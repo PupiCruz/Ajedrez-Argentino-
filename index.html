@@ -4437,6 +4437,7 @@ async function _buildZip(files) {
 var _EXPORT_ASSET_PATHS = [
   'data/hardcoded.js',   // PLAYER_GAMES + PGN_DB (datos curados, ya no inline en el HTML)
   'assets/chess.min.js', // librería de ajedrez local (antes venía de jsDelivr)
+  'assets/stockfish-nnue-16-single.js','assets/stockfish-nnue-16-single.wasm', // motor local (antes jsDelivr)
   'assets/piezas/wK.svg','assets/piezas/wQ.svg','assets/piezas/wR.svg','assets/piezas/wB.svg','assets/piezas/wN.svg','assets/piezas/wP.svg',
   'assets/piezas/bK.svg','assets/piezas/bQ.svg','assets/piezas/bR.svg','assets/piezas/bB.svg','assets/piezas/bN.svg','assets/piezas/bP.svg',
   'assets/sonidos/Move.mp3','assets/sonidos/Capture.mp3'
@@ -5751,14 +5752,10 @@ function pgnGameMatchesPlayer(hdrs, player) {
   return false;
 }
 
-// Huella de una partida para detectar DUPLICADOS entre bases distintas. Combina los dos
-// jugadores + la secuencia de jugadas normalizada (sin headers, comentarios, variantes,
-// NAGs, números de jugada, resultado ni símbolos +#!?), de modo que el MISMO juego con
-// distinto formato de encabezados/anotaciones produzca la MISMA huella. Las jugadas (no los
-// headers) son la identidad real de la partida.
 // Jugadas normalizadas de un PGN (sin headers, comentarios, variantes, NAGs, números,
 // resultado ni símbolos +#!?), en minúsculas y separadas por espacio. Es la "columna vertebral"
-// de la partida: dos transcripciones del mismo juego dan el mismo texto de jugadas.
+// de la partida: dos transcripciones del mismo juego dan el mismo texto de jugadas. Es la
+// identidad real de una partida (los headers, no) y la base de toda la detección de duplicados.
 function _moveBody(pgn) {
   return String(pgn || '')
     .replace(/\[[^\]]*\]/g, ' ')                 // headers [Tag "..."]
@@ -5771,24 +5768,6 @@ function _moveBody(pgn) {
     .replace(/[+#!?]/g, '')                      // jaque/mate/anotaciones
     .replace(/[^a-z0-9 =-]/gi, ' ')              // dejar SAN básico (incluye = de promoción y - de enroque)
     .replace(/\s+/g, ' ').trim().toLowerCase();
-}
-
-function gameFingerprint(pgn) {
-  var h = parsePgnHeaders(pgn);
-  var body = _moveBody(pgn);
-  if (body.length < 4) {
-    // Sin jugadas (solo resultado): las jugadas no sirven de identidad → caer en los headers,
-    // para NO colapsar partidas distintas entre los mismos jugadores (mismo día/ronda/evento).
-    body = '#' + (h.Date || '') + '#' + (h.Round || '') + '#' + (h.Event || '');
-  } else {
-    // Usar solo las primeras 40 jugadas (plies): así dos transcripciones del MISMO juego que
-    // difieren solo en el final (una cortada, o con una jugada de más, o de una base con
-    // análisis y otra sin) dan la misma huella. 40 plies = 20 jugadas: lo bastante específico
-    // para no fusionar partidas distintas (se verificó: a 40 todas las fusiones son "una es
-    // prefijo de la otra"; recién a 30 aparecen partidas distintas que comparten apertura).
-    body = body.split(' ').slice(0, 40).join(' ');
-  }
-  return normStr(h.White || '') + '|' + normStr(h.Black || '') + '|' + body;
 }
 
 // Deduplica una lista de partidas detectando el MISMO juego aunque una venga truncada o con
@@ -5830,17 +5809,67 @@ function dedupGamesByMoves(items, getPgn) {
   return items.filter(function(it) { return drop.indexOf(it) < 0; });
 }
 
-// Conjunto de huellas de TODAS las partidas del sitio: torneos públicos (localStorage) +
-// todos los perfiles (_memTournaments). Sirve para el filtro de duplicados al importar, para
-// que una partida no entre de nuevo aunque ya esté guardada bajo OTRO jugador. ~1s sobre
-// decenas de miles de partidas (se llama solo al importar).
-function allSiteFingerprints() {
-  var seen = {};
+// Índice de duplicados del sitio por RELACIÓN DE PREFIJO de jugadas — la MISMA identidad que
+// usa dedupGamesByMoves (una secuencia de jugadas que es prefijo de otra es el mismo juego
+// cortado antes). Permite preguntar incrementalmente "¿esta partida ya está en el sitio?" y
+// atrapa también las truncadas / con jugadas de más, no solo las idénticas (lo que la vieja
+// huella de 40 jugadas dejaba pasar). Lo usan los dos caminos de "todo el sitio": el filtro al
+// importar y la limpieza global. Las partidas SIN jugadas se indexan aparte por
+// jugadores#Date#Round#Event (no se mezclan con las que sí tienen jugadas).
+function newDedupIndex() { return { byPair: Object.create(null), empty: Object.create(null) }; }
+
+// Clave de una partida en el índice: {pk: jugadores, body: jugadas, ek: clave sin-jugadas}.
+function _dedupKey(pgn) {
+  var h = parsePgnHeaders(pgn);
+  var pk = normStr(h.White || '') + '|' + normStr(h.Black || '');
+  var body = _moveBody(pgn);
+  return { pk: pk, body: body, ek: pk + '#' + (h.Date || '') + '#' + (h.Round || '') + '#' + (h.Event || '') };
+}
+
+// ¿Ya está esta partida en el índice? Prefijo en CUALQUIER dirección (la nueva es prefijo de
+// una guardada, o una guardada es prefijo de la nueva) = mismo juego.
+function dedupIndexHas(idx, pgn) {
+  var k = _dedupKey(pgn);
+  if (k.body.length < 4) return !!idx.empty[k.ek];
+  var arr = idx.byPair[k.pk];
+  if (arr) for (var i = 0; i < arr.length; i++) {
+    if (arr[i].indexOf(k.body) === 0 || k.body.indexOf(arr[i]) === 0) return true;
+  }
+  return false;
+}
+
+// ¿La partida ya está CUBIERTA por una copia igual o MÁS LARGA del índice? (es prefijo de una
+// existente, o idéntica). A diferencia de dedupIndexHas, si la nueva es estrictamente MÁS LARGA
+// (la existente es su prefijo) devuelve false: no está cubierta → conviene importarla como mejora
+// y dejar que la consolidación quite después la copia corta vieja. Lo usa el filtro al importar.
+function dedupIndexCovered(idx, pgn) {
+  var k = _dedupKey(pgn);
+  if (k.body.length < 4) return !!idx.empty[k.ek];
+  var arr = idx.byPair[k.pk];
+  if (arr) for (var i = 0; i < arr.length; i++) {
+    if (arr[i].indexOf(k.body) === 0) return true;   // existente empieza con la nueva → existente ≥ nueva
+  }
+  return false;
+}
+
+// Agregar una partida al índice (para encadenar chequeos: atrapa duplicados internos del
+// propio archivo y deja constancia de lo ya conservado).
+function dedupIndexAdd(idx, pgn) {
+  var k = _dedupKey(pgn);
+  if (k.body.length < 4) { idx.empty[k.ek] = true; return; }
+  (idx.byPair[k.pk] = idx.byPair[k.pk] || []).push(k.body);
+}
+
+// Índice poblado con TODAS las partidas del sitio: torneos públicos (localStorage) + todos los
+// perfiles (_memTournaments). Sirve para que una partida no entre de nuevo aunque ya esté
+// guardada bajo OTRO jugador.
+function buildSiteDedupIndex() {
+  var idx = newDedupIndex();
   var lsStored = [];
   try { lsStored = JSON.parse(localStorage.getItem('pgn_tournaments') || '[]'); } catch (e) {}
-  lsStored.forEach(function(e) { (e.games || []).forEach(function(g) { seen[gameFingerprint(g)] = true; }); });
-  _memTournaments.forEach(function(t) { (t.games || []).forEach(function(g) { seen[gameFingerprint(g)] = true; }); });
-  return seen;
+  lsStored.forEach(function(e) { (e.games || []).forEach(function(g) { dedupIndexAdd(idx, g); }); });
+  _memTournaments.forEach(function(t) { (t.games || []).forEach(function(g) { dedupIndexAdd(idx, g); }); });
+  return idx;
 }
 
 // Reúne TODAS las partidas de PLAYER_GAMES que corresponden al jugador p
@@ -6178,14 +6207,14 @@ function cvSetResult(res) {
   if (wEl) { wEl.textContent = wS; wEl.style.color = wC; }
 }
 
-// chess.js se baja de un CDN (ver el <script> al final del body, con onerror que marca
-// window.__chessLibFailed). Si el CDN falla o la conexión está caída, Chess queda indefinido.
+// chess.js se carga local (assets/chess.min.js, ver el <script> al final del body, con onerror
+// que marca window.__chessLibFailed). Si el archivo no carga, Chess queda indefinido.
 // En vez de no hacer nada (visor mudo), avisamos al usuario distinguiendo "todavía cargando"
 // de "falló de verdad". Devuelve true solo si la librería está lista.
 function ensureChessLib() {
   if (typeof Chess !== 'undefined') return true;
   if (window.__chessLibFailed) {
-    alert('No se pudo cargar la librería de ajedrez (chess.js) desde internet.\n\nEl servicio externo (jsDelivr) puede estar caído. Revisá tu conexión y recargá la página.');
+    alert('No se pudo cargar la librería de ajedrez (chess.js).\n\nRecargá la página y volvé a intentarlo.');
   } else {
     alert('La librería de ajedrez todavía se está cargando.\n\nEsperá unos segundos y volvé a intentarlo.');
   }
@@ -6351,20 +6380,23 @@ function playerPgnImport(playerId) {
   var player = null;
   for (var pi = 0; pi < PLAYERS.length; pi++) { if (PLAYERS[pi].id === playerId) { player = PLAYERS[pi]; break; } }
 
-  // FILTRO DE DUPLICADOS (partida por partida). La huella (gameFingerprint) usa jugadores +
-  // jugadas, así reconoce el MISMO juego aunque venga de otra base con headers distintos.
-  // Se compara contra TODAS las partidas del sitio (públicas + todos los perfiles), no solo
-  // las de este jugador, así no entra duplicada aunque ya esté guardada bajo el rival; y
-  // también contra el propio archivo (evita duplicados internos). ~1s sobre decenas de miles.
-  var seenFp = allSiteFingerprints();
+  // FILTRO DE DUPLICADOS (partida por partida) por RELACIÓN DE PREFIJO de jugadas: reconoce el
+  // MISMO juego aunque venga de otra base con headers distintos Y aunque esté truncado o tenga
+  // jugadas de más. Se compara contra TODAS las partidas del sitio (públicas + todos los
+  // perfiles), no solo las de este jugador, así no entra duplicada aunque ya esté guardada bajo
+  // el rival. Primero se deduplica el propio archivo (dedupGamesByMoves conserva la versión más
+  // larga de cada juego); después se filtra contra el índice del sitio. Se usa dedupIndexCovered
+  // (no dedupIndexHas): si la entrante es MÁS LARGA que una guardada (la guardada es su prefijo),
+  // NO se descarta — entra como mejora y la consolidación de abajo quita después la copia corta.
+  var uniqueIncoming = dedupGamesByMoves(allGames.map(function(p) { return { pgn: p }; }), function(w) { return w.pgn; });
+  var siteIdx = buildSiteDedupIndex();
   var games = [];
-  var dupSkipped = 0;
-  allGames.forEach(function(pgn) {
-    var fp = gameFingerprint(pgn);
-    if (seenFp[fp]) { dupSkipped++; return; }
-    seenFp[fp] = true;
-    games.push(pgn);
+  uniqueIncoming.forEach(function(w) {
+    if (dedupIndexCovered(siteIdx, w.pgn)) return;
+    dedupIndexAdd(siteIdx, w.pgn);
+    games.push(w.pgn);
   });
+  var dupSkipped = allGames.length - games.length;   // internas del archivo + ya en el sitio
 
   if (!games.length) {
     if (res) res.innerHTML = '<span style="color:var(--text2)">Todas las partidas del archivo (' + allGames.length + ') ya estaban cargadas para este jugador. No se agregó ninguna nueva.</span>';
@@ -6423,6 +6455,13 @@ function playerPgnImport(playerId) {
 
   pgnMergeToPlayerGames();
 
+  // CONSOLIDACIÓN: si alguna partida recién importada es una versión MÁS LARGA de una ya guardada
+  // (la vieja era truncada), dejar solo la larga y quitar la corta de los perfiles. Reusa la misma
+  // pasada "quedarse con la más larga" que el botón global (no toca los torneos públicos).
+  var _consPlan = _computeProfileDedup();
+  var _upgraded = _consPlan.removed;
+  if (_upgraded) _consPlan.apply();
+
   // Limpiar
   _plPgnContent = null;
   var input = document.getElementById('pl-pgn-input');
@@ -6435,6 +6474,7 @@ function playerPgnImport(playerId) {
     ? '✓ ' + imported + ' partida' + (imported !== 1 ? 's' : '') + ' nueva' + (imported !== 1 ? 's' : '') + ' importada' + (imported !== 1 ? 's' : '')
     : '';
   if (dupSkipped > 0) msg += (msg ? ' · ' : '') + dupSkipped + ' duplicada' + (dupSkipped !== 1 ? 's' : '') + ' omitida' + (dupSkipped !== 1 ? 's' : '');
+  if (_upgraded > 0) msg += (msg ? ' · ' : '') + _upgraded + ' versión' + (_upgraded !== 1 ? 'es' : '') + ' más corta' + (_upgraded !== 1 ? 's' : '') + ' reemplazada' + (_upgraded !== 1 ? 's' : '');
   if (!_lsSaveOk && imported > 0) msg += '<br><span style="color:var(--gold);font-size:11px">⚠️ Almacenamiento lleno — exportá el HTML para no perder estas partidas al recargar la página.</span>';
   if (res) res.innerHTML = '<span style="color:' + (imported > 0 ? 'var(--green)' : 'var(--text2)') + '">' + (msg || 'Sin cambios.') + '</span>';
 
@@ -6442,56 +6482,73 @@ function playerPgnImport(playerId) {
   if (player) fetchPlayerBroadcastGames(player);
 }
 
-// LIMPIEZA GLOBAL de partidas duplicadas en los IMPORTS de perfil (torneos playerOnly),
-// para todo el sitio de una vez. Compara por huella de jugadas (gameFingerprint) contra los
-// torneos PÚBLICOS (que nunca se tocan) y entre sí, dejando una sola copia de cada partida.
-// Una sola pasada: cuenta, confirma con el número, y recién entonces aplica.
-function runProfileDedup() {
-  var lsStored = JSON.parse(localStorage.getItem('pgn_tournaments') || '[]');
-  // 1) keep-set: todas las partidas de torneos PÚBLICOS → siempre se conservan, mandan ellas.
-  var keep = {};
-  lsStored.forEach(function(e) { if (!e.playerOnly) (e.games || []).forEach(function(g) { keep[gameFingerprint(g)] = true; }); });
-  // 2) calcular (SIN mutar todavía) qué queda en cada torneo de perfil.
-  var removed = 0;
-  var memResult = _memTournaments.map(function(t) {
-    var ng = [];
-    (t.games || []).forEach(function(g) {
-      var fp = gameFingerprint(g);
-      if (keep[fp]) { removed++; }       // ya existe (público u otra copia ya vista) → quitar
-      else { keep[fp] = true; ng.push(g); }
-    });
-    return { entry: t, games: ng };
-  });
-
-  if (removed === 0) { alert('No se encontraron partidas duplicadas en los perfiles. 🎉'); return; }
-  if (!confirm('Se encontraron ' + removed + ' partidas duplicadas en los perfiles de jugadores.\n\n'
-    + 'Se va a dejar UNA sola copia de cada una. No se tocan los torneos públicos.\n\n'
-    + '💡 Antes conviene descargar tu copia de autor por las dudas.\n\n'
-    + '¿Quitar las ' + removed + ' partidas duplicadas ahora?')) return;
-
-  // 3) APLICAR: actualizar _memTournaments (descartar torneos que quedaron vacíos).
-  var newMem = [];
-  memResult.forEach(function(r) {
-    r.entry.games = r.games;
-    r.entry.gameCount = r.games.length;
-    if (r.games.length > 0) newMem.push(r.entry);
-  });
-  _memTournaments = newMem;
-
-  // 4) Sincronizar localStorage: las entradas playerOnly reflejan los _memTournaments
-  //    deduplicados (por id); las públicas quedan intactas; las vaciadas se descartan.
+// Sincroniza localStorage 'pgn_tournaments' con los _memTournaments ya deduplicados: las entradas
+// playerOnly se actualizan por id (y las vaciadas se descartan); las públicas quedan intactas. NO
+// re-agrega los perfiles EMBEBIDOS (los que startup sacó del localStorage para ahorrar espacio):
+// solo toca entradas que ya estaban en localStorage. `lsStored` = snapshot leído antes de mutar.
+function _syncProfileLs(lsStored) {
   var memById = {};
   _memTournaments.forEach(function(t) { memById[t.id] = t; });
   var newLs = [];
   lsStored.forEach(function(e) {
     if (!e.playerOnly) { newLs.push(e); return; }   // público: intacto
     var m = memById[e.id];
-    if (m) { e.games = m.games; e.gameCount = m.games.length; newLs.push(e); }
+    if (m) { e.games = m.games; e.gameCount = (m.games || []).length; newLs.push(e); }
   });
-  try { localStorage.setItem('pgn_tournaments', JSON.stringify(newLs)); } catch(err) {}
+  try { localStorage.setItem('pgn_tournaments', JSON.stringify(newLs)); } catch (err) {}
+}
 
-  pgnMergeToPlayerGames();
-  alert('✓ Listo. Se quitaron ' + removed + ' partidas duplicadas de los perfiles.\n\n'
+// Calcula (SIN mutar) la consolidación de duplicados de los perfiles: deja UNA sola copia, la MÁS
+// LARGA, de cada partida — relación de prefijo de jugadas contra los torneos PÚBLICOS (mandan,
+// intocables) y entre sí; atrapa también truncadas / con jugadas de más. Procesa las partidas de
+// MAYOR a menor longitud, así la versión larga gana y las cortas (prefijos) caen. Devuelve
+// {removed, apply()}: apply() recién entonces muta _memTournaments + localStorage. Lo usan el botón
+// global y la importación.
+function _computeProfileDedup() {
+  var lsStored = [];
+  try { lsStored = JSON.parse(localStorage.getItem('pgn_tournaments') || '[]'); } catch (e) {}
+  var idx = newDedupIndex();
+  lsStored.forEach(function(e) { if (!e.playerOnly) (e.games || []).forEach(function(g) { dedupIndexAdd(idx, g); }); });
+  // Aplanar todas las partidas de perfil con su ubicación (entry + índice), más largas primero.
+  var all = [];
+  _memTournaments.forEach(function(t) { (t.games || []).forEach(function(g, gi) { all.push({ entry: t, gi: gi, pgn: g, len: _moveBody(g).length }); }); });
+  all.sort(function(a, b) { return b.len - a.len; });
+  var dropByEntry = new Map();   // entry -> { gi: true } de las partidas a quitar
+  var removed = 0;
+  all.forEach(function(it) {
+    if (dedupIndexHas(idx, it.pgn)) {
+      var s = dropByEntry.get(it.entry); if (!s) { s = {}; dropByEntry.set(it.entry, s); }
+      s[it.gi] = true; removed++;
+    } else { dedupIndexAdd(idx, it.pgn); }
+  });
+  return {
+    removed: removed,
+    apply: function() {
+      if (!removed) return;
+      var newMem = [];
+      _memTournaments.forEach(function(t) {
+        var s = dropByEntry.get(t);
+        if (s) { t.games = (t.games || []).filter(function(g, i) { return !s[i]; }); t.gameCount = t.games.length; }
+        if ((t.games || []).length > 0) newMem.push(t);   // descartar torneos que quedaron vacíos
+      });
+      _memTournaments = newMem;
+      _syncProfileLs(lsStored);
+      pgnMergeToPlayerGames();
+    }
+  };
+}
+
+// LIMPIEZA GLOBAL de partidas duplicadas en los perfiles (botón de Mantenimiento): cuenta, confirma
+// con el número, y recién entonces aplica. Deja la copia MÁS LARGA de cada partida.
+function runProfileDedup() {
+  var plan = _computeProfileDedup();
+  if (plan.removed === 0) { alert('No se encontraron partidas duplicadas en los perfiles. 🎉'); return; }
+  if (!confirm('Se encontraron ' + plan.removed + ' partidas duplicadas en los perfiles de jugadores.\n\n'
+    + 'Se va a dejar UNA sola copia (la más completa) de cada una. No se tocan los torneos públicos.\n\n'
+    + '💡 Antes conviene descargar tu copia de autor por las dudas.\n\n'
+    + '¿Quitar las ' + plan.removed + ' partidas duplicadas ahora?')) return;
+  plan.apply();
+  alert('✓ Listo. Se quitaron ' + plan.removed + ' partidas duplicadas de los perfiles.\n\n'
     + 'Para que el cambio quede PERMANENTE (y no vuelvan al recargar), descargá ahora '
     + '"Descargar archivo actualizado" y guardá esa copia sobre la que tenés.');
   exportTabInit();   // refrescar las estadísticas de la pestaña
@@ -8688,8 +8745,10 @@ function sfStart() {
   if (sf.loading) return;
   sf.loading = true;
   document.getElementById('sf-depth').textContent = 'Cargando SF16…';
-  var _sfJsUrl = 'https://cdn.jsdelivr.net/npm/stockfish@16.0.0/src/stockfish-nnue-16-single.js';
-  var _sfWasmUrl = 'https://cdn.jsdelivr.net/npm/stockfish@16.0.0/src/stockfish-nnue-16-single.wasm';
+  // Stockfish bundleado localmente (antes venía de jsDelivr). El .js lo baja la página
+  // (ruta relativa sirve); el .wasm lo busca el Worker desde un Blob → necesita URL absoluta.
+  var _sfJsUrl = 'assets/stockfish-nnue-16-single.js';
+  var _sfWasmUrl = new URL('assets/stockfish-nnue-16-single.wasm', location.href).href;
   fetch(_sfJsUrl)
     .then(function(r) {
       if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -8710,7 +8769,7 @@ function sfStart() {
       sf.engine.postMessage('uci');
     })
     .catch(function() {
-      document.getElementById('sf-depth').textContent = 'Sin conexión al CDN';
+      document.getElementById('sf-depth').textContent = 'No se pudo cargar el motor';
       sf.loading = false;
     });
 }
