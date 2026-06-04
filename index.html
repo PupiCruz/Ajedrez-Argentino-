@@ -3875,6 +3875,13 @@ function exportTabInit() {
   h += _dlSvg + '<span id="export-btn-label">Descargar para publicar (ZIP)</span></button>';
   h += '<div style="font-size:11px;color:var(--text3);margin-bottom:20px;line-height:1.5">Para publicar: descomprimí el ZIP y arrastrá la carpeta a <b style="color:var(--text2)">Netlify</b> o <b style="color:var(--text2)">Cloudflare Pages</b> (gratis). El token de Lichess nunca se incluye.</div>';
 
+  // Mantenimiento — limpiar duplicados de perfiles
+  h += '<div style="padding-top:16px;border-top:1px solid var(--border);margin-bottom:20px">';
+  h += '<div style="font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text2);margin-bottom:6px">Mantenimiento</div>';
+  h += '<div style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.5">Quita las partidas <b style="color:var(--text2)">duplicadas</b> que cargaste a los perfiles (en todo el sitio, no perfil por perfil). No toca los torneos públicos y deja una sola copia de cada partida. Conviene descargar antes la copia de autor.</div>';
+  h += '<button onclick="runProfileDedup()" style="width:100%;padding:11px;background:var(--bg3);border:1px solid var(--border);color:var(--text2);font-size:13px;font-weight:600;border-radius:10px;cursor:pointer;font-family:inherit">🧹 Limpiar partidas duplicadas (todo el sitio)</button>';
+  h += '</div>';
+
   // Token Lichess
   h += '<div style="padding-top:16px;border-top:1px solid var(--border)">';
   h += '<div style="font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text2);margin-bottom:6px">Token de Lichess</div>';
@@ -5763,6 +5770,9 @@ function gameFingerprint(pgn) {
     .replace(/[+#!?]/g, '')                      // jaque/mate/anotaciones
     .replace(/[^a-z0-9 =-]/gi, ' ')              // dejar SAN básico (incluye = de promoción y - de enroque)
     .replace(/\s+/g, ' ').trim().toLowerCase();
+  // Sin jugadas (solo resultado): las jugadas no sirven de identidad → caer en los headers,
+  // para NO colapsar partidas distintas entre los mismos jugadores (mismo día/ronda/evento).
+  if (body.length < 4) body = '#' + (h.Date || '') + '#' + (h.Round || '') + '#' + (h.Event || '');
   return normStr(h.White || '') + '|' + normStr(h.Black || '') + '|' + body;
 }
 
@@ -6370,6 +6380,61 @@ function playerPgnImport(playerId) {
 
   // Refrescar el modal (player ya quedó resuelto arriba)
   if (player) fetchPlayerBroadcastGames(player);
+}
+
+// LIMPIEZA GLOBAL de partidas duplicadas en los IMPORTS de perfil (torneos playerOnly),
+// para todo el sitio de una vez. Compara por huella de jugadas (gameFingerprint) contra los
+// torneos PÚBLICOS (que nunca se tocan) y entre sí, dejando una sola copia de cada partida.
+// Una sola pasada: cuenta, confirma con el número, y recién entonces aplica.
+function runProfileDedup() {
+  var lsStored = JSON.parse(localStorage.getItem('pgn_tournaments') || '[]');
+  // 1) keep-set: todas las partidas de torneos PÚBLICOS → siempre se conservan, mandan ellas.
+  var keep = {};
+  lsStored.forEach(function(e) { if (!e.playerOnly) (e.games || []).forEach(function(g) { keep[gameFingerprint(g)] = true; }); });
+  // 2) calcular (SIN mutar todavía) qué queda en cada torneo de perfil.
+  var removed = 0;
+  var memResult = _memTournaments.map(function(t) {
+    var ng = [];
+    (t.games || []).forEach(function(g) {
+      var fp = gameFingerprint(g);
+      if (keep[fp]) { removed++; }       // ya existe (público u otra copia ya vista) → quitar
+      else { keep[fp] = true; ng.push(g); }
+    });
+    return { entry: t, games: ng };
+  });
+
+  if (removed === 0) { alert('No se encontraron partidas duplicadas en los perfiles. 🎉'); return; }
+  if (!confirm('Se encontraron ' + removed + ' partidas duplicadas en los perfiles de jugadores.\n\n'
+    + 'Se va a dejar UNA sola copia de cada una. No se tocan los torneos públicos.\n\n'
+    + '💡 Antes conviene descargar tu copia de autor por las dudas.\n\n'
+    + '¿Quitar las ' + removed + ' partidas duplicadas ahora?')) return;
+
+  // 3) APLICAR: actualizar _memTournaments (descartar torneos que quedaron vacíos).
+  var newMem = [];
+  memResult.forEach(function(r) {
+    r.entry.games = r.games;
+    r.entry.gameCount = r.games.length;
+    if (r.games.length > 0) newMem.push(r.entry);
+  });
+  _memTournaments = newMem;
+
+  // 4) Sincronizar localStorage: las entradas playerOnly reflejan los _memTournaments
+  //    deduplicados (por id); las públicas quedan intactas; las vaciadas se descartan.
+  var memById = {};
+  _memTournaments.forEach(function(t) { memById[t.id] = t; });
+  var newLs = [];
+  lsStored.forEach(function(e) {
+    if (!e.playerOnly) { newLs.push(e); return; }   // público: intacto
+    var m = memById[e.id];
+    if (m) { e.games = m.games; e.gameCount = m.games.length; newLs.push(e); }
+  });
+  try { localStorage.setItem('pgn_tournaments', JSON.stringify(newLs)); } catch(err) {}
+
+  pgnMergeToPlayerGames();
+  alert('✓ Listo. Se quitaron ' + removed + ' partidas duplicadas de los perfiles.\n\n'
+    + 'Para que el cambio quede PERMANENTE (y no vuelvan al recargar), descargá ahora '
+    + '"Descargar archivo actualizado" y guardá esa copia sobre la que tenés.');
+  exportTabInit();   // refrescar las estadísticas de la pestaña
 }
 
 function filterPgByResult(result) {
