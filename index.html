@@ -5776,6 +5776,19 @@ function gameFingerprint(pgn) {
   return normStr(h.White || '') + '|' + normStr(h.Black || '') + '|' + body;
 }
 
+// Conjunto de huellas de TODAS las partidas del sitio: torneos públicos (localStorage) +
+// todos los perfiles (_memTournaments). Sirve para el filtro de duplicados al importar, para
+// que una partida no entre de nuevo aunque ya esté guardada bajo OTRO jugador. ~1s sobre
+// decenas de miles de partidas (se llama solo al importar).
+function allSiteFingerprints() {
+  var seen = {};
+  var lsStored = [];
+  try { lsStored = JSON.parse(localStorage.getItem('pgn_tournaments') || '[]'); } catch (e) {}
+  lsStored.forEach(function(e) { (e.games || []).forEach(function(g) { seen[gameFingerprint(g)] = true; }); });
+  _memTournaments.forEach(function(t) { (t.games || []).forEach(function(g) { seen[gameFingerprint(g)] = true; }); });
+  return seen;
+}
+
 // Reúne TODAS las partidas de PLAYER_GAMES que corresponden al jugador p
 function gatherGamesForPlayer(player) {
   var results = []; // [{tourName, tourLocation, pgn}]
@@ -6291,12 +6304,10 @@ function playerPgnImport(playerId) {
 
   // FILTRO DE DUPLICADOS (partida por partida). La huella (gameFingerprint) usa jugadores +
   // jugadas, así reconoce el MISMO juego aunque venga de otra base con headers distintos.
-  // Se compara contra TODO lo que el jugador ya tiene (baseline + torneos públicos + lo
-  // importado antes) y también contra el propio archivo (evita duplicados internos).
-  var seenFp = {};
-  if (player) {
-    gatherGamesForPlayer(player).forEach(function(r) { seenFp[gameFingerprint(r.pgn)] = true; });
-  }
+  // Se compara contra TODAS las partidas del sitio (públicas + todos los perfiles), no solo
+  // las de este jugador, así no entra duplicada aunque ya esté guardada bajo el rival; y
+  // también contra el propio archivo (evita duplicados internos). ~1s sobre decenas de miles.
+  var seenFp = allSiteFingerprints();
   var games = [];
   var dupSkipped = 0;
   allGames.forEach(function(pgn) {
