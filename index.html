@@ -5745,6 +5745,27 @@ function pgnGameMatchesPlayer(hdrs, player) {
   return false;
 }
 
+// Huella de una partida para detectar DUPLICADOS entre bases distintas. Combina los dos
+// jugadores + la secuencia de jugadas normalizada (sin headers, comentarios, variantes,
+// NAGs, números de jugada, resultado ni símbolos +#!?), de modo que el MISMO juego con
+// distinto formato de encabezados/anotaciones produzca la MISMA huella. Las jugadas (no los
+// headers) son la identidad real de la partida.
+function gameFingerprint(pgn) {
+  var h = parsePgnHeaders(pgn);
+  var body = String(pgn || '')
+    .replace(/\[[^\]]*\]/g, ' ')                 // headers [Tag "..."]
+    .replace(/\{[^}]*\}/g, ' ')                  // comentarios {…} (incluye [%clk]/[%eval])
+    .replace(/\([^)]*\)/g, ' ')                  // variantes (…)
+    .replace(/;[^\n]*/g, ' ')                    // comentarios de línea ;
+    .replace(/\$\d+/g, ' ')                      // NAGs $n
+    .replace(/\d+\s*\.(\s*\.\.)?/g, ' ')         // números de jugada: "12." y "12..."
+    .replace(/\b(1-0|0-1|1\/2-1\/2|\*)\b/g, ' ') // resultado
+    .replace(/[+#!?]/g, '')                      // jaque/mate/anotaciones
+    .replace(/[^a-z0-9 =-]/gi, ' ')              // dejar SAN básico (incluye = de promoción y - de enroque)
+    .replace(/\s+/g, ' ').trim().toLowerCase();
+  return normStr(h.White || '') + '|' + normStr(h.Black || '') + '|' + body;
+}
+
 // Reúne TODAS las partidas de PLAYER_GAMES que corresponden al jugador p
 function gatherGamesForPlayer(player) {
   var results = []; // [{tourName, tourLocation, pgn}]
@@ -6248,14 +6269,43 @@ function clearPlayerImported(playerId) {
 
 function playerPgnImport(playerId) {
   if (!_plPgnContent) return;
-  var games = pgnSplitGames(_plPgnContent);
+  var allGames = pgnSplitGames(_plPgnContent);
   var res = document.getElementById('pl-pgn-result');
-  if (!games.length) {
+  if (!allGames.length) {
     if (res) res.innerHTML = '<span style="color:var(--red)">⚠️ No se encontraron partidas en el archivo.</span>';
     return;
   }
 
-  // Agrupar por [Event] — cada torneo queda separado
+  var player = null;
+  for (var pi = 0; pi < PLAYERS.length; pi++) { if (PLAYERS[pi].id === playerId) { player = PLAYERS[pi]; break; } }
+
+  // FILTRO DE DUPLICADOS (partida por partida). La huella (gameFingerprint) usa jugadores +
+  // jugadas, así reconoce el MISMO juego aunque venga de otra base con headers distintos.
+  // Se compara contra TODO lo que el jugador ya tiene (baseline + torneos públicos + lo
+  // importado antes) y también contra el propio archivo (evita duplicados internos).
+  var seenFp = {};
+  if (player) {
+    gatherGamesForPlayer(player).forEach(function(r) { seenFp[gameFingerprint(r.pgn)] = true; });
+  }
+  var games = [];
+  var dupSkipped = 0;
+  allGames.forEach(function(pgn) {
+    var fp = gameFingerprint(pgn);
+    if (seenFp[fp]) { dupSkipped++; return; }
+    seenFp[fp] = true;
+    games.push(pgn);
+  });
+
+  if (!games.length) {
+    if (res) res.innerHTML = '<span style="color:var(--text2)">Todas las partidas del archivo (' + allGames.length + ') ya estaban cargadas para este jugador. No se agregó ninguna nueva.</span>';
+    _plPgnContent = null;
+    var inp0 = document.getElementById('pl-pgn-input'); if (inp0) inp0.value = '';
+    var lbl0 = document.getElementById('pl-pgn-lbl'); if (lbl0) lbl0.textContent = 'Elegir archivo .pgn';
+    var info0 = document.getElementById('pl-pgn-info'); if (info0) info0.style.display = 'none';
+    return;
+  }
+
+  // Agrupar las partidas NUEVAS por [Event] — cada torneo queda separado
   var tourMap = {}, tourOrder = [];
   games.forEach(function(pgn) {
     var hdrs = parsePgnHeaders(pgn);
@@ -6272,25 +6322,10 @@ function playerPgnImport(playerId) {
   });
 
   var now = Date.now();
-  var imported = 0, skipped = 0;
-
-  // Deduplicar solo contra torneos ya importados en memoria para ESTE jugador
-  var existingNames = {};
-  _memTournaments.forEach(function(e) {
-    if (e.playerId === playerId) {
-      existingNames[normStr(e.name || '')] = true;
-    }
-  });
-
+  var imported = 0;
   var newEntries = [];
   tourOrder.forEach(function(evName, idx) {
     var t = tourMap[evName];
-    var normEvName = normStr(evName);
-    if (existingNames[normEvName]) {
-      skipped++;
-      return; // ya existe para este jugador, no duplicar
-    }
-    existingNames[normEvName] = true;
     var entry = {
       id: now + idx,
       name: t.name,
@@ -6327,17 +6362,13 @@ function playerPgnImport(playerId) {
   var info = document.getElementById('pl-pgn-info');
   if (info) info.style.display = 'none';
   var msg = imported > 0
-    ? '✓ ' + imported + ' partidas importadas correctamente'
+    ? '✓ ' + imported + ' partida' + (imported !== 1 ? 's' : '') + ' nueva' + (imported !== 1 ? 's' : '') + ' importada' + (imported !== 1 ? 's' : '')
     : '';
-  if (skipped > 0) msg += (msg ? ' · ' : '') + skipped + ' torneo' + (skipped !== 1 ? 's' : '') + ' ya existía' + (skipped !== 1 ? 'n' : '') + ', se omitió' + (skipped !== 1 ? 'ron' : '');
+  if (dupSkipped > 0) msg += (msg ? ' · ' : '') + dupSkipped + ' duplicada' + (dupSkipped !== 1 ? 's' : '') + ' omitida' + (dupSkipped !== 1 ? 's' : '');
   if (!_lsSaveOk && imported > 0) msg += '<br><span style="color:var(--gold);font-size:11px">⚠️ Almacenamiento lleno — exportá el HTML para no perder estas partidas al recargar la página.</span>';
   if (res) res.innerHTML = '<span style="color:' + (imported > 0 ? 'var(--green)' : 'var(--text2)') + '">' + (msg || 'Sin cambios.') + '</span>';
 
-  // Refrescar el modal
-  var player = null;
-  for (var i = 0; i < PLAYERS.length; i++) {
-    if (PLAYERS[i].id === playerId) { player = PLAYERS[i]; break; }
-  }
+  // Refrescar el modal (player ya quedó resuelto arriba)
   if (player) fetchPlayerBroadcastGames(player);
 }
 
