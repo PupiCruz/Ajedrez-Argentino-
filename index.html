@@ -3863,10 +3863,22 @@ function exportTabInit() {
 
   var _dlSvg = '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>';
 
-  // BOTÓN 1 — Copia de autor (respaldo / editar en otra PC)
-  h += '<div style="font-size:12px;color:var(--text2);margin-bottom:10px;line-height:1.5">📦 <b style="color:var(--text2)">Tu copia de autor.</b> ZIP con la app y TODOS tus datos para <b style="color:var(--text2)">respaldar</b> y <b style="color:var(--text2)">seguir editando</b> (incluso en otra PC). Descomprimilo y abrí <i>index.html</i>.</div>';
+  // Estado: ¿hay cambios sin exportar al archivo?
+  var _dirty = _hayCambiosSinExportar();
+  h += '<div style="display:flex;align-items:center;gap:9px;margin-bottom:16px;padding:11px 13px;border-radius:10px;background:' + (_dirty ? 'rgba(200,140,20,.12)' : 'rgba(40,160,90,.12)') + ';border:1px solid ' + (_dirty ? 'rgba(200,140,20,.35)' : 'rgba(40,160,90,.35)') + '">';
+  h += '<span style="font-size:17px;line-height:1">' + (_dirty ? '●' : '✓') + '</span>';
+  h += '<span style="font-size:12.5px;color:var(--text2);line-height:1.4">' + (_dirty ? '<b style="color:#e0a020">Tenés cambios sin guardar en el archivo.</b> Usá el botón dorado de abajo.' : '<b style="color:#28a05a">Todo guardado en el archivo.</b>') + '</span>';
+  h += '</div>';
+
+  // BOTÓN PRINCIPAL — Guardar datos en la carpeta (día a día, 1 archivo, sin ZIP)
+  h += '<div style="font-size:12px;color:var(--text2);margin-bottom:10px;line-height:1.5">💾 <b style="color:var(--text2)">Guardar en tu carpeta.</b> Deja al día <i>tu carpeta principal</i>: descarga <i>embedded-data.js</i> y <i>embedded-photos.js</i> para reemplazar en la subcarpeta <i>data\\</i>. <b style="color:var(--text2)">Es lo que usás todos los días.</b></div>';
+  h += '<button onclick="exportDataFile()" style="width:100%;padding:13px;background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-size:14px;font-weight:700;border-radius:10px;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:9px;margin-bottom:22px">';
+  h += _dlSvg + '<span>Guardar datos en mi carpeta</span></button>';
+
+  // BOTÓN 1 — Copia de autor (respaldo completo ocasional)
+  h += '<div style="font-size:12px;color:var(--text2);margin-bottom:10px;line-height:1.5">📦 <b style="color:var(--text2)">Respaldo completo (ocasional).</b> ZIP con la app y TODOS tus datos para <b style="color:var(--text2)">respaldar</b> o llevar a una PC que no tiene la carpeta. Descomprimilo y abrí <i>index.html</i>.</div>';
   h += '<button onclick="exportAuthoringZip()" style="width:100%;padding:13px;background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-size:14px;font-weight:700;border-radius:10px;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:9px;margin-bottom:22px">';
-  h += _dlSvg + '<span id="export-authoring-label">Descargar archivo actualizado</span></button>';
+  h += _dlSvg + '<span id="export-authoring-label">Descargar respaldo completo (ZIP)</span></button>';
 
   // BOTÓN 2 — Build de publicación (Netlify)
   h += '<div style="font-size:12px;color:var(--text2);margin-bottom:10px;line-height:1.5">🌐 <b style="color:var(--text2)">Para publicar la web.</b> ZIP liviano de carga por demanda para subir al hosting.</div>';
@@ -4437,6 +4449,7 @@ async function _buildZip(files) {
 var _EXPORT_ASSET_PATHS = [
   'data/hardcoded.js',   // PLAYER_GAMES + PGN_DB (datos curados, ya no inline en el HTML)
   'assets/chess.min.js', // librería de ajedrez local (antes venía de jsDelivr)
+  'assets/stockfish-embedded.js', // motor + wasm en base64 (lo que usa el análisis; anda en file://)
   'assets/stockfish-nnue-16-single.js','assets/stockfish-nnue-16-single.wasm', // motor local (antes jsDelivr)
   'assets/piezas/wK.svg','assets/piezas/wQ.svg','assets/piezas/wR.svg','assets/piezas/wB.svg','assets/piezas/wN.svg','assets/piezas/wP.svg',
   'assets/piezas/bK.svg','assets/piezas/bQ.svg','assets/piezas/bR.svg','assets/piezas/bB.svg','assets/piezas/bN.svg','assets/piezas/bP.svg',
@@ -4498,8 +4511,11 @@ async function exportAuthoringZip() {
   try {
     // Todos los datos vivos: públicos (localStorage) + perfiles (memoria). Mismo origen que el build.
     var stored = JSON.parse(localStorage.getItem('pgn_tournaments') || '[]');
-    var allData = stored.concat(_memTournaments);
-    var embeddedDataJs = 'window.__EMBEDDED_DATA__=' + JSON.stringify(allData) + ';';
+    var allData = _dedupById(stored.concat(_memTournaments));
+    var embeddedDataJs = 'window.__EMBEDDED_DATA__=' + JSON.stringify(allData) + ';\n'
+                       + 'window.__EMBEDDED_TZ__='   + JSON.stringify(getTzConfig()) + ';\n'
+                       + 'window.__EMBEDDED_NEWS__=' + JSON.stringify(getNewsItems()) + ';';
+    try { localStorage.setItem('last_export_fp', _estadoActualFp()); } catch(e){}
 
     // index.html para EDITAR: mantiene el <script> de embedded-data.js (modo eager), saca el
     // del manifest (no se usa al editar) y deja el token vacío.
@@ -4520,7 +4536,30 @@ async function exportAuthoringZip() {
   } catch (e) {
     alert('No se pudo generar la copia de autor: ' + (e && e.message ? e.message : e));
   } finally {
-    if (lblEl) lblEl.textContent = prevLbl || 'Descargar archivo actualizado';
+    if (lblEl) lblEl.textContent = prevLbl || 'Descargar respaldo completo (ZIP)';
+  }
+}
+
+// Descarga SOLO el archivo de datos (data/embedded-data.js + data/embedded-photos.js) para
+// reemplazarlos en tu carpeta principal. Como la carpeta ya tiene código, piezas y motor, con
+// esto alcanza para dejarla al día. Es el botón del día a día (no genera ZIP).
+function exportDataFile() {
+  if (_ondemand) { alert('Esto se usa desde tu carpeta de edición, no en modo publicación.'); return; }
+  try {
+    var stored  = JSON.parse(localStorage.getItem('pgn_tournaments') || '[]');
+    var allData = _dedupById(stored.concat(_memTournaments));
+    var tzObj   = getTzConfig();
+    var js = 'window.__EMBEDDED_DATA__=' + JSON.stringify(allData) + ';\n'
+           + 'window.__EMBEDDED_TZ__='   + JSON.stringify(tzObj)   + ';\n'
+           + 'window.__EMBEDDED_NEWS__=' + JSON.stringify(getNewsItems()) + ';';
+    _downloadBlob(new Blob([js], { type: 'application/javascript' }), 'embedded-data.js');
+    _downloadBlob(new Blob([_collectExportPhotosJs()],
+      { type: 'application/javascript' }), 'embedded-photos.js');
+    try { localStorage.setItem('last_export_fp', _estadoActualFp()); } catch(e){}
+    if (typeof exportTabInit === 'function') { try { exportTabInit(); } catch(e){} }
+    alert('✅ ¡Datos al día!\n\nSe descargaron 2 archivos:\n  • embedded-data.js\n  • embedded-photos.js\n\nMovelos a la carpeta  ajedrez-argentino\\data\\  y reemplazá los que están\n(Windows pregunta: "Reemplazar el archivo en el destino" → Sí).\n\nDespués subí la carpeta a Google Drive.');
+  } catch(e) {
+    alert('No se pudo generar el archivo de datos: ' + (e && e.message ? e.message : e));
   }
 }
 
@@ -4531,15 +4570,20 @@ async function exportHtml() {
   if (lblEl) lblEl.textContent = 'Generando ZIP…';
   try {
     // index.html publicado: token vacío y SIN el <script> de embedded-data.js (los 37MB no
-    // se publican; las partidas se bajan por demanda desde el split manifest/t/p).
-    var html = _exportBaseHtml().replace(/\s*<script src="data\/embedded-data\.js"><\/script>/, '');
+    // se publican). En su lugar carga data/manifest.js (índice liviano) → así __MANIFEST__
+    // queda definido y el sitio arranca en modo carga-por-demanda (split manifest/t/p).
+    var html = _exportBaseHtml().replace(/<script src="data\/embedded-data\.js"><\/script>/, '<script src="data\/manifest.js"><\/script>');
 
     // ETAPA 2 — build de publicación con CARGA POR DEMANDA:
     //   data/manifest.js  → índice liviano (lo único que baja al abrir la web)
     //   data/t/<id>.json  → partidas de cada torneo (fetch al abrir el torneo)
     //   data/p/<id>.json  → partidas de cada jugador (fetch al abrir el perfil)
     var split = buildSplitData();
-    var manifestJs = 'window.__MANIFEST__=' + JSON.stringify(split.manifest).replace(/</g, '\\u003c') + ';';
+    // El manifest liviano lleva también noticias y zona horaria (son chicas) para que la web
+    // publicada muestre TUS noticias/horarios y no los de ejemplo (embedded-data.js no se publica).
+    var manifestJs = 'window.__MANIFEST__=' + JSON.stringify(split.manifest).replace(/</g, '\\u003c') + ';\n'
+                   + 'window.__EMBEDDED_TZ__='   + JSON.stringify(getTzConfig()) + ';\n'
+                   + 'window.__EMBEDDED_NEWS__=' + JSON.stringify(getNewsItems()).replace(/</g, '\\u003c') + ';';
 
     var enc = new TextEncoder();
     function _tfn(id) { return String(id).replace(/[^a-z0-9_-]/gi, '_') + '.json'; }
@@ -4977,6 +5021,73 @@ function _refreshPlayerAvatar(playerId, dataUrl) {
 // Partidas de perfiles de jugadores — guardadas en memoria, no en localStorage
 var _memTournaments = [];
 
+// ── Sincronización archivo ⇄ navegador ──────────────────────────────────────────
+// Huella barata y estable del ESTADO exportable: torneos públicos (pgn_tournaments) + los
+// del editor (tz_config). Detecta altas/bajas/cambios para saber si hay cambios sin exportar
+// y si el archivo embebido cambió.
+function _fpStr(s){ var h = 5381; for (var i=0;i<s.length;i++){ h = ((h<<5)+h + s.charCodeAt(i)) >>> 0; } return h.toString(36); }
+function _combinedFp(arr, tzObj) {
+  try {
+    var pub = [], prof = [];
+    (arr || []).forEach(function(e){
+      if (e.playerOnly) {
+        prof.push(e.id + ':' + (e.gameCount != null ? e.gameCount : (e.games||[]).length));
+      } else {
+        pub.push([e.id, e.name, (e.gameCount != null ? e.gameCount : (e.games||[]).length),
+                  (e.leaders||[]).length, e.startDate||'', e.endDate||''].join('|'));
+      }
+    });
+    pub.sort(); prof.sort();
+    var tk = tzObj ? Object.keys(tzObj).sort() : [];
+    var b = tk.map(function(k){
+      var d = tzObj[k] || {};
+      return [k, d.name||'', d.status||'', d.startDate||'', d.endDate||'',
+              (d.pgnCount != null ? d.pgnCount : (d.pgnGames||[]).length), d.crurl||'', d.broadcastId||''].join('|');
+    });
+    var s = pub.join('§') + '¶' + prof.join('§') + '¶' + b.join('§');
+    return (pub.length + prof.length + tk.length) + '-' + _fpStr(s);
+  } catch(e){ return 'na'; }
+}
+// Huella del estado actual guardado en este navegador: torneos públicos + perfiles + tz + fotos.
+function _estadoActualFp() {
+  var stored = [];
+  try { stored = JSON.parse(localStorage.getItem('pgn_tournaments') || '[]'); } catch(e){}
+  var all = (typeof _dedupById === 'function') ? _dedupById(stored.concat(_memTournaments)) : stored.concat(_memTournaments);
+  var photoKeys = '';
+  try {
+    var ph = (typeof PLAYER_PHOTOS === 'object' && PLAYER_PHOTOS) ? PLAYER_PHOTOS : {};
+    photoKeys = Object.keys(ph).sort().map(function(k){ return k + ':' + ((ph[k]||'').length); }).join(',');
+  } catch(e){}
+  var newsFp = (typeof _newsFp === 'function' && typeof getNewsItems === 'function') ? _newsFp(getNewsItems()) : '';
+  return _combinedFp(all, getTzConfig()) + '~' + _fpStr(photoKeys) + '~' + newsFp;
+}
+// ¿Hay torneos cambiados que todavía no se exportaron al archivo?
+function _hayCambiosSinExportar() {
+  try {
+    var base = localStorage.getItem('last_export_fp');
+    return base != null && _estadoActualFp() !== base;
+  } catch(e){ return false; }
+}
+// Aviso del navegador si te vas con cambios sin exportar.
+window.addEventListener('beforeunload', function(e){
+  if (!_ondemand && _hayCambiosSinExportar()) { e.preventDefault(); e.returnValue = ''; return ''; }
+});
+
+// Quita entradas con id repetido (conserva la última). Evita que perfiles de jugadores
+// queden duplicados al exportar/cargar (cada perfil estaba tanto en localStorage como en memoria).
+function _dedupById(arr) {
+  var seen = {}, out = [];
+  for (var i = (arr ? arr.length : 0) - 1; i >= 0; i--) {
+    var e = arr[i];
+    var k = (e && e.id != null) ? ('id_' + e.id) : ('__noid_' + i);
+    if (seen[k]) continue;
+    seen[k] = true;
+    out.push(e);
+  }
+  out.reverse();
+  return out;
+}
+
 // Al arrancar la app, carga los torneos guardados
 (function() {
   if (_ondemand) {
@@ -4985,15 +5096,17 @@ var _memTournaments = [];
     _embeddedTournaments.forEach(function(e) { if (e.playerOnly) _memTournaments.push(e); });
     return;
   }
-  // IDs de partidas de perfiles ya embebidas (exportadas previamente)
+  // (La sincronización de "el archivo manda" + línea base se hace en el paso siguiente,
+  // que contempla tanto los torneos públicos como los del editor tz_config.)
+
+  // IDs de perfiles y de públicos ya embebidos en el archivo
   var embeddedPlayerIds = {};
+  var embeddedPublicIds = {};
   _embeddedTournaments.forEach(function(e) {
-    if (e.playerOnly) embeddedPlayerIds[e.id] = true;
+    if (e.playerOnly) embeddedPlayerIds[e.id] = true; else embeddedPublicIds[e.id] = true;
   });
 
   var stored = JSON.parse(localStorage.getItem('pgn_tournaments') || '[]');
-  var storedIds = {};
-  stored.forEach(function(e) { storedIds[e.id] = true; });
 
   // Embedded playerOnly → _memTournaments (ya exportadas, podemos liberarlas del localStorage)
   _embeddedTournaments.forEach(function(e) {
@@ -5011,18 +5124,75 @@ var _memTournaments = [];
         _memTournaments.push(e);
         newStored.push(e);
       }
-    } else {
+    } else if (!embeddedPublicIds[e.id]) {
+      // Público que el archivo NO tiene → alta local sin exportar: la conservamos.
+      // (Si el archivo SÍ lo tiene, NO usamos la copia vieja del navegador: la pisa el archivo.)
       newStored.push(e);
     }
   });
 
-  // Agregar public embedded que no están en localStorage
+  // El archivo aporta TODOS sus torneos públicos, en su versión al día (el archivo manda).
   _embeddedTournaments.forEach(function(e) {
-    if (!e.playerOnly && !storedIds[e.id]) newStored.push(e);
+    if (!e.playerOnly) newStored.push(e);
   });
+
+  // Sin perfiles duplicados (por si el archivo trae ids repetidos de exports viejos).
+  _memTournaments = _dedupById(_memTournaments);
 
   try { localStorage.setItem('pgn_tournaments', JSON.stringify(newStored)); } catch(e) { /* storage lleno, ok */ }
 })();
+
+// Sincroniza las NOTICIAS con el archivo (mismo criterio: el archivo manda cuando cambió;
+// conserva altas locales sin exportar). Las noticias se editan desde la app.
+(function() {
+  if (_ondemand) return;
+  var emb = (typeof window.__EMBEDDED_NEWS__ !== 'undefined' && Array.isArray(window.__EMBEDDED_NEWS__)) ? window.__EMBEDDED_NEWS__ : NOTICIAS;
+  var embNorm = emb.map(function(n,i){ return { id:(n.id||('n'+i)), emoji:n.emoji||'📰', date:n.date||'', title:n.title||'', text:n.text||'', url:n.url||'' }; });
+  var embFp = _newsFp(embNorm);
+  var hasLocal = false; try { hasLocal = localStorage.getItem('news_items') != null; } catch(e){}
+  if (!hasLocal || localStorage.getItem('seen_news_fp') !== embFp) {
+    var local = []; try { local = JSON.parse(localStorage.getItem('news_items') || '[]'); } catch(e){}
+    var embIds = {}; embNorm.forEach(function(n){ embIds[n.id] = true; });
+    var merged = embNorm.slice();
+    local.forEach(function(n){ if (n && n.id && !embIds[n.id]) merged.push(n); }); // altas locales sin exportar
+    try { localStorage.setItem('news_items', JSON.stringify(merged)); localStorage.setItem('seen_news_fp', embFp); } catch(e){}
+  }
+})();
+
+// Sincroniza los torneos del editor (tz_config) con el archivo + fija la "línea base guardada".
+// Los torneos agregados con "+Agregar" (chess-results / broadcast de Lichess) viven en tz_config
+// y ahora SÍ se exportan/restauran. Criterio "el archivo manda" pero sin perder lo local:
+//   - claves que el archivo no trae → se conservan (altas locales sin exportar)
+//   - si el archivo cambió, sus claves pisan a las del navegador (versión al día)
+(function() {
+  if (_ondemand) return;
+  var embTz = (window.__EMBEDDED_TZ__ && typeof window.__EMBEDDED_TZ__ === 'object') ? window.__EMBEDDED_TZ__ : {};
+  var local = getTzConfig();
+  var merged = {};
+  for (var k in local)  if (Object.prototype.hasOwnProperty.call(local, k))  merged[k]  = local[k];
+  for (var k2 in embTz) if (Object.prototype.hasOwnProperty.call(embTz, k2) && !(k2 in merged)) merged[k2] = embTz[k2];
+
+  var embFp = _combinedFp(_embeddedTournaments, embTz);
+  var fileChanged = (localStorage.getItem('seen_embedded_fp') !== embFp);
+  if (fileChanged) {
+    for (var k3 in embTz) if (Object.prototype.hasOwnProperty.call(embTz, k3)) merged[k3] = embTz[k3];
+  }
+  try { saveTzConfig(merged); } catch(e){}
+
+  // Re-fijar la línea base si: cambió el archivo, nunca se fijó, o cambió la fórmula de huella
+  // (FP_VER se sube cuando se agregan categorías a la huella, p.ej. al sumar las noticias).
+  var FP_VER = '2';
+  var needBaseline = fileChanged || (localStorage.getItem('last_export_fp') == null) || (localStorage.getItem('fp_ver') !== FP_VER);
+  if (needBaseline) {
+    try {
+      localStorage.setItem('seen_embedded_fp', embFp);
+      // línea base = estado completo recién cargado (torneos + perfiles + fotos + tz + noticias).
+      localStorage.setItem('last_export_fp', _estadoActualFp());
+      localStorage.setItem('fp_ver', FP_VER);
+    } catch(e){}
+  }
+})();
+
 pgnMergeToPlayerGames();
 
 /* ═══════════════════════════════════════════════════════
@@ -6549,8 +6719,8 @@ function runProfileDedup() {
     + '¿Quitar las ' + plan.removed + ' partidas duplicadas ahora?')) return;
   plan.apply();
   alert('✓ Listo. Se quitaron ' + plan.removed + ' partidas duplicadas de los perfiles.\n\n'
-    + 'Para que el cambio quede PERMANENTE (y no vuelvan al recargar), descargá ahora '
-    + '"Descargar archivo actualizado" y guardá esa copia sobre la que tenés.');
+    + 'Para que el cambio quede PERMANENTE (y no vuelvan al recargar), usá ahora el botón '
+    + '"Guardar datos en mi carpeta" y reemplazá los archivos en tu carpeta data\\.');
   exportTabInit();   // refrescar las estadísticas de la pestaña
 }
 
@@ -7464,24 +7634,109 @@ function closeModal(e) {
 /* ═══════════════════════════════════════════════════════
    NOTICIAS
 ═══════════════════════════════════════════════════════ */
+function _nEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function _nEscAttr(s){ return _nEsc(s).replace(/"/g,'&quot;'); }
+// Huella de las noticias (para detectar cambios sin exportar y si el archivo cambió).
+function _newsFp(arr){
+  try {
+    var s = (arr||[]).map(function(n,i){ return [(n.id||('n'+i)), n.emoji||'', n.date||'', n.title||'', n.text||'', n.url||''].join('|'); }).join('§');
+    return (arr?arr.length:0) + '-' + _fpStr(s);
+  } catch(e){ return 'na'; }
+}
+// Noticias por defecto: las del archivo (__EMBEDDED_NEWS__) o, si no hay, las de ejemplo (NOTICIAS).
+function _defaultNews(){
+  var src = (typeof window.__EMBEDDED_NEWS__ !== 'undefined' && Array.isArray(window.__EMBEDDED_NEWS__)) ? window.__EMBEDDED_NEWS__ : NOTICIAS;
+  return src.map(function(n,i){ return { id:(n.id||('n'+i)), emoji:n.emoji||'📰', date:n.date||'', title:n.title||'', text:n.text||'', url:n.url||'' }; });
+}
+function getNewsItems(){
+  try { var raw = localStorage.getItem('news_items'); if (raw) return JSON.parse(raw); } catch(e){}
+  return _defaultNews();
+}
+function saveNewsItems(arr){
+  try { localStorage.setItem('news_items', JSON.stringify(arr)); }
+  catch(e){ if (typeof lsQuotaAlert==='function') lsQuotaAlert(); }
+}
+function newsOpenCard(id){
+  var n = getNewsItems().filter(function(x){ return x.id===id; })[0];
+  window.open((n && n.url) ? n.url : 'https://ajedrezargentino.com.ar', '_blank');
+}
 function renderNoticias() {
+  var items = getNewsItems();
+  var editable = !_ondemand;
   var html = '';
-  for (var i = 0; i < NOTICIAS.length; i++) {
-    var n = NOTICIAS[i];
-    html += '<div class="n-card" onclick="window.open(\'https://ajedrezargentino.com.ar\',\'_blank\')">';
-    html += '<div class="n-img">' + n.emoji + '</div>';
+  if (editable) {
+    html += '<button onclick="openNewsEditor(null)" style="width:100%;padding:12px;margin-bottom:14px;background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-size:14px;font-weight:700;border-radius:10px;cursor:pointer;font-family:inherit">+ Agregar noticia</button>';
+  }
+  for (var i = 0; i < items.length; i++) {
+    var n = items[i];
+    html += '<div class="n-card" style="position:relative" onclick="newsOpenCard(\'' + _nEscAttr(n.id) + '\')">';
+    if (editable) {
+      html += '<div style="position:absolute;top:6px;right:6px;display:flex;gap:3px;z-index:2">';
+      html += '<button onclick="event.stopPropagation();openNewsEditor(\'' + _nEscAttr(n.id) + '\')" title="Editar" style="background:rgba(0,0,0,.3);border:none;color:var(--text2);font-size:13px;cursor:pointer;padding:4px 6px;border-radius:6px">✏️</button>';
+      html += '<button onclick="event.stopPropagation();deleteNewsItem(\'' + _nEscAttr(n.id) + '\')" title="Borrar" style="background:rgba(0,0,0,.3);border:none;color:var(--text3);font-size:15px;cursor:pointer;padding:4px 6px;border-radius:6px">✕</button>';
+      html += '</div>';
+    }
+    html += '<div class="n-img">' + _nEsc(n.emoji||'📰') + '</div>';
     html += '<div class="n-body">';
-    html += '<div class="n-date">' + n.date + '</div>';
-    html += '<div class="n-title">' + n.title + '</div>';
-    html += '<div class="n-text">' + n.text + '</div>';
-    html += '<div class="n-link">';
-    html += '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">';
-    html += '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>';
-    html += '<polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>';
-    html += '</svg>Leer más en ajedrezargentino.com.ar</div>';
+    html += '<div class="n-date">' + _nEsc(n.date) + '</div>';
+    html += '<div class="n-title">' + _nEsc(n.title) + '</div>';
+    html += '<div class="n-text">' + _nEsc(n.text) + '</div>';
+    html += '<div class="n-link"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>Leer más</div>';
     html += '</div></div>';
   }
-  document.getElementById('list-noticias').innerHTML = html;
+  var box = document.getElementById('list-noticias');
+  if (box) box.innerHTML = html;
+}
+// ── Editor de noticias (modal armado en JS) ──
+function _newsInput(label, id, val, ph, type){
+  return '<div style="margin-bottom:10px"><label style="display:block;font-size:12px;color:var(--text2);margin-bottom:4px">'+label+'</label>'
+    + '<input id="'+id+'" type="'+(type||'text')+'" value="'+_nEscAttr(val)+'" placeholder="'+_nEscAttr(ph||'')+'" '
+    + 'style="width:100%;padding:9px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit;font-size:14px;box-sizing:border-box"></div>';
+}
+function openNewsEditor(id){
+  var n = id ? getNewsItems().filter(function(x){ return x.id===id; })[0] : null;
+  var ov = document.getElementById('news-editor-overlay');
+  if (!ov){
+    ov = document.createElement('div');
+    ov.id = 'news-editor-overlay';
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.addEventListener('click', function(e){ if (e.target===ov) closeNewsEditor(); });
+    document.body.appendChild(ov);
+  }
+  ov.innerHTML = '<div style="background:var(--bg2,#1c1c1e);border:1px solid var(--border);border-radius:14px;max-width:480px;width:100%;max-height:90vh;overflow:auto;padding:20px;font-family:inherit;box-sizing:border-box">'
+    + '<div style="font-size:17px;font-weight:700;color:var(--text);margin-bottom:14px">' + (n?'Editar noticia':'Nueva noticia') + '</div>'
+    + '<div style="display:flex;gap:10px"><div style="width:80px;flex:none">' + _newsInput('Emoji','news-f-emoji', n?n.emoji:'📰','📰') + '</div>'
+    + '<div style="flex:1">' + _newsInput('Fecha','news-f-date', n?n.date:'','Ej: 4 Jun 2026') + '</div></div>'
+    + _newsInput('Título','news-f-title', n?n.title:'','Título de la noticia')
+    + '<div style="margin-bottom:10px"><label style="display:block;font-size:12px;color:var(--text2);margin-bottom:4px">Texto</label>'
+    + '<textarea id="news-f-text" rows="4" style="width:100%;padding:9px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit;font-size:14px;box-sizing:border-box;resize:vertical">'+_nEsc(n?n.text:'')+'</textarea></div>'
+    + _newsInput('Link (opcional)','news-f-url', n?n.url:'','https://...','url')
+    + '<div style="display:flex;gap:8px;margin-top:16px">'
+    + '<button onclick="saveNewsFromEditor(' + (id?('\''+_nEscAttr(id)+'\''):'null') + ')" style="flex:1;padding:11px;background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-weight:700;border-radius:9px;cursor:pointer;font-family:inherit">Guardar</button>'
+    + '<button onclick="closeNewsEditor()" style="padding:11px 16px;background:var(--bg3);border:1px solid var(--border);color:var(--text2);border-radius:9px;cursor:pointer;font-family:inherit">Cancelar</button>'
+    + (id ? '<button onclick="deleteNewsItem(\''+_nEscAttr(id)+'\')" style="padding:11px 14px;background:rgba(180,40,40,.15);border:1px solid rgba(200,60,60,.4);color:#e07070;border-radius:9px;cursor:pointer;font-family:inherit">Borrar</button>' : '')
+    + '</div></div>';
+}
+function closeNewsEditor(){ var ov=document.getElementById('news-editor-overlay'); if (ov && ov.parentNode) ov.parentNode.removeChild(ov); }
+function saveNewsFromEditor(id){
+  var g = function(x){ var el=document.getElementById(x); return el?(el.value||'').trim():''; };
+  var emoji = g('news-f-emoji')||'📰', date=g('news-f-date'), title=g('news-f-title'), text=g('news-f-text'), url=g('news-f-url');
+  if (!title){ alert('Poné al menos un título.'); return; }
+  var items = getNewsItems();
+  if (id){
+    for (var i=0;i<items.length;i++){ if (items[i].id===id){ items[i] = {id:id,emoji:emoji,date:date,title:title,text:text,url:url}; break; } }
+  } else {
+    items.unshift({ id:'n'+Date.now(), emoji:emoji, date:date, title:title, text:text, url:url });
+  }
+  saveNewsItems(items);
+  closeNewsEditor();
+  renderNoticias();
+}
+function deleteNewsItem(id){
+  if (!confirm('¿Borrar esta noticia? No se puede deshacer.')) return;
+  saveNewsItems(getNewsItems().filter(function(n){ return n.id!==id; }));
+  closeNewsEditor();
+  renderNoticias();
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -8745,21 +9000,26 @@ function sfStart() {
   if (sf.loading) return;
   sf.loading = true;
   document.getElementById('sf-depth').textContent = 'Cargando SF16…';
-  // Stockfish bundleado localmente (antes venía de jsDelivr). El .js lo baja la página
-  // (ruta relativa sirve); el .wasm lo busca el Worker desde un Blob → necesita URL absoluta.
-  var _sfJsUrl = 'assets/stockfish-nnue-16-single.js';
-  var _sfWasmUrl = new URL('assets/stockfish-nnue-16-single.wasm', location.href).href;
-  fetch(_sfJsUrl)
-    .then(function(r) {
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      return r.text();
-    })
-    .then(function(src) {
-      src = src.split("stockfish-nnue-16-single.wasm").join(_sfWasmUrl);
-      var blob   = new Blob([src], {type: 'text/javascript'});
-      var burl   = URL.createObjectURL(blob);
+  // Stockfish con el .wasm INCRUSTADO (assets/stockfish-embedded.js define window.__SF_JS__ y
+  // window.__SF_WASM_B64__). No usa fetch → funciona con doble clic (file://) Y por servidor.
+  // El archivo embebido se carga una sola vez, on-demand, vía <script src> (sí permitido en file://).
+  _sfEnsureEmbedded(function(ok) {
+    if (!ok || !window.__SF_JS__ || !window.__SF_WASM_B64__) {
+      document.getElementById('sf-depth').textContent = 'No se pudo cargar el motor';
+      sf.loading = false;
+      return;
+    }
+    try {
+      // Decodifica el wasm dentro del Worker y se lo pasa al motor como Module.wasmBinary
+      // (inyectado en el objeto Module que arma el build en modo worker).
+      var inject = 'self.__SFWB__=(function(){var s=atob("' + window.__SF_WASM_B64__ + '");'
+                 + 'var u=new Uint8Array(s.length);for(var i=0;i<s.length;i++)u[i]=s.charCodeAt(i);return u;})();\n';
+      var src = window.__SF_JS__
+        .split('e={locateFile:function(e){return-1<e.indexOf(".wasm")?r:self.location.origin')
+        .join('e={wasmBinary:self.__SFWB__,locateFile:function(e){return-1<e.indexOf(".wasm")?r:self.location.origin');
+      var burl   = URL.createObjectURL(new Blob([inject + src], {type: 'text/javascript'}));
       var worker = new Worker(burl);
-      URL.revokeObjectURL(burl); // el worker ya tiene la URL cargada; liberar el Blob de memoria
+      URL.revokeObjectURL(burl);
       worker.onmessage = function(e) { sfOnMsg(e.data); };
       worker.onerror   = function(e) {
         document.getElementById('sf-depth').textContent = 'Error en el motor';
@@ -8767,11 +9027,33 @@ function sfStart() {
       };
       sf.engine = worker;
       sf.engine.postMessage('uci');
-    })
-    .catch(function() {
+    } catch (err) {
       document.getElementById('sf-depth').textContent = 'No se pudo cargar el motor';
       sf.loading = false;
-    });
+    }
+  });
+}
+// Carga una sola vez assets/stockfish-embedded.js (motor + wasm en base64) vía <script src>.
+var _sfEmbeddedState = 0; // 0=sin cargar, 1=cargando, 2=ok, 3=error
+var _sfEmbeddedCbs = [];
+function _sfEnsureEmbedded(cb) {
+  if (_sfEmbeddedState === 2 || (window.__SF_JS__ && window.__SF_WASM_B64__)) { cb(true); return; }
+  if (_sfEmbeddedState === 3) { cb(false); return; }
+  _sfEmbeddedCbs.push(cb);
+  if (_sfEmbeddedState === 1) return;
+  _sfEmbeddedState = 1;
+  var s = document.createElement('script');
+  s.src = 'assets/stockfish-embedded.js';
+  s.onload = function() {
+    var ok = !!(window.__SF_JS__ && window.__SF_WASM_B64__);
+    _sfEmbeddedState = ok ? 2 : 3;
+    _sfEmbeddedCbs.forEach(function(f){ try { f(ok); } catch(e){} }); _sfEmbeddedCbs = [];
+  };
+  s.onerror = function() {
+    _sfEmbeddedState = 3;
+    _sfEmbeddedCbs.forEach(function(f){ try { f(false); } catch(e){} }); _sfEmbeddedCbs = [];
+  };
+  document.head.appendChild(s);
 }
 
 function sfOnMsg(line) {
