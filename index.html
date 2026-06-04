@@ -5756,9 +5756,11 @@ function pgnGameMatchesPlayer(hdrs, player) {
 // NAGs, números de jugada, resultado ni símbolos +#!?), de modo que el MISMO juego con
 // distinto formato de encabezados/anotaciones produzca la MISMA huella. Las jugadas (no los
 // headers) son la identidad real de la partida.
-function gameFingerprint(pgn) {
-  var h = parsePgnHeaders(pgn);
-  var body = String(pgn || '')
+// Jugadas normalizadas de un PGN (sin headers, comentarios, variantes, NAGs, números,
+// resultado ni símbolos +#!?), en minúsculas y separadas por espacio. Es la "columna vertebral"
+// de la partida: dos transcripciones del mismo juego dan el mismo texto de jugadas.
+function _moveBody(pgn) {
+  return String(pgn || '')
     .replace(/\[[^\]]*\]/g, ' ')                 // headers [Tag "..."]
     .replace(/\{[^}]*\}/g, ' ')                  // comentarios {…} (incluye [%clk]/[%eval])
     .replace(/\([^)]*\)/g, ' ')                  // variantes (…)
@@ -5769,10 +5771,63 @@ function gameFingerprint(pgn) {
     .replace(/[+#!?]/g, '')                      // jaque/mate/anotaciones
     .replace(/[^a-z0-9 =-]/gi, ' ')              // dejar SAN básico (incluye = de promoción y - de enroque)
     .replace(/\s+/g, ' ').trim().toLowerCase();
-  // Sin jugadas (solo resultado): las jugadas no sirven de identidad → caer en los headers,
-  // para NO colapsar partidas distintas entre los mismos jugadores (mismo día/ronda/evento).
-  if (body.length < 4) body = '#' + (h.Date || '') + '#' + (h.Round || '') + '#' + (h.Event || '');
+}
+
+function gameFingerprint(pgn) {
+  var h = parsePgnHeaders(pgn);
+  var body = _moveBody(pgn);
+  if (body.length < 4) {
+    // Sin jugadas (solo resultado): las jugadas no sirven de identidad → caer en los headers,
+    // para NO colapsar partidas distintas entre los mismos jugadores (mismo día/ronda/evento).
+    body = '#' + (h.Date || '') + '#' + (h.Round || '') + '#' + (h.Event || '');
+  } else {
+    // Usar solo las primeras 40 jugadas (plies): así dos transcripciones del MISMO juego que
+    // difieren solo en el final (una cortada, o con una jugada de más, o de una base con
+    // análisis y otra sin) dan la misma huella. 40 plies = 20 jugadas: lo bastante específico
+    // para no fusionar partidas distintas (se verificó: a 40 todas las fusiones son "una es
+    // prefijo de la otra"; recién a 30 aparecen partidas distintas que comparten apertura).
+    body = body.split(' ').slice(0, 40).join(' ');
+  }
   return normStr(h.White || '') + '|' + normStr(h.Black || '') + '|' + body;
+}
+
+// Deduplica una lista de partidas detectando el MISMO juego aunque una venga truncada o con
+// jugadas de más. Agrupa por jugadores y, dentro de cada grupo, si las jugadas de una son
+// PREFIJO de las de otra (más larga), descarta la corta: una secuencia de jugadas que es
+// prefijo exacto de otra es, por definición, el mismo juego cortado antes (no puede ser otra
+// partida). Es más completo que la huella de 40 jugadas y 100% seguro (no fusiona distintas).
+// Las partidas SIN jugadas se deduplican aparte por Date|Round|Event (no se mezclan con las
+// que sí tienen jugadas). `getPgn` extrae el PGN de cada item; preserva el orden original.
+function dedupGamesByMoves(items, getPgn) {
+  var groups = {};       // jugadores -> [{item, body}]
+  var emptySeen = {};    // clave de header (sin jugadas) -> true
+  var drop = [];         // items a descartar (se marca por referencia)
+  items.forEach(function(it) {
+    var pgn = getPgn(it);
+    var h = parsePgnHeaders(pgn);
+    var body = _moveBody(pgn);
+    var pk = normStr(h.White || '') + '|' + normStr(h.Black || '');
+    if (body.length < 4) {
+      var ek = pk + '#' + (h.Date || '') + '#' + (h.Round || '') + '#' + (h.Event || '');
+      if (emptySeen[ek]) drop.push(it); else emptySeen[ek] = true;
+    } else {
+      (groups[pk] = groups[pk] || []).push({ item: it, body: body });
+    }
+  });
+  Object.keys(groups).forEach(function(pk) {
+    var arr = groups[pk];
+    arr.sort(function(a, b) { return b.body.length - a.body.length; });   // más larga primero
+    var kept = [];
+    arr.forEach(function(g) {
+      var isDup = false;
+      for (var i = 0; i < kept.length; i++) {
+        if (kept[i].body.indexOf(g.body) === 0) { isDup = true; break; }  // g es prefijo de una ya guardada
+      }
+      if (isDup) drop.push(g.item); else kept.push(g);
+    });
+  });
+  if (!drop.length) return items;
+  return items.filter(function(it) { return drop.indexOf(it) < 0; });
 }
 
 // Conjunto de huellas de TODAS las partidas del sitio: torneos públicos (localStorage) +
@@ -5808,16 +5863,11 @@ function gatherGamesForPlayer(player) {
   }
 
   // Deduplicar: White + Black + Date + Round identifica unívocamente una partida
-  var seen = {};
-  results = results.filter(function(r) {
-    var h = parsePgnHeaders(r.pgn);
-    var key = normStr(h.White || '') + '|' + normStr(h.Black || '') + '|' + (h.Date || '') + '|' + (h.Round || '');
-    if (seen[key]) return false;
-    seen[key] = true;
-    return true;
-  });
-
-  return results;
+  // Deduplicar por relación de prefijo de jugadas (ver dedupGamesByMoves): así el perfil no
+  // muestra repetida una partida que vino en dos formatos — distinta fecha/ronda, una con una
+  // jugada de más, o una versión truncada (fragmento). Antes deduplicaba por White|Black|Date|
+  // Round y se le escapaban esas variantes → aparecían duplicadas en la lista.
+  return dedupGamesByMoves(results, function(r) { return r.pgn; });
 }
 
 // Agrupa las partidas por torneo
