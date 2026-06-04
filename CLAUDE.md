@@ -1,0 +1,69 @@
+# Ajedrez Argentino — guía del proyecto
+
+> Esta nota la lee Claude automáticamente al abrir esta carpeta, en cualquier PC.
+> Sirve para retomar el trabajo aunque sea en otra computadora o sesión nueva.
+
+## Qué es
+App web de **ajedrez argentino**: torneos, perfiles de jugadores, rankings FIDE,
+visor de partidas con análisis (motor Stockfish) y noticias. Es una **app de un solo
+archivo HTML** (`index.html`) que carga sus datos y assets desde subcarpetas.
+
+El autor **no es programador** y trabaja en español. El objetivo es eventualmente
+**publicar la web** para el público.
+
+## La carpeta (qué es cada cosa)
+- `index.html` — toda la app (HTML + CSS + JS en un solo archivo).
+- `data/embedded-data.js` — **todos los datos** (torneos, jugadores, noticias, zona
+  horaria). Es la **fuente de la verdad**. Pesa ~20MB. NO está en git (es data, se
+  respalda en Drive).
+- `data/embedded-photos.js` — fotos de jugadores.
+- `data/hardcoded.js` — datos curados (PLAYER_GAMES + PGN_DB).
+- `data/manifest.js`, `data/t/`, `data/p/` — "pedacitos" para la web publicada
+  (carga por demanda). **Se regeneran solos al publicar**; no se tocan a mano.
+  Están ignorados por git.
+- `assets/` — motor Stockfish (self-host), librería de ajedrez, piezas SVG, sonidos.
+  **La app no tiene ninguna dependencia externa en runtime** (anda sin internet).
+- `iniciar-servidor.cmd` / `serve.ps1` — levantan un servidor local para abrir la app.
+
+## Cómo se trabaja (flujo del autor)
+1. Abrir la app (con `iniciar-servidor.cmd`) y cargar/editar torneos, jugadores, noticias.
+2. **Día a día:** botón **"Guardar datos en mi carpeta"** → descarga
+   `embedded-data.js` + `embedded-photos.js` para reemplazar en `data\`. Después se
+   sube la carpeta a Google Drive. **Esto es lo único que hay que hacer siempre.**
+3. La app avisa si hay cambios sin guardar (cartel + aviso al cerrar la pestaña).
+   Al cargar, "el archivo manda" (los datos del archivo pisan lo del navegador).
+
+## Los 3 botones de la pestaña de export
+1. **"Guardar datos en mi carpeta"** (`exportDataFile`) — el del día a día. Solo baja
+   los 2 archivos de datos para reemplazar en `data\`.
+2. **"Descargar respaldo completo (ZIP)"** (`exportAuthoringZip`) — ZIP autónomo con
+   la app + todos los datos embebidos. Para respaldar o llevar a una PC sin la carpeta.
+   Se descomprime y se abre `index.html` directamente. (Ocasional.)
+3. **"Descargar para publicar (ZIP)"** (`exportHtml`) — build liviano de **carga por
+   demanda** para subir a hosting (Netlify / Cloudflare Pages). Genera
+   `manifest.js` + `data/t/*.json` + `data/p/*.json` frescos desde la data actual.
+   El token de Lichess **nunca** se incluye.
+
+## Publicar la web
+Apretar "Descargar para publicar (ZIP)", descomprimir y arrastrar la carpeta a
+**Netlify** o **Cloudflare Pages** (gratis). Cada vez que se quiera actualizar la web
+con datos nuevos, se regenera el ZIP y se vuelve a subir.
+
+## Cosas importantes a no romper
+- **Token de Lichess** (para el libro de aperturas): vive solo en el navegador y
+  **nunca** debe quedar incrustado en lo que se publica. Ya hubo un incidente de token
+  filtrado por incrustarlo en el HTML.
+- El `index.html` publicado debe cargar `data/manifest.js` (no `embedded-data.js`), y
+  el manifest debe incluir **noticias y zona horaria**, si no la web publicada abre sin
+  torneos o muestra las noticias de ejemplo.
+- Cuidado al escribir `</script>` dentro de strings en el JS inline: hay que escaparlo
+  como `<\/script>` o el navegador corta el script y rompe toda la app.
+
+## Git
+Repo **local** (sin remoto), rama `master`. Se commitea el código (`index.html`,
+assets, scripts); **no** se commitea `data/embedded-data.js` (datos → Drive).
+
+## Memoria por PC (no viaja con esta carpeta)
+Las notas detalladas sesión por sesión que toma Claude viven en el perfil de la PC
+(`...\.claude\...\memory\`) y **no** se sincronizan con Drive. Esta carpeta y este
+`CLAUDE.md` sí viajan; por eso el resumen importante va acá.
