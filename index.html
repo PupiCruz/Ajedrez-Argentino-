@@ -3920,6 +3920,8 @@ function exportTabInit() {
   h += '<button onclick="runProfileDedup()" style="width:100%;padding:11px;background:var(--bg3);border:1px solid var(--border);color:var(--text2);font-size:13px;font-weight:600;border-radius:10px;cursor:pointer;font-family:inherit">🧹 Limpiar partidas duplicadas (todo el sitio)</button>';
   h += '<div style="font-size:12px;color:var(--text3);margin:14px 0 10px;line-height:1.5">Une los <b style="color:var(--text2)">torneos duplicados</b> de los perfiles: el mismo evento cargado dos veces con nombres distintos (ej. desde chess-results y desde Lumbras). Junta las partidas en un solo torneo <b style="color:var(--text2)">sin perder ninguna</b> (verifica antes de aplicar). No toca los torneos públicos.</div>';
   h += '<button onclick="runTourMerge()" style="width:100%;padding:11px;background:var(--bg3);border:1px solid var(--border);color:var(--text2);font-size:13px;font-weight:600;border-radius:10px;cursor:pointer;font-family:inherit">🔗 Unir torneos duplicados (perfiles)</button>';
+  h += '<div style="font-size:12px;color:var(--text3);margin:14px 0 10px;line-height:1.5"><b style="color:var(--gold)">Migrar a base de datos única</b> (acción de un solo uso). Junta TODAS las partidas de perfil en un pool único por evento, dejando una sola copia de cada una. Los perfiles pasan a leer ese pool → más limpio y rápido. Verifica que no se pierda ninguna partida antes de aplicar. <b style="color:var(--text2)">Bajá tu respaldo completo antes</b>, y "Guardar datos en mi carpeta" enseguida después.</div>';
+  h += '<button onclick="runGamesDBMigration()" style="width:100%;padding:11px;background:var(--bg3);border:1px solid var(--gold);color:var(--gold);font-size:13px;font-weight:600;border-radius:10px;cursor:pointer;font-family:inherit">🗄️ Migrar a base de datos única de partidas</button>';
   h += '</div>';
 
   // Token Lichess
@@ -6974,6 +6976,118 @@ function _dedupPgnsCheap(pgns) {
       .sort(function(a, b) { return b.len - a.len; })
       .forEach(function(it) { if (dedupIndexHas(idx, it.p)) return; dedupIndexAdd(idx, it.p); out.push(it.p); });
   return out;
+}
+
+// ═══════════════ MIGRACIÓN A BASE DE DATOS ÚNICA DE PARTIDAS ═══════════════
+// Consolida las partidas de los IMPORTS DE PERFIL (mem_, ~96% de los datos y la fuente de la
+// duplicación: la misma partida queda en el import de los DOS jugadores) en un POOL único de
+// partidas agrupado por EVENTO. Cada partida queda UNA vez. Los perfiles ya consultan el pool por
+// nombre (gatherGamesForPlayer), así que dejan de duplicar. Públicos/curadas/modal NO se tocan: si
+// una partida de perfil ya está ahí, se descarta del pool (la canónica manda). Dedup con el orden y
+// candado acordados (cuerpo exacto → prefijo → posición final), conservando la copia más completa.
+// _buildGamesPool DRY-RUN: no muta nada, devuelve el plan + estadísticas para confirmar. `withFen`
+// activa el filtro 3 (posición final) — apagado por defecto: sobre los datos reales saca ~1 dup más
+// y cuesta ~30s; en la migración no vale la pena (el botón de mantenimiento limpia ese caso raro).
+function _buildGamesPool(withFen) {
+  var canon = [], mem = [];   // canon = públicas+curadas+modal (se quedan); mem = imports de perfil
+  for (var k in PLAYER_GAMES) {
+    var d = PLAYER_GAMES[k]; if (!d || !d.tournaments) continue;
+    var isMem = (k.indexOf('mem_') === 0);
+    d.tournaments.forEach(function(t) { (t.games || []).forEach(function(g) { (isMem ? mem : canon).push(g); }); });
+  }
+  function meta(g, isCanon) {
+    var h = parsePgnHeaders(g), body = _moveBody(g);
+    return { g: g, canon: isCanon, body: body, date: (h.Date || ''), ev: (h.Event || ''),
+             keys: body.length >= 4 ? _pairCandKeys(h.White, h.Black) : null,
+             nameLen: (h.White || '').length + (h.Black || '').length,
+             ek: body.length < 4 ? (_pairKey(h.White, h.Black) + '#' + (h.Date || '') + '#' + (h.Round || '') + '#' + (h.Event || '')) : null };
+  }
+  var metas = canon.map(function(g) { return meta(g, true); }).concat(mem.map(function(g) { return meta(g, false); }));  // canon PRIMERO (gana empates)
+  var dropped = new Set();
+  function dropMem(m) { if (!m.canon) dropped.add(m); }   // nunca se descartan canónicas (no se tocan)
+  function canonFirst(a, b) { if (a.canon !== b.canon) return a.canon ? -1 : 1; return b.body.length - a.body.length; }
+  // 0) sin jugadas
+  var emptySeen = Object.create(null);
+  metas.forEach(function(m) { if (m.body.length >= 4 || m.ek == null) return; if (emptySeen[m.ek]) dropMem(m); else emptySeen[m.ek] = m; });
+  // 1) cuerpo exacto (conserva canónica > nombre más largo)
+  var byBody = Object.create(null);
+  metas.forEach(function(m) {
+    if (m.body.length < 4 || dropped.has(m)) return;
+    var c = byBody[m.body];
+    if (!c) { byBody[m.body] = m; return; }
+    var keepNew = (m.canon && !c.canon) || (m.canon === c.canon && m.nameLen > c.nameLen);
+    if (keepNew) { dropMem(c); byBody[m.body] = m; } else dropMem(m);
+  });
+  function buckets() { var bk = Object.create(null); metas.forEach(function(m) { if (m.body.length < 4 || dropped.has(m) || !m.keys) return; for (var i = 0; i < m.keys.length; i++) (bk[m.keys[i]] = bk[m.keys[i]] || []).push(m); }); return bk; }
+  // 2) prefijo
+  var bk2 = buckets();
+  Object.keys(bk2).forEach(function(key) { var arr = bk2[key]; if (arr.length < 2) return; arr.sort(canonFirst); var kept = []; arr.forEach(function(m) { if (dropped.has(m)) return; for (var i = 0; i < kept.length; i++) if (kept[i].body.indexOf(m.body) === 0) { dropMem(m); return; } kept.push(m); }); });
+  // 3) posición final (caro) — solo si withFen
+  if (withFen) {
+    var bk3 = buckets();
+    Object.keys(bk3).forEach(function(key) { var arr = bk3[key].filter(function(m) { return !dropped.has(m); }); if (arr.length < 2) return; var dc = Object.create(null); arr.forEach(function(m) { if (m.date) dc[m.date] = (dc[m.date] || 0) + 1; }); arr.sort(canonFirst); var seen = Object.create(null); arr.forEach(function(m) { if (dropped.has(m) || !m.date || dc[m.date] < 2) return; if (m._fen === undefined) m._fen = _finalPosKey(m.g); if (!m._fen) return; var fk = m.date + '|' + m._fen; if (seen[fk]) dropMem(m); else seen[fk] = m; }); });
+  }
+  // pool = partidas de perfil que sobreviven, agrupadas por EVENTO
+  var byEv = Object.create(null), order = [];
+  metas.forEach(function(m) {
+    if (m.canon || dropped.has(m)) return;
+    var ev = m.ev || '(Sin evento)';
+    if (!byEv[ev]) { byEv[ev] = { name: ev, games: [] }; order.push(ev); }
+    byEv[ev].games.push(m.g);
+  });
+  var poolGames = 0; order.forEach(function(ev) { poolGames += byEv[ev].games.length; });
+  // canonGames: lista plana de canónicas (para verificación de cobertura post-migración)
+  return { memTotal: mem.length, canonTotal: canon.length, canonGames: canon, poolGames: poolGames, droppedMem: mem.length - poolGames, eventos: order.length, byEv: byEv, order: order };
+}
+
+// Aplica el plan: reemplaza _memTournaments por el pool por evento; públicas quedan. Mejor esfuerzo
+// en localStorage (puede no entrar todo → el usuario guarda en su carpeta y listo). Reconstruye.
+function _applyGamesPool(plan) {
+  var base = Date.now();
+  var pool = plan.order.map(function(ev, i) {
+    var g = plan.byEv[ev].games;
+    return { id: base + i, name: ev, location: '', games: g, gameCount: g.length, playerOnly: true, source: 'pgn', dbPool: true, loadedAt: base };
+  });
+  _memTournaments = pool;
+  // localStorage: SOLO públicos. El pool NO va a localStorage (si no, pgnMergeToPlayerGames le crea
+  // claves ls_ ADEMÁS de mem_ y duplica el pool en PLAYER_GAMES). El pool vive en _memTournaments;
+  // se persiste al "Guardar datos en mi carpeta" (se embebe). Por eso hay que guardar enseguida.
+  var lsStored = []; try { lsStored = JSON.parse(localStorage.getItem('pgn_tournaments') || '[]'); } catch (e) {}
+  var newLs = lsStored.filter(function(e) { return !e.playerOnly; });   // perfiles viejos fuera del backup
+  try { localStorage.setItem('pgn_tournaments', JSON.stringify(newLs)); } catch (e) {}
+  pgnMergeToPlayerGames();
+}
+
+// Botón: MIGRAR a base de datos única. Verifica ANTES de aplicar que ningún jugador (muestra de los
+// más pesados) pierda partidas; recién entonces aplica. Conserva todas las partidas (una copia c/u).
+function runGamesDBMigration() {
+  var plan = _buildGamesPool(false);
+  if (plan.memTotal === 0) { alert('No hay partidas de perfil para consolidar. 🎉'); return; }
+  if (!confirm('MIGRAR a base de datos única de partidas:\n\n'
+    + '• Partidas de perfil hoy: ' + plan.memTotal + '\n'
+    + '• Quedan: ' + plan.poolGames + ' partidas únicas en ' + plan.eventos + ' eventos\n'
+    + '• Se quitan ' + plan.droppedMem + ' copias repetidas\n'
+    + '• Públicas/curadas (' + plan.canonTotal + ') no se tocan\n\n'
+    + 'No se pierde ninguna partida (de cada una queda UNA copia). Los perfiles pasan a leer este pool único.\n\n'
+    + '💡 Antes conviene descargar tu RESPALDO COMPLETO (ZIP).\n\n¿Migrar ahora?')) return;
+  // Verificación de cobertura ANTES de aplicar: para una muestra de jugadores pesados, las partidas
+  // únicas tras la migración (pool + canónicas) no deben ser menos que ahora.
+  var postGames = plan.canonGames.slice();
+  plan.order.forEach(function(ev) { plan.byEv[ev].games.forEach(function(g) { postGames.push(g); }); });
+  var sample = [7, 5, 2, 1, 3, 40];
+  var problema = null;
+  for (var s = 0; s < sample.length && !problema; s++) {
+    var p = PLAYERS.find(function(x) { return x.id === sample[s]; }); if (!p) continue;
+    var antes = gatherGamesForPlayer(p).length;
+    var matched = postGames.filter(function(g) { return pgnGameMatchesPlayer(parsePgnHeaders(g), p); });
+    var despues = dedupGamesByMoves(matched.map(function(g) { return { pgn: g }; }), function(w) { return w.pgn; }).length;
+    if (despues < antes) problema = p.name + ': ' + antes + ' → ' + despues;
+  }
+  if (problema) { alert('⚠️ Cancelado por seguridad: la verificación detectó que un jugador perdería partidas (' + problema + '). No se modificó nada. Avisá a quien programa.'); return; }
+  _applyGamesPool(plan);
+  alert('✓ Migrado a base de datos única.\n\n' + plan.poolGames + ' partidas en ' + plan.eventos + ' eventos. Se quitaron ' + plan.droppedMem + ' copias repetidas; no se perdió ninguna partida.\n\n'
+    + '⚠️ IMPORTANTE: apretá YA "Guardar datos en mi carpeta" y reemplazá los archivos en data\\, para que el cambio quede permanente (si recargás antes de guardar, se pierde).');
+  exportTabInit();
 }
 
 // Detecta grupos de torneos de PERFIL (playerOnly, en _memTournaments) que son el MISMO evento
