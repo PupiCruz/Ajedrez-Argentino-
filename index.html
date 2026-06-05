@@ -817,6 +817,11 @@
           Agregar jugador adicional (por FIDE id)
         </button>
         <div style="font-size:11px;color:var(--text3);margin-top:5px;line-height:1.5">Para argentinos con otra bandera o fuera del top. Quedan en la solapa <b style="color:var(--text2)">Adicionales</b> (no en el ranking) y sus datos se actualizan cada mes con la tabla.</div>
+        <button onclick="openFrequentFinder()" style="width:100%;margin-top:8px;padding:11px;background:var(--bg2);border:1px dashed var(--border);color:var(--text2);font-size:13px;font-weight:600;border-radius:11px;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:8px">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.35-4.35"></path></svg>
+          Buscar jugadores frecuentes para agregar
+        </button>
+        <div style="font-size:11px;color:var(--text3);margin-top:5px;line-height:1.5">Lista de jugadores con <b style="color:var(--text2)">50+ partidas</b> en el sitio que aún no tienen perfil. Vos elegís cuáles agregar (ideal para leyendas argentinas).</div>
       </div>
 
       <!-- Selector de mes -->
@@ -7493,6 +7498,7 @@ function getPlayerRanking(player) {
 var _FIDE_MIN_ELO = 1700;
 var _ADIC_KEEP_ELO = 2000;     // al salir del ranking, se conserva como adicional si elo ≥ esto…
 var _ADIC_KEEP_GAMES = 30;     // …o si tiene al menos esta cantidad de partidas en el sitio.
+var _SUGGEST_MIN_GAMES = 50;   // "Buscar frecuentes": sugiere agregar jugadores con ≥ esto en el sitio.
 var _MONTH_ABBR = { JAN:['01','Enero'], FEB:['02','Febrero'], MAR:['03','Marzo'], APR:['04','Abril'], MAY:['05','Mayo'], JUN:['06','Junio'], JUL:['07','Julio'], AUG:['08','Agosto'], SEP:['09','Septiembre'], OCT:['10','Octubre'], NOV:['11','Noviembre'], DEC:['12','Diciembre'] };
 var _rankOvCache;
 // Datos de jugadores guardados: localStorage (autor) o __EMBEDDED_PLAYERS__ (archivo publicado). Memoizado.
@@ -7723,13 +7729,17 @@ function promptAddAdditional() {
   addAdditionalPlayer(fid, name.trim(), (fed || '').trim().toUpperCase());
   alert('✅ ' + name.trim() + ' agregado a "Adicionales".\n\nEl elo, el título y la federación se completan (y se actualizan cada mes) cuando subas la tabla FIDE.\n\nAcordate de "Guardar datos en mi carpeta".');
 }
-function addAdditionalPlayer(fid, name, fed) {
+// Crea un adicional en memoria (sin persistir ni re-rendear). fid puede ir vacío (solo nombre).
+function _createAdditional(fid, name, fed) {
   var im = _idMapAndNext();
-  var id = im.idMap[fid];
-  if (id == null) { id = im.nextId++; im.idMap[fid] = id; }
-  PLAYERS = PLAYERS.filter(function(p){ return p.id !== id; });
-  PLAYERS.push({ id: id, fide_id: String(fid), name: name, title: '', elo: 0, province: '', born: 0, fed: fed || '', female: false, ranked: false, wins: 0, draws: 0, losses: 0, peak: 0, results: [] });
-  var ov = _rankingOverride();
+  var id = fid ? im.idMap[fid] : null;
+  if (id == null) id = im.nextId;     // _idMapAndNext recalcula por jugador, así que nextId queda libre
+  PLAYERS = PLAYERS.filter(function(p){ return p.id !== id && !(fid && String(p.fide_id) === String(fid)); });
+  PLAYERS.push({ id: id, fide_id: fid ? String(fid) : '', name: name, title: '', elo: 0, province: '', born: 0, fed: fed || '', female: false, inactive: false, ranked: false, wins: 0, draws: 0, losses: 0, peak: 0, results: [] });
+}
+// Persiste el estado y muestra la solapa Adicionales.
+function _persistAndShowAdicionales() {
+  var im = _idMapAndNext(), ov = _rankingOverride();
   _persistPlayers(ov ? ov.month : _selectedMonth, ov ? ov.monthLabel : '', im.idMap, im.nextId);
   _filterMode = 'adicionales'; _currentPage = 1;
   var chips = document.querySelectorAll('#tab-jugadores .chip');
@@ -7737,6 +7747,10 @@ function addAdditionalPlayer(fid, name, fed) {
   _currentList = getFilteredPlayers();
   if (typeof renderPlayers === 'function') renderPlayers(_currentList, 'list-jugadores');
   if (typeof updateSubtitle === 'function') updateSubtitle();
+}
+function addAdditionalPlayer(fid, name, fed) {
+  _createAdditional(fid, name, fed);
+  _persistAndShowAdicionales();
 }
 function removeAdditional(id) {
   var p = null; for (var i = 0; i < PLAYERS.length; i++) if (PLAYERS[i].id === id) { p = PLAYERS[i]; break; }
@@ -7749,6 +7763,86 @@ function removeAdditional(id) {
   _filterMode = 'adicionales'; _currentList = getFilteredPlayers();
   if (typeof renderPlayers === 'function') renderPlayers(_currentList, 'list-jugadores');
   if (typeof updateSubtitle === 'function') updateSubtitle();
+}
+
+// ── FASE 2: sugerir jugadores frecuentes (≥ N partidas) que no están en la app ──
+// Las partidas solo traen nombres (sin federación), así que esto NO decide nacionalidad:
+// arma la lista por cantidad y el autor elige a quién agregar (y le pone fide_id si quiere).
+function _freqCandidates(minGames) {
+  var all = (typeof _collectAllTournaments === 'function') ? _collectAllTournaments() : [];
+  var byName = {};
+  function add(nm, fid) {
+    nm = (nm || '').trim(); if (!nm) return;
+    var k = normStr(nm); if (!byName[k]) byName[k] = { name: nm, count: 0, fideId: '' };
+    byName[k].count++; if (fid && !byName[k].fideId) byName[k].fideId = String(fid).replace(/\D/g, '');
+  }
+  all.forEach(function(t) {
+    (t.games || []).forEach(function(pgn) {
+      var h = parsePgnHeaders(String(pgn).slice(0, 800));
+      add(h.White, h.WhiteFideId); add(h.Black, h.BlackFideId);
+    });
+  });
+  var cand = [];
+  Object.keys(byName).forEach(function(k) {
+    var r = byName[k];
+    if (r.count < minGames) return;
+    if (typeof _isArgPlayer === 'function' && _isArgPlayer(r.name)) return;   // ya está en la app
+    cand.push(r);
+  });
+  cand.sort(function(a, b) { return b.count - a.count; });
+  return cand;
+}
+function openFrequentFinder() {
+  if (_ondemand) { alert('Esto se usa desde tu carpeta de edición, no en la web publicada.'); return; }
+  var cand = _freqCandidates(_SUGGEST_MIN_GAMES);
+  var ov = document.getElementById('freq-finder-overlay');
+  if (!ov) {
+    ov = document.createElement('div'); ov.id = 'freq-finder-overlay';
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.addEventListener('click', function(e){ if (e.target === ov) closeFreqFinder(); });
+    document.body.appendChild(ov);
+  }
+  var rows = '';
+  if (!cand.length) {
+    rows = '<div style="color:var(--text2);font-size:13px;padding:10px 0">No hay jugadores con ' + _SUGGEST_MIN_GAMES + '+ partidas que no estén ya en la app. 🎉</div>';
+  } else {
+    cand.forEach(function(c, i) {
+      var natural = (typeof pgnNameToNatural === 'function') ? pgnNameToNatural(c.name) : c.name;
+      rows += '<div style="display:flex;align-items:center;gap:9px;padding:8px 0;border-bottom:1px solid var(--border)">'
+        + '<input type="checkbox" id="freq-chk-' + i + '" style="width:16px;height:16px;flex:none;cursor:pointer">'
+        + '<label for="freq-chk-' + i + '" style="flex:1;min-width:0;cursor:pointer"><div style="font-size:13.5px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escHtml(natural) + '</div><div style="font-size:11px;color:var(--text3)">' + c.count + ' partidas</div></label>'
+        + '<input type="text" id="freq-fid-' + i + '" value="' + escHtml(c.fideId || '') + '" placeholder="FIDE id" style="width:82px;flex:none;padding:6px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:12px;font-family:inherit">'
+        + '<input type="hidden" id="freq-name-' + i + '" value="' + escHtml(natural) + '">'
+        + '</div>';
+    });
+  }
+  ov.innerHTML = '<div style="background:var(--bg2,#1c1c1e);border:1px solid var(--border);border-radius:14px;max-width:540px;width:100%;max-height:90vh;overflow:auto;padding:20px;font-family:inherit;box-sizing:border-box">'
+    + '<div style="font-size:17px;font-weight:700;color:var(--text);margin-bottom:4px">Jugadores frecuentes sin perfil</div>'
+    + '<div style="font-size:12px;color:var(--text2);margin-bottom:14px;line-height:1.5">Aparecen en <b style="color:var(--text2)">' + _SUGGEST_MIN_GAMES + '+ partidas</b> y no tienen perfil. Tildá los <b style="color:var(--text2)">argentinos</b> que quieras agregar a Adicionales (las partidas no traen país, así que elegís vos). Si ponés el FIDE id, sus datos se actualizan cada mes.</div>'
+    + rows
+    + '<div style="display:flex;gap:8px;margin-top:16px">'
+    + (cand.length ? '<button onclick="createSelectedFrequent(' + cand.length + ')" style="flex:1;padding:11px;background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-weight:700;border-radius:9px;cursor:pointer;font-family:inherit">Crear seleccionados</button>' : '')
+    + '<button onclick="closeFreqFinder()" style="padding:11px 16px;background:var(--bg3);border:1px solid var(--border);color:var(--text2);border-radius:9px;cursor:pointer;font-family:inherit">Cerrar</button>'
+    + '</div></div>';
+}
+function closeFreqFinder() { var ov = document.getElementById('freq-finder-overlay'); if (ov && ov.parentNode) ov.parentNode.removeChild(ov); }
+function createSelectedFrequent(n) {
+  var creados = 0, dups = 0;
+  for (var i = 0; i < n; i++) {
+    var chk = document.getElementById('freq-chk-' + i);
+    if (!chk || !chk.checked) continue;
+    var name = ((document.getElementById('freq-name-' + i) || {}).value || '').trim();
+    if (!name) continue;
+    var fid = ((document.getElementById('freq-fid-' + i) || {}).value || '').replace(/\D/g, '');
+    if (fid && _findPlayerByFide(fid)) { dups++; continue; }
+    _createAdditional(fid, name, '');
+    creados++;
+  }
+  closeFreqFinder();
+  if (!creados) { alert('No tildaste ningún jugador.' + (dups ? '\n(' + dups + ' ya estaban en la app.)' : '')); return; }
+  _persistAndShowAdicionales();
+  alert('✅ ' + creados + ' jugador' + (creados > 1 ? 'es agregados' : ' agregado') + ' a Adicionales.' + (dups ? '\n(' + dups + ' ya estaban.)' : '')
+    + '\n\nLos que tienen FIDE id se completan al subir la tabla del mes.\nAcordate de "Guardar datos en mi carpeta".');
 }
 
 // Mejores victorias del jugador por ELO del rival
