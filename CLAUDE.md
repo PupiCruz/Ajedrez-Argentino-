@@ -66,7 +66,15 @@ estable por `fide_id`, campo `ranked:false`). La actualización mensual de la ta
 y les **refresca elo/título/federación** por fide_id (sin importar federación ni actividad), así
 si suben de elo se refleja. Quedan reconocidos como argentinos en torneos aunque su bandera sea
 extranjera (vía `_getArgFideSet`). Se guardan en `fide_ranking.additionals` y se embeben en los
-exports. (Pendiente fase 2: auto-sugerir adicionales detectados en partidas cargadas.)
+exports.
+
+**Al actualizar la tabla, los que SALEN del ranking** (pasan a inactivos, bajan de 1700, o cambian
+de federación) no desaparecen: se **conservan como Adicional** si valen la pena —elo ≥ 2000
+(`_ADIC_KEEP_ELO`), o ≥ 30 partidas en el sitio (`_ADIC_KEEP_GAMES`), o ya tienen foto/favorito—; si
+no (ocasional de poco elo sin partidas), se **quitan** (sin borrar datos; la app recuerda su id y
+reaparecen si vuelven). El nombre de los adicionales se toma exacto del listado FIDE por fide_id, y
+se marca "inactivo" en tarjeta/perfil. (Pendiente fase 2: auto-sugerir adicionales detectados en
+partidas cargadas, con el mismo umbral de ≥30 partidas y solo si no están ya en la app / base FIDE.)
 
 ## Publicar la web
 Apretar "Descargar para publicar (ZIP)", descomprimir y arrastrar la carpeta a
