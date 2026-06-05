@@ -5989,6 +5989,26 @@ function _moveBody(pgn) {
     .replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
+// Clave de la POSICIÓN FINAL de una partida (piezas + lado a mover), reproduciendo las jugadas
+// con chess.js. Sirve para detectar el MISMO juego con orden de jugadas o notación distinta
+// (transposiciones) que la huella por prefijo no agarra. Memoizado por cuerpo de jugadas.
+// Devuelve null si no hay jugadas suficientes o el PGN no se puede reproducir (no se toca).
+var _fenCache = Object.create(null);
+function _finalPosKey(pgn) {
+  var body = _moveBody(pgn);
+  if (body.length < 8) return null;
+  if (_fenCache[body] !== undefined) return _fenCache[body];
+  var r = null;
+  try {
+    if (typeof Chess !== 'undefined') {
+      var c = new Chess();
+      if (c.load_pgn(String(pgn || ''), { sloppy: true })) r = c.fen().split(' ').slice(0, 2).join(' ');
+    }
+  } catch (e) { r = null; }
+  _fenCache[body] = r;
+  return r;
+}
+
 // Deduplica una lista de partidas detectando el MISMO juego aunque una venga truncada o con
 // jugadas de más. Agrupa por jugadores y, dentro de cada grupo, si las jugadas de una son
 // PREFIJO de las de otra (más larga), descarta la corta: una secuencia de jugadas que es
@@ -6009,19 +6029,35 @@ function dedupGamesByMoves(items, getPgn) {
       var ek = pk + '#' + (h.Date || '') + '#' + (h.Round || '') + '#' + (h.Event || '');
       if (emptySeen[ek]) drop.push(it); else emptySeen[ek] = true;
     } else {
-      (groups[pk] = groups[pk] || []).push({ item: it, body: body });
+      (groups[pk] = groups[pk] || []).push({ item: it, body: body, date: (h.Date || '') });
     }
   });
   Object.keys(groups).forEach(function(pk) {
     var arr = groups[pk];
     arr.sort(function(a, b) { return b.body.length - a.body.length; });   // más larga primero
+    // Pre-filtro barato para el cálculo de posición final: un duplicado real es el MISMO juego,
+    // así que comparte la fecha. Solo computamos la posición final cuando hay 2+ partidas del
+    // mismo par con la MISMA fecha (no vacía). Así no se reproduce nada en jugadores pesados.
+    var dateCount = {};
+    arr.forEach(function(g) { if (g.date) dateCount[g.date] = (dateCount[g.date] || 0) + 1; });
     var kept = [];
     arr.forEach(function(g) {
-      var isDup = false;
+      // 1) Filtro existente: una secuencia de jugadas es prefijo de otra (truncada / con jugadas de más).
       for (var i = 0; i < kept.length; i++) {
-        if (kept[i].body.indexOf(g.body) === 0) { isDup = true; break; }  // g es prefijo de una ya guardada
+        if (kept[i].body.indexOf(g.body) === 0) { drop.push(g.item); return; }  // g es prefijo → duplicado
       }
-      if (isDup) drop.push(g.item); else kept.push(g);
+      // 2) Filtro ADICIONAL: misma POSICIÓN FINAL (transposiciones / notación distinta), mismos
+      //    rivales (mismo pk) y misma fecha. Solo en colisiones de fecha → barato.
+      if (g.date && dateCount[g.date] >= 2) {
+        var fen = _finalPosKey(getPgn(g.item));
+        if (fen) {
+          for (var j = 0; j < kept.length; j++) {
+            if (kept[j]._fen && kept[j]._fen === fen) { drop.push(g.item); return; }  // misma posición final → duplicado
+          }
+          g._fen = fen;
+        }
+      }
+      kept.push(g);
     });
   });
   if (!drop.length) return items;
@@ -6740,37 +6776,118 @@ function _computeProfileDedup() {
       s[it.gi] = true; removed++;
     } else { dedupIndexAdd(idx, it.pgn); }
   });
-  return {
-    removed: removed,
-    apply: function() {
-      if (!removed) return;
-      var newMem = [];
-      _memTournaments.forEach(function(t) {
-        var s = dropByEntry.get(t);
-        if (s) { t.games = (t.games || []).filter(function(g, i) { return !s[i]; }); t.gameCount = t.games.length; }
-        if ((t.games || []).length > 0) newMem.push(t);   // descartar torneos que quedaron vacíos
-      });
-      _memTournaments = newMem;
-      _syncProfileLs(lsStored);
-      pgnMergeToPlayerGames();
-    }
-  };
+  return { removed: removed, _dropByEntry: dropByEntry, apply: function() { if (removed) _applyProfileDrops(dropByEntry); } };
 }
+
+// Aplica un mapa entry->{gi:true} de partidas de perfil a quitar (compartido por prefijo + posición final).
+function _applyProfileDrops(dropByEntry) {
+  var lsStored = []; try { lsStored = JSON.parse(localStorage.getItem('pgn_tournaments') || '[]'); } catch (e) {}
+  var newMem = [];
+  _memTournaments.forEach(function(t) {
+    var s = dropByEntry.get(t);
+    if (s) { t.games = (t.games || []).filter(function(g, i) { return !s[i]; }); t.gameCount = t.games.length; }
+    if ((t.games || []).length > 0) newMem.push(t);   // descartar torneos que quedaron vacíos
+  });
+  _memTournaments = newMem;
+  _syncProfileLs(lsStored);
+  pgnMergeToPlayerGames();
+}
+
+// Pasada ADICIONAL de duplicados por POSICIÓN FINAL (transposiciones / notación). Asíncrona con
+// barra de progreso porque reproduce jugadas (puede tardar). Solo procesa pares de jugadores
+// repetidos (≥2 partidas). `prefixPlan` = resultado de _computeProfileDedup (para no recontar lo
+// que ya quita el prefijo). Llama done({removed, _dropByEntry}).
+function _computeFenDedup(prefixPlan, onProgress, done) {
+  var lsStored = []; try { lsStored = JSON.parse(localStorage.getItem('pgn_tournaments') || '[]'); } catch (e) {}
+  var prefixDrop = (prefixPlan && prefixPlan._dropByEntry) || null;
+  var pairs = Object.create(null);
+  function info(pgn) { var h = parsePgnHeaders(String(pgn).slice(0, 400)); return { pk: normStr(h.White || '') + '|' + normStr(h.Black || ''), date: (h.Date || '') }; }
+  // Solo agrupamos con los HEADERS (barato). Se ignoran las partidas sin fecha (no se pueden
+  // pre-filtrar) y la posición final se reproduce recién en las colisiones de fecha (abajo).
+  lsStored.forEach(function(e) {
+    if (e.playerOnly) return;
+    (e.games || []).forEach(function(g) { var n = info(g); if (!n.date) return; (pairs[n.pk] = pairs[n.pk] || []).push({ pgn: g, isProfile: false, len: String(g).length, date: n.date }); });
+  });
+  // Perfiles que NO descarta el filtro de prefijo.
+  _memTournaments.forEach(function(t) {
+    var s = prefixDrop && prefixDrop.get ? prefixDrop.get(t) : null;
+    (t.games || []).forEach(function(g, gi) { if (s && s[gi]) return; var n = info(g); if (!n.date) return; (pairs[n.pk] = pairs[n.pk] || []).push({ pgn: g, isProfile: true, entry: t, gi: gi, len: String(g).length, date: n.date }); });
+  });
+  var keys = Object.keys(pairs).filter(function(k) { return pairs[k].length >= 2; });
+  var total = keys.length, i = 0, removed = 0;
+  var dropByEntry = new Map();
+  function step() {
+    var tStart = performance.now();
+    while (i < total) {
+      var arr = pairs[keys[i]]; i++;
+      // Pre-filtro por fecha: solo se reproduce la partida si hay otra del mismo par con la MISMA
+      // fecha (un duplicado real es el mismo juego). Acota muchísimo el cálculo de posición final.
+      var dc = {};
+      arr.forEach(function(g) { if (g.date) dc[g.date] = (dc[g.date] || 0) + 1; });
+      // Públicos primero (canónicos), luego perfiles; dentro, más largos primero.
+      arr.sort(function(a, b) { if (a.isProfile !== b.isProfile) return a.isProfile ? 1 : -1; return b.len - a.len; });
+      var seen = Object.create(null);
+      for (var x = 0; x < arr.length; x++) {
+        var g = arr[x];
+        if (!g.date || dc[g.date] < 2) continue;       // sin colisión de fecha → no es duplicado
+        var fen = _finalPosKey(g.pgn);
+        if (!fen) continue;
+        var fk = g.date + '|' + fen;
+        if (seen[fk]) {
+          if (g.isProfile) { var d = dropByEntry.get(g.entry); if (!d) { d = {}; dropByEntry.set(g.entry, d); } if (!d[g.gi]) { d[g.gi] = true; removed++; } }
+        } else seen[fk] = true;
+      }
+      if (performance.now() - tStart > 350) break;   // ceder ~cada 350ms para refrescar la barra de progreso
+    }
+    if (onProgress) onProgress(i, total);
+    if (i < total) setTimeout(step, 0);
+    else done({ removed: removed, _dropByEntry: dropByEntry });
+  }
+  if (!total) { done({ removed: 0, _dropByEntry: dropByEntry }); return; }
+  step();
+}
+
+function _showDedupProgress() {
+  var ov = document.getElementById('dedup-progress');
+  if (!ov) { ov = document.createElement('div'); ov.id = 'dedup-progress'; ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:100000;display:flex;align-items:center;justify-content:center;padding:16px'; document.body.appendChild(ov); }
+  ov.innerHTML = '<div style="background:var(--bg2,#1c1c1e);border:1px solid var(--border);border-radius:14px;padding:24px;max-width:340px;width:100%;text-align:center;font-family:inherit">'
+    + '<div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:12px">Analizando posiciones finales…</div>'
+    + '<div style="height:10px;background:var(--bg3);border-radius:6px;overflow:hidden;margin-bottom:8px"><div id="dedup-bar" style="height:100%;width:0%;background:var(--gold);transition:width .12s"></div></div>'
+    + '<div id="dedup-pct" style="font-size:12px;color:var(--text2)">0%</div></div>';
+}
+function _updateDedupProgress(done, total) {
+  var pct = total ? Math.round(done / total * 100) : 100;
+  var b = document.getElementById('dedup-bar'), p = document.getElementById('dedup-pct');
+  if (b) b.style.width = pct + '%';
+  if (p) p.textContent = pct + '%';
+}
+function _hideDedupProgress() { var ov = document.getElementById('dedup-progress'); if (ov && ov.parentNode) ov.parentNode.removeChild(ov); }
 
 // LIMPIEZA GLOBAL de partidas duplicadas en los perfiles (botón de Mantenimiento): cuenta, confirma
 // con el número, y recién entonces aplica. Deja la copia MÁS LARGA de cada partida.
 function runProfileDedup() {
-  var plan = _computeProfileDedup();
-  if (plan.removed === 0) { alert('No se encontraron partidas duplicadas en los perfiles. 🎉'); return; }
-  if (!confirm('Se encontraron ' + plan.removed + ' partidas duplicadas en los perfiles de jugadores.\n\n'
-    + 'Se va a dejar UNA sola copia (la más completa) de cada una. No se tocan los torneos públicos.\n\n'
-    + '💡 Antes conviene descargar tu copia de autor por las dudas.\n\n'
-    + '¿Quitar las ' + plan.removed + ' partidas duplicadas ahora?')) return;
-  plan.apply();
-  alert('✓ Listo. Se quitaron ' + plan.removed + ' partidas duplicadas de los perfiles.\n\n'
-    + 'Para que el cambio quede PERMANENTE (y no vuelvan al recargar), usá ahora el botón '
-    + '"Guardar datos en mi carpeta" y reemplazá los archivos en tu carpeta data\\.');
-  exportTabInit();   // refrescar las estadísticas de la pestaña
+  var prefixPlan = _computeProfileDedup();           // 1) prefijo (rápido, sin tocar lo anterior)
+  _showDedupProgress();
+  _computeFenDedup(prefixPlan, _updateDedupProgress, function(fenPlan) {   // 2) posición final (con progreso)
+    _hideDedupProgress();
+    // Combinar los descartes de ambos filtros en un solo mapa (mismo espacio de índices, sin aplicar aún).
+    var combined = new Map();
+    function merge(m) { if (!m || !m.forEach) return; m.forEach(function(s, entry) { var d = combined.get(entry); if (!d) { d = {}; combined.set(entry, d); } for (var k in s) d[k] = true; }); }
+    merge(prefixPlan._dropByEntry); merge(fenPlan._dropByEntry);
+    var total = 0; combined.forEach(function(s) { total += Object.keys(s).length; });
+    if (total === 0) { alert('No se encontraron partidas duplicadas en los perfiles. 🎉'); return; }
+    var porPos = fenPlan.removed;
+    if (!confirm('Se encontraron ' + total + ' partidas duplicadas en los perfiles de jugadores'
+      + (porPos ? ' (' + porPos + ' por misma posición final: transposiciones / notación)' : '') + '.\n\n'
+      + 'Se va a dejar UNA sola copia (la más completa) de cada una. No se tocan los torneos públicos.\n\n'
+      + '💡 Antes conviene descargar tu copia de autor por las dudas.\n\n'
+      + '¿Quitar las ' + total + ' partidas duplicadas ahora?')) return;
+    _applyProfileDrops(combined);
+    alert('✓ Listo. Se quitaron ' + total + ' partidas duplicadas de los perfiles.\n\n'
+      + 'Para que el cambio quede PERMANENTE (y no vuelvan al recargar), usá ahora el botón '
+      + '"Guardar datos en mi carpeta" y reemplazá los archivos en tu carpeta data\\.');
+    exportTabInit();   // refrescar las estadísticas de la pestaña
+  });
 }
 
 function filterPgByResult(result) {
