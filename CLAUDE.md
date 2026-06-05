@@ -44,6 +44,19 @@ El autor **no es programador** y trabaja en español. El objetivo es eventualmen
    `manifest.js` + `data/t/*.json` + `data/p/*.json` frescos desde la data actual.
    El token de Lichess **nunca** se incluye.
 
+## Actualizar el ranking FIDE (mensual)
+La lista de Jugadores es el ranking FIDE de Argentina. Cada mes FIDE publica un nuevo
+`standard_rating_list.txt`. Para actualizar: pestaña **Jugadores** → botón **"Actualizar
+ranking FIDE"** → subir el .txt. La app arma la lista de **activos ARG con elo ≥ 1700**
+(excluye inactivos: Flag con `i` → `i`/`wi`), muestra un resumen y pide confirmación.
+- Preserva el `id` de cada jugador por su `fide_id` (no se rompen fotos/favoritos/partidas).
+- NO toca partidas, estadísticas ni torneos: solo cambia el ranking y las posiciones.
+- Detecta el mes del encabezado de la tabla (ej. columna `JUN26` → "Junio 2026").
+- La solapa **Femeninos** filtra por **sexo** (dato que trae la tabla), no por título.
+- Umbral en la constante `_FIDE_MIN_ELO` (hoy 1700). El override se guarda en localStorage
+  (`fide_ranking`) y se embebe en los 3 exports (`__EMBEDDED_PLAYERS__`).
+- Después de actualizar, usar **"Guardar datos en mi carpeta"** para que quede guardado.
+
 ## Publicar la web
 Apretar "Descargar para publicar (ZIP)", descomprimir y arrastrar la carpeta a
 **Netlify** o **Cloudflare Pages** (gratis). Cada vez que se quiera actualizar la web
