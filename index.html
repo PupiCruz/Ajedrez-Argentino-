@@ -5601,12 +5601,9 @@ async function openPlayer(id) {
   var rc2 = { win:'var(--green)', draw:'var(--text2)', loss:'var(--red)' };
   var isFav = favs.indexOf(p.id) >= 0;
 
-  // Calcular estadísticas desde partidas cargadas en la app
-  var uploadedGames = gatherGamesForPlayer(p);
-  var directData = PLAYER_GAMES[p.id];
-  var directTours = (directData && directData.tournaments) ? directData.tournaments : [];
-  var uploadedTours = uploadedGames.length > 0 ? groupByTournament(uploadedGames) : [];
-  var allTours = mergeTournaments(uploadedTours, directTours);
+  // Calcular estadísticas desde partidas cargadas en la app (deduplicado: el mismo juego no se
+  // cuenta dos veces aunque el evento esté cargado con dos nombres de torneo distintos).
+  var allTours = gatherPlayerTours(p);
   var cs = computeStatsFromGames(p, allTours);
   var hasData = cs.total > 0;
 
@@ -6218,6 +6215,25 @@ function groupByTournament(games) {
   return order.map(function(k){ return map[k]; });
 }
 
+// Torneos del jugador para PERFIL y ESTADÍSTICAS: une las partidas detectadas por nombre
+// (gatherGamesForPlayer, que ya recorre TODO PLAYER_GAMES y deduplica) con las curadas de
+// PLAYER_GAMES[id] (por si alguna no matchea por nombre) y DEDUPLICA todo junto por jugadas. Así
+// el MISMO juego no aparece dos veces aunque el evento esté cargado con DOS nombres de torneo
+// distintos (p. ej. "IV OPEN CHESS MENORCA GRUPO A" de chess-results vs "IV Menorca Open A 2025"
+// de Lumbras). Antes se mezclaba por NOMBRE de torneo (mergeTournaments) y, al quedarse con el
+// torneo curado que tenía más partidas, REINTRODUCÍA la copia que el dedup ya había sacado →
+// partida repetida en la lista y estadísticas infladas (contaba el juego dos veces).
+function gatherPlayerTours(player) {
+  var games = gatherGamesForPlayer(player);   // ya deduplicado
+  var directData = PLAYER_GAMES[player.id];
+  var directTours = (directData && directData.tournaments) ? directData.tournaments : [];
+  directTours.forEach(function(t) {
+    (t.games || []).forEach(function(g) { games.push({ tourName: t.name, tourLocation: t.location || '', pgn: g }); });
+  });
+  games = dedupGamesByMoves(games, function(r) { return r.pgn; });
+  return groupByTournament(games).sort(function(a, b) { return tourDateKey(b) - tourDateKey(a); });
+}
+
 /* ═══════════════════════════════════════════════════════
    PARTIDAS — busca en PLAYER_GAMES por nombre/fideId,
    sino muestra links externos
@@ -6381,29 +6397,11 @@ function tourDateKey(tour) {
   return parseDateFromText(loc);
 }
 
-function mergeTournaments(uploaded, direct) {
-  var map = {}, order = [];
-  function add(t) {
-    var key = normStr(t.name || '');
-    if (!map[key]) { map[key] = t; order.push(key); }
-    else if ((t.games || []).length > (map[key].games || []).length) map[key] = t;
-  }
-  uploaded.forEach(add);
-  direct.forEach(add);
-  return order.map(function(k){ return map[k]; })
-    .sort(function(a, b){ return tourDateKey(b) - tourDateKey(a); });
-}
-
 function fetchPlayerBroadcastGames(player) {
   var el = document.getElementById('pg-games');
   if (!el) return;
 
-  var uploadedGames = gatherGamesForPlayer(player);
-  var directData = PLAYER_GAMES[player.id];
-  var directTours = (directData && directData.tournaments) ? directData.tournaments : [];
-
-  var uploaded = uploadedGames.length > 0 ? groupByTournament(uploadedGames) : [];
-  var all = mergeTournaments(uploaded, directTours);
+  var all = gatherPlayerTours(player);
 
   // Guardar estado para filtros
   _pgCurrentPlayer = player;
