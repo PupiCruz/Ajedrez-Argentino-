@@ -6052,109 +6052,94 @@ function _tokSet(name) {
 function _sideTokens(h) { return { w: _tokSet(h.White), b: _tokSet(h.Black) }; }
 function _tokOverlap(a, b) { for (var k in a) if (b[k]) return true; return false; }
 
-// Deduplica una lista de partidas detectando el MISMO juego aunque una venga truncada o con
-// jugadas de más. Agrupa por jugadores y, dentro de cada grupo, si las jugadas de una son
-// PREFIJO de las de otra (más larga), descarta la corta: una secuencia de jugadas que es
-// prefijo exacto de otra es, por definición, el mismo juego cortado antes (no puede ser otra
-// partida). Es más completo que la huella de 40 jugadas y 100% seguro (no fusiona distintas).
-// Las partidas SIN jugadas se deduplican aparte por Date|Round|Event (no se mezclan con las
-// que sí tienen jugadas). `getPgn` extrae el PGN de cada item; preserva el orden original.
-function dedupGamesByMoves(items, getPgn) {
-  var groups = {};       // jugadores (apellido) -> [{item, body, date, h}]
-  var emptySeen = {};    // clave de header (sin jugadas) -> true
-  var drop = [];         // items a descartar
+// Candidatos de apellido de un nombre (CANDADO tolerante al formato): con coma → tokens de antes de
+// la coma; sin coma → TODOS los tokens (el apellido es uno, no sabemos cuál: "Oro Faustino" puede
+// ser Apellido-Nombre). Así "Oro, Faustino" ≡ "Oro Faustino" ≡ "Faustino Oro" comparten "oro".
+function _surnameCands(name) {
+  var s = String(name || '');
+  return nameTokens(s.indexOf(',') >= 0 ? s.split(',')[0] : s);
+}
+// Claves de "par de jugadores" tolerantes al formato: producto de apellidos-candidatos de blancas ×
+// negras, cada par ordenado (tolera el orden de colores entre fuentes). Dos copias de la MISMA
+// partida comparten al menos una clave aunque el nombre venga en formato distinto. Es el candado
+// de los filtros 2 (prefijo) y 3 (posición final): los agrupa sin depender del formato del nombre.
+function _pairCandKeys(white, black) {
+  var wc = _surnameCands(white), bc = _surnameCands(black), keys = [], seen = Object.create(null);
+  for (var i = 0; i < wc.length; i++) for (var j = 0; j < bc.length; j++) {
+    var k = wc[i] < bc[j] ? wc[i] + '+' + bc[j] : bc[j] + '+' + wc[i];
+    if (!seen[k]) { seen[k] = true; keys.push(k); }
+  }
+  return keys;
+}
+
+// Deduplica una lista de partidas (la MISMA partida aunque difieran nombres/formato, esté truncada,
+// transpuesta o con notación distinta). ORDEN ACORDADO (barato→caro; lo caro solo sobre lo que
+// sobrevive). `withFen` activa el filtro 3 (posición final, reproduce con chess.js): el DISPLAY lo
+// llama SIN withFen (instantáneo); la migración y el botón de mantenimiento lo llaman con withFen.
+// Conserva la copia MÁS COMPLETA de cada partida (y, a igual largo, la de mejor nombre). Las
+// partidas SIN jugadas se deduplican por jugadores+fecha+ronda+evento. Preserva el orden original.
+function dedupGamesByMoves(items, getPgn, withFen) {
+  var metas = items.map(function(it) {
+    var pgn = getPgn(it), h = parsePgnHeaders(pgn), body = _moveBody(pgn);
+    return { it: it, body: body, date: (h.Date || ''),
+             keys: body.length >= 4 ? _pairCandKeys(h.White, h.Black) : null,
+             nameLen: (h.White || '').length + (h.Black || '').length,
+             ek: body.length < 4 ? (_pairKey(h.White, h.Black) + '#' + (h.Date || '') + '#' + (h.Round || '') + '#' + (h.Event || '')) : null };
+  });
   var dropped = new Set();
-  function kill(it) { drop.push(it); dropped.add(it); }
-  items.forEach(function(it) {
-    var pgn = getPgn(it);
-    var h = parsePgnHeaders(pgn);
-    var body = _moveBody(pgn);
-    var pk = _pairKey(h.White, h.Black);
-    if (body.length < 4) {
-      var ek = pk + '#' + (h.Date || '') + '#' + (h.Round || '') + '#' + (h.Event || '');
-      if (emptySeen[ek]) kill(it); else emptySeen[ek] = true;
-    } else {
-      (groups[pk] = groups[pk] || []).push({ item: it, body: body, date: (h.Date || ''), h: h });
-    }
+  // ── 0) SIN jugadas: por jugadores+fecha+ronda+evento.
+  var emptySeen = Object.create(null);
+  metas.forEach(function(m) { if (m.body.length >= 4 || m.ek == null) return; if (emptySeen[m.ek]) dropped.add(m.it); else emptySeen[m.ek] = true; });
+  // ── 1) JUGADAS IDÉNTICAS (cuerpo exacto, NO mira nombres). Barato, atrapa la mayoría. Conserva la
+  //       copia con mejor nombre (más larga de White+Black: nombre completo gana a abreviado).
+  var byBody = Object.create(null);
+  metas.forEach(function(m) {
+    if (m.body.length < 4 || dropped.has(m.it)) return;
+    var c = byBody[m.body];
+    if (!c) { byBody[m.body] = m; return; }
+    if (m.nameLen > c.nameLen) { dropped.add(c.it); byBody[m.body] = m; } else dropped.add(m.it);
   });
-  // ── 1) PREFIJO por grupo de apellido (barato): una secuencia de jugadas que es prefijo exacto de
-  //       otra más larga es el mismo juego truncado. Deja en cada grupo solo los sobrevivientes.
-  Object.keys(groups).forEach(function(pk) {
-    var arr = groups[pk];
-    arr.sort(function(a, b) { return b.body.length - a.body.length; });   // más larga primero
+  // Buckets por par de apellidos-candidatos (candado tolerante al formato) sobre los sobrevivientes.
+  function buildBuckets() {
+    var bk = Object.create(null);
+    metas.forEach(function(m) { if (m.body.length < 4 || dropped.has(m.it) || !m.keys) return; for (var i = 0; i < m.keys.length; i++) (bk[m.keys[i]] = bk[m.keys[i]] || []).push(m); });
+    return bk;
+  }
+  // ── 2) PREFIJO / truncada (barato): una secuencia de jugadas es prefijo exacto de otra más larga.
+  //       Candado: mismos jugadores (par de apellidos candidatos). Conserva la MÁS LARGA.
+  var bk2 = buildBuckets();
+  Object.keys(bk2).forEach(function(k) {
+    var arr = bk2[k]; if (arr.length < 2) return;
+    arr.sort(function(a, b) { return b.body.length - a.body.length; });
     var kept = [];
-    arr.forEach(function(g) {
-      for (var i = 0; i < kept.length; i++) {
-        if (kept[i].body.indexOf(g.body) === 0) { kill(g.item); return; }   // g es prefijo → duplicado
-      }
-      kept.push(g);
-    });
-    groups[pk] = kept;
-  });
-  // ── 2) CUERPO EXACTO global (barato, name-independiente): jugadas idénticas = misma partida aunque
-  //       el apellido venga escrito distinto ("Rodrigues" vs "Rodriques"). Se hace ANTES de reproducir
-  //       posiciones para no gastar chess.js en copias que ya caen acá.
-  var bodySeen = Object.create(null);
-  items.forEach(function(it) {
-    if (dropped.has(it)) return;
-    var body = _moveBody(getPgn(it));
-    if (body.length < 4) return;
-    if (bodySeen[body]) kill(it); else bodySeen[body] = true;
-  });
-  // ── 3) POSICIÓN FINAL por grupo de apellido + misma fecha (TRANSPOSICIONES / notación), SOLO sobre
-  //       los sobrevivientes de 1+2. Reproducir con chess.js es caro → gateado por colisión de fecha
-  //       dentro del grupo; tras quitar exactas/prefijos quedan poquísimos candidatos.
-  Object.keys(groups).forEach(function(pk) {
-    var arr = groups[pk].filter(function(g) { return !dropped.has(g.item); });
-    if (arr.length < 2) return;
-    var dateCount = {};
-    arr.forEach(function(g) { if (g.date) dateCount[g.date] = (dateCount[g.date] || 0) + 1; });
-    var kept = [];
-    arr.forEach(function(g) {
-      if (g.date && dateCount[g.date] >= 2) {
-        var fen = _finalPosKey(getPgn(g.item));
-        if (fen) {
-          for (var j = 0; j < kept.length; j++) {
-            if (kept[j]._fen && kept[j]._fen === fen) { kill(g.item); return; }
-          }
-          g._fen = fen;
-        }
-      }
-      kept.push(g);
+    arr.forEach(function(m) {
+      if (dropped.has(m.it)) return;
+      for (var i = 0; i < kept.length; i++) if (kept[i].body.indexOf(m.body) === 0) { dropped.add(m.it); return; }
+      kept.push(m);
     });
   });
-  // ── 4) POSICIÓN FINAL por FECHA + nombres COMPATIBLES + misma APERTURA (name-independiente): atrapa
-  //       el MISMO juego cuando NOTACIÓN distinta ("Ne2" vs "Nge2") hace divergir las jugadas Y los
-  //       nombres vienen en formato distinto que rompe la clave por apellido ("Oro Faustino" vs
-  //       "Oro, Faustino"). Triple candado barato antes de reproducir: misma fecha + mismos rivales
-  //       (overlap de apellido en blancas Y negras) + misma apertura (primeros plies). Seguro (no
-  //       fusiona distintas) y acotado (reproduce solo candidatos reales que 1-3 no agarraron).
-  var byDate = Object.create(null);
-  items.forEach(function(it) {
-    if (dropped.has(it)) return;
-    var pgn = getPgn(it);
-    var h = parsePgnHeaders(pgn);
-    if (!h.Date) return;
-    var body = _moveBody(pgn);
-    if (body.length < 8) return;
-    (byDate[h.Date] = byDate[h.Date] || []).push({ it: it, tk: _sideTokens(h), body: body });
-  });
-  Object.keys(byDate).forEach(function(d) {
-    var arr = byDate[d];
-    if (arr.length < 2) return;
-    for (var i = 0; i < arr.length; i++) {
-      if (dropped.has(arr[i].it)) continue;
-      for (var j = i + 1; j < arr.length; j++) {
-        if (dropped.has(arr[j].it)) continue;
-        if (arr[i].body.slice(0, 36) !== arr[j].body.slice(0, 36)) continue;      // distinta apertura
-        if (!_tokOverlap(arr[i].tk.w, arr[j].tk.w) || !_tokOverlap(arr[i].tk.b, arr[j].tk.b)) continue;  // distinto par
-        if (arr[i]._fen === undefined) arr[i]._fen = _finalPosKey(getPgn(arr[i].it));
-        if (arr[j]._fen === undefined) arr[j]._fen = _finalPosKey(getPgn(arr[j].it));
-        if (arr[i]._fen && arr[i]._fen === arr[j]._fen) kill(arr[j].it);
-      }
-    }
-  });
-  if (!drop.length) return items;
+  // ── 3) POSICIÓN FINAL (CARO, reproduce con chess.js — solo si withFen): transposiciones + notación.
+  //       Candado: misma fecha + mismos jugadores (par de apellidos candidatos). Solo sobre
+  //       sobrevivientes y gateado por colisión de fecha dentro del bucket → reproduce poquísimas.
+  if (withFen) {
+    var bk3 = buildBuckets();
+    Object.keys(bk3).forEach(function(k) {
+      var arr = bk3[k].filter(function(m) { return !dropped.has(m.it); });
+      if (arr.length < 2) return;
+      var dc = Object.create(null);
+      arr.forEach(function(m) { if (m.date) dc[m.date] = (dc[m.date] || 0) + 1; });
+      arr.sort(function(a, b) { return b.body.length - a.body.length; });
+      var seen = Object.create(null);
+      arr.forEach(function(m) {
+        if (dropped.has(m.it) || !m.date || dc[m.date] < 2) return;
+        if (m._fen === undefined) m._fen = _finalPosKey(getPgn(m.it));
+        if (!m._fen) return;
+        var fk = m.date + '|' + m._fen;
+        if (seen[fk]) dropped.add(m.it); else seen[fk] = true;
+      });
+    });
+  }
+  if (!dropped.size) return items;
   return items.filter(function(it) { return !dropped.has(it); });
 }
 
@@ -6269,23 +6254,12 @@ function groupByTournament(games) {
   return order.map(function(k){ return map[k]; });
 }
 
-// Torneos del jugador para PERFIL y ESTADÍSTICAS: une las partidas detectadas por nombre
-// (gatherGamesForPlayer, que ya recorre TODO PLAYER_GAMES y deduplica) con las curadas de
-// PLAYER_GAMES[id] (por si alguna no matchea por nombre) y DEDUPLICA todo junto por jugadas. Así
-// el MISMO juego no aparece dos veces aunque el evento esté cargado con DOS nombres de torneo
-// distintos (p. ej. "IV OPEN CHESS MENORCA GRUPO A" de chess-results vs "IV Menorca Open A 2025"
-// de Lumbras). Antes se mezclaba por NOMBRE de torneo (mergeTournaments) y, al quedarse con el
-// torneo curado que tenía más partidas, REINTRODUCÍA la copia que el dedup ya había sacado →
-// partida repetida en la lista y estadísticas infladas (contaba el juego dos veces).
+// Torneos del jugador para PERFIL y ESTADÍSTICAS: gatherGamesForPlayer ya recorre TODO PLAYER_GAMES
+// (incluida la data curada PLAYER_GAMES[id]) y deduplica BARATO (cuerpo exacto + prefijo, sin motor
+// → instantáneo). Acá solo agrupa por torneo y ordena por fecha. El filtro CARO (posición final) NO
+// corre al abrir un perfil: queda para la migración y el botón de mantenimiento.
 function gatherPlayerTours(player) {
-  var games = gatherGamesForPlayer(player);   // ya deduplicado
-  var directData = PLAYER_GAMES[player.id];
-  var directTours = (directData && directData.tournaments) ? directData.tournaments : [];
-  directTours.forEach(function(t) {
-    (t.games || []).forEach(function(g) { games.push({ tourName: t.name, tourLocation: t.location || '', pgn: g }); });
-  });
-  games = dedupGamesByMoves(games, function(r) { return r.pgn; });
-  return groupByTournament(games).sort(function(a, b) { return tourDateKey(b) - tourDateKey(a); });
+  return groupByTournament(gatherGamesForPlayer(player)).sort(function(a, b) { return tourDateKey(b) - tourDateKey(a); });
 }
 
 /* ═══════════════════════════════════════════════════════
