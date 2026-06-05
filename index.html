@@ -10677,11 +10677,30 @@ function openTourFromProfile(type, id) {
   openTournamentDetail(type, id);
 }
 
+// ── Fase 3b: el torneo toma sus PARTIDAS de la base de datos única (pool) por EVENTO ──────────────
+// Nombres de evento (header Event) que le corresponden al torneo: explícito (cfg.poolEvents, que el
+// autor setea en el modal) o, como transición, derivados de los Event de sus partidas ya guardadas.
+function _tourEventNames(cfg, storedGames) {
+  if (cfg && cfg.poolEvents && cfg.poolEvents.length) return cfg.poolEvents;
+  var evs = Object.create(null), list = [];
+  (storedGames || []).forEach(function(g) { var e = (parsePgnHeaders(g).Event || '').trim(); if (e && !evs[e]) { evs[e] = true; list.push(e); } });
+  return list;
+}
+// Partidas del pool (_memTournaments, contenedores por evento) cuyos nombres están en eventNames.
+function _tourPoolGames(eventNames) {
+  if (!eventNames || !eventNames.length) return [];
+  var set = Object.create(null); eventNames.forEach(function(e) { set[e] = true; });
+  var out = [];
+  _memTournaments.forEach(function(t) { if (t.name && set[t.name]) (t.games || []).forEach(function(g) { out.push(g); }); });
+  return out;
+}
+
 async function openTournamentDetail(type, id, scrollToGames) {
   var name = '', location = '', dates = '', status = 'upcoming', typ = '', rounds = null;
   var leaders = [], games = [], crUrl = '', broadcastId = '', broadcastUrl = '', pgnGames = [];
   var timeControl = '', chesscomUrl = '', flyerUrl = '';
   var loadFailed = false;
+  var _poolCfg = null;   // config del torneo (para resolver sus eventos en la base de datos)
   var tzCfg2 = getTzConfig();
 
   if (type === 'hc') {
@@ -10698,6 +10717,7 @@ async function openTournamentDetail(type, id, scrollToGames) {
     pgnGames = hcCfg.pgnGames || [];
     if (t.hasPgn && PGN_DB[t.pgnId]) games = PGN_DB[t.pgnId].games || [];
     games = pgnGames.length ? pgnGames : games;
+    _poolCfg = hcCfg;
   } else if (type === 'ls') {
     var entry = null;
     if (_ondemand && _manifest) {
@@ -10720,6 +10740,7 @@ async function openTournamentDetail(type, id, scrollToGames) {
     flyerUrl = entry.flyerUrl || '';
     games = entry.games || [];
     leaders = pgnComputeLeaders(games);
+    _poolCfg = entry;
   } else if (type === 'tz') {
     var d = tzCfg2[id];
     if (!d) return;
@@ -10732,6 +10753,16 @@ async function openTournamentDetail(type, id, scrollToGames) {
     pgnGames = d.pgnGames || [];
     games = pgnGames;
     leaders = pgnComputeLeaders(games);
+    _poolCfg = d;
+  }
+
+  // Fase 3b: sumar las partidas del POOL (base de datos única) que le corresponden a este torneo por
+  // EVENTO, y deduplicar con las guardadas (transición). Así subir rondas a la base las muestra acá
+  // sin duplicar. NO cambia las posiciones/cruces (siguen del Excel; las partidas solo rellenan los
+  // resultados clickeables vía crSyncResultsFromPgn).
+  var _poolG = _tourPoolGames(_tourEventNames(_poolCfg, games));
+  if (_poolG.length) {
+    games = dedupGamesByMoves(games.concat(_poolG).map(function(p) { return { pgn: p }; }), function(w) { return w.pgn; }).map(function(w) { return w.pgn; });
   }
 
   // Agrupar partidas por ronda
