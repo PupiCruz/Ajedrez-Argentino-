@@ -801,9 +801,10 @@
         <button class="chip" onclick="filterJugadores('im',this)">IM</button>
         <button class="chip" onclick="filterJugadores('fm',this)">FM</button>
         <button class="chip" onclick="filterJugadores('wt',this)">Femeninos</button>
+        <button class="chip" id="chip-adicionales" onclick="filterJugadores('adicionales',this)">Adicionales</button>
       </div>
 
-      <!-- Actualizar ranking FIDE (solo modo autor; se oculta en la web publicada) -->
+      <!-- Actualizar ranking FIDE + agregar adicionales (solo modo autor; se oculta en la web publicada) -->
       <div id="ranking-update-wrap" style="display:none;margin-bottom:12px">
         <input id="ranking-file-input" type="file" accept=".txt" style="display:none" onchange="updateRankingFromFile(this)">
         <button onclick="pickRankingFile()" style="width:100%;padding:11px;background:var(--bg2);border:1px dashed var(--border);color:var(--text2);font-size:13px;font-weight:600;border-radius:11px;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:8px">
@@ -811,6 +812,11 @@
           Actualizar ranking FIDE (subir tabla del mes)
         </button>
         <div style="font-size:11px;color:var(--text3);margin-top:5px;line-height:1.5">Subí el listado FIDE <i>standard_rating_list.txt</i>. Arma la lista con federación ARG, activos y elo ≥ 1700. No toca partidas, estadísticas ni torneos.</div>
+        <button onclick="promptAddAdditional()" style="width:100%;margin-top:8px;padding:11px;background:var(--bg2);border:1px dashed var(--border);color:var(--text2);font-size:13px;font-weight:600;border-radius:11px;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:8px">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          Agregar jugador adicional (por FIDE id)
+        </button>
+        <div style="font-size:11px;color:var(--text3);margin-top:5px;line-height:1.5">Para argentinos con otra bandera o fuera del top. Quedan en la solapa <b style="color:var(--text2)">Adicionales</b> (no en el ranking) y sus datos se actualizan cada mes con la tabla.</div>
       </div>
 
       <!-- Selector de mes -->
@@ -2189,7 +2195,7 @@ var PLAYERS = [
 // reemplaza la lista base por la actualizada. La lista guardada conserva el id de cada
 // jugador atado a su fide_id, así NO se rompen fotos, favoritos ni partidas. Las partidas,
 // estadísticas y torneos viven en otras estructuras y no se tocan. Ver _rankingOverride().
-(function(){ var _ov = _rankingOverride(); if (_ov && _ov.players && _ov.players.length) PLAYERS = _ov.players; })();
+(function(){ var _ov = _rankingOverride(); if (_ov) { if (_ov.players && _ov.players.length) PLAYERS = _ov.players.slice(); if (_ov.additionals && _ov.additionals.length) PLAYERS = PLAYERS.concat(_ov.additionals); } })();
 
 var TORNEOS = [
   {
@@ -5079,7 +5085,7 @@ function _estadoActualFp() {
   } catch(e){}
   var newsFp = (typeof _newsFp === 'function' && typeof getNewsItems === 'function') ? _newsFp(getNewsItems()) : '';
   var rankFp = '';
-  try { var o = _rankingOverride(); if (o && o.players) rankFp = (o.month||'') + ':' + o.players.length + ':' + _fpStr(o.players.map(function(p){ return p.fide_id + '=' + p.elo; }).join(',')); } catch(e){}
+  try { var o = _rankingOverride(); if (o) { var pl = (o.players||[]).concat(o.additionals||[]); rankFp = (o.month||'') + ':' + pl.length + ':' + _fpStr(pl.map(function(p){ return p.fide_id + '=' + p.elo + '=' + (p.fed||''); }).join(',')); } } catch(e){}
   return _combinedFp(all, getTzConfig()) + '~' + _fpStr(photoKeys) + '~' + newsFp + '~' + rankFp;
 }
 // ¿Hay torneos cambiados que todavía no se exportaron al archivo?
@@ -5235,20 +5241,24 @@ var MONTH_LABELS = {
 (function(){ var o = _rankingOverride(); if (o && o.month && o.monthLabel) MONTH_LABELS[o.month] = o.monthLabel; })();
 
 function getFilteredPlayers() {
+  if (_filterMode === 'adicionales') {
+    return PLAYERS.filter(function(p){ return p.ranked === false; });
+  }
+  var ranked = PLAYERS.filter(function(p){ return p.ranked !== false; });   // el ranking excluye adicionales
   if (_filterMode === 'titulados') {
-    return PLAYERS.filter(function(p){ return p.title && TITLED_TITLES.indexOf(p.title) >= 0; });
+    return ranked.filter(function(p){ return p.title && TITLED_TITLES.indexOf(p.title) >= 0; });
   } else if (_filterMode === 'gm') {
-    return PLAYERS.filter(function(p){ return p.title === 'GM'; });
+    return ranked.filter(function(p){ return p.title === 'GM'; });
   } else if (_filterMode === 'im') {
-    return PLAYERS.filter(function(p){ return p.title === 'IM'; });
+    return ranked.filter(function(p){ return p.title === 'IM'; });
   } else if (_filterMode === 'fm') {
-    return PLAYERS.filter(function(p){ return p.title === 'FM' || p.title === 'CM'; });
+    return ranked.filter(function(p){ return p.title === 'FM' || p.title === 'CM'; });
   } else if (_filterMode === 'wt') {
     // Femeninos = por SEXO (campo female, que trae la actualización FIDE). Como respaldo, para la
     // lista vieja que aún no tiene ese dato, cae al título femenino (WGM/WIM/WFM/WCM).
-    return PLAYERS.filter(function(p){ return p.female || (p.title && p.title.charAt(0) === 'W'); });
+    return ranked.filter(function(p){ return p.female || (p.title && p.title.charAt(0) === 'W'); });
   }
-  return PLAYERS;
+  return ranked;
 }
 
 function filterJugadores(mode, btn) {
@@ -5291,7 +5301,9 @@ function updateSubtitle() {
   } else if (_filterMode === 'fm') {
     sub.textContent = count + ' FMs/CMs · Argentina · ' + monthLabel;
   } else if (_filterMode === 'wt') {
-    sub.textContent = count + ' jugadoras con título · Argentina · ' + monthLabel;
+    sub.textContent = count + ' jugadoras · Argentina · ' + monthLabel;
+  } else if (_filterMode === 'adicionales') {
+    sub.textContent = count + ' jugadores adicionales (fuera del ranking activo)';
   } else {
     sub.textContent = 'Ranking FIDE — Argentina · ' + monthLabel;
   }
@@ -5332,7 +5344,7 @@ function renderPlayers(list, id, showRank) {
       html += '<div class="p-avatar">' + ini(p.name) + '</div>';
       html += '<div class="p-info">';
       html += '<div class="p-name">' + p.name + '</div>';
-      html += '<div class="p-sub">' + tBadge + (p.province || '') + '</div>';
+      html += '<div class="p-sub">' + tBadge + (p.ranked === false ? (p.fed || '') : (p.province || '')) + '</div>';
       html += '</div>';
       html += '<div class="p-elo">';
       html += '<div class="p-elo-n">' + p.elo + '</div>';
@@ -5359,7 +5371,7 @@ function renderPlayers(list, id, showRank) {
       html += '<div class="p-avatar">' + ini(p.name) + '</div>';
       html += '<div class="p-info">';
       html += '<div class="p-name">' + p.name + '</div>';
-      html += '<div class="p-sub">' + tBadge + (p.province || '') + '</div>';
+      html += '<div class="p-sub">' + tBadge + (p.ranked === false ? (p.fed || '') : (p.province || '')) + '</div>';
       html += '</div>';
       html += '<div class="p-elo">';
       html += '<div class="p-elo-n">' + p.elo + '</div>';
@@ -5618,9 +5630,16 @@ async function openPlayer(id) {
   h += '<button id="photo-del-' + p.id + '" onclick="removePlayerPhoto(' + p.id + ')" title="Quitar foto" style="position:absolute;top:-2px;right:-2px;width:20px;height:20px;border-radius:50%;border:none;background:var(--bg3);color:var(--text3);cursor:pointer;font-size:11px;display:' + delBtnDisplay + ';align-items:center;justify-content:center;padding:0;line-height:1">✕</button>';
   h += '</div>';
   h += '<div><div class="m-name">' + p.name + '</div>';
-  h += '<div class="m-sub">' + p.title + ' · ' + p.province + ' · Nac. ' + p.born
-     + (ranking ? ' · <span style="color:var(--gold)">#' + ranking + ' ARG</span>' : '') + '</div>';
-  if (p.fide_id) h += '<div class="m-sub" style="margin-top:3px"><a href="https://ratings.fide.com/profile/' + p.fide_id + '" target="_blank" style="color:var(--gold);text-decoration:none">FIDE ID: ' + p.fide_id + ' ↗</a></div>';
+  var _fed = p.fed || 'ARG';
+  var _subParts = [];
+  if (p.title) _subParts.push(p.title);
+  if (p.province) _subParts.push(p.province);
+  if (p.born) _subParts.push('Nac. ' + p.born);
+  if (p.ranked === false) _subParts.push('<span style="color:var(--gold)">' + _fed + '</span>');
+  else if (ranking) _subParts.push('<span style="color:var(--gold)">#' + ranking + ' ' + _fed + '</span>');
+  h += '<div class="m-sub">' + _subParts.join(' · ') + '</div>';
+  if (p.fide_id) h += '<div class="m-sub" style="margin-top:3px"><a href="https://ratings.fide.com/profile/' + p.fide_id + '" target="_blank" style="color:var(--gold);text-decoration:none">FIDE ID: ' + p.fide_id + ' ↗</a>'
+     + (p.ranked === false ? ' · <a href="javascript:void(0)" onclick="removeAdditional(' + p.id + ')" style="color:var(--text3);text-decoration:none">✕ quitar de adicionales</a>' : '') + '</div>';
   h += '</div></div>';
   h += '<div class="stats-grid">';
   h += '<div class="s-box"><div class="s-val" style="color:var(--gold)">' + p.elo + '</div><div class="s-lbl">ELO FIDE actual</div></div>';
@@ -7455,7 +7474,8 @@ function topOpenings(dict, n) {
 
 // Ranking del jugador por ELO entre todos los jugadores cargados
 function getPlayerRanking(player) {
-  var sorted = PLAYERS.slice().sort(function(a, b) { return b.elo - a.elo; });
+  if (player.ranked === false) return null;   // los adicionales no tienen posición en el ranking
+  var sorted = PLAYERS.filter(function(p){ return p.ranked !== false; }).sort(function(a, b) { return b.elo - a.elo; });
   for (var i = 0; i < sorted.length; i++) {
     if (sorted[i].id === player.id) return i + 1;
   }
@@ -7473,13 +7493,15 @@ function getPlayerRanking(player) {
 var _FIDE_MIN_ELO = 1700;
 var _MONTH_ABBR = { JAN:['01','Enero'], FEB:['02','Febrero'], MAR:['03','Marzo'], APR:['04','Abril'], MAY:['05','Mayo'], JUN:['06','Junio'], JUL:['07','Julio'], AUG:['08','Agosto'], SEP:['09','Septiembre'], OCT:['10','Octubre'], NOV:['11','Noviembre'], DEC:['12','Diciembre'] };
 var _rankOvCache;
-// Override de ranking guardado: localStorage (autor) o __EMBEDDED_PLAYERS__ (archivo publicado). Memoizado.
+// Datos de jugadores guardados: localStorage (autor) o __EMBEDDED_PLAYERS__ (archivo publicado). Memoizado.
+// Estructura: { month, monthLabel, players:[ranking activo], additionals:[adicionales ranked:false], idMap, nextId }.
 function _rankingOverride() {
   if (typeof _rankOvCache !== 'undefined') return _rankOvCache;
   var ov = null;
   try { var raw = localStorage.getItem('fide_ranking'); if (raw) ov = JSON.parse(raw); } catch(e){}
   if (!ov && typeof window !== 'undefined' && window.__EMBEDDED_PLAYERS__ && typeof window.__EMBEDDED_PLAYERS__ === 'object') ov = window.__EMBEDDED_PLAYERS__;
-  _rankOvCache = (ov && ov.players && ov.players.length) ? ov : null;
+  var hasData = ov && ((ov.players && ov.players.length) || (ov.additionals && ov.additionals.length));
+  _rankOvCache = hasData ? ov : null;
   return _rankOvCache;
 }
 // JS para embeber el ranking en el export (igual criterio que noticias / tz).
@@ -7496,49 +7518,77 @@ function _playerTieneDatos(p) {
   } catch(e){}
   return false;
 }
+// Busca un jugador (del ranking o adicional) por fide_id.
+function _findPlayerByFide(fid) {
+  fid = String(fid || '');
+  for (var i = 0; i < PLAYERS.length; i++) if (String(PLAYERS[i].fide_id) === fid) return PLAYERS[i];
+  return null;
+}
+// Mapa fide_id→id acumulado + próximo id libre (ids estables aunque cambie el ranking).
+function _idMapAndNext() {
+  var ov = _rankingOverride();
+  var idMap = (ov && ov.idMap) ? JSON.parse(JSON.stringify(ov.idMap)) : {};
+  var maxId = 0;
+  for (var i = 0; i < PLAYERS.length; i++) { var p = PLAYERS[i]; if (p.fide_id && idMap[p.fide_id] == null) idMap[p.fide_id] = p.id; if (p.id > maxId) maxId = p.id; }
+  for (var f in idMap) { if (idMap[f] > maxId) maxId = idMap[f]; }
+  return { idMap: idMap, nextId: (ov && ov.nextId && ov.nextId > maxId + 1) ? ov.nextId : maxId + 1 };
+}
+// Persiste el estado (ranking + adicionales) y refresca caches. PLAYERS ya debe estar actualizado.
+function _persistPlayers(month, monthLabel, idMap, nextId) {
+  var data = {
+    month: month || '', monthLabel: monthLabel || '',
+    players:     PLAYERS.filter(function(p){ return p.ranked !== false; }),
+    additionals: PLAYERS.filter(function(p){ return p.ranked === false; }),
+    idMap: idMap, nextId: nextId
+  };
+  try { localStorage.setItem('fide_ranking', JSON.stringify(data)); }
+  catch(e) { if (typeof lsQuotaAlert === 'function') lsQuotaAlert(); }
+  _rankOvCache = data;
+  _argFideSet = null;   // recalcular detección de argentinos (incluye adicionales con otra bandera)
+}
 // Abre el selector de archivo del botón "Actualizar ranking FIDE".
 function pickRankingFile() {
   if (_ondemand) { alert('Esto se usa desde tu carpeta de edición, no en la web publicada.'); return; }
   var inp = document.getElementById('ranking-file-input');
   if (inp) { inp.value = ''; inp.click(); }
 }
-// Parsea el listado FIDE (ancho fijo). Devuelve { month, monthLabel, active:[{fide_id,name,title,elo,born}] }.
-function _parseFideTable(text) {
+// Parsea el listado FIDE (ancho fijo). active = ranking ARG activo; extras = datos de los fide_ids
+// pedidos (adicionales) SIN importar federación/actividad/elo, para refrescarlos cada mes.
+function _parseFideTable(text, extraIds) {
   var lines = String(text || '').split(/\r?\n/);
   var header = lines[0] || '';
   var month = '', monthLabel = '';
   var hm = header.match(/\b([A-Z]{3})(\d{2})\b/);   // la columna de rating se llama p.ej. "JUN26"
   if (hm && _MONTH_ABBR[hm[1]]) { month = '20' + hm[2] + '-' + _MONTH_ABBR[hm[1]][0]; monthLabel = _MONTH_ABBR[hm[1]][1] + ' 20' + hm[2]; }
-  var active = [];
+  var active = [], extras = {}, hasExtra = extraIds && typeof extraIds === 'object';
   for (var i = 1; i < lines.length; i++) {
     var ln = lines[i];
     if (!ln || ln.length < 119) continue;
-    if (ln.substr(76, 4).replace(/\s+/g, '') !== 'ARG') continue;                 // solo federación ARG
-    var flag = ln.length > 132 ? ln.substring(132).replace(/\s+/g, '') : '';
-    if (flag.indexOf('i') >= 0) continue;                                          // inactivos: i, wi
-    var elo = parseInt(ln.substr(113, 6), 10);
-    if (!(elo >= _FIDE_MIN_ELO)) continue;                                         // elo ≥ 1700
     var fide_id = ln.substr(0, 15).replace(/\s+/g, '');
     if (!fide_id) continue;
+    var fed   = ln.substr(76, 4).replace(/\s+/g, '');
+    var sex   = ln.substr(80, 4).trim();                                          // M / F (solapa Femeninos)
     var title = ln.substr(84, 5).trim() || ln.substr(89, 5).trim();               // Tit, o WTit (mujeres)
-    var born = parseInt(ln.substr(126, 6), 10) || 0;
-    var sex = ln.substr(80, 4).trim();                                            // M / F (para la solapa Femeninos)
-    active.push({ fide_id: fide_id, name: ln.substr(15, 61).trim(), title: title, elo: elo, born: born, sex: sex });
+    var elo   = parseInt(ln.substr(113, 6), 10) || 0;
+    var born  = parseInt(ln.substr(126, 6), 10) || 0;
+    var name  = ln.substr(15, 61).trim();
+    var flag  = ln.length > 132 ? ln.substring(132).replace(/\s+/g, '') : '';
+    // Adicionales: capturar SIEMPRE (cualquier federación / actividad / elo) para refrescarlos.
+    if (hasExtra && extraIds[fide_id]) extras[fide_id] = { name: name, fed: fed, title: title, elo: elo, sex: sex, born: born };
+    // Ranking activo: ARG + activo (sin 'i') + elo ≥ mínimo.
+    if (fed !== 'ARG') continue;
+    if (flag.indexOf('i') >= 0) continue;
+    if (!(elo >= _FIDE_MIN_ELO)) continue;
+    active.push({ fide_id: fide_id, name: name, title: title, elo: elo, born: born, sex: sex });
   }
-  return { month: month, monthLabel: monthLabel, active: active };
+  return { month: month, monthLabel: monthLabel, active: active, extras: extras };
 }
-// Construye la nueva lista preservando ids por fide_id. Devuelve el override + métricas para el resumen.
+// Construye ranking nuevo (preservando ids) + conserva/refresca adicionales desde la tabla.
 function _buildRankingFromActive(parsed) {
-  var cur = PLAYERS, ov = _rankingOverride();
-  var idMap = (ov && ov.idMap) ? JSON.parse(JSON.stringify(ov.idMap)) : {};
-  var byFid = {}, maxId = 0;
-  for (var i = 0; i < cur.length; i++) {
-    var p = cur[i];
-    if (p.fide_id) { byFid[String(p.fide_id)] = p; if (idMap[p.fide_id] == null) idMap[p.fide_id] = p.id; }
-    if (p.id > maxId) maxId = p.id;
-  }
-  for (var f in idMap) { if (idMap[f] > maxId) maxId = idMap[f]; }
-  var nextId = (ov && ov.nextId && ov.nextId > maxId + 1) ? ov.nextId : maxId + 1;
+  var cur = PLAYERS;
+  var im = _idMapAndNext(), idMap = im.idMap, nextId = im.nextId;
+  var byFid = {};
+  for (var i = 0; i < cur.length; i++) { var cp = cur[i]; if (cp.fide_id) byFid[String(cp.fide_id)] = cp; }
 
   var seen = {}, players = [], nuevos = 0;
   for (var j = 0; j < parsed.active.length; j++) {
@@ -7548,19 +7598,31 @@ function _buildRankingFromActive(parsed) {
     var id = idMap[a.fide_id];
     if (id == null) { id = nextId++; idMap[a.fide_id] = id; }
     var old = byFid[a.fide_id], name, province, peak, born;
-    if (old) { name = old.name; province = old.province || ''; peak = Math.max(old.peak || old.elo || 0, a.elo); born = a.born || old.born || 0; }
+    if (old) { name = old.name; province = old.province || ''; peak = Math.max(old.peak || old.elo || 0, a.elo); born = a.born || old.born || 0; if (old.ranked === false) peak = Math.max(old.peak || 0, a.elo); }
     else { name = (typeof pgnNameToNatural === 'function') ? pgnNameToNatural(a.name) : a.name; province = ''; peak = a.elo; born = a.born || 0; nuevos++; }
-    players.push({ id: id, fide_id: a.fide_id, name: name, title: a.title, elo: a.elo, province: province, born: born, female: (a.sex === 'F'), wins: 0, draws: 0, losses: 0, peak: peak, results: [] });
+    players.push({ id: id, fide_id: a.fide_id, name: name, title: a.title, elo: a.elo, province: province, born: born, fed: 'ARG', female: (a.sex === 'F'), ranked: true, wins: 0, draws: 0, losses: 0, peak: peak, results: [] });
   }
   players.sort(function(x, y) { return y.elo - x.elo; });
+
+  // Adicionales: conservar y refrescar por fide_id (si ahora entró al ranking activo, no duplicar).
+  var additionals = [];
+  cur.forEach(function(p) {
+    if (p.ranked !== false || seen[p.fide_id]) return;
+    var ex = parsed.extras && parsed.extras[p.fide_id];
+    var np = { id: p.id, fide_id: p.fide_id, name: p.name, title: p.title || '', elo: p.elo || 0, province: p.province || '', born: p.born || 0, fed: p.fed || '', female: !!p.female, ranked: false, wins: 0, draws: 0, losses: 0, peak: p.peak || p.elo || 0, results: [] };
+    if (ex) { np.title = ex.title || np.title; np.elo = ex.elo || np.elo; np.fed = ex.fed || np.fed; np.female = (ex.sex === 'F'); np.born = ex.born || np.born; np.peak = Math.max(np.peak, ex.elo || 0); }
+    additionals.push(np);
+  });
+  additionals.sort(function(x, y) { return (y.elo || 0) - (x.elo || 0); });
 
   var salen = [], salenConDatos = [];
   for (var k = 0; k < cur.length; k++) {
     var c = cur[k];
+    if (c.ranked === false) continue;
     if (c.fide_id && !seen[c.fide_id]) { salen.push(c); if (_playerTieneDatos(c)) salenConDatos.push(c); }
   }
-  return { month: parsed.month, monthLabel: parsed.monthLabel, players: players, idMap: idMap, nextId: nextId,
-           _nuevos: nuevos, _salen: salen, _salenConDatos: salenConDatos };
+  return { month: parsed.month, monthLabel: parsed.monthLabel, players: players, additionals: additionals, idMap: idMap, nextId: nextId,
+           _nuevos: nuevos, _salen: salen, _salenConDatos: salenConDatos, _adic: additionals.length };
 }
 // onchange del input de archivo: lee, parsea, muestra resumen y (si confirma) aplica.
 function updateRankingFromFile(input) {
@@ -7569,13 +7631,16 @@ function updateRankingFromFile(input) {
   var reader = new FileReader();
   reader.onload = function() {
     try {
-      var parsed = _parseFideTable(reader.result);
-      if (!parsed.active.length) { alert('No se encontraron jugadores ARG con elo ≥ 1700 en ese archivo.\n\n¿Seguro que es el listado FIDE standard (standard_rating_list.txt)?'); return; }
+      var extraIds = {};
+      PLAYERS.forEach(function(p){ if (p.ranked === false && p.fide_id) extraIds[p.fide_id] = true; });
+      var parsed = _parseFideTable(reader.result, extraIds);
+      if (!parsed.active.length) { alert('No se encontraron jugadores ARG con elo ≥ ' + _FIDE_MIN_ELO + ' en ese archivo.\n\n¿Seguro que es el listado FIDE standard (standard_rating_list.txt)?'); return; }
       var built = _buildRankingFromActive(parsed);
       var msg = '📋 Tabla detectada: ' + (built.monthLabel || '(mes no reconocido)') + '\n\n'
-        + 'Jugadores activos (ARG · activos · elo ≥ 1700): ' + built.players.length + '\n'
+        + 'Jugadores activos (ARG · activos · elo ≥ ' + _FIDE_MIN_ELO + '): ' + built.players.length + '\n'
         + '  • Nuevos respecto a la lista actual: ' + built._nuevos + '\n'
-        + '  • Salen del ranking (bajaron de 1700 o quedaron inactivos): ' + built._salen.length + '\n';
+        + '  • Salen del ranking (bajaron de ' + _FIDE_MIN_ELO + ' o quedaron inactivos): ' + built._salen.length + '\n';
+      if (built._adic) msg += '  • Adicionales conservados (elo/título/federación actualizados): ' + built._adic + '\n';
       if (built._salenConDatos.length) {
         msg += '\n⚠️ ' + built._salenConDatos.length + ' de los que salen tienen foto/partidas/favorito cargados.\n'
             +  'Sus datos NO se borran: quedan guardados y reaparecen si vuelven a calificar.\n';
@@ -7584,7 +7649,7 @@ function updateRankingFromFile(input) {
       if (!confirm(msg)) return;
       _applyRanking(built);
       alert('✅ Ranking actualizado a ' + (built.monthLabel || 'la tabla nueva') + '.\n\n'
-        + built.players.length + ' jugadores activos.\n\n'
+        + built.players.length + ' jugadores activos' + (built._adic ? ' + ' + built._adic + ' adicionales' : '') + '.\n\n'
         + 'Acordate de usar "Guardar datos en mi carpeta" para que quede guardado en el archivo.');
     } catch(e) {
       alert('No se pudo procesar la tabla: ' + (e && e.message ? e.message : e));
@@ -7593,19 +7658,58 @@ function updateRankingFromFile(input) {
   reader.onerror = function() { alert('No se pudo leer el archivo.'); };
   reader.readAsText(file);
 }
-// Aplica y persiste el ranking nuevo (localStorage + memoria), y re-rendea la lista.
+// Aplica y persiste (ranking + adicionales) y re-rendea la lista.
 function _applyRanking(built) {
-  var ov = { month: built.month, monthLabel: built.monthLabel, players: built.players, idMap: built.idMap, nextId: built.nextId };
-  try { localStorage.setItem('fide_ranking', JSON.stringify(ov)); }
-  catch(e) { if (typeof lsQuotaAlert === 'function') lsQuotaAlert(); }
-  _rankOvCache = ov;
-  PLAYERS = built.players;
+  PLAYERS = built.players.concat(built.additionals || []);
   if (built.month) { _selectedMonth = built.month; if (built.monthLabel) MONTH_LABELS[built.month] = built.monthLabel; }
+  _persistPlayers(built.month, built.monthLabel, built.idMap, built.nextId);
   _filterMode = 'todos';
   _currentPage = 1;
   var chips = document.querySelectorAll('#tab-jugadores .chip');
   for (var i = 0; i < chips.length; i++) chips[i].classList.toggle('active', i === 0);
   _currentList = getFilteredPlayers();
+  if (typeof renderPlayers === 'function') renderPlayers(_currentList, 'list-jugadores');
+  if (typeof updateSubtitle === 'function') updateSubtitle();
+}
+// ── Jugadores ADICIONALES (fuera del ranking activo): agregar a mano por FIDE id ──
+function promptAddAdditional() {
+  if (_ondemand) { alert('Esto se usa desde tu carpeta de edición, no en la web publicada.'); return; }
+  var fid = prompt('FIDE id del jugador a agregar (ej: 110973 para Alan Pichot):');
+  if (fid == null) return;
+  fid = String(fid).replace(/\D/g, '');
+  if (!fid) { alert('Poné un FIDE id válido (solo números).'); return; }
+  var ex = _findPlayerByFide(fid);
+  if (ex) { alert('Ese jugador ya está en la app:\n\n' + ex.name + (ex.ranked === false ? '  (en Adicionales)' : '  (en el ranking activo)')); return; }
+  var name = prompt('Nombre del jugador (ej: Alan Pichot):');
+  if (name == null || !name.trim()) return;
+  var fed = prompt('Federación (3 letras, ej: ESP). Si la dejás vacía, se completa al subir la tabla del mes:', '');
+  addAdditionalPlayer(fid, name.trim(), (fed || '').trim().toUpperCase());
+  alert('✅ ' + name.trim() + ' agregado a "Adicionales".\n\nEl elo, el título y la federación se completan (y se actualizan cada mes) cuando subas la tabla FIDE.\n\nAcordate de "Guardar datos en mi carpeta".');
+}
+function addAdditionalPlayer(fid, name, fed) {
+  var im = _idMapAndNext();
+  var id = im.idMap[fid];
+  if (id == null) { id = im.nextId++; im.idMap[fid] = id; }
+  PLAYERS = PLAYERS.filter(function(p){ return p.id !== id; });
+  PLAYERS.push({ id: id, fide_id: String(fid), name: name, title: '', elo: 0, province: '', born: 0, fed: fed || '', female: false, ranked: false, wins: 0, draws: 0, losses: 0, peak: 0, results: [] });
+  var ov = _rankingOverride();
+  _persistPlayers(ov ? ov.month : _selectedMonth, ov ? ov.monthLabel : '', im.idMap, im.nextId);
+  _filterMode = 'adicionales'; _currentPage = 1;
+  var chips = document.querySelectorAll('#tab-jugadores .chip');
+  for (var i = 0; i < chips.length; i++) chips[i].classList.toggle('active', chips[i].id === 'chip-adicionales');
+  _currentList = getFilteredPlayers();
+  if (typeof renderPlayers === 'function') renderPlayers(_currentList, 'list-jugadores');
+  if (typeof updateSubtitle === 'function') updateSubtitle();
+}
+function removeAdditional(id) {
+  var p = null; for (var i = 0; i < PLAYERS.length; i++) if (PLAYERS[i].id === id) { p = PLAYERS[i]; break; }
+  if (!p || p.ranked !== false) return;
+  if (!confirm('¿Quitar a ' + p.name + ' de Adicionales?\n\nNo borra sus partidas ni su foto; solo lo saca de la lista.')) return;
+  PLAYERS = PLAYERS.filter(function(x){ return x.id !== id; });
+  var im = _idMapAndNext(), ov = _rankingOverride();
+  _persistPlayers(ov ? ov.month : _selectedMonth, ov ? ov.monthLabel : '', im.idMap, im.nextId);
+  var _ovl = document.getElementById('overlay'); if (_ovl) _ovl.classList.remove('open');
+  _filterMode = 'adicionales'; _currentList = getFilteredPlayers();
   if (typeof renderPlayers === 'function') renderPlayers(_currentList, 'list-jugadores');
   if (typeof updateSubtitle === 'function') updateSubtitle();
 }
