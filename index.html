@@ -7491,6 +7491,8 @@ function getPlayerRanking(player) {
    estadísticas y torneos viven en OTRAS estructuras y no se tocan: solo cambia el ranking.
 ═══════════════════════════════════════════════════════ */
 var _FIDE_MIN_ELO = 1700;
+var _ADIC_KEEP_ELO = 2000;     // al salir del ranking, se conserva como adicional si elo ≥ esto…
+var _ADIC_KEEP_GAMES = 30;     // …o si tiene al menos esta cantidad de partidas en el sitio.
 var _MONTH_ABBR = { JAN:['01','Enero'], FEB:['02','Febrero'], MAR:['03','Marzo'], APR:['04','Abril'], MAY:['05','Mayo'], JUN:['06','Junio'], JUL:['07','Julio'], AUG:['08','Agosto'], SEP:['09','Septiembre'], OCT:['10','Octubre'], NOV:['11','Noviembre'], DEC:['12','Diciembre'] };
 var _rankOvCache;
 // Datos de jugadores guardados: localStorage (autor) o __EMBEDDED_PLAYERS__ (archivo publicado). Memoizado.
@@ -7517,6 +7519,22 @@ function _playerTieneDatos(p) {
     if (typeof favs !== 'undefined' && favs && favs.indexOf(p.id) >= 0) return true;
   } catch(e){}
   return false;
+}
+// Cuenta, en UNA pasada, cuántas partidas del sitio tiene cada jugador (por fide_id de los headers).
+// Sirve para decidir si conservar a alguien que sale del ranking. (No memoizado: se recalcula por update.)
+function _siteGamesByFide() {
+  var cnt = {};
+  try {
+    var all = (typeof _collectAllTournaments === 'function') ? _collectAllTournaments() : [];
+    all.forEach(function(t) {
+      (t.games || []).forEach(function(pgn) {
+        var h = parsePgnHeaders(pgn);
+        if (h.WhiteFideId) cnt[h.WhiteFideId] = (cnt[h.WhiteFideId] || 0) + 1;
+        if (h.BlackFideId) cnt[h.BlackFideId] = (cnt[h.BlackFideId] || 0) + 1;
+      });
+    });
+  } catch(e){}
+  return cnt;
 }
 // Busca un jugador (del ranking o adicional) por fide_id.
 function _findPlayerByFide(fid) {
@@ -7604,11 +7622,8 @@ function _buildRankingFromActive(parsed) {
   }
   players.sort(function(x, y) { return y.elo - x.elo; });
 
-  // Adicionales: conservar y refrescar por fide_id (si ahora entró al ranking activo, no duplicar).
-  var additionals = [];
-  cur.forEach(function(p) {
-    if (p.ranked !== false || seen[p.fide_id]) return;
-    var ex = parsed.extras && parsed.extras[p.fide_id];
+  // Crea un objeto adicional a partir del jugador actual + (si está) sus datos frescos de la tabla.
+  function _mkAdic(p, ex) {
     var np = { id: p.id, fide_id: p.fide_id, name: p.name, title: p.title || '', elo: p.elo || 0, province: p.province || '', born: p.born || 0, fed: p.fed || '', female: !!p.female, inactive: !!p.inactive, ranked: false, wins: 0, draws: 0, losses: 0, peak: p.peak || p.elo || 0, results: [] };
     if (ex) {
       // El nombre lo tomamos EXACTO del listado FIDE (por fide_id) para evitar confusiones.
@@ -7617,18 +7632,35 @@ function _buildRankingFromActive(parsed) {
       np.female = (ex.sex === 'F'); np.born = ex.born || np.born; np.inactive = !!ex.inactive;
       np.peak = Math.max(np.peak, ex.elo || 0);
     }
-    additionals.push(np);
+    if (!np.fed) np.fed = 'ARG';
+    return np;
+  }
+
+  // Adicionales ya existentes: conservar y refrescar por fide_id (si ahora entró al ranking, no duplicar).
+  var additionals = [];
+  cur.forEach(function(p) {
+    if (p.ranked !== false || seen[p.fide_id]) return;
+    additionals.push(_mkAdic(p, parsed.extras && parsed.extras[p.fide_id]));
+  });
+
+  // Los que SALEN del ranking activo (inactivos, bajaron de mínimo, o cambiaron de federación):
+  // se CONSERVAN como adicional si valen la pena (elo alto, o partidas en el sitio, o ya curados);
+  // si no (ocasional de poco elo sin partidas), se quitan. Quitar NO borra datos ni el id.
+  var siteGames = _siteGamesByFide();
+  var salen = 0, pasanAdic = 0, sequitan = 0;
+  cur.forEach(function(c) {
+    if (c.ranked === false || !c.fide_id || seen[c.fide_id]) return;
+    salen++;
+    var ex2 = parsed.extras && parsed.extras[c.fide_id];
+    var eloAct = (ex2 && ex2.elo) ? ex2.elo : (c.elo || 0);
+    var keep = (eloAct >= _ADIC_KEEP_ELO) || ((siteGames[c.fide_id] || 0) >= _ADIC_KEEP_GAMES) || _playerTieneDatos(c);
+    if (keep) { additionals.push(_mkAdic(c, ex2)); pasanAdic++; }
+    else sequitan++;
   });
   additionals.sort(function(x, y) { return (y.elo || 0) - (x.elo || 0); });
 
-  var salen = [], salenConDatos = [];
-  for (var k = 0; k < cur.length; k++) {
-    var c = cur[k];
-    if (c.ranked === false) continue;
-    if (c.fide_id && !seen[c.fide_id]) { salen.push(c); if (_playerTieneDatos(c)) salenConDatos.push(c); }
-  }
   return { month: parsed.month, monthLabel: parsed.monthLabel, players: players, additionals: additionals, idMap: idMap, nextId: nextId,
-           _nuevos: nuevos, _salen: salen, _salenConDatos: salenConDatos, _adic: additionals.length };
+           _nuevos: nuevos, _salen: salen, _pasanAdic: pasanAdic, _sequitan: sequitan, _adic: additionals.length };
 }
 // onchange del input de archivo: lee, parsea, muestra resumen y (si confirma) aplica.
 function updateRankingFromFile(input) {
@@ -7637,21 +7669,20 @@ function updateRankingFromFile(input) {
   var reader = new FileReader();
   reader.onload = function() {
     try {
+      // Pedimos datos frescos de TODOS los jugadores actuales (para refrescar a los que salen del ranking).
       var extraIds = {};
-      PLAYERS.forEach(function(p){ if (p.ranked === false && p.fide_id) extraIds[p.fide_id] = true; });
+      PLAYERS.forEach(function(p){ if (p.fide_id) extraIds[p.fide_id] = true; });
       var parsed = _parseFideTable(reader.result, extraIds);
       if (!parsed.active.length) { alert('No se encontraron jugadores ARG con elo ≥ ' + _FIDE_MIN_ELO + ' en ese archivo.\n\n¿Seguro que es el listado FIDE standard (standard_rating_list.txt)?'); return; }
       var built = _buildRankingFromActive(parsed);
       var msg = '📋 Tabla detectada: ' + (built.monthLabel || '(mes no reconocido)') + '\n\n'
-        + 'Jugadores activos (ARG · activos · elo ≥ ' + _FIDE_MIN_ELO + '): ' + built.players.length + '\n'
-        + '  • Nuevos respecto a la lista actual: ' + built._nuevos + '\n'
-        + '  • Salen del ranking (bajaron de ' + _FIDE_MIN_ELO + ' o quedaron inactivos): ' + built._salen.length + '\n';
-      if (built._adic) msg += '  • Adicionales conservados (elo/título/federación actualizados): ' + built._adic + '\n';
-      if (built._salenConDatos.length) {
-        msg += '\n⚠️ ' + built._salenConDatos.length + ' de los que salen tienen foto/partidas/favorito cargados.\n'
-            +  'Sus datos NO se borran: quedan guardados y reaparecen si vuelven a calificar.\n';
-      }
-      msg += '\nNO se tocan partidas, estadísticas ni torneos. Solo se actualiza el ranking y las posiciones.\n\n¿Aplicar la actualización?';
+        + 'Ranking activo (ARG · activos · elo ≥ ' + _FIDE_MIN_ELO + '): ' + built.players.length + '\n'
+        + '  • Nuevos que entran: ' + built._nuevos + '\n'
+        + '  • Salen del ranking: ' + built._salen + '  →  ' + built._pasanAdic + ' pasan a Adicionales, ' + built._sequitan + ' se quitan\n'
+        + '\nAdicionales en total: ' + built._adic + ' (elo/título/federación actualizados de la tabla)\n'
+        + '\nLos que se quitan son ocasionales (elo < ' + _ADIC_KEEP_ELO + ' y menos de ' + _ADIC_KEEP_GAMES + ' partidas en el sitio).\n'
+        + 'No se borran sus partidas ni datos: la app recuerda su id y reaparecen si vuelven a calificar.\n';
+      msg += '\nNO se tocan partidas, estadísticas ni torneos.\n\n¿Aplicar la actualización?';
       if (!confirm(msg)) return;
       _applyRanking(built);
       alert('✅ Ranking actualizado a ' + (built.monthLabel || 'la tabla nueva') + '.\n\n'
