@@ -6009,6 +6009,27 @@ function _finalPosKey(pgn) {
   return r;
 }
 
+// PRIMER apellido normalizado de un nombre PGN, que es la parte MÁS ESTABLE del nombre: las bases
+// truncan o abrevian el nombre de pila ("Flores, Diego" vs "Flores, Di") Y a veces sueltan el
+// segundo apellido ("Ynojosa Aponte, Felix Jose" vs "Ynojosa, F."). Eso rompía la agrupación de
+// duplicados (caían en grupos distintos y no se comparaban). "Apellido, Nombre" → primer token de
+// lo de antes de la coma; "Nombre Apellido" → último token. Tomamos UN solo token a propósito:
+// agrupar de más es inocuo (la fusión la decide la huella de jugadas), pero perder el match no.
+function _surnameKey(name) {
+  var s = String(name || '');
+  var sur = s.indexOf(',') >= 0
+    ? (normStr(s.split(',')[0]).split(' ')[0] || '')   // primer apellido (antes de la coma)
+    : (normStr(s).split(' ').pop() || '');             // formato "Nombre Apellido" → último token
+  return sur;
+}
+// Clave de la dupla de jugadores para agrupar duplicados. Por apellido (no nombre completo): así
+// las variantes/truncamientos del nombre de pila quedan en el mismo grupo. Agrupar de más es
+// inocuo: la fusión real la decide la huella de JUGADAS (prefijo / posición final), que nunca
+// junta partidas distintas. Conserva el color (blancas|negras) para no mezclar ida y vuelta.
+function _pairKey(white, black) {
+  return _surnameKey(white) + '|' + _surnameKey(black);
+}
+
 // Deduplica una lista de partidas detectando el MISMO juego aunque una venga truncada o con
 // jugadas de más. Agrupa por jugadores y, dentro de cada grupo, si las jugadas de una son
 // PREFIJO de las de otra (más larga), descarta la corta: una secuencia de jugadas que es
@@ -6024,7 +6045,7 @@ function dedupGamesByMoves(items, getPgn) {
     var pgn = getPgn(it);
     var h = parsePgnHeaders(pgn);
     var body = _moveBody(pgn);
-    var pk = normStr(h.White || '') + '|' + normStr(h.Black || '');
+    var pk = _pairKey(h.White, h.Black);
     if (body.length < 4) {
       var ek = pk + '#' + (h.Date || '') + '#' + (h.Round || '') + '#' + (h.Event || '');
       if (emptySeen[ek]) drop.push(it); else emptySeen[ek] = true;
@@ -6076,7 +6097,7 @@ function newDedupIndex() { return { byPair: Object.create(null), empty: Object.c
 // Clave de una partida en el índice: {pk: jugadores, body: jugadas, ek: clave sin-jugadas}.
 function _dedupKey(pgn) {
   var h = parsePgnHeaders(pgn);
-  var pk = normStr(h.White || '') + '|' + normStr(h.Black || '');
+  var pk = _pairKey(h.White, h.Black);
   var body = _moveBody(pgn);
   return { pk: pk, body: body, ek: pk + '#' + (h.Date || '') + '#' + (h.Round || '') + '#' + (h.Event || '') };
 }
@@ -6801,7 +6822,7 @@ function _computeFenDedup(prefixPlan, onProgress, done) {
   var lsStored = []; try { lsStored = JSON.parse(localStorage.getItem('pgn_tournaments') || '[]'); } catch (e) {}
   var prefixDrop = (prefixPlan && prefixPlan._dropByEntry) || null;
   var pairs = Object.create(null);
-  function info(pgn) { var h = parsePgnHeaders(String(pgn).slice(0, 400)); return { pk: normStr(h.White || '') + '|' + normStr(h.Black || ''), date: (h.Date || '') }; }
+  function info(pgn) { var h = parsePgnHeaders(String(pgn).slice(0, 400)); return { pk: _pairKey(h.White, h.Black), date: (h.Date || '') }; }
   // Solo agrupamos con los HEADERS (barato). Se ignoran las partidas sin fecha (no se pueden
   // pre-filtrar) y la posición final se reproduce recién en las colisiones de fecha (abajo).
   lsStored.forEach(function(e) {
