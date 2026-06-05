@@ -5976,11 +5976,20 @@ function pgnGameMatchesPlayer(hdrs, player) {
 // de la partida: dos transcripciones del mismo juego dan el mismo texto de jugadas. Es la
 // identidad real de una partida (los headers, no) y la base de toda la detección de duplicados.
 function _moveBody(pgn) {
-  return String(pgn || '')
+  var s = String(pgn || '')
     .replace(/\[[^\]]*\]/g, ' ')                 // headers [Tag "..."]
     .replace(/\{[^}]*\}/g, ' ')                  // comentarios {…} (incluye [%clk]/[%eval])
-    .replace(/\([^)]*\)/g, ' ')                  // variantes (…)
-    .replace(/;[^\n]*/g, ' ')                    // comentarios de línea ;
+    .replace(/;[^\n]*/g, ' ');                   // comentarios de línea ;
+  // Variantes (…), que pueden estar ANIDADAS. Hay que pelar los paréntesis MÁS INTERNOS (`[^()]`
+  // = ni abre ni cierra) repetidamente hasta que no quede ninguno. Con un solo replace global no
+  // anidado, la jugada que seguía al ')' interno sobrevivía (ej. "...)Rxa8 )") y ensuciaba la
+  // huella → el MISMO juego con anotaciones daba huella distinta al limpio y NO se deduplicaba.
+  while (s.indexOf('(') >= 0) {
+    var before = s;
+    s = s.replace(/\([^()]*\)/g, ' ');
+    if (s === before) { s = s.replace(/[()]/g, ' '); break; }   // paréntesis sueltos/desbalanceados
+  }
+  return s
     .replace(/\$\d+/g, ' ')                      // NAGs $n
     .replace(/\d+\s*\.(\s*\.\.)?/g, ' ')         // números de jugada: "12." y "12..."
     .replace(/\b(1-0|0-1|1\/2-1\/2|\*)\b/g, ' ') // resultado
