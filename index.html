@@ -803,6 +803,16 @@
         <button class="chip" onclick="filterJugadores('wt',this)">Femeninos</button>
       </div>
 
+      <!-- Actualizar ranking FIDE (solo modo autor; se oculta en la web publicada) -->
+      <div id="ranking-update-wrap" style="display:none;margin-bottom:12px">
+        <input id="ranking-file-input" type="file" accept=".txt" style="display:none" onchange="updateRankingFromFile(this)">
+        <button onclick="pickRankingFile()" style="width:100%;padding:11px;background:var(--bg2);border:1px dashed var(--border);color:var(--text2);font-size:13px;font-weight:600;border-radius:11px;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:8px">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+          Actualizar ranking FIDE (subir tabla del mes)
+        </button>
+        <div style="font-size:11px;color:var(--text3);margin-top:5px;line-height:1.5">Subí el listado FIDE <i>standard_rating_list.txt</i>. Arma la lista con federación ARG, activos y elo ≥ 1700. No toca partidas, estadísticas ni torneos.</div>
+      </div>
+
       <!-- Selector de mes -->
       <div id="month-selector-wrap" style="display:none;margin-bottom:12px">
         <div style="display:flex;align-items:center;gap:8px;background:var(--bg2);border:1px solid var(--border);border-radius:11px;padding:9px 14px">
@@ -2174,6 +2184,12 @@ var PLAYERS = [
   { id:1037, fide_id:"20039131", name:"Francisco Jose Ambroa", title:"", elo:1800, province:"", born:2004, wins:0, draws:0, losses:0, peak:1800, results:[] },
   { id:1038, fide_id:"113590", name:"Gustavo Gomez", title:"", elo:1800, province:"", born:null, wins:0, draws:0, losses:0, peak:1800, results:[] },
 ];
+
+// Si el autor subió una tabla FIDE más nueva (o vino embebida en el archivo publicado),
+// reemplaza la lista base por la actualizada. La lista guardada conserva el id de cada
+// jugador atado a su fide_id, así NO se rompen fotos, favoritos ni partidas. Las partidas,
+// estadísticas y torneos viven en otras estructuras y no se tocan. Ver _rankingOverride().
+(function(){ var _ov = _rankingOverride(); if (_ov && _ov.players && _ov.players.length) PLAYERS = _ov.players; })();
 
 var TORNEOS = [
   {
@@ -4514,7 +4530,8 @@ async function exportAuthoringZip() {
     var allData = _dedupById(stored.concat(_memTournaments));
     var embeddedDataJs = 'window.__EMBEDDED_DATA__=' + JSON.stringify(allData) + ';\n'
                        + 'window.__EMBEDDED_TZ__='   + JSON.stringify(getTzConfig()) + ';\n'
-                       + 'window.__EMBEDDED_NEWS__=' + JSON.stringify(getNewsItems()) + ';';
+                       + 'window.__EMBEDDED_NEWS__=' + JSON.stringify(getNewsItems()) + ';\n'
+                       + _embeddedPlayersJs();
     try { localStorage.setItem('last_export_fp', _estadoActualFp()); } catch(e){}
 
     // index.html para EDITAR: mantiene el <script> de embedded-data.js (modo eager), saca el
@@ -4551,7 +4568,8 @@ function exportDataFile() {
     var tzObj   = getTzConfig();
     var js = 'window.__EMBEDDED_DATA__=' + JSON.stringify(allData) + ';\n'
            + 'window.__EMBEDDED_TZ__='   + JSON.stringify(tzObj)   + ';\n'
-           + 'window.__EMBEDDED_NEWS__=' + JSON.stringify(getNewsItems()) + ';';
+           + 'window.__EMBEDDED_NEWS__=' + JSON.stringify(getNewsItems()) + ';\n'
+           + _embeddedPlayersJs();
     _downloadBlob(new Blob([js], { type: 'application/javascript' }), 'embedded-data.js');
     _downloadBlob(new Blob([_collectExportPhotosJs()],
       { type: 'application/javascript' }), 'embedded-photos.js');
@@ -4583,7 +4601,8 @@ async function exportHtml() {
     // publicada muestre TUS noticias/horarios y no los de ejemplo (embedded-data.js no se publica).
     var manifestJs = 'window.__MANIFEST__=' + JSON.stringify(split.manifest).replace(/</g, '\\u003c') + ';\n'
                    + 'window.__EMBEDDED_TZ__='   + JSON.stringify(getTzConfig()) + ';\n'
-                   + 'window.__EMBEDDED_NEWS__=' + JSON.stringify(getNewsItems()).replace(/</g, '\\u003c') + ';';
+                   + 'window.__EMBEDDED_NEWS__=' + JSON.stringify(getNewsItems()).replace(/</g, '\\u003c') + ';\n'
+                   + _embeddedPlayersJs();
 
     var enc = new TextEncoder();
     function _tfn(id) { return String(id).replace(/[^a-z0-9_-]/gi, '_') + '.json'; }
@@ -5059,7 +5078,9 @@ function _estadoActualFp() {
     photoKeys = Object.keys(ph).sort().map(function(k){ return k + ':' + ((ph[k]||'').length); }).join(',');
   } catch(e){}
   var newsFp = (typeof _newsFp === 'function' && typeof getNewsItems === 'function') ? _newsFp(getNewsItems()) : '';
-  return _combinedFp(all, getTzConfig()) + '~' + _fpStr(photoKeys) + '~' + newsFp;
+  var rankFp = '';
+  try { var o = _rankingOverride(); if (o && o.players) rankFp = (o.month||'') + ':' + o.players.length + ':' + _fpStr(o.players.map(function(p){ return p.fide_id + '=' + p.elo; }).join(',')); } catch(e){}
+  return _combinedFp(all, getTzConfig()) + '~' + _fpStr(photoKeys) + '~' + newsFp + '~' + rankFp;
 }
 // ¿Hay torneos cambiados que todavía no se exportaron al archivo?
 function _hayCambiosSinExportar() {
@@ -5201,7 +5222,7 @@ pgnMergeToPlayerGames();
 
 var TITLED_TITLES = ['GM','WGM','IM','WIM','FM','WFM','CM','WCM'];
 var _filterMode = 'todos';
-var _selectedMonth = '2026-05';
+var _selectedMonth = (function(){ var o = _rankingOverride(); return (o && o.month) ? o.month : '2026-05'; })();
 
 var MONTH_LABELS = {
   '2026-05':'Mayo 2026','2026-04':'Abril 2026','2026-03':'Marzo 2026',
@@ -5210,6 +5231,8 @@ var MONTH_LABELS = {
   '2025-09':'Septiembre 2025','2025-08':'Agosto 2025','2025-07':'Julio 2025',
   '2025-06':'Junio 2025','2025-05':'Mayo 2025'
 };
+// Si hay un ranking actualizado con un mes nuevo, registrar su etiqueta (ej: '2026-06' → 'Junio 2026').
+(function(){ var o = _rankingOverride(); if (o && o.month && o.monthLabel) MONTH_LABELS[o.month] = o.monthLabel; })();
 
 function getFilteredPlayers() {
   if (_filterMode === 'titulados') {
@@ -5221,7 +5244,9 @@ function getFilteredPlayers() {
   } else if (_filterMode === 'fm') {
     return PLAYERS.filter(function(p){ return p.title === 'FM' || p.title === 'CM'; });
   } else if (_filterMode === 'wt') {
-    return PLAYERS.filter(function(p){ return p.title && p.title.charAt(0) === 'W'; });
+    // Femeninos = por SEXO (campo female, que trae la actualización FIDE). Como respaldo, para la
+    // lista vieja que aún no tiene ese dato, cae al título femenino (WGM/WIM/WFM/WCM).
+    return PLAYERS.filter(function(p){ return p.female || (p.title && p.title.charAt(0) === 'W'); });
   }
   return PLAYERS;
 }
@@ -7435,6 +7460,154 @@ function getPlayerRanking(player) {
     if (sorted[i].id === player.id) return i + 1;
   }
   return null;
+}
+
+/* ═══════════════════════════════════════════════════════
+   ACTUALIZAR RANKING FIDE (subir tabla mensual)
+   El autor sube el listado FIDE "standard_rating_list.txt" (ancho fijo) y la app
+   reconstruye la lista de jugadores ACTIVOS: federación ARG, elo ≥ 1700, excluyendo
+   inactivos (Flag con la letra "i": i / wi). Preserva el id de cada jugador atado a su
+   fide_id (idMap acumulado), así NO se rompen fotos, favoritos ni partidas. Las partidas,
+   estadísticas y torneos viven en OTRAS estructuras y no se tocan: solo cambia el ranking.
+═══════════════════════════════════════════════════════ */
+var _FIDE_MIN_ELO = 1700;
+var _MONTH_ABBR = { JAN:['01','Enero'], FEB:['02','Febrero'], MAR:['03','Marzo'], APR:['04','Abril'], MAY:['05','Mayo'], JUN:['06','Junio'], JUL:['07','Julio'], AUG:['08','Agosto'], SEP:['09','Septiembre'], OCT:['10','Octubre'], NOV:['11','Noviembre'], DEC:['12','Diciembre'] };
+var _rankOvCache;
+// Override de ranking guardado: localStorage (autor) o __EMBEDDED_PLAYERS__ (archivo publicado). Memoizado.
+function _rankingOverride() {
+  if (typeof _rankOvCache !== 'undefined') return _rankOvCache;
+  var ov = null;
+  try { var raw = localStorage.getItem('fide_ranking'); if (raw) ov = JSON.parse(raw); } catch(e){}
+  if (!ov && typeof window !== 'undefined' && window.__EMBEDDED_PLAYERS__ && typeof window.__EMBEDDED_PLAYERS__ === 'object') ov = window.__EMBEDDED_PLAYERS__;
+  _rankOvCache = (ov && ov.players && ov.players.length) ? ov : null;
+  return _rankOvCache;
+}
+// JS para embeber el ranking en el export (igual criterio que noticias / tz).
+function _embeddedPlayersJs() {
+  var o = _rankingOverride();
+  return 'window.__EMBEDDED_PLAYERS__=' + JSON.stringify(o || null).replace(/</g, '\\u003c') + ';';
+}
+// ¿El jugador tiene datos propios cargados (foto / partidas curadas / favorito)? Para avisar si "sale".
+function _playerTieneDatos(p) {
+  try {
+    if (typeof PLAYER_GAMES === 'object' && PLAYER_GAMES && PLAYER_GAMES[p.id]) return true;
+    if (typeof PLAYER_PHOTOS === 'object' && PLAYER_PHOTOS && PLAYER_PHOTOS[p.id]) return true;
+    if (typeof favs !== 'undefined' && favs && favs.indexOf(p.id) >= 0) return true;
+  } catch(e){}
+  return false;
+}
+// Abre el selector de archivo del botón "Actualizar ranking FIDE".
+function pickRankingFile() {
+  if (_ondemand) { alert('Esto se usa desde tu carpeta de edición, no en la web publicada.'); return; }
+  var inp = document.getElementById('ranking-file-input');
+  if (inp) { inp.value = ''; inp.click(); }
+}
+// Parsea el listado FIDE (ancho fijo). Devuelve { month, monthLabel, active:[{fide_id,name,title,elo,born}] }.
+function _parseFideTable(text) {
+  var lines = String(text || '').split(/\r?\n/);
+  var header = lines[0] || '';
+  var month = '', monthLabel = '';
+  var hm = header.match(/\b([A-Z]{3})(\d{2})\b/);   // la columna de rating se llama p.ej. "JUN26"
+  if (hm && _MONTH_ABBR[hm[1]]) { month = '20' + hm[2] + '-' + _MONTH_ABBR[hm[1]][0]; monthLabel = _MONTH_ABBR[hm[1]][1] + ' 20' + hm[2]; }
+  var active = [];
+  for (var i = 1; i < lines.length; i++) {
+    var ln = lines[i];
+    if (!ln || ln.length < 119) continue;
+    if (ln.substr(76, 4).replace(/\s+/g, '') !== 'ARG') continue;                 // solo federación ARG
+    var flag = ln.length > 132 ? ln.substring(132).replace(/\s+/g, '') : '';
+    if (flag.indexOf('i') >= 0) continue;                                          // inactivos: i, wi
+    var elo = parseInt(ln.substr(113, 6), 10);
+    if (!(elo >= _FIDE_MIN_ELO)) continue;                                         // elo ≥ 1700
+    var fide_id = ln.substr(0, 15).replace(/\s+/g, '');
+    if (!fide_id) continue;
+    var title = ln.substr(84, 5).trim() || ln.substr(89, 5).trim();               // Tit, o WTit (mujeres)
+    var born = parseInt(ln.substr(126, 6), 10) || 0;
+    var sex = ln.substr(80, 4).trim();                                            // M / F (para la solapa Femeninos)
+    active.push({ fide_id: fide_id, name: ln.substr(15, 61).trim(), title: title, elo: elo, born: born, sex: sex });
+  }
+  return { month: month, monthLabel: monthLabel, active: active };
+}
+// Construye la nueva lista preservando ids por fide_id. Devuelve el override + métricas para el resumen.
+function _buildRankingFromActive(parsed) {
+  var cur = PLAYERS, ov = _rankingOverride();
+  var idMap = (ov && ov.idMap) ? JSON.parse(JSON.stringify(ov.idMap)) : {};
+  var byFid = {}, maxId = 0;
+  for (var i = 0; i < cur.length; i++) {
+    var p = cur[i];
+    if (p.fide_id) { byFid[String(p.fide_id)] = p; if (idMap[p.fide_id] == null) idMap[p.fide_id] = p.id; }
+    if (p.id > maxId) maxId = p.id;
+  }
+  for (var f in idMap) { if (idMap[f] > maxId) maxId = idMap[f]; }
+  var nextId = (ov && ov.nextId && ov.nextId > maxId + 1) ? ov.nextId : maxId + 1;
+
+  var seen = {}, players = [], nuevos = 0;
+  for (var j = 0; j < parsed.active.length; j++) {
+    var a = parsed.active[j];
+    if (seen[a.fide_id]) continue;       // por si el archivo trae duplicados
+    seen[a.fide_id] = true;
+    var id = idMap[a.fide_id];
+    if (id == null) { id = nextId++; idMap[a.fide_id] = id; }
+    var old = byFid[a.fide_id], name, province, peak, born;
+    if (old) { name = old.name; province = old.province || ''; peak = Math.max(old.peak || old.elo || 0, a.elo); born = a.born || old.born || 0; }
+    else { name = (typeof pgnNameToNatural === 'function') ? pgnNameToNatural(a.name) : a.name; province = ''; peak = a.elo; born = a.born || 0; nuevos++; }
+    players.push({ id: id, fide_id: a.fide_id, name: name, title: a.title, elo: a.elo, province: province, born: born, female: (a.sex === 'F'), wins: 0, draws: 0, losses: 0, peak: peak, results: [] });
+  }
+  players.sort(function(x, y) { return y.elo - x.elo; });
+
+  var salen = [], salenConDatos = [];
+  for (var k = 0; k < cur.length; k++) {
+    var c = cur[k];
+    if (c.fide_id && !seen[c.fide_id]) { salen.push(c); if (_playerTieneDatos(c)) salenConDatos.push(c); }
+  }
+  return { month: parsed.month, monthLabel: parsed.monthLabel, players: players, idMap: idMap, nextId: nextId,
+           _nuevos: nuevos, _salen: salen, _salenConDatos: salenConDatos };
+}
+// onchange del input de archivo: lee, parsea, muestra resumen y (si confirma) aplica.
+function updateRankingFromFile(input) {
+  var file = input && input.files && input.files[0];
+  if (!file) return;
+  var reader = new FileReader();
+  reader.onload = function() {
+    try {
+      var parsed = _parseFideTable(reader.result);
+      if (!parsed.active.length) { alert('No se encontraron jugadores ARG con elo ≥ 1700 en ese archivo.\n\n¿Seguro que es el listado FIDE standard (standard_rating_list.txt)?'); return; }
+      var built = _buildRankingFromActive(parsed);
+      var msg = '📋 Tabla detectada: ' + (built.monthLabel || '(mes no reconocido)') + '\n\n'
+        + 'Jugadores activos (ARG · activos · elo ≥ 1700): ' + built.players.length + '\n'
+        + '  • Nuevos respecto a la lista actual: ' + built._nuevos + '\n'
+        + '  • Salen del ranking (bajaron de 1700 o quedaron inactivos): ' + built._salen.length + '\n';
+      if (built._salenConDatos.length) {
+        msg += '\n⚠️ ' + built._salenConDatos.length + ' de los que salen tienen foto/partidas/favorito cargados.\n'
+            +  'Sus datos NO se borran: quedan guardados y reaparecen si vuelven a calificar.\n';
+      }
+      msg += '\nNO se tocan partidas, estadísticas ni torneos. Solo se actualiza el ranking y las posiciones.\n\n¿Aplicar la actualización?';
+      if (!confirm(msg)) return;
+      _applyRanking(built);
+      alert('✅ Ranking actualizado a ' + (built.monthLabel || 'la tabla nueva') + '.\n\n'
+        + built.players.length + ' jugadores activos.\n\n'
+        + 'Acordate de usar "Guardar datos en mi carpeta" para que quede guardado en el archivo.');
+    } catch(e) {
+      alert('No se pudo procesar la tabla: ' + (e && e.message ? e.message : e));
+    }
+  };
+  reader.onerror = function() { alert('No se pudo leer el archivo.'); };
+  reader.readAsText(file);
+}
+// Aplica y persiste el ranking nuevo (localStorage + memoria), y re-rendea la lista.
+function _applyRanking(built) {
+  var ov = { month: built.month, monthLabel: built.monthLabel, players: built.players, idMap: built.idMap, nextId: built.nextId };
+  try { localStorage.setItem('fide_ranking', JSON.stringify(ov)); }
+  catch(e) { if (typeof lsQuotaAlert === 'function') lsQuotaAlert(); }
+  _rankOvCache = ov;
+  PLAYERS = built.players;
+  if (built.month) { _selectedMonth = built.month; if (built.monthLabel) MONTH_LABELS[built.month] = built.monthLabel; }
+  _filterMode = 'todos';
+  _currentPage = 1;
+  var chips = document.querySelectorAll('#tab-jugadores .chip');
+  for (var i = 0; i < chips.length; i++) chips[i].classList.toggle('active', i === 0);
+  _currentList = getFilteredPlayers();
+  if (typeof renderPlayers === 'function') renderPlayers(_currentList, 'list-jugadores');
+  if (typeof updateSubtitle === 'function') updateSubtitle();
 }
 
 // Mejores victorias del jugador por ELO del rival
@@ -10472,6 +10645,8 @@ _currentList = PLAYERS; _currentPage = 1;
 updateSubtitle();
 renderPlayers(PLAYERS, 'list-jugadores');
 renderNoticias();
+// El botón "Actualizar ranking FIDE" es solo para el autor (no en la web publicada).
+if (!_ondemand) { var _ruw = document.getElementById('ranking-update-wrap'); if (_ruw) _ruw.style.display = 'block'; }
 
 // Reubicar SOLO el gráfico de "Análisis de partida" FUERA de la columna derecha, a lo
 // ancho debajo de las dos columnas (estilo Lichess). El módulo EN VIVO (sf-panel, 3 líneas)
