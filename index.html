@@ -3916,6 +3916,13 @@ function exportTabInit() {
   // Mantenimiento — limpiar duplicados de perfiles
   h += '<div style="padding-top:16px;border-top:1px solid var(--border);margin-bottom:20px">';
   h += '<div style="font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text2);margin-bottom:6px">Mantenimiento</div>';
+  // Subir partidas a la base de datos (Fase 3a) — el lugar para cargar partidas en el modelo nuevo
+  h += '<div style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.5">📥 <b style="color:var(--text2)">Subir partidas a la base de datos.</b> Entran al pool único agrupadas por evento, <b style="color:var(--text2)">sin duplicar</b> (no se sube lo que ya está). Sirve para cargar rondas a medida que terminan. Los perfiles las toman solas.</div>';
+  h += '<input type="file" id="dbpool-input" accept=".pgn,.txt" style="display:none" onchange="dbPoolFileSelected(this)">';
+  h += '<button onclick="document.getElementById(\'dbpool-input\').click()" style="width:100%;padding:11px;background:var(--bg3);border:1px solid var(--border);color:var(--text2);font-size:13px;font-weight:600;border-radius:10px;cursor:pointer;font-family:inherit"><span id="dbpool-lbl">Elegir archivo .pgn</span></button>';
+  h += '<button id="dbpool-btn" onclick="dbPoolImport()" style="display:none;width:100%;padding:11px;margin-top:8px;background:var(--green,#2a7);border:none;color:#fff;font-size:13px;font-weight:700;border-radius:10px;cursor:pointer;font-family:inherit">📥 Agregar a la base de datos</button>';
+  h += '<div id="dbpool-result" style="font-size:12px;margin-top:8px;line-height:1.5"></div>';
+  h += '<div style="height:1px;background:var(--border);margin:16px 0"></div>';
   h += '<div style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.5">Quita las partidas <b style="color:var(--text2)">duplicadas</b> que cargaste a los perfiles (en todo el sitio, no perfil por perfil). No toca los torneos públicos y deja una sola copia de cada partida. Conviene descargar antes la copia de autor.</div>';
   h += '<button onclick="runProfileDedup()" style="width:100%;padding:11px;background:var(--bg3);border:1px solid var(--border);color:var(--text2);font-size:13px;font-weight:600;border-radius:10px;cursor:pointer;font-family:inherit">🧹 Limpiar partidas duplicadas (todo el sitio)</button>';
   h += '<div style="font-size:12px;color:var(--text3);margin:14px 0 10px;line-height:1.5">Une los <b style="color:var(--text2)">torneos duplicados</b> de los perfiles: el mismo evento cargado dos veces con nombres distintos (ej. desde chess-results y desde Lumbras). Junta las partidas en un solo torneo <b style="color:var(--text2)">sin perder ninguna</b> (verifica antes de aplicar). No toca los torneos públicos.</div>';
@@ -7088,6 +7095,63 @@ function runGamesDBMigration() {
   alert('✓ Migrado a base de datos única.\n\n' + plan.poolGames + ' partidas en ' + plan.eventos + ' eventos. Se quitaron ' + plan.droppedMem + ' copias repetidas; no se perdió ninguna partida.\n\n'
     + '⚠️ IMPORTANTE: apretá YA "Guardar datos en mi carpeta" y reemplazá los archivos en data\\, para que el cambio quede permanente (si recargás antes de guardar, se pierde).');
   exportTabInit();
+}
+
+// ── SUBIR PARTIDAS A LA BASE DE DATOS (Fase 3a) ──────────────────────────────
+// El ÚNICO lugar para subir partidas en el modelo nuevo: entran al pool único agrupadas por EVENTO,
+// deduplicadas contra TODO el sitio (no se sube nada que ya esté). No se carga por jugador: los
+// perfiles (y los torneos, Fase 3b) ya leen del pool. Maneja "en vivo → terminada": si subís la
+// versión completa de una partida que ya estaba a medias, queda la completa (se colapsa el prefijo).
+var _dbPoolContent = null;
+function dbPoolFileSelected(input) {
+  if (!input.files || !input.files[0]) return;
+  var file = input.files[0];
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    _dbPoolContent = e.target.result.replace(/^﻿/, '');
+    var games = pgnSplitGames(_dbPoolContent);
+    var evs = Object.create(null); games.forEach(function(p) { evs[(parsePgnHeaders(p).Event || 'Torneo').trim()] = true; });
+    var lbl = document.getElementById('dbpool-lbl');
+    if (lbl) lbl.textContent = '📄 ' + file.name + ' — ' + games.length + ' partida' + (games.length !== 1 ? 's' : '') + ' · ' + Object.keys(evs).length + ' evento' + (Object.keys(evs).length !== 1 ? 's' : '');
+    var btn = document.getElementById('dbpool-btn'); if (btn) btn.style.display = '';
+    var res = document.getElementById('dbpool-result'); if (res) res.innerHTML = '';
+  };
+  reader.readAsText(file, 'UTF-8');
+}
+function dbPoolImport() {
+  var res = document.getElementById('dbpool-result');
+  if (!_dbPoolContent) return;
+  var allGames = pgnSplitGames(_dbPoolContent);
+  if (!allGames.length) { if (res) res.innerHTML = '<span style="color:var(--red)">No se encontraron partidas en el archivo.</span>'; return; }
+  // dedup interno del archivo (barato) + contra todo el sitio (prefijo/exacto → no entra lo ya cargado)
+  var uniqueIncoming = dedupGamesByMoves(allGames.map(function(p) { return { pgn: p }; }), function(w) { return w.pgn; });
+  var siteIdx = buildSiteDedupIndex();
+  var newGames = [];
+  uniqueIncoming.forEach(function(w) { if (dedupIndexCovered(siteIdx, w.pgn)) return; dedupIndexAdd(siteIdx, w.pgn); newGames.push(w.pgn); });
+  var skipped = allGames.length - newGames.length;
+  if (!newGames.length) { if (res) res.innerHTML = '<span style="color:var(--text2)">Todas las partidas del archivo (' + allGames.length + ') ya estaban en la base. No se agregó ninguna.</span>'; return; }
+  // agrupar por evento y mergear al pool (a un contenedor existente con ese nombre, o uno nuevo)
+  var poolByName = Object.create(null);
+  _memTournaments.forEach(function(t) { if (!poolByName[t.name]) poolByName[t.name] = t; });
+  var byEv = Object.create(null), order = [], nuevosEventos = 0;
+  newGames.forEach(function(pgn) { var ev = (parsePgnHeaders(pgn).Event || '(Sin evento)').trim(); if (!byEv[ev]) { byEv[ev] = []; order.push(ev); } byEv[ev].push(pgn); });
+  order.forEach(function(ev) {
+    var t = poolByName[ev];
+    if (!t) { t = { id: Date.now() + order.indexOf(ev), name: ev, location: '', games: [], gameCount: 0, playerOnly: true, source: 'pgn', dbPool: true, loadedAt: Date.now() }; _memTournaments.push(t); poolByName[ev] = t; nuevosEventos++; }
+    t.games = (t.games || []).concat(byEv[ev]);
+    // colapsar prefijos dentro del evento (caso "en vivo → terminada"): deja la versión más completa.
+    // dedupGamesByMoves devuelve los ITEMS envueltos → hay que mapear de vuelta a los PGN (strings).
+    t.games = dedupGamesByMoves(t.games.map(function(p) { return { pgn: p }; }), function(w) { return w.pgn; }).map(function(w) { return w.pgn; });
+    t.gameCount = t.games.length;
+  });
+  pgnMergeToPlayerGames();
+  _dbPoolContent = null;
+  var inp = document.getElementById('dbpool-input'); if (inp) inp.value = '';
+  var lbl = document.getElementById('dbpool-lbl'); if (lbl) lbl.textContent = 'Elegir archivo .pgn';
+  var btn = document.getElementById('dbpool-btn'); if (btn) btn.style.display = 'none';
+  if (res) res.innerHTML = '<span style="color:var(--green)">✓ ' + newGames.length + ' partida' + (newGames.length !== 1 ? 's' : '') + ' nueva' + (newGames.length !== 1 ? 's' : '') + ' agregada' + (newGames.length !== 1 ? 's' : '')
+    + ' en ' + order.length + ' evento' + (order.length !== 1 ? 's' : '') + (nuevosEventos ? ' (' + nuevosEventos + ' nuevo' + (nuevosEventos !== 1 ? 's' : '') + ')' : '')
+    + (skipped ? ' · ' + skipped + ' ya estaban' : '') + '.<br><span style="color:var(--gold);font-size:11px">Acordate de "Guardar datos en mi carpeta".</span></span>';
 }
 
 // Detecta grupos de torneos de PERFIL (playerOnly, en _memTournaments) que son el MISMO evento
