@@ -3918,6 +3918,8 @@ function exportTabInit() {
   h += '<div style="font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text2);margin-bottom:6px">Mantenimiento</div>';
   h += '<div style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.5">Quita las partidas <b style="color:var(--text2)">duplicadas</b> que cargaste a los perfiles (en todo el sitio, no perfil por perfil). No toca los torneos públicos y deja una sola copia de cada partida. Conviene descargar antes la copia de autor.</div>';
   h += '<button onclick="runProfileDedup()" style="width:100%;padding:11px;background:var(--bg3);border:1px solid var(--border);color:var(--text2);font-size:13px;font-weight:600;border-radius:10px;cursor:pointer;font-family:inherit">🧹 Limpiar partidas duplicadas (todo el sitio)</button>';
+  h += '<div style="font-size:12px;color:var(--text3);margin:14px 0 10px;line-height:1.5">Une los <b style="color:var(--text2)">torneos duplicados</b> de los perfiles: el mismo evento cargado dos veces con nombres distintos (ej. desde chess-results y desde Lumbras). Junta las partidas en un solo torneo <b style="color:var(--text2)">sin perder ninguna</b> (verifica antes de aplicar). No toca los torneos públicos.</div>';
+  h += '<button onclick="runTourMerge()" style="width:100%;padding:11px;background:var(--bg3);border:1px solid var(--border);color:var(--text2);font-size:13px;font-weight:600;border-radius:10px;cursor:pointer;font-family:inherit">🔗 Unir torneos duplicados (perfiles)</button>';
   h += '</div>';
 
   // Token Lichess
@@ -6935,6 +6937,126 @@ function runProfileDedup() {
       + '"Guardar datos en mi carpeta" y reemplazá los archivos en tu carpeta data\\.');
     exportTabInit();   // refrescar las estadísticas de la pestaña
   });
+}
+
+// ── UNIR TORNEOS DUPLICADOS (mismo evento cargado dos veces, normalmente con nombres distintos) ──
+// Deduplica una lista de PGN por identidad de jugadas SIN reproducir con chess.js (barato): exacto
+// por cuerpo + relación de prefijo (mismos rivales). Conserva la copia MÁS LARGA de cada partida.
+function _dedupPgnsCheap(pgns) {
+  var idx = newDedupIndex(), out = [];
+  pgns.map(function(p) { return { p: p, len: _moveBody(p).length }; })
+      .sort(function(a, b) { return b.len - a.len; })
+      .forEach(function(it) { if (dedupIndexHas(idx, it.p)) return; dedupIndexAdd(idx, it.p); out.push(it.p); });
+  return out;
+}
+
+// Detecta grupos de torneos de PERFIL (playerOnly, en _memTournaments) que son el MISMO evento
+// cargado más de una vez. Solo dentro del MISMO jugador (cada torneo de perfil tiene playerId).
+// Eficiente: índice invertido cuerpo-de-jugadas → torneos que lo contienen (un cuerpo idéntico es
+// la misma partida y _moveBody ya ignora anotaciones, así que la copia anotada y la limpia caen en
+// el mismo cuerpo). Dos torneos que comparten ≥2 partidas son el mismo evento (una partida vive en
+// un solo evento). Une por componentes. Verifica que la unión CUBRE todas las partidas (cobertura)
+// antes de ofrecer el grupo → no se arriesga a perder ninguna. NO toca los torneos públicos.
+function _computeTourDupGroups() {
+  var byPlayer = {};
+  _memTournaments.forEach(function(t) {
+    if (t.playerId == null) return;
+    (byPlayer[t.playerId] = byPlayer[t.playerId] || []).push(t);
+  });
+  var groups = [];
+  Object.keys(byPlayer).forEach(function(pid) {
+    var tours = byPlayer[pid];
+    if (tours.length < 2) return;
+    // Cuerpos (set) por torneo, una sola vez.
+    var bodies = tours.map(function(t) {
+      var set = {};
+      (t.games || []).forEach(function(p) { var b = _moveBody(p); if (b.length >= 4) set[b] = true; });
+      return set;
+    });
+    // Índice invertido: cuerpo → [índices de torneo]. Contar partidas compartidas por par (sparse:
+    // solo cuerpos en ≥2 torneos, que son pocos = los eventos duplicados).
+    var bodyMap = {};
+    bodies.forEach(function(set, i) { for (var b in set) (bodyMap[b] = bodyMap[b] || []).push(i); });
+    var pairShared = {};
+    for (var bk in bodyMap) {
+      var L = bodyMap[bk];
+      if (L.length < 2) continue;
+      for (var x = 0; x < L.length; x++) for (var y = x + 1; y < L.length; y++) {
+        var pk = L[x] + ',' + L[y]; pairShared[pk] = (pairShared[pk] || 0) + 1;
+      }
+    }
+    var parent = tours.map(function(_, i) { return i; });
+    function find(i) { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; }
+    for (var key in pairShared) {
+      if (pairShared[key] < 2) continue;
+      var ij = key.split(','); parent[find(+ij[0])] = find(+ij[1]);
+    }
+    var comp = {};
+    for (var k = 0; k < tours.length; k++) { var r = find(k); (comp[r] = comp[r] || []).push(k); }
+    Object.keys(comp).forEach(function(r) {
+      var idxs = comp[r];
+      if (idxs.length < 2) return;
+      var grp = idxs.map(function(ix) { return tours[ix]; });
+      var allP = [];
+      grp.forEach(function(t) { (t.games || []).forEach(function(p) { allP.push(p); }); });
+      var mergedPgns = _dedupPgnsCheap(allP);
+      // COBERTURA: cada partida original debe quedar cubierta por la unión (idéntica o prefijo de
+      // una conservada). Si algo no cubre, NO se ofrece el grupo (no arriesgar perder una partida).
+      var vidx = newDedupIndex(); mergedPgns.forEach(function(p) { dedupIndexAdd(vidx, p); });
+      if (!allP.every(function(p) { return _moveBody(p).length < 4 || dedupIndexHas(vidx, p); })) return;
+      var primary = grp[0];
+      grp.forEach(function(t) { if ((t.games || []).length > (primary.games || []).length) primary = t; });
+      groups.push({ plan: {
+        playerId: pid, primaryId: primary.id, mergedPgns: mergedPgns,
+        removeIds: grp.filter(function(t) { return t.id !== primary.id; }).map(function(t) { return t.id; }),
+        names: grp.map(function(t) { return (t.name || '(sin nombre)') + ' (' + ((t.games || []).length) + ')'; }),
+        afterUnique: mergedPgns.length, beforeTotal: allP.length
+      }});
+    });
+  });
+  return groups;
+}
+
+// Aplica la unión: al torneo "primary" de cada grupo le pone la unión deduplicada; los demás del
+// grupo se quitan. Reusa _syncProfileLs (los ids quitados ya no están en _memTournaments → caen de
+// localStorage) + pgnMergeToPlayerGames. NO toca torneos públicos.
+function _applyTourMerge(plans) {
+  var lsStored = []; try { lsStored = JSON.parse(localStorage.getItem('pgn_tournaments') || '[]'); } catch (e) {}
+  var removeIds = {}, primaryPlan = {};
+  plans.forEach(function(pl) { pl.removeIds.forEach(function(id) { removeIds[id] = true; }); primaryPlan[pl.primaryId] = pl; });
+  var newMem = [];
+  _memTournaments.forEach(function(t) {
+    if (removeIds[t.id]) return;
+    var pl = primaryPlan[t.id];
+    if (pl) { t.games = pl.mergedPgns.slice(); t.gameCount = t.games.length; }
+    newMem.push(t);
+  });
+  _memTournaments = newMem;
+  _syncProfileLs(lsStored);
+  pgnMergeToPlayerGames();
+}
+
+// Botón de Mantenimiento: detecta, confirma con el detalle y aplica. La garantía de "no se pierde
+// ninguna partida" es ESTRUCTURAL: _computeTourDupGroups solo ofrece grupos cuya unión deduplicada
+// CUBRE todas las partidas originales (idénticas o prefijo de una conservada), y la fusión deja la
+// copia más completa de cada juego. Une el MISMO evento cargado dos veces. NO toca torneos públicos.
+function runTourMerge() {
+  var groups = _computeTourDupGroups();
+  if (!groups.length) { alert('No encontré torneos duplicados (el mismo evento cargado dos veces) en los perfiles. 🎉'); return; }
+  var totalAbsorb = 0, totalRepetidas = 0;
+  groups.forEach(function(g) { totalAbsorb += g.plan.removeIds.length; totalRepetidas += (g.plan.beforeTotal - g.plan.afterUnique); });
+  var lines = groups.slice(0, 12).map(function(g) { return '• ' + g.plan.names.join('  +  ') + '\n      → 1 torneo con ' + g.plan.afterUnique + ' partidas'; });
+  if (groups.length > 12) lines.push('…y ' + (groups.length - 12) + ' grupo(s) más.');
+  if (!confirm('Encontré ' + groups.length + ' grupo(s) de torneos duplicados (' + totalAbsorb + ' torneo(s) se absorben):\n\n'
+    + lines.join('\n') + '\n\n'
+    + 'Se UNEN las partidas de cada grupo en un solo torneo: se conservan TODAS, solo se quitan las '
+    + totalRepetidas + ' copias repetidas. No se toca ningún torneo público.\n\n'
+    + '💡 Antes conviene descargar tu copia de autor por las dudas.\n\n'
+    + '¿Unir ahora?')) return;
+  _applyTourMerge(groups.map(function(g) { return g.plan; }));
+  alert('✓ Listo. Se unieron ' + totalAbsorb + ' torneo(s) duplicado(s); no se perdió ninguna partida.\n\n'
+    + 'Para que quede PERMANENTE (y no vuelvan al recargar), usá ahora "Guardar datos en mi carpeta" y reemplazá los archivos en tu carpeta data\\.');
+  exportTabInit();
 }
 
 function filterPgByResult(result) {
