@@ -74,7 +74,15 @@ de federación) no desaparecen: se **conservan como Adicional** si valen la pena
 no (ocasional de poco elo sin partidas), se **quitan** (sin borrar datos; la app recuerda su id y
 reaparecen si vuelven). El nombre de los adicionales se toma exacto del listado FIDE por fide_id, y
 se marca "inactivo" en tarjeta/perfil. (Pendiente fase 2: auto-sugerir adicionales detectados en
-partidas cargadas, con el mismo umbral de ≥30 partidas y solo si no están ya en la app / base FIDE.)
+partidas cargadas.)
+
+**Buscar jugadores frecuentes (fase 2):** botón en la pestaña Jugadores (modo autor) que lista
+jugadores con **≥ 50 partidas** en el sitio (`_SUGGEST_MIN_GAMES`) que aún no tienen perfil. Como las
+partidas solo traen nombres (sin federación, casi sin fide_id), NO se autodetecta nacionalidad: es una
+**lista para revisar** y el autor tilda los argentinos (ideal para leyendas). Por cada uno puede pegar
+el FIDE id (se actualiza cada mes con la tabla) o dejarlo solo con nombre (engancha sus partidas por
+nombre). Crea Adicionales. Umbral de "conservar al salir del ranking" es 30 (`_ADIC_KEEP_GAMES`),
+distinto del de sugerencia (50).
 
 ## Publicar la web
 Apretar "Descargar para publicar (ZIP)", descomprimir y arrastrar la carpeta a
