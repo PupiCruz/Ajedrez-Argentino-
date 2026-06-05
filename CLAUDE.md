@@ -57,6 +57,17 @@ ranking FIDE"** → subir el .txt. La app arma la lista de **activos ARG con elo
   (`fide_ranking`) y se embebe en los 3 exports (`__EMBEDDED_PLAYERS__`).
 - Después de actualizar, usar **"Guardar datos en mi carpeta"** para que quede guardado.
 
+### Jugadores "Adicionales" (fuera del ranking)
+Para argentinos que juegan con **otra bandera** (ej. Alan Pichot → ESP) o que querés tener
+aunque no estén en el top activo. Botón **"Agregar jugador adicional"** (modo autor): se
+cargan por **FIDE id** + nombre (+ federación opcional). Quedan en la solapa **"Adicionales"**,
+NO en el ranking numerado, pero tienen perfil/foto/favoritos/partidas como cualquiera (id
+estable por `fide_id`, campo `ranked:false`). La actualización mensual de la tabla los conserva
+y les **refresca elo/título/federación** por fide_id (sin importar federación ni actividad), así
+si suben de elo se refleja. Quedan reconocidos como argentinos en torneos aunque su bandera sea
+extranjera (vía `_getArgFideSet`). Se guardan en `fide_ranking.additionals` y se embeben en los
+exports. (Pendiente fase 2: auto-sugerir adicionales detectados en partidas cargadas.)
+
 ## Publicar la web
 Apretar "Descargar para publicar (ZIP)", descomprimir y arrastrar la carpeta a
 **Netlify** o **Cloudflare Pages** (gratis). Cada vez que se quiera actualizar la web
