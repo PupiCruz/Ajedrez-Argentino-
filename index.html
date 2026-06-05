@@ -6081,8 +6081,21 @@ function dedupGamesByMoves(items, getPgn) {
       kept.push(g);
     });
   });
+  // 3) Filtro name-INDEPENDIENTE por cuerpo EXACTO de jugadas: dos transcripciones con las MISMAS
+  //    jugadas son la misma partida aunque el apellido venga ESCRITO distinto entre fuentes
+  //    ("Rodrigues, Edgar" vs "Rodriques, E." — typo/transliteración). La agrupación por apellido
+  //    no las junta (apellido distinto → grupo distinto); este pase sí. 100% seguro: jugadas
+  //    idénticas = misma partida (no puede fusionar partidas distintas).
+  var dropped = (drop.length ? new Set(drop) : new Set());
+  var bodySeen = Object.create(null);
+  items.forEach(function(it) {
+    if (dropped.has(it)) return;
+    var body = _moveBody(getPgn(it));
+    if (body.length < 4) return;
+    if (bodySeen[body]) { drop.push(it); dropped.add(it); } else bodySeen[body] = true;
+  });
   if (!drop.length) return items;
-  return items.filter(function(it) { return drop.indexOf(it) < 0; });
+  return items.filter(function(it) { return !dropped.has(it); });
 }
 
 // Índice de duplicados del sitio por RELACIÓN DE PREFIJO de jugadas — la MISMA identidad que
@@ -6092,7 +6105,10 @@ function dedupGamesByMoves(items, getPgn) {
 // huella de 40 jugadas dejaba pasar). Lo usan los dos caminos de "todo el sitio": el filtro al
 // importar y la limpieza global. Las partidas SIN jugadas se indexan aparte por
 // jugadores#Date#Round#Event (no se mezclan con las que sí tienen jugadas).
-function newDedupIndex() { return { byPair: Object.create(null), empty: Object.create(null) }; }
+// byBody: además del índice por apellido (byPair, para prefijos/truncadas), un set por cuerpo EXACTO
+// de jugadas. Atrapa el MISMO juego con el apellido escrito distinto entre fuentes (typo), donde la
+// clave por apellido falla. 100% seguro (jugadas idénticas = misma partida).
+function newDedupIndex() { return { byPair: Object.create(null), empty: Object.create(null), byBody: Object.create(null) }; }
 
 // Clave de una partida en el índice: {pk: jugadores, body: jugadas, ek: clave sin-jugadas}.
 function _dedupKey(pgn) {
@@ -6107,6 +6123,7 @@ function _dedupKey(pgn) {
 function dedupIndexHas(idx, pgn) {
   var k = _dedupKey(pgn);
   if (k.body.length < 4) return !!idx.empty[k.ek];
+  if (idx.byBody[k.body]) return true;   // cuerpo exacto ya presente (mismo juego, nombre distinto)
   var arr = idx.byPair[k.pk];
   if (arr) for (var i = 0; i < arr.length; i++) {
     if (arr[i].indexOf(k.body) === 0 || k.body.indexOf(arr[i]) === 0) return true;
@@ -6121,6 +6138,7 @@ function dedupIndexHas(idx, pgn) {
 function dedupIndexCovered(idx, pgn) {
   var k = _dedupKey(pgn);
   if (k.body.length < 4) return !!idx.empty[k.ek];
+  if (idx.byBody[k.body]) return true;   // cuerpo exacto ya presente → idéntica (cubierta, nombre distinto)
   var arr = idx.byPair[k.pk];
   if (arr) for (var i = 0; i < arr.length; i++) {
     if (arr[i].indexOf(k.body) === 0) return true;   // existente empieza con la nueva → existente ≥ nueva
@@ -6134,6 +6152,7 @@ function dedupIndexAdd(idx, pgn) {
   var k = _dedupKey(pgn);
   if (k.body.length < 4) { idx.empty[k.ek] = true; return; }
   (idx.byPair[k.pk] = idx.byPair[k.pk] || []).push(k.body);
+  idx.byBody[k.body] = true;
 }
 
 // Índice poblado con TODAS las partidas del sitio: torneos públicos (localStorage) + todos los
