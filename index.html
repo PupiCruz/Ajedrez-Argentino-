@@ -6038,6 +6038,20 @@ function _pairKey(white, black) {
   return _surnameKey(white) + '|' + _surnameKey(black);
 }
 
+// Tokens (palabras ≥2 letras) de un nombre, normalizados, como conjunto. Independiente del orden y
+// de la coma: "Oro Faustino", "Oro, Faustino" y "Faustino Oro" dan el mismo conjunto.
+function _tokSet(name) {
+  var s = Object.create(null);
+  nameTokens(name || '').forEach(function(t) { s[t] = true; });
+  return s;
+}
+// Tokens de cada lado (blancas / negras) por separado. Mantener los lados separados es lo que hace
+// DISCRIMINANTE la comprobación: en un perfil todas las partidas comparten el nombre del propio
+// jugador, así que solo mirando el conjunto unido "siempre coinciden"; exigir overlap en AMBOS
+// lados restringe a partidas contra el MISMO rival (los candidatos reales a ser la misma partida).
+function _sideTokens(h) { return { w: _tokSet(h.White), b: _tokSet(h.Black) }; }
+function _tokOverlap(a, b) { for (var k in a) if (b[k]) return true; return false; }
+
 // Deduplica una lista de partidas detectando el MISMO juego aunque una venga truncada o con
 // jugadas de más. Agrupa por jugadores y, dentro de cada grupo, si las jugadas de una son
 // PREFIJO de las de otra (más larga), descarta la corta: una secuencia de jugadas que es
@@ -6046,9 +6060,11 @@ function _pairKey(white, black) {
 // Las partidas SIN jugadas se deduplican aparte por Date|Round|Event (no se mezclan con las
 // que sí tienen jugadas). `getPgn` extrae el PGN de cada item; preserva el orden original.
 function dedupGamesByMoves(items, getPgn) {
-  var groups = {};       // jugadores -> [{item, body}]
+  var groups = {};       // jugadores (apellido) -> [{item, body, date, h}]
   var emptySeen = {};    // clave de header (sin jugadas) -> true
-  var drop = [];         // items a descartar (se marca por referencia)
+  var drop = [];         // items a descartar
+  var dropped = new Set();
+  function kill(it) { drop.push(it); dropped.add(it); }
   items.forEach(function(it) {
     var pgn = getPgn(it);
     var h = parsePgnHeaders(pgn);
@@ -6056,32 +6072,50 @@ function dedupGamesByMoves(items, getPgn) {
     var pk = _pairKey(h.White, h.Black);
     if (body.length < 4) {
       var ek = pk + '#' + (h.Date || '') + '#' + (h.Round || '') + '#' + (h.Event || '');
-      if (emptySeen[ek]) drop.push(it); else emptySeen[ek] = true;
+      if (emptySeen[ek]) kill(it); else emptySeen[ek] = true;
     } else {
-      (groups[pk] = groups[pk] || []).push({ item: it, body: body, date: (h.Date || '') });
+      (groups[pk] = groups[pk] || []).push({ item: it, body: body, date: (h.Date || ''), h: h });
     }
   });
+  // ── 1) PREFIJO por grupo de apellido (barato): una secuencia de jugadas que es prefijo exacto de
+  //       otra más larga es el mismo juego truncado. Deja en cada grupo solo los sobrevivientes.
   Object.keys(groups).forEach(function(pk) {
     var arr = groups[pk];
     arr.sort(function(a, b) { return b.body.length - a.body.length; });   // más larga primero
-    // Pre-filtro barato para el cálculo de posición final: un duplicado real es el MISMO juego,
-    // así que comparte la fecha. Solo computamos la posición final cuando hay 2+ partidas del
-    // mismo par con la MISMA fecha (no vacía). Así no se reproduce nada en jugadores pesados.
+    var kept = [];
+    arr.forEach(function(g) {
+      for (var i = 0; i < kept.length; i++) {
+        if (kept[i].body.indexOf(g.body) === 0) { kill(g.item); return; }   // g es prefijo → duplicado
+      }
+      kept.push(g);
+    });
+    groups[pk] = kept;
+  });
+  // ── 2) CUERPO EXACTO global (barato, name-independiente): jugadas idénticas = misma partida aunque
+  //       el apellido venga escrito distinto ("Rodrigues" vs "Rodriques"). Se hace ANTES de reproducir
+  //       posiciones para no gastar chess.js en copias que ya caen acá.
+  var bodySeen = Object.create(null);
+  items.forEach(function(it) {
+    if (dropped.has(it)) return;
+    var body = _moveBody(getPgn(it));
+    if (body.length < 4) return;
+    if (bodySeen[body]) kill(it); else bodySeen[body] = true;
+  });
+  // ── 3) POSICIÓN FINAL por grupo de apellido + misma fecha (TRANSPOSICIONES / notación), SOLO sobre
+  //       los sobrevivientes de 1+2. Reproducir con chess.js es caro → gateado por colisión de fecha
+  //       dentro del grupo; tras quitar exactas/prefijos quedan poquísimos candidatos.
+  Object.keys(groups).forEach(function(pk) {
+    var arr = groups[pk].filter(function(g) { return !dropped.has(g.item); });
+    if (arr.length < 2) return;
     var dateCount = {};
     arr.forEach(function(g) { if (g.date) dateCount[g.date] = (dateCount[g.date] || 0) + 1; });
     var kept = [];
     arr.forEach(function(g) {
-      // 1) Filtro existente: una secuencia de jugadas es prefijo de otra (truncada / con jugadas de más).
-      for (var i = 0; i < kept.length; i++) {
-        if (kept[i].body.indexOf(g.body) === 0) { drop.push(g.item); return; }  // g es prefijo → duplicado
-      }
-      // 2) Filtro ADICIONAL: misma POSICIÓN FINAL (transposiciones / notación distinta), mismos
-      //    rivales (mismo pk) y misma fecha. Solo en colisiones de fecha → barato.
       if (g.date && dateCount[g.date] >= 2) {
         var fen = _finalPosKey(getPgn(g.item));
         if (fen) {
           for (var j = 0; j < kept.length; j++) {
-            if (kept[j]._fen && kept[j]._fen === fen) { drop.push(g.item); return; }  // misma posición final → duplicado
+            if (kept[j]._fen && kept[j]._fen === fen) { kill(g.item); return; }
           }
           g._fen = fen;
         }
@@ -6089,18 +6123,36 @@ function dedupGamesByMoves(items, getPgn) {
       kept.push(g);
     });
   });
-  // 3) Filtro name-INDEPENDIENTE por cuerpo EXACTO de jugadas: dos transcripciones con las MISMAS
-  //    jugadas son la misma partida aunque el apellido venga ESCRITO distinto entre fuentes
-  //    ("Rodrigues, Edgar" vs "Rodriques, E." — typo/transliteración). La agrupación por apellido
-  //    no las junta (apellido distinto → grupo distinto); este pase sí. 100% seguro: jugadas
-  //    idénticas = misma partida (no puede fusionar partidas distintas).
-  var dropped = (drop.length ? new Set(drop) : new Set());
-  var bodySeen = Object.create(null);
+  // ── 4) POSICIÓN FINAL por FECHA + nombres COMPATIBLES + misma APERTURA (name-independiente): atrapa
+  //       el MISMO juego cuando NOTACIÓN distinta ("Ne2" vs "Nge2") hace divergir las jugadas Y los
+  //       nombres vienen en formato distinto que rompe la clave por apellido ("Oro Faustino" vs
+  //       "Oro, Faustino"). Triple candado barato antes de reproducir: misma fecha + mismos rivales
+  //       (overlap de apellido en blancas Y negras) + misma apertura (primeros plies). Seguro (no
+  //       fusiona distintas) y acotado (reproduce solo candidatos reales que 1-3 no agarraron).
+  var byDate = Object.create(null);
   items.forEach(function(it) {
     if (dropped.has(it)) return;
-    var body = _moveBody(getPgn(it));
-    if (body.length < 4) return;
-    if (bodySeen[body]) { drop.push(it); dropped.add(it); } else bodySeen[body] = true;
+    var pgn = getPgn(it);
+    var h = parsePgnHeaders(pgn);
+    if (!h.Date) return;
+    var body = _moveBody(pgn);
+    if (body.length < 8) return;
+    (byDate[h.Date] = byDate[h.Date] || []).push({ it: it, tk: _sideTokens(h), body: body });
+  });
+  Object.keys(byDate).forEach(function(d) {
+    var arr = byDate[d];
+    if (arr.length < 2) return;
+    for (var i = 0; i < arr.length; i++) {
+      if (dropped.has(arr[i].it)) continue;
+      for (var j = i + 1; j < arr.length; j++) {
+        if (dropped.has(arr[j].it)) continue;
+        if (arr[i].body.slice(0, 36) !== arr[j].body.slice(0, 36)) continue;      // distinta apertura
+        if (!_tokOverlap(arr[i].tk.w, arr[j].tk.w) || !_tokOverlap(arr[i].tk.b, arr[j].tk.b)) continue;  // distinto par
+        if (arr[i]._fen === undefined) arr[i]._fen = _finalPosKey(getPgn(arr[i].it));
+        if (arr[j]._fen === undefined) arr[j]._fen = _finalPosKey(getPgn(arr[j].it));
+        if (arr[i]._fen && arr[i]._fen === arr[j]._fen) kill(arr[j].it);
+      }
+    }
   });
   if (!drop.length) return items;
   return items.filter(function(it) { return !dropped.has(it); });
