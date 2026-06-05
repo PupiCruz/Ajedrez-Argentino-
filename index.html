@@ -3917,7 +3917,9 @@ function exportTabInit() {
   h += '<div style="padding-top:16px;border-top:1px solid var(--border);margin-bottom:20px">';
   h += '<div style="font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text2);margin-bottom:6px">Mantenimiento</div>';
   // Subir partidas a la base de datos (Fase 3a) — el lugar para cargar partidas en el modelo nuevo
-  h += '<div style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.5">📥 <b style="color:var(--text2)">Subir partidas a la base de datos.</b> Entran al pool único agrupadas por evento, <b style="color:var(--text2)">sin duplicar</b> (no se sube lo que ya está). Sirve para cargar rondas a medida que terminan. Los perfiles las toman solas.</div>';
+  h += '<div style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.5">📥 <b style="color:var(--text2)">Subir partidas a la base de datos.</b> Entran al pool único, <b style="color:var(--text2)">sin duplicar</b> (no se sube lo que ya está). Sirve para cargar rondas a medida que terminan. Los perfiles las toman solas. Si elegís un torneo, se enganchan a ese torneo (aunque el PGN tenga eventos desprolijos).</div>';
+  h += '<div style="font-size:11px;color:var(--text3);margin-bottom:4px">Para el torneo (opcional):</div>';
+  h += '<select id="dbpool-target" style="width:100%;padding:9px;background:var(--bg3);border:1px solid var(--border);color:var(--text2);border-radius:8px;font-family:inherit;font-size:13px;margin-bottom:8px">' + _dbPoolTargetOptions() + '</select>';
   h += '<input type="file" id="dbpool-input" accept=".pgn,.txt" style="display:none" onchange="dbPoolFileSelected(this)">';
   h += '<button onclick="document.getElementById(\'dbpool-input\').click()" style="width:100%;padding:11px;background:var(--bg3);border:1px solid var(--border);color:var(--text2);font-size:13px;font-weight:600;border-radius:10px;cursor:pointer;font-family:inherit"><span id="dbpool-lbl">Elegir archivo .pgn</span></button>';
   h += '<button id="dbpool-btn" onclick="dbPoolImport()" style="display:none;width:100%;padding:11px;margin-top:8px;background:var(--green,#2a7);border:none;color:#fff;font-size:13px;font-weight:700;border-radius:10px;cursor:pointer;font-family:inherit">📥 Agregar a la base de datos</button>';
@@ -7118,11 +7120,37 @@ function dbPoolFileSelected(input) {
   };
   reader.readAsText(file, 'UTF-8');
 }
+// Opciones del selector "para el torneo": nombres de torneos mostrables (tz_config + hardcoded +
+// públicos). El valor es el nombre (= evento canónico que se estampa y por el que el torneo lee).
+function _dbPoolTargetOptions() {
+  var seen = Object.create(null), list = [];
+  function add(n) { n = (n || '').trim(); if (n && !seen[n]) { seen[n] = true; list.push(n); } }
+  try { var tz = getTzConfig(); for (var k in tz) add(tz[k].name); } catch (e) {}
+  try { (TORNEOS || []).forEach(function(t) { add(t.name); }); } catch (e) {}
+  try { var ls = JSON.parse(localStorage.getItem('pgn_tournaments') || '[]'); ls.forEach(function(e) { if (!e.playerOnly) add(e.name); }); } catch (e) {}
+  list.sort(function(a, b) { return a.localeCompare(b); });
+  var h = '<option value="">(ninguno — usar el evento del PGN)</option>';
+  list.forEach(function(n) { h += '<option value="' + escHtml(n) + '">' + escHtml(n.length > 64 ? n.slice(0, 64) + '…' : n) + '</option>'; });
+  return h;
+}
+// Estampa (o agrega) el header [Event] de un PGN con el evento canónico del torneo, para que las
+// partidas subidas "para el torneo X" queden bajo SU evento sin importar qué Event traía el PGN.
+function _stampEvent(pgn, ev) {
+  var safe = String(ev).replace(/"/g, "'");
+  var s = String(pgn);
+  if (/\[Event\s+"[^"]*"\]/.test(s)) return s.replace(/\[Event\s+"[^"]*"\]/, '[Event "' + safe + '"]');
+  return '[Event "' + safe + '"]\n' + s;
+}
 function dbPoolImport() {
   var res = document.getElementById('dbpool-result');
   if (!_dbPoolContent) return;
   var allGames = pgnSplitGames(_dbPoolContent);
   if (!allGames.length) { if (res) res.innerHTML = '<span style="color:var(--red)">No se encontraron partidas en el archivo.</span>'; return; }
+  // Si se eligió un torneo destino, ESTAMPAR su evento canónico (el nombre) en cada partida → quedan
+  // bajo ese evento en el pool y el torneo las muestra siempre (incluidas las rondas que subas después).
+  var targetSel = document.getElementById('dbpool-target');
+  var target = (targetSel && targetSel.value) ? targetSel.value : '';
+  if (target) allGames = allGames.map(function(g) { return _stampEvent(g, target); });
   // dedup interno del archivo (barato) + contra todo el sitio (prefijo/exacto → no entra lo ya cargado)
   var uniqueIncoming = dedupGamesByMoves(allGames.map(function(p) { return { pgn: p }; }), function(w) { return w.pgn; });
   var siteIdx = buildSiteDedupIndex();
@@ -10678,12 +10706,15 @@ function openTourFromProfile(type, id) {
 }
 
 // ── Fase 3b: el torneo toma sus PARTIDAS de la base de datos única (pool) por EVENTO ──────────────
-// Nombres de evento (header Event) que le corresponden al torneo: explícito (cfg.poolEvents, que el
-// autor setea en el modal) o, como transición, derivados de los Event de sus partidas ya guardadas.
-function _tourEventNames(cfg, storedGames) {
-  if (cfg && cfg.poolEvents && cfg.poolEvents.length) return cfg.poolEvents;
+// Nombres de evento (header Event) que le corresponden al torneo. El evento CANÓNICO es el nombre del
+// torneo (las partidas subidas "para este torneo" se estampan con ese Event → siempre enganchan, sin
+// depender de los Event desprolijos del PGN original). Además, como fallback de transición, se suman
+// los Event de sus partidas ya guardadas (legacy: broadcast con Event por partida, etc.).
+function _tourEventNames(name, storedGames) {
   var evs = Object.create(null), list = [];
-  (storedGames || []).forEach(function(g) { var e = (parsePgnHeaders(g).Event || '').trim(); if (e && !evs[e]) { evs[e] = true; list.push(e); } });
+  function add(e) { e = (e || '').trim(); if (e && !evs[e]) { evs[e] = true; list.push(e); } }
+  add(name);
+  (storedGames || []).forEach(function(g) { add(parsePgnHeaders(g).Event); });
   return list;
 }
 // Partidas del pool (_memTournaments, contenedores por evento) cuyos nombres están en eventNames.
@@ -10700,7 +10731,6 @@ async function openTournamentDetail(type, id, scrollToGames) {
   var leaders = [], games = [], crUrl = '', broadcastId = '', broadcastUrl = '', pgnGames = [];
   var timeControl = '', chesscomUrl = '', flyerUrl = '';
   var loadFailed = false;
-  var _poolCfg = null;   // config del torneo (para resolver sus eventos en la base de datos)
   var tzCfg2 = getTzConfig();
 
   if (type === 'hc') {
@@ -10717,7 +10747,6 @@ async function openTournamentDetail(type, id, scrollToGames) {
     pgnGames = hcCfg.pgnGames || [];
     if (t.hasPgn && PGN_DB[t.pgnId]) games = PGN_DB[t.pgnId].games || [];
     games = pgnGames.length ? pgnGames : games;
-    _poolCfg = hcCfg;
   } else if (type === 'ls') {
     var entry = null;
     if (_ondemand && _manifest) {
@@ -10740,7 +10769,6 @@ async function openTournamentDetail(type, id, scrollToGames) {
     flyerUrl = entry.flyerUrl || '';
     games = entry.games || [];
     leaders = pgnComputeLeaders(games);
-    _poolCfg = entry;
   } else if (type === 'tz') {
     var d = tzCfg2[id];
     if (!d) return;
@@ -10753,14 +10781,13 @@ async function openTournamentDetail(type, id, scrollToGames) {
     pgnGames = d.pgnGames || [];
     games = pgnGames;
     leaders = pgnComputeLeaders(games);
-    _poolCfg = d;
   }
 
   // Fase 3b: sumar las partidas del POOL (base de datos única) que le corresponden a este torneo por
   // EVENTO, y deduplicar con las guardadas (transición). Así subir rondas a la base las muestra acá
   // sin duplicar. NO cambia las posiciones/cruces (siguen del Excel; las partidas solo rellenan los
   // resultados clickeables vía crSyncResultsFromPgn).
-  var _poolG = _tourPoolGames(_tourEventNames(_poolCfg, games));
+  var _poolG = _tourPoolGames(_tourEventNames(name, games));
   if (_poolG.length) {
     games = dedupGamesByMoves(games.concat(_poolG).map(function(p) { return { pgn: p }; }), function(w) { return w.pgn; }).map(function(w) { return w.pgn; });
   }
