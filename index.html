@@ -859,8 +859,8 @@
     <!-- ── FAVORITOS ── -->
     <section class="section" id="s-favoritos">
       <div class="pg-head">
-        <h2>Favoritos</h2>
-        <p>Jugadores que seguís</p>
+        <h2>Partidas</h2>
+        <p>Buscá en la base de datos</p>
       </div>
       <div id="list-favoritos"><div class="p-card" onclick="openPlayer(20)"><span class="p-rank ">★</span><div class="p-avatar">IS</div><div class="p-info"><div class="p-name">Ilan Schnaider</div><div class="p-sub"><span class="p-title-badge p-title-im">IM</span> </div></div><div class="p-elo"><div class="p-elo-n">2431</div><div class="p-elo-l">ELO FIDE</div></div><button class="fav-btn on" onclick="toggleFav(event,20)" title="Agregar a favoritos"><svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg></button></div></div>
     </section>
@@ -900,9 +900,9 @@
     </button>
     <button class="nav-btn" onclick="goTo('favoritos',this)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-        <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+        <circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>
       </svg>
-      <span>Favoritos</span>
+      <span>Partidas</span>
     </button>
     <button class="nav-btn" onclick="goTo('noticias',this)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -4131,6 +4131,7 @@ function pgnMergeToPlayerGames() {
       tournaments: [{ name: tName, location: tLoc, games: d.pgnGames }]
     };
   }
+  if (typeof _invalidateDbSearch === 'function') _invalidateDbSearch();   // el buscador se reconstruye
 }
 
 // Muestra la lista de torneos ya cargados
@@ -5463,6 +5464,131 @@ function searchP(q) {
 /* ═══════════════════════════════════════════════════════
    FAVORITOS
 ═══════════════════════════════════════════════════════ */
+// ═══════════════ BUSCADOR DE PARTIDAS (Base de datos) ═══════════════
+// Todas las partidas de la base (pool + públicas + curadas + modal), deduplicadas barato. Cacheado.
+var _dbSearchIndex = null;
+function _invalidateDbSearch() { _dbSearchIndex = null; }
+function _buildDbSearchIndex() {
+  var all = [];
+  for (var k in PLAYER_GAMES) { var d = PLAYER_GAMES[k]; if (!d || !d.tournaments) continue; d.tournaments.forEach(function(t) { (t.games || []).forEach(function(g) { all.push(g); }); }); }
+  var uniq = dedupGamesByMoves(all.map(function(p) { return { pgn: p }; }), function(w) { return w.pgn; }).map(function(w) { return w.pgn; });
+  _dbSearchIndex = uniq.map(function(pgn) {
+    var h = parsePgnHeaders(pgn);
+    var body = _moveBody(pgn);
+    return { pgn: pgn, white: h.White || '', black: h.Black || '',
+             wt: nameTokens(h.White || ''), bt: nameTokens(h.Black || ''),
+             year: parseInt((h.Date || '').slice(0, 4)) || 0, date: h.Date || '',
+             result: h.Result || '', eco: (h.ECO || '').toUpperCase(),
+             plies: parseInt(h.PlyCount) || (body ? body.split(' ').filter(Boolean).length : 0),
+             event: h.Event || '' };
+  });
+  return _dbSearchIndex;
+}
+// ¿el conjunto de tokens `need` está todo en wt∪bt? (cada token, por prefijo, en algún lado)
+function _tokAllIn(need, a, b) {
+  for (var i = 0; i < need.length; i++) {
+    var t = need[i], ok = false, j;
+    for (j = 0; j < a.length && !ok; j++) if (a[j].indexOf(t) === 0) ok = true;
+    for (j = 0; j < b.length && !ok; j++) if (b[j].indexOf(t) === 0) ok = true;
+    if (!ok) return false;
+  }
+  return true;
+}
+function _tokAllInOne(need, side) {
+  for (var i = 0; i < need.length; i++) { var t = need[i], ok = false; for (var j = 0; j < side.length && !ok; j++) if (side[j].indexOf(t) === 0) ok = true; if (!ok) return false; }
+  return true;
+}
+function _dbSearch(opts) {
+  if (!_dbSearchIndex) _buildDbSearchIndex();
+  // parsear barra "en bruto": tokens-año (1905, 58-59, 2020-2024) → rango; resto → tokens de nombre
+  var raw = (opts.raw || '').trim();
+  var nameNeed = [], yFrom = opts.yearFrom || 0, yTo = opts.yearTo || 0;
+  raw.split(/\s+/).forEach(function(w) {
+    if (!w) return;
+    var m4 = w.match(/^(\d{4})(?:-(\d{4}))?$/), m2 = w.match(/^(\d{2})-(\d{2})$/);
+    if (m4) { var a = +m4[1], b = m4[2] ? +m4[2] : a; if (!yFrom || a < yFrom) yFrom = a; if (b > yTo) yTo = b; }
+    else if (m2) { var a2 = 1900 + (+m2[1]), b2 = 1900 + (+m2[2]); if (!yFrom || a2 < yFrom) yFrom = a2; if (b2 > yTo) yTo = b2; }
+    else nameNeed = nameNeed.concat(nameTokens(w));
+  });
+  var wNeed = nameTokens(opts.white || ''), bNeed = nameTokens(opts.black || '');
+  var eco = (opts.eco || '').toUpperCase().trim();
+  var res = (opts.result || '').trim();
+  return _dbSearchIndex.filter(function(g) {
+    if (nameNeed.length && !_tokAllIn(nameNeed, g.wt, g.bt)) return false;
+    if (wNeed.length && !_tokAllInOne(wNeed, g.wt)) return false;
+    if (bNeed.length && !_tokAllInOne(bNeed, g.bt)) return false;
+    if (yFrom && g.year && g.year < yFrom) return false;
+    if (yTo && g.year && g.year > yTo) return false;
+    if (res && g.result !== res) return false;
+    if (eco && g.eco.indexOf(eco) !== 0) return false;
+    return true;
+  });
+}
+
+var _dbSearchResults = [], _dbSearchPage = 1;
+var _DB_PAGE = 50;
+function renderDbSearch() {
+  var el = document.getElementById('list-favoritos');
+  if (!el) return;
+  var h = '';
+  h += '<div style="margin-bottom:14px">';
+  h += '<div style="display:flex;gap:8px"><input id="db-q" type="text" placeholder="Nombre de jugador(es), ej: Mareco Oro 2024" value="' + escHtml(_dbLastQ.raw || '') + '" onkeydown="if(event.key===\'Enter\')dbSearchRun()" style="flex:1;padding:11px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:10px;font-family:inherit;font-size:14px">';
+  h += '<button onclick="dbSearchRun()" style="padding:11px 18px;background:var(--gold);border:none;color:#000;font-weight:700;border-radius:10px;cursor:pointer;font-family:inherit">Buscar</button></div>';
+  h += '<details style="margin-top:10px"' + (_dbAdvOpen ? ' open' : '') + ' ontoggle="_dbAdvOpen=this.open">';
+  h += '<summary style="cursor:pointer;color:var(--text2);font-size:13px;user-select:none">Búsqueda avanzada</summary>';
+  h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">';
+  h += _dbField('Blancas', '<input id="db-white" type="text" value="' + escHtml(_dbLastQ.white || '') + '" ' + _dbInpStyle() + '>');
+  h += _dbField('Negras', '<input id="db-black" type="text" value="' + escHtml(_dbLastQ.black || '') + '" ' + _dbInpStyle() + '>');
+  h += _dbField('Año desde', '<input id="db-yfrom" type="number" value="' + (_dbLastQ.yearFrom || '') + '" ' + _dbInpStyle() + '>');
+  h += _dbField('Año hasta', '<input id="db-yto" type="number" value="' + (_dbLastQ.yearTo || '') + '" ' + _dbInpStyle() + '>');
+  h += _dbField('Resultado', '<select id="db-res" ' + _dbInpStyle() + '><option value="">Cualquiera</option><option value="1-0"' + (_dbLastQ.result === '1-0' ? ' selected' : '') + '>1-0</option><option value="0-1"' + (_dbLastQ.result === '0-1' ? ' selected' : '') + '>0-1</option><option value="1/2-1/2"' + (_dbLastQ.result === '1/2-1/2' ? ' selected' : '') + '>½-½</option></select>');
+  h += _dbField('ECO', '<input id="db-eco" type="text" placeholder="ej: B40" value="' + escHtml(_dbLastQ.eco || '') + '" ' + _dbInpStyle() + '>');
+  h += '</div></details></div>';
+  h += '<div id="db-results"></div>';
+  el.innerHTML = h;
+  if (_dbSearchResults.length || _dbLastQ.ran) _renderDbResults();
+}
+function _dbField(label, inner) { return '<div><div style="font-size:11px;color:var(--text3);margin-bottom:3px">' + label + '</div>' + inner + '</div>'; }
+function _dbInpStyle() { return 'style="width:100%;padding:9px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;font-family:inherit;font-size:13px;box-sizing:border-box"'; }
+var _dbLastQ = {}, _dbAdvOpen = false;
+function dbSearchRun() {
+  var g = function(id) { var e = document.getElementById(id); return e ? e.value.trim() : ''; };
+  _dbLastQ = { raw: g('db-q'), white: g('db-white'), black: g('db-black'), yearFrom: parseInt(g('db-yfrom')) || 0, yearTo: parseInt(g('db-yto')) || 0, result: g('db-res'), eco: g('db-eco'), ran: true };
+  _dbSearchResults = _dbSearch(_dbLastQ);
+  _dbSearchPage = 1;
+  _renderDbResults();
+}
+function _renderDbResults() {
+  var box = document.getElementById('db-results'); if (!box) return;
+  var n = _dbSearchResults.length;
+  if (!n) { box.innerHTML = '<div style="text-align:center;color:var(--text3);padding:24px;font-size:14px">' + (_dbLastQ.ran ? 'Sin resultados.' : 'Escribí un nombre y apretá Buscar.') + '</div>'; return; }
+  var total = Math.ceil(n / _DB_PAGE), pg = Math.min(_dbSearchPage, total);
+  var start = (pg - 1) * _DB_PAGE, slice = _dbSearchResults.slice(start, start + _DB_PAGE);
+  var h = '<div style="font-size:12px;color:var(--text2);margin-bottom:10px"><b style="color:var(--text)">' + n + '</b> partida' + (n !== 1 ? 's' : '') + '</div>';
+  var rs = { '1-0': '1-0', '0-1': '0-1', '1/2-1/2': '½-½', '*': '*' };
+  slice.forEach(function(g, i) {
+    var idx = start + i;
+    h += '<div onclick="dbOpenResult(' + idx + ')" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-bottom:6px;cursor:pointer;background:var(--bg2)">';
+    h += '<div style="flex:1;min-width:0"><div style="font-size:14px;color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escHtml(g.white || '?') + ' – ' + escHtml(g.black || '?') + '</div>';
+    h += '<div style="font-size:12px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escHtml(g.event || '') + (g.date ? ' · ' + escHtml(g.date) : '') + (g.eco ? ' · ' + escHtml(g.eco) : '') + '</div></div>';
+    h += '<div style="font-size:13px;font-weight:700;color:var(--text2);flex-shrink:0">' + (rs[g.result] || '') + '</div></div>';
+  });
+  if (total > 1) {
+    h += '<div style="display:flex;justify-content:center;align-items:center;gap:12px;margin-top:10px">';
+    h += '<button onclick="dbSearchGoPage(' + (pg - 1) + ')" ' + (pg <= 1 ? 'disabled' : '') + ' style="padding:7px 14px;background:var(--bg3);border:1px solid var(--border);color:var(--text2);border-radius:8px;cursor:pointer;font-family:inherit;opacity:' + (pg <= 1 ? '.4' : '1') + '">◀</button>';
+    h += '<span style="font-size:13px;color:var(--text2)">' + pg + ' / ' + total + '</span>';
+    h += '<button onclick="dbSearchGoPage(' + (pg + 1) + ')" ' + (pg >= total ? 'disabled' : '') + ' style="padding:7px 14px;background:var(--bg3);border:1px solid var(--border);color:var(--text2);border-radius:8px;cursor:pointer;font-family:inherit;opacity:' + (pg >= total ? '.4' : '1') + '">▶</button></div>';
+  }
+  box.innerHTML = h;
+}
+function dbSearchGoPage(p) { _dbSearchPage = p; _renderDbResults(); window.scrollTo(0, 0); }
+function dbOpenResult(idx) {
+  var g = _dbSearchResults[idx]; if (!g) return;
+  _cvTourGames = _dbSearchResults.map(function(r) { return r.pgn; });
+  _cvTourName = 'Búsqueda'; _cvTourLoc = '';
+  openTourGameByIndex(idx);
+}
+
 function renderFavs() {
   var list = PLAYERS.filter(function(p){ return favs.indexOf(p.id) >= 0; });
   list.sort(function(a, b){ return b.elo - a.elo; });
@@ -8676,7 +8802,7 @@ function goTo(sec, btn) {
   document.getElementById('s-' + sec).classList.add('active');
   btn.classList.add('active');
   document.querySelector('.main').scrollTop = 0;
-  if (sec === 'favoritos') renderFavs();
+  if (sec === 'favoritos') renderDbSearch();
   try { localStorage.setItem('last_section', sec); } catch(e) {}
 }
 
@@ -11453,7 +11579,7 @@ if (!_ondemand) { var _ruw = document.getElementById('ranking-update-wrap'); if 
       document.querySelectorAll('.nav-btn').forEach(function(b){ b.classList.remove('active'); });
       sec.classList.add('active');
       btn.classList.add('active');
-      if (last === 'favoritos') renderFavs();
+      if (last === 'favoritos') renderDbSearch();
     }
   }
 })();
