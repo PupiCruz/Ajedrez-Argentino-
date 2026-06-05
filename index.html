@@ -5344,7 +5344,7 @@ function renderPlayers(list, id, showRank) {
       html += '<div class="p-avatar">' + ini(p.name) + '</div>';
       html += '<div class="p-info">';
       html += '<div class="p-name">' + p.name + '</div>';
-      html += '<div class="p-sub">' + tBadge + (p.ranked === false ? (p.fed || '') : (p.province || '')) + '</div>';
+      html += '<div class="p-sub">' + tBadge + (p.ranked === false ? ((p.fed || '') + (p.inactive ? ' · <span style="color:var(--text3)">inactivo</span>' : '')) : (p.province || '')) + '</div>';
       html += '</div>';
       html += '<div class="p-elo">';
       html += '<div class="p-elo-n">' + p.elo + '</div>';
@@ -5371,7 +5371,7 @@ function renderPlayers(list, id, showRank) {
       html += '<div class="p-avatar">' + ini(p.name) + '</div>';
       html += '<div class="p-info">';
       html += '<div class="p-name">' + p.name + '</div>';
-      html += '<div class="p-sub">' + tBadge + (p.ranked === false ? (p.fed || '') : (p.province || '')) + '</div>';
+      html += '<div class="p-sub">' + tBadge + (p.ranked === false ? ((p.fed || '') + (p.inactive ? ' · <span style="color:var(--text3)">inactivo</span>' : '')) : (p.province || '')) + '</div>';
       html += '</div>';
       html += '<div class="p-elo">';
       html += '<div class="p-elo-n">' + p.elo + '</div>';
@@ -5635,7 +5635,7 @@ async function openPlayer(id) {
   if (p.title) _subParts.push(p.title);
   if (p.province) _subParts.push(p.province);
   if (p.born) _subParts.push('Nac. ' + p.born);
-  if (p.ranked === false) _subParts.push('<span style="color:var(--gold)">' + _fed + '</span>');
+  if (p.ranked === false) { _subParts.push('<span style="color:var(--gold)">' + _fed + '</span>'); if (p.inactive) _subParts.push('<span style="color:var(--text3)">inactivo</span>'); }
   else if (ranking) _subParts.push('<span style="color:var(--gold)">#' + ranking + ' ' + _fed + '</span>');
   h += '<div class="m-sub">' + _subParts.join(' · ') + '</div>';
   if (p.fide_id) h += '<div class="m-sub" style="margin-top:3px"><a href="https://ratings.fide.com/profile/' + p.fide_id + '" target="_blank" style="color:var(--gold);text-decoration:none">FIDE ID: ' + p.fide_id + ' ↗</a>'
@@ -7574,7 +7574,7 @@ function _parseFideTable(text, extraIds) {
     var name  = ln.substr(15, 61).trim();
     var flag  = ln.length > 132 ? ln.substring(132).replace(/\s+/g, '') : '';
     // Adicionales: capturar SIEMPRE (cualquier federación / actividad / elo) para refrescarlos.
-    if (hasExtra && extraIds[fide_id]) extras[fide_id] = { name: name, fed: fed, title: title, elo: elo, sex: sex, born: born };
+    if (hasExtra && extraIds[fide_id]) extras[fide_id] = { name: name, fed: fed, title: title, elo: elo, sex: sex, born: born, inactive: (flag.indexOf('i') >= 0) };
     // Ranking activo: ARG + activo (sin 'i') + elo ≥ mínimo.
     if (fed !== 'ARG') continue;
     if (flag.indexOf('i') >= 0) continue;
@@ -7609,8 +7609,14 @@ function _buildRankingFromActive(parsed) {
   cur.forEach(function(p) {
     if (p.ranked !== false || seen[p.fide_id]) return;
     var ex = parsed.extras && parsed.extras[p.fide_id];
-    var np = { id: p.id, fide_id: p.fide_id, name: p.name, title: p.title || '', elo: p.elo || 0, province: p.province || '', born: p.born || 0, fed: p.fed || '', female: !!p.female, ranked: false, wins: 0, draws: 0, losses: 0, peak: p.peak || p.elo || 0, results: [] };
-    if (ex) { np.title = ex.title || np.title; np.elo = ex.elo || np.elo; np.fed = ex.fed || np.fed; np.female = (ex.sex === 'F'); np.born = ex.born || np.born; np.peak = Math.max(np.peak, ex.elo || 0); }
+    var np = { id: p.id, fide_id: p.fide_id, name: p.name, title: p.title || '', elo: p.elo || 0, province: p.province || '', born: p.born || 0, fed: p.fed || '', female: !!p.female, inactive: !!p.inactive, ranked: false, wins: 0, draws: 0, losses: 0, peak: p.peak || p.elo || 0, results: [] };
+    if (ex) {
+      // El nombre lo tomamos EXACTO del listado FIDE (por fide_id) para evitar confusiones.
+      np.name = (typeof pgnNameToNatural === 'function') ? pgnNameToNatural(ex.name) : ex.name;
+      np.title = ex.title || np.title; np.elo = ex.elo || np.elo; np.fed = ex.fed || np.fed;
+      np.female = (ex.sex === 'F'); np.born = ex.born || np.born; np.inactive = !!ex.inactive;
+      np.peak = Math.max(np.peak, ex.elo || 0);
+    }
     additionals.push(np);
   });
   additionals.sort(function(x, y) { return (y.elo || 0) - (x.elo || 0); });
