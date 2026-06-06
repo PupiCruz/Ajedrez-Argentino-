@@ -10094,6 +10094,14 @@ window.addEventListener('popstate', function() {
     closeChessViewer();
     return;
   }
+  var bcg = document.getElementById('bcgrid-overlay');
+  if (bcg && bcg.style.display !== 'none') {
+    _bcGridPushed = false;
+    if (_bcGridTimer) { clearTimeout(_bcGridTimer); _bcGridTimer = null; }
+    bcg.style.display = 'none';
+    _bcGrid = null;
+    return;
+  }
   var player = document.getElementById('overlay');
   if (player && player.classList.contains('open')) {
     _playerHistoryPushed = false;
@@ -11024,21 +11032,177 @@ function _bcMarkLiveButtons(root) {
 // primero resuelve el tour id desde la URL (que sí trae la ronda) y recién ahí abre.
 function openBroadcastTournament(broadcastId, name, sub, pageUrl) {
   var raw = String(broadcastId || '');
-  if (/^[A-Za-z0-9]{8}$/.test(raw)) { _openBroadcastByTourId(raw, name, sub, pageUrl); return; }
+  if (/^[A-Za-z0-9]{8}$/.test(raw)) { bcOpenLiveGrid(raw, name, sub, pageUrl); return; }
   var m = (String(pageUrl || '') + ' ' + raw).match(/broadcast\/([^\/\?#\s]+)\/([^\/\?#\s]+)\/([^\/\?#\s]+)/);
   if (m) {
     bcResolveTourId(m[1], m[2], m[3], function(tourId) {
-      if (tourId) _openBroadcastByTourId(tourId, name, sub, pageUrl);
+      if (tourId) bcOpenLiveGrid(tourId, name, sub, pageUrl);
       else if (confirm('No se pudo conectar con Lichess (requiere servidor, no funciona desde archivo local).\n\n¿Abrís el broadcast en Lichess?')) window.open(pageUrl || ('https://lichess.org/broadcast/' + raw), '_blank');
     });
     return;
   }
-  _openBroadcastByTourId(raw, name, sub, pageUrl);   // compat: datos viejos sin URL de ronda
+  bcOpenLiveGrid(raw, name, sub, pageUrl);   // compat: datos viejos sin URL de ronda
 }
 
 function _openBroadcastByTourId(broadcastId, name, sub, pageUrl) {
   _liveCtx = { broadcastId: broadcastId, name: name, sub: sub, pageUrl: pageUrl };
   _bcLoad(false);
+}
+
+/* ═══════════════════════════════════════════════════════
+   GRILLA DE TABLEROS EN VIVO (estilo "boards" de Lichess)
+   "Ver partidas · Lichess" abre esta grilla: los tableros de la ronda en juego,
+   con pestañas por ronda y auto-refresco. Tocar un tablero abre el visor grande.
+═══════════════════════════════════════════════════════ */
+var _bcGrid = null;        // { tourId, name, location, pageUrl, rounds, curRound, argOnly, tourSlug }
+var _bcGridTimer = null;
+var _bcGridPushed = false;
+
+function bcOpenLiveGrid(tourId, name, location, pageUrl) {
+  _bcGrid = { tourId: tourId, name: name || '', location: location || '', pageUrl: pageUrl || '', rounds: [], curRound: 0, argOnly: false };
+  _bcGridEnsureOverlay();
+  document.getElementById('bcgrid-title').textContent = name || 'Partidas en vivo';
+  document.getElementById('bcgrid-tabs').innerHTML = '';
+  document.getElementById('bcgrid-arg').style.display = 'none';
+  document.getElementById('bcgrid-body').innerHTML = '<div style="text-align:center;padding:46px 0;color:var(--text3);font-size:14px">Cargando partidas…</div>';
+  document.getElementById('bcgrid-overlay').style.display = 'block';
+  if (!_bcGridPushed) { _bcGridPushed = true; history.pushState({ bcGrid: true }, ''); }
+  _bcGridLoad(false);
+}
+
+function _bcGridEnsureOverlay() {
+  if (document.getElementById('bcgrid-overlay')) return;
+  var ov = document.createElement('div');
+  ov.id = 'bcgrid-overlay';
+  // z-index 800: encima del detalle del torneo (300), debajo del visor (9000) para que el
+  // visor de la partida abra por encima al tocar un tablero.
+  ov.style.cssText = 'position:fixed;inset:0;background:var(--bg,#0f1115);z-index:800;display:none;overflow-y:auto';
+  ov.innerHTML =
+      '<div style="max-width:1000px;margin:0 auto;padding:14px 14px 50px;box-sizing:border-box">'
+    + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">'
+    + '<button onclick="bcGridClose()" style="background:var(--bg3);border:1px solid var(--border);color:var(--text2);font-size:13px;border-radius:8px;padding:8px 13px;cursor:pointer;font-family:inherit;flex-shrink:0">← Volver</button>'
+    + '<div id="bcgrid-title" style="flex:1;min-width:0;font-size:15px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>'
+    + '<span style="font-size:12px;color:#e07070;font-weight:700;flex-shrink:0">🔴 EN VIVO</span>'
+    + '</div>'
+    + '<div id="bcgrid-livebar" style="font-size:11px;color:var(--text3);margin-bottom:12px">Se actualiza solo cada 30 segundos.</div>'
+    + '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:12px">'
+    + '<div id="bcgrid-tabs" style="display:flex;flex-wrap:wrap;gap:6px"></div>'
+    + '<button id="bcgrid-arg" onclick="bcGridToggleArg()" style="padding:6px 13px;border-radius:20px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;display:none">🇦🇷 Solo argentinos</button>'
+    + '</div>'
+    + '<div id="bcgrid-body"></div>'
+    + '</div>';
+  document.body.appendChild(ov);
+}
+
+function _bcGridOpen() { var ov = document.getElementById('bcgrid-overlay'); return ov && ov.style.display !== 'none'; }
+
+function _bcGridLoad(isRefresh) {
+  if (!_bcGrid) return;
+  var tourId = _bcGrid.tourId;
+  _bcFetchAll(tourId, function(res) {
+    if (!_bcGrid || _bcGrid.tourId !== tourId || !_bcGridOpen()) return;
+    if (!res || !res.roundsWithGames || !res.roundsWithGames.length) {
+      if (!isRefresh) document.getElementById('bcgrid-body').innerHTML = '<div style="text-align:center;padding:46px 0;color:var(--text3);font-size:14px">No se pudieron cargar las partidas.<br>Probá de nuevo en un momento.</div>';
+      return;
+    }
+    _bcGrid.rounds = res.roundsWithGames;
+    _bcGrid.tourSlug = res.tourSlug;
+    if (!isRefresh) {
+      var idx = -1;
+      for (var i = 0; i < _bcGrid.rounds.length; i++) { if (_bcGrid.rounds[i].live) { idx = i; break; } }
+      _bcGrid.curRound = idx >= 0 ? idx : (_bcGrid.rounds.length - 1);
+    } else if (_bcGrid.curRound >= _bcGrid.rounds.length) {
+      _bcGrid.curRound = _bcGrid.rounds.length - 1;
+    }
+    _bcGridRender();
+    if (_bcGridTimer) { clearTimeout(_bcGridTimer); _bcGridTimer = null; }
+    if (_bcGrid.rounds.some(function(r){ return r.live; }) && _bcGridOpen()) {
+      _bcGridTimer = setTimeout(function(){ _bcGridLoad(true); }, _BC_REFRESH_MS);
+    }
+  });
+}
+
+function _bcGridRender() {
+  if (!_bcGrid || !_bcGridOpen()) return;
+  var tabsEl = document.getElementById('bcgrid-tabs');
+  var th = '';
+  _bcGrid.rounds.forEach(function(r, i) {
+    var active = i === _bcGrid.curRound;
+    th += '<button onclick="bcGridShowRound(' + i + ')" style="padding:6px 14px;border-radius:20px;border:1px solid var(--border);background:' + (active?'var(--gold-bg)':'var(--bg3)') + ';color:' + (active?'var(--gold)':'var(--text2)') + ';font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">' + (r.live?'🔴 ':'') + escHtml(r.name || ('R'+(i+1))) + '</button>';
+  });
+  tabsEl.innerHTML = th;
+  var round = _bcGrid.rounds[_bcGrid.curRound];
+  var games = (round && round.games) || [];
+  var argCount = games.filter(function(pgn){ return _isArgGame(parsePgnHeaders(pgn)); }).length;
+  document.getElementById('bcgrid-arg').style.display = argCount > 0 ? '' : 'none';
+  var lb = document.getElementById('bcgrid-livebar');
+  if (lb) lb.textContent = round && round.live ? '🔴 ' + (round.name||'Ronda en curso') + ' · se actualiza solo cada 30 segundos' : (round ? round.name + ' · finalizada' : '');
+  // Para abrir el visor al tocar un tablero
+  PGN_DB['_bcgrid'] = { title: _bcGrid.name, sub: (round&&round.name)||'', url: _bcGrid.pageUrl, games: games };
+  var START = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR';
+  var h = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:10px">';
+  games.forEach(function(pgn, idx) {
+    var hd = parsePgnHeaders(pgn);
+    var wParts = (hd.White || '?').split(','); var white = wParts.length > 1 ? (wParts[1].trim() + ' ' + wParts[0].trim()) : wParts[0].trim();
+    var bParts = (hd.Black || '?').split(','); var black = bParts.length > 1 ? (bParts[1].trim() + ' ' + bParts[0].trim()) : bParts[0].trim();
+    var res = hd.Result || '*';
+    var wScore = res === '1-0' ? '1' : res === '0-1' ? '0' : res === '1/2-1/2' ? '½' : '';
+    var bScore = res === '1-0' ? '0' : res === '0-1' ? '1' : res === '1/2-1/2' ? '½' : '';
+    var wsc = res === '1-0' ? 'var(--green)' : res === '0-1' ? 'var(--red)' : 'var(--text2)';
+    var bsc = res === '0-1' ? 'var(--green)' : res === '1-0' ? 'var(--red)' : 'var(--text2)';
+    var isArg = _isArgGame(hd) ? '1' : '0';
+    var fen = tdFinalFenCached(pgn);
+    var board = tdMiniFen(fen);
+    if (fen.split(' ')[0] === START) {
+      var resBig = res === '1/2-1/2' ? '½-½' : (res === '*' ? '·' : res);
+      board += '<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none"><span style="background:rgba(20,20,25,.82);color:#fff;font-size:15px;font-weight:800;padding:5px 11px;border-radius:8px">' + resBig + '</span></div>';
+    }
+    h += '<div class="bcgrid-card" data-arg="' + isArg + '" onclick="bcGridOpenGame(' + idx + ')" style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;cursor:pointer;overflow:hidden" onmouseover="this.style.borderColor=\'var(--gold-dim)\'" onmouseout="this.style.borderColor=\'var(--border)\'">';
+    h += '<div style="display:flex;gap:5px;padding:5px 7px 4px"><div style="flex:1;font-size:11px;line-height:1.25;color:var(--text)">' + escHtml(black) + '</div><span style="font-size:11px;font-weight:700;color:' + bsc + '">' + bScore + '</span></div>';
+    h += '<div style="position:relative">' + board + '</div>';
+    h += '<div style="display:flex;gap:5px;padding:4px 7px 6px"><div style="flex:1;font-size:11px;line-height:1.25;color:var(--text)">' + escHtml(white) + '</div><span style="font-size:11px;font-weight:700;color:' + wsc + '">' + wScore + '</span></div>';
+    h += '</div>';
+  });
+  h += '</div>';
+  if (!games.length) h = '<div style="text-align:center;padding:46px 0;color:var(--text3);font-size:14px">Esta ronda todavía no tiene partidas.</div>';
+  document.getElementById('bcgrid-body').innerHTML = h;
+  _bcGridApplyArg();
+}
+
+function bcGridShowRound(i) { if (_bcGrid) { _bcGrid.curRound = i; _bcGridRender(); } }
+
+function bcGridToggleArg() {
+  if (!_bcGrid) return;
+  _bcGrid.argOnly = !_bcGrid.argOnly;
+  var btn = document.getElementById('bcgrid-arg');
+  if (_bcGrid.argOnly) { btn.style.background = 'rgba(50,150,80,.2)'; btn.style.borderColor = 'rgba(50,200,80,.4)'; btn.style.color = '#6fcf8a'; }
+  else { btn.style.background = 'var(--bg3)'; btn.style.borderColor = 'var(--border)'; btn.style.color = 'var(--text2)'; }
+  _bcGridApplyArg();
+}
+
+function _bcGridApplyArg() {
+  if (!_bcGrid) return;
+  document.querySelectorAll('#bcgrid-body .bcgrid-card').forEach(function(card){
+    card.style.display = (_bcGrid.argOnly && card.getAttribute('data-arg') !== '1') ? 'none' : '';
+  });
+}
+
+function bcGridOpenGame(idx) {
+  if (!_bcGrid) return;
+  var round = _bcGrid.rounds[_bcGrid.curRound];
+  if (!round || !round.games[idx]) return;
+  _cvTourGames = round.games;
+  _cvTourName  = _bcGrid.name;
+  _cvTourLoc   = round.name || '';
+  openTourGameByIndex(idx);   // visor grande con jugadas/análisis
+}
+
+function bcGridClose() {
+  if (_bcGridTimer) { clearTimeout(_bcGridTimer); _bcGridTimer = null; }
+  var ov = document.getElementById('bcgrid-overlay');
+  if (ov) ov.style.display = 'none';
+  _bcGrid = null;
+  if (_bcGridPushed) { _bcGridPushed = false; history.back(); }
 }
 
 // Contexto del broadcast abierto, para el auto-refresco en vivo.
@@ -11074,7 +11238,14 @@ function _bcFetchAll(broadcastId, cb) {
         if (!liveRound) { for (var j = 0; j < rounds.length; j++) { if (!rounds[j].finished && rounds[j].startsAt && rounds[j].startsAt <= now) { liveRound = rounds[j]; break; } } }
         var liveHasProgress = liveRound && (byRound[liveRound.id] || []).some(function(g) { return /\[Result\s+"\*"\]/.test(g); });
         var isLive = !!ongoing || !!liveHasProgress;
-        cb({ tourSlug: tourSlug, rounds: rounds, allGames: allGames, liveRound: isLive ? liveRound : null, isLive: isLive });
+        // Rondas con sus partidas (para la grilla de tableros). `live` = esa ronda está en curso.
+        var roundsWithGames = [];
+        rounds.forEach(function(r) {
+          if (!byRound[r.id]) return;
+          var rLive = !!r.ongoing || (liveRound && r.id === liveRound.id && liveHasProgress);
+          roundsWithGames.push({ name: r.name, id: r.id, slug: r.slug, games: byRound[r.id], live: !!rLive, finished: !!r.finished });
+        });
+        cb({ tourSlug: tourSlug, rounds: rounds, allGames: allGames, liveRound: isLive ? liveRound : null, isLive: isLive, roundsWithGames: roundsWithGames });
       };
       toFetch.forEach(function(round) {
         var pgnUrl = 'https://lichess.org/broadcast/' + tourSlug + '/' + round.slug + '/' + round.id + '.pgn';
