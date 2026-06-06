@@ -2628,10 +2628,28 @@ function crKey(type, id) {
   return 'cr2_' + type + '_' + String(id).replace(/[^a-z0-9]/gi,'_');
 }
 function crDataLoad(key) {
-  try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch(e) { return null; }
+  try { var v = localStorage.getItem(key); if (v != null) return JSON.parse(v); } catch(e) {}
+  // Fallback al archivo: cruces/tabla embebidos (__EMBEDDED_CR__). Necesario cuando se abre por
+  // servidor o en la web publicada, donde el localStorage no tiene los cruces (otro almacenamiento).
+  try { if (window.__EMBEDDED_CR__ && window.__EMBEDDED_CR__[key]) return window.__EMBEDDED_CR__[key]; } catch(e) {}
+  return null;
 }
 function crDataSave(key, data) {
   try { localStorage.setItem(key, JSON.stringify(data)); _crArgCache = {}; } catch(e) { alert('Sin espacio en localStorage'); }
+}
+// Junta TODOS los cuadros de cruces/tabla (cr2_*) para embeberlos en el archivo, así viajan con
+// los datos (doble clic ⇄ servidor ⇄ web publicada) y no quedan atrapados en un solo navegador.
+// Merge: base = los del archivo (__EMBEDDED_CR__), encima los de localStorage (ediciones locales mandan).
+function _collectCrData() {
+  var out = {};
+  try { if (window.__EMBEDDED_CR__) for (var k in window.__EMBEDDED_CR__) if (Object.prototype.hasOwnProperty.call(window.__EMBEDDED_CR__, k)) out[k] = window.__EMBEDDED_CR__[k]; } catch(e) {}
+  try {
+    for (var i = 0; i < localStorage.length; i++) {
+      var lk = localStorage.key(i);
+      if (lk && lk.indexOf('cr2_') === 0) { try { out[lk] = JSON.parse(localStorage.getItem(lk)); } catch(e) {} }
+    }
+  } catch(e) {}
+  return out;
 }
 // Devuelve el top-n de la tabla importada como leaders [{name,score}], o null si no hay tabla.
 function crTopLeaders(type, id, n) {
@@ -4568,6 +4586,7 @@ async function exportAuthoringZip() {
     var embeddedDataJs = 'window.__EMBEDDED_DATA__=' + JSON.stringify(allData) + ';\n'
                        + 'window.__EMBEDDED_TZ__='   + JSON.stringify(getTzConfig()) + ';\n'
                        + 'window.__EMBEDDED_NEWS__=' + JSON.stringify(getNewsItems()) + ';\n'
+                       + 'window.__EMBEDDED_CR__='   + JSON.stringify(_collectCrData()) + ';\n'
                        + _embeddedPlayersJs();
     try { localStorage.setItem('last_export_fp', _estadoActualFp()); } catch(e){}
 
@@ -4606,6 +4625,7 @@ function exportDataFile() {
     var js = 'window.__EMBEDDED_DATA__=' + JSON.stringify(allData) + ';\n'
            + 'window.__EMBEDDED_TZ__='   + JSON.stringify(tzObj)   + ';\n'
            + 'window.__EMBEDDED_NEWS__=' + JSON.stringify(getNewsItems()) + ';\n'
+           + 'window.__EMBEDDED_CR__='   + JSON.stringify(_collectCrData()) + ';\n'
            + _embeddedPlayersJs();
     _downloadBlob(new Blob([js], { type: 'application/javascript' }), 'embedded-data.js');
     _downloadBlob(new Blob([_collectExportPhotosJs()],
@@ -4639,6 +4659,7 @@ async function exportHtml() {
     var manifestJs = 'window.__MANIFEST__=' + JSON.stringify(split.manifest).replace(/</g, '\\u003c') + ';\n'
                    + 'window.__EMBEDDED_TZ__='   + JSON.stringify(getTzConfig()) + ';\n'
                    + 'window.__EMBEDDED_NEWS__=' + JSON.stringify(getNewsItems()).replace(/</g, '\\u003c') + ';\n'
+                   + 'window.__EMBEDDED_CR__='   + JSON.stringify(_collectCrData()).replace(/</g, '\\u003c') + ';\n'
                    + _embeddedPlayersJs();
 
     var enc = new TextEncoder();
