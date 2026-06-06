@@ -10995,14 +10995,16 @@ function _bcIsTourLive(tourId, cb) {
 
 // Tras renderizar la lista, marca "🔴 EN VIVO" los botones de broadcast de torneos EN CURSO por
 // fecha (tarjeta con badge b-live) que Lichess confirme en vivo. Solo consulta esos pocos.
-function _bcMarkLiveButtons() {
-  var list = document.getElementById('list-torneos');
-  if (!list) return;
-  var btns = list.querySelectorAll('button[data-bc]');
+function _bcMarkLiveButtons(root) {
+  root = root || document.getElementById('list-torneos');
+  if (!root) return;
+  var btns = root.querySelectorAll('button[data-bc]');
   for (var i = 0; i < btns.length; i++) {
     (function(btn) {
       var card = btn.closest('.card');
-      if (!card || !card.querySelector('.badge.b-live')) return;   // solo torneos en curso por fecha
+      // En la lista: solo torneos EN CURSO por fecha (tarjeta con .badge.b-live). En el detalle
+      // del torneo el botón no está en una .card → lo evaluamos igual (es un solo torneo elegido).
+      if (card && !card.querySelector('.badge.b-live')) return;
       _bcResolveTourIdFromRef(btn.getAttribute('data-bc'), btn.getAttribute('data-bcurl') || '', function(tourId) {
         if (!tourId) return;
         _bcIsTourLive(tourId, function(live) {
@@ -11456,6 +11458,8 @@ async function openTournamentDetail(type, id, scrollToGames) {
   }
 
   document.getElementById('tour-modal-body').innerHTML = h;
+  // Si el torneo está en curso por fecha, marcar "🔴 EN VIVO" el botón de Lichess (si transmite ahora).
+  if (status === 'live') _bcMarkLiveButtons(document.getElementById('tour-modal-body'));
   // Armar solo la primera ronda (las demás bajo demanda)
   if (roundOrder.length) tdBuildRound(roundOrder[0]);
   var m = document.querySelector('#tour-overlay .modal');
