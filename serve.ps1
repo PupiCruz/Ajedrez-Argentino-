@@ -15,6 +15,10 @@ while ($listener.IsListening) {
       $bytes = [System.IO.File]::ReadAllBytes($path)
       $ext = [System.IO.Path]::GetExtension($path).ToLower()
       if ($mime.ContainsKey($ext)) { $ctx.Response.ContentType = $mime[$ext] }
+      # Sin caché: que el navegador siempre baje la versión fresca de los archivos. Evita que,
+      # tras editar index.html, el navegador siga mostrando la versión vieja al recargar.
+      $ctx.Response.Headers.Add("Cache-Control","no-store, no-cache, must-revalidate, max-age=0")
+      $ctx.Response.Headers.Add("Pragma","no-cache")
       $ctx.Response.ContentLength64 = $bytes.Length
       $ctx.Response.OutputStream.Write($bytes, 0, $bytes.Length)
     } else {
