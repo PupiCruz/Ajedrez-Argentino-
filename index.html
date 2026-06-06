@@ -5609,7 +5609,7 @@ function _buildObIndex() {
   });
   return _obIdx;
 }
-var _dbMode = 'search', _obLine = [], _obThreshold = 150, _obMatches = [];   // _obThreshold = máx partidas a mostrar (siempre las de mayor Elo)
+var _dbMode = 'search', _obLine = [], _obMatches = [];
 function _obCompute() {
   if (!_obIdx) _buildObIndex();
   var L = _obLine, n = L.length, matches = [], tally = Object.create(null), order = [];
@@ -5634,23 +5634,43 @@ function _obCurrentBoard() {
 // Actualiza el tablero INCREMENTALMENTE: construye las 64 casillas una vez y, en cada movida, solo
 // cambia la pieza (innerHTML) de las casillas que cambiaron — no recrea las 64 imágenes (rápido y no
 // recarga los SVG en cada jugada, igual que el camino rápido del visor).
+var _obSel = null, _obSelCell = null;
 function _obRefreshBoard() {
   if (typeof Chess === 'undefined') return;
   var boardEl = document.getElementById('ob-board'); if (!boardEl) return;
-  var bd = _obCurrentBoard(), cells = boardEl.children;
+  var bd = _obCurrentBoard(), cells = boardEl.children, FL = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
   if (cells.length !== 64) {
     var h = '';
     for (var r = 0; r < 8; r++) for (var f = 0; f < 8; f++) {
-      var li = (r + f) % 2 === 0;
-      h += '<div style="background:' + (li ? '#f0d9b5' : '#b58863') + ';aspect-ratio:1;display:flex;align-items:center;justify-content:center"></div>';
+      var li = (r + f) % 2 === 0, sq = FL[f] + (8 - r);
+      h += '<div data-sq="' + sq + '" onclick="obCellClick(\'' + sq + '\')" style="background:' + (li ? '#f0d9b5' : '#b58863') + ';aspect-ratio:1;display:flex;align-items:center;justify-content:center;cursor:pointer"></div>';
     }
-    boardEl.innerHTML = h; cells = boardEl.children;
+    boardEl.innerHTML = h; cells = boardEl.children; _obSelCell = null;
   }
   var idx = 0;
   for (var r2 = 0; r2 < 8; r2++) for (var f2 = 0; f2 < 8; f2++) {
     var cell = cells[idx++], pc = bd[r2][f2], pk = pc ? (pc.color + pc.type) : '';
-    if (cell._pk !== pk) { cell._pk = pk; cell.innerHTML = pc ? '<img src="' + WP_BASE + pc.color + pc.type.toUpperCase() + '.svg" style="width:92%;height:92%">' : ''; }
+    if (cell._pk !== pk) { cell._pk = pk; cell.innerHTML = pc ? '<img src="' + WP_BASE + pc.color + pc.type.toUpperCase() + '.svg" style="width:92%;height:92%;pointer-events:none">' : ''; }
   }
+  _obHighlightSel();
+}
+function _obHighlightSel() {
+  if (_obSelCell) { _obSelCell.style.boxShadow = ''; _obSelCell = null; }
+  if (_obSel) { var b = document.getElementById('ob-board'); var c = b ? b.querySelector('[data-sq="' + _obSel + '"]') : null; if (c) { c.style.boxShadow = 'inset 0 0 0 3px var(--gold)'; _obSelCell = c; } }
+}
+// Click/tap en una casilla: selecciona la pieza del lado a mover y, con la 2ª casilla, juega la
+// jugada (si es legal) y avanza el árbol. Permite ir armando la línea moviendo en el tablero.
+function obCellClick(sq) {
+  if (typeof Chess === 'undefined') return;
+  var c = new Chess();
+  for (var i = 0; i < _obLine.length; i++) { try { c.move(_obLine[i], { sloppy: true }); } catch (e) {} }
+  if (_obSel && _obSel !== sq) {
+    var mv = null; try { mv = c.move({ from: _obSel, to: sq, promotion: 'q' }); } catch (e) {}
+    if (mv) { _obSel = null; _obHighlightSel(); obPlay(mv.san); return; }
+  }
+  var pc = c.get(sq);
+  _obSel = (pc && pc.color === c.turn()) ? sq : null;
+  _obHighlightSel();
 }
 function _dbModeSwitcher() {
   function btn(mode, label) { var on = (_dbMode === mode); return '<button onclick="_dbMode=\'' + mode + '\';renderPartidas()" style="flex:1;padding:9px;border-radius:8px;border:1px solid var(--border);background:' + (on ? 'var(--gold-bg)' : 'var(--bg3)') + ';color:' + (on ? 'var(--gold)' : 'var(--text2)') + ';font-weight:600;cursor:pointer;font-family:inherit;font-size:13px">' + label + '</button>'; }
@@ -5664,9 +5684,9 @@ function renderOpeningExplorer() {
   if (!ensureChessLib()) { el.innerHTML = _dbModeSwitcher() + '<div style="padding:20px;color:var(--text3)">Cargando motor de ajedrez…</div>'; setTimeout(renderOpeningExplorer, 400); return; }
   el.innerHTML = _dbModeSwitcher()
     + '<div id="ob-top" style="margin-bottom:12px"></div>'
-    + '<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start;margin-bottom:14px">'
-    +   '<div id="ob-board" style="flex:0 0 340px;max-width:min(340px,80vw);display:grid;grid-template-columns:repeat(8,1fr);border-radius:6px;overflow:hidden;border:1px solid var(--border);align-self:flex-start"></div>'
-    +   '<div id="ob-moves" style="flex:1;min-width:220px"></div>'
+    + '<div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;margin-bottom:14px">'
+    +   '<div id="ob-board" style="flex:0 0 440px;max-width:92vw;display:grid;grid-template-columns:repeat(8,1fr);border-radius:6px;overflow:hidden;border:1px solid var(--border);align-self:flex-start"></div>'
+    +   '<div id="ob-moves" style="flex:1 1 240px;min-width:220px;max-width:400px"></div>'
     + '</div>'
     + '<div id="ob-games"></div>';
   _obRefreshBoard();
@@ -5687,7 +5707,6 @@ function _obRefreshAll() {
     h += '<span style="font-size:14px;color:var(--text2);line-height:1.8">';
     _obLine.forEach(function(m, i) { var num = (i % 2 === 0) ? ' <b>' + ((i / 2 | 0) + 1) + '.</b>' : ''; h += num + ' <span onclick="obBack(' + (i + 1) + ')" style="cursor:pointer">' + escHtml(m) + '</span>'; });
     h += '</span></div>';
-    h += '<div style="font-size:12px;color:var(--text3);margin-top:8px">Mostrar hasta <input id="ob-th" type="number" value="' + _obThreshold + '" onchange="obSetThreshold()" style="width:64px;padding:5px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:6px;font-family:inherit"> partidas (las de mayor Elo)</div>';
     top.innerHTML = h;
   }
   // Jugadas del libro (continuaciones)
@@ -5705,26 +5724,45 @@ function _obRefreshAll() {
     });
     mv.innerHTML = h2;
   }
-  // Partidas: SIEMPRE las primeras (tope _obThreshold), por Elo promedio desc
-  var gx = document.getElementById('ob-games');
-  if (gx) {
-    _obMatches = r.matches.slice(0, _obThreshold);
-    var rs = { '1-0': '1-0', '0-1': '0-1', '1/2-1/2': '½-½', '*': '*' };
-    var h3 = '<div style="font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text2);margin:6px 0 8px">Partidas (' + (r.total > _obThreshold ? 'primeras ' + _obThreshold + ' de ' + r.total : r.total) + ', por Elo)</div>';
-    if (!_obMatches.length) h3 += '<div style="color:var(--text3);font-size:13px;padding:8px">Sin partidas en esta línea.</div>';
-    _obMatches.forEach(function(g, i) {
-      h3 += '<div onclick="obOpenGame(' + i + ')" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-bottom:6px;cursor:pointer;background:var(--bg2)">';
-      h3 += '<div style="flex:1;min-width:0"><div style="font-size:14px;color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escHtml(g.white || '?') + ' – ' + escHtml(g.black || '?') + (g.avgElo ? ' <span style="color:var(--text3);font-weight:400">(' + Math.round(g.avgElo) + ')</span>' : '') + '</div>';
-      h3 += '<div style="font-size:12px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escHtml(g.event || '') + (g.date ? ' · ' + escHtml(g.date) : '') + '</div></div>';
-      h3 += '<div style="font-size:13px;font-weight:700;color:var(--text2);flex-shrink:0">' + (rs[g.result] || '') + '</div></div>';
-    });
-    gx.innerHTML = h3;
-  }
+  // Partidas: TODAS (por Elo desc), paginadas 30 por página.
+  _obMatches = r.matches;
+  _obRenderGames();
 }
-function obPlay(san) { _obLine.push(san); _obRefreshBoard(); _obRefreshAll(); }
-function obBack(i) { _obLine = _obLine.slice(0, i); _obRefreshBoard(); _obRefreshAll(); }
+var _obGamesPage = 1, _OB_PER = 30;
+function _obRenderGames() {
+  var gx = document.getElementById('ob-games'); if (!gx) return;
+  var n = _obMatches.length, total = Math.ceil(n / _OB_PER) || 1, pg = Math.min(_obGamesPage, total);
+  var slice = _obMatches.slice((pg - 1) * _OB_PER, pg * _OB_PER);
+  var rs = { '1-0': '1-0', '0-1': '0-1', '1/2-1/2': '½-½', '*': '*' };
+  var h = '<div style="font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text2);margin:6px 0 8px">Partidas · ' + n + ' (por Elo)</div>';
+  if (!n) h += '<div style="color:var(--text3);font-size:13px;padding:8px">Sin partidas en esta línea.</div>';
+  slice.forEach(function(g, i) {
+    var gi = (pg - 1) * _OB_PER + i;
+    h += '<div onclick="obOpenGame(' + gi + ')" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-bottom:6px;cursor:pointer;background:var(--bg2)">';
+    h += '<div style="flex:1;min-width:0"><div style="font-size:14px;color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escHtml(g.white || '?') + ' – ' + escHtml(g.black || '?') + (g.avgElo ? ' <span style="color:var(--text3);font-weight:400">(' + Math.round(g.avgElo) + ')</span>' : '') + '</div>';
+    h += '<div style="font-size:12px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escHtml(g.event || '') + (g.date ? ' · ' + escHtml(g.date) : '') + '</div></div>';
+    h += '<div style="font-size:13px;font-weight:700;color:var(--text2);flex-shrink:0">' + (rs[g.result] || '') + '</div></div>';
+  });
+  if (total > 1) {
+    h += '<div style="display:flex;justify-content:center;align-items:center;gap:12px;margin-top:8px">';
+    h += '<button onclick="obGamesPage(' + (pg - 1) + ')" ' + (pg <= 1 ? 'disabled' : '') + ' style="padding:7px 14px;background:var(--bg3);border:1px solid var(--border);color:var(--text2);border-radius:8px;cursor:pointer;font-family:inherit;opacity:' + (pg <= 1 ? '.4' : '1') + '">◀</button>';
+    h += '<span style="font-size:13px;color:var(--text2)">' + pg + ' / ' + total + '</span>';
+    h += '<button onclick="obGamesPage(' + (pg + 1) + ')" ' + (pg >= total ? 'disabled' : '') + ' style="padding:7px 14px;background:var(--bg3);border:1px solid var(--border);color:var(--text2);border-radius:8px;cursor:pointer;font-family:inherit;opacity:' + (pg >= total ? '.4' : '1') + '">▶</button></div>';
+  }
+  gx.innerHTML = h;
+}
+function obGamesPage(p) { _obGamesPage = p; _obRenderGames(); }
+function obPlay(san) { _obLine.push(san); _obGamesPage = 1; _obRefreshBoard(); _obRefreshAll(); }
+function obBack(i) { _obLine = _obLine.slice(0, i); _obGamesPage = 1; _obRefreshBoard(); _obRefreshAll(); }
 function obUndo() { if (_obLine.length) obBack(_obLine.length - 1); }
-function obSetThreshold() { var v = parseInt((document.getElementById('ob-th') || {}).value); if (v > 0) _obThreshold = Math.min(v, 1000); _obRefreshAll(); }
+// Flecha ← del teclado: retroceder una jugada (solo en modo Aperturas, sin visor abierto ni input).
+document.addEventListener('keydown', function(e) {
+  if (_dbMode !== 'openings') return;
+  var fav = document.getElementById('s-favoritos'); if (!fav || !fav.classList.contains('active')) return;
+  var cv = document.getElementById('chess-overlay'); if (cv && cv.classList.contains('open')) return;
+  if (/^(INPUT|TEXTAREA|SELECT)$/.test((e.target && e.target.tagName) || '')) return;
+  if (e.key === 'ArrowLeft' && _obLine.length) { e.preventDefault(); obUndo(); }
+});
 function obOpenGame(i) { var g = _obMatches[i]; if (!g) return; _cvTourGames = _obMatches.map(function(x) { return x.pgn; }); _cvTourName = 'Aperturas'; _cvTourLoc = ''; openTourGameByIndex(i); }
 
 function renderFavs() {
