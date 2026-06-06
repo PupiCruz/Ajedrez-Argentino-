@@ -2600,6 +2600,7 @@ function renderTorneos(filter) {
     }
   }
   document.getElementById('list-torneos').innerHTML = html;
+  _bcMarkLiveButtons();   // marca "🔴 EN VIVO" los torneos en curso que Lichess confirme transmitiendo
 }
 function filterT(f, btn) {
   var chips = document.querySelectorAll('#tab-torneos .chip');
@@ -9472,8 +9473,8 @@ function openLiveBroadcast(slug, roundSlug, roundId) {
 }
 
 function refreshLiveBroadcast() {
-  if (!_liveParams) return;
-  openLiveBroadcast(_liveParams.slug, _liveParams.roundSlug, _liveParams.roundId);
+  if (_liveCtx) { _bcLoad(true); return; }                       // broadcast genérico (nuevo)
+  if (_liveParams) openLiveBroadcast(_liveParams.slug, _liveParams.roundSlug, _liveParams.roundId);   // compat viejo
 }
 /* ── Seleccionar partida ── */
 function cvSelect(i) {
@@ -10071,7 +10072,7 @@ function closeChessViewer(e){
     _cvHistoryPushed = false;
     var bar = document.getElementById('cv-live-bar'); if (bar) { bar.style.display='none'; bar.innerHTML=''; }
     var abar = document.getElementById('cv-arg-bar'); if (abar) { abar.style.display='none'; abar.innerHTML=''; }
-    _liveParams = null; if (_liveTimer) { clearTimeout(_liveTimer); _liveTimer = null; }
+    _liveParams = null; _liveCtx = null; if (_liveTimer) { clearTimeout(_liveTimer); _liveTimer = null; }
     _bcBaseKey = null; _bcArgMode = false;
     // Limpiar el maxHeight seteado por JS para que el CSS tome el control de nuevo
     var sc = document.querySelector('.cv-side-col'); if (sc) sc.style.maxHeight = '';
@@ -10491,7 +10492,8 @@ function escJs(s) {
    El mismo markup salía copiado a mano en ~4 lugares (tarjetas de torneo y detalle).
    Centralizado acá para que estilo/texto no se desincronicen. */
 function btnBroadcastLichess(broadcastId, name, location, url) {
-  return '<button class="pgn-btn" onclick="openBroadcastTournament(\'' + escJs(broadcastId) + '\',\'' + escJs(name || '') + '\',\'' + escJs(location || '') + '\',\'' + escJs(url || '') + '\')" style="background:rgba(30,60,120,.15);border-color:rgba(60,100,200,.3);color:#8ab4f8">⚡ Ver partidas · Lichess</button>';
+  // data-bc / data-bcurl: los usa _bcMarkLiveButtons para marcar "🔴 EN VIVO" tras consultar Lichess.
+  return '<button class="pgn-btn" data-bc="' + escHtml(broadcastId) + '" data-bcurl="' + escHtml(url || '') + '" onclick="openBroadcastTournament(\'' + escJs(broadcastId) + '\',\'' + escJs(name || '') + '\',\'' + escJs(location || '') + '\',\'' + escJs(url || '') + '\')" style="background:rgba(30,60,120,.15);border-color:rgba(60,100,200,.3);color:#8ab4f8">⚡ Ver partidas · Lichess</button>';
 }
 function linkChessResults(url) {
   return '<a href="' + escHtml(url) + '" target="_blank" rel="noopener" class="pgn-btn" style="display:block;text-align:center;text-decoration:none">🌐 Ver en Chess Results</a>';
@@ -10937,70 +10939,233 @@ function toggleBcArgFilter() {
   var abar = document.getElementById('cv-arg-bar');
   if (abar) _bcRenderArgBar(abar);
 }
-function openBroadcastTournament(broadcastId, name, sub, pageUrl) {
+// Resuelve el tour id corto de Lichess (ej "jaDEEkUm") a partir de los 3 segmentos de una URL
+// de broadcast (slug / round-slug / round-id). La API /api/broadcast/{id} NO acepta el slug
+// largo del torneo (da 404), por eso hay que resolver el id corto. cb recibe el tourId o null.
+function bcResolveTourId(slug, roundSlug, roundId, cb) {
   var hdrs = {};
   if (typeof LICHESS_TOKEN !== 'undefined' && LICHESS_TOKEN) hdrs['Authorization'] = 'Bearer ' + LICHESS_TOKEN;
-  var bcUrl = pageUrl || ('https://lichess.org/broadcast/' + broadcastId);
-  _liveParams = null;
+  fetch('https://lichess.org/api/broadcast/' + slug + '/' + roundSlug + '/' + roundId, { headers: hdrs })
+    .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(function(j) { cb(j && j.tour && j.tour.id ? j.tour.id : null); })
+    .catch(function() { cb(null); });
+}
 
+// ── Indicador "🔴 EN VIVO" en la lista de torneos ──────────────────────────────
+var _bcTourIdCache = {};   // ref (slug/url) → tourId resuelto (o false si no se pudo)
+var _bcLiveCache = {};     // tourId → { live:bool, ts:ms }
+var _BC_LIVE_TTL = 60000;  // 1 min: no reconsultar al re-renderizar la lista
+
+// Resuelve el tour id a partir del data-bc (tour id ya, slug, o vacío) + la URL. Cachea el resultado.
+function _bcResolveTourIdFromRef(bcid, bcurl, cb) {
+  var raw = String(bcid || '');
+  if (/^[A-Za-z0-9]{8}$/.test(raw)) { cb(raw); return; }
+  var cacheKey = raw + '|' + (bcurl || '');
+  if (_bcTourIdCache.hasOwnProperty(cacheKey)) { cb(_bcTourIdCache[cacheKey] || null); return; }
+  var m = (String(bcurl || '') + ' ' + raw).match(/broadcast\/([^\/\?#\s]+)\/([^\/\?#\s]+)\/([^\/\?#\s]+)/);
+  if (!m) { _bcTourIdCache[cacheKey] = false; cb(null); return; }
+  bcResolveTourId(m[1], m[2], m[3], function(tourId) { _bcTourIdCache[cacheKey] = tourId || false; cb(tourId); });
+}
+
+// ¿El torneo tiene una ronda en vivo? (criterio B, liviano: baja metadata y solo el PGN de la
+// ronda candidata si hace falta). Cachea ~1 min.
+function _bcIsTourLive(tourId, cb) {
+  var c = _bcLiveCache[tourId];
+  if (c && (Date.now() - c.ts) < _BC_LIVE_TTL) { cb(c.live); return; }
+  var hdrs = {};
+  if (typeof LICHESS_TOKEN !== 'undefined' && LICHESS_TOKEN) hdrs['Authorization'] = 'Bearer ' + LICHESS_TOKEN;
+  var set = function(live) { _bcLiveCache[tourId] = { live: live, ts: Date.now() }; cb(live); };
+  fetch('https://lichess.org/api/broadcast/' + tourId, { headers: hdrs })
+    .then(function(r) { if (!r.ok) throw 0; return r.json(); })
+    .then(function(data) {
+      var rounds = data.rounds || [], tourSlug = data.tour && data.tour.slug, now = Date.now();
+      var ongoing = null;
+      for (var i = 0; i < rounds.length; i++) { if (rounds[i].ongoing) { ongoing = rounds[i]; break; } }
+      if (ongoing) { set(true); return; }
+      var cand = null;
+      for (var j = 0; j < rounds.length; j++) { if (!rounds[j].finished && rounds[j].startsAt && rounds[j].startsAt <= now) { cand = rounds[j]; break; } }
+      if (!cand) { set(false); return; }
+      fetch('https://lichess.org/broadcast/' + tourSlug + '/' + cand.slug + '/' + cand.id + '.pgn', { headers: hdrs })
+        .then(function(r) { return r.text(); })
+        .then(function(pgn) { set(/\[Result\s+"\*"\]/.test(pgn)); })
+        .catch(function() { set(false); });
+    })
+    .catch(function() { set(false); });
+}
+
+// Tras renderizar la lista, marca "🔴 EN VIVO" los botones de broadcast de torneos EN CURSO por
+// fecha (tarjeta con badge b-live) que Lichess confirme en vivo. Solo consulta esos pocos.
+function _bcMarkLiveButtons() {
+  var list = document.getElementById('list-torneos');
+  if (!list) return;
+  var btns = list.querySelectorAll('button[data-bc]');
+  for (var i = 0; i < btns.length; i++) {
+    (function(btn) {
+      var card = btn.closest('.card');
+      if (!card || !card.querySelector('.badge.b-live')) return;   // solo torneos en curso por fecha
+      _bcResolveTourIdFromRef(btn.getAttribute('data-bc'), btn.getAttribute('data-bcurl') || '', function(tourId) {
+        if (!tourId) return;
+        _bcIsTourLive(tourId, function(live) {
+          if (!live || !btn.isConnected) return;
+          btn.innerHTML = '🔴 EN VIVO · Ver partidas';
+          btn.style.background = 'rgba(220,50,50,0.18)';
+          btn.style.borderColor = 'rgba(220,60,60,0.5)';
+          btn.style.color = '#e07070';
+        });
+      });
+    })(btns[i]);
+  }
+}
+
+// Punto de entrada de los botones "Ver partidas · Lichess". `broadcastId` puede ser el tour id
+// corto, el slug del torneo, o venir con la URL completa en pageUrl. Si no es un tour id corto,
+// primero resuelve el tour id desde la URL (que sí trae la ronda) y recién ahí abre.
+function openBroadcastTournament(broadcastId, name, sub, pageUrl) {
+  var raw = String(broadcastId || '');
+  if (/^[A-Za-z0-9]{8}$/.test(raw)) { _openBroadcastByTourId(raw, name, sub, pageUrl); return; }
+  var m = (String(pageUrl || '') + ' ' + raw).match(/broadcast\/([^\/\?#\s]+)\/([^\/\?#\s]+)\/([^\/\?#\s]+)/);
+  if (m) {
+    bcResolveTourId(m[1], m[2], m[3], function(tourId) {
+      if (tourId) _openBroadcastByTourId(tourId, name, sub, pageUrl);
+      else if (confirm('No se pudo conectar con Lichess (requiere servidor, no funciona desde archivo local).\n\n¿Abrís el broadcast en Lichess?')) window.open(pageUrl || ('https://lichess.org/broadcast/' + raw), '_blank');
+    });
+    return;
+  }
+  _openBroadcastByTourId(raw, name, sub, pageUrl);   // compat: datos viejos sin URL de ronda
+}
+
+function _openBroadcastByTourId(broadcastId, name, sub, pageUrl) {
+  _liveCtx = { broadcastId: broadcastId, name: name, sub: sub, pageUrl: pageUrl };
+  _bcLoad(false);
+}
+
+// Contexto del broadcast abierto, para el auto-refresco en vivo.
+var _liveCtx = null;
+var _BC_REFRESH_MS = 30000;   // cada 30s mientras haya una ronda en vivo
+
+// Profundidad (Nº de jugadas desde el inicio) de un nodo del árbol del visor.
+function _cvNodeDepth(n) { var d = 0; while (n && n.parent) { d++; n = n.parent; } return d; }
+
+// Baja metadata del broadcast + el PGN de cada ronda jugada o en curso. cb(null) si falla.
+// Criterio B de "en vivo": además de las rondas que Lichess marca finished/ongoing, bajamos las
+// que ya empezaron por horario (startsAt pasado) aunque el relay esté en pausa; una ronda cuenta
+// como EN VIVO si Lichess la marca ongoing O si tiene partidas con resultado "*" (en curso).
+function _bcFetchAll(broadcastId, cb) {
+  var hdrs = {};
+  if (typeof LICHESS_TOKEN !== 'undefined' && LICHESS_TOKEN) hdrs['Authorization'] = 'Bearer ' + LICHESS_TOKEN;
   fetch('https://lichess.org/api/broadcast/' + broadcastId, { headers: hdrs })
     .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
     .then(function(data) {
       var tourSlug = data.tour && data.tour.slug;
       var rounds   = data.rounds || [];
-      var toFetch  = rounds.filter(function(r) { return r.finished || r.ongoing; });
-      if (!toFetch.length) { alert('El torneo aún no tiene rondas disponibles.'); return; }
-      var pending  = toFetch.length;
-      var roundMap = {};
-      var liveKey  = '_bc_' + broadcastId;
-
-      var onDone = function() {
+      var now = Date.now();
+      var toFetch = rounds.filter(function(r) { return r.finished || r.ongoing || (r.startsAt && r.startsAt <= now); });
+      if (!toFetch.length) { cb({ tourSlug: tourSlug, rounds: rounds, allGames: [], liveRound: null, isLive: false }); return; }
+      var pending = toFetch.length, byRound = {};
+      var done = function() {
         if (pending > 0) return;
         var allGames = [];
-        rounds.forEach(function(r) { if (roundMap[r.id]) allGames = allGames.concat(roundMap[r.id]); });
+        rounds.forEach(function(r) { if (byRound[r.id]) allGames = allGames.concat(byRound[r.id]); });
         var ongoing = null;
         for (var i = 0; i < rounds.length; i++) { if (rounds[i].ongoing) { ongoing = rounds[i]; break; } }
-        if (ongoing) _liveParams = { slug: tourSlug, roundSlug: ongoing.slug, roundId: ongoing.id };
-        var argGames = allGames.filter(function(pgn) {
-          return _isArgGame(parsePgnHeaders(pgn));
-        });
-        PGN_DB[liveKey] = { title: name, sub: sub, url: bcUrl, games: allGames };
-        PGN_DB[liveKey + '_arg'] = { title: name, sub: sub, url: bcUrl, games: argGames };
-        _bcBaseKey = liveKey;
-        _bcArgMode = false;
-        openChessViewer(_bcArgMode ? liveKey + '_arg' : liveKey);
-        var abar = document.getElementById('cv-arg-bar');
-        if (abar) _bcRenderArgBar(abar);
-        if (ongoing) {
-          var bar = document.getElementById('cv-live-bar');
-          if (bar) {
-            var rUrl = 'https://lichess.org/broadcast/' + tourSlug + '/' + ongoing.slug + '/' + ongoing.id;
-            bar.innerHTML = '<span style="font-size:12px;color:#e07070">\u{1F534} En vivo \xb7 ' + escHtml(ongoing.name || 'Ronda en curso') + '</span>'
-              + '<div style="display:flex;gap:6px">'
-              + '<button onclick="refreshLiveBroadcast()" style="background:rgba(220,50,50,0.2);border:1px solid rgba(220,50,50,0.4);color:#e07070;font-size:12px;padding:3px 8px;border-radius:6px;cursor:pointer;font-family:inherit">🔄 Actualizar</button>'
-              + '<a href="' + rUrl + '" target="_blank" style="background:rgba(220,50,50,0.1);border:1px solid rgba(220,50,50,0.3);color:#e07070;font-size:12px;padding:3px 8px;border-radius:6px;text-decoration:none">↗ Lichess</a>'
-              + '</div>';
-            bar.style.display = 'flex';
-          }
-        }
+        var liveRound = ongoing;
+        if (!liveRound) { for (var j = 0; j < rounds.length; j++) { if (!rounds[j].finished && rounds[j].startsAt && rounds[j].startsAt <= now) { liveRound = rounds[j]; break; } } }
+        var liveHasProgress = liveRound && (byRound[liveRound.id] || []).some(function(g) { return /\[Result\s+"\*"\]/.test(g); });
+        var isLive = !!ongoing || !!liveHasProgress;
+        cb({ tourSlug: tourSlug, rounds: rounds, allGames: allGames, liveRound: isLive ? liveRound : null, isLive: isLive });
       };
-
       toFetch.forEach(function(round) {
         var pgnUrl = 'https://lichess.org/broadcast/' + tourSlug + '/' + round.slug + '/' + round.id + '.pgn';
         fetch(pgnUrl, { headers: hdrs })
           .then(function(r) { return r.text(); })
-          .then(function(pgn) {
-            roundMap[round.id] = pgn.trim().split(/\n\n(?=\[Event )/).filter(function(g) { return g.trim(); });
-            pending--; onDone();
-          })
-          .catch(function() { roundMap[round.id] = []; pending--; onDone(); });
+          .then(function(pgn) { byRound[round.id] = pgn.trim().split(/\n\n(?=\[Event )/).filter(function(g) { return g.trim(); }); pending--; done(); })
+          .catch(function() { byRound[round.id] = []; pending--; done(); });
       });
     })
-    .catch(function() {
-      if (confirm('No se pudo conectar con Lichess (requiere servidor, no funciona desde archivo local).\n\n¿Abrís el broadcast en Lichess?')) {
-        window.open(bcUrl, '_blank');
-      }
-    });
+    .catch(function() { cb(null); });
+}
+
+// Carga (isRefresh=false) o recarga (true) el broadcast activo. En recarga, actualiza los datos
+// en segundo plano y preserva la partida y la jugada que el visitante está mirando.
+function _bcLoad(isRefresh) {
+  if (!_liveCtx) return;
+  var ctx = _liveCtx;
+  _bcFetchAll(ctx.broadcastId, function(res) {
+    if (!_liveCtx || _liveCtx.broadcastId !== ctx.broadcastId) return;   // cambió de torneo mientras tanto
+    if (!res) {
+      if (!isRefresh && confirm('No se pudo conectar con Lichess (requiere servidor, no funciona desde archivo local).\n\n¿Abrís el broadcast en Lichess?')) window.open(ctx.pageUrl || ('https://lichess.org/broadcast/' + ctx.broadcastId), '_blank');
+      return;
+    }
+    if (!isRefresh && !res.allGames.length) { alert('El torneo aún no tiene rondas disponibles.'); return; }
+
+    var liveKey = '_bc_' + ctx.broadcastId;
+    var bcUrl = ctx.pageUrl || ('https://lichess.org/broadcast/' + ctx.broadcastId);
+    var argGames = res.allGames.filter(function(pgn) { return _isArgGame(parsePgnHeaders(pgn)); });
+    PGN_DB[liveKey] = { title: ctx.name, sub: ctx.sub, url: bcUrl, games: res.allGames };
+    PGN_DB[liveKey + '_arg'] = { title: ctx.name, sub: ctx.sub, url: bcUrl, games: argGames };
+    _liveParams = res.liveRound ? { slug: res.tourSlug, roundSlug: res.liveRound.slug, roundId: res.liveRound.id } : null;
+
+    if (!isRefresh) {
+      _bcBaseKey = liveKey;
+      _bcArgMode = false;
+      openChessViewer(liveKey);
+      var abar = document.getElementById('cv-arg-bar');
+      if (abar) _bcRenderArgBar(abar);
+    } else {
+      _bcApplyRefreshToViewer(liveKey);
+    }
+    _bcRenderLiveBar(res);
+
+    // Reprogramar el auto-refresco solo si sigue en vivo y el visor sigue abierto en este broadcast.
+    if (_liveTimer) { clearTimeout(_liveTimer); _liveTimer = null; }
+    var viewerOpen = document.getElementById('chess-overlay').classList.contains('open');
+    if (res.isLive && viewerOpen && _bcBaseKey === liveKey) {
+      _liveTimer = setTimeout(function() { _bcLoad(true); }, _BC_REFRESH_MS);
+    }
+  });
+}
+
+// Tras un refresco, actualiza la vista preservando la partida y la jugada que el visitante mira.
+function _bcApplyRefreshToViewer(liveKey) {
+  if (!document.getElementById('chess-overlay').classList.contains('open')) return;
+  if (_bcBaseKey !== liveKey) return;
+  var curKey = _bcArgMode ? liveKey + '_arg' : liveKey;
+  var data = PGN_DB[curKey];
+  if (!data || !data.games || !cv.games) return;
+  var prevG = cv.games[cv.gIdx];
+  var prevKey = prevG ? (prevG.w + '|' + prevG.b) : null;
+  var prevAtEnd = cv.node && cv.node.children.length === 0;
+  var prevDepth = _cvNodeDepth(cv.node);
+  cv.games = data.games.map(pgMeta);
+  var newIdx = cv.gIdx;
+  if (prevKey) { for (var i = 0; i < cv.games.length; i++) { if ((cv.games[i].w + '|' + cv.games[i].b) === prevKey) { newIdx = i; break; } } }
+  if (newIdx >= cv.games.length) newIdx = 0;
+  cvBuildGameList();
+  cvSelect(newIdx);   // reconstruye la partida (con jugadas nuevas) y vuelve al inicio
+  // Volver a donde estaba: si miraba la última jugada (en vivo), ir al nuevo final; si revisaba
+  // jugadas anteriores, quedarse en la misma para no interrumpir.
+  if (prevAtEnd) cvLast();
+  else { for (var k = 0; k < prevDepth && cv.node.children.length > 0; k++) cvSetNode(cv.node.children[0]); }
+  var abar = document.getElementById('cv-arg-bar');
+  if (abar) _bcRenderArgBar(abar);
+}
+
+// Dibuja la barra "🔴 En vivo" del visor (o la oculta si la ronda ya no está en curso).
+function _bcRenderLiveBar(res) {
+  var bar = document.getElementById('cv-live-bar');
+  if (!bar) return;
+  if (res && res.isLive && res.liveRound) {
+    var rUrl = 'https://lichess.org/broadcast/' + res.tourSlug + '/' + res.liveRound.slug + '/' + res.liveRound.id;
+    bar.innerHTML = '<span style="font-size:12px;color:#e07070">\u{1F534} En vivo \xb7 ' + escHtml(res.liveRound.name || 'Ronda en curso') + ' <span style="opacity:.55;font-weight:400">se actualiza solo</span></span>'
+      + '<div style="display:flex;gap:6px">'
+      + '<button onclick="refreshLiveBroadcast()" style="background:rgba(220,50,50,0.2);border:1px solid rgba(220,50,50,0.4);color:#e07070;font-size:12px;padding:3px 8px;border-radius:6px;cursor:pointer;font-family:inherit">🔄 Actualizar</button>'
+      + '<a href="' + rUrl + '" target="_blank" style="background:rgba(220,50,50,0.1);border:1px solid rgba(220,50,50,0.3);color:#e07070;font-size:12px;padding:3px 8px;border-radius:6px;text-decoration:none">↗ Lichess</a>'
+      + '</div>';
+    bar.style.display = 'flex';
+  } else {
+    bar.style.display = 'none';
+    bar.innerHTML = '';
+  }
 }
 
 /* ═══════════════════════════════════════════════════════
