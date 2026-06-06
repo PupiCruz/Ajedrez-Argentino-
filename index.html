@@ -10139,6 +10139,7 @@ window.addEventListener('popstate', function() {
   }
   if (tour && tour.classList.contains('open')) {
     _tourHistoryPushed = false;
+    _tdLiveStop();   // cortar el auto-refresco de partidas en vivo del detalle
     tour.classList.remove('open');
     // Si el torneo se abrió desde un perfil, reabrir el perfil (conserva su entrada).
     if (_tourReturnToProfile) {
@@ -11458,6 +11459,7 @@ function _tourPoolGames(eventNames) {
 }
 
 async function openTournamentDetail(type, id, scrollToGames) {
+  _tdLiveStop();   // cortar el auto-refresco del vivo del torneo anterior (si lo había)
   var name = '', location = '', dates = '', status = 'upcoming', typ = '', rounds = null;
   var leaders = [], games = [], crUrl = '', broadcastId = '', broadcastUrl = '', pgnGames = [];
   var timeControl = '', chesscomUrl = '', flyerUrl = '';
@@ -11618,8 +11620,13 @@ async function openTournamentDetail(type, id, scrollToGames) {
   crSyncResultsFromPgn(crk);
   h += crRenderSection(crk);
 
-  // Partidas: miniaturas por ronda
-  if (roundOrder.length) {
+  // Partidas por ronda. Si el torneo tiene transmisión de Lichess mostramos ESAS partidas (vivo +
+  // rondas terminadas) en lugar de las subidas a mano: _tdLoadLiveGames reemplaza #td-games-section.
+  h += '<div id="td-games-section">';
+  if (broadcastId) {
+    h += '<div id="td-partidas-anchor" style="scroll-margin-top:10px"></div>';
+    h += '<div style="text-align:center;padding:34px 0;color:var(--text3);font-size:13px">⏳ Cargando partidas desde Lichess…</div>';
+  } else if (roundOrder.length) {
     _tdArgOnly = false;
     _tdCurrentRound = roundOrder[0];
     var argTotal = 0;
@@ -11642,21 +11649,21 @@ async function openTournamentDetail(type, id, scrollToGames) {
     roundOrder.forEach(function(rInt, ri) {
       h += '<div id="td-round-' + rInt + '" style="display:' + (ri===0?'grid':'none') + ';grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:4px"></div>';
     });
-  } else if (broadcastId) {
-    // Sin partidas locales pero tiene broadcast
-    h += '<div style="text-align:center;padding:20px;color:var(--text3);font-size:13px">Las partidas se cargan desde Lichess.<br>Usá el botón de arriba para verlas.</div>';
   } else if (status === 'upcoming') {
     h += '<div style="text-align:center;padding:20px;color:var(--text3);font-size:13px">Todavía no hay partidas cargadas.</div>';
   }
+  h += '</div>';   // /td-games-section
 
   document.getElementById('tour-modal-body').innerHTML = h;
   // Si el torneo está en curso por fecha, marcar "🔴 EN VIVO" el botón de Lichess (si transmite ahora).
   if (status === 'live') _bcMarkLiveButtons(document.getElementById('tour-modal-body'));
-  // Armar solo la primera ronda (las demás bajo demanda)
-  if (roundOrder.length) tdBuildRound(roundOrder[0]);
+  // Armar solo la primera ronda (las demás bajo demanda). Con transmisión de Lichess, las partidas
+  // las trae _tdLoadLiveGames (abajo) en lugar de las subidas a mano.
+  if (!broadcastId && roundOrder.length) tdBuildRound(roundOrder[0]);
   var m = document.querySelector('#tour-overlay .modal');
   if (m) m.scrollTop = 0;
   document.getElementById('tour-overlay').classList.add('open');
+  if (broadcastId) _tdLoadLiveGames(broadcastId, broadcastUrl, name, location, pgnKey2, typ, status);
   // Si se pidió, bajar directo al apartado de partidas
   if (scrollToGames && m) {
     var anchor = document.getElementById('td-partidas-anchor');
@@ -12151,6 +12158,96 @@ function tdOpenGame(idx, pgnKey, tname, tloc) {
   _cvTourName  = tname;
   _cvTourLoc   = tloc;
   openTourGameByIndex(idx);
+}
+
+/* ── Partidas EN VIVO dentro del detalle del torneo (mismo formato que las miniaturas subidas) ──
+   Si el torneo tiene transmisión de Lichess, #td-games-section muestra esas partidas por ronda
+   (vivo + terminadas) en lugar de las subidas. Reusa _tdCtx + tdBuildRound + tdShowRound. */
+var _tdLiveTimer = null;
+var _tdLiveCtx = null;   // { tourId, pgnKey, name, location, typ }
+
+function _tdLiveStop() { if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; } _tdLiveCtx = null; }
+
+function _tdLoadLiveGames(broadcastId, broadcastUrl, name, location, pgnKey, typ, status) {
+  var raw = String(broadcastId || '');
+  if (/^[A-Za-z0-9]{8}$/.test(raw)) { _tdLiveFetch(raw, name, location, pgnKey, typ); return; }
+  var m = (String(broadcastUrl || '') + ' ' + raw).match(/broadcast\/([^\/\?#\s]+)\/([^\/\?#\s]+)\/([^\/\?#\s]+)/);
+  if (m) { bcResolveTourId(m[1], m[2], m[3], function(tid){ if (tid) _tdLiveFetch(tid, name, location, pgnKey, typ); else _tdLiveError(broadcastUrl); }); return; }
+  _tdLiveFetch(raw, name, location, pgnKey, typ);
+}
+
+function _tdLiveError(url) {
+  var sec = document.getElementById('td-games-section');
+  if (sec) sec.innerHTML = '<div style="text-align:center;padding:30px 0;color:var(--text3);font-size:13px">No se pudieron cargar las partidas en vivo.' + (url ? '<br><a href="' + escHtml(url) + '" target="_blank" style="color:var(--gold)">Ver en Lichess ↗</a>' : '') + '</div>';
+}
+
+function _tdLiveFetch(tourId, name, location, pgnKey, typ) {
+  _tdLiveCtx = { tourId: tourId, pgnKey: pgnKey, name: name, location: location, typ: typ };
+  _bcFetchAll(tourId, function(res){
+    if (!_tdLiveCtx || _tdLiveCtx.tourId !== tourId) return;
+    var sec = document.getElementById('td-games-section');
+    if (!sec) return;
+    if (!res || !res.roundsWithGames || !res.roundsWithGames.length) { _tdLiveError(null); return; }
+    _tdLiveBuild(res, sec, null);
+    if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; }
+    if (res.roundsWithGames.some(function(r){ return r.live; })) _tdLiveTimer = setTimeout(_tdLiveRefresh, _BC_REFRESH_MS);
+  });
+}
+
+// keepRound: ronda a re-seleccionar tras un refresco (preserva la pestaña del usuario).
+function _tdLiveBuild(res, sec, keepRound) {
+  var byRound = {}, roundOrder = [], games = [], liveRoundInt = null;
+  res.roundsWithGames.forEach(function(r, ri) {
+    var mm = (r.name||'').match(/(\d+)/);
+    var rInt = mm ? parseInt(mm[1]) : (ri + 1);
+    if (!byRound[rInt]) { byRound[rInt] = []; roundOrder.push(rInt); }
+    r.games.forEach(function(pgn){ byRound[rInt].push({ pgn: pgn, h: parsePgnHeaders(pgn) }); games.push(pgn); });
+    if (r.live) liveRoundInt = rInt;
+  });
+  roundOrder.sort(function(a,b){ return (parseInt(a)||0) - (parseInt(b)||0); });
+  var ctx = _tdLiveCtx;
+  PGN_DB[ctx.pgnKey] = { title: ctx.name, sub: ctx.location, url: '', games: games };
+  _tdCtx = { byRound: byRound, games: games, pgnKey: ctx.pgnKey, name: ctx.name, location: ctx.location, built: {}, crKey: (_tdCtx ? _tdCtx.crKey : null) };
+  var startRound = (keepRound != null && byRound[keepRound]) ? keepRound : (liveRoundInt || roundOrder[roundOrder.length - 1] || roundOrder[0]);
+  _tdArgOnly = false;
+  _tdCurrentRound = startRound;
+  var argTotal = 0;
+  roundOrder.forEach(function(rInt){ byRound[rInt].forEach(function(g){ if (_isArgGame(g.h)) argTotal++; }); });
+  var liveInts = {};
+  res.roundsWithGames.forEach(function(r){ if (r.live) { var mm=(r.name||'').match(/(\d+)/); if (mm) liveInts[parseInt(mm[1])] = true; } });
+  var h = '';
+  h += '<div id="td-partidas-anchor" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;flex-wrap:wrap;scroll-margin-top:10px">';
+  h += '<span style="font-size:11px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:var(--text2)">Partidas (' + games.length + ') · Lichess</span>';
+  if (argTotal > 0 && crShowArgLine(ctx.typ)) {
+    h += '<button id="td-arg-btn" onclick="tdToggleArg()" style="padding:6px 13px;border-radius:20px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">🇦🇷 Solo argentinos</button>';
+  }
+  h += '</div>';
+  h += '<div id="td-rtabs" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">';
+  roundOrder.forEach(function(rInt) {
+    var active = rInt === startRound;
+    h += '<button onclick="tdShowRound(' + rInt + ',\'' + ctx.pgnKey + '\')" id="td-rtab-' + rInt + '" style="padding:6px 15px;border-radius:20px;border:1px solid var(--border);background:' + (active?'var(--gold-bg)':'var(--bg3)') + ';color:' + (active?'var(--gold)':'var(--text2)') + ';font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit">' + (liveInts[rInt]?'🔴 ':'') + 'R' + rInt + '</button>';
+  });
+  h += '</div>';
+  roundOrder.forEach(function(rInt) {
+    h += '<div id="td-round-' + rInt + '" style="display:' + (rInt===startRound?'grid':'none') + ';grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:4px"></div>';
+  });
+  sec.innerHTML = h;
+  tdBuildRound(startRound);
+}
+
+function _tdLiveRefresh() {
+  if (!_tdLiveCtx) return;
+  var tourId = _tdLiveCtx.tourId;
+  _bcFetchAll(tourId, function(res){
+    if (!_tdLiveCtx || _tdLiveCtx.tourId !== tourId) return;
+    var sec = document.getElementById('td-games-section');
+    if (!sec) { _tdLiveStop(); return; }
+    if (res && res.roundsWithGames && res.roundsWithGames.length) _tdLiveBuild(res, sec, _tdCurrentRound);
+    if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; }
+    if (res && res.roundsWithGames && res.roundsWithGames.some(function(r){ return r.live; }) && document.getElementById('td-games-section')) {
+      _tdLiveTimer = setTimeout(_tdLiveRefresh, _BC_REFRESH_MS);
+    }
+  });
 }
 
 /* ═══════════════════════════════════════════════════════
