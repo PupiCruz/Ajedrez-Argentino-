@@ -5609,7 +5609,7 @@ function _buildObIndex() {
   });
   return _obIdx;
 }
-var _dbMode = 'search', _obLine = [], _obThreshold = 50, _obMatches = [];
+var _dbMode = 'search', _obLine = [], _obThreshold = 150, _obMatches = [];   // _obThreshold = máx partidas a mostrar (siempre las de mayor Elo)
 function _obCompute() {
   if (!_obIdx) _buildObIndex();
   var L = _obLine, n = L.length, matches = [], tally = Object.create(null), order = [];
@@ -5657,55 +5657,74 @@ function _dbModeSwitcher() {
   return '<div style="display:flex;gap:8px;margin-bottom:14px">' + btn('search', '🔍 Buscar') + btn('openings', '🌳 Aperturas') + '</div>';
 }
 function renderPartidas() { if (_dbMode === 'openings') renderOpeningExplorer(); else renderDbSearch(); }
-// Render COMPLETO (estructura): switcher + tablero (contenedor vacío) + panel. Se llama al entrar al
-// modo. Después, cada movida solo actualiza el tablero (incremental) y el panel (texto).
+// Render COMPLETO (estructura): switcher + barra (atrás/recorrido/tope) + fila [tablero | jugadas del
+// libro] + partidas (abajo). El árbol se construye la 1ª vez en segundo plano (no congela).
 function renderOpeningExplorer() {
   var el = document.getElementById('list-favoritos'); if (!el) return;
   if (!ensureChessLib()) { el.innerHTML = _dbModeSwitcher() + '<div style="padding:20px;color:var(--text3)">Cargando motor de ajedrez…</div>'; setTimeout(renderOpeningExplorer, 400); return; }
   el.innerHTML = _dbModeSwitcher()
-    + '<div id="ob-board" style="display:grid;grid-template-columns:repeat(8,1fr);width:100%;max-width:300px;margin:0 auto;border-radius:6px;overflow:hidden;border:1px solid var(--border)"></div>'
-    + '<div id="ob-panels"></div>';
+    + '<div id="ob-top" style="margin-bottom:12px"></div>'
+    + '<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start;margin-bottom:14px">'
+    +   '<div id="ob-board" style="flex:0 0 340px;max-width:min(340px,80vw);display:grid;grid-template-columns:repeat(8,1fr);border-radius:6px;overflow:hidden;border:1px solid var(--border);align-self:flex-start"></div>'
+    +   '<div id="ob-moves" style="flex:1;min-width:220px"></div>'
+    + '</div>'
+    + '<div id="ob-games"></div>';
   _obRefreshBoard();
-  _obRefreshPanels();
+  if (!_obIdx) {
+    var mv = document.getElementById('ob-moves'); if (mv) mv.innerHTML = '<div style="padding:20px;color:var(--text3);font-size:13px">Construyendo árbol de aperturas… <span style="opacity:.7">(solo la 1ª vez)</span></div>';
+    setTimeout(function() { _buildObIndex(); _obRefreshAll(); }, 30);
+  } else { _obRefreshAll(); }
 }
-// Re-render del PANEL (recorrido + umbral + continuaciones + partidas). No toca el tablero.
-function _obRefreshPanels() {
-  var box = document.getElementById('ob-panels'); if (!box) return;
+// Re-render de los 3 paneles de texto (barra, jugadas del libro, partidas). No toca el tablero.
+function _obRefreshAll() {
   var r = _obCompute();
-  var h = '';
-  h += '<div style="margin:12px 0;font-size:14px;color:var(--text2);line-height:1.9">';
-  h += '<span onclick="obBack(0)" style="cursor:pointer;font-weight:600;color:' + (_obLine.length ? 'var(--gold)' : 'var(--text2)') + '">⟲ Inicio</span>';
-  _obLine.forEach(function(m, i) { var num = (i % 2 === 0) ? ' <b>' + ((i / 2 | 0) + 1) + '.</b>' : ''; h += num + ' <span onclick="obBack(' + (i + 1) + ')" style="cursor:pointer">' + escHtml(m) + '</span>'; });
-  h += '</div>';
-  h += '<div style="font-size:12px;color:var(--text3);margin:10px 0">Mostrar partidas cuando queden ≤ <input id="ob-th" type="number" value="' + _obThreshold + '" onchange="obSetThreshold()" style="width:64px;padding:5px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:6px;font-family:inherit"></div>';
-  h += '<div style="font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text2);margin:12px 0 8px">Continuaciones · ' + r.total + ' partida' + (r.total !== 1 ? 's' : '') + '</div>';
-  if (!r.nextMoves.length) h += '<div style="color:var(--text3);font-size:13px;padding:8px">No hay más jugadas en la base por esta línea.</div>';
-  r.nextMoves.slice(0, 20).forEach(function(t) {
-    var p = function(x) { return Math.round(x / t.count * 100); };
-    h += '<div onclick="obPlay(\'' + escJs(t.san) + '\')" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;margin-bottom:5px;cursor:pointer;background:var(--bg2)">';
-    h += '<div style="font-weight:700;color:var(--text);min-width:52px">' + escHtml(t.san) + '</div>';
-    h += '<div style="font-size:12px;color:var(--text2);min-width:54px">' + t.count + '</div>';
-    h += '<div style="flex:1;display:flex;height:13px;border-radius:3px;overflow:hidden"><div style="width:' + p(t.w) + '%;background:#e8e8e8"></div><div style="width:' + p(t.d) + '%;background:#888"></div><div style="width:' + p(t.b) + '%;background:#2a2a2a"></div></div>';
-    h += '</div>';
-  });
-  if (r.total <= _obThreshold && r.total > 0) {
-    _obMatches = r.matches;
-    var rs = { '1-0': '1-0', '0-1': '0-1', '1/2-1/2': '½-½', '*': '*' };
-    h += '<div style="font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text2);margin:16px 0 8px">Partidas (por Elo)</div>';
-    r.matches.slice(0, 300).forEach(function(g, i) {
-      h += '<div onclick="obOpenGame(' + i + ')" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-bottom:6px;cursor:pointer;background:var(--bg2)">';
-      h += '<div style="flex:1;min-width:0"><div style="font-size:14px;color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escHtml(g.white || '?') + ' – ' + escHtml(g.black || '?') + (g.avgElo ? ' <span style="color:var(--text3);font-weight:400">(' + Math.round(g.avgElo) + ')</span>' : '') + '</div>';
-      h += '<div style="font-size:12px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escHtml(g.event || '') + (g.date ? ' · ' + escHtml(g.date) : '') + '</div></div>';
-      h += '<div style="font-size:13px;font-weight:700;color:var(--text2);flex-shrink:0">' + (rs[g.result] || '') + '</div></div>';
-    });
-  } else if (r.total > _obThreshold) {
-    h += '<div style="text-align:center;color:var(--text3);padding:16px;font-size:13px">Seguí eligiendo jugadas — las partidas aparecen cuando queden ≤ ' + _obThreshold + '.</div>';
+  // Barra: atrás + recorrido + tope
+  var top = document.getElementById('ob-top');
+  if (top) {
+    var h = '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">';
+    h += '<button onclick="obUndo()" ' + (_obLine.length ? '' : 'disabled') + ' style="padding:6px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);cursor:pointer;font-family:inherit;opacity:' + (_obLine.length ? '1' : '.4') + '">◀ Atrás</button>';
+    h += '<span onclick="obBack(0)" style="cursor:pointer;font-weight:600;color:' + (_obLine.length ? 'var(--gold)' : 'var(--text2)') + '">⟲ Inicio</span>';
+    h += '<span style="font-size:14px;color:var(--text2);line-height:1.8">';
+    _obLine.forEach(function(m, i) { var num = (i % 2 === 0) ? ' <b>' + ((i / 2 | 0) + 1) + '.</b>' : ''; h += num + ' <span onclick="obBack(' + (i + 1) + ')" style="cursor:pointer">' + escHtml(m) + '</span>'; });
+    h += '</span></div>';
+    h += '<div style="font-size:12px;color:var(--text3);margin-top:8px">Mostrar hasta <input id="ob-th" type="number" value="' + _obThreshold + '" onchange="obSetThreshold()" style="width:64px;padding:5px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:6px;font-family:inherit"> partidas (las de mayor Elo)</div>';
+    top.innerHTML = h;
   }
-  box.innerHTML = h;
+  // Jugadas del libro (continuaciones)
+  var mv = document.getElementById('ob-moves');
+  if (mv) {
+    var h2 = '<div style="font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text2);margin:0 0 8px">Jugadas · ' + r.total + ' partida' + (r.total !== 1 ? 's' : '') + '</div>';
+    if (!r.nextMoves.length) h2 += '<div style="color:var(--text3);font-size:13px;padding:8px">Fin de la línea en la base.</div>';
+    r.nextMoves.slice(0, 20).forEach(function(t) {
+      var p = function(x) { return Math.round(x / t.count * 100); };
+      h2 += '<div onclick="obPlay(\'' + escJs(t.san) + '\')" style="display:flex;align-items:center;gap:8px;padding:7px 9px;border:1px solid var(--border);border-radius:8px;margin-bottom:5px;cursor:pointer;background:var(--bg2)">';
+      h2 += '<div style="font-weight:700;color:var(--text);min-width:46px">' + escHtml(t.san) + '</div>';
+      h2 += '<div style="font-size:12px;color:var(--text2);min-width:46px">' + t.count + '</div>';
+      h2 += '<div style="flex:1;display:flex;height:12px;border-radius:3px;overflow:hidden"><div style="width:' + p(t.w) + '%;background:#e8e8e8"></div><div style="width:' + p(t.d) + '%;background:#888"></div><div style="width:' + p(t.b) + '%;background:#2a2a2a"></div></div>';
+      h2 += '</div>';
+    });
+    mv.innerHTML = h2;
+  }
+  // Partidas: SIEMPRE las primeras (tope _obThreshold), por Elo promedio desc
+  var gx = document.getElementById('ob-games');
+  if (gx) {
+    _obMatches = r.matches.slice(0, _obThreshold);
+    var rs = { '1-0': '1-0', '0-1': '0-1', '1/2-1/2': '½-½', '*': '*' };
+    var h3 = '<div style="font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text2);margin:6px 0 8px">Partidas (' + (r.total > _obThreshold ? 'primeras ' + _obThreshold + ' de ' + r.total : r.total) + ', por Elo)</div>';
+    if (!_obMatches.length) h3 += '<div style="color:var(--text3);font-size:13px;padding:8px">Sin partidas en esta línea.</div>';
+    _obMatches.forEach(function(g, i) {
+      h3 += '<div onclick="obOpenGame(' + i + ')" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-bottom:6px;cursor:pointer;background:var(--bg2)">';
+      h3 += '<div style="flex:1;min-width:0"><div style="font-size:14px;color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escHtml(g.white || '?') + ' – ' + escHtml(g.black || '?') + (g.avgElo ? ' <span style="color:var(--text3);font-weight:400">(' + Math.round(g.avgElo) + ')</span>' : '') + '</div>';
+      h3 += '<div style="font-size:12px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escHtml(g.event || '') + (g.date ? ' · ' + escHtml(g.date) : '') + '</div></div>';
+      h3 += '<div style="font-size:13px;font-weight:700;color:var(--text2);flex-shrink:0">' + (rs[g.result] || '') + '</div></div>';
+    });
+    gx.innerHTML = h3;
+  }
 }
-function obPlay(san) { _obLine.push(san); _obRefreshBoard(); _obRefreshPanels(); }
-function obBack(i) { _obLine = _obLine.slice(0, i); _obRefreshBoard(); _obRefreshPanels(); }
-function obSetThreshold() { var v = parseInt((document.getElementById('ob-th') || {}).value); if (v > 0) _obThreshold = v; _obRefreshPanels(); }
+function obPlay(san) { _obLine.push(san); _obRefreshBoard(); _obRefreshAll(); }
+function obBack(i) { _obLine = _obLine.slice(0, i); _obRefreshBoard(); _obRefreshAll(); }
+function obUndo() { if (_obLine.length) obBack(_obLine.length - 1); }
+function obSetThreshold() { var v = parseInt((document.getElementById('ob-th') || {}).value); if (v > 0) _obThreshold = Math.min(v, 1000); _obRefreshAll(); }
 function obOpenGame(i) { var g = _obMatches[i]; if (!g) return; _cvTourGames = _obMatches.map(function(x) { return x.pgn; }); _cvTourName = 'Aperturas'; _cvTourLoc = ''; openTourGameByIndex(i); }
 
 function renderFavs() {
