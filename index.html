@@ -6970,6 +6970,9 @@ function loadPgnIntoViewer(pgn, tourName, tourLoc, activeIdx) {
   cvBuildMoveList();
   faReset();
   cvSetNode(cv.root);
+  // Partida en curso (resultado *): abrir en la última jugada (posición actual) para seguir el
+  // vivo; las terminadas abren en la inicial, para poder revisarlas desde el principio.
+  if (meta.res === '*' && cv.root && cv.root.children.length) cvLast();
   document.getElementById('ob-wrap').style.display = 'none';
   cvOpenOverlay();
 
@@ -11176,8 +11179,9 @@ function _bcGridRender() {
     var wsc = res === '1-0' ? 'var(--green)' : res === '0-1' ? 'var(--red)' : 'var(--text2)';
     var bsc = res === '0-1' ? 'var(--green)' : res === '1-0' ? 'var(--red)' : 'var(--text2)';
     var isArg = _isArgGame(hd) ? '1' : '0';
-    var fen = tdFinalFenCached(pgn);
-    var board = tdMiniFen(fen);
+    var _gr = tdFinalFenCached(pgn);
+    var fen = _gr.fen;
+    var board = tdMiniFen(fen, _gr.last);
     if (fen.split(' ')[0] === START) {
       var resBig = res === '1/2-1/2' ? '½-½' : (res === '*' ? '·' : res);
       board += '<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none"><span style="background:rgba(20,20,25,.82);color:#fff;font-size:15px;font-weight:800;padding:5px 11px;border-radius:8px">' + resBig + '</span></div>';
@@ -11986,8 +11990,10 @@ var _tdPieceMap = {
 };
 var _tdPieceBase = 'assets/piezas/';   // piezas cburnett bundleadas localmente (sin jsDelivr)
 
+// Devuelve { fen, last:{from,to}|null } de la posición final del PGN. `last` = casillas de la
+// última jugada, para resaltarlas en la miniatura.
 function tdFinalFen(pgn) {
-  var fallback = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+  var fallback = { fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1', last: null };
   try {
     // 1) Aislar el movetext (después de los headers) — los headers rompen load_pgn de chess.js 0.10.3
     var mv;
@@ -12011,7 +12017,11 @@ function tdFinalFen(pgn) {
 
     // 5) load_pgn sobre el movetext limpio (sin headers ni comentarios)
     var c = new Chess();
-    if (c.load_pgn(clean) && c.history().length > 0) return c.fen();
+    if (c.load_pgn(clean) && c.history().length > 0) {
+      var hv = c.history({ verbose: true });
+      var lm = hv.length ? hv[hv.length - 1] : null;
+      return { fen: c.fen(), last: lm ? { from: lm.from, to: lm.to } : null };
+    }
 
     // 6) Respaldo: aplicar jugadas una por una
     var c2 = new Chess();
@@ -12020,10 +12030,13 @@ function tdFinalFen(pgn) {
       .replace(/(1-0|0-1|1\/2-1\/2|\*)/g, ' ')
       .replace(/[!?]+/g, '')
       .split(/\s+/).filter(function(t) { return t.length > 0; });
+    var lastMv = null;
     for (var j = 0; j < tokens.length; j++) {
-      if (!c2.move(tokens[j], { sloppy: true })) break;
+      var _mv = c2.move(tokens[j], { sloppy: true });
+      if (!_mv) break;
+      lastMv = _mv;
     }
-    return c2.fen();
+    return { fen: c2.fen(), last: lastMv ? { from: lastMv.from, to: lastMv.to } : null };
   } catch (e) { return fallback; }
 }
 
@@ -12062,8 +12075,9 @@ function tdFillBoards(rInt) {
       el.setAttribute('data-filled', '1');
       var gidx = parseInt(el.getAttribute('data-gidx'));
       var pgn = _tdCtx.games[gidx];
-      var fen = tdFinalFenCached(pgn);
-      var html = tdMiniFen(fen);
+      var rr = tdFinalFenCached(pgn);
+      var fen = rr.fen;
+      var html = tdMiniFen(fen, rr.last);
       if (fen.split(' ')[0] === START) {
         var res = el.getAttribute('data-res') || '*';
         var resBig = res === '1/2-1/2' ? '½-½' : (res === '*' ? '·' : res);
@@ -12077,7 +12091,9 @@ function tdFillBoards(rInt) {
   step();
 }
 
-function tdMiniFen(fen) {
+function tdMiniFen(fen, last) {
+  var hl = null;
+  if (last && last.from && last.to) { hl = {}; hl[last.from] = 1; hl[last.to] = 1; }
   var rows = fen.split(' ')[0].split('/');
   var h = '<div style="display:grid;grid-template-columns:repeat(8,1fr);grid-template-rows:repeat(8,1fr);width:100%;aspect-ratio:1">';
   for (var r = 0; r < 8; r++) {
@@ -12091,6 +12107,7 @@ function tdMiniFen(fen) {
     for (var f = 0; f < 8; f++) {
       var light = (r + f) % 2 === 0;
       var bg = light ? '#f0d9b5' : '#b58863';
+      if (hl) { var sq = 'abcdefgh'[f] + (8 - r); if (hl[sq]) bg = light ? '#cdd26b' : '#aaa23b'; }   // resalta la última jugada
       var pc = squares[f];
       var img = pc && _tdPieceMap[pc] ? '<img src="' + _tdPieceBase + _tdPieceMap[pc] + '.svg" style="width:100%;height:100%;display:block" draggable="false">' : '';
       h += '<div style="background:' + bg + '">' + img + '</div>';
