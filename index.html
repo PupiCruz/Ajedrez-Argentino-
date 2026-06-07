@@ -11954,6 +11954,7 @@ function tdBuildRound(rInt) {
   var panel = document.getElementById('td-round-' + rInt);
   if (!panel) return;
   var _all = _tdCtx.byRound[rInt] || [];
+  if (_tdArgOnly) _all = _all.filter(function(g){ return _isArgGame(g.h); });   // filtrar ANTES de paginar (los argentinos juntos)
   var _totalPages = Math.max(1, Math.ceil(_all.length / _TD_PER_PAGE));
   if (_tdPage >= _totalPages) _tdPage = _totalPages - 1;
   if (_tdPage < 0) _tdPage = 0;
@@ -12122,6 +12123,7 @@ function tdFillBoards(rInt) {
       }
       el.innerHTML = html;
       el.setAttribute('data-fen', fen);   // para comparar en el refresco incremental (solo redibuja los que cambian)
+      _tdSetCellKeys(el, fen, rr.last);    // memoriza pieza/resaltado por casilla → permite parchear solo lo que cambia
       // Relojes (si la transmisión los trae): último [%clk] de cada lado.
       var _cb = document.getElementById('td-clk-b-' + gidx); if (_cb) _cb.textContent = rr.bc ? fmtClock(rr.bc) : '';
       var _cw = document.getElementById('td-clk-w-' + gidx); if (_cw) _cw.textContent = rr.wc ? fmtClock(rr.wc) : '';
@@ -12155,6 +12157,48 @@ function tdMiniFen(fen, last) {
   }
   h += '</div>';
   return h;
+}
+
+// Expande una fila de FEN ("r1bk...") a 8 elementos (pieza o null).
+function _tdExpandRow(row) {
+  var sq = [];
+  for (var c = 0; c < (row||'').length; c++) {
+    var ch = row[c];
+    if (ch >= '1' && ch <= '8') { for (var k = 0; k < parseInt(ch); k++) sq.push(null); }
+    else sq.push(ch);
+  }
+  while (sq.length < 8) sq.push(null);
+  return sq;
+}
+// Memoriza en cada casilla del mini-tablero la pieza (_pk) y el resaltado (_hl) actuales, para
+// que tdPatchMiniBoard pueda actualizar SOLO las casillas que cambian en la próxima movida.
+function _tdSetCellKeys(bdEl, fen, last) {
+  var grid = bdEl.firstElementChild;
+  if (!grid || grid.children.length !== 64) return;
+  var hl = (last && last.from && last.to) ? {} : null; if (hl) { hl[last.from] = 1; hl[last.to] = 1; }
+  var rows = fen.split(' ')[0].split('/'), cells = grid.children, idx = 0;
+  for (var r = 0; r < 8; r++) { var sqr = _tdExpandRow(rows[r]); for (var f = 0; f < 8; f++) { var cell = cells[idx++]; cell._pk = sqr[f] || ''; cell._hl = !!(hl && hl['abcdefgh'[f] + (8 - r)]); } }
+}
+// Actualiza un mini-tablero ya dibujado redibujando SOLO las casillas cuya pieza o resaltado
+// cambió (patrón del visor grande). Mucho más liviano que regenerar los 64 div en cada movida.
+// Devuelve false si no se puede parchear (hay que redibujar entero).
+function tdPatchMiniBoard(bdEl, fen, last) {
+  var grid = bdEl.firstElementChild;
+  if (!grid || grid.children.length !== 64) return false;
+  var hl = (last && last.from && last.to) ? {} : null; if (hl) { hl[last.from] = 1; hl[last.to] = 1; }
+  var rows = fen.split(' ')[0].split('/'), cells = grid.children, idx = 0;
+  for (var r = 0; r < 8; r++) {
+    var sqr = _tdExpandRow(rows[r]);
+    for (var f = 0; f < 8; f++) {
+      var cell = cells[idx++];
+      var light = (r + f) % 2 === 0;
+      var hlOn = !!(hl && hl['abcdefgh'[f] + (8 - r)]);
+      if (cell._hl !== hlOn) { cell._hl = hlOn; cell.style.background = hlOn ? (light ? '#cdd26b' : '#aaa23b') : (light ? '#f0d9b5' : '#b58863'); }
+      var pk = sqr[f] || '';
+      if (cell._pk !== pk) { cell._pk = pk; cell.innerHTML = (pk && _tdPieceMap[pk]) ? '<img src="' + _tdPieceBase + _tdPieceMap[pk] + '.svg" style="width:100%;height:100%;display:block" draggable="false">' : ''; }
+    }
+  }
+  return true;
 }
 
 var _tdArgOnly = false;
@@ -12199,7 +12243,8 @@ function tdToggleArg() {
     if (_tdArgOnly) { btn.style.background = 'rgba(50,150,80,.2)'; btn.style.borderColor = 'rgba(50,200,80,.4)'; btn.style.color = '#6fcf8a'; }
     else { btn.style.background = 'var(--bg3)'; btn.style.borderColor = 'var(--border)'; btn.style.color = 'var(--text2)'; }
   }
-  tdApplyArgFilter();
+  _tdPage = 0;                       // al filtrar, paginar sobre los argentinos desde la página 1
+  tdBuildRound(_tdCurrentRound);
 }
 
 function closeTourDetail(e) {
@@ -12324,19 +12369,31 @@ function _tdLiveApplyRefresh(res, sec) {
   PGN_DB[_tdLiveCtx.pgnKey] = { title: _tdLiveCtx.name, sub: _tdLiveCtx.location, url: '', games: games };
   var panel = document.getElementById('td-round-' + curR);
   var bds = panel.querySelectorAll('.td-bd');
-  var changed = 0;
+  var START = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR';
+  var needFull = 0;
   for (var i = 0; i < bds.length; i++) {
     var el = bds[i];
     var gidx = parseInt(el.getAttribute('data-gidx'));
     var newPgn = games[gidx];
     if (newPgn === undefined) continue;
-    if (tdFinalFenCached(newPgn).fen !== el.getAttribute('data-fen')) {
+    var rr = tdFinalFenCached(newPgn);
+    if (rr.fen === el.getAttribute('data-fen')) continue;   // este tablero no cambió
+    var nowStart = rr.fen.split(' ')[0] === START;
+    var wasStart = (el.getAttribute('data-fen') || '').split(' ')[0] === START;
+    if (nowStart || wasStart || !tdPatchMiniBoard(el, rr.fen, rr.last)) {
+      // empieza/termina sin jugadas o no se puede parchear → redibujar el tablero entero
       el.removeAttribute('data-filled');
       el.setAttribute('data-res', parsePgnHeaders(newPgn).Result || '*');
-      changed++;
+      needFull++;
+    } else {
+      // jugada nueva → solo se redibujaron las casillas que cambiaron. Actualizar fen, resultado y relojes.
+      el.setAttribute('data-fen', rr.fen);
+      el.setAttribute('data-res', parsePgnHeaders(newPgn).Result || '*');
+      var _cb = document.getElementById('td-clk-b-' + gidx); if (_cb) _cb.textContent = rr.bc ? fmtClock(rr.bc) : '';
+      var _cw = document.getElementById('td-clk-w-' + gidx); if (_cw) _cw.textContent = rr.wc ? fmtClock(rr.wc) : '';
     }
   }
-  if (changed) tdFillBoards(curR);   // re-dibuja SOLO los sin data-filled (los que cambiaron)
+  if (needFull) tdFillBoards(curR);   // re-dibuja entero solo los pocos que lo necesitaron
 }
 
 function _tdLiveRefresh() {
