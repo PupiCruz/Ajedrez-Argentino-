@@ -11653,7 +11653,7 @@ async function openTournamentDetail(type, id, scrollToGames) {
       h += '<button onclick="tdShowRound(' + rInt + ',\'' + pgnKey2 + '\')" id="td-rtab-' + rInt + '" style="padding:6px 15px;border-radius:20px;border:1px solid var(--border);background:' + (ri===0?'var(--gold-bg)':'var(--bg3)') + ';color:' + (ri===0?'var(--gold)':'var(--text2)') + ';font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit">R' + rInt + '</button>';
     });
     h += '</div>';
-    // (_tdCtx ya se preparó arriba, antes de crRenderSection)
+    h += '<div id="td-pager" style="display:none;align-items:center;justify-content:center;gap:14px;margin-bottom:14px"></div>';
     // Paneles de ronda vacíos; se llenan bajo demanda
     roundOrder.forEach(function(rInt, ri) {
       h += '<div id="td-round-' + rInt + '" style="display:' + (ri===0?'grid':'none') + ';grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:4px"></div>';
@@ -11947,13 +11947,19 @@ function trfHandleFile(event, trfKey) {
 
 // Arma (una sola vez) la grilla de miniaturas de una ronda
 var _tdCtx = null;
+var _TD_PER_PAGE = 24;   // miniaturas por página (carga fluida con muchos tableros)
+var _tdPage = 0;
 function tdBuildRound(rInt) {
-  if (!_tdCtx || _tdCtx.built[rInt]) return;
+  if (!_tdCtx) return;
   var panel = document.getElementById('td-round-' + rInt);
   if (!panel) return;
+  var _all = _tdCtx.byRound[rInt] || [];
+  var _totalPages = Math.max(1, Math.ceil(_all.length / _TD_PER_PAGE));
+  if (_tdPage >= _totalPages) _tdPage = _totalPages - 1;
+  if (_tdPage < 0) _tdPage = 0;
   var START = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR';
   var h = '';
-  _tdCtx.byRound[rInt].forEach(function(g) {
+  _all.slice(_tdPage * _TD_PER_PAGE, _tdPage * _TD_PER_PAGE + _TD_PER_PAGE).forEach(function(g) {
     var globalIdx = _tdCtx.games.indexOf(g.pgn);
     var wParts = (g.h.White || '?').split(','); var white = wParts.length > 1 ? (wParts[1].trim() + ' ' + wParts[0].trim()) : wParts[0].trim();
     var bParts = (g.h.Black || '?').split(','); var black = bParts.length > 1 ? (bParts[1].trim() + ' ' + bParts[0].trim()) : bParts[0].trim();
@@ -11982,8 +11988,29 @@ function tdBuildRound(rInt) {
     h += '</div>';
   });
   panel.innerHTML = h;
-  _tdCtx.built[rInt] = true;
   tdFillBoards(rInt);   // calcula y dibuja las posiciones finales en segundo plano
+  _tdRenderPager(rInt, _totalPages, _all.length);
+}
+
+// Navegación de páginas de miniaturas (◀ Página X/Y ▶). Usa el contenedor #td-pager.
+function _tdRenderPager(rInt, totalPages, total) {
+  var pg = document.getElementById('td-pager');
+  if (!pg) return;
+  if (totalPages <= 1) { pg.innerHTML = ''; pg.style.display = 'none'; return; }
+  pg.style.display = 'flex';
+  var bs = 'background:var(--bg3);border:1px solid var(--border);color:var(--text2);font-size:14px;border-radius:8px;padding:6px 13px;cursor:pointer;font-family:inherit';
+  pg.innerHTML = '<button onclick="tdGoPage(' + rInt + ',' + (_tdPage-1) + ')"' + (_tdPage===0?' disabled':'') + ' style="' + bs + (_tdPage===0?';opacity:.4':'') + '">◀</button>'
+    + '<span style="font-size:12px;color:var(--text2)">Página ' + (_tdPage+1) + ' de ' + totalPages + ' · ' + total + ' partidas</span>'
+    + '<button onclick="tdGoPage(' + rInt + ',' + (_tdPage+1) + ')"' + (_tdPage>=totalPages-1?' disabled':'') + ' style="' + bs + (_tdPage>=totalPages-1?';opacity:.4':'') + '">▶</button>';
+}
+
+function tdGoPage(rInt, p) {
+  _tdPage = p;
+  tdBuildRound(rInt);
+  tdApplyArgFilter();
+  var m = document.querySelector('#tour-overlay .modal');
+  var anchor = document.getElementById('td-partidas-anchor');
+  if (m && anchor) { var d = anchor.getBoundingClientRect().top - m.getBoundingClientRect().top; m.scrollTop = Math.max(0, m.scrollTop + d - 8); }
 }
 
 var _tdPieceMap = {
@@ -12135,7 +12162,8 @@ var _tdCurrentRound = null;
 
 function tdShowRound(rInt, pgnKey2) {
   _tdCurrentRound = rInt;
-  tdBuildRound(rInt); // arma la ronda si todavía no se armó
+  _tdPage = 0;   // al cambiar de ronda, volver a la página 1
+  tdBuildRound(rInt); // arma la ronda
   // Ocultar todas las rondas y desactivar tabs
   document.querySelectorAll('[id^="td-round-"]').forEach(function(el) { el.style.display = 'none'; });
   document.querySelectorAll('[id^="td-rtab-"]').forEach(function(btn) {
@@ -12252,7 +12280,7 @@ function _tdLiveBuild(res, sec, keepRound) {
   res.roundsWithGames.forEach(function(r){ if (r.live) { var mm=(r.name||'').match(/(\d+)/); if (mm) liveInts[parseInt(mm[1])] = true; } });
   var h = '';
   h += '<div id="td-partidas-anchor" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;flex-wrap:wrap;scroll-margin-top:10px">';
-  h += '<span style="font-size:11px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:var(--text2)">Partidas (' + games.length + ') · Lichess</span>';
+  h += '<span style="font-size:11px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:var(--text2)">Partidas · Lichess</span>';
   if (argTotal > 0 && crShowArgLine(ctx.typ)) {
     h += '<button id="td-arg-btn" onclick="tdToggleArg()" style="padding:6px 13px;border-radius:20px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">🇦🇷 Solo argentinos</button>';
   }
@@ -12263,10 +12291,12 @@ function _tdLiveBuild(res, sec, keepRound) {
     h += '<button onclick="tdShowRound(' + rInt + ',\'' + ctx.pgnKey + '\')" id="td-rtab-' + rInt + '" style="padding:6px 15px;border-radius:20px;border:1px solid var(--border);background:' + (active?'var(--gold-bg)':'var(--bg3)') + ';color:' + (active?'var(--gold)':'var(--text2)') + ';font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit">' + (liveInts[rInt]?'🔴 ':'') + 'R' + rInt + '</button>';
   });
   h += '</div>';
+  h += '<div id="td-pager" style="display:none;align-items:center;justify-content:center;gap:14px;margin-bottom:14px"></div>';
   roundOrder.forEach(function(rInt) {
     h += '<div id="td-round-' + rInt + '" style="display:' + (rInt===startRound?'grid':'none') + ';grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:4px"></div>';
   });
   sec.innerHTML = h;
+  if (keepRound == null) _tdPage = 0;   // apertura: arranca en la página 1 (el refresco mantiene la página)
   tdBuildRound(startRound);
 }
 
