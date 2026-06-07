@@ -11966,15 +11966,17 @@ function tdBuildRound(rInt) {
     var bScoreColor = res === '0-1' ? 'var(--green)' : res === '1-0' ? 'var(--red)' : 'var(--text2)';
     var isArg = _isArgGame(g.h) ? '1' : '0';
     h += '<div class="td-card" data-arg="' + isArg + '" onclick="tdOpenGame(' + globalIdx + ',\'' + _tdCtx.pgnKey + '\',\'' + escJs(_tdCtx.name) + '\',\'' + escJs(_tdCtx.location) + '\')" style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;cursor:pointer;transition:border-color .15s;overflow:hidden" onmouseover="this.style.borderColor=\'var(--gold-dim)\'" onmouseout="this.style.borderColor=\'var(--border)\'">';
-    h += '<div style="display:flex;align-items:flex-start;gap:5px;padding:5px 7px 4px">';
+    h += '<div style="display:flex;align-items:center;gap:5px;padding:5px 7px 4px">';
     h += '<div style="flex:1;font-size:11px;line-height:1.25;color:var(--text)">' + bTitle + escHtml(black) + '</div>';
+    h += '<span class="td-clk" id="td-clk-b-' + globalIdx + '" style="font-size:10px;font-variant-numeric:tabular-nums;color:var(--text3);flex-shrink:0"></span>';
     h += '<span style="font-size:11px;font-weight:700;color:' + bScoreColor + ';flex-shrink:0">' + bScore + '</span>';
     h += '</div>';
     // El tablero arranca con un placeholder vacío; la posición final se calcula
     // en segundo plano (tdFillBoards) para que la apertura sea instantánea.
     h += '<div class="td-bd" id="td-bd-' + globalIdx + '" data-gidx="' + globalIdx + '" data-res="' + res + '" style="position:relative">' + _tdPlaceholderBoard() + '</div>';
-    h += '<div style="display:flex;align-items:flex-start;gap:5px;padding:4px 7px 6px">';
+    h += '<div style="display:flex;align-items:center;gap:5px;padding:4px 7px 6px">';
     h += '<div style="flex:1;font-size:11px;line-height:1.25;color:var(--text)">' + wTitle + escHtml(white) + '</div>';
+    h += '<span class="td-clk" id="td-clk-w-' + globalIdx + '" style="font-size:10px;font-variant-numeric:tabular-nums;color:var(--text3);flex-shrink:0"></span>';
     h += '<span style="font-size:11px;font-weight:700;color:' + wScoreColor + ';flex-shrink:0">' + wScore + '</span>';
     h += '</div>';
     h += '</div>';
@@ -11993,8 +11995,15 @@ var _tdPieceBase = 'assets/piezas/';   // piezas cburnett bundleadas localmente 
 // Devuelve { fen, last:{from,to}|null } de la posición final del PGN. `last` = casillas de la
 // última jugada, para resaltarlas en la miniatura.
 function tdFinalFen(pgn) {
-  var fallback = { fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1', last: null };
+  var fallback = { fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1', last: null, wc: '', bc: '' };
   try {
+    // Relojes: último [%clk] de cada lado (jugadas pares = blancas, impares = negras).
+    var _clk = parseMoveClocks(pgn), _wc = '', _bc = '';
+    for (var _ci = _clk.length - 1; _ci >= 0; _ci--) {
+      if (_clk[_ci] === undefined) continue;
+      if (_ci % 2 === 0) { if (!_wc) _wc = _clk[_ci]; } else { if (!_bc) _bc = _clk[_ci]; }
+      if (_wc && _bc) break;
+    }
     // 1) Aislar el movetext (después de los headers) — los headers rompen load_pgn de chess.js 0.10.3
     var mv;
     var sep = pgn.indexOf('\n\n');
@@ -12020,7 +12029,7 @@ function tdFinalFen(pgn) {
     if (c.load_pgn(clean) && c.history().length > 0) {
       var hv = c.history({ verbose: true });
       var lm = hv.length ? hv[hv.length - 1] : null;
-      return { fen: c.fen(), last: lm ? { from: lm.from, to: lm.to } : null };
+      return { fen: c.fen(), last: lm ? { from: lm.from, to: lm.to } : null, wc: _wc, bc: _bc };
     }
 
     // 6) Respaldo: aplicar jugadas una por una
@@ -12036,7 +12045,7 @@ function tdFinalFen(pgn) {
       if (!_mv) break;
       lastMv = _mv;
     }
-    return { fen: c2.fen(), last: lastMv ? { from: lastMv.from, to: lastMv.to } : null };
+    return { fen: c2.fen(), last: lastMv ? { from: lastMv.from, to: lastMv.to } : null, wc: _wc, bc: _bc };
   } catch (e) { return fallback; }
 }
 
@@ -12085,6 +12094,9 @@ function tdFillBoards(rInt) {
           + '<span style="background:rgba(20,20,25,.82);color:#fff;font-size:18px;font-weight:800;letter-spacing:1px;padding:6px 14px;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,.4)">' + resBig + '</span></div>';
       }
       el.innerHTML = html;
+      // Relojes (si la transmisión los trae): último [%clk] de cada lado.
+      var _cb = document.getElementById('td-clk-b-' + gidx); if (_cb) _cb.textContent = rr.bc ? fmtClock(rr.bc) : '';
+      var _cw = document.getElementById('td-clk-w-' + gidx); if (_cw) _cw.textContent = rr.wc ? fmtClock(rr.wc) : '';
     } while (i < els.length && performance.now() - t0 < 25);
     if (i < els.length) next(step);
   }
