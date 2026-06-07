@@ -12143,9 +12143,7 @@ function tdFillBoards(rInt) {
       el.innerHTML = html;
       el.setAttribute('data-fen', fen);   // para comparar en el refresco incremental (solo redibuja los que cambian)
       _tdSetCellKeys(el, fen, rr.last);    // memoriza pieza/resaltado por casilla → permite parchear solo lo que cambia
-      // Relojes (si la transmisión los trae): último [%clk] de cada lado.
-      var _cb = document.getElementById('td-clk-b-' + gidx); if (_cb) _cb.textContent = rr.bc ? fmtClock(rr.bc) : '';
-      var _cw = document.getElementById('td-clk-w-' + gidx); if (_cw) _cw.textContent = rr.wc ? fmtClock(rr.wc) : '';
+      _tdSetClocks(el, gidx, fen, rr);     // relojes (valor fijo + base para el countdown corriendo)
     } while (i < els.length && performance.now() - t0 < 25);
     if (i < els.length) next(step);
   }
@@ -12293,7 +12291,7 @@ function tdOpenGame(idx, pgnKey, tname, tloc) {
 var _tdLiveTimer = null;
 var _tdLiveCtx = null;   // { tourId, pgnKey, name, location, typ }
 
-function _tdLiveStop() { if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; } _tdLiveCtx = null; }
+function _tdLiveStop() { if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; } _tdLiveCtx = null; _tdStopClocks(); }
 
 function _tdLoadLiveGames(broadcastId, broadcastUrl, name, location, pgnKey, typ, status) {
   var raw = String(broadcastId || '');
@@ -12362,17 +12360,20 @@ function _tdLiveBuild(res, sec, keepRound) {
   sec.innerHTML = h;
   if (keepRound == null) _tdPage = 0;   // apertura: arranca en la página 1 (el refresco mantiene la página)
   tdBuildRound(startRound);
+  _tdStartClocks();   // relojes corriendo (descuentan el lado al que le toca mover)
   // Ya con las partidas del vivo cargadas, sincronizar los resultados del cuadro de cruces con
   // ellas y re-renderizar esa sección. (Al abrir, crSyncResultsFromPgn corrió SIN partidas y no
   // enlazaba: por eso los resultados recién aparecían tras togglear el filtro.)
   if (_tdCtx.crKey && PGN_DB[_tdCtx.pgnKey] && PGN_DB[_tdCtx.pgnKey].games.length) {
     try {
       crSyncResultsFromPgn(_tdCtx.crKey);   // completa los resultados vacíos con las partidas del vivo
-      var _k = _tdCtx.crKey, _tab = _crActiveTab[_k];
-      if (_tab == null) { var _d = crDataLoad(_k); var _rs = (_d && _d.rounds) ? Object.keys(_d.rounds).map(Number).sort(function(a,b){return a-b;}) : []; _tab = _rs.length ? _rs[0] : ((_d && _d.standings && _d.standings.length) ? 'tabla' : null); }
-      // Re-render SIEMPRE (no solo si cambió el sync): así los resultados del cuadro quedan
-      // enlazados (clickeables → abren la partida) ahora que las partidas del vivo ya cargaron.
-      if (_tab != null) crRefreshSection(_k, _tab);
+      var _k = _tdCtx.crKey, _d = crDataLoad(_k), _tab = _crActiveTab[_k];
+      // Preferir la pestaña de la ronda que muestra la grilla (la en vivo), para no descolocarlas.
+      if (_d && _d.rounds && _d.rounds[_tdCurrentRound]) _tab = _tdCurrentRound;
+      else if (_tab == null) { var _rs = (_d && _d.rounds) ? Object.keys(_d.rounds).map(Number).sort(function(a,b){return a-b;}) : []; _tab = _rs.length ? _rs[0] : ((_d && _d.standings && _d.standings.length) ? 'tabla' : null); }
+      // Re-render SIEMPRE (enlaza los resultados con las partidas ya cargadas). _crSyncing=true evita
+      // que crShowTab rebote a tdShowRound y cambie la ronda visible (sacaba de la ronda en vivo).
+      if (_tab != null) { _crSyncing = true; try { crRefreshSection(_k, _tab); } catch(e){} _crSyncing = false; }
     } catch(e){}
   }
 }
@@ -12418,11 +12419,11 @@ function _tdLiveApplyRefresh(res, sec) {
       el.setAttribute('data-res', parsePgnHeaders(newPgn).Result || '*');
       needFull++;
     } else {
-      // jugada nueva → solo se redibujaron las casillas que cambiaron. Actualizar fen, resultado y relojes.
+      // jugada nueva → solo se redibujaron las casillas que cambiaron. Actualizar fen, resultado y
+      // re-sincronizar el reloj (el countdown sigue desde el [%clk] nuevo del PGN).
       el.setAttribute('data-fen', rr.fen);
       el.setAttribute('data-res', parsePgnHeaders(newPgn).Result || '*');
-      var _cb = document.getElementById('td-clk-b-' + gidx); if (_cb) _cb.textContent = rr.bc ? fmtClock(rr.bc) : '';
-      var _cw = document.getElementById('td-clk-w-' + gidx); if (_cw) _cw.textContent = rr.wc ? fmtClock(rr.wc) : '';
+      _tdSetClocks(el, gidx, rr.fen, rr);
     }
   }
   if (needFull) tdFillBoards(curR);   // re-dibuja entero solo los pocos que lo necesitaron
@@ -12598,6 +12599,57 @@ function fmtClock(c) {
     return h + ':' + p[1] + ':' + p[2];
   }
   return c;
+}
+// "1:14:10" → segundos; "" → -1 (sin reloj).
+function _clkToSec(c) {
+  if (!c) return -1;
+  var p = String(c).split(':').map(function(x){ return parseInt(x, 10) || 0; });
+  if (p.length === 3) return p[0]*3600 + p[1]*60 + p[2];
+  if (p.length === 2) return p[0]*60 + p[1];
+  return p[0] || -1;
+}
+// segundos → "M:SS" o "H:MM:SS" (como fmtClock). Negativo → "0:00".
+function _secToClk(s) {
+  if (s < 0) s = 0;
+  var h = Math.floor(s/3600), m = Math.floor((s%3600)/60), sec = s%60;
+  var ss = (sec < 10 ? '0' : '') + sec;
+  if (h > 0) return h + ':' + (m < 10 ? '0' : '') + m + ':' + ss;
+  return m + ':' + ss;
+}
+// Setea los relojes de una miniatura: muestra el valor y guarda turno + segundos para el countdown.
+// `data-running=1` = partida en curso con relojes → el lado al que le toca mover va descontando.
+function _tdSetClocks(el, gidx, fen, rr) {
+  var ws = _clkToSec(rr.wc), bs = _clkToSec(rr.bc);
+  var cb = document.getElementById('td-clk-b-' + gidx); if (cb) cb.textContent = bs >= 0 ? _secToClk(bs) : '';
+  var cw = document.getElementById('td-clk-w-' + gidx); if (cw) cw.textContent = ws >= 0 ? _secToClk(ws) : '';
+  var inProgress = (el.getAttribute('data-res') || '*') === '*';
+  el.setAttribute('data-turn', (fen.split(' ')[1] === 'b') ? 'b' : 'w');
+  el.setAttribute('data-wsec', ws);
+  el.setAttribute('data-bsec', bs);
+  el.setAttribute('data-running', (inProgress && ws >= 0 && bs >= 0) ? '1' : '0');
+}
+// Timer que da la sensación de relojes corriendo: cada segundo descuenta 1s al lado al que le
+// toca mover, en las miniaturas en curso visibles. Se re-sincroniza con la transmisión cuando
+// llega una jugada nueva (el refresco re-setea los segundos desde el [%clk] del PGN).
+var _tdClockTimer = null;
+function _tdStartClocks() { if (!_tdClockTimer) _tdClockTimer = setInterval(_tdClockTick, 1000); }
+function _tdStopClocks() { if (_tdClockTimer) { clearInterval(_tdClockTimer); _tdClockTimer = null; } }
+function _tdClockTick() {
+  if (_tdCurrentRound == null) return;
+  var panel = document.getElementById('td-round-' + _tdCurrentRound);
+  if (!panel) return;
+  var bds = panel.querySelectorAll('.td-bd[data-running="1"]');
+  for (var i = 0; i < bds.length; i++) {
+    var el = bds[i];
+    var turn = el.getAttribute('data-turn');
+    var gidx = el.getAttribute('data-gidx');
+    var attr = turn === 'b' ? 'data-bsec' : 'data-wsec';
+    var sec = parseInt(el.getAttribute(attr));
+    if (isNaN(sec) || sec <= 0) continue;
+    sec--; el.setAttribute(attr, String(sec));
+    var span = document.getElementById('td-clk-' + turn + '-' + gidx);
+    if (span) span.textContent = _secToClk(sec);
+  }
 }
 
 function nagClass(nag) {
