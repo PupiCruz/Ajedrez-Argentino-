@@ -2482,8 +2482,9 @@ function renderTorneos(filter) {
         }
         var _hcCfg = tzCfg['hc_' + t.id] || {};
         var _bcId  = _hcCfg.broadcastId;
+        var _hcPgnCount = (_hcCfg.pgnGames && _hcCfg.pgnGames.length) || 0;
         if (_bcId) {
-          html += btnBroadcastLichess(_bcId, t.name, t.location, _hcCfg.broadcastUrl||'');
+          html += btnVerPartidas('hc', t.id, false, _hcPgnCount, _bcId, _hcCfg.broadcastUrl);
         } else {
           if (t.hasPgn) {
             var pgnLabel = t.lichessLive ? '♟ Ver partidas · Rondas 1–3 (30 partidas)' : '♟ Ver partidas · Ronda 1 (25 partidas)';
@@ -2492,9 +2493,9 @@ function renderTorneos(filter) {
           if (t.lichessLive) {
             html += '<button class="pgn-btn" onclick="openLiveBroadcast(\'' + t.lichessLive.slug + '\',\'' + t.lichessLive.roundSlug + '\',\'' + t.lichessLive.roundId + '\')" style="background:rgba(180,30,30,0.15);border-color:rgba(220,60,60,0.4);color:#e07070">⚡ Ver en vivo · Ronda 4 (en curso)</button>';
           }
-        }
-        if (_hcCfg.pgnGames && _hcCfg.pgnGames.length) {
-          html += '<button class="pgn-btn" onclick="openTournamentDetail(\'hc\',' + t.id + ',true)">♟ Ver partidas subidas (' + _hcCfg.pgnGames.length + ')</button>';
+          if (_hcPgnCount > 0) {
+            html += '<button class="pgn-btn" onclick="openTournamentDetail(\'hc\',' + t.id + ',true)">♟ Ver partidas subidas (' + _hcPgnCount + ')</button>';
+          }
         }
         if (_hcCfg.crurl) {
           html += linkChessResults(_hcCfg.crurl);
@@ -2539,15 +2540,10 @@ function renderTorneos(filter) {
         if (isCR && st.crUrl) {
           html += linkChessResults(st.crUrl);
         }
-        if (st.broadcastId) {
-          html += btnBroadcastLichess(st.broadcastId, st.name, st.location, st.broadcastUrl||'');
-        }
         if (st.chesscomUrl) {
           html += linkChesscom(st.chesscomUrl);
         }
-        if (st.gameCount > 0) {
-          html += '<button class="pgn-btn" onclick="openTournamentDetail(\'ls\',' + st._id + ',true)">♟ Ver partidas (' + st.gameCount + ')</button>';
-        }
+        html += btnVerPartidas('ls', st._id, false, st.gameCount, st.broadcastId, st.broadcastUrl);
         html += '</div>';
       } else if (item._type === 'tzconfig') {
         var d = item._data; var tzk = item._key;
@@ -2581,16 +2577,11 @@ function renderTorneos(filter) {
         html += flyerLeadersRow(d.flyerUrl, tzLeadersHtml);
         html += crArgLineHtml('tz', tzk, d.pgnGames || [], d.type);
         if (d.crurl) html += linkChessResults(d.crurl);
-        if (d.broadcastId) {
-          html += btnBroadcastLichess(d.broadcastId, d.name||'', d.location||'', d.broadcastUrl||'');
-        }
         if (d.chesscomUrl) {
           html += linkChesscom(d.chesscomUrl);
         }
         var _tzPgnCount = d.pgnCount || (d.pgnGames && d.pgnGames.length) || 0;
-        if (_tzPgnCount > 0) {
-          html += '<button class="pgn-btn" onclick="openTournamentDetail(\'tz\',\'' + tzk + '\',true)">♟ Ver partidas (' + _tzPgnCount + ')</button>';
-        }
+        html += btnVerPartidas('tz', tzk, true, _tzPgnCount, d.broadcastId, d.broadcastUrl);
         html += '</div>';
       }
     });
@@ -10525,6 +10516,18 @@ function btnBroadcastLichess(broadcastId, name, location, url) {
   // data-bc / data-bcurl: los usa _bcMarkLiveButtons para marcar "🔴 EN VIVO" tras consultar Lichess.
   return '<button class="pgn-btn" data-bc="' + escHtml(broadcastId) + '" data-bcurl="' + escHtml(url || '') + '" onclick="openBroadcastTournament(\'' + escJs(broadcastId) + '\',\'' + escJs(name || '') + '\',\'' + escJs(location || '') + '\',\'' + escJs(url || '') + '\')" style="background:rgba(30,60,120,.15);border-color:rgba(60,100,200,.3);color:#8ab4f8">⚡ Ver partidas · Lichess</button>';
 }
+// Botón UNIFICADO "Ver partidas": abre el detalle del torneo (donde está la grilla integrada).
+// Si el torneo tiene transmisión, lleva data-bc para que _bcMarkLiveButtons lo pinte rojo
+// "🔴 EN VIVO · Ver partidas" cuando se está jugando; si no, queda "♟ Ver partidas (N)".
+function btnVerPartidas(type, id, isStringId, count, broadcastId, broadcastUrl) {
+  var idArg = isStringId ? ("'" + escJs(String(id)) + "'") : id;
+  var oc = 'openTournamentDetail(\'' + type + '\',' + idArg + ',true)';
+  if (broadcastId) {
+    return '<button class="pgn-btn" data-bc="' + escHtml(broadcastId) + '" data-bcurl="' + escHtml(broadcastUrl || '') + '" onclick="' + oc + '">♟ Ver partidas</button>';
+  }
+  if (count > 0) return '<button class="pgn-btn" onclick="' + oc + '">♟ Ver partidas (' + count + ')</button>';
+  return '';
+}
 function linkChessResults(url) {
   return '<a href="' + escHtml(url) + '" target="_blank" rel="noopener" class="pgn-btn" style="display:block;text-align:center;text-decoration:none">🌐 Ver en Chess Results</a>';
 }
@@ -11551,7 +11554,10 @@ async function openTournamentDetail(type, id, scrollToGames) {
   h += '<div style="margin-bottom:18px">';
   h += '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:8px">';
   h += '<div style="font-size:17px;font-weight:700;color:var(--text);line-height:1.3">' + escHtml(name) + '</div>';
-  h += '<span class="badge ' + cls2[status] + '" style="flex-shrink:0;margin-top:2px">' + lbl2[status] + '</span>';
+  h += '<div style="flex-shrink:0;display:flex;flex-direction:column;align-items:flex-end;gap:6px;margin-top:2px">';
+  h += '<span class="badge ' + cls2[status] + '">' + lbl2[status] + '</span>';
+  if (broadcastId) h += '<a href="' + escHtml(broadcastUrl || ('https://lichess.org/broadcast/' + broadcastId)) + '" target="_blank" rel="noopener" style="font-size:11px;color:#8ab4f8;text-decoration:none;white-space:nowrap">⚡ Ver en Lichess ↗</a>';
+  h += '</div>';
   h += '</div>';
   h += '<div style="display:flex;flex-wrap:wrap;gap:6px;font-size:12px;color:var(--text2)">';
   if (dates)    h += '<span style="background:var(--bg3);border:1px solid var(--border);border-radius:20px;padding:3px 10px">📅 ' + escHtml(dates) + '</span>';
@@ -11588,12 +11594,11 @@ async function openTournamentDetail(type, id, scrollToGames) {
   // (El flyer se muestra solo en la tarjeta, no al entrar al torneo.)
 
   // Links externos
-  var hasLinks = crUrl || broadcastId || chesscomUrl;
+  // El botón de Lichess ya NO va acá: con transmisión, las partidas se muestran integradas abajo
+  // (#td-games-section) y arriba a la derecha hay un link discreto "Ver en Lichess".
+  var hasLinks = crUrl || chesscomUrl;
   if (hasLinks) {
     h += '<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:20px">';
-    if (broadcastId) {
-      h += btnBroadcastLichess(broadcastId, name, location, broadcastUrl);
-    }
     if (chesscomUrl) {
       h += linkChesscom(chesscomUrl);
     }
