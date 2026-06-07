@@ -6016,6 +6016,7 @@ async function openPlayer(id) {
   else if (ranking) _subParts.push('<span style="color:var(--gold)">#' + ranking + ' ' + _fed + '</span>');
   h += '<div class="m-sub">' + _subParts.join(' · ') + '</div>';
   if (p.fide_id) h += '<div class="m-sub" style="margin-top:3px"><a href="https://ratings.fide.com/profile/' + p.fide_id + '" target="_blank" style="color:var(--gold);text-decoration:none">FIDE ID: ' + p.fide_id + ' ↗</a>'
+     + (p.ranked === false && !_ondemand ? ' · <a href="javascript:void(0)" onclick="toggleAdditionalArg(' + p.id + ')" style="text-decoration:none" title="¿Cuenta como argentino en el filtro de partidas?">🇦🇷 ¿argentino? ' + (p.arg === false ? '<span style="color:var(--text3)">NO</span>' : '<span style="color:var(--green)">SÍ</span>') + '</a>' : '')
      + (p.ranked === false ? ' · <a href="javascript:void(0)" onclick="removeAdditional(' + p.id + ')" style="color:var(--text3);text-decoration:none">✕ quitar de adicionales</a>' : '') + '</div>';
   h += '</div></div>';
   h += '<div class="stats-grid">';
@@ -8639,6 +8640,16 @@ function addAdditionalPlayer(fid, name, fed) {
   _createAdditional(fid, name, fed);
   _persistAndShowAdicionales();
 }
+// Marca/desmarca un adicional como argentino (para el filtro "Solo argentinos" de las partidas).
+// Default = argentino; al marcarlo NO argentino (ej. un extranjero frecuente) deja de contar.
+function toggleAdditionalArg(id) {
+  var p = null; for (var i = 0; i < PLAYERS.length; i++) if (PLAYERS[i].id === id) { p = PLAYERS[i]; break; }
+  if (!p || p.ranked !== false) return;
+  p.arg = (p.arg === false) ? true : false;
+  var im = _idMapAndNext(), ov = _rankingOverride();
+  _persistPlayers(ov ? ov.month : '', ov ? ov.monthLabel : '', im.idMap, im.nextId);
+  openPlayer(id);   // re-renderizar el perfil con el nuevo estado
+}
 function removeAdditional(id) {
   var p = null; for (var i = 0; i < PLAYERS.length; i++) if (PLAYERS[i].id === id) { p = PLAYERS[i]; break; }
   if (!p || p.ranked !== false) return;
@@ -10851,7 +10862,9 @@ var _argFideSet = null;
 function _getArgFideSet() {
   if (!_argFideSet) {
     _argFideSet = {};
-    PLAYERS.forEach(function(p) { if (p.fide_id) _argFideSet[String(p.fide_id)] = true; });
+    // Incluye el ranking (todos ARG) y los adicionales, SALVO los marcados arg:false (adicionales
+    // que NO son argentinos, ej. un extranjero frecuente cargado para tener su perfil/partidas).
+    PLAYERS.forEach(function(p) { if (p.fide_id && p.arg !== false) _argFideSet[String(p.fide_id)] = true; });
   }
   return _argFideSet;
 }
@@ -10915,8 +10928,12 @@ function _isArgGame(hdrs) {
   var fs = _getArgFideSet();
   if (hdrs.WhiteFideId && fs[String(hdrs.WhiteFideId)]) return true;
   if (hdrs.BlackFideId && fs[String(hdrs.BlackFideId)]) return true;
-  // 3. Coincidencia de nombre
-  return _isArgPlayer(hdrs.White || '') || _isArgPlayer(hdrs.Black || '');
+  // 3. Coincidencia de nombre SOLO si el jugador NO trae fide_id en el PGN. Si trae fide_id y no
+  // está en el set argentino, NO es argentino: un nombre parecido (apellido + inicial) no alcanza.
+  // Evita falsos positivos en torneos FIDE (ej. "Juarez Flores", "Baules Rodriguez" en el Continental).
+  if (!hdrs.WhiteFideId && _isArgPlayer(hdrs.White || '')) return true;
+  if (!hdrs.BlackFideId && _isArgPlayer(hdrs.Black || '')) return true;
+  return false;
 }
 function _openWithArgFilter(pgnKey, title, sub, url, games) {
   var argGames = games.filter(function(pgn) {
