@@ -3362,8 +3362,10 @@ function crToggleRest(key,btn){
   btn.textContent=show?'Ocultar tabla completa':'Ver tabla completa ('+total+' jugadores)';
 }
 
+var _crActiveTab = {};
 function crShowTab(key,tab){
   var data=crDataLoad(key); if(!data) return;
+  _crActiveTab[key] = tab;   // recordar la pestaña activa (para re-render tras sincronizar con el vivo)
   var tabs=document.getElementById('cr-tabs-'+key); if(!tabs) return;
   tabs.querySelectorAll('button').forEach(function(b){
     b.style.background='var(--bg3)'; b.style.color='var(--text2)'; b.style.borderColor='var(--border)';
@@ -12360,6 +12362,19 @@ function _tdLiveBuild(res, sec, keepRound) {
   sec.innerHTML = h;
   if (keepRound == null) _tdPage = 0;   // apertura: arranca en la página 1 (el refresco mantiene la página)
   tdBuildRound(startRound);
+  // Ya con las partidas del vivo cargadas, sincronizar los resultados del cuadro de cruces con
+  // ellas y re-renderizar esa sección. (Al abrir, crSyncResultsFromPgn corrió SIN partidas y no
+  // enlazaba: por eso los resultados recién aparecían tras togglear el filtro.)
+  if (_tdCtx.crKey && PGN_DB[_tdCtx.pgnKey] && PGN_DB[_tdCtx.pgnKey].games.length) {
+    try {
+      crSyncResultsFromPgn(_tdCtx.crKey);   // completa los resultados vacíos con las partidas del vivo
+      var _k = _tdCtx.crKey, _tab = _crActiveTab[_k];
+      if (_tab == null) { var _d = crDataLoad(_k); var _rs = (_d && _d.rounds) ? Object.keys(_d.rounds).map(Number).sort(function(a,b){return a-b;}) : []; _tab = _rs.length ? _rs[0] : ((_d && _d.standings && _d.standings.length) ? 'tabla' : null); }
+      // Re-render SIEMPRE (no solo si cambió el sync): así los resultados del cuadro quedan
+      // enlazados (clickeables → abren la partida) ahora que las partidas del vivo ya cargaron.
+      if (_tab != null) crRefreshSection(_k, _tab);
+    } catch(e){}
+  }
 }
 
 // Refresco: si la estructura de la ronda visible no cambió, actualiza SOLO los tableros cuya
