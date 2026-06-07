@@ -12094,6 +12094,7 @@ function tdFillBoards(rInt) {
           + '<span style="background:rgba(20,20,25,.82);color:#fff;font-size:18px;font-weight:800;letter-spacing:1px;padding:6px 14px;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,.4)">' + resBig + '</span></div>';
       }
       el.innerHTML = html;
+      el.setAttribute('data-fen', fen);   // para comparar en el refresco incremental (solo redibuja los que cambian)
       // Relojes (si la transmisión los trae): último [%clk] de cada lado.
       var _cb = document.getElementById('td-clk-b-' + gidx); if (_cb) _cb.textContent = rr.bc ? fmtClock(rr.bc) : '';
       var _cw = document.getElementById('td-clk-w-' + gidx); if (_cw) _cw.textContent = rr.wc ? fmtClock(rr.wc) : '';
@@ -12269,6 +12270,45 @@ function _tdLiveBuild(res, sec, keepRound) {
   tdBuildRound(startRound);
 }
 
+// Refresco: si la estructura de la ronda visible no cambió, actualiza SOLO los tableros cuya
+// posición cambió (no reconstruye toda la grilla → fluido con 48+ partidas). Si cambió la cantidad
+// de partidas o el set de rondas, reconstruye con _tdLiveBuild.
+function _tdLiveApplyRefresh(res, sec) {
+  var curR = _tdCurrentRound;
+  var byRound = {}, roundOrder = [], games = [];
+  res.roundsWithGames.forEach(function(r, ri) {
+    var mm = (r.name||'').match(/(\d+)/);
+    var rInt = mm ? parseInt(mm[1]) : (ri + 1);
+    if (!byRound[rInt]) { byRound[rInt] = []; roundOrder.push(rInt); }
+    r.games.forEach(function(pgn){ byRound[rInt].push({ pgn: pgn, h: parsePgnHeaders(pgn) }); games.push(pgn); });
+  });
+  var oldRoundN = (_tdCtx && _tdCtx.byRound[curR]) ? _tdCtx.byRound[curR].length : -1;
+  var newRoundN = byRound[curR] ? byRound[curR].length : -2;
+  var sameRoundSet = _tdCtx && roundOrder.length === Object.keys(_tdCtx.byRound).length;
+  if (!_tdCtx || !sameRoundSet || oldRoundN !== newRoundN || !document.getElementById('td-round-' + curR)) {
+    _tdLiveBuild(res, sec, curR);   // estructura cambió → reconstruir
+    return;
+  }
+  // estructura igual → actualizar datos y re-dibujar solo los tableros que cambiaron
+  _tdCtx.byRound = byRound; _tdCtx.games = games;
+  PGN_DB[_tdLiveCtx.pgnKey] = { title: _tdLiveCtx.name, sub: _tdLiveCtx.location, url: '', games: games };
+  var panel = document.getElementById('td-round-' + curR);
+  var bds = panel.querySelectorAll('.td-bd');
+  var changed = 0;
+  for (var i = 0; i < bds.length; i++) {
+    var el = bds[i];
+    var gidx = parseInt(el.getAttribute('data-gidx'));
+    var newPgn = games[gidx];
+    if (newPgn === undefined) continue;
+    if (tdFinalFenCached(newPgn).fen !== el.getAttribute('data-fen')) {
+      el.removeAttribute('data-filled');
+      el.setAttribute('data-res', parsePgnHeaders(newPgn).Result || '*');
+      changed++;
+    }
+  }
+  if (changed) tdFillBoards(curR);   // re-dibuja SOLO los sin data-filled (los que cambiaron)
+}
+
 function _tdLiveRefresh() {
   if (!_tdLiveCtx) return;
   var tourId = _tdLiveCtx.tourId;
@@ -12276,7 +12316,7 @@ function _tdLiveRefresh() {
     if (!_tdLiveCtx || _tdLiveCtx.tourId !== tourId) return;
     var sec = document.getElementById('td-games-section');
     if (!sec) { _tdLiveStop(); return; }
-    if (res && res.roundsWithGames && res.roundsWithGames.length) _tdLiveBuild(res, sec, _tdCurrentRound);
+    if (res && res.roundsWithGames && res.roundsWithGames.length) _tdLiveApplyRefresh(res, sec);
     if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; }
     if (res && res.roundsWithGames && res.roundsWithGames.some(function(r){ return r.live; }) && document.getElementById('td-games-section')) {
       _tdLiveTimer = setTimeout(_tdLiveRefresh, _BC_REFRESH_MS);
