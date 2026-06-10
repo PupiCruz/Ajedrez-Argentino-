@@ -1,45 +1,49 @@
 @echo off
-chcp 65001 >nul
-title Publicar web — Ajedrez Argentino
+title Publicar web - Ajedrez Argentino
 
-echo.
-echo  ╔══════════════════════════════════════════╗
-echo  ║   Publicar web — Ajedrez Argentino       ║
-echo  ╚══════════════════════════════════════════╝
-echo.
-echo  Esto sube los archivos a GitHub y
-echo  Netlify actualiza la web automaticamente.
-echo.
+:: Agregar Git al PATH para esta sesion
+set PATH=%PATH%;C:\Program Files\Git\cmd
 
 cd /d "%~dp0"
 
-:: Verificar que hay archivos para subir
-git status --short >nul 2>&1
-if errorlevel 1 (
-    echo  ERROR: No se encontro Git o no es un repositorio.
-    pause
-    exit /b
-)
+echo.
+echo ==========================================
+echo   Publicar web - Ajedrez Argentino
+echo ==========================================
+echo.
 
-git status --short > "%TEMP%\gitstatus.txt" 2>&1
-for /f %%i in ("%TEMP%\gitstatus.txt") do set size=%%~zi
-if "%size%"=="0" (
-    echo  No hay cambios para publicar.
-    echo  La web ya esta al dia.
+:: Verificar que git funciona
+git --version >nul 2>&1
+if errorlevel 1 (
+    echo ERROR: No se encontro Git instalado.
+    echo Instala Git desde https://git-scm.com
     echo.
     pause
     exit /b
 )
 
-echo  Archivos con cambios:
+:: Ver si hay cambios
+git status --short > "%TEMP%\gitstatus.txt" 2>&1
+set /a size=0
+for %%F in ("%TEMP%\gitstatus.txt") do set /a size=%%~zF
+if %size%==0 (
+    echo No hay cambios para publicar.
+    echo La web ya esta al dia.
+    echo.
+    pause
+    exit /b
+)
+
+echo Archivos con cambios:
 git status --short
 echo.
 
-set /p MSG= Descripcion del cambio (Enter para usar "Actualizar datos"):
+set MSG=
+set /p MSG=Descripcion del cambio (Enter = "Actualizar datos"):
 if "%MSG%"=="" set MSG=Actualizar datos
 
 echo.
-echo  Subiendo a GitHub...
+echo Subiendo a GitHub...
 echo.
 
 git add .
@@ -48,16 +52,16 @@ git push origin HEAD:main
 
 if errorlevel 1 (
     echo.
-    echo  ╔══════════════════════════════════════════╗
-    echo  ║   ERROR al subir. Revisa la conexion.    ║
-    echo  ╚══════════════════════════════════════════╝
+    echo ==========================================
+    echo   ERROR al subir. Revisa la conexion.
+    echo ==========================================
 ) else (
     echo.
-    echo  ╔══════════════════════════════════════════╗
-    echo  ║   Listo! La web se esta actualizando.    ║
-    echo  ║   En 1-2 minutos estara disponible en:   ║
-    echo  ║   https://chessargentino.netlify.app     ║
-    echo  ╚══════════════════════════════════════════╝
+    echo ==========================================
+    echo   Listo! La web se esta actualizando.
+    echo   En 1-2 min estara disponible en:
+    echo   https://chessargentino.netlify.app
+    echo ==========================================
 )
 
 echo.
