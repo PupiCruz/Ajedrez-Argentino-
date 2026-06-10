@@ -743,6 +743,7 @@
     select option { background: var(--bg2); color: var(--text); }
   </style>
   <script src="data/embedded-data.js"></script>
+  <script src="data/manifest.js"></script>
   <script src="data/hardcoded.js"></script>
   <script type="application/json" id="embedded-token">""</script>
   <script src="data/embedded-photos.js"></script>
@@ -3938,6 +3939,11 @@ function exportTabInit() {
   h += _dlSvg + '<span id="export-btn-label">Descargar para publicar (ZIP)</span></button>';
   h += '<div style="font-size:11px;color:var(--text3);margin-bottom:20px;line-height:1.5">Para publicar: descomprimí el ZIP y arrastrá la carpeta a <b style="color:var(--text2)">Netlify</b> o <b style="color:var(--text2)">Cloudflare Pages</b> (gratis). El token de Lichess nunca se incluye.</div>';
 
+  // BOTÓN GitHub
+  h += '<div style="font-size:12px;color:var(--text2);margin-bottom:10px;line-height:1.5">🐙 <b style="color:var(--text2)">Publicar vía GitHub.</b> Genera solo los archivos de datos livianos para reemplazar en tu carpeta y hacer <code style="background:var(--bg3);padding:1px 5px;border-radius:4px">git push</code>.</div>';
+  h += '<button onclick="exportGithubData()" style="width:100%;padding:13px;background:var(--bg3);border:1px solid var(--border);color:var(--text);font-size:14px;font-weight:600;border-radius:10px;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:9px;margin-bottom:20px">';
+  h += _dlSvg + '<span id="export-github-label">📦 Preparar archivos para GitHub</span></button>';
+
   // Token Lichess
   h += '<div style="padding-top:16px;border-top:1px solid var(--border)">';
   h += '<div style="font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text2);margin-bottom:6px">Token de Lichess</div>';
@@ -4677,6 +4683,37 @@ async function exportHtml() {
     alert('No se pudo generar el ZIP: ' + (e && e.message ? e.message : e));
   } finally {
     if (lblEl) lblEl.textContent = prevLbl || 'Descargar para publicar (ZIP)';
+  }
+}
+
+async function exportGithubData() {
+  var lblEl = document.getElementById('export-github-label');
+  if (_ondemand) { alert('Esto se usa desde tu carpeta de edición, no en modo publicación.'); return; }
+  if (lblEl) lblEl.textContent = 'Generando archivos…';
+  try {
+    var split = buildSplitData();
+    var manifestJs = 'window.__MANIFEST__=' + JSON.stringify(split.manifest).replace(/</g, '\\u003c') + ';\n'
+                   + 'window.__EMBEDDED_TZ__='   + JSON.stringify(getTzConfig()) + ';\n'
+                   + 'window.__EMBEDDED_NEWS__=' + JSON.stringify(getNewsItems()).replace(/</g, '\\u003c') + ';\n'
+                   + 'window.__EMBEDDED_CR__='   + JSON.stringify(_collectCrData()).replace(/</g, '\\u003c') + ';\n'
+                   + _embeddedPlayersJs();
+    var enc = new TextEncoder();
+    function _tfn(id) { return String(id).replace(/[^a-z0-9_-]/gi, '_') + '.json'; }
+    var zipEntries = [
+      { name: 'data/manifest.js', data: enc.encode(manifestJs) },
+      { name: 'data/embedded-photos.js', data: enc.encode(_collectExportPhotosJs()) }
+    ];
+    Object.keys(split.tFiles).forEach(function(id) { zipEntries.push({ name: 'data/t/' + _tfn(id), data: enc.encode(JSON.stringify(split.tFiles[id])) }); });
+    Object.keys(split.pFiles).forEach(function(id) { zipEntries.push({ name: 'data/p/' + _tfn(id), data: enc.encode(JSON.stringify(split.pFiles[id])) }); });
+    var zipBlob = await _buildZip(zipEntries);
+    _downloadBlob(zipBlob, 'datos-para-github.zip');
+    setTimeout(function() {
+      alert('✅ ZIP descargado: datos-para-github.zip\n\nPasos para publicar:\n1. Descomprimí el ZIP\n2. Copiá la carpeta "data" y reemplazá la que está en tu carpeta ajedrez-argentino\n3. Hacé git add .\n   git commit -m "Actualizar datos"\n   git push origin HEAD:main');
+    }, 300);
+  } catch (e) {
+    alert('No se pudo generar el ZIP: ' + (e && e.message ? e.message : e));
+  } finally {
+    if (lblEl) lblEl.textContent = '📦 Preparar archivos para GitHub';
   }
 }
 
