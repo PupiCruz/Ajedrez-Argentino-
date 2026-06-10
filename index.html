@@ -11241,15 +11241,18 @@ function bcResolveTourId(slug, roundSlug, roundId, cb) {
   var doFetch = function(h) {
     return fetch(url, { headers: h })
       .then(function(r) {
-        // Si el token es inválido Lichess devuelve 401; reintentar sin token.
-        if (r.status === 401 && h['Authorization']) return fetch(url).then(function(r2) { if (!r2.ok) throw new Error('HTTP ' + r2.status); return r2.json(); });
+        if ((r.status === 401 || r.status === 403) && h['Authorization']) return fetch(url).then(function(r2) { if (!r2.ok) throw new Error('HTTP ' + r2.status); return r2.json(); });
         if (!r.ok) throw new Error('HTTP ' + r.status);
         return r.json();
       });
   };
   doFetch(hdrs)
-    .then(function(j) { cb(j && j.tour && j.tour.id ? j.tour.id : null); })
-    .catch(function() { cb(null); });
+    .then(function(j) {
+      var tid = j && j.tour && j.tour.id;
+      var detail = tid ? null : ('respuesta sin tour.id: ' + (j ? JSON.stringify(Object.keys(j)) : 'null'));
+      cb(tid || null, detail);
+    })
+    .catch(function(e) { cb(null, 'fetch error: ' + (e && e.message)); });
 }
 
 // ── Indicador "🔴 EN VIVO" en la lista de torneos ──────────────────────────────
@@ -12586,19 +12589,22 @@ function _tdLiveStop() { if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLive
 
 function _tdLoadLiveGames(broadcastId, broadcastUrl, name, location, pgnKey, typ, status) {
   var raw = String(broadcastId || '');
+  console.log('[BC] _tdLoadLiveGames raw=', raw, 'url=', broadcastUrl);
   // Caso 1: ya es un ID de 8 chars → usarlo directamente.
-  if (/^[A-Za-z0-9]{8}$/.test(raw)) { _tdLiveFetch(raw, name, location, pgnKey, typ); return; }
+  if (/^[A-Za-z0-9]{8}$/.test(raw)) { console.log('[BC] caso1 directo'); _tdLiveFetch(raw, name, location, pgnKey, typ); return; }
   // Caso 2: URL con 3 segmentos broadcast/{slug}/{roundSlug}/{roundId} → resolver tour id vía API.
   var combined = String(broadcastUrl || '') + ' ' + raw;
   var m = combined.match(/broadcast\/([^\/\?#\s]+)\/([^\/\?#\s]+)\/([^\/\?#\s]{8})(?:[\/\?#\s]|$)/);
-  if (m) { bcResolveTourId(m[1], m[2], m[3], function(tid){ if (tid) _tdLiveFetch(tid, name, location, pgnKey, typ); else _tdLiveError(broadcastUrl); }); return; }
+  console.log('[BC] regex match=', m);
+  if (m) { bcResolveTourId(m[1], m[2], m[3], function(tid, detail){ console.log('[BC] resolvedTourId=', tid, 'detail=', detail); if (tid) _tdLiveFetch(tid, name, location, pgnKey, typ); else _tdLiveError(broadcastUrl, 'bcResolve('+m[3]+') → '+(detail||'null')); }); return; }
   // Caso 3: otro formato → intentar como está.
+  console.log('[BC] caso3 fallback');
   _tdLiveFetch(raw, name, location, pgnKey, typ);
 }
 
-function _tdLiveError(url) {
+function _tdLiveError(url, detail) {
   var sec = document.getElementById('td-games-section');
-  if (sec) sec.innerHTML = '<div style="text-align:center;padding:30px 0;color:var(--text3);font-size:13px">No se pudieron cargar las partidas en vivo.' + (url ? '<br><a href="' + escHtml(url) + '" target="_blank" style="color:var(--gold)">Ver en Lichess ↗</a>' : '') + '</div>';
+  if (sec) sec.innerHTML = '<div style="text-align:center;padding:30px 0;color:var(--text3);font-size:13px">No se pudieron cargar las partidas en vivo.' + (url ? '<br><a href="' + escHtml(url) + '" target="_blank" style="color:var(--gold)">Ver en Lichess ↗</a>' : '') + (detail ? '<br><span style="font-size:11px;opacity:.6">' + escHtml(detail) + '</span>' : '') + '</div>';
 }
 
 function _tdLiveFetch(tourId, name, location, pgnKey, typ) {
