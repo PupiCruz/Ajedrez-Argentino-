@@ -7512,27 +7512,23 @@ function dbPoolFileSelected(input) {
 // Opciones del selector "para el torneo": nombres de torneos mostrables (tz_config + hardcoded +
 // públicos). El valor es el nombre (= evento canónico que se estampa y por el que el torneo lee).
 function _dbPoolTargetOptions() {
-  var today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
   var seen = Object.create(null);
   var live = [], done = [];
-  function add(name, rng) {
+  function add(name, obj) {
     name = (name || '').trim();
     if (!name || seen[name]) return;
     seen[name] = true;
-    var end = rng && rng.end ? rng.end.replace(/-/g, '') : '';
-    var start = rng && rng.start ? rng.start.replace(/-/g, '') : '';
-    if (end && end < today) {
-      done.push({ name: name, end: end });
-    } else if (start && start > today) {
-      // próximo — no incluir
-    } else {
-      live.push(name);
-    }
+    var rng = tourRange(obj);
+    var status = computeTourStatus(rng, 'done');
+    if (status === 'upcoming') return;
+    var endKey = (rng && rng.end) ? rng.end : 0;
+    if (status === 'live') live.push(name);
+    else done.push({ name: name, end: endKey });
   }
-  try { var tz = getTzConfig(); for (var k in tz) { var d = tz[k]; add(d.name, tourRange(d)); } } catch (e) {}
-  try { (TORNEOS || []).forEach(function(t) { add(t.name, tourRange(t)); }); } catch (e) {}
-  try { var ls = JSON.parse(localStorage.getItem('pgn_tournaments') || '[]'); ls.forEach(function(e) { if (!e.playerOnly) add(e.name, tourRange(e)); }); } catch (e) {}
-  done.sort(function(a, b) { return b.end.localeCompare(a.end); });
+  try { var tz = getTzConfig(); for (var k in tz) add(tz[k].name, tz[k]); } catch (e) {}
+  try { (TORNEOS || []).forEach(function(t) { add(t.name, t); }); } catch (e) {}
+  try { var ls = JSON.parse(localStorage.getItem('pgn_tournaments') || '[]'); ls.forEach(function(e) { if (!e.playerOnly) add(e.name, e); }); } catch (e) {}
+  done.sort(function(a, b) { return b.end > a.end ? 1 : b.end < a.end ? -1 : 0; });
   var recentDone = done.slice(0, 10).map(function(x) { return x.name; });
   var h = '<option value="">(ninguno — usar el evento del PGN)</option>';
   if (live.length) {
