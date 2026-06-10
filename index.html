@@ -10994,9 +10994,17 @@ function saveTzModal() {
   var _bcRaw = document.getElementById('tze-broadcast').value.trim();
   var broadcastId = null; var broadcastUrl = null;
   if (_bcRaw) {
-    var _bcM = _bcRaw.match(/lichess\.org\/broadcast\/([^\/\?#]+)/);
-    if (_bcM) { broadcastId = _bcM[1]; broadcastUrl = _bcRaw.startsWith('http') ? _bcRaw : ('https://lichess.org/broadcast/' + broadcastId); }
-    else { broadcastId = _bcRaw; }
+    // URL de torneo:  lichess.org/broadcast/{slug}/{tourId8}
+    // URL de ronda:   lichess.org/broadcast/{slug}/{roundSlug}/{roundId8}
+    // En ambos casos el ID útil (8 chars alfanumérico) es el ÚLTIMO segmento del path.
+    var _bcM3 = _bcRaw.match(/lichess\.org\/broadcast\/[^\/\?#]+\/[^\/\?#]+\/([A-Za-z0-9]{8})(?:[\/\?#]|$)/);
+    var _bcM2 = !_bcM3 && _bcRaw.match(/lichess\.org\/broadcast\/[^\/\?#]+\/([A-Za-z0-9]{8})(?:[\/\?#]|$)/);
+    if (_bcM3 || _bcM2) {
+      broadcastId = (_bcM3 || _bcM2)[1];
+      broadcastUrl = _bcRaw.startsWith('http') ? _bcRaw : ('https://lichess.org/broadcast/' + broadcastId);
+    } else {
+      broadcastId = _bcRaw;
+    }
   }
   var status      = document.getElementById('tze-status').value;
   var loc         = document.getElementById('tze-loc').value.trim();
@@ -11246,9 +11254,11 @@ function _bcResolveTourIdFromRef(bcid, bcurl, cb) {
   if (/^[A-Za-z0-9]{8}$/.test(raw)) { cb(raw); return; }
   var cacheKey = raw + '|' + (bcurl || '');
   if (_bcTourIdCache.hasOwnProperty(cacheKey)) { cb(_bcTourIdCache[cacheKey] || null); return; }
-  var m = (String(bcurl || '') + ' ' + raw).match(/broadcast\/([^\/\?#\s]+)\/([^\/\?#\s]+)\/([^\/\?#\s]+)/);
-  if (!m) { _bcTourIdCache[cacheKey] = false; cb(null); return; }
-  bcResolveTourId(m[1], m[2], m[3], function(tourId) { _bcTourIdCache[cacheKey] = tourId || false; cb(tourId); });
+  var combined = String(bcurl || '') + ' ' + raw;
+  var mId = combined.match(/broadcast\/[^\/\?#\s]+\/(?:[^\/\?#\s]+\/)?([A-Za-z0-9]{8})(?:[\/\?#\s]|$)/);
+  if (!mId) { _bcTourIdCache[cacheKey] = false; cb(null); return; }
+  _bcTourIdCache[cacheKey] = mId[1];
+  cb(mId[1]);
 }
 
 // ¿El torneo tiene una ronda en vivo? (criterio B, liviano: baja metadata y solo el PGN de la
@@ -12558,9 +12568,13 @@ function _tdLiveStop() { if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLive
 
 function _tdLoadLiveGames(broadcastId, broadcastUrl, name, location, pgnKey, typ, status) {
   var raw = String(broadcastId || '');
+  // Si ya tenemos un ID de 8 chars → úsalo directamente.
   if (/^[A-Za-z0-9]{8}$/.test(raw)) { _tdLiveFetch(raw, name, location, pgnKey, typ); return; }
-  var m = (String(broadcastUrl || '') + ' ' + raw).match(/broadcast\/([^\/\?#\s]+)\/([^\/\?#\s]+)\/([^\/\?#\s]+)/);
-  if (m) { bcResolveTourId(m[1], m[2], m[3], function(tid){ if (tid) _tdLiveFetch(tid, name, location, pgnKey, typ); else _tdLiveError(broadcastUrl); }); return; }
+  // Intentar extraer el ID (último segmento de 8 chars alfanuméricos) desde la URL guardada.
+  // Cubre tanto URL de torneo (.../slug/tourId) como de ronda (.../slug/roundSlug/roundId).
+  var combined = String(broadcastUrl || '') + ' ' + raw;
+  var mId = combined.match(/broadcast\/[^\/\?#\s]+\/(?:[^\/\?#\s]+\/)?([A-Za-z0-9]{8})(?:[\/\?#\s]|$)/);
+  if (mId) { _tdLiveFetch(mId[1], name, location, pgnKey, typ); return; }
   _tdLiveFetch(raw, name, location, pgnKey, typ);
 }
 
