@@ -4354,6 +4354,23 @@ function _collectAllTournaments() {
   try { stored = JSON.parse(localStorage.getItem('pgn_tournaments') || '[]'); } catch (e) {}
   var out = stored.slice();
   _memTournaments.forEach(function(e) { out.push(e); });
+  // Incluir torneos tz_config (creados con +Agregar): tienen sus partidas en .pgnGames
+  try {
+    var tz = getTzConfig();
+    for (var k in tz) {
+      var d = tz[k];
+      if (!d || !d.name) continue;
+      out.push({
+        id: k, name: d.name, type: d.type || '', timeControl: d.timeControl || '',
+        location: d.location || '', tournamentDates: d.dates || '',
+        startDate: d.startDate || null, endDate: d.endDate || null,
+        flyerUrl: d.flyerUrl || '', chesscomUrl: d.chesscomUrl || '',
+        crUrl: d.crurl || '', broadcastId: d.broadcastId || null, broadcastUrl: d.broadcastUrl || null,
+        gameCount: (d.pgnGames || []).length, games: d.pgnGames || [],
+        leaders: d.leaders || [], source: 'tz', playerOnly: false, playerId: null
+      });
+    }
+  } catch (e) {}
   return out;
 }
 
@@ -4430,7 +4447,19 @@ function buildSplitData() {
     for (var z = 0; z < arr2.length; z++) { if (!seenp[arr2[z]]) { seenp[arr2[z]] = true; outp.push(arr2[z]); } }
     playerIndex[ipid] = outp;
   }
-  return { manifest: { tournaments: tournaments, playerIndex: playerIndex }, tFiles: tFiles, pFiles: pFiles };
+  // Índice compacto de todas las partidas (para pestaña Partidas en modo publicado)
+  var gSeen = {}, gameEntries = [];
+  all.forEach(function(entry) {
+    (entry.games || []).forEach(function(pgn) {
+      var body = _moveBody(pgn); if (!body || gSeen[body]) return; gSeen[body] = true;
+      var h = parsePgnHeaders(pgn);
+      gameEntries.push({ w: h.White||'', b: h.Black||'', d: h.Date||'', r: h.Result||'',
+        e: (h.ECO||'').toUpperCase(), we: parseInt(h.WhiteElo)||0, be: parseInt(h.BlackElo)||0,
+        ev: h.Event||'', pl: parseInt(h.PlyCount)||(body?body.split(' ').filter(Boolean).length:0),
+        m: _sanMoves(pgn).join(' ') });
+    });
+  });
+  return { manifest: { tournaments: tournaments, playerIndex: playerIndex }, tFiles: tFiles, pFiles: pFiles, gameEntries: gameEntries };
 }
 
 function pgnDeleteTorneo(id) {
@@ -4670,7 +4699,8 @@ async function exportHtml() {
     var zipEntries = [
       { name: 'index.html', data: enc.encode(html) },
       { name: 'data/manifest.js', data: enc.encode(manifestJs) },
-      { name: 'data/embedded-photos.js', data: enc.encode(_collectExportPhotosJs()) }
+      { name: 'data/embedded-photos.js', data: enc.encode(_collectExportPhotosJs()) },
+      { name: 'data/games.json', data: enc.encode(JSON.stringify(split.gameEntries)) }
     ];
     Object.keys(split.tFiles).forEach(function(id) { zipEntries.push({ name: 'data/t/' + _tfn(id), data: enc.encode(JSON.stringify(split.tFiles[id])) }); });
     Object.keys(split.pFiles).forEach(function(id) { zipEntries.push({ name: 'data/p/' + _tfn(id), data: enc.encode(JSON.stringify(split.pFiles[id])) }); });
@@ -4701,7 +4731,8 @@ async function exportGithubData() {
     function _tfn(id) { return String(id).replace(/[^a-z0-9_-]/gi, '_') + '.json'; }
     var zipEntries = [
       { name: 'data/manifest.js', data: enc.encode(manifestJs) },
-      { name: 'data/embedded-photos.js', data: enc.encode(_collectExportPhotosJs()) }
+      { name: 'data/embedded-photos.js', data: enc.encode(_collectExportPhotosJs()) },
+      { name: 'data/games.json', data: enc.encode(JSON.stringify(split.gameEntries)) }
     ];
     Object.keys(split.tFiles).forEach(function(id) { zipEntries.push({ name: 'data/t/' + _tfn(id), data: enc.encode(JSON.stringify(split.tFiles[id])) }); });
     Object.keys(split.pFiles).forEach(function(id) { zipEntries.push({ name: 'data/p/' + _tfn(id), data: enc.encode(JSON.stringify(split.pFiles[id])) }); });
@@ -5534,9 +5565,52 @@ function searchP(q) {
 ═══════════════════════════════════════════════════════ */
 // ═══════════════ BUSCADOR DE PARTIDAS (Base de datos) ═══════════════
 // Todas las partidas de la base (pool + públicas + curadas + modal), deduplicadas barato. Cacheado.
+function _reconstructPgn(g) {
+  var h = '';
+  if (g.ev) h += '[Event "' + String(g.ev).replace(/"/g,"'") + '"]\n';
+  if (g.w)  h += '[White "' + String(g.w).replace(/"/g,"'") + '"]\n';
+  if (g.b)  h += '[Black "' + String(g.b).replace(/"/g,"'") + '"]\n';
+  if (g.d)  h += '[Date "' + g.d + '"]\n';
+  if (g.r)  h += '[Result "' + g.r + '"]\n';
+  if (g.we) h += '[WhiteElo "' + g.we + '"]\n';
+  if (g.be) h += '[BlackElo "' + g.be + '"]\n';
+  if (g.e)  h += '[ECO "' + g.e + '"]\n';
+  var moves = (g.m || '').split(/\s+/).filter(Boolean);
+  var moveStr = moves.map(function(m, i) { return (i % 2 === 0 ? (Math.floor(i/2)+1) + '. ' : '') + m; }).join(' ');
+  return h + '\n' + moveStr + ' ' + (g.r || '');
+}
+
+var _gamesIdxLoading = false, _gamesIdxCbs = [];
+function _loadGamesIndexAsync(cb) {
+  if (window.__GAMES_INDEX__) { cb(); return; }
+  _gamesIdxCbs.push(cb);
+  if (_gamesIdxLoading) return;
+  _gamesIdxLoading = true;
+  fetch('data/games.json').then(function(r) { return r.json(); }).then(function(data) {
+    window.__GAMES_INDEX__ = data;
+    _gamesIdxLoading = false;
+    var cbs = _gamesIdxCbs; _gamesIdxCbs = [];
+    cbs.forEach(function(f) { f(); });
+  }).catch(function() {
+    _gamesIdxLoading = false;
+    var cbs = _gamesIdxCbs; _gamesIdxCbs = [];
+    cbs.forEach(function(f) { f(true); });
+  });
+}
+
 var _dbSearchIndex = null;
 function _invalidateDbSearch() { _dbSearchIndex = null; _obIdx = null; }
 function _buildDbSearchIndex() {
+  if (_ondemand && window.__GAMES_INDEX__) {
+    _dbSearchIndex = window.__GAMES_INDEX__.map(function(g) {
+      return { pgn: _reconstructPgn(g), white: g.w||'', black: g.b||'',
+               wt: nameTokens(g.w||''), bt: nameTokens(g.b||''),
+               year: parseInt((g.d||'').slice(0,4))||0, date: g.d||'',
+               result: g.r||'', eco: g.e||'', plies: g.pl||0, event: g.ev||'',
+               _we: g.we||0, _be: g.be||0, _m: g.m||'' };
+    });
+    return _dbSearchIndex;
+  }
   var all = [];
   for (var k in PLAYER_GAMES) { var d = PLAYER_GAMES[k]; if (!d || !d.tournaments) continue; d.tournaments.forEach(function(t) { (t.games || []).forEach(function(g) { all.push(g); }); }); }
   var uniq = dedupGamesByMoves(all.map(function(p) { return { pgn: p }; }), function(w) { return w.pgn; }).map(function(w) { return w.pgn; });
@@ -5595,9 +5669,17 @@ function _dbSearch(opts) {
 
 var _dbSearchResults = [], _dbSearchPage = 1;
 var _DB_PAGE = 50;
+function _renderPartidasLoading(el, cb) {
+  el.innerHTML = _dbModeSwitcher() + '<div style="text-align:center;padding:32px;color:var(--text2);font-size:13px">⏳ Cargando índice de partidas…</div>';
+  _loadGamesIndexAsync(function(err) {
+    if (err) { el.innerHTML = _dbModeSwitcher() + '<div style="text-align:center;padding:32px;color:var(--red);font-size:13px">No se pudo cargar el índice de partidas.</div>'; return; }
+    cb();
+  });
+}
 function renderDbSearch() {
   var el = document.getElementById('list-favoritos');
   if (!el) return;
+  if (_ondemand && !window.__GAMES_INDEX__) { _renderPartidasLoading(el, renderDbSearch); return; }
   var h = _dbModeSwitcher();
   // Subir partidas a la base de datos
   h += '<details style="margin-bottom:14px;border:1px solid var(--border);border-radius:10px;overflow:hidden">';
@@ -5682,10 +5764,11 @@ var _obIdx = null;
 function _buildObIndex() {
   if (!_dbSearchIndex) _buildDbSearchIndex();
   _obIdx = _dbSearchIndex.map(function(e) {
-    var h = parsePgnHeaders(e.pgn);
-    var we = parseInt(h.WhiteElo) || 0, be = parseInt(h.BlackElo) || 0;
+    var we = e._we || 0, be = e._be || 0;
+    if (!we || !be) { var h = parsePgnHeaders(e.pgn); we = we||parseInt(h.WhiteElo)||0; be = be||parseInt(h.BlackElo)||0; }
     var avg = (we && be) ? (we + be) / 2 : (we || be || 0);
-    return { moves: _sanMoves(e.pgn), white: e.white, black: e.black, avgElo: avg, result: e.result, pgn: e.pgn, date: e.date, event: e.event };
+    var moves = e._m ? e._m.split(/\s+/).filter(Boolean) : _sanMoves(e.pgn);
+    return { moves: moves, white: e.white, black: e.black, avgElo: avg, result: e.result, pgn: e.pgn, date: e.date, event: e.event };
   });
   return _obIdx;
 }
@@ -5770,6 +5853,7 @@ function renderPartidas() { if (_dbMode === 'openings') renderOpeningExplorer();
 // libro] + partidas (abajo). El árbol se construye la 1ª vez en segundo plano (no congela).
 function renderOpeningExplorer() {
   var el = document.getElementById('list-favoritos'); if (!el) return;
+  if (_ondemand && !window.__GAMES_INDEX__) { _renderPartidasLoading(el, renderOpeningExplorer); return; }
   if (!ensureChessLib()) { el.innerHTML = _dbModeSwitcher() + '<div style="padding:20px;color:var(--text3)">Cargando motor de ajedrez…</div>'; setTimeout(renderOpeningExplorer, 400); return; }
   el.innerHTML = _dbModeSwitcher()
     + '<div style="max-width:880px;margin:0 auto">'
