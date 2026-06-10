@@ -2543,7 +2543,7 @@ function renderTorneos(filter) {
         if (st.chesscomUrl) {
           html += linkChesscom(st.chesscomUrl);
         }
-        html += btnVerPartidas('ls', st._id, false, st.gameCount, st.broadcastId, st.broadcastUrl);
+        html += btnVerPartidas('ls', st._id, false, (st.gameCount || 0) + _tourPoolGameCount(st.name), st.broadcastId, st.broadcastUrl);
         html += '</div>';
       } else if (item._type === 'tzconfig') {
         var d = item._data; var tzk = item._key;
@@ -2580,7 +2580,7 @@ function renderTorneos(filter) {
         if (d.chesscomUrl) {
           html += linkChesscom(d.chesscomUrl);
         }
-        var _tzPgnCount = d.pgnCount || (d.pgnGames && d.pgnGames.length) || 0;
+        var _tzPgnCount = (d.pgnCount || (d.pgnGames && d.pgnGames.length) || 0) + _tourPoolGameCount(d.name);
         html += btnVerPartidas('tz', tzk, true, _tzPgnCount, d.broadcastId, d.broadcastUrl);
         html += '</div>';
       }
@@ -6834,6 +6834,7 @@ var _cvTourGames   = [];   // todas las partidas del torneo activo
 var _cvTourName    = '';
 var _cvTourLoc     = '';
 var _cvTourIdx     = 0;    // índice de la partida actualmente abierta
+var _cvTourPgnKey  = null; // pgnKey del torneo detail activo (para actualizar visor en vivo)
 
 function openTourGameByIndex(idx) {
   if (idx < 0 || idx >= _cvTourGames.length) return;
@@ -7529,6 +7530,43 @@ function dbPoolImport() {
   var newGames = [];
   uniqueIncoming.forEach(function(w) { if (dedupIndexCovered(siteIdx, w.pgn)) return; dedupIndexAdd(siteIdx, w.pgn); newGames.push(w.pgn); });
   var skipped = allGames.length - newGames.length;
+  // Si el usuario eligió un torneo destino y TODAS las partidas ya estaban (dedup las bloqueó),
+  // buscar contenedores del pool con esas mismas partidas bajo otro nombre y re-estamparlos.
+  if (!newGames.length && target) {
+    var targetLow = target.trim().toLowerCase();
+    var renamedCount = 0;
+    _memTournaments.forEach(function(t) {
+      if (!t.name || !t.dbPool) return;
+      var tn = t.name.trim().toLowerCase();
+      if (tn === targetLow) return;  // ya tiene el nombre correcto
+      // ¿Es este contenedor una variante del torneo destino?
+      var isVariant = (tn.indexOf(targetLow) === 0 && (tn.length === targetLow.length || /^[\s\-–—,.]/.test(tn[targetLow.length])))
+                   || (targetLow.indexOf(tn) === 0 && (targetLow.length === tn.length || /^[\s\-–—,.]/.test(targetLow[tn.length])));
+      if (!isVariant) return;
+      // Re-estampar todas sus partidas con el nombre canónico del torneo destino
+      t.games = (t.games || []).map(function(g) { return _stampEvent(g, target); });
+      t.name = target;
+      renamedCount += t.games.length;
+    });
+    // Consolidar contenedores con el mismo nombre tras el renombrado
+    var poolByName2 = Object.create(null);
+    var merged = [];
+    _memTournaments.forEach(function(t) {
+      var key = t.name;
+      if (poolByName2[key]) { poolByName2[key].games = poolByName2[key].games.concat(t.games || []); poolByName2[key].gameCount = poolByName2[key].games.length; }
+      else { poolByName2[key] = t; merged.push(t); }
+    });
+    _memTournaments = merged;
+    pgnMergeToPlayerGames();
+    _dbPoolContent = null;
+    var inp2 = document.getElementById('dbpool-input'); if (inp2) inp2.value = '';
+    var lbl2 = document.getElementById('dbpool-lbl'); if (lbl2) lbl2.textContent = 'Elegir archivo .pgn';
+    var btn2 = document.getElementById('dbpool-btn'); if (btn2) btn2.style.display = 'none';
+    if (res) res.innerHTML = renamedCount
+      ? '<span style="color:var(--green)">✓ ' + renamedCount + ' partida' + (renamedCount !== 1 ? 's' : '') + ' ya estaban en la base y se reasignaron al torneo seleccionado.<br><span style="color:var(--gold);font-size:11px">Acordate de "Guardar datos en mi carpeta".</span></span>'
+      : '<span style="color:var(--text2)">Todas las partidas del archivo (' + allGames.length + ') ya estaban en la base. No se agregó ninguna.</span>';
+    return;
+  }
   if (!newGames.length) { if (res) res.innerHTML = '<span style="color:var(--text2)">Todas las partidas del archivo (' + allGames.length + ') ya estaban en la base. No se agregó ninguna.</span>'; return; }
   // agrupar por evento y mergear al pool (a un contenedor existente con ese nombre, o uno nuevo)
   var poolByName = Object.create(null);
@@ -9354,6 +9392,28 @@ function nodeDepth(node) {
 /* Muestra el reloj de cada jugador en la posición actual (si el PGN trae [%clk]).
    Recorre hacia atrás buscando la última jugada de cada color con reloj.
    Los ids cv-wclock/cv-belo viajan con el contenido al girar el tablero. */
+var _cvLiveClock = null;  // { wSec, bSec, turn, timerId } – cuenta regresiva en el visor
+
+function _cvStopLiveClock() {
+  if (_cvLiveClock) { clearInterval(_cvLiveClock.timerId); _cvLiveClock = null; }
+}
+
+function _cvStartLiveClock(wSec, bSec, turn) {
+  _cvStopLiveClock();
+  if (wSec < 0 && bSec < 0) return;
+  _cvLiveClock = { wSec: wSec, bSec: bSec, turn: turn,
+    timerId: setInterval(function() {
+      if (!_cvLiveClock) return;
+      if (_cvLiveClock.turn === 'w') _cvLiveClock.wSec = Math.max(0, _cvLiveClock.wSec - 1);
+      else                           _cvLiveClock.bSec = Math.max(0, _cvLiveClock.bSec - 1);
+      var wEl = document.getElementById('cv-wclock');
+      var bEl = document.getElementById('cv-bclock');
+      if (wEl && _cvLiveClock.wSec >= 0) wEl.textContent = '⏱ ' + _secToClk(_cvLiveClock.wSec);
+      if (bEl && _cvLiveClock.bSec >= 0) bEl.textContent = '⏱ ' + _secToClk(_cvLiveClock.bSec);
+    }, 1000)
+  };
+}
+
 function cvUpdateClocks() {
   var wEl = document.getElementById('cv-wclock');
   var bEl = document.getElementById('cv-bclock');
@@ -9369,6 +9429,13 @@ function cvUpdateClocks() {
   }
   wEl.textContent = wc ? '⏱ ' + fmtClock(wc) : '';
   bEl.textContent = bc ? '⏱ ' + fmtClock(bc) : '';
+  // Cuenta regresiva: solo en la última jugada de una partida en curso (Result *)
+  _cvStopLiveClock();
+  if (cv.node && cv.node.children.length === 0 && (wc || bc) &&
+      cv.rawPgn && /\[Result\s+"[*]"\]/.test(cv.rawPgn)) {
+    var turn = (nodeDepth(cv.node) % 2 === 0) ? 'w' : 'b';
+    _cvStartLiveClock(_clkToSec(wc), _clkToSec(bc), turn);
+  }
 }
 
 /* ── Round filter helpers ── */
@@ -10101,7 +10168,7 @@ function closeChessViewer(e){
     var bar = document.getElementById('cv-live-bar'); if (bar) { bar.style.display='none'; bar.innerHTML=''; }
     var abar = document.getElementById('cv-arg-bar'); if (abar) { abar.style.display='none'; abar.innerHTML=''; }
     _liveParams = null; _liveCtx = null; if (_liveTimer) { clearTimeout(_liveTimer); _liveTimer = null; }
-    _bcBaseKey = null; _bcArgMode = false;
+    _bcBaseKey = null; _bcArgMode = false; _cvTourPgnKey = null; _cvStopLiveClock();
     // Limpiar el maxHeight seteado por JS para que el CSS tome el control de nuevo
     var sc = document.querySelector('.cv-side-col'); if (sc) sc.style.maxHeight = '';
   }
@@ -11475,13 +11542,46 @@ function _tourEventNames(name, storedGames) {
   (storedGames || []).forEach(function(g) { add(parsePgnHeaders(g).Event); });
   return list;
 }
+// Normaliza un nombre de evento para comparación: minúsculas, trim, comillas simples→dobles.
+// Las comillas simples aparecen porque _stampEvent reemplaza " por ' al guardar en el pool.
+function _normEvName(s) { return (s || '').trim().toLowerCase().replace(/'/g, '"'); }
+
 // Partidas del pool (_memTournaments, contenedores por evento) cuyos nombres están en eventNames.
+// La comparación es case-insensitive + normaliza comillas. Además tolera que el nombre del pool
+// sea una extensión del nombre del torneo (ej. Event = "Torneo X - $750.000 - SALTA" y torneo = "Torneo X").
 function _tourPoolGames(eventNames) {
   if (!eventNames || !eventNames.length) return [];
-  var set = Object.create(null); eventNames.forEach(function(e) { set[e] = true; });
+  var normed = eventNames.map(_normEvName);
   var out = [];
-  _memTournaments.forEach(function(t) { if (t.name && set[t.name]) (t.games || []).forEach(function(g) { out.push(g); }); });
+  _memTournaments.forEach(function(t) {
+    if (!t.name) return;
+    var tn = _normEvName(t.name);
+    var match = normed.some(function(ev) {
+      if (tn === ev) return true;
+      // el pool tiene el nombre largo (Event del PGN) y el torneo tiene el prefijo
+      if (tn.indexOf(ev) === 0 && (tn.length === ev.length || /^[\s\-–—,.]/.test(tn[ev.length]))) return true;
+      // el torneo tiene el nombre largo y el pool el prefijo (caso inverso)
+      if (ev.indexOf(tn) === 0 && (ev.length === tn.length || /^[\s\-–—,.]/.test(ev[tn.length]))) return true;
+      return false;
+    });
+    if (match) (t.games || []).forEach(function(g) { out.push(g); });
+  });
   return out;
+}
+// Cuenta partidas del pool que corresponden a un torneo por nombre (para la tarjeta).
+function _tourPoolGameCount(name) {
+  if (!name) return 0;
+  var n = _normEvName(name);
+  var count = 0;
+  _memTournaments.forEach(function(t) {
+    if (!t.name || !t.dbPool) return;
+    var tn = _normEvName(t.name);
+    var match = (tn === n)
+      || (tn.indexOf(n) === 0 && (tn.length === n.length || /^[\s\-–—,.]/.test(tn[n.length])))
+      || (n.indexOf(tn) === 0 && (n.length === tn.length || /^[\s\-–—,.]/.test(n[tn.length])));
+    if (match) count += (t.games || []).length;
+  });
+  return count;
 }
 
 async function openTournamentDetail(type, id, scrollToGames) {
@@ -12282,6 +12382,7 @@ function tdOpenGame(idx, pgnKey, tname, tloc) {
   _cvTourGames = data.games;
   _cvTourName  = tname;
   _cvTourLoc   = tloc;
+  _cvTourPgnKey = pgnKey;
   openTourGameByIndex(idx);
 }
 
@@ -12376,6 +12477,8 @@ function _tdLiveBuild(res, sec, keepRound) {
       if (_tab != null) { _crSyncing = true; try { crRefreshSection(_k, _tab); } catch(e){} _crSyncing = false; }
     } catch(e){}
   }
+  // Si era un refresco (keepRound != null) y el visor está abierto, actualizar la partida que se mira.
+  if (keepRound != null) _tdApplyViewerRefresh(_tdCtx.pgnKey);
 }
 
 // Refresco: si la estructura de la ronda visible no cambió, actualiza SOLO los tableros cuya
@@ -12427,6 +12530,34 @@ function _tdLiveApplyRefresh(res, sec) {
     }
   }
   if (needFull) tdFillBoards(curR);   // re-dibuja entero solo los pocos que lo necesitaron
+  _tdApplyViewerRefresh(_tdLiveCtx && _tdLiveCtx.pgnKey);
+}
+
+// Si el visor está abierto con una partida de este torneo, la actualiza con las jugadas nuevas
+// preservando la posición: si el usuario miraba la última jugada, avanza al nuevo final;
+// si revisaba jugadas anteriores, se queda en la misma profundidad para no interrumpirlo.
+function _tdApplyViewerRefresh(pgnKey) {
+  if (!pgnKey || _cvTourPgnKey !== pgnKey) return;
+  if (!document.getElementById('chess-overlay').classList.contains('open')) return;
+  var data = PGN_DB[pgnKey];
+  if (!data || !data.games) return;
+  var curHeaders = cv.rawPgn ? parsePgnHeaders(cv.rawPgn) : null;
+  if (!curHeaders) return;
+  var curKey = (curHeaders.White || '') + '|' + (curHeaders.Black || '');
+  var newIdx = -1;
+  for (var i = 0; i < data.games.length; i++) {
+    var h = parsePgnHeaders(data.games[i]);
+    if ((h.White || '') + '|' + (h.Black || '') === curKey) { newIdx = i; break; }
+  }
+  if (newIdx < 0 || data.games[newIdx] === cv.rawPgn) return;  // no encontrada o sin cambios
+  var prevAtEnd = cv.node && cv.node.children.length === 0;
+  var prevDepth = _cvNodeDepth(cv.node);
+  _cvTourGames = data.games;
+  _cvTourIdx   = newIdx;
+  cv.games = data.games.map(pgMeta);
+  cvSelect(newIdx);
+  if (prevAtEnd) cvLast();
+  else { var n = cv.root; for (var k = 0; k < prevDepth && n.children.length > 0; k++) { n = n.children[0]; cvSetNode(n); } }
 }
 
 function _tdLiveRefresh() {
