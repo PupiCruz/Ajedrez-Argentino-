@@ -11235,10 +11235,19 @@ function toggleBcArgFilter() {
 // de broadcast (slug / round-slug / round-id). La API /api/broadcast/{id} NO acepta el slug
 // largo del torneo (da 404), por eso hay que resolver el id corto. cb recibe el tourId o null.
 function bcResolveTourId(slug, roundSlug, roundId, cb) {
+  var url = 'https://lichess.org/api/broadcast/' + slug + '/' + roundSlug + '/' + roundId;
   var hdrs = {};
   if (typeof LICHESS_TOKEN !== 'undefined' && LICHESS_TOKEN) hdrs['Authorization'] = 'Bearer ' + LICHESS_TOKEN;
-  fetch('https://lichess.org/api/broadcast/' + slug + '/' + roundSlug + '/' + roundId, { headers: hdrs })
-    .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+  var doFetch = function(h) {
+    return fetch(url, { headers: h })
+      .then(function(r) {
+        // Si el token es inválido Lichess devuelve 401; reintentar sin token.
+        if (r.status === 401 && h['Authorization']) return fetch(url).then(function(r2) { if (!r2.ok) throw new Error('HTTP ' + r2.status); return r2.json(); });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      });
+  };
+  doFetch(hdrs)
     .then(function(j) { cb(j && j.tour && j.tour.id ? j.tour.id : null); })
     .catch(function() { cb(null); });
 }
@@ -11255,10 +11264,9 @@ function _bcResolveTourIdFromRef(bcid, bcurl, cb) {
   var cacheKey = raw + '|' + (bcurl || '');
   if (_bcTourIdCache.hasOwnProperty(cacheKey)) { cb(_bcTourIdCache[cacheKey] || null); return; }
   var combined = String(bcurl || '') + ' ' + raw;
-  var mId = combined.match(/broadcast\/[^\/\?#\s]+\/(?:[^\/\?#\s]+\/)?([A-Za-z0-9]{8})(?:[\/\?#\s]|$)/);
-  if (!mId) { _bcTourIdCache[cacheKey] = false; cb(null); return; }
-  _bcTourIdCache[cacheKey] = mId[1];
-  cb(mId[1]);
+  var m = combined.match(/broadcast\/([^\/\?#\s]+)\/([^\/\?#\s]+)\/([^\/\?#\s]{8})(?:[\/\?#\s]|$)/);
+  if (!m) { _bcTourIdCache[cacheKey] = false; cb(null); return; }
+  bcResolveTourId(m[1], m[2], m[3], function(tourId) { _bcTourIdCache[cacheKey] = tourId || false; cb(tourId); });
 }
 
 // ¿El torneo tiene una ronda en vivo? (criterio B, liviano: baja metadata y solo el PGN de la
@@ -11506,8 +11514,16 @@ function _cvNodeDepth(n) { var d = 0; while (n && n.parent) { d++; n = n.parent;
 function _bcFetchAll(broadcastId, cb) {
   var hdrs = {};
   if (typeof LICHESS_TOKEN !== 'undefined' && LICHESS_TOKEN) hdrs['Authorization'] = 'Bearer ' + LICHESS_TOKEN;
-  fetch('https://lichess.org/api/broadcast/' + broadcastId, { headers: hdrs })
-    .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+  var url = 'https://lichess.org/api/broadcast/' + broadcastId;
+  fetch(url, { headers: hdrs })
+    .then(function(r) {
+      // Si el token es inválido/revocado Lichess devuelve 401 incluso en endpoints públicos.
+      // En ese caso reintentamos sin token para que los broadcasts siempre funcionen.
+      if (r.status === 401 && hdrs['Authorization']) {
+        return fetch(url).then(function(r2) { if (!r2.ok) throw new Error('HTTP ' + r2.status); return r2.json(); });
+      }
+      if (!r.ok) throw new Error('HTTP ' + r.status); return r.json();
+    })
     .then(function(data) {
       var tourSlug = data.tour && data.tour.slug;
       var rounds   = data.rounds || [];
@@ -12568,13 +12584,13 @@ function _tdLiveStop() { if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLive
 
 function _tdLoadLiveGames(broadcastId, broadcastUrl, name, location, pgnKey, typ, status) {
   var raw = String(broadcastId || '');
-  // Si ya tenemos un ID de 8 chars → úsalo directamente.
+  // Caso 1: ya es un ID de 8 chars → usarlo directamente.
   if (/^[A-Za-z0-9]{8}$/.test(raw)) { _tdLiveFetch(raw, name, location, pgnKey, typ); return; }
-  // Intentar extraer el ID (último segmento de 8 chars alfanuméricos) desde la URL guardada.
-  // Cubre tanto URL de torneo (.../slug/tourId) como de ronda (.../slug/roundSlug/roundId).
+  // Caso 2: URL con 3 segmentos broadcast/{slug}/{roundSlug}/{roundId} → resolver tour id vía API.
   var combined = String(broadcastUrl || '') + ' ' + raw;
-  var mId = combined.match(/broadcast\/[^\/\?#\s]+\/(?:[^\/\?#\s]+\/)?([A-Za-z0-9]{8})(?:[\/\?#\s]|$)/);
-  if (mId) { _tdLiveFetch(mId[1], name, location, pgnKey, typ); return; }
+  var m = combined.match(/broadcast\/([^\/\?#\s]+)\/([^\/\?#\s]+)\/([^\/\?#\s]{8})(?:[\/\?#\s]|$)/);
+  if (m) { bcResolveTourId(m[1], m[2], m[3], function(tid){ if (tid) _tdLiveFetch(tid, name, location, pgnKey, typ); else _tdLiveError(broadcastUrl); }); return; }
+  // Caso 3: otro formato → intentar como está.
   _tdLiveFetch(raw, name, location, pgnKey, typ);
 }
 
