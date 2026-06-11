@@ -2379,7 +2379,7 @@ function renderTorneos(filter) {
         html += '</div>';
         }
         html += '<div class="t-top" style="padding-right:52px">';
-        html += '<div class="t-name" onclick="openTournamentDetail(\'hc\',' + t.id + ')" style="cursor:pointer">' + t.name + '</div>';
+        html += '<a href="' + _tourHref(t.id) + '" class="t-name" onclick="return tourCardClick(event,\'' + escJs(String(t.id)) + '\')" style="cursor:pointer;color:inherit;text-decoration:none">' + t.name + '</a>';
         html += '<span class="badge ' + cls[status] + '">' + lbl[status] + '</span>';
         html += '</div>';
         html += '<div class="t-meta">';
@@ -2441,7 +2441,7 @@ function renderTorneos(filter) {
         html += '</div>';
         }
         html += '<div class="t-top" style="padding-right:52px">';
-        html += '<div class="t-name" onclick="openTournamentDetail(\'ls\',' + _lsIdArg + ')" style="cursor:pointer">' + escHtml(st.name) + '</div>';
+        html += '<a href="' + _tourHref(st._id) + '" class="t-name" onclick="return tourCardClick(event,' + _lsIdArg + ')" style="cursor:pointer;color:inherit;text-decoration:none">' + escHtml(st.name) + '</a>';
         html += '<span class="badge ' + cls[status] + '">' + lbl[status] + '</span>';
         html += '</div>';
         html += '<div class="t-meta">';
@@ -2484,7 +2484,7 @@ function renderTorneos(filter) {
         html += '</div>';
         }
         html += '<div class="t-top" style="padding-right:36px">';
-        html += '<div class="t-name" onclick="openTournamentDetail(\'tz\',\'' + tzk + '\')" style="cursor:pointer">' + escHtml(d.name || '') + '</div>';
+        html += '<a href="' + _tourHref(tzk) + '" class="t-name" onclick="return tourCardClick(event,\'' + escJs(tzk) + '\')" style="cursor:pointer;color:inherit;text-decoration:none">' + escHtml(d.name || '') + '</a>';
         html += '<span class="badge ' + cls[st2] + '">' + lbl[st2] + '</span>';
         html += '</div>';
         html += '<div class="t-meta">';
@@ -11829,6 +11829,30 @@ function _tdLocalGamesHtml(byRound, roundOrder, games, pgnKey, typ) {
   return h;
 }
 
+// ── Links / pestañas de torneos (deep-link ?torneo=<id>) ───────────────────────────────────
+// El link guarda SOLO el id (no el tipo), para que el MISMO link ande en modo autor y en la web
+// publicada: el tipo se resuelve según el modo. En on-demand todos los torneos del manifest son
+// 'ls'; en modo autor pueden ser 'hc' (TORNEOS) o 'tz' (getTzConfig).
+function _resolveTourType(key) {
+  if (_ondemand) return 'ls';
+  if (typeof TORNEOS !== 'undefined') { for (var i = 0; i < TORNEOS.length; i++) { if (String(TORNEOS[i].id) === String(key)) return 'hc'; } }
+  try { if (getTzConfig()[key]) return 'tz'; } catch (e) {}
+  return 'ls';
+}
+function _tourHref(key) { return '?torneo=' + encodeURIComponent(key); }
+function openTournamentByKey(key) {
+  if (key == null || key === '') return;
+  openTournamentDetail(_resolveTourType(key), key);
+}
+// Click en el título de un torneo. Con Ctrl/Cmd/Shift o botón del medio, deja que el navegador
+// abra el href (?torneo=<id>) en una PESTAÑA NUEVA. Click normal: abre en la misma página.
+function tourCardClick(e, key) {
+  if (e && (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1)) return true;
+  if (e) e.preventDefault();
+  openTournamentByKey(key);
+  return false;
+}
+
 async function openTournamentDetail(type, id, scrollToGames) {
   _tdLiveStop();   // cortar el auto-refresco del vivo del torneo anterior (si lo había)
   var name = '', location = '', dates = '', status = 'upcoming', typ = '', rounds = null;
@@ -12032,7 +12056,8 @@ async function openTournamentDetail(type, id, scrollToGames) {
       m.scrollTop = Math.max(0, m.scrollTop + delta - 8);
     }, 60);
   }
-  if (!_tourHistoryPushed) { _tourHistoryPushed = true; history.pushState({ tourDetail: true }, ''); }
+  // La URL pasa a ?torneo=<id> (compartible / favoritos / pestaña nueva). Atrás la revierte.
+  if (!_tourHistoryPushed) { _tourHistoryPushed = true; history.pushState({ tourDetail: true }, '', _tourHref(id)); }
 }
 
 // ── TRF (Tournament Report File) parser & renderer ──
@@ -12860,6 +12885,19 @@ if (_ondemand) {
       if (last === 'favoritos') renderPartidas();
     }
   }
+})();
+
+// Deep-link: si la URL trae ?torneo=<id> (link compartido o pestaña nueva), abrir ese torneo.
+// Dejamos el historial como [lista, torneo] (replaceState a la URL limpia + el push del detalle),
+// así el botón Atrás muestra la LISTA en vez de salir del sitio.
+(function() {
+  var tk = null;
+  try { tk = new URLSearchParams(location.search).get('torneo'); } catch (e) { return; }
+  if (!tk) return;
+  var tbtn = document.querySelector('.nav-btn[onclick*="\'torneos\'"]');
+  if (tbtn) { try { goTo('torneos', tbtn); } catch (e) {} }
+  try { history.replaceState({}, '', location.pathname); } catch (e) {}
+  openTournamentByKey(tk);
 })();
 
 /* ═══════════════════════════════════════════════════════
