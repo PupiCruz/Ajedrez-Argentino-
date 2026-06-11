@@ -4409,20 +4409,23 @@ function buildSplitData() {
     for (var z = 0; z < arr2.length; z++) { if (!seenp[arr2[z]]) { seenp[arr2[z]] = true; outp.push(arr2[z]); } }
     playerIndex[ipid] = outp;
   }
-  // Índice compacto de todas las partidas (para pestaña Partidas en modo publicado).
-  // Solo primeras 40 jugadas (semijugadas) para el explorador de aperturas; el archivo
-  // queda ~5-8MB en vez de 50MB+ que resulta de incluir partidas analizadas completas.
+  // Índice compacto de todas las partidas (para la pestaña Partidas en modo publicado).
+  // Guarda solo las primeras 24 semijugadas (12 jugadas) para el árbol de aperturas + un puntero
+  // al torneo de origen (t = id del torneo, gi = índice dentro de data/t/<id>.json). La PARTIDA
+  // COMPLETA NO se guarda acá: al abrirla, openTourGameByIndex la baja del archivo del torneo (que
+  // ya viaja a la web), así no duplicamos las partidas enteras en este índice. Iteramos tFiles (la
+  // lista canónica por torneo) para que gi matchee EXACTO el archivo publicado.
   var gSeen = {}, gameEntries = [];
-  all.forEach(function(entry) {
-    (entry.games || []).forEach(function(pgn) {
+  Object.keys(tFiles).forEach(function(tid) {
+    (tFiles[tid].games || []).forEach(function(pgn, gi) {
       var body = _moveBody(pgn); if (!body || gSeen[body]) return; gSeen[body] = true;
       var h = parsePgnHeaders(pgn);
       var pl = parseInt(h.PlyCount) || (body ? body.split(' ').filter(Boolean).length : 0);
       var movArr = _sanMoves(pgn);
-      var m = movArr.slice(0, 40).join(' ');
+      var m = movArr.slice(0, 24).join(' ');
       gameEntries.push({ w: h.White||'', b: h.Black||'', d: h.Date||'', r: h.Result||'',
         e: (h.ECO||'').toUpperCase(), we: parseInt(h.WhiteElo)||0, be: parseInt(h.BlackElo)||0,
-        ev: h.Event||'', pl: pl, m: m });
+        ev: h.Event||'', pl: pl, m: m, t: tid, gi: gi });
     });
   });
   return { manifest: { tournaments: tournaments, playerIndex: playerIndex }, tFiles: tFiles, pFiles: pFiles, gameEntries: gameEntries };
@@ -5541,6 +5544,11 @@ function _reconstructPgn(g) {
   if (g.we) h += '[WhiteElo "' + g.we + '"]\n';
   if (g.be) h += '[BlackElo "' + g.be + '"]\n';
   if (g.e)  h += '[ECO "' + g.e + '"]\n';
+  // Puntero al archivo del torneo para bajar la PARTIDA COMPLETA al abrirla (modo publicado): estas
+  // entradas traen solo 12 jugadas. openTourGameByIndex lee SrcTour/SrcIdx y reemplaza por la versión
+  // completa de data/t/<SrcTour>.json. Son headers custom: el visor los ignora al mostrar.
+  if (g.t != null && g.t !== '') h += '[SrcTour "' + String(g.t).replace(/"/g, '') + '"]\n';
+  if (g.gi != null) h += '[SrcIdx "' + g.gi + '"]\n';
   var moves = (g.m || '').split(/\s+/).filter(Boolean);
   var moveStr = moves.map(function(m, i) { return (i % 2 === 0 ? (Math.floor(i/2)+1) + '. ' : '') + m; }).join(' ');
   return h + '\n' + moveStr + ' ' + (g.r || '');
@@ -5918,11 +5926,11 @@ document.addEventListener('keydown', function(e) {
   if (/^(INPUT|TEXTAREA|SELECT)$/.test((e.target && e.target.tagName) || '')) return;
   if (e.key === 'ArrowLeft' && _obLine.length) { e.preventDefault(); obUndo(); }
 });
-function obOpenGame(i) {
+async function obOpenGame(i) {
   var g = _obShown[i]; if (!g) return;
   _cvTourGames = _obShown.map(function(x) { return x.pgn; }); _cvTourName = 'Aperturas'; _cvTourLoc = '';
   var ply = _obLine.length;
-  openTourGameByIndex(i);
+  await openTourGameByIndex(i);   // espera a que esté la partida COMPLETA (modo publicado) antes de avanzar
   // Arrancar el visor en la POSICIÓN del tablero del explorador (avanzar `ply` jugadas por la línea
   // principal del árbol del visor). Las partidas matchean el prefijo, así que llegan a esa posición.
   if (ply > 0 && typeof cv !== 'undefined' && cv && cv.root) {
@@ -6946,10 +6954,18 @@ var _cvTourLoc     = '';
 var _cvTourIdx     = 0;    // índice de la partida actualmente abierta
 var _cvTourPgnKey  = null; // pgnKey del torneo detail activo (para actualizar visor en vivo)
 
-function openTourGameByIndex(idx) {
+async function openTourGameByIndex(idx) {
   if (idx < 0 || idx >= _cvTourGames.length) return;
   _cvTourIdx = idx;
   var pgn = _cvTourGames[idx];
+  // Modo publicado: las partidas de la pestaña Partidas vienen del índice recortado (12 jugadas) con
+  // un puntero al torneo (SrcTour/SrcIdx). Antes de mostrarlas, bajamos la partida COMPLETA del
+  // archivo del torneo y la dejamos cacheada en _cvTourGames[idx] (sirve para prev/siguiente).
+  if (_ondemand && pgn.indexOf('[SrcTour ') >= 0) {
+    var full = await _cvResolveFullGame(idx);
+    if (_cvTourIdx !== idx) return;          // el usuario navegó a otra mientras se bajaba
+    if (full) { _cvTourGames[idx] = full; pgn = full; }
+  }
   loadPgnIntoViewer(pgn, _cvTourName, _cvTourLoc, idx);
   // Sincronizar la ronda del torneo de fondo con la partida que se está viendo,
   // así al cerrar el visor queda mostrando la ronda correcta.
@@ -6961,6 +6977,38 @@ function openTourGameByIndex(idx) {
       tdShowRound(_rInt);
     }
   }
+}
+
+// Baja la partida COMPLETA del archivo del torneo (data/t/<SrcTour>.json) para la entrada del índice
+// en _cvTourGames[idx]. Usa SrcIdx como índice exacto y verifica por jugadores; si no coincide (la
+// data se reordenó), busca por nombres + prefijo de jugadas. Devuelve el PGN completo o null.
+async function _cvResolveFullGame(idx) {
+  try {
+    var entryPgn = _cvTourGames[idx];
+    var h = parsePgnHeaders(entryPgn);
+    if (!h.SrcTour) return null;
+    var games = await fetchTournamentGames(h.SrcTour);
+    if (!games || !games.length) return null;
+    var gi = parseInt(h.SrcIdx);
+    if (gi >= 0 && gi < games.length && _cvGameMatches(games[gi], h)) return games[gi];
+    var pre = _sanMoves(entryPgn);
+    for (var i = 0; i < games.length; i++) {
+      if (_cvGameMatches(games[i], h, pre)) return games[i];
+    }
+    return (gi >= 0 && gi < games.length) ? games[gi] : null;   // último recurso
+  } catch (e) { return null; }
+}
+// ¿El PGN completo corresponde a la entrada del índice (mismos jugadores y, si se pasa, mismo
+// arranque de jugadas)? Compara White/Black, Date si están, y opcionalmente el prefijo SAN.
+function _cvGameMatches(fullPgn, h, pre) {
+  var fh = parsePgnHeaders(fullPgn);
+  if ((fh.White || '') !== (h.White || '') || (fh.Black || '') !== (h.Black || '')) return false;
+  if (h.Date && fh.Date && fh.Date !== h.Date) return false;
+  if (pre && pre.length) {
+    var fm = _sanMoves(fullPgn);
+    for (var k = 0; k < pre.length && k < fm.length; k++) if (fm[k] !== pre[k]) return false;
+  }
+  return true;
 }
 
 function cvTourPrev() { openTourGameByIndex(_cvTourIdx - 1); }
