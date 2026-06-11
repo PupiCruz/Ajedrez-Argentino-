@@ -9668,9 +9668,8 @@ function openLiveBroadcast(slug, roundSlug, roundId) {
       + '<span style="font-size:11px;color:rgba(224,112,112,0.6)">Cargando…</span>';
     bar.style.display = 'flex';
   }
-  var hdrs = {};
-  if (typeof LICHESS_TOKEN !== 'undefined' && LICHESS_TOKEN) hdrs['Authorization'] = 'Bearer ' + LICHESS_TOKEN;
-  fetch(url, { headers: hdrs })
+  // SIN token: el .pgn de ronda no soporta el preflight CORS con Authorization (ver _bcFetchAll).
+  fetch(url)
     .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
     .then(function(pgn) {
       var rawGames = pgn.trim().split(/\n\n(?=\[Event )/).filter(function(g) { return g.trim(); });
@@ -11213,18 +11212,11 @@ function toggleBcArgFilter() {
 // de broadcast (slug / round-slug / round-id). La API /api/broadcast/{id} NO acepta el slug
 // largo del torneo (da 404), por eso hay que resolver el id corto. cb recibe el tourId o null.
 function bcResolveTourId(slug, roundSlug, roundId, cb) {
+  // SIN token (endpoint público). Mandar Authorization fuerza un preflight CORS que rompe la
+  // descarga del PGN de ronda (ver nota en _bcFetchAll). Sin token siempre resuelve.
   var url = 'https://lichess.org/api/broadcast/' + slug + '/' + roundSlug + '/' + roundId;
-  var hdrs = {};
-  if (typeof LICHESS_TOKEN !== 'undefined' && LICHESS_TOKEN) hdrs['Authorization'] = 'Bearer ' + LICHESS_TOKEN;
-  var doFetch = function(h) {
-    return fetch(url, { headers: h })
-      .then(function(r) {
-        if ((r.status === 401 || r.status === 403) && h['Authorization']) return fetch(url).then(function(r2) { if (!r2.ok) throw new Error('HTTP ' + r2.status); return r2.json(); });
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        return r.json();
-      });
-  };
-  doFetch(hdrs)
+  fetch(url)
+    .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
     .then(function(j) {
       var tid = j && j.tour && j.tour.id;
       var detail = tid ? null : ('respuesta sin tour.id: ' + (j ? JSON.stringify(Object.keys(j)) : 'null'));
@@ -11255,10 +11247,9 @@ function _bcResolveTourIdFromRef(bcid, bcurl, cb) {
 function _bcIsTourLive(tourId, cb) {
   var c = _bcLiveCache[tourId];
   if (c && (Date.now() - c.ts) < _BC_LIVE_TTL) { cb(c.live); return; }
-  var hdrs = {};
-  if (typeof LICHESS_TOKEN !== 'undefined' && LICHESS_TOKEN) hdrs['Authorization'] = 'Bearer ' + LICHESS_TOKEN;
+  // SIN token (endpoint público; ver nota en _bcFetchAll).
   var set = function(live) { _bcLiveCache[tourId] = { live: live, ts: Date.now() }; cb(live); };
-  fetch('https://lichess.org/api/broadcast/' + tourId, { headers: hdrs })
+  fetch('https://lichess.org/api/broadcast/' + tourId)
     .then(function(r) { if (!r.ok) throw 0; return r.json(); })
     .then(function(data) {
       var rounds = data.rounds || [], tourSlug = data.tour && data.tour.slug, now = Date.now();
@@ -11268,7 +11259,7 @@ function _bcIsTourLive(tourId, cb) {
       var cand = null;
       for (var j = 0; j < rounds.length; j++) { if (!rounds[j].finished && rounds[j].startsAt && rounds[j].startsAt <= now) { cand = rounds[j]; break; } }
       if (!cand) { set(false); return; }
-      fetch('https://lichess.org/broadcast/' + tourSlug + '/' + cand.slug + '/' + cand.id + '.pgn', { headers: hdrs })
+      fetch('https://lichess.org/broadcast/' + tourSlug + '/' + cand.slug + '/' + cand.id + '.pgn')
         .then(function(r) { return r.text(); })
         .then(function(pgn) { set(/\[Result\s+"\*"\]/.test(pgn)); })
         .catch(function() { set(false); });
@@ -11493,16 +11484,13 @@ function _cvNodeDepth(n) { var d = 0; while (n && n.parent) { d++; n = n.parent;
 // que ya empezaron por horario (startsAt pasado) aunque el relay esté en pausa; una ronda cuenta
 // como EN VIVO si Lichess la marca ongoing O si tiene partidas con resultado "*" (en curso).
 function _bcFetchAll(broadcastId, cb) {
-  var hdrs = {};
-  if (typeof LICHESS_TOKEN !== 'undefined' && LICHESS_TOKEN) hdrs['Authorization'] = 'Bearer ' + LICHESS_TOKEN;
+  // SIN token: los broadcasts son públicos y el endpoint del PGN de ronda
+  // (lichess.org/broadcast/.../*.pgn) NO soporta el preflight CORS con el header Authorization
+  // (responde 404 al OPTIONS), así que si hay un token configurado el navegador BLOQUEA la
+  // descarga de las partidas y caen al respaldo local. Sin token son requests "simples" → andan.
   var url = 'https://lichess.org/api/broadcast/' + broadcastId;
-  fetch(url, { headers: hdrs })
+  fetch(url)
     .then(function(r) {
-      // Si el token es inválido/revocado Lichess devuelve 401 incluso en endpoints públicos.
-      // En ese caso reintentamos sin token para que los broadcasts siempre funcionen.
-      if (r.status === 401 && hdrs['Authorization']) {
-        return fetch(url).then(function(r2) { if (!r2.ok) throw new Error('HTTP ' + r2.status); return r2.json(); });
-      }
       if (!r.ok) throw new Error('HTTP ' + r.status); return r.json();
     })
     .then(function(data) {
@@ -11535,7 +11523,7 @@ function _bcFetchAll(broadcastId, cb) {
       };
       toFetch.forEach(function(round) {
         var pgnUrl = 'https://lichess.org/broadcast/' + tourSlug + '/' + round.slug + '/' + round.id + '.pgn';
-        fetch(pgnUrl, { headers: hdrs })
+        fetch(pgnUrl)
           .then(function(r) { return r.text(); })
           .then(function(pgn) { byRound[round.id] = pgn.trim().split(/\n\n(?=\[Event )/).filter(function(g) { return g.trim(); }); pending--; done(); })
           .catch(function() { byRound[round.id] = []; pending--; done(); });
