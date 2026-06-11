@@ -2490,7 +2490,7 @@ function renderTorneos(filter) {
         var _bcId  = _hcCfg.broadcastId;
         var _hcPgnCount = (_hcCfg.pgnGames && _hcCfg.pgnGames.length) || 0;
         if (_bcId) {
-          html += btnVerPartidas('hc', t.id, false, _hcPgnCount, _bcId, _hcCfg.broadcastUrl);
+          html += btnVerPartidas('hc', t.id, false, _hcPgnCount, _bcId, _hcCfg.broadcastUrl, t.name, t.location);
         } else {
           if (t.hasPgn) {
             var pgnLabel = t.lichessLive ? '♟ Ver partidas · Rondas 1–3 (30 partidas)' : '♟ Ver partidas · Ronda 1 (25 partidas)';
@@ -2551,7 +2551,7 @@ function renderTorneos(filter) {
         if (st.chesscomUrl) {
           html += linkChesscom(st.chesscomUrl);
         }
-        html += btnVerPartidas('ls', st._id, false, (st.gameCount || 0) + _tourPoolGameCount(st.name), st.broadcastId, st.broadcastUrl);
+        html += btnVerPartidas('ls', st._id, false, (st.gameCount || 0) + _tourPoolGameCount(st.name), st.broadcastId, st.broadcastUrl, st.name, st.location);
         html += '</div>';
       } else if (item._type === 'tzconfig') {
         var d = item._data; var tzk = item._key;
@@ -2980,17 +2980,24 @@ function crRenderSection(key) {
   var hasStandings=data&&data.standings&&data.standings.length>0;
   var hasAny=hasRounds||hasStandings;
 
+  // Web publicada (on-demand): si no hay cruces/tabla cargados, no mostrar nada (el cartel
+  // "Importá los Excel…" y los botones de importar son solo para el autor).
+  if(_ondemand && !hasAny) return '';
+
   var h='<div id="cr-section-'+key+'" style="margin-bottom:20px">';
   // Cabecera
   h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">';
   h+='<span style="font-size:11px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:var(--text2)">Resultados Chess-Results</span>';
+  if(!_ondemand){
   h+='<div style="display:flex;gap:6px;align-items:center">';
   if(hasAny) h+='<button onclick="crClearData(\''+ks+'\')" style="background:none;border:none;color:var(--text3);font-size:16px;cursor:pointer;padding:2px 5px" title="Borrar todo">🗑</button>';
   h+='<label style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:var(--bg3);border:1px solid var(--border);color:var(--text2);font-size:11px;font-weight:600;border-radius:8px;cursor:pointer;font-family:inherit" title="Importar Excel de cruces — una ronda, o todas las rondas en un archivo (round robin)">';
   h+='<input type="file" accept=".xlsx" style="display:none" onchange="crImportRound(\''+ks+'\',this)">♟ Cruces</label>';
   h+='<label style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-size:11px;font-weight:600;border-radius:8px;cursor:pointer;font-family:inherit" title="Importar Excel de tabla de posiciones">';
   h+='<input type="file" accept=".xlsx" style="display:none" onchange="crImportStandings(\''+ks+'\',this)">📊 Tabla</label>';
-  h+='</div></div>';
+  h+='</div>';
+  }
+  h+='</div>';
   h+='<div id="cr-status-'+key+'" style="font-size:11px;color:var(--text3);min-height:14px;margin-bottom:6px"></div>';
 
   if(!hasAny){
@@ -3020,6 +3027,11 @@ function crBuildTabsAndPanels(key,data){
   }
   roundNums.forEach(function(r){
     var active=(r===defaultTab);
+    if(_ondemand){
+      // Web publicada: solo la pestaña de la ronda (sin el ✕ de borrar, que es del autor).
+      h+='<button onclick="crShowTab(\''+ks+'\','+r+')" id="cr-rtab-'+key+'-'+r+'" style="padding:6px 15px;border-radius:20px;border:1px solid '+(active?'var(--gold-dim)':'var(--border)')+';background:'+(active?'var(--gold-bg)':'var(--bg3)')+';color:'+(active?'var(--gold)':'var(--text2)')+';font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit">R'+r+'</button>';
+      return;
+    }
     h+='<span style="display:inline-flex;align-items:center;gap:1px">';
     h+='<button onclick="crShowTab(\''+ks+'\','+r+')" id="cr-rtab-'+key+'-'+r+'" style="padding:6px 11px 6px 15px;border-radius:20px 0 0 20px;border:1px solid '+(active?'var(--gold-dim)':'var(--border)')+';border-right:none;background:'+(active?'var(--gold-bg)':'var(--bg3)')+';color:'+(active?'var(--gold)':'var(--text2)')+';font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit">R'+r+'</button>';
     h+='<button onclick="crDeleteRound(\''+ks+'\','+r+')" title="Borrar ronda '+r+'" style="padding:6px 9px;border-radius:0 20px 20px 0;border:1px solid '+(active?'var(--gold-dim)':'var(--border)')+';border-left:none;background:'+(active?'var(--gold-bg)':'var(--bg3)')+';color:'+(active?'var(--gold)':'var(--text3)')+';font-size:11px;cursor:pointer;font-family:inherit;line-height:1">✕</button>';
@@ -5691,7 +5703,8 @@ function renderDbSearch() {
   if (!el) return;
   if (_ondemand && !window.__GAMES_INDEX__) { _renderPartidasLoading(el, renderDbSearch); return; }
   var h = _dbModeSwitcher();
-  // Subir partidas a la base de datos
+  // Subir partidas a la base de datos (solo modo autor; en la web se sube nada)
+  if(!_ondemand){
   h += '<details style="margin-bottom:14px;border:1px solid var(--border);border-radius:10px;overflow:hidden">';
   h += '<summary style="cursor:pointer;padding:11px 14px;background:var(--bg3);font-size:13px;font-weight:600;color:var(--text2);user-select:none;list-style:none;display:flex;align-items:center;gap:8px">📥 Subir partidas a la base de datos</summary>';
   h += '<div style="padding:12px 14px">';
@@ -5703,6 +5716,7 @@ function renderDbSearch() {
   h += '<button id="dbpool-btn" onclick="dbPoolImport()" style="display:none;width:100%;padding:11px;margin-top:8px;background:var(--green,#2a7);border:none;color:#fff;font-size:13px;font-weight:700;border-radius:10px;cursor:pointer;font-family:inherit">📥 Agregar a la base de datos</button>';
   h += '<div id="dbpool-result" style="font-size:12px;margin-top:8px;line-height:1.5"></div>';
   h += '</div></details>';
+  }
   h += '<div style="margin-bottom:14px">';
   h += '<div style="display:flex;gap:8px"><input id="db-q" type="text" placeholder="Nombre de jugador(es), ej: Mareco Oro 2024" value="' + escHtml(_dbLastQ.raw || '') + '" onkeydown="if(event.key===\'Enter\')dbSearchRun()" style="flex:1;padding:11px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:10px;font-family:inherit;font-size:14px">';
   h += '<button onclick="dbSearchRun()" style="padding:11px 18px;background:var(--gold);border:none;color:#000;font-weight:700;border-radius:10px;cursor:pointer;font-family:inherit">Buscar</button></div>';
@@ -6256,13 +6270,15 @@ async function openPlayer(id) {
   _memTournaments.forEach(function(e){ if (e.playerId === p.id) { _plProfileTours++; _plProfileGames += (e.gameCount || (e.games||[]).length || 0); } });
   h += '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-top:18px;margin-bottom:10px">';
   h += '<div class="m-sec-lbl" style="margin:0">Ver partidas</div>';
-  if (_plProfileTours > 0) {
+  if (_plProfileTours > 0 && !_ondemand) {
     h += '<button onclick="deleteAllPlayerGames(' + p.id + ')" style="background:rgba(180,30,30,.1);border:1px solid rgba(180,30,30,.3);color:var(--red);font-size:11px;font-weight:600;cursor:pointer;padding:5px 10px;border-radius:7px;font-family:inherit">🗑 Borrar todas las partidas</button>';
   }
   h += '</div>';
   h += '<div id="pg-games"><div class="pg-loading">Buscando partidas…</div></div>';
 
-  // Subir PGN directamente desde el perfil
+  // Subir PGN directamente desde el perfil (solo modo autor; en la web las partidas se
+  // cargan desde la pestaña Partidas, no desde el perfil).
+  if(!_ondemand){
   h += '<div class="m-sec-lbl" style="margin-top:20px">Agregar partidas</div>';
   h += '<div style="margin-bottom:18px">';
   // Mostrar torneos ya importados para este jugador
@@ -6288,6 +6304,7 @@ async function openPlayer(id) {
   h += '</div>';
   h += '<div id="pl-pgn-result" style="margin-top:8px;font-size:12px"></div>';
   h += '</div>';
+  }
 
   if (p.results && p.results.length > 0) {
     h += '<div class="sec-lbl" style="margin-top:18px">Últimas partidas</div>';
@@ -10772,10 +10789,17 @@ function btnBroadcastLichess(broadcastId, name, location, url) {
 // Botón UNIFICADO "Ver partidas": abre el detalle del torneo (donde está la grilla integrada).
 // Si el torneo tiene transmisión, lleva data-bc para que _bcMarkLiveButtons lo pinte rojo
 // "🔴 EN VIVO · Ver partidas" cuando se está jugando; si no, queda "♟ Ver partidas (N)".
-function btnVerPartidas(type, id, isStringId, count, broadcastId, broadcastUrl) {
+function btnVerPartidas(type, id, isStringId, count, broadcastId, broadcastUrl, name, location) {
   var idArg = isStringId ? ("'" + escJs(String(id)) + "'") : id;
   var oc = 'openTournamentDetail(\'' + type + '\',' + idArg + ',true)';
   if (broadcastId) {
+    // Si NO hay partidas locales/subidas (típico del broadcast puro de Lichess), abrir la grilla
+    // en vivo de Lichess: la web SÍ puede traer esas partidas del broadcast público. Con partidas
+    // subidas, abrir el detalle del torneo (que las muestra).
+    if (!(count > 0)) {
+      var bcArg = "'" + escJs(String(broadcastId)) + "','" + escJs(String(name || '')) + "','" + escJs(String(location || '')) + "','" + escJs(String(broadcastUrl || '')) + "'";
+      return '<button class="pgn-btn" data-bc="' + escHtml(broadcastId) + '" data-bcurl="' + escHtml(broadcastUrl || '') + '" onclick="openBroadcastTournament(' + bcArg + ')">♟ Ver partidas · Lichess</button>';
+    }
     return '<button class="pgn-btn" data-bc="' + escHtml(broadcastId) + '" data-bcurl="' + escHtml(broadcastUrl || '') + '" onclick="' + oc + '">♟ Ver partidas</button>';
   }
   if (count > 0) return '<button class="pgn-btn" onclick="' + oc + '">♟ Ver partidas (' + count + ')</button>';
@@ -10788,7 +10812,14 @@ function linkChesscom(url) {
   return '<a href="' + escHtml(url) + '" target="_blank" rel="noopener" class="pgn-btn" style="display:block;text-align:center;text-decoration:none;background:rgba(40,90,55,.18);border-color:rgba(60,150,90,.35);color:#8ed6a0">♟ Ver partidas · Chess.com ↗</a>';
 }
 
-function getTzConfig() { try { return JSON.parse(localStorage.getItem('tz_config') || '{}'); } catch(e) { return {}; } }
+function getTzConfig() {
+  // En la web publicada (on-demand) el manifest YA trae todos los torneos (incluidos los
+  // creados con +Agregar, con sus partidas en data/t/). El localStorage tz_config no debería
+  // existir acá; si quedó algo viejo de un deploy anterior, ignorarlo evita torneos DUPLICADOS
+  // (una tarjeta del manifest + otra de tz_config) y tarjetas vacías sin partidas.
+  if (_ondemand) return {};
+  try { return JSON.parse(localStorage.getItem('tz_config') || '{}'); } catch(e) { return {}; }
+}
 function lsQuotaAlert() {
   alert('⚠️ Almacenamiento lleno\n\nEl archivo PGN es demasiado grande para guardarlo en este dispositivo.\n\nSolución: exportá el HTML (pestaña Exportar) para no perder lo que ya tenés, luego recargá la página y volvé a intentarlo.');
 }
