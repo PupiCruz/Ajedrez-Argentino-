@@ -2208,95 +2208,12 @@ var PLAYERS = [
 // estadísticas y torneos viven en otras estructuras y no se tocan. Ver _rankingOverride().
 (function(){ var _ov = _rankingOverride(); if (_ov) { if (_ov.players && _ov.players.length) PLAYERS = _ov.players.slice(); if (_ov.additionals && _ov.additionals.length) PLAYERS = PLAYERS.concat(_ov.additionals); } })();
 
-var TORNEOS = [
-  {
-    id:1, status:"live",
-    name:"Campeonato Argentino Absoluto 2025",
-    type:"Nacional", location:"Buenos Aires",
-    dates:"12 – 26 May 2025", rounds:11, round:7,
-    leaders:[
-      {name:"Alan Pichot",      score:"5.5"},
-      {name:"Fernando Peralta", score:"5.0"},
-      {name:"Sandro Mareco",    score:"4.5"},
-      {name:"Diego Flores",     score:"4.5"},
-    ]
-  },
-  {
-    id:2, status:"upcoming",
-    name:"Torneo Magistral Ciudad de Buenos Aires",
-    type:"Internacional", location:"Buenos Aires",
-    dates:"14 – 22 Jun 2025", rounds:9, round:null,
-    leaders:[]
-  },
-  {
-    id:3, status:"upcoming",
-    name:"Copa Argentina de Ajedrez 2025",
-    type:"Nacional", location:"Córdoba",
-    dates:"5 – 10 Jul 2025", rounds:7, round:null,
-    leaders:[]
-  },
-  {
-    id:4, status:"upcoming",
-    name:"Campeonato Argentino Juvenil 2025",
-    type:"Nacional", location:"Rosario",
-    dates:"2 – 9 Ago 2025", rounds:9, round:null,
-    leaders:[]
-  },
-  {
-    id:5, status:"done",
-    name:"Campeonato Bonaerense 2025",
-    type:"Provincial", location:"La Plata",
-    dates:"1 – 8 Mar 2025", rounds:9, round:9,
-    leaders:[
-      {name:"Damián Lemos",    score:"7.5"},
-      {name:"Alejo Cámpora",   score:"7.0"},
-      {name:"Roberto Felgaer", score:"6.5"},
-      {name:"Carlos Ilardo",   score:"6.0"},
-    ]
-  },
-  {
-    id:6, status:"done",
-    name:"Open Internacional de Rosario",
-    type:"Internacional", location:"Rosario",
-    dates:"15 – 22 Feb 2025", rounds:9, round:9,
-    leaders:[
-      {name:"Pablo Zarnicki",  score:"8.0"},
-      {name:"Rubén Felgaer",   score:"7.5"},
-      {name:"Luciana Morales", score:"7.0"},
-    ]
-  },
-  {
-    id:7, status:"done",
-    name:"4° Open Ciudad de Buenos Aires 2026",
-    type:"Internacional", location:"Club Argentino de Ajedrez, CABA",
-    dates:"18 – 25 May 2026", rounds:9, round:9,
-    hasPgn:true, pgnId:"openba2026",
-    crurl:"https://chess-results.com/tnr1397575.aspx",
-    leaders:[
-      {name:"Vasquez Schroeder, R.", score:"8.0"},
-      {name:"Paveto, Kevin",         score:"7.5"},
-      {name:"Ticona Rocabado, L.",   score:"7.5"},
-      {name:"Perez Ponsa, Federico", score:"7.0"},
-    ]
-  },
-  {
-    id:8, status:"live",
-    name:"ITT WRChess Venezuela 2026",
-    type:"Internacional", location:"Nueva Esparta · VEN",
-    dates:"26 May – 4 Jun 2026", rounds:9, round:4,
-    hasPgn:true, pgnId:"venezuela2026",
-    crurl:"https://chess-results.com/tnr1412979.aspx",
-    lichessLive:{
-      slug:"itt-wrchess-venezuela-2026-circuito-de-torneos-internacionales-fva",
-      roundSlug:"round-4", roundId:"oyItzHJe"
-    },
-    leaders:[
-      {name:"Escalona Landi, S.", score:"2.5"},
-      {name:"Ynojosa Aponte, F.", score:"2.5"},
-      {name:"Krysa, Leandro",     score:"2.0"},
-    ]
-  },
-];
+// Torneos "destacados" hardcodeados. Antes había 8 torneos de EJEMPLO del desarrollo inicial
+// (con líderes inventados y un par de duplicados de torneos reales que el autor ya tiene cargados
+// como tz_/importados). Se quitaron todos: los torneos reales se gestionan con "+Agregar" (tz_),
+// importación de Chess-Results/PGN, o la base de datos de partidas. Dejar el array vacío NO rompe
+// nada (la rama 'hc' de openTournamentDetail y los loops sobre TORNEOS simplemente no encuentran nada).
+var TORNEOS = [];
 
 var NOTICIAS = [
   {
@@ -4446,6 +4363,19 @@ function buildSplitData() {
   var tournaments = [], playerIndex = {}, tFiles = {}, pFiles = {}, pSeen = {}, metaSeen = {};
   all.forEach(function(entry) {
     var games = entry.games || [];
+    // Igual que openTournamentDetail (modo autor): a los torneos destacados (NO los del pool)
+    // se les suman las partidas del pool (base de datos única) que les corresponden por nombre
+    // de evento, deduplicadas. Sin esto, en la web publicada un torneo cuyas partidas se subieron
+    // al pool (ej. Mijail Tal, Memorial JIAC) sale sin partidas, y uno con solo parte en pgnGames
+    // (Continental, Bandera) sale con rondas faltantes: el pool NO viaja a la web, pero el
+    // t/<id>.json sí. Acá lo dejamos cocinado en el archivo del torneo.
+    if (!entry.dbPool) {
+      var _poolG = _tourPoolGames(_tourEventNames(entry.name, games));
+      if (_poolG.length) {
+        games = dedupGamesByMoves(games.concat(_poolG).map(function(p){ return { pgn: p }; }), function(w){ return w.pgn; }).map(function(w){ return w.pgn; });
+        entry.games = games; entry.gameCount = games.length;   // que el manifest/tarjeta reflejen el total
+      }
+    }
     // Dedup por id: la data acumuló duplicados idénticos. Metadata: 1 por id. tFile: el de más partidas.
     if (!metaSeen[entry.id]) { metaSeen[entry.id] = true; tournaments.push(_tourManifestMeta(entry)); }
     if (!tFiles[entry.id] || games.length > tFiles[entry.id].games.length) {
@@ -11801,8 +11731,11 @@ function _tourPoolGames(eventNames) {
       if (tn === ev) return true;
       // el pool tiene el nombre largo (Event del PGN) y el torneo tiene el prefijo
       if (tn.indexOf(ev) === 0 && (tn.length === ev.length || /^[\s\-–—,.]/.test(tn[ev.length]))) return true;
-      // el torneo tiene el nombre largo y el pool el prefijo (caso inverso)
-      if (ev.indexOf(tn) === 0 && (ev.length === tn.length || /^[\s\-–—,.]/.test(ev[tn.length]))) return true;
+      // el torneo tiene el nombre largo y el pool el prefijo (caso inverso). OJO: solo si el
+      // nombre del pool es ESPECÍFICO (≥10 chars y multi-palabra). Sin esto, un Event genérico
+      // del pool como "ITT" (136 partidas sueltas) matchea CUALQUIER torneo que empiece con "ITT "
+      // y contamina (ej. Bandera 2026 tragaba partidas de otros años).
+      if (tn.length >= 10 && tn.indexOf(' ') > 0 && ev.indexOf(tn) === 0 && (ev.length === tn.length || /^[\s\-–—,.]/.test(ev[tn.length]))) return true;
       return false;
     });
     if (match) (t.games || []).forEach(function(g) { out.push(g); });
