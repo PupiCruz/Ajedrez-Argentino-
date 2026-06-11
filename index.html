@@ -9658,7 +9658,8 @@ var _bcBaseKey = null;
 var _bcArgMode = false;
 
 function openLiveBroadcast(slug, roundSlug, roundId) {
-  var url = 'https://lichess.org/broadcast/' + slug + '/' + roundSlug + '/' + roundId + '.pgn';
+  // Endpoint /api/ para el PGN (manda CORS desde cualquier origen; el web route no — ver _bcFetchAll).
+  var url = 'https://lichess.org/api/broadcast/round/' + roundId + '.pgn';
   var broadcastUrl = 'https://lichess.org/broadcast/' + slug + '/' + roundSlug + '/' + roundId;
   _liveParams = { slug:slug, roundSlug:roundSlug, roundId:roundId };
   if (_liveTimer) { clearTimeout(_liveTimer); _liveTimer = null; }
@@ -11259,7 +11260,7 @@ function _bcIsTourLive(tourId, cb) {
       var cand = null;
       for (var j = 0; j < rounds.length; j++) { if (!rounds[j].finished && rounds[j].startsAt && rounds[j].startsAt <= now) { cand = rounds[j]; break; } }
       if (!cand) { set(false); return; }
-      fetch('https://lichess.org/broadcast/' + tourSlug + '/' + cand.slug + '/' + cand.id + '.pgn')
+      fetch('https://lichess.org/api/broadcast/round/' + cand.id + '.pgn')
         .then(function(r) { return r.text(); })
         .then(function(pgn) { set(/\[Result\s+"\*"\]/.test(pgn)); })
         .catch(function() { set(false); });
@@ -11522,7 +11523,10 @@ function _bcFetchAll(broadcastId, cb) {
         cb({ tourSlug: tourSlug, rounds: rounds, allGames: allGames, liveRound: isLive ? liveRound : null, isLive: isLive, roundsWithGames: roundsWithGames });
       };
       toFetch.forEach(function(round) {
-        var pgnUrl = 'https://lichess.org/broadcast/' + tourSlug + '/' + round.slug + '/' + round.id + '.pgn';
+        // Endpoint /api/ (NO el web /broadcast/.../*.pgn): este devuelve Access-Control-Allow-Origin
+        // para CUALQUIER origen; el web route NO manda CORS desde dominios como Netlify, así que las
+        // partidas no se descargaban en la web publicada (sí desde localhost). Solo necesita el roundId.
+        var pgnUrl = 'https://lichess.org/api/broadcast/round/' + round.id + '.pgn';
         fetch(pgnUrl)
           .then(function(r) { return r.text(); })
           .then(function(pgn) { byRound[round.id] = pgn.trim().split(/\n\n(?=\[Event )/).filter(function(g) { return g.trim(); }); pending--; done(); })
