@@ -11758,6 +11758,37 @@ function _tourPoolGameCount(name) {
   return count;
 }
 
+// Devuelve el HTML del interior de #td-games-section para partidas LOCALES (subidas a mano + pool
+// de argentinos), agrupadas por ronda. Se usa al abrir el torneo (contenido inmediato y RESPALDO):
+// si hay broadcast, _tdLoadLiveGames lo reemplaza con el vivo de Lichess; si el fetch falla, quedan
+// estas. Setea _tdArgOnly/_tdCurrentRound.
+function _tdLocalGamesHtml(byRound, roundOrder, games, pgnKey, typ) {
+  _tdArgOnly = false;
+  _tdCurrentRound = roundOrder[0];
+  var argTotal = 0;
+  roundOrder.forEach(function(rInt){ byRound[rInt].forEach(function(g){ if (_isArgGame(g.h)) argTotal++; }); });
+  var h = '';
+  h += '<div id="td-partidas-anchor" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;flex-wrap:wrap;scroll-margin-top:10px">';
+  h += '<span style="font-size:11px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:var(--text2)">Partidas (' + games.length + ')</span>';
+  // El filtro de argentinos sale SOLO en torneos Internacionales (igual que en la tabla y los cuadros).
+  if (argTotal > 0 && crShowArgLine(typ)) {
+    h += '<button id="td-arg-btn" onclick="tdToggleArg()" style="padding:6px 13px;border-radius:20px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">🇦🇷 Solo argentinos</button>';
+  }
+  h += '</div>';
+  // Selector de ronda
+  h += '<div id="td-rtabs" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">';
+  roundOrder.forEach(function(rInt, ri) {
+    h += '<button onclick="tdShowRound(' + rInt + ',\'' + pgnKey + '\')" id="td-rtab-' + rInt + '" style="padding:6px 15px;border-radius:20px;border:1px solid var(--border);background:' + (ri===0?'var(--gold-bg)':'var(--bg3)') + ';color:' + (ri===0?'var(--gold)':'var(--text2)') + ';font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit">R' + rInt + '</button>';
+  });
+  h += '</div>';
+  h += '<div id="td-pager" style="display:none;align-items:center;justify-content:center;gap:14px;margin-bottom:14px"></div>';
+  // Paneles de ronda vacíos; se llenan bajo demanda
+  roundOrder.forEach(function(rInt, ri) {
+    h += '<div id="td-round-' + rInt + '" style="display:' + (ri===0?'grid':'none') + ';grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:4px"></div>';
+  });
+  return h;
+}
+
 async function openTournamentDetail(type, id, scrollToGames) {
   _tdLiveStop();   // cortar el auto-refresco del vivo del torneo anterior (si lo había)
   var name = '', location = '', dates = '', status = 'upcoming', typ = '', rounds = null;
@@ -11922,38 +11953,20 @@ async function openTournamentDetail(type, id, scrollToGames) {
   crSyncResultsFromPgn(crk);
   h += crRenderSection(crk);
 
-  // Partidas por ronda. Con transmisión EN VIVO (torneo en curso) o sin partidas subidas, traemos
-  // las del broadcast de Lichess. Pero si YA tenemos partidas subidas (el archivo del torneo trae
-  // partidas), mostramos ESAS: son fiables y no dependen de que Lichess responda. Esto es clave en
-  // la web publicada y en torneos terminados, donde el fetch en vivo suele fallar o tarda.
-  var useLive = broadcastId && !roundOrder.length;
+  // Partidas por ronda. PRIORIDAD LICHESS: si el torneo transmite por Lichess, esas partidas son el
+  // set COMPLETO (todas las rondas/tableros, en vivo o terminadas) y mandan. Las subidas a mano (pool)
+  // suelen ser solo un subconjunto (los argentinos). Por eso, si hay broadcast SIEMPRE pedimos el vivo
+  // (_tdLoadLiveGames, abajo). Igual renderizamos las subidas YA: sirven de contenido inmediato y de
+  // RESPALDO — si no hay broadcast, o el fetch a Lichess falla, quedan estas. Cuando llega el vivo,
+  // _tdLoadLiveGames reemplaza la sección.
+  var hasBroadcast = !!broadcastId;
   h += '<div id="td-games-section">';
-  if (useLive) {
+  if (roundOrder.length) {
+    h += _tdLocalGamesHtml(byRound, roundOrder, games, pgnKey2, typ);
+  } else if (hasBroadcast) {
+    // Hay broadcast pero todavía no hay partidas subidas → placeholder mientras llega el vivo.
     h += '<div id="td-partidas-anchor" style="scroll-margin-top:10px"></div>';
     h += '<div style="text-align:center;padding:34px 0;color:var(--text3);font-size:13px">⏳ Cargando partidas desde Lichess…</div>';
-  } else if (roundOrder.length) {
-    _tdArgOnly = false;
-    _tdCurrentRound = roundOrder[0];
-    var argTotal = 0;
-    roundOrder.forEach(function(rInt){ byRound[rInt].forEach(function(g){ if (_isArgGame(g.h)) argTotal++; }); });
-    h += '<div id="td-partidas-anchor" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;flex-wrap:wrap;scroll-margin-top:10px">';
-    h += '<span style="font-size:11px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:var(--text2)">Partidas (' + games.length + ')</span>';
-    // El filtro de argentinos sale SOLO en torneos Internacionales (igual que en la tabla y los cuadros).
-    if (argTotal > 0 && crShowArgLine(typ)) {
-      h += '<button id="td-arg-btn" onclick="tdToggleArg()" style="padding:6px 13px;border-radius:20px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">🇦🇷 Solo argentinos</button>';
-    }
-    h += '</div>';
-    // Selector de ronda
-    h += '<div id="td-rtabs" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">';
-    roundOrder.forEach(function(rInt, ri) {
-      h += '<button onclick="tdShowRound(' + rInt + ',\'' + pgnKey2 + '\')" id="td-rtab-' + rInt + '" style="padding:6px 15px;border-radius:20px;border:1px solid var(--border);background:' + (ri===0?'var(--gold-bg)':'var(--bg3)') + ';color:' + (ri===0?'var(--gold)':'var(--text2)') + ';font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit">R' + rInt + '</button>';
-    });
-    h += '</div>';
-    h += '<div id="td-pager" style="display:none;align-items:center;justify-content:center;gap:14px;margin-bottom:14px"></div>';
-    // Paneles de ronda vacíos; se llenan bajo demanda
-    roundOrder.forEach(function(rInt, ri) {
-      h += '<div id="td-round-' + rInt + '" style="display:' + (ri===0?'grid':'none') + ';grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:4px"></div>';
-    });
   } else if (status === 'upcoming') {
     h += '<div style="text-align:center;padding:20px;color:var(--text3);font-size:13px">Todavía no hay partidas cargadas.</div>';
   }
@@ -11962,13 +11975,15 @@ async function openTournamentDetail(type, id, scrollToGames) {
   document.getElementById('tour-modal-body').innerHTML = h;
   // Si el torneo está en curso por fecha, marcar "🔴 EN VIVO" el botón de Lichess (si transmite ahora).
   if (status === 'live') _bcMarkLiveButtons(document.getElementById('tour-modal-body'));
-  // Armar solo la primera ronda (las demás bajo demanda). Con transmisión de Lichess, las partidas
-  // las trae _tdLoadLiveGames (abajo) en lugar de las subidas a mano.
-  if (!useLive && roundOrder.length) tdBuildRound(roundOrder[0]);
+  // Armar la 1ª ronda de las partidas subidas (las demás bajo demanda). Si hay broadcast, esto es solo
+  // el respaldo inmediato: _tdLoadLiveGames reemplaza la sección con el vivo de Lichess al llegar.
+  if (roundOrder.length) tdBuildRound(roundOrder[0]);
   var m = document.querySelector('#tour-overlay .modal');
   if (m) m.scrollTop = 0;
   document.getElementById('tour-overlay').classList.add('open');
-  if (useLive) _tdLoadLiveGames(broadcastId, broadcastUrl, name, location, pgnKey2, typ, status);
+  // Prioridad Lichess: si hay broadcast, SIEMPRE pedimos el vivo. roundOrder.length>0 le avisa que ya
+  // hay partidas subidas mostrándose, para NO pisarlas con un error si el fetch falla (respaldo).
+  if (hasBroadcast) _tdLoadLiveGames(broadcastId, broadcastUrl, name, location, pgnKey2, typ, status, roundOrder.length > 0);
   // Si se pidió, bajar directo al apartado de partidas
   if (scrollToGames && m) {
     var anchor = document.getElementById('td-partidas-anchor');
@@ -12571,19 +12586,16 @@ var _tdLiveCtx = null;   // { tourId, pgnKey, name, location, typ }
 
 function _tdLiveStop() { if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; } _tdLiveCtx = null; _tdStopClocks(); }
 
-function _tdLoadLiveGames(broadcastId, broadcastUrl, name, location, pgnKey, typ, status) {
+function _tdLoadLiveGames(broadcastId, broadcastUrl, name, location, pgnKey, typ, status, hasFallback) {
   var raw = String(broadcastId || '');
-  console.log('[BC] _tdLoadLiveGames raw=', raw, 'url=', broadcastUrl);
   // Caso 1: ya es un ID de 8 chars → usarlo directamente.
-  if (/^[A-Za-z0-9]{8}$/.test(raw)) { console.log('[BC] caso1 directo'); _tdLiveFetch(raw, name, location, pgnKey, typ); return; }
+  if (/^[A-Za-z0-9]{8}$/.test(raw)) { _tdLiveFetch(raw, name, location, pgnKey, typ, hasFallback); return; }
   // Caso 2: URL con 3 segmentos broadcast/{slug}/{roundSlug}/{roundId} → resolver tour id vía API.
   var combined = String(broadcastUrl || '') + ' ' + raw;
   var m = combined.match(/broadcast\/([^\/\?#\s]+)\/([^\/\?#\s]+)\/([^\/\?#\s]{8})(?:[\/\?#\s]|$)/);
-  console.log('[BC] regex match=', m);
-  if (m) { bcResolveTourId(m[1], m[2], m[3], function(tid, detail){ console.log('[BC] resolvedTourId=', tid, 'detail=', detail); if (tid) _tdLiveFetch(tid, name, location, pgnKey, typ); else _tdLiveError(broadcastUrl, 'bcResolve('+m[3]+') → '+(detail||'null')); }); return; }
+  if (m) { bcResolveTourId(m[1], m[2], m[3], function(tid, detail){ if (tid) _tdLiveFetch(tid, name, location, pgnKey, typ, hasFallback); else if (!hasFallback) _tdLiveError(broadcastUrl, 'bcResolve('+m[3]+') → '+(detail||'null')); }); return; }
   // Caso 3: otro formato → intentar como está.
-  console.log('[BC] caso3 fallback');
-  _tdLiveFetch(raw, name, location, pgnKey, typ);
+  _tdLiveFetch(raw, name, location, pgnKey, typ, hasFallback);
 }
 
 function _tdLiveError(url, detail) {
@@ -12591,13 +12603,14 @@ function _tdLiveError(url, detail) {
   if (sec) sec.innerHTML = '<div style="text-align:center;padding:30px 0;color:var(--text3);font-size:13px">No se pudieron cargar las partidas en vivo.' + (url ? '<br><a href="' + escHtml(url) + '" target="_blank" style="color:var(--gold)">Ver en Lichess ↗</a>' : '') + (detail ? '<br><span style="font-size:11px;opacity:.6">' + escHtml(detail) + '</span>' : '') + '</div>';
 }
 
-function _tdLiveFetch(tourId, name, location, pgnKey, typ) {
-  _tdLiveCtx = { tourId: tourId, pgnKey: pgnKey, name: name, location: location, typ: typ };
+function _tdLiveFetch(tourId, name, location, pgnKey, typ, hasFallback) {
+  _tdLiveCtx = { tourId: tourId, pgnKey: pgnKey, name: name, location: location, typ: typ, hasFallback: !!hasFallback };
   _bcFetchAll(tourId, function(res){
     if (!_tdLiveCtx || _tdLiveCtx.tourId !== tourId) return;
     var sec = document.getElementById('td-games-section');
     if (!sec) return;
-    if (!res || !res.roundsWithGames || !res.roundsWithGames.length) { _tdLiveError(null); return; }
+    // Sin partidas en el broadcast: si ya se muestran las subidas (respaldo), dejarlas; si no, avisar.
+    if (!res || !res.roundsWithGames || !res.roundsWithGames.length) { if (!hasFallback) _tdLiveError(null); return; }
     _tdLiveBuild(res, sec, null);
     if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; }
     if (res.roundsWithGames.some(function(r){ return r.live; })) _tdLiveTimer = setTimeout(_tdLiveRefresh, _BC_REFRESH_MS);
