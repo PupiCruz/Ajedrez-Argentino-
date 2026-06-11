@@ -10792,14 +10792,9 @@ function btnBroadcastLichess(broadcastId, name, location, url) {
 function btnVerPartidas(type, id, isStringId, count, broadcastId, broadcastUrl, name, location) {
   var idArg = isStringId ? ("'" + escJs(String(id)) + "'") : id;
   var oc = 'openTournamentDetail(\'' + type + '\',' + idArg + ',true)';
+  // El detalle del torneo decide qué partidas mostrar: las subidas (archivo del torneo) si las hay,
+  // o las del broadcast de Lichess en vivo (con link "Ver en Lichess" de respaldo) si no.
   if (broadcastId) {
-    // Si NO hay partidas locales/subidas (típico del broadcast puro de Lichess), abrir la grilla
-    // en vivo de Lichess: la web SÍ puede traer esas partidas del broadcast público. Con partidas
-    // subidas, abrir el detalle del torneo (que las muestra).
-    if (!(count > 0)) {
-      var bcArg = "'" + escJs(String(broadcastId)) + "','" + escJs(String(name || '')) + "','" + escJs(String(location || '')) + "','" + escJs(String(broadcastUrl || '')) + "'";
-      return '<button class="pgn-btn" data-bc="' + escHtml(broadcastId) + '" data-bcurl="' + escHtml(broadcastUrl || '') + '" onclick="openBroadcastTournament(' + bcArg + ')">♟ Ver partidas · Lichess</button>';
-    }
     return '<button class="pgn-btn" data-bc="' + escHtml(broadcastId) + '" data-bcurl="' + escHtml(broadcastUrl || '') + '" onclick="' + oc + '">♟ Ver partidas</button>';
   }
   if (count > 0) return '<button class="pgn-btn" onclick="' + oc + '">♟ Ver partidas (' + count + ')</button>';
@@ -11980,10 +11975,13 @@ async function openTournamentDetail(type, id, scrollToGames) {
   crSyncResultsFromPgn(crk);
   h += crRenderSection(crk);
 
-  // Partidas por ronda. Si el torneo tiene transmisión de Lichess mostramos ESAS partidas (vivo +
-  // rondas terminadas) en lugar de las subidas a mano: _tdLoadLiveGames reemplaza #td-games-section.
+  // Partidas por ronda. Con transmisión EN VIVO (torneo en curso) o sin partidas subidas, traemos
+  // las del broadcast de Lichess. Pero si YA tenemos partidas subidas (el archivo del torneo trae
+  // partidas), mostramos ESAS: son fiables y no dependen de que Lichess responda. Esto es clave en
+  // la web publicada y en torneos terminados, donde el fetch en vivo suele fallar o tarda.
+  var useLive = broadcastId && (status === 'live' || !roundOrder.length);
   h += '<div id="td-games-section">';
-  if (broadcastId) {
+  if (useLive) {
     h += '<div id="td-partidas-anchor" style="scroll-margin-top:10px"></div>';
     h += '<div style="text-align:center;padding:34px 0;color:var(--text3);font-size:13px">⏳ Cargando partidas desde Lichess…</div>';
   } else if (roundOrder.length) {
@@ -12019,11 +12017,11 @@ async function openTournamentDetail(type, id, scrollToGames) {
   if (status === 'live') _bcMarkLiveButtons(document.getElementById('tour-modal-body'));
   // Armar solo la primera ronda (las demás bajo demanda). Con transmisión de Lichess, las partidas
   // las trae _tdLoadLiveGames (abajo) en lugar de las subidas a mano.
-  if (!broadcastId && roundOrder.length) tdBuildRound(roundOrder[0]);
+  if (!useLive && roundOrder.length) tdBuildRound(roundOrder[0]);
   var m = document.querySelector('#tour-overlay .modal');
   if (m) m.scrollTop = 0;
   document.getElementById('tour-overlay').classList.add('open');
-  if (broadcastId) _tdLoadLiveGames(broadcastId, broadcastUrl, name, location, pgnKey2, typ, status);
+  if (useLive) _tdLoadLiveGames(broadcastId, broadcastUrl, name, location, pgnKey2, typ, status);
   // Si se pidió, bajar directo al apartado de partidas
   if (scrollToGames && m) {
     var anchor = document.getElementById('td-partidas-anchor');
