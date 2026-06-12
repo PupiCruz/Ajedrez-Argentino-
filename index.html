@@ -210,6 +210,17 @@
       padding: 16px 16px calc(var(--nav-h) + 28px);
     }
     #tour-overlay.open .modal-handle, body.player-page #overlay.open .modal-handle { display: none; }
+    /* VISOR de partidas como PÁGINA (igual criterio que torneo/perfil): header (logo→Inicio) y nav
+       visibles, fondo sólido, sin bottom-sheet. body.game-page va DESPUÉS → su z-index gana sobre
+       tour-page (la partida está "más arriba" que el torneo que quedó de fondo). */
+    body.game-page header, body.game-page nav { z-index: 310; }
+    body.game-page .chess-overlay.open { background: var(--bg); align-items: stretch; }
+    body.game-page .chess-overlay.open .chess-modal {
+      background: var(--bg); border: none; border-radius: 0;
+      max-height: none; height: 100%;
+      padding-bottom: calc(var(--nav-h) + 28px);
+    }
+    body.game-page .chess-overlay .chess-handle { display: none; }
     .modal-handle { width: 38px; height: 4px; background: var(--border); border-radius: 2px; margin: 0 auto 18px; }
     .m-head { display: flex; align-items: center; gap: 14px; margin-bottom: 20px; }
     .m-avatar {
@@ -5750,6 +5761,8 @@ function dbSearchGoPage(p) { _dbSearchPage = p; _renderDbResults(); window.scrol
 function dbOpenResult(idx) {
   var g = _dbSearchResults[idx]; if (!g) return;
   _cvTourGames = _dbSearchResults.map(function(r) { return r.pgn; });
+  // Link propio de cada resultado (si trae puntero al torneo): ?torneo=<t>&partida=<gi>.
+  _cvShareKeys = _dbSearchResults.map(function(r) { return (r.t != null && r.gi != null) ? { tour: r.t, idx: r.gi } : null; });
   _cvTourName = 'Búsqueda'; _cvTourLoc = '';
   openTourGameByIndex(idx);
 }
@@ -5771,7 +5784,7 @@ function _buildObIndex() {
     if (!we || !be) { var h = parsePgnHeaders(e.pgn); we = we||parseInt(h.WhiteElo)||0; be = be||parseInt(h.BlackElo)||0; }
     var avg = (we && be) ? (we + be) / 2 : (we || be || 0);
     var moves = e._m ? e._m.split(/\s+/).filter(Boolean) : _sanMoves(e.pgn);
-    return { moves: moves, white: e.white, black: e.black, avgElo: avg, result: e.result, pgn: e.pgn, date: e.date, event: e.event };
+    return { moves: moves, white: e.white, black: e.black, avgElo: avg, result: e.result, pgn: e.pgn, date: e.date, event: e.event, t: e.t, gi: e.gi };
   });
   return _obIdx;
 }
@@ -5955,7 +5968,9 @@ document.addEventListener('keydown', function(e) {
 });
 async function obOpenGame(i) {
   var g = _obShown[i]; if (!g) return;
-  _cvTourGames = _obShown.map(function(x) { return x.pgn; }); _cvTourName = 'Aperturas'; _cvTourLoc = '';
+  _cvTourGames = _obShown.map(function(x) { return x.pgn; });
+  _cvShareKeys = _obShown.map(function(x) { return (x.t != null && x.gi != null) ? { tour: x.t, idx: x.gi } : null; });
+  _cvTourName = 'Aperturas'; _cvTourLoc = '';
   var ply = _obLine.length;
   await openTourGameByIndex(i);   // espera a que esté la partida COMPLETA (modo publicado) antes de avanzar
   // Arrancar el visor en la POSICIÓN del tablero del explorador (avanzar `ply` jugadas por la línea
@@ -6322,7 +6337,10 @@ async function openPlayer(id) {
   var _suppress = window._suppressPlayerPush; window._suppressPlayerPush = false;
   if (!_playerHistoryPushed) {
     _playerHistoryPushed = true;
+    // Si reusamos la entrada (venimos del visor, p.ej. clic en el nombre del jugador), igual
+    // actualizamos la URL al link del perfil para no dejar el ?torneo=&partida= viejo en la barra.
     if (!_suppress) history.pushState({ playerProfile: true }, '', _playerHref(id));
+    else { try { history.replaceState({ playerProfile: true }, '', _playerHref(id)); } catch (e) {} }
   }
 
   // Buscar partidas de forma asincrónica. Reusa allTours ya calculado arriba (evita un
@@ -6361,7 +6379,7 @@ function openBroadcastGame64(pgn64, tourName, roundName, date) {
   var pgn;
   try { pgn = decodeURIComponent(escape(atob(pgn64))); } catch(e) { return; }
   // Abre partida individual sin navegación entre rondas
-  _cvTourGames = [pgn];
+  _cvTourGames = [pgn]; _cvShareKeys = [];
   _cvTourName  = tourName || '';
   _cvTourLoc   = roundName + (date ? ' · ' + date : '');
   _cvTourIdx   = 0;
@@ -6987,6 +7005,13 @@ var _cvTourName    = '';
 var _cvTourLoc     = '';
 var _cvTourIdx     = 0;    // índice de la partida actualmente abierta
 var _cvTourPgnKey  = null; // pgnKey del torneo detail activo (para actualizar visor en vivo)
+// Clave compartible por cada partida abierta en el visor: _cvShareKeys[i] = {tour,idx} | null.
+// Permite que la barra de direcciones muestre el link propio de la partida (?torneo=&partida=) y que
+// se pueda compartir. Se setea junto a _cvTourGames en cada lugar que abre el visor (torneo/buscador/
+// aperturas); null = sin link (broadcast suelto, etc.).
+var _cvShareKeys   = [];
+// URL de la partida actualmente abierta (o undefined si no tiene clave compartible).
+function _cvGameUrl() { var sk = _cvShareKeys[_cvTourIdx]; return sk ? _gameHref(sk.tour, sk.idx) : undefined; }
 
 async function openTourGameByIndex(idx) {
   if (idx < 0 || idx >= _cvTourGames.length) return;
@@ -7001,6 +7026,9 @@ async function openTourGameByIndex(idx) {
     if (full) { _cvTourGames[idx] = full; pgn = full; }
   }
   loadPgnIntoViewer(pgn, _cvTourName, _cvTourLoc, idx);
+  // Actualizar la barra de direcciones con el link de ESTA partida (al navegar prev/sig dentro del
+  // visor). El primer push lo hace cvOpenOverlay; acá solo reemplazamos para no apilar historial.
+  if (_cvHistoryPushed) { var _gu = _cvGameUrl(); if (_gu) { try { history.replaceState(history.state, '', _gu); } catch (e) {} } }
   // Sincronizar la ronda del torneo de fondo con la partida que se está viendo,
   // así al cerrar el visor queda mostrando la ronda correcta.
   var _tourOv = document.getElementById('tour-overlay');
@@ -7063,10 +7091,17 @@ function cvBuildTourNav(activeIdx) {
     var res = h.Result || '*';
     var resStr = res === '1/2-1/2' ? '½-½' : (res === '*' ? '·' : res);
     var bd = (h.Round && h.Round.indexOf('.') >= 0) ? h.Round.split('.')[1] : '';
-    items += '<div class="cv-rg-item' + (i === activeIdx ? ' active' : '') + '" onclick="openTourGameByIndex(' + i + ')">'
+    // Cada partida de la lista es un link (si tiene clave compartible) → se puede abrir en pestaña nueva
+    // desde el mismo visor; el click normal navega dentro del visor.
+    var sk = _cvShareKeys[i];
+    var rgTag = sk ? 'a' : 'div';
+    var rgAttrs = sk
+      ? ' href="' + _gameHref(sk.tour, sk.idx) + '" onclick="return tdGameNavClick(event,' + i + ')" style="text-decoration:none;color:inherit"'
+      : ' onclick="openTourGameByIndex(' + i + ')"';
+    items += '<' + rgTag + ' class="cv-rg-item' + (i === activeIdx ? ' active' : '') + '"' + rgAttrs + '>'
       + (bd ? '<span class="cv-rg-bd">' + escHtml(bd) + '</span>' : '')
       + '<div class="cv-rg-names"><div>' + escHtml(h.White || '?') + '</div><div>' + escHtml(h.Black || '?') + '</div></div>'
-      + '<span class="cv-rg-res">' + resStr + '</span></div>';
+      + '<span class="cv-rg-res">' + resStr + '</span></' + rgTag + '>';
   });
   var roundLbl = curRound ? 'Ronda ' + curRound : 'Partidas';
   var posLbl = totalInRound > 1 ? ('partida ' + curPos + ' de ' + totalInRound) : '';
@@ -8179,7 +8214,7 @@ function gotoPgPage(p) {
 function openCachedTourGame(cacheKey, idx) {
   var entry = _pgTourCache[cacheKey];
   if (!entry) return;
-  _cvTourGames = entry.games;
+  _cvTourGames = entry.games; _cvShareKeys = [];
   _cvTourName  = entry.name;
   _cvTourLoc   = entry.loc;
   _cvTourIdx   = idx;
@@ -9305,8 +9340,12 @@ function deleteNewsItem(id){
    NAVEGACIÓN
 ═══════════════════════════════════════════════════════ */
 function goTo(sec, btn) {
+  // El visor de partidas ahora es una PÁGINA y la nav queda clickeable por encima → si hay una partida
+  // abierta, cerrarla también (antes la tapaba el overlay y bastaba el popstate).
+  var _cv = document.getElementById('chess-overlay');
+  if (_cv && _cv.classList.contains('open')) { _cvHistoryPushed = false; closeChessViewer(); }
   // Si hay un torneo abierto en modo "página", cerrarlo (la nav navega a la sección elegida) y
-  // limpiar la URL ?torneo=. El visor de partidas (encima) lo cierra su propio popstate.
+  // limpiar la URL ?torneo=.
   var _to = document.getElementById('tour-overlay');
   if (_to && _to.classList.contains('open')) {
     _tdLiveStop(); _to.classList.remove('open'); _tourPageOff();
@@ -9316,6 +9355,9 @@ function goTo(sec, btn) {
   if (_pl && _pl.classList.contains('open')) {
     _pl.classList.remove('open'); _playerPageOff(); _playerHistoryPushed = false; _tourReturnToProfile = false;
   }
+  // La partida puede haberse abierto SIN torneo de fondo (desde la pestaña Partidas) → limpiar la URL
+  // ?torneo=&partida= que pudo quedar, para que la nav deje una URL coherente con la sección.
+  if (location.search) { try { history.replaceState({}, '', location.pathname); } catch (_) {} }
   var sections = document.querySelectorAll('.section');
   var navBtns  = document.querySelectorAll('.nav-btn');
   for (var i = 0; i < sections.length; i++) sections[i].classList.remove('active');
@@ -9726,6 +9768,7 @@ function openChessViewer(id) {
   }
   if (!data || !data.games || !data.games.length) return;
   cv.games = data.games.map(pgMeta);
+  _cvShareKeys = [];   // este visor no navega por torneo → sin link propio de partida
   cv.activeRound = null;
   var _lbar = document.getElementById('cv-live-bar'); if (_lbar && !_liveParams) _lbar.style.display = 'none';
   var _abar = document.getElementById('cv-arg-bar'); if (_abar && !_bcBaseKey) { _abar.style.display='none'; _abar.innerHTML=''; }
@@ -10361,11 +10404,14 @@ function cvOpenOverlay() {
   cvRenderBoard();
   if (!_cvHistoryPushed) {
     _cvHistoryPushed = true;
-    history.pushState({ chessViewer: true }, '');
+    // Con clave compartible, la URL pasa a ?torneo=<id>&partida=<idx> (link propio de la partida);
+    // sin clave (broadcast suelto, etc.) se mantiene la URL actual.
+    history.pushState({ chessViewer: true }, '', _cvGameUrl());
   }
   var cm = document.querySelector('.chess-modal');
   if (cm) cm.scrollTop = 0;
   document.getElementById('chess-overlay').classList.add('open');
+  _gamePageOn();   // modo PÁGINA: header (logo→Inicio) y nav visibles, no bottom-sheet
   // Medir la altura real del tablero DESPUÉS de que el layout esté pintado
   requestAnimationFrame(function() { requestAnimationFrame(cvSyncSideColHeight); });
 }
@@ -10376,6 +10422,7 @@ function closeChessViewer(e){
     // popstate cierre SOLO el visor (no el torneo de atrás). Evita salir de más.
     if (e && _cvHistoryPushed) { history.back(); return; }
     document.getElementById('chess-overlay').classList.remove('open');
+    _gamePageOff();   // salir del modo PÁGINA del visor
     // limpiar estado interactivo
     cv.sel = null; cv.legalDests = [];
     if(sf.engine) sf.engine.postMessage('stop');
@@ -10458,7 +10505,8 @@ document.addEventListener('keydown',function(e){
   if(e.key==='ArrowRight') { e.preventDefault(); cvNext(); }
   if(e.key==='Home')       { e.preventDefault(); cvFirst(); }
   if(e.key==='End')        { e.preventDefault(); cvLast(); }
-  if(e.key==='Escape')     { closeChessViewer(); }
+  // Escape: si hay historial propio, delegamos en Atrás (restaura la URL ?torneo=…); si no, cerrar directo.
+  if(e.key==='Escape')     { if (_cvHistoryPushed) { history.back(); } else { closeChessViewer(); } }
 });
 
 /* ═══════════════════════════════════════════════════════
@@ -11555,7 +11603,7 @@ function bcGridOpenGame(idx) {
   if (!_bcGrid) return;
   var round = _bcGrid.rounds[_bcGrid.curRound];
   if (!round || !round.games[idx]) return;
-  _cvTourGames = round.games;
+  _cvTourGames = round.games; _cvShareKeys = [];
   _cvTourName  = _bcGrid.name;
   _cvTourLoc   = round.name || '';
   openTourGameByIndex(idx);   // visor grande con jugadas/análisis
@@ -11920,6 +11968,14 @@ function tdCardClick(e, idx, pgnKey, tname, tloc) {
   tdOpenGame(idx, pgnKey, tname, tloc);
   return false;
 }
+// Click en una partida de la lista desplegable DENTRO del visor (cambia de partida). Modificador /
+// botón del medio → pestaña nueva; click normal → navega en el mismo visor (sin recargar).
+function tdGameNavClick(e, i) {
+  if (e && (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1)) return true;
+  if (e) e.preventDefault();
+  openTourGameByIndex(i);
+  return false;
+}
 // Igual pero para un resultado del buscador de la pestaña Partidas (abre por índice en la lista).
 function dbResultClick(e, idx) {
   if (e && (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1)) return true;
@@ -11941,6 +11997,11 @@ async function _openTourGameDeepLink(tourKey, idx) {
   try { await openTournamentDetail(_resolveTourType(tourKey), tourKey); } catch (e) {}
   var tries = 0;
   (function attempt() {
+    // Si el usuario ya navegó a otro lado (cerró el torneo) o abrió otra partida, abortar el reintento
+    // para no reabrir el visor encima de la sección nueva (caso de broadcasts que cargan lento).
+    var to = document.getElementById('tour-overlay');
+    if (!to || !to.classList.contains('open') || String(_tdTourKey) !== String(tourKey)) return;
+    if (document.getElementById('chess-overlay').classList.contains('open')) return;
     if (_tdCtx && _tdCtx.games && idx >= 0 && idx < _tdCtx.games.length) {
       tdOpenGame(idx, _tdCtx.pgnKey, _tdCtx.name, _tdCtx.location);
       return;
@@ -11986,6 +12047,20 @@ function _playerPageOff() {
   document.body.classList.remove('player-page');
   var ov = document.getElementById('overlay');
   if (ov) ov.style.top = '';
+}
+// Igual que _tourPageOn/Off pero para el VISOR de partidas (overlay #chess-overlay): la partida se ve
+// como PÁGINA completa (header→Inicio y nav visibles) en vez de tapar todo. El top del overlay = alto
+// del header. Cuando se abre desde un torneo, ese torneo queda como página de atrás (Atrás vuelve a él).
+function _gamePageOn() {
+  document.body.classList.add('game-page');
+  var hdr = document.querySelector('header');
+  var co = document.getElementById('chess-overlay');
+  if (hdr && co) co.style.top = hdr.offsetHeight + 'px';
+}
+function _gamePageOff() {
+  document.body.classList.remove('game-page');
+  var co = document.getElementById('chess-overlay');
+  if (co) co.style.top = '';
 }
 
 async function openTournamentDetail(type, id, scrollToGames) {
@@ -12776,6 +12851,9 @@ function tdOpenGame(idx, pgnKey, tname, tloc) {
   var data = PGN_DB[pgnKey];
   if (!data || !data.games || !data.games.length) return;
   _cvTourGames = data.games;
+  // Cada partida del torneo tiene su link propio ?torneo=<id>&partida=<i> (el índice en data.games
+  // coincide con el del archivo del torneo en la web, así el link es estable y compartible).
+  _cvShareKeys = (_tdTourKey != null) ? data.games.map(function(_, i) { return { tour: _tdTourKey, idx: i }; }) : [];
   _cvTourName  = tname;
   _cvTourLoc   = tloc;
   _cvTourPgnKey = pgnKey;
