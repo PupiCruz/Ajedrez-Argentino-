@@ -8,6 +8,32 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="description" content="Seguí el ajedrez argentino: torneos, rankings FIDE, jugadores y noticias.">
   <title>♟ Ajedrez Argentino</title>
+
+  <!-- Al abrir una partida por link directo (pestaña nueva / compartido), tapar TODO con una pantalla de
+       carga limpia desde el primer instante, así no se ven de fondo el panel de autor ni las secciones
+       mientras carga. Se quita cuando el visor abre (cvOpenOverlay) o por seguridad a los 12s.
+       (Va DESPUÉS del <meta charset> para no empujarlo fuera de los primeros 1024 bytes.) -->
+  <script>
+  (function(){
+    try {
+      var p = new URLSearchParams(location.search || '');
+      var isGame = !!(p.get('partida')) || !!(p.get('jugador') && p.get('t') && p.get('g'));
+      if (!isGame) return;
+      var cover = document.createElement('div');
+      cover.id = 'deeplink-cover';
+      cover.setAttribute('style', 'position:fixed;inset:0;z-index:99999;background:#0a0a0a;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif');
+      var b = '<div style="display:grid;grid-template-columns:repeat(8,1fr);grid-template-rows:repeat(8,1fr);width:min(58vw,250px);aspect-ratio:1;border-radius:6px;overflow:hidden;box-shadow:0 10px 44px rgba(0,0,0,.55)">';
+      for (var r=0;r<8;r++) for (var c=0;c<8;c++) b += '<div style="background:'+(((r+c)%2===0)?'#e9d7b5':'#b58863')+'"></div>';
+      b += '</div>';
+      cover.innerHTML = b + '<div style="display:flex;align-items:center;gap:10px;color:#cfcfcf;font-size:14px;font-weight:500">'
+        + '<span style="width:15px;height:15px;border:2px solid #444;border-top-color:#c9a227;border-radius:50%;display:inline-block;animation:dlspin .8s linear infinite"></span>'
+        + 'Cargando partida…</div><style>@keyframes dlspin{to{transform:rotate(360deg)}}</style>';
+      (document.body || document.documentElement).appendChild(cover);
+      setTimeout(function(){ try { if (cover.parentNode) cover.parentNode.removeChild(cover); } catch(e){} }, 12000);
+    } catch(e){}
+  })();
+  </script>
+
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -10521,6 +10547,8 @@ function cvOpenOverlay() {
   if (cm) cm.scrollTop = 0;
   document.getElementById('chess-overlay').classList.add('open');
   _gamePageOn();   // modo PÁGINA: header (logo→Inicio) y nav visibles, no bottom-sheet
+  // Ya está la partida abierta: quitar la pantalla de carga del deep-link (si venía de un link directo).
+  var _dlc = document.getElementById('deeplink-cover'); if (_dlc && _dlc.parentNode) _dlc.parentNode.removeChild(_dlc);
   _cvApplyBoardSize();    // tamaño de tablero elegido por el visitante (si guardó uno)
   _cvBuildPageExtras();   // "Volver al torneo" + miniaturas de la ronda
   // Medir la altura real del tablero DESPUÉS de que el layout esté pintado
