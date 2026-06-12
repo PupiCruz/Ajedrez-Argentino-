@@ -22,17 +22,11 @@ if errorlevel 1 (
     exit /b
 )
 
-:: Ver si hay cambios
+:: 1) Si hay archivos sin guardar (datos nuevos, etc.), commitearlos.
 git status --short > "%TEMP%\gitstatus.txt" 2>&1
 set /a size=0
 for %%F in ("%TEMP%\gitstatus.txt") do set /a size=%%~zF
-if %size%==0 (
-    echo No hay cambios para publicar.
-    echo La web ya esta al dia.
-    echo.
-    pause
-    exit /b
-)
+if %size%==0 goto checkpush
 
 echo Archivos con cambios:
 git status --short
@@ -42,12 +36,25 @@ set MSG=
 set /p MSG=Descripcion del cambio (Enter = "Actualizar datos"):
 if "%MSG%"=="" set MSG=Actualizar datos
 
+git add .
+git commit -m "%MSG%"
+
+:checkpush
+:: 2) Hay commits locales que todavia NO estan en la web? (aunque no haya archivos sin guardar)
 echo.
+set AHEAD=0
+for /f %%i in ('git rev-list --count origin/main..HEAD 2^>nul') do set AHEAD=%%i
+if "%AHEAD%"=="0" (
+    echo No hay cambios para publicar. La web ya esta al dia.
+    echo.
+    pause
+    exit /b
+)
+
+echo Hay %AHEAD% cambio(s) para subir a la web.
 echo Subiendo a GitHub...
 echo.
 
-git add .
-git commit -m "%MSG%"
 git push origin HEAD:main
 
 if errorlevel 1 (
