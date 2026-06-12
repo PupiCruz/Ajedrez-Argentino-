@@ -198,18 +198,18 @@
       border-radius: 22px 22px 0 0; padding: 20px 18px 44px;
       width: 100%; max-height: 88vh; overflow-y: auto;
     }
-    /* Detalle de torneo como PÁGINA (no bottom-sheet): el header (logo→Inicio) y la nav quedan
-       visibles. Solo cuando body.tour-page; el visor de partidas (z-300) sigue cubriendo todo y el
-       perfil de jugador NO se toca. El top del overlay lo fija el JS = alto del header. */
-    body.tour-page header { position: relative; z-index: 210; }
-    body.tour-page nav { z-index: 210; }
-    #tour-overlay.open { background: var(--bg); align-items: stretch; }
-    #tour-overlay.open .modal {
+    /* Detalle de torneo y PERFIL de jugador como PÁGINA (no bottom-sheet): el header (logo→Inicio)
+       y la nav quedan visibles. Solo cuando body.tour-page / body.player-page; el visor de partidas
+       (z-300) sigue cubriendo todo. El top del overlay lo fija el JS = alto del header. */
+    body.tour-page header, body.player-page header { position: relative; z-index: 210; }
+    body.tour-page nav, body.player-page nav { z-index: 210; }
+    #tour-overlay.open, body.player-page #overlay.open { background: var(--bg); align-items: stretch; }
+    #tour-overlay.open .modal, body.player-page #overlay.open .modal {
       background: var(--bg); border-top: none; border-radius: 0;
       max-height: none; height: 100%;
       padding: 16px 16px calc(var(--nav-h) + 28px);
     }
-    #tour-overlay.open .modal-handle { display: none; }
+    #tour-overlay.open .modal-handle, body.player-page #overlay.open .modal-handle { display: none; }
     .modal-handle { width: 38px; height: 4px; background: var(--border); border-radius: 2px; margin: 0 auto 18px; }
     .m-head { display: flex; align-items: center; gap: 14px; margin-bottom: 20px; }
     .m-avatar {
@@ -6295,6 +6295,7 @@ async function openPlayer(id) {
 
   document.getElementById('modal-body').innerHTML = h;
   document.getElementById('overlay').classList.add('open');
+  _playerPageOn();   // modo "página": header (logo) y nav visibles
   // Volver al inicio del modal cada vez que se abre un perfil
   var _m = document.querySelector('.modal');
   if (_m) _m.scrollTop = 0;
@@ -9170,6 +9171,7 @@ function closeModal(e) {
   // popstate cierre SOLO el perfil (no el torneo que pueda estar debajo).
   if (_playerHistoryPushed) { history.back(); return; }
   document.getElementById('overlay').classList.remove('open');
+  _playerPageOff();
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -9290,6 +9292,10 @@ function goTo(sec, btn) {
   if (_to && _to.classList.contains('open')) {
     _tdLiveStop(); _to.classList.remove('open'); _tourPageOff();
     if (_tourHistoryPushed) { _tourHistoryPushed = false; try { history.replaceState({}, '', location.pathname); } catch (_) {} }
+  }
+  var _pl = document.getElementById('overlay');
+  if (_pl && _pl.classList.contains('open')) {
+    _pl.classList.remove('open'); _playerPageOff(); _playerHistoryPushed = false; _tourReturnToProfile = false;
   }
   var sections = document.querySelectorAll('.section');
   var navBtns  = document.querySelectorAll('.nav-btn');
@@ -10402,6 +10408,7 @@ window.addEventListener('popstate', function() {
     _playerHistoryPushed = false;
     _tourReturnToProfile = false;   // se cierra el perfil: no hay a dónde volver
     player.classList.remove('open');
+    _playerPageOff();
     return;
   }
   var tour = document.getElementById('tour-overlay');
@@ -10420,7 +10427,7 @@ window.addEventListener('popstate', function() {
     if (_tourReturnToProfile) {
       _tourReturnToProfile = false;
       var ov = document.getElementById('overlay');
-      if (ov) ov.classList.add('open');
+      if (ov) { ov.classList.add('open'); _playerPageOn(); }
     }
     return;
   }
@@ -11880,7 +11887,7 @@ function goHome(e) {
   if (e && (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1)) return true;
   if (e) e.preventDefault();
   try { var cv2 = document.getElementById('chess-overlay'); if (cv2 && cv2.classList.contains('open')) { _cvHistoryPushed = false; closeChessViewer(); } } catch (_) {}
-  try { var pl = document.getElementById('overlay'); if (pl) pl.classList.remove('open'); } catch (_) {}
+  try { var pl = document.getElementById('overlay'); if (pl) { pl.classList.remove('open'); _playerPageOff(); } } catch (_) {}
   try { var to = document.getElementById('tour-overlay'); if (to && to.classList.contains('open')) { _tdLiveStop(); to.classList.remove('open'); _tourPageOff(); } } catch (_) {}
   _tourHistoryPushed = false; _playerHistoryPushed = false; _tourReturnToProfile = false;
   var btn = document.querySelector('.nav-btn[onclick*="\'torneos\'"]');
@@ -11900,6 +11907,18 @@ function _tourPageOff() {
   document.body.classList.remove('tour-page');
   var to = document.getElementById('tour-overlay');
   if (to) to.style.top = '';
+}
+// Igual que _tourPageOn/Off pero para el PERFIL de jugador (overlay #overlay).
+function _playerPageOn() {
+  document.body.classList.add('player-page');
+  var hdr = document.querySelector('header');
+  var ov = document.getElementById('overlay');
+  if (hdr && ov) ov.style.top = hdr.offsetHeight + 'px';
+}
+function _playerPageOff() {
+  document.body.classList.remove('player-page');
+  var ov = document.getElementById('overlay');
+  if (ov) ov.style.top = '';
 }
 
 async function openTournamentDetail(type, id, scrollToGames) {
