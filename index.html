@@ -5440,7 +5440,7 @@ function renderPlayers(list, id, showRank) {
       var rankCls = (showRank && globalRank <= 3) ? 'hi' : '';
       var rankTxt = showRank ? globalRank : '★';
       var tBadge = p.title ? ('<span class="p-title-badge p-title-' + p.title.toLowerCase() + '">' + p.title + '</span> ') : '';
-      html += '<div class="p-card" onclick="openPlayer(' + p.id + ')">';
+      html += '<a href="' + _playerHref(p.id) + '" class="p-card" onclick="return playerCardClick(event,' + p.id + ')" style="color:inherit;text-decoration:none">';
       html += '<span class="p-rank ' + rankCls + '">' + rankTxt + '</span>';
       html += '<div class="p-avatar">' + ini(p.name) + '</div>';
       html += '<div class="p-info">';
@@ -5457,7 +5457,7 @@ function renderPlayers(list, id, showRank) {
       html += '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>';
       html += '</svg></button>';
       }
-      html += '</div>';
+      html += '</a>';
     }
     el.innerHTML = html;
     renderPagination(list, _currentPage);
@@ -5469,7 +5469,7 @@ function renderPlayers(list, id, showRank) {
       var rankCls = (showRank && i < 3) ? 'hi' : '';
       var rankTxt = showRank ? (i + 1) : '★';
       var tBadge = p.title ? ('<span class="p-title-badge p-title-' + p.title.toLowerCase() + '">' + p.title + '</span> ') : '';
-      html += '<div class="p-card" onclick="openPlayer(' + p.id + ')">';
+      html += '<a href="' + _playerHref(p.id) + '" class="p-card" onclick="return playerCardClick(event,' + p.id + ')" style="color:inherit;text-decoration:none">';
       html += '<span class="p-rank ' + rankCls + '">' + rankTxt + '</span>';
       html += '<div class="p-avatar">' + ini(p.name) + '</div>';
       html += '<div class="p-info">';
@@ -5486,7 +5486,7 @@ function renderPlayers(list, id, showRank) {
       html += '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>';
       html += '</svg></button>';
       }
-      html += '</div>';
+      html += '</a>';
     }
     el.innerHTML = html;
   }
@@ -5978,6 +5978,7 @@ function renderFavs() {
 ═══════════════════════════════════════════════════════ */
 function toggleFav(e, id) {
   e.stopPropagation();
+  if (e && e.preventDefault) e.preventDefault();   // la tarjeta ahora es <a>: no navegar al togglear ⭐
   var idx = favs.indexOf(id);
   if (idx >= 0) { favs.splice(idx, 1); } else { favs.push(id); }
   localStorage.setItem('chess_favs', JSON.stringify(favs));
@@ -6309,7 +6310,7 @@ async function openPlayer(id) {
   var _suppress = window._suppressPlayerPush; window._suppressPlayerPush = false;
   if (!_playerHistoryPushed) {
     _playerHistoryPushed = true;
-    if (!_suppress) history.pushState({ playerProfile: true }, '');
+    if (!_suppress) history.pushState({ playerProfile: true }, '', _playerHref(id));
   }
 
   // Buscar partidas de forma asincrónica. Reusa allTours ya calculado arriba (evita un
@@ -11887,6 +11888,14 @@ function tourCardClick(e, key) {
   openTournamentByKey(key);
   return false;
 }
+// Link de jugador: misma idea que el torneo (?jugador=<id>). El id es el mismo en autor y publicado.
+function _playerHref(id) { return '?jugador=' + encodeURIComponent(id); }
+function playerCardClick(e, id) {
+  if (e && (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1)) return true;
+  if (e) e.preventDefault();
+  openPlayer(id);
+  return false;
+}
 // Click en el logo → Inicio: cierra cualquier overlay abierto, va a la sección Torneos y limpia la URL.
 // Con Ctrl/Cmd/medio click deja que el navegador abra "?" (inicio) en una pestaña nueva.
 function goHome(e) {
@@ -12963,17 +12972,23 @@ if (_ondemand) {
   }
 })();
 
-// Deep-link: si la URL trae ?torneo=<id> (link compartido o pestaña nueva), abrir ese torneo.
-// Dejamos el historial como [lista, torneo] (replaceState a la URL limpia + el push del detalle),
-// así el botón Atrás muestra la LISTA en vez de salir del sitio.
+// Deep-link: si la URL trae ?torneo=<id> o ?jugador=<id> (link compartido o pestaña nueva), abrir
+// eso. Dejamos el historial como [lista, detalle] (replaceState a la URL limpia + el push del
+// detalle), así el botón Atrás muestra la LISTA en vez de salir del sitio.
 (function() {
-  var tk = null;
-  try { tk = new URLSearchParams(location.search).get('torneo'); } catch (e) { return; }
-  if (!tk) return;
-  var tbtn = document.querySelector('.nav-btn[onclick*="\'torneos\'"]');
-  if (tbtn) { try { goTo('torneos', tbtn); } catch (e) {} }
-  try { history.replaceState({}, '', location.pathname); } catch (e) {}
-  openTournamentByKey(tk);
+  var params; try { params = new URLSearchParams(location.search); } catch (e) { return; }
+  var tk = params.get('torneo'), pk = params.get('jugador');
+  if (tk) {
+    var tbtn = document.querySelector('.nav-btn[onclick*="\'torneos\'"]');
+    if (tbtn) { try { goTo('torneos', tbtn); } catch (e) {} }
+    try { history.replaceState({}, '', location.pathname); } catch (e) {}
+    openTournamentByKey(tk);
+  } else if (pk) {
+    var jbtn = document.querySelector('.nav-btn[onclick*="\'jugadores\'"]');
+    if (jbtn) { try { goTo('jugadores', jbtn); } catch (e) {} }
+    try { history.replaceState({}, '', location.pathname); } catch (e) {}
+    openPlayer(/^-?\d+$/.test(pk) ? parseInt(pk, 10) : pk);
+  }
 })();
 
 /* ═══════════════════════════════════════════════════════
