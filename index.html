@@ -41,6 +41,7 @@
     }
     .h-brand { display: flex; align-items: center; gap: 10px; }
     .h-brand .piece { font-size: 24px; line-height: 1; }
+    .h-brand .h-logo { width: 32px; height: 32px; border-radius: 7px; object-fit: cover; display: block; flex-shrink: 0; }
     .h-brand h1 { font-size: 17px; font-weight: 700; letter-spacing: -0.3px; }
     .h-brand h1 em { color: var(--gold); font-style: normal; }
     .h-live {
@@ -197,6 +198,18 @@
       border-radius: 22px 22px 0 0; padding: 20px 18px 44px;
       width: 100%; max-height: 88vh; overflow-y: auto;
     }
+    /* Detalle de torneo como PÁGINA (no bottom-sheet): el header (logo→Inicio) y la nav quedan
+       visibles. Solo cuando body.tour-page; el visor de partidas (z-300) sigue cubriendo todo y el
+       perfil de jugador NO se toca. El top del overlay lo fija el JS = alto del header. */
+    body.tour-page header { position: relative; z-index: 210; }
+    body.tour-page nav { z-index: 210; }
+    #tour-overlay.open { background: var(--bg); align-items: stretch; }
+    #tour-overlay.open .modal {
+      background: var(--bg); border-top: none; border-radius: 0;
+      max-height: none; height: 100%;
+      padding: 16px 16px calc(var(--nav-h) + 28px);
+    }
+    #tour-overlay.open .modal-handle { display: none; }
     .modal-handle { width: 38px; height: 4px; background: var(--border); border-radius: 2px; margin: 0 auto 18px; }
     .m-head { display: flex; align-items: center; gap: 14px; margin-bottom: 20px; }
     .m-avatar {
@@ -753,10 +766,11 @@
 
   <!-- HEADER -->
   <header>
-    <div class="h-brand">
-      <span class="piece">♟</span>
-      <h1>Ajedrez <em>Argentino</em></h1>
-    </div>
+    <a href="?" class="h-brand" onclick="return goHome(event)" title="Inicio" style="text-decoration:none;color:inherit;cursor:pointer">
+      <img src="assets/logo.png" alt="ChessArgentino" class="h-logo" onerror="this.style.display='none';var s=this.nextElementSibling;if(s)s.style.display='inline-block'">
+      <span class="piece" style="display:none">♞</span>
+      <h1>Chess<em>Argentino</em></h1>
+    </a>
     <div class="h-live">
       <div class="h-live-dot"></div>
       En curso
@@ -9270,6 +9284,13 @@ function deleteNewsItem(id){
    NAVEGACIÓN
 ═══════════════════════════════════════════════════════ */
 function goTo(sec, btn) {
+  // Si hay un torneo abierto en modo "página", cerrarlo (la nav navega a la sección elegida) y
+  // limpiar la URL ?torneo=. El visor de partidas (encima) lo cierra su propio popstate.
+  var _to = document.getElementById('tour-overlay');
+  if (_to && _to.classList.contains('open')) {
+    _tdLiveStop(); _to.classList.remove('open'); _tourPageOff();
+    if (_tourHistoryPushed) { _tourHistoryPushed = false; try { history.replaceState({}, '', location.pathname); } catch (_) {} }
+  }
   var sections = document.querySelectorAll('.section');
   var navBtns  = document.querySelectorAll('.nav-btn');
   for (var i = 0; i < sections.length; i++) sections[i].classList.remove('active');
@@ -10394,6 +10415,7 @@ window.addEventListener('popstate', function() {
     _tourHistoryPushed = false;
     _tdLiveStop();   // cortar el auto-refresco de partidas en vivo del detalle
     tour.classList.remove('open');
+    _tourPageOff();
     // Si el torneo se abrió desde un perfil, reabrir el perfil (conserva su entrada).
     if (_tourReturnToProfile) {
       _tourReturnToProfile = false;
@@ -11852,6 +11874,33 @@ function tourCardClick(e, key) {
   openTournamentByKey(key);
   return false;
 }
+// Click en el logo → Inicio: cierra cualquier overlay abierto, va a la sección Torneos y limpia la URL.
+// Con Ctrl/Cmd/medio click deja que el navegador abra "?" (inicio) en una pestaña nueva.
+function goHome(e) {
+  if (e && (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1)) return true;
+  if (e) e.preventDefault();
+  try { var cv2 = document.getElementById('chess-overlay'); if (cv2 && cv2.classList.contains('open')) { _cvHistoryPushed = false; closeChessViewer(); } } catch (_) {}
+  try { var pl = document.getElementById('overlay'); if (pl) pl.classList.remove('open'); } catch (_) {}
+  try { var to = document.getElementById('tour-overlay'); if (to && to.classList.contains('open')) { _tdLiveStop(); to.classList.remove('open'); _tourPageOff(); } } catch (_) {}
+  _tourHistoryPushed = false; _playerHistoryPushed = false; _tourReturnToProfile = false;
+  var btn = document.querySelector('.nav-btn[onclick*="\'torneos\'"]');
+  if (btn) { try { goTo('torneos', btn); } catch (_) {} }
+  try { history.replaceState({}, '', location.pathname); } catch (_) {}
+  return false;
+}
+// Activa/desactiva el modo "página" del detalle de torneo (header + nav visibles). El top del
+// overlay se fija al alto real del header para que el contenido arranque justo debajo.
+function _tourPageOn() {
+  document.body.classList.add('tour-page');
+  var hdr = document.querySelector('header');
+  var to = document.getElementById('tour-overlay');
+  if (hdr && to) to.style.top = hdr.offsetHeight + 'px';
+}
+function _tourPageOff() {
+  document.body.classList.remove('tour-page');
+  var to = document.getElementById('tour-overlay');
+  if (to) to.style.top = '';
+}
 
 async function openTournamentDetail(type, id, scrollToGames) {
   _tdLiveStop();   // cortar el auto-refresco del vivo del torneo anterior (si lo había)
@@ -12045,6 +12094,7 @@ async function openTournamentDetail(type, id, scrollToGames) {
   var m = document.querySelector('#tour-overlay .modal');
   if (m) m.scrollTop = 0;
   document.getElementById('tour-overlay').classList.add('open');
+  _tourPageOn();   // modo "página": header (logo) y nav visibles arriba/abajo
   // Prioridad Lichess: si hay broadcast, SIEMPRE pedimos el vivo. roundOrder.length>0 le avisa que ya
   // hay partidas subidas mostrándose, para NO pisarlas con un error si el fetch falla (respaldo).
   if (hasBroadcast) _tdLoadLiveGames(broadcastId, broadcastUrl, name, location, pgnKey2, typ, status, roundOrder.length > 0);
@@ -12629,6 +12679,7 @@ function closeTourDetail(e) {
   // y reabre el perfil) en vez de cerrar la pila entera.
   if (_tourReturnToProfile && _tourHistoryPushed) { history.back(); return; }
   document.getElementById('tour-overlay').classList.remove('open');
+  _tourPageOff();
   if (_tourHistoryPushed) { _tourHistoryPushed = false; history.back(); }
 }
 
