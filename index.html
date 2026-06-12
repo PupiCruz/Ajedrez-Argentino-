@@ -5599,6 +5599,7 @@ function _buildDbSearchIndex() {
                wt: nameTokens(g.w||''), bt: nameTokens(g.b||''),
                year: parseInt((g.d||'').slice(0,4))||0, date: g.d||'',
                result: g.r||'', eco: g.e||'', plies: g.pl||0, event: g.ev||'',
+               t: g.t, gi: g.gi,
                _we: g.we||0, _be: g.be||0, _m: g.m||'' };
     });
     return _dbSearchIndex;
@@ -5724,10 +5725,18 @@ function _renderDbResults() {
   var rs = { '1-0': '1-0', '0-1': '0-1', '1/2-1/2': '½-½', '*': '*' };
   slice.forEach(function(g, i) {
     var idx = start + i;
-    h += '<div onclick="dbOpenResult(' + idx + ')" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-bottom:6px;cursor:pointer;background:var(--bg2)">';
+    // Si la partida sabe de qué torneo viene (índice on-demand), la fila es un link compartible
+    // (?torneo=<id>&partida=<gi>) → Ctrl/medio/right-click abre en pestaña nueva. Si no, queda como
+    // botón que abre el visor sobre la lista de resultados.
+    var lk = (g.t != null && g.t !== '' && g.gi != null);
+    var tag = lk ? 'a' : 'div';
+    var attrs = lk
+      ? ' href="' + _gameHref(g.t, g.gi) + '" onclick="return dbResultClick(event,' + idx + ')"'
+      : ' onclick="dbOpenResult(' + idx + ')"';
+    h += '<' + tag + attrs + ' style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;margin-bottom:6px;cursor:pointer;background:var(--bg2);text-decoration:none;color:inherit">';
     h += '<div style="flex:1;min-width:0"><div style="font-size:14px;color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escHtml(g.white || '?') + ' – ' + escHtml(g.black || '?') + '</div>';
     h += '<div style="font-size:12px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escHtml(g.event || '') + (g.date ? ' · ' + escHtml(g.date) : '') + (g.eco ? ' · ' + escHtml(g.eco) : '') + '</div></div>';
-    h += '<div style="font-size:13px;font-weight:700;color:var(--text2);flex-shrink:0">' + (rs[g.result] || '') + '</div></div>';
+    h += '<div style="font-size:13px;font-weight:700;color:var(--text2);flex-shrink:0">' + (rs[g.result] || '') + '</div></' + tag + '>';
   });
   if (total > 1) {
     h += '<div style="display:flex;justify-content:center;align-items:center;gap:12px;margin-top:10px">';
@@ -6076,10 +6085,13 @@ function playerTournamentsHtml(player) {
     if (tt.dates) meta.push('📅 ' + escHtml(tt.dates));
     if (tt.location) meta.push('📍 ' + escHtml(tt.location));
     var clickable = tt.type && (tt.id || tt.id === 0);
-    var onClick = clickable
-      ? ' onclick="openTourFromProfile(\'' + escJs(tt.type) + '\',\'' + escJs(String(tt.id)) + '\')" title="Ver el torneo" onmouseover="this.style.borderColor=\'var(--gold)\'" onmouseout="this.style.borderColor=\'var(--border)\'"'
+    // Torneo como link (?torneo=<id>): con Ctrl/Cmd/medio-click se abre en una pestaña nueva; click
+    // normal lo abre en la misma página recordando volver al perfil. Right-click → "Abrir en pestaña".
+    var tag = clickable ? 'a' : 'div';
+    var attrs = clickable
+      ? ' href="' + _tourHref(tt.id) + '" onclick="return tourFromProfileClick(event,\'' + escJs(tt.type) + '\',\'' + escJs(String(tt.id)) + '\')" title="Ver el torneo" onmouseover="this.style.borderColor=\'var(--gold)\'" onmouseout="this.style.borderColor=\'var(--border)\'"'
       : '';
-    return '<div style="background:var(--bg3);border:1px solid var(--border);border-radius:9px;padding:9px 11px;margin-bottom:7px;transition:border-color .15s' + (clickable ? ';cursor:pointer' : '') + '"' + onClick + '>'
+    return '<' + tag + ' style="display:block;text-decoration:none;color:inherit;background:var(--bg3);border:1px solid var(--border);border-radius:9px;padding:9px 11px;margin-bottom:7px;transition:border-color .15s' + (clickable ? ';cursor:pointer' : '') + '"' + attrs + '>'
       + '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">'
       + '<div style="font-size:13.5px;font-weight:600;color:var(--text);line-height:1.3">' + escHtml(tt.name) + '</div>'
       + badge + '</div>'
@@ -6087,7 +6099,7 @@ function playerTournamentsHtml(player) {
       + (meta.length ? '<div style="font-size:11.5px;color:var(--text3)">' + meta.join(' · ') + '</div>' : '<span></span>')
       + (clickable ? '<span style="font-size:11px;color:var(--gold);font-weight:600;white-space:nowrap">Ver torneo ›</span>' : '')
       + '</div>'
-      + '</div>';
+      + '</' + tag + '>';
   }
   var h = '<div class="m-sec-lbl">🏆 Torneos del jugador</div>';
   r.live.forEach(function(tt) { h += row(tt, true); });
@@ -11896,6 +11908,46 @@ function playerCardClick(e, id) {
   openPlayer(id);
   return false;
 }
+// ── Links / pestañas de PARTIDAS (deep-link ?torneo=<id>&partida=<idx>) ───────────────────────────
+// El link abre el torneo y, dentro, la partida nº idx. Sirve para compartirla y para abrirla en una
+// pestaña/ventana nueva (igual que los torneos y jugadores).
+function _gameHref(tourKey, idx) { return '?torneo=' + encodeURIComponent(tourKey) + '&partida=' + idx; }
+// Click en una partida-miniatura de torneo (un <a>). Con Ctrl/Cmd/Shift o botón del medio deja que el
+// navegador abra el href en una pestaña nueva; click normal: la abre en el visor de la misma página.
+function tdCardClick(e, idx, pgnKey, tname, tloc) {
+  if (e && (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1)) return true;
+  if (e) e.preventDefault();
+  tdOpenGame(idx, pgnKey, tname, tloc);
+  return false;
+}
+// Igual pero para un resultado del buscador de la pestaña Partidas (abre por índice en la lista).
+function dbResultClick(e, idx) {
+  if (e && (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1)) return true;
+  if (e) e.preventDefault();
+  dbOpenResult(idx);
+  return false;
+}
+// Click en un torneo dentro del perfil de un jugador. Modificador / botón del medio → pestaña nueva;
+// click normal → abre el torneo recordando que hay que volver al perfil al cerrarlo.
+function tourFromProfileClick(e, type, id) {
+  if (e && (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1)) return true;
+  if (e) e.preventDefault();
+  openTourFromProfile(type, id);
+  return false;
+}
+// Deep-link a una partida: abre el torneo y, cuando sus partidas están listas, abre la nº idx en el
+// visor. Reintenta un rato porque con transmisión de Lichess las partidas llegan de forma asíncrona.
+async function _openTourGameDeepLink(tourKey, idx) {
+  try { await openTournamentDetail(_resolveTourType(tourKey), tourKey); } catch (e) {}
+  var tries = 0;
+  (function attempt() {
+    if (_tdCtx && _tdCtx.games && idx >= 0 && idx < _tdCtx.games.length) {
+      tdOpenGame(idx, _tdCtx.pgnKey, _tdCtx.name, _tdCtx.location);
+      return;
+    }
+    if (++tries < 25) setTimeout(attempt, 150);
+  })();
+}
 // Click en el logo → Inicio: cierra cualquier overlay abierto, va a la sección Torneos y limpia la URL.
 // Con Ctrl/Cmd/medio click deja que el navegador abra "?" (inicio) en una pestaña nueva.
 function goHome(e) {
@@ -11938,6 +11990,7 @@ function _playerPageOff() {
 
 async function openTournamentDetail(type, id, scrollToGames) {
   _tdLiveStop();   // cortar el auto-refresco del vivo del torneo anterior (si lo había)
+  _tdTourKey = id; // para los links de partidas (?torneo=<id>&partida=<idx>)
   var name = '', location = '', dates = '', status = 'upcoming', typ = '', rounds = null;
   var leaders = [], games = [], crUrl = '', broadcastId = '', broadcastUrl = '', pgnGames = [];
   var timeControl = '', chesscomUrl = '', flyerUrl = '';
@@ -12407,6 +12460,7 @@ function trfHandleFile(event, trfKey) {
 
 // Arma (una sola vez) la grilla de miniaturas de una ronda
 var _tdCtx = null;
+var _tdTourKey = null;   // clave del torneo abierto (para armar los links ?torneo=<id>&partida=<idx>)
 var _TD_PER_PAGE = 24;   // miniaturas por página (carga fluida con muchos tableros)
 var _tdPage = 0;
 function tdBuildRound(rInt) {
@@ -12432,7 +12486,7 @@ function tdBuildRound(rInt) {
     var wScoreColor = res === '1-0' ? 'var(--green)' : res === '0-1' ? 'var(--red)' : 'var(--text2)';
     var bScoreColor = res === '0-1' ? 'var(--green)' : res === '1-0' ? 'var(--red)' : 'var(--text2)';
     var isArg = _isArgGame(g.h) ? '1' : '0';
-    h += '<div class="td-card" data-arg="' + isArg + '" onclick="tdOpenGame(' + globalIdx + ',\'' + _tdCtx.pgnKey + '\',\'' + escJs(_tdCtx.name) + '\',\'' + escJs(_tdCtx.location) + '\')" style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;cursor:pointer;transition:border-color .15s;overflow:hidden" onmouseover="this.style.borderColor=\'var(--gold-dim)\'" onmouseout="this.style.borderColor=\'var(--border)\'">';
+    h += '<a class="td-card" data-arg="' + isArg + '" href="' + _gameHref(_tdTourKey, globalIdx) + '" onclick="return tdCardClick(event,' + globalIdx + ',\'' + _tdCtx.pgnKey + '\',\'' + escJs(_tdCtx.name) + '\',\'' + escJs(_tdCtx.location) + '\')" style="display:block;text-decoration:none;color:inherit;background:var(--bg3);border:1px solid var(--border);border-radius:8px;cursor:pointer;transition:border-color .15s;overflow:hidden" onmouseover="this.style.borderColor=\'var(--gold-dim)\'" onmouseout="this.style.borderColor=\'var(--border)\'">';
     h += '<div style="display:flex;align-items:center;gap:5px;padding:5px 7px 4px">';
     h += '<div style="flex:1;font-size:11px;line-height:1.25;color:var(--text)">' + bTitle + escHtml(black) + '</div>';
     h += '<span class="td-clk" id="td-clk-b-' + globalIdx + '" style="font-size:10px;font-variant-numeric:tabular-nums;color:var(--text3);flex-shrink:0"></span>';
@@ -12446,7 +12500,7 @@ function tdBuildRound(rInt) {
     h += '<span class="td-clk" id="td-clk-w-' + globalIdx + '" style="font-size:10px;font-variant-numeric:tabular-nums;color:var(--text3);flex-shrink:0"></span>';
     h += '<span style="font-size:11px;font-weight:700;color:' + wScoreColor + ';flex-shrink:0">' + wScore + '</span>';
     h += '</div>';
-    h += '</div>';
+    h += '</a>';
   });
   panel.innerHTML = h;
   tdFillBoards(rInt);   // calcula y dibuja las posiciones finales en segundo plano
@@ -12977,12 +13031,13 @@ if (_ondemand) {
 // detalle), así el botón Atrás muestra la LISTA en vez de salir del sitio.
 (function() {
   var params; try { params = new URLSearchParams(location.search); } catch (e) { return; }
-  var tk = params.get('torneo'), pk = params.get('jugador');
+  var tk = params.get('torneo'), pk = params.get('jugador'), gk = params.get('partida');
   if (tk) {
     var tbtn = document.querySelector('.nav-btn[onclick*="\'torneos\'"]');
     if (tbtn) { try { goTo('torneos', tbtn); } catch (e) {} }
     try { history.replaceState({}, '', location.pathname); } catch (e) {}
-    openTournamentByKey(tk);
+    if (gk != null && gk !== '' && /^\d+$/.test(gk)) _openTourGameDeepLink(tk, parseInt(gk, 10));
+    else openTournamentByKey(tk);
   } else if (pk) {
     var jbtn = document.querySelector('.nav-btn[onclick*="\'jugadores\'"]');
     if (jbtn) { try { goTo('jugadores', jbtn); } catch (e) {} }
