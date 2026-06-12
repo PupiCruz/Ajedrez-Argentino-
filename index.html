@@ -7180,6 +7180,9 @@ function cvTourNext() { openTourGameByIndex(_cvTourIdx + 1); }
    + lista desplegable (oculta) con las partidas de la ronda actual y sus nombres. */
 function cvBuildTourNav(activeIdx) {
   if (!_cvTourGames || _cvTourGames.length <= 1) return '';
+  // Solapa de rondas: solo tiene sentido viendo un torneo/transmisión. En partidas sueltas (perfil,
+  // buscador, aperturas) el agrupado por ronda no aplica → no se muestra.
+  if (!_cvFromTournament) return '';
   var curRound = parseInt(parsePgnHeaders(_cvTourGames[activeIdx]).Round) || 0;
   var items = '', totalInRound = 0, curPos = 0;
   _cvTourGames.forEach(function(g, i) {
@@ -9874,7 +9877,7 @@ function openChessViewer(id) {
   }
   if (!data || !data.games || !data.games.length) return;
   cv.games = data.games.map(pgMeta);
-  _cvShareKeys = []; _cvFromTournament = false;   // este visor no navega por torneo → sin link propio de partida
+  _cvShareKeys = []; _cvFromTournament = true;   // visor de torneo/transmisión: muestra la solapa de rondas (sin link propio por partida)
   cv.activeRound = null;
   var _lbar = document.getElementById('cv-live-bar'); if (_lbar && !_liveParams) _lbar.style.display = 'none';
   var _abar = document.getElementById('cv-arg-bar'); if (_abar && !_bcBaseKey) { _abar.style.display='none'; _abar.innerHTML=''; }
@@ -11713,7 +11716,7 @@ function bcGridOpenGame(idx) {
   if (!_bcGrid) return;
   var round = _bcGrid.rounds[_bcGrid.curRound];
   if (!round || !round.games[idx]) return;
-  _cvTourGames = round.games; _cvShareKeys = []; _cvFromTournament = false;
+  _cvTourGames = round.games; _cvShareKeys = []; _cvFromTournament = true;
   _cvTourName  = _bcGrid.name;
   _cvTourLoc   = round.name || '';
   openTourGameByIndex(idx);   // visor grande con jugadas/análisis
@@ -12115,11 +12118,13 @@ async function _openTourGameDeepLink(tourKey, idx) {
     var to = document.getElementById('tour-overlay');
     if (!to || !to.classList.contains('open') || String(_tdTourKey) !== String(tourKey)) return;
     if (document.getElementById('chess-overlay').classList.contains('open')) return;
-    if (_tdCtx && _tdCtx.games && idx >= 0 && idx < _tdCtx.games.length) {
+    // Esperar a que la librería de ajedrez (chess.js) esté lista: en pestaña nueva el torneo abre antes
+    // que termine de cargar el script y, sin esto, el visor tira "la librería todavía se está cargando".
+    if (typeof Chess !== 'undefined' && _tdCtx && _tdCtx.games && idx >= 0 && idx < _tdCtx.games.length) {
       tdOpenGame(idx, _tdCtx.pgnKey, _tdCtx.name, _tdCtx.location);
       return;
     }
-    if (++tries < 25) setTimeout(attempt, 150);
+    if (++tries < 60) setTimeout(attempt, 150);
   })();
 }
 // Deep-link a una partida abierta desde un PERFIL (?jugador=&t=&g=): abre el perfil y, cuando su historial
@@ -12132,8 +12137,9 @@ async function _openPlayerGameDeepLink(pid, ti, gi) {
     if (!ov || !ov.classList.contains('open')) return;            // el usuario navegó a otro lado
     if (document.getElementById('chess-overlay').classList.contains('open')) return;
     var entry = _pgTourCache[cacheKey];
-    if (entry && entry.games && gi >= 0 && gi < entry.games.length) { openCachedTourGame(cacheKey, gi); return; }
-    if (++tries < 25) setTimeout(attempt, 150);
+    // Esperar también a la librería de ajedrez (chess.js) para no tirar el aviso de "todavía cargando".
+    if (typeof Chess !== 'undefined' && entry && entry.games && gi >= 0 && gi < entry.games.length) { openCachedTourGame(cacheKey, gi); return; }
+    if (++tries < 60) setTimeout(attempt, 150);
   })();
 }
 // Click en el logo → Inicio: cierra cualquier overlay abierto, va a la sección Torneos y limpia la URL.
