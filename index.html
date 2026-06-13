@@ -3002,18 +3002,25 @@ function crSyncResultsFromPgn(key){
   var changed=false;
   Object.keys(data.rounds).forEach(function(r){
     (data.rounds[r]||[]).forEach(function(p){
-      // Resultado del Excel o manual (no vacío y NO marcado como del PGN) → intocable.
-      if(p.res && !p.resFromPgn) return;
       var gi=crFindGameIdx(r, p.w, p.b);
       if(gi<0) return;
       var hdrs=parsePgnHeaders(db.games[gi]);
+      var gw=crNormTokens(hdrs.White), gb=crNormTokens(hdrs.Black);
+      var pw=crNormTokens(p.w), pb=crNormTokens(p.b);
+      var invert=(gw===pb && gb===pw);   // los colores del PGN están invertidos respecto del cruce
+      // Rellenar los Elos que falten con los de la partida (el broadcast trae WhiteElo/BlackElo),
+      // orientados según quién juega blancas en el cruce. Arregla, p.ej., el Elo de blancas que
+      // algunos Excel de Chess-Results no traen en la columna esperada.
+      var pgnWe=parseInt(hdrs.WhiteElo)||0, pgnBe=parseInt(hdrs.BlackElo)||0;
+      var ewSrc=invert?pgnBe:pgnWe, ebSrc=invert?pgnWe:pgnBe;
+      if(!p.ew && ewSrc){ p.ew=ewSrc; changed=true; }
+      if(!p.eb && ebSrc){ p.eb=ebSrc; changed=true; }
+      // Resultado del Excel o manual (no vacío y NO marcado como del PGN) → intocable.
+      if(p.res && !p.resFromPgn) return;
       var res=(hdrs.Result||'').trim();
       var base = res==='1-0'?'1-0' : res==='0-1'?'0-1' : (res==='1/2-1/2'||res==='½-½')?'½-½' : '';
       if(!base) return;  // partida sin resultado definido (en curso) → no completar
-      // Orientar el resultado según quién juega con blancas en el cruce.
-      var gw=crNormTokens(hdrs.White), gb=crNormTokens(hdrs.Black);
-      var pw=crNormTokens(p.w), pb=crNormTokens(p.b);
-      var mapped = (gw===pb && gb===pw)
+      var mapped = invert
         ? (base==='1-0'?'0-1' : base==='0-1'?'1-0' : '½-½')   // colores invertidos
         : base;                                               // misma orientación
       if(p.res!==mapped || !p.resFromPgn){ p.res=mapped; p.resFromPgn=true; changed=true; }
@@ -3836,8 +3843,12 @@ function _crParseSections(rows,roundHdrIdx){
     if(wCol<0||bCol<0||bCol<=wCol) return null;
     var rCol=find(/^(Resultado|Result|Res\.?)$/i,wCol,bCol+2); if(rCol<0) rCol=find(/^(Resultado|Result|Res\.?)$/i);
     var rc=rCol<0?Math.floor((wCol+bCol)/2):rCol;
+    // Elo de blancas: a la IZQUIERDA del nombre (No|Elo|Tít|Blancas) o a la DERECHA (Blancas|Elo|Pts).
     var eloWCol=-1; for(var i=wCol-1;i>=0;i--){ if(/^Elo$/i.test((hdr[i]||'').trim())){eloWCol=i;break;} }
+    if(eloWCol<0){ for(var i=wCol+1;i<rc;i++){ if(/^Elo$/i.test((hdr[i]||'').trim())){eloWCol=i;break;} } }
+    // Elo de negras: a la DERECHA del nombre (Negras|Tít|Elo|No) o a la IZQUIERDA (Pts|Elo|Tít|Negras).
     var eloBCol=-1; for(var i=bCol+1;i<hdr.length;i++){ if(/^Elo$/i.test((hdr[i]||'').trim())){eloBCol=i;break;} }
+    if(eloBCol<0){ for(var i=bCol-1;i>rc;i--){ if(/^Elo$/i.test((hdr[i]||'').trim())){eloBCol=i;break;} } }
     var noWCol=-1; for(var i=wCol-1;i>=0;i--){ if(/^No\.?$/i.test((hdr[i]||'').trim())){noWCol=i;break;} }
     var noBCol=-1; for(var i=bCol+1;i<hdr.length;i++){ if(/^No\.?$/i.test((hdr[i]||'').trim())){noBCol=i;break;} }
     var ptsWCol=-1; for(var i=wCol+1;i<rc;i++){ if(/^Pts\.?$/i.test((hdr[i]||'').trim())){ptsWCol=i;break;} }
