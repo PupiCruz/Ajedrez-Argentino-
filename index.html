@@ -4758,8 +4758,10 @@ async function exportHtml() {
       { name: 'index.html', data: enc.encode(html) },
       { name: 'data/manifest.js', data: enc.encode(manifestJs) },
       { name: 'data/embedded-photos.js', data: enc.encode(_collectExportPhotosJs()) },
-      { name: 'data/games.json', data: enc.encode(JSON.stringify(split.gameEntries)) }
     ];
+    var _ge = split.gameEntries, _half = Math.ceil(_ge.length / 2);
+    zipEntries.push({ name: 'data/games_0.json', data: enc.encode(JSON.stringify(_ge.slice(0, _half))) });
+    zipEntries.push({ name: 'data/games_1.json', data: enc.encode(JSON.stringify(_ge.slice(_half))) });
     Object.keys(split.tFiles).forEach(function(id) { zipEntries.push({ name: 'data/t/' + _tfn(id), data: enc.encode(JSON.stringify(split.tFiles[id])) }); });
     Object.keys(split.pFiles).forEach(function(id) { zipEntries.push({ name: 'data/p/' + _tfn(id), data: enc.encode(JSON.stringify(split.pFiles[id])) }); });
     // Omite el motor nnue (fuente de stockfish-embedded.js, no se usa en runtime): ahorra ~600KB.
@@ -4790,8 +4792,10 @@ async function exportGithubData() {
     var zipEntries = [
       { name: 'data/manifest.js', data: enc.encode(manifestJs) },
       { name: 'data/embedded-photos.js', data: enc.encode(_collectExportPhotosJs()) },
-      { name: 'data/games.json', data: enc.encode(JSON.stringify(split.gameEntries)) }
     ];
+    var _ge2 = split.gameEntries, _half2 = Math.ceil(_ge2.length / 2);
+    zipEntries.push({ name: 'data/games_0.json', data: enc.encode(JSON.stringify(_ge2.slice(0, _half2))) });
+    zipEntries.push({ name: 'data/games_1.json', data: enc.encode(JSON.stringify(_ge2.slice(_half2))) });
     Object.keys(split.tFiles).forEach(function(id) { zipEntries.push({ name: 'data/t/' + _tfn(id), data: enc.encode(JSON.stringify(split.tFiles[id])) }); });
     Object.keys(split.pFiles).forEach(function(id) { zipEntries.push({ name: 'data/p/' + _tfn(id), data: enc.encode(JSON.stringify(split.pFiles[id])) }); });
     var zipBlob = await _buildZip(zipEntries);
@@ -5653,8 +5657,11 @@ function _loadGamesIndexAsync(cb) {
   _gamesIdxCbs.push(cb);
   if (_gamesIdxLoading) return;
   _gamesIdxLoading = true;
-  fetch('data/games.json').then(function(r) { return r.json(); }).then(function(data) {
-    window.__GAMES_INDEX__ = data;
+  Promise.all([
+    fetch('data/games_0.json').then(function(r) { return r.json(); }),
+    fetch('data/games_1.json').then(function(r) { return r.json(); })
+  ]).then(function(parts) {
+    window.__GAMES_INDEX__ = parts[0].concat(parts[1]);
     _gamesIdxLoading = false;
     var cbs = _gamesIdxCbs; _gamesIdxCbs = [];
     cbs.forEach(function(f) { f(); });
