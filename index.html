@@ -478,13 +478,15 @@
          del libro baja a la fila siguiente (flex-wrap). */
       .cv-cols { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 24px; --cv-bw: 376px; }
       .cv-board-col { flex: 0 0 388px; }
-      /* Notaciones: estiradas hasta alinear con el borde inferior del tablero+nav (cv-bw + 148px). */
-      .cv-moves-col { flex: 1 1 300px; min-width: 280px; max-height: calc(var(--cv-bw) + 148px); }
-      .cv-book-col  { flex: 1 1 280px; min-width: 260px; }
+      /* Notaciones y libro: altura = borde inferior del tablero (la fija cvSyncSideColHeight por JS;
+         el max-height del CSS es respaldo). El libro scrollea si se pasa; las notaciones también. */
+      .cv-moves-col { flex: 1 1 300px; min-width: 280px; max-height: calc(var(--cv-bw) + 148px); overflow: hidden; }
+      .cv-book-col  { flex: 1 1 280px; min-width: 260px; max-height: calc(var(--cv-bw) + 148px); overflow-y: auto; overflow-x: hidden; }
       /* Tablero y filas de jugadores al MISMO ancho (alineados con los bordes del tablero). */
       .cv-board-col .chess-board-wrap { max-width: var(--cv-bw); }
       .cv-board-col .cv-player-row { max-width: var(--cv-bw); margin-left: auto; margin-right: auto; }
-      .cv-moves-col .chess-mwrap { min-height: 60px; max-height: none; }
+      /* El listado de jugadas absorbe el alto sobrante (se achica cuando aparece el motor). */
+      .cv-moves-col .chess-mwrap { flex: 1 1 0; min-height: 0; max-height: none; }
     }
     /* Pantallas anchas: aprovechar el espacio y agrandar el tablero. */
     @media (min-width: 1100px) {
@@ -602,13 +604,12 @@
 
     /* Columnas MEDIA (notaciones) y DERECHA (libro). En celular se apilan (block por defecto). */
     .cv-moves-col, .cv-book-col { display: flex; flex-direction: column; }
-    .cv-moves-col > *, .cv-book-col > * { flex-shrink: 0; }
-    /* Área de notaciones: el panel del motor se SUPERPONE (overlay absoluto) sin empujar las jugadas. */
-    .cv-moves-area { position: relative; flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
-    .cv-moves-area .chess-mwrap { flex: 1 1 auto; }
-    #sf-panel { position: absolute; top: 0; left: 0; right: 0; z-index: 9;
-      background: var(--bg2); border: 1px solid var(--gold-dim); border-radius: 9px;
-      box-shadow: 0 6px 20px rgba(0,0,0,.55); padding: 8px 10px; max-height: 48%; overflow-y: auto; }
+    /* El listado de jugadas (mwrap) es el ÚNICO flexible: absorbe el espacio. Lo demás no se comprime. */
+    .cv-moves-col > *:not(.chess-mwrap), .cv-book-col > * { flex-shrink: 0; }
+    /* Motor EN FLUJO arriba de las notaciones: al encenderse, las notaciones (flex) se achican; al
+       apagarse, se re-estiran. No es overlay y no empuja nada por debajo del borde del tablero. */
+    #sf-panel { background: var(--bg3); border: 1px solid var(--gold-dim); border-radius: 9px;
+      padding: 6px 9px; margin: 8px 0 0; flex-shrink: 0; max-height: 42%; overflow-y: auto; }
     /* Partidas de la apertura (opt-in) debajo del libro. */
     .cv-book-games { margin-top: 12px; }
     .cv-bg-btn { width: 100%; padding: 9px; border-radius: 8px; border: 1px solid var(--border);
@@ -808,8 +809,7 @@
        por más líneas que tenga en cada posición. */
     /* Alto FIJO: el libro no cambia de tamaño por más/menos líneas → los botones de abajo no saltan */
     #ob-list { height: 152px; overflow-y: auto; overflow-x: hidden; }
-    /* Cuando estamos fuera de libro, el listado de jugadas se alarga (estilo Lichess) */
-    .cv-nobook .chess-mwrap { max-height: 350px; }
+    /* (El libro vive en su propia columna; ocultarlo ya no afecta el alto de las notaciones.) */
     #ob-list::-webkit-scrollbar { width: 6px; }
     #ob-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
     .ob-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
@@ -1106,19 +1106,18 @@
       </div>
     </div>
 
-    <!-- JUGADAS (notaciones, estiradas hasta el borde del tablero) -->
+    <!-- JUGADAS (notaciones, estiradas hasta el borde inferior del tablero) -->
     <div class="chess-mlabel" style="margin-top:10px">Movimientos</div>
-    <div class="cv-moves-area">
-      <div class="chess-mwrap"><div class="chess-mlist" id="cv-moves"></div></div>
-      <!-- El módulo del motor PISA las notaciones (overlay absoluto) sin empujarlas para abajo. -->
-      <div id="sf-panel" style="display: none;">
-        <div class="sf-lines">
-          <div class="sf-line"><span class="sf-ln">1</span><span class="sf-lscore sf-pos" id="sf-ls0"></span><span class="sf-lmoves" id="sf-lm0"></span></div>
-          <div class="sf-line"><span class="sf-ln">2</span><span class="sf-lscore sf-pos" id="sf-ls1"></span><span class="sf-lmoves" id="sf-lm1"></span></div>
-          <div class="sf-line"><span class="sf-ln">3</span><span class="sf-lscore sf-pos" id="sf-ls2"></span><span class="sf-lmoves" id="sf-lm2"></span></div>
-        </div>
+    <!-- Módulo del motor: ARRIBA de las notaciones (en flujo). Al encenderse, las notaciones se
+         achican de arriba hacia abajo (flex) sin empujarse para abajo; al apagarse, se re-estiran. -->
+    <div id="sf-panel" style="display: none;">
+      <div class="sf-lines">
+        <div class="sf-line"><span class="sf-ln">1</span><span class="sf-lscore sf-pos" id="sf-ls0"></span><span class="sf-lmoves" id="sf-lm0"></span></div>
+        <div class="sf-line"><span class="sf-ln">2</span><span class="sf-lscore sf-pos" id="sf-ls1"></span><span class="sf-lmoves" id="sf-lm1"></span></div>
+        <div class="sf-line"><span class="sf-ln">3</span><span class="sf-lscore sf-pos" id="sf-ls2"></span><span class="sf-lmoves" id="sf-lm2"></span></div>
       </div>
     </div>
+    <div class="chess-mwrap"><div class="chess-mlist" id="cv-moves"></div></div>
 
     <div class="cv-copy-bar"><button class="cv-copy-btn" id="cv-btn-fen" onclick="cvCopyFen()">Copiar FEN</button><button class="cv-copy-btn" id="cv-btn-pgn" onclick="cvCopyPgn()">Copiar PGN</button><button class="cv-copy-btn cv-share-btn" id="cv-btn-share" onclick="cvShareGame()">🔗 Compartir</button></div>
     </div><!-- /cv-moves-col -->
@@ -7326,6 +7325,12 @@ function ensureChessLib() {
 // Carga un PGN en el visor y arma la barra de navegación del torneo
 function loadPgnIntoViewer(pgn, tourName, tourLoc, activeIdx) {
   if (!ensureChessLib()) return;
+  // Las partidas de la apertura arrancan OCULTAS en cada partida (el índice queda cacheado, no se
+  // vuelve a descargar; solo se colapsa la sección hasta que el visitante la pida de nuevo).
+  _cvBookGamesOn = false;
+  // Re-alinear la altura de las columnas con el tablero (cubre rutas que no pasan por cvOpenOverlay,
+  // ej. saltar a una partida del libro o volver con Atrás).
+  requestAnimationFrame(function() { requestAnimationFrame(cvSyncSideColHeight); });
   var meta = pgMeta(pgn);
 
   // En el visor de torneo el nombre es redundante (ya estás dentro) y ocupa lugar:
@@ -10557,13 +10562,16 @@ function cvFlipBoard() {
   cvUpdateNagBadge();
 }
 
-/* Sincroniza la altura de cv-side-col con la altura real de cv-board-col.
-   Se llama con rAF después de que el overlay es visible y el layout está calculado. */
+/* Fija la altura de las columnas de notaciones y libro al borde inferior REAL del tablero, así las
+   notaciones se estiran hasta ahí (y se achican con el motor sin pasarse) y el libro scrollea si
+   sobra. En celular (apilado, <880px) no se fija altura. Se llama con rAF al abrir y al redimensionar. */
 function cvSyncSideColHeight() {
   var boardCol = document.querySelector('.cv-board-col');
-  var sideCol  = document.querySelector('.cv-side-col');
-  if (!boardCol || !sideCol) return;
-  sideCol.style.maxHeight = boardCol.offsetHeight + 'px';
+  var cols = [document.querySelector('.cv-moves-col'), document.querySelector('.cv-book-col')];
+  var wide = window.innerWidth >= 880 && boardCol;
+  if (!wide) { cols.forEach(function(c) { if (c) { c.style.height = ''; c.style.maxHeight = ''; } }); return; }
+  var h = boardCol.offsetHeight;
+  cols.forEach(function(c) { if (c) { c.style.height = h + 'px'; c.style.maxHeight = h + 'px'; } });
 }
 
 // Abre el overlay del visor: muestra el botón flotante, empuja historial y hace scroll al tope
@@ -10617,8 +10625,10 @@ function closeChessViewer(e){
     var abar = document.getElementById('cv-arg-bar'); if (abar) { abar.style.display='none'; abar.innerHTML=''; }
     _liveParams = null; _liveCtx = null; if (_liveTimer) { clearTimeout(_liveTimer); _liveTimer = null; }
     _bcBaseKey = null; _bcArgMode = false; _cvTourPgnKey = null; _cvStopLiveClock();
-    // Limpiar el maxHeight seteado por JS para que el CSS tome el control de nuevo
-    var sc = document.querySelector('.cv-side-col'); if (sc) sc.style.maxHeight = '';
+    // Limpiar la altura seteada por JS en las columnas para que el CSS retome el control.
+    ['.cv-moves-col', '.cv-book-col'].forEach(function(sel) { var c = document.querySelector(sel); if (c) { c.style.height = ''; c.style.maxHeight = ''; } });
+    // Reset del libro de partidas opt-in y de la pila de "volver a la partida anterior".
+    _cvBookGamesOn = false; _cvJumpStack = [];
   }
 }
 
@@ -10633,6 +10643,8 @@ window.addEventListener('resize', function() {
 window.addEventListener('popstate', function() {
   var chess = document.getElementById('chess-overlay');
   if (chess && chess.classList.contains('open')) {
+    // Si venimos de saltar a una partida del libro, Atrás VUELVE a la partida anterior (no cierra).
+    if (_cvJumpStack.length) { _cvRestoreJump(_cvJumpStack.pop()); return; }
     _cvHistoryPushed = false;
     closeChessViewer();
     return;
@@ -10856,6 +10868,8 @@ function obRenderLocal(entries, nextSan) {
    índice completo (~32MB en la web publicada), así que NO se baja solo: aparece un botón y el
    visitante decide. Una vez activado, se actualiza al navegar. En modo autor el índice ya está. */
 var _cvBookGamesOn = false, _cvBookGamesShown = [], _cvBookGamesLine = null;
+// Pila de estados del visor para VOLVER (Atrás) a la partida anterior tras saltar a una del libro.
+var _cvJumpStack = [];
 function _cvBookGamesUpdate(line) {
   var el = document.getElementById('cv-book-games'); if (!el) return;
   _cvBookGamesLine = line;
@@ -10871,12 +10885,21 @@ function _cvBookGamesUpdate(line) {
   for (var i = 0; i < matches.length; i++) {
     var g = matches[i], yr = (g.date || '').slice(0, 4);
     var rc = g.result === '1-0' ? 'cv-bg-w' : (g.result === '0-1' ? 'cv-bg-b' : 'cv-bg-d');
-    h += '<div class="cv-bg-row" onclick="_cvBookGameOpen(' + i + ')">'
+    // Cada partida es un <a> con su propio link → se puede abrir en otra pestaña (Ctrl/clic medio).
+    var href = (g.t != null && g.gi != null) ? _gameHref(g.t, g.gi) : '#';
+    h += '<a class="cv-bg-row" href="' + href + '" onclick="return _cvBookRowClick(event,' + i + ')">'
        + '<div class="cv-bg-names"><div>' + escHtml(g.white) + '</div><div>' + escHtml(g.black) + '</div></div>'
        + '<div class="cv-bg-meta"><span class="cv-bg-res ' + rc + '">' + (g.result || '') + '</span>'
-       + (yr ? '<span class="cv-bg-yr">' + yr + '</span>' : '') + '</div></div>';
+       + (yr ? '<span class="cv-bg-yr">' + yr + '</span>' : '') + '</div></a>';
   }
   el.innerHTML = h;
+}
+// Clic en una partida del libro: nueva pestaña si viene con Ctrl/Cmd/Shift/medio; si no, abre en el visor.
+function _cvBookRowClick(e, i) {
+  if (e && (e.ctrlKey || e.metaKey || e.shiftKey || e.button === 1)) return true;  // dejar pasar → nueva pestaña
+  if (e && e.preventDefault) e.preventDefault();
+  _cvBookGameOpen(i);
+  return false;
 }
 function _cvBookGamesEnable() {
   _cvBookGamesOn = true;
@@ -10899,15 +10922,37 @@ function _cvBookMatches(line, limit) {
 }
 async function _cvBookGameOpen(idx) {
   var g = _cvBookGamesShown[idx]; if (!g) return;
-  _cvTourGames = _cvBookGamesShown.map(function(x) { return x.pgn; });
-  _cvShareKeys = _cvBookGamesShown.map(function(x) { return (x.t != null && x.gi != null) ? { url: _gameHref(x.t, x.gi), tour: x.t } : null; });
-  _cvFromTournament = false;
-  _cvTourName = 'Aperturas'; _cvTourLoc = '';
-  var ply = (_cvBookGamesLine || []).length;
+  // Guardar el estado actual del visor + apilar historial para poder VOLVER (Atrás) a esta partida.
+  if (_cvHistoryPushed && typeof cv !== 'undefined' && cv && cv.node) {
+    _cvJumpStack.push({
+      games: _cvTourGames, keys: _cvShareKeys, fromTour: _cvFromTournament,
+      name: _cvTourName, loc: _cvTourLoc, idx: _cvTourIdx, ply: nodeDepth(cv.node)
+    });
+    var _u = (g.t != null && g.gi != null) ? _gameHref(g.t, g.gi) : location.href;
+    try { history.pushState({ chessViewer: true, cvJump: _cvJumpStack.length }, '', _u); } catch (e) {}
+  }
+  await _cvOpenGameSet(_cvBookGamesShown, idx, (_cvBookGamesLine || []).length);
+}
+// Abre la partida `idx` de un set (sin tocar historial; lo maneja el llamador) y avanza `ply` jugadas.
+async function _cvOpenGameSet(games, idx, ply) {
+  _cvTourGames = games.map(function(x) { return x.pgn; });
+  _cvShareKeys = games.map(function(x) { return (x.t != null && x.gi != null) ? { url: _gameHref(x.t, x.gi), tour: x.t } : null; });
+  _cvFromTournament = false; _cvTourName = 'Aperturas'; _cvTourLoc = '';
   await openTourGameByIndex(idx);
   if (ply > 0 && typeof cv !== 'undefined' && cv && cv.root) {
     var node = cv.root;
     for (var k = 0; k < ply && node.children && node.children.length; k++) node = node.children[0];
+    if (node && node !== cv.root) cvSetNode(node);
+  }
+}
+// Restaura una partida previa guardada en _cvJumpStack (al apretar Atrás desde una partida del libro).
+async function _cvRestoreJump(st) {
+  _cvTourGames = st.games; _cvShareKeys = st.keys; _cvFromTournament = st.fromTour;
+  _cvTourName = st.name; _cvTourLoc = st.loc;
+  await openTourGameByIndex(st.idx);
+  if (st.ply > 0 && typeof cv !== 'undefined' && cv && cv.root) {
+    var node = cv.root;
+    for (var k = 0; k < st.ply && node.children && node.children.length; k++) node = node.children[0];
     if (node && node !== cv.root) cvSetNode(node);
   }
 }
