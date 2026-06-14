@@ -843,7 +843,10 @@
   </style>
   <script src="data/embedded-data.js"></script>
   <script src="data/manifest.js"></script>
-  <script src="data/hardcoded.js"></script>
+  <!-- En la web publicada (on-demand: hay manifest pero NO embedded-data), ocultar la UI de autor
+       ANTES de que se pinte el contenido → mata el "flash" de la pantalla de Exportar/Mantenimiento
+       y de los botones de editar que después el init oculta igual. En modo autor no hace nada. -->
+  <script>(function(){if(!window.__EMBEDDED_DATA__&&window.__MANIFEST__){var s=document.createElement('style');s.textContent='#pgn-upload-panel,#pgn-maint-panel,#chip-export,#chip-maint,#btn-add-tour,#ranking-update-wrap,button[onclick^="openTzModal"],button[onclick^="pgnDeleteTorneo"],button[onclick^="torneoDel"]{display:none!important}';(document.head||document.documentElement).appendChild(s);}})();</script>
   <script type="application/json" id="embedded-token">""</script>
   <script src="data/embedded-photos.js"></script>
 
@@ -2567,9 +2570,10 @@ function renderTorneos(filter) {
         html += '<div class="t-meta">';
         html += '<span class="t-meta-item">📅 ' + escHtml(st.dates) + '</span>';
         if (st.location) html += '<span class="t-meta-item">📍 ' + escHtml(st.location) + '</span>';
-        html += '<span class="t-meta-item">🏷 ' + (isCR ? 'Chess Results' : 'PGN importado') + '</span>';
+        html += '<span class="t-meta-item">🏷 ' + escHtml(st.type || (isCR ? 'Chess Results' : 'PGN importado')) + '</span>';
+        if (st.rounds) html += '<span class="t-meta-item">🎯 ' + st.rounds + ' rondas</span>';
         if (st.timeControl) html += '<span class="t-meta-item">⏱ ' + escHtml(st.timeControl) + '</span>';
-        if (!isCR) html += '<span class="t-meta-item">🎯 ' + st.gameCount + ' partidas</span>';
+        if (!st.rounds && !isCR) html += '<span class="t-meta-item">🎯 ' + st.gameCount + ' partidas</span>';
         html += '</div>';
         var lsLeaders = crTopLeaders('ls', st._id) || st.leaders;
         var lsLeadersHtml = '';
@@ -2586,7 +2590,7 @@ function renderTorneos(filter) {
         }
         html += flyerLeadersRow(st.flyerUrl, lsLeadersHtml);
         html += crArgLineHtml('ls', st._id, st.games, st.type);
-        if (isCR && st.crUrl) {
+        if (st.crUrl) {
           html += linkChessResults(st.crUrl);
         }
         if (st.chesscomUrl) {
@@ -4543,6 +4547,7 @@ function pgnGetTorneosForList() {
         startDate: entry.startDate || null, endDate: entry.endDate || null, location: entry.location || '',
         gameCount: entry.gameCount || 0, leaders: entry.leaders || [], source: entry.source || 'pgn',
         crUrl: entry.crUrl || '', broadcastId: entry.broadcastId || null, broadcastUrl: entry.broadcastUrl || null,
+        rounds: entry.rounds || null,
         status: status, _dateKey: dk
       };
     }).sort(function(a, b) { return b._dateKey - a._dateKey; });
@@ -4572,6 +4577,7 @@ function pgnGetTorneosForList() {
       crUrl: entry.crUrl || '',
       broadcastId: entry.broadcastId || null,
       broadcastUrl: entry.broadcastUrl || null,
+      rounds: entry.rounds || null,
       status: status,
       _dateKey: dk
     };
@@ -4668,7 +4674,7 @@ function _collectAllTournaments() {
         startDate: d.startDate || null, endDate: d.endDate || null,
         flyerUrl: d.flyerUrl || '', chesscomUrl: d.chesscomUrl || '',
         crUrl: d.crurl || '', broadcastId: d.broadcastId || null, broadcastUrl: d.broadcastUrl || null,
-        categories: d.categories || null, isTeam: d.isTeam || null,
+        categories: d.categories || null, isTeam: d.isTeam || null, rounds: d.rounds || null,
         gameCount: (d.pgnGames || []).length, games: d.pgnGames || [],
         leaders: d.leaders || [], source: 'tz', playerOnly: false, playerId: null
       });
@@ -4689,6 +4695,7 @@ function _tourManifestMeta(entry) {
     gameCount: entry.gameCount || ((entry.games || []).length), leaders: leaders,
     source: entry.source || 'pgn', crUrl: entry.crUrl || '', broadcastId: entry.broadcastId || null,
     broadcastUrl: entry.broadcastUrl || null, categories: entry.categories || null, isTeam: entry.isTeam || null,
+    rounds: entry.rounds || null,
     playerOnly: !!entry.playerOnly, playerId: entry.playerId || null,
     dateKey: tourDateKey(entry)
   };
