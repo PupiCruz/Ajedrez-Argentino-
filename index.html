@@ -857,10 +857,10 @@
     .sf-vbar-fill {
       position: absolute; bottom: 0; left: 0; right: 0;
       background: #eeeeee; height: 50%;
-      /* Glide suave: al avanzar una jugada la barra queda quieta hasta que el motor llega a una
-         profundidad confiable (_SF_BAR_MINDEPTH) y recién ahí se "reacomoda" gradualmente, en vez
-         de pegar un salto seco. */
-      transition: height 0.85s cubic-bezier(0.22, 0.61, 0.36, 1);
+      /* Glide suave: la barra queda quieta hasta que el motor llega a una profundidad confiable
+         (_SF_BAR_MINDEPTH) y luego se "reacomoda" en escalones (ver _SF_BAR_THROTTLE_MS). La
+         transición es más corta que el acelerador para que cada paso se asiente sin zigzag. */
+      transition: height 0.45s cubic-bezier(0.22, 0.61, 0.36, 1);
       border-radius: 0 0 4px 4px;
     }
 
@@ -11749,6 +11749,11 @@ var sf = { engine:null, loading:false, ready:false, on:false, depth:0, lines:[nu
 // Profundidad mínima antes de mover la barra de eval: evita el "salto" de las lecturas ruidosas
 // de baja profundidad al avanzar una jugada. El número de puntaje sí se actualiza desde el inicio.
 var _SF_BAR_MINDEPTH = 12;
+// La barra se mueve a lo sumo cada _SF_BAR_THROTTLE_MS: `go infinite` emite una eval nueva cada ~50ms
+// (prof. 12,13,14…) y aplicarlas todas hacía que la barra zigzagueara (sube, baja, se acomoda). Con el
+// acelerador, cada paso alcanza a asentarse antes del siguiente → escalones limpios que convergen.
+var _SF_BAR_THROTTLE_MS = 650;
+var _sfBarLastT = 0;
 
 function sfToggle() {
   if (!sf.on) {
@@ -11886,6 +11891,7 @@ function sfAnalyzeNow() {
   if (_fa.running) return;   // no interrumpir el análisis completo en curso
   sf.lines = [null, null, null];
   sf.depth = 0;
+  _sfBarLastT = 0;   // primera lectura confiable de la jugada nueva: aplicarla sin esperar el acelerador
   // No tirar la barra al centro (50%) en cada jugada: eso causaba el "salto brusco". En su lugar
   // la sembramos con el [%eval] del PGN si lo hay (Lichess) — y si no, la dejamos donde estaba.
   // El motor la afina suave (CSS transition) cuando llega a una profundidad confiable.
@@ -11957,7 +11963,9 @@ function sfUpdateUI() {
     // La barra recién se mueve a partir de una profundidad confiable: las primeras lecturas
     // (prof. 1-5) son ruidosas y hacían "saltar" la barra en cada jugada. El número sí se
     // actualiza siempre. Hasta entonces la barra queda en el valor sembrado (ver sfAnalyzeNow).
-    if (sf.depth >= _SF_BAR_MINDEPTH) {
+    var _now = (window.performance && performance.now) ? performance.now() : Date.now();
+    if (sf.depth >= _SF_BAR_MINDEPTH && (_now - _sfBarLastT >= _SF_BAR_THROTTLE_MS)) {
+      _sfBarLastT = _now;
       var pct = sfBarPct(main.score, flip);
       if (cv.flipped) pct = 100 - pct;
       document.getElementById('sf-vbar-fill').style.height = pct + '%';
