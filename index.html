@@ -11838,6 +11838,7 @@ function _sfEnsureEmbedded(cb) {
 
 function sfOnMsg(line) {
   if (_fa.running) { faHandleMsg(line); return; }
+  if (_mev.running) { mevHandleMsg(line); return; }
   if (line === 'uciok') {
     sf.engine.postMessage('setoption name MultiPV value 3');
     sf.engine.postMessage('isready');
@@ -11871,6 +11872,7 @@ function sfOnMsg(line) {
 var _sfDebounce = null;
 function sfAnalyze() {
   if (!sf.engine || !sf.ready || !sf.on || !cv.chess) return;
+  mevAbort();   // el análisis del visor (lo pidió el usuario) tiene prioridad sobre la eval de miniaturas
   // Silenciar de inmediato la búsqueda de la posición anterior: si no, su 'go infinite'
   // sigue inundando de mensajes (barra, puntaje, flechas) y traba al navegar rápido.
   sf.engine.postMessage('stop');
@@ -14014,7 +14016,7 @@ function tdFillBoards(rInt) {
         html += '<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none">'
           + '<span style="background:rgba(20,20,25,.82);color:#fff;font-size:18px;font-weight:800;letter-spacing:1px;padding:6px 14px;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,.4)">' + resBig + '</span></div>';
       }
-      html += _tdEvalBarHtml(rr.ev);   // barrita de evaluación (si el PGN trae [%eval])
+      html += _tdEvalBarHtml(_liveEvalFor(rr.fen, rr.ev));   // barrita: [%eval] del PGN o, en vivo, motor local
       el.innerHTML = html;
       el.setAttribute('data-fen', fen);   // para comparar en el refresco incremental (solo redibuja los que cambian)
       _tdSetCellKeys(el, fen, rr.last);    // memoriza pieza/resaltado por casilla → permite parchear solo lo que cambia
@@ -14068,6 +14070,131 @@ function _tdSetEvalBar(el, ev) {
   if (!bar) { el.insertAdjacentHTML('beforeend', _tdEvalBarHtml(ev)); return; }
   var fill = bar.firstElementChild;
   if (fill) fill.style.height = sfBarPct(ev, false) + '%';
+}
+
+/* ── Evaluación EN VIVO de las miniaturas con Stockfish local ─────────────────────────────────
+   Lichess NO incluye [%eval] en el PGN de las partidas mientras se están jugando (solo lo agrega
+   al TERMINAR la ronda). Para que el visitante igual vea cómo va cada partida, cuando hay una
+   TRANSMISIÓN en vivo evaluamos con el Stockfish self-host (assets/stockfish-embedded.js) las
+   posiciones de los tableros EN CURSO, a baja profundidad (orientativo, no exacto). Se dispara
+   junto con el refresco del vivo (cada ~30s) y solo evalúa las posiciones que CAMBIARON (la clave
+   es el FEN: las ya evaluadas se saltean). NO corre en torneos cargados a mano (sin broadcast):
+   _tdLiveCtx es null → no agrega peso. Las partidas TERMINADAS usan el [%eval] del PGN de Lichess,
+   que tiene PRIORIDAD sobre el motor local (ver _liveEvalFor). */
+var _mevEvals = {};   // FEN → score {cp|mate} en perspectiva de blancas (memoria de lo ya evaluado)
+var _mev = { running: false, armed: false, jobs: [], i: 0, last: null };
+var _MEV_DEPTH = 12;        // orientativo: rápido y suficiente para la barrita
+var _MEV_MAX_JOBS = 40;     // tope de tableros por ciclo (no saturar el motor)
+var _mevReadyPoll = null;
+
+// Evaluación a usar para la barrita: el [%eval] del PGN (Lichess) MANDA; si no hay (partida en curso
+// de un broadcast), cae a lo que calculó el motor local. Sin broadcast, _mevEvals está vacío → null.
+function _liveEvalFor(fen, pgnEv) {
+  if (pgnEv != null) return pgnEv;
+  var m = _mevEvals[fen];
+  return (m !== undefined) ? m : null;
+}
+
+function mevAbort() {
+  if (_mevReadyPoll) { clearInterval(_mevReadyPoll); _mevReadyPoll = null; }
+  if (!_mev.running) return;
+  _mev.running = false; _mev.armed = false; _mev.jobs = []; _mev.i = 0; _mev.last = null;
+  if (sf.engine) { sf.engine.postMessage('stop'); sf.engine.postMessage('setoption name MultiPV value 3'); }
+}
+
+// Recolecta los tableros EN CURSO de la ronda visible cuya posición aún no fue evaluada.
+function mevCollect() {
+  var jobs = [];
+  var panel = document.getElementById('td-round-' + _tdCurrentRound);
+  if (!panel) return jobs;
+  var bds = panel.querySelectorAll('.td-bd');
+  var START = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR';
+  var seen = {};
+  for (var i = 0; i < bds.length; i++) {
+    var el = bds[i];
+    if ((el.getAttribute('data-res') || '*') !== '*') continue;   // solo partidas en curso
+    var fen = el.getAttribute('data-fen');
+    if (!fen || fen.split(' ')[0] === START) continue;            // sin posición o sin jugadas todavía
+    if (_mevEvals[fen] !== undefined || seen[fen]) continue;      // ya evaluada (o duplicada en la grilla)
+    seen[fen] = 1;
+    jobs.push({ fen: fen });
+    if (jobs.length >= _MEV_MAX_JOBS) break;
+  }
+  return jobs;
+}
+
+// Dispara un ciclo de evaluación. Lo llaman el refresco del vivo y la apertura/cambio de ronda.
+function mevTick() {
+  if (!_tdLiveCtx) { mevAbort(); return; }            // no hay transmisión activa
+  if (_fa.running || sf.on || _mev.running) return;   // cede a los análisis que pidió el usuario
+  if (typeof Chess === 'undefined') return;
+  if (!sf.ready) {
+    sfStart();   // cargar el motor on-demand y reintentar cuando esté listo
+    if (!_mevReadyPoll) {
+      var n = 0;
+      _mevReadyPoll = setInterval(function() {
+        if (sf.ready) { clearInterval(_mevReadyPoll); _mevReadyPoll = null; mevTick(); }
+        else if (++n > 20) { clearInterval(_mevReadyPoll); _mevReadyPoll = null; }   // ~14s y desisto
+      }, 700);
+    }
+    return;
+  }
+  var jobs = mevCollect();
+  if (!jobs.length) return;
+  _mev.running = true; _mev.armed = false; _mev.jobs = jobs; _mev.i = 0; _mev.last = null;
+  // Barrera readyok: descarta el 'bestmove' fantasma de una búsqueda anterior (igual que el _fa).
+  sf.engine.postMessage('stop');
+  sf.engine.postMessage('ucinewgame');
+  sf.engine.postMessage('setoption name MultiPV value 1');
+  sf.engine.postMessage('isready');
+}
+
+function mevNext() {
+  if (!_mev.running) return;
+  if (_mev.i >= _mev.jobs.length) {
+    _mev.running = false; _mev.armed = false;
+    if (sf.engine) sf.engine.postMessage('setoption name MultiPV value 3');   // restaurar para el visor
+    return;
+  }
+  _mev.last = null;
+  sf.engine.postMessage('stop');
+  sf.engine.postMessage('position fen ' + _mev.jobs[_mev.i].fen);
+  sf.engine.postMessage('go depth ' + _MEV_DEPTH);
+}
+
+function mevHandleMsg(line) {
+  if (!_mev.armed) { if (line.indexOf('readyok') === 0) { _mev.armed = true; mevNext(); } return; }
+  if (line.indexOf('info') === 0) {
+    var mm = line.match(/\bmultipv (\d+)\b/);
+    if (mm && mm[1] !== '1') return;
+    var cpM = line.match(/\bscore cp (-?\d+)\b/);
+    var mtM = line.match(/\bscore mate (-?\d+)\b/);
+    if (cpM || mtM) _mev.last = mtM ? { mate: parseInt(mtM[1]) } : { cp: parseInt(cpM[1]) };
+  }
+  if (line.indexOf('bestmove') === 0) {
+    var job = _mev.jobs[_mev.i];
+    if (job) {
+      var raw = _mev.last || { cp: 0 };
+      var turn = job.fen.split(' ')[1];   // UCI puntúa desde el lado a mover → normalizar a blancas
+      var score = raw.mate !== undefined
+        ? { mate: turn === 'b' ? -raw.mate : raw.mate }
+        : { cp:   turn === 'b' ? -raw.cp   : raw.cp   };
+      _mevEvals[job.fen] = score;
+      _capCache(_mevEvals, 2000);
+      mevApply(job.fen, score);
+    }
+    _mev.i++; _mev.last = null; mevNext();
+  }
+}
+
+// Pinta la barrita en los tableros que siguen mostrando esa posición (pudo cambiar mientras tanto).
+function mevApply(fen, score) {
+  var panel = document.getElementById('td-round-' + _tdCurrentRound);
+  if (!panel) return;
+  var bds = panel.querySelectorAll('.td-bd');
+  for (var i = 0; i < bds.length; i++) {
+    if (bds[i].getAttribute('data-fen') === fen) _tdSetEvalBar(bds[i], score);
+  }
 }
 
 // Expande una fila de FEN ("r1bk...") a 8 elementos (pieza o null).
@@ -14321,9 +14448,10 @@ function _tdLiveApplyRefresh(res, sec) {
     if (newPgn === undefined) continue;
     var rr = tdFinalFenCached(newPgn);
     if (rr.fen === el.getAttribute('data-fen')) {
-      // Misma posición, pero la transmisión pudo agregar/actualizar el %eval (Lichess lo calcula unos
-      // segundos DESPUÉS de la jugada) → mover la barrita aunque el tablero no cambie.
-      _tdSetEvalBar(el, rr.ev);
+      // Misma posición, pero pudo aparecer el %eval del PGN (Lichess solo lo agrega al TERMINAR la
+      // ronda) o una nueva eval del motor local → mover la barrita aunque el tablero no cambie.
+      var _ev0 = _liveEvalFor(rr.fen, rr.ev);
+      if (_ev0 != null) _tdSetEvalBar(el, _ev0);   // si todavía no hay eval, dejar la barra como está
       continue;
     }
     var nowStart = rr.fen.split(' ')[0] === START;
@@ -14339,11 +14467,15 @@ function _tdLiveApplyRefresh(res, sec) {
       el.setAttribute('data-fen', rr.fen);
       el.setAttribute('data-res', parsePgnHeaders(newPgn).Result || '*');
       _tdSetClocks(el, gidx, rr.fen, rr);
-      _tdSetEvalBar(el, rr.ev);   // mover la barrita con la evaluación nueva (si la transmisión la trae)
+      // Jugada nueva: el [%eval] del PGN aún no existe (Lichess lo agrega al terminar) y el motor
+      // todavía no evaluó esta posición → dejar la barra anterior; mevTick la actualiza enseguida.
+      var _evN = _liveEvalFor(rr.fen, rr.ev);
+      if (_evN != null) _tdSetEvalBar(el, _evN);
     }
   }
   if (needFull) tdFillBoards(curR);   // re-dibuja entero solo los pocos que lo necesitaron
   _tdApplyViewerRefresh(_tdLiveCtx && _tdLiveCtx.pgnKey);
+  if (_tdLiveCtx) setTimeout(mevTick, 900);   // evaluar (motor local) las posiciones nuevas de esta tanda
 }
 
 // Si el visor está abierto con una partida de este torneo, la actualiza con las jugadas nuevas
@@ -15047,6 +15179,7 @@ function startFA() {
   }
   var nodes = faGetNodes();
   if (!nodes.length) return;
+  mevAbort();   // el análisis completo (lo pidió el usuario) tiene prioridad sobre la eval de miniaturas
   _fa.running = true; _fa.armed = false; _fa.nodes = nodes;
   _fa.results = new Array(nodes.length).fill(null);
   _fa.ply = 0; _fa.lastScore = null;
