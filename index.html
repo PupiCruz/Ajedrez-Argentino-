@@ -5003,12 +5003,27 @@ function exportDataFile() {
     _downloadBlob(new Blob([js], { type: 'application/javascript' }), 'embedded-data.js');
     _downloadBlob(new Blob([_collectExportPhotosJs()],
       { type: 'application/javascript' }), 'embedded-photos.js');
+    // También el manifest.js (lo que LEE la web publicada). Así, para actualizar TABLAS o info de
+    // torneos, alcanza con reemplazar manifest.js y pushear — sin generar el ZIP pesado de GitHub.
+    // (Las TABLAS/cruces y la metadata de torneos viajan acá; las PARTIDAS nuevas necesitan el ZIP.)
+    _downloadBlob(new Blob([_manifestJsFromSplit(buildSplitData())],
+      { type: 'application/javascript' }), 'manifest.js');
     try { localStorage.setItem('last_export_fp', _estadoActualFp()); } catch(e){}
     if (typeof exportTabInit === 'function') { try { exportTabInit(); } catch(e){} }
-    alert('✅ ¡Datos al día!\n\nSe descargaron 2 archivos:\n  • embedded-data.js\n  • embedded-photos.js\n\nMovelos a la carpeta  ajedrez-argentino\\data\\  y reemplazá los que están\n(Windows pregunta: "Reemplazar el archivo en el destino" → Sí).\n\nDespués subí la carpeta a Google Drive.');
+    alert('✅ ¡Datos al día!\n\nSe descargaron 3 archivos:\n  • embedded-data.js  (tu copia de autor)\n  • embedded-photos.js\n  • manifest.js  (lo que lee la web)\n\nMovelos a  ajedrez-argentino\\data\\  y reemplazá los que están.\n\nPara que salga a la web: doble clic en publicar-web.cmd.\n\nNOTA: con esto actualizás TABLAS e info de torneos. Si subiste PARTIDAS nuevas, usá "Preparar archivos para GitHub" (genera también los archivos de partidas).');
   } catch(e) {
     alert('No se pudo generar el archivo de datos: ' + (e && e.message ? e.message : e));
   }
+}
+
+// Arma el contenido de data/manifest.js (índice liviano + tz + noticias + cuadros CR + jugadores)
+// a partir de un split ya calculado. Centralizado para que los 3 exports generen el MISMO manifest.
+function _manifestJsFromSplit(split) {
+  return 'window.__MANIFEST__=' + JSON.stringify(split.manifest).replace(/</g, '\\u003c') + ';\n'
+       + 'window.__EMBEDDED_TZ__='   + JSON.stringify(getTzConfig()) + ';\n'
+       + 'window.__EMBEDDED_NEWS__=' + JSON.stringify(getNewsItems()).replace(/</g, '\\u003c') + ';\n'
+       + 'window.__EMBEDDED_CR__='   + JSON.stringify(_collectCrData()).replace(/</g, '\\u003c') + ';\n'
+       + _embeddedPlayersJs();
 }
 
 async function exportHtml() {
@@ -5029,11 +5044,7 @@ async function exportHtml() {
     var split = buildSplitData();
     // El manifest liviano lleva también noticias y zona horaria (son chicas) para que la web
     // publicada muestre TUS noticias/horarios y no los de ejemplo (embedded-data.js no se publica).
-    var manifestJs = 'window.__MANIFEST__=' + JSON.stringify(split.manifest).replace(/</g, '\\u003c') + ';\n'
-                   + 'window.__EMBEDDED_TZ__='   + JSON.stringify(getTzConfig()) + ';\n'
-                   + 'window.__EMBEDDED_NEWS__=' + JSON.stringify(getNewsItems()).replace(/</g, '\\u003c') + ';\n'
-                   + 'window.__EMBEDDED_CR__='   + JSON.stringify(_collectCrData()).replace(/</g, '\\u003c') + ';\n'
-                   + _embeddedPlayersJs();
+    var manifestJs = _manifestJsFromSplit(split);
 
     var enc = new TextEncoder();
     function _tfn(id) { return String(id).replace(/[^a-z0-9_-]/gi, '_') + '.json'; }
@@ -5072,11 +5083,7 @@ async function exportGithubData() {
     // acá sería peligroso: si reemplazás tu archivo de trabajo con el index.html PUBLICADO, perdés el
     // modo autor (cargaría manifest.js en vez de embedded-data.js y abriría en modo solo-lectura).
     var split = buildSplitData();
-    var manifestJs = 'window.__MANIFEST__=' + JSON.stringify(split.manifest).replace(/</g, '\\u003c') + ';\n'
-                   + 'window.__EMBEDDED_TZ__='   + JSON.stringify(getTzConfig()) + ';\n'
-                   + 'window.__EMBEDDED_NEWS__=' + JSON.stringify(getNewsItems()).replace(/</g, '\\u003c') + ';\n'
-                   + 'window.__EMBEDDED_CR__='   + JSON.stringify(_collectCrData()).replace(/</g, '\\u003c') + ';\n'
-                   + _embeddedPlayersJs();
+    var manifestJs = _manifestJsFromSplit(split);
     var enc = new TextEncoder();
     function _tfn(id) { return String(id).replace(/[^a-z0-9_-]/gi, '_') + '.json'; }
     var zipEntries = [
