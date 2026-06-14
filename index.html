@@ -857,7 +857,10 @@
     .sf-vbar-fill {
       position: absolute; bottom: 0; left: 0; right: 0;
       background: #eeeeee; height: 50%;
-      transition: height 0.4s ease;
+      /* Glide suave: al avanzar una jugada la barra queda quieta hasta que el motor llega a una
+         profundidad confiable (_SF_BAR_MINDEPTH) y recién ahí se "reacomoda" gradualmente, en vez
+         de pegar un salto seco. */
+      transition: height 0.85s cubic-bezier(0.22, 0.61, 0.36, 1);
       border-radius: 0 0 4px 4px;
     }
 
@@ -13560,6 +13563,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   _tourPageOn();   // modo "página": header (logo) y nav visibles arriba/abajo
   // Prioridad Lichess: si hay broadcast, SIEMPRE pedimos el vivo. roundOrder.length>0 le avisa que ya
   // hay partidas subidas mostrándose, para NO pisarlas con un error si el fetch falla (respaldo).
+  _tdLiveCrKey = crk;   // que el vivo conozca la clave de cruces aunque no haya partidas subidas (solo-broadcast)
   if (hasBroadcast) _tdLoadLiveGames(broadcastId, broadcastUrl, name, location, pgnKey2, typ, status, roundOrder.length > 0);
   // Si se pidió, bajar directo al apartado de partidas
   if (scrollToGames && m) {
@@ -14317,6 +14321,10 @@ function tdOpenGame(idx, pgnKey, tname, tloc) {
    (vivo + terminadas) en lugar de las subidas. Reusa _tdCtx + tdBuildRound + tdShowRound. */
 var _tdLiveTimer = null;
 var _tdLiveCtx = null;   // { tourId, pgnKey, name, location, typ }
+// Clave de cruces del torneo recién abierto. La guardamos aparte porque en torneos SOLO-broadcast
+// (sin partidas subidas) _tdCtx arranca null, y sin esto _tdLiveBuild perdía el crKey → la sección
+// de cruces no se re-renderizaba al llegar el vivo y faltaba el botón "♟ Ver partidas".
+var _tdLiveCrKey = null;
 
 function _tdLiveStop() { if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; } _tdLiveCtx = null; _tdStopClocks(); mevAbort(); }
 
@@ -14341,7 +14349,7 @@ function _tdLiveError(url, detail) {
 }
 
 function _tdLiveFetch(tourId, name, location, pgnKey, typ, hasFallback) {
-  _tdLiveCtx = { tourId: tourId, pgnKey: pgnKey, name: name, location: location, typ: typ, hasFallback: !!hasFallback };
+  _tdLiveCtx = { tourId: tourId, pgnKey: pgnKey, name: name, location: location, typ: typ, hasFallback: !!hasFallback, crKey: _tdLiveCrKey };
   _bcFetchAll(tourId, function(res){
     if (!_tdLiveCtx || _tdLiveCtx.tourId !== tourId) return;
     var sec = document.getElementById('td-games-section');
@@ -14367,7 +14375,7 @@ function _tdLiveBuild(res, sec, keepRound) {
   roundOrder.sort(function(a,b){ return (parseInt(a)||0) - (parseInt(b)||0); });
   var ctx = _tdLiveCtx;
   PGN_DB[ctx.pgnKey] = { title: ctx.name, sub: ctx.location, url: '', games: games };
-  _tdCtx = { byRound: byRound, games: games, pgnKey: ctx.pgnKey, name: ctx.name, location: ctx.location, built: {}, crKey: (_tdCtx ? _tdCtx.crKey : null) };
+  _tdCtx = { byRound: byRound, games: games, pgnKey: ctx.pgnKey, name: ctx.name, location: ctx.location, built: {}, crKey: (_tdCtx && _tdCtx.crKey) || ctx.crKey || null };
   var startRound = (keepRound != null && byRound[keepRound]) ? keepRound : (liveRoundInt || roundOrder[roundOrder.length - 1] || roundOrder[0]);
   _tdArgOnly = false;
   _tdCurrentRound = startRound;
