@@ -17,8 +17,12 @@
   (function(){
     try {
       var p = new URLSearchParams(location.search || '');
-      var isGame = !!(p.get('partida')) || !!(p.get('jugador') && p.get('t') && p.get('g'));
-      if (!isGame) return;
+      var label = null;
+      if (p.get('partida') || (p.get('jugador') && p.get('t') && p.get('g'))) label = 'Cargando partida…';
+      else if (p.get('torneo')) label = 'Cargando torneo…';
+      else if (p.get('jugador')) label = 'Cargando jugador…';
+      else if (p.get('noticia')) label = 'Cargando noticia…';
+      if (!label) return;
       var cover = document.createElement('div');
       cover.id = 'deeplink-cover';
       cover.setAttribute('style', 'position:fixed;inset:0;z-index:99999;background:#0a0a0a;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif');
@@ -27,7 +31,7 @@
       b += '</div>';
       cover.innerHTML = b + '<div style="display:flex;align-items:center;gap:10px;color:#cfcfcf;font-size:14px;font-weight:500">'
         + '<span style="width:15px;height:15px;border:2px solid #444;border-top-color:#c9a227;border-radius:50%;display:inline-block;animation:dlspin .8s linear infinite"></span>'
-        + 'Cargando partida…</div><style>@keyframes dlspin{to{transform:rotate(360deg)}}</style>';
+        + label + '</div><style>@keyframes dlspin{to{transform:rotate(360deg)}}</style>';
       (document.body || document.documentElement).appendChild(cover);
       setTimeout(function(){ try { if (cover.parentNode) cover.parentNode.removeChild(cover); } catch(e){} }, 12000);
     } catch(e){}
@@ -429,6 +433,8 @@
     .n-link  { font-size: 12px; color: var(--gold); margin-top: 10px; display: flex; align-items: center; gap: 4px; }
 
     /* ── NOTICIAS – layout hero + grid ── */
+    a.n-card, a.n-mini { color:inherit; text-decoration:none; }
+    a.n-card { display:block; }
     .n-layout { display:flex; gap:14px; align-items:flex-start; }
     .n-hero-wrap { flex:1.8; min-width:0; }
     .n-side-wrap { flex:1; min-width:0; display:flex; flex-direction:column; gap:10px; }
@@ -6809,6 +6815,7 @@ async function openPlayer(id) {
 
   document.getElementById('modal-body').innerHTML = h;
   document.getElementById('overlay').classList.add('open');
+  _removeDeepLinkCover();   // ya abrió el perfil: sacar la pantalla "Cargando…" del deep-link
   _playerPageOn();   // modo "página": header (logo) y nav visibles
   // Volver al inicio del modal cada vez que se abre un perfil
   var _m = document.querySelector('.modal');
@@ -9850,9 +9857,18 @@ var _newsReaderCurrentId = null;
 
 function _newsEditBtns(id) {
   return '<div style="position:absolute;top:6px;right:6px;display:flex;gap:3px;z-index:2">'
-    + '<button onclick="event.stopPropagation();openNewsEditor(\'' + _nEscAttr(id) + '\')" style="background:rgba(0,0,0,.55);border:none;color:#fff;font-size:11px;cursor:pointer;padding:4px 8px;border-radius:6px;font-family:inherit">✏️ Editar</button>'
-    + '<button onclick="event.stopPropagation();deleteNewsItem(\'' + _nEscAttr(id) + '\')" style="background:rgba(0,0,0,.55);border:none;color:#f99;font-size:13px;cursor:pointer;padding:4px 7px;border-radius:6px">✕</button>'
+    + '<button onclick="event.preventDefault();event.stopPropagation();openNewsEditor(\'' + _nEscAttr(id) + '\')" style="background:rgba(0,0,0,.55);border:none;color:#fff;font-size:11px;cursor:pointer;padding:4px 8px;border-radius:6px;font-family:inherit">✏️ Editar</button>'
+    + '<button onclick="event.preventDefault();event.stopPropagation();deleteNewsItem(\'' + _nEscAttr(id) + '\')" style="background:rgba(0,0,0,.55);border:none;color:#f99;font-size:13px;cursor:pointer;padding:4px 7px;border-radius:6px">✕</button>'
     + '</div>';
+}
+
+// Link propio de cada noticia (?noticia=<id>): compartir + abrir en pestaña nueva con Ctrl/Cmd-click.
+function _noticiaHref(id) { return '?noticia=' + encodeURIComponent(id); }
+function newsCardClick(e, id) {
+  if (e && (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1)) return true;   // nueva pestaña
+  if (e) e.preventDefault();
+  openNewsReader(id);
+  return false;
 }
 
 function _newsHeroHtml(n, editable) {
@@ -9860,27 +9876,27 @@ function _newsHeroHtml(n, editable) {
   var imgBlock = hasCover
     ? '<img src="' + _nEscAttr(n.coverImg) + '" style="width:100%;height:auto;display:block" draggable="false" onerror="this.style.display=\'none\'">'
     : '<div class="n-img">' + _nEsc(n.emoji || '📰') + '</div>';
-  return '<div class="n-card n-hero" style="position:relative" onclick="openNewsReader(\'' + _nEscAttr(n.id) + '\')">'
+  return '<a class="n-card n-hero" href="' + _noticiaHref(n.id) + '" onclick="return newsCardClick(event,\'' + _nEscAttr(n.id) + '\')" style="position:relative">'
     + (editable ? _newsEditBtns(n.id) : '')
     + imgBlock
     + '<div class="n-body">'
     + '<div class="n-date">' + _nEsc(n.date) + '</div>'
     + '<div class="n-title n-hero-title">' + _nEsc(n.title) + '</div>'
     + '<div class="n-text">' + _nEsc(n.summary || n.text || '') + '</div>'
-    + '</div></div>';
+    + '</div></a>';
 }
 
 function _newsMiniHtml(n, editable) {
   var hasCover = n.coverImg && n.coverImg.length;
   var imgStyle = hasCover ? 'background-image:url(' + _nEscAttr(n.coverImg) + ');background-size:contain;background-position:center;background-repeat:no-repeat;' : '';
   var imgInner = hasCover ? '' : _nEsc(n.emoji || '📰');
-  return '<div class="n-mini" onclick="openNewsReader(\'' + _nEscAttr(n.id) + '\')">'
+  return '<a class="n-mini" href="' + _noticiaHref(n.id) + '" onclick="return newsCardClick(event,\'' + _nEscAttr(n.id) + '\')">'
     + (editable ? _newsEditBtns(n.id) : '')
     + '<div class="n-mini-img" style="' + imgStyle + '">' + imgInner + '</div>'
     + '<div class="n-mini-body">'
     + '<div class="n-mini-date">' + _nEsc(n.date) + '</div>'
     + '<div class="n-mini-title">' + _nEsc(n.title) + '</div>'
-    + '</div></div>';
+    + '</div></a>';
 }
 
 function renderNoticias() {
@@ -9940,11 +9956,24 @@ function openNewsReader(id) {
   // Botón editar (modo autor)
   var editBtn = document.getElementById('n-reader-edit-btn');
   if (editBtn) editBtn.innerHTML = !_ondemand ? '<button onclick="openNewsEditor(\'' + _nEscAttr(id) + '\')" style="background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-size:13px;padding:6px 12px;border-radius:8px;cursor:pointer;font-family:inherit">✏️ Editar</button>' : '';
+  // URL propia de la noticia (compartible). Si ya estaba abierta (al re-renderizar tras editar),
+  // solo actualizamos la URL sin apilar otra entrada.
+  if (!_newsHistoryPushed) {
+    _newsHistoryPushed = true;
+    try { history.pushState({ newsReader: true }, '', _noticiaHref(id)); } catch (e) {}
+  } else {
+    try { history.replaceState({ newsReader: true }, '', _noticiaHref(id)); } catch (e) {}
+  }
+  _removeDeepLinkCover();   // ya abrió la noticia: sacar la pantalla "Cargando…" del deep-link
   ov.classList.add('open');
   ov.scrollTop = 0;
 }
 
+var _newsHistoryPushed = false;
 function closeNewsReader() {
+  // Si apilamos una entrada de historial, delegamos en Atrás: el popstate hace el cierre real
+  // (una sola vez) y restaura la URL limpia. Igual criterio que el visor de partidas y el perfil.
+  if (_newsHistoryPushed) { _newsHistoryPushed = false; history.back(); return; }
   var ov = document.getElementById('n-reader-overlay');
   if (ov) ov.classList.remove('open');
   _newsReaderCurrentId = null;
@@ -11387,6 +11416,14 @@ window.addEventListener('resize', function() {
 
 // Manejador único de popstate: cierra SOLO el overlay de más arriba (visor > perfil > torneo)
 window.addEventListener('popstate', function() {
+  // Lector de noticias: es el overlay más arriba (z-index 500), se cierra primero.
+  var nreader = document.getElementById('n-reader-overlay');
+  if (nreader && nreader.classList.contains('open')) {
+    _newsHistoryPushed = false;
+    nreader.classList.remove('open');
+    _newsReaderCurrentId = null;
+    return;
+  }
   var chess = document.getElementById('chess-overlay');
   if (chess && chess.classList.contains('open')) {
     // Si venimos de saltar a una partida del libro, Atrás VUELVE a la partida anterior (no cierra).
@@ -13082,6 +13119,11 @@ function _resolveTourType(key) {
   return 'ls';
 }
 function _tourHref(key) { return '?torneo=' + encodeURIComponent(key); }
+// Quita la pantalla "Cargando…" del deep-link (cover inicial), una vez que el contenido real abrió.
+function _removeDeepLinkCover() {
+  var c = document.getElementById('deeplink-cover');
+  if (c && c.parentNode) c.parentNode.removeChild(c);
+}
 function openTournamentByKey(key) {
   if (key == null || key === '') return;
   openTournamentDetail(_resolveTourType(key), key);
@@ -13513,6 +13555,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   var m = document.querySelector('#tour-overlay .modal');
   if (m) m.scrollTop = 0;
   document.getElementById('tour-overlay').classList.add('open');
+  _removeDeepLinkCover();   // ya abrió el torneo: sacar la pantalla "Cargando…" del deep-link
   _tourPageOn();   // modo "página": header (logo) y nav visibles arriba/abajo
   // Prioridad Lichess: si hay broadcast, SIEMPRE pedimos el vivo. roundOrder.length>0 le avisa que ya
   // hay partidas subidas mostrándose, para NO pisarlas con un error si el fetch falla (respaldo).
@@ -14402,6 +14445,14 @@ if (_ondemand) {
   var params; try { params = new URLSearchParams(location.search); } catch (e) { return; }
   var tk = params.get('torneo'), pk = params.get('jugador'), gk = params.get('partida');
   var ptk = params.get('t'), pgk = params.get('g');   // partida abierta desde un perfil: ?jugador=&t=&g=
+  var nk = params.get('noticia');                      // noticia compartida: ?noticia=<id>
+  if (nk) {
+    var nbtn = document.querySelector('.nav-btn[onclick*="\'noticias\'"]');
+    if (nbtn) { try { goTo('noticias', nbtn); } catch (e) {} }
+    try { history.replaceState({}, '', location.pathname); } catch (e) {}
+    openNewsReader(nk);
+    return;
+  }
   if (tk) {
     var tbtn = document.querySelector('.nav-btn[onclick*="\'torneos\'"]');
     if (tbtn) { try { goTo('torneos', tbtn); } catch (e) {} }
