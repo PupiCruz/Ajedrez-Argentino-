@@ -4845,6 +4845,10 @@ function _capCache(obj, max) {
 
 function _tourFileName(id) { return String(id).replace(/[^a-z0-9_-]/gi, '_') + '.json'; }
 function _playerFileName(id) { return String(id).replace(/[^a-z0-9_-]/gi, '_') + '.json'; }
+// Cache-busting: en la web publicada, manifest.js inyecta __DATA_TS__ (timestamp del build).
+// Todas las peticiones fetch de datos viajan con ?v=<ts>, así el navegador nunca reutiliza
+// una copia de datos de la publicación anterior aunque no haya expirado el caché HTTP.
+function _dataV() { return (typeof __DATA_TS__ !== 'undefined') ? '?v=' + __DATA_TS__ : ''; }
 
 // Baja (y cachea) las partidas de un torneo embebido. Devuelve [] si falla.
 // Si la carga FALLA (red caída o archivo ausente), marca _tourLoadFailed[id] y NO cachea
@@ -4854,7 +4858,7 @@ async function fetchTournamentGames(id) {
   if (_tourGamesCache[id]) return _tourGamesCache[id];
   delete _tourLoadFailed[id];
   try {
-    var r = await fetch('data/t/' + _tourFileName(id));
+    var r = await fetch('data/t/' + _tourFileName(id) + _dataV());
     if (!r.ok) { _tourLoadFailed[id] = true; return []; }
     var j = await r.json();
     var games = (j && j.games) ? j.games : [];
@@ -4875,7 +4879,7 @@ async function ensurePlayerLoaded(id) {
   var expected = !!(_manifest && _manifest.playerIndex && _manifest.playerIndex[id]);
   var arr = [], ok = false;
   try {
-    var r = await fetch('data/p/' + _playerFileName(id));
+    var r = await fetch('data/p/' + _playerFileName(id) + _dataV());
     if (r.ok) { var j = await r.json(); arr = Array.isArray(j) ? j : (j.games || []); ok = true; }
     else if (!expected) { ok = true; }   // 404 esperado: el jugador no tiene partidas
   } catch (e) {}
@@ -5266,7 +5270,7 @@ function exportDataFile() {
     // También el manifest.js (lo que LEE la web publicada). Así, para actualizar TABLAS o info de
     // torneos, alcanza con reemplazar manifest.js y pushear — sin generar el ZIP pesado de GitHub.
     // (Las TABLAS/cruces y la metadata de torneos viajan acá; las PARTIDAS nuevas necesitan el ZIP.)
-    _downloadBlob(new Blob([_manifestJsFromSplit(buildSplitData())],
+    _downloadBlob(new Blob([_manifestJsFromSplit(buildSplitData(), Date.now())],
       { type: 'application/javascript' }), 'manifest.js');
     try { localStorage.setItem('last_export_fp', _estadoActualFp()); } catch(e){}
     if (typeof exportTabInit === 'function') { try { exportTabInit(); } catch(e){} }
@@ -5278,8 +5282,10 @@ function exportDataFile() {
 
 // Arma el contenido de data/manifest.js (índice liviano + tz + noticias + cuadros CR + jugadores)
 // a partir de un split ya calculado. Centralizado para que los 3 exports generen el MISMO manifest.
-function _manifestJsFromSplit(split) {
-  return 'window.__MANIFEST__=' + JSON.stringify(split.manifest).replace(/</g, '\\u003c') + ';\n'
+function _manifestJsFromSplit(split, ts) {
+  ts = ts || Date.now();
+  return 'var __DATA_TS__=' + ts + ';\n'
+       + 'window.__MANIFEST__=' + JSON.stringify(split.manifest).replace(/</g, '\\u003c') + ';\n'
        + 'window.__EMBEDDED_TZ__='   + JSON.stringify(getTzConfig()) + ';\n'
        + 'window.__EMBEDDED_NEWS__=' + JSON.stringify(getNewsItems()).replace(/</g, '\\u003c') + ';\n'
        + 'window.__EMBEDDED_CR__='   + JSON.stringify(_collectCrData()).replace(/</g, '\\u003c') + ';\n'
@@ -5295,7 +5301,11 @@ async function exportHtml() {
     // index.html publicado: token vacío y SIN el <script> de embedded-data.js (los 37MB no
     // se publican). En su lugar carga data/manifest.js (índice liviano) → así __MANIFEST__
     // queda definido y el sitio arranca en modo carga-por-demanda (split manifest/t/p).
-    var html = _publishHideAuthorPanels(_exportBaseHtml().replace(/<script src="data\/embedded-data\.js"><\/script>/, '<script src="data\/manifest.js"><\/script>'));
+    // Timestamp único del build: viaja en manifest.js como __DATA_TS__ y se usa en todas
+    // las URLs de fetch (data/t/, data/p/, etc.) para que el navegador nunca sirva datos
+    // de una publicación anterior aunque los tenga cacheados.
+    var _buildTs = Date.now();
+    var html = _publishHideAuthorPanels(_exportBaseHtml().replace(/<script src="data\/embedded-data\.js"><\/script>/, '<script src="data\/manifest.js?v=' + _buildTs + '"><\/script>'));
 
     // ETAPA 2 — build de publicación con CARGA POR DEMANDA:
     //   data/manifest.js  → índice liviano (lo único que baja al abrir la web)
@@ -5304,7 +5314,7 @@ async function exportHtml() {
     var split = buildSplitData();
     // El manifest liviano lleva también noticias y zona horaria (son chicas) para que la web
     // publicada muestre TUS noticias/horarios y no los de ejemplo (embedded-data.js no se publica).
-    var manifestJs = _manifestJsFromSplit(split);
+    var manifestJs = _manifestJsFromSplit(split, _buildTs);
 
     var enc = new TextEncoder();
     function _tfn(id) { return String(id).replace(/[^a-z0-9_-]/gi, '_') + '.json'; }
@@ -5347,7 +5357,7 @@ async function exportGithubData() {
     // acá sería peligroso: si reemplazás tu archivo de trabajo con el index.html PUBLICADO, perdés el
     // modo autor (cargaría manifest.js en vez de embedded-data.js y abriría en modo solo-lectura).
     var split = buildSplitData();
-    var manifestJs = _manifestJsFromSplit(split);
+    var manifestJs = _manifestJsFromSplit(split, Date.now());
     var enc = new TextEncoder();
     function _tfn(id) { return String(id).replace(/[^a-z0-9_-]/gi, '_') + '.json'; }
     var zipEntries = [
@@ -6272,8 +6282,8 @@ function _loadGamesIndexAsync(cb) {
   if (_gamesIdxLoading) return;
   _gamesIdxLoading = true;
   Promise.all([
-    fetch('data/games_0.json').then(function(r) { return r.json(); }),
-    fetch('data/games_1.json').then(function(r) { return r.json(); })
+    fetch('data/games_0.json' + _dataV()).then(function(r) { return r.json(); }),
+    fetch('data/games_1.json' + _dataV()).then(function(r) { return r.json(); })
   ]).then(function(parts) {
     window.__GAMES_INDEX__ = parts[0].concat(parts[1]);
     _gamesIdxLoading = false;
@@ -11801,7 +11811,7 @@ function _loadBookAsync(cb) {
   if (_bookLoading) return;
   _bookLoading = true;
   if (_ondemand) {
-    fetch('data/book.json').then(function(r) { if (!r.ok) throw 0; return r.json(); })
+    fetch('data/book.json' + _dataV()).then(function(r) { if (!r.ok) throw 0; return r.json(); })
       .then(function(b) { window.__BOOK__ = b; _bookReady(); })
       .catch(function() { window.__BOOK__ = {}; _bookReady(); });
   } else {
