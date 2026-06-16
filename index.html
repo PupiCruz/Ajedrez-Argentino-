@@ -3482,7 +3482,7 @@ function crBuildRoundPanel(key,pairings,data,roundNum){
   // Muestra ~10 tableros y el resto scrolleable. scrollbar-gutter:stable reserva SIEMPRE el espacio
   // de la barra de scroll vertical → la tabla no se corre de lado al cambiar entre rondas con más o
   // menos filas (la barra aparecía/desaparecía y movía el contenido).
-  h+='<div style="max-height:440px;overflow:auto;scrollbar-gutter:stable;border:1px solid rgba(255,255,255,0.18);border-radius:10px">';
+  h+='<div style="max-height:440px;overflow:auto;scrollbar-gutter:stable;background:rgba(0,0,0,0.52);border:1px solid rgba(255,255,255,0.18);border-radius:10px">';
   h+='<table style="border-collapse:collapse;font-size:12.5px;white-space:nowrap;min-width:100%">';
   h+='<thead><tr>';
   h+='<th style="'+th+';text-align:center">M</th>';
@@ -3633,7 +3633,7 @@ function crBuildStandingsPanel(key,standings){
     +'</tr></thead>';
 
   var h=labelHtml;
-  h+='<div style="max-height:520px;overflow-y:auto;border:1px solid rgba(255,255,255,0.18);border-radius:10px;max-width:600px;margin:0 auto">';
+  h+='<div style="max-height:520px;overflow-y:auto;background:rgba(0,0,0,0.52);border:1px solid rgba(255,255,255,0.18);border-radius:10px;max-width:600px;margin:0 auto">';
   h+='<table style="width:100%;table-layout:fixed;border-collapse:collapse">';
   h+=thead;
   if(argOnly){
@@ -5009,7 +5009,31 @@ function buildSplitData() {
         ev: h.Event||'', pl: pl, m: m, t: tid, gi: gi });
     });
   });
-  return { manifest: { tournaments: tournaments, playerIndex: playerIndex }, tFiles: tFiles, pFiles: pFiles, gameEntries: gameEntries };
+  // Stats W/D/L por jugador, precomputadas desde pFiles para que la web publicada
+  // las muestre en el listado sin necesidad de cargar las partidas de cada jugador.
+  var pidToPlayer = {};
+  PLAYERS.forEach(function(p) { pidToPlayer[p.id] = p; });
+  var playerStats = {};
+  for (var spid in pFiles) {
+    var sp = pidToPlayer[spid];
+    if (!sp) continue;
+    var ss = {w:0, d:0, l:0};
+    var spf = sp.fide_id != null ? String(sp.fide_id) : '';
+    pFiles[spid].forEach(function(g) {
+      var h = parsePgnHeaders(g.pgn);
+      var res = h.Result || '*';
+      if (res !== '1-0' && res !== '0-1' && res !== '1/2-1/2') return;
+      var wf = h.WhiteFideId != null ? String(h.WhiteFideId) : '';
+      var bf = h.BlackFideId != null ? String(h.BlackFideId) : '';
+      var isW = (spf && wf === spf) || (!wf && pgnNameMatchesPlayer(h.White, sp));
+      var isB = (spf && bf === spf) || (!bf && pgnNameMatchesPlayer(h.Black, sp));
+      if (!isW && !isB) { isW = pgnNameMatchesPlayer(h.White, sp); isB = !isW && pgnNameMatchesPlayer(h.Black, sp); }
+      if (isW) { if (res==='1-0') ss.w++; else if (res==='0-1') ss.l++; else ss.d++; }
+      else if (isB) { if (res==='0-1') ss.w++; else if (res==='1-0') ss.l++; else ss.d++; }
+    });
+    if (ss.w + ss.d + ss.l > 0) playerStats[spid] = ss;
+  }
+  return { manifest: { tournaments: tournaments, playerIndex: playerIndex, playerStats: playerStats }, tFiles: tFiles, pFiles: pFiles, gameEntries: gameEntries };
 }
 
 function pgnDeleteTorneo(id) {
@@ -6019,6 +6043,11 @@ var _quickStats = null;
 function _buildQuickStats() {
   if (_quickStats) return _quickStats;
   _quickStats = {};
+  // En modo on-demand las stats vienen precomputadas en el manifest (buildSplitData las genera al publicar)
+  if (_ondemand && _manifest && _manifest.playerStats) {
+    _quickStats = _manifest.playerStats;
+    return _quickStats;
+  }
   var fideMap = {}, nameMap = {};
   PLAYERS.forEach(function(p) {
     if (p.fide_id) fideMap[p.fide_id] = p.id;
