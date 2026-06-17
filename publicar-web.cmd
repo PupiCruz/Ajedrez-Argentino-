@@ -67,7 +67,7 @@ if errorlevel 1 (
     echo ==========================================
     echo   Listo! La web se esta actualizando.
     echo   En 1-2 min estara disponible en:
-    echo   https://chessargentino.netlify.app
+    echo   https://chessargentino.pages.dev
     echo ==========================================
 )
 
