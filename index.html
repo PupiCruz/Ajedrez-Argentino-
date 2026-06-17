@@ -13680,7 +13680,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   // Sección Chess-Results (emparejamientos + tabla por ronda)
   var crk = crKey(type, id) + catSuffix;
   _crCategory[crk] = typ; // recordar la categoría para el filtro de argentinos
-  if (_tdCtx) _tdCtx.crKey = crk;
+  if (_tdCtx) { _tdCtx.crKey = crk; _tdCtx.isTeam = isTeam; }
   h += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.14);border-radius:14px;padding:16px 18px;margin-bottom:18px">';
   if (isTeam) {
     // Torneo por equipos: cruces por mesas + tabla de equipos (en vez del cuadro individual).
@@ -13725,6 +13725,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   // Prioridad Lichess: si hay broadcast, SIEMPRE pedimos el vivo. roundOrder.length>0 le avisa que ya
   // hay partidas subidas mostrándose, para NO pisarlas con un error si el fetch falla (respaldo).
   _tdLiveCrKey = crk;   // que el vivo conozca la clave de cruces aunque no haya partidas subidas (solo-broadcast)
+  _tdLiveIsTeam = !!isTeam;   // y si es por equipos, para no pisar la sección de equipos con el cuadro individual
   if (hasBroadcast) _tdLoadLiveGames(broadcastId, broadcastUrl, name, location, pgnKey2, typ, status, roundOrder.length > 0);
   // Si se pidió, bajar directo al apartado de partidas
   if (scrollToGames && m) {
@@ -14486,6 +14487,7 @@ var _tdLiveCtx = null;   // { tourId, pgnKey, name, location, typ }
 // (sin partidas subidas) _tdCtx arranca null, y sin esto _tdLiveBuild perdía el crKey → la sección
 // de cruces no se re-renderizaba al llegar el vivo y faltaba el botón "♟ Ver partidas".
 var _tdLiveCrKey = null;
+var _tdLiveIsTeam = false;   // si el torneo es por equipos: el vivo NO debe re-renderizar la sección como cuadro individual
 
 function _tdLiveStop() { if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; } _tdLiveCtx = null; _tdStopClocks(); mevAbort(); }
 
@@ -14510,7 +14512,7 @@ function _tdLiveError(url, detail) {
 }
 
 function _tdLiveFetch(tourId, name, location, pgnKey, typ, hasFallback) {
-  _tdLiveCtx = { tourId: tourId, pgnKey: pgnKey, name: name, location: location, typ: typ, hasFallback: !!hasFallback, crKey: _tdLiveCrKey };
+  _tdLiveCtx = { tourId: tourId, pgnKey: pgnKey, name: name, location: location, typ: typ, hasFallback: !!hasFallback, crKey: _tdLiveCrKey, isTeam: !!_tdLiveIsTeam };
   _bcFetchAll(tourId, function(res){
     if (!_tdLiveCtx || _tdLiveCtx.tourId !== tourId) return;
     var sec = document.getElementById('td-games-section');
@@ -14536,7 +14538,7 @@ function _tdLiveBuild(res, sec, keepRound) {
   roundOrder.sort(function(a,b){ return (parseInt(a)||0) - (parseInt(b)||0); });
   var ctx = _tdLiveCtx;
   PGN_DB[ctx.pgnKey] = { title: ctx.name, sub: ctx.location, url: '', games: games };
-  _tdCtx = { byRound: byRound, games: games, pgnKey: ctx.pgnKey, name: ctx.name, location: ctx.location, built: {}, crKey: (_tdCtx && _tdCtx.crKey) || ctx.crKey || null };
+  _tdCtx = { byRound: byRound, games: games, pgnKey: ctx.pgnKey, name: ctx.name, location: ctx.location, built: {}, crKey: (_tdCtx && _tdCtx.crKey) || ctx.crKey || null, isTeam: !!(ctx && ctx.isTeam) };
   var startRound = (keepRound != null && byRound[keepRound]) ? keepRound : (liveRoundInt || roundOrder[roundOrder.length - 1] || roundOrder[0]);
   _tdArgOnly = false;
   _tdCurrentRound = startRound;
@@ -14568,7 +14570,10 @@ function _tdLiveBuild(res, sec, keepRound) {
   // Ya con las partidas del vivo cargadas, sincronizar los resultados del cuadro de cruces con
   // ellas y re-renderizar esa sección. (Al abrir, crSyncResultsFromPgn corrió SIN partidas y no
   // enlazaba: por eso los resultados recién aparecían tras togglear el filtro.)
-  if (_tdCtx.crKey && PGN_DB[_tdCtx.pgnKey] && PGN_DB[_tdCtx.pgnKey].games.length) {
+  // OJO: en torneos POR EQUIPOS la sección cr-section-<crk> la dibuja _teamRenderSection (mismo id);
+  // crRefreshSection la reemplazaría por el cuadro INDIVIDUAL y se perdería la sección de equipos
+  // (los botones de importar Excel por equipos). Por eso lo salteamos si el torneo es por equipos.
+  if (!(_tdLiveCtx && _tdLiveCtx.isTeam) && _tdCtx.crKey && PGN_DB[_tdCtx.pgnKey] && PGN_DB[_tdCtx.pgnKey].games.length) {
     try {
       crSyncResultsFromPgn(_tdCtx.crKey);   // completa los resultados vacíos con las partidas del vivo
       var _k = _tdCtx.crKey, _d = crDataLoad(_k), _tab = _crActiveTab[_k];
