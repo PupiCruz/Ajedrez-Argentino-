@@ -3887,6 +3887,9 @@ function _teamRenderSection(crk,data){
     h+='<div style="display:flex;gap:6px;align-items:center">';
     h+='<label style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:var(--bg3);border:1px solid var(--border);color:var(--text2);font-size:11px;font-weight:600;border-radius:8px;cursor:pointer;font-family:inherit" title="Excel de emparejamientos por mesas (una ronda)"><input type="file" accept=".xlsx" style="display:none" onchange="_teamImportRound(\''+ks+'\',this)">♟ Cruces equipos</label>';
     h+='<label style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-size:11px;font-weight:600;border-radius:8px;cursor:pointer;font-family:inherit" title="Excel de la clasificación final por equipos"><input type="file" accept=".xlsx" style="display:none" onchange="_teamImportStandings(\''+ks+'\',this)">📊 Tabla equipos</label>';
+    if(_crUrlByKey[crk] && /tnr\d+/i.test(_crUrlByKey[crk])){
+      h+='<button onclick="_crAutoUpdateTeamBtn(\''+ks+'\')" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:rgba(60,130,200,.15);border:1px solid rgba(70,150,220,.4);color:#7ab8e6;font-size:11px;font-weight:600;border-radius:8px;cursor:pointer;font-family:inherit" title="Baja solo todas las rondas + la clasificación desde Chess-Results">🔄 Actualizar desde Chess-Results</button>';
+    }
     h+='</div>';
   }
   h+='</div>';
@@ -3964,6 +3967,83 @@ async function _teamDoRound(crk,bytes){
     setS('✓ '+nums.length+' ronda(s) — '+tot+' matches'); _teamRefresh(crk,parseInt(nums[nums.length-1]));
   }catch(err){ setS('❌ '+err.message); }
 }
+
+// ── Auto-actualización desde Chess-Results (vía Worker proxy que resuelve el CORS) ──
+// chess-results.com no manda headers CORS, así que el navegador no puede bajar sus .xlsx directo.
+// El Worker (Cloudflare) los baja del lado servidor y los reenvía con CORS. Acá derivamos las URLs
+// de export del crUrl del torneo, bajamos vía proxy y REUSAMOS los parsers de siempre.
+var CR_PROXY = 'https://cr-proxy.mmatiasscruz.workers.dev';
+var _crUrlByKey = {};   // crk -> crUrl del torneo (lo setea openTournamentDetail)
+
+// Deriva la URL de export a Excel para una vista (art) y ronda (rd). Equipos: art=3 = cruces por
+// mesa, art=0 = clasificación. prt=4&excel=2010 = "bajar como xlsx". zeilen=0 = todas las filas.
+function _crExportUrl(crUrl, art, rd) {
+  var m = String(crUrl||'').match(/tnr(\d+)/i);
+  if (!m) return null;
+  var host = 's2.chess-results.com';
+  try { var hm = String(crUrl).match(/https?:\/\/([^\/]+)/i); if (hm && /chess-results\.com$/i.test(hm[1])) host = hm[1]; } catch(e){}
+  return 'https://' + host + '/tnr' + m[1] + '.aspx?lan=2&zeilen=0&art=' + art +
+         (rd!=null ? '&rd=' + rd : '') + '&turdet=YES&flag=30&prt=4&excel=2010';
+}
+
+// Baja una URL de chess-results a través del Worker. Devuelve Uint8Array (los bytes del xlsx).
+async function _crProxyFetch(crUrl) {
+  var res = await fetch(CR_PROXY + '/?url=' + encodeURIComponent(crUrl));
+  if (!res.ok) throw new Error('proxy HTTP ' + res.status);
+  return new Uint8Array(await res.arrayBuffer());
+}
+
+// Descubre cuántas rondas hay leyendo los links "Emparejamientos por mesas" (art=3&rd=N) de la
+// página del torneo. Devuelve el nº máximo de ronda, o null.
+async function _crDiscoverRounds(crUrl) {
+  try {
+    var res = await fetch(CR_PROXY + '/?url=' + encodeURIComponent(crUrl));
+    if (!res.ok) return null;
+    var html = await res.text();
+    var re = /art=3&(?:amp;)?rd=(\d+)/gi, mm, max = 0;
+    while ((mm = re.exec(html)) !== null) { var n = parseInt(mm[1]); if (n > max) max = n; }
+    return max || null;
+  } catch(e) { return null; }
+}
+
+// Baja TODAS las rondas de cruces + la clasificación de un torneo por equipos, las pasa por los
+// parsers existentes y las guarda. silent=true → actualización en vivo (sin mensajes de estado).
+async function _crAutoFetchTeam(crk, crUrl, opts) {
+  opts = opts || {};
+  var st = document.getElementById('cr-status-' + crk);
+  function setS(m){ if (st && !opts.silent) st.textContent = m; }
+  if (!crUrl || !/tnr\d+/i.test(crUrl)) { setS('❌ Este torneo no tiene una URL de Chess-Results válida (debe contener tnr<número>).'); return false; }
+  if (_crAutoBusy[crk]) return false; _crAutoBusy[crk] = true;
+  try {
+    setS('⏳ Buscando rondas en Chess-Results…');
+    var maxR = await _crDiscoverRounds(crUrl);
+    if (!maxR) { setS('❌ No se encontraron rondas en la página de Chess-Results.'); return false; }
+    var data = crDataLoad(crk) || {};
+    if (!data.teamRounds) data.teamRounds = {};
+    var okR = 0;
+    for (var r = 1; r <= maxR; r++) {
+      setS('⏳ Bajando cruces ronda ' + r + '/' + maxR + '…');
+      try {
+        var rows = await crExtractXlsx(await _crProxyFetch(_crExportUrl(crUrl, 3, r)));
+        var parsed = _teamParseRounds(rows), nums = Object.keys(parsed);
+        if (nums.length) { nums.forEach(function(n){ data.teamRounds[n] = parsed[n]; }); okR++; }
+      } catch(e) { /* si una ronda falla, seguir con las demás */ }
+    }
+    setS('⏳ Bajando clasificación…');
+    try {
+      var stand = _teamParseStandings(await crExtractXlsx(await _crProxyFetch(_crExportUrl(crUrl, 0, maxR))));
+      if (stand && stand.teams && stand.teams.length) data.teamStandings = stand;
+    } catch(e) {}
+    crDataSave(crk, data);
+    var rn = Object.keys(data.teamRounds).map(Number).sort(function(a,b){return a-b;});
+    if (!opts.silent) setS('✓ Actualizado desde Chess-Results — ' + okR + ' ronda(s)' + (data.teamStandings ? ' + tabla' : '') + (_ondemand ? '' : '. Acordate de "Guardar datos en mi carpeta" y publicar.'));
+    _teamRefresh(crk, rn.length ? rn[rn.length-1] : (data.teamStandings ? 'tabla' : null));
+    return okR > 0 || !!data.teamStandings;
+  } catch(e) { setS('❌ ' + e.message); return false; }
+  finally { _crAutoBusy[crk] = false; }
+}
+var _crAutoBusy = {};
+function _crAutoUpdateTeamBtn(crk) { _crAutoFetchTeam(crk, _crUrlByKey[crk], {}); }
 
 // ── Importar cruces (pairings) ──
 function crImportRound(key,input){
@@ -13780,6 +13860,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   // Sección Chess-Results (emparejamientos + tabla por ronda)
   var crk = crKey(type, id) + catSuffix;
   _crCategory[crk] = typ; // recordar la categoría para el filtro de argentinos
+  _crUrlByKey[crk] = crUrl; // que la sección de equipos sepa el crUrl (botón + auto-fetch)
   if (_tdCtx) { _tdCtx.crKey = crk; _tdCtx.isTeam = isTeam; }
   h += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.14);border-radius:14px;padding:16px 18px;margin-bottom:18px">';
   if (isTeam) {
@@ -13827,6 +13908,12 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   _tdLiveCrKey = crk;   // que el vivo conozca la clave de cruces aunque no haya partidas subidas (solo-broadcast)
   _tdLiveIsTeam = !!isTeam;   // y si es por equipos, para no pisar la sección de equipos con el cuadro individual
   if (hasBroadcast) _tdLoadLiveGames(broadcastId, broadcastUrl, name, location, pgnKey2, typ, status, roundOrder.length > 0);
+  // "Se actualizan solos": en la web publicada, si el torneo por equipos está EN VIVO y tiene URL de
+  // Chess-Results, bajar los cuadros frescos al abrir (igual que los broadcasts de Lichess). En modo
+  // autor no corre solo: el autor usa el botón "🔄 Actualizar desde Chess-Results" cuando quiere.
+  if (isTeam && _ondemand && status === 'live' && crUrl && /tnr\d+/i.test(crUrl)) {
+    _crAutoFetchTeam(crk, crUrl, { silent: true });
+  }
   // Si se pidió, bajar directo al apartado de partidas
   if (scrollToGames && m) {
     var anchor = document.getElementById('td-partidas-anchor');
