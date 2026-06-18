@@ -4055,9 +4055,11 @@ async function _crAutoFetchTeam(crk, crUrl, opts) {
 var _crAutoBusy = {};
 function _crAutoUpdateTeamBtn(crk) { _crAutoFetchTeam(crk, _crUrlByKey[crk], {}); }
 
-// Igual que _crAutoFetchTeam pero para torneos INDIVIDUALES (suizo / round robin). Vistas: art=2 =
-// emparejamientos por mesas, art=1 = clasificación. Reusa _crParseSections (cruces) y
-// _crParseStandingsRows (tabla). Fuerza el nº de ronda (= rd pedido) para no depender de detección.
+// Igual que _crAutoFetchTeam pero para torneos INDIVIDUALES (suizo Y round robin). Vistas:
+//   art=2 SIN rd = TODAS las rondas de emparejamientos en un archivo (vale para suizo y round robin;
+//                  _crParseSections separa por las cabeceras "Ronda N").
+//   art=1 SIN rd = clasificación actual/final (el header dice de qué ronda es).
+// No depende de descubrir rondas en la página (eso fallaba en la página mínima del round robin).
 async function _crAutoFetchIndiv(crk, crUrl, opts) {
   opts = opts || {};
   var st = document.getElementById('cr-status-' + crk);
@@ -4065,32 +4067,23 @@ async function _crAutoFetchIndiv(crk, crUrl, opts) {
   if (!crUrl || !/tnr\d+/i.test(crUrl)) { setS('❌ Este torneo no tiene una URL de Chess-Results válida (debe contener tnr<número>).'); return false; }
   if (_crAutoBusy[crk]) return false; _crAutoBusy[crk] = true;
   try {
-    setS('⏳ Buscando rondas en Chess-Results…');
-    var maxR = await _crDiscoverRounds(crUrl, 2);
-    if (!maxR) { setS('❌ No se encontraron rondas en la página de Chess-Results.'); return false; }
     var data = crDataLoad(crk) || { rounds:{}, standings:[] };
     if (!data.rounds) data.rounds = {};
     var okR = 0;
-    for (var r = 1; r <= maxR; r++) {
-      setS('⏳ Bajando cruces ronda ' + r + '/' + maxR + '…');
-      try {
-        var rows = await crExtractXlsx(await _crProxyFetch(_crExportUrl(crUrl, 2, r)));
-        // Buscar la fila de cabecera "Ronda N" (si la hay) para que _crParseSections arranque ahí;
-        // si no aparece, row=-1 hace que escanee desde el principio. El nº de ronda lo FORZAMOS a r
-        // (pedimos rd=r), así nunca dispara el prompt "¿qué ronda es?".
-        var hdrRow = -1;
-        for (var ri = 0; ri < rows.length; ri++) {
-          if (/\d+\.\s*Ronda|Ronda\s+\d+|Round\s+\d+|\d+\.\s*Round/i.test(rows[ri].join(' '))) { hdrRow = ri; break; }
-        }
-        var parsed = _crParseSections(rows, [{ row: hdrRow, num: r }]);
-        if (parsed[r] && parsed[r].length) { data.rounds[r] = parsed[r]; okR++; }
-      } catch(e) { /* si una ronda falla, seguir */ }
-    }
+    setS('⏳ Bajando emparejamientos…');
+    try {
+      var rows = await crExtractXlsx(await _crProxyFetch(_crExportUrl(crUrl, 2, null)));
+      var roundHdrIdx = [];
+      for (var ri = 0; ri < rows.length; ri++) {
+        var hm = rows[ri].join(' ').match(/(\d+)\.\s*Ronda|Ronda\s+(\d+)|Round\s+(\d+)|(\d+)\.\s*Round/i);
+        if (hm) roundHdrIdx.push({ row: ri, num: parseInt(hm[1] || hm[2] || hm[3] || hm[4]) });
+      }
+      var parsed = _crParseSections(rows, roundHdrIdx);
+      Object.keys(parsed).forEach(function(n){ data.rounds[n] = parsed[n]; okR++; });
+    } catch(e) { /* seguir a la tabla */ }
     setS('⏳ Bajando clasificación…');
     try {
-      // La clasificación (art=1) puede llegar a menos rondas que los emparejamientos: su propio máximo.
-      var standR = await _crDiscoverRounds(crUrl, 1) || maxR;
-      var ps = _crParseStandingsRows(await crExtractXlsx(await _crProxyFetch(_crExportUrl(crUrl, 1, standR))));
+      var ps = _crParseStandingsRows(await crExtractXlsx(await _crProxyFetch(_crExportUrl(crUrl, 1, null))));
       if (ps.standings.length) {
         data.standings = ps.standings; data.standingsKind = ps.kind;
         delete data.standingsRound; delete data.standingsFinal;
@@ -4098,11 +4091,13 @@ async function _crAutoFetchIndiv(crk, crUrl, opts) {
         if (ps.final) data.standingsFinal = true;
       }
     } catch(e) {}
-    crDataSave(crk, data);
     var hasStand = !!(data.standings && data.standings.length);
+    if (!okR && !hasStand) { setS('❌ No se pudieron leer cruces ni clasificación desde Chess-Results.'); return false; }
+    crDataSave(crk, data);
     if (!opts.silent) setS('✓ Actualizado desde Chess-Results — ' + okR + ' ronda(s)' + (hasStand ? ' + tabla' : '') + (_ondemand ? '' : '. Acordate de "Guardar datos en mi carpeta" y publicar.'));
     var isRR = crLooksLikeRoundRobin(data);
-    crRefreshSection(crk, isRR ? 'cuadro' : (okR ? maxR : (hasStand ? 'tabla' : null)));
+    var lastR = Object.keys(data.rounds).map(Number).sort(function(a,b){return a-b;});
+    crRefreshSection(crk, isRR ? 'cuadro' : (lastR.length ? lastR[lastR.length-1] : (hasStand ? 'tabla' : null)));
     try { renderTorneos(_lastTorneoFilter); } catch(e){}
     return okR > 0 || hasStand;
   } catch(e) { setS('❌ ' + e.message); return false; }
