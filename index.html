@@ -13510,6 +13510,7 @@ function _tdLocalGamesHtml(byRound, roundOrder, games, pgnKey, typ) {
   var h = '';
   h += '<div id="td-partidas-anchor" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;flex-wrap:wrap;scroll-margin-top:10px">';
   h += '<span style="font-size:14px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:#e0e0e0;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000">Partidas (' + games.length + ')</span>';
+  h += _tdSearchBoxHtml();
   // El filtro de argentinos sale SOLO en torneos Internacionales (igual que en la tabla y los cuadros).
   if (argTotal > 0 && crShowArgLine(typ)) {
     h += '<button id="td-arg-btn" onclick="tdToggleArg()" style="padding:6px 13px;border-radius:20px;border:2px solid rgba(255,255,255,0.22);background:rgba(0,0,0,0.40);color:#d0d0d0;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000">🇦🇷 Solo argentinos</button>';
@@ -13845,6 +13846,11 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     byRound[rInt].push({ pgn: pgn, h: h });
   });
   roundOrder.sort(function(a, b) { return (parseInt(a)||0) - (parseInt(b)||0); });
+  // Guardar las partidas SUBIDAS (a mano + pool) agrupadas por ronda. Si el torneo transmite por
+  // Lichess, _tdLiveBuild usará estas en las rondas donde haya MÁS subidas que las que trae Lichess
+  // (Lichess suele traer solo los tableros de arriba; acá pudiste subir la ronda completa).
+  _tdUploadedByRound = byRound;
+  _tdSearch = '';   // limpiar el buscador de tableros al abrir un torneo nuevo
 
   var lbl2 = { live:'EN CURSO', upcoming:'PRÓXIMO', done:'FINALIZADO' };
   var cls2 = { live:'b-live', upcoming:'b-upcoming', done:'b-done' };
@@ -14271,6 +14277,25 @@ var _tdCtx = null;
 var _tdTourKey = null;   // clave del torneo abierto (para armar los links ?torneo=<id>&partida=<idx>)
 var _TD_PER_PAGE = 24;   // miniaturas por página (carga fluida con muchos tableros)
 var _tdPage = 0;
+// ── Buscador de tableros por jugador ──────────────────────────────────────────────────────────
+// Un visitante puede escribir varios apellidos (ej. "Paveto Valerga Adam") y se filtran SOLO esos
+// tableros (coincide con cualquiera de los términos, en blancas o negras). Filtra ANTES de paginar.
+var _tdSearch = '';        // texto crudo del buscador
+var _tdSearchTimer = null;
+function _tdNorm(s){ return (s||'').toString().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,''); }   // minúsculas + sin acentos
+// Caja de búsqueda (se reusa en la vista en vivo y en la local). value=_tdSearch para sobrevivir a los
+// re-render del header (cambio de ronda / refresco del vivo).
+function _tdSearchBoxHtml(){
+  return '<input id="td-search" type="search" autocomplete="off" placeholder="🔍 Filtrar jugador (ej: Paveto Valerga)" value="' + escHtml(_tdSearch) + '" oninput="tdSearchInput(this.value)" style="flex:1;min-width:150px;max-width:300px;padding:6px 13px;border-radius:20px;border:1px solid var(--border);background:rgba(0,0,0,0.40);color:#e8e8e8;font-size:13px;font-family:inherit;outline:none">';
+}
+// Al tipear: reconstruye la ronda actual (el input vive en el header, que tdBuildRound NO reconstruye,
+// así que no pierde el foco). Debounce corto para no rearmar en cada tecla.
+function tdSearchInput(val){
+  _tdSearch = val || '';
+  if (_tdSearchTimer) clearTimeout(_tdSearchTimer);
+  _tdSearchTimer = setTimeout(function(){ if (_tdCurrentRound !== null) { _tdPage = 0; tdBuildRound(_tdCurrentRound); } }, 180);
+}
+
 function tdBuildRound(rInt) {
   if (!_tdCtx) return;
   var panel = document.getElementById('td-round-' + rInt);
@@ -14284,6 +14309,10 @@ function tdBuildRound(rInt) {
   }
   var _all = _roundGames;
   if (_tdArgOnly) _all = _all.filter(function(g){ return _isArgGame(g.h); });   // filtrar ANTES de paginar (los argentinos juntos)
+  if (_tdSearch) {   // buscador: dejar solo los tableros cuyo nombre (blancas o negras) matchee algún término
+    var _terms = _tdNorm(_tdSearch).split(/\s+/).filter(Boolean);
+    if (_terms.length) _all = _all.filter(function(g){ var _hay = _tdNorm((g.h.White||'') + ' ' + (g.h.Black||'')); return _terms.some(function(t){ return _hay.indexOf(t) !== -1; }); });
+  }
   var _totalPages = Math.max(1, Math.ceil(_all.length / _TD_PER_PAGE));
   if (_tdPage >= _totalPages) _tdPage = _totalPages - 1;
   if (_tdPage < 0) _tdPage = 0;
@@ -14291,6 +14320,7 @@ function tdBuildRound(rInt) {
   _all.slice(_tdPage * _TD_PER_PAGE, _tdPage * _TD_PER_PAGE + _TD_PER_PAGE).forEach(function(g) {
     h += _tdCardHtml(g);
   });
+  if (!h) h = '<div style="grid-column:1/-1;text-align:center;padding:24px;color:var(--text3);font-size:13px">Sin tableros que coincidan con la búsqueda.</div>';
   panel.innerHTML = h;
   tdFillBoards(rInt);   // calcula y dibuja las posiciones finales en segundo plano
   _tdRenderPager(rInt, _totalPages, _all.length);
@@ -14896,17 +14926,41 @@ function _tdLiveFetchMulti(tourIds, name, location, pgnKey, typ, hasFallback) {
   });
 }
 
+// Partidas SUBIDAS (a mano/pool) del torneo abierto, agrupadas por ronda. Lo setea openTournamentDetail.
+var _tdUploadedByRound = {};
+// Si para una ronda hay MÁS partidas subidas a mano que las que trae Lichess, usar las subidas (Lichess
+// suele traer solo los tableros de arriba; el autor pudo subir la ronda completa). Reemplazo por ronda
+// (no mezcla → sin duplicados). Reconstruye y devuelve el array plano de games (en el orden de roundOrder).
+function _tdMergeUploadedRounds(byRound, roundOrder) {
+  var up = _tdUploadedByRound || {};
+  Object.keys(up).forEach(function(rk){
+    var rInt = parseInt(rk); if (isNaN(rInt)) rInt = rk;
+    var upArr = up[rk];
+    var upN = upArr ? upArr.length : 0;
+    var liN = byRound[rInt] ? byRound[rInt].length : 0;
+    if (upN > liN) {
+      byRound[rInt] = upArr.slice();
+      if (roundOrder.indexOf(rInt) === -1) roundOrder.push(rInt);
+    }
+  });
+  roundOrder.sort(function(a,b){ return (parseInt(a)||0) - (parseInt(b)||0); });
+  var games = [];
+  roundOrder.forEach(function(rInt){ (byRound[rInt]||[]).forEach(function(g){ games.push(g.pgn); }); });
+  return games;
+}
+
 // keepRound: ronda a re-seleccionar tras un refresco (preserva la pestaña del usuario).
 function _tdLiveBuild(res, sec, keepRound) {
-  var byRound = {}, roundOrder = [], games = [], liveRoundInt = null;
+  var byRound = {}, roundOrder = [], liveRoundInt = null;
   res.roundsWithGames.forEach(function(r, ri) {
     var mm = (r.name||'').match(/(\d+)/);
     var rInt = mm ? parseInt(mm[1]) : (ri + 1);
     if (!byRound[rInt]) { byRound[rInt] = []; roundOrder.push(rInt); }
-    r.games.forEach(function(pgn){ byRound[rInt].push({ pgn: pgn, h: parsePgnHeaders(pgn) }); games.push(pgn); });
+    r.games.forEach(function(pgn){ byRound[rInt].push({ pgn: pgn, h: parsePgnHeaders(pgn) }); });
     if (r.live) liveRoundInt = rInt;
   });
-  roundOrder.sort(function(a,b){ return (parseInt(a)||0) - (parseInt(b)||0); });
+  // Incorpora las subidas en las rondas donde superen a Lichess y arma el array plano de games.
+  var games = _tdMergeUploadedRounds(byRound, roundOrder);
   var ctx = _tdLiveCtx;
   PGN_DB[ctx.pgnKey] = { title: ctx.name, sub: ctx.location, url: '', games: games };
   _tdCtx = { byRound: byRound, games: games, pgnKey: ctx.pgnKey, name: ctx.name, location: ctx.location, built: {}, crKey: (_tdCtx && _tdCtx.crKey) || ctx.crKey || null, isTeam: !!(ctx && ctx.isTeam) };
@@ -14920,6 +14974,7 @@ function _tdLiveBuild(res, sec, keepRound) {
   var h = '';
   h += '<div id="td-partidas-anchor" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;flex-wrap:wrap;scroll-margin-top:10px">';
   h += '<span style="font-size:14px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:#e0e0e0;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000">Partidas · Lichess</span>';
+  h += _tdSearchBoxHtml();
   if (argTotal > 0 && crShowArgLine(ctx.typ)) {
     h += '<button id="td-arg-btn" onclick="tdToggleArg()" style="padding:6px 13px;border-radius:20px;border:2px solid rgba(255,255,255,0.22);background:rgba(0,0,0,0.40);color:#d0d0d0;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000">🇦🇷 Solo argentinos</button>';
   }
@@ -14966,13 +15021,14 @@ function _tdLiveBuild(res, sec, keepRound) {
 // de partidas o el set de rondas, reconstruye con _tdLiveBuild.
 function _tdLiveApplyRefresh(res, sec) {
   var curR = _tdCurrentRound;
-  var byRound = {}, roundOrder = [], games = [];
+  var byRound = {}, roundOrder = [];
   res.roundsWithGames.forEach(function(r, ri) {
     var mm = (r.name||'').match(/(\d+)/);
     var rInt = mm ? parseInt(mm[1]) : (ri + 1);
     if (!byRound[rInt]) { byRound[rInt] = []; roundOrder.push(rInt); }
-    r.games.forEach(function(pgn){ byRound[rInt].push({ pgn: pgn, h: parsePgnHeaders(pgn) }); games.push(pgn); });
+    r.games.forEach(function(pgn){ byRound[rInt].push({ pgn: pgn, h: parsePgnHeaders(pgn) }); });
   });
+  var games = _tdMergeUploadedRounds(byRound, roundOrder);
   var oldRoundN = (_tdCtx && _tdCtx.byRound[curR]) ? _tdCtx.byRound[curR].length : -1;
   var newRoundN = byRound[curR] ? byRound[curR].length : -2;
   var sameRoundSet = _tdCtx && roundOrder.length === Object.keys(_tdCtx.byRound).length;
