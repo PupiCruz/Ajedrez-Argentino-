@@ -3283,6 +3283,9 @@ function crRenderSection(key) {
   h+='<input type="file" accept=".xlsx" style="display:none" onchange="crImportRound(\''+ks+'\',this)">♟ Cruces</label>';
   h+='<label style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-size:11px;font-weight:600;border-radius:8px;cursor:pointer;font-family:inherit" title="Importar Excel de tabla de posiciones">';
   h+='<input type="file" accept=".xlsx" style="display:none" onchange="crImportStandings(\''+ks+'\',this)">📊 Tabla</label>';
+  if(_crUrlByKey[key] && /tnr\d+/i.test(_crUrlByKey[key])){
+    h+='<button onclick="_crAutoUpdateIndivBtn(\''+ks+'\')" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:rgba(60,130,200,.15);border:1px solid rgba(70,150,220,.4);color:#7ab8e6;font-size:11px;font-weight:600;border-radius:8px;cursor:pointer;font-family:inherit" title="Baja solo todas las rondas + la clasificación desde Chess-Results">🔄 Actualizar desde Chess-Results</button>';
+  }
   h+='</div>';
   }
   h+='</div>';
@@ -3975,14 +3978,17 @@ async function _teamDoRound(crk,bytes){
 var CR_PROXY = 'https://cr-proxy.mmatiasscruz.workers.dev';
 var _crUrlByKey = {};   // crk -> crUrl del torneo (lo setea openTournamentDetail)
 
-// Deriva la URL de export a Excel para una vista (art) y ronda (rd). Equipos: art=3 = cruces por
-// mesa, art=0 = clasificación. prt=4&excel=2010 = "bajar como xlsx". zeilen=0 = todas las filas.
+// Deriva la URL de export a Excel para una vista (art) y ronda (rd). prt=4&excel=2010 = "bajar como
+// xlsx". zeilen=99999 = TODAS las filas (equivale a tocar "Mostrar lista completa": sin esto, en
+// torneos de +150 jugadores el Excel se corta en las primeras 150 líneas). Vistas conocidas:
+//   Equipos     → art=3 cruces por mesa, art=0 clasificación.
+//   Individual  → art=2 cruces por mesa, art=1 clasificación.
 function _crExportUrl(crUrl, art, rd) {
   var m = String(crUrl||'').match(/tnr(\d+)/i);
   if (!m) return null;
   var host = 's2.chess-results.com';
   try { var hm = String(crUrl).match(/https?:\/\/([^\/]+)/i); if (hm && /chess-results\.com$/i.test(hm[1])) host = hm[1]; } catch(e){}
-  return 'https://' + host + '/tnr' + m[1] + '.aspx?lan=2&zeilen=0&art=' + art +
+  return 'https://' + host + '/tnr' + m[1] + '.aspx?lan=2&zeilen=99999&art=' + art +
          (rd!=null ? '&rd=' + rd : '') + '&turdet=YES&flag=30&prt=4&excel=2010';
 }
 
@@ -3993,14 +3999,15 @@ async function _crProxyFetch(crUrl) {
   return new Uint8Array(await res.arrayBuffer());
 }
 
-// Descubre cuántas rondas hay leyendo los links "Emparejamientos por mesas" (art=3&rd=N) de la
-// página del torneo. Devuelve el nº máximo de ronda, o null.
-async function _crDiscoverRounds(crUrl) {
+// Descubre cuántas rondas hay leyendo los links "Emparejamientos por mesas" de la página del torneo.
+// pairArt = el art de esos links (3 = equipos, 2 = individual). Devuelve el nº máximo de ronda, o null.
+async function _crDiscoverRounds(crUrl, pairArt) {
+  pairArt = pairArt || 3;
   try {
     var res = await fetch(CR_PROXY + '/?url=' + encodeURIComponent(crUrl));
     if (!res.ok) return null;
     var html = await res.text();
-    var re = /art=3&(?:amp;)?rd=(\d+)/gi, mm, max = 0;
+    var re = new RegExp('art=' + pairArt + '&(?:amp;)?rd=(\\d+)', 'gi'), mm, max = 0;
     while ((mm = re.exec(html)) !== null) { var n = parseInt(mm[1]); if (n > max) max = n; }
     return max || null;
   } catch(e) { return null; }
@@ -4031,7 +4038,10 @@ async function _crAutoFetchTeam(crk, crUrl, opts) {
     }
     setS('⏳ Bajando clasificación…');
     try {
-      var stand = _teamParseStandings(await crExtractXlsx(await _crProxyFetch(_crExportUrl(crUrl, 0, maxR))));
+      // La clasificación (art=0) puede llegar a MENOS rondas que los emparejamientos (la última
+      // ronda puede estar emparejada pero no jugada): descubrir su propio máximo.
+      var standR = await _crDiscoverRounds(crUrl, 0) || maxR;
+      var stand = _teamParseStandings(await crExtractXlsx(await _crProxyFetch(_crExportUrl(crUrl, 0, standR))));
       if (stand && stand.teams && stand.teams.length) data.teamStandings = stand;
     } catch(e) {}
     crDataSave(crk, data);
@@ -4044,6 +4054,61 @@ async function _crAutoFetchTeam(crk, crUrl, opts) {
 }
 var _crAutoBusy = {};
 function _crAutoUpdateTeamBtn(crk) { _crAutoFetchTeam(crk, _crUrlByKey[crk], {}); }
+
+// Igual que _crAutoFetchTeam pero para torneos INDIVIDUALES (suizo / round robin). Vistas: art=2 =
+// emparejamientos por mesas, art=1 = clasificación. Reusa _crParseSections (cruces) y
+// _crParseStandingsRows (tabla). Fuerza el nº de ronda (= rd pedido) para no depender de detección.
+async function _crAutoFetchIndiv(crk, crUrl, opts) {
+  opts = opts || {};
+  var st = document.getElementById('cr-status-' + crk);
+  function setS(m){ if (st && !opts.silent) st.textContent = m; }
+  if (!crUrl || !/tnr\d+/i.test(crUrl)) { setS('❌ Este torneo no tiene una URL de Chess-Results válida (debe contener tnr<número>).'); return false; }
+  if (_crAutoBusy[crk]) return false; _crAutoBusy[crk] = true;
+  try {
+    setS('⏳ Buscando rondas en Chess-Results…');
+    var maxR = await _crDiscoverRounds(crUrl, 2);
+    if (!maxR) { setS('❌ No se encontraron rondas en la página de Chess-Results.'); return false; }
+    var data = crDataLoad(crk) || { rounds:{}, standings:[] };
+    if (!data.rounds) data.rounds = {};
+    var okR = 0;
+    for (var r = 1; r <= maxR; r++) {
+      setS('⏳ Bajando cruces ronda ' + r + '/' + maxR + '…');
+      try {
+        var rows = await crExtractXlsx(await _crProxyFetch(_crExportUrl(crUrl, 2, r)));
+        // Buscar la fila de cabecera "Ronda N" (si la hay) para que _crParseSections arranque ahí;
+        // si no aparece, row=-1 hace que escanee desde el principio. El nº de ronda lo FORZAMOS a r
+        // (pedimos rd=r), así nunca dispara el prompt "¿qué ronda es?".
+        var hdrRow = -1;
+        for (var ri = 0; ri < rows.length; ri++) {
+          if (/\d+\.\s*Ronda|Ronda\s+\d+|Round\s+\d+|\d+\.\s*Round/i.test(rows[ri].join(' '))) { hdrRow = ri; break; }
+        }
+        var parsed = _crParseSections(rows, [{ row: hdrRow, num: r }]);
+        if (parsed[r] && parsed[r].length) { data.rounds[r] = parsed[r]; okR++; }
+      } catch(e) { /* si una ronda falla, seguir */ }
+    }
+    setS('⏳ Bajando clasificación…');
+    try {
+      // La clasificación (art=1) puede llegar a menos rondas que los emparejamientos: su propio máximo.
+      var standR = await _crDiscoverRounds(crUrl, 1) || maxR;
+      var ps = _crParseStandingsRows(await crExtractXlsx(await _crProxyFetch(_crExportUrl(crUrl, 1, standR))));
+      if (ps.standings.length) {
+        data.standings = ps.standings; data.standingsKind = ps.kind;
+        delete data.standingsRound; delete data.standingsFinal;
+        if (ps.round != null) data.standingsRound = ps.round;
+        if (ps.final) data.standingsFinal = true;
+      }
+    } catch(e) {}
+    crDataSave(crk, data);
+    var hasStand = !!(data.standings && data.standings.length);
+    if (!opts.silent) setS('✓ Actualizado desde Chess-Results — ' + okR + ' ronda(s)' + (hasStand ? ' + tabla' : '') + (_ondemand ? '' : '. Acordate de "Guardar datos en mi carpeta" y publicar.'));
+    var isRR = crLooksLikeRoundRobin(data);
+    crRefreshSection(crk, isRR ? 'cuadro' : (okR ? maxR : (hasStand ? 'tabla' : null)));
+    try { renderTorneos(_lastTorneoFilter); } catch(e){}
+    return okR > 0 || hasStand;
+  } catch(e) { setS('❌ ' + e.message); return false; }
+  finally { _crAutoBusy[crk] = false; }
+}
+function _crAutoUpdateIndivBtn(crk) { _crAutoFetchIndiv(crk, _crUrlByKey[crk], {}); }
 
 // ── Importar cruces (pairings) ──
 function crImportRound(key,input){
@@ -4274,83 +4339,92 @@ function crImportStandings(key,input){
   reader.readAsArrayBuffer(file);
 }
 
+// Parser PURO de la tabla de posiciones individual: filas → {standings, kind, round, final}.
+// Sin DOM ni guardado, para reusarlo desde la importación a mano Y desde la auto-actualización.
+function _crParseStandingsRows(rows){
+  var TITLES=/^(GM|IM|FM|WGM|WIM|WFM|CM|NM|WCM|AFM|AGM|WNM|AIM)$/;
+
+  // Detectar fila de encabezado: la que tiene "Nombre"/"Name" (ambos formatos
+  // —clasificación con "Rk." y ranking inicial con "FIDE-ID"— la tienen).
+  var hdrRow=-1, hdr=null;
+  for(var ri=0;ri<rows.length;ri++){
+    for(var ci=0;ci<rows[ri].length;ci++){
+      if(/^Nombre$|^Name$/i.test((rows[ri][ci]||'').trim())){ hdrRow=ri; hdr=rows[ri]; break; }
+    }
+    if(hdrRow>=0) break;
+  }
+
+  // Mapear índices de columna por nombre de encabezado
+  function findCol(re){ if(!hdr) return -1; for(var i=0;i<hdr.length;i++){ if(re.test((hdr[i]||'').trim())) return i; } return -1; }
+  var cRank = findCol(/^Rk\.?$/i);
+  var cNo   = findCol(/^No\.?$/i);
+  var cName = findCol(/^Nombre$|^Name$/i);
+  var cFed  = findCol(/^FED$/i);
+  var cElo  = findCol(/^Elo$/i);
+  var cPts  = findCol(/^Pts\.?$/i);
+  var cRp   = findCol(/^Rp$/i);
+  var cVar  = findCol(/^elo\s*\+\/-$|^Rtg\s*\+\/-$|^\+\/-$/i);
+  var cFide = findCol(/^FIDE[\s-]?ID$/i);
+  // El título no tiene encabezado: es la columna inmediatamente antes de "Nombre"
+  var cTitle = cName>0 ? cName-1 : -1;
+
+  // Ranking inicial: NO trae "Rk." pero SÍ "FIDE-ID". El nº de orden es "No.".
+  var isInitial = cRank<0 && cFide>=0;
+  var cOrder = isInitial ? cNo : cRank;
+
+  var standings=[];
+  if(hdrRow>=0 && cOrder>=0 && cName>=0){
+    // Parseo determinístico por columnas
+    for(var ri=hdrRow+1;ri<rows.length;ri++){
+      var row=rows[ri];
+      var name=(row[cName]||'').trim(); if(!name) continue;
+      // Chess-Results deja la celda "Rk." VACÍA para los empatados (comparten puesto
+      // con el de arriba). NO descartar esas filas: usar la posición correlativa.
+      var rk=parseInt(row[cOrder]); if(!rk) rk=standings.length+1;
+      var title=(row[cTitle]||'').trim(); if(!TITLES.test(title)) title='';
+      var fed=cFed>=0?(row[cFed]||'').trim():'';
+      var elo=cElo>=0?parseInt(row[cElo])||0:0;
+      var pts=(!isInitial&&cPts>=0)?parseFloat((row[cPts]||'0').replace(',','.').replace('½','.5'))||0:0;
+      var rp=cRp>=0?parseInt(row[cRp])||0:0;
+      var eloVar=cVar>=0?Math.round((parseFloat((row[cVar]||'0').replace(',','.'))||0)):0;
+      var entry={rank:rk,name:name,title:title,fed:fed,elo:elo,pts:pts,rp:rp,eloVar:eloVar};
+      var fideId=cFide>=0?(row[cFide]||'').trim():'';
+      if(fideId && /^\d+$/.test(fideId)) entry.fideId=fideId;
+      standings.push(entry);
+    }
+  }
+  var out={standings:standings, kind:(isInitial?'initial':'ranking'), round:null, final:false};
+  // Para la clasificación, leer del texto de cabecera de Chess-Results
+  // (p.ej. "Clasificación Final después de 9 rondas" / "Final standings after 9 rounds")
+  // el número de ronda y si es la clasificación final.
+  if(!isInitial){
+    for(var ti=0; ti<hdrRow; ti++){
+      var line=(rows[ti].join(' ')).trim();
+      if(/clasificaci|standing|ranking|después|despues|after/i.test(line)){
+        var nums=line.match(/\d+/g);
+        if(nums) out.round=parseInt(nums[nums.length-1]);
+        if(/\bfinal\b/i.test(line)) out.final=true;
+      }
+    }
+  }
+  return out;
+}
+
 async function _crParseStandingsAsync(key,bytes){
   var st=document.getElementById('cr-status-'+key);
   function setStatus(m){ if(st) st.textContent=m; }
   try {
     var rows=await crExtractXlsx(bytes);
-    var TITLES=/^(GM|IM|FM|WGM|WIM|WFM|CM|NM|WCM|AFM|AGM|WNM|AIM)$/;
-
-    // Detectar fila de encabezado: la que tiene "Nombre"/"Name" (ambos formatos
-    // —clasificación con "Rk." y ranking inicial con "FIDE-ID"— la tienen).
-    var hdrRow=-1, hdr=null;
-    for(var ri=0;ri<rows.length;ri++){
-      for(var ci=0;ci<rows[ri].length;ci++){
-        if(/^Nombre$|^Name$/i.test((rows[ri][ci]||'').trim())){ hdrRow=ri; hdr=rows[ri]; break; }
-      }
-      if(hdrRow>=0) break;
-    }
-
-    // Mapear índices de columna por nombre de encabezado
-    function findCol(re){ if(!hdr) return -1; for(var i=0;i<hdr.length;i++){ if(re.test((hdr[i]||'').trim())) return i; } return -1; }
-    var cRank = findCol(/^Rk\.?$/i);
-    var cNo   = findCol(/^No\.?$/i);
-    var cName = findCol(/^Nombre$|^Name$/i);
-    var cFed  = findCol(/^FED$/i);
-    var cElo  = findCol(/^Elo$/i);
-    var cPts  = findCol(/^Pts\.?$/i);
-    var cRp   = findCol(/^Rp$/i);
-    var cVar  = findCol(/^elo\s*\+\/-$|^Rtg\s*\+\/-$|^\+\/-$/i);
-    var cFide = findCol(/^FIDE[\s-]?ID$/i);
-    // El título no tiene encabezado: es la columna inmediatamente antes de "Nombre"
-    var cTitle = cName>0 ? cName-1 : -1;
-
-    // Ranking inicial: NO trae "Rk." pero SÍ "FIDE-ID". El nº de orden es "No.".
-    var isInitial = cRank<0 && cFide>=0;
-    var cOrder = isInitial ? cNo : cRank;
-
-    var standings=[];
-    if(hdrRow>=0 && cOrder>=0 && cName>=0){
-      // Parseo determinístico por columnas
-      for(var ri=hdrRow+1;ri<rows.length;ri++){
-        var row=rows[ri];
-        var name=(row[cName]||'').trim(); if(!name) continue;
-        // Chess-Results deja la celda "Rk." VACÍA para los empatados (comparten puesto
-        // con el de arriba). NO descartar esas filas: usar la posición correlativa.
-        var rk=parseInt(row[cOrder]); if(!rk) rk=standings.length+1;
-        var title=(row[cTitle]||'').trim(); if(!TITLES.test(title)) title='';
-        var fed=cFed>=0?(row[cFed]||'').trim():'';
-        var elo=cElo>=0?parseInt(row[cElo])||0:0;
-        var pts=(!isInitial&&cPts>=0)?parseFloat((row[cPts]||'0').replace(',','.').replace('½','.5'))||0:0;
-        var rp=cRp>=0?parseInt(row[cRp])||0:0;
-        var eloVar=cVar>=0?Math.round((parseFloat((row[cVar]||'0').replace(',','.'))||0)):0;
-        var entry={rank:rk,name:name,title:title,fed:fed,elo:elo,pts:pts,rp:rp,eloVar:eloVar};
-        var fideId=cFide>=0?(row[cFide]||'').trim():'';
-        if(fideId && /^\d+$/.test(fideId)) entry.fideId=fideId;
-        standings.push(entry);
-      }
-    }
-    if(!standings.length) throw new Error('No se encontraron jugadores en la tabla');
-
+    var parsed=_crParseStandingsRows(rows);
+    if(!parsed.standings.length) throw new Error('No se encontraron jugadores en la tabla');
     var data=crDataLoad(key)||{rounds:{},standings:[]};
-    data.standings=standings;
-    data.standingsKind = isInitial ? 'initial' : 'ranking';
-    // Para la clasificación, leer del texto de cabecera de Chess-Results
-    // (p.ej. "Clasificación Final después de 9 rondas" / "Final standings after 9 rounds")
-    // el número de ronda y si es la clasificación final.
+    data.standings=parsed.standings;
+    data.standingsKind=parsed.kind;
     delete data.standingsRound; delete data.standingsFinal;
-    if(!isInitial){
-      for(var ti=0; ti<hdrRow; ti++){
-        var line=(rows[ti].join(' ')).trim();
-        if(/clasificaci|standing|ranking|después|despues|after/i.test(line)){
-          var nums=line.match(/\d+/g);
-          if(nums) data.standingsRound=parseInt(nums[nums.length-1]);
-          if(/\bfinal\b/i.test(line)) data.standingsFinal=true;
-        }
-      }
-    }
+    if(parsed.round!=null) data.standingsRound=parsed.round;
+    if(parsed.final) data.standingsFinal=true;
     crDataSave(key,data);
-    setStatus((isInitial?'✓ Ranking inicial importado — ':'✓ Tabla importada — ')+standings.length+' jugadores');
+    setStatus((parsed.kind==='initial'?'✓ Ranking inicial importado — ':'✓ Tabla importada — ')+parsed.standings.length+' jugadores');
     crRefreshSection(key,'tabla');
     try { renderTorneos(_lastTorneoFilter); } catch(e){}
   } catch(err){ setStatus('❌ '+err.message); console.error(err); }
@@ -13908,11 +13982,12 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   _tdLiveCrKey = crk;   // que el vivo conozca la clave de cruces aunque no haya partidas subidas (solo-broadcast)
   _tdLiveIsTeam = !!isTeam;   // y si es por equipos, para no pisar la sección de equipos con el cuadro individual
   if (hasBroadcast) _tdLoadLiveGames(broadcastId, broadcastUrl, name, location, pgnKey2, typ, status, roundOrder.length > 0);
-  // "Se actualizan solos": en la web publicada, si el torneo por equipos está EN VIVO y tiene URL de
-  // Chess-Results, bajar los cuadros frescos al abrir (igual que los broadcasts de Lichess). En modo
-  // autor no corre solo: el autor usa el botón "🔄 Actualizar desde Chess-Results" cuando quiere.
-  if (isTeam && _ondemand && status === 'live' && crUrl && /tnr\d+/i.test(crUrl)) {
-    _crAutoFetchTeam(crk, crUrl, { silent: true });
+  // "Se actualizan solos": en la web publicada, si el torneo está EN VIVO y tiene URL de Chess-Results,
+  // bajar los cuadros frescos al abrir (igual que los broadcasts de Lichess). En modo autor no corre
+  // solo: el autor usa el botón "🔄 Actualizar desde Chess-Results" cuando quiere.
+  if (_ondemand && status === 'live' && crUrl && /tnr\d+/i.test(crUrl)) {
+    if (isTeam) _crAutoFetchTeam(crk, crUrl, { silent: true });
+    else _crAutoFetchIndiv(crk, crUrl, { silent: true });
   }
   // Si se pidió, bajar directo al apartado de partidas
   if (scrollToGames && m) {
