@@ -14009,55 +14009,125 @@ function tdBuildRound(rInt) {
   if (!_tdCtx) return;
   var panel = document.getElementById('td-round-' + rInt);
   if (!panel) return;
-  var _all = _tdCtx.byRound[rInt] || [];
+  var _roundGames = _tdCtx.byRound[rInt] || [];
+  // Torneos POR EQUIPOS con tags [WhiteTeam]/[BlackTeam] (los trae la transmisión de Lichess):
+  // agrupar los tableros por enfrentamiento (Equipo A vs Equipo B) con su marcador, estilo chess.com.
+  if (_tdCtx.isTeam && _roundGames.some(function(g){ return g.h.WhiteTeam && g.h.BlackTeam; })) {
+    tdBuildRoundTeams(rInt, panel, _roundGames);
+    return;
+  }
+  var _all = _roundGames;
   if (_tdArgOnly) _all = _all.filter(function(g){ return _isArgGame(g.h); });   // filtrar ANTES de paginar (los argentinos juntos)
   var _totalPages = Math.max(1, Math.ceil(_all.length / _TD_PER_PAGE));
   if (_tdPage >= _totalPages) _tdPage = _totalPages - 1;
   if (_tdPage < 0) _tdPage = 0;
-  var START = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR';
   var h = '';
   _all.slice(_tdPage * _TD_PER_PAGE, _tdPage * _TD_PER_PAGE + _TD_PER_PAGE).forEach(function(g) {
-    var globalIdx = _tdCtx.games.indexOf(g.pgn);
-    var wParts = (g.h.White || '?').split(','); var white = wParts.length > 1 ? (wParts[1].trim() + ' ' + wParts[0].trim()) : wParts[0].trim();
-    var bParts = (g.h.Black || '?').split(','); var black = bParts.length > 1 ? (bParts[1].trim() + ' ' + bParts[0].trim()) : bParts[0].trim();
-    var res = g.h.Result || '*';
-    var wTitle = g.h.WhiteTitle ? '<span style="color:var(--gold);font-size:10px;font-weight:700">' + g.h.WhiteTitle + '</span> ' : '';
-    var bTitle = g.h.BlackTitle ? '<span style="color:var(--gold);font-size:10px;font-weight:700">' + g.h.BlackTitle + '</span> ' : '';
-    var wScore = res === '1-0' ? '1' : res === '0-1' ? '0' : res === '1/2-1/2' ? '½' : '';
-    var bScore = res === '1-0' ? '0' : res === '0-1' ? '1' : res === '1/2-1/2' ? '½' : '';
-    var wScoreColor = res === '1-0' ? 'var(--green)' : res === '0-1' ? 'var(--red)' : 'var(--text2)';
-    var bScoreColor = res === '0-1' ? 'var(--green)' : res === '1-0' ? 'var(--red)' : 'var(--text2)';
-    var isArg = _isArgGame(g.h) ? '1' : '0';
-    h += '<a class="td-card" data-arg="' + isArg + '" href="' + _gameHref(_tdTourKey, globalIdx) + '" onclick="return tdCardClick(event,' + globalIdx + ',\'' + _tdCtx.pgnKey + '\',\'' + escJs(_tdCtx.name) + '\',\'' + escJs(_tdCtx.location) + '\')" style="display:block;text-decoration:none;color:inherit;background:var(--bg3);border:1px solid var(--border);border-radius:8px;cursor:pointer;transition:border-color .15s;overflow:hidden" onmouseover="this.style.borderColor=\'var(--gold-dim)\'" onmouseout="this.style.borderColor=\'var(--border)\'">';
-    h += '<div style="display:flex;align-items:center;gap:5px;padding:5px 7px 4px">';
-    h += '<div style="flex:1;font-size:12px;line-height:1.25;color:#f0f0f0;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000">' + bTitle + escHtml(black) + '</div>';
-    h += '<span class="td-clk" id="td-clk-b-' + globalIdx + '" style="font-size:12px;font-variant-numeric:tabular-nums;color:#c8c8c8;flex-shrink:0;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000"></span>';
-    h += '<span style="font-size:13px;font-weight:700;color:' + bScoreColor + ';flex-shrink:0;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000">' + bScore + '</span>';
-    h += '</div>';
-    // El tablero arranca con un placeholder vacío; la posición final se calcula
-    // en segundo plano (tdFillBoards) para que la apertura sea instantánea.
-    h += '<div class="td-bd" id="td-bd-' + globalIdx + '" data-gidx="' + globalIdx + '" data-res="' + res + '" style="position:relative">' + _tdPlaceholderBoard() + '</div>';
-    h += '<div style="display:flex;align-items:center;gap:5px;padding:4px 7px 6px">';
-    h += '<div style="flex:1;font-size:12px;line-height:1.25;color:#f0f0f0;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000">' + wTitle + escHtml(white) + '</div>';
-    h += '<span class="td-clk" id="td-clk-w-' + globalIdx + '" style="font-size:12px;font-variant-numeric:tabular-nums;color:#c8c8c8;flex-shrink:0;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000"></span>';
-    h += '<span style="font-size:13px;font-weight:700;color:' + wScoreColor + ';flex-shrink:0;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000">' + wScore + '</span>';
-    h += '</div>';
-    h += '</a>';
+    h += _tdCardHtml(g);
   });
   panel.innerHTML = h;
   tdFillBoards(rInt);   // calcula y dibuja las posiciones finales en segundo plano
   _tdRenderPager(rInt, _totalPages, _all.length);
 }
 
+// HTML de UNA miniatura de partida (negras arriba, tablero, blancas abajo + relojes/resultado).
+// Centralizado para reusarlo tanto en la grilla normal como en la vista por equipos.
+function _tdCardHtml(g) {
+  var globalIdx = _tdCtx.games.indexOf(g.pgn);
+  var wParts = (g.h.White || '?').split(','); var white = wParts.length > 1 ? (wParts[1].trim() + ' ' + wParts[0].trim()) : wParts[0].trim();
+  var bParts = (g.h.Black || '?').split(','); var black = bParts.length > 1 ? (bParts[1].trim() + ' ' + bParts[0].trim()) : bParts[0].trim();
+  var res = g.h.Result || '*';
+  var wTitle = g.h.WhiteTitle ? '<span style="color:var(--gold);font-size:10px;font-weight:700">' + g.h.WhiteTitle + '</span> ' : '';
+  var bTitle = g.h.BlackTitle ? '<span style="color:var(--gold);font-size:10px;font-weight:700">' + g.h.BlackTitle + '</span> ' : '';
+  var wScore = res === '1-0' ? '1' : res === '0-1' ? '0' : res === '1/2-1/2' ? '½' : '';
+  var bScore = res === '1-0' ? '0' : res === '0-1' ? '1' : res === '1/2-1/2' ? '½' : '';
+  var wScoreColor = res === '1-0' ? 'var(--green)' : res === '0-1' ? 'var(--red)' : 'var(--text2)';
+  var bScoreColor = res === '0-1' ? 'var(--green)' : res === '1-0' ? 'var(--red)' : 'var(--text2)';
+  var isArg = _isArgGame(g.h) ? '1' : '0';
+  var h = '';
+  h += '<a class="td-card" data-arg="' + isArg + '" href="' + _gameHref(_tdTourKey, globalIdx) + '" onclick="return tdCardClick(event,' + globalIdx + ',\'' + _tdCtx.pgnKey + '\',\'' + escJs(_tdCtx.name) + '\',\'' + escJs(_tdCtx.location) + '\')" style="display:block;text-decoration:none;color:inherit;background:var(--bg3);border:1px solid var(--border);border-radius:8px;cursor:pointer;transition:border-color .15s;overflow:hidden" onmouseover="this.style.borderColor=\'var(--gold-dim)\'" onmouseout="this.style.borderColor=\'var(--border)\'">';
+  h += '<div style="display:flex;align-items:center;gap:5px;padding:5px 7px 4px">';
+  h += '<div style="flex:1;font-size:12px;line-height:1.25;color:#f0f0f0;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000">' + bTitle + escHtml(black) + '</div>';
+  h += '<span class="td-clk" id="td-clk-b-' + globalIdx + '" style="font-size:12px;font-variant-numeric:tabular-nums;color:#c8c8c8;flex-shrink:0;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000"></span>';
+  h += '<span style="font-size:13px;font-weight:700;color:' + bScoreColor + ';flex-shrink:0;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000">' + bScore + '</span>';
+  h += '</div>';
+  // El tablero arranca con un placeholder vacío; la posición final se calcula
+  // en segundo plano (tdFillBoards) para que la apertura sea instantánea.
+  h += '<div class="td-bd" id="td-bd-' + globalIdx + '" data-gidx="' + globalIdx + '" data-res="' + res + '" style="position:relative">' + _tdPlaceholderBoard() + '</div>';
+  h += '<div style="display:flex;align-items:center;gap:5px;padding:4px 7px 6px">';
+  h += '<div style="flex:1;font-size:12px;line-height:1.25;color:#f0f0f0;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000">' + wTitle + escHtml(white) + '</div>';
+  h += '<span class="td-clk" id="td-clk-w-' + globalIdx + '" style="font-size:12px;font-variant-numeric:tabular-nums;color:#c8c8c8;flex-shrink:0;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000"></span>';
+  h += '<span style="font-size:13px;font-weight:700;color:' + wScoreColor + ';flex-shrink:0;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000">' + wScore + '</span>';
+  h += '</div>';
+  h += '</a>';
+  return h;
+}
+
+// Agrupa las partidas de la ronda en enfrentamientos por equipo (boards consecutivos con el
+// mismo par de equipos) y calcula el marcador del match desde los resultados de cada tablero.
+function _tdTeamMatches(games) {
+  var matches = [], cur = null, curKey = null;
+  (games || []).forEach(function(g) {
+    var wt = (g.h.WhiteTeam || '').trim(), bt = (g.h.BlackTeam || '').trim();
+    var key = [wt, bt].sort().join(' «» ');
+    if (!cur || key !== curKey) { cur = { teamA: wt, teamB: bt, boards: [], a: 0, b: 0 }; matches.push(cur); curKey = key; }
+    cur.boards.push(g);
+    var res = g.h.Result, aWhite = (wt === cur.teamA);
+    if (res === '1-0') { aWhite ? cur.a++ : cur.b++; }
+    else if (res === '0-1') { aWhite ? cur.b++ : cur.a++; }
+    else if (res === '1/2-1/2') { cur.a += 0.5; cur.b += 0.5; }
+  });
+  return matches;
+}
+// Formatea un puntaje de match con medios puntos: 0, ½, 1, 1½, 4½…
+function _fmtHalf(n) { var w = Math.floor(n); return ((n - w) >= 0.5) ? ((w > 0 ? w : '') + '½') : String(w); }
+
+var _TD_TEAM_PER_PAGE = 6;   // enfrentamientos por página en la vista por equipos
+function tdBuildRoundTeams(rInt, panel, roundGames) {
+  var matches = _tdTeamMatches(roundGames);
+  var totalPages = Math.max(1, Math.ceil(matches.length / _TD_TEAM_PER_PAGE));
+  if (_tdPage >= totalPages) _tdPage = totalPages - 1;
+  if (_tdPage < 0) _tdPage = 0;
+  var startIdx = _tdPage * _TD_TEAM_PER_PAGE;
+  var pageMatches = matches.slice(startIdx, startIdx + _TD_TEAM_PER_PAGE);
+  var h = '';
+  pageMatches.forEach(function(m, k) {
+    var mi = startIdx + k;
+    // Cada match ocupa todo el ancho de la grilla (grid-column:1/-1) y adentro lleva su propia
+    // grilla de tableros. Así no pelea con el grid de 4 columnas del panel de la ronda.
+    h += '<div style="grid-column:1/-1;margin-top:' + (k ? '18' : '2') + 'px">';
+    h += '<div style="display:flex;align-items:center;gap:10px;padding:9px 14px;background:var(--bg2);border:1px solid var(--border);border-radius:10px;margin-bottom:9px;font-weight:700">';
+    h += '<span style="flex:1;min-width:0;text-align:right;color:var(--text);font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHtml(m.teamA) + '</span>';
+    h += '<span id="td-mscore-' + rInt + '-' + mi + '" style="flex-shrink:0;color:var(--gold);background:var(--bg3);border-radius:6px;padding:3px 12px;font-variant-numeric:tabular-nums">' + _fmtHalf(m.a) + ' : ' + _fmtHalf(m.b) + '</span>';
+    h += '<span style="flex:1;min-width:0;color:var(--text);font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHtml(m.teamB) + '</span>';
+    h += '</div>';
+    h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px">';
+    m.boards.forEach(function(g) { h += _tdCardHtml(g); });
+    h += '</div>';
+    h += '</div>';
+  });
+  panel.innerHTML = h;
+  tdFillBoards(rInt);
+  _tdRenderPager(rInt, totalPages, matches.length, 'enfrentamientos');
+}
+// Refresca solo los marcadores de cada match (sin reconstruir) cuando llegan resultados en vivo.
+function _tdUpdateMatchScores(rInt) {
+  if (!_tdCtx) return;
+  _tdTeamMatches(_tdCtx.byRound[rInt] || []).forEach(function(m, mi) {
+    var el = document.getElementById('td-mscore-' + rInt + '-' + mi);
+    if (el) el.textContent = _fmtHalf(m.a) + ' : ' + _fmtHalf(m.b);
+  });
+}
+
 // Navegación de páginas de miniaturas (◀ Página X/Y ▶). Usa el contenedor #td-pager.
-function _tdRenderPager(rInt, totalPages, total) {
+function _tdRenderPager(rInt, totalPages, total, unit) {
   var pg = document.getElementById('td-pager');
   if (!pg) return;
   if (totalPages <= 1) { pg.innerHTML = ''; pg.style.display = 'none'; return; }
   pg.style.display = 'flex';
   var bs = 'background:var(--bg3);border:1px solid var(--border);color:var(--text2);font-size:14px;border-radius:8px;padding:6px 13px;cursor:pointer;font-family:inherit';
   pg.innerHTML = '<button onclick="tdGoPage(' + rInt + ',' + (_tdPage-1) + ')"' + (_tdPage===0?' disabled':'') + ' style="' + bs + (_tdPage===0?';opacity:.4':'') + '">◀</button>'
-    + '<span style="font-size:12px;color:var(--text2)">Página ' + (_tdPage+1) + ' de ' + totalPages + ' · ' + total + ' partidas</span>'
+    + '<span style="font-size:12px;color:var(--text2)">Página ' + (_tdPage+1) + ' de ' + totalPages + ' · ' + total + ' ' + (unit || 'partidas') + '</span>'
     + '<button onclick="tdGoPage(' + rInt + ',' + (_tdPage+1) + ')"' + (_tdPage>=totalPages-1?' disabled':'') + ' style="' + bs + (_tdPage>=totalPages-1?';opacity:.4':'') + '">▶</button>';
 }
 
@@ -14654,6 +14724,7 @@ function _tdLiveApplyRefresh(res, sec) {
     }
   }
   if (needFull) tdFillBoards(curR);   // re-dibuja entero solo los pocos que lo necesitaron
+  if (_tdLiveCtx && _tdLiveCtx.isTeam) _tdUpdateMatchScores(curR);   // marcador de cada match al día con los resultados nuevos
   _tdApplyViewerRefresh(_tdLiveCtx && _tdLiveCtx.pgnKey);
   if (_tdLiveCtx) setTimeout(mevTick, 900);   // evaluar (motor local) las posiciones nuevas de esta tanda
 }
