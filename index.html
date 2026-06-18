@@ -4081,9 +4081,13 @@ async function _crAutoFetchIndiv(crk, crUrl, opts) {
       var parsed = _crParseSections(rows, roundHdrIdx);
       Object.keys(parsed).forEach(function(n){ data.rounds[n] = parsed[n]; okR++; });
     } catch(e) { /* seguir a la tabla */ }
-    setS('⏳ Bajando clasificación…');
+    // Tabla: si ya se jugó/emparejó alguna ronda → clasificación (art=1). Si no hay rondas (torneo
+    // PRÓXIMO) → ranking inicial sembrado por Elo (art=0; trae nº de siembra + FIDE-ID, ordenado por
+    // Elo, que es lo que se ve como "Ranking inicial"; art=3 es la lista alfabética).
+    var standArt = okR > 0 ? 1 : 0;
+    setS('⏳ Bajando ' + (standArt === 0 ? 'ranking inicial' : 'clasificación') + '…');
     try {
-      var ps = _crParseStandingsRows(await crExtractXlsx(await _crProxyFetch(_crExportUrl(crUrl, 1, null))));
+      var ps = _crParseStandingsRows(await crExtractXlsx(await _crProxyFetch(_crExportUrl(crUrl, standArt, null))));
       if (ps.standings.length) {
         data.standings = ps.standings; data.standingsKind = ps.kind;
         delete data.standingsRound; delete data.standingsFinal;
@@ -4094,7 +4098,12 @@ async function _crAutoFetchIndiv(crk, crUrl, opts) {
     var hasStand = !!(data.standings && data.standings.length);
     if (!okR && !hasStand) { setS('❌ No se pudieron leer cruces ni clasificación desde Chess-Results.'); return false; }
     crDataSave(crk, data);
-    if (!opts.silent) setS('✓ Actualizado desde Chess-Results — ' + okR + ' ronda(s)' + (hasStand ? ' + tabla' : '') + (_ondemand ? '' : '. Acordate de "Guardar datos en mi carpeta" y publicar.'));
+    if (!opts.silent) {
+      var msg = (!okR && hasStand && data.standingsKind === 'initial')
+        ? '✓ Ranking inicial actualizado — ' + data.standings.length + ' jugadores'
+        : '✓ Actualizado desde Chess-Results — ' + okR + ' ronda(s)' + (hasStand ? ' + tabla' : '');
+      setS(msg + (_ondemand ? '' : '. Acordate de "Guardar datos en mi carpeta" y publicar.'));
+    }
     var isRR = crLooksLikeRoundRobin(data);
     var lastR = Object.keys(data.rounds).map(Number).sort(function(a,b){return a-b;});
     crRefreshSection(crk, isRR ? 'cuadro' : (lastR.length ? lastR[lastR.length-1] : (hasStand ? 'tabla' : null)));
