@@ -3837,6 +3837,11 @@ function _teamRenderStandings(standings){
   h+='</tbody></table></div>';
   return h;
 }
+// Disco indicador del color con el que juega cada jugador en ese tablero (en equipos los colores
+// alternan mesa a mesa). Claro = blancas, oscuro = negras. El dato sale del Excel (columna W vs B).
+function _teamColorDot(isWhite){
+  return '<span title="'+(isWhite?'Juega con blancas':'Juega con negras')+'" style="display:inline-block;flex-shrink:0;width:13px;height:13px;border-radius:50%;border:1px solid #777;background:'+(isWhite?'#f2f2f2':'#1e1e1e')+'"></span>';
+}
 function _teamRenderRound(matches, roundNum){
   if(!matches||!matches.length) return '<div style="color:var(--text3);font-size:12px;padding:10px">Sin datos.</div>';
   function side(t,n,e,right){ return '<span style="flex:1;min-width:0;text-align:'+(right?'right':'left')+';color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(t?'<b style="color:var(--gold);font-size:11px">'+escHtml(t)+'</b> ':'')+escHtml(n||'')+(e?' <span style="color:var(--text3);font-size:12px">'+escHtml(String(e))+'</span>':'')+'</span>'; }
@@ -3849,8 +3854,9 @@ function _teamRenderRound(matches, roundNum){
     inner+='<span style="flex:1;min-width:0;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(m.bName||'')+'</span>';
     inner+='</div>';
     (m.boards||[]).forEach(function(b){
-      inner+='<div style="display:flex;align-items:center;gap:8px;padding:8px 14px;border-top:1px solid var(--border);font-size:14px">';
+      inner+='<div style="display:flex;align-items:center;gap:6px;padding:8px 14px;border-top:1px solid var(--border);font-size:14px">';
       inner+=side(b.tW,b.nW,b.eW,true);
+      inner+=_teamColorDot(true);    // disco claro: este jugador va con blancas
       // Resultado clickeable: abre la partida del broadcast que coincide con ese tablero (por ronda
       // + nombres). Si todavía no cargó el vivo o no hay partida para ese cruce, el clic no hace nada.
       if(b.res){
@@ -3858,6 +3864,7 @@ function _teamRenderRound(matches, roundNum){
       } else {
         inner+='<span style="flex-shrink:0;width:54px;text-align:center;font-weight:700;color:var(--text)">'+escHtml(b.res||'')+'</span>';
       }
+      inner+=_teamColorDot(false);   // disco oscuro: este jugador va con negras
       inner+=side(b.tB,b.nB,b.eB,false);
       inner+='</div>';
     });
@@ -10931,6 +10938,9 @@ function buildTree(moves, nags, evals, clocks) {
 
 /* ── Navegar al nodo y actualizar estado ── */
 function cvSetNode(node) {
+  // Si hay una reproducción en curso (jugadas que llegaron en vivo de a varias) y el usuario navega
+  // a mano, cortarla. La propia reproducción marca _cvAnimStepping para no autocancelarse.
+  if (_cvAnimTimer && !_cvAnimStepping) { clearTimeout(_cvAnimTimer); _cvAnimTimer = null; }
   cv.node = node;
   cv.sel = null;
   cv.legalDests = [];
@@ -11380,6 +11390,24 @@ function cvLast()  {
   var n = cv.node;
   while (n && n.children.length > 0) n = n.children[0];
   if (n) cvSetNode(n);
+}
+
+// Reproducción de jugadas en el visor: cuando en vivo llegan VARIAS jugadas de una (ritmo rápido),
+// en vez de saltar al final se muestran una por una (cada _CV_ANIM_MS). Cualquier navegación manual
+// la corta (guard en cvSetNode). _cvAnimStepping evita que la propia reproducción se autocancele.
+var _cvAnimTimer = null, _cvAnimStepping = false, _CV_ANIM_MS = 550;
+function _cvEndDepth(){ var n = cv.root, d = 0; while (n && n.children && n.children.length > 0) { n = n.children[0]; d++; } return d; }
+function _cvAnimateToEnd(fromDepth){
+  if (_cvAnimTimer) { clearTimeout(_cvAnimTimer); _cvAnimTimer = null; }
+  var n = cv.root; for (var k = 0; k < fromDepth && n.children.length > 0; k++) n = n.children[0];
+  _cvAnimStepping = true; cvSetNode(n); _cvAnimStepping = false;   // posicionar donde estaba el usuario
+  function go(){
+    if (!document.getElementById('chess-overlay').classList.contains('open')) { _cvAnimTimer = null; return; }
+    if (!cv.node || !cv.node.children || cv.node.children.length === 0) { _cvAnimTimer = null; return; }   // llegó al final
+    _cvAnimStepping = true; cvNext(); _cvAnimStepping = false;
+    _cvAnimTimer = setTimeout(go, _CV_ANIM_MS);
+  }
+  _cvAnimTimer = setTimeout(go, _CV_ANIM_MS);
 }
 
 /* ════════════════════════════════════════════════════════
@@ -14517,9 +14545,18 @@ function tdFinalFen(pgn) {
 
 // Caché de posiciones finales (PGN → FEN). Persiste en la sesión: reabrir es instantáneo.
 var _tdFenCache = {};
+// ¿El PGN tiene jugadas reales (no solo resultado)? Mira el movetext tras los headers.
+function _pgnHasMoves(pgn) {
+  var sep = String(pgn||'').indexOf('\n\n');
+  var mv = sep >= 0 ? pgn.slice(sep + 2) : String(pgn||'').replace(/\[[^\]]*\]/g, '');
+  return /[a-hKQRBNO]/.test(mv);   // un movimiento SAN siempre tiene una letra de columna/pieza/enroque
+}
 function tdFinalFenCached(pgn) {
   if (_tdFenCache[pgn] !== undefined) return _tdFenCache[pgn];
   var f = tdFinalFen(pgn);
+  // NO cachear un parseo fallido: posición inicial cuando el PGN sí tiene jugadas (p.ej. chess.js
+  // no estaba listo). Así se reintenta en el próximo render en vez de quedar pegado en la inicial.
+  if (f.fen.split(' ')[0] === 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR' && _pgnHasMoves(pgn)) return f;
   _tdFenCache[pgn] = f;
   _capCache(_tdFenCache, 500);   // la clave es el PGN entero: conviene no acumular sin tope
   return f;
@@ -14537,6 +14574,9 @@ function _tdPlaceholderBoard() {
 function tdFillBoards(rInt) {
   var panel = document.getElementById('td-round-' + rInt);
   if (!panel || !_tdCtx) return;
+  // Si chess.js todavía no cargó (apertura rápida), esperar: si no, tdFinalFen falla y deja las
+  // miniaturas en posición inicial (y peor, la cachea). Pasaba en la 1ª página de la 1ª ronda.
+  if (typeof Chess === 'undefined') { setTimeout(function(){ tdFillBoards(rInt); }, 150); return; }
   var START = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR';
   var els = Array.prototype.slice.call(panel.querySelectorAll('.td-bd:not([data-filled])'));
   if (!els.length) return;
@@ -15112,7 +15152,13 @@ function _tdApplyViewerRefresh(pgnKey) {
   var prevAtEnd = cv.node && cv.node.children.length === 0;
   var prevDepth = _cvNodeDepth(cv.node);
   cvSelect(newIdx);
-  if (prevAtEnd) cvLast();
+  if (prevAtEnd) {
+    // El usuario miraba la última jugada (en vivo). Si llegaron VARIAS jugadas nuevas, reproducirlas
+    // una a una desde donde estaba; si fue una sola (o ninguna), saltar directo al final.
+    var endDepth = _cvEndDepth();
+    if (endDepth - prevDepth >= 2) _cvAnimateToEnd(prevDepth);
+    else cvLast();
+  }
   else { var n = cv.root; for (var k = 0; k < prevDepth && n.children.length > 0; k++) { n = n.children[0]; cvSetNode(n); } }
 }
 
