@@ -5918,6 +5918,25 @@ function _dedupById(arr) {
   }
 })();
 
+// Web PUBLICADA: "el manifest manda" para los cuadros de cruces. Cuando se publica data nueva, el
+// manifest trae un __DATA_TS__ nuevo. Los cuadros (cr2_*) que el visitante tenga en su localStorage
+// son de una visita anterior —la web los escribe al sincronizar resultados con el vivo
+// (crSyncResultsFromPgn → crDataSave)— y como crDataLoad lee localStorage ANTES que __EMBEDDED_CR__,
+// al volver tapaban los del manifest nuevo (la tabla salía atrasada; en incógnito se veía bien porque
+// no hay localStorage). Al detectar un __DATA_TS__ nuevo, descartamos esos cr2_* para que manden los
+// del manifest. Dentro de la sesión se vuelven a poblar (live sync) sobre la base fresca. En modo
+// AUTOR no se toca (ahí el localStorage es la fuente de edición).
+(function() {
+  if (!_ondemand || typeof __DATA_TS__ === 'undefined') return;
+  try {
+    if (localStorage.getItem('cr_embedded_ts') === String(__DATA_TS__)) return;
+    var del = [];
+    for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); if (k && k.indexOf('cr2_') === 0) del.push(k); }
+    del.forEach(function(k) { localStorage.removeItem(k); });
+    localStorage.setItem('cr_embedded_ts', String(__DATA_TS__));
+  } catch(e) {}
+})();
+
 pgnMergeToPlayerGames();
 
 /* ═══════════════════════════════════════════════════════
@@ -7711,12 +7730,22 @@ function cvBackToTournament() {
 }
 
 // HTML de las miniaturas (tableros finales clicables) de la MISMA ronda que la partida abierta.
-function _cvRoundMinisHtml() {
+var _cvMiniPage = 0;
+var _CV_MINI_PER_PAGE = 24;   // miniaturas por página dentro del visor (igual que la pantalla principal)
+// keepPage=true mantiene la página elegida con el pager; sin él, salta a la página de la partida abierta.
+function _cvRoundMinisHtml(keepPage) {
   var curRound = parseInt(parsePgnHeaders(_cvTourGames[_cvTourIdx]).Round) || 0;
+  // Índices (globales) de las partidas de la ronda actual.
+  var roundIdx = [];
+  _cvTourGames.forEach(function(pgn, i) { if ((parseInt(parsePgnHeaders(pgn).Round) || 0) === curRound) roundIdx.push(i); });
+  if (!roundIdx.length) return '';
+  var totalPages = Math.max(1, Math.ceil(roundIdx.length / _CV_MINI_PER_PAGE));
+  if (keepPage) { _cvMiniPage = Math.min(Math.max(0, _cvMiniPage), totalPages - 1); }
+  else { var activePos = roundIdx.indexOf(_cvTourIdx); _cvMiniPage = activePos >= 0 ? Math.floor(activePos / _CV_MINI_PER_PAGE) : 0; }
+  var pageIdx = roundIdx.slice(_cvMiniPage * _CV_MINI_PER_PAGE, _cvMiniPage * _CV_MINI_PER_PAGE + _CV_MINI_PER_PAGE);
   var cards = '';
-  _cvTourGames.forEach(function(pgn, i) {
-    var h = parsePgnHeaders(pgn);
-    if ((parseInt(h.Round) || 0) !== curRound) return;
+  pageIdx.forEach(function(i) {
+    var pgn = _cvTourGames[i], h = parsePgnHeaders(pgn);
     var sk = _cvShareKeys[i];
     var wParts = (h.White || '?').split(','); var white = wParts.length > 1 ? (wParts[1].trim() + ' ' + wParts[0].trim()) : wParts[0].trim();
     var bParts = (h.Black || '?').split(','); var black = bParts.length > 1 ? (bParts[1].trim() + ' ' + bParts[0].trim()) : bParts[0].trim();
@@ -7734,7 +7763,21 @@ function _cvRoundMinisHtml() {
       + '</a>';
   });
   if (!cards) return '';
-  return '<div class="m-sec-lbl" style="margin-bottom:10px">Partidas de la ronda</div><div class="cv-rm-grid">' + cards + '</div>';
+  var pager = '';
+  if (totalPages > 1) {
+    var bs = 'background:var(--bg3);border:1px solid var(--border);color:var(--text2);font-size:14px;border-radius:8px;padding:5px 12px;cursor:pointer;font-family:inherit';
+    pager = '<div style="display:flex;align-items:center;justify-content:center;gap:14px;margin-top:12px">'
+      + '<button onclick="cvMiniGoPage(' + (_cvMiniPage - 1) + ')"' + (_cvMiniPage === 0 ? ' disabled' : '') + ' style="' + bs + (_cvMiniPage === 0 ? ';opacity:.4' : '') + '">◀</button>'
+      + '<span style="font-size:12px;color:var(--text2)">Página ' + (_cvMiniPage + 1) + ' de ' + totalPages + ' · ' + roundIdx.length + ' partidas</span>'
+      + '<button onclick="cvMiniGoPage(' + (_cvMiniPage + 1) + ')"' + (_cvMiniPage >= totalPages - 1 ? ' disabled' : '') + ' style="' + bs + (_cvMiniPage >= totalPages - 1 ? ';opacity:.4' : '') + '">▶</button>'
+      + '</div>';
+  }
+  return '<div class="m-sec-lbl" style="margin-bottom:10px">Partidas de la ronda</div><div class="cv-rm-grid">' + cards + '</div>' + pager;
+}
+function cvMiniGoPage(p) {
+  _cvMiniPage = p;
+  var minis = document.getElementById('cv-round-minis');
+  if (minis) minis.innerHTML = _cvRoundMinisHtml(true);
 }
 
 async function openTourGameByIndex(idx) {
@@ -14170,7 +14213,7 @@ function tdBuildRoundTeams(rInt, panel, roundGames) {
     h += '<span id="td-mscore-' + rInt + '-' + mi + '" style="flex-shrink:0;color:var(--gold);background:var(--bg3);border-radius:6px;padding:3px 12px;font-variant-numeric:tabular-nums">' + _fmtHalf(m.a) + ' : ' + _fmtHalf(m.b) + '</span>';
     h += '<span style="flex:1;min-width:0;color:var(--text);font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHtml(m.teamB) + '</span>';
     h += '</div>';
-    h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px">';
+    h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,210px));gap:10px">';
     m.boards.forEach(function(g) { h += _tdCardHtml(g); });
     h += '</div>';
     h += '</div>';
