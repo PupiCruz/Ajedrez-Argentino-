@@ -3853,10 +3853,13 @@ function _teamRenderRound(matches, roundNum){
     inner+='<span style="flex-shrink:0;color:var(--gold);background:var(--bg3);border-radius:6px;padding:3px 12px">'+escHtml(m.score||'')+'</span>';
     inner+='<span style="flex:1;min-width:0;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(m.bName||'')+'</span>';
     inner+='</div>';
-    (m.boards||[]).forEach(function(b){
+    (m.boards||[]).forEach(function(b,bi){
+      // El color ALTERNA por mesa: mesa 1 (impar) el equipo de la izquierda va con blancas; mesa 2
+      // (par) con negras; etc. (nW = columna izquierda/equipo A, nB = derecha/equipo B; NO son colores).
+      var leftIsWhite = (bi % 2 === 0);
       inner+='<div style="display:flex;align-items:center;gap:6px;padding:8px 14px;border-top:1px solid var(--border);font-size:14px">';
       inner+=side(b.tW,b.nW,b.eW,true);
-      inner+=_teamColorDot(true);    // disco claro: este jugador va con blancas
+      inner+=_teamColorDot(leftIsWhite);    // color del jugador de la izquierda en esta mesa
       // Resultado clickeable: abre la partida del broadcast que coincide con ese tablero (por ronda
       // + nombres). Si todavía no cargó el vivo o no hay partida para ese cruce, el clic no hace nada.
       if(b.res){
@@ -3864,7 +3867,7 @@ function _teamRenderRound(matches, roundNum){
       } else {
         inner+='<span style="flex-shrink:0;width:54px;text-align:center;font-weight:700;color:var(--text)">'+escHtml(b.res||'')+'</span>';
       }
-      inner+=_teamColorDot(false);   // disco oscuro: este jugador va con negras
+      inner+=_teamColorDot(!leftIsWhite);   // color del jugador de la derecha en esta mesa
       inner+=side(b.tB,b.nB,b.eB,false);
       inner+='</div>';
     });
@@ -14356,7 +14359,9 @@ function tdBuildRound(rInt) {
 
 // HTML de UNA miniatura de partida (negras arriba, tablero, blancas abajo + relojes/resultado).
 // Centralizado para reusarlo tanto en la grilla normal como en la vista por equipos.
-function _tdCardHtml(g) {
+// flip=true (vista por equipos, mesas pares): dibuja el tablero dado vuelta y pone al jugador de
+// BLANCAS arriba y al de NEGRAS abajo, para que el jugador del mismo equipo quede siempre del mismo lado.
+function _tdCardHtml(g, flip) {
   var globalIdx = _tdCtx.games.indexOf(g.pgn);
   var wParts = (g.h.White || '?').split(','); var white = wParts.length > 1 ? (wParts[1].trim() + ' ' + wParts[0].trim()) : wParts[0].trim();
   var bParts = (g.h.Black || '?').split(','); var black = bParts.length > 1 ? (bParts[1].trim() + ' ' + bParts[0].trim()) : bParts[0].trim();
@@ -14368,21 +14373,25 @@ function _tdCardHtml(g) {
   var wScoreColor = res === '1-0' ? 'var(--green)' : res === '0-1' ? 'var(--red)' : 'var(--text2)';
   var bScoreColor = res === '0-1' ? 'var(--green)' : res === '1-0' ? 'var(--red)' : 'var(--text2)';
   var isArg = _isArgGame(g.h) ? '1' : '0';
+  // Fila de un jugador (nombre + reloj + puntaje). El id del reloj queda atado al COLOR (w/b), no a
+  // la posición, así _tdSetClocks lo encuentra aunque la fila esté arriba o abajo.
+  function nameRow(title, name, clkId, score, scoreColor, pad){
+    return '<div style="display:flex;align-items:center;gap:5px;padding:' + pad + '">'
+      + '<div style="flex:1;font-size:12px;line-height:1.25;color:#f0f0f0;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000">' + title + escHtml(name) + '</div>'
+      + '<span class="td-clk" id="td-clk-' + clkId + '-' + globalIdx + '" style="font-size:12px;font-variant-numeric:tabular-nums;color:#c8c8c8;flex-shrink:0;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000"></span>'
+      + '<span style="font-size:13px;font-weight:700;color:' + scoreColor + ';flex-shrink:0;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000">' + score + '</span>'
+      + '</div>';
+  }
+  var rowBlack = nameRow(bTitle, black, 'b', bScore, bScoreColor, flip ? '4px 7px 6px' : '5px 7px 4px');
+  var rowWhite = nameRow(wTitle, white, 'w', wScore, wScoreColor, flip ? '5px 7px 4px' : '4px 7px 6px');
   var h = '';
   h += '<a class="td-card" data-arg="' + isArg + '" href="' + _gameHref(_tdTourKey, globalIdx) + '" onclick="return tdCardClick(event,' + globalIdx + ',\'' + _tdCtx.pgnKey + '\',\'' + escJs(_tdCtx.name) + '\',\'' + escJs(_tdCtx.location) + '\')" style="display:block;text-decoration:none;color:inherit;background:var(--bg3);border:1px solid var(--border);border-radius:8px;cursor:pointer;transition:border-color .15s;overflow:hidden" onmouseover="this.style.borderColor=\'var(--gold-dim)\'" onmouseout="this.style.borderColor=\'var(--border)\'">';
-  h += '<div style="display:flex;align-items:center;gap:5px;padding:5px 7px 4px">';
-  h += '<div style="flex:1;font-size:12px;line-height:1.25;color:#f0f0f0;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000">' + bTitle + escHtml(black) + '</div>';
-  h += '<span class="td-clk" id="td-clk-b-' + globalIdx + '" style="font-size:12px;font-variant-numeric:tabular-nums;color:#c8c8c8;flex-shrink:0;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000"></span>';
-  h += '<span style="font-size:13px;font-weight:700;color:' + bScoreColor + ';flex-shrink:0;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000">' + bScore + '</span>';
-  h += '</div>';
+  // Arriba el rival del que queda abajo: normal → negras arriba; volteado → blancas arriba.
+  h += flip ? rowWhite : rowBlack;
   // El tablero arranca con un placeholder vacío; la posición final se calcula
   // en segundo plano (tdFillBoards) para que la apertura sea instantánea.
-  h += '<div class="td-bd" id="td-bd-' + globalIdx + '" data-gidx="' + globalIdx + '" data-res="' + res + '" style="position:relative">' + _tdPlaceholderBoard() + '</div>';
-  h += '<div style="display:flex;align-items:center;gap:5px;padding:4px 7px 6px">';
-  h += '<div style="flex:1;font-size:12px;line-height:1.25;color:#f0f0f0;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000">' + wTitle + escHtml(white) + '</div>';
-  h += '<span class="td-clk" id="td-clk-w-' + globalIdx + '" style="font-size:12px;font-variant-numeric:tabular-nums;color:#c8c8c8;flex-shrink:0;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000"></span>';
-  h += '<span style="font-size:13px;font-weight:700;color:' + wScoreColor + ';flex-shrink:0;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000">' + wScore + '</span>';
-  h += '</div>';
+  h += '<div class="td-bd" id="td-bd-' + globalIdx + '" data-gidx="' + globalIdx + '" data-res="' + res + '"' + (flip ? ' data-flip="1"' : '') + ' style="position:relative">' + _tdPlaceholderBoard() + '</div>';
+  h += flip ? rowBlack : rowWhite;
   h += '</a>';
   return h;
 }
@@ -14438,7 +14447,10 @@ function tdBuildRoundTeams(rInt, panel, roundGames) {
     h += '<span style="flex:1;min-width:0;color:var(--text);font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHtml(m.teamB) + '</span>';
     h += '</div>';
     h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,210px));gap:10px">';
-    m.boards.forEach(function(g) { h += _tdCardHtml(g); });
+    // Voltear el tablero cuando el equipo de la izquierda (teamA) juega con NEGRAS en esa mesa, así
+    // ese equipo queda SIEMPRE abajo (en equipos los colores alternan mesa a mesa). Usa los tags
+    // WhiteTeam/BlackTeam del PGN de Lichess (más confiable que par/impar).
+    m.boards.forEach(function(g) { var flip = (g.h.BlackTeam||'').trim() === (m.teamA||'').trim(); h += _tdCardHtml(g, flip); });
     h += '</div>';
     h += '</div>';
   });
@@ -14592,7 +14604,8 @@ function tdFillBoards(rInt) {
       var pgn = _tdCtx.games[gidx];
       var rr = tdFinalFenCached(pgn);
       var fen = rr.fen;
-      var html = tdMiniFen(fen, rr.last);
+      var flip = el.getAttribute('data-flip') === '1';   // vista por equipos: tableros pares dados vuelta
+      var html = tdMiniFen(fen, rr.last, flip);
       if (fen.split(' ')[0] === START) {
         var res = el.getAttribute('data-res') || '*';
         var resBig = res === '1/2-1/2' ? '½-½' : (res === '*' ? '·' : res);
@@ -14602,7 +14615,7 @@ function tdFillBoards(rInt) {
       html += _tdEvalBarHtml(_liveEvalFor(rr.fen, rr.ev));   // barrita: [%eval] del PGN o, en vivo, motor local
       el.innerHTML = html;
       el.setAttribute('data-fen', fen);   // para comparar en el refresco incremental (solo redibuja los que cambian)
-      _tdSetCellKeys(el, fen, rr.last);    // memoriza pieza/resaltado por casilla → permite parchear solo lo que cambia
+      _tdSetCellKeys(el, fen, rr.last, flip);    // memoriza pieza/resaltado por casilla → permite parchear solo lo que cambia
       _tdSetClocks(el, gidx, fen, rr);     // relojes (valor fijo + base para el countdown corriendo)
     } while (i < els.length && performance.now() - t0 < 25);
     if (i < els.length) next(step);
@@ -14610,24 +14623,23 @@ function tdFillBoards(rInt) {
   step();
 }
 
-function tdMiniFen(fen, last) {
+// flip=true dibuja el tablero DADO VUELTA (negras abajo, piezas derechas). Lo usa la vista por
+// equipos para que el jugador del equipo de la izquierda quede siempre abajo (los colores alternan).
+function tdMiniFen(fen, last, flip) {
   var hl = null;
   if (last && last.from && last.to) { hl = {}; hl[last.from] = 1; hl[last.to] = 1; }
   var rows = fen.split(' ')[0].split('/');
   var h = '<div style="display:grid;grid-template-columns:repeat(8,1fr);grid-template-rows:repeat(8,1fr);width:100%;aspect-ratio:1">';
   for (var r = 0; r < 8; r++) {
-    var row = rows[r] || '';
-    var squares = [];
-    for (var c = 0; c < row.length; c++) {
-      var ch = row[c];
-      if (ch >= '1' && ch <= '8') { for (var k = 0; k < parseInt(ch); k++) squares.push(null); }
-      else squares.push(ch);
-    }
+    var sr = flip ? 7 - r : r;                 // fila ORIGEN del FEN (0 = fila 8)
+    var squares = _tdExpandRow(rows[sr]);
     for (var f = 0; f < 8; f++) {
-      var light = (r + f) % 2 === 0;
+      var sf = flip ? 7 - f : f;               // columna ORIGEN (0 = 'a')
+      var light = (r + f) % 2 === 0;           // damero por posición VISUAL (la paridad no cambia al voltear)
       var bg = light ? 'var(--sq-l)' : 'var(--sq-d)';
-      if (hl) { var sq = 'abcdefgh'[f] + (8 - r); if (hl[sq]) bg = light ? 'var(--sq-hl-l)' : 'var(--sq-hl-d)'; }   // resalta la última jugada
-      var pc = squares[f];
+      var sq = 'abcdefgh'[sf] + (8 - sr);      // casilla real (para el resaltado de la última jugada)
+      if (hl && hl[sq]) bg = light ? 'var(--sq-hl-l)' : 'var(--sq-hl-d)';
+      var pc = squares[sf];
       var img = pc && _tdPieceMap[pc] ? '<img src="' + _tdPieceBase + _tdPieceMap[pc] + '.svg" style="width:100%;height:100%;display:block" draggable="false">' : '';
       h += '<div style="background-color:' + bg + ';background-image:var(--sq-texture)">' + img + '</div>';
     }
@@ -14793,29 +14805,31 @@ function _tdExpandRow(row) {
 }
 // Memoriza en cada casilla del mini-tablero la pieza (_pk) y el resaltado (_hl) actuales, para
 // que tdPatchMiniBoard pueda actualizar SOLO las casillas que cambian en la próxima movida.
-function _tdSetCellKeys(bdEl, fen, last) {
+function _tdSetCellKeys(bdEl, fen, last, flip) {
   var grid = bdEl.firstElementChild;
   if (!grid || grid.children.length !== 64) return;
   var hl = (last && last.from && last.to) ? {} : null; if (hl) { hl[last.from] = 1; hl[last.to] = 1; }
   var rows = fen.split(' ')[0].split('/'), cells = grid.children, idx = 0;
-  for (var r = 0; r < 8; r++) { var sqr = _tdExpandRow(rows[r]); for (var f = 0; f < 8; f++) { var cell = cells[idx++]; cell._pk = sqr[f] || ''; cell._hl = !!(hl && hl['abcdefgh'[f] + (8 - r)]); } }
+  for (var r = 0; r < 8; r++) { var sr = flip?7-r:r; var sqr = _tdExpandRow(rows[sr]); for (var f = 0; f < 8; f++) { var sf = flip?7-f:f; var cell = cells[idx++]; cell._pk = sqr[sf] || ''; cell._hl = !!(hl && hl['abcdefgh'[sf] + (8 - sr)]); } }
 }
 // Actualiza un mini-tablero ya dibujado redibujando SOLO las casillas cuya pieza o resaltado
 // cambió (patrón del visor grande). Mucho más liviano que regenerar los 64 div en cada movida.
 // Devuelve false si no se puede parchear (hay que redibujar entero).
-function tdPatchMiniBoard(bdEl, fen, last) {
+function tdPatchMiniBoard(bdEl, fen, last, flip) {
   var grid = bdEl.firstElementChild;
   if (!grid || grid.children.length !== 64) return false;
   var hl = (last && last.from && last.to) ? {} : null; if (hl) { hl[last.from] = 1; hl[last.to] = 1; }
   var rows = fen.split(' ')[0].split('/'), cells = grid.children, idx = 0;
   for (var r = 0; r < 8; r++) {
-    var sqr = _tdExpandRow(rows[r]);
+    var sr = flip?7-r:r;
+    var sqr = _tdExpandRow(rows[sr]);
     for (var f = 0; f < 8; f++) {
+      var sf = flip?7-f:f;
       var cell = cells[idx++];
       var light = (r + f) % 2 === 0;
-      var hlOn = !!(hl && hl['abcdefgh'[f] + (8 - r)]);
+      var hlOn = !!(hl && hl['abcdefgh'[sf] + (8 - sr)]);
       if (cell._hl !== hlOn) { cell._hl = hlOn; cell.style.backgroundColor = hlOn ? (light ? 'var(--sq-hl-l)' : 'var(--sq-hl-d)') : (light ? 'var(--sq-l)' : 'var(--sq-d)'); }   // solo el color; la trama (background-image) la puso tdMiniFen
-      var pk = sqr[f] || '';
+      var pk = sqr[sf] || '';
       if (cell._pk !== pk) { cell._pk = pk; cell.innerHTML = (pk && _tdPieceMap[pk]) ? '<img src="' + _tdPieceBase + _tdPieceMap[pk] + '.svg" style="width:100%;height:100%;display:block" draggable="false">' : ''; }
     }
   }
@@ -15098,7 +15112,7 @@ function _tdLiveApplyRefresh(res, sec) {
     }
     var nowStart = rr.fen.split(' ')[0] === START;
     var wasStart = (el.getAttribute('data-fen') || '').split(' ')[0] === START;
-    if (nowStart || wasStart || !tdPatchMiniBoard(el, rr.fen, rr.last)) {
+    if (nowStart || wasStart || !tdPatchMiniBoard(el, rr.fen, rr.last, el.getAttribute('data-flip') === '1')) {
       // empieza/termina sin jugadas o no se puede parchear → redibujar el tablero entero
       el.removeAttribute('data-filled');
       el.setAttribute('data-res', parsePgnHeaders(newPgn).Result || '*');
