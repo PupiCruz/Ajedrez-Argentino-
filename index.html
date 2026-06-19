@@ -4468,17 +4468,11 @@ function crOpenPlayer(key,name){
     return '⋯ Por jugar';
   }
   var history=[];
-  if(data.rounds){
-    var roundNums=Object.keys(data.rounds).map(Number).sort(function(a,b){return a-b;});
-    roundNums.forEach(function(r){
-      (data.rounds[r]||[]).forEach(function(p){
-        if(p.w===name){ history.push({round:r,color:'Blancas',opp:p.b,oppTitle:p.tb,oppElo:p.eb,res:p.res,myRes:myResult(p.res,true)}); }
-        else if(p.b===name){ history.push({round:r,color:'Negras',opp:p.w,oppTitle:p.tw,oppElo:p.ew,res:p.res,myRes:myResult(p.res,false)}); }
-      });
-    });
-  } else if(data.teamRounds){
+  // PRIORIDAD equipos: si hay teamRounds con datos, usar esos (el torneo por equipos a veces también
+  // tiene un data.rounds vacío {} que, por ser "truthy", bloqueaba esta rama y el visor salía vacío).
+  if(data.teamRounds && Object.keys(data.teamRounds).length){
     // Torneo POR EQUIPOS: el historial sale de los tableros de cada enfrentamiento (nW=blancas,
-    // nB=negras). Sin standings individuales (info queda null): se muestra nombre + historial.
+    // nB=negras). El info (pts/pos) viene de data.standings si está cargado; si no, queda null.
     var trNums=Object.keys(data.teamRounds).map(Number).sort(function(a,b){return a-b;});
     trNums.forEach(function(r){
       (data.teamRounds[r]||[]).forEach(function(mt){
@@ -4486,6 +4480,15 @@ function crOpenPlayer(key,name){
           if(bd.nW===name){ history.push({round:r,color:'Blancas',opp:bd.nB,oppTitle:bd.tB,oppElo:bd.eB,res:bd.res,myRes:myResult(bd.res,true)}); }
           else if(bd.nB===name){ history.push({round:r,color:'Negras',opp:bd.nW,oppTitle:bd.tW,oppElo:bd.eW,res:bd.res,myRes:myResult(bd.res,false)}); }
         });
+      });
+    });
+  } else if(data.rounds){
+    // Torneo INDIVIDUAL: historial desde las rondas (p.w/p.b = blancas/negras).
+    var roundNums=Object.keys(data.rounds).map(Number).sort(function(a,b){return a-b;});
+    roundNums.forEach(function(r){
+      (data.rounds[r]||[]).forEach(function(p){
+        if(p.w===name){ history.push({round:r,color:'Blancas',opp:p.b,oppTitle:p.tb,oppElo:p.eb,res:p.res,myRes:myResult(p.res,true)}); }
+        else if(p.b===name){ history.push({round:r,color:'Negras',opp:p.w,oppTitle:p.tw,oppElo:p.ew,res:p.res,myRes:myResult(p.res,false)}); }
       });
     });
   }
@@ -14464,9 +14467,9 @@ function tdBuildRoundTeams(rInt, panel, roundGames) {
     h += '<span id="td-mscore-' + rInt + '-' + mi + '" style="flex-shrink:0;color:var(--gold);background:var(--bg3);border-radius:6px;padding:3px 12px;font-variant-numeric:tabular-nums">' + _fmtHalf(m.a) + ' : ' + _fmtHalf(m.b) + '</span>';
     h += '<span style="flex:1;min-width:0;color:var(--text);font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHtml(m.teamB) + '</span>';
     h += '</div>';
-    // Todos los tableros del enfrentamiento en UNA fila (sin huecos a la derecha): N columnas iguales.
-    // La barra de eval se superpone sobre el tablero (no suma ancho), así que no hay que descontarla.
-    h += '<div style="display:grid;grid-template-columns:repeat(' + m.boards.length + ',minmax(0,1fr));gap:8px">';
+    // Todos los tableros del enfrentamiento en UNA fila (N columnas iguales). max-width topea el tamaño
+    // (~215px por tablero) para que, al filtrar y quedar 1-2 tableros, no se hagan gigantes.
+    h += '<div style="display:grid;grid-template-columns:repeat(' + m.boards.length + ',minmax(0,1fr));gap:8px;max-width:' + (m.boards.length * 215) + 'px">';
     // Voltear el tablero cuando el equipo de la izquierda (teamA) juega con NEGRAS en esa mesa, así
     // ese equipo queda SIEMPRE abajo (en equipos los colores alternan mesa a mesa). Usa los tags
     // WhiteTeam/BlackTeam del PGN de Lichess (más confiable que par/impar).
@@ -15015,9 +15018,11 @@ function _tdMergeUploadedRounds(byRound, roundOrder) {
     var upArr = up[rk];
     var upN = upArr ? upArr.length : 0;
     var liN = byRound[rInt] ? byRound[rInt].length : 0;
-    if (upN > liN) {
+    // Solo REEMPLAZAR rondas que la transmisión ya tiene (Lichess manda qué rondas existen). NO agregar
+    // rondas nuevas desde el pool: evita rondas fantasma con partidas de otro torneo coladas por nombre
+    // (ej. Alan Pichot apareciendo como R9-R12 en un torneo de menos rondas).
+    if (byRound[rInt] && upN > liN) {
       byRound[rInt] = upArr.slice();
-      if (roundOrder.indexOf(rInt) === -1) roundOrder.push(rInt);
     }
   });
   roundOrder.sort(function(a,b){ return (parseInt(a)||0) - (parseInt(b)||0); });
