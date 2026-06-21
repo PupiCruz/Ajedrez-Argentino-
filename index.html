@@ -1330,6 +1330,14 @@
         <button class="chip" onclick="puzSetLevel('aficionado',this)">Nivel aficionado</button>
         <button class="chip" onclick="puzSetLevel('avanzado',this)">Nivel avanzado</button>
       </div>
+      <div id="puz-author-tools" style="display:none;background:var(--bg2);border:1px dashed var(--gold-dim);border-radius:11px;padding:11px 13px;margin-bottom:14px">
+        <div style="font-size:12px;color:var(--text2);line-height:1.5;margin-bottom:9px">🔗 <b style="color:var(--text2)">Enlazar ejercicios con sus partidas.</b> Busca en el pool la partida original de cada ejercicio y guarda el puntero, así la web publicada baja solo esa partida (KB) y no el índice entero (~34&nbsp;MB). Repetilo cada vez que agregás ejercicios nuevos.</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <button onclick="puzLinkAllGames(this)" style="padding:9px 14px;background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-size:13px;font-weight:700;border-radius:9px;cursor:pointer;font-family:inherit">🔗 Enlazar ejercicios con sus partidas</button>
+          <button onclick="puzSaveJson()" style="padding:9px 14px;background:var(--bg3);border:1px solid var(--border);color:var(--text2);font-size:13px;font-weight:600;border-radius:9px;cursor:pointer;font-family:inherit">💾 Guardar puzzles.json</button>
+          <span id="puz-author-tools-msg" style="font-size:12px;color:var(--gold)"></span>
+        </div>
+      </div>
       <div id="puz-list"></div>
     </section>
 
@@ -15491,7 +15499,7 @@ var PUZ_MOTIF_SKIP = { short:1, long:1, mate:1, sacrifice:1, sacrificio:1, defen
 var puz = { level:'inicial', list:[], idx:0, cur:null, chess:null, flipped:false, sel:null, legalDests:[],
   step:0, solved:false, revealed:false, failed:false, busy:false, reviewing:false, reviewIdx:0,
   lastFrom:'', lastTo:'', _revFens:[], _revMoves:[], played:[], seen:{}, editing:false, _dirty:false,
-  anOn:false, anScore:null, anDepth:0, anPv:null, anBestUci:null, lines:[], recording:false, recLine:[] };
+  anOn:false, anScore:null, anDepth:0, anPv:null, anBestUci:null, lines:[], recording:false, recLine:[], _srcGame:null, _srcGameMaybe:false };
 var _puzHistoryPushed = false;
 function _puzPageOn() { document.body.classList.add('puz-page'); var hdr = document.querySelector('header'), ov = document.getElementById('puz-overlay'); if (hdr && ov) ov.style.top = hdr.offsetHeight + 'px'; }
 function _puzPageOff() { document.body.classList.remove('puz-page'); var ov = document.getElementById('puz-overlay'); if (ov) ov.style.top = ''; }
@@ -15516,6 +15524,7 @@ function puzSetResult(id, r) { var m = puzResults(); m[id] = r; try { localStora
 
 function puzInit() {
   try { var lv = localStorage.getItem('puz_level'); if (lv && PUZ_LVL_NAME[lv]) puz.level = lv; } catch(e) {}
+  if (!_ondemand) { var _pat = document.getElementById('puz-author-tools'); if (_pat) _pat.style.display = ''; }
   var chips = document.querySelectorAll('#tab-ejercicios .chip');
   for (var i=0;i<chips.length;i++) chips[i].classList.toggle('active', chips[i].getAttribute('onclick').indexOf("'"+puz.level+"'") >= 0);
   fetch('data/puzzles.json' + _dataV()).then(function(r){ return r.json(); }).then(function(d) {
@@ -15593,7 +15602,9 @@ function puzLoad() {
   puz.solved = false; puz.revealed = false; puz.failed = false; puz.busy = false; puz.editing = false;
   puz.reviewing = false; puz.reviewIdx = 0; puz.lastFrom = ''; puz.lastTo = '';
   puz.seen[p.id] = 1;
+  puz._srcGame = null; puz._srcGameMaybe = false;
   puzSfOff();
+  puzResolveSrcGame(p);   // identifica la partida original del pool; el boton recien aparece al resolver el ejercicio
   document.getElementById('puz-lvl-badge').textContent = PUZ_LVL_SHORT[puz.level] || '';
   var side = p.sideToMove === 'w' ? 'Blancas' : 'Negras';
   document.getElementById('puz-prompt').innerHTML = '<span class="dot ' + p.sideToMove + '"></span> Juegan ' + side + ' — encontrá la mejor jugada';
@@ -15660,6 +15671,7 @@ function puzRenderActions() {
   if (puz.solved || puz.revealed) {
     h += '<button class="puz-btn primary" onclick="puzNext()">Próximo ejercicio →</button>';
     h += '<button class="puz-btn" id="puz-an-btn" onclick="puzSfToggle()">🔬 Analizar con el módulo</button>';
+    if (puz._srcGame || puz._srcGameMaybe) h += '<button class="puz-btn" onclick="puzOpenSourceGame()">♟ Ver la partida original</button>';
     h += '<button class="puz-btn" id="puz-share" onclick="puzShare()">🔗 Compartir</button>';
   } else {
     h += '<button class="puz-btn" onclick="puzReveal()">👁 Ver solución</button>';
@@ -15851,6 +15863,127 @@ function _puzDoClose() {
   try { history.replaceState({}, '', location.pathname); } catch(e) {}
 }
 function puzClose() { if (_puzHistoryPushed) { _puzHistoryPushed = false; history.back(); } else _puzDoClose(); }
+
+/* ── "Ver la partida original": enlaza el puzzle con la partida del POOL de donde salió ──
+   La identifica por jugadores + torneo (+ fecha/resultado) y la abre en el visor en la POSICIÓN del
+   ejercicio (el visitante puede retroceder para verla entera). El botón recién aparece tras resolver. */
+function puzFindGame(p) {
+  try { if (!_dbSearchIndex) _buildDbSearchIndex(); } catch (e) { return null; }
+  if (!_dbSearchIndex) return null;
+  var s = p.source || {};
+  var wN = nameTokens(s.white || ''), bN = nameTokens(s.black || '');
+  if (!wN.length || !bN.length) return null;
+  var cands = _dbSearchIndex.filter(function(g) { return _tokAllInOne(wN, g.wt) && _tokAllInOne(bN, g.bt); });
+  if (!cands.length) return null;
+  function narrow(field, val) { if (cands.length <= 1 || !val) return; var c = cands.filter(function(g) { return (g[field] || '') === val; }); if (c.length) cands = c; }
+  narrow('event', (s.tournamentName || '').trim());
+  narrow('date', (s.date || '').trim());
+  narrow('result', (s.result || '').trim());
+  if (cands.length > 1 && s.ply) { var c = cands.filter(function(g) { return (g.plies || 0) >= s.ply; }); if (c.length) cands = c; }
+  return cands[0] || null;
+}
+// Deja el botón "Ver la partida original" listo. Si el ejercicio ya trae el puntero guardado (gameRef,
+// generado por "Enlazar ejercicios con sus partidas"), no hace falta el índice. Si no, y el índice YA
+// está en memoria (autor, o publicado ya cargado) identifica la partida ahora; en publicado SIN cargar
+// (índice ~34MB) muestra el botón optimista y resuelve al clickear (puzOpenSourceGame).
+function puzResolveSrcGame(p) {
+  if (p.gameRef && p.gameRef.t != null) { puz._srcGameMaybe = true; return; }   // ya enlazado: botón directo
+  if (_ondemand && !window.__GAMES_INDEX__) { puz._srcGameMaybe = true; return; }
+  puz._srcGame = puzFindGame(p);
+  if (puz._srcGame && (puz.solved || puz.revealed)) puzRenderActions();
+}
+// Modo autor: enlaza TODOS los ejercicios con su partida del pool y guarda el puntero (t, gi, ply) en
+// cada uno. Usa el índice publicado (__GAMES_INDEX__, que sí trae t/gi). Después: "Guardar puzzles.json".
+async function puzLinkAllGames(btn) {
+  var msg = document.getElementById('puz-author-tools-msg');
+  if (btn) btn.disabled = true;
+  if (msg) msg.textContent = 'Cargando índice de partidas…';
+  await new Promise(function(r) { _loadGamesIndexAsync(function() { r(); }); });
+  var idx = window.__GAMES_INDEX__ || [];
+  if (!idx.length) { if (msg) msg.textContent = 'No se pudo cargar el índice de partidas.'; if (btn) btn.disabled = false; return; }
+  if (msg) msg.textContent = 'Enlazando…';
+  // pre-tokenizar el índice una sola vez
+  var entries = idx.map(function(g) { return { wt: nameTokens(g.w || ''), bt: nameTokens(g.b || ''), ev: g.ev || '', d: g.d || '', r: g.r || '', pl: g.pl || 0, t: g.t, gi: g.gi }; });
+  var linked = 0, notfound = 0, already = 0;
+  for (var i = 0; i < PUZZLES.length; i++) {
+    var p = PUZZLES[i], s = p.source || {};
+    var wN = nameTokens(s.white || ''), bN = nameTokens(s.black || '');
+    if (!wN.length || !bN.length) { notfound++; continue; }
+    var cands = entries.filter(function(e) { return _tokAllInOne(wN, e.wt) && _tokAllInOne(bN, e.bt); });
+    (function() {
+      function narrow(f, v) { if (cands.length <= 1 || !v) return; var c = cands.filter(function(e) { return (e[f] || '') === v; }); if (c.length) cands = c; }
+      narrow('ev', (s.tournamentName || '').trim()); narrow('d', (s.date || '').trim()); narrow('r', (s.result || '').trim());
+      if (cands.length > 1 && s.ply) { var c = cands.filter(function(e) { return (e.pl || 0) >= s.ply; }); if (c.length) cands = c; }
+    })();
+    var g = cands[0];
+    if (g && g.t != null && g.gi != null) { p.gameRef = { t: g.t, gi: g.gi, ply: s.ply }; linked++; }
+    else { notfound++; }
+    if (i % 20 === 0 && msg) { msg.textContent = 'Enlazando… ' + (i + 1) + '/' + PUZZLES.length; await new Promise(function(r){ setTimeout(r, 0); }); }
+  }
+  puz._dirty = true;
+  if (msg) msg.textContent = '✓ Enlazadas ' + linked + ' de ' + PUZZLES.length + (notfound ? ' · ' + notfound + ' sin partida' : '') + '. Ahora "Guardar puzzles.json" y publicar.';
+  if (btn) btn.disabled = false;
+}
+// Camina la línea principal del visor hasta la posición (FEN) del ejercicio.
+function _puzFenKey(f) { return f.split(' ').slice(0, 4).join(' '); }
+function puzNavViewerToFen(fen) {
+  if (!cv.root) return false;
+  var target = _puzFenKey(fen), node = cv.root;
+  while (node) {
+    if (_puzFenKey(node.fen) === target) { cvSetNode(node); return true; }
+    if (!node.children || !node.children.length) break;
+    node = node.children[0];
+  }
+  return false;
+}
+function _puzPlayersMatch(pgn, white, black) {
+  var h = parsePgnHeaders(pgn);
+  return _tokAllInOne(nameTokens(white || ''), nameTokens(h.White || '')) && _tokAllInOne(nameTokens(black || ''), nameTokens(h.Black || ''));
+}
+// Elige la partida dentro del archivo del torneo: games[gi] si coincide por jugadores, si no la busca
+// (robusto a que el índice gi se haya corrido por agregar/quitar partidas de ese torneo).
+function puzPickGameFromTour(games, gi, src) {
+  if (!games || !games.length) return null;
+  if (gi >= 0 && gi < games.length && _puzPlayersMatch(games[gi], src.white, src.black)) return games[gi];
+  for (var i = 0; i < games.length; i++) if (_puzPlayersMatch(games[i], src.white, src.black)) return games[i];
+  return (gi >= 0 && gi < games.length) ? games[gi] : null;
+}
+async function puzOpenSourceGame() {
+  if (typeof openTourGameByIndex !== 'function' || !puz.cur) return;
+  var p = puz.cur, fen = p.fen, g = null, t = null, gi = null;
+  // 1) Puntero guardado (gameRef): baja SOLO data/t/<t>.json (KB), sin el índice de 34MB.
+  if (p.gameRef && p.gameRef.t != null && typeof fetchTournamentGames === 'function') {
+    puzSetFb('hint', '🔎', 'Cargando la partida original…');
+    var games = await fetchTournamentGames(p.gameRef.t);
+    if (!puz.cur || puz.cur.fen !== fen) return;
+    var pgn = puzPickGameFromTour(games, p.gameRef.gi, p.source || {});
+    if (pgn) { g = pgn; t = p.gameRef.t; gi = p.gameRef.gi; }
+  }
+  // 2) Sin puntero (o no se pudo): índice del pool (autor: en memoria; publicado: lo carga al pedir).
+  if (!g) {
+    if (!puz._srcGame) {
+      if (_ondemand && !window.__GAMES_INDEX__) {
+        puzSetFb('hint', '🔎', 'Buscando la partida original…');
+        await new Promise(function(r) { _loadGamesIndexAsync(function() { _invalidateDbSearch(); r(); }); });
+      }
+      if (!puz.cur || puz.cur.fen !== fen) return;
+      puz._srcGame = puzFindGame(puz.cur);
+    }
+    if (puz._srcGame) { g = puz._srcGame.pgn; t = puz._srcGame.t; gi = puz._srcGame.gi; }
+  }
+  if (!g) { puzSetFb('bad', '🔎', 'No encontré la partida original en la base de partidas.'); return; }
+  // cerrar el solver (sin enredar el historial); el visor abre encima con su link propio
+  puzSfOff();
+  document.getElementById('puz-overlay').classList.remove('open'); _puzPageOff();
+  _puzHistoryPushed = false; puz.cur = null; puz.editing = false;
+  try { history.replaceState({}, '', location.pathname); } catch (e) {}
+  puzRenderList();
+  _cvTourGames = [g];
+  _cvShareKeys = [(t != null && gi != null) ? { url: _gameHref(t, gi), tour: t } : null];
+  _cvFromTournament = false; _cvTourName = 'Partida original'; _cvTourLoc = '';
+  try { await openTourGameByIndex(0); } catch (e) {}
+  puzNavViewerToFen(fen);   // arrancar en la posición del ejercicio (se puede retroceder)
+}
 
 /* ── Análisis con el módulo DENTRO del tablero del ejercicio (estilo Lichess) ──
    Reusa el worker compartido de Stockfish (sf). El ruteo de mensajes está en sfOnMsg (puz.anOn). */
