@@ -21,6 +21,7 @@
       if (p.get('partida') || (p.get('jugador') && p.get('t') && p.get('g'))) label = 'Cargando partida…';
       else if (p.get('torneo')) label = 'Cargando torneo…';
       else if (p.get('jugador')) label = 'Cargando jugador…';
+      else if (p.get('ejercicio')) label = 'Cargando ejercicio…';
       else if (p.get('noticia')) label = 'Cargando noticia…';
       if (!label) return;
       var cover = document.createElement('div');
@@ -907,6 +908,105 @@
       box-shadow: inset 0 0 0 4px rgba(0,0,0,0.22);
       pointer-events: none;
     }
+
+    /* ═══════════ EJERCICIOS (puzzles) ═══════════ */
+    .puz-intro { font-size: 13px; color: var(--text2); line-height: 1.6; margin-bottom: 14px; }
+    .puz-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; }
+    @media (max-width: 480px) { .puz-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; } }
+    .puz-card {
+      background: var(--bg2); border: 1px solid var(--border); border-radius: 12px;
+      padding: 9px; cursor: pointer; transition: border-color .15s, transform .1s; position: relative;
+    }
+    .puz-card:hover { border-color: var(--gold-dim); transform: translateY(-2px); }
+    .puz-card-bd { position: relative; border-radius: 7px; overflow: hidden; }
+    .puz-card-mark {
+      position: absolute; top: 5px; right: 5px; z-index: 3; width: 22px; height: 22px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 800;
+      box-shadow: 0 1px 5px rgba(0,0,0,.5); color: #fff;
+    }
+    .puz-card-mark.ok { background: var(--green); }
+    .puz-card-mark.fail { background: var(--red); }
+    .puz-card-meta { margin-top: 8px; display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+    .puz-turn { display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--text2); font-weight: 600; }
+    .puz-turn .dot { width: 11px; height: 11px; border-radius: 50%; border: 1px solid var(--text3); flex-shrink: 0; }
+    .puz-turn .dot.w { background: #f0f0f0; } .puz-turn .dot.b { background: #2b2b2b; }
+    .puz-tag { font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 20px; text-transform: uppercase; letter-spacing: .3px; white-space: nowrap;
+      background: var(--bg3); color: var(--text2); border: 1px solid var(--border); }
+    .puz-tag.s-mates { background: rgba(224,112,112,.13); color: #e88; border-color: rgba(224,112,112,.3); }
+    .puz-tag.s-tactics { background: rgba(255,201,64,.13); color: var(--gold); border-color: var(--gold-dim); }
+    .puz-tag.s-sacrificio { background: rgba(190,120,230,.14); color: #c89af0; border-color: rgba(190,120,230,.32); }
+    .puz-tag.s-defensa { background: rgba(80,150,220,.14); color: #8ab4f8; border-color: rgba(80,150,220,.32); }
+    .puz-tag.s-ventaja { background: rgba(82,183,136,.14); color: var(--green); border-color: rgba(82,183,136,.32); }
+    .puz-tag.s-finales { background: rgba(160,160,160,.14); color: var(--text2); border-color: var(--border); }
+
+    /* Solver overlay — wallpaper de la web de fondo (tapa la lista), panel oscuro sobre el contenido */
+    body.puz-page header, body.puz-page nav { z-index: 311; }
+    .puz-overlay { position: fixed; inset: 0; z-index: 300; background: var(--bg) var(--bg-img) center center / cover fixed no-repeat;
+      display: none; overflow-y: auto; }
+    .puz-overlay.open { display: block; }
+    .puz-modal { max-width: 1000px; margin: 20px auto; padding: 20px 22px 26px;
+      background: rgba(8,8,10,0.86); border: 1px solid rgba(255,255,255,0.10); border-radius: 16px; box-shadow: 0 16px 54px rgba(0,0,0,0.6); backdrop-filter: blur(3px); }
+    @media (max-width: 640px) { .puz-modal { margin: 10px; padding: 14px 14px 20px; } }
+    /* Análisis del módulo dentro del tablero del ejercicio (estilo Lichess) */
+    .puz-eval { margin-top: 10px; background: rgba(0,0,0,0.45); border: 1px solid var(--gold-dim); border-radius: 9px; padding: 8px 11px; }
+    .puz-eval-top { display: flex; align-items: center; gap: 9px; }
+    .puz-eval-depth { font-size: 11px; color: var(--text3); }
+    .puz-eval-line { font-size: 13px; color: #d8d8d8; font-family: 'Courier New', monospace; line-height: 1.5; margin-top: 5px; word-break: break-word; max-height: 60px; overflow-y: auto; }
+    #puz-arrow { position: absolute; inset: 0; pointer-events: none; z-index: 4; }
+    .puz-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+    .puz-bar h2 { font-size: 18px; color: var(--text); }
+    .puz-bar .puz-lvl { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--gold);
+      background: var(--gold-bg); border: 1px solid var(--gold-dim); padding: 3px 9px; border-radius: 20px; }
+    .puz-bar .puz-spacer { flex: 1; }
+    .puz-x { background: none; border: 1px solid var(--border); color: var(--text2); font-size: 14px; cursor: pointer;
+      border-radius: 8px; padding: 6px 12px; font-family: inherit; }
+    .puz-x:hover { color: var(--text); border-color: var(--text3); }
+    .puz-cols { display: flex; gap: 22px; align-items: flex-start; flex-wrap: wrap; }
+    .puz-board-col { flex: 0 0 clamp(280px, 46vw, 460px); max-width: 460px; }
+    .puz-info-col { flex: 1; min-width: 250px; }
+    .puz-prompt { font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 9px; display: flex; align-items: center; gap: 8px; }
+    .puz-prompt .dot { width: 15px; height: 15px; border-radius: 50%; border: 1px solid var(--text3); flex-shrink: 0; }
+    .puz-prompt .dot.w { background: #f0f0f0; } .puz-prompt .dot.b { background: #2b2b2b; }
+    .puz-ctrls { display: flex; gap: 6px; margin-top: 8px; }
+    .puz-ctrls button { background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.2); color: #f0f0f0;
+      padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 15px; font-family: inherit; line-height: 1; }
+    .puz-ctrls button:hover { border-color: var(--gold-dim); color: var(--gold); }
+    .puz-ctrls .puz-counter { flex: 1; text-align: center; font-size: 13px; color: var(--text2); align-self: center; }
+    .puz-fb { border-radius: 11px; padding: 13px 15px; font-size: 14px; font-weight: 600; line-height: 1.5; margin-bottom: 14px;
+      border: 1px solid var(--border); background: var(--bg2); color: var(--text2); min-height: 50px; display: flex; align-items: center; gap: 10px; }
+    .puz-fb .ic { font-size: 22px; line-height: 1; flex-shrink: 0; }
+    .puz-fb.ok { background: rgba(82,183,136,.12); border-color: rgba(82,183,136,.4); color: var(--green); }
+    .puz-fb.bad { background: rgba(224,112,112,.12); border-color: rgba(224,112,112,.4); color: #e88; }
+    .puz-fb.hint { background: rgba(255,201,64,.1); border-color: var(--gold-dim); color: var(--gold); }
+    .puz-source { font-size: 13px; color: var(--text2); line-height: 1.6; background: var(--bg2); border: 1px solid var(--border);
+      border-radius: 11px; padding: 12px 14px; margin-bottom: 14px; }
+    .puz-source b { color: var(--text); font-weight: 600; }
+    .puz-source .meta { color: var(--text3); font-size: 12px; margin-top: 5px; }
+    .puz-motifs { margin-bottom: 14px; display: flex; flex-wrap: wrap; gap: 6px; }
+    .puz-actions { display: flex; flex-wrap: wrap; gap: 9px; }
+    .puz-btn { padding: 11px 16px; border-radius: 10px; font-size: 14px; font-weight: 700; cursor: pointer; font-family: inherit;
+      border: 1px solid var(--border); background: var(--bg3); color: var(--text2); display: inline-flex; align-items: center; gap: 7px; }
+    .puz-btn:hover { border-color: var(--text3); color: var(--text); }
+    .puz-btn.primary { background: var(--gold-bg); border-color: var(--gold-dim); color: var(--gold); }
+    .puz-btn.primary:hover { background: var(--gold); color: #1a1400; }
+    .puz-btn.copied { background: var(--green) !important; border-color: var(--green) !important; color: #fff !important; }
+    @keyframes puzShakeBad { 0%,100%{transform:translateX(0)} 20%,60%{transform:translateX(-7px)} 40%,80%{transform:translateX(7px)} }
+    .puz-board-col.shake { animation: puzShakeBad .42s; }
+    /* Panel de autor (solo modo edición) */
+    .puz-author { margin-top: 16px; border: 1px dashed var(--gold-dim); border-radius: 12px; padding: 14px; background: rgba(255,201,64,0.04); }
+    .puz-author h4 { font-size: 12px; text-transform: uppercase; letter-spacing: .6px; color: var(--gold); margin-bottom: 10px; }
+    .puz-author .row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+    .puz-author label { font-size: 12.5px; color: var(--text2); min-width: 72px; }
+    .puz-author input[type=number], .puz-author select { background: var(--bg3); border: 1px solid var(--border); color: var(--text);
+      border-radius: 8px; padding: 6px 9px; font-family: inherit; font-size: 13px; width: 92px; }
+    .puz-author .hint { font-size: 11.5px; color: var(--text3); line-height: 1.5; margin: 4px 0 10px; }
+    .puz-author .alts { font-size: 12.5px; color: var(--text2); margin-bottom: 10px; line-height: 1.7; }
+    .puz-author .alt-chip { display: inline-flex; align-items: center; gap: 5px; background: var(--bg3); border: 1px solid var(--border);
+      border-radius: 20px; padding: 2px 6px 2px 9px; margin: 2px 4px 2px 0; font-family: 'Courier New', monospace; }
+    .puz-author .alt-chip button { background: none; border: none; color: var(--red); cursor: pointer; font-size: 13px; padding: 0 2px; }
+    .puz-author .a-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+    .puz-edit-on { box-shadow: 0 0 0 3px var(--gold-dim) inset; }
+
     /* promotion picker */
     .promo-overlay {
       position: fixed; inset: 0; background: rgba(0,0,0,.75);
@@ -1087,6 +1187,13 @@
         </svg>
         <span>Partidas</span>
       </button>
+      <button class="nav-btn" onclick="goTo('ejercicios',this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect>
+          <rect x="3" y="14" width="7" height="7" rx="1"></rect><rect x="14" y="14" width="7" height="7" rx="1"></rect>
+        </svg>
+        <span>Ejercicios</span>
+      </button>
       <button class="nav-btn" onclick="goTo('noticias',this)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
           <path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2z"></path>
@@ -1211,6 +1318,21 @@
       <div id="list-favoritos"><div class="p-card" onclick="openPlayer(20)"><span class="p-rank ">★</span><div class="p-avatar">IS</div><div class="p-info"><div class="p-name">Ilan Schnaider</div><div class="p-sub"><span class="p-title-badge p-title-im">IM</span> </div></div><div class="p-elo"><div class="p-elo-n">2431</div><div class="p-elo-l">ELO FIDE</div></div><button class="fav-btn on" onclick="toggleFav(event,20)" title="Agregar a favoritos"><svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg></button></div></div>
     </section>
 
+    <!-- ── EJERCICIOS ── -->
+    <section class="section" id="s-ejercicios">
+      <div class="pg-head">
+        <h2>🧩 Ejercicios</h2>
+        <p>Posiciones de partidas reales para resolver</p>
+      </div>
+      <div class="puz-intro" id="puz-intro">Encontrá la mejor jugada en posiciones tomadas de partidas de ajedrez argentino. Elegí tu nivel.</div>
+      <div class="tabs" id="tab-ejercicios">
+        <button class="chip active" onclick="puzSetLevel('inicial',this)">Nivel inicial</button>
+        <button class="chip" onclick="puzSetLevel('aficionado',this)">Nivel aficionado</button>
+        <button class="chip" onclick="puzSetLevel('avanzado',this)">Nivel avanzado</button>
+      </div>
+      <div id="puz-list"></div>
+    </section>
+
     <!-- ── NOTICIAS ── -->
     <section class="section" id="s-noticias">
       <div class="pg-head">
@@ -1246,6 +1368,53 @@
     <div id="n-reader-body" class="n-reader-body"></div>
     <div id="n-reader-pgn"></div>
     <div id="n-reader-actions" style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap;align-items:center"></div>
+  </div>
+</div>
+
+<!-- EJERCICIOS — SOLVER -->
+<div class="puz-overlay" id="puz-overlay">
+  <div class="puz-modal">
+    <div class="puz-bar">
+      <h2>🧩 Ejercicio</h2>
+      <span class="puz-lvl" id="puz-lvl-badge">Inicial</span>
+      <span class="puz-spacer"></span>
+      <button class="puz-x" onclick="puzClose()">✕ Cerrar</button>
+    </div>
+    <div class="puz-cols">
+      <div class="puz-board-col" id="puz-board-col">
+        <div class="puz-prompt" id="puz-prompt"></div>
+        <div class="chess-board-wrap" style="max-width:none">
+          <div class="sf-vbar" id="puz-vbar" style="display:none"><div class="sf-vbar-fill" id="puz-vbar-fill" style="height:50%"></div></div>
+          <div style="position:relative;flex:1;min-width:0">
+            <div class="chess-board" id="puz-board"></div>
+            <svg id="puz-arrow" viewBox="0 0 8 8" preserveAspectRatio="none" style="display:none"></svg>
+          </div>
+        </div>
+        <div class="puz-ctrls">
+          <button onclick="puzReviewPrev()" title="Jugada anterior" id="puz-prev" style="display:none">◀</button>
+          <span class="puz-counter" id="puz-counter"></span>
+          <button onclick="puzReviewNext()" title="Jugada siguiente" id="puz-next" style="display:none">▶</button>
+          <button onclick="puzFlip()" title="Girar tablero" style="font-size:16px">⇅</button>
+          <button onclick="toggleBoard()" title="Cambiar color del tablero">◧</button>
+        </div>
+        <div class="puz-eval" id="puz-eval" style="display:none">
+          <div class="puz-eval-top">
+            <span class="sf-score sf-neu" id="puz-eval-score">…</span>
+            <span class="puz-eval-depth" id="puz-eval-depth"></span>
+            <span style="flex:1"></span>
+            <span style="font-size:11px;color:var(--text3)">Stockfish</span>
+          </div>
+          <div class="puz-eval-line" id="puz-eval-line"></div>
+        </div>
+      </div>
+      <div class="puz-info-col">
+        <div class="puz-fb" id="puz-fb"><span class="ic">🎯</span><span id="puz-fb-txt">Mové la pieza que resuelve la posición.</span></div>
+        <div class="puz-motifs" id="puz-motifs"></div>
+        <div class="puz-source" id="puz-source"></div>
+        <div class="puz-actions" id="puz-actions"></div>
+        <div class="puz-author" id="puz-author" style="display:none"></div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -10682,6 +10851,8 @@ function deleteNewsItem(id){
 function goTo(sec, btn) {
   // El visor de partidas ahora es una PÁGINA y la nav queda clickeable por encima → si hay una partida
   // abierta, cerrarla también (antes la tapaba el overlay y bastaba el popstate).
+  var _pz = document.getElementById('puz-overlay');
+  if (_pz && _pz.classList.contains('open')) { if (typeof puzSfOff === 'function') puzSfOff(); _puzHistoryPushed = false; _pz.classList.remove('open'); _puzPageOff(); puz.cur = null; puz.editing = false; }
   var _cv = document.getElementById('chess-overlay');
   if (_cv && _cv.classList.contains('open')) { _cvHistoryPushed = false; closeChessViewer(); }
   // Si hay un torneo abierto en modo "página", cerrarlo (la nav navega a la sección elegida) y
@@ -10938,12 +11109,12 @@ function cvPlayerHtml(title, name, fideId, elo, team, isBlack) {
 }
 
 /* ── Construir árbol desde una lista de movimientos verbose ── */
-function buildTree(moves, nags, evals, clocks) {
+function buildTree(moves, nags, evals, clocks, startFen) {
   nags = nags || [];
   evals = evals || [];
   clocks = clocks || [];
   if (typeof Chess === 'undefined') return null;
-  var tmp = new Chess();
+  var tmp = startFen ? new Chess(startFen) : new Chess();
   var root = makeNode(tmp.fen(), null, null);
   var cur = root;
   for (var i = 0; i < moves.length; i++) {
@@ -11200,6 +11371,9 @@ function cvSelect(i) {
   document.getElementById('cv-opening').textContent = g.eco&&g.op?g.eco+' · '+g.op:'';
 
   var moves = [];
+  // Posición inicial: las partidas normales arrancan del comienzo; los ejercicios traen [FEN]/[SetUp].
+  var fenM = g.pgn.match(/\[FEN "([^"]+)"\]/);
+  var startFen = fenM ? fenM[1] : '';
   if (typeof Chess !== 'undefined') {
     var tmp = new Chess();
     var ok = tmp.load_pgn(g.pgn);
@@ -11211,7 +11385,7 @@ function cvSelect(i) {
   }
 
   cv.rawPgn = g.pgn || '';
-  cv.root = buildTree(moves, parseMovenags(cv.rawPgn), parseMoveEvals(cv.rawPgn), parseMoveClocks(cv.rawPgn));
+  cv.root = buildTree(moves, parseMovenags(cv.rawPgn), parseMoveEvals(cv.rawPgn), parseMoveClocks(cv.rawPgn), startFen);
   _boardBound = false;
   cvBuildMoveList();
   faReset();
@@ -11848,6 +12022,12 @@ window.addEventListener('popstate', function() {
     _newsReaderCurrentId = null;
     return;
   }
+  // Solver de ejercicios (z-index 320): se cierra antes que el visor de partidas.
+  var puzo = document.getElementById('puz-overlay');
+  if (puzo && puzo.classList.contains('open')) {
+    _puzHistoryPushed = false; _puzDoClose();
+    return;
+  }
   var chess = document.getElementById('chess-overlay');
   if (chess && chess.classList.contains('open')) {
     // Si venimos de saltar a una partida del libro, Atrás VUELVE a la partida anterior (no cierra).
@@ -12278,8 +12458,11 @@ function sfOnMsg(line) {
     sf.loading = false;
     document.getElementById('sf-depth').textContent = '';
     if (sf.on) sfAnalyze();
+    if (puz.anOn) puzSfGo();   // análisis del solver de ejercicios esperando al motor
     return;
   }
+  // Análisis dentro del tablero del ejercicio: rutea acá (no toca la UI del visor).
+  if (puz.anOn) { puzSfInfo(line); return; }
   if (line.indexOf('info') !== 0) return;
   var dm = line.match(/\bdepth (\d+)\b/);
   var mm = line.match(/\bmultipv (\d+)\b/);
@@ -15289,6 +15472,639 @@ if (_ondemand) {
   }
 })();
 
+/* ═══════════════════════════════════════════════════════
+   EJERCICIOS (puzzles) — solver que reusa chess.js y el tablero.
+   Cero motor del visitante: las soluciones vienen pre-generadas en data/puzzles.json.
+═══════════════════════════════════════════════════════ */
+var PUZZLES = [], _puzLoaded = false;
+var PUZ_OVERLAP = 50;   // solapamiento ±50 en los bordes 1400/1800 (los ejercicios de borde caen en 2 niveles)
+var PUZ_LVL_NAME = { inicial: 'Nivel inicial', aficionado: 'Nivel aficionado', avanzado: 'Nivel avanzado' };
+var PUZ_LVL_SHORT = { inicial: 'Inicial', aficionado: 'Aficionado', avanzado: 'Avanzado' };
+var PUZ_SEC_LABEL = { mates:'Mate', tactics:'Táctica', defensa:'Defensa', ventaja:'Ventaja', sacrificio:'Sacrificio', finales:'Final' };
+var PUZ_MOTIF_LABEL = { horquilla:'Horquilla', clavada:'Clavada', enfilada:'Enfilada', descubierta:'Descubierta',
+  'doble-jaque':'Doble jaque', 'mate-pasillo':'Mate del pasillo', coronacion:'Coronación', tablas:'Tablas',
+  'final-ganado':'Final ganado', 'final-tablas':'Final en tablas' };
+// Tags técnicos o que ya muestra el badge de sección: no se listan como motivos.
+var PUZ_MOTIF_SKIP = { short:1, long:1, mate:1, sacrifice:1, sacrificio:1, defensa:1, ventaja:1, final:1, ventajaDecisiva:1 };
+
+var puz = { level:'inicial', list:[], idx:0, cur:null, chess:null, flipped:false, sel:null, legalDests:[],
+  step:0, solved:false, revealed:false, failed:false, busy:false, reviewing:false, reviewIdx:0,
+  lastFrom:'', lastTo:'', _revFens:[], _revMoves:[], played:[], seen:{}, editing:false, _dirty:false,
+  anOn:false, anScore:null, anDepth:0, anPv:null, anBestUci:null, lines:[], recording:false, recLine:[] };
+var _puzHistoryPushed = false;
+function _puzPageOn() { document.body.classList.add('puz-page'); var hdr = document.querySelector('header'), ov = document.getElementById('puz-overlay'); if (hdr && ov) ov.style.top = hdr.offsetHeight + 'px'; }
+function _puzPageOff() { document.body.classList.remove('puz-page'); var ov = document.getElementById('puz-overlay'); if (ov) ov.style.top = ''; }
+
+// Niveles a los que pertenece un ejercicio (con solapamiento en los bordes).
+function puzBand(d) {
+  var lv = [];
+  if (d <= 1400 + PUZ_OVERLAP) lv.push('inicial');
+  if (d >= 1400 - PUZ_OVERLAP && d <= 1800 + PUZ_OVERLAP) lv.push('aficionado');
+  if (d >= 1800 - PUZ_OVERLAP) lv.push('avanzado');
+  return lv.length ? lv : ['aficionado'];
+}
+function puzForLevel(level) {
+  return PUZZLES.filter(function(p){ return !p.hidden && puzBand(p.difficulty || 1000).indexOf(level) >= 0; })
+                .sort(function(a,b){ return (a.difficulty||0) - (b.difficulty||0) || (a.id < b.id ? -1 : 1); });
+}
+function puzById(id) { for (var i=0;i<PUZZLES.length;i++) if (PUZZLES[i].id === id) return PUZZLES[i]; return null; }
+
+// Resultado por ejercicio: 'ok' (resuelto sin errores) / 'fail' (con error o vio la solución).
+function puzResults() { try { return JSON.parse(localStorage.getItem('puz_results') || '{}'); } catch(e) { return {}; } }
+function puzSetResult(id, r) { var m = puzResults(); m[id] = r; try { localStorage.setItem('puz_results', JSON.stringify(m)); } catch(e) {} }
+
+function puzInit() {
+  try { var lv = localStorage.getItem('puz_level'); if (lv && PUZ_LVL_NAME[lv]) puz.level = lv; } catch(e) {}
+  var chips = document.querySelectorAll('#tab-ejercicios .chip');
+  for (var i=0;i<chips.length;i++) chips[i].classList.toggle('active', chips[i].getAttribute('onclick').indexOf("'"+puz.level+"'") >= 0);
+  fetch('data/puzzles.json' + _dataV()).then(function(r){ return r.json(); }).then(function(d) {
+    PUZZLES = Array.isArray(d) ? d : (d.puzzles || []);
+    _puzLoaded = true; puzUpdateChipCounts(); puzRenderList();
+  }).catch(function() {
+    _puzLoaded = true; var el = document.getElementById('puz-list');
+    if (el) el.innerHTML = '<div style="text-align:center;padding:32px;color:var(--red);font-size:13px">No se pudieron cargar los ejercicios.</div>';
+  });
+}
+
+function puzUpdateChipCounts() {
+  var chips = document.querySelectorAll('#tab-ejercicios .chip');
+  for (var i=0;i<chips.length;i++) {
+    var m = chips[i].getAttribute('onclick').match(/'(inicial|aficionado|avanzado)'/); if (!m) continue;
+    chips[i].innerHTML = PUZ_LVL_NAME[m[1]] + ' <span style="opacity:.6">(' + puzForLevel(m[1]).length + ')</span>';
+  }
+}
+
+function puzSetLevel(level, btn) {
+  puz.level = level;
+  try { localStorage.setItem('puz_level', level); } catch(e) {}
+  if (btn) { var chips = btn.parentNode.querySelectorAll('.chip'); for (var i=0;i<chips.length;i++) chips[i].classList.remove('active'); btn.classList.add('active'); }
+  puzRenderList();
+}
+
+function puzSyncChips() {
+  var chips = document.querySelectorAll('#tab-ejercicios .chip');
+  for (var i=0;i<chips.length;i++) chips[i].classList.toggle('active', chips[i].getAttribute('onclick').indexOf("'"+puz.level+"'") >= 0);
+}
+function puzRenderList() {
+  var el = document.getElementById('puz-list'); if (!el) return;
+  puzSyncChips();
+  if (!_puzLoaded) { el.innerHTML = '<div style="text-align:center;padding:32px;color:var(--text2);font-size:13px">⏳ Cargando ejercicios…</div>'; return; }
+  var list = puzForLevel(puz.level), res = puzResults();
+  if (!list.length) { el.innerHTML = '<div style="text-align:center;padding:32px;color:var(--text2);font-size:13px">No hay ejercicios en este nivel todavía.</div>'; return; }
+  var done = 0; for (var k=0;k<list.length;k++) if (res[list[k].id]) done++;
+  var h = '<div class="puz-intro" style="margin:-2px 0 14px">' + list.length + ' ejercicios · ' + done + ' intentados</div><div class="puz-grid">';
+  for (var i=0;i<list.length;i++) {
+    var p = list[i], flip = (p.sideToMove === 'b'), sec = p.section, lbl = PUZ_SEC_LABEL[sec] || sec;
+    var r = res[p.id];
+    var mark = r === 'ok' ? '<div class="puz-card-mark ok">✓</div>' : r === 'fail' ? '<div class="puz-card-mark fail">✗</div>' : '';
+    h += '<div class="puz-card" onclick="puzOpenById(\'' + p.id + '\')">'
+       + '<div class="puz-card-bd" data-flip="' + (flip?1:0) + '">' + mark + tdMiniFen(p.fen, null, flip) + '</div>'
+       + '<div class="puz-card-meta"><span class="puz-turn"><span class="dot ' + p.sideToMove + '"></span>'
+       + (p.sideToMove === 'w' ? 'Blancas' : 'Negras') + '</span>'
+       + '<span class="puz-tag s-' + sec + '">' + lbl + '</span></div></div>';
+  }
+  el.innerHTML = h + '</div>';
+}
+
+function puzOpenById(id) {
+  var p = puzById(id); if (!p) return;
+  var bands = puzBand(p.difficulty || 1000);
+  var level = bands.indexOf(puz.level) >= 0 ? puz.level : bands[0];
+  puz.level = level;
+  puz.list = puzForLevel(level);
+  puz.idx = 0; for (var i=0;i<puz.list.length;i++) if (puz.list[i].id === id) { puz.idx = i; break; }
+  puzOpenOverlay();
+  puzLoad();
+}
+
+function puzOpenOverlay() {
+  var ov = document.getElementById('puz-overlay');
+  ov.classList.add('open'); ov.scrollTop = 0; _puzPageOn();
+  if (!_puzHistoryPushed) { _puzHistoryPushed = true; try { history.pushState({ puzzle:true }, '', location.href); } catch(e) {} }
+}
+
+function puzLoad() {
+  var p = puz.list[puz.idx]; if (!p) return;
+  puz.cur = p; puz.chess = new Chess(p.fen); puz.flipped = (p.sideToMove === 'b');
+  puz.sel = null; puz.legalDests = []; puz.step = 0; puz.played = [];
+  puz.lines = [p.solution].concat(p.acceptedLines || []);   // líneas correctas: principal + variantes completas
+  puz.recording = false; puz.recLine = [];
+  puz.solved = false; puz.revealed = false; puz.failed = false; puz.busy = false; puz.editing = false;
+  puz.reviewing = false; puz.reviewIdx = 0; puz.lastFrom = ''; puz.lastTo = '';
+  puz.seen[p.id] = 1;
+  puzSfOff();
+  document.getElementById('puz-lvl-badge').textContent = PUZ_LVL_SHORT[puz.level] || '';
+  var side = p.sideToMove === 'w' ? 'Blancas' : 'Negras';
+  document.getElementById('puz-prompt').innerHTML = '<span class="dot ' + p.sideToMove + '"></span> Juegan ' + side + ' — encontrá la mejor jugada';
+  puzSetFb('aim', '🎯', 'Es tu turno. Mové la pieza que resuelve la posición.');
+  document.getElementById('puz-source').innerHTML = puzSourceHtml(p);
+  document.getElementById('puz-motifs').innerHTML = puzMotifsHtml(p);
+  document.getElementById('puz-prev').style.display = 'none';
+  document.getElementById('puz-next').style.display = 'none';
+  document.getElementById('puz-counter').textContent = '';
+  puzRenderActions();
+  puzRenderAuthor();
+  puzUpdateUrl();
+  puzRenderBoard();
+}
+
+function puzSetFb(kind, ic, txt) {
+  var fb = document.getElementById('puz-fb');
+  fb.className = 'puz-fb' + (kind === 'ok' ? ' ok' : kind === 'bad' ? ' bad' : kind === 'hint' ? ' hint' : '');
+  fb.innerHTML = '<span class="ic">' + ic + '</span><span id="puz-fb-txt">' + txt + '</span>';
+}
+
+function puzFmtDate(d) {
+  if (!d) return '';
+  var m = String(d).match(/(\d{4})\.(\d{2})\.(\d{2})/);
+  if (!m) return /^\d{4}/.test(d) ? String(d).slice(0,4) : '';
+  if (m[2] === '00' || m[3] === '00') return m[1];
+  return m[3] + '/' + m[2] + '/' + m[1];
+}
+function puzSourceHtml(p) {
+  var s = p.source || {};
+  var h = 'Esta posición se dio en la partida disputada entre <b>' + escHtml(s.white || '?') + '</b> y <b>' + escHtml(s.black || '?') + '</b>.';
+  var meta = [];
+  if (s.tournamentName) meta.push(escHtml(String(s.tournamentName)));
+  if (s.round) meta.push('Ronda ' + escHtml(String(s.round)));
+  var d = puzFmtDate(s.date); if (d) meta.push(d);
+  if (meta.length) h += '<div class="meta">' + meta.join(' · ') + '</div>';
+  return h;
+}
+function puzMotifsHtml(p) {
+  var ths = p.themes || [], seen = {}, out = [];
+  for (var i=0;i<ths.length;i++) {
+    var t = ths[i]; if (PUZ_MOTIF_SKIP[t]) continue;
+    var lbl = PUZ_MOTIF_LABEL[t];
+    if (lbl === undefined) { var mm = /^mateIn(\d+)$/.exec(t); lbl = mm ? 'Mate en ' + mm[1] : t; }
+    if (!lbl || seen[lbl]) continue; seen[lbl] = 1;
+    out.push('<span class="puz-tag">' + escHtml(lbl) + '</span>');
+  }
+  return out.join('');
+}
+// Línea de la solución en notación SAN (con números de jugada correctos según el FEN).
+function puzSanLine(p) {
+  var fp = p.fen.split(' '), n = parseInt(fp[5] || '1', 10), w = (fp[1] === 'w');
+  var san = p.solutionSan || [], parts = [];
+  for (var i=0;i<san.length;i++) {
+    if (w) parts.push(n + '.' + san[i]);
+    else { parts.push((i === 0 ? n + '…' : '') + san[i]); n++; }
+    w = !w;
+  }
+  return parts.join(' ');
+}
+
+function puzRenderActions() {
+  var el = document.getElementById('puz-actions'), h = '';
+  if (puz.solved || puz.revealed) {
+    h += '<button class="puz-btn primary" onclick="puzNext()">Próximo ejercicio →</button>';
+    h += '<button class="puz-btn" id="puz-an-btn" onclick="puzSfToggle()">🔬 Analizar con el módulo</button>';
+    h += '<button class="puz-btn" id="puz-share" onclick="puzShare()">🔗 Compartir</button>';
+  } else {
+    h += '<button class="puz-btn" onclick="puzReveal()">👁 Ver solución</button>';
+    h += '<button class="puz-btn" onclick="puzNext()">Otro ejercicio →</button>';
+    h += '<button class="puz-btn" id="puz-share" onclick="puzShare()">🔗 Compartir</button>';
+  }
+  el.innerHTML = h;
+}
+
+/* ── Tablero del solver ── */
+var _puzBoardBound = false;
+function puzRenderBoard() {
+  if (!puz.chess) return;
+  var bd = puz.chess.board(), FL = ['a','b','c','d','e','f','g','h'], el = document.getElementById('puz-board'), h = '';
+  for (var r=0;r<8;r++) for (var f=0;f<8;f++) {
+    var rr = puz.flipped ? 7-r : r, ff = puz.flipped ? 7-f : f;
+    var sq = FL[ff] + (8-rr), li = (r+f) % 2 === 0, cls = 'csq ' + (li ? 'li' : 'da');
+    if (sq === puz.lastFrom) cls += ' mf';
+    if (sq === puz.lastTo) cls += ' mt';
+    if (sq === puz.sel) cls += ' sel';
+    var pc = bd[rr][ff];
+    if (puz.legalDests.indexOf(sq) >= 0) cls += pc ? ' legal-cap' : ' legal';
+    var pk = pc ? (pc.color + pc.type) : '';
+    h += '<div class="' + cls + '" data-sq="' + sq + '">' + cvCellInner(r, f, rr, ff, sq, pk, FL) + '</div>';
+  }
+  el.innerHTML = h;
+  puzBindBoard();
+}
+function puzBindBoard() {
+  if (_puzBoardBound) return; _puzBoardBound = true;
+  var el = document.getElementById('puz-board');
+  el.addEventListener('click', function(e) {
+    if (_puzDragSuppress) { _puzDragSuppress = false; return; }
+    var t = e.target.closest('[data-sq]'); if (!t) return; puzHandleClick(t.getAttribute('data-sq'));
+  });
+  el.addEventListener('touchend', function(e) {
+    e.preventDefault(); var t = e.changedTouches[0], x = document.elementFromPoint(t.clientX, t.clientY);
+    var sqEl = x ? x.closest('[data-sq]') : null; if (!sqEl) return; puzHandleClick(sqEl.getAttribute('data-sq'));
+  }, { passive:false });
+  puzInitDrag(el);
+}
+function puzLocked() { return !puz.chess || puz.solved || puz.revealed || puz.reviewing || puz.busy; }
+function puzHandleClick(sq) {
+  if (puz.recording) { puzFreeClick(sq, puzRecordMove); return; }
+  if (puz.editing) { puzFreeClick(sq, puzEditMove); return; }
+  if (puzLocked()) return;
+  if (puz.sel) {
+    if (sq === puz.sel) { puz.sel = null; puz.legalDests = []; puzRenderBoard(); return; }
+    if (puz.legalDests.indexOf(sq) >= 0) { puzTryMove(puz.sel, sq); return; }
+  }
+  var pc = puz.chess.get(sq);
+  if (pc && pc.color === puz.chess.turn()) { puz.sel = sq; puz.legalDests = puz.chess.moves({ square:sq, verbose:true }).map(function(m){ return m.to; }); }
+  else { puz.sel = null; puz.legalDests = []; }
+  puzRenderBoard();
+}
+// En modo autor: selección/jugada libre (la jugada se procesa con `moveFn`).
+function puzFreeClick(sq, moveFn) {
+  if (puz.sel) {
+    if (sq === puz.sel) { puz.sel = null; puz.legalDests = []; puzRenderBoard(); return; }
+    if (puz.legalDests.indexOf(sq) >= 0) { moveFn(puz.sel, sq); return; }
+  }
+  var pc = puz.chess.get(sq);
+  if (pc && pc.color === puz.chess.turn()) { puz.sel = sq; puz.legalDests = puz.chess.moves({ square:sq, verbose:true }).map(function(m){ return m.to; }); }
+  else { puz.sel = null; puz.legalDests = []; }
+  puzRenderBoard();
+}
+function puzPromoFor(from, to) {
+  var p = puz.cur, exp = p.solution[puz.step] || '';
+  if (exp.slice(0,4) === from + to && exp.length > 4) return exp[4];
+  var alts = (p.acceptedAlts && p.acceptedAlts[puz.step]) || [];
+  for (var i=0;i<alts.length;i++) if (alts[i].slice(0,4) === from + to && alts[i].length > 4) return alts[i][4];
+  return null;
+}
+function puzTryMove(from, to) {
+  var pc = puz.chess.get(from), promo;
+  if (pc && pc.type === 'p') { var tr = parseInt(to[1]); if ((pc.color === 'w' && tr === 8) || (pc.color === 'b' && tr === 1)) promo = puzPromoFor(from, to) || 'q'; }
+  puzApplyUserMove(from, to, promo);
+}
+function puzUciEq(a, b) { if (!a || !b) return false; if (a.slice(0,4) !== b.slice(0,4)) return false; var pa = a[4]||'', pb = b[4]||''; return (pa && pb) ? pa === pb : true; }
+function puzPlay(from, to, promo) { var m = puz.chess.move({ from:from, to:to, promotion:promo || 'q' }); if (m) { puz.lastFrom = m.from; puz.lastTo = m.to; puz.played.push(m.from + m.to + (m.promotion || '')); } return m; }
+function puzPlayUci(uci) { if (!uci) return; return puzPlay(uci.slice(0,2), uci.slice(2,4), uci[4]); }
+function puzApplyUserMove(from, to, promo) {
+  var p = puz.cur, test = new Chess(puz.chess.fen()), mv = test.move({ from:from, to:to, promotion:promo || 'q' });
+  puz.sel = null; puz.legalDests = [];
+  if (!mv) { puzRenderBoard(); return; }
+  var uci = from + to + (mv.promotion || '');
+  // Cualquier jaque mate del que resuelve es correcto (cubre posiciones con varios mates posibles).
+  if (test.in_checkmate()) { puzPlay(from, to, promo); puzRenderBoard(); puzOnSolved(); return; }
+  // ¿coincide con la jugada del solucionador en alguna línea aceptada (principal o variante completa)?
+  var matching = puz.lines.filter(function(L){ return L.length > puz.step && puzUciEq(L[puz.step], uci); });
+  if (matching.length) {
+    puz.lines = matching;                                     // nos quedamos en esa rama
+    puzPlay(from, to, promo); puz.step++;
+    if (!puz.lines.some(function(L){ return L.length > puz.step; })) { puzRenderBoard(); puzOnSolved(); return; }
+    puz.busy = true; puzRenderBoard();
+    setTimeout(function() {
+      var cont = puz.lines.filter(function(L){ return L.length > puz.step; })[0];
+      var opp = cont ? cont[puz.step] : null;
+      if (opp) { puzPlayUci(opp); puz.lines = puz.lines.filter(function(L){ return L.length > puz.step && puzUciEq(L[puz.step], opp); }); puz.step++; }
+      puz.busy = false;
+      if (!puz.lines.some(function(L){ return L.length > puz.step; })) { puzRenderBoard(); puzOnSolved(); }
+      else { puzSetFb('ok', '✔', '¡Bien! Seguí — encontrá la próxima jugada.'); puzRenderBoard(); }
+    }, 360);
+    return;
+  }
+  var alts = (p.acceptedAlts && p.acceptedAlts[puz.step]) || [];   // buena pero no la mejor
+  if (alts.some(function(a){ return puzUciEq(uci, a); })) {
+    puzSetFb('hint', '💡', 'Esa es buena… pero hay una <b>mejor</b>. Seguí intentando.');
+    puzRenderBoard(); return;
+  }
+  puz.failed = true;                                          // jugada incorrecta
+  puzSetFb('bad', '✗', 'No es la mejor. Probá de nuevo, o mirá la solución.');
+  var col = document.getElementById('puz-board-col'); col.classList.remove('shake'); void col.offsetWidth; col.classList.add('shake');
+  puzRenderBoard();
+}
+function puzOnSolved() {
+  puz.solved = true; puz.sel = null; puz.legalDests = [];
+  var clean = !puz.failed && !puz.revealed;
+  puzSetResult(puz.cur.id, clean ? 'ok' : 'fail');
+  if (clean) puzSetFb('ok', '🏆', '¡Correcto! Resolviste el ejercicio.');
+  else puzSetFb('ok', '✔', 'Ejercicio completado' + (puz.failed ? ' (hubo algún intento fallido).' : '.'));
+  puzSetupReview(puz.played.length ? puz.played : puz.cur.solution, false);
+  puzRenderActions();
+  if (typeof sfStart === 'function' && !sf.engine) sfStart();   // precargar el motor (queda oculto hasta que lo piden)
+}
+function puzReveal() {
+  if (puz.solved || puz.revealed) return;
+  puz.revealed = true; puzSetResult(puz.cur.id, 'fail');
+  puzSetFb('hint', '👁', 'Esta es la solución. Recorré las jugadas con ◀ ▶.<div style="margin-top:7px;font-weight:600;color:var(--text);font-family:\'Courier New\',monospace">' + escHtml(puzSanLine(puz.cur)) + '</div>');
+  puzSetupReview(puz.cur.solution, true);
+  puzRenderActions();
+  if (typeof sfStart === 'function' && !sf.engine) sfStart();   // precargar el motor (queda oculto hasta que lo piden)
+}
+// Prepara el recorrido (◀ ▶) de una línea UCI. atStart=true arranca en la posición inicial.
+function puzSetupReview(lineUci, atStart) {
+  var p = puz.cur, c = new Chess(p.fen);
+  puz._revFens = [p.fen]; puz._revMoves = [null];
+  for (var i=0;i<lineUci.length;i++) {
+    var u = lineUci[i], m = c.move({ from:u.slice(0,2), to:u.slice(2,4), promotion:u[4] || 'q' });
+    if (!m) break;
+    puz._revMoves.push({ from:m.from, to:m.to }); puz._revFens.push(c.fen());
+  }
+  puz.reviewing = true;
+  puz.reviewIdx = atStart ? 0 : puz._revFens.length - 1;
+  if (!puz.editing) document.getElementById('puz-prompt').innerHTML = '<span style="color:var(--gold)">Solución</span> — recorré las jugadas con ◀ ▶';
+  document.getElementById('puz-prev').style.display = '';
+  document.getElementById('puz-next').style.display = '';
+  puzReviewShow();
+}
+function puzReviewShow() {
+  puz.chess = new Chess(puz._revFens[puz.reviewIdx]);
+  var mv = puz._revMoves[puz.reviewIdx]; puz.lastFrom = mv ? mv.from : ''; puz.lastTo = mv ? mv.to : '';
+  puz.sel = null; puz.legalDests = [];
+  document.getElementById('puz-counter').textContent = 'Jugada ' + puz.reviewIdx + ' / ' + (puz._revFens.length - 1);
+  puzRenderBoard();
+  if (puz.anOn) { puz.anScore = null; puz.anPv = null; puz.anBestUci = null; document.getElementById('puz-eval-score').textContent = '…'; puzDrawArrow(); puzSfGo(); }
+}
+function puzReviewPrev() { if (puz.reviewing && puz.reviewIdx > 0) { puz.reviewIdx--; puzReviewShow(); } }
+function puzReviewNext() { if (puz.reviewing && puz.reviewIdx < puz._revFens.length - 1) { puz.reviewIdx++; puzReviewShow(); } }
+
+function puzFlip() { puz.flipped = !puz.flipped; puz.sel = null; puz.legalDests = []; puzRenderBoard(); if (puz.anOn) { puzDrawArrow(); puzSfRender(); } }
+// Próximo ejercicio AL AZAR del nivel (variedad por visita), prefiriendo no vistos en esta sesión.
+function puzNext() {
+  var pool = puz.list.filter(function(p){ return !puz.cur || p.id !== puz.cur.id; });
+  if (!pool.length) { puzClose(); return; }
+  var unseen = pool.filter(function(p){ return !puz.seen[p.id]; });
+  var bag = unseen.length ? unseen : pool;
+  var pick = bag[Math.floor(Math.random() * bag.length)];
+  puz.idx = puz.list.indexOf(pick);
+  puzLoad(); var ov = document.getElementById('puz-overlay'); if (ov) ov.scrollTop = 0;
+}
+function puzUpdateUrl() { if (!puz.cur) return; try { history.replaceState({ puzzle:true }, '', location.pathname + '?ejercicio=' + encodeURIComponent(puz.cur.id)); } catch(e) {} }
+function puzShare() {
+  if (!puz.cur) return;
+  var url = location.origin + location.pathname + '?ejercicio=' + encodeURIComponent(puz.cur.id);
+  if (navigator.share) { navigator.share({ title:'Ejercicio de ajedrez', url:url }).catch(function(){}); return; }
+  if (navigator.clipboard) navigator.clipboard.writeText(url).then(function() {
+    var b = document.getElementById('puz-share'); if (!b) return;
+    var t = b.innerHTML; b.classList.add('copied'); b.innerHTML = '✓ Link copiado';
+    setTimeout(function() { b.classList.remove('copied'); b.innerHTML = t; }, 1600);
+  }).catch(function(){});
+}
+function _puzDoClose() {
+  puzSfOff();
+  document.getElementById('puz-overlay').classList.remove('open'); _puzPageOff();
+  puz.cur = null; puz.chess = null; puz.reviewing = false; puz.editing = false;
+  puzRenderList();
+  try { history.replaceState({}, '', location.pathname); } catch(e) {}
+}
+function puzClose() { if (_puzHistoryPushed) { _puzHistoryPushed = false; history.back(); } else _puzDoClose(); }
+
+/* ── Análisis con el módulo DENTRO del tablero del ejercicio (estilo Lichess) ──
+   Reusa el worker compartido de Stockfish (sf). El ruteo de mensajes está en sfOnMsg (puz.anOn). */
+function puzSfOff() {
+  puz.anOn = false; puz.anScore = null; puz.anPv = null; puz.anBestUci = null; puz.anDepth = 0;
+  var p = document.getElementById('puz-eval'); if (p) p.style.display = 'none';
+  var v = document.getElementById('puz-vbar'); if (v) { v.style.display = 'none'; v.classList.remove('show'); }
+  var b = document.getElementById('puz-an-btn'); if (b) b.classList.remove('on');
+  var sv = document.getElementById('puz-arrow'); if (sv) { sv.style.display = 'none'; sv.innerHTML = ''; }
+  if (sf.engine && !sf.on) { try { sf.engine.postMessage('stop'); } catch(e) {} }
+}
+function puzSfToggle() {
+  if (puz.anOn) { puzSfOff(); return; }
+  puz.anOn = true;
+  document.getElementById('puz-eval').style.display = 'block';
+  var v = document.getElementById('puz-vbar'); v.style.display = ''; v.classList.add('show');
+  document.getElementById('puz-an-btn').classList.add('on');
+  document.getElementById('puz-eval-score').textContent = (sf.engine && sf.ready) ? '…' : 'Cargando motor…';
+  document.getElementById('puz-eval-depth').textContent = '';
+  document.getElementById('puz-eval-line').textContent = '';
+  puz.anScore = null; puz.anPv = null; puz.anBestUci = null;
+  puzSfStart();
+}
+function puzSfStart() { if (sf.engine && sf.ready) puzSfGo(); else if (typeof sfStart === 'function') sfStart(); }
+function puzSfGo() {
+  if (!sf.engine || !sf.ready || !puz.anOn || !puz.chess) return;
+  sf.engine.postMessage('stop');
+  sf.engine.postMessage('position fen ' + puz.chess.fen());
+  sf.engine.postMessage('go infinite');
+}
+function puzSfInfo(line) {
+  if (line.indexOf('info') !== 0) return;
+  var mm = line.match(/\bmultipv (\d+)\b/); if (mm && parseInt(mm[1]) !== 1) return;   // solo la mejor línea
+  var pm = line.match(/ pv (.+)/), dm = line.match(/\bdepth (\d+)\b/);
+  var cpM = line.match(/\bscore cp (-?\d+)\b/), mtM = line.match(/\bscore mate (-?\d+)\b/);
+  if ((!cpM && !mtM) || !pm) return;
+  puz.anScore = mtM ? { mate:parseInt(mtM[1]) } : { cp:parseInt(cpM[1]) };
+  puz.anDepth = dm ? parseInt(dm[1]) : 0;
+  puz.anPv = pm[1].trim().split(/\s+/);
+  puzSfRender();
+}
+function puzSfRender() {
+  if (!puz.anOn || !puz.anScore) return;
+  var flip = puz.chess.turn() === 'b';   // score del motor es perspectiva del que mueve → a perspectiva blancas
+  var sc = document.getElementById('puz-eval-score');
+  sc.textContent = sfScoreStr(puz.anScore, flip); sc.className = 'sf-score ' + sfScoreCls(puz.anScore, flip);
+  document.getElementById('puz-eval-depth').textContent = puz.anDepth ? 'prof. ' + puz.anDepth : '';
+  document.getElementById('puz-eval-line').textContent = puzSfPvSan(puz.anPv);
+  var pct = sfBarPct(puz.anScore, flip); if (puz.flipped) pct = 100 - pct;
+  var fill = document.getElementById('puz-vbar-fill'); if (fill) fill.style.height = pct + '%';
+  var vbar = document.getElementById('puz-vbar'); if (vbar) { if (puz.flipped) vbar.classList.add('flipped'); else vbar.classList.remove('flipped'); }
+  puz.anBestUci = (puz.anPv && puz.anPv[0]) || null; puzDrawArrow();
+}
+function puzSfPvSan(pv) {
+  if (typeof Chess === 'undefined' || !puz.chess || !pv) return '';
+  var t = new Chess(puz.chess.fen()), out = [];
+  for (var i=0;i<Math.min(pv.length,10);i++) { var u = pv[i]; var m = t.move({ from:u.slice(0,2), to:u.slice(2,4), promotion:u[4]||'q' }); if (!m) break; out.push(m.san); }
+  return out.join(' ');
+}
+// Flecha de la mejor jugada (SVG en coords 0..8, preserveAspectRatio none = se estira al tablero).
+function puzDrawArrow() {
+  var sv = document.getElementById('puz-arrow'); if (!sv) return;
+  if (!puz.anOn || !puz.anBestUci) { sv.style.display = 'none'; sv.innerHTML = ''; return; }
+  function cell(sq) {
+    var f = sq.charCodeAt(0) - 97, r = parseInt(sq[1]);
+    var col = puz.flipped ? 7 - f : f, row = puz.flipped ? r - 1 : 8 - r;
+    return { x: col + 0.5, y: row + 0.5 };
+  }
+  var a = cell(puz.anBestUci.slice(0,2)), b = cell(puz.anBestUci.slice(2,4));
+  var dx = b.x - a.x, dy = b.y - a.y, len = Math.sqrt(dx*dx + dy*dy) || 1, ux = dx/len, uy = dy/len;
+  var ex = b.x - ux * 0.32, ey = b.y - uy * 0.32, hw = 0.24, px = -uy, py = ux;
+  sv.innerHTML = '<line x1="' + a.x + '" y1="' + a.y + '" x2="' + ex + '" y2="' + ey + '" stroke="#3aa0ff" stroke-width="0.16" stroke-linecap="round" opacity="0.82"/>'
+    + '<polygon points="' + b.x + ',' + b.y + ' ' + (ex+px*hw) + ',' + (ey+py*hw) + ' ' + (ex-px*hw) + ',' + (ey-py*hw) + '" fill="#3aa0ff" opacity="0.9"/>';
+  sv.style.display = '';
+}
+function puzOpenByIdWhenReady(id) {
+  var tries = 0;
+  (function attempt() {
+    if (_puzLoaded && typeof Chess !== 'undefined') {
+      puzOpenById(id);
+      var dlc = document.getElementById('deeplink-cover'); if (dlc && dlc.parentNode) dlc.parentNode.removeChild(dlc);
+      return;
+    }
+    if (++tries < 80) setTimeout(attempt, 150);
+  })();
+}
+
+/* ── Modo AUTOR: corregir el ejercicio (variantes/dificultad/calidad) y guardar ── */
+function puzAuthorMsg(t) { var e = document.getElementById('puz-amsg'); if (e) e.textContent = t || ''; }
+function puzRenderAuthor() {
+  var el = document.getElementById('puz-author'); if (!el) return;
+  if (_ondemand || !puz.cur) { el.style.display = 'none'; return; }
+  el.style.display = '';
+  var p = puz.cur, altsHtml = '';
+  (p.acceptedAlts || []).forEach(function(arr, i) {
+    if (!arr || !arr.length || i % 2 !== 0) return;   // solo jugadas del que resuelve (índices pares)
+    var chips = arr.map(function(u) { return '<span class="alt-chip">' + escHtml(u) + '<button onclick="puzRemoveAlt(' + i + ',\'' + u + '\')" title="Quitar">✕</button></span>'; }).join('');
+    altsHtml += '<div>Jugada ' + (Math.floor(i/2)+1) + ': ' + chips + '</div>';
+  });
+  if (!altsHtml) altsHtml = '<span style="color:var(--text3)">(ninguna)</span>';
+  var linesHtml = (p.acceptedLines || []).map(function(L, i) {
+    return '<div class="alt-chip" style="font-family:inherit;margin-bottom:4px">' + escHtml(puzLineSan(L)) + '<button onclick="puzRemoveLine(' + i + ')" title="Quitar">✕</button></div>';
+  }).join('');
+  if (!linesHtml) linesHtml = '<span style="color:var(--text3)">(ninguno)</span>';
+  var qopts = [['','—'],['1','1'],['2','2'],['3','3'],['4','4'],['5','5']].map(function(o) {
+    return '<option value="' + o[0] + '"' + (String(p.quality == null ? '' : p.quality) === o[0] ? ' selected' : '') + '>' + o[1] + '</option>';
+  }).join('');
+  var actions = puz.recording
+    ? '<button class="puz-btn primary" onclick="puzCancelRecord()">✖ Cancelar grabación</button>'
+    : '<button class="puz-btn' + (puz.editing ? ' primary' : '') + '" onclick="puzToggleEdit()">' + (puz.editing ? '✓ Terminar edición' : '✏️ Editar variantes') + '</button>'
+      + (puz.editing ? '<button class="puz-btn" onclick="puzStartRecord()">🎬 Grabar camino al mate</button>' : '')
+      + '<button class="puz-btn" onclick="puzSaveJson()">💾 Guardar puzzles.json</button>';
+  el.innerHTML =
+    '<h4>✏️ Modo autor</h4>'
+    + '<div class="row"><label>Dificultad</label><input type="number" step="25" min="600" max="3000" value="' + (p.difficulty || 1000) + '" onchange="puzSetDiff(this.value)">'
+    + '<span style="font-size:11px;color:var(--text3)">' + puzBand(p.difficulty || 1000).map(function(x){ return PUZ_LVL_SHORT[x]; }).join(' + ') + '</span></div>'
+    + '<div class="row"><label>Calidad</label><select onchange="puzSetQuality(this.value)">' + qopts + '</select>'
+    + '<label style="min-width:auto;margin-left:12px"><input type="checkbox"' + (p.hidden ? ' checked' : '') + ' onchange="puzSetHidden(this.checked)" style="width:auto;margin-right:5px">Ocultar ejercicio</label></div>'
+    + '<div class="alts"><b>Variantes sueltas</b> (buenas, pero no la mejor):<br>' + altsHtml + '</div>'
+    + '<div class="alts"><b>Caminos completos al mate</b> (variantes que también ganan):<br>' + linesHtml + '</div>'
+    + '<div class="hint"><b>Variante suelta:</b> "Editar variantes" → ◀ ▶ a una jugada del que resuelve → jugá la otra respuesta.<br><b>Camino al mate:</b> "Editar variantes" → ◀ ▶ a donde se ramifica → "Grabar camino al mate" → jugá AMBOS bandos hasta el jaque mate. <i>Los jaque mate simples se aceptan todos solos.</i></div>'
+    + '<div id="puz-amsg" style="font-size:12px;color:var(--gold);min-height:15px;margin-bottom:6px"></div>'
+    + '<div class="a-actions">' + actions + '</div>';
+}
+function puzSetDiff(v) { var n = parseInt(v, 10); if (!isNaN(n)) { puz.cur.difficulty = n; puz._dirty = true; puzRenderAuthor(); } }
+function puzSetQuality(v) { puz.cur.quality = (v === '') ? null : parseInt(v, 10); puz._dirty = true; }
+function puzSetHidden(b) { puz.cur.hidden = !!b; puz._dirty = true; }
+function puzToggleEdit() {
+  if (puz.editing) { puz.editing = false; puz.reviewing = false; puzAuthorMsg(''); puzLoad(); }
+  else {
+    puz.editing = true; puz.solved = false; puz.revealed = false;
+    puzSetupReview(puz.cur.solution, true);
+    puzSetFb('hint', '✏️', 'Modo autor: usá ◀ ▶ para pararte en una jugada del que resuelve y jugá la variante a aceptar.');
+    puzRenderAuthor();
+  }
+}
+function puzEditMove(from, to) {
+  puz.sel = null; puz.legalDests = [];
+  var s = puz.reviewIdx;   // ply donde estamos parados (0 = posición inicial, antes de solution[0])
+  if (s >= puz.cur.solution.length || s % 2 !== 0) { puzAuthorMsg('Pará en una jugada del que resuelve (◀ ▶) para agregar su variante.'); puzRenderBoard(); return; }
+  var pc = puz.chess.get(from), promo = '';
+  if (pc && pc.type === 'p') { var tr = parseInt(to[1]); if ((pc.color === 'w' && tr === 8) || (pc.color === 'b' && tr === 1)) promo = 'q'; }
+  var test = new Chess(puz.chess.fen()), mv = test.move({ from:from, to:to, promotion:promo || 'q' });
+  if (!mv) { puzRenderBoard(); return; }
+  var uci = from + to + (mv.promotion || '');
+  if (puzUciEq(uci, puz.cur.solution[s])) { puzAuthorMsg('Esa ya es la jugada principal.'); puzRenderBoard(); return; }
+  puz.cur.acceptedAlts = puz.cur.acceptedAlts || [];
+  while (puz.cur.acceptedAlts.length < puz.cur.solution.length) puz.cur.acceptedAlts.push([]);
+  var arr = puz.cur.acceptedAlts[s] || (puz.cur.acceptedAlts[s] = []);
+  var msg;
+  if (arr.some(function(a){ return puzUciEq(a, uci); })) msg = 'Esa variante ya estaba cargada.';
+  else { arr.push(uci); puz._dirty = true; msg = '✓ Variante agregada en la jugada ' + (Math.floor(s/2)+1) + ': ' + mv.san; }
+  puzRenderBoard(); puzRenderAuthor(); puzAuthorMsg(msg);   // el mensaje va DESPUÉS del re-render (que recrea #puz-amsg)
+}
+function puzRemoveAlt(i, u) {
+  var arr = (puz.cur.acceptedAlts || [])[i]; if (!arr) return;
+  var k = arr.indexOf(u); if (k >= 0) { arr.splice(k, 1); puz._dirty = true; puzRenderAuthor(); }
+}
+// SAN legible de una línea UCI (para mostrar las variantes completas en el panel de autor).
+function puzLineSan(line) {
+  if (typeof Chess === 'undefined') return line.join(' ');
+  var c = new Chess(puz.cur.fen), fp = puz.cur.fen.split(' '), n = parseInt(fp[5] || '1', 10), w = (fp[1] === 'w'), out = [];
+  for (var i=0;i<line.length;i++) { var u = line[i]; var m = c.move({ from:u.slice(0,2), to:u.slice(2,4), promotion:u[4]||'q' }); if (!m) break;
+    if (w) out.push(n + '.' + m.san); else { out.push((i === 0 ? n + '…' : '') + m.san); n++; } w = !w; }
+  return out.join(' ');
+}
+// Grabar un CAMINO COMPLETO alternativo hacia el mate (variante que ramifica y también es correcta).
+function puzStartRecord() {
+  if (!puz.editing) puzEnterEdit();
+  if (puz.reviewIdx % 2 !== 0) { puzAuthorMsg('Pará en una jugada del que resuelve (◀ ▶) antes de grabar el camino.'); return; }
+  puz.recording = true;
+  puz.recLine = puz.cur.solution.slice(0, puz.reviewIdx);   // prefijo compartido hasta el punto de ramificación
+  puz.chess = new Chess(puz._revFens[puz.reviewIdx]);
+  puz.sel = null; puz.legalDests = [];
+  puzRenderBoard(); puzRenderAuthor();
+  puzAuthorMsg('🎬 Grabando: jugá AMBOS bandos desde la jugada ' + (Math.floor(puz.reviewIdx/2)+1) + ' hasta el jaque mate.');
+}
+function puzRecordMove(from, to) {
+  puz.sel = null; puz.legalDests = [];
+  var pc = puz.chess.get(from), promo = '';
+  if (pc && pc.type === 'p') { var tr = parseInt(to[1]); if ((pc.color === 'w' && tr === 8) || (pc.color === 'b' && tr === 1)) promo = 'q'; }
+  var mv = puz.chess.move({ from:from, to:to, promotion:promo || 'q' });
+  if (!mv) { puzRenderBoard(); return; }
+  puz.lastFrom = mv.from; puz.lastTo = mv.to;
+  puz.recLine.push(mv.from + mv.to + (mv.promotion || ''));
+  puzRenderBoard();
+  if (puz.chess.in_checkmate()) {
+    puz.cur.acceptedLines = puz.cur.acceptedLines || [];
+    var key = puz.recLine.join(' ');
+    if (key !== puz.cur.solution.join(' ') && !puz.cur.acceptedLines.some(function(L){ return L.join(' ') === key; })) {
+      puz.cur.acceptedLines.push(puz.recLine.slice()); puz._dirty = true;
+      puz.recording = false; puzRenderAuthor(); puzAuthorMsg('✓ Camino al mate guardado.');
+    } else { puz.recording = false; puzRenderAuthor(); puzAuthorMsg('Ese camino ya estaba (o es el principal).'); }
+  } else {
+    puzRenderAuthor(); puzAuthorMsg('🎬 Grabando… seguí hasta el jaque mate, o Cancelá.');
+  }
+}
+function puzCancelRecord() {
+  puz.recording = false; puz.recLine = [];
+  if (puz.reviewing) puzReviewShow();
+  puzRenderAuthor(); puzAuthorMsg('Grabación cancelada.');
+}
+function puzRemoveLine(i) {
+  if (!puz.cur.acceptedLines) return;
+  puz.cur.acceptedLines.splice(i, 1); puz._dirty = true; puzRenderAuthor();
+}
+function puzSaveJson() {
+  var blob = new Blob([JSON.stringify(PUZZLES)], { type:'application/json' });
+  var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'puzzles.json';
+  document.body.appendChild(a); a.click();
+  setTimeout(function() { URL.revokeObjectURL(a.href); a.remove(); }, 120);
+  puz._dirty = false;
+  puzAuthorMsg('✓ Descargado. Reemplazá data/puzzles.json con este archivo y volvé a publicar.');
+}
+
+/* ── Drag & drop del solver (solo PC) ── */
+var _puzDrag = null, _puzDragSuppress = false, _puzDragDocBound = false;
+function puzInitDrag(boardEl) {
+  if (!window.matchMedia('(pointer: fine)').matches) return;
+  if (boardEl._pzDragBound) return; boardEl._pzDragBound = true;
+  boardEl.addEventListener('mousedown', function(e) {
+    if (e.button !== 0 || (!puz.editing && !puz.recording && puzLocked())) return;
+    var sqEl = e.target.closest('[data-sq]'); if (!sqEl) return;
+    var sq = sqEl.getAttribute('data-sq'), pc = puz.chess.get(sq);
+    if (!pc || pc.color !== puz.chess.turn()) return;
+    var img = sqEl.querySelector('img.cpc'); if (!img) return;
+    puz.sel = sq; puz.legalDests = puz.chess.moves({ square:sq, verbose:true }).map(function(m){ return m.to; });
+    puzRenderBoard();
+    var rect = img.getBoundingClientRect(), sz = rect.width, clone = document.createElement('img');
+    clone.src = img.src;
+    clone.style.cssText = 'position:fixed;pointer-events:none;z-index:9999;width:' + sz + 'px;height:' + sz + 'px;left:' + (e.clientX-sz/2) + 'px;top:' + (e.clientY-sz/2) + 'px;opacity:.88;';
+    document.body.appendChild(clone);
+    var live = document.querySelector('#puz-board [data-sq="' + sq + '"] img.cpc'); if (live) live.style.opacity = '.22';
+    _puzDrag = { sq:sq, clone:clone, sx:e.clientX, sy:e.clientY, moved:false }; e.preventDefault();
+  });
+  if (_puzDragDocBound) return; _puzDragDocBound = true;
+  document.addEventListener('mousemove', function(e) {
+    if (!_puzDrag) return; var sz = parseFloat(_puzDrag.clone.style.width);
+    _puzDrag.clone.style.left = (e.clientX-sz/2) + 'px'; _puzDrag.clone.style.top = (e.clientY-sz/2) + 'px';
+    if (!_puzDrag.moved && (Math.abs(e.clientX-_puzDrag.sx) > 4 || Math.abs(e.clientY-_puzDrag.sy) > 4)) _puzDrag.moved = true;
+  });
+  document.addEventListener('mouseup', function(e) {
+    if (!_puzDrag) return; var d = _puzDrag; _puzDrag = null;
+    if (d.clone.parentNode) d.clone.parentNode.removeChild(d.clone);
+    if (!d.moved) { return; }
+    _puzDragSuppress = true;
+    var x = document.elementFromPoint(e.clientX, e.clientY), sqEl = x ? x.closest('[data-sq]') : null;
+    if (!sqEl || sqEl.getAttribute('data-sq') === d.sq) { puz.sel = null; puz.legalDests = []; puzRenderBoard(); return; }
+    var to = sqEl.getAttribute('data-sq');
+    if (puz.legalDests.indexOf(to) >= 0) { if (puz.recording) puzRecordMove(d.sq, to); else if (puz.editing) puzEditMove(d.sq, to); else puzTryMove(d.sq, to); }
+    else { puz.sel = null; puz.legalDests = []; puzRenderBoard(); }
+  });
+}
+
+puzInit();
+
 // Deep-link: si la URL trae ?torneo=<id> o ?jugador=<id> (link compartido o pestaña nueva), abrir
 // eso. Dejamos el historial como [lista, detalle] (replaceState a la URL limpia + el push del
 // detalle), así el botón Atrás muestra la LISTA en vez de salir del sitio.
@@ -15297,6 +16113,14 @@ if (_ondemand) {
   var tk = params.get('torneo'), pk = params.get('jugador'), gk = params.get('partida');
   var ptk = params.get('t'), pgk = params.get('g');   // partida abierta desde un perfil: ?jugador=&t=&g=
   var nk = params.get('noticia');                      // noticia compartida: ?noticia=<id>
+  var ek = params.get('ejercicio');                    // ejercicio compartido: ?ejercicio=<id>
+  if (ek) {
+    var ebtn = document.querySelector('.nav-btn[onclick*="\'ejercicios\'"]');
+    if (ebtn) { try { goTo('ejercicios', ebtn); } catch (e) {} }
+    try { history.replaceState({}, '', location.pathname); } catch (e) {}
+    puzOpenByIdWhenReady(ek);
+    return;
+  }
   if (nk) {
     var nbtn = document.querySelector('.nav-btn[onclick*="\'noticias\'"]');
     if (nbtn) { try { goTo('noticias', nbtn); } catch (e) {} }
