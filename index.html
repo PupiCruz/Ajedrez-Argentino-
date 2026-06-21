@@ -1405,6 +1405,7 @@
             <span style="font-size:11px;color:var(--text3)">Stockfish</span>
           </div>
           <div class="puz-eval-line" id="puz-eval-line"></div>
+          <div style="font-size:11px;color:var(--text3);margin-top:6px">Podés mover las piezas para probar variantes; el módulo las analiza. Usá ◀ ▶ para volver a la solución.</div>
         </div>
       </div>
       <div class="puz-info-col">
@@ -15704,6 +15705,7 @@ function puzLocked() { return !puz.chess || puz.solved || puz.revealed || puz.re
 function puzHandleClick(sq) {
   if (puz.recording) { puzFreeClick(sq, puzRecordMove); return; }
   if (puz.editing) { puzFreeClick(sq, puzEditMove); return; }
+  if (puz.anOn) { puzFreeClick(sq, puzAnalysisMove); return; }   // con el módulo abierto: explorar variantes
   if (puzLocked()) return;
   if (puz.sel) {
     if (sq === puz.sel) { puz.sel = null; puz.legalDests = []; puzRenderBoard(); return; }
@@ -16070,7 +16072,7 @@ function puzInitDrag(boardEl) {
   if (!window.matchMedia('(pointer: fine)').matches) return;
   if (boardEl._pzDragBound) return; boardEl._pzDragBound = true;
   boardEl.addEventListener('mousedown', function(e) {
-    if (e.button !== 0 || (!puz.editing && !puz.recording && puzLocked())) return;
+    if (e.button !== 0 || (!puz.editing && !puz.recording && !puz.anOn && puzLocked())) return;
     var sqEl = e.target.closest('[data-sq]'); if (!sqEl) return;
     var sq = sqEl.getAttribute('data-sq'), pc = puz.chess.get(sq);
     if (!pc || pc.color !== puz.chess.turn()) return;
@@ -16098,9 +16100,22 @@ function puzInitDrag(boardEl) {
     var x = document.elementFromPoint(e.clientX, e.clientY), sqEl = x ? x.closest('[data-sq]') : null;
     if (!sqEl || sqEl.getAttribute('data-sq') === d.sq) { puz.sel = null; puz.legalDests = []; puzRenderBoard(); return; }
     var to = sqEl.getAttribute('data-sq');
-    if (puz.legalDests.indexOf(to) >= 0) { if (puz.recording) puzRecordMove(d.sq, to); else if (puz.editing) puzEditMove(d.sq, to); else puzTryMove(d.sq, to); }
+    if (puz.legalDests.indexOf(to) >= 0) { if (puz.recording) puzRecordMove(d.sq, to); else if (puz.editing) puzEditMove(d.sq, to); else if (puz.anOn) puzAnalysisMove(d.sq, to); else puzTryMove(d.sq, to); }
     else { puz.sel = null; puz.legalDests = []; puzRenderBoard(); }
   });
+}
+// Con el módulo abierto: el visitante mueve libremente para explorar variantes; el motor reanaliza.
+function puzAnalysisMove(from, to) {
+  puz.sel = null; puz.legalDests = [];
+  var pc = puz.chess.get(from), promo = '';
+  if (pc && pc.type === 'p') { var tr = parseInt(to[1]); if ((pc.color === 'w' && tr === 8) || (pc.color === 'b' && tr === 1)) promo = 'q'; }
+  var m = puz.chess.move({ from:from, to:to, promotion:promo || 'q' });
+  if (!m) { puzRenderBoard(); return; }
+  puz.lastFrom = m.from; puz.lastTo = m.to;
+  puzRenderBoard();
+  puz.anScore = null; puz.anPv = null; puz.anBestUci = null;
+  var sc = document.getElementById('puz-eval-score'); if (sc) sc.textContent = '…';
+  puzDrawArrow(); puzSfGo();
 }
 
 puzInit();
