@@ -10860,6 +10860,7 @@ function deleteNewsItem(id){
 function goTo(sec, btn) {
   // El visor de partidas ahora es una PÁGINA y la nav queda clickeable por encima → si hay una partida
   // abierta, cerrarla también (antes la tapaba el overlay y bastaba el popstate).
+  _cvFromPuzzle = false;
   var _pz = document.getElementById('puz-overlay');
   if (_pz && _pz.classList.contains('open')) { if (typeof puzSfOff === 'function') puzSfOff(); _puzHistoryPushed = false; _pz.classList.remove('open'); _puzPageOff(); puz.cur = null; puz.editing = false; }
   var _cv = document.getElementById('chess-overlay');
@@ -12043,6 +12044,8 @@ window.addEventListener('popstate', function() {
     if (_cvJumpStack.length) { _cvRestoreJump(_cvJumpStack.pop()); return; }
     _cvHistoryPushed = false;
     closeChessViewer();
+    // Si la partida se abrió desde un ejercicio ("Ver la partida original"), Atrás vuelve AL ejercicio.
+    if (_cvFromPuzzle) { _cvFromPuzzle = false; puzReopenAfterGame(); }
     return;
   }
   var bcg = document.getElementById('bcgrid-overlay');
@@ -15501,6 +15504,7 @@ var puz = { level:'inicial', list:[], idx:0, cur:null, chess:null, flipped:false
   lastFrom:'', lastTo:'', _revFens:[], _revMoves:[], played:[], seen:{}, editing:false, _dirty:false,
   anOn:false, anScore:null, anDepth:0, anPv:null, anBestUci:null, lines:[], recording:false, recLine:[], _srcGame:null, _srcGameMaybe:false };
 var _puzHistoryPushed = false;
+var _cvFromPuzzle = false;   // el visor se abrió desde un ejercicio ("Ver la partida original"): al cerrarlo, volver al ejercicio
 function _puzPageOn() { document.body.classList.add('puz-page'); var hdr = document.querySelector('header'), ov = document.getElementById('puz-overlay'); if (hdr && ov) ov.style.top = hdr.offsetHeight + 'px'; }
 function _puzPageOff() { document.body.classList.remove('puz-page'); var ov = document.getElementById('puz-overlay'); if (ov) ov.style.top = ''; }
 
@@ -15982,6 +15986,14 @@ async function puzOpenSourceGame() {
   _cvFromTournament = false; _cvTourName = 'Partida original'; _cvTourLoc = '';
   try { await openTourGameByIndex(0); } catch (e) {}
   puzNavViewerToFen(fen);   // arrancar en la posición del ejercicio (se puede retroceder)
+}
+// Reabre el ejercicio (en el estado en que quedó: resuelto/recorrido) al volver Atrás desde la partida.
+function puzReopenAfterGame() {
+  if (!puz.cur) return;
+  var ov = document.getElementById('puz-overlay'); if (!ov) return;
+  ov.classList.add('open'); _puzPageOn(); ov.scrollTop = 0;
+  if (puz.reviewing) puzReviewShow(); else puzRenderBoard();
+  puzRenderActions();
 }
 
 /* ── Análisis con el módulo DENTRO del tablero del ejercicio (estilo Lichess) ──
