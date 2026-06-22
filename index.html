@@ -1337,6 +1337,10 @@
           <button onclick="puzSaveJson()" style="padding:9px 14px;background:var(--bg3);border:1px solid var(--border);color:var(--text2);font-size:13px;font-weight:600;border-radius:9px;cursor:pointer;font-family:inherit">💾 Guardar puzzles.json</button>
           <span id="puz-author-tools-msg" style="font-size:12px;color:var(--gold)"></span>
         </div>
+        <div style="border-top:1px dashed var(--border);margin-top:11px;padding-top:10px">
+          <label style="font-size:12px;color:var(--text2);display:inline-flex;align-items:center;gap:6px"><input type="checkbox" id="puz-snd-on" onchange="(function(c){var x=puzSndCfg();x.on=c;puzSndSet(x);if(c)puzPlaySound('ok');})(this.checked)" style="width:auto">🔔 Sonidos del solver</label>
+          <div id="puz-snd-rows"></div>
+        </div>
       </div>
       <div id="puz-list"></div>
     </section>
@@ -1404,6 +1408,7 @@
           <button onclick="puzReviewNext()" title="Jugada siguiente" id="puz-next" style="display:none">▶</button>
           <button onclick="puzFlip()" title="Girar tablero" style="font-size:16px">⇅</button>
           <button onclick="toggleBoard()" title="Cambiar color del tablero">◧</button>
+          <button onclick="puzSndToggleMute(this)" id="puz-mute" title="Sonidos" style="font-size:15px;line-height:1">🔊</button>
         </div>
         <div class="puz-eval" id="puz-eval" style="display:none">
           <div class="puz-eval-top">
@@ -15607,6 +15612,7 @@ function puzLoad() {
   puz.reviewing = false; puz.reviewIdx = 0; puz.lastFrom = ''; puz.lastTo = '';
   puz.seen[p.id] = 1;
   puz._srcGame = null; puz._srcGameMaybe = false;
+  var _mb = document.getElementById('puz-mute'); if (_mb) { var _on = puzSndCfg().on; _mb.textContent = _on?'🔊':'🔇'; _mb.title = (_on?'Silenciar':'Activar') + ' sonidos'; }
   puzSfOff();
   puzResolveSrcGame(p);   // identifica la partida original del pool; el boton recien aparece al resolver el ejercicio
   document.getElementById('puz-lvl-badge').textContent = PUZ_LVL_SHORT[puz.level] || '';
@@ -15764,12 +15770,12 @@ function puzApplyUserMove(from, to, promo) {
   if (!mv) { puzRenderBoard(); return; }
   var uci = from + to + (mv.promotion || '');
   // Cualquier jaque mate del que resuelve es correcto (cubre posiciones con varios mates posibles).
-  if (test.in_checkmate()) { puzPlay(from, to, promo); puzRenderBoard(); puzOnSolved(); return; }
+  if (test.in_checkmate()) { puzPlay(from, to, promo); puzPlaySound('ok'); puzRenderBoard(); puzOnSolved(); return; }
   // ¿coincide con la jugada del solucionador en alguna línea aceptada (principal o variante completa)?
   var matching = puz.lines.filter(function(L){ return L.length > puz.step && puzUciEq(L[puz.step], uci); });
   if (matching.length) {
     puz.lines = matching;                                     // nos quedamos en esa rama
-    puzPlay(from, to, promo); puz.step++;
+    puzPlay(from, to, promo); puz.step++; puzPlaySound('ok');
     if (!puz.lines.some(function(L){ return L.length > puz.step; })) { puzRenderBoard(); puzOnSolved(); return; }
     puz.busy = true; puzRenderBoard();
     setTimeout(function() {
@@ -15785,10 +15791,11 @@ function puzApplyUserMove(from, to, promo) {
   var alts = (p.acceptedAlts && p.acceptedAlts[puz.step]) || [];   // buena pero no la mejor
   if (alts.some(function(a){ return puzUciEq(uci, a); })) {
     puzSetFb('hint', '💡', 'Esa es buena… pero hay una <b>mejor</b>. Seguí intentando.');
-    puzRenderBoard(); return;
+    puzPlaySound('hint'); puzRenderBoard(); return;
   }
   puz.failed = true;                                          // jugada incorrecta
   puzSetFb('bad', '✗', 'No es la mejor. Probá de nuevo, o mirá la solución.');
+  puzPlaySound('bad');
   var col = document.getElementById('puz-board-col'); col.classList.remove('shake'); void col.offsetWidth; col.classList.add('shake');
   puzRenderBoard();
 }
@@ -16208,6 +16215,72 @@ function puzRemoveLine(i) {
   if (!puz.cur.acceptedLines) return;
   puz.cur.acceptedLines.splice(i, 1); puz._dirty = true; puzRenderAuthor();
 }
+/* ── Sonidos del solver (sintetizados con Web Audio, sin archivos) ── */
+var PUZ_SOUNDS = {
+  ok: [
+    [{f:523,d:0,dur:0.12},{f:659,d:0.10,dur:0.12},{f:784,d:0.20,dur:0.22}],                                  // Campanita (do-mi-sol)
+    [{f:659,d:0,dur:0.10},{f:988,d:0.09,dur:0.24}],                                                            // Ding (mi-si)
+    [{f:523,d:0,dur:0.10,type:'triangle'},{f:784,d:0.09,dur:0.10,type:'triangle'},{f:1047,d:0.18,dur:0.28,type:'triangle'}]  // Triunfo
+  ],
+  hint: [
+    [{f:600,d:0,dur:0.16,g:0.12}],                                                                             // Suave
+    [{f:520,d:0,dur:0.10,g:0.11},{f:640,d:0.10,dur:0.15,g:0.11}],                                              // Doble
+    [{f:760,d:0,dur:0.14,type:'triangle',g:0.12}]                                                              // Campanilla
+  ],
+  bad: [
+    [{f:300,to:150,d:0,dur:0.30,type:'sawtooth',g:0.15}],                                                      // Grave (cae)
+    [{f:165,d:0,dur:0.22,type:'square',g:0.12}],                                                               // Zumbido
+    [{f:240,d:0,dur:0.12,type:'sawtooth',g:0.14},{f:150,d:0.12,dur:0.20,type:'sawtooth',g:0.14}]               // Doble grave
+  ]
+};
+var PUZ_SOUND_NAMES = { ok:['Campanita','Ding','Triunfo'], hint:['Suave','Doble','Campanilla'], bad:['Grave','Zumbido','Doble grave'] };
+function puzSndCfg() { var c = { on:true, ok:0, hint:0, bad:0 }; try { var s = JSON.parse(localStorage.getItem('puz_snd') || '{}'); for (var k in s) c[k] = s[k]; } catch(e) {} return c; }
+function puzSndSet(c) { try { localStorage.setItem('puz_snd', JSON.stringify(c)); } catch(e) {} }
+function puzSynthPlay(seq) {
+  try {
+    var c = _getAudioCtx(); if (c.state === 'suspended') { try { c.resume(); } catch(_){} }
+    var t0 = c.currentTime;
+    seq.forEach(function(n) {
+      var o = c.createOscillator(), g = c.createGain();
+      o.connect(g); g.connect(c.destination);
+      o.type = n.type || 'sine';
+      var st = t0 + (n.d || 0), dur = n.dur || 0.18, gain = n.g || 0.16;
+      o.frequency.setValueAtTime(n.f, st);
+      if (n.to) o.frequency.exponentialRampToValueAtTime(n.to, st + dur);
+      g.gain.setValueAtTime(0.0001, st);
+      g.gain.exponentialRampToValueAtTime(gain, st + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, st + dur);
+      o.start(st); o.stop(st + dur + 0.03);
+    });
+  } catch(e) {}
+}
+function puzPlaySound(kind, previewIdx) {
+  var cfg = puzSndCfg();
+  if (previewIdx === undefined && !cfg.on) return;
+  var bank = PUZ_SOUNDS[kind]; if (!bank) return;
+  var idx = (previewIdx !== undefined) ? previewIdx : (cfg[kind] || 0);
+  puzSynthPlay(bank[idx] || bank[0]);
+}
+function puzSndMuteBtnHtml() { var on = puzSndCfg().on; return '<button onclick="puzSndToggleMute(this)" title="' + (on?'Silenciar':'Activar') + ' sonidos" style="font-size:15px;line-height:1">' + (on?'🔊':'🔇') + '</button>'; }
+function puzSndToggleMute(btn) { var c = puzSndCfg(); c.on = !c.on; puzSndSet(c); if (btn) { btn.textContent = c.on?'🔊':'🔇'; btn.title = (c.on?'Silenciar':'Activar') + ' sonidos'; } if (c.on) puzPlaySound('ok'); var pk = document.getElementById('puz-snd-on'); if (pk) pk.checked = c.on; }
+// Botonera de autor: elegir el sonido de cada evento.
+function puzPickSound(kind, idx) { var c = puzSndCfg(); c[kind] = idx; c.on = true; puzSndSet(c); puzPlaySound(kind, idx); puzRenderSoundPicker(); }
+function puzRenderSoundPicker() {
+  var el = document.getElementById('puz-snd-rows'); if (!el) return;
+  var c = puzSndCfg(); var on = document.getElementById('puz-snd-on'); if (on) on.checked = c.on;
+  var labels = { ok:'✅ Acierto', hint:'💡 Buena, pero hay mejor', bad:'❌ Error' };
+  var h = '';
+  ['ok','hint','bad'].forEach(function(kind) {
+    h += '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:7px"><span style="font-size:12px;color:var(--text2);min-width:160px">' + labels[kind] + '</span>';
+    PUZ_SOUND_NAMES[kind].forEach(function(nm, i) {
+      var sel = c[kind] === i;
+      h += '<button onclick="puzPickSound(\'' + kind + '\',' + i + ')" style="padding:5px 10px;border-radius:7px;font-size:12px;cursor:pointer;font-family:inherit;border:1px solid ' + (sel?'var(--gold-dim)':'var(--border)') + ';background:' + (sel?'var(--gold-bg)':'var(--bg3)') + ';color:' + (sel?'var(--gold)':'var(--text2)') + '">' + (sel?'✓ ':'▶ ') + escHtml(nm) + '</button>';
+    });
+    h += '</div>';
+  });
+  el.innerHTML = h;
+}
+
 function puzSaveJson() {
   var blob = new Blob([JSON.stringify(PUZZLES)], { type:'application/json' });
   var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'puzzles.json';
