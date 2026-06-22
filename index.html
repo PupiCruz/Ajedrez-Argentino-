@@ -12101,6 +12101,20 @@ document.addEventListener('keydown',function(e){
   if(e.key==='Escape')     { if (_cvHistoryPushed) { history.back(); } else { closeChessViewer(); } }
 });
 
+// Flechas del teclado en el SOLVER de ejercicios: recorrer la solución (◀ ▶) una vez resuelto / al ver
+// la solución / al analizar. No choca con el visor: cuando el visor abre, el solver queda oculto (no .open).
+document.addEventListener('keydown', function(e) {
+  var ov = document.getElementById('puz-overlay');
+  if (!ov || !ov.classList.contains('open')) return;
+  var tag = (e.target && e.target.tagName) || '';
+  if (/^(INPUT|TEXTAREA|SELECT)$/.test(tag)) return;   // no robar las flechas si se está escribiendo
+  if (!puz.reviewing || puz.recording) return;          // solo cuando hay recorrido (no mientras se graba una variante)
+  if (e.key === 'ArrowLeft')       { e.preventDefault(); puzReviewPrev(); }
+  else if (e.key === 'ArrowRight') { e.preventDefault(); puzReviewNext(); }
+  else if (e.key === 'Home')       { e.preventDefault(); puz.reviewIdx = 0; puzReviewShow(); }
+  else if (e.key === 'End')        { e.preventDefault(); puz.reviewIdx = puz._revFens.length - 1; puzReviewShow(); }
+});
+
 /* ═══════════════════════════════════════════════════════
    OPENING BOOK (Lichess Masters)
    Token: reemplazá el valor de LICHESS_TOKEN con el tuyo.
@@ -15770,13 +15784,14 @@ function puzApplyUserMove(from, to, promo) {
   if (!mv) { puzRenderBoard(); return; }
   var uci = from + to + (mv.promotion || '');
   // Cualquier jaque mate del que resuelve es correcto (cubre posiciones con varios mates posibles).
-  if (test.in_checkmate()) { puzPlay(from, to, promo); puzPlaySound('ok'); puzRenderBoard(); puzOnSolved(); return; }
+  if (test.in_checkmate()) { puzPlay(from, to, promo); puzRenderBoard(); puzOnSolved(); return; }   // el sonido "resuelto" lo toca puzOnSolved
   // ¿coincide con la jugada del solucionador en alguna línea aceptada (principal o variante completa)?
   var matching = puz.lines.filter(function(L){ return L.length > puz.step && puzUciEq(L[puz.step], uci); });
   if (matching.length) {
     puz.lines = matching;                                     // nos quedamos en esa rama
-    puzPlay(from, to, promo); puz.step++; puzPlaySound('ok');
-    if (!puz.lines.some(function(L){ return L.length > puz.step; })) { puzRenderBoard(); puzOnSolved(); return; }
+    puzPlay(from, to, promo); puz.step++;
+    if (!puz.lines.some(function(L){ return L.length > puz.step; })) { puzRenderBoard(); puzOnSolved(); return; }   // resolvió → suena "resuelto" (no "acierto")
+    puzPlaySound('ok');                                       // jugada correcta y todavía hay más → "acierto por jugada"
     puz.busy = true; puzRenderBoard();
     setTimeout(function() {
       var cont = puz.lines.filter(function(L){ return L.length > puz.step; })[0];
@@ -15801,6 +15816,7 @@ function puzApplyUserMove(from, to, promo) {
 }
 function puzOnSolved() {
   puz.solved = true; puz.sel = null; puz.legalDests = [];
+  puzPlaySound('win');   // "ejercicio resuelto" (más festivo que el acierto por jugada)
   var clean = !puz.failed && !puz.revealed;
   puzSetResult(puz.cur.id, clean ? 'ok' : 'fail');
   if (clean) puzSetFb('ok', '🏆', '¡Correcto! Resolviste el ejercicio.');
@@ -16228,13 +16244,21 @@ var PUZ_SOUNDS = {
     [{f:760,d:0,dur:0.14,type:'triangle',g:0.12}]                                                              // Campanilla
   ],
   bad: [
+    [{f:240,d:0,dur:0.12,type:'sawtooth',g:0.14},{f:150,d:0.12,dur:0.20,type:'sawtooth',g:0.14}],              // Doble grave (elegido)
     [{f:300,to:150,d:0,dur:0.30,type:'sawtooth',g:0.15}],                                                      // Grave (cae)
-    [{f:165,d:0,dur:0.22,type:'square',g:0.12}],                                                               // Zumbido
-    [{f:240,d:0,dur:0.12,type:'sawtooth',g:0.14},{f:150,d:0.12,dur:0.20,type:'sawtooth',g:0.14}]               // Doble grave
+    [{f:165,d:0,dur:0.22,type:'square',g:0.12}]                                                                // Zumbido
+  ],
+  win: [
+    [{f:523,d:0,dur:0.09},{f:587,d:0.09,dur:0.09},{f:659,d:0.18,dur:0.09},{f:698,d:0.27,dur:0.09},{f:784,d:0.36,dur:0.09},{f:880,d:0.45,dur:0.09},{f:988,d:0.54,dur:0.09},{f:1047,d:0.63,dur:0.50,type:'triangle',g:0.18}],  // Escalera feliz (elegido)
+    [{f:523,d:0,dur:0.13,type:'triangle'},{f:659,d:0.13,dur:0.13,type:'triangle'},{f:784,d:0.26,dur:0.13,type:'triangle'},{f:1047,d:0.39,dur:0.16,type:'triangle'},{f:1319,d:0.55,dur:0.46,type:'triangle',g:0.18}],            // Victoria
+    [{f:784,d:0,dur:0.10,type:'square',g:0.12},{f:784,d:0.14,dur:0.10,type:'square',g:0.12},{f:784,d:0.28,dur:0.10,type:'square',g:0.12},{f:1047,d:0.42,dur:0.18,type:'square',g:0.13},{f:1319,d:0.62,dur:0.42,type:'triangle',g:0.17}],  // Trompeta
+    [{f:784,d:0,dur:0.12,type:'triangle'},{f:659,d:0.12,dur:0.12,type:'triangle'},{f:784,d:0.24,dur:0.12,type:'triangle'},{f:1047,d:0.36,dur:0.18,type:'triangle'},{f:988,d:0.54,dur:0.12,type:'triangle'},{f:1047,d:0.66,dur:0.42,type:'triangle',g:0.18}],  // Melodía
+    [{f:1047,d:0,dur:0.50,type:'sine',g:0.18},{f:1319,d:0.14,dur:0.55,type:'sine',g:0.14},{f:1568,d:0.28,dur:0.62,type:'sine',g:0.12},{f:2093,d:0.42,dur:0.72,type:'sine',g:0.08}],  // Campanas
+    [{f:523,d:0,dur:0.10,type:'triangle'},{f:784,d:0.10,dur:0.10,type:'triangle'},{f:1047,d:0.20,dur:0.12,type:'triangle'},{f:784,d:0.34,dur:0.10,type:'triangle'},{f:1047,d:0.44,dur:0.12,type:'triangle'},{f:1319,d:0.58,dur:0.44,type:'triangle',g:0.18}]   // Festejo
   ]
 };
-var PUZ_SOUND_NAMES = { ok:['Campanita','Ding','Triunfo'], hint:['Suave','Doble','Campanilla'], bad:['Grave','Zumbido','Doble grave'] };
-function puzSndCfg() { var c = { on:true, ok:0, hint:0, bad:0 }; try { var s = JSON.parse(localStorage.getItem('puz_snd') || '{}'); for (var k in s) c[k] = s[k]; } catch(e) {} return c; }
+var PUZ_SOUND_NAMES = { ok:['Campanita','Ding','Triunfo'], hint:['Suave','Doble','Campanilla'], bad:['Doble grave','Grave','Zumbido'], win:['Escalera feliz','Victoria','Trompeta','Melodía','Campanas','Festejo'] };
+function puzSndCfg() { var c = { on:true, ok:0, hint:0, bad:0, win:0 }; try { var s = JSON.parse(localStorage.getItem('puz_snd') || '{}'); for (var k in s) c[k] = s[k]; } catch(e) {} return c; }
 function puzSndSet(c) { try { localStorage.setItem('puz_snd', JSON.stringify(c)); } catch(e) {} }
 function puzSynthPlay(seq) {
   try {
@@ -16268,9 +16292,9 @@ function puzPickSound(kind, idx) { var c = puzSndCfg(); c[kind] = idx; c.on = tr
 function puzRenderSoundPicker() {
   var el = document.getElementById('puz-snd-rows'); if (!el) return;
   var c = puzSndCfg(); var on = document.getElementById('puz-snd-on'); if (on) on.checked = c.on;
-  var labels = { ok:'✅ Acierto', hint:'💡 Buena, pero hay mejor', bad:'❌ Error' };
+  var labels = { ok:'✅ Acierto (por jugada)', win:'🏆 Ejercicio resuelto', hint:'💡 Buena, pero hay mejor', bad:'❌ Error' };
   var h = '';
-  ['ok','hint','bad'].forEach(function(kind) {
+  ['ok','win','hint','bad'].forEach(function(kind) {
     h += '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:7px"><span style="font-size:12px;color:var(--text2);min-width:160px">' + labels[kind] + '</span>';
     PUZ_SOUND_NAMES[kind].forEach(function(nm, i) {
       var sel = c[kind] === i;
