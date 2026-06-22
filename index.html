@@ -3229,6 +3229,7 @@ function crArgPlayers(type, id, games) {
     result = names;
   } catch (e) { console.error('crArgPlayers', e); result = []; }
   _crArgCache[cacheKey] = result;
+  _capCache(_crArgCache, 80);
   return result;
 }
 
@@ -5362,7 +5363,13 @@ function buildSplitData() {
       }
     }
     // Dedup por id: la data acumuló duplicados idénticos. Metadata: 1 por id. tFile: el de más partidas.
-    if (!metaSeen[entry.id]) { metaSeen[entry.id] = true; tournaments.push(_tourManifestMeta(entry)); }
+    // Los torneos del POOL de perfil (playerOnly) NO van al índice del manifest publicado: sus partidas
+    // ya quedan horneadas en los t/<id>.json de los torneos destacados (arriba), en los p/<id>.json de
+    // cada jugador (abajo) y en el índice de búsqueda (games_*.json). Su metadata era ~4MB de PESO MUERTO
+    // en la web (el visor on-demand nunca la usa: esas entradas no traen partidas). Igual les generamos
+    // su tFile (lo necesita el buscador para abrir la partida completa por SrcTour). metaSeen se marca
+    // para todos (dedup), pero solo los destacados entran al índice → manifest de 7MB a ~2.7MB.
+    if (!metaSeen[entry.id]) { metaSeen[entry.id] = true; if (!entry.playerOnly) tournaments.push(_tourManifestMeta(entry)); }
     if (!tFiles[entry.id] || games.length > tFiles[entry.id].games.length) {
       tFiles[entry.id] = { id: entry.id, name: entry.name, location: entry.location || '', games: games };
     }
@@ -7608,6 +7615,7 @@ function _finalPosKey(pgn) {
     }
   } catch (e) { r = null; }
   _fenCache[body] = r;
+  _capCache(_fenCache, 4000);
   return r;
 }
 
@@ -7672,13 +7680,22 @@ function _pairCandKeys(white, black) {
 // llama SIN withFen (instantáneo); la migración y el botón de mantenimiento lo llaman con withFen.
 // Conserva la copia MÁS COMPLETA de cada partida (y, a igual largo, la de mejor nombre). Las
 // partidas SIN jugadas se deduplican por jugadores+fecha+ronda+evento. Preserva el orden original.
+// Campos de IDENTIDAD para deduplicar una partida. Los comparten dedupGamesByMoves (display) y
+// _buildGamesPool (pool único), así "misma partida" se define en UN solo lugar y los dos caminos
+// no se desincronizan. body = jugadas (de _moveBody); h = headers (de parsePgnHeaders).
+function _dedupIdentity(h, body) {
+  return {
+    date: (h.Date || ''),
+    keys: body.length >= 4 ? _pairCandKeys(h.White, h.Black) : null,
+    nameLen: (h.White || '').length + (h.Black || '').length,
+    ek: body.length < 4 ? (_pairKey(h.White, h.Black) + '#' + (h.Date || '') + '#' + (h.Round || '') + '#' + (h.Event || '')) : null
+  };
+}
+
 function dedupGamesByMoves(items, getPgn, withFen) {
   var metas = items.map(function(it) {
-    var pgn = getPgn(it), h = parsePgnHeaders(pgn), body = _moveBody(pgn);
-    return { it: it, body: body, date: (h.Date || ''),
-             keys: body.length >= 4 ? _pairCandKeys(h.White, h.Black) : null,
-             nameLen: (h.White || '').length + (h.Black || '').length,
-             ek: body.length < 4 ? (_pairKey(h.White, h.Black) + '#' + (h.Date || '') + '#' + (h.Round || '') + '#' + (h.Event || '')) : null };
+    var pgn = getPgn(it), h = parsePgnHeaders(pgn), body = _moveBody(pgn), id = _dedupIdentity(h, body);
+    return { it: it, body: body, date: id.date, keys: id.keys, nameLen: id.nameLen, ek: id.ek };
   });
   var dropped = new Set();
   // ── 0) SIN jugadas: por jugadores+fecha+ronda+evento.
@@ -8749,11 +8766,9 @@ function _buildGamesPool(withFen) {
     d.tournaments.forEach(function(t) { (t.games || []).forEach(function(g) { (isMem ? mem : canon).push(g); }); });
   }
   function meta(g, isCanon) {
-    var h = parsePgnHeaders(g), body = _moveBody(g);
-    return { g: g, canon: isCanon, body: body, date: (h.Date || ''), ev: (h.Event || ''),
-             keys: body.length >= 4 ? _pairCandKeys(h.White, h.Black) : null,
-             nameLen: (h.White || '').length + (h.Black || '').length,
-             ek: body.length < 4 ? (_pairKey(h.White, h.Black) + '#' + (h.Date || '') + '#' + (h.Round || '') + '#' + (h.Event || '')) : null };
+    var h = parsePgnHeaders(g), body = _moveBody(g), id = _dedupIdentity(h, body);
+    return { g: g, canon: isCanon, body: body, ev: (h.Event || ''),
+             date: id.date, keys: id.keys, nameLen: id.nameLen, ek: id.ek };
   }
   var metas = canon.map(function(g) { return meta(g, true); }).concat(mem.map(function(g) { return meta(g, false); }));  // canon PRIMERO (gana empates)
   var dropped = new Set();
@@ -10277,7 +10292,7 @@ function renderOpeningsCol(label, list) {
     h += '<div class="op-none">Sin datos</div>';
   } else {
     list.forEach(function(op) {
-      var safeName = op.name.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+      var safeName = escJs(op.name);   // escapa ' " < > \ → seguro dentro del onclick
       h += '<div class="op-row" style="cursor:pointer" onclick="filterPgByOpening(\'' + safeName + '\')">';
       h += '<span class="op-nm">' + escHtml(op.name) + '</span>';
       h += '<span class="op-cnt">' + op.count + '</span>';
@@ -11098,8 +11113,8 @@ function cvPlayerHtml(title, name, fideId, elo, team, isBlack) {
   if (!name) return '';
   var found = cvFindPlayer(name, fideId);
   var clickable = found || fideId;
-  var safeName = name.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
-  var safeFide = (fideId || '').replace(/'/g,"\\'");
+  var safeName = escJs(name);              // escapa ' " < > \ → seguro dentro del onclick="…(' … ')"
+  var safeFide = escJs(fideId || '');
   var titleAttr = found ? 'Ver perfil' : 'Ver en FIDE';
   var titleStr = title ? '<span style="color:var(--gold);font-size:11px;font-weight:700;margin-right:3px">' + escHtml(title) + '</span>' : '';
   var nameStr = escHtml(name);
@@ -11708,6 +11723,7 @@ function cvBindBoardOnce() {
   boardEl.addEventListener('click', function(e) {
     if (_dragSuppressClick) { _dragSuppressClick = false; return; }
     var sqEl = e.target.closest('[data-sq]');
+    if (!sqEl) return;   // clic en el borde/hueco entre casillas: no hay casilla, no hacer nada
     cvHandleClick(sqEl.getAttribute('data-sq'));
   });
 
