@@ -15869,7 +15869,7 @@ function puzNext() {
   var bag = unseen.length ? unseen : pool;
   var pick = bag[Math.floor(Math.random() * bag.length)];
   puz.idx = puz.list.indexOf(pick);
-  puzLoad(); var ov = document.getElementById('puz-overlay'); if (ov) ov.scrollTop = 0;
+  puzLoad();   // NO se reposiciona el scroll: el próximo ejercicio aparece donde el visitante dejó la pantalla
 }
 function puzUpdateUrl() { if (!puz.cur) return; try { history.replaceState({ puzzle:true }, '', location.pathname + '?ejercicio=' + encodeURIComponent(puz.cur.id)); } catch(e) {} }
 function puzShare() {
@@ -16133,9 +16133,11 @@ function puzRenderAuthor() {
     return '<option value="' + o[0] + '"' + (String(p.quality == null ? '' : p.quality) === o[0] ? ' selected' : '') + '>' + o[1] + '</option>';
   }).join('');
   var actions = puz.recording
-    ? '<button class="puz-btn primary" onclick="puzCancelRecord()">✖ Cancelar grabación</button>'
+    ? '<button class="puz-btn primary" onclick="puzFinishRecord()">✓ Guardar variante</button>'
+      + '<button class="puz-btn" onclick="puzCancelRecord()">✖ Cancelar grabación</button>'
     : '<button class="puz-btn' + (puz.editing ? ' primary' : '') + '" onclick="puzToggleEdit()">' + (puz.editing ? '✓ Terminar edición' : '✏️ Editar variantes') + '</button>'
-      + (puz.editing ? '<button class="puz-btn" onclick="puzStartRecord()">🎬 Grabar camino al mate</button>' : '')
+      + (puz.editing ? '<button class="puz-btn" onclick="puzStartRecord()">🎬 Grabar variante completa</button>' : '')
+      + (puz.editing ? '<button class="puz-btn" onclick="puzTrimHere()">✂ Terminar el ejercicio acá</button>' : '')
       + '<button class="puz-btn" onclick="puzSaveJson()">💾 Guardar puzzles.json</button>';
   el.innerHTML =
     '<h4>✏️ Modo autor</h4>'
@@ -16144,8 +16146,8 @@ function puzRenderAuthor() {
     + '<div class="row"><label>Calidad</label><select onchange="puzSetQuality(this.value)">' + qopts + '</select>'
     + '<label style="min-width:auto;margin-left:12px"><input type="checkbox"' + (p.hidden ? ' checked' : '') + ' onchange="puzSetHidden(this.checked)" style="width:auto;margin-right:5px">Ocultar ejercicio</label></div>'
     + '<div class="alts"><b>Variantes sueltas</b> (buenas, pero no la mejor):<br>' + altsHtml + '</div>'
-    + '<div class="alts"><b>Caminos completos al mate</b> (variantes que también ganan):<br>' + linesHtml + '</div>'
-    + '<div class="hint"><b>Variante suelta:</b> "Editar variantes" → ◀ ▶ a una jugada del que resuelve → jugá la otra respuesta.<br><b>Camino al mate:</b> "Editar variantes" → ◀ ▶ a donde se ramifica → "Grabar camino al mate" → jugá AMBOS bandos hasta el jaque mate. <i>Los jaque mate simples se aceptan todos solos.</i></div>'
+    + '<div class="alts"><b>Variantes completas aceptadas</b> (otro camino correcto, gane o dé mate):<br>' + linesHtml + '</div>'
+    + '<div class="hint"><b>Variante suelta:</b> "Editar variantes" → ◀ ▶ a una jugada del que resuelve → jugá la otra respuesta (queda como "buena, pero hay mejor").<br><b>Variante completa:</b> "Editar variantes" → ◀ ▶ a donde se ramifica → "Grabar variante completa" → jugá AMBOS bandos. Si llega al jaque mate se guarda solo; si no, apretá <b>"Guardar variante"</b> al terminar (tiene que cerrar en una jugada del que resuelve). <br><b>Recortar:</b> ◀ ▶ hasta donde querés que termine y "Terminar el ejercicio acá". <i>Los jaque mate simples se aceptan todos solos.</i></div>'
     + '<div id="puz-amsg" style="font-size:12px;color:var(--gold);min-height:15px;margin-bottom:6px"></div>'
     + '<div class="a-actions">' + actions + '</div>';
 }
@@ -16194,13 +16196,14 @@ function puzLineSan(line) {
 // Grabar un CAMINO COMPLETO alternativo hacia el mate (variante que ramifica y también es correcta).
 function puzStartRecord() {
   if (!puz.editing) puzEnterEdit();
-  if (puz.reviewIdx % 2 !== 0) { puzAuthorMsg('Pará en una jugada del que resuelve (◀ ▶) antes de grabar el camino.'); return; }
+  if (puz.reviewIdx % 2 !== 0) { puzAuthorMsg('Pará en una jugada del que resuelve (◀ ▶) antes de grabar la variante.'); return; }
   puz.recording = true;
+  puz._recPrefix = puz.reviewIdx;                            // hasta acá es el prefijo compartido
   puz.recLine = puz.cur.solution.slice(0, puz.reviewIdx);   // prefijo compartido hasta el punto de ramificación
   puz.chess = new Chess(puz._revFens[puz.reviewIdx]);
   puz.sel = null; puz.legalDests = [];
   puzRenderBoard(); puzRenderAuthor();
-  puzAuthorMsg('🎬 Grabando: jugá AMBOS bandos desde la jugada ' + (Math.floor(puz.reviewIdx/2)+1) + ' hasta el jaque mate.');
+  puzAuthorMsg('🎬 Grabando desde la jugada ' + (Math.floor(puz.reviewIdx/2)+1) + ': jugá AMBOS bandos. Si das mate se guarda solo; si no, "Guardar variante" al terminar.');
 }
 function puzRecordMove(from, to) {
   puz.sel = null; puz.legalDests = [];
@@ -16226,6 +16229,38 @@ function puzCancelRecord() {
   puz.recording = false; puz.recLine = [];
   if (puz.reviewing) puzReviewShow();
   puzRenderAuthor(); puzAuthorMsg('Grabación cancelada.');
+}
+// Guarda la línea grabada como VARIANTE COMPLETA aceptada (sin necesidad de jaque mate). Debe cerrar
+// en una jugada del que resuelve (si no, la posición quedaría a mitad del cálculo del rival).
+function puzFinishRecord() {
+  if (!puz.recording) return;
+  var p = puz.cur;
+  if (puz.recLine.length <= (puz._recPrefix || 0)) { puzAuthorMsg('Jugá al menos la jugada del que resuelve antes de guardar.'); return; }
+  if (puz.chess.turn() === p.sideToMove) { puzAuthorMsg('La variante tiene que terminar en una jugada del que resuelve (jugá una más).'); return; }
+  p.acceptedLines = p.acceptedLines || [];
+  var key = puz.recLine.join(' ');
+  if (key === p.solution.join(' ') || p.acceptedLines.some(function(L){ return L.join(' ') === key; })) {
+    puz.recording = false; puzRenderAuthor(); puzAuthorMsg('Esa variante ya estaba (o es la principal).'); return;
+  }
+  p.acceptedLines.push(puz.recLine.slice()); puz._dirty = true;
+  puz.recording = false; puzRenderAuthor(); puzAuthorMsg('✓ Variante completa aceptada guardada.');
+}
+// "Terminar el ejercicio acá": recorta la solución hasta la posición actual (◀ ▶), cerrando en una
+// jugada del que resuelve. Sirve para ejercicios que quedaron largos.
+function puzTrimHere() {
+  if (!puz.editing) { puzAuthorMsg('Entrá en "Editar variantes" para recortar.'); return; }
+  var p = puz.cur, len = puz.reviewIdx;
+  if (len % 2 === 0) len -= 1;                               // que termine en jugada del que resuelve
+  if (len < 1) { puzAuthorMsg('Avanzá (▶) al menos hasta una jugada del que resuelve antes de recortar.'); return; }
+  if (len >= p.solution.length) { puzAuthorMsg('Ya estás al final, no hay nada que recortar.'); return; }
+  p.solution = p.solution.slice(0, len);
+  p.solutionSan = p.solutionSan.slice(0, len);
+  if (p.acceptedAlts) p.acceptedAlts = p.acceptedAlts.slice(0, Math.ceil(len / 2));
+  if (p.acceptedLines) p.acceptedLines = p.acceptedLines.filter(function(L){ return L.length === len; });   // solo caminos que cierran en el nuevo final
+  puz._dirty = true;
+  puzSetupReview(p.solution, false);                          // re-armar el recorrido con la solución recortada
+  puzRenderAuthor();
+  puzAuthorMsg('✂ Recortado a ' + Math.ceil(len / 2) + ' jugada(s) del que resuelve.');
 }
 function puzRemoveLine(i) {
   if (!puz.cur.acceptedLines) return;
