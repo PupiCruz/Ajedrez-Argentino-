@@ -21,6 +21,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 const ALLOWED_HOST = /(^|\.)chess-results\.com$/i;
+const ALLOWED_HOST_I64 = /(^|\.)info64\.org$/i;
 const CACHE_SECONDS = 120;
 const STATS_CACHE_SECONDS = 30;
 
@@ -36,6 +37,9 @@ export default {
     // ── Stats de ejercicios (D1) ──
     if (reqUrl.pathname === '/puzstats') return puzStats(env);
     if (reqUrl.pathname === '/puzhit')   return puzHit(reqUrl, env);
+
+    // ── Descarga de Excel de info64 (POST → JSON {url} → bajar el .xlsx) ──
+    if (reqUrl.pathname === '/i64xls') return i64Xls(reqUrl, ctx);
 
     // ── Proxy CORS Chess-Results ──
     const target = reqUrl.searchParams.get('url');
@@ -78,6 +82,67 @@ export default {
     return resp;
   },
 };
+
+// GET /i64xls?url=<endpoint de export de info64> → baja el .xlsx.
+// info64 exporta en DOS pasos: POST al endpoint (ej. .../standings_xls) devuelve un JSON
+// { "url": "/media/....xlsx" } y recién ahí se baja el archivo. El navegador no puede hacer
+// ese POST cross-origin, así que lo hace el Worker y devuelve los bytes con CORS.
+async function i64Xls(reqUrl, ctx) {
+  const target = reqUrl.searchParams.get('url');
+  if (!target) return errJson('Falta el parámetro ?url=', 400);
+  let t;
+  try { t = new URL(target); }
+  catch (e) { return errJson('URL inválida', 400); }
+  if (t.protocol !== 'https:' || !ALLOWED_HOST_I64.test(t.hostname)) {
+    return errJson('Host no permitido (sólo info64.org)', 403);
+  }
+
+  // Caché: la respuesta final (el .xlsx) la guardamos ~2 min, igual que el proxy de CR.
+  const cache = caches.default;
+  const cacheKey = new Request(reqUrl.toString());
+  const hit = await cache.match(cacheKey);
+  if (hit) return hit;
+
+  // Paso 1: POST al endpoint de export → JSON { url: "/media/....xlsx" }
+  let meta;
+  try {
+    const r1 = await fetch(t.toString(), {
+      method: 'POST',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; AjedrezArgentinoBot/1.0)',
+        'X-Requested-With': 'XMLHttpRequest',
+        'Accept': 'application/json, text/javascript, */*; q=0.01',
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        'Referer': t.origin + '/',
+      },
+      body: '',
+    });
+    if (!r1.ok) return errJson('info64 export HTTP ' + r1.status, 502);
+    meta = await r1.json();
+  } catch (e) {
+    return errJson('No se pudo pedir el export a info64: ' + e.message, 502);
+  }
+  if (!meta || !meta.url) return errJson('info64 no devolvió la URL del archivo', 502);
+
+  // Paso 2: bajar el .xlsx (la url viene relativa al dominio de info64).
+  let upstream;
+  try {
+    upstream = await fetch(new URL(meta.url, t.origin).toString(), {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AjedrezArgentinoBot/1.0)' },
+      redirect: 'follow',
+    });
+  } catch (e) {
+    return errJson('No se pudo bajar el .xlsx de info64: ' + e.message, 502);
+  }
+
+  const headers = corsHeaders();
+  const ct = upstream.headers.get('content-type');
+  if (ct) headers.set('Content-Type', ct);
+  headers.set('Cache-Control', 'public, max-age=' + CACHE_SECONDS);
+  const resp = new Response(upstream.body, { status: upstream.status, headers });
+  if (upstream.ok) ctx.waitUntil(cache.put(cacheKey, resp.clone()));
+  return resp;
+}
 
 function corsHeaders() {
   return new Headers({

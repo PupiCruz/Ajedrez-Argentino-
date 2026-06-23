@@ -2880,6 +2880,10 @@ function renderTorneos(filter) {
     return (b._endKey || 0) - (a._endKey || 0);
   });
 
+  // Tarjetas "vivas": en la web publicada, refrescar los líderes de los torneos en curso
+  // (baja solo la tabla por el Worker, con enfriamiento de 90s; re-renderiza al llegar).
+  if (_ondemand) _refreshLiveLeaders(items, tzCfg);
+
   // Apply filter
   var filtered = (filter === 'todos') ? items : items.filter(function(item){ return item._status === filter; });
 
@@ -3491,6 +3495,9 @@ function crRenderSection(key) {
   h+='<input type="file" accept=".xlsx" style="display:none" onchange="crImportStandings(\''+ks+'\',this)">📊 Tabla</label>';
   if(_crUrlByKey[key] && /tnr\d+/i.test(_crUrlByKey[key])){
     h+='<button onclick="_crAutoUpdateIndivBtn(\''+ks+'\')" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:rgba(60,130,200,.15);border:1px solid rgba(70,150,220,.4);color:#7ab8e6;font-size:11px;font-weight:600;border-radius:8px;cursor:pointer;font-family:inherit" title="Baja solo todas las rondas + la clasificación desde Chess-Results">🔄 Actualizar desde Chess-Results</button>';
+  }
+  if(_i64UrlByKey[key] && _i64Base(_i64UrlByKey[key])){
+    h+='<button onclick="_i64AutoUpdateIndivBtn(\''+ks+'\')" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:rgba(60,130,200,.15);border:1px solid rgba(70,150,220,.4);color:#7ab8e6;font-size:11px;font-weight:600;border-radius:8px;cursor:pointer;font-family:inherit" title="Baja todas las rondas + la clasificación desde info64">🔄 Actualizar desde info64</button>';
   }
   h+='</div>';
   }
@@ -4217,6 +4224,30 @@ async function _crProxyFetch(crUrl) {
   return new Uint8Array(await res.arrayBuffer());
 }
 
+// ── info64 (otra web tipo Chess-Results) ──
+// Deriva el "slug" base del torneo desde cualquiera de las formas de URL que el usuario
+// pegue: la raíz, /standings o /<ronda>. Ej: https://info64.org/<slug>(/standings|/3)?…
+function _i64Base(url) {
+  var m = String(url || '').match(/^https?:\/\/(?:www\.)?info64\.org\/([^\/?#]+)/i);
+  return m ? 'https://info64.org/' + m[1] : null;
+}
+// Endpoint de export de info64 para cada vista. kind: 'initial' (ranking inicial), 'standings'
+// (clasificación), 'round' (emparejamientos de la ronda rd). Devuelve la URL a la que el Worker
+// le hace POST. null si la URL guardada no es de info64.
+function _i64ExportUrl(url, kind, rd) {
+  var base = _i64Base(url); if (!base) return null;
+  if (kind === 'standings') return base + '/standings_xls';
+  if (kind === 'initial')   return base + '/xls';
+  if (kind === 'round')     return base + '/' + rd + '/xls';
+  return null;
+}
+// Baja un xlsx de info64 a través del Worker (que resuelve el POST→media). Uint8Array.
+async function _i64ProxyFetch(exportUrl) {
+  var res = await fetch(CR_PROXY + '/i64xls?url=' + encodeURIComponent(exportUrl));
+  if (!res.ok) throw new Error('proxy HTTP ' + res.status);
+  return new Uint8Array(await res.arrayBuffer());
+}
+
 // Descubre cuántas rondas hay leyendo los links "Emparejamientos por mesas" de la página del torneo.
 // pairArt = el art de esos links (3 = equipos, 2 = individual). Devuelve el nº máximo de ronda, o null.
 async function _crDiscoverRounds(crUrl, pairArt) {
@@ -4331,6 +4362,133 @@ async function _crAutoFetchIndiv(crk, crUrl, opts) {
   finally { _crAutoBusy[crk] = false; }
 }
 function _crAutoUpdateIndivBtn(crk) { _crAutoFetchIndiv(crk, _crUrlByKey[crk], {}); }
+
+// ── Auto-actualización desde info64 (mismo destino que Chess-Results) ──
+// info64 da un xlsx por ronda (/<n>/xls) + la clasificación (/standings_xls) + el ranking
+// inicial (/xls). Bajamos la clasificación y vamos ronda por ronda (1,2,3…) hasta que una
+// venga vacía. Reusa los MISMOS parsers que Chess-Results (_crParseSections / _crParseStandingsRows).
+var _i64UrlByKey = {};   // crk -> URL de info64 del torneo (lo setea openTournamentDetail)
+var _I64_MAX_ROUNDS = 25;
+async function _i64AutoFetchIndiv(crk, i64url, opts) {
+  opts = opts || {};
+  var st = document.getElementById('cr-status-' + crk);
+  function setS(m){ if (st && !opts.silent) st.textContent = m; }
+  if (!_i64Base(i64url)) { setS('❌ Este torneo no tiene una URL de info64 válida (debe ser https://info64.org/…).'); return false; }
+  if (_crAutoBusy[crk]) return false; _crAutoBusy[crk] = true;
+  try {
+    var data = crDataLoad(crk) || { rounds:{}, standings:[] };
+    if (!data.rounds) data.rounds = {};
+    var okR = 0;
+    for (var r = 1; r <= _I64_MAX_ROUNDS; r++) {
+      setS('⏳ Bajando emparejamientos ronda ' + r + '…');
+      var got = 0;
+      try {
+        var rows = await crExtractXlsx(await _i64ProxyFetch(_i64ExportUrl(i64url, 'round', r)));
+        var roundHdrIdx = [];
+        for (var ri = 0; ri < rows.length; ri++) {
+          var hm = rows[ri].join(' ').match(/(\d+)\.\s*Ronda|Ronda\s+(\d+)|Round\s+(\d+)|(\d+)\.\s*Round/i);
+          if (hm) roundHdrIdx.push({ row: ri, num: parseInt(hm[1] || hm[2] || hm[3] || hm[4]) });
+        }
+        var parsed = _crParseSections(rows, roundHdrIdx);
+        Object.keys(parsed).forEach(function(n){ data.rounds[n] = parsed[n]; got += parsed[n].length; okR++; });
+      } catch(e) { /* ronda inexistente o vacía → cortamos abajo */ }
+      if (!got) break;   // primera ronda sin partidas = no hay más → frenar
+    }
+    // Tabla: si ya hay rondas → clasificación; si no → ranking inicial.
+    var standKind = okR > 0 ? 'standings' : 'initial';
+    setS('⏳ Bajando ' + (standKind === 'initial' ? 'ranking inicial' : 'clasificación') + '…');
+    try {
+      var ps = _crParseStandingsRows(await crExtractXlsx(await _i64ProxyFetch(_i64ExportUrl(i64url, standKind))));
+      if (ps.standings.length) {
+        data.standings = ps.standings; data.standingsKind = ps.kind;
+        delete data.standingsRound; delete data.standingsFinal;
+        if (ps.round != null) data.standingsRound = ps.round;
+        if (ps.final) data.standingsFinal = true;
+      }
+    } catch(e) {}
+    var hasStand = !!(data.standings && data.standings.length);
+    if (!okR && !hasStand) { setS('❌ No se pudieron leer cruces ni clasificación desde info64.'); return false; }
+    crDataSave(crk, data);
+    if (!opts.silent) {
+      var msg = (!okR && hasStand && data.standingsKind === 'initial')
+        ? '✓ Ranking inicial actualizado — ' + data.standings.length + ' jugadores'
+        : '✓ Actualizado desde info64 — ' + okR + ' ronda(s)' + (hasStand ? ' + tabla' : '');
+      setS(msg + (_ondemand ? '' : '. Acordate de "Guardar datos en mi carpeta" y publicar.'));
+    }
+    var isRR = crLooksLikeRoundRobin(data);
+    var lastR = Object.keys(data.rounds).map(Number).sort(function(a,b){return a-b;});
+    crRefreshSection(crk, isRR ? 'cuadro' : (lastR.length ? lastR[lastR.length-1] : (hasStand ? 'tabla' : null)));
+    try { renderTorneos(_lastTorneoFilter); } catch(e){}
+    return okR > 0 || hasStand;
+  } catch(e) { setS('❌ ' + e.message); return false; }
+  finally { _crAutoBusy[crk] = false; }
+}
+function _i64AutoUpdateIndivBtn(crk) { _i64AutoFetchIndiv(crk, _i64UrlByKey[crk], {}); }
+
+// ── Tarjetas "vivas": refrescar los líderes de los torneos EN CURSO en la lista ──
+// En la web publicada, los podios de las tarjetas vienen congelados del último "publicar".
+// Para que se vean al día durante un torneo, al renderizar la lista bajamos SOLO la tabla
+// (no las rondas) de cada torneo en vivo, vía el Worker (que cachea), y re-renderizamos.
+// El detalle del torneo ya se auto-actualiza solo al abrirlo; esto es para la lista.
+var _liveLeaderAt = {};            // crk -> timestamp del último refresco
+var _LIVE_LEADER_MS = 90000;       // no volver a pedir la misma tabla antes de 90s
+function _liveItemSource(item, tzCfg) {
+  if (item._status !== 'live') return null;
+  if (item._type === 'hardcoded') {
+    var t = item._t, ov = tzCfg['hc_' + t.id] || {};
+    return { type:'hc', id:t.id, crUrl: ov.crurl || t.crurl || '', info64url: ov.info64url || '', isTeam: !!(ov.isTeam || t.isTeam) };
+  }
+  if (item._type === 'stored') {
+    var st = item._st;
+    return { type:'ls', id:st._id, crUrl: st.crUrl || '', info64url: st.info64url || '', isTeam: !!st.isTeam };
+  }
+  if (item._type === 'tzconfig') {
+    var d = item._data;
+    return { type:'tz', id:item._key, crUrl: d.crurl || '', info64url: d.info64url || '', isTeam: !!d.isTeam };
+  }
+  return null;
+}
+function _refreshLiveLeaders(items, tzCfg) {
+  var now = Date.now();
+  items.forEach(function(item) {
+    var src = _liveItemSource(item, tzCfg);
+    if (!src || (!src.crUrl && !src.info64url)) return;
+    var crk = crKey(src.type, src.id);
+    if (_liveLeaderAt[crk] && now - _liveLeaderAt[crk] < _LIVE_LEADER_MS) return;
+    _liveLeaderAt[crk] = now;
+    _liveStandingsFetch(crk, src.crUrl, src.info64url, src.isTeam);
+  });
+}
+// Baja SOLO la tabla de posiciones (liviano) y actualiza la tarjeta. Comparte el candado
+// _crAutoBusy con la auto-actualización completa para no pisarse si el usuario abre el torneo.
+async function _liveStandingsFetch(crk, crUrl, info64url, isTeam) {
+  if (_crAutoBusy[crk]) return;
+  _crAutoBusy[crk] = true;
+  try {
+    var data = crDataLoad(crk) || { rounds:{}, standings:[] };
+    if (isTeam) {
+      if (!crUrl || !/tnr\d+/i.test(crUrl)) return;
+      var standR = await _crDiscoverRounds(crUrl, 0);
+      var stand = _teamParseStandings(await crExtractXlsx(await _crProxyFetch(_crExportUrl(crUrl, 0, standR))));
+      if (stand && stand.teams && stand.teams.length) { data.teamStandings = stand; crDataSave(crk, data); renderTorneos(_lastTorneoFilter); }
+      return;
+    }
+    var rows = null;
+    if (info64url && _i64Base(info64url)) rows = await crExtractXlsx(await _i64ProxyFetch(_i64ExportUrl(info64url, 'standings')));
+    else if (crUrl && /tnr\d+/i.test(crUrl)) rows = await crExtractXlsx(await _crProxyFetch(_crExportUrl(crUrl, 1, null)));
+    if (!rows) return;
+    var ps = _crParseStandingsRows(rows);
+    if (ps.standings.length) {
+      data.standings = ps.standings; data.standingsKind = ps.kind;
+      delete data.standingsRound; delete data.standingsFinal;
+      if (ps.round != null) data.standingsRound = ps.round;
+      if (ps.final) data.standingsFinal = true;
+      crDataSave(crk, data);
+      renderTorneos(_lastTorneoFilter);
+    }
+  } catch(e) { /* silencioso: si falla, la tarjeta queda con lo que tenía */ }
+  finally { _crAutoBusy[crk] = false; }
+}
 
 // ── Importar cruces (pairings) ──
 function crImportRound(key,input){
@@ -5869,7 +6027,14 @@ function crFetch() {
   var btn = document.getElementById('cr-fetch-btn');
   btn.disabled = true;
 
+  // PRIMERO nuestro propio Worker (rápido, confiable y sigue las redirecciones de
+  // chess-results a s2/s3). Los proxies públicos quedan SOLO como respaldo por si el
+  // Worker estuviera caído — antes eran los únicos y eran lentos/inestables.
   var proxies = [
+    function(u) {
+      return fetch(CR_PROXY + '/?url=' + encodeURIComponent(u))
+        .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); });
+    },
     function(u) {
       return fetch('https://api.allorigins.win/get?url=' + encodeURIComponent(u))
         .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
@@ -14315,6 +14480,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   var crk = crKey(type, id) + catSuffix;
   _crCategory[crk] = typ; // recordar la categoría para el filtro de argentinos
   _crUrlByKey[crk] = crUrl; // que la sección de equipos sepa el crUrl (botón + auto-fetch)
+  _i64UrlByKey[crk] = info64url || ''; // ídem para info64 (botón + auto-fetch)
   if (_tdCtx) { _tdCtx.crKey = crk; _tdCtx.isTeam = isTeam; }
   h += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.14);border-radius:14px;padding:16px 18px;margin-bottom:18px">';
   if (isTeam) {
@@ -14368,6 +14534,10 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   if (_ondemand && status === 'live' && crUrl && /tnr\d+/i.test(crUrl)) {
     if (isTeam) _crAutoFetchTeam(crk, crUrl, { silent: true });
     else _crAutoFetchIndiv(crk, crUrl, { silent: true });
+  }
+  // Ídem para info64 (sólo individuales). Si el torneo tiene ambas fuentes, se actualizan las dos.
+  if (_ondemand && status === 'live' && !isTeam && _i64Base(info64url)) {
+    _i64AutoFetchIndiv(crk, info64url, { silent: true });
   }
   // Si se pidió, bajar directo al apartado de partidas
   if (scrollToGames && m) {
