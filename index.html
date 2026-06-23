@@ -3263,6 +3263,17 @@ function crFlagEmoji(fed) {
 }
 
 // ── XLSX descompresión (compartida) — usa regex para evitar problemas de namespace XML ──
+// Decodifica entidades XML que aparecen en el texto de las planillas (sobre todo en
+// los exports con texto en línea de info64: "Clasificaci&#243;n" → "Clasificación",
+// "T&#237;t." → "Tít."). Cubre numéricas (&#243; / &#xF3;) y las cinco con nombre.
+function _xlsxDecodeEntities(s){
+  if(!s||s.indexOf('&')<0) return s;
+  return s.replace(/&#x([0-9a-fA-F]+);/g,function(_,h){return String.fromCodePoint(parseInt(h,16));})
+          .replace(/&#(\d+);/g,function(_,d){return String.fromCodePoint(parseInt(d,10));})
+          .replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"')
+          .replace(/&apos;/g,"'").replace(/&amp;/g,'&');
+}
+
 async function crExtractXlsx(bytes) {
   // Los .xlsx vienen comprimidos (deflate); sin DecompressionStream no se pueden leer.
   // (Safari < 16.4 no lo trae.) Avisamos con un mensaje claro en vez de tirar un error técnico.
@@ -3332,13 +3343,22 @@ async function crExtractXlsx(bytes) {
       // Rellenar celdas vacías hasta la columna correcta
       while(cells.length<colIdx) cells.push('');
       var isShared=/\bt="s"/.test(attrs);
-      var vM=/<(?:\w+:)?v[^>]*>([^<]*)<\/(?:\w+:)?v>/.exec(content);
+      var isInline=/\bt="inlineStr"/.test(attrs);
       var val='';
-      if(vM&&vM[1]!=null){
-        if(isShared){ val=strings[parseInt(vM[1])]||''; }
-        else { val=vM[1]; }
+      if(isInline){
+        // info64 (otra web tipo Chess-Results) exporta el texto EN LÍNEA dentro de la
+        // celda: <c t="inlineStr"><is><t>texto</t></is></c>, en vez de usar la tabla
+        // de sharedStrings. Juntamos todos los <t> (puede haber varios por rich-text).
+        var tRe=/<(?:\w+:)?t[^>]*>([^<]*)<\/(?:\w+:)?t>/g, tM;
+        while((tM=tRe.exec(content))!==null) val+=(tM[1]||'');
+      } else {
+        var vM=/<(?:\w+:)?v[^>]*>([^<]*)<\/(?:\w+:)?v>/.exec(content);
+        if(vM&&vM[1]!=null){
+          if(isShared){ val=strings[parseInt(vM[1])]||''; }
+          else { val=vM[1]; }
+        }
       }
-      cells.push((val||'').trim());
+      cells.push(_xlsxDecodeEntities(val||'').trim());
     }
     rows.push(cells);
   }
@@ -4428,6 +4448,14 @@ async function _crParseRoundAsync(key,bytes){
   }
 }
 
+// Separa un título FIDE pegado al inicio del nombre ("GM Pichot, Alan" → {title:'GM',
+// name:'Pichot, Alan'}). info64 no usa columna de título aparte. Si no hay prefijo,
+// devuelve el nombre intacto y título vacío.
+function _crSplitTitle(name){
+  var m=(name||'').match(/^(GM|IM|FM|WGM|WIM|WFM|CM|NM|WCM|AFM|AGM|WNM|AIM)\s+(.+)$/);
+  return m ? {title:m[1], name:m[2].trim()} : {title:'', name:(name||'').trim()};
+}
+
 // ── Parser de cruces por ENCABEZADO (1 o varias rondas) ──
 // Lee cada sección "N. Ronda", detecta las columnas desde su fila de títulos y devuelve
 // { num: [pairings] }. Soporta los layouts de Chess-Results con Elo (round robin, sin Pts)
@@ -4444,15 +4472,19 @@ function _crParseSections(rows,roundHdrIdx){
     var rCol=find(/^(Resultado|Result|Res\.?)$/i,wCol,bCol+2); if(rCol<0) rCol=find(/^(Resultado|Result|Res\.?)$/i);
     var rc=rCol<0?Math.floor((wCol+bCol)/2):rCol;
     // Elo de blancas: a la IZQUIERDA del nombre (No|Elo|Tít|Blancas) o a la DERECHA (Blancas|Elo|Pts).
-    var eloWCol=-1; for(var i=wCol-1;i>=0;i--){ if(/^Elo$/i.test((hdr[i]||'').trim())){eloWCol=i;break;} }
-    if(eloWCol<0){ for(var i=wCol+1;i<rc;i++){ if(/^Elo$/i.test((hdr[i]||'').trim())){eloWCol=i;break;} } }
+    // info64 llama "FIDE" a la columna del elo, así que aceptamos ambos rótulos.
+    var ELOH=/^(Elo|FIDE)$/i;
+    var eloWCol=-1; for(var i=wCol-1;i>=0;i--){ if(ELOH.test((hdr[i]||'').trim())){eloWCol=i;break;} }
+    if(eloWCol<0){ for(var i=wCol+1;i<rc;i++){ if(ELOH.test((hdr[i]||'').trim())){eloWCol=i;break;} } }
     // Elo de negras: a la DERECHA del nombre (Negras|Tít|Elo|No) o a la IZQUIERDA (Pts|Elo|Tít|Negras).
-    var eloBCol=-1; for(var i=bCol+1;i<hdr.length;i++){ if(/^Elo$/i.test((hdr[i]||'').trim())){eloBCol=i;break;} }
-    if(eloBCol<0){ for(var i=bCol-1;i>rc;i--){ if(/^Elo$/i.test((hdr[i]||'').trim())){eloBCol=i;break;} } }
+    var eloBCol=-1; for(var i=bCol+1;i<hdr.length;i++){ if(ELOH.test((hdr[i]||'').trim())){eloBCol=i;break;} }
+    if(eloBCol<0){ for(var i=bCol-1;i>rc;i--){ if(ELOH.test((hdr[i]||'').trim())){eloBCol=i;break;} } }
     var noWCol=-1; for(var i=wCol-1;i>=0;i--){ if(/^No\.?$/i.test((hdr[i]||'').trim())){noWCol=i;break;} }
     var noBCol=-1; for(var i=bCol+1;i<hdr.length;i++){ if(/^No\.?$/i.test((hdr[i]||'').trim())){noBCol=i;break;} }
     var ptsWCol=-1; for(var i=wCol+1;i<rc;i++){ if(/^Pts\.?$/i.test((hdr[i]||'').trim())){ptsWCol=i;break;} }
     var ptsBCol=-1; for(var i=rc+1;i<bCol;i++){ if(/^Pts\.?$/i.test((hdr[i]||'').trim())){ptsBCol=i;break;} }
+    // info64: las Pts. de negras van a la DERECHA del nombre (Negras|Ran|Pts|FIDE|Fed).
+    if(ptsBCol<0){ for(var i=bCol+1;i<hdr.length;i++){ if(/^Pts\.?$/i.test((hdr[i]||'').trim())){ptsBCol=i;break;} } }
     return {wCol:wCol,bCol:bCol,rCol:rCol,eloWCol:eloWCol,eloBCol:eloBCol,noWCol:noWCol,noBCol:noBCol,ptsWCol:ptsWCol,ptsBCol:ptsBCol};
   }
   var roundsData={};
@@ -4471,6 +4503,10 @@ function _crParseSections(rows,roundHdrIdx){
       if(/sin emparejar|bye|^-+$/i.test(nameB)||/sin emparejar|bye/i.test(nameW)) continue;
       var titleW=(row[cols.wCol-1]||'').trim(); if(!TITLES.test(titleW)) titleW='';
       var titleB=(row[cols.bCol-1]||'').trim(); if(!TITLES.test(titleB)) titleB='';
+      // info64 no trae columna de título: lo pega al nombre ("GM Pichot, Alan").
+      // Si no detectamos título en su columna y el nombre arranca con uno, lo separamos.
+      if(!titleW){ var stw=_crSplitTitle(nameW); titleW=stw.title; nameW=stw.name; }
+      if(!titleB){ var stb=_crSplitTitle(nameB); titleB=stb.title; nameB=stb.name; }
       var eloW=cols.eloWCol>=0?parseInt(row[cols.eloWCol])||0:0;
       var eloB=cols.eloBCol>=0?parseInt(row[cols.eloBCol])||0:0;
       var sw=cols.noWCol>=0?parseInt(row[cols.noWCol])||0:0;
@@ -4556,11 +4592,14 @@ function _crParseStandingsRows(rows){
 
   // Mapear índices de columna por nombre de encabezado
   function findCol(re){ if(!hdr) return -1; for(var i=0;i<hdr.length;i++){ if(re.test((hdr[i]||'').trim())) return i; } return -1; }
-  var cRank = findCol(/^Rk\.?$/i);
-  var cNo   = findCol(/^No\.?$/i);
+  // info64 (otra web tipo Chess-Results) usa encabezados distintos: "Pos." en vez de
+  // "Rk.", "Ran." en vez de "No.", "Fed." en vez de "FED", y la columna del elo se
+  // llama "FIDE" (no "Elo"). Aceptamos ambas variantes.
+  var cRank = findCol(/^(Rk|Pos)\.?$/i);
+  var cNo   = findCol(/^(No|Ran)\.?$/i);
   var cName = findCol(/^Nombre$|^Name$/i);
-  var cFed  = findCol(/^FED$/i);
-  var cElo  = findCol(/^Elo$/i);
+  var cFed  = findCol(/^(FED|Fed\.?)$/i);
+  var cElo  = findCol(/^(Elo|FIDE)$/i);
   var cPts  = findCol(/^Pts\.?$/i);
   var cRp   = findCol(/^Rp$/i);
   var cVar  = findCol(/^elo\s*\+\/-$|^Rtg\s*\+\/-$|^\+\/-$/i);
