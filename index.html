@@ -926,6 +926,11 @@
     }
     .puz-card-mark.ok { background: var(--green); }
     .puz-card-mark.fail { background: var(--red); }
+    .puz-pop {
+      position: absolute; bottom: 5px; left: 5px; z-index: 3; font-size: 10px; font-weight: 700;
+      padding: 2px 6px; border-radius: 20px; background: rgba(0,0,0,.62); color: #f0f0f0;
+      box-shadow: 0 1px 4px rgba(0,0,0,.5); line-height: 1.3; white-space: nowrap;
+    }
     .puz-card-meta { margin-top: 8px; display: flex; align-items: center; justify-content: space-between; gap: 6px; }
     .puz-turn { display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--text2); font-weight: 600; }
     .puz-turn .dot { width: 11px; height: 11px; border-radius: 50%; border: 1px solid var(--text3); flex-shrink: 0; }
@@ -15646,13 +15651,42 @@ function puzById(id) { for (var i=0;i<PUZZLES.length;i++) if (PUZZLES[i].id === 
 
 // Resultado por ejercicio: 'ok' (resuelto sin errores) / 'fail' (con error o vio la solución).
 function puzResults() { try { return JSON.parse(localStorage.getItem('puz_results') || '{}'); } catch(e) { return {}; } }
-function puzSetResult(id, r) { var m = puzResults(); m[id] = r; try { localStorage.setItem('puz_results', JSON.stringify(m)); } catch(e) {} }
+function puzSetResult(id, r) { var m = puzResults(); m[id] = r; try { localStorage.setItem('puz_results', JSON.stringify(m)); } catch(e) {} puzReportResult(id, r); }
+
+// ── Estadísticas colectivas de ejercicios (aciertos/errores de toda la gente) ──
+// Se guardan en el Worker de Cloudflare (base D1). Acá: cargamos el resumen al abrir la
+// pestaña y reportamos el resultado de cada visitante UNA sola vez por ejercicio (por navegador).
+var _puzStats = {};   // { id: {ok, fail} }
+function puzLoadStats() {
+  try {
+    fetch(CR_PROXY + '/puzstats').then(function(r){ return r.ok ? r.json() : null; }).then(function(d){
+      if (d && typeof d === 'object' && !d.error) { _puzStats = d; if (_puzLoaded) puzRenderList(); puzRenderSource(); }
+    }).catch(function(){});
+  } catch(e) {}
+}
+function puzStatPct(id) {
+  var s = _puzStats[id]; if (!s) return null;
+  var tot = (s.ok || 0) + (s.fail || 0); if (!tot) return null;
+  return { pct: Math.round((s.ok || 0) * 100 / tot), tot: tot };
+}
+// Reporta el resultado al Worker (suma 1 acierto/error), una vez por navegador por ejercicio.
+// Suma también localmente (optimista) para que el % se vea al instante sin re-consultar.
+function puzReportResult(id, r) {
+  var sent = {}; try { sent = JSON.parse(localStorage.getItem('puz_sent') || '{}'); } catch(e) {}
+  if (sent[id]) return;
+  sent[id] = 1; try { localStorage.setItem('puz_sent', JSON.stringify(sent)); } catch(e) {}
+  if (!_puzStats[id]) _puzStats[id] = { ok: 0, fail: 0 };
+  if (r === 'ok') _puzStats[id].ok++; else _puzStats[id].fail++;
+  try { fetch(CR_PROXY + '/puzhit?id=' + encodeURIComponent(id) + '&r=' + (r === 'ok' ? 'ok' : 'fail'), { keepalive: true }).catch(function(){}); } catch(e) {}
+  puzRenderSource();
+}
 
 function puzInit() {
   try { var lv = localStorage.getItem('puz_level'); if (lv && PUZ_LVL_NAME[lv]) puz.level = lv; } catch(e) {}
   if (!_ondemand) { var _pat = document.getElementById('puz-author-tools'); if (_pat) _pat.style.display = ''; }
   var chips = document.querySelectorAll('#tab-ejercicios .chip');
   for (var i=0;i<chips.length;i++) chips[i].classList.toggle('active', chips[i].getAttribute('onclick').indexOf("'"+puz.level+"'") >= 0);
+  puzLoadStats();
   fetch('data/puzzles.json' + _dataV()).then(function(r){ return r.json(); }).then(function(d) {
     PUZZLES = Array.isArray(d) ? d : (d.puzzles || []);
     _puzLoaded = true; puzUpdateChipCounts(); puzRenderList();
@@ -15693,8 +15727,10 @@ function puzRenderList() {
     var p = list[i], flip = (p.sideToMove === 'b'), sec = p.section, lbl = PUZ_SEC_LABEL[sec] || sec;
     var r = res[p.id];
     var mark = r === 'ok' ? '<div class="puz-card-mark ok">✓</div>' : r === 'fail' ? '<div class="puz-card-mark fail">✗</div>' : '';
+    var st = puzStatPct(p.id);
+    var pop = st ? '<div class="puz-pop" title="' + st.tot + ' intento' + (st.tot !== 1 ? 's' : '') + '">👥 ' + st.pct + '%</div>' : '';
     h += '<div class="puz-card" onclick="puzOpenById(\'' + p.id + '\')">'
-       + '<div class="puz-card-bd" data-flip="' + (flip?1:0) + '">' + mark + tdMiniFen(p.fen, null, flip) + '</div>'
+       + '<div class="puz-card-bd" data-flip="' + (flip?1:0) + '">' + mark + pop + tdMiniFen(p.fen, null, flip) + '</div>'
        + '<div class="puz-card-meta"><span class="puz-turn"><span class="dot ' + p.sideToMove + '"></span>'
        + (p.sideToMove === 'w' ? 'Blancas' : 'Negras') + '</span>'
        + '<span class="puz-tag s-' + sec + '">' + lbl + '</span></div></div>';
@@ -15736,7 +15772,7 @@ function puzLoad() {
   var side = p.sideToMove === 'w' ? 'Blancas' : 'Negras';
   document.getElementById('puz-prompt').innerHTML = '<span class="dot ' + p.sideToMove + '"></span> Juegan ' + side + ' — encontrá la mejor jugada';
   puzSetFb('aim', '🎯', 'Es tu turno. Mové la pieza que resuelve la posición.');
-  document.getElementById('puz-source').innerHTML = puzSourceHtml(p);
+  puzRenderSource();
   document.getElementById('puz-motifs').innerHTML = puzMotifsHtml(p);
   document.getElementById('puz-prev').style.display = 'none';
   document.getElementById('puz-next').style.display = 'none';
@@ -15769,6 +15805,18 @@ function puzSourceHtml(p) {
   var d = puzFmtDate(s.date); if (d) meta.push(d);
   if (meta.length) h += '<div class="meta">' + meta.join(' · ') + '</div>';
   return h;
+}
+// Línea con la estadística colectiva (cuánta gente lo resolvió bien). Vacío si no hay datos aún.
+function puzCrowdHtml(id) {
+  var st = puzStatPct(id); if (!st) return '';
+  return '<div class="meta" style="margin-top:5px">👥 Lo resolvió bien el <b>' + st.pct + '%</b> de quienes lo intentaron (' + st.tot + ').</div>';
+}
+// Repinta el bloque de "origen" del ejercicio (partida + estadística). Se llama al abrir el
+// ejercicio y cuando llegan/cambian las estadísticas.
+function puzRenderSource() {
+  if (!puz.cur) return;
+  var el = document.getElementById('puz-source'); if (!el) return;
+  el.innerHTML = puzSourceHtml(puz.cur) + puzCrowdHtml(puz.cur.id);
 }
 function puzMotifsHtml(p) {
   var ths = p.themes || [], seen = {}, out = [];
