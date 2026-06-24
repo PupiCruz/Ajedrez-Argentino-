@@ -918,7 +918,7 @@
     .puz-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; }
     @media (max-width: 480px) { .puz-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; } }
     .puz-card {
-      background: var(--bg2); border: 1px solid var(--border); border-radius: 12px;
+      background: #1a1c26; border: 2px solid rgba(255,255,255,0.22); border-radius: 12px;
       padding: 9px; cursor: pointer; transition: border-color .15s, transform .1s; position: relative;
     }
     .puz-card:hover { border-color: var(--gold-dim); transform: translateY(-2px); }
@@ -15934,6 +15934,7 @@ function puzUpdateChipCounts() {
 
 function puzSetLevel(level, btn) {
   puz.level = level;
+  puz._page = 1;
   try { localStorage.setItem('puz_level', level); } catch(e) {}
   if (btn) { var chips = btn.parentNode.querySelectorAll('.chip'); for (var i=0;i<chips.length;i++) chips[i].classList.remove('active'); btn.classList.add('active'); }
   puzRenderList();
@@ -15950,9 +15951,26 @@ function puzRenderList() {
   var list = puzForLevel(puz.level), res = puzResults();
   if (!list.length) { el.innerHTML = '<div style="text-align:center;padding:32px;color:var(--text2);font-size:13px">No hay ejercicios en este nivel todavía.</div>'; return; }
   var done = 0; for (var k=0;k<list.length;k++) if (res[list[k].id]) done++;
-  var h = '<div class="puz-intro" style="margin:-2px 0 14px">' + list.length + ' ejercicios · ' + done + ' intentados</div><div class="puz-grid">';
-  for (var i=0;i<list.length;i++) {
-    var p = list[i], flip = (p.sideToMove === 'b'), sec = p.section, lbl = PUZ_SEC_LABEL[sec] || sec;
+  var PUZ_PER_PAGE = 40;
+  var totalPages = Math.ceil(list.length / PUZ_PER_PAGE);
+  if (!puz._page || puz._page < 1) puz._page = 1;
+  if (puz._page > totalPages) puz._page = totalPages;
+  var pgStart = (puz._page - 1) * PUZ_PER_PAGE;
+  var pageList = list.slice(pgStart, pgStart + PUZ_PER_PAGE);
+  var bs = 'background:#0d0d12;border:1px solid rgba(255,255,255,0.35);color:#f0f0f0;font-size:14px;border-radius:8px;padding:5px 12px;cursor:pointer;font-family:inherit';
+  function _puzPager() {
+    if (totalPages <= 1) return '';
+    return '<div style="display:flex;align-items:center;justify-content:center;gap:14px;padding:8px 0">'
+      + '<button onclick="puzGoPage(' + (puz._page - 1) + ')"' + (puz._page <= 1 ? ' disabled' : '') + ' style="' + bs + (puz._page <= 1 ? ';opacity:.35' : '') + '">◀</button>'
+      + '<span style="font-size:12px;color:#e0e0e0;font-weight:500">Página ' + puz._page + ' de ' + totalPages + ' · ' + list.length + ' ejercicios</span>'
+      + '<button onclick="puzGoPage(' + (puz._page + 1) + ')"' + (puz._page >= totalPages ? ' disabled' : '') + ' style="' + bs + (puz._page >= totalPages ? ';opacity:.35' : '') + '">▶</button>'
+      + '</div>';
+  }
+  var h = '<div class="puz-intro" style="margin:-2px 0 6px">' + list.length + ' ejercicios · ' + done + ' intentados</div>';
+  h += _puzPager();
+  h += '<div class="puz-grid">';
+  for (var i=0;i<pageList.length;i++) {
+    var p = pageList[i], flip = (p.sideToMove === 'b'), sec = p.section, lbl = PUZ_SEC_LABEL[sec] || sec;
     var r = res[p.id];
     var mark = r === 'ok' ? '<div class="puz-card-mark ok">✓</div>' : r === 'fail' ? '<div class="puz-card-mark fail">✗</div>' : '';
     var st = puzStatPct(p.id);
@@ -15963,7 +15981,14 @@ function puzRenderList() {
        + (p.sideToMove === 'w' ? 'Blancas' : 'Negras') + '</span>'
        + '<span class="puz-tag s-' + sec + '">' + lbl + '</span></div></div>';
   }
-  el.innerHTML = h + '</div>';
+  h += '</div>' + _puzPager();
+  el.innerHTML = h;
+}
+function puzGoPage(p) {
+  puz._page = p;
+  puzRenderGrid();
+  var el = document.getElementById('puz-grid');
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function puzOpenById(id) {
