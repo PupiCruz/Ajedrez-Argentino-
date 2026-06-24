@@ -8419,6 +8419,7 @@ async function openTourGameByIndex(idx) {
       tdShowRound(_rInt);
     }
   }
+  faMaybeAutoLive();   // si es una transmisión en vivo, mostrar el gráfico de análisis al abrir
 }
 
 // Baja la partida COMPLETA del archivo del torneo (data/t/<SrcTour>.json) para la entrada del índice
@@ -13926,6 +13927,7 @@ function _bcLoad(isRefresh) {
     if (res.isLive && viewerOpen && _bcBaseKey === liveKey) {
       _liveTimer = setTimeout(function() { _bcLoad(true); }, _BC_REFRESH_MS);
     }
+    if (viewerOpen) faMaybeAutoLive();   // auto-mostrar/actualizar el gráfico en vivo
   });
 }
 
@@ -13952,6 +13954,7 @@ function _bcApplyRefreshToViewer(liveKey) {
   else { for (var k = 0; k < prevDepth && cv.node.children.length > 0; k++) cvSetNode(cv.node.children[0]); }
   var abar = document.getElementById('cv-arg-bar');
   if (abar) _bcRenderArgBar(abar);
+  faMaybeAutoLive();   // auto-mostrar/actualizar el gráfico en vivo con la partida nueva
 }
 
 // Dibuja la barra "🔴 En vivo" del visor (o la oculta si la ronda ya no está en curso).
@@ -15793,6 +15796,7 @@ function _tdApplyViewerRefresh(pgnKey) {
     else cvLast();
   }
   else { var n = cv.root; for (var k = 0; k < prevDepth && n.children.length > 0; k++) { n = n.children[0]; cvSetNode(n); } }
+  faMaybeAutoLive();   // auto-mostrar/actualizar el gráfico en vivo con las jugadas nuevas
 }
 
 function _tdLiveRefresh() {
@@ -17393,7 +17397,92 @@ function cvPlayObMove(san) {
    ANÁLISIS COMPLETO DE PARTIDA + GRÁFICO
    (usa MultiPV 1 para capturar la evaluación real de la mejor línea)
 ═══════════════════════════════════════════════════════ */
-var _fa = { running:false, armed:false, results:[], nodes:[], ply:0, lastScore:null };
+var _fa = { running:false, armed:false, results:[], nodes:[], ply:0, lastScore:null, live:false };
+
+// ── GRÁFICO EN VIVO (modo híbrido) ───────────────────────────────────────────────────────────────
+// En transmisiones en vivo el gráfico de análisis se muestra solo y se va llenando jugada a jugada,
+// para que la columna derecha no quede vacía cuando se sale del libro de aperturas.
+//  · Jugadas de partidas TERMINADAS → usan el [%eval] que Lichess agrega al terminar (gratis).
+//  · Jugadas de la partida EN CURSO → Lichess NO manda eval; las calcula el motor local (incremental,
+//    cacheadas por FEN para no recalcular en cada refresco). _fa.live distingue este modo del manual.
+var _faLiveCache = {};                                       // FEN → score {cp|mate} (perspectiva blancas)
+var _faLiveHidden = false;
+try { _faLiveHidden = (localStorage.getItem('fa_live_hidden') === '1'); } catch(e) {}
+
+// Estamos en un visor de transmisión EN VIVO (hay un refresco automático de Lichess programado).
+function _faLiveEligible() {
+  if (!document.getElementById('chess-overlay').classList.contains('open')) return false;
+  return !!((typeof _liveTimer !== 'undefined' && _liveTimer) || (typeof _tdLiveTimer !== 'undefined' && _tdLiveTimer));
+}
+
+// Interpola los huecos (null) de un array de scores para que el gráfico no se corte. Devuelve una COPIA
+// (el original conserva los null para que el motor sepa qué jugadas todavía tiene que calcular).
+function _faInterp(R) {
+  var out = R.slice();
+  for (var k = 0; k < out.length; k++) {
+    if (out[k]) continue;
+    var pj = -1, nj = -1;
+    for (var a = k - 1; a >= 0; a--) { if (out[a]) { pj = a; break; } }
+    for (var b = k + 1; b < R.length; b++) { if (R[b]) { nj = b; break; } }
+    var prev = pj >= 0 ? out[pj] : null, next = nj >= 0 ? R[nj] : null;
+    if (prev && next && prev.cp !== undefined && next.cp !== undefined) {
+      var t = (k - pj) / (nj - pj);
+      out[k] = { cp: Math.round(prev.cp + (next.cp - prev.cp) * t) };
+    } else if (prev) { out[k] = prev; }
+    else if (next) { out[k] = next; }
+    else { out[k] = { cp: 0 }; }
+  }
+  return out;
+}
+
+// Decide si auto-mostrar el gráfico en vivo (al abrir o en cada refresco de la transmisión).
+function faMaybeAutoLive() {
+  if (typeof _fa === 'undefined') return;
+  if (!_faLiveEligible() || _faLiveHidden) return;   // solo en vivo y si el visitante no lo cerró
+  if (_fa.running) return;                           // ya está calculando
+  _fa.live = true;
+  faLiveBuild();
+}
+
+// (Re)construye el gráfico en vivo: siembra desde el [%eval] del PGN + el caché del motor, lo dibuja
+// enseguida (interpolando los huecos) y lanza el motor SOLO sobre las jugadas que faltan.
+function faLiveBuild() {
+  if (!document.getElementById('chess-overlay').classList.contains('open')) return;
+  var nodes = faGetNodes();
+  if (!nodes.length) return;
+  _fa.live = true;
+  _fa.nodes = nodes;
+  _fa.results = nodes.map(function(nd) {
+    if (nd.move && nd.move.ev) return nd.move.ev;     // Lichess (jugada de partida terminada)
+    var c = _faLiveCache[nd.fen];                     // motor local (jugada en curso ya calculada)
+    return c || null;
+  });
+  document.getElementById('eval-graph-wrap').style.display = 'block';
+  document.getElementById('fa-prog-row').style.display = 'none';
+  document.getElementById('fa-cancel-btn').style.display = 'none';
+  document.getElementById('fa-btn').classList.add('active');
+  var _op = document.getElementById('cv-opening'), _faOp = document.getElementById('fa-opening');
+  if (_faOp) _faOp.textContent = _op ? _op.textContent : '';
+  faRender(_faInterp(_fa.results));   // dibujar ya con lo que haya
+  // ¿Faltan jugadas por evaluar? Lanzar el pase del motor (incremental) que solo calcula esas.
+  if (_fa.results.some(function(r) { return r == null; })) faLiveEngineStart();
+  else { faClassify(); faRender(); faRenderStats(); faApplyNags(); cvUpdateNagBadge(); faUpdateBar(); }
+}
+
+// Arranca el pase del motor para el modo en vivo (solo las jugadas sin eval). Reusa faNext/faHandleMsg.
+function faLiveEngineStart() {
+  if (!sf.engine || !sf.ready) {
+    if (typeof sfStart === 'function') sfStart();   // cargar el motor; al estar listo, el próximo refresco reintenta
+    return;
+  }
+  if (_fa.running) return;
+  mevAbort();
+  _fa.running = true; _fa.armed = false; _fa.ply = 0;
+  sf.engine.postMessage('stop');
+  sf.engine.postMessage('ucinewgame');
+  sf.engine.postMessage('setoption name MultiPV value 1');
+  sf.engine.postMessage('isready');   // faHandleMsg arranca faNext() al recibir 'readyok'
+}
 
 function faGetNodes() {
   var nodes = [], n = cv.root;
@@ -17401,7 +17490,14 @@ function faGetNodes() {
   return nodes;
 }
 
-function faToggle() { _fa.running ? cancelFA() : startFA(); }
+function faToggle() {
+  if (_fa.running) { cancelFA(); return; }
+  // El botón 📊 vuelve a habilitar el gráfico si el visitante lo había cerrado.
+  _faLiveHidden = false;
+  try { localStorage.removeItem('fa_live_hidden'); } catch(e) {}
+  if (_faLiveEligible()) { _fa.live = true; faLiveBuild(); }   // en vivo: gráfico híbrido que se mantiene
+  else startFA();                                              // partida histórica: análisis manual de siempre
+}
 
 /* ¿Cuántas jugadas de la línea principal traen eval del PGN? */
 function faCountEmbedded(nodes) {
@@ -17421,22 +17517,8 @@ function faFromEmbedded(nodes) {
     var ev = nodes[i].move && nodes[i].move.ev;
     if (ev) R[i] = ev;
   }
-  // Rellenar huecos: interpolación lineal entre cp vecinos; si no, copia el vecino.
-  for (var k = 0; k < R.length; k++) {
-    if (R[k]) continue;
-    var pj = -1, nj = -1;
-    for (var a = k - 1; a >= 0; a--) { if (R[a]) { pj = a; break; } }
-    for (var b = k + 1; b < R.length; b++) { if (R[b]) { nj = b; break; } }
-    var prev = pj >= 0 ? R[pj] : null, next = nj >= 0 ? R[nj] : null;
-    if (prev && next && prev.cp !== undefined && next.cp !== undefined) {
-      var t = (k - pj) / (nj - pj);
-      R[k] = { cp: Math.round(prev.cp + (next.cp - prev.cp) * t) };
-    } else if (prev) { R[k] = prev; }
-    else if (next) { R[k] = next; }
-    else { R[k] = { cp: 0 }; }
-  }
-  _fa.results = R;
-  _fa.running = false;
+  _fa.results = _faInterp(R);   // rellena huecos por interpolación lineal entre cp vecinos
+  _fa.running = false; _fa.live = false;
   document.getElementById('eval-graph-wrap').style.display = 'block';
   document.getElementById('fa-prog-row').style.display = 'none';
   document.getElementById('fa-cancel-btn').style.display = 'none';
@@ -17475,8 +17557,9 @@ function startFA() {
   var nodes = faGetNodes();
   if (!nodes.length) return;
   mevAbort();   // el análisis completo (lo pidió el usuario) tiene prioridad sobre la eval de miniaturas
-  _fa.running = true; _fa.armed = false; _fa.nodes = nodes;
-  _fa.results = new Array(nodes.length).fill(null);
+  _fa.running = true; _fa.armed = false; _fa.live = false; _fa.nodes = nodes;
+  // Sembrar las jugadas que ya traen [%eval] del PGN: el motor se saltea esas y solo calcula el resto.
+  _fa.results = nodes.map(function(nd) { return (nd.move && nd.move.ev) ? nd.move.ev : null; });
   _fa.ply = 0; _fa.lastScore = null;
   document.getElementById('fa-btn').classList.add('active');
   document.getElementById('eval-graph-wrap').style.display = 'block';
@@ -17496,7 +17579,8 @@ function faFinish() {
   _fa.running = false; _fa.armed = false;
   // restaurar MultiPV para el análisis en vivo
   if (sf.engine) sf.engine.postMessage('setoption name MultiPV value 3');
-  document.getElementById('fa-btn').classList.remove('active');
+  // En modo en vivo el gráfico queda mostrándose (el botón sigue "activo"); en el manual se apaga.
+  if (!_fa.live) document.getElementById('fa-btn').classList.remove('active');
   document.getElementById('fa-prog-row').style.display = 'none';
   document.getElementById('fa-cancel-btn').style.display = 'none';
 }
@@ -17511,12 +17595,19 @@ function cancelFA() {
    Si está calculando, lo detiene primero. La barra de eval queda como esté. */
 function faCloseGraph() {
   if (_fa.running) cancelFA();
+  _fa.live = false;
+  // En transmisión en vivo, recordar que el visitante NO quiere el gráfico (no reabrirlo en cada refresco).
+  _faLiveHidden = true;
+  try { localStorage.setItem('fa_live_hidden', '1'); } catch(e) {}
   var w = document.getElementById('eval-graph-wrap'); if (w) w.style.display = 'none';
   var b = document.getElementById('fa-btn'); if (b) b.classList.remove('active');
 }
 
 function faNext() {
   if (!_fa.running) return;
+  // Saltar las jugadas que YA tienen evaluación (del [%eval] de Lichess o del caché del motor): el
+  // motor solo calcula las que faltan. Acelera el análisis manual y permite el modo en vivo incremental.
+  while (_fa.ply < _fa.nodes.length && _fa.results[_fa.ply] != null) _fa.ply++;
   if (_fa.ply >= _fa.nodes.length) {
     faFinish();
     faClassify();
@@ -17531,12 +17622,14 @@ function faNext() {
   _fa.lastScore = null;
   sf.engine.postMessage('stop');
   sf.engine.postMessage('position fen ' + _fa.nodes[_fa.ply].fen);
-  sf.engine.postMessage('go movetime 350');
-  var pct = Math.round(_fa.ply / _fa.nodes.length * 100);
-  var t = document.getElementById('fa-prog-txt');
-  var f = document.getElementById('fa-prog-fill');
-  if (t) t.textContent = 'Jugada ' + _fa.ply + ' / ' + _fa.nodes.length;
-  if (f) f.style.width = pct + '%';
+  sf.engine.postMessage('go movetime ' + (_fa.live ? 250 : 350));   // en vivo, algo más rápido
+  if (!_fa.live) {   // la barra de progreso es solo para el análisis manual
+    var pct = Math.round(_fa.ply / _fa.nodes.length * 100);
+    var t = document.getElementById('fa-prog-txt');
+    var f = document.getElementById('fa-prog-fill');
+    if (t) t.textContent = 'Jugada ' + _fa.ply + ' / ' + _fa.nodes.length;
+    if (f) f.style.width = pct + '%';
+  }
 }
 
 function faHandleMsg(line) {
@@ -17563,6 +17656,11 @@ function faHandleMsg(line) {
       ? {mate: turn === 'b' ? -raw.mate : raw.mate}
       : {cp:   turn === 'b' ? -raw.cp   : raw.cp  };
     _fa.results[_fa.ply] = score;
+    if (_fa.live) {
+      _faLiveCache[node.fen] = score;            // recordar para no recalcular en el próximo refresco
+      _capCache(_faLiveCache, 4000);
+      faRender(_faInterp(_fa.results));          // el gráfico se va llenando jugada a jugada
+    }
     _fa.ply++;
     faNext();
   }
@@ -17574,10 +17672,11 @@ function faScoreToY(score, midY, cap) {
   return midY - (Math.max(-cap, Math.min(cap, cp)) / cap) * midY;
 }
 
-function faRender() {
+function faRender(R) {
   var c = document.getElementById('eval-graph-container');
   if (!c) return;
-  var R = _fa.results, n = R.length;
+  R = R || _fa.results;
+  var n = R.length;
   if (!n) { c.innerHTML = ''; return; }
   var W = 500, H = 80, mid = H/2, cap = 600;
   var pts = R.map(function(r,i){ return {x:(i+0.5)*W/n, y:faScoreToY(r,mid,cap)}; });
@@ -17721,9 +17820,15 @@ function faReset() {
     var vb = document.getElementById('sf-vbar'); if (vb) vb.classList.remove('show');
     var vf = document.getElementById('sf-vbar-fill'); if (vf) vf.style.height = '50%';
   }
-  var w = document.getElementById('eval-graph-wrap'); if (w) w.style.display = 'none';
-  var s = document.getElementById('fa-stats'); if (s) s.innerHTML = '';
-  var b = document.getElementById('fa-btn'); if (b) b.classList.remove('active');
+  // En modo en vivo NO ocultamos el gráfico (faLiveBuild lo repuebla enseguida con la partida nueva,
+  // sin parpadeo). Si ya no estamos en una transmisión en vivo, sí se cierra como siempre.
+  var keepLive = _fa.live && _faLiveEligible();
+  _fa.live = keepLive;
+  if (!keepLive) {
+    var w = document.getElementById('eval-graph-wrap'); if (w) w.style.display = 'none';
+    var s = document.getElementById('fa-stats'); if (s) s.innerHTML = '';
+    var b = document.getElementById('fa-btn'); if (b) b.classList.remove('active');
+  }
 }
 
 function faClick(e) {
