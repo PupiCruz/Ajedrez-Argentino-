@@ -11440,7 +11440,12 @@ function cvSetNode(node) {
   obSchedule();
   // No tocar el motor mientras corre el análisis completo: si no, la navegación
   // le roba el turno y el análisis se frena. Al terminar, faNext reanuda el vivo.
-  if (sf.on && sf.ready && !_fa.running) sfAnalyze();
+  // Tampoco analizar las posiciones INTERMEDIAS de la reproducción en vivo (cuando llegan varias
+  // jugadas y se pasan una por una): solo la final. _cvAnimStepping marca que estamos reproduciendo;
+  // si el nodo todavía tiene hijos, es intermedio → lo saltamos y dejamos que el motor arranque recién
+  // en la última. Así evitamos la ráfaga de stop/go que rompía el módulo.
+  var _animMid = _cvAnimStepping && cv.node && cv.node.children && cv.node.children.length > 0;
+  if (sf.on && sf.ready && !_fa.running && !_animMid) sfAnalyze();
 }
 
 function nodeDepth(node) {
@@ -12644,7 +12649,14 @@ async function _cvRestoreJump(st) {
 /* ═══════════════════════════════════════════════════════
    STOCKFISH
 ═══════════════════════════════════════════════════════ */
-var sf = { engine:null, loading:false, ready:false, on:false, depth:0, lines:[null,null,null] };
+var sf = { engine:null, loading:false, ready:false, on:false, depth:0, lines:[null,null,null],
+           // curSide = lado a mover de la posición que el motor está analizando AHORA. El puntaje del
+           // motor viene desde la perspectiva del que mueve; para mostrarlo desde las blancas hay que
+           // saber ese lado. Antes se leía del tablero vivo (cv.chess.turn()), pero cuando llegan
+           // jugadas nuevas el tablero ya cambió mientras seguían entrando evals de la posición vieja
+           // → el signo salía al revés. Ahora lo atamos a la posición analizada y se actualiza recién
+           // cuando el motor arranca de verdad la nueva (en la barrera readyok).
+           curSide:'w', pending:null, armed:true };
 // Profundidad mínima antes de mover la barra de eval: evita el "salto" de las lecturas ruidosas
 // de baja profundidad al avanzar una jugada. El número de puntaje sí se actualiza desde el inicio.
 var _SF_BAR_MINDEPTH = 12;
@@ -12751,11 +12763,28 @@ function sfOnMsg(line) {
     return;
   }
   if (line === 'readyok') {
+    // Barrera de reinicio: si hay una búsqueda pendiente (visor o ejercicio), recién ACÁ —con el
+    // motor garantizado libre y ya descartado el 'bestmove' fantasma de la búsqueda anterior—
+    // mandamos la posición nueva. Esto evita que una ráfaga de stop/go deje al motor colgado
+    // ("no arranca") y deja sf.curSide sincronizado con la posición que de verdad se va a analizar.
+    if (!sf.armed && sf.pending) {
+      sf.armed = true;
+      var _p = sf.pending; sf.pending = null;
+      sf.curSide = _p.side;
+      sf.engine.postMessage('position fen ' + _p.fen);
+      sf.engine.postMessage('go infinite');
+      return;
+    }
+    var _wasReady = sf.ready;
     sf.ready = true;
     sf.loading = false;
     document.getElementById('sf-depth').textContent = '';
-    if (sf.on) sfAnalyze();
-    if (puz.anOn) puzSfGo();   // análisis del solver de ejercicios esperando al motor
+    // Solo al quedar listo por primera vez disparamos el análisis abierto. Un 'readyok' suelto (de
+    // una barrera ya resuelta) no debe relanzar nada → evita reinicios en cadena.
+    if (!_wasReady) {
+      if (sf.on) sfAnalyze();
+      if (puz.anOn) puzSfGo();   // análisis del solver de ejercicios esperando al motor
+    }
     return;
   }
   // Análisis dentro del tablero del ejercicio: rutea acá (no toca la UI del visor).
@@ -12812,9 +12841,19 @@ function sfAnalyzeNow() {
     document.getElementById('sf-ls'+i).textContent = '—';
     document.getElementById('sf-lm'+i).textContent = '';
   }
+  sfRestart(cv.chess.fen(), cv.chess.turn());
+}
+
+// Reinicio robusto del motor: NO manda la posición de una; primero 'stop' + 'isready' y deja la
+// posición/lado en sf.pending. La barrera readyok (en sfOnMsg) recién entonces manda 'position'+'go'.
+// Así el motor nunca queda colgado por una andanada de stop/go, y el lado del puntaje (sf.curSide)
+// se cambia exactamente cuando arranca la búsqueda nueva (no antes). Lo usan el visor y el solver.
+function sfRestart(fen, side) {
+  if (!sf.engine) return;
+  sf.pending = { fen: fen, side: side };
+  sf.armed = false;
   sf.engine.postMessage('stop');
-  sf.engine.postMessage('position fen ' + cv.chess.fen());
-  sf.engine.postMessage('go infinite');
+  sf.engine.postMessage('isready');
 }
 
 function sfScoreStr(score, flip) {
@@ -12857,7 +12896,9 @@ function sfPvSan(pvArr) {
 
 function sfUpdateUI() {
   if (!sf.on) return;
-  var flip = cv.chess && cv.chess.turn() === 'b';
+  // El signo va atado a la posición que el motor ANALIZÓ (sf.curSide), no al tablero vivo: si no,
+  // las evals que entran de la posición anterior, cuando el tablero ya avanzó, salían del bando contrario.
+  var flip = sf.curSide === 'b';
   var main = sf.lines[0];
 
   // vertical eval bar + main score
@@ -16446,11 +16487,18 @@ function puzSfToggle() {
   puzSfStart();
 }
 function puzSfStart() { if (sf.engine && sf.ready) puzSfGo(); else if (typeof sfStart === 'function') sfStart(); }
+// Debounce igual que el visor: al recorrer la solución con la flecha NO evaluamos cada jugada
+// (eso disparaba una andanada de stop/go que colgaba el motor y mostraba el bando contrario), sino
+// que esperamos a que se deje de pasar y analizamos solo la posición final.
+var _puzSfDebounce = null;
 function puzSfGo() {
+  if (sf.engine) sf.engine.postMessage('stop');   // silenciar ya la búsqueda de la posición anterior
+  if (_puzSfDebounce) clearTimeout(_puzSfDebounce);
+  _puzSfDebounce = setTimeout(function() { _puzSfDebounce = null; puzSfGoNow(); }, 240);
+}
+function puzSfGoNow() {
   if (!sf.engine || !sf.ready || !puz.anOn || !puz.chess) return;
-  sf.engine.postMessage('stop');
-  sf.engine.postMessage('position fen ' + puz.chess.fen());
-  sf.engine.postMessage('go infinite');
+  sfRestart(puz.chess.fen(), puz.chess.turn());   // barrera readyok + estampa el lado en sf.curSide
 }
 function puzSfInfo(line) {
   if (line.indexOf('info') !== 0) return;
@@ -16465,7 +16513,9 @@ function puzSfInfo(line) {
 }
 function puzSfRender() {
   if (!puz.anOn || !puz.anScore) return;
-  var flip = puz.chess.turn() === 'b';   // score del motor es perspectiva del que mueve → a perspectiva blancas
+  // Signo atado a la posición analizada (sf.curSide), no al tablero vivo: arregla el "bando contrario"
+  // al recorrer la solución, igual que en el visor.
+  var flip = sf.curSide === 'b';   // score del motor es perspectiva del que mueve → a perspectiva blancas
   var sc = document.getElementById('puz-eval-score');
   sc.textContent = sfScoreStr(puz.anScore, flip); sc.className = 'sf-score ' + sfScoreCls(puz.anScore, flip);
   document.getElementById('puz-eval-depth').textContent = puz.anDepth ? 'prof. ' + puz.anDepth : '';
