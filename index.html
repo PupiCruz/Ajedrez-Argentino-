@@ -17413,6 +17413,12 @@ var _faLiveCache = {};                                       // FEN → score {c
 // profundidad para más exactitud (más lento) o bajala para más velocidad.
 var _FA_LIVE_DEPTH = 18;
 var _FA_LIVE_CAP_MS = 900;
+// Análisis MANUAL del pool (botón 📊): mismo criterio (profundidad fija + tope por jugada), pero como
+// recorre TODAS las jugadas de la partida, el tope marca el presupuesto total. 450ms/jugada ≈ 45s por
+// cada 100 jugadas. Profundidad alta para que las posiciones quietas/finales corten antes (más exactas
+// y eficientes en máquinas rápidas); las agudas se cortan en el tope. (Antes: tiempo fijo 350ms.)
+var _FA_MANUAL_DEPTH = 20;
+var _FA_MANUAL_CAP_MS = 450;
 var _faLiveHidden = false;
 try { _faLiveHidden = (localStorage.getItem('fa_live_hidden') === '1'); } catch(e) {}
 
@@ -17631,15 +17637,15 @@ function faNext() {
   if (_fa._capTimer) { clearTimeout(_fa._capTimer); _fa._capTimer = null; }
   sf.engine.postMessage('stop');
   sf.engine.postMessage('position fen ' + _fa.nodes[_fa.ply].fen);
-  if (_fa.live) {
-    // En vivo: PROFUNDIDAD fija en vez de tiempo fijo. En posiciones quietas/finales llega rápido a
-    // buena profundidad (eval más cercana a la del módulo en vivo, sobre todo en posiciones muy
-    // ganadas); con un TOPE de tiempo para que las posiciones agudas no frenen el dibujado.
-    sf.engine.postMessage('go depth ' + _FA_LIVE_DEPTH);
-    _fa._capTimer = setTimeout(function() { if (sf.engine) sf.engine.postMessage('stop'); }, _FA_LIVE_CAP_MS);
-  } else {
-    sf.engine.postMessage('go movetime 350');
-    var pct = Math.round(_fa.ply / _fa.nodes.length * 100);   // barra de progreso solo en el análisis manual
+  // Mismo criterio en vivo y manual: PROFUNDIDAD fija en vez de tiempo fijo. En posiciones quietas/
+  // finales llega rápido a buena profundidad (eval más cercana a la del módulo en vivo, sobre todo en
+  // posiciones muy ganadas); con un TOPE de tiempo por jugada para que las agudas no se eternicen.
+  // Vivo: pocas jugadas por refresco → tope holgado. Manual: recorre toda la partida → el tope marca
+  // el presupuesto total (≈45s por 100 jugadas).
+  sf.engine.postMessage('go depth ' + (_fa.live ? _FA_LIVE_DEPTH : _FA_MANUAL_DEPTH));
+  _fa._capTimer = setTimeout(function() { if (sf.engine) sf.engine.postMessage('stop'); }, _fa.live ? _FA_LIVE_CAP_MS : _FA_MANUAL_CAP_MS);
+  if (!_fa.live) {   // la barra de progreso es solo para el análisis manual
+    var pct = Math.round(_fa.ply / _fa.nodes.length * 100);
     var t = document.getElementById('fa-prog-txt');
     var f = document.getElementById('fa-prog-fill');
     if (t) t.textContent = 'Jugada ' + _fa.ply + ' / ' + _fa.nodes.length;
