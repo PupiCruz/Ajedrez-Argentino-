@@ -1203,6 +1203,13 @@
         </svg>
         <span>Ejercicios</span>
       </button>
+      <button class="nav-btn" onclick="goTo('practicar',this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <path d="M14.5 2v6l4 4-4 4v6"></path><path d="M9.5 2v6l-4 4 4 4v6"></path>
+          <line x1="5.5" y1="12" x2="18.5" y2="12"></line>
+        </svg>
+        <span>Practicar</span>
+      </button>
       <button class="nav-btn" onclick="goTo('noticias',this)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
           <path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2z"></path>
@@ -1354,6 +1361,37 @@
       <div id="puz-list"></div>
     </section>
 
+    <!-- ── PRACTICAR (jugar posiciones vs el módulo) ── -->
+    <section class="section" id="s-practicar">
+      <div class="pg-head">
+        <h2>♟ Practicar</h2>
+        <p>Jugá posiciones reales contra el módulo, hasta el final</p>
+      </div>
+      <div class="puz-intro">Elegí una posición de <b>finales</b> o de <b>medio juego</b> tomada de partidas reales y jugala contra Stockfish. Vos elegís el color y la fuerza del módulo.</div>
+
+      <!-- Sub-pestañas: finales / medio juego -->
+      <div class="tabs" id="tab-practicar">
+        <button class="chip active" onclick="pracSetPhase('endgame',this)">Práctica de finales</button>
+        <button class="chip" onclick="pracSetPhase('middlegame',this)">Práctica de medio juego</button>
+      </div>
+
+      <!-- Fuerza del módulo (4 niveles) -->
+      <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+        <span style="font-size:12px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.4px">Fuerza del módulo:</span>
+        <div class="tabs" id="tab-prac-level" style="margin:0">
+          <button class="chip active" onclick="pracSetLevel('inicial',this)">Inicial</button>
+          <button class="chip" onclick="pracSetLevel('aficionado',this)">Aficionado</button>
+          <button class="chip" onclick="pracSetLevel('avanzado',this)">Avanzado</button>
+          <button class="chip" onclick="pracSetLevel('maestro',this)">Maestro</button>
+        </div>
+      </div>
+
+      <!-- Filtros (cambian según la sub-pestaña) -->
+      <div id="prac-filters" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px"></div>
+
+      <div id="prac-list"></div>
+    </section>
+
     <!-- ── NOTICIAS ── -->
     <section class="section" id="s-noticias">
       <div class="pg-head">
@@ -1436,6 +1474,47 @@
         <div class="puz-source" id="puz-source"></div>
         <div class="puz-actions" id="puz-actions"></div>
         <div class="puz-author" id="puz-author" style="display:none"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- PRACTICAR (jugar vs el módulo) — reusa los estilos .puz-* -->
+<div class="puz-overlay" id="prac-overlay">
+  <div class="puz-modal">
+    <div class="puz-bar">
+      <h2>♟ Practicar</h2>
+      <span class="puz-lvl" id="prac-lvl-badge">Aficionado</span>
+      <span class="puz-spacer"></span>
+      <button class="puz-x" onclick="pracClose()">✕ Cerrar</button>
+    </div>
+    <div class="puz-cols">
+      <div class="puz-board-col" id="prac-board-col">
+        <div class="puz-prompt" id="prac-prompt"></div>
+        <div class="chess-board-wrap" style="max-width:none">
+          <div style="position:relative;flex:1;min-width:0">
+            <div class="chess-board" id="prac-board"></div>
+          </div>
+        </div>
+        <div class="puz-ctrls">
+          <button onclick="pracUndo()" title="Deshacer tu última jugada" id="prac-undo">↩ Deshacer</button>
+          <button onclick="pracFlip()" title="Girar tablero" style="font-size:16px">⇅</button>
+          <button onclick="toggleBoard()" title="Cambiar color del tablero">◧</button>
+        </div>
+      </div>
+      <div class="puz-info-col">
+        <div class="puz-fb" id="prac-status"><span class="ic">♟</span><span id="prac-status-txt">Tu turno.</span></div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+          <span style="font-size:12px;font-weight:700;color:var(--text2)">Jugás con:</span>
+          <div class="tabs" id="prac-color" style="margin:0">
+            <button class="chip" onclick="pracSetColor('w',this)">♔ Blancas</button>
+            <button class="chip" onclick="pracSetColor('b',this)">♚ Negras</button>
+          </div>
+        </div>
+        <div class="puz-motifs" id="prac-goal"></div>
+        <div class="puz-source" id="prac-source"></div>
+        <div class="puz-source" id="prac-moves" style="font-family:'Courier New',monospace;font-size:12px;line-height:1.7;display:none"></div>
+        <div class="puz-actions" id="prac-actions"></div>
       </div>
     </div>
   </div>
@@ -11134,6 +11213,8 @@ function goTo(sec, btn) {
   _cvFromPuzzle = false;
   var _pz = document.getElementById('puz-overlay');
   if (_pz && _pz.classList.contains('open')) { if (typeof puzSfOff === 'function') puzSfOff(); _puzHistoryPushed = false; _pz.classList.remove('open'); _puzPageOff(); puz.cur = null; puz.editing = false; }
+  var _prc = document.getElementById('prac-overlay');
+  if (_prc && _prc.classList.contains('open')) { if (typeof pracStopEngine === 'function') { pracStopEngine(); pracRestoreEngine(); } _pracHistoryPushed = false; _prc.classList.remove('open'); _pracPageOff(); prac.cur = null; prac.chess = null; }
   var _cv = document.getElementById('chess-overlay');
   if (_cv && _cv.classList.contains('open')) { _cvHistoryPushed = false; closeChessViewer(); }
   // Si hay un torneo abierto en modo "página", cerrarlo (la nav navega a la sección elegida) y
@@ -12315,6 +12396,12 @@ window.addEventListener('popstate', function() {
     _puzHistoryPushed = false; _puzDoClose();
     return;
   }
+  // Práctica vs el módulo (mismo nivel que el solver).
+  var praco = document.getElementById('prac-overlay');
+  if (praco && praco.classList.contains('open')) {
+    _pracHistoryPushed = false; _pracDoClose();
+    return;
+  }
   var chess = document.getElementById('chess-overlay');
   if (chess && chess.classList.contains('open')) {
     // Si venimos de saltar a una partida del libro, Atrás VUELVE a la partida anterior (no cierra).
@@ -12756,6 +12843,7 @@ function _sfEnsureEmbedded(cb) {
 }
 
 function sfOnMsg(line) {
+  if (typeof prac !== 'undefined' && prac.running) { pracHandleMsg(line); return; }
   if (_fa.running) { faHandleMsg(line); return; }
   if (_mev.running) { mevHandleMsg(line); return; }
   if (line === 'uciok') {
@@ -12785,6 +12873,7 @@ function sfOnMsg(line) {
     if (!_wasReady) {
       if (sf.on) sfAnalyze();
       if (puz.anOn) puzSfGo();   // análisis del solver de ejercicios esperando al motor
+      if (typeof prac !== 'undefined' && prac.wantMove) pracEngineMove();   // jugada del módulo esperando al motor
     }
     return;
   }
@@ -16862,6 +16951,495 @@ function puzAnalysisMove(from, to) {
 
 puzInit();
 
+/* ═══════════════════════════════════════════════════════
+   PRACTICAR — jugar posiciones reales (finales y medio juego) contra el módulo.
+   Consume data/practice.json. El visitante elige color y fuerza del motor; el módulo
+   responde con su mejor jugada (a fuerza limitada) hasta el final de la partida.
+   Reusa el mismo Stockfish self-host que el visor/solver (objeto `sf`), con su propia
+   ruta de mensajes (prac.running) y barrera readyok, igual que `_fa`.
+═══════════════════════════════════════════════════════ */
+var PRACTICE = [], _pracLoaded = false;
+// 4 niveles de fuerza: Skill Level de Stockfish (0–20, agrega imprecisión a propósito
+// en los bajos) + tope de profundidad y de tiempo por jugada.
+var PRAC_LEVELS = {
+  inicial:    { name:'Inicial',    skill:0,  depth:4,  capMs:400  },
+  aficionado: { name:'Aficionado', skill:6,  depth:8,  capMs:800  },
+  avanzado:   { name:'Avanzado',   skill:13, depth:12, capMs:1300 },
+  maestro:    { name:'Maestro',    skill:20, depth:18, capMs:2400 }
+};
+var PRAC_LEVEL_ORDER = ['inicial','aficionado','avanzado','maestro'];
+// Nombres lindos de los temas de medio juego (espejo de MID_LABELS del generador).
+var PRAC_MID_LABELS = {
+  'carlsbad':'Estructura Carlsbad', 'maroczy':'Maróczy (clamp c4+e4)', 'stonewall':'Stonewall',
+  'benoni':'Benoni (cuña en d5)', 'erizo':'Erizo (Hedgehog)', 'peon-dama-aislado':'Peón dama aislado',
+  'peones-colgantes':'Peones colgantes', 'peon-retrasado':'Peón retrasado', 'peon-pasado':'Peón pasado',
+  'peon-aislado':'Peón aislado', 'peones-doblados':'Peones doblados', 'centro-cerrado':'Centro cerrado',
+  'islas-de-peones':'Islas de peones débiles', 'ventaja-de-espacio':'Ventaja de espacio',
+  'cuatro-contra-tres':'4 contra 3 en un flanco', 'mayorias-enfrentadas':'Mayorías enfrentadas (ataque de minorías)',
+  'mayoria-de-dama':'Mayoría en el flanco de dama', 'mayoria-de-rey':'Mayoría en el flanco de rey',
+  'flanco-mayoria-minima':'Mayoría mínima en un flanco', 'estructura-simetrica':'Estructura simétrica',
+  'estructura-asimetrica':'Estructura asimétrica', 'puesto-avanzado':'Caballo en puesto avanzado',
+  'pareja-de-alfiles':'Pareja de alfiles', 'alfiles-distinto-color':'Alfiles de distinto color (con damas)',
+  'alfil-vs-caballo':'Alfil contra caballo', 'damas-cambiadas':'Damas cambiadas',
+  'desequilibrio-de-calidad':'Desequilibrio de calidad', 'enroques-opuestos':'Enroques opuestos',
+  'mismo-flanco':'Enroques al mismo flanco', 'rey-en-el-centro':'Rey en el centro'
+};
+// Tags que NO se ofrecen como filtro de tema (son el objetivo, ya tiene su propio filtro).
+var PRAC_TAG_SKIP = { igualada:1, ventaja:1, defensa:1 };
+var PRAC_OBJ_LABEL = { igualada:'Posición igualada', ventaja:'Convertir ventaja', defensa:'Defender posición peor' };
+
+var prac = { phase:'endgame', level:'aficionado', fType:'', fObj:'', fTag:'', _page:1,
+  cur:null, chess:null, humanColor:'w', flipped:false, sel:null, legalDests:[],
+  lastFrom:'', lastTo:'', hist:[], over:false, busy:false,
+  running:false, armed:false, wantMove:false, _cap:null };
+var _pracHistoryPushed = false;
+
+function _pracPageOn() { document.body.classList.add('puz-page'); var hdr = document.querySelector('header'), ov = document.getElementById('prac-overlay'); if (hdr && ov) ov.style.top = hdr.offsetHeight + 'px'; }
+function _pracPageOff() { document.body.classList.remove('puz-page'); var ov = document.getElementById('prac-overlay'); if (ov) ov.style.top = ''; }
+
+function pracInit() {
+  try { var lv = localStorage.getItem('prac_level'); if (lv && PRAC_LEVELS[lv]) prac.level = lv; } catch(e) {}
+  pracSyncLevelChips();
+  fetch('data/practice.json' + _dataV()).then(function(r){ return r.json(); }).then(function(d) {
+    PRACTICE = Array.isArray(d) ? d : (d.practice || []);
+    _pracLoaded = true; pracUpdatePhaseCounts(); pracRenderFilters(); pracRenderList();
+  }).catch(function() {
+    _pracLoaded = true; var el = document.getElementById('prac-list');
+    if (el) el.innerHTML = '<div style="text-align:center;padding:32px;color:var(--red);font-size:13px">No se pudieron cargar las posiciones de práctica.</div>';
+  });
+}
+
+function pracItems(phase) {
+  var ph = phase || prac.phase;
+  return PRACTICE.filter(function(p){
+    if (p.phase !== ph) return false;
+    if (ph === 'endgame') { if (prac.fType && p.type !== prac.fType) return false; }
+    else {
+      if (prac.fObj && p.objective !== prac.fObj) return false;
+      if (prac.fTag && (p.tags || []).indexOf(prac.fTag) < 0) return false;
+    }
+    return true;
+  });
+}
+function pracById(id) { for (var i=0;i<PRACTICE.length;i++) if (PRACTICE[i].id === id) return PRACTICE[i]; return null; }
+
+function pracUpdatePhaseCounts() {
+  var chips = document.querySelectorAll('#tab-practicar .chip');
+  var labels = { endgame:'Práctica de finales', middlegame:'Práctica de medio juego' };
+  for (var i=0;i<chips.length;i++) {
+    var m = chips[i].getAttribute('onclick').match(/'(endgame|middlegame)'/); if (!m) continue;
+    var n = PRACTICE.filter(function(p){ return p.phase === m[1]; }).length;
+    chips[i].innerHTML = labels[m[1]] + ' <span style="opacity:.6">(' + n + ')</span>';
+  }
+}
+function pracSyncLevelChips() {
+  var chips = document.querySelectorAll('#tab-prac-level .chip');
+  for (var i=0;i<chips.length;i++) chips[i].classList.toggle('active', chips[i].getAttribute('onclick').indexOf("'"+prac.level+"'") >= 0);
+  var b = document.getElementById('prac-lvl-badge'); if (b) b.textContent = PRAC_LEVELS[prac.level].name;
+}
+function pracSetPhase(phase, btn) {
+  prac.phase = phase; prac.fType = ''; prac.fObj = ''; prac.fTag = ''; prac._page = 1;
+  if (btn) { var chips = btn.parentNode.querySelectorAll('.chip'); for (var i=0;i<chips.length;i++) chips[i].classList.remove('active'); btn.classList.add('active'); }
+  pracRenderFilters(); pracRenderList();
+}
+function pracSetLevel(level, btn) {
+  prac.level = level;
+  try { localStorage.setItem('prac_level', level); } catch(e) {}
+  pracSyncLevelChips();
+}
+
+// ── Filtros: cambian según la sub-pestaña (finales = por tipo de final; medio juego = objetivo + tema) ──
+function pracRenderFilters() {
+  var el = document.getElementById('prac-filters'); if (!el) return;
+  var items = PRACTICE.filter(function(p){ return p.phase === prac.phase; });
+  var selStyle = 'background:var(--bg3);border:1px solid var(--border);color:var(--text);font-size:13px;font-family:inherit;padding:8px 11px;border-radius:9px;outline:none;cursor:pointer';
+  var h = '';
+  if (prac.phase === 'endgame') {
+    var types = {}; items.forEach(function(p){ if (p.type) types[p.type] = (types[p.type]||0)+1; });
+    var keys = Object.keys(types).sort();
+    h += '<select onchange="pracSetFilter(\'fType\',this.value)" style="' + selStyle + '">';
+    h += '<option value="">Todos los finales (' + items.length + ')</option>';
+    keys.forEach(function(t){ h += '<option value="' + escHtml(t) + '"' + (prac.fType === t ? ' selected' : '') + '>' + escHtml(t) + ' (' + types[t] + ')</option>'; });
+    h += '</select>';
+  } else {
+    // objetivo
+    var objs = {}; items.forEach(function(p){ if (p.objective) objs[p.objective] = (objs[p.objective]||0)+1; });
+    h += '<select onchange="pracSetFilter(\'fObj\',this.value)" style="' + selStyle + '">';
+    h += '<option value="">Cualquier objetivo</option>';
+    ['ventaja','defensa','igualada'].forEach(function(o){ if (objs[o]) h += '<option value="' + o + '"' + (prac.fObj === o ? ' selected' : '') + '>' + PRAC_OBJ_LABEL[o] + ' (' + objs[o] + ')</option>'; });
+    h += '</select>';
+    // tema
+    var tags = {}; items.forEach(function(p){ (p.tags || []).forEach(function(t){ if (!PRAC_TAG_SKIP[t]) tags[t] = (tags[t]||0)+1; }); });
+    var tkeys = Object.keys(tags).sort(function(a,b){ return (PRAC_MID_LABELS[a]||a) < (PRAC_MID_LABELS[b]||b) ? -1 : 1; });
+    h += '<select onchange="pracSetFilter(\'fTag\',this.value)" style="' + selStyle + '">';
+    h += '<option value="">Cualquier tema</option>';
+    tkeys.forEach(function(t){ h += '<option value="' + escHtml(t) + '"' + (prac.fTag === t ? ' selected' : '') + '>' + escHtml(PRAC_MID_LABELS[t] || t) + ' (' + tags[t] + ')</option>'; });
+    h += '</select>';
+  }
+  el.innerHTML = h;
+}
+function pracSetFilter(which, val) { prac[which] = val; prac._page = 1; pracRenderList(); }
+
+function pracItemLabel(p) {
+  if (p.phase === 'endgame') return p.type || 'Final';
+  return p.objective ? PRAC_OBJ_LABEL[p.objective] : (p.type || 'Medio juego');
+}
+function pracRenderList() {
+  var el = document.getElementById('prac-list'); if (!el) return;
+  if (!_pracLoaded) { el.innerHTML = '<div style="text-align:center;padding:32px;color:var(--text2);font-size:13px">⏳ Cargando posiciones…</div>'; return; }
+  var list = pracItems();
+  if (!list.length) { el.innerHTML = '<div style="text-align:center;padding:32px;color:var(--text2);font-size:13px">No hay posiciones con esos filtros.</div>'; return; }
+  var PER = 40, totalPages = Math.ceil(list.length / PER);
+  if (!prac._page || prac._page < 1) prac._page = 1;
+  if (prac._page > totalPages) prac._page = totalPages;
+  var pgStart = (prac._page - 1) * PER, pageList = list.slice(pgStart, pgStart + PER);
+  var bs = 'background:#0d0d12;border:1px solid rgba(255,255,255,0.35);color:#f0f0f0;font-size:14px;border-radius:8px;padding:5px 12px;cursor:pointer;font-family:inherit';
+  function pager() {
+    if (totalPages <= 1) return '';
+    return '<div style="display:flex;align-items:center;justify-content:center;gap:14px;padding:8px 0">'
+      + '<button onclick="pracGoPage(' + (prac._page - 1) + ')"' + (prac._page <= 1 ? ' disabled' : '') + ' style="' + bs + (prac._page <= 1 ? ';opacity:.35' : '') + '">◀</button>'
+      + '<span style="font-size:12px;color:#e0e0e0;font-weight:500">Página ' + prac._page + ' de ' + totalPages + ' · ' + list.length + ' posiciones</span>'
+      + '<button onclick="pracGoPage(' + (prac._page + 1) + ')"' + (prac._page >= totalPages ? ' disabled' : '') + ' style="' + bs + (prac._page >= totalPages ? ';opacity:.35' : '') + '">▶</button>'
+      + '</div>';
+  }
+  var h = '<div class="puz-intro" style="margin:-2px 0 6px">' + list.length + ' posiciones</div>' + pager() + '<div class="puz-grid">';
+  for (var i=0;i<pageList.length;i++) {
+    var p = pageList[i], flip = (p.sideToMove === 'b');
+    h += '<div class="puz-card" onclick="pracOpenById(\'' + p.id + '\')">'
+       + '<div class="puz-card-bd" data-flip="' + (flip?1:0) + '">' + tdMiniFen(p.fen, null, flip) + '</div>'
+       + '<div class="puz-card-meta"><span class="puz-turn"><span class="dot ' + p.sideToMove + '"></span>'
+       + (p.sideToMove === 'w' ? 'Mueven blancas' : 'Mueven negras') + '</span>'
+       + '<span class="puz-tag">' + escHtml(pracItemLabel(p)) + '</span></div></div>';
+  }
+  h += '</div>' + pager();
+  el.innerHTML = h;
+}
+function pracGoPage(p) { prac._page = p; pracRenderList(); var el = document.getElementById('prac-list'); if (el) el.scrollIntoView({ behavior:'smooth', block:'start' }); }
+
+/* ── Abrir una posición y jugarla ── */
+function pracOpenById(id) {
+  var p = pracById(id); if (!p) return;
+  prac.cur = p;
+  prac.humanColor = p.sideToMove;   // por defecto jugás el bando que está a mover (sos vos quien decide)
+  pracOpenOverlay();
+  pracSetup();
+}
+function pracOpenOverlay() {
+  var ov = document.getElementById('prac-overlay');
+  ov.classList.add('open'); ov.scrollTop = 0; _pracPageOn();
+  if (!_pracHistoryPushed) { _pracHistoryPushed = true; try { history.pushState({ practica:true }, '', location.href); } catch(e) {} }
+}
+function pracSetup() {
+  var p = prac.cur; if (!p) return;
+  prac.chess = new Chess(p.fen);
+  prac.flipped = (prac.humanColor === 'b');
+  prac.sel = null; prac.legalDests = []; prac.lastFrom = ''; prac.lastTo = '';
+  prac.hist = []; prac.over = false; prac.busy = false;
+  prac.running = false; prac.armed = false; prac.wantMove = false;
+  if (prac._cap) { clearTimeout(prac._cap); prac._cap = null; }
+  pracSyncColorChips(); pracSyncLevelChips();
+  pracRenderGoal(); pracRenderSource(); pracRenderBoard(); pracRenderMoves(); pracRenderActions();
+  pracUpdateUrl();
+  if (typeof sfStart === 'function' && !sf.engine) sfStart();   // precargar el motor en segundo plano
+  // Si elegiste el bando que NO está a mover, el módulo abre con su jugada.
+  if (prac.chess.turn() !== prac.humanColor) { pracEngineMove(); }
+  else { pracSetStatus('play', '♟', 'Tu turno. Mové una pieza.'); }
+}
+function pracSyncColorChips() {
+  var chips = document.querySelectorAll('#prac-color .chip');
+  for (var i=0;i<chips.length;i++) chips[i].classList.toggle('active', chips[i].getAttribute('onclick').indexOf("'"+prac.humanColor+"'") >= 0);
+}
+function pracSetColor(c, btn) {
+  if (prac.humanColor === c && btn) { return; }
+  prac.humanColor = c;
+  if (btn) { var chips = btn.parentNode.querySelectorAll('.chip'); for (var i=0;i<chips.length;i++) chips[i].classList.remove('active'); btn.classList.add('active'); }
+  pracStopEngine();
+  pracSetup();   // reinicia la posición con el color elegido
+}
+
+function pracGoalText() {
+  var p = prac.cur; if (!p) return '';
+  if (p.phase === 'endgame') return 'Jugá el final lo mejor que puedas contra el módulo.';
+  var obj = p.objective;
+  if (!obj) return 'Jugá la posición contra el módulo.';
+  var hObj = obj;
+  if (prac.humanColor !== p.sideToMove) { if (obj === 'ventaja') hObj = 'defensa'; else if (obj === 'defensa') hObj = 'ventaja'; }
+  if (hObj === 'ventaja') return 'Tu tarea: convertí la ventaja en victoria.';
+  if (hObj === 'defensa') return 'Tu tarea: defendé la posición peor y buscá las tablas.';
+  return 'Tu tarea: jugá la posición igualada y tomá la iniciativa.';
+}
+function pracRenderGoal() {
+  var el = document.getElementById('prac-goal'); if (!el) return;
+  var p = prac.cur, chips = '';
+  if (p && p.phase === 'middlegame') {
+    (p.tags || []).forEach(function(t){ if (PRAC_TAG_SKIP[t]) return; chips += '<span class="puz-tag">' + escHtml(PRAC_MID_LABELS[t] || t) + '</span>'; });
+  }
+  el.innerHTML = '<div style="font-size:13px;color:var(--text);font-weight:600;margin-bottom:8px">🎯 ' + escHtml(pracGoalText()) + '</div>' + chips;
+}
+function pracRenderSource() {
+  var el = document.getElementById('prac-source'); if (!el || !prac.cur) return;
+  var s = prac.cur.source || {};
+  var h = 'Posición de la partida entre <b>' + escHtml(s.white || '?') + '</b> y <b>' + escHtml(s.black || '?') + '</b>.';
+  var meta = [];
+  if (s.tournamentName) meta.push(escHtml(String(s.tournamentName)));
+  if (s.round) meta.push('Ronda ' + escHtml(String(s.round)));
+  var d = puzFmtDate(s.date); if (d) meta.push(d);
+  if (meta.length) h += '<div class="meta">' + meta.join(' · ') + '</div>';
+  el.innerHTML = h;
+}
+function pracSetStatus(kind, ic, txt) {
+  var fb = document.getElementById('prac-status');
+  fb.className = 'puz-fb' + (kind === 'ok' ? ' ok' : kind === 'bad' ? ' bad' : kind === 'think' ? ' hint' : '');
+  fb.innerHTML = '<span class="ic">' + ic + '</span><span id="prac-status-txt">' + txt + '</span>';
+}
+function pracRenderMoves() {
+  var el = document.getElementById('prac-moves'); if (!el) return;
+  if (!prac.hist.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  el.style.display = '';
+  var fp = prac.cur.fen.split(' '), n = parseInt(fp[5] || '1', 10), w = (fp[1] === 'w'), parts = [];
+  for (var i=0;i<prac.hist.length;i++) {
+    if (w) parts.push(n + '.' + prac.hist[i]);
+    else { parts.push((i === 0 ? n + '…' : '') + prac.hist[i]); n++; }
+    w = !w;
+  }
+  el.innerHTML = parts.join(' ');
+}
+function pracRenderActions() {
+  var el = document.getElementById('prac-actions'); if (!el) return;
+  var h = '';
+  if (prac.over) {
+    h += '<button class="puz-btn primary" onclick="pracRestart()">↻ Volver a intentar</button>';
+    h += '<button class="puz-btn" onclick="pracNext()">Otra posición →</button>';
+  } else {
+    h += '<button class="puz-btn" onclick="pracRestart()">↻ Reiniciar</button>';
+    h += '<button class="puz-btn" onclick="pracResign()">🏳 Rendirse</button>';
+    h += '<button class="puz-btn" onclick="pracNext()">Otra posición →</button>';
+  }
+  el.innerHTML = h;
+  var u = document.getElementById('prac-undo');
+  if (u) u.disabled = prac.over || prac.busy || prac.hist.length < 2;
+}
+
+/* ── Tablero (clon liviano del tablero del solver, con su propio estado `prac`) ── */
+var _pracBoardBound = false;
+function pracRenderBoard() {
+  if (!prac.chess) return;
+  var bd = prac.chess.board(), FL = ['a','b','c','d','e','f','g','h'], el = document.getElementById('prac-board'), h = '';
+  for (var r=0;r<8;r++) for (var f=0;f<8;f++) {
+    var rr = prac.flipped ? 7-r : r, ff = prac.flipped ? 7-f : f;
+    var sq = FL[ff] + (8-rr), li = (r+f) % 2 === 0, cls = 'csq ' + (li ? 'li' : 'da');
+    if (sq === prac.lastFrom) cls += ' mf';
+    if (sq === prac.lastTo) cls += ' mt';
+    if (sq === prac.sel) cls += ' sel';
+    var pc = bd[rr][ff];
+    if (prac.legalDests.indexOf(sq) >= 0) cls += pc ? ' legal-cap' : ' legal';
+    var pk = pc ? (pc.color + pc.type) : '';
+    h += '<div class="' + cls + '" data-sq="' + sq + '">' + cvCellInner(r, f, rr, ff, sq, pk, FL) + '</div>';
+  }
+  el.innerHTML = h;
+  pracBindBoard();
+}
+function pracBindBoard() {
+  if (_pracBoardBound) return; _pracBoardBound = true;
+  var el = document.getElementById('prac-board');
+  el.addEventListener('click', function(e) {
+    if (_pracDragSuppress) { _pracDragSuppress = false; return; }
+    var t = e.target.closest('[data-sq]'); if (!t) return; pracHandleClick(t.getAttribute('data-sq'));
+  });
+  el.addEventListener('touchend', function(e) {
+    e.preventDefault(); var t = e.changedTouches[0], x = document.elementFromPoint(t.clientX, t.clientY);
+    var sqEl = x ? x.closest('[data-sq]') : null; if (!sqEl) return; pracHandleClick(sqEl.getAttribute('data-sq'));
+  }, { passive:false });
+  pracInitDrag(el);
+}
+function pracLocked() { return !prac.chess || prac.over || prac.busy || prac.chess.turn() !== prac.humanColor; }
+function pracHandleClick(sq) {
+  if (pracLocked()) return;
+  if (prac.sel) {
+    if (sq === prac.sel) { prac.sel = null; prac.legalDests = []; pracRenderBoard(); return; }
+    if (prac.legalDests.indexOf(sq) >= 0) { pracTryMove(prac.sel, sq); return; }
+  }
+  var pc = prac.chess.get(sq);
+  if (pc && pc.color === prac.chess.turn()) { prac.sel = sq; prac.legalDests = prac.chess.moves({ square:sq, verbose:true }).map(function(m){ return m.to; }); }
+  else { prac.sel = null; prac.legalDests = []; }
+  pracRenderBoard();
+}
+function pracTryMove(from, to) {
+  var pc = prac.chess.get(from), promo;
+  if (pc && pc.type === 'p') { var tr = parseInt(to[1]); if ((pc.color === 'w' && tr === 8) || (pc.color === 'b' && tr === 1)) promo = 'q'; }
+  var m = prac.chess.move({ from:from, to:to, promotion:promo || 'q' });
+  prac.sel = null; prac.legalDests = [];
+  if (!m) { pracRenderBoard(); return; }
+  prac.lastFrom = m.from; prac.lastTo = m.to; prac.hist.push(m.san);
+  pracRenderBoard(); pracRenderMoves();
+  pracAfterMove();
+}
+function pracUndo() {
+  if (prac.over || prac.busy || prac.hist.length < 2) return;
+  // deshace tu jugada y la respuesta del módulo (dos medias jugadas)
+  prac.chess.undo(); prac.chess.undo(); prac.hist.pop(); prac.hist.pop();
+  prac.sel = null; prac.legalDests = []; prac.over = false;
+  var h = prac.chess.history({ verbose:true }); var last = h[h.length-1];
+  prac.lastFrom = last ? last.from : ''; prac.lastTo = last ? last.to : '';
+  pracRenderBoard(); pracRenderMoves();
+  pracAfterMove();   // si la posición quedó con el módulo a mover, vuelve a jugar él
+}
+
+/* ── Jugada del módulo (motor a fuerza limitada) ── */
+function pracEngineMove() {
+  if (prac.over || !prac.chess) return;
+  prac.busy = true; pracRenderActions();
+  pracSetStatus('think', '⏳', 'El módulo está pensando…');
+  if (typeof mevAbort === 'function') mevAbort();   // la práctica se queda con el motor
+  if (typeof sfStart !== 'function') return;
+  if (!sf.engine || !sf.ready) { prac.wantMove = true; sfStart(); return; }
+  prac.wantMove = false; prac.running = true; prac.armed = false;
+  var lv = PRAC_LEVELS[prac.level];
+  sf.engine.postMessage('setoption name Skill Level value ' + lv.skill);
+  sf.engine.postMessage('setoption name MultiPV value 1');
+  sf.engine.postMessage('stop');
+  sf.engine.postMessage('isready');   // barrera → pracHandleMsg readyok → pracSendGo
+}
+function pracSendGo() {
+  if (!prac.chess) { prac.running = false; return; }
+  var lv = PRAC_LEVELS[prac.level];
+  sf.engine.postMessage('position fen ' + prac.chess.fen());
+  sf.engine.postMessage('go depth ' + lv.depth);
+  if (prac._cap) clearTimeout(prac._cap);
+  prac._cap = setTimeout(function(){ if (sf.engine) sf.engine.postMessage('stop'); }, lv.capMs);
+}
+function pracHandleMsg(line) {
+  if (!prac.armed) { if (line.indexOf('readyok') === 0) { prac.armed = true; pracSendGo(); } return; }
+  if (line.indexOf('bestmove') === 0) {
+    if (prac._cap) { clearTimeout(prac._cap); prac._cap = null; }
+    prac.running = false;
+    var uci = line.split(/\s+/)[1];
+    pracApplyEngineMove(uci);
+  }
+}
+function pracApplyEngineMove(uci) {
+  prac.busy = false;
+  if (!prac.chess) return;
+  if (!uci || uci === '(none)') { pracAfterMove(); return; }
+  var m = prac.chess.move({ from:uci.slice(0,2), to:uci.slice(2,4), promotion:uci[4] || 'q' });
+  if (!m) { pracRenderBoard(); pracRenderActions(); return; }
+  prac.lastFrom = m.from; prac.lastTo = m.to; prac.hist.push(m.san);
+  pracRenderBoard(); pracRenderMoves();
+  pracAfterMove();
+}
+// Tras cualquier jugada: ¿terminó? ¿le toca al módulo? ¿o a vos?
+function pracAfterMove() {
+  if (!prac.chess) return;
+  if (prac.chess.game_over()) { pracEndGame(); return; }
+  if (prac.chess.turn() !== prac.humanColor) { pracEngineMove(); }
+  else {
+    var chk = prac.chess.in_check() ? ' (¡estás en jaque!)' : '';
+    pracSetStatus('play', '♟', 'Tu turno' + chk + '.');
+    pracRenderActions();
+  }
+}
+function pracEndGame() {
+  prac.over = true; prac.busy = false; prac.sel = null; prac.legalDests = [];
+  var c = prac.chess, msg, kind = 'ok', ic = '🤝';
+  if (c.in_checkmate()) {
+    var loser = c.turn();   // el que está a mover recibió el mate
+    if (loser === prac.humanColor) { msg = 'Jaque mate. Ganó el módulo.'; kind = 'bad'; ic = '😞'; }
+    else { msg = '¡Jaque mate! Le ganaste al módulo. 🎉'; kind = 'ok'; ic = '🏆'; }
+  } else if (c.in_stalemate()) { msg = 'Tablas por ahogado.'; ic = '🤝'; }
+  else if (c.in_threefold_repetition()) { msg = 'Tablas por repetición.'; ic = '🤝'; }
+  else if (c.insufficient_material()) { msg = 'Tablas por material insuficiente.'; ic = '🤝'; }
+  else if (c.in_draw()) { msg = 'Tablas (regla de las 50 jugadas).'; ic = '🤝'; }
+  else { msg = 'Partida terminada.'; }
+  pracSetStatus(kind, ic, msg);
+  pracRenderBoard(); pracRenderActions();
+  pracStopEngine();
+}
+function pracResign() {
+  if (prac.over) return;
+  prac.over = true;
+  pracSetStatus('bad', '🏳', 'Te rendiste. Gana el módulo. Probá de nuevo o cambiá de posición.');
+  pracStopEngine(); pracRenderActions();
+}
+function pracRestart() { pracStopEngine(); pracSetup(); }
+function pracNext() {
+  var list = pracItems().filter(function(p){ return !prac.cur || p.id !== prac.cur.id; });
+  if (!list.length) { pracClose(); return; }
+  var pick = list[Math.floor(Math.random() * list.length)];
+  prac.cur = pick; prac.humanColor = pick.sideToMove;
+  pracStopEngine(); pracSetup();
+}
+function pracFlip() { prac.flipped = !prac.flipped; prac.sel = null; prac.legalDests = []; pracRenderBoard(); }
+
+function pracStopEngine() {
+  prac.running = false; prac.armed = false; prac.wantMove = false;
+  if (prac._cap) { clearTimeout(prac._cap); prac._cap = null; }
+  if (sf.engine) { try { sf.engine.postMessage('stop'); } catch(e) {} }
+}
+// Devuelve el motor compartido a su configuración de análisis (fuerza máxima + 3 líneas).
+function pracRestoreEngine() {
+  if (sf.engine) { try { sf.engine.postMessage('setoption name Skill Level value 20'); sf.engine.postMessage('setoption name MultiPV value 3'); } catch(e) {} }
+}
+function pracUpdateUrl() { if (!prac.cur) return; try { history.replaceState({ practica:true }, '', location.pathname + '?practica=' + encodeURIComponent(prac.cur.id)); } catch(e) {} }
+function _pracDoClose() {
+  pracStopEngine(); pracRestoreEngine();
+  document.getElementById('prac-overlay').classList.remove('open'); _pracPageOff();
+  prac.cur = null; prac.chess = null; prac.over = false; prac.busy = false;
+  try { history.replaceState({}, '', location.pathname); } catch(e) {}
+}
+function pracClose() { if (_pracHistoryPushed) { _pracHistoryPushed = false; history.back(); } else _pracDoClose(); }
+function pracOpenByIdWhenReady(id) {
+  var tries = 0;
+  (function attempt() {
+    if (_pracLoaded && typeof Chess !== 'undefined') {
+      pracOpenById(id);
+      var dlc = document.getElementById('deeplink-cover'); if (dlc && dlc.parentNode) dlc.parentNode.removeChild(dlc);
+      return;
+    }
+    if (++tries < 80) setTimeout(attempt, 150);
+  })();
+}
+
+/* ── Arrastrar piezas en el tablero de práctica (igual que el solver) ── */
+var _pracDrag = null, _pracDragSuppress = false, _pracDragDocBound = false;
+function pracInitDrag(boardEl) {
+  if (!window.matchMedia('(pointer: fine)').matches) return;
+  if (boardEl._prDragBound) return; boardEl._prDragBound = true;
+  boardEl.addEventListener('mousedown', function(e) {
+    if (e.button !== 0 || pracLocked()) return;
+    var sqEl = e.target.closest('[data-sq]'); if (!sqEl) return;
+    var sq = sqEl.getAttribute('data-sq'), pc = prac.chess.get(sq);
+    if (!pc || pc.color !== prac.chess.turn()) return;
+    var img = sqEl.querySelector('img.cpc'); if (!img) return;
+    prac.sel = sq; prac.legalDests = prac.chess.moves({ square:sq, verbose:true }).map(function(m){ return m.to; });
+    pracRenderBoard();
+    var rect = img.getBoundingClientRect(), sz = rect.width, clone = document.createElement('img');
+    clone.src = img.src;
+    clone.style.cssText = 'position:fixed;pointer-events:none;z-index:9999;width:' + sz + 'px;height:' + sz + 'px;left:' + (e.clientX-sz/2) + 'px;top:' + (e.clientY-sz/2) + 'px;opacity:.88;';
+    document.body.appendChild(clone);
+    var live = document.querySelector('#prac-board [data-sq="' + sq + '"] img.cpc'); if (live) live.style.opacity = '.22';
+    _pracDrag = { sq:sq, clone:clone, sx:e.clientX, sy:e.clientY, moved:false }; e.preventDefault();
+  });
+  if (_pracDragDocBound) return; _pracDragDocBound = true;
+  document.addEventListener('mousemove', function(e) {
+    if (!_pracDrag) return; var sz = parseFloat(_pracDrag.clone.style.width);
+    _pracDrag.clone.style.left = (e.clientX-sz/2) + 'px'; _pracDrag.clone.style.top = (e.clientY-sz/2) + 'px';
+    if (!_pracDrag.moved && (Math.abs(e.clientX-_pracDrag.sx) > 4 || Math.abs(e.clientY-_pracDrag.sy) > 4)) _pracDrag.moved = true;
+  });
+  document.addEventListener('mouseup', function(e) {
+    if (!_pracDrag) return; var d = _pracDrag; _pracDrag = null;
+    if (d.clone.parentNode) d.clone.parentNode.removeChild(d.clone);
+    if (!d.moved) { return; }
+    _pracDragSuppress = true;
+    var x = document.elementFromPoint(e.clientX, e.clientY), sqEl = x ? x.closest('[data-sq]') : null;
+    if (!sqEl || sqEl.getAttribute('data-sq') === d.sq) { prac.sel = null; prac.legalDests = []; pracRenderBoard(); return; }
+    var to = sqEl.getAttribute('data-sq');
+    if (prac.legalDests.indexOf(to) >= 0) { pracTryMove(d.sq, to); }
+    else { prac.sel = null; prac.legalDests = []; pracRenderBoard(); }
+  });
+}
+
+pracInit();
+
 // Deep-link: si la URL trae ?torneo=<id> o ?jugador=<id> (link compartido o pestaña nueva), abrir
 // eso. Dejamos el historial como [lista, detalle] (replaceState a la URL limpia + el push del
 // detalle), así el botón Atrás muestra la LISTA en vez de salir del sitio.
@@ -16871,11 +17449,19 @@ puzInit();
   var ptk = params.get('t'), pgk = params.get('g');   // partida abierta desde un perfil: ?jugador=&t=&g=
   var nk = params.get('noticia');                      // noticia compartida: ?noticia=<id>
   var ek = params.get('ejercicio');                    // ejercicio compartido: ?ejercicio=<id>
+  var pak = params.get('practica');                    // práctica compartida: ?practica=<id>
   if (ek) {
     var ebtn = document.querySelector('.nav-btn[onclick*="\'ejercicios\'"]');
     if (ebtn) { try { goTo('ejercicios', ebtn); } catch (e) {} }
     try { history.replaceState({}, '', location.pathname); } catch (e) {}
     puzOpenByIdWhenReady(ek);
+    return;
+  }
+  if (pak) {
+    var pabtn = document.querySelector('.nav-btn[onclick*="\'practicar\'"]');
+    if (pabtn) { try { goTo('practicar', pabtn); } catch (e) {} }
+    try { history.replaceState({}, '', location.pathname); } catch (e) {}
+    pracOpenByIdWhenReady(pak);
     return;
   }
   if (nk) {
