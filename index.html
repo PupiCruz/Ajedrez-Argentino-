@@ -16031,8 +16031,8 @@ function puzRenderList() {
 }
 function puzGoPage(p) {
   puz._page = p;
-  puzRenderGrid();
-  var el = document.getElementById('puz-grid');
+  puzRenderList();
+  var el = document.getElementById('puz-list');
   if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
@@ -16215,7 +16215,7 @@ function puzFreeClick(sq, moveFn) {
 function puzPromoFor(from, to) {
   var p = puz.cur, exp = p.solution[puz.step] || '';
   if (exp.slice(0,4) === from + to && exp.length > 4) return exp[4];
-  var alts = (p.acceptedAlts && p.acceptedAlts[puz.step]) || [];
+  var alts = (p.acceptedAlts && p.acceptedAlts[Math.floor(puz.step / 2)]) || [];
   for (var i=0;i<alts.length;i++) if (alts[i].slice(0,4) === from + to && alts[i].length > 4) return alts[i][4];
   return null;
 }
@@ -16252,7 +16252,7 @@ function puzApplyUserMove(from, to, promo) {
     }, 360);
     return;
   }
-  var alts = (p.acceptedAlts && p.acceptedAlts[puz.step]) || [];   // buena pero no la mejor
+  var alts = (p.acceptedAlts && p.acceptedAlts[Math.floor(puz.step / 2)]) || [];   // buena pero no la mejor
   if (alts.some(function(a){ return puzUciEq(uci, a); })) {
     puzSetFb('hint', '💡', 'Esa es buena… pero hay una <b>mejor</b>. Seguí intentando.');
     puzPlaySound('hint'); puzRenderBoard(); return;
@@ -16578,9 +16578,9 @@ function puzRenderAuthor() {
   el.style.display = '';
   var p = puz.cur, altsHtml = '';
   (p.acceptedAlts || []).forEach(function(arr, i) {
-    if (!arr || !arr.length || i % 2 !== 0) return;   // solo jugadas del que resuelve (índices pares)
+    if (!arr || !arr.length) return;   // acceptedAlts está indexado por JUGADA del solucionador (no por ply)
     var chips = arr.map(function(u) { return '<span class="alt-chip">' + escHtml(u) + '<button onclick="puzRemoveAlt(' + i + ',\'' + u + '\')" title="Quitar">✕</button></span>'; }).join('');
-    altsHtml += '<div>Jugada ' + (Math.floor(i/2)+1) + ': ' + chips + '</div>';
+    altsHtml += '<div>Jugada ' + (i+1) + ': ' + chips + '</div>';
   });
   if (!altsHtml) altsHtml = '<span style="color:var(--text3)">(ninguna)</span>';
   var linesHtml = (p.acceptedLines || []).map(function(L, i) {
@@ -16632,8 +16632,9 @@ function puzEditMove(from, to) {
   var uci = from + to + (mv.promotion || '');
   if (puzUciEq(uci, puz.cur.solution[s])) { puzAuthorMsg('Esa ya es la jugada principal.'); puzRenderBoard(); return; }
   puz.cur.acceptedAlts = puz.cur.acceptedAlts || [];
-  while (puz.cur.acceptedAlts.length < puz.cur.solution.length) puz.cur.acceptedAlts.push([]);
-  var arr = puz.cur.acceptedAlts[s] || (puz.cur.acceptedAlts[s] = []);
+  var ai = Math.floor(s / 2);   // acceptedAlts se indexa por JUGADA del solucionador (s es el ply)
+  while (puz.cur.acceptedAlts.length < Math.ceil(puz.cur.solution.length / 2)) puz.cur.acceptedAlts.push([]);
+  var arr = puz.cur.acceptedAlts[ai] || (puz.cur.acceptedAlts[ai] = []);
   var msg;
   if (arr.some(function(a){ return puzUciEq(a, uci); })) msg = 'Esa variante ya estaba cargada.';
   else { arr.push(uci); puz._dirty = true; msg = '✓ Variante agregada en la jugada ' + (Math.floor(s/2)+1) + ': ' + mv.san; }
