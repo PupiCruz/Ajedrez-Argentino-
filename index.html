@@ -17398,7 +17398,7 @@ function cvPlayObMove(san) {
    ANÁLISIS COMPLETO DE PARTIDA + GRÁFICO
    (usa MultiPV 1 para capturar la evaluación real de la mejor línea)
 ═══════════════════════════════════════════════════════ */
-var _fa = { running:false, armed:false, results:[], nodes:[], ply:0, lastScore:null, live:false };
+var _fa = { running:false, armed:false, results:[], nodes:[], ply:0, lastScore:null, live:false, _capTimer:null };
 
 // ── GRÁFICO EN VIVO (modo híbrido) ───────────────────────────────────────────────────────────────
 // En transmisiones en vivo el gráfico de análisis se muestra solo y se va llenando jugada a jugada,
@@ -17407,6 +17407,12 @@ var _fa = { running:false, armed:false, results:[], nodes:[], ply:0, lastScore:n
 //  · Jugadas de la partida EN CURSO → Lichess NO manda eval; las calcula el motor local (incremental,
 //    cacheadas por FEN para no recalcular en cada refresco). _fa.live distingue este modo del manual.
 var _faLiveCache = {};                                       // FEN → score {cp|mate} (perspectiva blancas)
+// El gráfico en vivo evalúa cada jugada a PROFUNDIDAD fija (no tiempo fijo): así se acerca más a la
+// valoración del módulo en vivo en posiciones muy ganadas, sin desperdiciar tiempo en las quietas.
+// _FA_LIVE_CAP_MS es el tope por jugada (las posiciones agudas no frenan el dibujado). Subí la
+// profundidad para más exactitud (más lento) o bajala para más velocidad.
+var _FA_LIVE_DEPTH = 18;
+var _FA_LIVE_CAP_MS = 900;
 var _faLiveHidden = false;
 try { _faLiveHidden = (localStorage.getItem('fa_live_hidden') === '1'); } catch(e) {}
 
@@ -17578,6 +17584,7 @@ function startFA() {
 
 function faFinish() {
   _fa.running = false; _fa.armed = false;
+  if (_fa._capTimer) { clearTimeout(_fa._capTimer); _fa._capTimer = null; }
   // restaurar MultiPV para el análisis en vivo
   if (sf.engine) sf.engine.postMessage('setoption name MultiPV value 3');
   // En modo en vivo el gráfico queda mostrándose (el botón sigue "activo"); en el manual se apaga.
@@ -17621,11 +17628,18 @@ function faNext() {
     return;
   }
   _fa.lastScore = null;
+  if (_fa._capTimer) { clearTimeout(_fa._capTimer); _fa._capTimer = null; }
   sf.engine.postMessage('stop');
   sf.engine.postMessage('position fen ' + _fa.nodes[_fa.ply].fen);
-  sf.engine.postMessage('go movetime ' + (_fa.live ? 250 : 350));   // en vivo, algo más rápido
-  if (!_fa.live) {   // la barra de progreso es solo para el análisis manual
-    var pct = Math.round(_fa.ply / _fa.nodes.length * 100);
+  if (_fa.live) {
+    // En vivo: PROFUNDIDAD fija en vez de tiempo fijo. En posiciones quietas/finales llega rápido a
+    // buena profundidad (eval más cercana a la del módulo en vivo, sobre todo en posiciones muy
+    // ganadas); con un TOPE de tiempo para que las posiciones agudas no frenen el dibujado.
+    sf.engine.postMessage('go depth ' + _FA_LIVE_DEPTH);
+    _fa._capTimer = setTimeout(function() { if (sf.engine) sf.engine.postMessage('stop'); }, _FA_LIVE_CAP_MS);
+  } else {
+    sf.engine.postMessage('go movetime 350');
+    var pct = Math.round(_fa.ply / _fa.nodes.length * 100);   // barra de progreso solo en el análisis manual
     var t = document.getElementById('fa-prog-txt');
     var f = document.getElementById('fa-prog-fill');
     if (t) t.textContent = 'Jugada ' + _fa.ply + ' / ' + _fa.nodes.length;
@@ -17649,6 +17663,7 @@ function faHandleMsg(line) {
     if (cpM || mtM) _fa.lastScore = mtM ? {mate:parseInt(mtM[1])} : {cp:parseInt(cpM[1])};
   }
   if (line.indexOf('bestmove') === 0) {
+    if (_fa._capTimer) { clearTimeout(_fa._capTimer); _fa._capTimer = null; }
     var node = _fa.nodes[_fa.ply];
     var raw  = _fa.lastScore || {cp:0};
     var turn = node.fen.split(' ')[1];   // lado a mover en esta posición
@@ -17814,6 +17829,7 @@ function faRenderStats() {
 
 function faReset() {
   if (typeof _fa === 'undefined') return;
+  if (_fa._capTimer) { clearTimeout(_fa._capTimer); _fa._capTimer = null; }
   if (_fa.running) { _fa.running = false; if (sf.engine) { sf.engine.postMessage('stop'); sf.engine.postMessage('setoption name MultiPV value 3'); } }
   _fa.armed = false;
   _fa.results = []; _fa.nodes = []; _fa.ply = 0; _fa.stats = null;
