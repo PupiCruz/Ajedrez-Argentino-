@@ -1469,6 +1469,7 @@
 <!-- EJERCICIOS — SOLVER -->
 <div class="puz-overlay" id="puz-overlay">
   <div class="puz-modal">
+    <div id="puz-routine-bar"></div>
     <div class="puz-bar">
       <h2>🧩 Ejercicio</h2>
       <span class="puz-lvl" id="puz-lvl-badge">Inicial</span>
@@ -1520,6 +1521,7 @@
 <!-- PRACTICAR (jugar vs el módulo) — reusa los estilos .puz-* -->
 <div class="puz-overlay" id="prac-overlay">
   <div class="puz-modal">
+    <div id="prac-routine-bar"></div>
     <div class="puz-bar">
       <h2>♟ Practicar</h2>
       <span class="puz-lvl" id="prac-lvl-badge">Aficionado</span>
@@ -16273,15 +16275,259 @@ function puzRenderStatsPanel() {
   for (var i=0;i<lvls.length;i++) { var b = P.byLevel[lvls[i]]; if (b && b.n) byLvl += (byLvl?' · ':'') + PUZ_LVL_SHORT[lvls[i]] + ' ' + b.ok + '/' + b.n; }
   var cont = '';
   if (P.lastId && puzById(P.lastId)) cont = '<button onclick="puzOpenById(\'' + P.lastId + '\')" style="background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-size:14px;font-weight:700;border-radius:9px;padding:9px 15px;cursor:pointer;font-family:inherit">▶ Seguir donde quedaste</button>';
-  el.style.textAlign = 'center';   // centra el panel (que se ajusta al ancho de las estadísticas)
-  el.innerHTML =
-    '<div style="display:inline-block;text-align:left;max-width:100%;background:rgba(26,28,38,0.90);border:2px solid rgba(255,255,255,0.22);border-radius:13px;padding:14px 16px;margin-bottom:14px">'
-    + '<div style="display:flex;gap:9px;flex-wrap:wrap;align-items:stretch;justify-content:center">' + pills + '</div>'
+  var statsCard =
+    '<div style="text-align:left;flex:0 1 auto;max-width:100%;background:rgba(26,28,38,0.90);border:2px solid rgba(255,255,255,0.22);border-radius:13px;padding:14px 16px">'
+    + '<div style="display:flex;gap:9px;flex-wrap:wrap;align-items:stretch">' + pills + '</div>'
     + (byLvl ? '<div style="font-size:13px;color:var(--text2);margin-top:11px">Por nivel: ' + byLvl + '</div>' : '')
     + _puzDailyBar(P)
     + _puzActivityStrip(P)
     + (cont ? '<div style="margin-top:12px">' + cont + '</div>' : '')
     + '</div>';
+  el.style.cssText = 'display:flex;flex-wrap:wrap;gap:14px;align-items:stretch;justify-content:center;margin-bottom:14px';
+  el.innerHTML = statsCard + _puzRoutineBuilderHtml();
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+//  RUTINA DE ENTRENAMIENTO — arma una sesión guiada: fase de ejercicios (por
+//  tiempo o por aciertos limpios) + práctica de medio juego y/o finales.
+//  Reusa el solver y Practicar; sin login, todo del lado del visitante.
+// ───────────────────────────────────────────────────────────────────────────
+var routine = { active:false, steps:[], idx:0, mode:'time', minutes:20, count:5,
+  inc:{ puz:true, mid:true, fin:true }, midObj:'', finType:'',
+  puzClean:0, phaseEndMs:0, phaseDurMs:0, _timer:null, _used:{}, _level:'aficionado',
+  doneP:0, doneMid:0, doneFin:0 };
+
+var _routineBarBtn     = 'padding:6px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.20);background:rgba(0,0,0,0.25);color:var(--text2);font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit';
+var _routineBarBtnGold = 'padding:7px 14px;border-radius:8px;border:1px solid var(--gold-dim);background:var(--gold);color:#1a1400;font-size:13px;font-weight:800;cursor:pointer;font-family:inherit';
+var _routineBarX       = 'width:28px;height:28px;border-radius:8px;border:1px solid rgba(255,255,255,0.18);background:rgba(0,0,0,0.2);color:var(--text2);font-size:13px;cursor:pointer;font-family:inherit;line-height:1';
+
+function _routineLevel() { var r = puzPlayer().rating; return r < 1400 ? 'inicial' : r < 1800 ? 'aficionado' : r < 2200 ? 'avanzado' : 'maestro'; }
+function _routineEnsurePractice(cb) {
+  if (_pracLoaded || (PRACTICE && PRACTICE.length)) { cb(); return; }
+  fetch('data/practice.json' + _dataV()).then(function(r){ return r.json(); }).then(function(d) {
+    PRACTICE = Array.isArray(d) ? d : (d.practice || []); _pracLoaded = true; cb();
+  }).catch(function(){ cb(); });
+}
+function _routineMidCount() { return routine.inc.mid ? (routine.mode === 'time' ? Math.max(1, Math.round(routine.minutes / 30)) : 1) : 0; }
+function _routineFinCount() { return routine.inc.fin ? (routine.mode === 'time' ? Math.max(1, Math.round(routine.minutes / 30)) : 1) : 0; }
+function _routinePuzMin() { return Math.max(5, routine.minutes - (_routineMidCount() * 8 + _routineFinCount() * 6)); }
+
+// ── Armador (panel a la derecha de las estadísticas) ──
+function _puzRoutineBuilderHtml() {
+  var R = routine;
+  var h = '<div style="font-size:15px;font-weight:800;color:var(--text);margin-bottom:10px">🎯 Rutina de entrenamiento</div>';
+  if (R.inc.puz) {
+    var seg = function(m, lbl) { var on = R.mode === m;
+      return '<button onclick="routineSetMode(\'' + m + '\')" style="flex:1;padding:7px 6px;border-radius:8px;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit;border:1px solid ' + (on?'var(--gold-dim)':'rgba(255,255,255,0.14)') + ';background:' + (on?'var(--gold-bg)':'rgba(0,0,0,0.22)') + ';color:' + (on?'var(--gold)':'var(--text2)') + '">' + lbl + '</button>'; };
+    h += '<div style="display:flex;gap:6px;margin-bottom:11px">' + seg('time','⏱ Por tiempo') + seg('count','🎯 Por aciertos') + '</div>';
+    h += R.mode === 'time' ? _routineStepper('Duración', R.minutes + ' min', 'min') : _routineStepper('Ejercicios correctos', String(R.count), 'count');
+  }
+  h += '<div style="font-size:12px;color:var(--text2);margin:13px 0 6px;font-weight:700">Incluir:</div>';
+  h += _routineCheck('puz', 'Ejercicios');
+  h += _routineCheck('mid', 'Medio juego');
+  if (R.inc.mid) h += _routineMidPicker();
+  h += _routineCheck('fin', 'Finales');
+  if (R.inc.fin) h += _routineFinPicker();
+  h += '<div style="font-size:12px;color:var(--text2);margin:12px 0 11px;line-height:1.5">' + _routinePreview() + '</div>';
+  var can = R.inc.puz || R.inc.mid || R.inc.fin;
+  h += '<button onclick="routineStart()"' + (can?'':' disabled') + ' style="width:100%;padding:11px;border-radius:10px;font-size:14px;font-weight:800;cursor:' + (can?'pointer':'default') + ';font-family:inherit;border:1px solid var(--gold-dim);background:' + (can?'var(--gold)':'rgba(255,255,255,0.06)') + ';color:' + (can?'#1a1400':'var(--text3)') + '">▶ Empezar rutina</button>';
+  return '<div style="text-align:left;flex:0 1 320px;min-width:250px;max-width:340px;background:rgba(26,28,38,0.90);border:2px solid rgba(255,255,255,0.22);border-radius:13px;padding:14px 16px">' + h + '</div>';
+}
+function _routineStepper(lbl, val, which) {
+  var bs = 'width:32px;height:32px;border-radius:8px;border:1px solid rgba(255,255,255,0.18);background:rgba(0,0,0,0.25);color:var(--text);font-size:18px;font-weight:800;cursor:pointer;font-family:inherit;line-height:1';
+  return '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">'
+    + '<span style="font-size:12.5px;color:var(--text2)">' + lbl + '</span>'
+    + '<span style="display:flex;align-items:center;gap:8px">'
+    + '<button onclick="routineAdj(\'' + which + '\',-1)" style="' + bs + '">–</button>'
+    + '<span style="font-size:15px;font-weight:800;color:var(--text);min-width:64px;text-align:center">' + val + '</span>'
+    + '<button onclick="routineAdj(\'' + which + '\',1)" style="' + bs + '">+</button>'
+    + '</span></div>';
+}
+function _routineCheck(key, lbl) {
+  return '<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);cursor:pointer;margin-bottom:6px">'
+    + '<input type="checkbox"' + (routine.inc[key] ? ' checked' : '') + ' onchange="routineToggleInc(\'' + key + '\')" style="width:16px;height:16px;cursor:pointer">' + lbl + '</label>';
+}
+var _routineSelStyle = 'width:calc(100% - 24px);margin:-2px 0 8px 24px;padding:6px 8px;border-radius:7px;background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.18);color:var(--text);font-size:12.5px;font-family:inherit';
+function _routineMidPicker() {
+  var opts = [['','Cualquier objetivo'],['ventaja','Convertir ventaja'],['igualada','Posición igualada'],['defensa','Defender posición peor']];
+  var h = '<select onchange="routineSetSel(\'midObj\',this.value)" style="' + _routineSelStyle + '">';
+  opts.forEach(function(o){ h += '<option value="' + o[0] + '"' + (routine.midObj === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; });
+  return h + '</select>';
+}
+function _routineFinPicker() {
+  var types = {}; (PRACTICE || []).forEach(function(p){ if (p.phase === 'endgame' && p.type) types[p.type] = (types[p.type]||0) + 1; });
+  var keys = Object.keys(types).sort();
+  var h = '<select onchange="routineSetSel(\'finType\',this.value)" style="' + _routineSelStyle + '"><option value="">Cualquier final</option>';
+  keys.forEach(function(t){ h += '<option value="' + escHtml(t) + '"' + (routine.finType === t ? ' selected' : '') + '>' + escHtml(t) + ' (' + types[t] + ')</option>'; });
+  return h + '</select>';
+}
+function _routinePreview() {
+  var R = routine, parts = [];
+  if (R.inc.puz) parts.push(R.mode === 'time' ? ('≈' + _routinePuzMin() + ' min de táctica') : (R.count + ' ejercicio' + (R.count!==1?'s':'') + ' limpio' + (R.count!==1?'s':'')));
+  var nm = _routineMidCount(), nf = _routineFinCount();
+  if (nm) parts.push(nm + ' medio juego' + (nm>1?'s':''));
+  if (nf) parts.push(nf + ' final' + (nf>1?'es':''));
+  if (!parts.length) return 'Tildá al menos una opción para armar la rutina.';
+  return '<b style="color:var(--text)">Tu rutina:</b> ' + parts.join(' + ') + '.';
+}
+function routineSetMode(m) { routine.mode = m; puzRenderStatsPanel(); }
+function routineAdj(which, dir) {
+  if (which === 'min') routine.minutes = Math.min(120, Math.max(5, routine.minutes + dir * 5));
+  else routine.count = Math.min(30, Math.max(1, routine.count + dir));
+  puzRenderStatsPanel();
+}
+function routineToggleInc(k) { routine.inc[k] = !routine.inc[k]; if (!routine.inc.puz && routine.mode === 'count') routine.mode = 'time'; puzRenderStatsPanel(); }
+function routineSetSel(k, v) { routine[k] = v; }   // los selects no necesitan re-render (perdería el foco)
+
+// ── Arranque y secuencia ──
+function routineStart() {
+  if (!(routine.inc.puz || routine.inc.mid || routine.inc.fin)) return;
+  _routineEnsurePractice(_routineStartGo);
+}
+function _routineStartGo() {
+  var R = routine;
+  R._level = _routineLevel(); R._used = {}; R.doneP = 0; R.doneMid = 0; R.doneFin = 0; R.puzClean = 0;
+  var steps = [];
+  if (R.inc.puz) steps.push({ type:'puzzles' });
+  var mids = _routinePickPractice('middlegame', R.midObj, _routineMidCount());
+  var fins = _routinePickPractice('endgame', R.finType, _routineFinCount());
+  var mi = 0, fi = 0;                                   // intercalar medio juego / final
+  while (mi < mids.length || fi < fins.length) {
+    if (mi < mids.length) steps.push({ type:'practice', id: mids[mi++] });
+    if (fi < fins.length) steps.push({ type:'practice', id: fins[fi++] });
+  }
+  if (!steps.length) return;
+  R.steps = steps; R.idx = 0; R.active = true;
+  routineOpenStep();
+}
+function _routinePickPractice(phase, filt, n) {
+  if (!n) return [];
+  var pool = (PRACTICE || []).filter(function(p){
+    if (p.phase !== phase) return false;
+    if (phase === 'endgame') { if (filt && p.type !== filt) return false; }
+    else { if (filt && p.objective !== filt) return false; }
+    return true;
+  }).slice();
+  for (var i = pool.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)); var t = pool[i]; pool[i] = pool[j]; pool[j] = t; }
+  return pool.slice(0, n).map(function(p){ return p.id; });
+}
+function _routinePuzPool() {
+  var pool = puzForLevel(routine._level);
+  if (pool.length < 3) pool = PUZZLES.filter(function(p){ return !p.hidden; });
+  return pool;
+}
+function routineOpenStep() {
+  var R = routine, step = R.steps[R.idx];
+  if (!step) { routineFinish(); return; }
+  if (step.type === 'puzzles') {
+    R.puzClean = 0;
+    if (R.mode === 'time') { R.phaseDurMs = _routinePuzMin() * 60000; R.phaseEndMs = Date.now() + R.phaseDurMs; _routineStartTimer(); }
+    else _routineStopTimer();
+    _routineServePuzzle();
+  } else { _routineStopTimer(); _routineOpenPractice(step.id); }
+}
+function _routineServePuzzle() {
+  var R = routine, pool = _routinePuzPool();
+  var fresh = pool.filter(function(p){ return !R._used[p.id]; });
+  var bag = fresh.length ? fresh : pool;
+  if (!bag.length) { _routineAdvance(); return; }
+  var p = bag[Math.floor(Math.random() * bag.length)];
+  R._used[p.id] = 1;
+  puz.level = R._level; puz.list = puzForLevel(R._level);
+  var ix = -1; for (var i = 0; i < puz.list.length; i++) if (puz.list[i].id === p.id) { ix = i; break; }
+  if (ix < 0) { puz.list = puz.list.concat([p]); ix = puz.list.length - 1; }
+  puz.idx = ix;
+  _routineShowOverlay('puz');
+  puzLoad();
+  routineRenderBar();
+}
+function _routineAfterPuzzle() {
+  var R = routine; R.doneP++;
+  var done = (R.mode === 'count') ? (R.puzClean >= R.count) : (Date.now() >= R.phaseEndMs);
+  if (done) _routineAdvance(); else _routineServePuzzle();
+}
+function _routineAdvance() {
+  var cur = routine.steps[routine.idx];
+  if (cur && cur.type === 'practice') { var p = pracById(cur.id); if (p) { if (p.phase === 'middlegame') routine.doneMid++; else routine.doneFin++; } }
+  _routineStopTimer(); routine.idx++; routineOpenStep();
+}
+function routineSkipStep() { _routineAdvance(); }
+function _routineOpenPractice(id) {
+  var p = pracById(id); if (!p) { _routineAdvance(); return; }
+  prac.cur = p; prac.humanColor = p.sideToMove; prac.level = routine._level;
+  _routineShowOverlay('prac');
+  pracSetup();
+  routineRenderBar();
+}
+function _routineStartTimer() { _routineStopTimer(); routine._timer = setInterval(routineRenderBar, 1000); }
+function _routineStopTimer() { if (routine._timer) { clearInterval(routine._timer); routine._timer = null; } }
+
+// ── Mostrar/ocultar overlays sin tocar el historial (la rutina maneja su propio flujo) ──
+function _routineShowOverlay(which) {
+  var a = document.getElementById('puz-overlay'), b = document.getElementById('prac-overlay');
+  if (which === 'puz') {
+    if (b) b.classList.remove('open');
+    if (a && !a.classList.contains('open')) { a.classList.add('open'); a.scrollTop = 0; if (typeof _puzPageOn === 'function') _puzPageOn(); _puzApplyBoardSize('puz-board-col','puz_board_size'); }
+  } else {
+    if (a) a.classList.remove('open');
+    if (b && !b.classList.contains('open')) { b.classList.add('open'); b.scrollTop = 0; if (typeof _pracPageOn === 'function') _pracPageOn(); _puzApplyBoardSize('prac-board-col','prac_board_size'); }
+  }
+}
+function _routineCloseOverlays() {
+  var a = document.getElementById('puz-overlay'), b = document.getElementById('prac-overlay');
+  if (a && a.classList.contains('open')) { a.classList.remove('open'); if (typeof _puzPageOff === 'function') _puzPageOff(); if (typeof puzSfOff === 'function') puzSfOff(); }
+  if (b && b.classList.contains('open')) { b.classList.remove('open'); if (typeof _pracPageOff === 'function') _pracPageOff(); }
+}
+function routineFinish() { _routineStopTimer(); routine.active = false; _routineCloseOverlays(); routineRenderBar(); _routineSummary(); puzRenderStatsPanel(); }
+function routineTerminate() { _routineStopTimer(); routine.active = false; _routineCloseOverlays(); routineRenderBar(); puzRenderStatsPanel(); }
+function routineQuit() { _routineStopTimer(); routine.active = false; routineRenderBar(); }   // cuando el visitante cierra el overlay a mano
+
+// ── Barra de rutina (arriba de los dos overlays) ──
+function routineRenderBar() {
+  var pBar = document.getElementById('puz-routine-bar'), rBar = document.getElementById('prac-routine-bar');
+  if (!routine.active) { if (pBar) pBar.innerHTML = ''; if (rBar) rBar.innerHTML = ''; return; }
+  var R = routine, step = R.steps[R.idx] || {}, inner = '';
+  if (step.type === 'puzzles') {
+    if (R.mode === 'count') {
+      inner = '<span style="font-weight:800;color:var(--text)">🎯 Táctica</span>'
+        + '<span style="color:var(--text2);font-size:13px">Limpios: <b style="color:#3fbf5a">' + R.puzClean + '</b> / ' + R.count + '</span>';
+    } else {
+      var rem = Math.max(0, R.phaseEndMs - Date.now()), frac = R.phaseDurMs ? Math.max(0, Math.min(1, rem / R.phaseDurMs)) : 0;
+      var col = (rem <= 0 || frac < 0.2) ? '#e0b020' : '#3fbf5a';
+      var msg = rem <= 0 ? '⏰ Terminá este y seguís' : (frac < 0.2 ? 'Queda poco' : 'Tiempo de táctica');
+      inner = '<span style="font-weight:800;color:var(--text)">⏱ Táctica</span>'
+        + '<span style="flex:1;max-width:180px;min-width:80px;height:8px;border-radius:4px;background:rgba(255,255,255,.10);overflow:hidden;display:inline-block"><span style="display:block;height:100%;width:' + (frac*100) + '%;background:' + col + '"></span></span>'
+        + '<span style="color:var(--text2);font-size:12px">' + msg + '</span>';
+    }
+    inner += '<span style="flex:1"></span><button onclick="routineSkipStep()" style="' + _routineBarBtn + '">Saltar a la práctica →</button>';
+  } else {
+    var pp = pracById(step.id) || {};
+    var lbl = pp.phase === 'middlegame' ? ('Medio juego' + (pp.objective ? ' · ' + (PRAC_OBJ_LABEL[pp.objective] || '') : '')) : ('Final' + (pp.type ? ' · ' + pp.type : ''));
+    inner = '<span style="font-weight:800;color:var(--text)">' + (pp.phase === 'middlegame' ? '♟' : '♚') + ' ' + escHtml(lbl) + '</span>'
+      + '<span style="color:var(--text2);font-size:12px">Jugá un rato; seguí cuando quieras</span>'
+      + '<span style="flex:1"></span><button onclick="routineSkipStep()" style="' + _routineBarBtnGold + '">Siguiente paso ▶</button>';
+  }
+  var html = '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:rgba(20,30,55,0.92);border:1px solid rgba(120,150,220,0.35);border-radius:11px;padding:10px 13px;margin-bottom:14px">'
+    + '<span style="font-size:11px;font-weight:800;color:#9fb4e6;text-transform:uppercase;letter-spacing:.5px">Rutina · paso ' + (R.idx + 1) + '/' + R.steps.length + '</span>'
+    + inner
+    + '<button onclick="routineTerminate()" title="Terminar la rutina" style="' + _routineBarX + '">✕</button></div>';
+  if (pBar) pBar.innerHTML = html;
+  if (rBar) rBar.innerHTML = html;
+}
+function _routineSummary() {
+  var R = routine, parts = [];
+  if (R.doneP) parts.push('<b>' + R.doneP + '</b> ejercicio' + (R.doneP!==1?'s':'') + ' (' + R.puzClean + ' limpio' + (R.puzClean!==1?'s':'') + ')');
+  if (R.doneMid) parts.push('<b>' + R.doneMid + '</b> medio juego' + (R.doneMid!==1?'s':''));
+  if (R.doneFin) parts.push('<b>' + R.doneFin + '</b> final' + (R.doneFin!==1?'es':''));
+  var d = document.createElement('div'); d.id = 'routine-summary';
+  d.style.cssText = 'position:fixed;inset:0;z-index:650;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.55)';
+  d.onclick = function(e){ if (e.target === d) d.remove(); };
+  d.innerHTML = '<div style="background:rgba(26,28,38,0.97);border:2px solid rgba(255,255,255,0.22);border-radius:16px;padding:24px 26px;max-width:340px;text-align:center;box-shadow:0 16px 54px rgba(0,0,0,0.6)">'
+    + '<div style="font-size:40px;margin-bottom:6px">🎉</div>'
+    + '<div style="font-size:19px;font-weight:800;color:var(--text);margin-bottom:8px">¡Rutina completa!</div>'
+    + '<div style="font-size:14px;color:var(--text2);line-height:1.6;margin-bottom:16px">' + (parts.length ? 'Hiciste ' + parts.join(' · ') + '.' : '¡Buen trabajo!') + '</div>'
+    + '<button onclick="var e=document.getElementById(\'routine-summary\');if(e)e.remove()" style="padding:10px 22px;border-radius:10px;border:1px solid var(--gold-dim);background:var(--gold);color:#1a1400;font-size:14px;font-weight:800;cursor:pointer;font-family:inherit">¡Listo!</button></div>';
+  document.body.appendChild(d);
 }
 // Panel de sesión DENTRO del solver (columna derecha): rating, racha y la tira de los
 // últimos ejercicios — verde acierto, rojo error, ámbar resuelto con pista.
@@ -16346,6 +16592,7 @@ function puzInit() {
   var chips = document.querySelectorAll('#tab-ejercicios .chip');
   for (var i=0;i<chips.length;i++) chips[i].classList.toggle('active', chips[i].getAttribute('onclick').indexOf("'"+puz.level+"'") >= 0);
   puzRenderStatsPanel();
+  _routineEnsurePractice(function(){ puzRenderStatsPanel(); });   // para el selector de tipos de final en el armador de rutina
   puzLoadStats();
   fetch('data/puzzles.json' + _dataV()).then(function(r){ return r.json(); }).then(function(d) {
     PUZZLES = Array.isArray(d) ? d : (d.puzzles || []);
@@ -16736,6 +16983,8 @@ function puzOnSolved() {
   puzPlaySound('win');   // "ejercicio resuelto" (más festivo que el acierto por jugada)
   var clean = !puz.failed && !puz.revealed;
   puzSetResult(puz.cur.id, clean ? 'ok' : 'fail');
+  // Rutina por aciertos: cuenta SOLO limpio (sin pista, sin ver la solución).
+  if (routine.active && routine.steps[routine.idx] && routine.steps[routine.idx].type === 'puzzles' && clean && !puz.hinted) { routine.puzClean++; routineRenderBar(); }
   if (clean) puzSetFb('ok', '🏆', '¡Correcto! Resolviste el ejercicio.');
   else puzSetFb('ok', '✔', 'Ejercicio completado' + (puz.failed ? ' (hubo algún intento fallido).' : '.'));
   puzSetupReview(puz.played.length ? puz.played : puz.cur.solution, false);
@@ -16780,6 +17029,7 @@ function puzReviewNext() { if (puz.reviewing && puz.reviewIdx < puz._revFens.len
 function puzFlip() { puz.flipped = !puz.flipped; puz.sel = null; puz.legalDests = []; puzRenderBoard(); if (puz.anOn) { puzDrawArrow(); puzSfRender(); } }
 // Próximo ejercicio AL AZAR del nivel (variedad por visita), prefiriendo no vistos en esta sesión.
 function puzNext() {
+  if (routine.active && routine.steps[routine.idx] && routine.steps[routine.idx].type === 'puzzles') { _routineAfterPuzzle(); return; }
   var pool = puz.list.filter(function(p){ return !puz.cur || p.id !== puz.cur.id; });
   if (!pool.length) { puzClose(); return; }
   var unseen = pool.filter(function(p){ return !puz.seen[p.id]; });
@@ -16800,6 +17050,7 @@ function puzShare() {
   }).catch(function(){});
 }
 function _puzDoClose() {
+  if (routine.active) routineQuit();   // si estaba en una rutina y cierra a mano, la corta
   puzSfOff();
   document.getElementById('puz-overlay').classList.remove('open'); _puzPageOff();
   puz.cur = null; puz.chess = null; puz.reviewing = false; puz.editing = false;
@@ -18036,6 +18287,7 @@ function pracRestoreEngine() {
 }
 function pracUpdateUrl() { if (!prac.cur) return; try { history.replaceState({ practica:true }, '', location.pathname + '?practica=' + encodeURIComponent(prac.cur.id)); } catch(e) {} }
 function _pracDoClose() {
+  if (routine.active) routineQuit();   // si estaba en una rutina y cierra a mano, la corta
   pracAnOff(); pracStopEngine(); pracRestoreEngine();
   document.getElementById('prac-overlay').classList.remove('open'); _pracPageOff();
   prac.cur = null; prac.chess = null; prac.over = false; prac.busy = false;
