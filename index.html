@@ -967,7 +967,7 @@
       display: none; overflow-y: auto; }
     .puz-overlay.open { display: block; }
     .puz-modal { max-width: 1000px; margin: 20px auto; padding: 20px 22px 26px;
-      background: rgba(8,8,10,0.86); border: 1px solid rgba(255,255,255,0.10); border-radius: 16px; box-shadow: 0 16px 54px rgba(0,0,0,0.6); backdrop-filter: blur(3px); }
+      background: rgba(26,28,38,0.90); border: 2px solid rgba(255,255,255,0.22); border-radius: 16px; box-shadow: 0 16px 54px rgba(0,0,0,0.6); backdrop-filter: blur(3px); }
     @media (max-width: 640px) { .puz-modal { margin: 10px; padding: 14px 14px 20px; } }
     /* Análisis del módulo dentro del tablero del ejercicio (estilo Lichess) */
     .puz-eval { margin-top: 10px; background: rgba(0,0,0,0.45); border: 1px solid var(--gold-dim); border-radius: 9px; padding: 8px 11px; }
@@ -993,6 +993,10 @@
     }
     .puz-resize:hover { color: var(--gold); }
     .puz-info-col { flex: 1; min-width: 250px; }
+    /* Solver: columnas a la misma altura y el panel de estadísticas pegado al borde inferior del tablero. */
+    #puz-overlay .puz-cols { align-items: stretch; }
+    #puz-overlay .puz-info-col { display: flex; flex-direction: column; }
+    #puz-session { margin-top: auto; }
     .puz-prompt { font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 9px; display: flex; align-items: center; gap: 8px; }
     .puz-prompt .dot { width: 15px; height: 15px; border-radius: 50%; border: 1px solid var(--text3); flex-shrink: 0; }
     .puz-prompt .dot.w { background: #f0f0f0; } .puz-prompt .dot.b { background: #2b2b2b; }
@@ -1002,15 +1006,15 @@
     .puz-ctrls button:hover { border-color: var(--gold-dim); color: var(--gold); }
     .puz-ctrls .puz-counter { flex: 1; text-align: center; font-size: 13px; color: var(--text2); align-self: center; }
     .puz-fb { border-radius: 11px; padding: 13px 15px; font-size: 14px; font-weight: 600; line-height: 1.5; margin-bottom: 14px;
-      border: 1px solid var(--border); background: var(--bg2); color: var(--text2); min-height: 50px; display: flex; align-items: center; gap: 10px; }
+      border: 1px solid rgba(255,255,255,0.18); background: #1a1c26; color: var(--text2); min-height: 50px; display: flex; align-items: center; gap: 10px; }
     .puz-fb .ic { font-size: 22px; line-height: 1; flex-shrink: 0; }
     .puz-fb.ok { background: rgba(82,183,136,.12); border-color: rgba(82,183,136,.4); color: var(--green); }
     .puz-fb.bad { background: rgba(224,112,112,.12); border-color: rgba(224,112,112,.4); color: #e88; }
     .puz-fb.hint { background: rgba(255,201,64,.1); border-color: var(--gold-dim); color: var(--gold); }
-    .puz-source { font-size: 13px; color: var(--text2); line-height: 1.6; background: var(--bg2); border: 1px solid var(--border);
-      border-radius: 11px; padding: 12px 14px; margin-bottom: 14px; }
+    .puz-source { font-size: 15px; color: var(--text2); line-height: 1.6; background: #1a1c26; border: 1px solid rgba(255,255,255,0.18);
+      border-radius: 11px; padding: 13px 15px; margin-bottom: 14px; }
     .puz-source b { color: var(--text); font-weight: 600; }
-    .puz-source .meta { color: var(--text3); font-size: 12px; margin-top: 5px; }
+    .puz-source .meta { color: var(--text2); font-size: 13.5px; margin-top: 6px; }
     .puz-motifs { margin-bottom: 14px; display: flex; flex-wrap: wrap; gap: 6px; }
     .puz-actions { display: flex; flex-wrap: wrap; gap: 9px; }
     .puz-btn { padding: 11px 16px; border-radius: 10px; font-size: 14px; font-weight: 700; cursor: pointer; font-family: inherit;
@@ -1506,6 +1510,7 @@
         <div class="puz-motifs" id="puz-motifs"></div>
         <div class="puz-source" id="puz-source"></div>
         <div class="puz-actions" id="puz-actions"></div>
+        <div id="puz-session"></div>
         <div class="puz-author" id="puz-author" style="display:none"></div>
       </div>
     </div>
@@ -16118,7 +16123,7 @@ function puzPlayer() {
   if (_puzPlayer) return _puzPlayer;
   var P = { rating: 1200, n: 0, seeded: false, solved: 0, ok: 0, fail: 0,
             streak: 0, bestStreak: 0, best: 1200, byLevel: {}, days: {},
-            dailyDate: '', dailyCount: 0, lastId: '' };
+            dailyDate: '', dailyCount: 0, lastId: '', hist: [] };
   try { var s = JSON.parse(localStorage.getItem('puz_player') || 'null');
         if (s && typeof s === 'object') for (var k in P) if (s[k] !== undefined) P[k] = s[k];
   } catch(e) {}
@@ -16131,17 +16136,23 @@ function _puzKv(n) { if (n < 15) return 40; if (n < 50) return 24; return 16; }
 function puzPlayerSeed(rating) { var P = puzPlayer(); P.rating = rating; P.best = Math.max(P.best, rating); P.seeded = true; puzPlayerSave(); }
 
 // Aplica un intento al progreso del visitante (Elo + rachas + calendario). Devuelve el delta de rating.
-function puzPlayerRecord(p, ok) {
+// `hinted` = resolvió con pista → la ganancia se reduce a la mitad (la pérdida queda completa).
+function puzPlayerRecord(p, ok, hinted) {
   var P = puzPlayer();
   var Rp = _puzEffDiff(p);                                      // rating del ejercicio (calibrado o del autor)
   var S = ok ? 1 : 0;
   var E = 1 / (1 + Math.pow(10, (Rp - P.rating) / 400));        // prob. esperada de que el visitante acierte
   var delta = Math.round(_puzKv(P.n) * (S - E));
+  if (hinted && delta > 0) delta = Math.round(delta / 2);       // con ayuda, la mitad de los puntos
   P.rating = Math.max(100, Math.min(3200, P.rating + delta));
   P.n++; P.solved++; if (ok) P.ok++; else P.fail++;
   P.best = Math.max(P.best, P.rating);
-  P.streak = ok ? P.streak + 1 : 0;
+  P.streak = ok ? P.streak + 1 : 0;                            // una pista igual cuenta para la racha si acertó
   P.bestStreak = Math.max(P.bestStreak, P.streak);
+  // Historial corto de la sesión (para la tira de puntos verde/rojo del solver).
+  if (!P.hist) P.hist = [];
+  P.hist.push({ r: ok ? (hinted ? 'hint' : 'ok') : 'fail', d: delta });
+  if (P.hist.length > 40) P.hist = P.hist.slice(-40);
   var bands = puzBand(Rp), lvl = bands[bands.length - 1];       // el nivel "más alto" que toca el ejercicio
   if (!P.byLevel[lvl]) P.byLevel[lvl] = { ok: 0, n: 0 };
   P.byLevel[lvl].n++; if (ok) P.byLevel[lvl].ok++;
@@ -16239,21 +16250,60 @@ function puzRenderStatsPanel() {
     + (cont ? '<div style="margin-top:10px">' + cont + '</div>' : '')
     + '</div>';
 }
+// Panel de sesión DENTRO del solver (columna derecha): rating, racha y la tira de los
+// últimos ejercicios — verde acierto, rojo error, ámbar resuelto con pista.
+function puzRenderSession() {
+  var el = document.getElementById('puz-session'); if (!el) return;
+  var P = puzPlayer();
+  if (!P.solved) { el.innerHTML = ''; return; }   // todavía no resolvió nada: no ocupa lugar
+  var hist = (P.hist || []).slice(-18), dots = '';
+  for (var i=0;i<hist.length;i++) {
+    var x = hist[i];
+    var col = x.r === 'ok' ? '#2f9e44' : x.r === 'hint' ? '#d9a300' : '#c0392b';
+    var ic  = x.r === 'ok' ? '✓' : x.r === 'hint' ? '½' : '✗';
+    var sg  = (x.d > 0 ? '+' : '') + x.d;
+    dots += '<span title="' + sg + ' pts" style="width:24px;height:24px;border-radius:5px;background:' + col + ';color:#fff;font-size:15px;font-weight:800;display:inline-flex;align-items:center;justify-content:center">' + ic + '</span>';
+  }
+  var prov = P.n < 15, acc = P.solved ? Math.round(P.ok * 100 / P.solved) : 0;
+  el.innerHTML =
+    '<div style="background:#1a1c26;border:1px solid rgba(255,255,255,0.18);border-radius:11px;padding:14px 15px;margin-top:14px">'
+    + '<div style="display:flex;align-items:baseline;gap:9px;flex-wrap:wrap">'
+    +   '<span style="font-size:13px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px">Tu rating</span>'
+    +   '<span style="font-size:28px;font-weight:800;color:var(--text);line-height:1">' + Math.round(P.rating) + '</span>'
+    +   (prov ? '<span style="font-size:12px;color:var(--text2)">provisional</span>' : '')
+    +   '<span style="flex:1"></span>'
+    +   '<span style="font-size:16px;color:var(--text)" title="racha actual">🔥 ' + P.streak + '</span>'
+    +   '<span style="font-size:16px;color:var(--text2)" title="aciertos">🎯 ' + acc + '%</span>'
+    + '</div>'
+    + '<div style="font-size:13px;color:var(--text2);margin:13px 0 7px">Tus últimos ejercicios</div>'
+    + '<div style="display:flex;gap:5px;flex-wrap:wrap">' + dots + '</div>'
+    + '<div style="font-size:12.5px;color:var(--text2);margin-top:9px">'
+    +   '<span style="color:#3fbf5a">■</span> acierto · <span style="color:#e06464">■</span> error · <span style="color:#e0b020">■</span> con pista (½)'
+    + '</div>'
+    + '</div>';
+}
+
 // Reporta el resultado al Worker (suma 1 acierto/error), una vez por navegador por ejercicio.
 // Suma también localmente (optimista) para que el % se vea al instante sin re-consultar.
 function puzReportResult(id, r) {
   var sent = {}; try { sent = JSON.parse(localStorage.getItem('puz_sent') || '{}'); } catch(e) {}
   if (sent[id]) return;                                    // un solo cómputo por ejercicio por navegador (no se puede "farmear")
   sent[id] = 1; try { localStorage.setItem('puz_sent', JSON.stringify(sent)); } catch(e) {}
-  if (!_puzStats[id]) _puzStats[id] = { ok: 0, fail: 0 };
-  if (r === 'ok') _puzStats[id].ok++; else _puzStats[id].fail++;
-  // Progreso del visitante (rating/rachas) + datos para que el Worker calibre el ejercicio.
+  var hinted = !!puz.hinted;
+  // Progreso del visitante (rating/rachas/historial), siempre — incluso con pista (suma la mitad).
   var p = puzById(id), vr = Math.round(puzPlayer().rating), seed = p ? (p.difficulty || 1000) : 1000, delta = 0;
-  if (p) delta = puzPlayerRecord(p, r === 'ok');           // vr = rating ANTES del intento (lo que "jugó" la partida)
-  try { fetch(CR_PROXY + '/puzhit?id=' + encodeURIComponent(id) + '&r=' + (r === 'ok' ? 'ok' : 'fail')
-              + '&vr=' + vr + '&pr=' + seed, { keepalive: true }).catch(function(){}); } catch(e) {}
+  if (p) delta = puzPlayerRecord(p, r === 'ok', hinted);   // vr = rating ANTES del intento (lo que "jugó" la partida)
+  // Estadística colectiva + calibración del ejercicio: SOLO si lo resolvió sin pista
+  // (un intento con ayuda no representa la dificultad real, así no ensucia el rating compartido).
+  if (!hinted) {
+    if (!_puzStats[id]) _puzStats[id] = { ok: 0, fail: 0 };
+    if (r === 'ok') _puzStats[id].ok++; else _puzStats[id].fail++;
+    try { fetch(CR_PROXY + '/puzhit?id=' + encodeURIComponent(id) + '&r=' + (r === 'ok' ? 'ok' : 'fail')
+                + '&vr=' + vr + '&pr=' + seed, { keepalive: true }).catch(function(){}); } catch(e) {}
+  }
   puzRenderSource();
   puzRenderStatsPanel();
+  puzRenderSession();
   puzShowRatingDelta(delta);
 }
 
@@ -16361,11 +16411,13 @@ function puzOpenOverlay() {
 
 function puzLoad() {
   var p = puz.list[puz.idx]; if (!p) return;
+  _puzIntroTok++;   // invalida cualquier intro pendiente de un ejercicio anterior
   puz.cur = p; puz.chess = new Chess(p.fen); puz.flipped = (p.sideToMove === 'b');
   puz.sel = null; puz.legalDests = []; puz.step = 0; puz.played = [];
   puz.lines = [p.solution].concat(p.acceptedLines || []);   // líneas correctas: principal + variantes completas
   puz.recording = false; puz.recLine = [];
   puz.solved = false; puz.revealed = false; puz.failed = false; puz.busy = false; puz.editing = false;
+  puz.hinted = false;   // ¿pidió pista en este ejercicio? (suma la mitad si resuelve con ayuda)
   puz.reviewing = false; puz.reviewIdx = 0; puz.lastFrom = ''; puz.lastTo = '';
   puz.seen[p.id] = 1;
   puz._srcGame = null; puz._srcGameMaybe = false;
@@ -16382,9 +16434,10 @@ function puzLoad() {
   document.getElementById('puz-next').style.display = 'none';
   document.getElementById('puz-counter').textContent = '';
   puzRenderActions();
+  puzRenderSession();
   puzRenderAuthor();
   puzUpdateUrl();
-  puzRenderBoard();
+  if (!puzMaybeIntro(p)) puzRenderBoard();   // intro de la última jugada del rival (o estático si no hay datos)
 }
 
 function puzSetFb(kind, ic, txt) {
@@ -16458,11 +16511,82 @@ function puzRenderActions() {
     if (puz._srcGame || puz._srcGameMaybe) h += '<button class="puz-btn" onclick="puzOpenSourceGame()">♟ Ver la partida original</button>';
     h += '<button class="puz-btn" id="puz-share" onclick="puzShare()">🔗 Compartir</button>';
   } else {
+    h += '<button class="puz-btn" onclick="puzHint()"' + (puz.hinted ? ' disabled style="opacity:.45"' : '') + '>💡 Pista' + (puz.hinted ? ' (usada)' : '') + '</button>';
     h += '<button class="puz-btn" onclick="puzReveal()">👁 Ver solución</button>';
     h += '<button class="puz-btn" onclick="puzNext()">Otro ejercicio →</button>';
     h += '<button class="puz-btn" id="puz-share" onclick="puzShare()">🔗 Compartir</button>';
   }
   el.innerHTML = h;
+}
+
+// Pista: marca la pieza que hay que mover (la pre-selecciona y muestra sus jugadas).
+// Quien usa pista suma la MITAD de puntos si acierta (se maneja en puzPlayerRecord).
+function puzHint() {
+  if (puzLocked()) return;
+  var sol = puz.cur && puz.cur.solution;
+  if (!sol || !sol[puz.step]) return;
+  var from = sol[puz.step].slice(0, 2);
+  puz.hinted = true;
+  puz.sel = from;
+  puz.legalDests = puz.chess.moves({ square: from, verbose: true }).map(function(m){ return m.to; });
+  puzSetFb('hint', '💡', 'Te marco la pieza que hay que mover. Si resolvés con ayuda, suma la mitad de puntos.');
+  puzPlaySound('hint');
+  puzRenderBoard();
+  puzRenderActions();
+}
+
+// ── Intro: animar la última jugada del rival al abrir el ejercicio ──
+// Cada ejercicio puede traer `pm` (jugada previa en UCI) y `pc` (pieza capturada). Reconstruimos
+// la posición ANTERIOR, la mostramos un instante y "jugamos" la movida con el sonido que toque
+// (movida / captura / jaque). Si el ejercicio no trae `pm`, arranca estático como siempre.
+var _puzIntroTok = 0;
+function _puzReconBeforeFen(p) {
+  if (!p.pm || p.pm.length < 4) return null;
+  var c; try { c = new Chess(p.fen); } catch(e) { return null; }     // posición del ejercicio (después de la jugada)
+  var board = c.board();                                             // [0]=fila 8 … [7]=fila 1 ; col 0=a … 7=h
+  var fr = function(sq){ return { r: 8 - parseInt(sq[1], 10), f: sq.charCodeAt(0) - 97 }; };
+  var a = fr(p.pm.slice(0, 2)), b = fr(p.pm.slice(2, 4));
+  if ([a.r,a.f,b.r,b.f].some(function(v){ return v < 0 || v > 7; })) return null;
+  var moved = board[b.r][b.f]; if (!moved) return null;
+  board[a.r][a.f] = moved;                                           // la pieza vuelve a su casilla de origen
+  board[b.r][b.f] = p.pc ? { type: p.pc, color: p.sideToMove } : null;   // restauramos la capturada (o vaciamos)
+  var rows = [];
+  for (var r = 0; r < 8; r++) {
+    var row = '', empty = 0;
+    for (var f = 0; f < 8; f++) {
+      var pc = board[r][f];
+      if (!pc) { empty++; continue; }
+      if (empty) { row += empty; empty = 0; }
+      row += pc.color === 'w' ? pc.type.toUpperCase() : pc.type;
+    }
+    if (empty) row += empty;
+    rows.push(row);
+  }
+  return rows.join('/') + ' ' + (p.sideToMove === 'w' ? 'b' : 'w') + ' - - 0 1';
+}
+// Sonido de la jugada previa: los MISMOS que el visor de partidas (Move.mp3 / Capture.mp3 /
+// jaque sintetizado), respetando el botón de silencio del solver.
+function puzIntroSound(p) {
+  if (!puzSndCfg().on) return;
+  if (puz.chess.in_check()) _playSynthCheck();
+  else if (p.pc) _loadAndPlay('Capture');
+  else _loadAndPlay('Move');
+}
+// Devuelve true si arrancó la intro (y se encarga del render); false si hay que dibujar estático.
+function puzMaybeIntro(p) {
+  var beforeFen = _puzReconBeforeFen(p); if (!beforeFen) return false;
+  var tmp; try { tmp = new Chess(beforeFen); } catch(e) { return false; }
+  var after = puz.chess, from = p.pm.slice(0, 2), to = p.pm.slice(2, 4), tok = _puzIntroTok;
+  puz.chess = tmp; puz.lastFrom = ''; puz.lastTo = ''; puz.sel = null; puz.legalDests = [];
+  puz.busy = true;                                                  // bloquear el tablero durante la intro
+  puzRenderBoard();
+  setTimeout(function() {
+    if (tok !== _puzIntroTok || !puz.cur || puz.cur.id !== p.id) return;   // ya cambió de ejercicio
+    puz.chess = after; puz.lastFrom = from; puz.lastTo = to; puz.busy = false;
+    puzIntroSound(p);
+    puzRenderBoard();
+  }, 520);
+  return true;
 }
 
 /* ── Tablero del solver ── */
