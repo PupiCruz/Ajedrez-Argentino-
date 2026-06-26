@@ -984,7 +984,14 @@
       border-radius: 8px; padding: 6px 12px; font-family: inherit; }
     .puz-x:hover { color: var(--text); border-color: var(--text3); }
     .puz-cols { display: flex; gap: 22px; align-items: flex-start; flex-wrap: wrap; }
-    .puz-board-col { flex: 0 0 clamp(280px, 46vw, 460px); max-width: 460px; }
+    .puz-board-col { flex: 0 0 var(--puz-bw, clamp(280px, 46vw, 460px)); max-width: var(--puz-bw, 460px); }
+    /* Agarradera para agrandar/achicar el tablero (igual que el visor de partidas) */
+    .puz-resize {
+      position: absolute; right: 0; bottom: 0; width: 22px; height: 22px;
+      display: flex; align-items: flex-end; justify-content: flex-end; padding: 2px;
+      color: var(--text3); cursor: nwse-resize; z-index: 7; touch-action: none; transition: color .15s;
+    }
+    .puz-resize:hover { color: var(--gold); }
     .puz-info-col { flex: 1; min-width: 250px; }
     .puz-prompt { font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 9px; display: flex; align-items: center; gap: 8px; }
     .puz-prompt .dot { width: 15px; height: 15px; border-radius: 50%; border: 1px solid var(--text3); flex-shrink: 0; }
@@ -1470,6 +1477,7 @@
           <div style="position:relative;flex:1;min-width:0">
             <div class="chess-board" id="puz-board"></div>
             <svg id="puz-arrow" viewBox="0 0 8 8" preserveAspectRatio="none" style="display:none"></svg>
+            <div class="puz-resize" id="puz-resize" title="Arrastrá para agrandar o achicar el tablero (se guarda)" aria-label="Cambiar tamaño del tablero"><svg viewBox="0 0 12 12" width="12" height="12" fill="none"><path d="M11 4.5 L4.5 11 M11 8.5 L8.5 11" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"></path></svg></div>
           </div>
         </div>
         <div class="puz-ctrls">
@@ -1519,6 +1527,7 @@
           <div style="position:relative;flex:1;min-width:0">
             <div class="chess-board" id="prac-board"></div>
             <svg id="prac-arrow" viewBox="0 0 8 8" preserveAspectRatio="none" style="display:none"></svg>
+            <div class="puz-resize" id="prac-resize" title="Arrastrá para agrandar o achicar el tablero (se guarda)" aria-label="Cambiar tamaño del tablero"><svg viewBox="0 0 12 12" width="12" height="12" fill="none"><path d="M11 4.5 L4.5 11 M11 8.5 L8.5 11" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"></path></svg></div>
           </div>
         </div>
         <div class="puz-ctrls">
@@ -16193,6 +16202,7 @@ function puzOpenById(id) {
 function puzOpenOverlay() {
   var ov = document.getElementById('puz-overlay');
   ov.classList.add('open'); ov.scrollTop = 0; _puzPageOn();
+  _puzApplyBoardSize('puz-board-col', 'puz_board_size');
   if (!_puzHistoryPushed) { _puzHistoryPushed = true; try { history.pushState({ puzzle:true }, '', location.href); } catch(e) {} }
 }
 
@@ -17202,6 +17212,7 @@ function pracOpenById(id) {
 function pracOpenOverlay() {
   var ov = document.getElementById('prac-overlay');
   ov.classList.add('open'); ov.scrollTop = 0; _pracPageOn();
+  _puzApplyBoardSize('prac-board-col', 'prac_board_size');
   if (!_pracHistoryPushed) { _pracHistoryPushed = true; try { history.pushState({ practica:true }, '', location.href); } catch(e) {} }
 }
 function pracSetup() {
@@ -17766,6 +17777,46 @@ function pracInitDrag(boardEl) {
     else { prac.sel = null; prac.legalDests = []; pracRenderBoard(); }
   });
 }
+
+/* ── Agarradera para agrandar/achicar el tablero del solver y de Practicar (igual que el visor) ──
+   Controla el ancho de la columna del tablero con --puz-bw (sobre .puz-board-col) y lo guarda. */
+function _puzApplyBoardSize(colId, key) {
+  var col = document.getElementById(colId); if (!col) return;
+  var s = parseInt(localStorage.getItem(key) || '', 10);
+  if (s && s >= 240) col.style.setProperty('--puz-bw', Math.min(s, 640) + 'px');
+  else col.style.removeProperty('--puz-bw');
+}
+function _puzBindBoardResize(handleId, colId, boardId, key) {
+  var h = document.getElementById(handleId); if (!h || h._rzBound) return; h._rzBound = true;
+  var dragging = false, startX = 0, startY = 0, startW = 0, col = null;
+  function maxW() { return Math.min(640, Math.max(300, window.innerWidth - 300)); }
+  h.addEventListener('pointerdown', function(e) {
+    col = document.getElementById(colId); if (!col) return;
+    dragging = true;
+    var bd = document.getElementById(boardId);
+    startW = bd ? bd.getBoundingClientRect().width : 360;
+    startX = e.clientX; startY = e.clientY;
+    try { h.setPointerCapture(e.pointerId); } catch(_) {}
+    e.preventDefault(); e.stopPropagation();
+  });
+  h.addEventListener('pointermove', function(e) {
+    if (!dragging || !col) return;
+    var d = Math.max(e.clientX - startX, e.clientY - startY);   // arrastrar abajo-derecha agranda
+    var w = Math.round(Math.min(Math.max(startW + d, 240), maxW()));
+    col.style.setProperty('--puz-bw', w + 'px');
+    e.preventDefault();
+  });
+  function end(e) {
+    if (!dragging) return; dragging = false;
+    try { h.releasePointerCapture(e.pointerId); } catch(_) {}
+    var v = col && col.style.getPropertyValue('--puz-bw');
+    if (v) { try { localStorage.setItem(key, parseInt(v, 10)); } catch(_) {} }
+  }
+  h.addEventListener('pointerup', end);
+  h.addEventListener('pointercancel', end);
+}
+_puzBindBoardResize('puz-resize', 'puz-board-col', 'puz-board', 'puz_board_size');
+_puzBindBoardResize('prac-resize', 'prac-board-col', 'prac-board', 'prac_board_size');
 
 pracInit();
 
