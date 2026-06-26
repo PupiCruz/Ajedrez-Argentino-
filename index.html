@@ -16187,18 +16187,50 @@ function puzShowRatingDelta(delta) {
   t._tmr = setTimeout(function(){ t.style.opacity = '0'; }, 2300);
 }
 
-// Tira de actividad de los últimos 14 días (cuadraditos estilo Duolingo/GitHub).
+// Racha de DÍAS seguidos con actividad (termina hoy; si hoy todavía no jugaste, no la corta).
+function _puzDayStreak(P) {
+  var d = new Date(), streak = 0;
+  for (var i = 0; i < 400; i++) {
+    var dd = new Date(d.getFullYear(), d.getMonth(), d.getDate() - i);
+    var key = dd.getFullYear() + '-' + ('0'+(dd.getMonth()+1)).slice(-2) + '-' + ('0'+dd.getDate()).slice(-2);
+    if ((P.days[key] || 0) > 0) streak++;
+    else if (i === 0) continue;   // hoy sin jugar todavía: la racha sigue viva hasta fin del día
+    else break;
+  }
+  return streak;
+}
+// Barra de la META DIARIA: avanza con cada ejercicio resuelto hoy (a diferencia del calendario).
+function _puzDailyBar(P) {
+  var goal = PUZ_DAILY_GOAL, done = P.dailyCount || 0, filled = Math.min(done, goal), segs = '';
+  for (var i = 0; i < goal; i++)
+    segs += '<span style="flex:1;height:11px;border-radius:3px;background:' + (i < filled ? '#2f9e44' : 'rgba(255,255,255,.10)') + '"></span>';
+  var hecho = done >= goal;
+  return '<div style="margin-top:13px">'
+    + '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">'
+    + '<span style="font-size:13px;color:var(--text2)">Meta de hoy</span>'
+    + '<span style="font-size:13px;font-weight:700;color:' + (hecho ? '#3fbf5a' : 'var(--text)') + '">'
+    +   filled + '/' + goal + (hecho ? ' ✓ ¡cumplida!' : '') + (done > goal ? ' (+' + (done - goal) + ')' : '') + '</span>'
+    + '</div>'
+    + '<div style="display:flex;gap:5px">' + segs + '</div></div>';
+}
+// Calendario de los últimos 14 días (un cuadrito por DÍA; más verde = más ejercicios ese día).
 function _puzActivityStrip(P) {
   var cells = '', d = new Date();
   for (var i = 13; i >= 0; i--) {
     var dd = new Date(d.getFullYear(), d.getMonth(), d.getDate() - i);
     var key = dd.getFullYear() + '-' + ('0'+(dd.getMonth()+1)).slice(-2) + '-' + ('0'+dd.getDate()).slice(-2);
     var c = P.days[key] || 0;
+    var hoy = (i === 0);
     var bg = c === 0 ? 'rgba(255,255,255,.07)' : c < 3 ? 'rgba(70,170,100,.5)' : c < 6 ? 'rgba(70,170,100,.8)' : 'rgba(90,210,120,1)';
-    cells += '<span title="' + key + ': ' + c + '" style="width:14px;height:14px;border-radius:4px;background:' + bg + ';display:inline-block"></span>';
+    cells += '<span title="' + (hoy ? 'Hoy' : key) + ': ' + c + ' ejercicio' + (c !== 1 ? 's' : '') + '" style="width:15px;height:15px;border-radius:4px;background:' + bg + ';' + (hoy ? 'box-shadow:0 0 0 1.5px rgba(255,255,255,.45);' : '') + 'display:inline-block"></span>';
   }
-  return '<div style="display:flex;gap:4px;align-items:center;margin-top:11px">'
-       + '<span style="font-size:12px;color:var(--text2);margin-right:4px">Actividad</span>' + cells + '</div>';
+  var st = _puzDayStreak(P);
+  return '<div style="margin-top:14px">'
+    + '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">'
+    + '<span style="font-size:13px;color:var(--text2)">Últimos 14 días</span>'
+    + (st > 0 ? '<span style="font-size:13px;color:var(--text2)">🔥 ' + st + (st === 1 ? ' día' : ' días') + ' seguidos</span>' : '')
+    + '</div>'
+    + '<div style="display:flex;gap:4px;align-items:center">' + cells + '</div></div>';
 }
 
 function _puzPill(html, sub) {
@@ -16235,8 +16267,7 @@ function puzRenderStatsPanel() {
     + _puzPill('♟ ' + Math.round(P.rating), ratingSub)
     + _puzPill('✔ ' + P.solved, P.solved === 1 ? 'resuelto' : 'resueltos')
     + _puzPill('🎯 ' + acc + '%', 'de acierto')
-    + _puzPill('🔥 ' + P.streak, 'racha · récord ' + P.bestStreak)
-    + _puzPill('📅 ' + Math.min(P.dailyCount, PUZ_DAILY_GOAL) + '/' + PUZ_DAILY_GOAL, P.dailyCount >= PUZ_DAILY_GOAL ? '¡meta de hoy! ✓' : 'meta de hoy');
+    + _puzPill('🔥 ' + P.streak, 'racha · récord ' + P.bestStreak);
   // Desglose por nivel.
   var lvls = ['inicial','aficionado','avanzado','maestro'], byLvl = '';
   for (var i=0;i<lvls.length;i++) { var b = P.byLevel[lvls[i]]; if (b && b.n) byLvl += (byLvl?' · ':'') + PUZ_LVL_SHORT[lvls[i]] + ' ' + b.ok + '/' + b.n; }
@@ -16247,6 +16278,7 @@ function puzRenderStatsPanel() {
     '<div style="display:inline-block;text-align:left;max-width:100%;background:rgba(26,28,38,0.90);border:2px solid rgba(255,255,255,0.22);border-radius:13px;padding:14px 16px;margin-bottom:14px">'
     + '<div style="display:flex;gap:9px;flex-wrap:wrap;align-items:stretch;justify-content:center">' + pills + '</div>'
     + (byLvl ? '<div style="font-size:13px;color:var(--text2);margin-top:11px">Por nivel: ' + byLvl + '</div>' : '')
+    + _puzDailyBar(P)
     + _puzActivityStrip(P)
     + (cont ? '<div style="margin-top:12px">' + cont + '</div>' : '')
     + '</div>';
