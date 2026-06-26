@@ -1365,7 +1365,9 @@
         <button class="chip active" onclick="puzSetLevel('inicial',this)">Nivel inicial</button>
         <button class="chip" onclick="puzSetLevel('aficionado',this)">Nivel aficionado</button>
         <button class="chip" onclick="puzSetLevel('avanzado',this)">Nivel avanzado</button>
+        <button class="chip" onclick="puzSetLevel('maestro',this)">Nivel maestro</button>
       </div>
+      <div id="puz-stats-panel"></div>
       <div id="puz-author-tools" style="display:none;background:var(--bg2);border:1px dashed var(--gold-dim);border-radius:11px;padding:11px 13px;margin-bottom:14px">
         <div style="font-size:12px;color:var(--text2);line-height:1.5;margin-bottom:9px">🔗 <b style="color:var(--text2)">Enlazar ejercicios con sus partidas.</b> Busca en el pool la partida original de cada ejercicio y guarda el puntero, así la web publicada baja solo esa partida (KB) y no el índice entero (~34&nbsp;MB). Repetilo cada vez que agregás ejercicios nuevos.</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
@@ -16041,9 +16043,11 @@ if (_ondemand) {
    Cero motor del visitante: las soluciones vienen pre-generadas en data/puzzles.json.
 ═══════════════════════════════════════════════════════ */
 var PUZZLES = [], _puzLoaded = false;
-var PUZ_OVERLAP = 50;   // solapamiento ±50 en los bordes 1400/1800 (los ejercicios de borde caen en 2 niveles)
-var PUZ_LVL_NAME = { inicial: 'Nivel inicial', aficionado: 'Nivel aficionado', avanzado: 'Nivel avanzado' };
-var PUZ_LVL_SHORT = { inicial: 'Inicial', aficionado: 'Aficionado', avanzado: 'Avanzado' };
+var PUZ_OVERLAP = 50;   // solapamiento ±50 en los bordes 1400/1800/2200 (los ejercicios de borde caen en 2 niveles)
+var PUZ_RATING_MINNB = 5;   // intentos mínimos para confiar en el rating calibrado del Worker (si no, usa el del autor)
+var PUZ_DAILY_GOAL = 5;     // meta diaria de ejercicios (para el "Hoy: X/5")
+var PUZ_LVL_NAME = { inicial: 'Nivel inicial', aficionado: 'Nivel aficionado', avanzado: 'Nivel avanzado', maestro: 'Nivel maestro' };
+var PUZ_LVL_SHORT = { inicial: 'Inicial', aficionado: 'Aficionado', avanzado: 'Avanzado', maestro: 'Maestro' };
 var PUZ_SEC_LABEL = { mates:'Mate', tactics:'Táctica', defensa:'Defensa', ventaja:'Ventaja', sacrificio:'Sacrificio', finales:'Final' };
 var PUZ_MOTIF_LABEL = { horquilla:'Horquilla', clavada:'Clavada', enfilada:'Enfilada', descubierta:'Descubierta',
   'doble-jaque':'Doble jaque', 'mate-pasillo':'Mate del pasillo', coronacion:'Coronación', tablas:'Tablas',
@@ -16065,12 +16069,20 @@ function puzBand(d) {
   var lv = [];
   if (d <= 1400 + PUZ_OVERLAP) lv.push('inicial');
   if (d >= 1400 - PUZ_OVERLAP && d <= 1800 + PUZ_OVERLAP) lv.push('aficionado');
-  if (d >= 1800 - PUZ_OVERLAP) lv.push('avanzado');
+  if (d >= 1800 - PUZ_OVERLAP && d <= 2200 + PUZ_OVERLAP) lv.push('avanzado');
+  if (d >= 2200 - PUZ_OVERLAP) lv.push('maestro');
   return lv.length ? lv : ['aficionado'];
 }
+// Dificultad EFECTIVA: si el ejercicio ya se calibró con los visitantes (rating del Worker),
+// usamos ese; si no, el valor "a ojo" del autor. Así los ejercicios migran solos de nivel.
+function _puzEffDiff(p) {
+  var st = p && _puzStats[p.id];
+  if (st && typeof st.rating === 'number' && (st.nb || 0) >= PUZ_RATING_MINNB) return st.rating;
+  return p && p.difficulty || 1000;
+}
 function puzForLevel(level) {
-  return PUZZLES.filter(function(p){ return !p.hidden && puzBand(p.difficulty || 1000).indexOf(level) >= 0; })
-                .sort(function(a,b){ return (a.difficulty||0) - (b.difficulty||0) || (a.id < b.id ? -1 : 1); });
+  return PUZZLES.filter(function(p){ return !p.hidden && puzBand(_puzEffDiff(p)).indexOf(level) >= 0; })
+                .sort(function(a,b){ return _puzEffDiff(a) - _puzEffDiff(b) || (a.id < b.id ? -1 : 1); });
 }
 function puzById(id) { for (var i=0;i<PUZZLES.length;i++) if (PUZZLES[i].id === id) return PUZZLES[i]; return null; }
 
@@ -16094,16 +16106,155 @@ function puzStatPct(id) {
   var tot = (s.ok || 0) + (s.fail || 0); if (!tot) return null;
   return { pct: Math.round((s.ok || 0) * 100 / tot), tot: tot };
 }
+
+// ───────────────────────────────────────────────────────────────────────────
+//  Progreso del visitante (sin login — guardado en el navegador, localStorage)
+//  Lleva un rating de táctica que sube/baja como en Lichess, más rachas, resueltos
+//  por nivel y calendario de actividad. Es por navegador/dispositivo: si borra el
+//  caché, se pierde (más adelante: código de respaldo para migrar sin cuenta).
+// ───────────────────────────────────────────────────────────────────────────
+var _puzPlayer = null;
+function puzPlayer() {
+  if (_puzPlayer) return _puzPlayer;
+  var P = { rating: 1200, n: 0, seeded: false, solved: 0, ok: 0, fail: 0,
+            streak: 0, bestStreak: 0, best: 1200, byLevel: {}, days: {},
+            dailyDate: '', dailyCount: 0, lastId: '' };
+  try { var s = JSON.parse(localStorage.getItem('puz_player') || 'null');
+        if (s && typeof s === 'object') for (var k in P) if (s[k] !== undefined) P[k] = s[k];
+  } catch(e) {}
+  _puzPlayer = P; return P;
+}
+function puzPlayerSave() { try { localStorage.setItem('puz_player', JSON.stringify(puzPlayer())); } catch(e) {} }
+function _puzTodayKey() { var d = new Date(); return d.getFullYear() + '-' + ('0'+(d.getMonth()+1)).slice(-2) + '-' + ('0'+d.getDate()).slice(-2); }
+// K del visitante: provisional al principio (rating incierto), después se calma.
+function _puzKv(n) { if (n < 15) return 40; if (n < 50) return 24; return 16; }
+function puzPlayerSeed(rating) { var P = puzPlayer(); P.rating = rating; P.best = Math.max(P.best, rating); P.seeded = true; puzPlayerSave(); }
+
+// Aplica un intento al progreso del visitante (Elo + rachas + calendario). Devuelve el delta de rating.
+function puzPlayerRecord(p, ok) {
+  var P = puzPlayer();
+  var Rp = _puzEffDiff(p);                                      // rating del ejercicio (calibrado o del autor)
+  var S = ok ? 1 : 0;
+  var E = 1 / (1 + Math.pow(10, (Rp - P.rating) / 400));        // prob. esperada de que el visitante acierte
+  var delta = Math.round(_puzKv(P.n) * (S - E));
+  P.rating = Math.max(100, Math.min(3200, P.rating + delta));
+  P.n++; P.solved++; if (ok) P.ok++; else P.fail++;
+  P.best = Math.max(P.best, P.rating);
+  P.streak = ok ? P.streak + 1 : 0;
+  P.bestStreak = Math.max(P.bestStreak, P.streak);
+  var bands = puzBand(Rp), lvl = bands[bands.length - 1];       // el nivel "más alto" que toca el ejercicio
+  if (!P.byLevel[lvl]) P.byLevel[lvl] = { ok: 0, n: 0 };
+  P.byLevel[lvl].n++; if (ok) P.byLevel[lvl].ok++;
+  var today = _puzTodayKey();
+  P.days[today] = (P.days[today] || 0) + 1;
+  if (P.dailyDate !== today) { P.dailyDate = today; P.dailyCount = 0; }
+  P.dailyCount++;
+  P.lastId = p.id;
+  puzPlayerSave();
+  return delta;
+}
+
+// El visitante elige su nivel la PRIMERA vez (siembra el rating para que converja más rápido).
+function puzSeedPick(which) {
+  var map = { beg: 1000, int: 1500, adv: 1900, unsure: 1200 };
+  puzPlayerSeed(map[which] || 1200);
+  puzRenderStatsPanel();
+}
+
+// Toast flotante con el cambio de rating al resolver/fallar (visible sobre el tablero y la lista).
+function puzShowRatingDelta(delta) {
+  if (!delta) return;
+  var P = puzPlayer(), up = delta > 0;
+  var t = document.getElementById('puz-rating-toast');
+  if (!t) { t = document.createElement('div'); t.id = 'puz-rating-toast'; document.body.appendChild(t); }
+  t.style.cssText = 'position:fixed;top:64px;left:50%;transform:translateX(-50%);z-index:600;'
+    + 'background:' + (up ? 'rgba(34,150,72,.97)' : 'rgba(176,58,58,.97)') + ';color:#fff;'
+    + 'padding:8px 16px;border-radius:22px;font-weight:800;font-size:14px;box-shadow:0 5px 18px rgba(0,0,0,.45);'
+    + 'font-family:inherit;pointer-events:none;transition:opacity .45s;opacity:1';
+  t.textContent = (up ? '▲ +' + delta : '▼ ' + delta) + '   Tu rating: ' + Math.round(P.rating);
+  clearTimeout(t._tmr); t.style.opacity = '1';
+  t._tmr = setTimeout(function(){ t.style.opacity = '0'; }, 2300);
+}
+
+// Tira de actividad de los últimos 14 días (cuadraditos estilo Duolingo/GitHub).
+function _puzActivityStrip(P) {
+  var cells = '', d = new Date();
+  for (var i = 13; i >= 0; i--) {
+    var dd = new Date(d.getFullYear(), d.getMonth(), d.getDate() - i);
+    var key = dd.getFullYear() + '-' + ('0'+(dd.getMonth()+1)).slice(-2) + '-' + ('0'+dd.getDate()).slice(-2);
+    var c = P.days[key] || 0;
+    var bg = c === 0 ? 'rgba(255,255,255,.07)' : c < 3 ? 'rgba(70,170,100,.5)' : c < 6 ? 'rgba(70,170,100,.8)' : 'rgba(90,210,120,1)';
+    cells += '<span title="' + key + ': ' + c + '" style="width:11px;height:11px;border-radius:3px;background:' + bg + ';display:inline-block"></span>';
+  }
+  return '<div style="display:flex;gap:3px;align-items:center;margin-top:8px">'
+       + '<span style="font-size:10px;color:var(--text3);margin-right:3px">Actividad</span>' + cells + '</div>';
+}
+
+function _puzPill(html, sub) {
+  return '<div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:7px 11px;text-align:center;min-width:74px">'
+       + '<div style="font-size:16px;font-weight:800;color:var(--text);line-height:1.15">' + html + '</div>'
+       + '<div style="font-size:10px;color:var(--text3);margin-top:1px">' + sub + '</div></div>';
+}
+
+// Panel de progreso arriba de la lista de ejercicios. Si el visitante todavía no eligió su
+// nivel, muestra la preguntita de siembra en su lugar.
+function puzRenderStatsPanel() {
+  var el = document.getElementById('puz-stats-panel'); if (!el) return;
+  var P = puzPlayer();
+  // Primera vez: preguntar el nivel para sembrar el rating.
+  if (!P.seeded && P.solved === 0) {
+    var bs = 'flex:1;min-width:92px;padding:9px 8px;background:var(--bg3);border:1px solid var(--border);border-radius:9px;color:var(--text);font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit';
+    el.innerHTML =
+      '<div style="background:var(--bg2);border:1px solid var(--gold-dim);border-radius:12px;padding:13px 14px;margin-bottom:14px">'
+      + '<div style="font-size:13px;color:var(--text);font-weight:700;margin-bottom:3px">👋 ¿Qué nivel tenés?</div>'
+      + '<div style="font-size:11.5px;color:var(--text2);margin-bottom:10px">Para arrancar tu rating de táctica más cerca de tu nivel. Lo ajustamos solo a medida que resolvés. (Una sola vez.)</div>'
+      + '<div style="display:flex;gap:7px;flex-wrap:wrap">'
+      + '<button onclick="puzSeedPick(\'beg\')" style="' + bs + '">🌱 Principiante</button>'
+      + '<button onclick="puzSeedPick(\'int\')" style="' + bs + '">♟ Intermedio</button>'
+      + '<button onclick="puzSeedPick(\'adv\')" style="' + bs + '">⚔ Avanzado</button>'
+      + '<button onclick="puzSeedPick(\'unsure\')" style="' + bs + ';opacity:.8">🤷 No sé</button>'
+      + '</div></div>';
+    return;
+  }
+  var prov = P.n < 15;
+  var acc = P.solved ? Math.round(P.ok * 100 / P.solved) : 0;
+  var nextLvl = P.rating < 1400 ? 1400 : P.rating < 1800 ? 1800 : P.rating < 2200 ? 2200 : null;
+  var ratingSub = prov ? 'provisional' : (nextLvl ? (nextLvl - Math.round(P.rating)) + ' p. para el próximo nivel' : '¡nivel máximo!');
+  var pills = ''
+    + _puzPill('♟ ' + Math.round(P.rating), ratingSub)
+    + _puzPill('✔ ' + P.solved, P.solved === 1 ? 'resuelto' : 'resueltos')
+    + _puzPill('🎯 ' + acc + '%', 'de acierto')
+    + _puzPill('🔥 ' + P.streak, 'racha · récord ' + P.bestStreak)
+    + _puzPill('📅 ' + Math.min(P.dailyCount, PUZ_DAILY_GOAL) + '/' + PUZ_DAILY_GOAL, P.dailyCount >= PUZ_DAILY_GOAL ? '¡meta de hoy! ✓' : 'meta de hoy');
+  // Desglose por nivel.
+  var lvls = ['inicial','aficionado','avanzado','maestro'], byLvl = '';
+  for (var i=0;i<lvls.length;i++) { var b = P.byLevel[lvls[i]]; if (b && b.n) byLvl += (byLvl?' · ':'') + PUZ_LVL_SHORT[lvls[i]] + ' ' + b.ok + '/' + b.n; }
+  var cont = '';
+  if (P.lastId && puzById(P.lastId)) cont = '<button onclick="puzOpenById(\'' + P.lastId + '\')" style="background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-size:12px;font-weight:700;border-radius:8px;padding:6px 12px;cursor:pointer;font-family:inherit">▶ Seguir donde quedaste</button>';
+  el.innerHTML =
+    '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:12px 13px;margin-bottom:14px">'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:stretch">' + pills + '</div>'
+    + (byLvl ? '<div style="font-size:11px;color:var(--text3);margin-top:9px">Por nivel: ' + byLvl + '</div>' : '')
+    + _puzActivityStrip(P)
+    + (cont ? '<div style="margin-top:10px">' + cont + '</div>' : '')
+    + '</div>';
+}
 // Reporta el resultado al Worker (suma 1 acierto/error), una vez por navegador por ejercicio.
 // Suma también localmente (optimista) para que el % se vea al instante sin re-consultar.
 function puzReportResult(id, r) {
   var sent = {}; try { sent = JSON.parse(localStorage.getItem('puz_sent') || '{}'); } catch(e) {}
-  if (sent[id]) return;
+  if (sent[id]) return;                                    // un solo cómputo por ejercicio por navegador (no se puede "farmear")
   sent[id] = 1; try { localStorage.setItem('puz_sent', JSON.stringify(sent)); } catch(e) {}
   if (!_puzStats[id]) _puzStats[id] = { ok: 0, fail: 0 };
   if (r === 'ok') _puzStats[id].ok++; else _puzStats[id].fail++;
-  try { fetch(CR_PROXY + '/puzhit?id=' + encodeURIComponent(id) + '&r=' + (r === 'ok' ? 'ok' : 'fail'), { keepalive: true }).catch(function(){}); } catch(e) {}
+  // Progreso del visitante (rating/rachas) + datos para que el Worker calibre el ejercicio.
+  var p = puzById(id), vr = Math.round(puzPlayer().rating), seed = p ? (p.difficulty || 1000) : 1000, delta = 0;
+  if (p) delta = puzPlayerRecord(p, r === 'ok');           // vr = rating ANTES del intento (lo que "jugó" la partida)
+  try { fetch(CR_PROXY + '/puzhit?id=' + encodeURIComponent(id) + '&r=' + (r === 'ok' ? 'ok' : 'fail')
+              + '&vr=' + vr + '&pr=' + seed, { keepalive: true }).catch(function(){}); } catch(e) {}
   puzRenderSource();
+  puzRenderStatsPanel();
+  puzShowRatingDelta(delta);
 }
 
 function puzInit() {
@@ -16111,6 +16262,7 @@ function puzInit() {
   if (!_ondemand) { var _pat = document.getElementById('puz-author-tools'); if (_pat) _pat.style.display = ''; }
   var chips = document.querySelectorAll('#tab-ejercicios .chip');
   for (var i=0;i<chips.length;i++) chips[i].classList.toggle('active', chips[i].getAttribute('onclick').indexOf("'"+puz.level+"'") >= 0);
+  puzRenderStatsPanel();
   puzLoadStats();
   fetch('data/puzzles.json' + _dataV()).then(function(r){ return r.json(); }).then(function(d) {
     PUZZLES = Array.isArray(d) ? d : (d.puzzles || []);
@@ -16124,7 +16276,7 @@ function puzInit() {
 function puzUpdateChipCounts() {
   var chips = document.querySelectorAll('#tab-ejercicios .chip');
   for (var i=0;i<chips.length;i++) {
-    var m = chips[i].getAttribute('onclick').match(/'(inicial|aficionado|avanzado)'/); if (!m) continue;
+    var m = chips[i].getAttribute('onclick').match(/'(inicial|aficionado|avanzado|maestro)'/); if (!m) continue;
     chips[i].innerHTML = PUZ_LVL_NAME[m[1]] + ' <span style="opacity:.6">(' + puzForLevel(m[1]).length + ')</span>';
   }
 }
@@ -16144,6 +16296,7 @@ function puzSyncChips() {
 function puzRenderList() {
   var el = document.getElementById('puz-list'); if (!el) return;
   puzSyncChips();
+  puzRenderStatsPanel();
   if (!_puzLoaded) { el.innerHTML = '<div style="text-align:center;padding:32px;color:var(--text2);font-size:13px">⏳ Cargando ejercicios…</div>'; return; }
   var list = puzForLevel(puz.level), res = puzResults();
   if (!list.length) { el.innerHTML = '<div style="text-align:center;padding:32px;color:var(--text2);font-size:13px">No hay ejercicios en este nivel todavía.</div>'; return; }
@@ -16190,7 +16343,7 @@ function puzGoPage(p) {
 
 function puzOpenById(id) {
   var p = puzById(id); if (!p) return;
-  var bands = puzBand(p.difficulty || 1000);
+  var bands = puzBand(_puzEffDiff(p));
   var level = bands.indexOf(puz.level) >= 0 ? puz.level : bands[0];
   puz.level = level;
   puz.list = puzForLevel(level);
@@ -16260,7 +16413,12 @@ function puzSourceHtml(p) {
 // Línea con la estadística colectiva (cuánta gente lo resolvió bien). Vacío si no hay datos aún.
 function puzCrowdHtml(id) {
   var st = puzStatPct(id); if (!st) return '';
-  return '<div class="meta" style="margin-top:5px">👥 Lo resolvió bien el <b>' + st.pct + '%</b> de quienes lo intentaron (' + st.tot + ').</div>';
+  var s = _puzStats[id], rat = '';
+  if (s && typeof s.rating === 'number' && (s.nb || 0) >= PUZ_RATING_MINNB) {
+    var bands = puzBand(s.rating);
+    rat = ' · dificultad <b>~' + s.rating + '</b> (' + PUZ_LVL_SHORT[bands[bands.length-1]] + ')';
+  }
+  return '<div class="meta" style="margin-top:5px">👥 Lo resolvió bien el <b>' + st.pct + '%</b> de quienes lo intentaron (' + st.tot + ')' + rat + '.</div>';
 }
 // Repinta el bloque de "origen" del ejercicio (partida + estadística). Se llama al abrir el
 // ejercicio y cuando llegan/cambian las estadísticas.

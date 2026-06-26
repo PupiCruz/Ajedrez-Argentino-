@@ -11,13 +11,26 @@
 //
 // 2) Estadísticas de ejercicios (aciertos/errores de la gente) en una base D1
 //    Endpoints:
-//      GET /puzhit?id=<id>&r=ok|fail   → suma 1 acierto o 1 error a ese ejercicio
-//      GET /puzstats                   → devuelve { "<id>": {ok, fail}, ... } (todos)
+//      GET /puzhit?id=<id>&r=ok|fail[&vr=<rating visitante>&pr=<semilla autor>]
+//                                       → suma 1 acierto/error y RECALIBRA el rating del ejercicio (Elo)
+//      GET /puzstats                    → devuelve { "<id>": {ok, fail, rating, nb}, ... } (todos)
 //    Requiere un binding D1 llamado DB (ver instrucciones). Si no está, /puzstats
 //    devuelve {} y /puzhit responde error, pero el proxy de arriba sigue andando.
 //    Esquema (correr una vez en la consola de D1):
 //      CREATE TABLE IF NOT EXISTS puz_stats (
 //        id TEXT PRIMARY KEY, ok INTEGER DEFAULT 0, fail INTEGER DEFAULT 0);
+//    Para la calibración de dificultad (Elo), agregar las columnas nuevas UNA vez:
+//      ALTER TABLE puz_stats ADD COLUMN rating REAL;
+//      ALTER TABLE puz_stats ADD COLUMN nb INTEGER DEFAULT 0;
+//    (Si todavía no se corrieron, /puzhit sigue contando aciertos/errores y la
+//     calibración simplemente queda inactiva hasta que existan las columnas.)
+//
+//    Cómo se calibra: cada ejercicio es como un "jugador" con su propio rating. Cada
+//    intento es una partida visitante-vs-ejercicio. Si el visitante acierta, el
+//    ejercicio baja un poco (era más fácil de lo pensado); si falla, sube. Cuánto se
+//    mueve depende de (a) la diferencia de rating entre ambos y (b) cuántos intentos
+//    lleva el ejercicio: arranca moviéndose fuerte (K=24) y se va congelando (K→3).
+//    El rating del visitante lo lleva su navegador (sin login) y llega en `vr`.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const ALLOWED_HOST = /(^|\.)chess-results\.com$/i;
@@ -165,14 +178,21 @@ function jsonResp(obj, status, cacheSeconds) {
   return new Response(JSON.stringify(obj), { status: status || 200, headers: h });
 }
 
-// GET /puzhit?id=<id>&r=ok|fail → suma 1 al contador del ejercicio (acierto o error).
-// Upsert atómico en D1 (ON CONFLICT ... DO UPDATE), así dos personas a la vez no pisan el conteo.
+// K de Elo del EJERCICIO: cuánto se mueve su rating según cuántos intentos lleva.
+// Mucho al principio (se acomoda rápido a su nivel real) y casi nada cuando ya está calibrado.
+function puzK(nb) { if (nb < 50) return 24; if (nb < 200) return 12; if (nb < 1000) return 6; return 3; }
+function clampRating(r) { return Math.max(400, Math.min(3000, r)); }
+
+// GET /puzhit?id=<id>&r=ok|fail[&vr=<rating visitante>&pr=<semilla autor>]
+//   1) Suma 1 al contador de aciertos/errores (upsert atómico; nunca rompe).
+//   2) Si llega `vr`, recalibra el rating del ejercicio con un paso de Elo.
 async function puzHit(reqUrl, env) {
   const id = (reqUrl.searchParams.get('id') || '').slice(0, 80);
   const r = reqUrl.searchParams.get('r');
   if (!id || (r !== 'ok' && r !== 'fail')) return errJson('Parámetros inválidos (id, r=ok|fail)', 400);
   if (!env.DB) return errJson('Falta el binding D1 (DB)', 500);
   const ok = r === 'ok' ? 1 : 0, fail = r === 'fail' ? 1 : 0;
+  // (1) Contador — upsert atómico, así dos personas a la vez no pisan el conteo.
   try {
     await env.DB.prepare(
       'INSERT INTO puz_stats (id, ok, fail) VALUES (?1, ?2, ?3) ' +
@@ -181,19 +201,46 @@ async function puzHit(reqUrl, env) {
   } catch (e) {
     return errJson('D1 error: ' + e.message, 500);
   }
+  // (2) Calibración Elo. Necesita las columnas rating/nb (ver ALTER TABLE en el encabezado).
+  //     Si no existen todavía, el try/catch lo absorbe y seguimos sin calibrar.
+  const vr = parseFloat(reqUrl.searchParams.get('vr'));   // rating del visitante (de su navegador)
+  const pr = parseFloat(reqUrl.searchParams.get('pr'));   // semilla del autor (solo si el ejercicio es nuevo)
+  if (isFinite(vr)) {
+    try {
+      const row = await env.DB.prepare('SELECT rating, nb FROM puz_stats WHERE id = ?1').bind(id).first();
+      let R = (row && row.rating != null) ? row.rating : (isFinite(pr) ? pr : 1500);
+      const nb = (row && row.nb != null) ? row.nb : 0;
+      R = clampRating(R);
+      const S = ok ? 1 : 0;                                              // puntaje del visitante
+      const E = 1 / (1 + Math.pow(10, (R - clampRating(vr)) / 400));     // prob. de que acierte
+      let d = puzK(nb) * (E - S);                                        // cuánto se mueve el ejercicio
+      if (d > 32) d = 32; else if (d < -32) d = -32;                    // tope de seguridad por intento
+      R = clampRating(R + d);
+      await env.DB.prepare('UPDATE puz_stats SET rating = ?2, nb = ?3 WHERE id = ?1')
+        .bind(id, R, nb + 1).run();
+    } catch (e) { /* faltan las columnas rating/nb: contamos pero no calibramos */ }
+  }
   return jsonResp({ ok: true });
 }
 
-// GET /puzstats → { "<id>": {ok, fail}, ... } con TODOS los ejercicios que tienen datos.
+// GET /puzstats → { "<id>": {ok, fail, rating, nb}, ... } con TODOS los ejercicios que tienen datos.
 // Si no hay binding D1, devuelve {} (la web sigue andando, solo sin estadísticas).
 async function puzStats(env) {
   if (!env.DB) return jsonResp({}, 200, STATS_CACHE_SECONDS);
+  let results;
   try {
-    const { results } = await env.DB.prepare('SELECT id, ok, fail FROM puz_stats').all();
-    const out = {};
-    for (const row of (results || [])) out[row.id] = { ok: row.ok || 0, fail: row.fail || 0 };
-    return jsonResp(out, 200, STATS_CACHE_SECONDS);
+    ({ results } = await env.DB.prepare('SELECT id, ok, fail, rating, nb FROM puz_stats').all());
   } catch (e) {
-    return jsonResp({}, 200, STATS_CACHE_SECONDS);
+    // Base vieja sin las columnas de calibración: caemos al esquema mínimo.
+    try { ({ results } = await env.DB.prepare('SELECT id, ok, fail FROM puz_stats').all()); }
+    catch (e2) { return jsonResp({}, 200, STATS_CACHE_SECONDS); }
   }
+  const out = {};
+  for (const row of (results || [])) {
+    const o = { ok: row.ok || 0, fail: row.fail || 0 };
+    if (row.rating != null) o.rating = Math.round(row.rating);
+    if (row.nb != null) o.nb = row.nb || 0;
+    out[row.id] = o;
+  }
+  return jsonResp(out, 200, STATS_CACHE_SECONDS);
 }

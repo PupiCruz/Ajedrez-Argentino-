@@ -27,3 +27,29 @@ Si descarga un archivo `.xlsx`, ¡funciona!
 ## Nota
 - El Worker sólo deja pasar URLs de `chess-results.com` (no es un proxy abierto).
 - Guarda cada archivo ~2 minutos en caché para no sobrecargar a chess-results.
+
+## Calibración de dificultad de los ejercicios (Elo) — migración de la base D1
+
+Esto se hace **una sola vez**, además de re-pegar el `cr-proxy-worker.js` actualizado.
+Agrega dos columnas a la tabla `puz_stats` para que cada ejercicio guarde su **rating**
+calibrado (cuánto cuesta de verdad, según aciertan/fallan los visitantes) y cuántos
+intentos lleva.
+
+1. En Cloudflare: **Workers & Pages** → **D1** → abrí tu base (la del binding `DB`, ej. `ajedrez`).
+2. Pestaña **Console** (consola de SQL).
+3. Pegá y ejecutá estas dos líneas (una por vez si te lo pide):
+
+   ```sql
+   ALTER TABLE puz_stats ADD COLUMN rating REAL;
+   ALTER TABLE puz_stats ADD COLUMN nb INTEGER DEFAULT 0;
+   ```
+
+4. Listo. A partir de ahí, cada vez que alguien resuelve/falla un ejercicio, su rating
+   se va acomodando solo.
+
+> Si todavía **no** corrés estos `ALTER TABLE`, no pasa nada malo: el Worker sigue
+> contando aciertos/errores como hasta ahora y la calibración simplemente queda
+> inactiva hasta que existan las columnas. (El código está hecho para no romperse.)
+
+El rating de cada visitante vive en **su navegador** (sin login); el Worker no guarda
+quién es nadie, sólo recibe un número de fuerza junto con el acierto/error.
