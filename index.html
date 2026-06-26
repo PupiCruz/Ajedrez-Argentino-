@@ -1402,6 +1402,16 @@
       <!-- Filtros (cambian según la sub-pestaña) -->
       <div id="prac-filters" style="display:flex;flex-direction:column;align-items:center;gap:11px;margin-bottom:18px"></div>
 
+      <!-- Herramientas de autor (solo modo autor) -->
+      <div id="prac-author-tools" style="display:none;background:var(--bg2);border:1px dashed var(--gold-dim);border-radius:11px;padding:11px 13px;margin:0 auto 16px;max-width:580px">
+        <div style="font-size:12px;color:var(--text2);line-height:1.5;margin-bottom:9px">🔗 <b style="color:var(--text2)">Enlazar posiciones con sus partidas.</b> Busca en el pool la partida original de cada posición y guarda el puntero, así la web publicada baja solo esa partida (KB) y no el índice entero (~34&nbsp;MB). Repetilo cada vez que agregás posiciones nuevas.</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:center">
+          <button onclick="pracLinkAllGames(this)" style="padding:9px 14px;background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-size:13px;font-weight:700;border-radius:9px;cursor:pointer;font-family:inherit">🔗 Enlazar posiciones con sus partidas</button>
+          <button onclick="pracSaveJson()" style="padding:9px 14px;background:var(--bg3);border:1px solid var(--border);color:var(--text2);font-size:13px;font-weight:600;border-radius:9px;cursor:pointer;font-family:inherit">💾 Guardar practice.json</button>
+        </div>
+        <div id="prac-author-tools-msg" style="font-size:12px;color:var(--gold);margin-top:8px;text-align:center;min-height:15px"></div>
+      </div>
+
       <div id="prac-list"></div>
     </section>
 
@@ -17047,6 +17057,7 @@ function _pracPageOff() { document.body.classList.remove('puz-page'); var ov = d
 
 function pracInit() {
   try { var lv = localStorage.getItem('prac_level'); if (lv && PRAC_LEVELS[lv]) prac.level = lv; } catch(e) {}
+  if (!_ondemand) { var _pat = document.getElementById('prac-author-tools'); if (_pat) _pat.style.display = ''; }
   pracSyncLevelChips();
   fetch('data/practice.json' + _dataV()).then(function(r){ return r.json(); }).then(function(d) {
     PRACTICE = Array.isArray(d) ? d : (d.practice || []);
@@ -17608,21 +17619,69 @@ function pracDrawArrow() {
 function pracFindGame(p) { return (typeof puzFindGame === 'function') ? puzFindGame(p) : null; }
 function pracResolveSrcGame(p) {
   prac._srcGame = null; prac._srcGameMaybe = false;
-  if (_ondemand && !window.__GAMES_INDEX__) { prac._srcGameMaybe = true; return; }   // publicado: se resuelve al clic
+  if (p.gameRef && p.gameRef.t != null) { prac._srcGameMaybe = true; return; }       // ya enlazado: botón directo, sin índice
+  if (_ondemand && !window.__GAMES_INDEX__) { prac._srcGameMaybe = true; return; }   // publicado sin enlazar: se resuelve al clic
   try { prac._srcGame = pracFindGame(p); } catch(e) {}
+}
+// Modo autor: enlaza TODAS las posiciones con su partida del pool y guarda el puntero (t, gi, ply).
+async function pracLinkAllGames(btn) {
+  var msg = document.getElementById('prac-author-tools-msg');
+  if (btn) btn.disabled = true;
+  if (msg) msg.textContent = 'Cargando índice de partidas…';
+  await new Promise(function(r) { _loadGamesIndexAsync(function() { r(); }); });
+  var idx = window.__GAMES_INDEX__ || [];
+  if (!idx.length) { if (msg) msg.textContent = 'No se pudo cargar el índice de partidas.'; if (btn) btn.disabled = false; return; }
+  if (msg) msg.textContent = 'Enlazando…';
+  var entries = idx.map(function(g) { return { wt: nameTokens(g.w || ''), bt: nameTokens(g.b || ''), ev: g.ev || '', d: g.d || '', r: g.r || '', pl: g.pl || 0, t: g.t, gi: g.gi }; });
+  var linked = 0, notfound = 0;
+  for (var i = 0; i < PRACTICE.length; i++) {
+    var p = PRACTICE[i], s = p.source || {};
+    var wN = nameTokens(s.white || ''), bN = nameTokens(s.black || '');
+    if (!wN.length || !bN.length) { notfound++; continue; }
+    var cands = entries.filter(function(e) { return _tokAllInOne(wN, e.wt) && _tokAllInOne(bN, e.bt); });
+    (function() {
+      function narrow(f, v) { if (cands.length <= 1 || !v) return; var c = cands.filter(function(e) { return (e[f] || '') === v; }); if (c.length) cands = c; }
+      narrow('ev', (s.tournamentName || '').trim()); narrow('d', (s.date || '').trim()); narrow('r', (s.result || '').trim());
+      if (cands.length > 1 && s.ply) { var c = cands.filter(function(e) { return (e.pl || 0) >= s.ply; }); if (c.length) cands = c; }
+    })();
+    var g = cands[0];
+    if (g && g.t != null && g.gi != null) { p.gameRef = { t: g.t, gi: g.gi, ply: s.ply }; linked++; }
+    else { notfound++; }
+    if (i % 20 === 0 && msg) { msg.textContent = 'Enlazando… ' + (i + 1) + '/' + PRACTICE.length; await new Promise(function(r){ setTimeout(r, 0); }); }
+  }
+  if (msg) msg.textContent = '✓ Enlazadas ' + linked + ' de ' + PRACTICE.length + (notfound ? ' · ' + notfound + ' sin partida' : '') + '. Ahora "Guardar practice.json" y publicar.';
+  if (btn) btn.disabled = false;
+}
+function pracSaveJson() {
+  var blob = new Blob([JSON.stringify(PRACTICE)], { type:'application/json' });
+  var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'practice.json';
+  document.body.appendChild(a); a.click();
+  setTimeout(function() { URL.revokeObjectURL(a.href); a.remove(); }, 120);
+  var msg = document.getElementById('prac-author-tools-msg'); if (msg) msg.textContent = '✓ Descargado. Reemplazá data/practice.json con este archivo y volvé a publicar.';
 }
 async function pracOpenSourceGame() {
   if (typeof openTourGameByIndex !== 'function' || !prac.cur) return;
   var p = prac.cur, fen = p.fen, g = null, t = null, gi = null;
-  if (!prac._srcGame) {
-    if (_ondemand && !window.__GAMES_INDEX__) {
-      pracSetStatus('think', '🔎', 'Buscando la partida original…');
-      await new Promise(function(r) { _loadGamesIndexAsync(function() { try { _invalidateDbSearch(); } catch(e){} r(); }); });
-    }
+  // 1) Puntero guardado (gameRef): baja SOLO data/t/<t>.json (KB), sin el índice de ~34MB.
+  if (p.gameRef && p.gameRef.t != null && typeof fetchTournamentGames === 'function') {
+    pracSetStatus('think', '🔎', 'Cargando la partida original…');
+    var games = await fetchTournamentGames(p.gameRef.t);
     if (!prac.cur || prac.cur.fen !== fen) return;
-    prac._srcGame = pracFindGame(prac.cur);
+    var pgn = puzPickGameFromTour(games, p.gameRef.gi, p.source || {});
+    if (pgn) { g = pgn; t = p.gameRef.t; gi = p.gameRef.gi; }
   }
-  if (prac._srcGame) { g = prac._srcGame.pgn; t = prac._srcGame.t; gi = prac._srcGame.gi; }
+  // 2) Sin puntero (o no se pudo): índice del pool (autor: en memoria; publicado: lo carga al pedir).
+  if (!g) {
+    if (!prac._srcGame) {
+      if (_ondemand && !window.__GAMES_INDEX__) {
+        pracSetStatus('think', '🔎', 'Buscando la partida original…');
+        await new Promise(function(r) { _loadGamesIndexAsync(function() { try { _invalidateDbSearch(); } catch(e){} r(); }); });
+      }
+      if (!prac.cur || prac.cur.fen !== fen) return;
+      prac._srcGame = pracFindGame(prac.cur);
+    }
+    if (prac._srcGame) { g = prac._srcGame.pgn; t = prac._srcGame.t; gi = prac._srcGame.gi; }
+  }
   if (!g) { pracSetStatus('bad', '🔎', 'No encontré la partida original en la base de partidas.'); return; }
   pracStopEngine(); pracRestoreEngine();
   document.getElementById('prac-overlay').classList.remove('open'); _pracPageOff();
