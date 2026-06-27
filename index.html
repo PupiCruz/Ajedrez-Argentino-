@@ -1721,6 +1721,9 @@
     <!-- PARTIDAS DE LA APERTURA (opt-in) -->
     <div id="cv-book-games" class="cv-book-games"></div>
 
+    <!-- DATO HISTÓRICO AL AZAR (rota cada ~14s; se nutre de data/datos.json) -->
+    <div id="cv-dato" class="cv-dato" style="display:none" onclick="cvDatoNext()" title="Tocá para ver otro dato"></div>
+
     <a id="cv-lichess" class="chess-lichess" href="#" target="_blank"></a>
 
     <!-- Copiar FEN / PGN / Compartir: pegados al borde inferior de la 3ª columna -->
@@ -12590,8 +12593,14 @@ var ob = { cache:{}, timer:null };
 function obSetVisible(visible) {
   var w = document.getElementById('ob-wrap');
   if (w) w.style.display = visible ? 'block' : 'none';
+  // Fuera de libro, el botón "Ver partidas de esta apertura" no tiene función:
+  // se oculta y ese lugar lo aprovecha el dato histórico.
+  var bg = document.getElementById('cv-book-games');
+  if (bg) bg.style.display = visible ? '' : 'none';
   var modal = document.querySelector('.chess-modal');
   if (modal) modal.classList.toggle('cv-nobook', !visible);
+  // El dato histórico aparece recién al salir del libro (con retraso), para no pisarlo.
+  if (window.cvDatoBookState) window.cvDatoBookState(visible);
 }
 
 function obSchedule() {
@@ -19477,7 +19486,83 @@ function cvUpdateNagBadge() {
 <script async="" src="assets/chess.min.js" onerror="window.__chessLibFailed=true">
 </script>
 
-
+<!-- ── DATOS HISTÓRICOS al azar en la columna derecha del visor ──────────────
+     Carga data/datos.json, muestra un dato al azar bajo el libro de aperturas
+     y lo rota cada ~14s. Para sumar datos sin tocar código: usá agregar-dato.cmd -->
+<style>
+  /* Mismo diseño que el recuadro "Análisis de partida" (.eval-graph-wrap) */
+  .cv-dato{margin-top:14px;background:#0d0d12;border:1px solid rgba(255,255,255,0.22);
+    border-radius:10px;padding:10px 12px 12px;cursor:pointer;transition:border-color .15s}
+  .cv-dato:hover{border-color:rgba(255,255,255,0.4)}
+  .cv-dato .d-head{font-size:14px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;
+    color:#e0e0e0;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000;
+    margin-bottom:8px;display:flex;align-items:center;gap:6px}
+  .cv-dato .d-body{font-size:15px;color:#e0e0e0;line-height:1.55}
+  .cv-dato .d-foot{font-size:12px;color:var(--gold);margin-top:9px;display:flex;
+    justify-content:space-between;align-items:center;gap:8px}
+  .cv-dato .d-cat{text-transform:capitalize}
+</style>
+<script>
+(function(){
+  // El dato aparece RECIÉN ~90s después de que la partida sale del libro de aperturas
+  // (para no pisar el libro), y se mantiene 10 min antes de cambiar. Click = otro dato.
+  var DELAY_MS = 90000, ROTATE_MS = 600000;   // 1.5 min de espera, 10 min por dato
+  var DATOS = [], _last = -1, _rotTimer = null, _showTimer = null, _armed = false, _shown = false;
+  var ICON = { historia:'📜', record:'🏆', mundial:'🌐', olimpiada:'🥇', curiosidad:'💡' };
+  function esc(s){ return String(s).replace(/[&<>]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c]; }); }
+  function pick(){
+    if (!DATOS.length) return -1;
+    if (DATOS.length === 1) return 0;
+    var i; do { i = Math.floor(Math.random()*DATOS.length); } while (i === _last);
+    return i;
+  }
+  window.cvDatoNext = function(){
+    var box = document.getElementById('cv-dato');
+    if (!box || !DATOS.length) return;
+    var i = pick(); _last = i;
+    var d = DATOS[i];
+    var ic = ICON[d.cat] || '♟';
+    var foot = [];
+    if (d.cat) foot.push('<span class="d-cat">'+esc(d.cat)+'</span>');
+    if (d.anio) foot.push(esc(d.anio));
+    box.innerHTML = '<div class="d-head">'+ic+' ¿Sabías que…</div>'
+      + '<div class="d-body">'+esc(d.t)+'</div>'
+      + '<div class="d-foot"><span>'+foot.join(' · ')+'</span>'
+      + (d.fuente ? '<span>'+esc(d.fuente)+'</span>' : '') + '</div>';
+    box.style.display = 'block';
+    _shown = true;
+  };
+  function hide(){
+    var box = document.getElementById('cv-dato');
+    if (box){ box.style.display = 'none'; box.innerHTML = ''; }
+    _shown = false;
+  }
+  function clearTimers(){
+    if (_showTimer){ clearTimeout(_showTimer); _showTimer = null; }
+    if (_rotTimer){ clearInterval(_rotTimer); _rotTimer = null; }
+  }
+  // Lo llama obSetVisible(): inBook=true mientras hay libro, false al salir de él.
+  window.cvDatoBookState = function(inBook){
+    if (inBook){
+      // Volvió al libro (o cambió de partida): ocultar y rearmar para la próxima salida.
+      clearTimers(); hide(); _armed = false;
+      return;
+    }
+    // Fuera de libro: armar UNA sola vez (no reiniciar si siguen llegando jugadas).
+    if (_armed || !DATOS.length) return;
+    _armed = true;
+    _showTimer = setTimeout(function(){
+      window.cvDatoNext();
+      _rotTimer = setInterval(window.cvDatoNext, ROTATE_MS);
+    }, DELAY_MS);
+  };
+  // Carga perezosa: igual que puzzles.json / practice.json. NO se muestra al cargar.
+  fetch('data/datos.json' + (window._dataV ? window._dataV() : ''))
+    .then(function(r){ return r.ok ? r.json() : []; })
+    .then(function(arr){ if (Array.isArray(arr) && arr.length){ DATOS = arr; } })
+    .catch(function(){ /* sin datos: la cajita simplemente no aparece */ });
+})();
+</script>
 
 
 </body></html>
