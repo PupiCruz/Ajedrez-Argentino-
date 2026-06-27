@@ -204,6 +204,19 @@
     }
     .chip:hover { border-color: rgba(255,255,255,0.50); color: #fff; background: rgba(255,255,255,0.12); }
     .chip.active { background: rgba(255,195,64,0.16); border-color: var(--gold); border-width: 2px; color: var(--gold); font-weight: 600; }
+    /* Desglose "Titulados" como chip con forma de desplegable (mismo look que los chips) */
+    .chip-select {
+      flex-shrink: 0; appearance: none; -webkit-appearance: none;
+      padding: 7px 30px 7px 18px; border-radius: 20px;
+      border: 2px solid rgba(255,255,255,0.30);
+      background: rgba(0,0,0,0.40) url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23f0f0f0' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3e%3cpath d='M6 9l6 6 6-6'/%3e%3c/svg%3e") no-repeat right 10px center;
+      background-size: 12px; color: #f0f0f0; font-size: 13px; font-weight: 500;
+      cursor: pointer; transition: all .15s; font-family: inherit;
+      text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000;
+    }
+    .chip-select:hover { border-color: rgba(255,255,255,0.50); color: #fff; }
+    .chip-select.active { background-color: rgba(255,195,64,0.16); border-color: var(--gold); color: var(--gold); font-weight: 600; }
+    .chip-select option { background: #14151c; color: var(--text); font-weight: 500; }
 
     /* ── CARD BASE ── */
     .card {
@@ -1306,10 +1319,16 @@
       <!-- Tabs: Todos / Titulados -->
       <div class="tabs" id="tab-jugadores" style="margin-bottom:10px">
         <button class="chip active" onclick="filterJugadores('todos',this)">Todos</button>
-        <button class="chip" onclick="filterJugadores('titulados',this)">Titulados</button>
-        <button class="chip" onclick="filterJugadores('gm',this)">GM</button>
-        <button class="chip" onclick="filterJugadores('im',this)">IM</button>
-        <button class="chip" onclick="filterJugadores('fm',this)">FM</button>
+        <select id="titulados-select" class="chip-select" onchange="filterTituladoSelect(this)" title="Filtrar por título">
+          <option value="" disabled selected hidden>Titulados</option>
+          <option value="titulados">Todos los titulados</option>
+          <option value="gm">GM</option>
+          <option value="im">IM</option>
+          <option value="fm">FM</option>
+          <option value="wgm">WGM</option>
+          <option value="wim">WIM</option>
+          <option value="wfm">WFM</option>
+        </select>
         <button class="chip" onclick="filterJugadores('wt',this)">Femeninos</button>
         <button class="chip" id="chip-adicionales" onclick="filterJugadores('adicionales',this)">Adicionales</button>
       </div>
@@ -6878,6 +6897,12 @@ function getFilteredPlayers() {
     return ranked.filter(function(p){ return p.title === 'IM'; });
   } else if (_filterMode === 'fm') {
     return ranked.filter(function(p){ return p.title === 'FM' || p.title === 'CM'; });
+  } else if (_filterMode === 'wgm') {
+    return ranked.filter(function(p){ return p.title === 'WGM'; });
+  } else if (_filterMode === 'wim') {
+    return ranked.filter(function(p){ return p.title === 'WIM'; });
+  } else if (_filterMode === 'wfm') {
+    return ranked.filter(function(p){ return p.title === 'WFM' || p.title === 'WCM'; });
   } else if (_filterMode === 'wt') {
     // Femeninos = por SEXO (campo female, que trae la actualización FIDE). Como respaldo, para la
     // lista vieja que aún no tiene ese dato, cae al título femenino (WGM/WIM/WFM/WCM).
@@ -6886,17 +6911,37 @@ function getFilteredPlayers() {
   return ranked;
 }
 
+// Vuelve el desglose "Titulados" a su estado neutro (placeholder + sin resaltar).
+function _resetTituladosDD() {
+  var ts = document.getElementById('titulados-select');
+  if (ts) { ts.classList.remove('active'); ts.selectedIndex = 0; }
+}
+
 function filterJugadores(mode, btn) {
   _filterMode = mode;
   var chips = document.querySelectorAll('#tab-jugadores .chip');
   for (var i = 0; i < chips.length; i++) chips[i].classList.remove('active');
   btn.classList.add('active');
+  _resetTituladosDD();   // al elegir Todos/Femeninos/Adicionales, soltar el desglose de títulos
   var mw = document.getElementById('month-selector-wrap');
-  if (mode === 'titulados') {
-    mw.style.display = 'block';
-  } else {
-    mw.style.display = 'none';
-  }
+  mw.style.display = 'none';   // el selector de mes sale en el grupo Titulados (lo maneja filterTituladoSelect)
+  updateSubtitle();
+  document.getElementById('search').value = '';
+  _currentPage = 1;
+  _currentList = getFilteredPlayers();
+  renderPlayers(_currentList, 'list-jugadores');
+}
+
+// Desglose del chip "Titulados": filtra por Todos los titulados / GM / IM / FM / WGM / WIM / WFM.
+function filterTituladoSelect(sel) {
+  var mode = sel.value;
+  if (!mode) return;
+  _filterMode = mode;
+  var chips = document.querySelectorAll('#tab-jugadores .chip');
+  for (var i = 0; i < chips.length; i++) chips[i].classList.remove('active');
+  sel.classList.add('active');   // resaltar el desglose como filtro activo
+  var mw = document.getElementById('month-selector-wrap');
+  if (mw) mw.style.display = 'block';   // el grupo Titulados permite elegir el mes del ranking
   updateSubtitle();
   document.getElementById('search').value = '';
   _currentPage = 1;
@@ -6925,10 +6970,16 @@ function updateSubtitle() {
     sub.textContent = count + ' IMs · Argentina · ' + monthLabel;
   } else if (_filterMode === 'fm') {
     sub.textContent = count + ' FMs/CMs · Argentina · ' + monthLabel;
+  } else if (_filterMode === 'wgm') {
+    sub.textContent = count + ' WGMs · Argentina · ' + monthLabel;
+  } else if (_filterMode === 'wim') {
+    sub.textContent = count + ' WIMs · Argentina · ' + monthLabel;
+  } else if (_filterMode === 'wfm') {
+    sub.textContent = count + ' WFMs/WCMs · Argentina · ' + monthLabel;
   } else if (_filterMode === 'wt') {
     sub.textContent = count + ' jugadoras · Argentina · ' + monthLabel;
   } else if (_filterMode === 'adicionales') {
-    sub.textContent = count + ' jugadores adicionales (fuera del ranking activo)';
+    sub.textContent = count + ' adicionales · argentinos con otra bandera y/o inactivos (fuera del ranking activo)';
   } else {
     sub.textContent = 'Ranking FIDE — Argentina · ' + monthLabel;
   }
@@ -10645,6 +10696,7 @@ function _applyRanking(built) {
   _currentPage = 1;
   var chips = document.querySelectorAll('#tab-jugadores .chip');
   for (var i = 0; i < chips.length; i++) chips[i].classList.toggle('active', i === 0);
+  _resetTituladosDD();
   _currentList = getFilteredPlayers();
   if (typeof renderPlayers === 'function') renderPlayers(_currentList, 'list-jugadores');
   if (typeof updateSubtitle === 'function') updateSubtitle();
@@ -10679,6 +10731,7 @@ function _persistAndShowAdicionales() {
   _filterMode = 'adicionales'; _currentPage = 1;
   var chips = document.querySelectorAll('#tab-jugadores .chip');
   for (var i = 0; i < chips.length; i++) chips[i].classList.toggle('active', chips[i].id === 'chip-adicionales');
+  _resetTituladosDD();
   _currentList = getFilteredPlayers();
   if (typeof renderPlayers === 'function') renderPlayers(_currentList, 'list-jugadores');
   if (typeof updateSubtitle === 'function') updateSubtitle();
@@ -10710,6 +10763,14 @@ function removeAdditional(id) {
   if (typeof updateSubtitle === 'function') updateSubtitle();
 }
 
+// ── Lista de "frecuentes ocultados": jugadores que el autor descartó (extranjeros que no quiere
+// volver a ver en "Buscar frecuentes"). Se guarda por CLAVE de nombre (normStr) en localStorage,
+// así sobrevive entre búsquedas. Es solo del autor (no viaja a la web publicada). ──
+function _freqIgnoredSet() { try { return JSON.parse(localStorage.getItem('freq_ignored') || '[]'); } catch (e) { return []; } }
+function _freqIsIgnored(k) { return _freqIgnoredSet().indexOf(k) >= 0; }
+function _freqIgnore(k) { var s = _freqIgnoredSet(); if (s.indexOf(k) < 0) { s.push(k); try { localStorage.setItem('freq_ignored', JSON.stringify(s)); } catch (e) {} } }
+function _freqRestoreAllIgnored() { try { localStorage.removeItem('freq_ignored'); } catch (e) {} }
+
 // ── FASE 2: sugerir jugadores frecuentes (≥ N partidas) que no están en la app ──
 // Las partidas solo traen nombres (sin federación), así que esto NO decide nacionalidad:
 // arma la lista por cantidad y el autor elige a quién agregar (y le pone fide_id si quiere).
@@ -10731,7 +10792,9 @@ function _freqCandidates(minGames) {
   Object.keys(byName).forEach(function(k) {
     var r = byName[k];
     if (r.count < minGames) return;
+    if (_freqIsIgnored(k)) return;   // el autor lo descartó antes → no volver a mostrarlo
     if (typeof _isArgPlayer === 'function' && _isArgPlayer(r.name)) return;   // ya está en la app
+    r.key = k;   // guardar la clave para poder ocultarlo desde la fila
     cand.push(r);
   });
   cand.sort(function(a, b) { return b.count - a.count; });
@@ -10753,24 +10816,40 @@ function openFrequentFinder() {
   } else {
     cand.forEach(function(c, i) {
       var natural = (typeof pgnNameToNatural === 'function') ? pgnNameToNatural(c.name) : c.name;
-      rows += '<div style="display:flex;align-items:center;gap:9px;padding:8px 0;border-bottom:1px solid var(--border)">'
+      rows += '<div id="freq-row-' + i + '" style="display:flex;align-items:center;gap:9px;padding:8px 0;border-bottom:1px solid var(--border)">'
         + '<input type="checkbox" id="freq-chk-' + i + '" style="width:16px;height:16px;flex:none;cursor:pointer">'
         + '<label for="freq-chk-' + i + '" style="flex:1;min-width:0;cursor:pointer"><div style="font-size:13.5px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escHtml(natural) + '</div><div style="font-size:11px;color:var(--text3)">' + c.count + ' partidas</div></label>'
         + '<input type="text" id="freq-fid-' + i + '" value="' + escHtml(c.fideId || '') + '" placeholder="FIDE id" style="width:82px;flex:none;padding:6px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:12px;font-family:inherit">'
         + '<input type="hidden" id="freq-name-' + i + '" value="' + escHtml(natural) + '">'
+        + '<input type="hidden" id="freq-key-' + i + '" value="' + escHtml(c.key || '') + '">'
+        + '<button onclick="freqIgnoreRow(' + i + ')" title="Ocultar — no volver a mostrarlo en próximas búsquedas (es un extranjero o no te interesa)" style="flex:none;width:30px;height:30px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;color:var(--text3);font-size:15px;cursor:pointer;font-family:inherit;line-height:1">✕</button>'
         + '</div>';
     });
   }
   ov.innerHTML = '<div style="background:var(--bg2,#1c1c1e);border:1px solid var(--border);border-radius:14px;max-width:540px;width:100%;max-height:90vh;overflow:auto;padding:20px;font-family:inherit;box-sizing:border-box">'
     + '<div style="font-size:17px;font-weight:700;color:var(--text);margin-bottom:4px">Jugadores frecuentes sin perfil</div>'
-    + '<div style="font-size:12px;color:var(--text2);margin-bottom:14px;line-height:1.5">Aparecen en <b style="color:var(--text2)">' + _SUGGEST_MIN_GAMES + '+ partidas</b> y no tienen perfil. Tildá los <b style="color:var(--text2)">argentinos</b> que quieras agregar a Adicionales (las partidas no traen país, así que elegís vos). Si ponés el FIDE id, sus datos se actualizan cada mes.</div>'
+    + '<div style="font-size:12px;color:var(--text2);margin-bottom:14px;line-height:1.5">Aparecen en <b style="color:var(--text2)">' + _SUGGEST_MIN_GAMES + '+ partidas</b> y no tienen perfil. Tildá los <b style="color:var(--text2)">argentinos</b> que quieras agregar a Adicionales (las partidas no traen país, así que elegís vos). Si ponés el FIDE id, sus datos se actualizan cada mes.<br>Tocá la <b style="color:var(--text2)">✕</b> de un jugador para <b style="color:var(--text2)">ocultarlo</b>: no vuelve a aparecer en próximas búsquedas (ideal para los extranjeros, así solo te quedan los argentinos nuevos por revisar).</div>'
     + rows
     + '<div style="display:flex;gap:8px;margin-top:16px">'
     + (cand.length ? '<button onclick="createSelectedFrequent(' + cand.length + ')" style="flex:1;padding:11px;background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-weight:700;border-radius:9px;cursor:pointer;font-family:inherit">Crear seleccionados</button>' : '')
     + '<button onclick="closeFreqFinder()" style="padding:11px 16px;background:var(--bg3);border:1px solid var(--border);color:var(--text2);border-radius:9px;cursor:pointer;font-family:inherit">Cerrar</button>'
-    + '</div></div>';
+    + '</div>'
+    + (_freqIgnoredSet().length ? '<div style="margin-top:12px;text-align:center;font-size:11.5px;color:var(--text3)">' + _freqIgnoredSet().length + ' ocultos · <a href="javascript:void(0)" onclick="freqRestoreIgnored()" style="color:var(--text2)">restaurar todos</a></div>' : '')
+    + '</div>';
 }
 function closeFreqFinder() { var ov = document.getElementById('freq-finder-overlay'); if (ov && ov.parentNode) ov.parentNode.removeChild(ov); }
+// Ocultar un frecuente: lo guarda en la lista de descartados y saca su fila al instante.
+function freqIgnoreRow(i) {
+  var k = ((document.getElementById('freq-key-' + i) || {}).value || '').trim();
+  if (k) _freqIgnore(k);
+  var row = document.getElementById('freq-row-' + i);
+  if (row && row.parentNode) row.parentNode.removeChild(row);
+}
+// Restaurar todos los ocultos y reabrir la lista (vuelven a aparecer).
+function freqRestoreIgnored() {
+  _freqRestoreAllIgnored();
+  openFrequentFinder();
+}
 function createSelectedFrequent(n) {
   var creados = 0, dups = 0;
   for (var i = 0; i < n; i++) {
