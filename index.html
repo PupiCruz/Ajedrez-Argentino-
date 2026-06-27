@@ -9972,7 +9972,10 @@ function renderLocalGames(data, player, resultFilter, colorFilter, openingFilter
            (oppElo ? ' (' + oppElo + ')' : '') + '</div>';
       h += '<div class="pg-meta">';
       h += '<span class="pg-result ' + resCls + '">' + resStr + '</span>';
+      h += '<span style="display:flex;align-items:center;gap:9px">';
       h += '<span class="pg-date">' + dispResult + '</span>';
+      if (!_ondemand) h += '<button onclick="event.stopPropagation();deleteProfileGame(' + player.id + ',\'' + cacheKey + '\',' + item.gi + ')" title="Eliminar esta partida (ej. duplicada o mal pasada)" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:15px;padding:0 2px;line-height:1">✕</button>';
+      h += '</span>';
       h += '</div></div>';
     });
     h += '</div>';
@@ -10056,6 +10059,54 @@ function deleteProfileTour(playerId, cacheKey) {
   });
   lsSaveTours(lsStored);
   pgnMergeToPlayerGames();
+  var player = null;
+  for (var i = 0; i < PLAYERS.length; i++) { if (PLAYERS[i].id === playerId) { player = PLAYERS[i]; break; } }
+  if (player) fetchPlayerBroadcastGames(player);
+}
+
+// Elimina UNA partida del perfil (ej. una copia mal pasada / duplicada). Borra todas las
+// copias EXACTAS de ese PGN de los stores de partidas y reconstruye PLAYER_GAMES. La
+// persistencia es como deleteProfileTour: pgn_tournaments/tz_config van a localStorage al
+// toque; el pool en memoria (_memTournaments) se guarda al archivo con "Guardar datos en mi
+// carpeta". El cartel de "cambios sin guardar" aparece solo (es por huella de estado).
+function deleteProfileGame(playerId, cacheKey, gi) {
+  var entry = _pgTourCache[cacheKey];
+  if (!entry || !entry.games) return;
+  var pgn = entry.games[gi];
+  if (pgn == null) return;
+  var hdrs = parsePgnHeaders(pgn);
+  var desc = (hdrs.White || '?') + ' vs ' + (hdrs.Black || '?') + (hdrs.Round ? '  (R' + hdrs.Round + ')' : '');
+  if (!confirm('¿Eliminar esta partida?\n\n' + desc + '\n\nSe quita de la base (todas sus copias idénticas). Acordate de "Guardar datos en mi carpeta" después.')) return;
+
+  var removed = 0;
+  function scrub(arr) {
+    if (!arr || !arr.length) return arr;
+    var out = arr.filter(function(g) { return g !== pgn; });
+    removed += arr.length - out.length;
+    return out;
+  }
+  // Pool de perfiles en memoria
+  _memTournaments.forEach(function(e) { if (e.games) e.games = scrub(e.games); });
+  // Torneos públicos en localStorage
+  var ls = JSON.parse(localStorage.getItem('pgn_tournaments') || '[]');
+  ls.forEach(function(e) { if (e.games) e.games = scrub(e.games); });
+  lsSaveTours(ls);
+  // PGN subidos por el modal de torneo (tz_config)
+  var tz = getTzConfig(), tzChanged = false;
+  for (var k in tz) {
+    if (tz[k] && tz[k].pgnGames) { var n = tz[k].pgnGames.length; tz[k].pgnGames = scrub(tz[k].pgnGames); if (tz[k].pgnGames.length !== n) tzChanged = true; }
+  }
+  if (tzChanged) saveTzConfig(tz);
+  // Partidas curadas (hardcoded, no _fromStorage)
+  for (var key in PLAYER_GAMES) {
+    var d = PLAYER_GAMES[key];
+    if (!d || d._fromStorage || !d.tournaments) continue;
+    d.tournaments.forEach(function(t) { if (t.games) t.games = scrub(t.games); });
+  }
+
+  pgnMergeToPlayerGames();
+  if (!removed) { alert('No se pudo ubicar la partida para borrarla.'); return; }
+  // Re-render del perfil (mismo camino que deleteProfileTour)
   var player = null;
   for (var i = 0; i < PLAYERS.length; i++) { if (PLAYERS[i].id === playerId) { player = PLAYERS[i]; break; } }
   if (player) fetchPlayerBroadcastGames(player);
