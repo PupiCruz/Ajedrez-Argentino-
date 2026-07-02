@@ -7157,6 +7157,17 @@ function _pStatsHtml(p) {
   return h;
 }
 
+// Máximo histórico por ritmo (Standard/Rápido/Blitz), tomando el historial + el valor actual.
+// Para Standard también respeta el p.peak que ya venía trackeando la app.
+function _histPeaks(p) {
+  var pk = { s: Math.max(p.peak || 0, p.elo || 0), r: p.rapid || 0, b: p.blitz || 0 };
+  (Array.isArray(p.hist) ? p.hist : []).forEach(function (pt) {
+    if ((pt.s || 0) > pk.s) pk.s = pt.s;
+    if ((pt.r || 0) > pk.r) pk.r = pt.r;
+    if ((pt.b || 0) > pk.b) pk.b = pt.b;
+  });
+  return pk;
+}
 // "YYYY-MM" → "Mmm AA" (ej. "2026-07" → "Jul 26")
 function _fmtHistMonth(d) {
   var m = /^(\d{4})-(\d{2})/.exec(d || ''); if (!m) return d || '';
@@ -7954,7 +7965,7 @@ async function openPlayer(id) {
   var bestWins  = hasData ? computeBestWins(p, allTours, 3) : [];
 
   var h = '<div class="prof-top">';
-  h += '<div style="background:var(--gl30);border:1px solid var(--bd14);border-radius:14px;padding:18px 16px;display:inline-block;width:fit-content;max-width:100%">';
+  h += '<div style="background:var(--card90);border:1px solid var(--bd22);border-radius:var(--r-lg);box-shadow:var(--shadow-sm);padding:16px 18px;display:inline-block;width:fit-content;max-width:100%">';
   h += '<div class="m-head" style="margin-bottom:0">';
   // Avatar: foto de Drive si existe, sino iniciales
   var photoUrl = PLAYER_PHOTOS[p.id] || null;
@@ -7991,10 +8002,12 @@ async function openPlayer(id) {
   h += '</div></div>';
   h += '</div>';   // /panel sombreado (foto + datos del jugador)
   // Ratings al lado de la foto: Standard / Rápido / Blitz (rápido y blitz solo si los tiene).
+  // Cada uno muestra su máximo histórico (si el historial lo tiene y es mayor al actual).
+  var _pk = _histPeaks(p);
   h += '<div class="prof-ratings">';
-  h += '<div class="prat prat-std"><b>' + p.elo + '</b><i>Standard</i>' + (p.peak && p.peak > p.elo ? '<u>máx ' + p.peak + '</u>' : '') + '</div>';
-  if (p.rapid) h += '<div class="prat prat-rap"><b>' + p.rapid + '</b><i>Rápido</i></div>';
-  if (p.blitz) h += '<div class="prat prat-blz"><b>' + p.blitz + '</b><i>Blitz</i></div>';
+  h += '<div class="prat prat-std"><b>' + p.elo + '</b><i>Standard</i>' + (_pk.s > p.elo ? '<u>máx ' + _pk.s + '</u>' : '') + '</div>';
+  if (p.rapid) h += '<div class="prat prat-rap"><b>' + p.rapid + '</b><i>Rápido</i>' + (_pk.r > p.rapid ? '<u>máx ' + _pk.r + '</u>' : '') + '</div>';
+  if (p.blitz) h += '<div class="prat prat-blz"><b>' + p.blitz + '</b><i>Blitz</i>' + (_pk.b > p.blitz ? '<u>máx ' + _pk.b + '</u>' : '') + '</div>';
   h += '</div>';
   h += '</div>';   // /prof-top
   // Gráfico de evolución de Elo (se llena mes a mes con cada padrón FIDE).
