@@ -476,16 +476,12 @@
     .p-name { font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: baseline; gap: 8px; }
     .p-name-txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .p-elo-inline { font-size: 13px; font-weight: 700; color: var(--gold); flex-shrink: 0; }
-    /* Los 3 ratings FIDE (Standard/Rápido/Blitz) como pastillitas debajo del nombre. */
-    .p-elos { display: flex; flex-wrap: wrap; gap: 5px 6px; margin-top: 4px; }
-    .p-elo3 { display: inline-flex; align-items: baseline; gap: 4px; padding: 1px 8px; border-radius: var(--r-pill);
-      background: var(--gl40); border: 1px solid var(--bd18); line-height: 1.5; }
-    .p-elo3 b { font-size: 13px; font-weight: 700; }
-    .p-elo3 i { font-size: 9px; font-style: normal; text-transform: uppercase; letter-spacing: .4px; color: var(--fg-b0); }
-    .p-elo3.e-std b { color: var(--gold); }
-    .p-elo3.e-rap b { color: var(--blue); }
-    .p-elo3.e-blz b { color: var(--green); }
     .p-sub  { font-size: 12px; color: var(--text2); margin-top: 3px; }
+    /* Foto del jugador en el círculo (si tiene); si no, quedan las iniciales. */
+    .p-avatar img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; display: block; }
+    /* Celdas de rating (Std/Ráp/Blitz) — mismo tamaño que "partidas cargadas". */
+    .p-rt { min-width: 46px; }
+    .p-stats-total.p-rt-sep { border-left: 1px solid var(--bd14); padding-left: 18px; }
     .p-elo  { text-align: right; flex-shrink: 0; }
     .p-elo-n { font-size: 17px; font-weight: 700; color: var(--gold); }
     .p-elo-l { font-size: 10px; color: var(--text3); text-transform: uppercase; letter-spacing: .5px; }
@@ -497,7 +493,11 @@
     .p-stat-cell { text-align: center; min-width: 52px; }
     .p-stat-n { font-size: 16px; font-weight: 700; line-height: 1.1; }
     .p-stat-l { font-size: 10px; color: var(--fg-b0); text-transform: uppercase; letter-spacing: .4px; margin-top: 1px; }
-    @media (max-width: 600px) { .p-stats { display: none; } }
+    /* Mobile: no entra todo → dejamos SOLO el rating Standard (se ocultan rápido, blitz y las partidas). */
+    @media (max-width: 600px) {
+      .p-stats > :not(.p-rt-std) { display: none; }
+      .p-rt-std { min-width: 0; }
+    }
     .fav-btn {
       background: none; border: none; cursor: pointer;
       padding: 5px; color: var(--text3); transition: color .15s;
@@ -1401,18 +1401,20 @@
     .ob-bar-w { background: #cec9bb; height: 100%; flex-shrink: 0; }
     .ob-bar-d { background: #666;    height: 100%; flex-shrink: 0; }
     .p-title-badge {
-      font-size: 10px; font-weight: 700; letter-spacing: .5px;
-      padding: 2px 6px; border-radius: 4px; flex-shrink: 0;
+      font-size: 10px; font-weight: 800; letter-spacing: .5px;
+      padding: 2px 7px; border-radius: 5px; flex-shrink: 0; color: #fff;
       text-transform: uppercase;
     }
-    .p-title-gm  { background: #1c180a; color: var(--gold); border: 1px solid var(--gold-dim); }
-    .p-title-wgm { background: #1c0a14; color: #e87bb8;     border: 1px solid #8b3a5e; }
-    .p-title-im  { background: #0d1e2b; color: var(--blue);  border: 1px solid #2a3a6e; }
-    .p-title-wim { background: #1a0d2b; color: #b87bde;     border: 1px solid #6a3a8b; }
-    .p-title-fm  { background: #0d2b1d; color: var(--green); border: 1px solid #1a4d32; }
-    .p-title-cm  { background: #1a1a0d; color: #c8c840;     border: 1px solid #5a5a20; }
-    .p-title-wfm { background: #2b0d1d; color: #de7baa;     border: 1px solid #8b3060; }
-    .p-title-wcm { background: #2b1a0d; color: #de9a50;     border: 1px solid #8b5020; }
+    /* Pastillas SÓLIDAS (mismo look en claro y oscuro). Tiers: dorado GM · azul IM · verde FM ·
+       oliva CM; los femeninos en familia rosa/violeta. */
+    .p-title-gm  { background: #c9a227; color: #231a05; }   /* dorado de la página */
+    .p-title-im  { background: #5878bf; }                    /* azul */
+    .p-title-fm  { background: #3f9061; }                    /* verde */
+    .p-title-cm  { background: #9a863c; }                    /* oliva/dorado apagado */
+    .p-title-wgm { background: #c25b86; }                    /* rosa */
+    .p-title-wim { background: #8f63bd; }                    /* violeta */
+    .p-title-wfm { background: #cf82a6; }                    /* rosa claro */
+    .p-title-wcm { background: #c98a4f; }                    /* naranja */
     select option { background: var(--bg2); color: var(--text); }
   </style>
   <script src="data/embedded-data.js"></script>
@@ -7118,25 +7120,27 @@ function _buildQuickStats() {
   }
   return _quickStats;
 }
-function _pStatsHtml(pid, elo) {
-  var stats = _buildQuickStats()[pid];
+function _pStatsHtml(p) {
+  var stats = _buildQuickStats()[p.id];
   var total = stats ? (stats.w + stats.d + stats.l) : 0;
+  // Ratings como celdas (mismo tamaño que "partidas cargadas"). En mobile solo se ve la de Std.
+  function rt(cls, lbl, v, color) {
+    return '<div class="p-stat-cell p-rt ' + cls + '"><div class="p-stat-n" style="color:' + color + '">' + (v > 0 ? v : '—') + '</div><div class="p-stat-l">' + lbl + '</div></div>';
+  }
+  var h = '<div class="p-stats">';
+  h += rt('p-rt-std', 'Std', p.elo || 0, 'var(--gold)');
+  h += rt('p-rt-rap', 'Rápido', p.rapid || 0, 'var(--blue)');
+  h += rt('p-rt-blz', 'Blitz', p.blitz || 0, 'var(--green)');
   if (total > 0) {
-    return '<div class="p-stats">'
-      + '<div class="p-stats-total"><div class="p-stats-total-n">' + total + '</div><div class="p-stats-total-l">Partidas<br>cargadas</div></div>'
+    h += '<div class="p-stats-total p-rt-sep"><div class="p-stats-total-n">' + total + '</div><div class="p-stats-total-l">Partidas<br>cargadas</div></div>'
       + '<div class="p-stats-wdl">'
       + '<div class="p-stat-cell"><div class="p-stat-n" style="color:var(--green)">' + stats.w + '</div><div class="p-stat-l">Victorias</div></div>'
       + '<div class="p-stat-cell"><div class="p-stat-n" style="color:var(--fg-c8)">' + stats.d + '</div><div class="p-stat-l">Tablas</div></div>'
       + '<div class="p-stat-cell"><div class="p-stat-n" style="color:var(--red)">' + stats.l + '</div><div class="p-stat-l">Derrotas</div></div>'
-      + '</div></div>';
+      + '</div>';
   }
-  // Sin partidas cargadas: el bloque derecho queda vacío (el elo ya se ve en las pastillitas del nombre).
-  return '';
-}
-// Las 3 pastillitas de rating (Standard / Rápido / Blitz) que van debajo del nombre en la lista.
-function _pElosHtml(p) {
-  function c(cls, lbl, v) { return '<span class="p-elo3 ' + cls + '"><b>' + (v > 0 ? v : '—') + '</b><i>' + lbl + '</i></span>'; }
-  return '<div class="p-elos">' + c('e-std', 'Std', p.elo || 0) + c('e-rap', 'Ráp', p.rapid || 0) + c('e-blz', 'Blitz', p.blitz || 0) + '</div>';
+  h += '</div>';
+  return h;
 }
 
 function renderPlayers(list, id, showRank) {
@@ -7164,13 +7168,13 @@ function renderPlayers(list, id, showRank) {
       var tBadge = p.title ? ('<span class="p-title-badge p-title-' + p.title.toLowerCase() + '">' + p.title + '</span> ') : '';
       html += '<a href="' + _playerHref(p.id) + '" class="p-card" onclick="return playerCardClick(event,' + p.id + ')" style="color:inherit;text-decoration:none">';
       html += '<span class="p-rank ' + rankCls + '">' + rankTxt + '</span>';
-      html += '<div class="p-avatar">' + ini(p.name) + '</div>';
+      var _ph = (typeof PLAYER_PHOTOS === 'object' && PLAYER_PHOTOS) ? PLAYER_PHOTOS[p.id] : null;
+      html += '<div class="p-avatar">' + (_ph ? '<img src="' + _ph + '" alt="" loading="lazy">' : ini(p.name)) + '</div>';
       html += '<div class="p-info">';
       html += '<div class="p-name"><span class="p-name-txt">' + p.name + '</span></div>';
-      html += _pElosHtml(p);
       html += '<div class="p-sub">' + tBadge + (p.ranked === false ? ((p.fed || '') + (p.inactive ? ' · <span style="color:var(--text3)">inactivo</span>' : '')) : (p.province || '')) + '</div>';
       html += '</div>';
-      html += _pStatsHtml(p.id, p.elo);
+      html += _pStatsHtml(p);
       if (!_ondemand) {   // ⭐ favoritos: solo en modo autor (sin login, no aporta al visitante)
       html += '<button class="fav-btn ' + (isFav ? 'on' : '') + '" onclick="toggleFav(event,' + p.id + ')" title="Agregar a favoritos">';
       html += '<svg viewBox="0 0 24 24" fill="' + (isFav ? 'currentColor' : 'none') + '" stroke="currentColor" stroke-width="2">';
@@ -7191,13 +7195,13 @@ function renderPlayers(list, id, showRank) {
       var tBadge = p.title ? ('<span class="p-title-badge p-title-' + p.title.toLowerCase() + '">' + p.title + '</span> ') : '';
       html += '<a href="' + _playerHref(p.id) + '" class="p-card" onclick="return playerCardClick(event,' + p.id + ')" style="color:inherit;text-decoration:none">';
       html += '<span class="p-rank ' + rankCls + '">' + rankTxt + '</span>';
-      html += '<div class="p-avatar">' + ini(p.name) + '</div>';
+      var _ph = (typeof PLAYER_PHOTOS === 'object' && PLAYER_PHOTOS) ? PLAYER_PHOTOS[p.id] : null;
+      html += '<div class="p-avatar">' + (_ph ? '<img src="' + _ph + '" alt="" loading="lazy">' : ini(p.name)) + '</div>';
       html += '<div class="p-info">';
       html += '<div class="p-name"><span class="p-name-txt">' + p.name + '</span></div>';
-      html += _pElosHtml(p);
       html += '<div class="p-sub">' + tBadge + (p.ranked === false ? ((p.fed || '') + (p.inactive ? ' · <span style="color:var(--text3)">inactivo</span>' : '')) : (p.province || '')) + '</div>';
       html += '</div>';
-      html += _pStatsHtml(p.id, p.elo);
+      html += _pStatsHtml(p);
       if (!_ondemand) {   // ⭐ favoritos: solo en modo autor (sin login, no aporta al visitante)
       html += '<button class="fav-btn ' + (isFav ? 'on' : '') + '" onclick="toggleFav(event,' + p.id + ')" title="Agregar a favoritos">';
       html += '<svg viewBox="0 0 24 24" fill="' + (isFav ? 'currentColor' : 'none') + '" stroke="currentColor" stroke-width="2">';
