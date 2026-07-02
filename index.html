@@ -476,7 +476,16 @@
     .p-name { font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: baseline; gap: 8px; }
     .p-name-txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .p-elo-inline { font-size: 13px; font-weight: 700; color: var(--gold); flex-shrink: 0; }
-    .p-sub  { font-size: 12px; color: var(--text2); margin-top: 2px; }
+    /* Los 3 ratings FIDE (Standard/Rápido/Blitz) como pastillitas debajo del nombre. */
+    .p-elos { display: flex; flex-wrap: wrap; gap: 5px 6px; margin-top: 4px; }
+    .p-elo3 { display: inline-flex; align-items: baseline; gap: 4px; padding: 1px 8px; border-radius: var(--r-pill);
+      background: var(--gl40); border: 1px solid var(--bd18); line-height: 1.5; }
+    .p-elo3 b { font-size: 13px; font-weight: 700; }
+    .p-elo3 i { font-size: 9px; font-style: normal; text-transform: uppercase; letter-spacing: .4px; color: var(--fg-b0); }
+    .p-elo3.e-std b { color: var(--gold); }
+    .p-elo3.e-rap b { color: var(--blue); }
+    .p-elo3.e-blz b { color: var(--green); }
+    .p-sub  { font-size: 12px; color: var(--text2); margin-top: 3px; }
     .p-elo  { text-align: right; flex-shrink: 0; }
     .p-elo-n { font-size: 17px; font-weight: 700; color: var(--gold); }
     .p-elo-l { font-size: 10px; color: var(--text3); text-transform: uppercase; letter-spacing: .5px; }
@@ -7121,7 +7130,13 @@ function _pStatsHtml(pid, elo) {
       + '<div class="p-stat-cell"><div class="p-stat-n" style="color:var(--red)">' + stats.l + '</div><div class="p-stat-l">Derrotas</div></div>'
       + '</div></div>';
   }
-  return '<div class="p-elo"><div class="p-elo-n">' + elo + '</div><div class="p-elo-l">ELO FIDE</div></div>';
+  // Sin partidas cargadas: el bloque derecho queda vacío (el elo ya se ve en las pastillitas del nombre).
+  return '';
+}
+// Las 3 pastillitas de rating (Standard / Rápido / Blitz) que van debajo del nombre en la lista.
+function _pElosHtml(p) {
+  function c(cls, lbl, v) { return '<span class="p-elo3 ' + cls + '"><b>' + (v > 0 ? v : '—') + '</b><i>' + lbl + '</i></span>'; }
+  return '<div class="p-elos">' + c('e-std', 'Std', p.elo || 0) + c('e-rap', 'Ráp', p.rapid || 0) + c('e-blz', 'Blitz', p.blitz || 0) + '</div>';
 }
 
 function renderPlayers(list, id, showRank) {
@@ -7151,7 +7166,8 @@ function renderPlayers(list, id, showRank) {
       html += '<span class="p-rank ' + rankCls + '">' + rankTxt + '</span>';
       html += '<div class="p-avatar">' + ini(p.name) + '</div>';
       html += '<div class="p-info">';
-      html += '<div class="p-name"><span class="p-name-txt">' + p.name + '</span><span class="p-elo-inline">' + p.elo + '</span></div>';
+      html += '<div class="p-name"><span class="p-name-txt">' + p.name + '</span></div>';
+      html += _pElosHtml(p);
       html += '<div class="p-sub">' + tBadge + (p.ranked === false ? ((p.fed || '') + (p.inactive ? ' · <span style="color:var(--text3)">inactivo</span>' : '')) : (p.province || '')) + '</div>';
       html += '</div>';
       html += _pStatsHtml(p.id, p.elo);
@@ -7177,7 +7193,8 @@ function renderPlayers(list, id, showRank) {
       html += '<span class="p-rank ' + rankCls + '">' + rankTxt + '</span>';
       html += '<div class="p-avatar">' + ini(p.name) + '</div>';
       html += '<div class="p-info">';
-      html += '<div class="p-name"><span class="p-name-txt">' + p.name + '</span><span class="p-elo-inline">' + p.elo + '</span></div>';
+      html += '<div class="p-name"><span class="p-name-txt">' + p.name + '</span></div>';
+      html += _pElosHtml(p);
       html += '<div class="p-sub">' + tBadge + (p.ranked === false ? ((p.fed || '') + (p.inactive ? ' · <span style="color:var(--text3)">inactivo</span>' : '')) : (p.province || '')) + '</div>';
       html += '</div>';
       html += _pStatsHtml(p.id, p.elo);
@@ -7902,6 +7919,11 @@ async function openPlayer(id) {
   h += '<div class="stats-grid">';
   h += '<div class="s-box"><div class="s-val" style="color:var(--gold)">' + p.elo + '</div><div class="s-lbl">ELO FIDE actual</div></div>';
   h += '<div class="s-box"><div class="s-val" style="color:var(--blue)">' + p.peak + '</div><div class="s-lbl">ELO máximo</div></div>';
+  // Rápido y Blitz (del listado FIDE foa) — solo si el jugador tiene esos ratings cargados.
+  if (p.rapid || p.blitz) {
+    h += '<div class="s-box"><div class="s-val" style="color:var(--blue)">' + (p.rapid || '–') + '</div><div class="s-lbl">ELO rápido</div></div>';
+    h += '<div class="s-box"><div class="s-val" style="color:var(--green)">' + (p.blitz || '–') + '</div><div class="s-lbl">ELO blitz</div></div>';
+  }
   h += '<div class="s-box"><div class="s-val" style="color:var(--green)">' + dPct + '</div><div class="s-lbl">% victorias</div></div>';
   h += '<div class="s-box"><div class="s-val" style="color:var(--text)">' + (dTotal || '–') + '</div><div class="s-lbl">partidas cargadas</div></div>';
   h += '</div>';
