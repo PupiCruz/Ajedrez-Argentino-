@@ -600,6 +600,20 @@
     .s-box { background: var(--card90); border: 1px solid var(--bd22); border-radius: var(--r-md); padding: 13px; text-align: center; box-shadow: var(--shadow-sm); }
     .s-val { font-size: 21px; font-weight: 700; margin-bottom: 2px; text-shadow: var(--txt-out); }
     .s-lbl { font-size: 11px; color: var(--fg-c0); text-transform: uppercase; letter-spacing: .5px; text-shadow: var(--txt-out); }
+    /* Perfil: cabecera (foto+datos) y los 3 ratings al lado; debajo el gráfico de evolución. */
+    .prof-top { display: flex; gap: 12px; align-items: stretch; flex-wrap: wrap; margin-bottom: 14px; }
+    .prof-ratings { display: flex; gap: 10px; flex: 1 1 260px; align-items: stretch; flex-wrap: wrap; }
+    .prat { flex: 1 1 90px; min-width: 88px; background: var(--card90); border: 1px solid var(--bd22);
+      border-radius: var(--r-lg); box-shadow: var(--shadow-sm); padding: 12px 14px;
+      display: flex; flex-direction: column; justify-content: center; }
+    .prat b { font-size: 29px; font-weight: 800; line-height: 1; text-shadow: var(--txt-out); }
+    .prat i { font-size: 11px; font-style: normal; text-transform: uppercase; letter-spacing: .5px; color: var(--fg-c0); margin-top: 5px; }
+    .prat u { font-size: 10px; text-decoration: none; color: var(--text3); margin-top: 3px; }
+    .prat-std b { color: var(--gold); } .prat-rap b { color: var(--blue); } .prat-blz b { color: var(--green); }
+    .prof-chart { background: var(--card90); border: 1px solid var(--bd22); border-radius: var(--r-lg);
+      box-shadow: var(--shadow-sm); padding: 14px 16px 12px; margin-bottom: 16px; }
+    .prof-chart-lbl { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;
+      color: var(--fg-e0); margin-bottom: 12px; text-shadow: var(--txt-out); }
     .wdl   { display: flex; gap: 8px; margin-bottom: 18px; }
     .wdl-box { flex: 1; background: var(--card90); border-radius: var(--r-md); padding: 11px; text-align: center; border: 1px solid var(--bd22); box-shadow: var(--shadow-sm); transition: border-color .15s, background .15s; }
     .wdl-box.clickable { cursor: pointer; }
@@ -7143,6 +7157,61 @@ function _pStatsHtml(p) {
   return h;
 }
 
+// "YYYY-MM" → "Mmm AA" (ej. "2026-07" → "Jul 26")
+function _fmtHistMonth(d) {
+  var m = /^(\d{4})-(\d{2})/.exec(d || ''); if (!m) return d || '';
+  var names = ['', 'Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+  return (names[+m[2]] || '') + ' ' + m[1].slice(2);
+}
+// Gráfico SVG de evolución de Elo (3 series: Standard/Rápido/Blitz). Los 0 = "sin dato ese mes"
+// cortan la línea. Colores por variables → se adapta a claro/oscuro.
+function _eloChartSvg(hist) {
+  var W = 720, H = 210, padL = 44, padR = 14, padT = 12, padB = 24;
+  var series = [{ k: 's', c: 'var(--gold)', n: 'Standard' }, { k: 'r', c: 'var(--blue)', n: 'Rápido' }, { k: 'b', c: 'var(--green)', n: 'Blitz' }];
+  var vals = [];
+  hist.forEach(function (pt) { ['s', 'r', 'b'].forEach(function (k) { if (pt[k] > 0) vals.push(pt[k]); }); });
+  if (!vals.length) vals = [1500, 2000];
+  var lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+  if (hi === lo) { lo -= 20; hi += 20; }
+  var gp = Math.max(10, Math.round((hi - lo) * 0.12)); lo = Math.floor((lo - gp) / 10) * 10; hi = Math.ceil((hi + gp) / 10) * 10;
+  var n = hist.length;
+  var X = function (i) { return padL + (n <= 1 ? (W - padL - padR) / 2 : (i / (n - 1)) * (W - padL - padR)); };
+  var Y = function (v) { return padT + (1 - (v - lo) / (hi - lo)) * (H - padT - padB); };
+  var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto;display:block">';
+  [hi, Math.round((lo + hi) / 2), lo].forEach(function (v) {
+    var yy = Y(v).toFixed(1);
+    s += '<line x1="' + padL + '" y1="' + yy + '" x2="' + (W - padR) + '" y2="' + yy + '" stroke="var(--bd12)" stroke-width="1"/>';
+    s += '<text x="' + (padL - 7) + '" y="' + (Y(v) + 3).toFixed(1) + '" text-anchor="end" font-size="11" fill="var(--text3)">' + v + '</text>';
+  });
+  s += '<text x="' + X(0).toFixed(1) + '" y="' + (H - 6) + '" text-anchor="start" font-size="11" fill="var(--text3)">' + _fmtHistMonth(hist[0].d) + '</text>';
+  if (n > 1) s += '<text x="' + X(n - 1).toFixed(1) + '" y="' + (H - 6) + '" text-anchor="end" font-size="11" fill="var(--text3)">' + _fmtHistMonth(hist[n - 1].d) + '</text>';
+  series.forEach(function (se) {
+    var segs = [], cur = [];
+    hist.forEach(function (pt, i) { if (pt[se.k] > 0) cur.push(X(i).toFixed(1) + ',' + Y(pt[se.k]).toFixed(1)); else if (cur.length) { segs.push(cur); cur = []; } });
+    if (cur.length) segs.push(cur);
+    segs.forEach(function (seg) {
+      if (seg.length > 1) s += '<polyline points="' + seg.join(' ') + '" fill="none" stroke="' + se.c + '" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>';
+      seg.forEach(function (xy) { var a = xy.split(','); s += '<circle cx="' + a[0] + '" cy="' + a[1] + '" r="' + (seg.length > 1 ? 2 : 3.6) + '" fill="' + se.c + '"/>'; });
+    });
+  });
+  s += '</svg>';
+  var leg = '<div style="display:flex;gap:14px;justify-content:center;margin-top:8px;flex-wrap:wrap">';
+  series.forEach(function (se) { leg += '<span style="font-size:11px;color:var(--text2);display:inline-flex;align-items:center;gap:5px"><span style="width:13px;height:3px;background:' + se.c + ';border-radius:2px;display:inline-block"></span>' + se.n + '</span>'; });
+  return s + leg + '</div>';
+}
+// Card del gráfico de evolución. Si el jugador todavía no tiene historial, muestra el mes actual
+// como único punto + una nota (se va llenando con cada padrón mensual que se sube).
+function _eloChartCard(p) {
+  var hist = (Array.isArray(p.hist) && p.hist.length) ? p.hist : null;
+  var multi = hist && hist.length > 1;
+  if (!hist) hist = [{ d: (typeof _selectedMonth !== 'undefined' && _selectedMonth) ? _selectedMonth : '', s: p.elo || 0, r: p.rapid || 0, b: p.blitz || 0 }];
+  var h = '<div class="prof-chart"><div class="prof-chart-lbl">📈 Evolución de Elo</div>';
+  h += _eloChartSvg(hist);
+  if (!multi) h += '<div style="font-size:11px;color:var(--text3);margin-top:8px;text-align:center;line-height:1.4">El gráfico se completa a medida que cargás los padrones FIDE mes a mes.</div>';
+  h += '</div>';
+  return h;
+}
+
 function renderPlayers(list, id, showRank) {
   if (showRank === undefined) showRank = true;
   var el = document.getElementById(id);
@@ -7884,8 +7953,9 @@ async function openPlayer(id) {
   var ranking   = getPlayerRanking(p);
   var bestWins  = hasData ? computeBestWins(p, allTours, 3) : [];
 
-  var h = '<div style="background:var(--gl30);border:1px solid var(--bd14);border-radius:14px;padding:18px 16px;display:inline-block;width:fit-content;max-width:100%;margin-bottom:16px">';
-  h += '<div class="m-head">';
+  var h = '<div class="prof-top">';
+  h += '<div style="background:var(--gl30);border:1px solid var(--bd14);border-radius:14px;padding:18px 16px;display:inline-block;width:fit-content;max-width:100%">';
+  h += '<div class="m-head" style="margin-bottom:0">';
   // Avatar: foto de Drive si existe, sino iniciales
   var photoUrl = PLAYER_PHOTOS[p.id] || null;
   var avatarInner = photoUrl
@@ -7919,15 +7989,17 @@ async function openPlayer(id) {
        + '</div>';
   }
   h += '</div></div>';
-  h += '</div>';   // /panel sombreado: ahora SOLO envuelve la cabecera (foto + datos del jugador)
+  h += '</div>';   // /panel sombreado (foto + datos del jugador)
+  // Ratings al lado de la foto: Standard / Rápido / Blitz (rápido y blitz solo si los tiene).
+  h += '<div class="prof-ratings">';
+  h += '<div class="prat prat-std"><b>' + p.elo + '</b><i>Standard</i>' + (p.peak && p.peak > p.elo ? '<u>máx ' + p.peak + '</u>' : '') + '</div>';
+  if (p.rapid) h += '<div class="prat prat-rap"><b>' + p.rapid + '</b><i>Rápido</i></div>';
+  if (p.blitz) h += '<div class="prat prat-blz"><b>' + p.blitz + '</b><i>Blitz</i></div>';
+  h += '</div>';
+  h += '</div>';   // /prof-top
+  // Gráfico de evolución de Elo (se llena mes a mes con cada padrón FIDE).
+  h += _eloChartCard(p);
   h += '<div class="stats-grid">';
-  h += '<div class="s-box"><div class="s-val" style="color:var(--gold)">' + p.elo + '</div><div class="s-lbl">ELO FIDE actual</div></div>';
-  h += '<div class="s-box"><div class="s-val" style="color:var(--blue)">' + p.peak + '</div><div class="s-lbl">ELO máximo</div></div>';
-  // Rápido y Blitz (del listado FIDE foa) — solo si el jugador tiene esos ratings cargados.
-  if (p.rapid || p.blitz) {
-    h += '<div class="s-box"><div class="s-val" style="color:var(--blue)">' + (p.rapid || '–') + '</div><div class="s-lbl">ELO rápido</div></div>';
-    h += '<div class="s-box"><div class="s-val" style="color:var(--green)">' + (p.blitz || '–') + '</div><div class="s-lbl">ELO blitz</div></div>';
-  }
   h += '<div class="s-box"><div class="s-val" style="color:var(--green)">' + dPct + '</div><div class="s-lbl">% victorias</div></div>';
   h += '<div class="s-box"><div class="s-val" style="color:var(--text)">' + (dTotal || '–') + '</div><div class="s-lbl">partidas cargadas</div></div>';
   h += '</div>';
@@ -10808,6 +10880,18 @@ async function _parseFideTableStream(file, extraIds, onProgress) {
   if (!fmt) fmt = { month: '', monthLabel: '' };
   return { month: fmt.month, monthLabel: fmt.monthLabel, active: active, extras: extras };
 }
+// Agrega/actualiza un punto mensual al historial de ratings de un jugador (para el gráfico de
+// evolución del perfil). hist = [{d:"YYYY-MM", s:std, r:rapid, b:blitz}], ordenado por fecha.
+// Si el mes ya está, lo reemplaza (re-subir el mismo mes no duplica).
+function _histAppend(hist, month, s, r, b) {
+  var out = Array.isArray(hist) ? hist.slice() : [];
+  if (!month) return out;
+  var pt = { d: month, s: s || 0, r: r || 0, b: b || 0 }, found = false;
+  for (var i = 0; i < out.length; i++) { if (out[i].d === month) { out[i] = pt; found = true; break; } }
+  if (!found) out.push(pt);
+  out.sort(function(x, y) { return x.d < y.d ? -1 : (x.d > y.d ? 1 : 0); });
+  return out;
+}
 // Construye ranking nuevo (preservando ids) + conserva/refresca adicionales desde la tabla.
 function _buildRankingFromActive(parsed) {
   var cur = PLAYERS;
@@ -10825,18 +10909,20 @@ function _buildRankingFromActive(parsed) {
     var old = byFid[a.fide_id], name, province, peak, born;
     if (old) { name = old.name; province = old.province || ''; peak = Math.max(old.peak || old.elo || 0, a.elo); born = a.born || old.born || 0; if (old.ranked === false) peak = Math.max(old.peak || 0, a.elo); }
     else { name = (typeof pgnNameToNatural === 'function') ? pgnNameToNatural(a.name) : a.name; province = ''; peak = a.elo; born = a.born || 0; nuevos++; }
-    players.push({ id: id, fide_id: a.fide_id, name: name, title: a.title, elo: a.elo, rapid: a.rapid || 0, blitz: a.blitz || 0, province: province, born: born, fed: 'ARG', female: (a.sex === 'F'), ranked: true, wins: 0, draws: 0, losses: 0, peak: peak, results: [] });
+    var hist = _histAppend(old && old.hist, parsed.month, a.elo, a.rapid, a.blitz);
+    players.push({ id: id, fide_id: a.fide_id, name: name, title: a.title, elo: a.elo, rapid: a.rapid || 0, blitz: a.blitz || 0, province: province, born: born, fed: 'ARG', female: (a.sex === 'F'), ranked: true, wins: 0, draws: 0, losses: 0, peak: peak, hist: hist, results: [] });
   }
   players.sort(function(x, y) { return y.elo - x.elo; });
 
   // Crea un objeto adicional a partir del jugador actual + (si está) sus datos frescos de la tabla.
   function _mkAdic(p, ex) {
-    var np = { id: p.id, fide_id: p.fide_id, name: p.name, title: p.title || '', elo: p.elo || 0, rapid: p.rapid || 0, blitz: p.blitz || 0, province: p.province || '', born: p.born || 0, fed: p.fed || '', female: !!p.female, inactive: !!p.inactive, ranked: false, wins: 0, draws: 0, losses: 0, peak: p.peak || p.elo || 0, results: [] };
+    var np = { id: p.id, fide_id: p.fide_id, name: p.name, title: p.title || '', elo: p.elo || 0, rapid: p.rapid || 0, blitz: p.blitz || 0, province: p.province || '', born: p.born || 0, fed: p.fed || '', female: !!p.female, inactive: !!p.inactive, ranked: false, wins: 0, draws: 0, losses: 0, peak: p.peak || p.elo || 0, hist: Array.isArray(p.hist) ? p.hist.slice() : [], results: [] };
     if (ex) {
       // El nombre lo tomamos EXACTO del listado FIDE (por fide_id) para evitar confusiones.
       np.name = (typeof pgnNameToNatural === 'function') ? pgnNameToNatural(ex.name) : ex.name;
       np.title = ex.title || np.title; np.elo = ex.elo || np.elo; np.fed = ex.fed || np.fed;
       np.rapid = ex.rapid || np.rapid; np.blitz = ex.blitz || np.blitz;
+      np.hist = _histAppend(np.hist, parsed.month, ex.elo, ex.rapid, ex.blitz);
       np.female = (ex.sex === 'F'); np.born = ex.born || np.born; np.inactive = !!ex.inactive;
       np.peak = Math.max(np.peak, ex.elo || 0);
     }
