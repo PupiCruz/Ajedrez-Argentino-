@@ -1552,7 +1552,7 @@
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
           Actualizar ranking FIDE (subir tabla del mes)
         </button>
-        <div style="font-size:11px;color:var(--text3);margin-top:5px;line-height:1.5">Subí el listado FIDE <i>standard_rating_list.txt</i>. Arma la lista con federación ARG, activos y elo ≥ 1700. No toca partidas, estadísticas ni torneos.</div>
+        <div style="font-size:11px;color:var(--text3);margin-top:5px;line-height:1.5">Subí el listado FIDE <i>players_list_foa.txt</i> (trae Standard + Rápido + Blitz; también sirve el <i>standard_rating_list.txt</i> viejo). Arma la lista con federación ARG, activos y Standard ≥ 1700. Los datos de rápido y blitz se agregan a esos jugadores. No toca partidas, estadísticas ni torneos.</div>
         <button onclick="promptAddAdditional()" style="width:100%;margin-top:8px;padding:11px;background:var(--bg2);border:1px dashed var(--border);color:var(--text2);font-size:13px;font-weight:600;border-radius:11px;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:8px">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
           Agregar jugador adicional (por FIDE id)
@@ -10706,34 +10706,81 @@ function pickRankingFile() {
 }
 // Parsea el listado FIDE (ancho fijo). active = ranking ARG activo; extras = datos de los fide_ids
 // pedidos (adicionales) SIN importar federación/actividad/elo, para refrescarlos cada mes.
-function _parseFideTable(text, extraIds) {
-  var lines = String(text || '').split(/\r?\n/);
-  var header = lines[0] || '';
+// Detecta el formato del listado por el ENCABEZADO. Dos layouts posibles:
+//  • standard_rating_list.txt (solo Standard): B-day col 127, Flag col 133.
+//  • players_list_foa.txt (Standard+Rapid+Blitz): Rapid col 127, Blitz col 140, B-day col 153, Flag col 159.
+// La parte izquierda (id/nombre/fed/sexo/título/standard) es idéntica en ambos. El mes sale igual.
+function _fideFmt(header) {
+  header = header || '';
+  var foa = header.indexOf('RRtng') >= 0 && header.indexOf('BRtng') >= 0;   // el foa trae columnas Rapid/Blitz
   var month = '', monthLabel = '';
   var hm = header.match(/\b([A-Z]{3})(\d{2})\b/);   // la columna de rating se llama p.ej. "JUN26"
   if (hm && _MONTH_ABBR[hm[1]]) { month = '20' + hm[2] + '-' + _MONTH_ABBR[hm[1]][0]; monthLabel = _MONTH_ABBR[hm[1]][1] + ' 20' + hm[2]; }
-  var active = [], extras = {}, hasExtra = extraIds && typeof extraIds === 'object';
-  for (var i = 1; i < lines.length; i++) {
-    var ln = lines[i];
-    if (!ln || ln.length < 119) continue;
-    var fide_id = ln.substr(0, 15).replace(/\s+/g, '');
-    if (!fide_id) continue;
-    var fed   = ln.substr(76, 4).replace(/\s+/g, '');
-    var sex   = ln.substr(80, 4).trim();                                          // M / F (solapa Femeninos)
-    var title = ln.substr(84, 5).trim() || ln.substr(89, 5).trim();               // Tit, o WTit (mujeres)
-    var elo   = parseInt(ln.substr(113, 6), 10) || 0;
-    var born  = parseInt(ln.substr(126, 6), 10) || 0;
-    var name  = ln.substr(15, 61).trim();
-    var flag  = ln.length > 132 ? ln.substring(132).replace(/\s+/g, '') : '';
-    // Adicionales: capturar SIEMPRE (cualquier federación / actividad / elo) para refrescarlos.
-    if (hasExtra && extraIds[fide_id]) extras[fide_id] = { name: name, fed: fed, title: title, elo: elo, sex: sex, born: born, inactive: (flag.indexOf('i') >= 0) };
-    // Ranking activo: ARG + activo (sin 'i') + elo ≥ mínimo.
-    if (fed !== 'ARG') continue;
-    if (flag.indexOf('i') >= 0) continue;
-    if (!(elo >= _FIDE_MIN_ELO)) continue;
-    active.push({ fide_id: fide_id, name: name, title: title, elo: elo, born: born, sex: sex });
+  return { foa: foa, month: month, monthLabel: monthLabel };
+}
+// Parsea UNA línea (ancho fijo) y, si corresponde, la suma a active[] / extras{}. Mismos filtros de
+// siempre: el RANKING se arma por STANDARD (ARG + activo + elo ≥ mínimo). Rapid/Blitz son datos extra
+// que se agregan a los que ya califican (no cambian quién entra).
+function _fideParseLine(ln, fmt, hasExtra, extraIds, active, extras) {
+  if (!ln || ln.length < 119) return;
+  var fide_id = ln.substr(0, 15).replace(/\s+/g, '');
+  if (!fide_id) return;
+  var fed   = ln.substr(76, 4).replace(/\s+/g, '');
+  var sex   = ln.substr(80, 4).trim();                                          // M / F (solapa Femeninos)
+  var title = ln.substr(84, 5).trim() || ln.substr(89, 5).trim();               // Tit, o WTit (mujeres)
+  var elo   = parseInt(ln.substr(113, 6), 10) || 0;                              // SRtng (standard) — igual en ambos
+  var rapid = 0, blitz = 0, born, flag;
+  if (fmt.foa) {
+    rapid = parseInt(ln.substr(126, 6), 10) || 0;   // RRtng col 127
+    blitz = parseInt(ln.substr(139, 6), 10) || 0;   // BRtng col 140
+    born  = parseInt(ln.substr(152, 6), 10) || 0;   // B-day col 153
+    flag  = ln.length > 158 ? ln.substring(158).replace(/\s+/g, '') : '';        // Flag col 159 (i / w / wi)
+  } else {
+    born  = parseInt(ln.substr(126, 6), 10) || 0;
+    flag  = ln.length > 132 ? ln.substring(132).replace(/\s+/g, '') : '';
   }
-  return { month: month, monthLabel: monthLabel, active: active, extras: extras };
+  var name  = ln.substr(15, 61).trim();
+  // Adicionales: capturar SIEMPRE (cualquier federación / actividad / elo) para refrescarlos.
+  if (hasExtra && extraIds[fide_id]) extras[fide_id] = { name: name, fed: fed, title: title, elo: elo, rapid: rapid, blitz: blitz, sex: sex, born: born, inactive: (flag.indexOf('i') >= 0) };
+  // Ranking activo: ARG + activo (sin 'i') + STANDARD ≥ mínimo.
+  if (fed !== 'ARG') return;
+  if (flag.indexOf('i') >= 0) return;
+  if (!(elo >= _FIDE_MIN_ELO)) return;
+  active.push({ fide_id: fide_id, name: name, title: title, elo: elo, rapid: rapid, blitz: blitz, born: born, sex: sex });
+}
+function _parseFideTable(text, extraIds) {
+  var lines = String(text || '').split(/\r?\n/);
+  var fmt = _fideFmt(lines[0] || '');
+  var active = [], extras = {}, hasExtra = extraIds && typeof extraIds === 'object';
+  for (var i = 1; i < lines.length; i++) _fideParseLine(lines[i], fmt, hasExtra, extraIds, active, extras);
+  return { month: fmt.month, monthLabel: fmt.monthLabel, active: active, extras: extras };
+}
+// Igual que _parseFideTable pero leyendo el archivo en STREAMING (por pedazos), sin cargar los 295 MB
+// del foa de una sola vez en memoria. Solo acumula las filas ARG que califican + los extras pedidos.
+async function _parseFideTableStream(file, extraIds, onProgress) {
+  var active = [], extras = {}, hasExtra = extraIds && typeof extraIds === 'object';
+  var fmt = null, buf = '', first = true, count = 0;
+  var reader = file.stream().pipeThrough(new TextDecoderStream('utf-8')).getReader();
+  for (;;) {
+    var r = await reader.read();
+    if (r.done) break;
+    buf += r.value;
+    var nl;
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      var line = buf.slice(0, nl);
+      if (line.charCodeAt(line.length - 1) === 13) line = line.slice(0, -1);   // \r
+      buf = buf.slice(nl + 1);
+      if (first) { fmt = _fideFmt(line); first = false; }
+      else { _fideParseLine(line, fmt, hasExtra, extraIds, active, extras); }
+      if (onProgress && (++count % 250000 === 0)) onProgress(count, active.length);
+    }
+  }
+  if (buf.length) {
+    var last = buf; if (last.charCodeAt(last.length - 1) === 13) last = last.slice(0, -1);
+    if (first) fmt = _fideFmt(last); else _fideParseLine(last, fmt, hasExtra, extraIds, active, extras);
+  }
+  if (!fmt) fmt = { month: '', monthLabel: '' };
+  return { month: fmt.month, monthLabel: fmt.monthLabel, active: active, extras: extras };
 }
 // Construye ranking nuevo (preservando ids) + conserva/refresca adicionales desde la tabla.
 function _buildRankingFromActive(parsed) {
@@ -10752,17 +10799,18 @@ function _buildRankingFromActive(parsed) {
     var old = byFid[a.fide_id], name, province, peak, born;
     if (old) { name = old.name; province = old.province || ''; peak = Math.max(old.peak || old.elo || 0, a.elo); born = a.born || old.born || 0; if (old.ranked === false) peak = Math.max(old.peak || 0, a.elo); }
     else { name = (typeof pgnNameToNatural === 'function') ? pgnNameToNatural(a.name) : a.name; province = ''; peak = a.elo; born = a.born || 0; nuevos++; }
-    players.push({ id: id, fide_id: a.fide_id, name: name, title: a.title, elo: a.elo, province: province, born: born, fed: 'ARG', female: (a.sex === 'F'), ranked: true, wins: 0, draws: 0, losses: 0, peak: peak, results: [] });
+    players.push({ id: id, fide_id: a.fide_id, name: name, title: a.title, elo: a.elo, rapid: a.rapid || 0, blitz: a.blitz || 0, province: province, born: born, fed: 'ARG', female: (a.sex === 'F'), ranked: true, wins: 0, draws: 0, losses: 0, peak: peak, results: [] });
   }
   players.sort(function(x, y) { return y.elo - x.elo; });
 
   // Crea un objeto adicional a partir del jugador actual + (si está) sus datos frescos de la tabla.
   function _mkAdic(p, ex) {
-    var np = { id: p.id, fide_id: p.fide_id, name: p.name, title: p.title || '', elo: p.elo || 0, province: p.province || '', born: p.born || 0, fed: p.fed || '', female: !!p.female, inactive: !!p.inactive, ranked: false, wins: 0, draws: 0, losses: 0, peak: p.peak || p.elo || 0, results: [] };
+    var np = { id: p.id, fide_id: p.fide_id, name: p.name, title: p.title || '', elo: p.elo || 0, rapid: p.rapid || 0, blitz: p.blitz || 0, province: p.province || '', born: p.born || 0, fed: p.fed || '', female: !!p.female, inactive: !!p.inactive, ranked: false, wins: 0, draws: 0, losses: 0, peak: p.peak || p.elo || 0, results: [] };
     if (ex) {
       // El nombre lo tomamos EXACTO del listado FIDE (por fide_id) para evitar confusiones.
       np.name = (typeof pgnNameToNatural === 'function') ? pgnNameToNatural(ex.name) : ex.name;
       np.title = ex.title || np.title; np.elo = ex.elo || np.elo; np.fed = ex.fed || np.fed;
+      np.rapid = ex.rapid || np.rapid; np.blitz = ex.blitz || np.blitz;
       np.female = (ex.sex === 'F'); np.born = ex.born || np.born; np.inactive = !!ex.inactive;
       np.peak = Math.max(np.peak, ex.elo || 0);
     }
@@ -10796,38 +10844,48 @@ function _buildRankingFromActive(parsed) {
   return { month: parsed.month, monthLabel: parsed.monthLabel, players: players, additionals: additionals, idMap: idMap, nextId: nextId,
            _nuevos: nuevos, _salen: salen, _pasanAdic: pasanAdic, _sequitan: sequitan, _adic: additionals.length };
 }
-// onchange del input de archivo: lee, parsea, muestra resumen y (si confirma) aplica.
-function updateRankingFromFile(input) {
+// onchange del input de archivo: lee (en streaming si el navegador puede), parsea, muestra resumen
+// y (si confirma) aplica. Async porque el foa (~295 MB) se lee por pedazos para no ahogar la memoria.
+async function updateRankingFromFile(input) {
   var file = input && input.files && input.files[0];
+  if (input) input.value = '';   // permitir volver a elegir el mismo archivo
   if (!file) return;
-  var reader = new FileReader();
-  reader.onload = function() {
-    try {
-      // Pedimos datos frescos de TODOS los jugadores actuales (para refrescar a los que salen del ranking).
-      var extraIds = {};
-      PLAYERS.forEach(function(p){ if (p.fide_id) extraIds[p.fide_id] = true; });
-      var parsed = _parseFideTable(reader.result, extraIds);
-      if (!parsed.active.length) { alert('No se encontraron jugadores ARG con elo ≥ ' + _FIDE_MIN_ELO + ' en ese archivo.\n\n¿Seguro que es el listado FIDE standard (standard_rating_list.txt)?'); return; }
-      var built = _buildRankingFromActive(parsed);
-      var msg = '📋 Tabla detectada: ' + (built.monthLabel || '(mes no reconocido)') + '\n\n'
-        + 'Ranking activo (ARG · activos · elo ≥ ' + _FIDE_MIN_ELO + '): ' + built.players.length + '\n'
-        + '  • Nuevos que entran: ' + built._nuevos + '\n'
-        + '  • Salen del ranking: ' + built._salen + '  →  ' + built._pasanAdic + ' pasan a Adicionales, ' + built._sequitan + ' se quitan\n'
-        + '\nAdicionales en total: ' + built._adic + ' (elo/título/federación actualizados de la tabla)\n'
-        + '\nLos que se quitan son ocasionales (elo < ' + _ADIC_KEEP_ELO + ' y menos de ' + _ADIC_KEEP_GAMES + ' partidas en el sitio).\n'
-        + 'No se borran sus partidas ni datos: la app recuerda su id y reaparecen si vuelven a calificar.\n';
-      msg += '\nNO se tocan partidas, estadísticas ni torneos.\n\n¿Aplicar la actualización?';
-      if (!confirm(msg)) return;
-      _applyRanking(built);
-      alert('✅ Ranking actualizado a ' + (built.monthLabel || 'la tabla nueva') + '.\n\n'
-        + built.players.length + ' jugadores activos' + (built._adic ? ' + ' + built._adic + ' adicionales' : '') + '.\n\n'
-        + 'Acordate de usar "Guardar datos en mi carpeta" para que quede guardado en el archivo.');
-    } catch(e) {
-      alert('No se pudo procesar la tabla: ' + (e && e.message ? e.message : e));
+  try {
+    // Pedimos datos frescos de TODOS los jugadores actuales (para refrescar a los que salen del ranking).
+    var extraIds = {};
+    PLAYERS.forEach(function(p){ if (p.fide_id) extraIds[p.fide_id] = true; });
+    var parsed;
+    if (file.stream && typeof TextDecoderStream !== 'undefined') {
+      parsed = await _parseFideTableStream(file, extraIds);   // streaming: no carga los 295 MB de una
+    } else {
+      parsed = _parseFideTable(await file.text(), extraIds);  // fallback: navegadores sin streaming
     }
-  };
-  reader.onerror = function() { alert('No se pudo leer el archivo.'); };
-  reader.readAsText(file);
+    if (!parsed.active.length) { alert('No se encontraron jugadores ARG con elo ≥ ' + _FIDE_MIN_ELO + ' en ese archivo.\n\n¿Es el listado FIDE? (players_list_foa.txt — con rápido y blitz — o el standard_rating_list.txt)'); return; }
+    // El foa no trae el mes en el encabezado (el standard viejo sí). Si no se detectó, lo deducimos
+    // de la fecha del archivo (se descarga en el mes correspondiente). El resumen lo muestra para confirmar.
+    if (!parsed.month) {
+      var _d = new Date(file.lastModified || Date.now());
+      var _mn = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+      parsed.month = _d.getFullYear() + '-' + String(_d.getMonth() + 1).padStart(2, '0');
+      parsed.monthLabel = _mn[_d.getMonth()] + ' ' + _d.getFullYear();
+    }
+    var built = _buildRankingFromActive(parsed);
+    var msg = '📋 Tabla detectada: ' + (built.monthLabel || '(mes no reconocido)') + '\n\n'
+      + 'Ranking activo (ARG · activos · elo ≥ ' + _FIDE_MIN_ELO + '): ' + built.players.length + '\n'
+      + '  • Nuevos que entran: ' + built._nuevos + '\n'
+      + '  • Salen del ranking: ' + built._salen + '  →  ' + built._pasanAdic + ' pasan a Adicionales, ' + built._sequitan + ' se quitan\n'
+      + '\nAdicionales en total: ' + built._adic + ' (elo/título/federación actualizados de la tabla)\n'
+      + '\nLos que se quitan son ocasionales (elo < ' + _ADIC_KEEP_ELO + ' y menos de ' + _ADIC_KEEP_GAMES + ' partidas en el sitio).\n'
+      + 'No se borran sus partidas ni datos: la app recuerda su id y reaparecen si vuelven a calificar.\n';
+    msg += '\nNO se tocan partidas, estadísticas ni torneos.\n\n¿Aplicar la actualización?';
+    if (!confirm(msg)) return;
+    _applyRanking(built);
+    alert('✅ Ranking actualizado a ' + (built.monthLabel || 'la tabla nueva') + '.\n\n'
+      + built.players.length + ' jugadores activos' + (built._adic ? ' + ' + built._adic + ' adicionales' : '') + '.\n\n'
+      + 'Acordate de usar "Guardar datos en mi carpeta" para que quede guardado en el archivo.');
+  } catch(e) {
+    alert('No se pudo procesar la tabla: ' + (e && e.message ? e.message : e));
+  }
 }
 // Aplica y persiste (ranking + adicionales) y re-rendea la lista.
 function _applyRanking(built) {
