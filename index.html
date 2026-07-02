@@ -425,6 +425,7 @@
     .t-tile-foot { position: absolute; left: 0; right: 0; bottom: 0; z-index: 2; padding: 40px 11px 11px;
       background: linear-gradient(to top, rgba(0,0,0,.96) 0%, rgba(0,0,0,.9) 26%, rgba(0,0,0,.62) 58%, rgba(0,0,0,.22) 82%, rgba(0,0,0,0) 100%); }
     .t-tile-name { color: #fff; font-size: 14px; font-weight: 800; line-height: 1.22; letter-spacing: -.2px;
+      -webkit-text-stroke: 0.6px #000; paint-order: stroke fill;
       text-shadow: 0 1px 2px rgba(0,0,0,.95), 0 0 9px rgba(0,0,0,.7);
       display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
     .t-tile-date { color: #f0f0f0; font-size: 11.5px; font-weight: 700; margin-top: 3px;
@@ -14590,6 +14591,17 @@ function flyerLeadersRow(flyerUrl, leadersHtml) {
 // Layout 3 columnas para tarjeta de torneo: [flyer | detalle+líderes+AR | botones]
 // Tres columnas de igual ancho (flex:1 1 0). Con flyer → tercios; sin flyer → mitades.
 // min-width permite que se apilen en pantallas angostas.
+// El encuadre del flyer se guarda como string opaco "x% y%" con zoom opcional "x% y% z1.5".
+// Devuelve el CSS (object-position + transform:scale) para aplicarlo al <img> (tile y detalle).
+function _flyerCropCss(pos) {
+  var m = (pos || '').match(/(-?\d+)%\s+(-?\d+)%(?:\s+z([\d.]+))?/);
+  if (!m) return '';
+  var x = m[1], y = m[2], z = m[3] ? parseFloat(m[3]) : 1;
+  var s = 'object-position:' + x + '% ' + y + '%;';
+  if (z && z !== 1) s += 'transform:scale(' + z + ');transform-origin:' + x + '% ' + y + '%;';
+  return s;
+}
+
 // Tile tipo poster para la grilla de torneos: flyer (o respaldo) + franja con nombre/fecha + badge.
 // Todo el detalle del torneo aparece al entrar (openTournamentDetail vía tourCardClick).
 // o = { flyerUrl, name, dates, status, href, clickKey, editHtml }
@@ -14600,7 +14612,7 @@ function _tourTileHtml(o) {
   h += o.editHtml || '';
   h += '<a class="t-tile" href="' + o.href + '" onclick="return tourCardClick(event,' + o.clickKey + ')">';
   h += '<div class="t-tile-fallback"><span class="pc">♞</span></div>';
-  if (o.flyerUrl) h += '<img class="t-tile-img" src="' + escHtml(o.flyerUrl) + '" alt="" loading="lazy"' + (o.flyerPos ? ' style="object-position:' + escHtml(o.flyerPos) + '"' : '') + ' onerror="this.style.display=\'none\'">';
+  if (o.flyerUrl) h += '<img class="t-tile-img" src="' + escHtml(o.flyerUrl) + '" alt="" loading="lazy"' + (o.flyerPos ? ' style="' + _flyerCropCss(o.flyerPos) + '"' : '') + ' onerror="this.style.display=\'none\'">';
   h += '<div class="t-tile-badge"><span class="badge ' + (cls[o.status] || 'b-upcoming') + '">' + (lbl[o.status] || '') + '</span></div>';
   h += '<div class="t-tile-foot"><div class="t-tile-name">' + escHtml(o.name || '') + '</div>';
   if (o.dates) h += '<div class="t-tile-date">' + escHtml(o.dates) + '</div>';
@@ -14635,19 +14647,22 @@ function tzeFlyerPreview() {
   if (!url) { box.innerHTML = ''; return; }
   // Encuadre guardado (object-position "x% y%"). Los sliders lo ajustan y el recorte 3:4 (igual al
   // de la grilla) se actualiza en vivo, así el autor ve qué parte del flyer va a quedar visible.
-  var m = (_tzeFlyerPos || '50% 0%').match(/(-?\d+)%\s+(-?\d+)%/);
-  var px = m ? +m[1] : 50, py = m ? +m[2] : 0;
+  var m = (_tzeFlyerPos || '50% 0%').match(/(-?\d+)%\s+(-?\d+)%(?:\s+z([\d.]+))?/);
+  var px = m ? +m[1] : 50, py = m ? +m[2] : 0, pz = (m && m[3]) ? parseFloat(m[3]) : 1;
+  var tf = pz !== 1 ? ';transform:scale(' + pz + ');transform-origin:' + px + '% ' + py + '%' : '';
   box.innerHTML =
     '<div style="display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap">' +
       '<div style="width:150px;flex-shrink:0">' +
         '<div style="font-size:11px;color:var(--text3);margin-bottom:4px;text-align:center">Así se ve en la grilla</div>' +
         '<div style="width:150px;aspect-ratio:3/4;border-radius:var(--r-md);overflow:hidden;border:1px solid var(--border);background:var(--bg3)">' +
-          '<img id="tze-flyer-crop" src="' + escHtml(url) + '" alt="" style="width:100%;height:100%;object-fit:cover;object-position:' + px + '% ' + py + '%;display:block" onerror="this.parentNode.style.display=\'none\';document.getElementById(\'tze-flyer-err\').style.display=\'block\'">' +
+          '<img id="tze-flyer-crop" src="' + escHtml(url) + '" alt="" style="width:100%;height:100%;object-fit:cover;object-position:' + px + '% ' + py + '%' + tf + ';display:block" onerror="this.parentNode.style.display=\'none\';document.getElementById(\'tze-flyer-err\').style.display=\'block\'">' +
         '</div>' +
       '</div>' +
       '<div style="flex:1 1 170px;min-width:150px">' +
         '<div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:2px">Encuadre del recorte</div>' +
         '<div style="font-size:11px;color:var(--text3);margin-bottom:10px;line-height:1.4">Movés los controles hasta que se vea la parte importante del flyer.</div>' +
+        '<label style="font-size:11px;color:var(--text3);display:block;margin-bottom:2px">🔍 Zoom</label>' +
+        '<input id="tze-flyer-z" type="range" min="100" max="300" step="5" value="' + Math.round(pz * 100) + '" oninput="tzeFlyerPosSet()" style="width:100%;margin-bottom:12px">' +
         '<label style="font-size:11px;color:var(--text3);display:block;margin-bottom:2px">↔ Horizontal</label>' +
         '<input id="tze-flyer-x" type="range" min="0" max="100" value="' + px + '" oninput="tzeFlyerPosSet()" style="width:100%;margin-bottom:12px">' +
         '<label style="font-size:11px;color:var(--text3);display:block;margin-bottom:2px">↕ Vertical</label>' +
@@ -14657,20 +14672,25 @@ function tzeFlyerPreview() {
     '</div>' +
     '<div id="tze-flyer-err" style="display:none;font-size:11px;color:#e07070;margin-top:6px">⚠ No se pudo cargar la imagen. ¿El link es directo a la imagen?</div>';
 }
-// Sliders del encuadre → actualiza _tzeFlyerPos y el recorte en vivo.
+// Sliders del encuadre (zoom + posición) → actualiza _tzeFlyerPos y el recorte en vivo.
 function tzeFlyerPosSet() {
-  var xEl = document.getElementById('tze-flyer-x'), yEl = document.getElementById('tze-flyer-y');
+  var xEl = document.getElementById('tze-flyer-x'), yEl = document.getElementById('tze-flyer-y'), zEl = document.getElementById('tze-flyer-z');
   if (!xEl || !yEl) return;
-  _tzeFlyerPos = xEl.value + '% ' + yEl.value + '%';
+  var x = xEl.value, y = yEl.value, z = zEl ? (parseInt(zEl.value) / 100) : 1;
+  _tzeFlyerPos = x + '% ' + y + '%' + (z !== 1 ? ' z' + z : '');
   var img = document.getElementById('tze-flyer-crop');
-  if (img) img.style.objectPosition = _tzeFlyerPos;
+  if (img) {
+    img.style.objectPosition = x + '% ' + y + '%';
+    img.style.transform = z !== 1 ? 'scale(' + z + ')' : '';
+    img.style.transformOrigin = x + '% ' + y + '%';
+  }
 }
 function tzeFlyerPosReset() {
   _tzeFlyerPos = '50% 0%';
-  var x = document.getElementById('tze-flyer-x'), y = document.getElementById('tze-flyer-y');
-  if (x) x.value = 50; if (y) y.value = 0;
+  var x = document.getElementById('tze-flyer-x'), y = document.getElementById('tze-flyer-y'), z = document.getElementById('tze-flyer-z');
+  if (x) x.value = 50; if (y) y.value = 0; if (z) z.value = 100;
   var img = document.getElementById('tze-flyer-crop');
-  if (img) img.style.objectPosition = _tzeFlyerPos;
+  if (img) { img.style.objectPosition = '50% 0%'; img.style.transform = ''; img.style.transformOrigin = '50% 0%'; }
 }
 
 // Salta suavemente a la sección de partidas dentro del modal de torneo.
@@ -15133,7 +15153,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   // (borde 1px, radio grande, sombra). El flyer ahora SÍ se muestra al entrar (antes solo en la tarjeta).
   h += '<div style="margin-bottom:18px;background:var(--card90);border:1px solid var(--bd22);border-radius:var(--r-lg);padding:18px 20px;box-shadow:var(--shadow-card)">';
   h += '<div style="display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap">';
-  if (flyerUrl) h += '<img src="' + escHtml(flyerUrl) + '" alt="" style="width:150px;max-width:36%;aspect-ratio:3/4;object-fit:cover;object-position:' + escHtml(flyerPos || 'top center') + ';border-radius:var(--r-md);border:1px solid var(--bd22);box-shadow:var(--shadow-sm);flex-shrink:0" onerror="this.style.display=\'none\'">';
+  if (flyerUrl) h += '<img src="' + escHtml(flyerUrl) + '" alt="" style="width:150px;max-width:36%;aspect-ratio:3/4;object-fit:cover;' + _flyerCropCss(flyerPos || '50% 0%') + 'border-radius:var(--r-md);border:1px solid var(--bd22);box-shadow:var(--shadow-sm);flex-shrink:0" onerror="this.style.display=\'none\'">';
   h += '<div style="flex:1 1 240px;min-width:0">';
   h += '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:10px">';
   h += '<div style="font-size:22px;font-weight:700;color:var(--text);line-height:1.3;text-shadow:var(--txt-out)">' + escHtml(name) + '</div>';
