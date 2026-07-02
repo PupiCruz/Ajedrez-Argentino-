@@ -399,11 +399,35 @@
     .t-card3-mid .t-leaders { max-width: none; margin-left: 0; margin-right: 0; border-top: none; padding-top: 0; padding-right: 14px; }
     .progress-bar { height: 3px; background: var(--bg3); border-radius: 2px; margin-top: 12px; overflow: hidden; }
     .progress-fill { height: 100%; background: var(--gold); border-radius: 2px; transition: width .4s; }
-    /* Grilla de torneos: 2 columnas en pantallas anchas; en mobile queda 1 columna (gap maneja el
-       espaciado, así que anulamos el margen inferior de las tarjetas cuando están en la grilla). */
-    .t-grid { display: grid; gap: 11px; grid-template-columns: minmax(0, 1fr); }
-    .t-grid .card { margin-bottom: 0; }
-    @media (min-width: 900px) { .t-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; } }
+    /* ── PARED DE POSTERS (grilla de torneos) ── Tiles verticales tipo poster, todos del mismo
+       tamaño (aspect-ratio fijo) → parejos. Celular: 2 por fila; ≥560px: se acomodan solos (~4-5
+       en compu). El detalle completo del torneo aparece al entrar. */
+    .t-grid { display: grid; gap: 12px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    @media (min-width: 560px) { .t-grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); } }
+    .t-tile-wrap { position: relative; aspect-ratio: 3 / 4; }
+    .t-tile {
+      position: absolute; inset: 0; display: block; overflow: hidden; text-decoration: none; color: inherit;
+      border-radius: var(--r-lg); border: 1px solid var(--bd22); background: var(--panel1);
+      box-shadow: var(--shadow-card); transition: transform .12s, box-shadow .15s, border-color .15s;
+    }
+    .t-tile:hover { transform: translateY(-3px); box-shadow: var(--shadow-hover); border-color: var(--gold-dim); }
+    .t-tile-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: top center; }
+    /* Respaldo para torneos sin flyer: fondo cálido + pieza tenue (queda igual de parejo) */
+    .t-tile-fallback { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+      background: linear-gradient(155deg, var(--panel1), var(--panel0)); }
+    .t-tile-fallback .pc { font-size: 92px; color: var(--gold); opacity: .32; }
+    .t-tile-badge { position: absolute; top: 9px; left: 9px; z-index: 3; }
+    .t-tile-edit { position: absolute; top: 6px; right: 6px; z-index: 4; display: flex; gap: 3px; }
+    .t-tile-ebtn { background: rgba(0,0,0,.5); border: none; color: #fff; font-size: 13px; line-height: 1;
+      padding: 5px 6px; border-radius: var(--r-sm); cursor: pointer; }
+    .t-tile-ebtn:hover { background: rgba(0,0,0,.72); }
+    .t-tile-foot { position: absolute; left: 0; right: 0; bottom: 0; z-index: 2; padding: 30px 11px 11px;
+      background: linear-gradient(to top, rgba(0,0,0,.86) 0%, rgba(0,0,0,.6) 50%, rgba(0,0,0,0) 100%); }
+    .t-tile-name { color: #fff; font-size: 14px; font-weight: 800; line-height: 1.22; letter-spacing: -.2px;
+      text-shadow: 0 1px 3px rgba(0,0,0,.7);
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .t-tile-date { color: #eaeaea; font-size: 11.5px; font-weight: 600; margin-top: 3px; text-shadow: 0 1px 3px rgba(0,0,0,.7);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
     /* ── SEARCH ── */
     /* ── Buscador "pastilla" dorado y centrado — formato unificado de TODOS los buscadores ── */
@@ -3185,7 +3209,7 @@ function pct(a, b, c) { return Math.round((a / (a+b+c)) * 100); }
 var _hiddenTorneos = JSON.parse(localStorage.getItem('hidden_torneos') || '[]');
 var _lastTorneoFilter = 'todos';
 var _torneoPage = 1;
-var TORNEOS_PER_PAGE = 10;
+var TORNEOS_PER_PAGE = 20;
 
 // Controles de paginación (‹ Anterior · números · Siguiente ›). Devuelve '' si hay 1 sola página.
 function renderTorneoPagination(totalPages) {
@@ -3384,67 +3408,12 @@ function renderTorneos(filter) {
         var origIdx = item._origIdx;
         var prog = t.round ? Math.round((t.round / t.rounds) * 100) : 0;
         var roundInfo = t.round ? ('⚡ Ronda ' + t.round + '/' + t.rounds) : ('🎯 ' + t.rounds + ' rondas');
-        html += '<div class="card" style="position:relative">';
-        if (!_ondemand) {
-        html += '<div style="position:absolute;top:6px;right:6px;display:flex;gap:2px;z-index:2">';
-        html += '<button onclick="openTzModal(\'hc_' + t.id + '\')" title="Editar" style="background:none;border:none;color:var(--text2);font-size:14px;cursor:pointer;line-height:1;padding:4px">✏️</button>';
-        html += '<button onclick="torneoDel(' + origIdx + ')" title="Ocultar" style="background:none;border:none;color:var(--text3);font-size:16px;cursor:pointer;line-height:1;padding:4px">✕</button>';
-        html += '</div>';
-        }
-        html += '<div class="t-top" style="padding-right:52px">';
-        html += '<a href="' + _tourHref(t.id) + '" class="t-name" onclick="return tourCardClick(event,\'' + escJs(String(t.id)) + '\')" style="cursor:pointer;color:inherit;text-decoration:none">' + t.name + '</a>';
-        html += '<span class="badge ' + cls[status] + '">' + lbl[status] + '</span>';
-        html += '</div>';
         var _hcCfg = tzCfg['hc_' + t.id] || {};
-        var _bcId  = _hcCfg.broadcastId;
-        var _hcPgnCount = (_hcCfg.pgnGames && _hcCfg.pgnGames.length) || 0;
-        // meta
-        var hcMetaHtml = '<div class="t-meta">';
-        hcMetaHtml += '<span class="t-meta-item">📅 ' + t.dates + '</span>';
-        hcMetaHtml += '<span class="t-meta-item">📍 ' + t.location + '</span>';
-        hcMetaHtml += '<span class="t-meta-item">🏷 ' + t.type + '</span>';
-        hcMetaHtml += _tourFormatChip(_hcCfg.format || t.format);
-        hcMetaHtml += '<span class="t-meta-item">' + roundInfo + '</span>';
-        hcMetaHtml += '</div>';
-        // líderes
-        var hcLeaders = crTopLeaders('hc', t.id) || t.leaders;
-        var hcLeadersHtml = '';
-        if (status !== 'upcoming' || (crTopLeaders('hc', t.id))) {
-          hcLeadersHtml = '<div class="t-leaders">';
-          for (var j = 0; j < hcLeaders.length; j++) {
-            var l = hcLeaders[j];
-            var posClass = j===0 ? 'g1' : j===1 ? 'g2' : j===2 ? 'g3' : '';
-            hcLeadersHtml += '<div class="t-row"><span class="t-pos ' + posClass + '">' + (j+1) + '</span><span style="flex:1">' + escHtml(l.name) + '</span><span class="t-score">' + l.score + ' pts</span></div>';
-          }
-          hcLeadersHtml += '</div>';
-          if (status === 'live') {
-            hcLeadersHtml += '<div class="progress-bar"><div class="progress-fill" style="width:' + prog + '%"></div></div>';
-          }
-        } else {
-          hcLeadersHtml = '<div style="font-size:12px;color:var(--text3);padding:4px 0 0;text-align:center">Inscripciones en curso — resultados disponibles al inicio</div>';
-        }
-        // botones
-        var hcBtns = '';
-        if (_bcId) {
-          hcBtns += btnVerPartidas('hc', t.id, false, _hcPgnCount, _bcId, _hcCfg.broadcastUrl, t.name, t.location);
-        } else {
-          if (t.hasPgn) {
-            var pgnLabel = t.lichessLive ? '♟ Ver partidas · Rondas 1–3 (30 partidas)' : '♟ Ver partidas · Ronda 1 (25 partidas)';
-            hcBtns += '<button class="pgn-btn" onclick="openChessViewer(\'' + t.pgnId + '\')">' + pgnLabel + '</button>';
-          }
-          if (t.lichessLive) {
-            hcBtns += '<button class="pgn-btn" onclick="openLiveBroadcast(\'' + t.lichessLive.slug + '\',\'' + t.lichessLive.roundSlug + '\',\'' + t.lichessLive.roundId + '\')" style="background:rgba(180,30,30,0.15);border-color:rgba(220,60,60,0.4);color:#e07070">⚡ Ver en vivo · Ronda 4 (en curso)</button>';
-          }
-          if (_hcPgnCount > 0) {
-            hcBtns += '<button class="pgn-btn" onclick="openTournamentDetail(\'hc\',' + t.id + ',true)">♟ Ver partidas subidas (' + _hcPgnCount + ')</button>';
-          }
-        }
-        if (_hcCfg.crurl) hcBtns += linkChessResults(_hcCfg.crurl);
-        if (_hcCfg.info64url) hcBtns += linkInfo64(_hcCfg.info64url);
-        if (_hcCfg.weburl) hcBtns += linkWebUrl(_hcCfg.weburl);
-        hcBtns += aboutEventHtml(_hcCfg.about);
-        html += _tourCard3Col(_hcCfg.flyerUrl, hcMetaHtml, hcLeadersHtml, '', hcBtns, String(t.id));
-        html += '</div>';
+        html += _tourTileHtml({
+          flyerUrl: _hcCfg.flyerUrl || t.flyerUrl, name: t.name, dates: _hcCfg.dates || t.dates, status: status,
+          href: _tourHref(t.id), clickKey: "'" + escJs(String(t.id)) + "'",
+          editHtml: _ondemand ? '' : ('<div class="t-tile-edit"><button onclick="openTzModal(\'hc_' + t.id + '\')" title="Editar" class="t-tile-ebtn">✏️</button><button onclick="torneoDel(' + origIdx + ')" title="Ocultar" class="t-tile-ebtn">✕</button></div>')
+        });
       } else if (item._type === 'stored') {
         // stored tournament
         var st = item._st;
@@ -3454,96 +3423,19 @@ function renderTorneos(filter) {
         // la web viene del manifest como 'ls'). HAY que comillarlo en el onclick: sin comillas,
         // openTournamentDetail('ls',tz_123) toma tz_123 como variable → error → "no pasa nada".
         var _lsIdArg = "'" + escJs(String(st._id)) + "'";
-        html += '<div class="card" style="position:relative">';
-        if (!_ondemand) {
-        html += '<div style="position:absolute;top:6px;right:6px;display:flex;gap:2px;z-index:2">';
-        html += '<button onclick="openTzModal(\'ls_' + st._id + '\')" title="Editar" style="background:none;border:none;color:var(--text2);font-size:14px;cursor:pointer;line-height:1;padding:4px">✏️</button>';
-        html += '<button onclick="pgnDeleteTorneo(' + st._id + ')" title="Eliminar" style="background:none;border:none;color:var(--text3);font-size:16px;cursor:pointer;line-height:1;padding:4px">✕</button>';
-        html += '</div>';
-        }
-        html += '<div class="t-top" style="padding-right:52px">';
-        html += '<a href="' + _tourHref(st._id) + '" class="t-name" onclick="return tourCardClick(event,' + _lsIdArg + ')" style="cursor:pointer;color:inherit;text-decoration:none">' + escHtml(st.name) + '</a>';
-        html += '<span class="badge ' + cls[status] + '">' + lbl[status] + '</span>';
-        html += '</div>';
-        // meta
-        var stMetaHtml = '<div class="t-meta">';
-        stMetaHtml += '<span class="t-meta-item">📅 ' + escHtml(st.dates) + '</span>';
-        if (st.location) stMetaHtml += '<span class="t-meta-item">📍 ' + escHtml(st.location) + '</span>';
-        stMetaHtml += '<span class="t-meta-item">🏷 ' + escHtml(st.type || (isCR ? 'Chess Results' : 'PGN importado')) + '</span>';
-        stMetaHtml += _tourFormatChip(st.format);
-        if (st.rounds) stMetaHtml += '<span class="t-meta-item">🎯 ' + st.rounds + ' rondas</span>';
-        if (st.timeControl) stMetaHtml += '<span class="t-meta-item">⏱ ' + escHtml(st.timeControl) + '</span>';
-        if (!st.rounds && !isCR) stMetaHtml += '<span class="t-meta-item">🎯 ' + st.gameCount + ' partidas</span>';
-        stMetaHtml += '</div>';
-        // líderes
-        var lsLeaders = crTopLeaders('ls', st._id) || st.leaders;
-        var lsLeadersHtml = '';
-        if (status === 'upcoming' && !crTopLeaders('ls', st._id)) {
-          lsLeadersHtml = '<div style="font-size:12px;color:var(--text3);padding:4px 0 0;text-align:center">Próximo torneo — resultados disponibles al inicio</div>';
-        } else if (lsLeaders.length) {
-          lsLeadersHtml = '<div class="t-leaders">';
-          for (var li = 0; li < lsLeaders.length; li++) {
-            var l2 = lsLeaders[li];
-            var pc = li===0 ? 'g1' : li===1 ? 'g2' : li===2 ? 'g3' : '';
-            lsLeadersHtml += '<div class="t-row"><span class="t-pos ' + pc + '">' + (li+1) + '</span><span style="flex:1">' + escHtml(l2.name) + '</span><span class="t-score">' + l2.score + ' pts</span></div>';
-          }
-          lsLeadersHtml += '</div>';
-        }
-        // botones
-        var stBtns = '';
-        if (st.crUrl) stBtns += linkChessResults(st.crUrl);
-        if (st.info64url) stBtns += linkInfo64(st.info64url);
-        if (st.weburl) stBtns += linkWebUrl(st.weburl);
-        if (st.chesscomUrl) stBtns += linkChesscom(st.chesscomUrl);
-        stBtns += btnVerPartidas('ls', st._id, true, (st.gameCount || 0) + _tourPoolGameCount(st.name), st.broadcastId, st.broadcastUrl, st.name, st.location);
-        stBtns += aboutEventHtml(st.about);
-        html += _tourCard3Col(st.flyerUrl, stMetaHtml, lsLeadersHtml, crArgLineHtml('ls', st._id, st.games, st.type), stBtns, String(st._id));
-        html += '</div>';
+        html += _tourTileHtml({
+          flyerUrl: st.flyerUrl, name: st.name, dates: st.dates, status: status,
+          href: _tourHref(st._id), clickKey: _lsIdArg,
+          editHtml: _ondemand ? '' : ('<div class="t-tile-edit"><button onclick="openTzModal(\'ls_' + st._id + '\')" title="Editar" class="t-tile-ebtn">✏️</button><button onclick="pgnDeleteTorneo(' + st._id + ')" title="Eliminar" class="t-tile-ebtn">✕</button></div>')
+        });
       } else if (item._type === 'tzconfig') {
         var d = item._data; var tzk = item._key;
         var st2 = item._status || 'upcoming';
-        html += '<div class="card" style="position:relative">';
-        if (!_ondemand) {
-        html += '<div style="position:absolute;top:6px;right:6px;display:flex;gap:2px;z-index:2">';
-        html += '<button onclick="openTzModal(\'' + tzk + '\')" title="Editar" style="background:none;border:none;color:var(--text2);font-size:14px;cursor:pointer;line-height:1;padding:4px">✏️</button>';
-        html += '</div>';
-        }
-        html += '<div class="t-top" style="padding-right:36px">';
-        html += '<a href="' + _tourHref(tzk) + '" class="t-name" onclick="return tourCardClick(event,\'' + escJs(tzk) + '\')" style="cursor:pointer;color:inherit;text-decoration:none">' + escHtml(d.name || '') + '</a>';
-        html += '<span class="badge ' + cls[st2] + '">' + lbl[st2] + '</span>';
-        html += '</div>';
-        // meta
-        var tzMetaHtml = '<div class="t-meta">';
-        if (d.dates)    tzMetaHtml += '<span class="t-meta-item">📅 ' + escHtml(d.dates) + '</span>';
-        if (d.location) tzMetaHtml += '<span class="t-meta-item">📍 ' + escHtml(d.location) + '</span>';
-        if (d.type)     tzMetaHtml += '<span class="t-meta-item">🏷 ' + escHtml(d.type) + '</span>';
-        tzMetaHtml += _tourFormatChip(d.format);
-        if (d.rounds)   tzMetaHtml += '<span class="t-meta-item">🎯 ' + d.rounds + ' rondas</span>';
-        if (d.timeControl) tzMetaHtml += '<span class="t-meta-item">⏱ ' + escHtml(d.timeControl) + '</span>';
-        tzMetaHtml += '</div>';
-        // líderes
-        var tzLeaders = crTopLeaders('tz', tzk);
-        var tzLeadersHtml = '';
-        if (tzLeaders) {
-          tzLeadersHtml = '<div class="t-leaders">';
-          for (var ti2 = 0; ti2 < tzLeaders.length; ti2++) {
-            var l3 = tzLeaders[ti2];
-            var pc3 = ti2===0 ? 'g1' : ti2===1 ? 'g2' : ti2===2 ? 'g3' : '';
-            tzLeadersHtml += '<div class="t-row"><span class="t-pos ' + pc3 + '">' + (ti2+1) + '</span><span style="flex:1">' + escHtml(l3.name) + '</span><span class="t-score">' + l3.score + ' pts</span></div>';
-          }
-          tzLeadersHtml += '</div>';
-        }
-        // botones
-        var tzBtns = '';
-        if (d.crurl) tzBtns += linkChessResults(d.crurl);
-        if (d.info64url) tzBtns += linkInfo64(d.info64url);
-        if (d.weburl) tzBtns += linkWebUrl(d.weburl);
-        if (d.chesscomUrl) tzBtns += linkChesscom(d.chesscomUrl);
-        var _tzPgnCount = (d.pgnCount || (d.pgnGames && d.pgnGames.length) || 0) + _tourPoolGameCount(d.name);
-        tzBtns += btnVerPartidas('tz', tzk, true, _tzPgnCount, d.broadcastId, d.broadcastUrl);
-        tzBtns += aboutEventHtml(d.about);
-        html += _tourCard3Col(d.flyerUrl, tzMetaHtml, tzLeadersHtml, crArgLineHtml('tz', tzk, d.pgnGames || [], d.type), tzBtns, tzk);
-        html += '</div>';
+        html += _tourTileHtml({
+          flyerUrl: d.flyerUrl, name: d.name || '', dates: d.dates, status: st2,
+          href: _tourHref(tzk), clickKey: "'" + escJs(tzk) + "'",
+          editHtml: _ondemand ? '' : ('<div class="t-tile-edit"><button onclick="openTzModal(\'' + tzk + '\')" title="Editar" class="t-tile-ebtn">✏️</button></div>')
+        });
       }
     });
     html += '</div>';
@@ -14687,6 +14579,24 @@ function flyerLeadersRow(flyerUrl, leadersHtml) {
 // Layout 3 columnas para tarjeta de torneo: [flyer | detalle+líderes+AR | botones]
 // Tres columnas de igual ancho (flex:1 1 0). Con flyer → tercios; sin flyer → mitades.
 // min-width permite que se apilen en pantallas angostas.
+// Tile tipo poster para la grilla de torneos: flyer (o respaldo) + franja con nombre/fecha + badge.
+// Todo el detalle del torneo aparece al entrar (openTournamentDetail vía tourCardClick).
+// o = { flyerUrl, name, dates, status, href, clickKey, editHtml }
+function _tourTileHtml(o) {
+  var lbl = { live:'EN VIVO', upcoming:'PRÓXIMO', done:'FINALIZADO' };
+  var cls = { live:'b-live', upcoming:'b-upcoming', done:'b-done' };
+  var h = '<div class="t-tile-wrap">';
+  h += o.editHtml || '';
+  h += '<a class="t-tile" href="' + o.href + '" onclick="return tourCardClick(event,' + o.clickKey + ')">';
+  h += '<div class="t-tile-fallback"><span class="pc">♞</span></div>';
+  if (o.flyerUrl) h += '<img class="t-tile-img" src="' + escHtml(o.flyerUrl) + '" alt="" loading="lazy" onerror="this.style.display=\'none\'">';
+  h += '<div class="t-tile-badge"><span class="badge ' + (cls[o.status] || 'b-upcoming') + '">' + (lbl[o.status] || '') + '</span></div>';
+  h += '<div class="t-tile-foot"><div class="t-tile-name">' + escHtml(o.name || '') + '</div>';
+  if (o.dates) h += '<div class="t-tile-date">' + escHtml(o.dates) + '</div>';
+  h += '</div></a></div>';
+  return h;
+}
+
 function _tourCard3Col(flyerUrl, metaHtml, leadersHtml, argHtml, buttonsHtml, tourKey) {
   var h = '<div style="display:flex;gap:14px;align-items:flex-start;margin:8px 0;flex-wrap:wrap">';
   if (flyerUrl) {
@@ -15171,8 +15081,12 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   }
 
   var h = '';
-  // Header (mismo recuadro que las tarjetas de torneos: azulado, borde claro, 0.90 de opacidad)
-  h += '<div style="margin-bottom:18px;background:var(--card90);border:2px solid var(--bd22);border-radius:14px;padding:18px 20px">';
+  // Header: flyer (si hay) a la izquierda + info a la derecha. Mismo criterio visual que las tarjetas
+  // (borde 1px, radio grande, sombra). El flyer ahora SÍ se muestra al entrar (antes solo en la tarjeta).
+  h += '<div style="margin-bottom:18px;background:var(--card90);border:1px solid var(--bd22);border-radius:var(--r-lg);padding:18px 20px;box-shadow:var(--shadow-card)">';
+  h += '<div style="display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap">';
+  if (flyerUrl) h += '<img src="' + escHtml(flyerUrl) + '" alt="" style="width:150px;max-width:36%;aspect-ratio:3/4;object-fit:cover;object-position:top center;border-radius:var(--r-md);border:1px solid var(--bd22);box-shadow:var(--shadow-sm);flex-shrink:0" onerror="this.style.display=\'none\'">';
+  h += '<div style="flex:1 1 240px;min-width:0">';
   h += '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:10px">';
   h += '<div style="font-size:22px;font-weight:700;color:var(--text);line-height:1.3;text-shadow:var(--txt-out)">' + escHtml(name) + '</div>';
   h += '<div style="flex-shrink:0;display:flex;flex-direction:column;align-items:flex-end;gap:6px;margin-top:2px">';
@@ -15208,7 +15122,9 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     });
     h += '</div>';
   }
-  h += '</div>';
+  h += '</div>';   // /columna derecha (info)
+  h += '</div>';   // /flex (flyer + info)
+  h += '</div>';   // /caja header
 
   // Aviso si las partidas NO se pudieron cargar (red caída o archivo ausente). Sin esto, un
   // error de carga se vería igual que un torneo legítimamente sin partidas.
@@ -15223,8 +15139,6 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   if (status === 'live' && prog > 0) {
     h += '<div class="progress-bar" style="margin-bottom:16px"><div class="progress-fill" style="width:' + prog + '%"></div></div>';
   }
-
-  // (El flyer se muestra solo en la tarjeta, no al entrar al torneo.)
 
   // Links externos
   // El botón de Lichess ya NO va acá: con transmisión, las partidas se muestran integradas abajo
@@ -15259,8 +15173,8 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   _i64UrlByKey[crk] = info64url || ''; // ídem para info64 (botón + auto-fetch)
   _crFormat[crk] = format || ''; // sistema elegido a mano (override de la heurística suizo/round robin)
   if (_tdCtx) { _tdCtx.crKey = crk; _tdCtx.isTeam = isTeam; }
-  // Sección Chess-Results: mismo recuadro que las tarjetas de torneos (azulado, borde claro, 0.90).
-  h += '<div style="background:var(--card90);border:2px solid var(--bd22);border-radius:14px;padding:16px 18px;margin-bottom:18px">';
+  // Sección Chess-Results: mismo criterio visual que las tarjetas (borde 1px, radio grande, sombra).
+  h += '<div style="background:var(--card90);border:1px solid var(--bd22);border-radius:var(--r-lg);padding:16px 18px;margin-bottom:18px;box-shadow:var(--shadow-card)">';
   if (isTeam) {
     // Torneo por equipos: cruces por mesas + tabla de equipos (en vez del cuadro individual).
     h += _teamRenderSection(crk, crDataLoad(crk));
