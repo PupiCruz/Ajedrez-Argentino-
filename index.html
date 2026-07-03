@@ -377,9 +377,13 @@
     .b-live     { background: #0d2b1d; color: var(--green);  border: 1px solid #1a4d32; }
     .b-upcoming { background: #0e0e22; color: var(--blue);   border: 1px solid #2a2a5e; }
     .b-done     { background: var(--gold-bg); color: var(--gold-dim); border: 1px solid #3a2e10; }
+    /* "EN VIVO" (rojo): solo cuando Lichess confirma que se está jugando una ronda AHORA. Los
+       torneos en curso por fecha usan .b-live ("EN CURSO", verde) hasta que arranca la ronda. */
+    .b-livenow  { background: rgba(220,50,50,.18); color: #e77; border: 1px solid rgba(220,60,60,.5); }
     /* En claro los fondos oscuros de los badges no se leen → versión clara legible. */
     body.light .b-live     { background: #d3efdf; color: #176b3e; border-color: #67bd8f; }
     body.light .b-upcoming { background: #dce5fb; color: #2c4ba6; border-color: #92a9e6; }
+    body.light .b-livenow  { background: #fdecec; color: #c0392b; border-color: #e6a3a3; }
 
     /* ── TORNEOS ── */
     .t-top { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 10px; gap: 8px; }
@@ -3449,6 +3453,7 @@ function renderTorneos(filter) {
         var _hcCfg = tzCfg['hc_' + t.id] || {};
         html += _tourTileHtml({
           flyerUrl: _hcCfg.flyerUrl || t.flyerUrl, flyerPos: _hcCfg.flyerPos || t.flyerPos, name: t.name, dates: _hcCfg.dates || t.dates, status: status,
+          bcId: _hcCfg.broadcastId || '', bcUrl: _hcCfg.broadcastUrl || '',
           href: _tourHref(t.id), clickKey: "'" + escJs(String(t.id)) + "'",
           editHtml: _ondemand ? '' : ('<div class="t-tile-edit"><button onclick="openTzModal(\'hc_' + t.id + '\')" title="Editar" class="t-tile-ebtn">✏️</button><button onclick="torneoDel(' + origIdx + ')" title="Ocultar" class="t-tile-ebtn">✕</button></div>')
         });
@@ -3463,6 +3468,7 @@ function renderTorneos(filter) {
         var _lsIdArg = "'" + escJs(String(st._id)) + "'";
         html += _tourTileHtml({
           flyerUrl: st.flyerUrl, flyerPos: st.flyerPos, name: st.name, dates: st.dates, status: status,
+          bcId: st.broadcastId || '', bcUrl: st.broadcastUrl || '',
           href: _tourHref(st._id), clickKey: _lsIdArg,
           editHtml: _ondemand ? '' : ('<div class="t-tile-edit"><button onclick="openTzModal(\'ls_' + st._id + '\')" title="Editar" class="t-tile-ebtn">✏️</button><button onclick="pgnDeleteTorneo(' + st._id + ')" title="Eliminar" class="t-tile-ebtn">✕</button></div>')
         });
@@ -3471,6 +3477,7 @@ function renderTorneos(filter) {
         var st2 = item._status || 'upcoming';
         html += _tourTileHtml({
           flyerUrl: d.flyerUrl, flyerPos: d.flyerPos, name: d.name || '', dates: d.dates, status: st2,
+          bcId: d.broadcastId || '', bcUrl: d.broadcastUrl || '',
           href: _tourHref(tzk), clickKey: "'" + escJs(tzk) + "'",
           editHtml: _ondemand ? '' : ('<div class="t-tile-edit"><button onclick="openTzModal(\'' + tzk + '\')" title="Editar" class="t-tile-ebtn">✏️</button></div>')
         });
@@ -3480,7 +3487,8 @@ function renderTorneos(filter) {
     if (totalPages > 1) html += _pagerHtml + '<div style="text-align:center;font-size:11.5px;color:var(--text3);margin-top:2px">' + filtered.length + ' torneos · página ' + _torneoPage + ' de ' + totalPages + '</div>';
   }
   document.getElementById('list-torneos').innerHTML = html;
-  _bcMarkLiveButtons();   // marca "🔴 EN VIVO" los torneos en curso que Lichess confirme transmitiendo
+  _bcMarkLiveButtons();   // marca "🔴 EN VIVO" los botones de los torneos que Lichess confirme transmitiendo
+  _markLiveTiles();       // y pasa el badge de la tarjeta a "🔴 EN VIVO" (rojo) si hay ronda en juego
 }
 function filterT(f, btn) {
   var chips = document.querySelectorAll('#tab-torneos .chip');
@@ -7326,7 +7334,9 @@ function _eloChartCard(p) {
   var h = '<div class="prof-chart"><div class="prof-chart-lbl">📈 Evolución de Elo</div>';
   h += '<div id="elo-chart-tip"></div>';
   h += _eloChartSvg(hist);
-  if (!multi) h += '<div style="font-size:11px;color:var(--text3);margin-top:8px;text-align:center;line-height:1.4">El gráfico se completa a medida que cargás los padrones FIDE mes a mes.</div>';
+  // El cartel "se completa a medida que cargás los padrones…" es una nota de AUTOR: solo tiene
+  // sentido para quien carga los padrones. Al visitante (modo publicado) no se le muestra nada.
+  if (!multi && !_ondemand) h += '<div style="font-size:11px;color:var(--text3);margin-top:8px;text-align:center;line-height:1.4">El gráfico se completa a medida que cargás los padrones FIDE mes a mes.</div>';
   // Modo autor: botón para traer el historial completo (desde ~2000) de Lichess de una.
   if (typeof _ondemand !== 'undefined' && !_ondemand && p.fide_id) {
     h += '<div style="text-align:center;margin-top:10px"><button id="hist-fetch-btn" onclick="traerHistorialJugador(' + p.id + ')" style="font-size:12px;background:var(--gl40);border:1px solid var(--bd22);color:var(--fg-d0);border-radius:var(--r-sm);padding:6px 14px;cursor:pointer;font-family:inherit;font-weight:600">📈 ' + (multi ? 'Actualizar' : 'Traer') + ' historial de Lichess</button></div>';
@@ -14474,6 +14484,31 @@ function _bcMarkLiveButtons(root) {
   }
 }
 
+// Igual que _bcMarkLiveButtons, pero para el BADGE de la tarjeta/detalle. Los torneos EN CURSO por
+// fecha (badge "EN CURSO", .b-live) que Lichess confirme jugando una ronda AHORA pasan a "🔴 EN VIVO"
+// (rojo, .b-livenow). Sin broadcast no se puede confirmar → quedan en "EN CURSO". Reusa el mismo
+// caché de _bcIsTourLive (1 min), así no re-consulta al re-renderizar.
+function _markLiveTiles(root) {
+  root = root || document.getElementById('list-torneos');
+  if (!root) return;
+  var badges = root.querySelectorAll('.badge[data-livebadge]');
+  for (var i = 0; i < badges.length; i++) {
+    (function(badge) {
+      var bc = badge.getAttribute('data-bc') || '', bcurl = badge.getAttribute('data-bcurl') || '';
+      if (!bc && !bcurl) return;   // sin fuente de Lichess no podemos confirmar "en vivo ahora"
+      _bcResolveTourIdFromRef(bc, bcurl, function(tourId) {
+        if (!tourId || !badge.isConnected) return;
+        _bcIsTourLive(tourId, function(live) {
+          if (!live || !badge.isConnected) return;
+          badge.textContent = '🔴 EN VIVO';
+          badge.classList.remove('b-live');
+          badge.classList.add('b-livenow');
+        });
+      });
+    })(badges[i]);
+  }
+}
+
 // Punto de entrada de los botones "Ver partidas · Lichess". `broadcastId` puede ser el tour id
 // corto, el slug del torneo, o venir con la URL completa en pageUrl. Si no es un tour id corto,
 // primero resuelve el tour id desde la URL (que sí trae la ronda) y recién ahí abre.
@@ -14898,14 +14933,17 @@ function _flyerCropCss(pos) {
 // Todo el detalle del torneo aparece al entrar (openTournamentDetail vía tourCardClick).
 // o = { flyerUrl, name, dates, status, href, clickKey, editHtml }
 function _tourTileHtml(o) {
-  var lbl = { live:'EN VIVO', upcoming:'PRÓXIMO', done:'FINALIZADO' };
+  // Los torneos en curso por fecha arrancan como "EN CURSO"; _markLiveTiles los pasa a "🔴 EN VIVO"
+  // (rojo) solo si Lichess confirma que se está jugando la ronda ahora (ver data-livebadge más abajo).
+  var lbl = { live:'EN CURSO', upcoming:'PRÓXIMO', done:'FINALIZADO' };
   var cls = { live:'b-live', upcoming:'b-upcoming', done:'b-done' };
   var h = '<div class="t-tile-wrap">';
   h += o.editHtml || '';
   h += '<a class="t-tile" href="' + o.href + '" onclick="return tourCardClick(event,' + o.clickKey + ')">';
   h += '<div class="t-tile-fallback"><span class="pc">♞</span></div>';
   if (o.flyerUrl) h += '<img class="t-tile-img" src="' + escHtml(o.flyerUrl) + '" alt="" loading="lazy"' + (o.flyerPos ? ' style="' + _flyerCropCss(o.flyerPos) + '"' : '') + ' onerror="this.style.display=\'none\'">';
-  h += '<div class="t-tile-badge"><span class="badge ' + (cls[o.status] || 'b-upcoming') + '">' + (lbl[o.status] || '') + '</span></div>';
+  var _lb = (o.status === 'live') ? (' data-livebadge="1"' + (o.bcId ? ' data-bc="' + escHtml(String(o.bcId)) + '"' : '') + (o.bcUrl ? ' data-bcurl="' + escHtml(String(o.bcUrl)) + '"' : '')) : '';
+  h += '<div class="t-tile-badge"><span class="badge ' + (cls[o.status] || 'b-upcoming') + '"' + _lb + '>' + (lbl[o.status] || '') + '</span></div>';
   h += '<div class="t-tile-foot"><div class="t-tile-name">' + escHtml(o.name || '') + '</div>';
   if (o.dates) h += '<div class="t-tile-date">' + escHtml(o.dates) + '</div>';
   h += '</div></a></div>';
@@ -15346,7 +15384,15 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
       for (var jm = 0; jm < _manifest.tournaments.length; jm++) { if (String(_manifest.tournaments[jm].id) === String(id)) { entry = _manifest.tournaments[jm]; break; } }
       if (!entry) return;
       entry = Object.assign({}, entry, { games: await fetchTournamentGames(id) });
-      if (_tourLoadFailed[id]) loadFailed = true;
+      // Un archivo de partidas ausente NO es un error si el torneo no tiene partidas archivadas
+      // (gameCount 0: es EN VIVO o próximo y las partidas llegan por Lichess / Chess-Results) o si
+      // tiene una fuente en vivo que las va a traer. Mostrar el cartel rojo ahí es contradictorio
+      // (aparece justo mientras Lichess trae las partidas). Solo avisamos si DEBERÍA haber archivo.
+      if (_tourLoadFailed[id]) {
+        var _hasLiveSrc = !!(entry.broadcastId || entry.broadcastUrl
+          || (entry.crUrl && /tnr\d+/i.test(entry.crUrl)) || (entry.info64url && _i64Base(entry.info64url)));
+        if ((entry.gameCount || 0) > 0 && !_hasLiveSrc) loadFailed = true;
+      }
     } else {
       var tours = JSON.parse(localStorage.getItem('pgn_tournaments') || '[]');
       for (var j = 0; j < tours.length; j++) { if (tours[j].id == id) { entry = tours[j]; break; } }
@@ -15450,7 +15496,8 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   h += '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:10px">';
   h += '<div style="font-size:22px;font-weight:700;color:var(--text);line-height:1.3;text-shadow:var(--txt-out)">' + escHtml(name) + '</div>';
   h += '<div style="flex-shrink:0;display:flex;flex-direction:column;align-items:flex-end;gap:6px;margin-top:2px">';
-  h += '<span class="badge ' + cls2[status] + '">' + lbl2[status] + '</span>';
+  var _dlb = (status === 'live') ? (' data-livebadge="1"' + (broadcastId ? ' data-bc="' + escHtml(String(broadcastId)) + '"' : '') + (broadcastUrl ? ' data-bcurl="' + escHtml(String(broadcastUrl)) + '"' : '')) : '';
+  h += '<span class="badge ' + cls2[status] + '"' + _dlb + '>' + lbl2[status] + '</span>';
   if (broadcastId) h += '<a href="' + escHtml(broadcastUrl || ('https://lichess.org/broadcast/' + broadcastId)) + '" target="_blank" rel="noopener" style="font-size:11px;color:#8ab4f8;text-decoration:none;white-space:nowrap">⚡ Ver en Lichess ↗</a>';
   h += '</div>';
   h += '</div>';
@@ -15565,8 +15612,9 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   h += '</div>';   // /glass panel inferior
 
   document.getElementById('tour-modal-body').innerHTML = h;
-  // Si el torneo está en curso por fecha, marcar "🔴 EN VIVO" el botón de Lichess (si transmite ahora).
-  if (status === 'live') _bcMarkLiveButtons(document.getElementById('tour-modal-body'));
+  // Si el torneo está en curso por fecha, marcar "🔴 EN VIVO" el botón de Lichess y el badge del
+  // header (solo si Lichess confirma que se está jugando una ronda ahora).
+  if (status === 'live') { var _tmb = document.getElementById('tour-modal-body'); _bcMarkLiveButtons(_tmb); _markLiveTiles(_tmb); }
   // Armar la 1ª ronda de las partidas subidas (las demás bajo demanda). Si hay broadcast, esto es solo
   // el respaldo inmediato: _tdLoadLiveGames reemplaza la sección con el vivo de Lichess al llegar.
   if (roundOrder.length) tdBuildRound(roundOrder[0]);
