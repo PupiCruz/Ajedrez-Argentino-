@@ -603,15 +603,22 @@
     /* Perfil: cabecera (foto+datos) y los 3 ratings al lado; debajo el gráfico de evolución. */
     .prof-top { display: flex; gap: 12px; align-items: stretch; flex-wrap: wrap; margin-bottom: 14px; }
     .prof-ratings { display: flex; gap: 10px; flex: 1 1 260px; align-items: stretch; flex-wrap: wrap; }
-    .prat { flex: 1 1 90px; min-width: 88px; background: var(--card90); border: 1px solid var(--bd22);
+    .prat { flex: 1 1 120px; min-width: 112px; background: var(--card90); border: 1px solid var(--bd22);
       border-radius: var(--r-lg); box-shadow: var(--shadow-sm); padding: 12px 14px;
-      display: flex; flex-direction: column; justify-content: center; }
-    .prat b { font-size: 29px; font-weight: 800; line-height: 1; text-shadow: var(--txt-out); }
-    .prat i { font-size: 11px; font-style: normal; text-transform: uppercase; letter-spacing: .5px; color: var(--fg-c0); margin-top: 5px; }
-    .prat u { font-size: 10px; text-decoration: none; color: var(--text3); margin-top: 3px; }
-    .prat-std b { color: var(--gold); } .prat-rap b { color: var(--blue); } .prat-blz b { color: var(--green); }
-    .prof-chart { background: var(--card90); border: 1px solid var(--bd22); border-radius: var(--r-lg);
+      display: flex; align-items: center; justify-content: center; gap: 14px; }
+    .prat-main { text-align: center; }
+    .prat-main b { font-size: 30px; font-weight: 800; line-height: 1; text-shadow: var(--txt-out); }
+    .prat-main i { display: block; font-size: 11px; font-style: normal; text-transform: uppercase; letter-spacing: .5px; color: var(--fg-c0); margin-top: 5px; }
+    .prat-max { text-align: center; padding-left: 14px; border-left: 1px solid var(--bd14); line-height: 1.15; }
+    .prat-max span { display: block; font-size: 9px; text-transform: uppercase; letter-spacing: .5px; color: var(--text3); margin-bottom: 2px; }
+    .prat-max b { font-size: 17px; font-weight: 700; color: var(--fg-c0); }
+    .prat-std .prat-main b { color: var(--gold); } .prat-rap .prat-main b { color: var(--blue); } .prat-blz .prat-main b { color: var(--green); }
+    .prof-chart { position: relative; background: var(--card90); border: 1px solid var(--bd22); border-radius: var(--r-lg);
       box-shadow: var(--shadow-sm); padding: 14px 16px 12px; margin-bottom: 16px; }
+    #elo-chart-tip { position: absolute; top: 34px; pointer-events: none; background: var(--card90);
+      border: 1px solid var(--bd22); border-radius: 6px; padding: 3px 9px; font-size: 11px; font-weight: 600;
+      color: var(--text); box-shadow: var(--shadow-card); white-space: nowrap; z-index: 3; display: none; }
+    #elo-chart-tip b { font-weight: 700; }
     .prof-chart-lbl { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;
       color: var(--fg-e0); margin-bottom: 12px; text-shadow: var(--txt-out); }
     .wdl   { display: flex; gap: 8px; margin-bottom: 18px; }
@@ -7230,8 +7237,9 @@ function _fmtHistMonth(d) {
 }
 // Gráfico SVG de evolución de Elo (3 series: Standard/Rápido/Blitz). Los 0 = "sin dato ese mes"
 // cortan la línea. Colores por variables → se adapta a claro/oscuro.
+var _eloChartGeom = null;
 function _eloChartSvg(hist) {
-  var W = 720, H = 210, padL = 44, padR = 14, padT = 12, padB = 24;
+  var W = 720, H = 150, padL = 44, padR = 14, padT = 10, padB = 22;
   var series = [{ k: 's', c: 'var(--gold)', n: 'Standard' }, { k: 'r', c: 'var(--blue)', n: 'Rápido' }, { k: 'b', c: 'var(--green)', n: 'Blitz' }];
   var vals = [];
   hist.forEach(function (pt) { ['s', 'r', 'b'].forEach(function (k) { if (pt[k] > 0) vals.push(pt[k]); }); });
@@ -7239,33 +7247,68 @@ function _eloChartSvg(hist) {
   var lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
   if (hi === lo) { lo -= 20; hi += 20; }
   var gp = Math.max(10, Math.round((hi - lo) * 0.12)); lo = Math.floor((lo - gp) / 10) * 10; hi = Math.ceil((hi + gp) / 10) * 10;
-  // Eje X por TIEMPO real (año + mes), así el espaciado refleja los años (los padrones no son mensuales
-  // parejos). Cada serie se dibuja como UNA línea que une solo los meses donde tiene dato (>0); los 0
-  // (sin rating ese ritmo) no cortan ni ensucian la línea.
+  // Eje X por TIEMPO real (año + mes): el espaciado refleja los años (los padrones no son mensuales
+  // parejos). Cada serie es UNA línea que une solo los meses con dato (>0); los 0 no cortan la línea.
   var tOf = function (d) { var m = /^(\d{4})-(\d{2})/.exec(d) || [0, '0', '01']; return (+m[1]) + ((+m[2]) - 1) / 12; };
   var t0 = tOf(hist[0].d), t1 = tOf(hist[hist.length - 1].d); if (t1 <= t0) t1 = t0 + 1;
   var single = hist.length <= 1;
   var X = function (d) { return single ? padL + (W - padL - padR) / 2 : padL + (tOf(d) - t0) / (t1 - t0) * (W - padL - padR); };
   var Y = function (v) { return padT + (1 - (v - lo) / (hi - lo)) * (H - padT - padB); };
-  var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto;display:block">';
+  // Geometría para el hover (mes/año del punto bajo el mouse).
+  _eloChartGeom = { W: W, single: single, top: padT, bot: H - padB, pts: hist.map(function (pt) { return { d: pt.d, x: X(pt.d), s: pt.s, r: pt.r, b: pt.b }; }) };
+  var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto;display:block" onmousemove="_eloChartHover(event)" onmouseleave="_eloChartHoverOut()">';
   [hi, Math.round((lo + hi) / 2), lo].forEach(function (v) {
     var yy = Y(v).toFixed(1);
     s += '<line x1="' + padL + '" y1="' + yy + '" x2="' + (W - padR) + '" y2="' + yy + '" stroke="var(--bd12)" stroke-width="1"/>';
     s += '<text x="' + (padL - 7) + '" y="' + (Y(v) + 3).toFixed(1) + '" text-anchor="end" font-size="11" fill="var(--text3)">' + v + '</text>';
   });
-  s += '<text x="' + X(hist[0].d).toFixed(1) + '" y="' + (H - 6) + '" text-anchor="start" font-size="11" fill="var(--text3)">' + _fmtHistMonth(hist[0].d) + '</text>';
-  if (!single) s += '<text x="' + X(hist[hist.length - 1].d).toFixed(1) + '" y="' + (H - 6) + '" text-anchor="end" font-size="11" fill="var(--text3)">' + _fmtHistMonth(hist[hist.length - 1].d) + '</text>';
+  s += '<line id="elo-chart-guide" x1="0" x2="0" y1="' + padT + '" y2="' + (H - padB) + '" stroke="var(--bd30)" stroke-width="1" style="visibility:hidden;pointer-events:none"/>';
+  s += '<text x="' + X(hist[0].d).toFixed(1) + '" y="' + (H - 5) + '" text-anchor="start" font-size="11" fill="var(--text3)">' + _fmtHistMonth(hist[0].d) + '</text>';
+  if (!single) s += '<text x="' + X(hist[hist.length - 1].d).toFixed(1) + '" y="' + (H - 5) + '" text-anchor="end" font-size="11" fill="var(--text3)">' + _fmtHistMonth(hist[hist.length - 1].d) + '</text>';
   series.forEach(function (se) {
     var pts = [];
     hist.forEach(function (pt) { if (pt[se.k] > 0) pts.push(X(pt.d).toFixed(1) + ',' + Y(pt[se.k]).toFixed(1)); });
-    if (pts.length > 1) s += '<polyline points="' + pts.join(' ') + '" fill="none" stroke="' + se.c + '" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>';
+    if (pts.length > 1) s += '<polyline points="' + pts.join(' ') + '" fill="none" stroke="' + se.c + '" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round" style="pointer-events:none"/>';
     var r = pts.length > 30 ? 0 : (pts.length > 1 ? 1.8 : 3.6);   // muchos puntos → sin bolitas (línea limpia)
-    if (r) pts.forEach(function (xy) { var a = xy.split(','); s += '<circle cx="' + a[0] + '" cy="' + a[1] + '" r="' + r + '" fill="' + se.c + '"/>'; });
+    if (r) pts.forEach(function (xy) { var a = xy.split(','); s += '<circle cx="' + a[0] + '" cy="' + a[1] + '" r="' + r + '" fill="' + se.c + '" style="pointer-events:none"/>'; });
   });
   s += '</svg>';
   var leg = '<div style="display:flex;gap:14px;justify-content:center;margin-top:8px;flex-wrap:wrap">';
   series.forEach(function (se) { leg += '<span style="font-size:11px;color:var(--text2);display:inline-flex;align-items:center;gap:5px"><span style="width:13px;height:3px;background:' + se.c + ';border-radius:2px;display:inline-block"></span>' + se.n + '</span>'; });
   return s + leg + '</div>';
+}
+// Hover del gráfico: muestra el mes/año (y los ratings) del punto más cercano al mouse + línea guía.
+function _fmtHistMonthLong(d) {
+  var m = /^(\d{4})-(\d{2})/.exec(d || ''); if (!m) return d || '';
+  var names = ['', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+  return (names[+m[2]] || '') + ' ' + m[1];
+}
+function _eloChartHover(evt) {
+  var g = _eloChartGeom; if (!g || g.single) return;
+  var svg = evt.currentTarget, rect = svg.getBoundingClientRect();
+  if (!rect.width) return;
+  var vx = (evt.clientX - rect.left) / rect.width * g.W;
+  var best = null, bd = 1e9;
+  g.pts.forEach(function (p) { var dd = Math.abs(p.x - vx); if (dd < bd) { bd = dd; best = p; } });
+  if (!best) return;
+  var guide = document.getElementById('elo-chart-guide');
+  if (guide) { guide.setAttribute('x1', best.x); guide.setAttribute('x2', best.x); guide.style.visibility = 'visible'; }
+  var tip = document.getElementById('elo-chart-tip'), card = svg.closest('.prof-chart');
+  if (tip && card) {
+    var parts = [];
+    if (best.s > 0) parts.push('<span style="color:var(--gold)">' + best.s + '</span>');
+    if (best.r > 0) parts.push('<span style="color:var(--blue)">' + best.r + '</span>');
+    if (best.b > 0) parts.push('<span style="color:var(--green)">' + best.b + '</span>');
+    tip.innerHTML = '<b>' + _fmtHistMonthLong(best.d) + '</b>' + (parts.length ? ' · ' + parts.join(' · ') : '');
+    tip.style.display = 'block';
+    var cardRect = card.getBoundingClientRect();
+    var px = (rect.left - cardRect.left) + best.x / g.W * rect.width;
+    tip.style.left = Math.max(6, Math.min(px - tip.offsetWidth / 2, card.clientWidth - tip.offsetWidth - 6)) + 'px';
+  }
+}
+function _eloChartHoverOut() {
+  var t = document.getElementById('elo-chart-tip'); if (t) t.style.display = 'none';
+  var g = document.getElementById('elo-chart-guide'); if (g) g.style.visibility = 'hidden';
 }
 // Card del gráfico de evolución. Si el jugador todavía no tiene historial, muestra el mes actual
 // como único punto + una nota (se va llenando con cada padrón mensual que se sube).
@@ -7274,6 +7317,7 @@ function _eloChartCard(p) {
   var multi = hist && hist.length > 1;
   if (!hist) hist = [{ d: (typeof _selectedMonth !== 'undefined' && _selectedMonth) ? _selectedMonth : '', s: p.elo || 0, r: p.rapid || 0, b: p.blitz || 0 }];
   var h = '<div class="prof-chart"><div class="prof-chart-lbl">📈 Evolución de Elo</div>';
+  h += '<div id="elo-chart-tip"></div>';
   h += _eloChartSvg(hist);
   if (!multi) h += '<div style="font-size:11px;color:var(--text3);margin-top:8px;text-align:center;line-height:1.4">El gráfico se completa a medida que cargás los padrones FIDE mes a mes.</div>';
   // Modo autor: botón para traer el historial completo (desde ~2000) de Lichess de una.
@@ -8065,10 +8109,14 @@ async function openPlayer(id) {
   // Ratings al lado de la foto: Standard / Rápido / Blitz (rápido y blitz solo si los tiene).
   // Cada uno muestra su máximo histórico (si el historial lo tiene y es mayor al actual).
   var _pk = _histPeaks(p);
+  var _prat = function (cls, lbl, val, mx) {
+    return '<div class="prat ' + cls + '"><div class="prat-main"><b>' + val + '</b><i>' + lbl + '</i></div>'
+      + (mx > val ? '<div class="prat-max"><span>máx</span><b>' + mx + '</b></div>' : '') + '</div>';
+  };
   h += '<div class="prof-ratings">';
-  h += '<div class="prat prat-std"><b>' + p.elo + '</b><i>Standard</i>' + (_pk.s > p.elo ? '<u>máx ' + _pk.s + '</u>' : '') + '</div>';
-  if (p.rapid) h += '<div class="prat prat-rap"><b>' + p.rapid + '</b><i>Rápido</i>' + (_pk.r > p.rapid ? '<u>máx ' + _pk.r + '</u>' : '') + '</div>';
-  if (p.blitz) h += '<div class="prat prat-blz"><b>' + p.blitz + '</b><i>Blitz</i>' + (_pk.b > p.blitz ? '<u>máx ' + _pk.b + '</u>' : '') + '</div>';
+  h += _prat('prat-std', 'Standard', p.elo, _pk.s);
+  if (p.rapid) h += _prat('prat-rap', 'Rápido', p.rapid, _pk.r);
+  if (p.blitz) h += _prat('prat-blz', 'Blitz', p.blitz, _pk.b);
   h += '</div>';
   h += '</div>';   // /prof-top
   // Gráfico de evolución de Elo (se llena mes a mes con cada padrón FIDE).
