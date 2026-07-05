@@ -939,7 +939,9 @@
       /* Notaciones y libro: altura = borde inferior del tablero (la fija cvSyncSideColHeight por JS;
          el max-height del CSS es respaldo). El libro scrollea si se pasa; las notaciones también. */
       .cv-moves-col { flex: 1 1 270px; min-width: 260px; max-height: calc(var(--cv-bw) + 148px); overflow: hidden; }
-      .cv-book-col  { flex: 1 1 258px; min-width: 240px; max-height: calc(var(--cv-bw) + 148px); overflow-y: auto; overflow-x: hidden; }
+      /* order: la columna del libro/gráfico/datos va a la IZQUIERDA (order:-1); así el tablero queda
+         centrado (libro | tablero | notaciones). En celular todo sigue apilado en orden del HTML. */
+      .cv-book-col  { order: -1; flex: 1 1 258px; min-width: 240px; max-height: calc(var(--cv-bw) + 148px); overflow-y: auto; overflow-x: hidden; }
       /* Tablero y filas de jugadores al MISMO ancho (alineados con los bordes del tablero). */
       .cv-board-col .chess-board-wrap { max-width: var(--cv-bw); }
       .cv-board-col .cv-player-row { max-width: var(--cv-bw); margin-left: auto; margin-right: auto; }
@@ -1149,6 +1151,12 @@
     .fa-opening { font-size:11px; color:var(--gold); margin:2px 0 8px; line-height:1.3; }
     .fa-opening:empty { display:none; }
     .fa-cancel-btn { font-size:11px; background:none; border:1px solid var(--border); border-radius:5px; color:var(--text3); cursor:pointer; padding:2px 7px; font-family:inherit; }
+    /* Botón "Analizar" al lado del título: invita al visitante a construir el gráfico. */
+    .fa-build-btn { font-size:11px; font-weight:700; background:var(--gold-bg); border:1px solid var(--gold-dim); border-radius:5px; color:var(--gold); cursor:pointer; padding:3px 10px; font-family:inherit; white-space:nowrap; transition:all .15s; }
+    .fa-build-btn:hover { background:var(--gold); color:#000; }
+    /* Placeholder cuando todavía no se analizó: el recuadro no queda vacío. */
+    .fa-empty { background:var(--fa-bg); border-radius:6px; padding:18px 14px; text-align:center; font-size:11px; color:var(--text3); line-height:1.55; cursor:pointer; }
+    .fa-empty b { color:var(--gold); }
     .fa-prog-row { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
     .fa-prog-txt { font-size:11px; color:var(--text2); white-space:nowrap; }
     .fa-prog-bar { flex:1; height:4px; background:var(--bg3); border-radius:2px; }
@@ -1961,10 +1969,7 @@
     <div class="sf-wrap">
       <div class="sf-top">
         <button class="sf-btn" id="sf-toggle" onclick="sfToggle()">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-          </svg>
-          <span id="sf-btn-label">Analizar</span>
+          <span id="sf-btn-label">🔬 Analizar con el módulo</span>
         </button>
         <span class="sf-score sf-neu" id="sf-score"></span>
         <button class="fa-btn" id="fa-btn" onclick="faToggle()" title="Análisis de la partida">📊</button>
@@ -2006,6 +2011,7 @@
       <div class="eval-graph-head">
         <span class="eval-graph-lbl">Análisis de la partida</span>
         <span style="display:flex;gap:6px;align-items:center">
+          <button class="fa-build-btn" id="fa-build-btn" onclick="faToggle()" title="Analizar la partida con el motor" style="display: none;">▶ Analizar</button>
           <button class="fa-cancel-btn" id="fa-cancel-btn" onclick="cancelFA()" style="display: none;">✕ Cancelar</button>
           <button class="fa-cancel-btn" id="fa-close-btn" onclick="faCloseGraph()" title="Cerrar gráfico">✕</button>
         </span>
@@ -9317,10 +9323,11 @@ function loadPgnIntoViewer(pgn, tourName, tourLoc, activeIdx) {
   if (sf.on) {
     sf.on = false;
     document.getElementById('sf-toggle').classList.remove('on');
-    document.getElementById('sf-btn-label').textContent = 'Analizar';
+    document.getElementById('sf-btn-label').textContent = '🔬 Analizar con el módulo';
     document.getElementById('sf-panel').style.display = 'none';
     if (sf.engine) sf.engine.postMessage('stop');
   }
+  faAutoShow();   // mostrar SIEMPRE el gráfico (con datos si los hay, o el botón Analizar si no)
 }
 
 // Almacena los torneos del último jugador abierto para navegación
@@ -11524,6 +11531,7 @@ function openMasterGame(gid, wName, bName, wRating, bRating, result, month) {
     cvBuildMoveList();
     faReset();
     cvSetNode(cv.root);
+    faAutoShow();   // gráfico siempre visible (datos si hay, o botón Analizar)
   })
   .catch(function() {
     document.getElementById('cv-opening').textContent = 'Error al cargar la partida';
@@ -12590,6 +12598,7 @@ function cvSelect(i) {
   cvBuildMoveList();
   faReset();
   cvSetNode(cv.root);
+  faAutoShow();   // gráfico siempre visible (datos si hay, o botón Analizar)
 }
 
 /* ════════════════════════════════════════════════════════
@@ -13203,7 +13212,7 @@ function closeChessViewer(e){
     if(sf.engine) sf.engine.postMessage('stop');
     sf.on = false;
     document.getElementById('sf-toggle').classList.remove('on');
-    document.getElementById('sf-btn-label').textContent = 'Analizar';
+    document.getElementById('sf-btn-label').textContent = '🔬 Analizar con el módulo';
     document.getElementById('sf-panel').style.display = 'none';
     document.getElementById('sf-depth').textContent = '';
     document.getElementById('sf-score').textContent = '';
@@ -13633,7 +13642,7 @@ function sfTurnOff() {
   if (!sf.on) return;
   sf.on = false;
   document.getElementById('sf-toggle').classList.remove('on');
-  document.getElementById('sf-btn-label').textContent = 'Analizar';
+  document.getElementById('sf-btn-label').textContent = '🔬 Analizar con el módulo';
   document.getElementById('sf-panel').style.display = 'none';
   document.getElementById('sf-depth').textContent = '';
   document.getElementById('sf-score').textContent = '';
@@ -20131,6 +20140,7 @@ function faLiveBuild() {
   // ¿Faltan jugadas por evaluar? Lanzar el pase del motor (incremental) que solo calcula esas.
   if (_fa.results.some(function(r) { return r == null; })) faLiveEngineStart();
   else { faClassify(); faRender(); faRenderStats(); faApplyNags(); cvUpdateNagBadge(); faUpdateBar(); }
+  faUpdateBuildBtn();
 }
 
 // Arranca el pase del motor para el modo en vivo (solo las jugadas sin eval). Reusa faNext/faHandleMsg.
@@ -20193,6 +20203,7 @@ function faFromEmbedded(nodes) {
   faApplyNags();
   cvUpdateNagBadge();
   faUpdateBar();
+  faUpdateBuildBtn();
 }
 
 function startFA() {
@@ -20206,6 +20217,19 @@ function startFA() {
   var preNodes = faGetNodes();
   if (preNodes.length && faCountEmbedded(preNodes) / preNodes.length >= 0.8) {
     faFromEmbedded(preNodes);
+    return;
+  }
+  // Reabrir un gráfico ya analizado: si el caché del motor (persistido) + el eval del PGN cubren
+  // TODAS las jugadas, se dibuja al instante sin arrancar el motor de nuevo.
+  var cachedSeed = preNodes.map(function(nd){ return (nd.move && nd.move.ev) || _faLiveCache[nd.fen] || null; });
+  if (preNodes.length && cachedSeed.every(function(r){ return r != null; })) {
+    _fa.nodes = preNodes; _fa.results = _faInterp(cachedSeed); _fa.running = false; _fa.live = false;
+    document.getElementById('fa-btn').classList.add('active');
+    document.getElementById('eval-graph-wrap').style.display = 'block';
+    document.getElementById('fa-prog-row').style.display = 'none';
+    document.getElementById('fa-cancel-btn').style.display = 'none';
+    faClassify(); faRender(); faRenderStats(); faApplyNags(); cvUpdateNagBadge(); faUpdateBar();
+    faUpdateBuildBtn();
     return;
   }
   if (!sf.engine || !sf.ready) {
@@ -20222,8 +20246,9 @@ function startFA() {
   if (!nodes.length) return;
   mevAbort();   // el análisis completo (lo pidió el usuario) tiene prioridad sobre la eval de miniaturas
   _fa.running = true; _fa.armed = false; _fa.live = false; _fa.nodes = nodes;
-  // Sembrar las jugadas que ya traen [%eval] del PGN: el motor se saltea esas y solo calcula el resto.
-  _fa.results = nodes.map(function(nd) { return (nd.move && nd.move.ev) ? nd.move.ev : null; });
+  // Sembrar las jugadas que ya traen [%eval] del PGN o que están en el caché del motor: el motor se
+  // saltea esas y solo calcula el resto.
+  _fa.results = nodes.map(function(nd) { return (nd.move && nd.move.ev) || _faLiveCache[nd.fen] || null; });
   _fa.ply = 0; _fa.lastScore = null;
   document.getElementById('fa-btn').classList.add('active');
   document.getElementById('eval-graph-wrap').style.display = 'block';
@@ -20248,22 +20273,28 @@ function faFinish() {
   if (!_fa.live) document.getElementById('fa-btn').classList.remove('active');
   document.getElementById('fa-prog-row').style.display = 'none';
   document.getElementById('fa-cancel-btn').style.display = 'none';
+  faUpdateBuildBtn();
 }
 
 function cancelFA() {
   if (sf.engine) sf.engine.postMessage('stop');
   faFinish();
+  faUpdateBuildBtn();
   if (sf.on && sf.ready) sfAnalyze();
 }
 
 /* Cierra (oculta) el gráfico de análisis cuando el usuario quiere.
    Si está calculando, lo detiene primero. La barra de eval queda como esté. */
 function faCloseGraph() {
+  var wasLive = _fa.live || (typeof _faLiveEligible === 'function' && _faLiveEligible());
   if (_fa.running) cancelFA();
   _fa.live = false;
-  // En transmisión en vivo, recordar que el visitante NO quiere el gráfico (no reabrirlo en cada refresco).
-  _faLiveHidden = true;
-  try { localStorage.setItem('fa_live_hidden', '1'); } catch(e) {}
+  // Solo en transmisión EN VIVO recordamos que el visitante NO quiere el gráfico (no reabrirlo en cada
+  // refresco). En una partida histórica, cerrarlo NO debe silenciar el gráfico del vivo.
+  if (wasLive) {
+    _faLiveHidden = true;
+    try { localStorage.setItem('fa_live_hidden', '1'); } catch(e) {}
+  }
   var w = document.getElementById('eval-graph-wrap'); if (w) w.style.display = 'none';
   var b = document.getElementById('fa-btn'); if (b) b.classList.remove('active');
 }
@@ -20329,10 +20360,12 @@ function faHandleMsg(line) {
       ? {mate: turn === 'b' ? -raw.mate : raw.mate}
       : {cp:   turn === 'b' ? -raw.cp   : raw.cp  };
     _fa.results[_fa.ply] = score;
+    // Cachear SIEMPRE (vivo y manual) por FEN y persistir: así, al cerrar el gráfico con la ✕ y
+    // reabrirlo (o abrir la partida en otra pestaña), se dibuja al instante sin recalcular nada.
+    _faLiveCache[node.fen] = score;
+    _capCache(_faLiveCache, 4000);
+    _faSaveLiveCache();
     if (_fa.live) {
-      _faLiveCache[node.fen] = score;            // recordar para no recalcular en el próximo refresco
-      _capCache(_faLiveCache, 4000);
-      _faSaveLiveCache();                         // persistir para reusar en otras pestañas
       faRender(_faInterp(_fa.results));          // el gráfico se va llenando jugada a jugada
     }
     _fa.ply++;
@@ -20504,6 +20537,50 @@ function faReset() {
     var s = document.getElementById('fa-stats'); if (s) s.innerHTML = '';
     var b = document.getElementById('fa-btn'); if (b) b.classList.remove('active');
   }
+}
+
+// El botón "▶ Analizar" (al lado del título) se ve SOLO cuando el gráfico está vacío y el motor no
+// está trabajando: así el visitante entiende que apretándolo se construye. Cuando ya hay datos (o
+// mientras calcula, con "Cancelar" a la vista) se esconde.
+function faUpdateBuildBtn() {
+  var b = document.getElementById('fa-build-btn'); if (!b) return;
+  var hasData = _fa && _fa.results && _fa.results.some(function(r){ return r != null; });
+  b.style.display = (!_fa.running && !_fa.live && !hasData) ? 'inline-block' : 'none';
+}
+
+// Dibuja un recuadro "vacío" (sin evaluaciones): el gráfico no queda desnudo antes de analizar y el
+// texto invita a apretar Analizar (todo el recuadro es clickeable).
+function faRenderEmpty() {
+  var c = document.getElementById('eval-graph-container'); if (!c) return;
+  c.innerHTML = '<div class="fa-empty" onclick="faToggle()">📈 Tocá <b>▶ Analizar</b> para ver la evaluación jugada a jugada de esta partida.</div>';
+  var s = document.getElementById('fa-stats'); if (s) s.innerHTML = '';
+}
+
+// Al abrir una partida, MOSTRAR SIEMPRE el recuadro del gráfico (así la columna no queda vacía). Si la
+// partida ya trae evaluaciones (del PGN o del caché del motor) las dibuja; si no, deja el placeholder
+// con el botón Analizar a la vista. En transmisiones EN VIVO no interviene: manda faMaybeAutoLive.
+function faAutoShow() {
+  var wrap = document.getElementById('eval-graph-wrap'); if (!wrap) return;
+  if (typeof _faLiveEligible === 'function' && _faLiveEligible()) return;
+  var nodes = faGetNodes();
+  var _op = document.getElementById('cv-opening'), _faOp = document.getElementById('fa-opening');
+  if (_faOp) _faOp.textContent = _op ? _op.textContent : '';
+  wrap.style.display = 'block';
+  document.getElementById('fa-prog-row').style.display = 'none';
+  document.getElementById('fa-cancel-btn').style.display = 'none';
+  document.getElementById('fa-btn').classList.remove('active');
+  if (!nodes.length) { faRenderEmpty(); faUpdateBuildBtn(); return; }
+  var R = nodes.map(function(nd){ return (nd.move && nd.move.ev) || _faLiveCache[nd.fen] || null; });
+  var have = R.filter(function(r){ return r != null; }).length;
+  if (have / nodes.length >= 0.8) {   // suficientes datos → dibujar sin motor
+    _fa.nodes = nodes; _fa.results = _faInterp(R); _fa.running = false; _fa.live = false;
+    document.getElementById('fa-btn').classList.add('active');
+    faClassify(); faRender(); faRenderStats(); faApplyNags(); cvUpdateNagBadge(); faUpdateBar();
+  } else {                            // sin datos → placeholder + botón Analizar
+    _fa.results = []; _fa.nodes = [];
+    faRenderEmpty();
+  }
+  faUpdateBuildBtn();
 }
 
 function faClick(e) {
