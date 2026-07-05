@@ -15732,7 +15732,10 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   var m = document.querySelector('#tour-overlay .modal');
   if (m) m.scrollTop = 0;
   document.getElementById('tour-overlay').classList.add('open');
-  _removeDeepLinkCover();   // ya abrió el torneo: sacar la pantalla "Cargando…" del deep-link
+  // Deep-link a una PARTIDA (?torneo=&partida=): mantener la pantalla "Cargando partida…" hasta que
+  // abra el visor (cvOpenOverlay la saca), para que el visitante NO vea el detalle del torneo unos
+  // segundos y crea que la partida no cargó. Si es solo ?torneo= (sin partida), sacar el cover ya.
+  if (!_pendingDeepGame) _removeDeepLinkCover();   // ya abrió el torneo: sacar la pantalla "Cargando…" del deep-link
   _tourPageOn();   // modo "página": header (logo) y nav visibles arriba/abajo
   // Prioridad Lichess: si hay broadcast, SIEMPRE pedimos el vivo. roundOrder.length>0 le avisa que ya
   // hay partidas subidas mostrándose, para NO pisarlas con un error si el fetch falla (respaldo).
@@ -20019,7 +20022,18 @@ var _fa = { running:false, armed:false, results:[], nodes:[], ply:0, lastScore:n
 //  · Jugadas de partidas TERMINADAS → usan el [%eval] que Lichess agrega al terminar (gratis).
 //  · Jugadas de la partida EN CURSO → Lichess NO manda eval; las calcula el motor local (incremental,
 //    cacheadas por FEN para no recalcular en cada refresco). _fa.live distingue este modo del manual.
-var _faLiveCache = {};                                       // FEN → score {cp|mate} (perspectiva blancas)
+// FEN → score {cp|mate} (perspectiva blancas). Se PERSISTE en localStorage: así, al reabrir una partida
+// en OTRA pestaña, el gráfico de análisis aparece al toque con las evals ya calculadas, sin que el motor
+// las recalcule. Es seguro compartir por FEN: la eval de una posición no cambia entre pestañas.
+var _faLiveCache = (function(){ try { return JSON.parse(localStorage.getItem('fa_eval_cache')) || {}; } catch(e){ return {}; } })();
+var _faCacheSaveTimer = null;
+function _faSaveLiveCache() {   // debounce: guarda 2s después de la última eval (evita escribir en cada jugada)
+  if (_faCacheSaveTimer) clearTimeout(_faCacheSaveTimer);
+  _faCacheSaveTimer = setTimeout(function(){
+    _faCacheSaveTimer = null;
+    try { localStorage.setItem('fa_eval_cache', JSON.stringify(_faLiveCache)); } catch(e){ /* quota llena: se ignora */ }
+  }, 2000);
+}
 // El gráfico en vivo evalúa cada jugada a PROFUNDIDAD fija (no tiempo fijo): así se acerca más a la
 // valoración del módulo en vivo en posiciones muy ganadas, sin desperdiciar tiempo en las quietas.
 // _FA_LIVE_CAP_MS es el tope por jugada (las posiciones agudas no frenan el dibujado). Subí la
@@ -20294,6 +20308,7 @@ function faHandleMsg(line) {
     if (_fa.live) {
       _faLiveCache[node.fen] = score;            // recordar para no recalcular en el próximo refresco
       _capCache(_faLiveCache, 4000);
+      _faSaveLiveCache();                         // persistir para reusar en otras pestañas
       faRender(_faInterp(_fa.results));          // el gráfico se va llenando jugada a jugada
     }
     _fa.ply++;
