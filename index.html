@@ -14491,24 +14491,20 @@ function toggleBcArgFilter() {
 // Resuelve el tour id corto de Lichess (ej "jaDEEkUm") a partir de los 3 segmentos de una URL
 // de broadcast (slug / round-slug / round-id). La API /api/broadcast/{id} NO acepta el slug
 // largo del torneo (da 404), por eso hay que resolver el id corto. cb recibe el tourId o null.
-// Fetch con reintentos para errores TRANSITORIOS de Lichess: "Failed to fetch" (red/CORS momentánea
-// al abrir muchas pestañas de golpe) y rate-limit 429 / 5xx. NO reintenta 4xx "duros" (404, etc.).
-// Sin esto, al abrir varias partidas en pestañas nuevas a la vez, algunas fallaban y quedaban en la
-// página del torneo en vez de abrir la partida.
+// Fetch con reintentos SUAVES para fallos transitorios de Lichess: sobre todo el rechazo de RED
+// ("Failed to fetch", que aparecía al abrir varias pestañas de golpe) y de paso 429 / 5xx.
+// Clave: el reintento es CORTO y con tope bajo (300ms fijos, hasta 2 reintentos) para no estancar la
+// apertura — un backoff largo convertía un hipo momentáneo en 10s de "Cargando…". Devuelve la respuesta
+// tal cual (los callers ya manejan !ok / cuerpo vacío); el refresco del vivo (cada 30s) recupera el resto.
 function _bcFetchRetry(url, opts, tries) {
-  tries = (tries == null) ? 3 : tries;
-  var wait = function(next) { setTimeout(next, 500 + Math.random() * 700); };  // backoff con jitter
+  tries = (tries == null) ? 3 : tries;   // 1 intento + hasta 2 reintentos
+  var again = function() { return new Promise(function(res) { setTimeout(res, 300); }).then(function() { return _bcFetchRetry(url, opts, tries - 1); }); };
   return fetch(url, opts).then(function(r) {
-    if (!r.ok) {
-      if ((r.status === 429 || r.status >= 500) && tries > 1) {
-        return new Promise(function(res) { wait(res); }).then(function() { return _bcFetchRetry(url, opts, tries - 1); });
-      }
-      throw new Error('HTTP ' + r.status);
-    }
+    if ((r.status === 429 || r.status >= 500) && tries > 1) return again();
     return r;
   }, function(err) {
-    if (tries > 1) return new Promise(function(res) { wait(res); }).then(function() { return _bcFetchRetry(url, opts, tries - 1); });
-    throw err;   // se agotaron los reintentos → propagar el error de red
+    if (tries > 1) return again();   // rechazo de red (Failed to fetch): reintento rápido
+    throw err;
   });
 }
 
