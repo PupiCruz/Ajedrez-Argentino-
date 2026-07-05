@@ -15301,23 +15301,43 @@ function tourFromProfileClick(e, type, id) {
   openTourFromProfile(type, id);
   return false;
 }
-// Deep-link a una partida: abre el torneo y, cuando sus partidas están listas, abre la nº idx en el
-// visor. Reintenta un rato porque con transmisión de Lichess las partidas llegan de forma asíncrona.
+// Partida pendiente de abrir por deep-link (?torneo=&partida=), mientras el torneo carga sus partidas.
+// Con transmisión de Lichess las partidas llegan async (y a veces recién en un refresco), así que en
+// vez de un sondeo con tope fijo (que se rendía y dejaba al visitante en el torneo), la recordamos y
+// _tdLiveBuild la abre en cuanto la lista de partidas está lista (carga inicial O refresco a los 30s).
+var _pendingDeepGame = null;   // { tourKey, idx }
+
+// Intenta abrir la partida pendiente si ya está disponible. Devuelve true si abrió. Si el visitante
+// navegó a otro torneo / cerró todo, descarta el pendiente. No hace nada si ya hay un visor abierto.
+function _tryOpenPendingDeepGame() {
+  var p = _pendingDeepGame; if (!p) return false;
+  if (typeof Chess === 'undefined') return false;   // esperar a chess.js (pestaña nueva)
+  var to = document.getElementById('tour-overlay');
+  // El visitante cerró el torneo o abrió otro → el deep-link ya no aplica.
+  if (!to || !to.classList.contains('open') || String(_tdTourKey) !== String(p.tourKey)) { _pendingDeepGame = null; return false; }
+  var co = document.getElementById('chess-overlay');
+  if (co && co.classList.contains('open')) { _pendingDeepGame = null; return false; }   // ya hay una partida abierta
+  if (_tdCtx && _tdCtx.games && p.idx >= 0 && p.idx < _tdCtx.games.length) {
+    _pendingDeepGame = null;
+    tdOpenGame(p.idx, _tdCtx.pgnKey, _tdCtx.name, _tdCtx.location);
+    return true;
+  }
+  return false;
+}
+
+// Deep-link a una partida: abre el torneo y, cuando sus partidas están listas, abre la nº idx.
 async function _openTourGameDeepLink(tourKey, idx) {
+  _pendingDeepGame = { tourKey: String(tourKey), idx: idx };
   try { await openTournamentDetail(_resolveTourType(tourKey), tourKey); } catch (e) {}
+  if (_tryOpenPendingDeepGame()) return;   // partidas subidas / ya cargadas → abre al toque
+  // Broadcast: las partidas llegan async. Sondeo rápido (~9s) para el caso normal; si tarda más o hubo
+  // un fallo transitorio, el pendiente queda vivo y _tdLiveBuild lo abre en el próximo refresco (30s).
   var tries = 0;
   (function attempt() {
-    // Si el usuario ya navegó a otro lado (cerró el torneo) o abrió otra partida, abortar el reintento
-    // para no reabrir el visor encima de la sección nueva (caso de broadcasts que cargan lento).
+    if (!_pendingDeepGame) return;                              // ya se abrió
     var to = document.getElementById('tour-overlay');
-    if (!to || !to.classList.contains('open') || String(_tdTourKey) !== String(tourKey)) return;
-    if (document.getElementById('chess-overlay').classList.contains('open')) return;
-    // Esperar a que la librería de ajedrez (chess.js) esté lista: en pestaña nueva el torneo abre antes
-    // que termine de cargar el script y, sin esto, el visor tira "la librería todavía se está cargando".
-    if (typeof Chess !== 'undefined' && _tdCtx && _tdCtx.games && idx >= 0 && idx < _tdCtx.games.length) {
-      tdOpenGame(idx, _tdCtx.pgnKey, _tdCtx.name, _tdCtx.location);
-      return;
-    }
+    if (!to || !to.classList.contains('open') || String(_tdTourKey) !== String(tourKey)) { _pendingDeepGame = null; return; }
+    if (_tryOpenPendingDeepGame()) return;
     if (++tries < 60) setTimeout(attempt, 150);
   })();
 }
@@ -16732,6 +16752,10 @@ function _tdLiveBuild(res, sec, keepRound) {
   var ctx = _tdLiveCtx;
   PGN_DB[ctx.pgnKey] = { title: ctx.name, sub: ctx.location, url: '', games: games };
   _tdCtx = { byRound: byRound, games: games, pgnKey: ctx.pgnKey, name: ctx.name, location: ctx.location, built: {}, crKey: (_tdCtx && _tdCtx.crKey) || ctx.crKey || null, isTeam: !!(ctx && ctx.isTeam) };
+  // Deep-link (?torneo=&partida=): ya tenemos la lista de partidas del vivo → abrir la pendiente si la
+  // hay. Corre tanto en la carga inicial como en cada refresco (30s), así una partida que no estaba
+  // lista (o falló su fetch) se abre en cuanto aparece, sin depender de un sondeo con tope fijo.
+  if (_pendingDeepGame) _tryOpenPendingDeepGame();
   var startRound = (keepRound != null && byRound[keepRound]) ? keepRound : (liveRoundInt || roundOrder[roundOrder.length - 1] || roundOrder[0]);
   _tdArgOnly = false;
   _tdCurrentRound = startRound;
@@ -16807,6 +16831,7 @@ function _tdLiveApplyRefresh(res, sec) {
   // estructura igual → actualizar datos y re-dibujar solo los tableros que cambiaron
   _tdCtx.byRound = byRound; _tdCtx.games = games;
   PGN_DB[_tdLiveCtx.pgnKey] = { title: _tdLiveCtx.name, sub: _tdLiveCtx.location, url: '', games: games };
+  if (_pendingDeepGame) _tryOpenPendingDeepGame();   // deep-link: por si la partida recién aparece en un refresco
   var panel = document.getElementById('td-round-' + curR);
   var bds = panel.querySelectorAll('.td-bd');
   var START = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR';
