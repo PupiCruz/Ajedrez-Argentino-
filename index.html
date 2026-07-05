@@ -1059,6 +1059,9 @@
       font-size: 15px; font-family: inherit; text-align: center;
       transition: background .15s, border-color .15s;
       text-shadow: var(--txt-out);
+      /* Mantener apretado ◀/▶ auto-repite: evitar que en móvil se seleccione texto, haga zoom o el
+         menú contextual del long-press mientras se sostiene el botón. */
+      touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
     }
     .chess-nbtn:hover { background: var(--bd12); border-color: var(--bd30); }
     .chess-nbtn:active { background: var(--bd18); }
@@ -1985,8 +1988,8 @@
     <!-- Botones de navegación (antes debajo del tablero): pegados al borde inferior, alineados con el tablero -->
     <div class="chess-nav" style="margin-top:10px;margin-bottom:0">
       <button class="chess-nbtn" onclick="cvFirst()" title="Ir al inicio">|◀</button>
-      <button class="chess-nbtn" onclick="cvPrev()" title="Jugada anterior">◀</button>
-      <button class="chess-nbtn cv-next" onclick="cvNext()" title="Jugada siguiente">▶</button>
+      <button class="chess-nbtn" id="cv-btn-prev" title="Jugada anterior (mantené apretado para retroceder varias)">◀</button>
+      <button class="chess-nbtn cv-next" id="cv-btn-next" title="Jugada siguiente (mantené apretado para avanzar varias)">▶</button>
       <button class="chess-nbtn" onclick="cvLast()" title="Ir al final">▶|</button>
       <button class="cv-nag-toggle cv-nav-tool on" id="cv-nag-toggle" onclick="toggleNagBadges()" title="Mostrar símbolos en el tablero">?!</button>
       <button class="chess-nbtn cv-nav-tool" onclick="cvFlipBoard()" title="Girar tablero" style="font-size:16px;line-height:1">⇅</button>
@@ -12782,6 +12785,23 @@ function cvLast()  {
   while (n && n.children.length > 0) n = n.children[0];
   if (n) cvSetNode(n);
 }
+// Mantener apretado ◀/▶ para navegar varias jugadas (como las flechas del teclado), en mouse Y touch.
+// Un toque suelto = una jugada; sostener = primera jugada al toque y luego auto-repite. En los extremos
+// cvPrev/cvNext son no-ops, así que seguir repitiendo es inofensivo.
+function _cvBindHold(btnId, step) {
+  var btn = document.getElementById(btnId); if (!btn) return;
+  var delayT = null, repT = null;
+  function stop() { if (delayT) { clearTimeout(delayT); delayT = null; } if (repT) { clearInterval(repT); repT = null; } }
+  btn.addEventListener('pointerdown', function(e) {
+    if (e.button != null && e.button > 0) return;   // ignorar botón derecho/medio del mouse
+    e.preventDefault();                              // evita el foco/selección/scroll y NO genera doble paso
+    stop();
+    step();                                          // primera jugada inmediata
+    delayT = setTimeout(function() { repT = setInterval(step, 130); }, 350);   // luego auto-repite
+  });
+  ['pointerup', 'pointerleave', 'pointercancel'].forEach(function(ev) { btn.addEventListener(ev, stop); });
+  window.addEventListener('blur', stop);             // si la pestaña pierde el foco, cortar
+}
 
 // Reproducción de jugadas en el visor: cuando en vivo llegan VARIAS jugadas de una (ritmo rápido),
 // en vez de saltar al final se muestran una por una (cada _CV_ANIM_MS). Cualquier navegación manual
@@ -19415,6 +19435,10 @@ function _puzBindBoardResize(handleId, colId, boardId, key) {
 }
 _puzBindBoardResize('puz-resize', 'puz-board-col', 'puz-board', 'puz_board_size');
 _puzBindBoardResize('prac-resize', 'prac-board-col', 'prac-board', 'prac_board_size');
+
+// Mantener apretado ◀/▶ del visor → navegar varias jugadas (mouse y touch/móvil).
+_cvBindHold('cv-btn-prev', cvPrev);
+_cvBindHold('cv-btn-next', cvNext);
 
 pracInit();
 
