@@ -16,11 +16,16 @@ El autor **no es programador** y trabaja en español. El objetivo es eventualmen
 - `data/embedded-data.js` — **todos los datos** (torneos, jugadores, noticias, zona
   horaria). Es la **fuente de la verdad**. Pesa ~20MB. NO está en git (es data, se
   respalda en Drive).
-- `data/embedded-photos.js` — fotos de jugadores.
+- `data/embedded-photos.js` — fotos de jugadores en base64. Igual que embedded-data.js:
+  es SOLO para el modo autor local (NO está en git, se respalda en Drive). En la web
+  publicada NO se usa.
 - `data/hardcoded.js` — datos curados (PLAYER_GAMES + PGN_DB).
-- `data/manifest.js`, `data/t/`, `data/p/` — "pedacitos" para la web publicada
-  (carga por demanda). **Se regeneran solos al publicar**; no se tocan a mano.
-  Están ignorados por git.
+- `data/manifest.js`, `data/t/`, `data/p/`, `data/ph/` — "pedacitos" para la web
+  publicada (carga por demanda). **Se regeneran solos al publicar**; no se tocan a mano.
+  `data/ph/<id>.jpg` = las FOTOS sueltas (una por jugador), que el navegador baja solo
+  cuando el avatar aparece en pantalla (loading="lazy"), en vez de todas juntas al
+  arrancar. El manifest lleva `__PHOTO_INDEX__` = {id: ext} de quién tiene foto.
+  `manifest.js` está ignorado por git; `data/ph/`, `data/t/`, `data/p/` SÍ se publican.
 - `assets/` — motor Stockfish (self-host), librería de ajedrez, piezas SVG, sonidos.
   **La app no tiene ninguna dependencia externa en runtime** (anda sin internet).
 - `iniciar-servidor.cmd` / `serve.ps1` — levantan un servidor local para abrir la app.

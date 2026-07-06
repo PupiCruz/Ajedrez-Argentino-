@@ -6265,6 +6265,45 @@ function _collectExportPhotosJs() {
   return 'window.__EMBEDDED_PHOTOS__=' + JSON.stringify(all).replace(/</g, '\\u003c') + ';';
 }
 
+// PUBLICACIÓN: decodifica cada foto (dataURL base64) a un archivo de imagen suelto
+// data/ph/<id>.<ext>. Así la web publicada baja las fotos de a una, por demanda
+// (loading="lazy"), en vez de todas juntas en el archivote embedded-photos.js al
+// arrancar. Devuelve { files:[{name,data}], index:{id:ext} }.
+function _collectExportPhotoFiles() {
+  var files = [], index = {};
+  var seen = {};
+  var lsPhotos = {};
+  try { lsPhotos = JSON.parse(localStorage.getItem('player_photos') || '{}'); } catch(e) {}
+  var all = {};
+  for (var k in PLAYER_PHOTOS) if (Object.prototype.hasOwnProperty.call(PLAYER_PHOTOS, k)) all[k] = PLAYER_PHOTOS[k];
+  for (var k2 in lsPhotos)     if (Object.prototype.hasOwnProperty.call(lsPhotos, k2))     all[k2] = lsPhotos[k2];
+  for (var id in all) {
+    if (!Object.prototype.hasOwnProperty.call(all, id)) continue;
+    var du = all[id];
+    if (!du || du.indexOf('data:') !== 0) continue;
+    var comma = du.indexOf(',');
+    if (comma < 0) continue;
+    var meta = du.slice(5, comma);          // ej. "image/jpeg;base64"
+    var ext  = _photoExt(du);
+    var bytes;
+    try {
+      if (/;base64/i.test(meta)) {
+        var bin = atob(du.slice(comma + 1));
+        bytes = new Uint8Array(bin.length);
+        for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      } else {
+        bytes = new TextEncoder().encode(decodeURIComponent(du.slice(comma + 1)));
+      }
+    } catch(e) { continue; }
+    var base = _photoFileBase(id);
+    if (seen[base]) continue;               // evita colisiones de nombre
+    seen[base] = 1;
+    files.push({ name: 'data/ph/' + base + '.' + ext, data: bytes });
+    index[id] = ext;
+  }
+  return { files: files, index: index };
+}
+
 // Baja los assets locales (hardcoded.js, chess.min.js, piezas, sonidos) como entradas de ZIP.
 // `skip`: lista opcional de rutas a omitir.
 async function _fetchExportAssets(skip) {
@@ -6358,7 +6397,7 @@ function exportDataFile() {
       { type: 'application/javascript' }), 'manifest.js');
     try { localStorage.setItem('last_export_fp', _estadoActualFp()); } catch(e){}
     if (typeof exportTabInit === 'function') { try { exportTabInit(); } catch(e){} }
-    alert('✅ ¡Datos al día!\n\nSe descargaron 3 archivos:\n  • embedded-data.js  (tu copia de autor)\n  • embedded-photos.js\n  • manifest.js  (lo que lee la web)\n\nMovelos a  ajedrez-argentino\\data\\  y reemplazá los que están.\n\nPara que salga a la web: doble clic en publicar-web.cmd.\n\nNOTA: con esto actualizás TABLAS e info de torneos. Si subiste PARTIDAS nuevas, usá "Preparar archivos para GitHub" (genera también los archivos de partidas).');
+    alert('✅ ¡Datos al día!\n\nSe descargaron 3 archivos:\n  • embedded-data.js  (tu copia de autor)\n  • embedded-photos.js\n  • manifest.js  (lo que lee la web)\n\nMovelos a  ajedrez-argentino\\data\\  y reemplazá los que están.\n\nPara que salga a la web: doble clic en publicar-web.cmd.\n\nNOTA: con esto actualizás TABLAS e info de torneos. Si subiste PARTIDAS o FOTOS nuevas, usá "Preparar archivos para GitHub" (genera también los archivos de partidas y las fotos data/ph).');
   } catch(e) {
     alert('No se pudo generar el archivo de datos: ' + (e && e.message ? e.message : e));
   }
@@ -6366,13 +6405,15 @@ function exportDataFile() {
 
 // Arma el contenido de data/manifest.js (índice liviano + tz + noticias + cuadros CR + jugadores)
 // a partir de un split ya calculado. Centralizado para que los 3 exports generen el MISMO manifest.
-function _manifestJsFromSplit(split, ts) {
+function _manifestJsFromSplit(split, ts, photoIndex) {
   ts = ts || Date.now();
+  if (!photoIndex) photoIndex = _photoIndexFromPhotos();
   return 'var __DATA_TS__=' + ts + ';\n'
        + 'window.__MANIFEST__=' + JSON.stringify(split.manifest).replace(/</g, '\\u003c') + ';\n'
        + 'window.__EMBEDDED_TZ__='   + JSON.stringify(getTzConfig()) + ';\n'
        + 'window.__EMBEDDED_NEWS__=' + JSON.stringify(getNewsItems()).replace(/</g, '\\u003c') + ';\n'
        + 'window.__EMBEDDED_CR__='   + JSON.stringify(_collectCrData()).replace(/</g, '\\u003c') + ';\n'
+       + 'window.__PHOTO_INDEX__='   + JSON.stringify(photoIndex) + ';\n'
        + _embeddedPlayersJs();
 }
 
@@ -6386,13 +6427,20 @@ async function exportGithubData() {
     // acá sería peligroso: si reemplazás tu archivo de trabajo con el index.html PUBLICADO, perdés el
     // modo autor (cargaría manifest.js en vez de embedded-data.js y abriría en modo solo-lectura).
     var split = buildSplitData();
-    var manifestJs = _manifestJsFromSplit(split, Date.now());
+    // Fotos sueltas (carga por demanda). El manifest lleva el índice {id:ext} de estas
+    // mismas fotos, así el avatar sabe a qué archivo pedir sin bajar nada de más.
+    var _photos = _collectExportPhotoFiles();
+    var manifestJs = _manifestJsFromSplit(split, Date.now(), _photos.index);
     var enc = new TextEncoder();
     function _tfn(id) { return String(id).replace(/[^a-z0-9_-]/gi, '_') + '.json'; }
+    // OJO: NO metemos data/embedded-photos.js en el ZIP. En la web las fotos son
+    // archivos sueltos data/ph/<id>.<ext> (carga por demanda). El embedded-photos.js
+    // completo (base64) es SOLO para tu modo autor local (gitignored, va a Drive):
+    // si lo pusiéramos acá, al fusionar la carpeta pisaría tu copia local con fotos.
     var zipEntries = [
       { name: 'data/manifest.js', data: enc.encode(manifestJs) },
-      { name: 'data/embedded-photos.js', data: enc.encode(_collectExportPhotosJs()) },
     ];
+    _photos.files.forEach(function(f) { zipEntries.push(f); });
     var _ge2 = split.gameEntries, _half2 = Math.ceil(_ge2.length / 2);
     zipEntries.push({ name: 'data/games_0.json', data: enc.encode(JSON.stringify(_ge2.slice(0, _half2))) });
     zipEntries.push({ name: 'data/games_1.json', data: enc.encode(JSON.stringify(_ge2.slice(_half2))) });
@@ -6767,6 +6815,42 @@ var PLAYER_PHOTOS = (function() {
   for (var k in lsRaw)    if (Object.prototype.hasOwnProperty.call(lsRaw, k))    merged[k] = lsRaw[k];
   return merged;
 })();
+
+// ── Fotos por demanda ────────────────────────────────────────────────────────
+// Modo autor: las fotos viven en memoria (PLAYER_PHOTOS, dataURL base64) desde
+// data/embedded-photos.js. Modo publicado (on-demand): NO se baja ese archivote;
+// cada foto es un archivo suelto data/ph/<id>.<ext> que el navegador baja SOLO
+// cuando la <img> entra en pantalla (loading="lazy"). __PHOTO_INDEX__ (en el
+// manifest) dice qué jugador tiene foto y en qué formato, para no pedir 404s.
+function _photoExt(dataUrl) {
+  var m = /^data:image\/([\w+.-]+)/i.exec(dataUrl || '');
+  var t = m ? m[1].toLowerCase() : 'jpeg';
+  if (t === 'jpeg') return 'jpg';
+  if (t === 'svg+xml') return 'svg';
+  return t;
+}
+function _photoFileBase(id) { return String(id).replace(/[^a-z0-9_-]/gi, '_'); }
+// Índice {id: ext} de los jugadores con foto (se embebe en el manifest publicado).
+function _photoIndexFromPhotos() {
+  var idx = {};
+  for (var k in PLAYER_PHOTOS)
+    if (Object.prototype.hasOwnProperty.call(PLAYER_PHOTOS, k) && PLAYER_PHOTOS[k]) idx[k] = _photoExt(PLAYER_PHOTOS[k]);
+  return idx;
+}
+// URL de la foto para pintar el avatar. Autor (o foto recién subida sin publicar):
+// dataURL en memoria. Publicado: el archivo suelto data/ph/<id>.<ext> (con ?v= para
+// que refresque al republicar). null → quedan las iniciales.
+function _photoSrc(id) {
+  var local = (typeof PLAYER_PHOTOS === 'object' && PLAYER_PHOTOS) ? PLAYER_PHOTOS[id] : null;
+  if (local) return local;
+  if (_ondemand && typeof __PHOTO_INDEX__ !== 'undefined' && __PHOTO_INDEX__ && __PHOTO_INDEX__[id])
+    return 'data/ph/' + _photoFileBase(id) + '.' + __PHOTO_INDEX__[id] + _dataV();
+  return null;
+}
+// Fallback si la foto no carga: mostrar las iniciales guardadas en data-ini.
+function _avImgErr(img) {
+  try { var d = img.parentNode; if (d) { d.textContent = d.getAttribute('data-ini') || ''; d.style.padding = ''; } } catch (e) {}
+}
 
 function setPlayerPhoto(playerId) {
   var input = document.createElement('input');
@@ -7412,8 +7496,8 @@ function renderPlayers(list, id, showRank) {
       var tBadge = p.title ? ('<span class="p-title-badge p-title-' + p.title.toLowerCase() + '">' + p.title + '</span> ') : '';
       html += '<a href="' + _playerHref(p.id) + '" class="p-card" onclick="return playerCardClick(event,' + p.id + ')" style="color:inherit;text-decoration:none">';
       html += '<span class="p-rank ' + rankCls + '">' + rankTxt + '</span>';
-      var _ph = (typeof PLAYER_PHOTOS === 'object' && PLAYER_PHOTOS) ? PLAYER_PHOTOS[p.id] : null;
-      html += '<div class="p-avatar">' + (_ph ? '<img src="' + _ph + '" alt="" loading="lazy">' : ini(p.name)) + '</div>';
+      var _ph = _photoSrc(p.id), _pini = ini(p.name);
+      html += '<div class="p-avatar" data-ini="' + escHtml(_pini) + '">' + (_ph ? '<img src="' + _ph + '" alt="" loading="lazy" onerror="_avImgErr(this)">' : _pini) + '</div>';
       html += '<div class="p-info">';
       html += '<div class="p-name"><span class="p-name-txt">' + p.name + '</span></div>';
       html += '<div class="p-sub">' + tBadge + (p.ranked === false ? ((p.fed || '') + (p.inactive ? ' · <span style="color:var(--text3)">inactivo</span>' : '')) : (p.province || '')) + '</div>';
@@ -7439,8 +7523,8 @@ function renderPlayers(list, id, showRank) {
       var tBadge = p.title ? ('<span class="p-title-badge p-title-' + p.title.toLowerCase() + '">' + p.title + '</span> ') : '';
       html += '<a href="' + _playerHref(p.id) + '" class="p-card" onclick="return playerCardClick(event,' + p.id + ')" style="color:inherit;text-decoration:none">';
       html += '<span class="p-rank ' + rankCls + '">' + rankTxt + '</span>';
-      var _ph = (typeof PLAYER_PHOTOS === 'object' && PLAYER_PHOTOS) ? PLAYER_PHOTOS[p.id] : null;
-      html += '<div class="p-avatar">' + (_ph ? '<img src="' + _ph + '" alt="" loading="lazy">' : ini(p.name)) + '</div>';
+      var _ph = _photoSrc(p.id), _pini = ini(p.name);
+      html += '<div class="p-avatar" data-ini="' + escHtml(_pini) + '">' + (_ph ? '<img src="' + _ph + '" alt="" loading="lazy" onerror="_avImgErr(this)">' : _pini) + '</div>';
       html += '<div class="p-info">';
       html += '<div class="p-name"><span class="p-name-txt">' + p.name + '</span></div>';
       html += '<div class="p-sub">' + tBadge + (p.ranked === false ? ((p.fed || '') + (p.inactive ? ' · <span style="color:var(--text3)">inactivo</span>' : '')) : (p.province || '')) + '</div>';
@@ -8108,6 +8192,9 @@ async function openPlayer(id) {
   for (var i = 0; i < PLAYERS.length; i++) { if (PLAYERS[i].id === id) { p = PLAYERS[i]; break; } }
   if (!p) return;
   // On-demand: bajar las partidas del jugador ANTES de calcular stats (resto del código sigue sync).
+  // El archivo data/p/<id>.json puede pesar varios MB → mostrar la pantalla "Cargando perfil…"
+  // (negra con logo) para que el visitante vea que no se colgó. Solo si aún no está en caché.
+  if (_ondemand && !_playerLoaded[id]) _showLoadingCover('Cargando perfil del jugador…');
   if (_ondemand) { try { await ensurePlayerLoaded(id); } catch (e) {} }
   _tourReturnToProfile = false;   // perfil abierto en fresco: sin torneo "de vuelta" pendiente
   var rl = { win:'Gana', draw:'Tablas', loss:'Pierde' };
@@ -8135,9 +8222,9 @@ async function openPlayer(id) {
   h += '<div style="background:var(--card90);border:1px solid var(--bd22);border-radius:var(--r-lg);box-shadow:var(--shadow-sm);padding:16px 18px;display:inline-block;width:fit-content;max-width:100%">';
   h += '<div class="m-head" style="margin-bottom:0">';
   // Avatar: foto de Drive si existe, sino iniciales
-  var photoUrl = PLAYER_PHOTOS[p.id] || null;
+  var photoUrl = _photoSrc(p.id);
   var avatarInner = photoUrl
-    ? '<img src="' + photoUrl + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%">'
+    ? '<img src="' + photoUrl + '" onerror="_avImgErr(this)" style="width:100%;height:100%;object-fit:cover;border-radius:50%">'
     : ini(p.name);
   var avatarPad = photoUrl ? 'padding:0' : '';
   var delBtnDisplay = photoUrl ? 'flex' : 'none';
@@ -15283,6 +15370,24 @@ function _tourHref(key) { return '?torneo=' + encodeURIComponent(key); }
 function _removeDeepLinkCover() {
   var c = document.getElementById('deeplink-cover');
   if (c && c.parentNode) c.parentNode.removeChild(c);
+}
+// Muestra la pantalla "Cargando…" (negra con logo, misma que el deep-link) por encima de todo,
+// mientras se baja algo pesado (ej. las partidas de un jugador). Reusa el id 'deeplink-cover'
+// para que _removeDeepLinkCover() la saque igual. Idempotente: si ya hay una, no crea otra.
+function _showLoadingCover(label) {
+  try {
+    if (document.getElementById('deeplink-cover')) return;
+    var cover = document.createElement('div');
+    cover.id = 'deeplink-cover';
+    cover.setAttribute('style', 'position:fixed;inset:0;z-index:99999;background:#0a0a0a;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif');
+    var b = '<img src="assets/logo-hd.jpg" alt="" style="width:min(40vw,160px);height:min(40vw,160px);object-fit:contain;border-radius:18px;box-shadow:0 10px 44px rgba(0,0,0,.7);opacity:.92">';
+    cover.innerHTML = b + '<div style="display:flex;align-items:center;gap:10px;color:#cfcfcf;font-size:14px;font-weight:500">'
+      + '<span style="width:15px;height:15px;border:2px solid #444;border-top-color:#c9a227;border-radius:50%;display:inline-block;animation:dlspin .8s linear infinite"></span>'
+      + (label || 'Cargando…') + '</div><style>@keyframes dlspin{to{transform:rotate(360deg)}}</style>';
+    (document.body || document.documentElement).appendChild(cover);
+    // Red de seguridad: nunca dejar la pantalla trabada si algo falla al abrir el contenido.
+    setTimeout(function(){ try { var c = document.getElementById('deeplink-cover'); if (c && c.parentNode) c.parentNode.removeChild(c); } catch(e){} }, 12000);
+  } catch(e){}
 }
 function openTournamentByKey(key) {
   if (key == null || key === '') return;
