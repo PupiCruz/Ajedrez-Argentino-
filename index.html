@@ -1498,6 +1498,8 @@
   <script>(function(){if(!window.__EMBEDDED_DATA__&&window.__MANIFEST__){var s=document.createElement('style');s.textContent='#pgn-upload-panel,#pgn-maint-panel,#chip-export,#chip-maint,#btn-add-tour,#ranking-update-wrap,button[onclick^="openTzModal"],button[onclick^="pgnDeleteTorneo"],button[onclick^="torneoDel"]{display:none!important}';(document.head||document.documentElement).appendChild(s);}})();</script>
   <script type="application/json" id="embedded-token">""</script>
   <script src="data/embedded-photos.js"></script>
+  <!-- Flyers self-hosteados (solo modo autor; en la web 404 inofensivo, como embedded-photos.js). -->
+  <script src="data/embedded-flyers.js"></script>
 
 
 <div class="app">
@@ -5571,6 +5573,11 @@ function exportTabInit() {
   h += '<button onclick="exportGithubData()" style="width:100%;padding:13px;background:var(--bg3);border:1px solid var(--border);color:var(--text);font-size:14px;font-weight:600;border-radius:10px;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:9px;margin-bottom:20px">';
   h += _dlSvg + '<span id="export-github-label">📦 Preparar archivos para GitHub</span></button>';
 
+  // Migrar flyers de imgur (u otros links externos) a tu propio hosting: los baja, los achica y
+  // los deja como archivos sueltos data/fl/ (carga rápida por demanda). imgur es lentísimo.
+  h += '<div style="font-size:12px;color:var(--text3);margin:2px 0 10px;line-height:1.5"><b style="color:var(--gold)">Flyers rápidos.</b> Los flyers con link de imgur cargan lento (hasta 9s). Este botón los baja a tu hosting (data/fl) y pasan a cargar al instante. Después: "Guardar datos en mi carpeta" + "Preparar archivos para GitHub".</div>';
+  h += '<button id="migrate-flyers-btn" onclick="migrateFlyers()" style="width:100%;padding:12px;background:var(--bg3);border:1px solid var(--border);color:var(--text2);font-size:13px;font-weight:600;border-radius:10px;cursor:pointer;font-family:inherit;margin-bottom:20px">🖼️ Migrar flyers a mi hosting</button>';
+
   // Token Lichess
   h += '<div style="padding-top:16px;border-top:1px solid var(--border)">';
   h += '<div style="font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text2);margin-bottom:6px">Token de Lichess</div>';
@@ -6304,6 +6311,117 @@ function _collectExportPhotoFiles() {
   return { files: files, index: index };
 }
 
+// ── Migración de flyers imgur → self-hosteados ───────────────────────────────
+// JS de autor para persistir los flyers migrados (bytes + mapa de redirección). Se baja con
+// "Guardar datos en mi carpeta" y se guarda en data/embedded-flyers.js (solo-autor, gitignored).
+function _collectExportFlyersJs() {
+  var store = {}, redir = {};
+  var lsS = {}, lsR = {};
+  try { lsS = JSON.parse(localStorage.getItem('flyer_store') || '{}'); } catch(e) {}
+  try { lsR = JSON.parse(localStorage.getItem('flyer_redirect') || '{}'); } catch(e) {}
+  for (var k in FLYER_STORE)    if (Object.prototype.hasOwnProperty.call(FLYER_STORE, k))    store[k] = FLYER_STORE[k];
+  for (var k2 in lsS)           if (Object.prototype.hasOwnProperty.call(lsS, k2))           store[k2] = lsS[k2];
+  for (var r in FLYER_REDIRECT) if (Object.prototype.hasOwnProperty.call(FLYER_REDIRECT, r)) redir[r] = FLYER_REDIRECT[r];
+  for (var r2 in lsR)           if (Object.prototype.hasOwnProperty.call(lsR, r2))           redir[r2] = lsR[r2];
+  return 'window.__EMBEDDED_FLYERS__=' + JSON.stringify(store).replace(/</g, '\\u003c') + ';\n'
+       + 'window.__FLYER_REDIRECT__=' + JSON.stringify(redir).replace(/</g, '\\u003c') + ';';
+}
+// Mapa de redirección {urlImgur: data/fl/<key>.jpg} para embeber en el manifest publicado.
+function _flyerRedirectMap() {
+  var redir = {};
+  for (var r in FLYER_REDIRECT) if (Object.prototype.hasOwnProperty.call(FLYER_REDIRECT, r)) redir[r] = FLYER_REDIRECT[r];
+  return redir;
+}
+// PUBLICACIÓN: decodifica cada flyer migrado (dataURL) a un archivo suelto data/fl/<key>.jpg.
+function _collectExportFlyerFiles() {
+  var files = [];
+  for (var path in FLYER_STORE) {
+    if (!Object.prototype.hasOwnProperty.call(FLYER_STORE, path)) continue;
+    if (path.indexOf('data/fl/') !== 0) continue;
+    var du = FLYER_STORE[path];
+    if (!du || du.indexOf('data:') !== 0) continue;
+    var comma = du.indexOf(',');
+    if (comma < 0) continue;
+    try {
+      var bin = atob(du.slice(comma + 1));
+      var bytes = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      files.push({ name: path, data: bytes });
+    } catch(e) {}
+  }
+  return files;
+}
+// Junta todas las URLs de flyer EXTERNAS (http/https) en uso en los torneos, sin repetir.
+function _collectFlyerUrls() {
+  var urls = [], seen = {};
+  var tzCfg = getTzConfig();
+  function add(u) { if (u && /^https?:\/\//i.test(u) && !seen[u]) { seen[u] = 1; urls.push(u); } }
+  try { (typeof TORNEOS !== 'undefined' ? TORNEOS : []).forEach(function(t) { var ov = tzCfg['hc_' + t.id] || {}; add(ov.flyerUrl || t.flyerUrl); }); } catch(e){}
+  try { pgnGetTorneosForList().forEach(function(st) { add(st.flyerUrl); }); } catch(e){}
+  Object.keys(tzCfg).forEach(function(key) { if (key.indexOf('tz_') === 0) add(tzCfg[key].flyerUrl); });
+  return urls;
+}
+// Carga una imagen externa (CORS), la achica a maxW de ancho y la devuelve como dataURL JPEG.
+// imgur manda Access-Control-Allow-Origin:* → el canvas no queda "tainted" → toDataURL funciona.
+function _fetchResizeImage(url, maxW, quality) {
+  return new Promise(function(resolve, reject) {
+    var img = new Image();
+    img.crossOrigin = 'anonymous';
+    var done = false;
+    var to = setTimeout(function() { if (!done) { done = true; reject(new Error('timeout')); } }, 20000);
+    img.onload = function() {
+      if (done) return; done = true; clearTimeout(to);
+      var w = img.naturalWidth, h = img.naturalHeight;
+      if (!w || !h) return reject(new Error('sin dimensiones'));
+      if (w > maxW) { h = Math.round(h * maxW / w); w = maxW; }
+      try {
+        var c = document.createElement('canvas'); c.width = w; c.height = h;
+        c.getContext('2d').drawImage(img, 0, 0, w, h);
+        resolve(c.toDataURL('image/jpeg', quality || 0.85));
+      } catch(e) { reject(e); }   // canvas tainted (host sin CORS): dejamos el link original
+    };
+    img.onerror = function() { if (done) return; done = true; clearTimeout(to); reject(new Error('no cargó')); };
+    img.src = url;
+  });
+}
+function _flyerPersist() {
+  try { localStorage.setItem('flyer_redirect', JSON.stringify(FLYER_REDIRECT)); } catch(e) {}
+  try { localStorage.setItem('flyer_store', JSON.stringify(FLYER_STORE)); } catch(e) {}   // puede desbordar; los bytes igual quedan en memoria hasta exportar
+}
+// Botón de autor: baja todos los flyers externos, los achica y los re-hostea (data/fl/<key>.jpg).
+async function migrateFlyers() {
+  if (_ondemand) { alert('Esto se usa desde tu carpeta de edición, no en modo publicación.'); return; }
+  var all = _collectFlyerUrls();
+  var pending = all.filter(function(u) { return !FLYER_REDIRECT[u]; });
+  var btn = document.getElementById('migrate-flyers-btn');
+  if (!pending.length) {
+    alert(all.length
+      ? '✅ Todos los flyers (' + all.length + ') ya están en tu hosting. Nada para migrar.\n\nSi cargaste flyers nuevos, aparecen acá para migrar.'
+      : 'No hay flyers con link externo para migrar.');
+    return;
+  }
+  if (!confirm('Se van a bajar y re-hostear ' + pending.length + ' flyer(s) desde sus links externos (imgur, etc.).\n\nQuedan en tu hosting (carga rápida) y se publican como archivos sueltos.\n\n¿Continuar?')) return;
+  var ok = 0, fail = 0, failList = [];
+  for (var i = 0; i < pending.length; i++) {
+    var url = pending[i];
+    if (btn) btn.textContent = '⏳ Migrando flyers… ' + (i + 1) + '/' + pending.length;
+    try {
+      var dataUrl = await _fetchResizeImage(url, 800, 0.85);
+      var path = 'data/fl/' + _flyerKey(url) + '.jpg';
+      FLYER_STORE[path] = dataUrl;
+      FLYER_REDIRECT[url] = path;
+      ok++;
+    } catch(e) { fail++; failList.push(url); }
+  }
+  _flyerPersist();
+  if (btn) btn.textContent = '🖼️ Migrar flyers a mi hosting';
+  try { renderTorneos(_lastTorneoFilter); } catch(e) {}
+  var msg = '✅ Migrados ' + ok + ' flyer(s) a tu hosting.';
+  if (fail) msg += '\n\n⚠️ ' + fail + ' no se pudieron bajar (link caído o sin CORS); quedan con su link original como respaldo.';
+  msg += '\n\nIMPORTANTE: ahora usá "Guardar datos en mi carpeta" para guardar los flyers, y "Preparar archivos para GitHub" para publicarlos.';
+  alert(msg);
+}
+
 // Baja los assets locales (hardcoded.js, chess.min.js, piezas, sonidos) como entradas de ZIP.
 // `skip`: lista opcional de rutas a omitir.
 async function _fetchExportAssets(skip) {
@@ -6358,7 +6476,8 @@ async function exportAuthoringZip() {
     var zipEntries = [
       { name: 'index.html', data: enc.encode(html) },
       { name: 'data/embedded-data.js', data: enc.encode(embeddedDataJs) },
-      { name: 'data/embedded-photos.js', data: enc.encode(_collectExportPhotosJs()) }
+      { name: 'data/embedded-photos.js', data: enc.encode(_collectExportPhotosJs()) },
+      { name: 'data/embedded-flyers.js', data: enc.encode(_collectExportFlyersJs()) }
     ];
     (await _fetchExportAssets()).forEach(function(e) { zipEntries.push(e); });
 
@@ -6390,6 +6509,8 @@ function exportDataFile() {
     _downloadBlob(new Blob([js], { type: 'application/javascript' }), 'embedded-data.js');
     _downloadBlob(new Blob([_collectExportPhotosJs()],
       { type: 'application/javascript' }), 'embedded-photos.js');
+    _downloadBlob(new Blob([_collectExportFlyersJs()],
+      { type: 'application/javascript' }), 'embedded-flyers.js');
     // También el manifest.js (lo que LEE la web publicada). Así, para actualizar TABLAS o info de
     // torneos, alcanza con reemplazar manifest.js y pushear — sin generar el ZIP pesado de GitHub.
     // (Las TABLAS/cruces y la metadata de torneos viajan acá; las PARTIDAS nuevas necesitan el ZIP.)
@@ -6397,7 +6518,7 @@ function exportDataFile() {
       { type: 'application/javascript' }), 'manifest.js');
     try { localStorage.setItem('last_export_fp', _estadoActualFp()); } catch(e){}
     if (typeof exportTabInit === 'function') { try { exportTabInit(); } catch(e){} }
-    alert('✅ ¡Datos al día!\n\nSe descargaron 3 archivos:\n  • embedded-data.js  (tu copia de autor)\n  • embedded-photos.js\n  • manifest.js  (lo que lee la web)\n\nMovelos a  ajedrez-argentino\\data\\  y reemplazá los que están.\n\nPara que salga a la web: doble clic en publicar-web.cmd.\n\nNOTA: con esto actualizás TABLAS e info de torneos. Si subiste PARTIDAS o FOTOS nuevas, usá "Preparar archivos para GitHub" (genera también los archivos de partidas y las fotos data/ph).');
+    alert('✅ ¡Datos al día!\n\nSe descargaron 4 archivos:\n  • embedded-data.js  (tu copia de autor)\n  • embedded-photos.js\n  • embedded-flyers.js  (flyers migrados)\n  • manifest.js  (lo que lee la web)\n\nMovelos a  ajedrez-argentino\\data\\  y reemplazá los que están.\n\nPara que salga a la web: doble clic en publicar-web.cmd.\n\nNOTA: con esto actualizás TABLAS e info de torneos. Si subiste PARTIDAS, FOTOS o FLYERS nuevos, usá "Preparar archivos para GitHub" (genera también los archivos de partidas, fotos data/ph y flyers data/fl).');
   } catch(e) {
     alert('No se pudo generar el archivo de datos: ' + (e && e.message ? e.message : e));
   }
@@ -6414,6 +6535,7 @@ function _manifestJsFromSplit(split, ts, photoIndex) {
        + 'window.__EMBEDDED_NEWS__=' + JSON.stringify(getNewsItems()).replace(/</g, '\\u003c') + ';\n'
        + 'window.__EMBEDDED_CR__='   + JSON.stringify(_collectCrData()).replace(/</g, '\\u003c') + ';\n'
        + 'window.__PHOTO_INDEX__='   + JSON.stringify(photoIndex) + ';\n'
+       + 'window.__FLYER_REDIRECT__=' + JSON.stringify(_flyerRedirectMap()).replace(/</g, '\\u003c') + ';\n'
        + _embeddedPlayersJs();
 }
 
@@ -6441,6 +6563,10 @@ async function exportGithubData() {
       { name: 'data/manifest.js', data: enc.encode(manifestJs) },
     ];
     _photos.files.forEach(function(f) { zipEntries.push(f); });
+    // Flyers self-hosteados (data/fl/<key>.jpg), carga por demanda. Como las fotos, el
+    // embedded-flyers.js completo NO va al ZIP (es solo-autor); el mapa de redirección va
+    // en el manifest y acá van los archivos de imagen sueltos.
+    _collectExportFlyerFiles().forEach(function(f) { zipEntries.push(f); });
     var _ge2 = split.gameEntries, _half2 = Math.ceil(_ge2.length / 2);
     zipEntries.push({ name: 'data/games_0.json', data: enc.encode(JSON.stringify(_ge2.slice(0, _half2))) });
     zipEntries.push({ name: 'data/games_1.json', data: enc.encode(JSON.stringify(_ge2.slice(_half2))) });
@@ -6852,6 +6978,45 @@ function _avImgErr(img) {
   try { var d = img.parentNode; if (d) { d.textContent = d.getAttribute('data-ini') || ''; d.style.padding = ''; } } catch (e) {}
 }
 
+// ── Flyers de torneos self-hosteados ─────────────────────────────────────────
+// Problema: los flyers eran links de imgur, lentísimos (TTFB ~1s, a veces 9s). Solución:
+// re-hostearlos en el propio Cloudflare (TTFB ~0,1s) como archivos sueltos data/fl/<key>.jpg
+// que cargan por demanda (loading="lazy"). Modelo idéntico al de las fotos de jugadores:
+//   · FLYER_STORE  = { 'data/fl/<key>.jpg': dataURL }  (bytes; autor en memoria/base64).
+//   · FLYER_REDIRECT = { '<urlImgur>': 'data/fl/<key>.jpg' }  (a dónde redirigir cada link viejo).
+// No se toca el flyerUrl guardado en los torneos: el link de imgur queda como respaldo y
+// _flyerSrc() lo redirige a la copia self-hosteada si existe. En la web publicada FLYER_STORE
+// va vacío (los archivos están en disco) y FLYER_REDIRECT viaja dentro del manifest.
+var FLYER_STORE = (function() {
+  var emb = (window.__EMBEDDED_FLYERS__ && typeof window.__EMBEDDED_FLYERS__ === 'object') ? window.__EMBEDDED_FLYERS__ : {};
+  var ls = {}; try { ls = JSON.parse(localStorage.getItem('flyer_store') || '{}'); } catch (e) {}
+  var m = {}; for (var k in emb) if (Object.prototype.hasOwnProperty.call(emb, k)) m[k] = emb[k];
+  for (var k2 in ls) if (Object.prototype.hasOwnProperty.call(ls, k2)) m[k2] = ls[k2];
+  return m;
+})();
+var FLYER_REDIRECT = (function() {
+  var emb = (window.__FLYER_REDIRECT__ && typeof window.__FLYER_REDIRECT__ === 'object') ? window.__FLYER_REDIRECT__ : {};
+  var ls = {}; try { ls = JSON.parse(localStorage.getItem('flyer_redirect') || '{}'); } catch (e) {}
+  var m = {}; for (var k in emb) if (Object.prototype.hasOwnProperty.call(emb, k)) m[k] = emb[k];
+  for (var k2 in ls) if (Object.prototype.hasOwnProperty.call(ls, k2)) m[k2] = ls[k2];
+  return m;
+})();
+// Nombre de archivo estable para un flyer, derivado del hash de su URL original (así el mismo
+// imgur usado por dos torneos comparte un solo archivo).
+function _flyerKey(url) { return _fpStr(String(url || '')); }
+// URL a usar para pintar un flyer. Si el link fue migrado, apunta a la copia self-hosteada
+// (dataURL en autor, archivo data/fl/<key>.jpg en la web). Si no, el link original (imgur/lichess).
+function _flyerSrc(url) {
+  if (!url) return '';
+  var local = FLYER_REDIRECT[url];
+  if (local) url = local;
+  if (url.indexOf('data/fl/') === 0) {
+    if (!_ondemand && FLYER_STORE[url]) return FLYER_STORE[url];
+    return url + _dataV();
+  }
+  return url;
+}
+
 function setPlayerPhoto(playerId) {
   var input = document.createElement('input');
   input.type = 'file';
@@ -6960,7 +7125,9 @@ function _estadoActualFp() {
   var newsFp = (typeof _newsFp === 'function' && typeof getNewsItems === 'function') ? _newsFp(getNewsItems()) : '';
   var rankFp = '';
   try { var o = _rankingOverride(); if (o) { var pl = (o.players||[]).concat(o.additionals||[]); rankFp = (o.month||'') + ':' + pl.length + ':' + _fpStr(pl.map(function(p){ return p.fide_id + '=' + p.elo + '=' + (p.fed||''); }).join(',')); } } catch(e){}
-  return _combinedFp(all, getTzConfig()) + '~' + _fpStr(photoKeys) + '~' + newsFp + '~' + rankFp;
+  var flyerFp = '';
+  try { flyerFp = _fpStr(Object.keys(FLYER_REDIRECT).sort().join(',')); } catch(e){}
+  return _combinedFp(all, getTzConfig()) + '~' + _fpStr(photoKeys) + '~' + newsFp + '~' + rankFp + '~' + flyerFp;
 }
 // ¿Hay torneos cambiados que todavía no se exportaron al archivo?
 function _hayCambiosSinExportar() {
@@ -15114,7 +15281,7 @@ function webUrlLabel(url) {
 // título): mismo href y mismo handler, así Ctrl/Cmd/click-medio abren en pestaña nueva.
 function flyerImgHtml(url, tourKey) {
   if (!url) return '';
-  var img = '<img src="' + escHtml(url) + '" loading="lazy" alt="Flyer del torneo" '
+  var img = '<img src="' + escHtml(_flyerSrc(url)) + '" loading="lazy" alt="Flyer del torneo" '
     + 'style="width:100%;max-height:460px;border-radius:8px;border:1px solid var(--border);object-fit:contain;background:var(--bg3);display:block" '
     + 'onerror="this.style.display=\'none\'">';
   if (!tourKey) return img;
@@ -15160,7 +15327,7 @@ function _tourTileHtml(o) {
   h += o.editHtml || '';
   h += '<a class="t-tile" href="' + o.href + '" onclick="return tourCardClick(event,' + o.clickKey + ')">';
   h += '<div class="t-tile-fallback"><span class="pc">♞</span></div>';
-  if (o.flyerUrl) h += '<img class="t-tile-img" src="' + escHtml(o.flyerUrl) + '" alt="" loading="lazy"' + (o.flyerPos ? ' style="' + _flyerCropCss(o.flyerPos) + '"' : '') + ' onerror="this.style.display=\'none\'">';
+  if (o.flyerUrl) h += '<img class="t-tile-img" src="' + escHtml(_flyerSrc(o.flyerUrl)) + '" alt="" loading="lazy"' + (o.flyerPos ? ' style="' + _flyerCropCss(o.flyerPos) + '"' : '') + ' onerror="this.style.display=\'none\'">';
   var _lb = (o.status === 'live') ? (' data-livebadge="1"' + (o.bcId ? ' data-bc="' + escHtml(String(o.bcId)) + '"' : '') + (o.bcUrl ? ' data-bcurl="' + escHtml(String(o.bcUrl)) + '"' : '')) : '';
   h += '<div class="t-tile-badge"><span class="badge ' + (cls[o.status] || 'b-upcoming') + '"' + _lb + '>' + (lbl[o.status] || '') + '</span></div>';
   h += '<div class="t-tile-foot"><div class="t-tile-name">' + escHtml(o.name || '') + '</div>';

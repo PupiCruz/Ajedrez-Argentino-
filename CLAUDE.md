@@ -19,13 +19,19 @@ El autor **no es programador** y trabaja en español. El objetivo es eventualmen
 - `data/embedded-photos.js` — fotos de jugadores en base64. Igual que embedded-data.js:
   es SOLO para el modo autor local (NO está en git, se respalda en Drive). En la web
   publicada NO se usa.
+- `data/embedded-flyers.js` — flyers de torneos migrados (base64) + mapa de redirección
+  imgur→data/fl. También SOLO modo autor local (gitignored, va a Drive).
 - `data/hardcoded.js` — datos curados (PLAYER_GAMES + PGN_DB).
-- `data/manifest.js`, `data/t/`, `data/p/`, `data/ph/` — "pedacitos" para la web
-  publicada (carga por demanda). **Se regeneran solos al publicar**; no se tocan a mano.
-  `data/ph/<id>.jpg` = las FOTOS sueltas (una por jugador), que el navegador baja solo
-  cuando el avatar aparece en pantalla (loading="lazy"), en vez de todas juntas al
-  arrancar. El manifest lleva `__PHOTO_INDEX__` = {id: ext} de quién tiene foto.
-  `manifest.js` está ignorado por git; `data/ph/`, `data/t/`, `data/p/` SÍ se publican.
+- `data/manifest.js`, `data/t/`, `data/p/`, `data/ph/`, `data/fl/` — "pedacitos" para la
+  web publicada (carga por demanda). **Se regeneran solos al publicar**; no se tocan a mano.
+  `data/ph/<id>.jpg` = FOTOS sueltas (una por jugador); el manifest lleva `__PHOTO_INDEX__`
+  = {id: ext} de quién tiene foto. `data/fl/<key>.jpg` = FLYERS self-hosteados (antes eran
+  links de imgur, lentísimos ~1-9s; ahora en Cloudflare ~0,1s); el manifest lleva
+  `__FLYER_REDIRECT__` = {urlImgur: data/fl/…}. Ambos con `loading="lazy"`. Los flyers se
+  migran con el botón "🖼️ Migrar flyers a mi hosting" (baja de imgur vía CORS, achica a
+  800px, `_fetchResizeImage`); no se toca el flyerUrl guardado (imgur queda de respaldo,
+  `_flyerSrc` redirige). `manifest.js` está ignorado por git; `data/ph/`, `data/fl/`,
+  `data/t/`, `data/p/` SÍ se publican.
 - `assets/` — motor Stockfish (self-host), librería de ajedrez, piezas SVG, sonidos.
   **La app no tiene ninguna dependencia externa en runtime** (anda sin internet).
 - `iniciar-servidor.cmd` / `serve.ps1` — levantan un servidor local para abrir la app.
