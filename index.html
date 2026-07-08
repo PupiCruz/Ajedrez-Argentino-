@@ -12351,6 +12351,7 @@ function goTo(sec, btn) {
   document.getElementById('s-' + sec).classList.add('active');
   btn.classList.add('active');
   document.querySelector('.main').scrollTop = 0;
+  _resetHdrForNav();   // mostrar el header y resetear el auto-ocultado al cambiar de sección
   if (sec === 'favoritos') renderPartidas();
   try { localStorage.setItem('last_section', sec); } catch(e) {}
 }
@@ -15744,31 +15745,31 @@ function goHome(e) {
 // overlay lo maneja la variable CSS --hdr-h (ver _setHdrVar), así el auto-ocultar del header lo sigue.
 function _tourPageOn() {
   document.body.classList.add('tour-page');
-  _showHeader(); _setHdrVar();
+  _resetHdrForNav(); _setHdrVar();
 }
 function _tourPageOff() {
   document.body.classList.remove('tour-page');
-  _showHeader();
+  _resetHdrForNav();
 }
 // Igual que _tourPageOn/Off pero para el PERFIL de jugador (overlay #overlay).
 function _playerPageOn() {
   document.body.classList.add('player-page');
-  _showHeader(); _setHdrVar();
+  _resetHdrForNav(); _setHdrVar();
 }
 function _playerPageOff() {
   document.body.classList.remove('player-page');
-  _showHeader();
+  _resetHdrForNav();
 }
 // Igual que _tourPageOn/Off pero para el VISOR de partidas (overlay #chess-overlay): la partida se ve
 // como PÁGINA completa (header→Inicio y nav visibles) en vez de tapar todo. El top del overlay = --hdr-h.
 // Cuando se abre desde un torneo, ese torneo queda como página de atrás (Atrás vuelve a él).
 function _gamePageOn() {
   document.body.classList.add('game-page');
-  _showHeader(); _setHdrVar();
+  _resetHdrForNav(); _setHdrVar();
 }
 function _gamePageOff() {
   document.body.classList.remove('game-page');
-  _showHeader();
+  _resetHdrForNav();
 }
 
 // ── Header que se auto-oculta al scrollear (estilo Lichess) ─────────────────────────────────────
@@ -15795,24 +15796,31 @@ function _showHeader() { if (document.body.classList.contains('hdr-collapsed')) 
 // disparando un scroll "hacia arriba" fantasma que volvía a mostrar el header → parpadeo/salto. Por eso,
 // después de un cambio real, se BLOQUEA el toggle durante la transición (_HDR_LOCK_MS) e ignoramos esos
 // eventos de reacomodo (solo actualizamos la baseline). Así queda estable en pantalla completa sin barra.
-var _HDR_LOCK_MS = 380, _hdrLocked = false, _hdrLockT = null;
+var _HDR_LOCK_MS = 380, _hdrLocked = false, _hdrLockT = null, _hdrLastY = 0, _hdrLastEl = null;
 function _lockHdr() { _hdrLocked = true; clearTimeout(_hdrLockT); _hdrLockT = setTimeout(function() { _hdrLocked = false; }, _HDR_LOCK_MS); }
+// Al navegar (cambiar de sección/página) hay que MOSTRAR el header sí o sí y resetear el estado del
+// auto-ocultado. Si no, cuando se navega justo después de ocultarlo (con el toggle bloqueado por la
+// animación), el header quedaba trabado colapsado en la página nueva ("la barra hecha un renglón").
+function _resetHdrForNav() {
+  clearTimeout(_hdrLockT); _hdrLocked = false;
+  _hdrLastEl = null; _hdrLastY = 0;
+  _showHeader();
+}
 (function _initHeaderAutoHide() {
-  var lastY = 0, lastEl = null;
   document.addEventListener('scroll', function(e) {
     var el = e.target;
     var y = (el === document || el === document.documentElement || el === window)
       ? (window.scrollY || document.documentElement.scrollTop || 0)
       : (el.scrollTop || 0);
-    if (el !== lastEl) { lastEl = el; lastY = y; return; }   // cambió de contenedor: rebasar sin togglear
-    if (_hdrLocked) { lastY = y; return; }                   // durante la animación: ignorar reacomodos
-    var dy = y - lastY;
-    if (Math.abs(dy) < 6) { return; }                        // ignorar micro-scroll (anti-jitter)
+    if (el !== _hdrLastEl) { _hdrLastEl = el; _hdrLastY = y; return; }   // cambió de contenedor: rebasar sin togglear
+    if (_hdrLocked) { _hdrLastY = y; return; }                          // durante la animación: ignorar reacomodos
+    var dy = y - _hdrLastY;
+    if (Math.abs(dy) < 6) { return; }                                   // ignorar micro-scroll (anti-jitter)
     var changed;
-    if (y <= 8) changed = _showHeader();                     // en el tope: header visible
-    else if (dy > 0) changed = _hideHeader();                // bajando (apenas se baja ya se oculta)
-    else changed = _showHeader();                            // subiendo
-    lastY = y;
+    if (y <= 8) changed = _showHeader();                                // en el tope: header visible
+    else if (dy > 0) changed = _hideHeader();                           // bajando (apenas se baja ya se oculta)
+    else changed = _showHeader();                                       // subiendo
+    _hdrLastY = y;
     if (changed) _lockHdr();
   }, true);
   // Medir el header al cargar y en cada resize (el alto cambia con los breakpoints responsive).
@@ -17445,8 +17453,8 @@ var puz = { level:'inicial', list:[], idx:0, cur:null, chess:null, flipped:false
   anOn:false, anScore:null, anDepth:0, anPv:null, anBestUci:null, lines:[], recording:false, recLine:[], _srcGame:null, _srcGameMaybe:false };
 var _puzHistoryPushed = false;
 var _cvFromPuzzle = false;   // el visor se abrió desde un ejercicio ("Ver la partida original"): al cerrarlo, volver al ejercicio
-function _puzPageOn() { document.body.classList.add('puz-page'); _showHeader(); _setHdrVar(); }
-function _puzPageOff() { document.body.classList.remove('puz-page'); _showHeader(); }
+function _puzPageOn() { document.body.classList.add('puz-page'); _resetHdrForNav(); _setHdrVar(); }
+function _puzPageOff() { document.body.classList.remove('puz-page'); _resetHdrForNav(); }
 
 // Niveles a los que pertenece un ejercicio (con solapamiento en los bordes).
 function puzBand(d) {
@@ -19074,8 +19082,8 @@ var prac = { phase:'endgame', level:'aficionado', fType:'', fObj:'', fTag:'', _p
 var _pracHistoryPushed = false;
 var _cvFromPractice = false;   // el visor se abrió desde Practicar ("Ver la partida original")
 
-function _pracPageOn() { document.body.classList.add('puz-page'); _showHeader(); _setHdrVar(); }
-function _pracPageOff() { document.body.classList.remove('puz-page'); _showHeader(); }
+function _pracPageOn() { document.body.classList.add('puz-page'); _resetHdrForNav(); _setHdrVar(); }
+function _pracPageOff() { document.body.classList.remove('puz-page'); _resetHdrForNav(); }
 
 function pracInit() {
   try { var lv = localStorage.getItem('prac_level'); if (lv && PRAC_LEVELS[lv]) prac.level = lv; } catch(e) {}
