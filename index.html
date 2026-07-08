@@ -9588,7 +9588,7 @@ function loadPgnIntoViewer(pgn, tourName, tourLoc, activeIdx) {
   _cvBookGamesOn = false;
   // Re-alinear la altura de las columnas con el tablero (cubre rutas que no pasan por cvOpenOverlay,
   // ej. saltar a una partida del libro o volver con Atrás).
-  requestAnimationFrame(function() { requestAnimationFrame(cvSyncSideColHeight); });
+  _cvSyncSoon();
   var meta = pgMeta(pgn);
 
   // En el visor de torneo el nombre es redundante (ya estás dentro) y ocupa lugar:
@@ -12545,7 +12545,7 @@ function _cvReopenViewer(s) {
   _bcArgMode = !!s.bcArgMode;
   _liveCtx = s.liveCtx || null;
   if (_liveCtx || _liveParams) { try { refreshLiveBroadcast(); } catch (e) {} }   // vía broadcast: reinicia su propio loop
-  requestAnimationFrame(function() { requestAnimationFrame(cvSyncSideColHeight); });
+  _cvSyncSoon();
 }
 
 // Caché de federación por FideId (se llena async).
@@ -13485,6 +13485,13 @@ function cvSyncSideColHeight() {
   var h = boardCol.offsetHeight;
   cols.forEach(function(c) { if (c) { c.style.height = h + 'px'; c.style.maxHeight = h + 'px'; c.scrollTop = 0; } });
 }
+// Sincroniza la altura de las columnas de forma robusta: doble rAF (cuando el layout ya pintó) + un
+// setTimeout de respaldo, por si el rAF está throttleado o el layout todavía no asentó (ej. al reabrir
+// una partida). Sin el respaldo, al reabrir el visor las columnas podían quedar con una altura vieja.
+function _cvSyncSoon() {
+  requestAnimationFrame(function() { requestAnimationFrame(cvSyncSideColHeight); });
+  setTimeout(cvSyncSideColHeight, 130);
+}
 
 // Abre el overlay del visor: muestra el botón flotante, empuja historial y hace scroll al tope
 function cvOpenOverlay() {
@@ -13511,7 +13518,7 @@ function cvOpenOverlay() {
   _cvApplyBoardSize();    // tamaño de tablero elegido por el visitante (si guardó uno)
   _cvBuildPageExtras();   // "Volver al torneo" + miniaturas de la ronda
   // Medir la altura real del tablero DESPUÉS de que el layout esté pintado
-  requestAnimationFrame(function() { requestAnimationFrame(cvSyncSideColHeight); });
+  _cvSyncSoon();
 }
 
 function closeChessViewer(e){
@@ -15777,11 +15784,19 @@ function _setHdrVar() {
     rs.setProperty('--hdr-real', h + 'px');
   }
 }
-function _hideHeader() { if (!document.body.classList.contains('hdr-collapsed')) document.body.classList.add('hdr-collapsed'); }
-function _showHeader() { if (document.body.classList.contains('hdr-collapsed')) document.body.classList.remove('hdr-collapsed'); }
+// Devuelven true si CAMBIARON el estado (para lockear solo cuando hubo un toggle real).
+function _hideHeader() { if (!document.body.classList.contains('hdr-collapsed')) { document.body.classList.add('hdr-collapsed'); return true; } return false; }
+function _showHeader() { if (document.body.classList.contains('hdr-collapsed')) { document.body.classList.remove('hdr-collapsed'); return true; } return false; }
 // Un solo listener en captura atrapa el scroll de CUALQUIER contenedor (.main o los overlays, que
-// scrollean internamente). Bajando → oculta; subiendo o cerca del tope → muestra. Sin rAF: el trabajo
-// es un toggle de clase condicional (barato, sin thrash) y así funciona aunque el rAF esté throttleado.
+// scrollean internamente). Bajando → oculta; subiendo o en el tope → muestra. Sin rAF: el trabajo es un
+// toggle de clase condicional (barato, sin thrash) y así anda aunque el rAF esté throttleado.
+//
+// CLAVE (evita el "salto"): al ocultar el header, el contenedor crece y el navegador RECORTA su scrollTop,
+// disparando un scroll "hacia arriba" fantasma que volvía a mostrar el header → parpadeo/salto. Por eso,
+// después de un cambio real, se BLOQUEA el toggle durante la transición (_HDR_LOCK_MS) e ignoramos esos
+// eventos de reacomodo (solo actualizamos la baseline). Así queda estable en pantalla completa sin barra.
+var _HDR_LOCK_MS = 380, _hdrLocked = false, _hdrLockT = null;
+function _lockHdr() { _hdrLocked = true; clearTimeout(_hdrLockT); _hdrLockT = setTimeout(function() { _hdrLocked = false; }, _HDR_LOCK_MS); }
 (function _initHeaderAutoHide() {
   var lastY = 0, lastEl = null;
   document.addEventListener('scroll', function(e) {
@@ -15790,12 +15805,15 @@ function _showHeader() { if (document.body.classList.contains('hdr-collapsed')) 
       ? (window.scrollY || document.documentElement.scrollTop || 0)
       : (el.scrollTop || 0);
     if (el !== lastEl) { lastEl = el; lastY = y; return; }   // cambió de contenedor: rebasar sin togglear
+    if (_hdrLocked) { lastY = y; return; }                   // durante la animación: ignorar reacomodos
     var dy = y - lastY;
-    if (Math.abs(dy) < 6) return;                            // ignorar micro-scroll (anti-jitter)
-    if (y <= 40) _showHeader();                              // cerca del tope: siempre visible
-    else if (dy > 0) _hideHeader();                          // bajando
-    else _showHeader();                                      // subiendo
+    if (Math.abs(dy) < 6) { return; }                        // ignorar micro-scroll (anti-jitter)
+    var changed;
+    if (y <= 8) changed = _showHeader();                     // en el tope: header visible
+    else if (dy > 0) changed = _hideHeader();                // bajando (apenas se baja ya se oculta)
+    else changed = _showHeader();                            // subiendo
     lastY = y;
+    if (changed) _lockHdr();
   }, true);
   // Medir el header al cargar y en cada resize (el alto cambia con los breakpoints responsive).
   if (document.readyState !== 'loading') _setHdrVar();
