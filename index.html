@@ -55,6 +55,8 @@
       --red:       #e07070;
       --blue:      #7b8cde;
       --nav-h:     64px;
+      --hdr-h:     56px;   /* alto real del header (lo mide el JS). Pasa a 0 al ocultarse en scroll. */
+      --hdr-real:  56px;   /* alto real del header (baseline de la transición de colapso; lo mide el JS). */
       --bg-img:    url('assets/fondo-oscuro.jpg');   /* fondo del tema actual (lo cambia body.light) */
       --panel-alpha: 0.86;   /* opacidad de los paneles sobre el fondo (deja ver el wallpaper detrás) */
       /* ── COLORES DEL TABLERO (por defecto "Canvas", estilo Lichess; el visitante puede pasar a
@@ -247,7 +249,17 @@
       display: flex; align-items: center; justify-content: flex-start;
       padding: 10px 18px; background: var(--bg);
       border-bottom: 1px solid var(--border); flex-shrink: 0; gap: 18px;
+      /* Auto-ocultar al scrollear (estilo Lichess): colapsa el alto para que el contenido entre
+         completo. El JS mide su alto real en --hdr-real para que la transición sea suave. */
+      overflow: hidden; max-height: var(--hdr-real, 120px);
+      transition: max-height .3s ease, padding-top .3s ease, padding-bottom .3s ease, opacity .22s ease;
     }
+    body.hdr-collapsed header {
+      max-height: 0; padding-top: 0; padding-bottom: 0; opacity: 0;
+      pointer-events: none; border-bottom-color: transparent;
+    }
+    /* Con el header oculto, los overlays "página" (torneo/perfil/partida/ejercicios) suben al tope. */
+    body.hdr-collapsed { --hdr-h: 0px; }
     .h-brand { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
     .h-brand .piece { font-size: 24px; line-height: 1; }
     .h-brand .h-logo { width: 32px; height: 32px; border-radius: 7px; object-fit: cover; display: block; flex-shrink: 0; }
@@ -545,6 +557,14 @@
       padding: 12px 20px 24px;
     }
     body.game-page .chess-overlay .chess-handle { display: none; }
+    /* Overlays "página" (torneo/perfil/partida/ejercicios/práctica): el borde superior sigue a --hdr-h
+       (= alto del header cuando está visible, 0 cuando se oculta al scrollear). Antes el JS fijaba
+       este top inline; ahora lo maneja la variable así el ocultar/mostrar del header lo acompaña. */
+    body.tour-page #tour-overlay.open, body.player-page #overlay.open,
+    body.game-page .chess-overlay.open,
+    body.puz-page .puz-overlay.open, body.puz-page #prac-overlay.open {
+      top: var(--hdr-h); transition: top .3s ease;
+    }
     /* En pantalla ancha, la partida usa todo el ancho: contenido centrado hasta 1280px y tablero más
        grande aprovechando la altura libre (ya no hay barra inferior). */
     @media (min-width: 1100px) {
@@ -574,10 +594,23 @@
       transition: border-color .15s, background .15s, color .15s;
     }
     .cv-bb-arrow:hover { border-color: var(--gold-dim); background: var(--gold-bg); color: var(--gold); }
+    /* Caja "Volver al torneo" completa clicable (flecha + nombre): recuadro sutil con sombra para que
+       se lea como botón. Reemplaza al botón que era solo la flechita. */
+    .cv-bb-btn {
+      display: flex; align-items: center; gap: 9px; width: 100%; text-align: left;
+      background: var(--gl42); border: 1px solid var(--bd26); color: var(--fg0);
+      border-radius: var(--r-md); padding: 8px 12px; cursor: pointer; font-family: inherit;
+      box-shadow: var(--shadow-sm);
+      transition: border-color .15s, background .15s, box-shadow .15s, transform .1s;
+    }
+    .cv-bb-btn:hover { border-color: var(--gold-dim); background: var(--gold-bg); box-shadow: var(--shadow-hover); }
+    .cv-bb-btn:hover .cv-bb-ic, .cv-bb-btn:hover .cv-bb-name { color: var(--gold); }
+    .cv-bb-btn:active { transform: translateY(1px); }
+    .cv-bb-ic { flex-shrink: 0; transition: color .15s; }
     .cv-bb-name {
       font-size: 14px; font-weight: 700; color: var(--fg0); line-height: 1.25; min-width: 0;
       overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2;
-      -webkit-box-orient: vertical; text-shadow: var(--txt-out);
+      -webkit-box-orient: vertical; text-shadow: var(--txt-out); transition: color .15s;
     }
     .cv-round-minis { margin-top: 18px; }
     body.game-page .cv-round-minis { background: var(--card90); border: 2px solid var(--bd22); border-radius: 18px; padding: 14px 14px 16px; }
@@ -9317,9 +9350,15 @@ function _cvBuildPageExtras() {
   if (bookBack) {
     if (sk && sk.tour != null) {
       bookBack.style.display = '';
-      bookBack.innerHTML = '<button class="cv-bb-arrow" onclick="cvBackToTournament()" title="Volver al torneo" aria-label="Volver al torneo">'
-        + '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"></polyline></svg></button>'
-        + (_cvTourName && _cvFromTournament ? '<span class="cv-bb-name">' + escHtml(_cvTourName) + '</span>' : '');
+      var _arrowSvg = '<svg class="cv-bb-ic" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"></polyline></svg>';
+      if (_cvTourName && _cvFromTournament) {
+        // Con nombre de torneo: toda la caja (flecha + nombre) es clicable, con recuadro sutil.
+        bookBack.innerHTML = '<button class="cv-bb-btn" onclick="cvBackToTournament()" title="Volver al torneo" aria-label="Volver al torneo">'
+          + _arrowSvg + '<span class="cv-bb-name">' + escHtml(_cvTourName) + '</span></button>';
+      } else {
+        // Sin nombre: queda solo la flechita compacta (como antes).
+        bookBack.innerHTML = '<button class="cv-bb-arrow" onclick="cvBackToTournament()" title="Volver al torneo" aria-label="Volver al torneo">' + _arrowSvg + '</button>';
+      }
     } else { bookBack.style.display = 'none'; bookBack.innerHTML = ''; }
   }
   if (minis) {
@@ -15695,44 +15734,74 @@ function goHome(e) {
   return false;
 }
 // Activa/desactiva el modo "página" del detalle de torneo (header + nav visibles). El top del
-// overlay se fija al alto real del header para que el contenido arranque justo debajo.
+// overlay lo maneja la variable CSS --hdr-h (ver _setHdrVar), así el auto-ocultar del header lo sigue.
 function _tourPageOn() {
   document.body.classList.add('tour-page');
-  var hdr = document.querySelector('header');
-  var to = document.getElementById('tour-overlay');
-  if (hdr && to) to.style.top = hdr.offsetHeight + 'px';
+  _showHeader(); _setHdrVar();
 }
 function _tourPageOff() {
   document.body.classList.remove('tour-page');
-  var to = document.getElementById('tour-overlay');
-  if (to) to.style.top = '';
+  _showHeader();
 }
 // Igual que _tourPageOn/Off pero para el PERFIL de jugador (overlay #overlay).
 function _playerPageOn() {
   document.body.classList.add('player-page');
-  var hdr = document.querySelector('header');
-  var ov = document.getElementById('overlay');
-  if (hdr && ov) ov.style.top = hdr.offsetHeight + 'px';
+  _showHeader(); _setHdrVar();
 }
 function _playerPageOff() {
   document.body.classList.remove('player-page');
-  var ov = document.getElementById('overlay');
-  if (ov) ov.style.top = '';
+  _showHeader();
 }
 // Igual que _tourPageOn/Off pero para el VISOR de partidas (overlay #chess-overlay): la partida se ve
-// como PÁGINA completa (header→Inicio y nav visibles) en vez de tapar todo. El top del overlay = alto
-// del header. Cuando se abre desde un torneo, ese torneo queda como página de atrás (Atrás vuelve a él).
+// como PÁGINA completa (header→Inicio y nav visibles) en vez de tapar todo. El top del overlay = --hdr-h.
+// Cuando se abre desde un torneo, ese torneo queda como página de atrás (Atrás vuelve a él).
 function _gamePageOn() {
   document.body.classList.add('game-page');
-  var hdr = document.querySelector('header');
-  var co = document.getElementById('chess-overlay');
-  if (hdr && co) co.style.top = hdr.offsetHeight + 'px';
+  _showHeader(); _setHdrVar();
 }
 function _gamePageOff() {
   document.body.classList.remove('game-page');
-  var co = document.getElementById('chess-overlay');
-  if (co) co.style.top = '';
+  _showHeader();
 }
+
+// ── Header que se auto-oculta al scrollear (estilo Lichess) ─────────────────────────────────────
+// Mide el alto real del header y lo guarda en --hdr-h (top de los overlays "página") y --hdr-real
+// (baseline para la transición de max-height). No mide si está colapsado (daría 0).
+function _setHdrVar() {
+  if (document.body.classList.contains('hdr-collapsed')) return;
+  var hdr = document.querySelector('header'); if (!hdr) return;
+  var h = hdr.offsetHeight;
+  if (h > 0) {
+    var rs = document.documentElement.style;
+    rs.setProperty('--hdr-h', h + 'px');
+    rs.setProperty('--hdr-real', h + 'px');
+  }
+}
+function _hideHeader() { if (!document.body.classList.contains('hdr-collapsed')) document.body.classList.add('hdr-collapsed'); }
+function _showHeader() { if (document.body.classList.contains('hdr-collapsed')) document.body.classList.remove('hdr-collapsed'); }
+// Un solo listener en captura atrapa el scroll de CUALQUIER contenedor (.main o los overlays, que
+// scrollean internamente). Bajando → oculta; subiendo o cerca del tope → muestra. Sin rAF: el trabajo
+// es un toggle de clase condicional (barato, sin thrash) y así funciona aunque el rAF esté throttleado.
+(function _initHeaderAutoHide() {
+  var lastY = 0, lastEl = null;
+  document.addEventListener('scroll', function(e) {
+    var el = e.target;
+    var y = (el === document || el === document.documentElement || el === window)
+      ? (window.scrollY || document.documentElement.scrollTop || 0)
+      : (el.scrollTop || 0);
+    if (el !== lastEl) { lastEl = el; lastY = y; return; }   // cambió de contenedor: rebasar sin togglear
+    var dy = y - lastY;
+    if (Math.abs(dy) < 6) return;                            // ignorar micro-scroll (anti-jitter)
+    if (y <= 40) _showHeader();                              // cerca del tope: siempre visible
+    else if (dy > 0) _hideHeader();                          // bajando
+    else _showHeader();                                      // subiendo
+    lastY = y;
+  }, true);
+  // Medir el header al cargar y en cada resize (el alto cambia con los breakpoints responsive).
+  if (document.readyState !== 'loading') _setHdrVar();
+  else document.addEventListener('DOMContentLoaded', _setHdrVar);
+  window.addEventListener('resize', function() { _showHeader(); _setHdrVar(); });
+})();
 
 // ── Tablero redimensionable por el visitante (se guarda en el navegador) ──────────────────────────
 var _CV_BW_MIN = 300, _CV_BW_MAX = 860;
@@ -17358,8 +17427,8 @@ var puz = { level:'inicial', list:[], idx:0, cur:null, chess:null, flipped:false
   anOn:false, anScore:null, anDepth:0, anPv:null, anBestUci:null, lines:[], recording:false, recLine:[], _srcGame:null, _srcGameMaybe:false };
 var _puzHistoryPushed = false;
 var _cvFromPuzzle = false;   // el visor se abrió desde un ejercicio ("Ver la partida original"): al cerrarlo, volver al ejercicio
-function _puzPageOn() { document.body.classList.add('puz-page'); var hdr = document.querySelector('header'), ov = document.getElementById('puz-overlay'); if (hdr && ov) ov.style.top = hdr.offsetHeight + 'px'; }
-function _puzPageOff() { document.body.classList.remove('puz-page'); var ov = document.getElementById('puz-overlay'); if (ov) ov.style.top = ''; }
+function _puzPageOn() { document.body.classList.add('puz-page'); _showHeader(); _setHdrVar(); }
+function _puzPageOff() { document.body.classList.remove('puz-page'); _showHeader(); }
 
 // Niveles a los que pertenece un ejercicio (con solapamiento en los bordes).
 function puzBand(d) {
@@ -18987,8 +19056,8 @@ var prac = { phase:'endgame', level:'aficionado', fType:'', fObj:'', fTag:'', _p
 var _pracHistoryPushed = false;
 var _cvFromPractice = false;   // el visor se abrió desde Practicar ("Ver la partida original")
 
-function _pracPageOn() { document.body.classList.add('puz-page'); var hdr = document.querySelector('header'), ov = document.getElementById('prac-overlay'); if (hdr && ov) ov.style.top = hdr.offsetHeight + 'px'; }
-function _pracPageOff() { document.body.classList.remove('puz-page'); var ov = document.getElementById('prac-overlay'); if (ov) ov.style.top = ''; }
+function _pracPageOn() { document.body.classList.add('puz-page'); _showHeader(); _setHdrVar(); }
+function _pracPageOff() { document.body.classList.remove('puz-page'); _showHeader(); }
 
 function pracInit() {
   try { var lv = localStorage.getItem('prac_level'); if (lv && PRAC_LEVELS[lv]) prac.level = lv; } catch(e) {}
