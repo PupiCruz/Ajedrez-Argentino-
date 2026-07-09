@@ -15805,8 +15805,16 @@ function _showHeader() { if (document.body.classList.contains('hdr-collapsed')) 
 // disparando un scroll "hacia arriba" fantasma que volvía a mostrar el header → parpadeo/salto. Por eso,
 // después de un cambio real, se BLOQUEA el toggle durante la transición (_HDR_LOCK_MS) e ignoramos esos
 // eventos de reacomodo (solo actualizamos la baseline). Así queda estable en pantalla completa sin barra.
-var _HDR_LOCK_MS = 380, _hdrLocked = false, _hdrLockT = null, _hdrLastY = 0, _hdrLastEl = null;
+var _HDR_LOCK_MS = 380, _hdrLocked = false, _hdrLockT = null, _hdrLastY = 0, _hdrLastEl = null, _hdrResizing = false;
 function _lockHdr() { _hdrLocked = true; clearTimeout(_hdrLockT); _hdrLockT = setTimeout(function() { _hdrLocked = false; }, _HDR_LOCK_MS); }
+// Mientras se redimensiona un tablero, cambia la altura del contenido y el navegador recorta el
+// scrollTop → dispara scrolls que hacían aparecer/desaparecer la barra. Se suprime durante el arrastre.
+var _hdrResizeT = null;
+function _hdrSuppressResize(on) {
+  clearTimeout(_hdrResizeT);
+  if (on) { _hdrResizing = true; }
+  else { _hdrLastEl = null; _hdrResizeT = setTimeout(function() { _hdrResizing = false; }, 150); }
+}
 // Al navegar (cambiar de sección/página) hay que MOSTRAR el header sí o sí y resetear el estado del
 // auto-ocultado. Si no, cuando se navega justo después de ocultarlo (con el toggle bloqueado por la
 // animación), el header quedaba trabado colapsado en la página nueva ("la barra hecha un renglón").
@@ -15833,6 +15841,7 @@ function _isPageScroller(el) {
 }
 (function _initHeaderAutoHide() {
   document.addEventListener('scroll', function(e) {
+    if (_hdrResizing) return;           // durante un resize de tablero, no togglear (el clamp dispara scrolls)
     var el = e.target;
     if (!_isPageScroller(el)) return;   // ignorar scrollers internos (jugadas, libro, motor, tablas…)
     var y = (el === document || el === document.documentElement || el === window)
@@ -15875,7 +15884,7 @@ function _cvApplyBoardSize() {
     var dragging = false, startX = 0, startY = 0, startW = 0, cols = null;
     h.addEventListener('pointerdown', function(e) {
       cols = document.querySelector('.cv-cols'); if (!cols) return;
-      dragging = true;
+      dragging = true; _hdrSuppressResize(true);
       var bi = document.getElementById('cv-board-inner');
       startW = bi ? bi.getBoundingClientRect().width : 376;
       startX = e.clientX; startY = e.clientY;
@@ -15891,7 +15900,7 @@ function _cvApplyBoardSize() {
       e.preventDefault();
     });
     function end(e) {
-      if (!dragging) return; dragging = false;
+      if (!dragging) return; dragging = false; _hdrSuppressResize(false);
       try { h.releasePointerCapture(e.pointerId); } catch (_) {}
       var v = cols && cols.style.getPropertyValue('--cv-bw');
       if (v) { try { localStorage.setItem('cv_board_size', parseInt(v, 10)); } catch (_) {} }
@@ -19847,7 +19856,7 @@ function _puzBindBoardResize(handleId, colId, boardId, key) {
   function maxW() { return Math.min(640, Math.max(300, window.innerWidth - 300)); }
   h.addEventListener('pointerdown', function(e) {
     col = document.getElementById(colId); if (!col) return;
-    dragging = true;
+    dragging = true; _hdrSuppressResize(true);
     var bd = document.getElementById(boardId);
     startW = bd ? bd.getBoundingClientRect().width : 360;
     startX = e.clientX; startY = e.clientY;
@@ -19862,7 +19871,7 @@ function _puzBindBoardResize(handleId, colId, boardId, key) {
     e.preventDefault();
   });
   function end(e) {
-    if (!dragging) return; dragging = false;
+    if (!dragging) return; dragging = false; _hdrSuppressResize(false);
     try { h.releasePointerCapture(e.pointerId); } catch(_) {}
     var v = col && col.style.getPropertyValue('--puz-bw');
     if (v) { try { localStorage.setItem(key, parseInt(v, 10)); } catch(_) {} }
