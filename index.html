@@ -934,18 +934,25 @@
       max-width:720px; width:calc(100% - 28px); margin:22px auto 70px;
       background:var(--card90); border:1px solid var(--bd18); border-radius:20px;
       box-shadow:var(--shadow-hover); overflow:hidden; position:relative;
+      flex-shrink:0;   /* NO encogerse: el overlay es flex-column; sin esto la tarjeta se achica a la
+                          pantalla y overflow:hidden recorta el texto (solo se veía la portada, sin scroll). */
       animation:nNewsIn .3s ease both;
     }
     /* barrita dorada decorativa arriba de la nota */
     .n-reader-content::before { content:''; position:absolute; top:0; left:0; right:0; height:4px;
       background:linear-gradient(90deg, var(--gold), transparent 82%); z-index:4; }
     .n-reader-cover {
-      width:100%; overflow:hidden; font-size:88px;
+      position:relative; width:100%; overflow:hidden; font-size:88px;
       background:radial-gradient(120% 130% at 25% 18%, var(--gold-bg), transparent 62%), var(--bg3);
       display:flex; align-items:center; justify-content:center;
     }
     .n-reader-cover.no-img { min-height:190px; }
-    .n-reader-cover img { width:100%; height:auto; display:block; max-height:460px; object-fit:contain; }
+    /* Relleno difuminado detrás de la foto: si el flyer es vertical, en vez de bandas blancas a los
+       costados se ve una versión borrosa y ampliada de la propia imagen (estilo reproductor). */
+    .n-cover-bg { position:absolute; inset:0; z-index:0; background-size:cover; background-position:center;
+      filter:blur(30px) saturate(1.2); transform:scale(1.18); opacity:.6; }
+    .n-reader-cover img { position:relative; z-index:1; display:block; margin:0 auto;
+      width:auto; height:auto; max-width:100%; max-height:min(560px,64vh); object-fit:contain; }
     .n-reader-main { padding:24px 34px 32px; }
     .n-reader-date {
       display:inline-block; font-size:11px; font-weight:700; color:var(--gold);
@@ -12190,11 +12197,13 @@ function openNewsReader(id) {
   if (n.coverImg) {
     coverEl.className = 'n-reader-cover';
     coverEl.style.backgroundImage = '';
-    coverEl.innerHTML = '<img src="' + _nEscAttr(n.coverImg) + '" alt="" onerror="this.parentNode.style.display=\'none\'">';
+    // Fondo difuminado (misma imagen) para rellenar las bandas cuando el flyer es vertical + foto nítida encima.
+    coverEl.innerHTML = '<div class="n-cover-bg" style="background-image:url(' + _nEscAttr(n.coverImg) + ')"></div>'
+      + '<img src="' + _nEscAttr(n.coverImg) + '" alt="" onerror="this.parentNode.style.display=\'none\'">';
   } else {
     coverEl.className = 'n-reader-cover no-img';
     coverEl.style.backgroundImage = '';
-    coverEl.innerHTML = _nEsc(n.emoji || '📰');
+    coverEl.innerHTML = '<span class="n-emoji">' + _nEsc(n.emoji || '📰') + '</span>';
   }
   // Fecha (pill dorada; se oculta si la noticia no tiene fecha) y título
   var _rdDate = document.getElementById('n-reader-date');
