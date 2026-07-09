@@ -12265,10 +12265,22 @@ function _newsOpenPgn() {
 // ── Visor de partida embebido en noticias (solo jugadas, sin motor ni libro) ──
 var _nrMini = { moves:[], positions:[], lmFroms:[], lmTos:[], idx:0, white:'?', black:'?', result:'*' };
 
-function _nrInitViewer(pgn) {
+function _nrInitViewer(pgn, _tries) {
   var el = document.getElementById('n-reader-pgn');
   if (!el) return;
-  if (typeof Chess === 'undefined') { el.innerHTML = '<p style="color:var(--text2);padding:10px 0;font-size:13px">Visor no disponible.</p>'; return; }
+  // La librería de ajedrez (chess.min.js) carga DESPUÉS del script de la app. Si la nota se abre antes
+  // de que termine (deep-link / carga lenta), en vez de rendirse esperamos y reintentamos: así la
+  // partida aparece sola cuando la librería está lista (antes mostraba "Visor no disponible" para siempre).
+  if (typeof Chess === 'undefined') {
+    _tries = _tries || 0;
+    if (_tries < 40) {
+      el.innerHTML = '<p style="color:var(--text2);padding:10px 0;font-size:13px">⏳ Cargando el visor…</p>';
+      setTimeout(function(){ _nrInitViewer(pgn, _tries + 1); }, 150);
+      return;
+    }
+    el.innerHTML = '<p style="color:var(--text2);padding:10px 0;font-size:13px">Visor no disponible.</p>';
+    return;
+  }
   el.innerHTML = '';
   try {
     var ch = new Chess();
