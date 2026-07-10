@@ -3587,6 +3587,12 @@ function renderTorneos(filter) {
   var cls = { live:'b-live', upcoming:'b-upcoming', done:'b-done' };
   var html = '';
 
+  // Cambios hechos desde el teléfono sin adoptar (solo modo autor): avisar arriba de la
+  // lista, así la PC no publica sin enterarse de lo que se editó desde el celular.
+  if (!_ondemand && typeof _liveTzHasPending === 'function' && _liveTzHasPending()) {
+    try { html += _liveTzAuthorBanner(); } catch (e) {}
+  }
+
   // Build unified list from hardcoded + stored tournaments
   var items = [];
   var tzCfg = getTzConfig();
@@ -3656,7 +3662,7 @@ function renderTorneos(filter) {
     var _emptyMsg = (_q || _torneoType !== 'todos')
       ? 'No se encontraron torneos' + (_q ? ' para “' + escHtml(_torneoSearch.trim()) + '”' : '') + '.'
       : 'No hay torneos en esta categoría.';
-    html = '<div class="empty"><div class="e-icon">🔍</div><h3>Sin torneos</h3><p>' + _emptyMsg + '</p></div>';
+    html += '<div class="empty"><div class="e-icon">🔍</div><h3>Sin torneos</h3><p>' + _emptyMsg + '</p></div>';
   } else {
     // Paginación: 10 por página. Recortar al rango de la página actual.
     var totalPages = Math.ceil(filtered.length / TORNEOS_PER_PAGE);
@@ -6127,6 +6133,146 @@ async function fetchTournamentGames(id) {
     return games;
   } catch (e) { _tourLoadFailed[id] = true; return []; }
 }
+
+/* ── Cambios hechos desde el teléfono (editar.html → Worker → data/live-torneos.json) ──
+   El teléfono no toca manifest.js (un typo ahí rompe TODA la web): sus cambios van a un
+   JSON aparte que acá se lee con fetch + try/catch y se FUSIONA. Si el archivo falta,
+   está vacío o viene roto, se ignora y la web sigue como si nada.
+   - overrides: parches a torneos que YA están en el manifest (agregar link, corregir dato).
+   - nuevos:    torneos "cáscara" creados desde el teléfono (id ph_…, sin partidas: las
+                trae solo el link de Lichess/Chess-Results/info64, como cualquier torneo).
+   En modo AUTOR no se fusiona nada: se avisa con un banner en la pestaña Torneos para
+   pasar los cambios a mano al editor (la fuente de la verdad sigue siendo embedded-data.js). */
+var _liveTz = null;          // contenido crudo de data/live-torneos.json (o null)
+var _liveTzApplied = false;  // evita fusionar dos veces sobre el manifest
+
+// Campos que el teléfono puede pisar de un torneo del manifest. Todo lo demás (partidas,
+// leaders, categorías…) se ignora aunque venga en el archivo: radio de daño mínimo.
+var _LIVE_TZ_FIELDS = ['name','type','location','tournamentDates','startDate','endDate',
+                       'rounds','crUrl','weburl','info64url','broadcastId','broadcastUrl',
+                       'timeControl','format','roundTimes','flyerUrl','flyerPos'];
+
+function _liveTzHasPending(d) {
+  d = d || _liveTz;
+  if (!d) return false;
+  var nOv = 0;
+  try { nOv = d.overrides ? Object.keys(d.overrides).length : 0; } catch (e) {}
+  return nOv > 0 || !!(d.nuevos && d.nuevos.length);
+}
+
+// Aplica UN override sobre una entrada del manifest (solo campos permitidos).
+function _liveTzApplyOne(entry, ov) {
+  var touchedDates = false;
+  var NULLABLE = { rounds:1, broadcastId:1, broadcastUrl:1, startDate:1, endDate:1 };
+  _LIVE_TZ_FIELDS.forEach(function(f) {
+    if (!(f in ov)) return;
+    var v = ov[f];
+    if (f === 'name' && (v == null || !String(v).trim())) return;   // el nombre nunca se blanquea
+    if (f === 'rounds') v = parseInt(v, 10) || null;
+    entry[f] = (v == null || v === '') ? (NULLABLE[f] ? null : '') : v;
+    if (f === 'startDate' || f === 'endDate' || f === 'tournamentDates') touchedDates = true;
+  });
+  // dateKey viene precocinado en el manifest: si cambiaron las fechas, invalidarlo para
+  // que estado y orden se recalculen de las fechas nuevas (0 es falsy → tourDateKey(entry)).
+  if (touchedDates) entry.dateKey = 0;
+}
+
+// Fusiona live-torneos.json sobre _manifest.tournaments (solo web publicada). Idempotente.
+function _liveTzMerge() {
+  if (!_ondemand || !_manifest || !_manifest.tournaments || !_liveTz || _liveTzApplied) return;
+  _liveTzApplied = true;
+  var list = _manifest.tournaments;
+  var byId = {};
+  list.forEach(function(e) { byId[String(e.id)] = e; });
+  var ovs = (_liveTz.overrides && typeof _liveTz.overrides === 'object') ? _liveTz.overrides : {};
+  Object.keys(ovs).forEach(function(id) {
+    var entry = byId[String(id)];
+    if (entry && ovs[id] && typeof ovs[id] === 'object') _liveTzApplyOne(entry, ovs[id]);
+  });
+  (Array.isArray(_liveTz.nuevos) ? _liveTz.nuevos : []).forEach(function(nv) {
+    if (!nv || !nv.name) return;
+    // Anti-duplicado: si el torneo ya llegó al manifest (se adoptó en la PC y se republicó
+    // sin vaciar los pendientes), no agregar otra tarjeta. Por id, o por nombre+inicio.
+    if (byId[String(nv.id)]) return;
+    var dup = list.some(function(e) {
+      return _normTxt(e.name) === _normTxt(nv.name) && String(e.startDate || '') === String(nv.startDate || '');
+    });
+    if (dup) return;
+    // Misma forma que _tourManifestMeta: para el resto de la app es un torneo más
+    // (gameCount 0 y con link en vivo → las partidas/tabla llegan solas, sin cartel de error).
+    var entry = {
+      id: nv.id || ('ph_' + Date.now()), name: String(nv.name), type: nv.type || '',
+      timeControl: nv.timeControl || '', chesscomUrl: '', flyerUrl: nv.flyerUrl || '', flyerPos: nv.flyerPos || '',
+      about: '', tournamentDates: nv.tournamentDates || nv.dates || '', loadedAt: '',
+      startDate: nv.startDate || null, endDate: nv.endDate || null, location: nv.location || '',
+      gameCount: 0, leaders: [], source: 'pgn',
+      crUrl: nv.crUrl || '', weburl: nv.weburl || '', info64url: nv.info64url || '', format: nv.format || '',
+      broadcastId: nv.broadcastId || null, broadcastUrl: nv.broadcastUrl || null,
+      categories: null, isTeam: null, rounds: parseInt(nv.rounds, 10) || null, roundTimes: nv.roundTimes || null,
+      playerOnly: false, playerId: null, dateKey: 0
+    };
+    byId[String(entry.id)] = entry;
+    list.push(entry);
+  });
+}
+
+// Banner (solo modo autor) cuando hay cambios del teléfono sin adoptar. La web publicada
+// los fusiona sola; en la PC hay que pasarlos a mano al editor (✏️) para que queden en
+// embedded-data.js, y después vaciarlos desde editar.html (🧹) para que no la pisen.
+function _liveTzAuthorBanner() {
+  var d = _liveTz || {};
+  var lines = [];
+  var stored = [];
+  try { stored = JSON.parse(localStorage.getItem('pgn_tournaments') || '[]'); } catch (e) {}
+  var tzCfg = getTzConfig();
+  var nameOf = function(id) {
+    for (var i = 0; i < stored.length; i++) if (String(stored[i].id) === String(id)) return stored[i].name;
+    if (tzCfg[id] && tzCfg[id].name) return tzCfg[id].name;
+    for (var j = 0; j < TORNEOS.length; j++) if (String(TORNEOS[j].id) === String(id)) return TORNEOS[j].name;
+    return null;
+  };
+  var ovs = (d.overrides && typeof d.overrides === 'object') ? d.overrides : {};
+  Object.keys(ovs).forEach(function(id) {
+    var flds = Object.keys(ovs[id] || {}).join(', ');
+    lines.push('✏️ <b>' + escHtml(nameOf(id) || ('torneo ' + id)) + '</b> — cambió: ' + escHtml(flds));
+  });
+  (Array.isArray(d.nuevos) ? d.nuevos : []).forEach(function(nv) {
+    if (nv && nv.name) lines.push('➕ Torneo nuevo: <b>' + escHtml(nv.name) + '</b>');
+  });
+  if (!lines.length) return '';
+  return '<div style="margin:0 0 14px;padding:12px 14px;border-radius:12px;border:1px solid var(--gold-dim);background:var(--gold-bg);font-size:13px;line-height:1.55;color:var(--text2)">'
+    + '<b style="color:var(--gold)">📲 Hay cambios hechos desde el teléfono</b> (data/live-torneos.json). '
+    + 'La web publicada ya los está mostrando; acá NO se aplican solos.<br>'
+    + lines.join('<br>')
+    + '<br><span style="color:var(--text3)">Para que queden en tus datos: rehacé el cambio en el editor (✏️) y guardá. '
+    + 'Después vacialos desde editar.html (🧹) para que no pisen tus datos al publicar.</span></div>';
+}
+
+// Arranque: bajar data/live-torneos.json (no-store: siempre fresco) y fusionar/avisar.
+function _liveTzInit() {
+  try {
+    fetch('data/live-torneos.json?nc=' + Date.now(), { cache: 'no-store' })
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(d) {
+        if (!d || typeof d !== 'object') return;
+        _liveTz = d;
+        if (!_liveTzHasPending(d)) return;
+        if (_ondemand) {
+          _liveTzMerge();
+          // Si la pestaña Torneos ya está dibujada, redibujarla con los cambios fusionados.
+          try { if (document.getElementById('list-torneos')) renderTorneos(_lastTorneoFilter); } catch (e) {}
+          // Deep-link a un torneo del teléfono (?torneo=ph_…) que corrió antes que este fetch
+          // y no lo encontró: reintentar ahora que el torneo existe en el manifest.
+          try { if (_tdTourKey && String(_tdTourKey).indexOf('ph_') === 0) openTournamentDetail('ls', _tdTourKey); } catch (e) {}
+        } else {
+          // Modo autor: solo avisar (banner arriba de la lista de torneos).
+          try { if (document.getElementById('list-torneos')) renderTorneos(_lastTorneoFilter); } catch (e) {}
+        }
+      })
+      .catch(function() {});
+  } catch (e) {}
+}
+_liveTzInit();
 
 // On-demand: baja el archivo del jugador (data/p/<id>.json = [{tourName,tourLocation,pgn}],
 // ya deduplicado) y lo inyecta en PLAYER_GAMES['emb_<id>'] agrupado por torneo, así el código

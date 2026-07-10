@@ -31,6 +31,26 @@
 //    mueve depende de (a) la diferencia de rating entre ambos y (b) cuántos intentos
 //    lleva el ejercicio: arranca moviéndose fuerte (K=24) y se va congelando (K→3).
 //    El rating del visitante lo lleva su navegador (sin login) y llega en `vr`.
+//
+// 3) Edición desde el teléfono (editar.html)
+//    Endpoints (POST con JSON en el body):
+//      POST /admin/live  { pin }                      → devuelve data/live-torneos.json FRESCO
+//                                                       (leído de GitHub, no de la web publicada
+//                                                       que tarda 1-2 min en redeplegar)
+//      POST /admin/save  { pin, op, id, fields }      → modifica data/live-torneos.json y lo
+//                                                       commitea a GitHub (Pages redepliega solo)
+//        op:'merge'  + id + fields → parcha un torneo EXISTENTE (overrides[id])
+//        op:'nuevo'  + fields      → crea un torneo cáscara (nuevos[], id ph_<timestamp>)
+//        op:'clear'                → vacía el archivo (después de adoptar los cambios en la PC)
+//    Seguridad:
+//      - Secretos del Worker (Settings → Variables → Secrets, o `wrangler secret put`):
+//          EDIT_PIN  = frase larga que se escribe en el teléfono
+//          GH_TOKEN  = PAT fine-grained de GitHub, SOLO repo Ajedrez-Argentino-, permiso
+//                      Contents: Read and write. Nada más.
+//      - El Worker escribe ÚNICAMENTE data/live-torneos.json (la ruta está fija en el código):
+//        aunque se filtre el PIN, no se puede tocar index.html ni ningún otro archivo.
+//      - Rate-limit de PIN errado con D1 (tabla admin_rl, se crea sola): tras 12 intentos
+//        fallidos en una hora, se bloquea una hora. Sin D1 igual funciona (sin rate-limit).
 // ─────────────────────────────────────────────────────────────────────────────
 
 const ALLOWED_HOST = /(^|\.)chess-results\.com$/i;
@@ -50,6 +70,10 @@ export default {
     // ── Stats de ejercicios (D1) ──
     if (reqUrl.pathname === '/puzstats') return puzStats(env);
     if (reqUrl.pathname === '/puzhit')   return puzHit(reqUrl, env);
+
+    // ── Edición desde el teléfono (editar.html) ──
+    if (reqUrl.pathname === '/admin/live') return adminLive(request, env);
+    if (reqUrl.pathname === '/admin/save') return adminSave(request, env);
 
     // ── Descarga de Excel de info64 (POST → JSON {url} → bajar el .xlsx) ──
     if (reqUrl.pathname === '/i64xls') return i64Xls(reqUrl, ctx);
@@ -160,7 +184,7 @@ async function i64Xls(reqUrl, ctx) {
 function corsHeaders() {
   return new Headers({
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': '*',
   });
 }
@@ -243,4 +267,220 @@ async function puzStats(env) {
     out[row.id] = o;
   }
   return jsonResp(out, 200, STATS_CACHE_SECONDS);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EDICIÓN DESDE EL TELÉFONO — /admin/live y /admin/save
+// El teléfono (editar.html) manda un PIN; el token de GitHub vive SOLO acá como
+// secreto. El Worker únicamente puede tocar data/live-torneos.json (ruta fija).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const GH_REPO = 'PupiCruz/Ajedrez-Argentino-';
+const GH_BRANCH = 'main';
+const LIVE_PATH = 'data/live-torneos.json';          // ÚNICO archivo que este Worker puede escribir
+const RL_MAX_FAILS = 12;                             // intentos de PIN errados permitidos…
+const RL_WINDOW_S = 3600;                            // …por hora (después, bloqueo de 1 hora)
+const MAX_NUEVOS = 20;                               // tope de torneos "cáscara" pendientes
+
+// Campos que el teléfono puede mandar. Cualquier otro se descarta.
+//   url:1 → tiene que ser https://…  ·  max → largo máximo del texto
+const ADMIN_FIELDS = {
+  name:            { max: 160 },
+  type:            { max: 30 },
+  location:        { max: 160 },
+  tournamentDates: { max: 80 },
+  startDate:       { max: 10 },   // AAAA-MM-DD
+  endDate:         { max: 10 },
+  rounds:          { int: true },
+  crUrl:           { max: 400, url: true },
+  weburl:          { max: 400, url: true },
+  info64url:       { max: 400, url: true },
+  broadcastUrl:    { max: 400, url: true },
+  broadcastId:     { max: 20 },
+  timeControl:     { max: 80 },
+  format:          { max: 12 },
+};
+
+// Limpia un objeto de campos según la whitelist. null/'' = "borrar este campo" (se
+// conserva como null: la app lo interpreta como campo vacío). Sin < ni > (anti-HTML).
+function adminCleanFields(raw) {
+  const out = {};
+  if (!raw || typeof raw !== 'object') return out;
+  for (const k of Object.keys(ADMIN_FIELDS)) {
+    if (!(k in raw)) continue;
+    const spec = ADMIN_FIELDS[k];
+    let v = raw[k];
+    if (v == null || v === '') { out[k] = null; continue; }
+    if (spec.int) {
+      v = parseInt(v, 10);
+      out[k] = (isFinite(v) && v >= 1 && v <= 99) ? v : null;
+      continue;
+    }
+    v = String(v).replace(/[<>]/g, '').trim().slice(0, spec.max || 200);
+    if (spec.url && v && !/^https:\/\//i.test(v)) continue;   // solo links https
+    out[k] = v || null;
+  }
+  return out;
+}
+
+// Valida el PIN contra el secreto EDIT_PIN, con rate-limit en D1 (si hay binding).
+// Devuelve null si está todo bien, o una Response de error para devolver tal cual.
+async function adminCheckPin(pin, env) {
+  if (!env.EDIT_PIN) return errJson('La edición remota no está configurada (falta el secreto EDIT_PIN)', 503);
+  // Rate-limit: contamos PIN errados en la última hora. Sin D1, seguimos sin contar.
+  let rlRow = null;
+  if (env.DB) {
+    try {
+      await env.DB.prepare('CREATE TABLE IF NOT EXISTS admin_rl (k TEXT PRIMARY KEY, n INTEGER, ts INTEGER)').run();
+      rlRow = await env.DB.prepare('SELECT n, ts FROM admin_rl WHERE k = ?1').bind('pinfail').first();
+      const now = Math.floor(Date.now() / 1000);
+      if (rlRow && (now - (rlRow.ts || 0)) > RL_WINDOW_S) rlRow = null;   // ventana vencida: de cero
+      if (rlRow && rlRow.n >= RL_MAX_FAILS) return errJson('Demasiados intentos fallidos. Probá de nuevo en una hora.', 429);
+    } catch (e) { rlRow = null; }
+  }
+  if (typeof pin !== 'string' || pin !== env.EDIT_PIN) {
+    if (env.DB) {
+      try {
+        const now = Math.floor(Date.now() / 1000);
+        const n = rlRow ? (rlRow.n + 1) : 1;
+        const ts = rlRow ? rlRow.ts : now;
+        await env.DB.prepare(
+          'INSERT INTO admin_rl (k, n, ts) VALUES (?1, ?2, ?3) ' +
+          'ON CONFLICT(k) DO UPDATE SET n = ?2, ts = ?3'
+        ).bind('pinfail', n, ts).run();
+      } catch (e) {}
+    }
+    return errJson('PIN incorrecto', 403);
+  }
+  return null;
+}
+
+// base64 ⇄ texto UTF-8 (la API de GitHub manda/recibe el contenido en base64).
+function b64ToUtf8(b64) {
+  const bin = atob((b64 || '').replace(/\s/g, ''));
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder('utf-8').decode(bytes);
+}
+function utf8ToB64(str) {
+  const bytes = new TextEncoder().encode(str);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
+}
+
+function ghHeaders(env) {
+  return {
+    'Authorization': 'Bearer ' + env.GH_TOKEN,
+    'Accept': 'application/vnd.github+json',
+    'User-Agent': 'AjedrezArgentino-Worker',      // GitHub exige User-Agent
+    'X-GitHub-Api-Version': '2022-11-28',
+  };
+}
+
+// Baja data/live-torneos.json del repo. Devuelve { data, sha }. Si el archivo no
+// existe todavía (404), devuelve el esqueleto vacío con sha null (el PUT lo crea).
+async function ghGetLive(env) {
+  const url = 'https://api.github.com/repos/' + GH_REPO + '/contents/' + LIVE_PATH + '?ref=' + GH_BRANCH;
+  const r = await fetch(url, { headers: ghHeaders(env) });
+  if (r.status === 404) return { data: { version: 1, nuevos: [], overrides: {} }, sha: null };
+  if (!r.ok) throw new Error('GitHub GET ' + r.status);
+  const j = await r.json();
+  let data;
+  try { data = JSON.parse(b64ToUtf8(j.content)); } catch (e) { data = null; }
+  // Archivo roto o con otra forma: arrancar de un esqueleto sano (nunca propagar basura).
+  if (!data || typeof data !== 'object') data = { version: 1, nuevos: [], overrides: {} };
+  if (!Array.isArray(data.nuevos)) data.nuevos = [];
+  if (!data.overrides || typeof data.overrides !== 'object') data.overrides = {};
+  return { data, sha: j.sha };
+}
+
+// Commitea el JSON nuevo. Si otro guardado se metió en el medio (409), el que llama reintenta.
+async function ghPutLive(env, data, sha, message) {
+  const url = 'https://api.github.com/repos/' + GH_REPO + '/contents/' + LIVE_PATH;
+  const body = {
+    message: message,
+    content: utf8ToB64(JSON.stringify(data, null, 2) + '\n'),
+    branch: GH_BRANCH,
+  };
+  if (sha) body.sha = sha;
+  const r = await fetch(url, { method: 'PUT', headers: { ...ghHeaders(env), 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!r.ok) {
+    const txt = await r.text();
+    const e = new Error('GitHub PUT ' + r.status + ': ' + txt.slice(0, 200));
+    e.status = r.status;
+    throw e;
+  }
+}
+
+// POST /admin/live { pin } → el live-torneos.json FRESCO (desde GitHub, no desde Pages).
+async function adminLive(request, env) {
+  if (request.method !== 'POST') return errJson('Usar POST', 405);
+  let body; try { body = await request.json(); } catch (e) { return errJson('Body inválido', 400); }
+  const bad = await adminCheckPin(body && body.pin, env);
+  if (bad) return bad;
+  if (!env.GH_TOKEN) return errJson('Falta el secreto GH_TOKEN en el Worker', 503);
+  try {
+    const { data } = await ghGetLive(env);
+    return jsonResp({ ok: true, live: data });
+  } catch (e) {
+    return errJson('No se pudo leer de GitHub: ' + e.message, 502);
+  }
+}
+
+// POST /admin/save { pin, op:'merge'|'nuevo'|'clear', id?, fields? }
+async function adminSave(request, env) {
+  if (request.method !== 'POST') return errJson('Usar POST', 405);
+  let body; try { body = await request.json(); } catch (e) { return errJson('Body inválido', 400); }
+  const bad = await adminCheckPin(body && body.pin, env);
+  if (bad) return bad;
+  if (!env.GH_TOKEN) return errJson('Falta el secreto GH_TOKEN en el Worker', 503);
+
+  const op = body.op;
+  if (op !== 'merge' && op !== 'nuevo' && op !== 'clear') return errJson('Operación inválida (merge | nuevo | clear)', 400);
+
+  // Leer → modificar → commitear. Si dos guardados chocan (409 de GitHub), reintentar una vez.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let cur;
+    try { cur = await ghGetLive(env); } catch (e) { return errJson('No se pudo leer de GitHub: ' + e.message, 502); }
+    const data = cur.data;
+    let msg = 'Teléfono: cambios';
+
+    if (op === 'clear') {
+      data.nuevos = [];
+      data.overrides = {};
+      msg = 'Teléfono: vaciar cambios pendientes';
+    } else if (op === 'merge') {
+      const id = String(body.id || '').slice(0, 80);
+      if (!id) return errJson('Falta el id del torneo', 400);
+      const fields = adminCleanFields(body.fields);
+      if (!Object.keys(fields).length) return errJson('No hay campos válidos para guardar', 400);
+      // Torneo creado desde el teléfono (ph_…): editar SU entrada en `nuevos` (un override
+      // no le aplicaría: la app solo aplica overrides a torneos que ya están en el manifest).
+      const nIdx = data.nuevos.findIndex((n) => n && String(n.id) === id);
+      if (nIdx >= 0) {
+        if (fields.name == null) delete fields.name;   // el nombre nunca se blanquea
+        data.nuevos[nIdx] = Object.assign({}, data.nuevos[nIdx], fields);
+      } else {
+        data.overrides[id] = Object.assign({}, data.overrides[id] || {}, fields);
+      }
+      msg = 'Teléfono: editar torneo ' + (fields.name || id);
+    } else { // 'nuevo'
+      const fields = adminCleanFields(body.fields);
+      if (!fields.name) return errJson('El nombre del torneo es obligatorio', 400);
+      if (data.nuevos.length >= MAX_NUEVOS) return errJson('Hay demasiados torneos pendientes de adoptar. Vaciá los pendientes desde la PC.', 400);
+      fields.id = 'ph_' + Date.now();
+      data.nuevos.push(fields);
+      msg = 'Teléfono: nuevo torneo ' + fields.name;
+    }
+
+    try {
+      await ghPutLive(env, data, cur.sha, msg);
+      return jsonResp({ ok: true, live: data });
+    } catch (e) {
+      if (e.status === 409 && attempt === 0) continue;   // choque de versiones: releer y reintentar
+      return errJson('No se pudo guardar en GitHub: ' + e.message, 502);
+    }
+  }
+  return errJson('No se pudo guardar (conflicto repetido). Probá de nuevo.', 502);
 }
