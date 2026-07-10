@@ -3588,8 +3588,8 @@ function renderTorneos(filter) {
   var html = '';
 
   // Cambios hechos desde el teléfono sin adoptar (solo modo autor): avisar arriba de la
-  // lista, así la PC no publica sin enterarse de lo que se editó desde el celular.
-  if (!_ondemand && typeof _liveTzHasPending === 'function' && _liveTzHasPending()) {
+  // lista, con botón "Adoptar", así la PC no publica sin enterarse de lo que se editó desde el celular.
+  if (!_ondemand && typeof _liveTzPendingItems === 'function' && _liveTzPendingItems().total) {
     try { html += _liveTzAuthorBanner(); } catch (e) {}
   }
 
@@ -6216,12 +6216,125 @@ function _liveTzMerge() {
   });
 }
 
-// Banner (solo modo autor) cuando hay cambios del teléfono sin adoptar. La web publicada
-// los fusiona sola; en la PC hay que pasarlos a mano al editor (✏️) para que queden en
-// embedded-data.js, y después vaciarlos desde editar.html (🧹) para que no la pisen.
-function _liveTzAuthorBanner() {
+// Torneos del teléfono YA adoptados en ESTA PC (para no re-adoptar ni seguir avisando).
+// Se guarda por navegador (no viaja): es un estado local de reconciliación.
+function _liveAdopted() { try { return JSON.parse(localStorage.getItem('live_adopted') || '[]'); } catch (e) { return []; } }
+function _liveMarkAdopted(ids) {
+  var cur = _liveAdopted();
+  ids.forEach(function(id) { if (cur.indexOf(String(id)) < 0) cur.push(String(id)); });
+  try { localStorage.setItem('live_adopted', JSON.stringify(cur)); } catch (e) {}
+}
+
+// Cambios del teléfono que TODAVÍA no se adoptaron en esta PC (para el banner).
+function _liveTzPendingItems() {
   var d = _liveTz || {};
-  var lines = [];
+  var adopted = _liveAdopted();
+  var ovs = (d.overrides && typeof d.overrides === 'object') ? d.overrides : {};
+  var ovIds = Object.keys(ovs).filter(function(id) { return adopted.indexOf(String(id)) < 0; });
+  var nuevos = (Array.isArray(d.nuevos) ? d.nuevos : []).filter(function(n) { return n && n.name && adopted.indexOf(String(n.id)) < 0; });
+  return { ovs: ovs, ovIds: ovIds, nuevos: nuevos, total: ovIds.length + nuevos.length };
+}
+
+// "Adoptar": pasa los cambios del teléfono a los datos propios de la PC (tz_config / pgn_tournaments),
+// para poder trabajarlos como cualquier torneo (subir PGN, fotos, etc.). Los NUEVOS se convierten en
+// torneos tz_ de verdad; los OVERRIDES se aplican sobre el torneo existente (hardcoded, tz_ o stored).
+// Después el autor tiene que "Guardar datos en mi carpeta". La web dedupe por nombre+fecha, así que
+// aunque no se vacíen los pendientes del teléfono, el torneo NO sale duplicado en la web.
+function _liveTzAdopt() {
+  var it = _liveTzPendingItems();
+  if (!it.total) return;
+  if (!confirm('Voy a pasar ' + it.total + ' cambio(s) del teléfono a los datos de esta PC.\n\n' +
+               'Después acordate de "Guardar datos en mi carpeta" para conservarlos. ¿Sigo?')) return;
+  var cfg = getTzConfig();
+  var adoptedIds = [], created = 0, patched = 0, _n = Date.now();
+
+  // NUEVOS → torneos tz_ (misma forma que crea el editor al guardar un torneo nuevo).
+  it.nuevos.forEach(function(nv, i) {
+    var nkey = 'tz_' + (_n + i);
+    var status = computeTourStatus(tourRange({ startDate:nv.startDate, endDate:nv.endDate, dates:nv.tournamentDates }), 'upcoming');
+    cfg[nkey] = {
+      name: nv.name, type: nv.type || '', location: nv.location || '',
+      dates: nv.tournamentDates || formatDateRangeText(nv.startDate, nv.endDate) || '',
+      startDate: nv.startDate || null, endDate: nv.endDate || null,
+      rounds: parseInt(nv.rounds, 10) || null, status: status,
+      crurl: nv.crUrl || null, weburl: nv.weburl || null, info64url: nv.info64url || null,
+      broadcastId: nv.broadcastId || null, broadcastUrl: nv.broadcastUrl || null,
+      timeControl: nv.timeControl || null, chesscomUrl: null,
+      flyerUrl: nv.flyerUrl || null, flyerPos: nv.flyerPos || null,
+      roundTimes: nv.roundTimes || null, format: nv.format || null,
+      categories: null, isTeam: null, pgnCount: 0, pgnGames: null
+    };
+    adoptedIds.push(nv.id); created++;
+  });
+
+  // OVERRIDES → parche sobre el torneo existente. El id del teléfono es el del manifest; en modo
+  // autor ese torneo puede ser hardcoded (overlay hc_<id>), tz_ (directo) o stored (pgn_tournaments).
+  // OJO con los nombres de campo: tz_config/overlay usan `crurl` (minúscula), no `crUrl`.
+  var applyOverlay = function(target, o) {
+    if (o.name) target.name = o.name;
+    if ('type' in o) target.type = o.type || '';
+    if ('location' in o) target.location = o.location || '';
+    if ('startDate' in o) target.startDate = o.startDate || null;
+    if ('endDate' in o) target.endDate = o.endDate || null;
+    if ('tournamentDates' in o || 'startDate' in o || 'endDate' in o)
+      target.dates = o.tournamentDates || formatDateRangeText(('startDate' in o ? o.startDate : target.startDate), ('endDate' in o ? o.endDate : target.endDate)) || target.dates || '';
+    if ('rounds' in o) target.rounds = parseInt(o.rounds, 10) || null;
+    if ('crUrl' in o) target.crurl = o.crUrl || null;
+    if ('weburl' in o) target.weburl = o.weburl || null;
+    if ('info64url' in o) target.info64url = o.info64url || null;
+    if ('broadcastId' in o) target.broadcastId = o.broadcastId || null;
+    if ('broadcastUrl' in o) target.broadcastUrl = o.broadcastUrl || null;
+    if ('timeControl' in o) target.timeControl = o.timeControl || null;
+    if ('format' in o) target.format = o.format || null;
+    if ('roundTimes' in o) target.roundTimes = o.roundTimes || null;
+  };
+  var storedTours = null;   // se carga perezoso solo si hace falta
+  it.ovIds.forEach(function(id) {
+    var ov = it.ovs[id]; if (!ov || typeof ov !== 'object') return;
+    var isHc = TORNEOS.some(function(t) { return String(t.id) === String(id); });
+    if (isHc) {
+      var hk = 'hc_' + id; cfg[hk] = cfg[hk] || {}; applyOverlay(cfg[hk], ov); patched++; adoptedIds.push(id);
+    } else if (cfg[id]) {
+      applyOverlay(cfg[id], ov); patched++; adoptedIds.push(id);
+    } else {
+      // Torneo "stored" (los de +Agregar): viven en pgn_tournaments, con crUrl en camelCase.
+      if (storedTours === null) { try { storedTours = JSON.parse(localStorage.getItem('pgn_tournaments') || '[]'); } catch (e) { storedTours = []; } }
+      var hit = null;
+      for (var k = 0; k < storedTours.length; k++) if (String(storedTours[k].id) === String(id)) { hit = storedTours[k]; break; }
+      if (hit) {
+        if (ov.name) hit.name = ov.name;
+        if ('type' in ov) hit.type = ov.type || '';
+        if ('location' in ov) hit.location = ov.location || '';
+        if ('startDate' in ov) hit.startDate = ov.startDate || null;
+        if ('endDate' in ov) hit.endDate = ov.endDate || null;
+        if ('tournamentDates' in ov || 'startDate' in ov || 'endDate' in ov)
+          hit.tournamentDates = ov.tournamentDates || formatDateRangeText(('startDate' in ov ? ov.startDate : hit.startDate), ('endDate' in ov ? ov.endDate : hit.endDate)) || hit.tournamentDates || '';
+        if ('rounds' in ov) hit.rounds = parseInt(ov.rounds, 10) || null;
+        if ('crUrl' in ov) hit.crUrl = ov.crUrl || '';
+        if ('weburl' in ov) hit.weburl = ov.weburl || '';
+        if ('info64url' in ov) hit.info64url = ov.info64url || '';
+        if ('broadcastId' in ov) hit.broadcastId = ov.broadcastId || null;
+        if ('broadcastUrl' in ov) hit.broadcastUrl = ov.broadcastUrl || null;
+        patched++; adoptedIds.push(id);
+      }
+    }
+  });
+
+  saveTzConfig(cfg);
+  if (storedTours !== null) lsSaveTours(storedTours);
+  _liveMarkAdopted(adoptedIds);
+  try { renderTorneos(_lastTorneoFilter); } catch (e) {}
+  alert('✓ Adopté ' + (created ? created + ' torneo(s) nuevo(s)' : '') + (created && patched ? ' y ' : '') + (patched ? patched + ' cambio(s)' : '') + '.\n\n' +
+        'Ya quedaron en tus datos (búscalos en la lista de Torneos).\n\n' +
+        'Ahora:\n1) Pestaña Exportar → "Guardar datos en mi carpeta" para conservarlos.\n' +
+        '2) En el teléfono (editar.html) tocá 🧹 para vaciar los pendientes.');
+}
+
+// Banner (solo modo autor) cuando hay cambios del teléfono sin adoptar. Botón "Adoptar" que los
+// pasa a los datos de la PC de un toque (_liveTzAdopt). La web publicada ya los fusiona sola.
+function _liveTzAuthorBanner() {
+  var it = _liveTzPendingItems();
+  if (!it.total) return '';
   var stored = [];
   try { stored = JSON.parse(localStorage.getItem('pgn_tournaments') || '[]'); } catch (e) {}
   var tzCfg = getTzConfig();
@@ -6231,21 +6344,20 @@ function _liveTzAuthorBanner() {
     for (var j = 0; j < TORNEOS.length; j++) if (String(TORNEOS[j].id) === String(id)) return TORNEOS[j].name;
     return null;
   };
-  var ovs = (d.overrides && typeof d.overrides === 'object') ? d.overrides : {};
-  Object.keys(ovs).forEach(function(id) {
-    var flds = Object.keys(ovs[id] || {}).join(', ');
+  var lines = [];
+  it.ovIds.forEach(function(id) {
+    var flds = Object.keys(it.ovs[id] || {}).join(', ');
     lines.push('✏️ <b>' + escHtml(nameOf(id) || ('torneo ' + id)) + '</b> — cambió: ' + escHtml(flds));
   });
-  (Array.isArray(d.nuevos) ? d.nuevos : []).forEach(function(nv) {
-    if (nv && nv.name) lines.push('➕ Torneo nuevo: <b>' + escHtml(nv.name) + '</b>');
-  });
-  if (!lines.length) return '';
-  return '<div style="margin:0 0 14px;padding:12px 14px;border-radius:12px;border:1px solid var(--gold-dim);background:var(--gold-bg);font-size:13px;line-height:1.55;color:var(--text2)">'
-    + '<b style="color:var(--gold)">📲 Hay cambios hechos desde el teléfono</b> (data/live-torneos.json). '
-    + 'La web publicada ya los está mostrando; acá NO se aplican solos.<br>'
+  it.nuevos.forEach(function(nv) { lines.push('➕ Torneo nuevo: <b>' + escHtml(nv.name) + '</b>'); });
+  return '<div style="margin:0 0 14px;padding:13px 15px;border-radius:12px;border:1px solid var(--gold-dim);background:var(--gold-bg);font-size:13px;line-height:1.55;color:var(--text2)">'
+    + '<b style="color:var(--gold)">📲 Hay cambios hechos desde el teléfono.</b> '
+    + 'La web publicada ya los muestra. Para tenerlos también en esta PC (y poder subirles partidas/fotos), tocá <b>Adoptar</b>.<br>'
     + lines.join('<br>')
-    + '<br><span style="color:var(--text3)">Para que queden en tus datos: rehacé el cambio en el editor (✏️) y guardá. '
-    + 'Después vacialos desde editar.html (🧹) para que no pisen tus datos al publicar.</span></div>';
+    + '<div style="margin-top:11px;display:flex;gap:9px;flex-wrap:wrap;align-items:center">'
+    + '<button onclick="_liveTzAdopt()" style="padding:8px 16px;border-radius:9px;border:1px solid var(--gold);background:var(--gold);color:#1a1508;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">⬇️ Adoptar en esta PC</button>'
+    + '<span style="color:var(--text3);font-size:12px">Después: "Guardar datos en mi carpeta" y vaciar pendientes (🧹) desde el teléfono.</span>'
+    + '</div></div>';
 }
 
 // Arranque: bajar data/live-torneos.json (no-store: siempre fresco) y fusionar/avisar.
