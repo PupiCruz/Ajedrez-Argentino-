@@ -57,6 +57,8 @@
   .badge { display: inline-block; font-size: 10.5px; font-weight: 700; border-radius: 6px; padding: 1px 7px; margin-left: 6px; vertical-align: 1px; }
   .badge.new { background: var(--gold-bg); color: var(--gold); border: 1px solid var(--gold-dim); }
   .badge.pend { background: rgba(60,160,100,.12); color: var(--green); border: 1px solid rgba(60,160,100,.35); }
+  .badge.live { background: rgba(200,70,70,.14); color: var(--red); border: 1px solid rgba(200,70,70,.4); }
+  .badge.up { background: rgba(90,120,200,.14); color: #8aa0e0; border: 1px solid rgba(90,120,200,.4); }
   .hint { font-size: 12px; color: var(--text3); margin-top: 4px; }
   .spin {
     width: 16px; height: 16px; border: 2px solid var(--bd); border-top-color: var(--gold);
@@ -69,6 +71,13 @@
   .okbig h2 { font-size: 18px; margin: 12px 0 6px; }
   .okbig p { color: var(--text2); font-size: 14px; }
   #screen-list .search { margin-bottom: 4px; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin: 6px 0 12px; }
+  .chip {
+    width: auto; margin: 0; padding: 8px 14px; font-size: 13px; font-weight: 600; border-radius: 999px;
+    background: var(--card2); border: 1px solid var(--bd); color: var(--text2);
+  }
+  .chip.active { background: var(--gold-bg); border-color: var(--gold-dim); color: var(--gold); }
+  .list-count { font-size: 12px; color: var(--text3); margin: 2px 0 2px; }
   .foot { margin-top: 26px; border-top: 1px solid var(--bd); padding-top: 14px; }
   .foot p { font-size: 12px; color: var(--text3); }
 </style>
@@ -93,7 +102,12 @@
 <!-- ── Pantalla 2: lista de torneos ────────────────────────────── -->
 <div id="screen-list" style="display:none">
   <button class="primary" onclick="openForm(null)">➕ Crear torneo nuevo</button>
-  <label for="search" style="margin-top:18px">Torneos</label>
+  <label style="margin-top:18px">Torneos</label>
+  <div class="chips" id="chips">
+    <button class="chip active" data-f="activos" onclick="setFilter('activos')">En curso y próximos</button>
+    <button class="chip" data-f="done" onclick="setFilter('done')">Finalizados</button>
+    <button class="chip" data-f="todos" onclick="setFilter('todos')">Todos</button>
+  </div>
   <input type="search" id="search" class="search" placeholder="Buscar torneo…" oninput="renderList()">
   <div id="list"></div>
   <div class="foot">
@@ -165,6 +179,7 @@ var PIN = '';            // PIN validado (queda en memoria + storage si se pidi�
 var LIVE = { nuevos: [], overrides: {} };   // cambios pendientes (frescos, vía Worker)
 var EDIT_ID = null;      // id del torneo en edición (null = crear nuevo)
 var INITIAL = {};        // valores iniciales del formulario, para mandar SOLO lo que cambió
+var FILTER = 'activos';  // 'activos' (en curso + próximos) | 'done' | 'todos'
 
 function $(id) { return document.getElementById(id); }
 function esc(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
@@ -261,13 +276,61 @@ function allTours() {
   return out;
 }
 
+/* Estado de un torneo por fechas: 'live' (en curso) | 'upcoming' (próximo) |
+   'done' (finalizado) | 'unknown' (sin fecha clara → lo tratamos como activo para
+   NO esconder por error algo editable). Usa las fechas ISO; si no hay, cae al
+   dateKey del manifest (AAAAMMDD, la fecha principal del torneo). */
+function dkey(iso) { var m = (iso || '').match(/^(\d{4})-(\d{2})-(\d{2})$/); return m ? (+m[1]) * 10000 + (+m[2]) * 100 + (+m[3]) : 0; }
+function todayKey() { var d = new Date(); return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate(); }
+function tourStatus(t) {
+  var sk = dkey(t.startDate), ek = dkey(t.endDate);
+  if (!sk && !ek && t.dateKey) { sk = ek = t.dateKey; }
+  if (!sk && !ek) return 'unknown';
+  if (!sk) sk = ek; if (!ek) ek = sk;
+  var tk = todayKey();
+  if (tk < sk) return 'upcoming';
+  if (tk > ek) return 'done';
+  return 'live';
+}
+function statusRank(s) { return s === 'live' ? 0 : s === 'upcoming' ? 1 : s === 'unknown' ? 2 : 3; }
+function tourSortKey(t) { var sk = dkey(t.startDate) || t.dateKey || 0, ek = dkey(t.endDate) || t.dateKey || sk; return { start: sk, end: ek }; }
+
+function setFilter(f) {
+  FILTER = f;
+  var chips = document.querySelectorAll('#chips .chip');
+  for (var i = 0; i < chips.length; i++) chips[i].classList.toggle('active', chips[i].getAttribute('data-f') === f);
+  renderList();
+}
+
 function renderList() {
   var q = ($('search').value || '').toLowerCase();
   var tours = allTours().filter(function(t) {
-    return !q || String(t.name || '').toLowerCase().indexOf(q) >= 0;
+    if (q && String(t.name || '').toLowerCase().indexOf(q) < 0) return false;
+    t._st = tourStatus(t);
+    if (FILTER === 'done') return t._st === 'done';
+    if (FILTER === 'activos') return t._st !== 'done';   // en curso + próximos + sin fecha
+    return true;                                          // 'todos'
   });
+  // Orden: en curso → próximos → sin fecha → finalizados. Dentro de cada grupo, los
+  // próximos por fecha de inicio (el más cercano arriba); los finalizados, el más
+  // reciente arriba. Los creados desde el teléfono, primero de todo (para verlos ya).
+  tours.sort(function(a, b) {
+    if (!!a._isNew !== !!b._isNew) return a._isNew ? -1 : 1;
+    var ra = statusRank(a._st), rb = statusRank(b._st);
+    if (ra !== rb) return ra - rb;
+    var ka = tourSortKey(a), kb = tourSortKey(b);
+    if (a._st === 'done') return kb.end - ka.end;         // finalizados: recientes primero
+    return ka.start - kb.start;                           // próximos/en curso: cercanos primero
+  });
+  var STBADGE = {
+    live:     '<span class="badge live">🔴 En curso</span>',
+    upcoming: '<span class="badge up">Próximo</span>',
+    done:     '',
+    unknown:  '',
+  };
   var h = '';
-  tours.slice(0, 60).forEach(function(t) {
+  if (tours.length) h += '<div class="list-count">' + tours.length + (FILTER === 'todos' ? ' torneos' : (FILTER === 'done' ? ' finalizados' : ' en curso / próximos')) + '</div>';
+  tours.slice(0, 80).forEach(function(t) {
     var dates = t.tournamentDates || fmtDates(t.startDate, t.endDate) || '';
     var links = [];
     if (t.broadcastUrl || t.broadcastId) links.push('📺');
@@ -275,13 +338,14 @@ function renderList() {
     if (t.info64url) links.push('📋');
     h += '<button class="tour" onclick="openForm(' + JSON.stringify(String(t.id)).replace(/"/g, '&quot;') + ')">'
       + '<div class="tname">' + esc(t.name)
+      + (STBADGE[t._st] || '')
       + (t._isNew ? '<span class="badge new">📲 creado acá</span>' : '')
       + (t._pending ? '<span class="badge pend">cambio pendiente</span>' : '')
       + '</div>'
       + '<div class="tmeta">' + esc(dates) + (t.location ? ' · ' + esc(t.location) : '') + (links.length ? ' · ' + links.join(' ') : '') + '</div>'
       + '</button>';
   });
-  if (!tours.length) h = '<p style="color:var(--text3);margin-top:14px">No se encontraron torneos.</p>';
+  if (!tours.length) h = '<p style="color:var(--text3);margin-top:14px">No hay torneos ' + (FILTER === 'done' ? 'finalizados' : 'en curso ni próximos') + (q ? ' para “' + esc($('search').value.trim()) + '”' : '') + '.</p>';
   $('list').innerHTML = h;
 
   var pend = Object.keys((LIVE && LIVE.overrides) || {}).length + ((LIVE && LIVE.nuevos) || []).length;
