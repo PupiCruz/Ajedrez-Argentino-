@@ -248,17 +248,16 @@
     header {
       display: flex; align-items: center; justify-content: flex-start;
       padding: 10px 18px; background: var(--bg);
-      border-bottom: 1px solid var(--border); flex-shrink: 0; gap: 18px;
-      /* Auto-ocultar al scrollear (estilo Lichess): colapsa el alto para que el contenido entre
-         completo. El JS mide su alto real en --hdr-real para que la transición sea suave. */
-      overflow: hidden; max-height: var(--hdr-real, 120px);
-      transition: max-height .3s ease, padding-top .3s ease, padding-bottom .3s ease, opacity .22s ease;
+      border-bottom: 1px solid var(--border); gap: 18px;
+      /* Auto-ocultar estilo Lichess: el header FLOTA fijo arriba y se esconde deslizándose con transform
+         (capa GPU, NO toca el layout → cero reflow, cero salto). El contenido reserva su alto real con
+         padding-top:var(--hdr-real), que nunca cambia. El JS mide ese alto en --hdr-real. */
+      position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+      transform: translateY(0); transition: transform .2s ease, border-color .2s ease;
+      will-change: transform;
     }
-    body.hdr-collapsed header {
-      max-height: 0; padding-top: 0; padding-bottom: 0; opacity: 0;
-      pointer-events: none; border-bottom-color: transparent;
-    }
-    /* Con el header oculto, los overlays "página" (torneo/perfil/partida/ejercicios) suben al tope. */
+    body.hdr-collapsed header { transform: translateY(-100%); border-bottom-color: transparent; }
+    /* Con el header oculto, los overlays "página" (torneo/perfil) suben al tope. */
     body.hdr-collapsed { --hdr-h: 0px; }
     .h-brand { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
     .h-brand .piece { font-size: 24px; line-height: 1; }
@@ -284,7 +283,9 @@
     .theme-toggle:hover { border-color: var(--gold-dim); background: var(--gold-bg); }
 
     .main {
-      flex: 1; overflow-y: scroll; padding-bottom: calc(24px + env(safe-area-inset-bottom));
+      flex: 1; overflow-y: scroll;
+      padding-top: var(--hdr-real);   /* deja lugar al header flotante; es constante, no reacomoda al ocultarlo */
+      padding-bottom: calc(24px + env(safe-area-inset-bottom));
       -webkit-overflow-scrolling: touch; scrollbar-width: thin; scrollbar-color: var(--text3) transparent;
     }
     .main::-webkit-scrollbar { width: 11px; }
@@ -338,7 +339,7 @@
       flex-shrink: 0; padding: 7px 18px; border-radius: var(--r-pill);
       border: 2px solid var(--bd30); background: var(--gl40);
       color: var(--fg0); font-size: 13px; font-weight: 500;
-      cursor: pointer; transition: all .15s; font-family: inherit;
+      cursor: pointer; transition: background-color .15s, border-color .15s, color .15s, box-shadow .15s, transform .15s; font-family: inherit;
       text-shadow: var(--txt-out);
     }
     .chip:hover { border-color: var(--bd50); color: var(--white-ink); background: var(--bd12); }
@@ -400,7 +401,7 @@
       border: 2px solid var(--bd30);
       background: var(--gl40) url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23f0f0f0' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3e%3cpath d='M6 9l6 6 6-6'/%3e%3c/svg%3e") no-repeat right 10px center;
       background-size: 12px; color: var(--fg0); font-size: 13px; font-weight: 500;
-      cursor: pointer; transition: all .15s; font-family: inherit;
+      cursor: pointer; transition: background-color .15s, border-color .15s, color .15s, box-shadow .15s, transform .15s; font-family: inherit;
       text-shadow: var(--txt-out);
     }
     .chip-select:hover { border-color: var(--bd50); color: var(--white-ink); }
@@ -528,7 +529,7 @@
     .p-rank.hi { color: var(--gold); }
     .pag-btn { min-width:34px; height:34px; padding:0 10px; background:var(--gl40); border:1px solid var(--bd20);
                color:var(--fg-e0); font-size:13px; font-weight:600; cursor:pointer; border-radius:var(--r-sm);
-               font-family:inherit; transition:all .15s;
+               font-family:inherit; transition:background-color .15s, border-color .15s, color .15s, box-shadow .15s, transform .15s;
                text-shadow:var(--txt-out); }
     .pag-btn:hover { border-color:var(--bd45); color:var(--white-ink); background:var(--bd10); }
     .pag-btn.active { background:var(--gold-bg); border-color:var(--gold); color:var(--gold); }
@@ -590,13 +591,13 @@
     /* Detalle de torneo y PERFIL de jugador como PÁGINA (no bottom-sheet): el header (logo→Inicio)
        y la nav quedan visibles. Solo cuando body.tour-page / body.player-page; el visor de partidas
        (z-300) sigue cubriendo todo. El top del overlay lo fija el JS = alto del header. */
-    body.tour-page header, body.player-page header { position: relative; z-index: 210; }
+    body.tour-page header, body.player-page header { z-index: 210; }
     body.tour-page nav, body.player-page nav { z-index: 210; }
     #tour-overlay.open, body.player-page #overlay.open { background: var(--bg) var(--bg-img) center center / cover fixed no-repeat; align-items: stretch; }
     #tour-overlay.open .modal, body.player-page #overlay.open .modal {
       background: transparent; border-top: none; border-radius: 0;
       max-height: none; height: 100%;
-      padding: 16px 16px calc(var(--nav-h) + 28px);
+      padding: calc(16px + var(--hdr-real)) 16px calc(var(--nav-h) + 28px);
     }
     #tour-overlay.open .modal-handle, body.player-page #overlay.open .modal-handle { display: none; }
     /* VISOR de partidas como PÁGINA (igual criterio que torneo/perfil): header (logo→Inicio) y nav
@@ -618,12 +619,11 @@
     body.game-page .chess-overlay.open { top: 0; }
     body.game-page .chess-overlay.open .chess-modal { padding-top: calc(12px + var(--hdr-real)); }
     body.puz-page .puz-overlay.open, body.puz-page #prac-overlay.open { top: 0; padding-top: var(--hdr-real); }
-    /* Torneo/perfil NO usan el header flotante: tienen tablas con encabezados sticky (top:0) que, a
-       pantalla completa, quedarían tapados por la barra. Siguen con el borde superior en --hdr-h (así el
-       sticky pega bajo la barra) y el reflow se ve suave por ser listas largas. */
-    body.tour-page #tour-overlay.open, body.player-page #overlay.open {
-      top: var(--hdr-h); transition: top .3s ease;
-    }
+    /* Torneo/perfil también flotan: overlay a pantalla completa (top:0) y el contenido arranca bajo el
+       header por padding-top:var(--hdr-real). Al ocultarse la barra el overlay NO cambia de tamaño → sin
+       reflow ni salto. (Los encabezados sticky de las tablas viven dentro de sus propias cajitas
+       overflow:auto, así que la barra flotante no los tapa.) */
+    body.tour-page #tour-overlay.open, body.player-page #overlay.open { top: 0; }
     /* En pantalla ancha, la partida usa todo el ancho: contenido centrado hasta 1280px y tablero más
        grande aprovechando la altura libre (ya no hay barra inferior). */
     @media (min-width: 1100px) {
@@ -981,7 +981,7 @@
     .soc-row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:12px; }
     .soc-lbl { font-size:11px; font-weight:700; color:var(--text2); text-transform:uppercase; letter-spacing:.5px; min-width:64px; }
     .soc-seg { display:flex; gap:5px; flex-wrap:wrap; }
-    .soc-opt { padding:7px 13px; border-radius:9px; border:1px solid var(--bd22); background:var(--gl25); color:var(--text2); font-size:12.5px; font-weight:700; cursor:pointer; font-family:inherit; transition:all .15s; }
+    .soc-opt { padding:7px 13px; border-radius:9px; border:1px solid var(--bd22); background:var(--gl25); color:var(--text2); font-size:12.5px; font-weight:700; cursor:pointer; font-family:inherit; transition:background-color .15s, border-color .15s, color .15s, box-shadow .15s, transform .15s; }
     .soc-opt:hover { color:var(--text); background:var(--bd10); }
     .soc-opt.on { color:var(--gold); background:var(--gold-bg); border-color:var(--gold-dim); }
     .soc-imgbtns { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:18px; }
@@ -1135,7 +1135,7 @@
       flex-shrink: 0; background: var(--bg3); border: 1px solid var(--border);
       color: var(--text2); font-size: 10px; padding: 6px 8px; border-radius: 8px;
       cursor: pointer; font-family: inherit; white-space: nowrap; text-align: center;
-      line-height: 1.5; min-width: 80px; transition: all .15s;
+      line-height: 1.5; min-width: 80px; transition: background-color .15s, border-color .15s, color .15s, box-shadow .15s, transform .15s;
     }
     .chess-gbtn .gnum { font-size: 9px; color: var(--text3); }
     .chess-gbtn .gres { font-weight: 700; }
@@ -1257,7 +1257,7 @@
     /* Partidas de la apertura (opt-in) debajo del libro. */
     .cv-book-games { margin-top: 12px; }
     .cv-bg-btn { width: 100%; padding: 10px; border-radius: 9px; border: 2px solid var(--bd22);
-      background: var(--gl40); color: var(--fg0); font-family: inherit; font-size: 14px; font-weight: 600; cursor: pointer; transition: all .15s;
+      background: var(--gl40); color: var(--fg0); font-family: inherit; font-size: 14px; font-weight: 600; cursor: pointer; transition: background-color .15s, border-color .15s, color .15s, box-shadow .15s, transform .15s;
       text-shadow:var(--txt-out); }
     .cv-bg-btn:hover { border-color: var(--gold-dim); color: var(--gold); background: var(--gold-bg); }
     .cv-bg-load, .cv-bg-empty { font-size: 13px; color: var(--fg-c0); padding: 8px 2px; text-align: center; text-shadow:var(--txt-out); }
@@ -1279,7 +1279,7 @@
     .cv-mnum { color: var(--fg-c0); text-align: right; font-size: 14px; text-shadow:var(--txt-out); }
     .cv-mw, .cv-mb { padding: 2px 2px; white-space: nowrap; min-width: 0; }
     .cv-mvar { font-size: 13px; color: var(--fg-c8); padding: 2px 0 4px 30px; line-height: 1.5; text-shadow:var(--txt-out); }
-    .cmv { cursor: pointer; padding: 1px 4px; border-radius: 3px; transition: all .1s; }
+    .cmv { cursor: pointer; padding: 1px 4px; border-radius: 3px; transition: background-color .1s, border-color .1s, color .1s, box-shadow .1s, transform .1s; }
     .cmv:hover { background: var(--border); color: var(--text); }
     .cmv.on { background: var(--gold); color: #111; font-weight: 700; border-radius: 4px; padding: 1px 5px; box-shadow: 0 0 0 2px rgba(201,162,39,.35); text-shadow: none; }
     /* En claro el --gold es marrón oscuro; la jugada en curso se aclara a un dorado más vivo. */
@@ -1311,7 +1311,7 @@
     .cv-nag-toggle { background: var(--gl40); border: 1px solid var(--bd20); color: var(--fg-e0); border-radius: var(--r-sm); cursor: pointer; font-size: 12px; font-weight: 700; font-family: inherit; padding: 11px 8px; min-width: 0; white-space: nowrap; }
     .cv-nag-toggle.on { border-color: var(--gold-dim); color: var(--gold); background: var(--gold-bg); }
     /* análisis completo de partida */
-    .fa-btn { background:var(--gl40); border:1px solid var(--bd22); border-radius:var(--r-sm); color:var(--fg0); font-size:18px; padding:6px 10px; cursor:pointer; transition:all .15s; line-height:1; }
+    .fa-btn { background:var(--gl40); border:1px solid var(--bd22); border-radius:var(--r-sm); color:var(--fg0); font-size:18px; padding:6px 10px; cursor:pointer; transition:background-color .15s, border-color .15s, color .15s, box-shadow .15s, transform .15s; line-height:1; }
     .fa-btn:hover { border-color:var(--gold-dim); color:var(--gold); background:var(--gold-bg); }
     .fa-btn.active { background:var(--gold-bg); border-color:var(--gold-dim); color:var(--gold); }
     .eval-graph-wrap { margin-top:14px; background:var(--panel0); border:1px solid var(--bd22); border-radius:10px; padding:10px 12px 12px; }
@@ -1321,7 +1321,7 @@
     .fa-opening:empty { display:none; }
     .fa-cancel-btn { font-size:11px; background:none; border:1px solid var(--border); border-radius:5px; color:var(--text3); cursor:pointer; padding:2px 7px; font-family:inherit; }
     /* Botón "Analizar" al lado del título: invita al visitante a construir el gráfico. */
-    .fa-build-btn { font-size:11px; font-weight:700; background:var(--gold-bg); border:1px solid var(--gold-dim); border-radius:5px; color:var(--gold); cursor:pointer; padding:3px 10px; font-family:inherit; white-space:nowrap; transition:all .15s; }
+    .fa-build-btn { font-size:11px; font-weight:700; background:var(--gold-bg); border:1px solid var(--gold-dim); border-radius:5px; color:var(--gold); cursor:pointer; padding:3px 10px; font-family:inherit; white-space:nowrap; transition:background-color .15s, border-color .15s, color .15s, box-shadow .15s, transform .15s; }
     .fa-build-btn:hover { background:var(--gold); color:#000; }
     /* Placeholder cuando todavía no se analizó: el recuadro no queda vacío. */
     .fa-empty { background:var(--fa-bg); border-radius:6px; padding:18px 14px; text-align:center; font-size:11px; color:var(--text3); line-height:1.55; cursor:pointer; }
@@ -1341,7 +1341,7 @@
     .fa-stat-acpl b { color:var(--text); }
     /* copy bar */
     .cv-copy-bar { display: flex; gap: 6px; margin-top: 10px; }
-    .cv-copy-btn { flex: 1; background: var(--panel0); border: 1px solid var(--bd22); color: var(--text2); font-size: 11px; padding: 6px 4px; border-radius: 7px; cursor: pointer; font-family: inherit; transition: all .15s; text-align: center; }
+    .cv-copy-btn { flex: 1; background: var(--panel0); border: 1px solid var(--bd22); color: var(--text2); font-size: 11px; padding: 6px 4px; border-radius: 7px; cursor: pointer; font-family: inherit; transition: background-color .15s, border-color .15s, color .15s, box-shadow .15s, transform .15s; text-align: center; }
     .cv-copy-btn:hover { background: var(--border); color: var(--text); }
     .cv-copy-btn.copied { color: #7bc868; border-color: #7bc868; }
 
@@ -1350,7 +1350,7 @@
     .cvar { display: inline; color: var(--text3); font-size: 11px; }
     .cvar-open  { color: var(--text3); }
     .cvar-close { color: var(--text3); }
-    .cmv-var { cursor: pointer; padding: 1px 3px; border-radius: 3px; transition: all .1s; color: var(--blue); }
+    .cmv-var { cursor: pointer; padding: 1px 3px; border-radius: 3px; transition: background-color .1s, border-color .1s, color .1s, box-shadow .1s, transform .1s; color: var(--blue); }
     .cmv-var:hover { background: var(--border); color: #a0b0ff; }
     .cmv-var.on { background: var(--blue); color: var(--white-ink); font-weight: 700; }
     /* board interaction */
@@ -10596,7 +10596,9 @@ function renderLocalGames(data, player, resultFilter, colorFilter, openingFilter
   data.tournaments.forEach(function(tour, ti) {
     _pgTourCache[player.id + '_' + ti] = { games: tour.games, name: tour.name, loc: tour.location || '' };
   });
-  _capCache(_pgTourCache, 300);
+  // NO topar este caché: un jugador puede tener >300 torneos y evictar entradas hace que las partidas de
+  // sus PRIMEROS torneos (índices bajos) no abran (era el bug: "Mejores victorias" y torneos viejos no
+  // abrían). Solo guarda REFERENCIAS a arrays ya existentes, así que no pesa. (Ver comentario de arriba.)
 
   // ¿Esta partida pasa los filtros activos? Devuelve {hdrs,isWhite,pr} o null.
   function pgGameInfo(pgn) {
@@ -12997,6 +12999,7 @@ function cvSetNode(node) {
   // Si hay una reproducción en curso (jugadas que llegaron en vivo de a varias) y el usuario navega
   // a mano, cortarla. La propia reproducción marca _cvAnimStepping para no autocancelarse.
   if (_cvAnimTimer && !_cvAnimStepping) { clearTimeout(_cvAnimTimer); _cvAnimTimer = null; }
+  var _prevNode = cv.node;   // para animar el deslizamiento SOLO al avanzar de a una jugada
   cv.node = node;
   cv.sel = null;
   cv.legalDests = [];
@@ -13004,12 +13007,17 @@ function cvSetNode(node) {
     cv.chess = new Chess(node.fen);
   }
   cvRenderBoard();
+  // Deslizamiento estilo Lichess: la pieza que llega se anima desde su casilla de origen. Solo al AVANZAR
+  // una jugada (node = hijo directo del anterior); atrás, saltos y giros van instantáneos (más seguro).
+  // Y solo en pasos DELIBERADOS: si venís navegando muy rápido (ráfaga), se saltea la animación (quedaría
+  // cortada por el siguiente redibujo) y el tablero salta directo. Así el scrolleo rápido es fluido.
+  var _nowNav = Date.now(), _rapidNav = (_nowNav - _cvLastNavT) < 220; _cvLastNavT = _nowNav;
+  if (!_rapidNav && node && node.move && node.parent === _prevNode && !cv._lastFull) {
+    _cvSlidePiece(document.getElementById('cv-board'), node.move.from, node.move.to);
+  }
   cvHighlight();
-  faUpdateMarker();
-  faUpdateBar();
-  cvUpdateClocks();
-  cvUpdateNagBadge();
 
+  // Contador de jugadas (liviano, va en el acto).
   var depth = nodeDepth(node);
   var counterText;
   if (depth === 0 || !node.move) {
@@ -13020,15 +13028,31 @@ function cvSetNode(node) {
     counterText = isBlack ? moveNum + '…' + node.move.san : moveNum + '.' + node.move.san;
   }
   var _cvCounterEl = document.getElementById('cv-counter'); if (_cvCounterEl) _cvCounterEl.textContent = counterText;
-  if (depth > 0) { cvClearUserArrows(); cvPlayMoveSound(node.move ? node.move.san : ''); }
+  if (depth > 0) cvClearUserArrows();
   sfClearArrows();
+
+  // El trabajo PESADO (barra/marcador de eval, relojes, badge NAG, sonido, libro y motor) se DIFIERE ~140ms:
+  // al navegar rápido con el teclado, hacerlo en cada tecla trababa el hilo principal y el navegador perdía
+  // pulsaciones (por eso "de a una anda, rápido no"). Ahora cada tecla solo dibuja el tablero (instantáneo)
+  // y el resto corre recién cuando frenás — como Lichess: navegás fluido y el análisis aparece al parar.
+  _cvScheduleSettle();
+}
+// Momento de la última navegación (para saltear la animación en ráfaga) y trabajo pesado diferido.
+var _cvLastNavT = 0, _cvSettleT = null;
+function _cvScheduleSettle() { clearTimeout(_cvSettleT); _cvSettleT = setTimeout(_cvSettleNode, 140); }
+function _cvSettleNode() {
+  _cvSettleT = null;
+  if (!cv.node) return;
+  var ov = document.getElementById('chess-overlay');
+  if (ov && !ov.classList.contains('open')) return;   // el visor se cerró: nada que actualizar
+  faUpdateMarker();
+  faUpdateBar();
+  cvUpdateClocks();
+  cvUpdateNagBadge();
+  if (cv.node.move) cvPlayMoveSound(cv.node.move.san);   // sonido de la posición FINAL (no ametralla al navegar rápido)
   obSchedule();
-  // No tocar el motor mientras corre el análisis completo: si no, la navegación
-  // le roba el turno y el análisis se frena. Al terminar, faNext reanuda el vivo.
-  // Tampoco analizar las posiciones INTERMEDIAS de la reproducción en vivo (cuando llegan varias
-  // jugadas y se pasan una por una): solo la final. _cvAnimStepping marca que estamos reproduciendo;
-  // si el nodo todavía tiene hijos, es intermedio → lo saltamos y dejamos que el motor arranque recién
-  // en la última. Así evitamos la ráfaga de stop/go que rompía el módulo.
+  // No tocar el motor mientras corre el análisis completo: si no, la navegación le roba el turno y el análisis
+  // se frena. Tampoco analizar las posiciones INTERMEDIAS de la reproducción en vivo (solo la final).
   var _animMid = _cvAnimStepping && cv.node && cv.node.children && cv.node.children.length > 0;
   if (sf.on && sf.ready && !_fa.running && !_animMid) sfAnalyze();
 }
@@ -13517,6 +13541,37 @@ function cvCellInner(r, f, rr, ff, sq, pk, FL) {
   return coords + ch;
 }
 
+// Desliza la pieza que acaba de llegar a `toSq` desde `fromSq` con transform (capa GPU, sin repintar el
+// tablero). La pieza ya está renderizada en destino; la arrancamos desplazada al origen y la llevamos a 0.
+var _CV_SLIDE_MS = 160;
+function _cvSlidePiece(boardEl, fromSq, toSq) {
+  if (!boardEl || document.hidden) return;   // pestaña oculta: sin animación (evita quedar pegada al origen)
+  var toCell = boardEl.querySelector('[data-sq="' + toSq + '"]');
+  var fromCell = boardEl.querySelector('[data-sq="' + fromSq + '"]');
+  if (!toCell || !fromCell) return;
+  var img = toCell.querySelector('img.cpc'); if (!img) return;
+  var dx = fromCell.offsetLeft - toCell.offsetLeft;
+  var dy = fromCell.offsetTop - toCell.offsetTop;
+  if (!dx && !dy) return;
+  var cleared = false;
+  function done() {
+    if (cleared) return; cleared = true;
+    img.style.transition = ''; img.style.transform = ''; img.style.zIndex = '';
+    img.removeEventListener('transitionend', done);
+  }
+  img.style.transition = 'none';
+  img.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
+  img.style.zIndex = '2';                 // por encima de las casillas vecinas mientras se desliza
+  void img.offsetWidth;                    // fuerza el layout para que el transform inicial "pegue"
+  (window.requestAnimationFrame || function(f){ setTimeout(f, 16); })(function() {
+    img.style.transition = 'transform ' + _CV_SLIDE_MS + 'ms ease-out';
+    img.style.transform = 'translate(0,0)';
+    img.addEventListener('transitionend', done);
+  });
+  // Respaldo SIEMPRE agendado (fuera del rAF): si rAF o transitionend tardan, limpia igual y no queda pegada.
+  setTimeout(done, _CV_SLIDE_MS + 140);
+}
+
 function cvRenderBoard() {
   if (!cv.chess) return;
   var bd = cv.chess.board(), FL = ['a','b','c','d','e','f','g','h'];
@@ -13526,6 +13581,7 @@ function cvRenderBoard() {
   var cells = boardEl.children;
   // Rebuild completo solo si el tablero no existe aún o cambió la orientación.
   var full = cells.length !== 64 || _cvBoardOrient !== cv.flipped;
+  cv._lastFull = full;   // lo consulta cvSetNode: en rebuild completo (giro/primer render) no anima
 
   if (full) {
     var h = '';
@@ -15982,15 +16038,13 @@ function _gamePageOff() {
 }
 
 // ── Header que se auto-oculta al scrollear (estilo Lichess) ─────────────────────────────────────
-// Mide el alto real del header y lo guarda en --hdr-h (top de los overlays "página") y --hdr-real
-// (baseline para la transición de max-height). No mide si está colapsado (daría 0).
+// Mide el alto real del header y lo guarda en --hdr-real (padding-top del contenido) y --hdr-h (offset que
+// pasa a 0 al ocultarse). Como ahora se esconde con transform, el offsetHeight es válido aun estando oculto.
 function _setHdrVar() {
-  if (document.body.classList.contains('hdr-collapsed')) return;
   var hdr = document.querySelector('header'); if (!hdr) return;
   var h = hdr.offsetHeight;
-  // Piso de seguridad: si se mide a mitad de la transición (colapsando/expandiendo) el alto es chico y,
-  // como el header usa max-height:var(--hdr-real) y los overlays padding-top:var(--hdr-real), un valor
-  // chico dejaba la barra hecha un renglón y los paneles pegados arriba. Solo aceptamos alturas reales.
+  // Piso de seguridad: un valor chico (medido a mitad de una fuente que aún carga) dejaría el contenido
+  // pegado arriba. Solo aceptamos alturas reales.
   if (h >= 30) {
     var rs = document.documentElement.style;
     rs.setProperty('--hdr-h', h + 'px');
@@ -16001,15 +16055,11 @@ function _setHdrVar() {
 function _hideHeader() { if (!document.body.classList.contains('hdr-collapsed')) { document.body.classList.add('hdr-collapsed'); return true; } return false; }
 function _showHeader() { if (document.body.classList.contains('hdr-collapsed')) { document.body.classList.remove('hdr-collapsed'); return true; } return false; }
 // Un solo listener en captura atrapa el scroll de CUALQUIER contenedor (.main o los overlays, que
-// scrollean internamente). Bajando → oculta; subiendo o en el tope → muestra. Sin rAF: el trabajo es un
-// toggle de clase condicional (barato, sin thrash) y así anda aunque el rAF esté throttleado.
-//
-// CLAVE (evita el "salto"): al ocultar el header, el contenedor crece y el navegador RECORTA su scrollTop,
-// disparando un scroll "hacia arriba" fantasma que volvía a mostrar el header → parpadeo/salto. Por eso,
-// después de un cambio real, se BLOQUEA el toggle durante la transición (_HDR_LOCK_MS) e ignoramos esos
-// eventos de reacomodo (solo actualizamos la baseline). Así queda estable en pantalla completa sin barra.
-var _HDR_LOCK_MS = 380, _hdrLocked = false, _hdrLockT = null, _hdrLastY = 0, _hdrLastEl = null, _hdrResizing = false;
-function _lockHdr() { _hdrLocked = true; clearTimeout(_hdrLockT); _hdrLockT = setTimeout(function() { _hdrLocked = false; }, _HDR_LOCK_MS); }
+// scrollean internamente). Bajando → oculta; subiendo o en el tope → muestra. Como el header ahora flota y
+// se esconde con transform, ocultarlo NO mueve el scroll: desapareció el "scroll fantasma" y con él la
+// necesidad del lock/clamp. El handler se throttlea con requestAnimationFrame y el listener es pasivo, así
+// nunca traba el scroll del dedo en el teléfono.
+var _hdrLastY = 0, _hdrLastEl = null, _hdrResizing = false, _hdrTick = false;
 // Mientras se redimensiona un tablero, cambia la altura del contenido y el navegador recorta el
 // scrollTop → dispara scrolls que hacían aparecer/desaparecer la barra. Se suprime durante el arrastre.
 var _hdrResizeT = null;
@@ -16018,11 +16068,8 @@ function _hdrSuppressResize(on) {
   if (on) { _hdrResizing = true; }
   else { _hdrLastEl = null; _hdrResizeT = setTimeout(function() { _hdrResizing = false; }, 150); }
 }
-// Al navegar (cambiar de sección/página) hay que MOSTRAR el header sí o sí y resetear el estado del
-// auto-ocultado. Si no, cuando se navega justo después de ocultarlo (con el toggle bloqueado por la
-// animación), el header quedaba trabado colapsado en la página nueva ("la barra hecha un renglón").
+// Al navegar (cambiar de sección/página) hay que MOSTRAR el header y resetear el estado del auto-ocultado.
 function _resetHdrForNav() {
-  clearTimeout(_hdrLockT); _hdrLocked = false;
   _hdrLastEl = null; _hdrLastY = 0;
   _showHeader();
 }
@@ -16043,24 +16090,28 @@ function _isPageScroller(el) {
   return false;
 }
 (function _initHeaderAutoHide() {
-  document.addEventListener('scroll', function(e) {
-    if (_hdrResizing) return;           // durante un resize de tablero, no togglear (el clamp dispara scrolls)
-    var el = e.target;
-    if (!_isPageScroller(el)) return;   // ignorar scrollers internos (jugadas, libro, motor, tablas…)
+  function _hdrEval(el) {
     var y = (el === document || el === document.documentElement || el === window)
       ? (window.scrollY || document.documentElement.scrollTop || 0)
       : (el.scrollTop || 0);
     if (el !== _hdrLastEl) { _hdrLastEl = el; _hdrLastY = y; return; }   // cambió de contenedor: rebasar sin togglear
-    if (_hdrLocked) { _hdrLastY = y; return; }                          // durante la animación: ignorar reacomodos
     var dy = y - _hdrLastY;
-    if (Math.abs(dy) < 6) { return; }                                   // ignorar micro-scroll (anti-jitter)
-    var changed;
-    if (y <= 8) changed = _showHeader();                                // en el tope: header visible
-    else if (dy > 0) changed = _hideHeader();                           // bajando (apenas se baja ya se oculta)
-    else changed = _showHeader();                                       // subiendo
+    if (Math.abs(dy) < 6) return;                                       // micro-scroll: ignorar (acumula, anti-jitter)
+    if (y <= 8) _showHeader();                                          // en el tope: header visible
+    else if (dy > 0) _hideHeader();                                     // bajando: ocultar
+    else _showHeader();                                                 // subiendo: mostrar
     _hdrLastY = y;
-    if (changed) _lockHdr();
-  }, true);
+  }
+  document.addEventListener('scroll', function(e) {
+    if (_hdrResizing) return;            // durante un resize de tablero, no togglear
+    var el = e.target;
+    if (!_isPageScroller(el)) return;    // ignorar scrollers internos (jugadas, libro, motor, tablas…)
+    if (_hdrTick) return;                // throttle: un solo cálculo por frame
+    _hdrTick = true;
+    (window.requestAnimationFrame || function(f){ setTimeout(f, 16); })(function() {
+      _hdrTick = false; _hdrEval(el);
+    });
+  }, { passive: true, capture: true });
   // Medir el header al cargar y en cada resize (el alto cambia con los breakpoints responsive).
   if (document.readyState !== 'loading') _setHdrVar();
   else document.addEventListener('DOMContentLoaded', _setHdrVar);
@@ -18583,29 +18634,55 @@ function puzMaybeIntro(p) {
     if (tok !== _puzIntroTok || !puz.cur || puz.cur.id !== p.id) return;   // ya cambió de ejercicio
     puz.chess = after; puz.lastFrom = from; puz.lastTo = to; puz.busy = false;
     puzIntroSound(p);
-    puzRenderBoard();
+    puzRenderBoard({from:from,to:to});
   }, 520);
   return true;
 }
 
 /* ── Tablero del solver ── */
-var _puzBoardBound = false;
-function puzRenderBoard() {
+var _puzBoardBound = false, _puzBoardOrient = null;
+function puzRenderBoard(animMove) {
   if (!puz.chess) return;
-  var bd = puz.chess.board(), FL = ['a','b','c','d','e','f','g','h'], el = document.getElementById('puz-board'), h = '';
-  for (var r=0;r<8;r++) for (var f=0;f<8;f++) {
-    var rr = puz.flipped ? 7-r : r, ff = puz.flipped ? 7-f : f;
-    var sq = FL[ff] + (8-rr), li = (r+f) % 2 === 0, cls = 'csq ' + (li ? 'li' : 'da');
-    if (sq === puz.lastFrom) cls += ' mf';
-    if (sq === puz.lastTo) cls += ' mt';
-    if (sq === puz.sel) cls += ' sel';
-    var pc = bd[rr][ff];
-    if (puz.legalDests.indexOf(sq) >= 0) cls += pc ? ' legal-cap' : ' legal';
-    var pk = pc ? (pc.color + pc.type) : '';
-    h += '<div class="' + cls + '" data-sq="' + sq + '">' + cvCellInner(r, f, rr, ff, sq, pk, FL) + '</div>';
+  var bd = puz.chess.board(), FL = ['a','b','c','d','e','f','g','h'], el = document.getElementById('puz-board');
+  var cells = el.children;
+  // Igual que el visor: rebuild completo solo si el tablero no existe aún o cambió la orientación; si no,
+  // se actualizan SOLO las casillas que cambian (clase y/o pieza). Antes reconstruía las 64 en cada render.
+  var full = cells.length !== 64 || _puzBoardOrient !== puz.flipped;
+  if (full) {
+    var h = '';
+    for (var r=0;r<8;r++) for (var f=0;f<8;f++) {
+      var rr = puz.flipped ? 7-r : r, ff = puz.flipped ? 7-f : f;
+      var sq = FL[ff] + (8-rr), li = (r+f) % 2 === 0, cls = 'csq ' + (li ? 'li' : 'da');
+      if (sq === puz.lastFrom) cls += ' mf';
+      if (sq === puz.lastTo) cls += ' mt';
+      if (sq === puz.sel) cls += ' sel';
+      var pc = bd[rr][ff];
+      if (puz.legalDests.indexOf(sq) >= 0) cls += pc ? ' legal-cap' : ' legal';
+      var pk = pc ? (pc.color + pc.type) : '';
+      h += '<div class="' + cls + '" data-sq="' + sq + '">' + cvCellInner(r, f, rr, ff, sq, pk, FL) + '</div>';
+    }
+    el.innerHTML = h;
+    _puzBoardOrient = puz.flipped;
+    puzBindBoard();
+  } else {
+    var idx = 0;
+    for (var r2=0;r2<8;r2++) for (var f2=0;f2<8;f2++) {
+      var cell = cells[idx++];
+      var rr2 = puz.flipped ? 7-r2 : r2, ff2 = puz.flipped ? 7-f2 : f2;
+      var sq2 = FL[ff2] + (8-rr2), li2 = (r2+f2) % 2 === 0, cls2 = 'csq ' + (li2 ? 'li' : 'da');
+      if (sq2 === puz.lastFrom) cls2 += ' mf';
+      if (sq2 === puz.lastTo) cls2 += ' mt';
+      if (sq2 === puz.sel) cls2 += ' sel';
+      var pc2 = bd[rr2][ff2];
+      if (puz.legalDests.indexOf(sq2) >= 0) cls2 += pc2 ? ' legal-cap' : ' legal';
+      if (cell.className !== cls2) cell.className = cls2;
+      var pk2 = pc2 ? (pc2.color + pc2.type) : '';
+      if (cell._pk !== pk2) { cell._pk = pk2; cell.innerHTML = cvCellInner(r2, f2, rr2, ff2, sq2, pk2, FL); }
+    }
   }
-  el.innerHTML = h;
-  puzBindBoard();
+  // Deslizamiento estilo Lichess: solo cuando el llamador pasa la movida (jugada del usuario, respuesta,
+  // intro, repaso ▶). Las renders de selección/error/pista no lo pasan → no animan.
+  if (animMove && animMove.from && animMove.to) _cvSlidePiece(el, animMove.from, animMove.to);
   _uaClear('puz-board', 'puz-user-arrows', _puzUA, puz.flipped);   // limpiar flechas del usuario al cambiar la posición
 }
 function puzBindBoard() {
@@ -18669,22 +18746,23 @@ function puzApplyUserMove(from, to, promo) {
   if (!mv) { puzRenderBoard(); return; }
   var uci = from + to + (mv.promotion || '');
   // Cualquier jaque mate del que resuelve es correcto (cubre posiciones con varios mates posibles).
-  if (test.in_checkmate()) { puzPlay(from, to, promo); puzRenderBoard(); puzOnSolved(); return; }   // el sonido "resuelto" lo toca puzOnSolved
+  if (test.in_checkmate()) { puzPlay(from, to, promo); puzRenderBoard({from:from,to:to}); puzOnSolved(); return; }   // el sonido "resuelto" lo toca puzOnSolved
   // ¿coincide con la jugada del solucionador en alguna línea aceptada (principal o variante completa)?
   var matching = puz.lines.filter(function(L){ return L.length > puz.step && puzUciEq(L[puz.step], uci); });
   if (matching.length) {
     puz.lines = matching;                                     // nos quedamos en esa rama
     puzPlay(from, to, promo); puz.step++;
-    if (!puz.lines.some(function(L){ return L.length > puz.step; })) { puzRenderBoard(); puzOnSolved(); return; }   // resolvió → suena "resuelto" (no "acierto")
+    if (!puz.lines.some(function(L){ return L.length > puz.step; })) { puzRenderBoard({from:from,to:to}); puzOnSolved(); return; }   // resolvió → suena "resuelto" (no "acierto")
     puzPlaySound('ok');                                       // jugada correcta y todavía hay más → "acierto por jugada"
-    puz.busy = true; puzRenderBoard();
+    puz.busy = true; puzRenderBoard({from:from,to:to});
     setTimeout(function() {
       var cont = puz.lines.filter(function(L){ return L.length > puz.step; })[0];
       var opp = cont ? cont[puz.step] : null;
       if (opp) { puzPlayUci(opp); puz.lines = puz.lines.filter(function(L){ return L.length > puz.step && puzUciEq(L[puz.step], opp); }); puz.step++; }
       puz.busy = false;
-      if (!puz.lines.some(function(L){ return L.length > puz.step; })) { puzRenderBoard(); puzOnSolved(); }
-      else { puzSetFb('ok', '✔', '¡Bien! Seguí — encontrá la próxima jugada.'); puzRenderBoard(); }
+      var _rm = opp ? { from:opp.slice(0,2), to:opp.slice(2,4) } : null;   // deslizar la respuesta del rival
+      if (!puz.lines.some(function(L){ return L.length > puz.step; })) { puzRenderBoard(_rm); puzOnSolved(); }
+      else { puzSetFb('ok', '✔', '¡Bien! Seguí — encontrá la próxima jugada.'); puzRenderBoard(_rm); }
     }, 360);
     return;
   }
@@ -18736,16 +18814,16 @@ function puzSetupReview(lineUci, atStart) {
   document.getElementById('puz-next').style.display = '';
   puzReviewShow();
 }
-function puzReviewShow() {
+function puzReviewShow(anim) {
   puz.chess = new Chess(puz._revFens[puz.reviewIdx]);
   var mv = puz._revMoves[puz.reviewIdx]; puz.lastFrom = mv ? mv.from : ''; puz.lastTo = mv ? mv.to : '';
   puz.sel = null; puz.legalDests = [];
   document.getElementById('puz-counter').textContent = 'Jugada ' + puz.reviewIdx + ' / ' + (puz._revFens.length - 1);
-  puzRenderBoard();
+  puzRenderBoard(anim && mv ? {from:mv.from, to:mv.to} : null);   // deslizar solo al AVANZAR (▶); atrás instantáneo
   if (puz.anOn) { puz.anScore = null; puz.anPv = null; puz.anBestUci = null; document.getElementById('puz-eval-score').textContent = '…'; puzDrawArrow(); puzSfGo(); }
 }
-function puzReviewPrev() { if (puz.reviewing && puz.reviewIdx > 0) { puz.reviewIdx--; puzReviewShow(); } }
-function puzReviewNext() { if (puz.reviewing && puz.reviewIdx < puz._revFens.length - 1) { puz.reviewIdx++; puzReviewShow(); } }
+function puzReviewPrev() { if (puz.reviewing && puz.reviewIdx > 0) { puz.reviewIdx--; puzReviewShow(false); } }
+function puzReviewNext() { if (puz.reviewing && puz.reviewIdx < puz._revFens.length - 1) { puz.reviewIdx++; puzReviewShow(true); } }
 
 function puzFlip() { puz.flipped = !puz.flipped; puz.sel = null; puz.legalDests = []; puzRenderBoard(); if (puz.anOn) { puzDrawArrow(); puzSfRender(); } }
 // Próximo ejercicio AL AZAR del nivel (variedad por visita), prefiriendo no vistos en esta sesión.
@@ -19624,26 +19702,51 @@ function pracShare() {
 }
 
 /* ── Tablero (clon liviano del tablero del solver, con su propio estado `prac`) ── */
-var _pracBoardBound = false;
-function pracRenderBoard() {
+var _pracBoardBound = false, _pracBoardOrient = null;
+function pracRenderBoard(anim) {
   if (!prac._fens.length) return;
   var live = pracIsLive();
   var rc = new Chess(prac._fens[prac.viewIdx]), bd = rc.board(), mv = prac._moves[prac.viewIdx];
   var lf = mv ? mv.from : '', lt = mv ? mv.to : '';
-  var FL = ['a','b','c','d','e','f','g','h'], el = document.getElementById('prac-board'), h = '';
-  for (var r=0;r<8;r++) for (var f=0;f<8;f++) {
-    var rr = prac.flipped ? 7-r : r, ff = prac.flipped ? 7-f : f;
-    var sq = FL[ff] + (8-rr), li = (r+f) % 2 === 0, cls = 'csq ' + (li ? 'li' : 'da');
-    if (sq === lf) cls += ' mf';
-    if (sq === lt) cls += ' mt';
-    if (live && sq === prac.sel) cls += ' sel';
-    var pc = bd[rr][ff];
-    if (live && prac.legalDests.indexOf(sq) >= 0) cls += pc ? ' legal-cap' : ' legal';
-    var pk = pc ? (pc.color + pc.type) : '';
-    h += '<div class="' + cls + '" data-sq="' + sq + '">' + cvCellInner(r, f, rr, ff, sq, pk, FL) + '</div>';
+  var FL = ['a','b','c','d','e','f','g','h'], el = document.getElementById('prac-board');
+  var cells = el.children;
+  // Igual que el visor y Ejercicios: rebuild completo solo si el tablero no existe o cambió la orientación;
+  // si no, se actualizan SOLO las casillas que cambian. Antes reconstruía las 64 en cada jugada.
+  var full = cells.length !== 64 || _pracBoardOrient !== prac.flipped;
+  if (full) {
+    var h = '';
+    for (var r=0;r<8;r++) for (var f=0;f<8;f++) {
+      var rr = prac.flipped ? 7-r : r, ff = prac.flipped ? 7-f : f;
+      var sq = FL[ff] + (8-rr), li = (r+f) % 2 === 0, cls = 'csq ' + (li ? 'li' : 'da');
+      if (sq === lf) cls += ' mf';
+      if (sq === lt) cls += ' mt';
+      if (live && sq === prac.sel) cls += ' sel';
+      var pc = bd[rr][ff];
+      if (live && prac.legalDests.indexOf(sq) >= 0) cls += pc ? ' legal-cap' : ' legal';
+      var pk = pc ? (pc.color + pc.type) : '';
+      h += '<div class="' + cls + '" data-sq="' + sq + '">' + cvCellInner(r, f, rr, ff, sq, pk, FL) + '</div>';
+    }
+    el.innerHTML = h;
+    _pracBoardOrient = prac.flipped;
+    pracBindBoard();
+  } else {
+    var idx = 0;
+    for (var r2=0;r2<8;r2++) for (var f2=0;f2<8;f2++) {
+      var cell = cells[idx++];
+      var rr2 = prac.flipped ? 7-r2 : r2, ff2 = prac.flipped ? 7-f2 : f2;
+      var sq2 = FL[ff2] + (8-rr2), li2 = (r2+f2) % 2 === 0, cls2 = 'csq ' + (li2 ? 'li' : 'da');
+      if (sq2 === lf) cls2 += ' mf';
+      if (sq2 === lt) cls2 += ' mt';
+      if (live && sq2 === prac.sel) cls2 += ' sel';
+      var pc2 = bd[rr2][ff2];
+      if (live && prac.legalDests.indexOf(sq2) >= 0) cls2 += pc2 ? ' legal-cap' : ' legal';
+      if (cell.className !== cls2) cell.className = cls2;
+      var pk2 = pc2 ? (pc2.color + pc2.type) : '';
+      if (cell._pk !== pk2) { cell._pk = pk2; cell.innerHTML = cvCellInner(r2, f2, rr2, ff2, sq2, pk2, FL); }
+    }
   }
-  el.innerHTML = h;
-  pracBindBoard();
+  // Deslizamiento estilo Lichess: solo cuando el llamador lo pide (tu jugada, respuesta del motor, ▶).
+  if (anim && mv) _cvSlidePiece(el, mv.from, mv.to);
   _uaClear('prac-board', 'prac-user-arrows', _pracUA, prac.flipped);   // limpiar flechas del usuario al cambiar la posición
 }
 function pracBindBoard() {
@@ -19680,7 +19783,7 @@ function pracTryMove(from, to) {
   prac.sel = null; prac.legalDests = [];
   if (!m) { pracRenderBoard(); return; }
   pracPushMove(m); pracPlayMoveSound(m);
-  pracRenderBoard(); pracRenderMoves(); pracRenderNav();
+  pracRenderBoard(true); pracRenderMoves(); pracRenderNav();
   pracAfterMove();
 }
 // Registra una jugada aplicada (humano o módulo) en el recorrido y salta a la posición en vivo.
@@ -19710,13 +19813,13 @@ function pracUndo() {
 function pracIsLive() { return prac.viewIdx >= prac._fens.length - 1; }
 function pracNavFirst() { pracNavTo(0); }
 function pracNavPrev() { pracNavTo(prac.viewIdx - 1); }
-function pracNavNext() { pracNavTo(prac.viewIdx + 1); }
+function pracNavNext() { pracNavTo(prac.viewIdx + 1, true); }
 function pracNavLast() { pracNavTo(prac._fens.length - 1); }
-function pracNavTo(i) {
+function pracNavTo(i, anim) {
   i = Math.max(0, Math.min(prac._fens.length - 1, i));
   if (i === prac.viewIdx) return;
   prac.viewIdx = i; prac.sel = null; prac.legalDests = [];
-  pracRenderBoard(); pracRenderNav();
+  pracRenderBoard(anim); pracRenderNav();
   if (pracIsLive()) pracResumeStatus();
   else { pracSetStatus('think', '👁', 'Estás mirando una jugada anterior. Volvé al final ⏭ para seguir jugando.'); if (prac.anOn) pracAnReset(); }
   if (prac.anOn) { document.getElementById('prac-eval-score').textContent = '…'; pracDrawArrow(); pracSfGo(); }
@@ -19777,7 +19880,7 @@ function pracApplyEngineMove(uci) {
   var m = prac.chess.move({ from:uci.slice(0,2), to:uci.slice(2,4), promotion:uci[4] || 'q' });
   if (!m) { pracRenderBoard(); pracRenderActions(); return; }
   pracPushMove(m); pracPlayMoveSound(m);
-  pracRenderBoard(); pracRenderMoves(); pracRenderNav();
+  pracRenderBoard(true); pracRenderMoves(); pracRenderNav();
   pracAfterMove();
 }
 // Tras cualquier jugada: ¿terminó? ¿le toca al módulo? ¿o a vos?
