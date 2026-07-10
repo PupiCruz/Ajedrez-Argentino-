@@ -299,6 +299,7 @@ const ADMIN_FIELDS = {
   broadcastId:     { max: 20 },
   timeControl:     { max: 80 },
   format:          { max: 12 },
+  flyerUrl:        { max: 500, url: true },   // link a la imagen del afiche (https)
 };
 
 // Limpia un objeto de campos según la whitelist. null/'' = "borrar este campo" (se
