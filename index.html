@@ -12653,10 +12653,67 @@ function _socDrawPlaca(canvas, n, theme, fmt) {
   var size = PLACA_SIZES[fmt] || PLACA_SIZES.cuadrado, W=size[0], H=size[1];
   canvas.width=W; canvas.height=H;
   var ctx = canvas.getContext('2d');
+  _socState.tainted = false;
+  if (n.coverImg && n.coverImg.length) {
+    // Preferencia de la usuaria: respetar SU foto de portada + logo como marca de agua en un costado.
+    _socLoadImgCross(n.coverImg, function(photo){ _socComposePhoto(ctx, W, H, photo); },
+      function(){ _socDrawBranded(ctx, W, H, n, theme); });   // si la foto falla, cae a la placa de marca
+  } else {
+    _socDrawBranded(ctx, W, H, n, theme);
+  }
+}
+// Placa de MARCA (cuando la noticia no tiene foto propia): fondo alternado + tarjeta + título.
+function _socDrawBranded(ctx, W, H, n, theme) {
   var after = function(){ _socLoadImg('assets/logo.png', function(lg){ _socCompose(ctx,W,H,n,theme,lg); }, function(){ _socCompose(ctx,W,H,n,theme,null); }); };
   _socLoadImg(theme==='oscuro'?'assets/fondo-oscuro.jpg':'assets/fondo-claro.jpg',
     function(img){ _socDrawCover(ctx, img, W, H); after(); },
     function(){ ctx.fillStyle = theme==='oscuro'?'#0e1626':'#fdf6e8'; ctx.fillRect(0,0,W,H); after(); });
+}
+// Placa con la FOTO de la usuaria: foto entera (contain) sobre un fondo difuminado de la misma foto
+// (rellena el formato sin recortar el flyer) + logo semitransparente ("sombreado") en la esquina.
+function _socComposePhoto(ctx, W, H, photo) {
+  // Fondo difuminado (misma foto, ampliada) para que no queden bandas.
+  try { ctx.save(); ctx.filter = 'blur(' + Math.round(W*0.03) + 'px)'; _socDrawCoverInto(ctx, photo, -W*0.07, -H*0.07, W*1.14, H*1.14); ctx.restore(); }
+  catch(e) { ctx.save(); _socDrawCoverInto(ctx, photo, 0, 0, W, H); ctx.restore(); }   // navegador sin ctx.filter
+  ctx.fillStyle = 'rgba(10,12,20,0.20)'; ctx.fillRect(0,0,W,H);
+  // Foto nítida entera, centrada.
+  _socDrawContain(ctx, photo, W, H);
+  // Logo marca de agua (semitransparente + sombra para que se lea sobre fotos claras u oscuras).
+  _socLoadImg('assets/logo.png', function(logo){
+    var lw = Math.round(W*0.15), lh = Math.round(lw*(logo.height/logo.width));
+    var m = Math.round(W*0.035), lx = W - lw - m, ly = H - lh - m;
+    ctx.save();
+    ctx.globalAlpha = 0.5;
+    ctx.shadowColor = 'rgba(0,0,0,0.55)'; ctx.shadowBlur = Math.round(W*0.02); ctx.shadowOffsetY = Math.round(W*0.004);
+    ctx.drawImage(logo, lx, ly, lw, lh);
+    ctx.restore();
+    _socMarkTaint(ctx);
+  }, function(){ _socMarkTaint(ctx); });
+}
+function _socDrawCoverInto(ctx, img, x, y, w, h) {
+  var ir=img.width/img.height, cr=w/h, dw,dh,dx,dy;
+  if (ir>cr){ dh=h; dw=h*ir; dx=x+(w-dw)/2; dy=y; } else { dw=w; dh=w/ir; dx=x; dy=y+(h-dh)/2; }
+  ctx.drawImage(img, dx, dy, dw, dh);
+}
+function _socDrawContain(ctx, img, W, H) {
+  var ir=img.width/img.height, cr=W/H, dw,dh;
+  if (ir>cr){ dw=W; dh=W/ir; } else { dh=H; dw=H*ir; }
+  ctx.drawImage(img, (W-dw)/2, (H-dh)/2, dw, dh);
+}
+// Carga la foto intentando CORS (para poder exportarla); si el host no lo permite, reintenta sin CORS
+// (se ve pero el canvas queda "tainted" → no descargable). Se avisa en el modal.
+function _socLoadImgCross(src, ok, fail) {
+  if (/^data:/.test(src)) { var d=new Image(); d.onload=function(){ok(d);}; d.onerror=function(){ if(fail)fail(); }; d.src=src; return; }
+  var img=new Image(); img.crossOrigin='anonymous';
+  img.onload=function(){ ok(img); };
+  img.onerror=function(){ var i2=new Image(); i2.onload=function(){ ok(i2); }; i2.onerror=function(){ if(fail)fail(); }; i2.src=src; };
+  img.src=src;
+}
+// Detecta si el canvas quedó "tainted" (foto remota sin CORS) → no se puede exportar.
+function _socMarkTaint(ctx) {
+  try { ctx.getImageData(0,0,1,1); _socState.tainted = false; }
+  catch(e) { _socState.tainted = true; }
+  var w = document.getElementById('soc-taint'); if (w) w.style.display = _socState.tainted ? '' : 'none';
 }
 
 // ── Enlace + textos por red ──
@@ -12719,14 +12776,19 @@ function _socNet(which, name, taId, rows) {
     + '<textarea class="soc-ta" id="'+taId+'" rows="'+rows+'" readonly></textarea>'
     + '<button class="soc-copy" onclick="_socCopyText(\''+which+'\',this)">Copiar texto</button></div>';
 }
+function _socCurNews(){ var items=getNewsItems(); for(var i=0;i<items.length;i++) if(items[i].id===_socState.id) return items[i]; return null; }
 function _socModalHtml() {
+  var n = _socCurNews(), hasCover = !!(n && n.coverImg && n.coverImg.length);
   return '<div class="soc-modal" onclick="event.stopPropagation()">'
     + '<div class="soc-hd"><span style="font-size:20px">📣</span><h3>Preparar para redes</h3>'
     +   '<button onclick="closeSocialAssistant()" style="background:none;border:none;color:var(--text2);font-size:24px;cursor:pointer;line-height:1;padding:0 4px">×</button></div>'
     + '<div class="soc-body">'
     +   '<div class="soc-preview-wrap"><canvas id="soc-canvas"></canvas></div>'
+    +   '<div id="soc-taint" style="display:none;font-size:12px;color:#e07070;background:rgba(200,60,60,.1);border:1px solid rgba(200,60,60,.35);border-radius:9px;padding:9px 11px;margin-bottom:12px;line-height:1.5">⚠️ La foto de portada es un <b>link externo</b>: se ve la placa pero no se puede descargar/copiar. Para poder bajarla, subí/pegá la foto como imagen embebida en la noticia.</div>'
     +   '<div class="soc-row"><span class="soc-lbl">Formato</span><div class="soc-seg">' + _socSeg('fmt') + '</div></div>'
-    +   '<div class="soc-row"><span class="soc-lbl">Fondo</span><div class="soc-seg">' + _socSeg('theme') + '</div></div>'
+    +   (hasCover
+        ? '<div class="soc-row"><span class="soc-lbl">Imagen</span><div style="font-size:12.5px;color:var(--text2);font-weight:600;line-height:1.4">📷 Usando tu foto de portada · el logo va como marca de agua en la esquina</div></div>'
+        : '<div class="soc-row"><span class="soc-lbl">Fondo</span><div class="soc-seg">' + _socSeg('theme') + '</div></div>')
     +   '<div class="soc-imgbtns">'
     +     '<button class="soc-btn" onclick="_socDownload(this)">⬇ Descargar imagen</button>'
     +     '<button class="soc-btn ghost" onclick="_socCopyImg(this)">📋 Copiar imagen</button>'
@@ -12749,6 +12811,7 @@ function _socFlash(btn, msg){ if (!btn) return; var old = btn.getAttribute('data
 function _socDownload(btn) {
   var cv = document.getElementById('soc-canvas'); if (!cv) return;
   cv.toBlob(function(blob){
+    if (!blob) { _socTaintWarn(btn); return; }
     var a = document.createElement('a'); a.href = URL.createObjectURL(blob);
     a.download = 'chessargentino-' + _socState.fmt + '.png';
     document.body.appendChild(a); a.click();
@@ -12759,10 +12822,16 @@ function _socDownload(btn) {
 function _socCopyImg(btn) {
   var cv = document.getElementById('soc-canvas'); if (!cv) return;
   cv.toBlob(function(blob){
+    if (!blob) { _socTaintWarn(btn); return; }
     if (navigator.clipboard && window.ClipboardItem) {
       navigator.clipboard.write([new ClipboardItem({'image/png':blob})]).then(function(){ _socFlash(btn,'¡Copiada!'); }).catch(function(){ _socDownload(btn); });
     } else { _socDownload(btn); }
   }, 'image/png');
+}
+function _socTaintWarn(btn) {
+  _socState.tainted = true;
+  var w = document.getElementById('soc-taint'); if (w) w.style.display = '';
+  if (btn) _socFlash(btn, 'Foto externa');
 }
 function _socCopyText(which, btn) {
   var e = document.getElementById('soc-ta-'+which); if (!e) return;
