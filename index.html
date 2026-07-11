@@ -17682,6 +17682,35 @@ function toggleBoard() {
 }
 (function(){ var t = 'canvas'; try { t = localStorage.getItem('tablero') || 'canvas'; } catch (e) {} _applyBoard(t); })();
 
+// ── ANTI-PARPADEO al scrollear: la trama de las casillas (--sq-texture) es un filtro SVG
+//    feTurbulence, CARÍSIMO de re-pintar. En páginas con muchos mini-tableros (Ejercicios,
+//    Practicar, visor de ronda, detalle de torneo) hay 64 casillas × N tableros, cada una
+//    referenciando ese filtro; al scrollear fuerte el navegador lo re-evalúa y salta el
+//    parpadeo. Solución: rasterizar el ruido a un PNG UNA sola vez (canvas) y reemplazar la
+//    variable por ese bitmap barato que el navegador cachea y bltea sin re-filtrar. El PNG es
+//    un snapshot 200×200 idéntico a como se veía el SVG → mismo aspecto, cero costo de filtro.
+//    Se aplica en <html> (inline) para no pisar el override 'none' del tablero de madera (body).
+(function _rasterizeSqTexture(){
+  try {
+    var css = getComputedStyle(document.documentElement).getPropertyValue('--sq-texture').trim();
+    if (!/^url\(/.test(css)) return;                 // tema madera ('none') u otro: no tocar
+    // Desenvolver url("…") — OJO: el data-URI del SVG lleva comillas simples adentro (atributos),
+    // así que no se puede matchear con una clase que las excluya; recorto envoltorio y comillas.
+    var svg = css.replace(/^url\(\s*/, '').replace(/\s*\)$/, '').replace(/^['"]/, '').replace(/['"]$/, '');
+    if (svg.indexOf('data:image/svg+xml,') !== 0) return;
+    var img = new Image();
+    img.onload = function(){
+      try {
+        var w = img.naturalWidth || 200, hgt = img.naturalHeight || 200;
+        var c = document.createElement('canvas'); c.width = w; c.height = hgt;
+        c.getContext('2d').drawImage(img, 0, 0, w, hgt);
+        document.documentElement.style.setProperty('--sq-texture', 'url("' + c.toDataURL('image/png') + '")');
+      } catch (e) {}                                 // canvas tainted u otro error: se queda con el SVG
+    };
+    img.src = svg;
+  } catch (e) {}
+})();
+
 renderTorneos();
 _currentList = PLAYERS; _currentPage = 1;
 updateSubtitle();
