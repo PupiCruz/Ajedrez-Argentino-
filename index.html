@@ -3811,7 +3811,7 @@ function crDataLoad(key) {
   return null;
 }
 function crDataSave(key, data) {
-  try { localStorage.setItem(key, JSON.stringify(data)); _crArgCache = {}; _tourSearchIndex = {}; } catch(e) { alert('Sin espacio en localStorage'); }
+  try { localStorage.setItem(key, JSON.stringify(data)); _crArgCache = {}; _tourSearchIndex = {}; _stdFedCache = {}; } catch(e) { alert('Sin espacio en localStorage'); }
 }
 // Junta TODOS los cuadros de cruces/tabla (cr2_*) para embeberlos en el archivo, así viajan con
 // los datos (doble clic ⇄ servidor ⇄ web publicada) y no quedan atrapados en un solo navegador.
@@ -4018,6 +4018,31 @@ function _teamFlag(team) {
   if (_FED_ISO[t.toUpperCase()]) return _flagImg(t.toUpperCase());   // código FIDE de 3 letras
   var fed = _NAME_FED[t.toLowerCase()];                              // nombre de país (es/en)
   return fed ? _flagImg(fed) : '';
+}
+
+// ── Bandera por NOMBRE desde la TABLA DE CRUCES del torneo ──────────────────────────────────
+// La tabla de posiciones (Chess-Results/info64) trae la federación de TODOS los jugadores. Como las
+// partidas están enlazadas al cruce, podemos sacar la bandera de ahí — sync, confiable y offline —
+// en vez de depender de que el PGN traiga el equipo o de la API de lichess (que no resuelve a todos).
+// Mapa {nombre-normalizado → fed} por clave de cruce (crKey), cacheado. crNormTokens matchea
+// "Campora, Daniel H." con "Daniel H. Campora" (tokens ordenados).
+var _stdFedCache = {};
+function _tourFedMap(crKey) {
+  if (!crKey) return null;
+  if (_stdFedCache[crKey]) return _stdFedCache[crKey];
+  var m = {};
+  try {
+    var d = crDataLoad(crKey);
+    if (d && d.standings) d.standings.forEach(function(s) { if (s && s.name && s.fed) m[crNormTokens(s.name)] = s.fed; });
+  } catch (e) {}
+  _stdFedCache[crKey] = m;
+  return m;
+}
+function _flagByName(name, crKey) {
+  var m = _tourFedMap(crKey);
+  if (!m || !name) return '';
+  var fed = m[crNormTokens(name)];
+  return fed ? _teamFlag(fed) : '';
 }
 
 // ── XLSX descompresión (compartida) — usa regex para evitar problemas de namespace XML ──
@@ -9608,9 +9633,12 @@ function _cvRoundMinisHtml(keepPage) {
     var sk = _cvShareKeys[i];
     var wParts = (h.White || '?').split(','); var white = wParts.length > 1 ? (wParts[1].trim() + ' ' + wParts[0].trim()) : wParts[0].trim();
     var bParts = (h.Black || '?').split(','); var black = bParts.length > 1 ? (bParts[1].trim() + ' ' + bParts[0].trim()) : bParts[0].trim();
-    // Título (pastilla) + bandera del equipo/país si el PGN los trae (Olimpiadas/torneos por equipos).
+    // Título (pastilla) + bandera. La bandera sale de la TABLA DE CRUCES por nombre (tiene a todos);
+    // si el torneo no tiene tabla, cae al equipo/país del PGN (Olimpiadas/torneos por equipos).
     var wTitle = titleBadge(h.WhiteTitle), bTitle = titleBadge(h.BlackTitle);
-    var wFlag = _teamFlag(h.WhiteTeam), bFlag = _teamFlag(h.BlackTeam);
+    var _mCrK = (typeof _tdCtx !== 'undefined' && _tdCtx && _tdCtx.crKey) || null;
+    var wFlag = _flagByName(white, _mCrK) || _teamFlag(h.WhiteTeam);
+    var bFlag = _flagByName(black, _mCrK) || _teamFlag(h.BlackTeam);
     var res = h.Result || '*';
     var ff = tdFinalFenCached(pgn);
     var href = sk ? sk.url : '#';
@@ -13015,6 +13043,7 @@ function cvLoadFlag(spanId, fideId) {
   if (!fideId) return;
   var el = document.getElementById(spanId);
   if (!el) return;
+  if (el.querySelector('img')) return;   // ya tiene bandera (de la tabla de cruces): no pisar con la async
   if (_fideCountryCache.hasOwnProperty(fideId)) {
     var fed = _fideCountryCache[fideId];
     var flag = fed ? _flagImg(fed) : '';
@@ -13034,7 +13063,7 @@ function cvLoadFlag(spanId, fideId) {
       var flag = fed ? _flagImg(fed) : '';
       if (flag) {
         var el2 = document.getElementById(spanId);
-        if (el2) el2.innerHTML = flag;
+        if (el2 && !el2.querySelector('img')) el2.innerHTML = flag;   // no pisar la bandera de la tabla
       }
     })
     .catch(function() { _fideCountryCache[fideId] = null; _capCache(_fideCountryCache, 500); });
@@ -13065,7 +13094,12 @@ function cvPlayerHtml(title, name, fideId, elo, team, isBlack) {
   // Sub-renglón (debajo del nombre): ELO + bandera. La bandera la llena cvLoadFlag por fideId (async).
   var eloStr = elo ? '<span class="cv-pelo">' + escHtml(elo) + '</span>' : '';
   var flagId = isBlack ? 'cv-bflag' : 'cv-wflag';
-  var flagStr = fideId ? '<span id="' + flagId + '"></span>' : '';
+  // Bandera: primero de la TABLA DE CRUCES del torneo (sync, tiene a todos), si no del fideId via
+  // lichess (async, cvLoadFlag). El crKey solo se usa si la partida es del torneo abierto (no pisar
+  // con banderas de un torneo viejo si se abrió una partida suelta).
+  var _crK = (_cvFromTournament && typeof _tdCtx !== 'undefined' && _tdCtx && _tdCtx.crKey) || null;
+  var stdFlag = _flagByName(name, _crK);
+  var flagStr = (stdFlag || fideId) ? '<span id="' + flagId + '">' + stdFlag + '</span>' : '';
   var sub = (eloStr || flagStr) ? '<span class="cv-psub">' + eloStr + flagStr + '</span>' : '';
   return avatarStr + '<span class="cv-pcol"><span class="cv-pn">' + badge + nameStr + '</span>' + sub + '</span>';
 }
@@ -16930,8 +16964,11 @@ function _tdCardHtml(g, flip) {
   var res = g.h.Result || '*';
   var wTitle = titleBadge(g.h.WhiteTitle) + (g.h.WhiteTitle ? ' ' : '');
   var bTitle = titleBadge(g.h.BlackTitle) + (g.h.BlackTitle ? ' ' : '');
-  // Bandera del país si el PGN la trae (Olimpiadas/torneos por equipos: WhiteTeam/BlackTeam).
-  var wFlag = _teamFlag(g.h.WhiteTeam), bFlag = _teamFlag(g.h.BlackTeam);
+  // Bandera: de la TABLA DE CRUCES por nombre (tiene a todos los jugadores); si no, del equipo/país
+  // del PGN (Olimpiadas/torneos por equipos).
+  var _tdCrK = (_tdCtx && _tdCtx.crKey) || null;
+  var wFlag = _flagByName(white, _tdCrK) || _teamFlag(g.h.WhiteTeam);
+  var bFlag = _flagByName(black, _tdCrK) || _teamFlag(g.h.BlackTeam);
   var wScore = res === '1-0' ? '1' : res === '0-1' ? '0' : res === '1/2-1/2' ? '½' : '';
   var bScore = res === '1-0' ? '0' : res === '0-1' ? '1' : res === '1/2-1/2' ? '½' : '';
   var wScoreColor = res === '1-0' ? 'var(--green)' : res === '0-1' ? 'var(--red)' : 'var(--text2)';
