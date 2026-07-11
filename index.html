@@ -13012,7 +13012,8 @@ function cvSetNode(node) {
   // Y solo en pasos DELIBERADOS: si venís navegando muy rápido (ráfaga), se saltea la animación (quedaría
   // cortada por el siguiente redibujo) y el tablero salta directo. Así el scrolleo rápido es fluido.
   var _nowNav = Date.now(), _rapidNav = (_nowNav - _cvLastNavT) < 220; _cvLastNavT = _nowNav;
-  if (!_rapidNav && node && node.move && node.parent === _prevNode && !cv._lastFull) {
+  var _userMv = _cvUserMove; _cvUserMove = false;   // jugada propia del usuario: no animar (ya la puso)
+  if (!_rapidNav && !_userMv && node && node.move && node.parent === _prevNode && !cv._lastFull) {
     _cvSlidePiece(document.getElementById('cv-board'), node.move.from, node.move.to);
   }
   cvHighlight();
@@ -13038,7 +13039,7 @@ function cvSetNode(node) {
   _cvScheduleSettle();
 }
 // Momento de la última navegación (para saltear la animación en ráfaga) y trabajo pesado diferido.
-var _cvLastNavT = 0, _cvSettleT = null;
+var _cvLastNavT = 0, _cvSettleT = null, _cvUserMove = false;
 function _cvScheduleSettle() { clearTimeout(_cvSettleT); _cvSettleT = setTimeout(_cvSettleNode, 140); }
 function _cvSettleNode() {
   _cvSettleT = null;
@@ -13837,6 +13838,7 @@ function cvApplyMove(from, to, promo) {
   }
 
   cv.sel = null; cv.legalDests = [];
+  _cvUserMove = true;   // la jugada la hace el usuario (arrastrar/click): NO animar el deslizamiento (ya la puso)
 
   // buscar si este movimiento ya existe como hijo del nodo actual
   var existingChild = null;
@@ -18746,15 +18748,15 @@ function puzApplyUserMove(from, to, promo) {
   if (!mv) { puzRenderBoard(); return; }
   var uci = from + to + (mv.promotion || '');
   // Cualquier jaque mate del que resuelve es correcto (cubre posiciones con varios mates posibles).
-  if (test.in_checkmate()) { puzPlay(from, to, promo); puzRenderBoard({from:from,to:to}); puzOnSolved(); return; }   // el sonido "resuelto" lo toca puzOnSolved
+  if (test.in_checkmate()) { puzPlay(from, to, promo); puzRenderBoard(); puzOnSolved(); return; }   // el sonido "resuelto" lo toca puzOnSolved (jugada del usuario: sin animar, ya la puso)
   // ¿coincide con la jugada del solucionador en alguna línea aceptada (principal o variante completa)?
   var matching = puz.lines.filter(function(L){ return L.length > puz.step && puzUciEq(L[puz.step], uci); });
   if (matching.length) {
     puz.lines = matching;                                     // nos quedamos en esa rama
     puzPlay(from, to, promo); puz.step++;
-    if (!puz.lines.some(function(L){ return L.length > puz.step; })) { puzRenderBoard({from:from,to:to}); puzOnSolved(); return; }   // resolvió → suena "resuelto" (no "acierto")
+    if (!puz.lines.some(function(L){ return L.length > puz.step; })) { puzRenderBoard(); puzOnSolved(); return; }   // resolvió → suena "resuelto" (jugada del usuario: sin animar)
     puzPlaySound('ok');                                       // jugada correcta y todavía hay más → "acierto por jugada"
-    puz.busy = true; puzRenderBoard({from:from,to:to});
+    puz.busy = true; puzRenderBoard();   // jugada del usuario: sin animar (ya la puso); la respuesta del rival sí anima
     setTimeout(function() {
       var cont = puz.lines.filter(function(L){ return L.length > puz.step; })[0];
       var opp = cont ? cont[puz.step] : null;
@@ -19358,6 +19360,7 @@ function puzInitDrag(boardEl) {
   });
   document.addEventListener('mouseup', function(e) {
     if (!_puzDrag) return; var d = _puzDrag; _puzDrag = null;
+    var _lp = document.querySelector('#puz-board [data-sq="' + d.sq + '"] img.cpc'); if (_lp) _lp.style.opacity = '';   // restaurar la pieza (con el diff, si no se movió no se rebuildea → quedaba semitransparente)
     if (d.clone.parentNode) d.clone.parentNode.removeChild(d.clone);
     if (!d.moved) { return; }
     _puzDragSuppress = true;
@@ -19783,7 +19786,7 @@ function pracTryMove(from, to) {
   prac.sel = null; prac.legalDests = [];
   if (!m) { pracRenderBoard(); return; }
   pracPushMove(m); pracPlayMoveSound(m);
-  pracRenderBoard(true); pracRenderMoves(); pracRenderNav();
+  pracRenderBoard(); pracRenderMoves(); pracRenderNav();   // tu jugada: sin animar (ya la moviste); la del motor sí anima
   pracAfterMove();
 }
 // Registra una jugada aplicada (humano o módulo) en el recorrido y salta a la posición en vivo.
@@ -20163,6 +20166,7 @@ function pracInitDrag(boardEl) {
   });
   document.addEventListener('mouseup', function(e) {
     if (!_pracDrag) return; var d = _pracDrag; _pracDrag = null;
+    var _lp = document.querySelector('#prac-board [data-sq="' + d.sq + '"] img.cpc'); if (_lp) _lp.style.opacity = '';   // restaurar la pieza (con el diff, si no se movió no se rebuildea → quedaba semitransparente)
     if (d.clone.parentNode) d.clone.parentNode.removeChild(d.clone);
     if (!d.moved) { return; }
     _pracDragSuppress = true;
