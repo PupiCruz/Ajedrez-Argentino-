@@ -1172,6 +1172,9 @@
     .cv-clr-wht { background:#f0d9b5; border:1.5px solid #b58863; }
     .cv-clr-blk { background:#362d21; border:1.5px solid #9a7030; }
     .chess-pname { font-size:15px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-shadow:var(--txt-out); }
+    /* Avatar del jugador (si tiene perfil con foto) a la izquierda del nombre. */
+    .cv-pav { width:22px; height:22px; border-radius:50%; object-fit:cover; vertical-align:middle;
+      margin:-2px 6px 0 0; border:1px solid var(--bd22); background:var(--panel0); }
     .chess-pelo  { font-size:13px; color:var(--fg-c8); text-shadow:var(--txt-out); }
     .chess-pres  { font-size:16px; font-weight:700; color:var(--gold); flex-shrink:0; padding:2px 9px; background:var(--panel0); border:1px solid var(--bd22); border-radius:7px; text-shadow:var(--txt-out); }
     .cv-clock { font-size:13px; color:var(--fg0); flex-shrink:0; font-variant-numeric:tabular-nums; letter-spacing:.3px; background:var(--panel0); border:1px solid var(--bd18); border-radius:6px; padding:2px 7px; min-width:0; text-shadow:var(--txt-out); }
@@ -12986,6 +12989,15 @@ function cvPlayerHtml(title, name, fideId, elo, team, isBlack) {
             + 'onclick="cvClickPlayer(\'' + safeName + '\',\'' + safeFide + '\')">'
             + escHtml(name) + '</span>';
   }
+  // Avatar chico a la IZQUIERDA del nombre, solo si el jugador tiene perfil CON foto (autor o
+  // publicado via _photoSrc). Si no hay foto, no se agrega nada. onerror lo esconde si el archivo
+  // no carga. Va antes del título/nombre; como .chess-pname trunca por la derecha, el avatar nunca
+  // se corta.
+  var avatarStr = '';
+  if (found) {
+    var _ph = _photoSrc(found.id);
+    if (_ph) avatarStr = '<img class="cv-pav" src="' + escHtml(_ph) + '" alt="" draggable="false" onerror="this.style.display=\'none\'">';
+  }
   var eloStr = elo ? '<span style="color:var(--fg-c0);font-size:14px;font-weight:600;margin-left:7px;text-shadow:var(--txt-out)">' + escHtml(elo) + '</span>' : '';
   // Span de bandera: siempre vacío en el HTML inicial, se llena via cvLoadFlag (async o caché)
   // Margen correcto: la bandera va DESPUÉS del ELO en blancas (necesita margin-left)
@@ -12995,7 +13007,7 @@ function cvPlayerHtml(title, name, fideId, elo, team, isBlack) {
   var flagStr = fideId
     ? '<span id="' + flagId + '" style="font-size:15px;margin-left:7px"></span>'
     : '';
-  return titleStr + nameStr + eloStr + flagStr;
+  return avatarStr + titleStr + nameStr + eloStr + flagStr;
 }
 
 /* ── Construir árbol desde una lista de movimientos verbose ── */
@@ -13128,6 +13140,13 @@ function cvUpdateClocks() {
   }
   wEl.textContent = wc ? '⏱ ' + fmtClock(wc) : '';
   bEl.textContent = bc ? '⏱ ' + fmtClock(bc) : '';
+  // Resaltar el reloj del jugador que tiene el TURNO en la posición actual (solo si hay relojes).
+  // La profundidad par = le toca a las blancas. Los ids cv-wclock/cv-bclock viajan con el contenido
+  // al girar el tablero, así que basta con marcar por color (no por posición visual).
+  var _toMove = (cv.node ? nodeDepth(cv.node) : 0) % 2 === 0 ? 'w' : 'b';
+  var _hasClk = !!(wc || bc);
+  wEl.classList.toggle('cv-clock-active', _hasClk && _toMove === 'w');
+  bEl.classList.toggle('cv-clock-active', _hasClk && _toMove === 'b');
   // Cuenta regresiva: solo en la última jugada de una partida en curso (Result *)
   _cvStopLiveClock();
   if (cv.node && cv.node.children.length === 0 && (wc || bc) &&
