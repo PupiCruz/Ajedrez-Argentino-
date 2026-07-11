@@ -1178,11 +1178,17 @@
     /* Banderas por imagen (SVG local). Escalan con el texto (height en em); sirven en tablas y visor. */
     .flag-ic { display:inline-block; height:0.9em; width:auto; vertical-align:-0.1em; border-radius:2px;
       box-shadow:0 0 0 .5px rgba(0,0,0,.35); }
+    /* Filas de la tabla de cruces de una ronda: en torneos grandes (240+ partidas) el scroll fuerte
+       en el teléfono borraba y repintaba toda la tabla. content-visibility saltea el pintado de las
+       filas fuera de pantalla (el navegador recuerda su alto real; 54px es solo la estimación inicial). */
+    .cr-prow { content-visibility:auto; contain-intrinsic-size:auto 54px; }
     .chess-pelo  { font-size:13px; color:var(--fg-c8); text-shadow:var(--txt-out); }
     .chess-pres  { font-size:16px; font-weight:700; color:var(--gold); flex-shrink:0; padding:2px 9px; background:var(--panel0); border:1px solid var(--bd22); border-radius:7px; text-shadow:var(--txt-out); }
     .cv-clock { font-size:13px; color:var(--fg0); flex-shrink:0; font-variant-numeric:tabular-nums; letter-spacing:.3px; background:var(--panel0); border:1px solid var(--bd18); border-radius:6px; padding:2px 7px; min-width:0; text-shadow:var(--txt-out); }
     .cv-clock:empty { background:none; border:none; padding:0; }
-    .cv-clock-active { background:#0e3d1e; border-color:rgba(60,220,100,0.80); color:#80f0a0; }
+    /* Reloj del que le toca mover: resaltado SUAVE (verde tenue). Legible en oscuro y claro. */
+    .cv-clock-active { background:rgba(70,180,110,0.16); border-color:rgba(95,195,135,0.55); color:#a3ddb9; }
+    body.light .cv-clock-active { background:rgba(40,155,90,0.13); border-color:rgba(40,150,85,0.5); color:#1f7a44; }
     /* El nombre de apertura se oculta del visor (ocupa lugar que se usa para agrandar el tablero). */
     .chess-opening { display: none; }
 
@@ -4464,7 +4470,7 @@ function crBuildRoundPanel(key,pairings,data,roundNum){
         : '<span style="color:var(--text3);font-weight:600;border-bottom:1px dashed var(--text3);padding:0 4px">＋</span>';
       resCell='<span style="cursor:pointer;font-weight:700;color:'+resColor+';font-size:15px;text-shadow:var(--txt-out)" title="Clic para cargar/cambiar el resultado (1-0 → ½-½ → 0-1 → vacío)" onclick="crSetRoundResult('+ks2+','+(roundNum==null?'null':roundNum)+','+nsW+','+nsB+')">'+resInner+'</span>';
     }
-    h+='<div style="display:flex;align-items:center;gap:6px;padding:8px 10px;border-bottom:1px solid var(--bd10);'+rowBg+'">';
+    h+='<div class="cr-prow" style="display:flex;align-items:center;gap:6px;padding:8px 10px;border-bottom:1px solid var(--bd10);'+rowBg+'">';
     h+='<div style="width:22px;text-align:center;color:var(--fg-e8);font-size:13px;font-weight:700;flex-shrink:0;text-shadow:var(--txt-out)">'+escHtml(mesaVal)+'</div>';
     // Blancas (derecha)
     h+='<div style="flex:1;min-width:0;text-align:right;cursor:pointer" onclick="crOpenPlayer('+ks2+','+nsW+')">';
@@ -13086,6 +13092,11 @@ function cvSetNode(node) {
   var _userMv = _cvUserMove; _cvUserMove = false;   // jugada propia del usuario: no animar (ya la puso)
   if (!_rapidNav && !_userMv && node && node.move && node.parent === _prevNode && !cv._lastFull) {
     _cvSlidePiece(document.getElementById('cv-board'), node.move.from, node.move.to);
+    // Arrancar el motor en la posición NUEVA ya mismo (no al terminar la animación): así las flechas
+    // del módulo aparecen del otro bando apenas avanzás la jugada, como en lichess. Solo en pasos
+    // deliberados (acá no hay ráfaga), con delay corto; el trabajo pesado sigue diferido al settle.
+    var _animMid0 = _cvAnimStepping && node.children && node.children.length > 0;
+    if (sf.on && sf.ready && !_fa.running && !_animMid0) { sfAnalyze(true); _cvSfNode = node; }
   }
   cvHighlight();
 
@@ -13102,6 +13113,7 @@ function cvSetNode(node) {
   var _cvCounterEl = document.getElementById('cv-counter'); if (_cvCounterEl) _cvCounterEl.textContent = counterText;
   if (depth > 0) cvClearUserArrows();
   sfClearArrows();
+  _sfArrowsHold = true;   // congelar flechas del motor hasta que arranque el análisis de la posición nueva
 
   // El trabajo PESADO (barra/marcador de eval, relojes, badge NAG, sonido, libro y motor) se DIFIERE ~140ms:
   // al navegar rápido con el teclado, hacerlo en cada tecla trababa el hilo principal y el navegador perdía
@@ -13110,7 +13122,7 @@ function cvSetNode(node) {
   _cvScheduleSettle();
 }
 // Momento de la última navegación (para saltear la animación en ráfaga) y trabajo pesado diferido.
-var _cvLastNavT = 0, _cvSettleT = null, _cvUserMove = false;
+var _cvLastNavT = 0, _cvSettleT = null, _cvUserMove = false, _cvSfNode = null;
 function _cvScheduleSettle() { clearTimeout(_cvSettleT); _cvSettleT = setTimeout(_cvSettleNode, 140); }
 function _cvSettleNode() {
   _cvSettleT = null;
@@ -13126,7 +13138,10 @@ function _cvSettleNode() {
   // No tocar el motor mientras corre el análisis completo: si no, la navegación le roba el turno y el análisis
   // se frena. Tampoco analizar las posiciones INTERMEDIAS de la reproducción en vivo (solo la final).
   var _animMid = _cvAnimStepping && cv.node && cv.node.children && cv.node.children.length > 0;
-  if (sf.on && sf.ready && !_fa.running && !_animMid) sfAnalyze();
+  // Si ya se arrancó el motor en el acto (paso deliberado), no re-analizar acá (reiniciaría la
+  // búsqueda que ya viene corriendo). Solo analiza el settle en el resto de los casos (atrás, saltos,
+  // navegación rápida que recién frena, jugada propia).
+  if (sf.on && sf.ready && !_fa.running && !_animMid && _cvSfNode !== cv.node) { sfAnalyze(); _cvSfNode = cv.node; }
 }
 
 function nodeDepth(node) {
@@ -14619,6 +14634,7 @@ function sfAnalyze() {
 function sfAnalyzeNow() {
   if (!sf.engine || !sf.ready || !sf.on || !cv.chess) return;
   if (_fa.running) return;   // no interrumpir el análisis completo en curso
+  _sfArrowsHold = false;   // arranca el análisis de la posición nueva: ya se pueden dibujar sus flechas
   sf.lines = [null, null, null];
   sf.depth = 0;
   _sfBarLastT = 0;   // primera lectura confiable de la jugada nueva: aplicarla sin esperar el acelerador
@@ -20631,6 +20647,11 @@ function cvPlayMoveSound(san) {
 ═══════════════════════════════════════════════════════ */
 var _arrows = [];        // [{from, to}]  — dibujadas por el usuario
 var _sfArrows = [];      // [{from, to, width, alpha}] — del motor
+// Al navegar se limpian las flechas del motor, pero su búsqueda VIEJA sigue un ratito (el reinicio
+// está diferido) y volvería a dibujar flechas de la posición anterior JUSTO sobre la pieza que se
+// desliza (se ve feo). Este flag congela el dibujo de flechas desde que navegás hasta que arranca el
+// análisis de la posición NUEVA (sfAnalyzeNow lo apaga), así nunca se redibujan las viejas.
+var _sfArrowsHold = false;
 var _highlights = {};    // {sq: true}
 var _arrowDragFrom = null;
 var _sfCanvasW = 0, _sfCanvasH = 0;  // último tamaño conocido del canvas de flechas del motor
@@ -20670,6 +20691,7 @@ function drawArrow(ctx, x1, y1, x2, y2, sqW, widthRatio, color) {
 
 function cvUpdateSfArrows() {
   if (!sf.on) { sfClearArrows(); return; }
+  if (_sfArrowsHold) return;   // navegación reciente: no dibujar flechas de la posición vieja
   _sfArrows = [];
   var widths = [0.16, 0.10, 0.06];
   var alphas = [0.55, 0.40, 0.28];
