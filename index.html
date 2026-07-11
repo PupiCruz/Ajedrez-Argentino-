@@ -1206,6 +1206,13 @@
     .csq.mf.da  { background-color: var(--sq-hl-d); }
     .csq.mt.li  { background-color: var(--sq-hl-l); }
     .csq.mt.da  { background-color: var(--sq-hl-d); }
+    /* Jugada calificada (?, ?!, ??): tinte TRANSLÚCIDO en origen y destino con el color del símbolo
+       (estilo chess.com/lichess). Va como capa de gradiente DEBAJO de la pieza (background-image),
+       así el color de la casilla y la trama se ven por debajo. Reemplaza el resaltado amarillo de
+       última jugada; el background-color sigue siendo el de la casilla (li/da), que asoma por el alfa. */
+    .csq.nagsq-blunder { background-image: linear-gradient(rgba(208,48,48,.5), rgba(208,48,48,.5)), var(--sq-texture); }
+    .csq.nagsq-mistake { background-image: linear-gradient(rgba(224,112,32,.5), rgba(224,112,32,.5)), var(--sq-texture); }
+    .csq.nagsq-inacc   { background-image: linear-gradient(rgba(212,161,43,.5), rgba(212,161,43,.5)), var(--sq-texture); }
     .cpc { width: 88%; height: 88%; display: block; pointer-events: none; }
     .sq-coord {
       position: absolute; font-size: 9.5px; font-weight: 700;
@@ -9460,10 +9467,16 @@ function _cvBuildPageExtras() {
   // tablero entra arriba sin scrollear, estilo chess.com).
   if (backbar) { backbar.style.display = 'none'; backbar.innerHTML = ''; }
   if (bookBack) {
-    if (sk && sk.tour != null) {
+    var _fromTrain = _cvFromPuzzle || _cvFromPractice;   // partida abierta desde Ejercicios/Practicar
+    if ((sk && sk.tour != null) || _fromTrain) {
       bookBack.style.display = '';
       var _arrowSvg = '<svg class="cv-bb-ic" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"></polyline></svg>';
-      if (_cvTourName && _cvFromTournament) {
+      if (_fromTrain) {
+        // Volver AL ejercicio/práctica (no a un torneo): caja clicable con el rótulo correcto.
+        var _bl = _cvFromPuzzle ? 'Volver al ejercicio' : 'Volver a la práctica';
+        bookBack.innerHTML = '<button class="cv-bb-btn" onclick="cvBackToTournament()" title="' + _bl + '" aria-label="' + _bl + '">'
+          + _arrowSvg + '<span class="cv-bb-name">' + _bl + '</span></button>';
+      } else if (_cvTourName && _cvFromTournament) {
         // Con nombre de torneo: toda la caja (flecha + nombre) es clicable, con recuadro sutil.
         bookBack.innerHTML = '<button class="cv-bb-btn" onclick="cvBackToTournament()" title="Volver al torneo" aria-label="Volver al torneo">'
           + _arrowSvg + '<span class="cv-bb-name">' + escHtml(_cvTourName) + '</span></button>';
@@ -9483,6 +9496,16 @@ function _cvBuildPageExtras() {
 // "Volver al torneo": si el torneo quedó abierto detrás (deep-link o apertura desde el torneo) usamos
 // Atrás (restaura su URL); si la partida se abrió suelta (desde el buscador), abrimos el torneo.
 function cvBackToTournament() {
+  // Si la partida se abrió desde un ejercicio/práctica ("Ver la partida original"), este botón
+  // debe volver AL ejercicio, no a un torneo. El visor ya empujó su entrada de historial, así que
+  // delegamos en Atrás (el popstate reabre el ejercicio/práctica, igual que el botón del navegador).
+  if (_cvFromPuzzle || _cvFromPractice) {
+    if (_cvHistoryPushed) { history.back(); return; }
+    closeChessViewer();
+    if (_cvFromPuzzle)  { _cvFromPuzzle  = false; puzReopenAfterGame(); }
+    else                { _cvFromPractice = false; pracReopenAfterGame(); }
+    return;
+  }
   var sk = _cvShareKeys[_cvTourIdx];
   if (!sk || sk.tour == null) return;
   var to = document.getElementById('tour-overlay');
@@ -13573,11 +13596,20 @@ function _cvSlidePiece(boardEl, fromSq, toSq) {
   setTimeout(done, _CV_SLIDE_MS + 140);
 }
 
+// Calidad NAG de la jugada ACTUAL para pintar sus casillas (origen+destino) con el color del
+// símbolo, estilo chess.com/lichess. Devuelve 'blunder'|'mistake'|'inacc' o '' (nada). Respeta el
+// toggle "?!" (mismos símbolos que el badge). El tinte real es translúcido (CSS .csq.nagsq-*).
+function _cvNagQ() {
+  var mv = cv.node && cv.node.move ? cv.node.move : null;
+  return (_showNagBadges && mv) ? (({ '??':'blunder', '?':'mistake', '?!':'inacc' })[mv.nag] || '') : '';
+}
+
 function cvRenderBoard() {
   if (!cv.chess) return;
   var bd = cv.chess.board(), FL = ['a','b','c','d','e','f','g','h'];
   var lastFrom = cv.node && cv.node.move ? cv.node.move.from : '';
   var lastTo   = cv.node && cv.node.move ? cv.node.move.to   : '';
+  var nagq = _cvNagQ();   // si la jugada actual es ?/?!/??, sus casillas van tintadas (no amarillo)
   var boardEl = document.getElementById('cv-board');
   var cells = boardEl.children;
   // Rebuild completo solo si el tablero no existe aún o cambió la orientación.
@@ -13592,8 +13624,8 @@ function cvRenderBoard() {
         var sq = FL[ff] + (8 - rr);
         var li = (r + f) % 2 === 0;
         var cls = 'csq ' + (li ? 'li' : 'da');
-        if (sq === lastFrom) cls += ' mf';
-        if (sq === lastTo)   cls += ' mt';
+        if (sq === lastFrom) cls += nagq ? ' nagsq-' + nagq : ' mf';
+        if (sq === lastTo)   cls += nagq ? ' nagsq-' + nagq : ' mt';
         if (sq === cv.sel)   cls += ' sel';
         var pc = bd[rr][ff];
         if (cv.legalDests.indexOf(sq) >= 0) cls += pc ? ' legal-cap' : ' legal';
@@ -13615,8 +13647,8 @@ function cvRenderBoard() {
         var sq2 = FL[ff2] + (8 - rr2);
         var li2 = (r2 + f2) % 2 === 0;
         var cls2 = 'csq ' + (li2 ? 'li' : 'da');
-        if (sq2 === lastFrom) cls2 += ' mf';
-        if (sq2 === lastTo)   cls2 += ' mt';
+        if (sq2 === lastFrom) cls2 += nagq ? ' nagsq-' + nagq : ' mf';
+        if (sq2 === lastTo)   cls2 += nagq ? ' nagsq-' + nagq : ' mt';
         if (sq2 === cv.sel)   cls2 += ' sel';
         var pc2 = bd[rr2][ff2];
         if (cv.legalDests.indexOf(sq2) >= 0) cls2 += pc2 ? ' legal-cap' : ' legal';
@@ -13720,6 +13752,7 @@ function cvApplyBoardClasses() {
   if (!boardEl || !cv.chess) return;
   var lastFrom = cv.node && cv.node.move ? cv.node.move.from : '';
   var lastTo   = cv.node && cv.node.move ? cv.node.move.to   : '';
+  var nagq = _cvNagQ();
   var bd = cv.chess.board();
   var FL = ['a','b','c','d','e','f','g','h'];
 
@@ -13730,8 +13763,8 @@ function cvApplyBoardClasses() {
     var r  = 8 - parseInt(sq[1]);
     var li = (r + f) % 2 === 0;
     var cls = 'csq ' + (li ? 'li' : 'da');
-    if (sq === lastFrom) cls += ' mf';
-    if (sq === lastTo)   cls += ' mt';
+    if (sq === lastFrom) cls += nagq ? ' nagsq-' + nagq : ' mf';
+    if (sq === lastTo)   cls += nagq ? ' nagsq-' + nagq : ' mt';
     if (sq === cv.sel)   cls += ' sel';
     var hasPiece = bd[r] && bd[r][f] !== null;
     var isLegal = cv.legalDests.indexOf(sq) >= 0;
@@ -20631,6 +20664,26 @@ function sfClearArrows() {
   if (canvas) { var ctx = canvas.getContext('2d'); ctx.clearRect(0, 0, canvas.width, canvas.height); }
 }
 
+// Verde tipo lichess para flechas/resaltados dibujados con botón derecho (antes eran naranjas, se
+// confundían con el tinte de jugada mala). Fill translúcido para el resaltado, más opaco para la flecha.
+var _UA_HL = 'rgba(56,158,88,0.5)', _UA_ARROW = 'rgba(56,158,88,0.9)';
+// Geometría de la GRILLA (las 8×8 casillas viven DENTRO del borde de 4px del tablero) en coordenadas
+// del buffer del canvas. Robusta al borde y a cualquier desalineación/escala entre canvas y tablero:
+// antes se dibujaba sobre el borde-box entero, por eso el resaltado salía un poco corrido.
+function _boardGrid(board, canvas) {
+  var br = board.getBoundingClientRect(), cr = canvas.getBoundingClientRect();
+  var cs = getComputedStyle(board);
+  var bl = parseFloat(cs.borderLeftWidth) || 0, bt = parseFloat(cs.borderTopWidth) || 0;
+  var sx = cr.width  ? canvas.width  / cr.width  : 1;
+  var sy = cr.height ? canvas.height / cr.height : 1;
+  return {
+    ox: (br.left - cr.left + bl) * sx,
+    oy: (br.top  - cr.top  + bt) * sy,
+    sqW: (board.clientWidth  / 8) * sx,   // clientWidth = interior, ya sin el borde
+    sqH: (board.clientHeight / 8) * sy
+  };
+}
+
 function cvDrawArrows() {
   var canvas = document.getElementById('cv-arrows');
   if (!canvas) return;
@@ -20644,31 +20697,31 @@ function cvDrawArrows() {
   }
   var ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  var sqW = canvas.width / 8, sqH = canvas.height / 8;
+  var g = _boardGrid(board, canvas);
 
   function sqCenter(sq) {
     var f = 'abcdefgh'.indexOf(sq[0]);
     var r = 8 - parseInt(sq[1]);
     if (cv.flipped) { f = 7 - f; r = 7 - r; }
-    return { x: (f + 0.5) * sqW, y: (r + 0.5) * sqH };
+    return { x: g.ox + (f + 0.5) * g.sqW, y: g.oy + (r + 0.5) * g.sqH };
   }
   function sqOrigin(sq) {
     var f = 'abcdefgh'.indexOf(sq[0]);
     var r = 8 - parseInt(sq[1]);
     if (cv.flipped) { f = 7 - f; r = 7 - r; }
-    return { x: f * sqW, y: r * sqH };
+    return { x: g.ox + f * g.sqW, y: g.oy + r * g.sqH };
   }
 
   // Highlights
   Object.keys(_highlights).forEach(function(sq) {
     var o = sqOrigin(sq);
-    ctx.fillStyle = 'rgba(255,170,0,0.45)';
-    ctx.fillRect(o.x, o.y, sqW, sqH);
+    ctx.fillStyle = _UA_HL;
+    ctx.fillRect(o.x, o.y, g.sqW, g.sqH);
   });
   // Flechas del usuario
   _arrows.forEach(function(arr) {
     var from = sqCenter(arr.from), to = sqCenter(arr.to);
-    drawArrow(ctx, from.x, from.y, to.x, to.y, sqW, 0.18, 'rgba(255,170,0,0.85)');
+    drawArrow(ctx, from.x, from.y, to.x, to.y, g.sqW, 0.18, _UA_ARROW);
   });
 }
 
@@ -20717,12 +20770,12 @@ function _uaDraw(boardId, canvasId, st, flipped) {
   }
   var ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  var sqW = canvas.width / 8, sqH = canvas.height / 8;
-  function origin(sq) { var f = 'abcdefgh'.indexOf(sq[0]), r = 8 - parseInt(sq[1]); if (flipped) { f = 7 - f; r = 7 - r; } return { x: f * sqW, y: r * sqH }; }
-  Object.keys(st.highlights).forEach(function(sq) { var o = origin(sq); ctx.fillStyle = 'rgba(255,170,0,0.45)'; ctx.fillRect(o.x, o.y, sqW, sqH); });
+  var g = _boardGrid(board, canvas);   // descuenta el borde de 4px (antes salía corrido)
+  function origin(sq) { var f = 'abcdefgh'.indexOf(sq[0]), r = 8 - parseInt(sq[1]); if (flipped) { f = 7 - f; r = 7 - r; } return { x: g.ox + f * g.sqW, y: g.oy + r * g.sqH }; }
+  Object.keys(st.highlights).forEach(function(sq) { var o = origin(sq); ctx.fillStyle = _UA_HL; ctx.fillRect(o.x, o.y, g.sqW, g.sqH); });
   st.arrows.forEach(function(a) {
     var f = origin(a.from), t = origin(a.to);
-    drawArrow(ctx, f.x + sqW / 2, f.y + sqH / 2, t.x + sqW / 2, t.y + sqH / 2, sqW, 0.18, 'rgba(255,170,0,0.85)');
+    drawArrow(ctx, f.x + g.sqW / 2, f.y + g.sqH / 2, t.x + g.sqW / 2, t.y + g.sqH / 2, g.sqW, 0.18, _UA_ARROW);
   });
 }
 function _uaClear(boardId, canvasId, st, flipped) { st.arrows = []; st.highlights = {}; st.dragFrom = null; _uaDraw(boardId, canvasId, st, flipped); }
@@ -21400,6 +21453,7 @@ function toggleNagBadges() {
   var btn = document.getElementById('cv-nag-toggle');
   if (btn) btn.classList.toggle('on', _showNagBadges);
   cvUpdateNagBadge();
+  cvApplyBoardClasses();   // el toggle también prende/apaga el tinte de las casillas calificadas
 }
 function cvUpdateNagBadge() {
   var badge = document.getElementById('cv-nag-badge');
