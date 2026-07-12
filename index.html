@@ -1317,12 +1317,14 @@
     .nag-dubious   { color: #d4a12b; }
     .nag-mistake   { color: #e06020; }
     .nag-blunder   { color: #d02020; }
+    .nag-best      { color: #1bca4b; font-size: 0.85em; }
     /* La jugada hereda el color de su símbolo NAG; si está seleccionada, el dorado manda */
     .cmv.nag-brilliant { color: #1bca4b; } .cmv.nag-good { color: #7bc868; }
     .cmv.nag-interesting { color: #b8d040; } .cmv.nag-dubious { color: #d4a12b; }
     .cmv.nag-mistake { color: #e06020; } .cmv.nag-blunder { color: #d02020; }
+    .cmv.nag-best { color: #1bca4b; }
     .cmv.on.nag-brilliant, .cmv.on.nag-good, .cmv.on.nag-interesting,
-    .cmv.on.nag-dubious, .cmv.on.nag-mistake, .cmv.on.nag-blunder { color: #111; }
+    .cmv.on.nag-dubious, .cmv.on.nag-mistake, .cmv.on.nag-blunder, .cmv.on.nag-best { color: #111; }
     /* board inner wrapper (for arrows canvas) */
     .chess-board-inner { position: relative; flex: 1; min-width: 0; }
     #cv-arrows { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; border-radius: 4px; }
@@ -1580,6 +1582,9 @@
     .mq-blunder    { color: #e03030; }
     .mq-mistake    { color: #e07030; }
     .mq-inaccuracy { color: #d4a12b; }
+    .mq-best       { color: #1bca4b; }
+    .mq-excellent  { color: #7bc868; }
+    .mq-good       { color: #96a89b; }
     .mq-good       { color: #7bc868; }
     .board-blunder    { box-shadow: 0 0 0 3px #e03030, 0 4px 18px rgba(0,0,0,0.5) !important; }
     .board-mistake    { box-shadow: 0 0 0 3px #e07030, 0 4px 18px rgba(0,0,0,0.5) !important; }
@@ -20687,7 +20692,7 @@ function _tdClockTick() {
 }
 
 function nagClass(nag) {
-  return { '!!': 'brilliant', '!': 'good', '!?': 'interesting', '?!': 'dubious', '?': 'mistake', '??': 'blunder' }[nag] || '';
+  return { '!!': 'brilliant', '!': 'good', '!?': 'interesting', '?!': 'dubious', '?': 'mistake', '??': 'blunder', '★': 'best' }[nag] || '';
 }
 function nagSpan(nag) {
   if (!nag) return '';
@@ -21423,6 +21428,11 @@ function faHandleMsg(line) {
     var score = raw.mate !== undefined
       ? {mate: turn === 'b' ? -raw.mate : raw.mate}
       : {cp:   turn === 'b' ? -raw.cp   : raw.cp  };
+    // Guardar también la MEJOR jugada del motor en esta posición (uci): permite marcar con ★
+    // la jugada siguiente de la partida si coincide (como el "Best" de Chess.com). Viaja en el
+    // caché, así el ★ también aparece al redibujar desde localStorage.
+    var bmM = line.match(/^bestmove ([a-h][1-8][a-h][1-8][qrbn]?)/);
+    if (bmM) score.bm = bmM[1];
     _fa.results[_fa.ply] = score;
     // Cachear SIEMPRE (vivo y manual) por FEN y persistir: así, al cerrar el gráfico con la ✕ y
     // reabrirlo (o abrir la partida en otra pestaña), se dibuja al instante sin recalcular nada.
@@ -21534,24 +21544,54 @@ function faNum(s) {
   return Math.max(-1000, Math.min(1000, v));
 }
 
-// Clasifica cada jugada por centipawn loss → asigna nag y acumula stats
+// Score {cp|mate} (perspectiva blancas) → % de expectativa de victoria de las blancas (0–100).
+// Es la fórmula EXACTA de Lichess (lichess.org/page/accuracy): comprime los centipawns a una
+// escala de "cuánto cambia el resultado esperado", que es lo que de verdad importa: perder
+// 150cp cuando vas +8 no cambia nada; perderlos en tablas es un error grave.
+function _faWinP(s) {
+  if (!s) return 50;
+  if (s.mate !== undefined) return s.mate > 0 ? 100 : 0;
+  return 50 + 50 * (2 / (1 + Math.exp(-0.00368208 * s.cp)) - 1);
+}
+
+// Clasifica cada jugada por CAÍDA DE WIN% del que movió (criterio Lichess/Chess.com; antes se
+// usaban centipawns crudos, que sobre-castigan en posiciones ganadas y sub-castigan en tablas).
+//  · Umbrales de Lichess:      ?! ≥5 puntos, ? ≥10, ?? ≥15.
+//  · Positivas (Chess.com):    ★ = jugó la mejor del motor (si la conocemos, viene del pase);
+//                              excelente = pierde ≤2 puntos; buena = pierde ≤5. Solo la ★ se
+//                              dibuja en la lista de jugadas; el resto va al recuadro de stats.
+// La "pérdida media" (ACPL) se mantiene en centipawns, que es el estándar.
 function faClassify() {
-  var st = { w:{inacc:0,mist:0,blun:0,lossSum:0,n:0}, b:{inacc:0,mist:0,blun:0,lossSum:0,n:0} };
+  var st = { w:{best:0,exc:0,good:0,inacc:0,mist:0,blun:0,lossSum:0,n:0},
+             b:{best:0,exc:0,good:0,inacc:0,mist:0,blun:0,lossSum:0,n:0} };
+  var anyBm = false;
+  // Para win%/pérdida se usa la serie INTERPOLADA (la misma que se dibuja): así un hueco
+  // (jugada aún sin evaluar) no genera marcas falsas comparando contra 50%. La mejor jugada
+  // (bm) se lee de los resultados crudos, que es donde el pase la guardó.
+  var R = _faInterp(_fa.results);
   for (var i = 0; i < _fa.nodes.length; i++) {
     var node = _fa.nodes[i];
-    var after  = faNum(_fa.results[i]);
-    var before = i === 0 ? 20 : faNum(_fa.results[i-1]);
+    var rAfter  = R[i];
+    var rBefore = i === 0 ? {cp:20} : R[i-1];
     var whiteMoved = (nodeDepth(node) % 2 === 1);
-    var loss = whiteMoved ? (before - after) : (after - before);
+    var wpA = _faWinP(rAfter), wpB = _faWinP(rBefore);
+    var dwin = whiteMoved ? (wpB - wpA) : (wpA - wpB);   // puntos de win% que perdió el que movió
+    var loss = whiteMoved ? (faNum(rBefore) - faNum(rAfter)) : (faNum(rAfter) - faNum(rBefore));
+    var bm  = i > 0 && rBefore && rBefore.bm;            // mejor jugada del motor en la posición previa
+    var uci = node.move ? (node.move.from + node.move.to + (node.move.promotion || '')) : '';
+    if (bm) anyBm = true;
     var sym = '';
-    if (loss >= 250)      sym = '??';
-    else if (loss >= 120) sym = '?';
-    else if (loss >= 50)  sym = '?!';
-    if (node.move) node.move.nag = sym;
     var side = whiteMoved ? st.w : st.b;
+    if (dwin >= 15)      { sym = '??'; side.blun++; }
+    else if (dwin >= 10) { sym = '?';  side.mist++; }
+    else if (dwin >= 5)  { sym = '?!'; side.inacc++; }
+    else if (bm && uci === bm) { sym = '★'; side.best++; }
+    else if (dwin <= 2)  side.exc++;
+    else                 side.good++;
+    if (node.move) node.move.nag = sym;
     side.n++; side.lossSum += Math.max(0, loss);
-    if (sym === '??') side.blun++; else if (sym === '?') side.mist++; else if (sym === '?!') side.inacc++;
   }
+  st.hasBest = anyBm;   // sin pase del motor (evals del PGN de Lichess) no hay ★ → la fila se oculta
   _fa.stats = st;
 }
 
@@ -21569,10 +21609,14 @@ function faRenderStats() {
   var g = cv.games && cv.games[cv.gIdx] ? cv.games[cv.gIdx] : null;
   var wName = g && g.w ? g.w : 'Blancas';
   var bName = g && g.b ? g.b : 'Negras';
+  var hasBest = !!_fa.stats.hasBest;
   function col(name, s) {
     var acpl = s.n ? Math.round(s.lossSum / s.n) : 0;
     return '<div class="fa-stat-col">'
       + '<div class="fa-stat-name">' + name + '</div>'
+      + (hasBest ? '<div class="fa-stat-row"><span class="mq-best">★</span> ' + s.best + ' mejores</div>' : '')
+      + '<div class="fa-stat-row"><span class="mq-excellent">!</span> ' + s.exc + ' excelentes</div>'
+      + '<div class="fa-stat-row"><span class="mq-good">✓</span> ' + s.good + ' buenas</div>'
       + '<div class="fa-stat-row"><span class="mq-inaccuracy">?!</span> ' + s.inacc + ' imprecisiones</div>'
       + '<div class="fa-stat-row"><span class="mq-mistake">?</span> ' + s.mist + ' errores</div>'
       + '<div class="fa-stat-row"><span class="mq-blunder">??</span> ' + s.blun + ' blunders</div>'
