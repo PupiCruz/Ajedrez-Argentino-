@@ -14538,7 +14538,9 @@ function sfTurnOff() {
   document.getElementById('sf-vbar').classList.remove('show');
   document.getElementById('sf-vbar-fill').style.height = '50%';
   sfClearArrows();
-  if (sf.engine) sf.engine.postMessage('stop');   // detiene el análisis (el worker queda ocioso, sin consumir CPU)
+  // Detiene el análisis (el worker queda ocioso, sin consumir CPU) — salvo que el motor lo esté
+  // usando el gráfico en este momento: su búsqueda no es nuestra y no hay que cortársela.
+  if (sf.engine && !_fa.running) sf.engine.postMessage('stop');
   faUpdateBar();   // si ya hay un análisis hecho, la barra vuelve (sin flechas)
 }
 // ── Motor en UNA sola pestaña (como Lichess) ─────────────────────────────────
@@ -14570,6 +14572,7 @@ function sfStart() {
 // Motor principal: SF18 lite single-thread. El worker se crea directo desde assets/ y él solo
 // baja su .wasm (mismo nombre, misma carpeta). Si algo falla ANTES de que el motor esté listo
 // (archivo que falta, wasm que no compila en un navegador viejo), caemos al SF16 embebido.
+var _sfCrashes = 0;   // reinicios automáticos del motor en esta pestaña (tope 2, contra loops de error)
 function _sfStartSF18() {
   var worker;
   try { worker = new Worker('assets/stockfish-18-lite-single.js'); }
@@ -14583,8 +14586,21 @@ function _sfStartSF18() {
       sf.engine = null;
       _sfStartEmbedded();
     } else {
-      document.getElementById('sf-depth').textContent = 'Error en el motor';
-      sf.engine = null; sf.loading = false;
+      // Motor caído DESPUÉS de estar listo (p.ej. sin memoria tras un análisis muy largo):
+      // reiniciarlo solo (hasta 2 veces por pestaña) para que la transmisión siga sin que el
+      // visitante tenga que hacer nada. La barrera readyok relanza el análisis que estuviera
+      // en curso (sf.on / ejercicio / practicar).
+      try { worker.terminate(); } catch (_) {}
+      sf.engine = null; sf.ready = false; sf.loading = false;
+      sf.lines = [null, null, null]; sf.depth = 0; sf.pending = null; sf.armed = true;
+      _fa.running = false; _fa.armed = false;         // que el gráfico no quede esperando un motor muerto
+      if (typeof _mev !== 'undefined') { _mev.running = false; _mev.armed = false; }
+      if (_sfCrashes++ < 2) {
+        document.getElementById('sf-depth').textContent = 'Reiniciando el motor…';
+        sfStart();
+      } else {
+        document.getElementById('sf-depth').textContent = 'Error en el motor';
+      }
     }
   };
   sf.engine = worker;
@@ -14711,6 +14727,10 @@ function sfOnMsg(line) {
 var _sfDebounce = null;
 function sfAnalyze() {
   if (!sf.engine || !sf.ready || !sf.on || !cv.chess) return;
+  // Si el gráfico (pase completo/vivo) está usando el motor, NO mandarle 'stop': cortaba su
+  // búsqueda a mitad de camino y el gráfico guardaba una eval de profundidad 1-5 (ruido, muchas
+  // veces con el signo dado vuelta). Al terminar, el pase relanza este análisis solo (faNext).
+  if (_fa.running) return;
   mevAbort();   // el análisis del visor (lo pidió el usuario) tiene prioridad sobre la eval de miniaturas
   // Silenciar de inmediato la búsqueda de la posición anterior: si no, su 'go infinite'
   // sigue inundando de mensajes (barra, puntaje, flechas) y traba al navegar rápido.
@@ -21082,13 +21102,19 @@ var _fa = { running:false, armed:false, results:[], nodes:[], ply:0, lastScore:n
 // FEN → score {cp|mate} (perspectiva blancas). Se PERSISTE en localStorage: así, al reabrir una partida
 // en OTRA pestaña, el gráfico de análisis aparece al toque con las evals ya calculadas, sin que el motor
 // las recalcule. Es seguro compartir por FEN: la eval de una posición no cambia entre pestañas.
-var _faLiveCache = (function(){ try { return JSON.parse(localStorage.getItem('fa_eval_cache')) || {}; } catch(e){ return {}; } })();
+// OJO: clave "fa_eval_cache2" — la v1 quedó contaminada con evals de profundidad 1-5 (un bug hacía
+// que el módulo en vivo cortara las búsquedas del gráfico a mitad de camino y se cacheara el ruido,
+// a veces con el signo dado vuelta). Se descarta entera y se borra la vieja para liberar espacio.
+var _faLiveCache = (function(){
+  try { localStorage.removeItem('fa_eval_cache'); } catch(e) {}
+  try { return JSON.parse(localStorage.getItem('fa_eval_cache2')) || {}; } catch(e){ return {}; }
+})();
 var _faCacheSaveTimer = null;
 function _faSaveLiveCache() {   // debounce: guarda 2s después de la última eval (evita escribir en cada jugada)
   if (_faCacheSaveTimer) clearTimeout(_faCacheSaveTimer);
   _faCacheSaveTimer = setTimeout(function(){
     _faCacheSaveTimer = null;
-    try { localStorage.setItem('fa_eval_cache', JSON.stringify(_faLiveCache)); } catch(e){ /* quota llena: se ignora */ }
+    try { localStorage.setItem('fa_eval_cache2', JSON.stringify(_faLiveCache)); } catch(e){ /* quota llena: se ignora */ }
   }, 2000);
 }
 // El gráfico en vivo evalúa cada jugada a PROFUNDIDAD fija (no tiempo fijo): así se acerca más a la
@@ -21340,6 +21366,7 @@ function faNext() {
     return;
   }
   _fa.lastScore = null;
+  _fa.lastDepth = 0;
   if (_fa._capTimer) { clearTimeout(_fa._capTimer); _fa._capTimer = null; }
   sf.engine.postMessage('stop');
   sf.engine.postMessage('position fen ' + _fa.nodes[_fa.ply].fen);
@@ -21372,12 +21399,25 @@ function faHandleMsg(line) {
     if (mm && mm[1] !== '1') return;
     var cpM = line.match(/\bscore cp (-?\d+)\b/);
     var mtM = line.match(/\bscore mate (-?\d+)\b/);
-    if (cpM || mtM) _fa.lastScore = mtM ? {mate:parseInt(mtM[1])} : {cp:parseInt(cpM[1])};
+    if (cpM || mtM) {
+      _fa.lastScore = mtM ? {mate:parseInt(mtM[1])} : {cp:parseInt(cpM[1])};
+      var dM = line.match(/\bdepth (\d+)\b/);
+      _fa.lastDepth = dM ? parseInt(dM[1]) : 0;
+    }
   }
   if (line.indexOf('bestmove') === 0) {
     if (_fa._capTimer) { clearTimeout(_fa._capTimer); _fa._capTimer = null; }
     var node = _fa.nodes[_fa.ply];
-    var raw  = _fa.lastScore || {cp:0};
+    // Control de calidad: si la búsqueda fue cortada antes de dar una eval confiable (sin score,
+    // o profundidad < 8 — pasa cuando otro 'stop' externo la interrumpe), NO guardar ese ruido:
+    // se deja el hueco (el gráfico interpola) y se reintenta en el próximo refresco del vivo.
+    // Los mates se aceptan siempre (un mate corto se anuncia a profundidad baja y es certero).
+    if (!_fa.lastScore || (_fa.lastScore.mate === undefined && (_fa.lastDepth || 0) < 8)) {
+      _fa.ply++;
+      faNext();
+      return;
+    }
+    var raw  = _fa.lastScore;
     var turn = node.fen.split(' ')[1];   // lado a mover en esta posición
     // UCI da el score desde la perspectiva del lado a mover → normalizar a blancas
     var score = raw.mate !== undefined
