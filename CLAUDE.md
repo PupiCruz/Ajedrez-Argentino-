@@ -32,8 +32,11 @@ El autor **no es programador** y trabaja en español. El objetivo es eventualmen
   800px, `_fetchResizeImage`); no se toca el flyerUrl guardado (imgur queda de respaldo,
   `_flyerSrc` redirige). `manifest.js` está ignorado por git; `data/ph/`, `data/fl/`,
   `data/t/`, `data/p/` SÍ se publican.
-- `assets/` — motor Stockfish (self-host), librería de ajedrez, piezas SVG, sonidos.
+- `assets/` — motores Stockfish (self-host), librería de ajedrez, piezas SVG, sonidos.
   **La app no tiene ninguna dependencia externa en runtime** (anda sin internet).
+  Motor principal: `stockfish-18-lite-single.{js,wasm}` (SF18 con red neuronal NNUE,
+  un solo hilo, el mismo build que usa Chess.com). Plan B y modo `file://` (doble clic):
+  `stockfish-embedded.js` (SF16 en base64, sin red). La lógica está en `sfStart()`.
 - `iniciar-servidor.cmd` / `serve.ps1` — levantan un servidor local para abrir la app.
 
 ## Cómo se trabaja (flujo del autor)
@@ -111,8 +114,12 @@ con datos nuevos, se regenera el ZIP y se vuelve a subir.
   como `<\/script>` o el navegador corta el script y rompe toda la app.
 
 ## Git
-Repo **local** (sin remoto), rama `master`. Se commitea el código (`index.html`,
-assets, scripts); **no** se commitea `data/embedded-data.js` (datos → Drive).
+Rama local `master` → remoto `origin/main` (GitHub `PupiCruz/Ajedrez-Argentino-`).
+Cloudflare Pages redeploya solo al pushear a `main` (~1-2 min) → `chessargentino.pages.dev`.
+El Worker del teléfono (editar.html) también pushea a `main`: si el push de la PC
+rebota, hacer `git fetch` + `git rebase origin/main` y pushear de nuevo.
+Se commitea el código (`index.html`, assets, scripts); **no** se commitea
+`data/embedded-data.js` (datos → Drive).
 
 ## Memoria por PC (no viaja con esta carpeta)
 Las notas detalladas sesión por sesión que toma Claude viven en el perfil de la PC
