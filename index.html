@@ -14771,10 +14771,9 @@ function sfAnalyzeNow() {
     document.getElementById('sf-score').textContent = '…';
     document.getElementById('sf-score').className = 'sf-score sf-neu';
   }
-  for (var i = 0; i < 3; i++) {
-    document.getElementById('sf-ls'+i).textContent = '—';
-    document.getElementById('sf-lm'+i).textContent = '';
-  }
+  // Las 3 líneas de variantes NO se borran a "—" al llegar la jugada: se conservan las anteriores
+  // hasta que el motor tenga las nuevas a profundidad confiable (sfUpdateUI las cambia recién en
+  // prof. _SF_BAR_MINDEPTH). Así el panel no parpadea ni "reinicia" en cada jugada del vivo.
   sfRestart(cv.chess.fen(), cv.chess.turn());
 }
 
@@ -14867,14 +14866,17 @@ function sfUpdateUI() {
   }
   document.getElementById('sf-depth').textContent = sf.depth ? 'prof. ' + sf.depth : '';
 
-  // three lines
-  for (var i = 0; i < 3; i++) {
-    var ln  = sf.lines[i];
-    var els = document.getElementById('sf-ls'+i);
-    var elm = document.getElementById('sf-lm'+i);
-    els.className = 'sf-lscore ' + (ln ? sfScoreCls(ln.score, flip) : 'sf-neu');
-    els.textContent = ln ? sfScoreStr(ln.score, flip) : '—';
-    elm.textContent = ln ? sfPvSan(ln.pv) : '';
+  // three lines — también esperan prof. confiable: hasta _SF_BAR_MINDEPTH se conservan las de la
+  // jugada anterior (no se borran ni parpadean con variantes de prof. 1-2 que después cambian).
+  if (sf.depth >= _SF_BAR_MINDEPTH) {
+    for (var i = 0; i < 3; i++) {
+      var ln  = sf.lines[i];
+      var els = document.getElementById('sf-ls'+i);
+      var elm = document.getElementById('sf-lm'+i);
+      els.className = 'sf-lscore ' + (ln ? sfScoreCls(ln.score, flip) : 'sf-neu');
+      els.textContent = ln ? sfScoreStr(ln.score, flip) : '—';
+      elm.textContent = ln ? sfPvSan(ln.pv) : '';
+    }
   }
 }
 
@@ -21470,6 +21472,7 @@ function faHandleMsg(line) {
     // caché, así el ★ también aparece al redibujar desde localStorage.
     var bmM = line.match(/^bestmove ([a-h][1-8][a-h][1-8][qrbn]?)/);
     if (bmM) score.bm = bmM[1];
+    score.d = _fa.lastDepth || 0;   // profundidad a la que se calculó (para diferir la calificación)
     _fa.results[_fa.ply] = score;
     // Cachear SIEMPRE (vivo y manual) por FEN y persistir: así, al cerrar el gráfico con la ✕ y
     // reabrirlo (o abrir la partida en otra pestaña), se dibuja al instante sin recalcular nada.
@@ -21498,6 +21501,7 @@ function _faFeedModuleEval(rawScore, flip) {
     : { cp:   flip ? -rawScore.cp   : rawScore.cp };
   var prev = _faLiveCache[fen];
   if (prev && prev.bm) ws.bm = prev.bm;   // conservar la mejor jugada ya cacheada (para el ★)
+  ws.d = sf.depth;                        // profundidad del módulo (para diferir la calificación)
   _faLiveCache[fen] = ws;
   _faSaveLiveCache();
   // Ubicar la jugada en la línea principal del gráfico y actualizar su punto (redibujo acelerado).
@@ -21507,6 +21511,9 @@ function _faFeedModuleEval(rawScore, flip) {
   _fa.results[idx] = ws;
   var _now = Date.now();
   if (_now - _faFeedT >= 400) { _faFeedT = _now; faRender(_faInterp(_fa.results)); }
+  // Al asentar esta jugada en profundidad puede aparecer/corregirse su símbolo (y el de la
+  // siguiente): recalcular la calificación, re-renderizando solo si algún símbolo cambió.
+  _faReclassifyIfChanged();
 }
 
 function faScoreToY(score, midY, cap) {
@@ -21616,31 +21623,44 @@ function _faWinP(s) {
   return 50 + 50 * (2 / (1 + Math.exp(-0.00368208 * s.cp)) - 1);
 }
 
+// Una eval está CONFIRMADA (sirve para calificar) si existe y es de fiar: un mate, una eval del
+// PGN de Lichess (sin `.d`, partida terminada) o una del motor a profundidad suficiente. Las de
+// baja profundidad (jugada recién llegada, todavía evaluándose) NO cuentan → no calificamos con
+// ellas para no tirar símbolos falsos que después cambian.
+var _FA_NAG_MINDEPTH = 14;
+function _faSettled(r) {
+  if (r == null) return false;                 // hueco: nunca califica (ni al vecino)
+  if (typeof _fa !== 'undefined' && !_fa.live) return true;   // análisis manual (partida terminada): todo cuenta
+  return r.mate !== undefined || r.d === undefined || r.d >= _FA_NAG_MINDEPTH;
+}
+
 // Clasifica cada jugada por CAÍDA DE WIN% del que movió (criterio Lichess/Chess.com; antes se
 // usaban centipawns crudos, que sobre-castigan en posiciones ganadas y sub-castigan en tablas).
 //  · Umbrales de Lichess:      ?! ≥5 puntos, ? ≥10, ?? ≥15.
-//  · Positivas (Chess.com):    ★ = jugó la mejor del motor (si la conocemos, viene del pase);
-//                              excelente = pierde ≤2 puntos; buena = pierde ≤5. Solo la ★ se
-//                              dibuja en la lista de jugadas; el resto va al recuadro de stats.
-// La "pérdida media" (ACPL) se mantiene en centipawns, que es el estándar.
+//  · Positiva (Chess.com):     ★ = jugó la mejor del motor (si la conocemos, viene del pase/módulo).
+// SOLO se califica una jugada cuando su eval Y la de la jugada anterior están CONFIRMADAS: mientras
+// alguna esté a baja profundidad (recién llegó en vivo) la jugada queda SIN símbolo, hasta que el
+// pase o el módulo la asienten (ahí `_faReclassifyIfChanged` la recalifica). La "pérdida media"
+// (ACPL) también cuenta solo jugadas confirmadas. Usa los resultados CRUDOS (no interpolados): un
+// hueco no debe generar una calificación.
 function faClassify() {
   var st = { w:{best:0,exc:0,good:0,inacc:0,mist:0,blun:0,lossSum:0,n:0},
              b:{best:0,exc:0,good:0,inacc:0,mist:0,blun:0,lossSum:0,n:0} };
   var anyBm = false;
-  // Para win%/pérdida se usa la serie INTERPOLADA (la misma que se dibuja): así un hueco
-  // (jugada aún sin evaluar) no genera marcas falsas comparando contra 50%. La mejor jugada
-  // (bm) se lee de los resultados crudos, que es donde el pase la guardó.
-  var R = _faInterp(_fa.results);
+  var R = _fa.results;
   for (var i = 0; i < _fa.nodes.length; i++) {
     var node = _fa.nodes[i];
+    if (!node.move) continue;
     var rAfter  = R[i];
     var rBefore = i === 0 ? {cp:20} : R[i-1];
+    // Ambos extremos confirmados; si no, sin símbolo (queda pendiente) y no suma a stats.
+    if (!_faSettled(rAfter) || !_faSettled(rBefore)) { node.move.nag = ''; continue; }
     var whiteMoved = (nodeDepth(node) % 2 === 1);
     var wpA = _faWinP(rAfter), wpB = _faWinP(rBefore);
     var dwin = whiteMoved ? (wpB - wpA) : (wpA - wpB);   // puntos de win% que perdió el que movió
     var loss = whiteMoved ? (faNum(rBefore) - faNum(rAfter)) : (faNum(rAfter) - faNum(rBefore));
-    var bm  = i > 0 && rBefore && rBefore.bm;            // mejor jugada del motor en la posición previa
-    var uci = node.move ? (node.move.from + node.move.to + (node.move.promotion || '')) : '';
+    var bm  = rBefore && rBefore.bm;                     // mejor jugada del motor en la posición previa
+    var uci = node.move.from + node.move.to + (node.move.promotion || '');
     if (bm) anyBm = true;
     var sym = '';
     var side = whiteMoved ? st.w : st.b;
@@ -21650,11 +21670,26 @@ function faClassify() {
     else if (bm && uci === bm) { sym = '★'; side.best++; }
     else if (dwin <= 2)  side.exc++;
     else                 side.good++;
-    if (node.move) node.move.nag = sym;
+    node.move.nag = sym;
     side.n++; side.lossSum += Math.max(0, loss);
   }
   st.hasBest = anyBm;   // sin pase del motor (evals del PGN de Lichess) no hay ★ → la fila se oculta
   _fa.stats = st;
+}
+
+// Recalifica y, SOLO si cambió algún símbolo, re-renderiza la lista de jugadas + stats + badge.
+// Lo llama el módulo al asentar una jugada en profundidad (evita re-render en cada lectura).
+var _faNagSig = '';
+function _faReclassifyIfChanged() {
+  if (typeof _fa === 'undefined' || !_fa.nodes || !_fa.nodes.length) return;
+  faClassify();
+  var sig = '';
+  for (var i = 0; i < _fa.nodes.length; i++) sig += (_fa.nodes[i].move ? (_fa.nodes[i].move.nag || '-') : '') + ',';
+  if (sig === _faNagSig) return;
+  _faNagSig = sig;
+  faApplyNags();
+  faRenderStats();
+  if (typeof cvUpdateNagBadge === 'function') cvUpdateNagBadge();
 }
 
 // Re-renderiza la lista de movimientos para que aparezcan los símbolos
