@@ -21127,7 +21127,16 @@ function _faSaveLiveCache() {   // debounce: guarda 2s después de la última ev
 // _FA_LIVE_CAP_MS es el tope por jugada (las posiciones agudas no frenan el dibujado). Subí la
 // profundidad para más exactitud (más lento) o bajala para más velocidad.
 var _FA_LIVE_DEPTH = 18;
-var _FA_LIVE_CAP_MS = 900;
+var _FA_LIVE_CAP_MS = 1000;
+// La COLA del gráfico en vivo (las últimas jugadas, las que el visitante está mirando) se evalúa
+// con presupuesto PROFUNDO: más profundidad y más tiempo, y si ni así se llega a una profundidad
+// confiable, no se dibuja (queda el hueco interpolado y se reintenta en el próximo refresco, donde
+// la tabla hash del motor ya viene precalentada y llega más lejos). Las jugadas viejas del
+// historial usan el presupuesto liviano de arriba (se rellenan rápido al abrir la partida).
+var _FA_LIVE_DEEP_N      = 6;     // cuántas jugadas finales cuentan como "cola"
+var _FA_LIVE_DEEP_DEPTH  = 22;    // profundidad objetivo de la cola
+var _FA_LIVE_DEEP_CAP_MS = 3000;  // tope de tiempo por jugada de la cola
+var _FA_LIVE_DEEP_MIN    = 13;    // prof. mínima para aceptar una eval de la cola (si no: hueco)
 // Análisis MANUAL del pool (botón 📊): mismo criterio (profundidad fija + tope por jugada), pero como
 // recorre TODAS las jugadas de la partida, el tope marca el presupuesto total. 450ms/jugada ≈ 45s por
 // cada 100 jugadas. Profundidad alta para que las posiciones quietas/finales corten antes (más exactas
@@ -21375,13 +21384,16 @@ function faNext() {
   if (_fa._capTimer) { clearTimeout(_fa._capTimer); _fa._capTimer = null; }
   sf.engine.postMessage('stop');
   sf.engine.postMessage('position fen ' + _fa.nodes[_fa.ply].fen);
-  // Mismo criterio en vivo y manual: PROFUNDIDAD fija en vez de tiempo fijo. En posiciones quietas/
-  // finales llega rápido a buena profundidad (eval más cercana a la del módulo en vivo, sobre todo en
-  // posiciones muy ganadas); con un TOPE de tiempo por jugada para que las agudas no se eternicen.
-  // Vivo: pocas jugadas por refresco → tope holgado. Manual: recorre toda la partida → el tope marca
-  // el presupuesto total (≈45s por 100 jugadas).
-  sf.engine.postMessage('go depth ' + (_fa.live ? _FA_LIVE_DEPTH : _FA_MANUAL_DEPTH));
-  _fa._capTimer = setTimeout(function() { if (sf.engine) sf.engine.postMessage('stop'); }, _fa.live ? _FA_LIVE_CAP_MS : _FA_MANUAL_CAP_MS);
+  // PROFUNDIDAD fija en vez de tiempo fijo, con TOPE de tiempo para que las agudas no se eternicen.
+  // En vivo hay dos presupuestos: liviano para el historial y PROFUNDO para la cola (las últimas
+  // _FA_LIVE_DEEP_N jugadas), que es lo que el visitante está mirando y donde los símbolos y el
+  // dibujo tienen que ser lo más verdaderos posible. Manual: presupuesto total ≈45s por 100 jugadas.
+  var deep  = _fa.live && (_fa.nodes.length - _fa.ply) <= _FA_LIVE_DEEP_N;
+  var depth = _fa.live ? (deep ? _FA_LIVE_DEEP_DEPTH : _FA_LIVE_DEPTH) : _FA_MANUAL_DEPTH;
+  var capMs = _fa.live ? (deep ? _FA_LIVE_DEEP_CAP_MS : _FA_LIVE_CAP_MS) : _FA_MANUAL_CAP_MS;
+  _fa.minD  = deep ? _FA_LIVE_DEEP_MIN : 8;   // prof. mínima para aceptar la eval de ESTE nodo
+  sf.engine.postMessage('go depth ' + depth);
+  _fa._capTimer = setTimeout(function() { if (sf.engine) sf.engine.postMessage('stop'); }, capMs);
   if (!_fa.live) {   // la barra de progreso es solo para el análisis manual
     var pct = Math.round(_fa.ply / _fa.nodes.length * 100);
     var t = document.getElementById('fa-prog-txt');
@@ -21417,7 +21429,9 @@ function faHandleMsg(line) {
     // o profundidad < 8 — pasa cuando otro 'stop' externo la interrumpe), NO guardar ese ruido:
     // se deja el hueco (el gráfico interpola) y se reintenta en el próximo refresco del vivo.
     // Los mates se aceptan siempre (un mate corto se anuncia a profundidad baja y es certero).
-    if (!_fa.lastScore || (_fa.lastScore.mate === undefined && (_fa.lastDepth || 0) < 8)) {
+    // En la cola del vivo la vara es más alta (_FA_LIVE_DEEP_MIN, via _fa.minD): mejor un hueco
+    // interpolado que dibujar una eval poco profunda — al reintentar, la hash precalentada llega más lejos.
+    if (!_fa.lastScore || (_fa.lastScore.mate === undefined && (_fa.lastDepth || 0) < (_fa.minD || 8))) {
       _fa.ply++;
       faNext();
       return;
