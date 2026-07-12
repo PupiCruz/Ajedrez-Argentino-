@@ -6774,7 +6774,8 @@ async function _buildZip(files) {
 var _EXPORT_ASSET_PATHS = [
   'data/hardcoded.js',   // PLAYER_GAMES + PGN_DB (datos curados, ya no inline en el HTML)
   'assets/chess.min.js', // librería de ajedrez local (antes venía de jsDelivr)
-  'assets/stockfish-embedded.js', // motor + wasm en base64 (lo que usa el análisis; anda en file://)
+  'assets/stockfish-18-lite-single.js','assets/stockfish-18-lite-single.wasm', // motor principal SF18 + red NNUE (por servidor)
+  'assets/stockfish-embedded.js', // SF16 + wasm en base64 (plan B y modo file:// con doble clic)
   'assets/stockfish-nnue-16-single.js','assets/stockfish-nnue-16-single.wasm', // motor local (antes jsDelivr)
   'assets/piezas/wK.svg','assets/piezas/wQ.svg','assets/piezas/wR.svg','assets/piezas/wB.svg','assets/piezas/wN.svg','assets/piezas/wP.svg',
   'assets/piezas/bK.svg','assets/piezas/bQ.svg','assets/piezas/bR.svg','assets/piezas/bB.svg','assets/piezas/bN.svg','assets/piezas/bP.svg',
@@ -14557,10 +14558,43 @@ function sfStart() {
   }
   if (sf.loading) return;
   sf.loading = true;
-  document.getElementById('sf-depth').textContent = 'Cargando SF16…';
-  // Stockfish con el .wasm INCRUSTADO (assets/stockfish-embedded.js define window.__SF_JS__ y
-  // window.__SF_WASM_B64__). No usa fetch → funciona con doble clic (file://) Y por servidor.
-  // El archivo embebido se carga una sola vez, on-demand, vía <script src> (sí permitido en file://).
+  document.getElementById('sf-depth').textContent = 'Cargando el motor…';
+  // Por servidor (la web publicada y el servidor local): Stockfish 18 lite con red neuronal
+  // (NNUE, ~7MB, un solo hilo — no necesita headers especiales). Es el mismo build que usa
+  // Chess.com (stockfish.js de nmrugg). Con doble clic (file://) los Workers no pueden cargar
+  // archivos → se usa el SF16 embebido en base64 de siempre (también es el plan B si el 18
+  // no llegara a cargar).
+  if (location.protocol !== 'file:') _sfStartSF18(); else _sfStartEmbedded();
+}
+
+// Motor principal: SF18 lite single-thread. El worker se crea directo desde assets/ y él solo
+// baja su .wasm (mismo nombre, misma carpeta). Si algo falla ANTES de que el motor esté listo
+// (archivo que falta, wasm que no compila en un navegador viejo), caemos al SF16 embebido.
+function _sfStartSF18() {
+  var worker;
+  try { worker = new Worker('assets/stockfish-18-lite-single.js'); }
+  catch (err) { _sfStartEmbedded(); return; }
+  var fellBack = false;
+  worker.onmessage = function(e) { sfOnMsg(e.data); };
+  worker.onerror = function(e) {
+    if (!fellBack && !sf.ready) {
+      fellBack = true;
+      try { worker.terminate(); } catch (_) {}
+      sf.engine = null;
+      _sfStartEmbedded();
+    } else {
+      document.getElementById('sf-depth').textContent = 'Error en el motor';
+      sf.engine = null; sf.loading = false;
+    }
+  };
+  sf.engine = worker;
+  sf.engine.postMessage('uci');
+}
+
+// Plan B / modo file://: Stockfish 16 con el .wasm INCRUSTADO (assets/stockfish-embedded.js
+// define window.__SF_JS__ y window.__SF_WASM_B64__). No usa fetch → funciona con doble clic.
+// El archivo embebido se carga una sola vez, on-demand, vía <script src> (sí permitido en file://).
+function _sfStartEmbedded() {
   _sfEnsureEmbedded(function(ok) {
     if (!ok || !window.__SF_JS__ || !window.__SF_WASM_B64__) {
       document.getElementById('sf-depth').textContent = 'No se pudo cargar el motor';
@@ -14620,6 +14654,9 @@ function sfOnMsg(line) {
   if (_mev.running) { mevHandleMsg(line); return; }
   if (line === 'uciok') {
     sf.engine.postMessage('setoption name MultiPV value 3');
+    // Más memoria para la tabla de transposición (default 16MB): llega a más profundidad
+    // más rápido. 32MB es seguro también en teléfonos.
+    sf.engine.postMessage('setoption name Hash value 32');
     sf.engine.postMessage('isready');
     return;
   }
