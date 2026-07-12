@@ -14755,9 +14755,12 @@ function sfAnalyzeNow() {
   sf.depth = 0;
   _sfBarLastT = 0;   // primera lectura confiable de la jugada nueva: aplicarla sin esperar el acelerador
   // No tirar la barra al centro (50%) en cada jugada: eso causaba el "salto brusco". En su lugar
-  // la sembramos con el [%eval] del PGN si lo hay (Lichess) — y si no, la dejamos donde estaba.
-  // El motor la afina suave (CSS transition) cuando llega a una profundidad confiable.
-  var _seed = cv.node && cv.node.move && cv.node.move.ev;
+  // la sembramos con la mejor eval que ya tengamos de ESTA posición: el [%eval] del PGN (Lichess) o,
+  // en vivo, la eval PROFUNDA que el gráfico acaba de calcular (_faLiveCache). Así el número arranca
+  // en el valor correcto y el motor solo lo afina — nunca muestra el signo dado vuelta de prof. 1-2.
+  var _seed = (cv.node && cv.node.move && cv.node.move.ev)
+           || (typeof _faLiveCache !== 'undefined' && cv.chess && _faLiveCache[cv.chess.fen()])
+           || null;
   if (_seed) {
     var _sp = sfBarPct(_seed, false);
     if (cv.flipped) _sp = 100 - _sp;
@@ -14846,9 +14849,16 @@ function sfUpdateUI() {
     }
     var _vbar = document.getElementById('sf-vbar');
     if (_vbar) { if (cv.flipped) _vbar.classList.add('flipped'); else _vbar.classList.remove('flipped'); }
-    var scoreEl = document.getElementById('sf-score');
-    scoreEl.textContent = sfScoreStr(main.score, flip);
-    scoreEl.className = 'sf-score ' + sfScoreCls(main.score, flip);
+    // El NÚMERO grande de puntaje también espera a una profundidad confiable (igual que la barra):
+    // al llegar una jugada nueva las lecturas de prof. 1-15 pueden salir del lado contrario un
+    // instante (ej. -7.2 cuando la posición es +6, porque prof. 1-2 ve el material antes de la
+    // recaptura). Hasta prof. _SF_BAR_MINDEPTH se conserva el valor sembrado (jugada anterior o
+    // gráfico, ya normalizado a blancas en sfAnalyzeNow).
+    if (sf.depth >= _SF_BAR_MINDEPTH) {
+      var scoreEl = document.getElementById('sf-score');
+      scoreEl.textContent = sfScoreStr(main.score, flip);
+      scoreEl.className = 'sf-score ' + sfScoreCls(main.score, flip);
+    }
   }
   document.getElementById('sf-depth').textContent = sf.depth ? 'prof. ' + sf.depth : '';
 
