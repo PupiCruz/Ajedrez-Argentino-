@@ -14858,6 +14858,11 @@ function sfUpdateUI() {
       var scoreEl = document.getElementById('sf-score');
       scoreEl.textContent = sfScoreStr(main.score, flip);
       scoreEl.className = 'sf-score ' + sfScoreCls(main.score, flip);
+      // El módulo es la eval MÁS PROFUNDA que tenemos de esta posición (prof. 20-30, en vivo
+      // continuo). Su valor alimenta directo el punto del gráfico de ESTA jugada: así la cola del
+      // gráfico coincide siempre con el número del módulo, sin depender de la eval más corta del
+      // pase ni de lecturas transitorias. Solo en modo en vivo y con el pase quieto.
+      _faFeedModuleEval(main.score, flip);
     }
   }
   document.getElementById('sf-depth').textContent = sf.depth ? 'prof. ' + sf.depth : '';
@@ -21477,6 +21482,31 @@ function faHandleMsg(line) {
     _fa.ply++;
     faNext();
   }
+}
+
+// El módulo en vivo alimenta el punto del gráfico de la posición que está analizando (normalmente la
+// última jugada). Es la eval más profunda disponible (prof. 20-30) → la cola del gráfico queda idéntica
+// al número del módulo, sin transitorios ni depender del pase. rawScore viene en perspectiva del que
+// mueve (sf.curSide); flip lo normaliza a blancas.
+var _faFeedT = 0;
+function _faFeedModuleEval(rawScore, flip) {
+  if (typeof _fa === 'undefined' || !_fa.live || _fa.running) return;   // solo en vivo, sin pase corriendo
+  if (!cv.chess || !rawScore) return;
+  var fen = cv.chess.fen();
+  var ws = rawScore.mate !== undefined
+    ? { mate: flip ? -rawScore.mate : rawScore.mate }
+    : { cp:   flip ? -rawScore.cp   : rawScore.cp };
+  var prev = _faLiveCache[fen];
+  if (prev && prev.bm) ws.bm = prev.bm;   // conservar la mejor jugada ya cacheada (para el ★)
+  _faLiveCache[fen] = ws;
+  _faSaveLiveCache();
+  // Ubicar la jugada en la línea principal del gráfico y actualizar su punto (redibujo acelerado).
+  var idx = -1;
+  for (var i = _fa.nodes.length - 1; i >= 0; i--) { if (_fa.nodes[i] && _fa.nodes[i].fen === fen) { idx = i; break; } }
+  if (idx < 0) return;
+  _fa.results[idx] = ws;
+  var _now = Date.now();
+  if (_now - _faFeedT >= 400) { _faFeedT = _now; faRender(_faInterp(_fa.results)); }
 }
 
 function faScoreToY(score, midY, cap) {
