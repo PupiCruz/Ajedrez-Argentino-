@@ -14511,11 +14511,11 @@ var sf = { engine:null, loading:false, ready:false, on:false, depth:0, lines:[nu
            curSide:'w', pending:null, armed:true };
 // Profundidad mínima antes de mover la barra de eval: evita el "salto" de las lecturas ruidosas
 // de baja profundidad al avanzar una jugada. El número de puntaje sí se actualiza desde el inicio.
-// Subida de 12 a 16: al llegar una jugada NUEVA en vivo el motor arranca de prof. 1 y la primera
-// lectura que movía la barra (prof. 12) podía salir del lado contrario un instante en posiciones
-// agudas/desequilibradas, antes de resolverse. Con 16 la barra espera a una eval más asentada y
-// ya no pega el salto momentáneo. Hasta entonces conserva el valor de la jugada anterior (correcto).
-var _SF_BAR_MINDEPTH = 16;
+// Prof. mínima para mover barra/número/líneas/gráfico al llegar una jugada nueva: por debajo, las
+// lecturas pueden salir del lado contrario un instante (agudas/desequilibradas) antes de resolverse.
+// 14 es un buen equilibrio: SF18 ya es confiable a esa prof. (el salto feo era a 12) y aparece más
+// rápido que a 16. Hasta entonces se conserva el valor de la jugada anterior (correcto).
+var _SF_BAR_MINDEPTH = 14;
 // La barra se mueve a lo sumo cada _SF_BAR_THROTTLE_MS: `go infinite` emite una eval nueva cada ~50ms
 // (prof. 12,13,14…) y aplicarlas todas hacía que la barra zigzagueara (sube, baja, se acomoda). Con el
 // acelerador, cada paso alcanza a asentarse antes del siguiente → escalones limpios que convergen.
@@ -21222,10 +21222,12 @@ function faLiveBuild() {
   if (!nodes.length) return;
   _fa.live = true;
   _fa.nodes = nodes;
-  _fa.results = nodes.map(function(nd) {
-    if (nd.move && nd.move.ev) return nd.move.ev;     // Lichess (jugada de partida terminada)
-    var c = _faLiveCache[nd.fen];                     // motor local (jugada en curso ya calculada)
-    return c || null;
+  _fa.results = nodes.map(function(nd, i) {
+    var mine = _faLiveCache[nd.fen];                   // NUESTRA eval (módulo/pase, con .d)
+    // Las últimas jugadas (las que llegan) prefieren NUESTRA eval con profundidad para poder
+    // calificarlas; el resto usa el [%eval] de Lichess (rápido) y cae a la nuestra si no hay.
+    if (i >= nodes.length - _FA_LIVE_TRUST_EV_AFTER && mine) return mine;
+    return (nd.move && nd.move.ev) || mine || null;
   });
   document.getElementById('eval-graph-wrap').style.display = 'block';
   document.getElementById('fa-prog-row').style.display = 'none';
@@ -21234,8 +21236,8 @@ function faLiveBuild() {
   var _op = document.getElementById('cv-opening'), _faOp = document.getElementById('fa-opening');
   if (_faOp) _faOp.textContent = _op ? _op.textContent : '';
   faRender(_faInterp(_fa.results));   // dibujar ya con lo que haya
-  // ¿Faltan jugadas por evaluar? Lanzar el pase del motor (incremental) que solo calcula esas.
-  if (_fa.results.some(function(r) { return r == null; })) faLiveEngineStart();
+  // ¿Falta (re)evaluar alguna? Lanzar el pase del motor (incremental) que solo calcula esas.
+  if (_fa.nodes.some(function(nd, i) { return _faNeedsPassEval(i); })) faLiveEngineStart();
   else { faClassify(); faRender(); faRenderStats(); faApplyNags(); cvUpdateNagBadge(); faUpdateBar(); }
   faUpdateBuildBtn();
 }
@@ -21398,9 +21400,10 @@ function faCloseGraph() {
 
 function faNext() {
   if (!_fa.running) return;
-  // Saltar las jugadas que YA tienen evaluación (del [%eval] de Lichess o del caché del motor): el
-  // motor solo calcula las que faltan. Acelera el análisis manual y permite el modo en vivo incremental.
-  while (_fa.ply < _fa.nodes.length && _fa.results[_fa.ply] != null) _fa.ply++;
+  // Saltar las jugadas que ya no necesitan (re)evaluación. Manual: las que tienen valor. Vivo: además
+  // re-evalúa las últimas que solo traen [%eval] de Lichess, para tener NUESTRA profundidad y poder
+  // calificarlas sin parpadeo (ver _faNeedsPassEval).
+  while (_fa.ply < _fa.nodes.length && !_faNeedsPassEval(_fa.ply)) _fa.ply++;
   if (_fa.ply >= _fa.nodes.length) {
     faFinish();
     faClassify();
@@ -21646,10 +21649,28 @@ function _faWinP(s) {
 // baja profundidad (jugada recién llegada, todavía evaluándose) NO cuentan → no calificamos con
 // ellas para no tirar símbolos falsos que después cambian.
 var _FA_NAG_MINDEPTH = 14;
-function _faSettled(r) {
+// Cuántas jugadas del final "están llegando": para ellas NO alcanza con el [%eval] de Lichess; se
+// exige NUESTRA profundidad antes de calificar. Así el símbolo aparece recién cuando el módulo/pase
+// evaluó la jugada, y no parpadea un ?? apenas llega la eval de Lichess (que a veces difiere).
+var _FA_LIVE_TRUST_EV_AFTER = 2;
+function _faSettled(r, i) {
   if (r == null) return false;                 // hueco: nunca califica (ni al vecino)
-  if (typeof _fa !== 'undefined' && !_fa.live) return true;   // análisis manual (partida terminada): todo cuenta
-  return r.mate !== undefined || r.d === undefined || r.d >= _FA_NAG_MINDEPTH;
+  if (r.mate !== undefined) return true;       // mate: certero a cualquier profundidad
+  if (typeof _fa === 'undefined' || !_fa.live) return true;   // análisis manual (partida terminada): todo cuenta
+  var recent = (typeof i === 'number') && i >= _fa.nodes.length - _FA_LIVE_TRUST_EV_AFTER;
+  if (recent) return r.d !== undefined && r.d >= _FA_NAG_MINDEPTH;   // las que llegan: exigir NUESTRA profundidad
+  return r.d === undefined || r.d >= _FA_NAG_MINDEPTH;               // historial: el [%eval] de Lichess vale
+}
+
+// ¿El pase debe (re)evaluar la jugada i? Los huecos siempre. En vivo, además, las últimas jugadas que
+// solo traen [%eval] de Lichess (sin NUESTRA profundidad) se re-evalúan para poder calificarlas sin
+// parpadeo. En manual no se re-evalúa nada que ya tenga valor.
+function _faNeedsPassEval(i) {
+  var r = _fa.results[i];
+  if (r == null) return true;
+  if (typeof _fa === 'undefined' || !_fa.live || r.mate !== undefined) return false;
+  var recent = i >= _fa.nodes.length - _FA_LIVE_TRUST_EV_AFTER;
+  return recent && !(r.d !== undefined && r.d >= _FA_NAG_MINDEPTH);
 }
 
 // Clasifica cada jugada por CAÍDA DE WIN% del que movió (criterio Lichess/Chess.com; antes se
@@ -21672,7 +21693,7 @@ function faClassify() {
     var rAfter  = R[i];
     var rBefore = i === 0 ? {cp:20} : R[i-1];
     // Ambos extremos confirmados; si no, sin símbolo (queda pendiente) y no suma a stats.
-    if (!_faSettled(rAfter) || !_faSettled(rBefore)) { node.move.nag = ''; continue; }
+    if (!_faSettled(rAfter, i) || !_faSettled(rBefore, i-1)) { node.move.nag = ''; continue; }
     var whiteMoved = (nodeDepth(node) % 2 === 1);
     var wpA = _faWinP(rAfter), wpB = _faWinP(rBefore);
     var dwin = whiteMoved ? (wpB - wpA) : (wpA - wpB);   // puntos de win% que perdió el que movió
