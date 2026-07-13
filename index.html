@@ -10463,32 +10463,35 @@ function dbPoolImport() {
   uniqueIncoming.forEach(function(w) { if (dedupIndexCovered(siteIdx, w.pgn)) return; dedupIndexAdd(siteIdx, w.pgn); newGames.push(w.pgn); });
   var skipped = allGames.length - newGames.length;
   // Si el usuario eligió un torneo destino y TODAS las partidas ya estaban (dedup las bloqueó),
-  // buscar contenedores del pool con esas mismas partidas bajo otro nombre y re-estamparlos.
+  // reasignar al torneo EXACTAMENTE las partidas del archivo. Se identifican por su HUELLA DE
+  // JUGADAS (_moveBody), NO por el parecido del nombre del contenedor: mover del pool solo las
+  // partidas que coinciden jugada-por-jugada con las subidas. (Antes se re-estampaba cualquier
+  // contenedor cuyo nombre fuera prefijo del destino — ej. "Abierto ..." — y eso arrastraba
+  // torneos ajenos enteros con sus partidas, pisándoles el [Event].)
   if (!newGames.length && target) {
     var targetLow = target.trim().toLowerCase();
+    var wantBodies = Object.create(null);
+    allGames.forEach(function(g) { var b = _moveBody(g); if (b.length >= 4) wantBodies[b] = true; });
     var renamedCount = 0;
+    // Contenedor destino: el existente con ese nombre exacto, o uno nuevo.
+    var destT = null;
+    _memTournaments.forEach(function(t) { if (!destT && t.name && t.name.trim().toLowerCase() === targetLow) destT = t; });
+    if (!destT) { destT = { id: Date.now(), name: target, location: '', games: [], gameCount: 0, playerOnly: true, source: 'pgn', dbPool: true, loadedAt: Date.now() }; _memTournaments.push(destT); }
+    // Mover al destino solo las partidas del pool cuya huella de jugadas está en el archivo subido.
     _memTournaments.forEach(function(t) {
-      if (!t.name || !t.dbPool) return;
-      var tn = t.name.trim().toLowerCase();
-      if (tn === targetLow) return;  // ya tiene el nombre correcto
-      // ¿Es este contenedor una variante del torneo destino?
-      var isVariant = (tn.indexOf(targetLow) === 0 && (tn.length === targetLow.length || /^[\s\-–—,.]/.test(tn[targetLow.length])))
-                   || (targetLow.indexOf(tn) === 0 && (targetLow.length === tn.length || /^[\s\-–—,.]/.test(targetLow[tn.length])));
-      if (!isVariant) return;
-      // Re-estampar todas sus partidas con el nombre canónico del torneo destino
-      t.games = (t.games || []).map(function(g) { return _stampEvent(g, target); });
-      t.name = target;
-      renamedCount += t.games.length;
+      if (t === destT || !t.dbPool) return;
+      var keep = [];
+      (t.games || []).forEach(function(g) {
+        var b = _moveBody(g);
+        if (b.length >= 4 && wantBodies[b]) { destT.games.push(_stampEvent(g, target)); renamedCount++; }
+        else keep.push(g);
+      });
+      if (keep.length !== (t.games || []).length) { t.games = keep; t.gameCount = keep.length; }
     });
-    // Consolidar contenedores con el mismo nombre tras el renombrado
-    var poolByName2 = Object.create(null);
-    var merged = [];
-    _memTournaments.forEach(function(t) {
-      var key = t.name;
-      if (poolByName2[key]) { poolByName2[key].games = poolByName2[key].games.concat(t.games || []); poolByName2[key].gameCount = poolByName2[key].games.length; }
-      else { poolByName2[key] = t; merged.push(t); }
-    });
-    _memTournaments = merged;
+    // Colapsar duplicados en el destino y descartar contenedores del pool que quedaron vacíos.
+    destT.games = dedupGamesByMoves(destT.games.map(function(p) { return { pgn: p }; }), function(w) { return w.pgn; }).map(function(w) { return w.pgn; });
+    destT.gameCount = destT.games.length;
+    _memTournaments = _memTournaments.filter(function(t) { return t === destT || !(t.dbPool && t.playerOnly && (t.games || []).length === 0); });
     pgnMergeToPlayerGames();
     _dbPoolContent = null;
     var inp2 = document.getElementById('dbpool-input'); if (inp2) inp2.value = '';
