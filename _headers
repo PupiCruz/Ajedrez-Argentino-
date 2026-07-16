@@ -1,39 +1,46 @@
-# Ajedrez Argentino — Cache-Control headers
-# Cloudflare Pages (y Netlify) leen este archivo automáticamente.
+# Ajedrez Argentino — Cache-Control headers (Cloudflare Pages)
 #
-# /*  = TODO (la raíz "/", index.html, manifest.js, datos) lleva "no-cache":
-# el navegador SIEMPRE le pregunta al servidor si hubo cambios antes de usar la
-# copia guardada. Si no cambió → respuesta 304 instantánea (no re-descarga).
-# Si cambió → baja la versión nueva. Así el visitante NUNCA ve algo viejo.
-#
-# OJO: la regla tiene que ser "/*" y no "/index.html", porque el visitante entra
-# a la RAÍZ "/" y la regla "/index.html" no matchea esa ruta (ese era el agujero
-# por el que la web salía desactualizada).
+# OJO CLAVE: Cloudflare Pages COMBINA todas las reglas que matchean (NO gana la más
+# específica). Por eso NO se puede usar un "/data/*" inmutable con una excepción no-cache
+# para manifest.js: la regla inmutable se le pega igual y el navegador lo cachea 1 año sin
+# revalidar → la web queda vieja hasta hacer Ctrl+F5 (esto rompía la actualización de
+# TORNEOS, PARTIDAS y noticias). Solución: no usar "/data/*"; aplicar "immutable" SOLO a
+# las subcarpetas/archivos versionados (se piden con ?v=<version>), y dejar que manifest.js
+# caiga únicamente bajo "/*" (no-cache).
+
+# TODO por defecto: no-cache (el navegador SIEMPRE revalida antes de usar su copia; si no
+# cambió → 304 instantáneo; si cambió → baja lo nuevo). Cubre "/", index.html y — CLAVE —
+# data/manifest.js, que es el índice (qué torneos/partidas hay y con qué versión). Si el
+# manifest se cachea, la web no se entera de ningún cambio.
 /*
   Cache-Control: no-cache, must-revalidate
 
-# Assets (Stockfish, piezas SVG, sonidos, chess.js): nunca cambian entre versiones,
-# se pueden cachear 1 año. Esta regla es MÁS específica que /* , así que para
-# /assets/ gana esta (caché largo) y para todo lo demás gana el no-cache de arriba.
+# Motor Stockfish, piezas, sonidos: nunca cambian entre versiones → cache 1 año.
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
 
-# Datos partidos (data/t/*, data/p/*, book.json, puzzles.json, practice.json, datos.json,
-# games_*.json): la app SIEMPRE los pide con "?v=<version>" (una marca que cambia sola cada vez
-# que se republica). Como la URL cambia al haber datos nuevos, se pueden cachear como inmutables:
-# el navegador los baja UNA sola vez y los reusa en todas las pestañas y recargas (ej. el libro de
-# aperturas ya no se re-descarga cada vez que se abre una partida). Al republicar, la versión nueva
-# tiene otra URL → se baja fresca.
-/data/*
+# Datos VERSIONADOS: la app los pide con "?v=<version>" (la versión sale del manifest.js).
+# Al haber datos nuevos cambia la URL → se bajan frescos. Por eso se cachean 1 año sin
+# problema. Se listan por subcarpeta/archivo a propósito, para NO tocar manifest.js.
+/data/t/*
   Cache-Control: public, max-age=31536000, immutable
-
-# EXCEPCIÓN: manifest.js es el índice de datos y se carga SIN "?v=" (via <script src>), así que
-# tiene que quedar no-cache para que la web refleje los datos nuevos al republicar. Esta regla es
-# más específica que /data/* , así que gana para este archivo.
-/data/manifest.js
-  Cache-Control: no-cache, must-revalidate
-
-# EXCEPCIÓN: live-torneos.json son los cambios hechos desde el teléfono (editar.html). Cambia
-# en cualquier momento (lo commitea el Worker), así que tampoco se puede cachear como inmutable.
-/data/live-torneos.json
-  Cache-Control: no-cache, must-revalidate
+/data/p/*
+  Cache-Control: public, max-age=31536000, immutable
+/data/ph/*
+  Cache-Control: public, max-age=31536000, immutable
+/data/fl/*
+  Cache-Control: public, max-age=31536000, immutable
+/data/book.json
+  Cache-Control: public, max-age=31536000, immutable
+/data/games_0.json
+  Cache-Control: public, max-age=31536000, immutable
+/data/games_1.json
+  Cache-Control: public, max-age=31536000, immutable
+/data/datos.json
+  Cache-Control: public, max-age=31536000, immutable
+/data/practice.json
+  Cache-Control: public, max-age=31536000, immutable
+/data/puzzles.json
+  Cache-Control: public, max-age=31536000, immutable
+/data/hardcoded.js
+  Cache-Control: public, max-age=31536000, immutable
