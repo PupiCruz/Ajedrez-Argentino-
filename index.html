@@ -662,7 +662,9 @@
     }
     .cv-back-btn:hover { border-color: var(--gold-dim); background: var(--gold-bg); color: var(--gold); }
     /* "Volver al torneo" compacto arriba de la 3ª columna (estilo chess.com): flechita + nombre. */
-    .cv-book-back { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-shrink: 0; }
+    /* margin-bottom 0: el hueco hasta el recuadro de análisis lo pone su margin-top (14px), igual
+       al que hay entre análisis y la cajita "¿Sabías que…" → los 3 recuadros quedan parejos. */
+    .cv-book-back { display: flex; align-items: center; gap: 8px; margin-bottom: 0; flex-shrink: 0; }
     .cv-bb-arrow {
       display: inline-flex; align-items: center; justify-content: center;
       width: 30px; height: 30px; flex-shrink: 0; padding: 0;
@@ -1211,6 +1213,16 @@
     /* Reloj del que le toca mover: resaltado SUAVE (verde tenue). Legible en oscuro y claro. */
     .cv-clock-active { background:rgba(70,180,110,0.16); border-color:rgba(95,195,135,0.55); color:#a3ddb9; }
     body.light .cv-clock-active { background:rgba(40,155,90,0.13); border-color:rgba(40,150,85,0.5); color:#1f7a44; }
+    /* Botón "Volver a la jugada en directo" (columna de notación, sobre los botones de navegación).
+       Mismos verdes que el reloj corriendo, en oscuro y claro. */
+    #cv-live-back { margin:10px 0 0; padding:9px 12px; text-align:center; font-weight:700; font-size:12.5px;
+      letter-spacing:.3px; border-radius:10px; cursor:pointer; user-select:none;
+      background:rgba(70,180,110,0.16); border:1px solid rgba(95,195,135,0.55); color:#a3ddb9;
+      transition:background .15s ease, transform .1s ease; }
+    #cv-live-back:hover { background:rgba(70,180,110,0.28); }
+    #cv-live-back:active { transform:scale(.97); }
+    body.light #cv-live-back { background:rgba(40,155,90,0.13); border-color:rgba(40,150,85,0.5); color:#1f7a44; }
+    body.light #cv-live-back:hover { background:rgba(40,155,90,0.22); }
     /* El nombre de apertura se oculta del visor (ocupa lugar que se usa para agrandar el tablero). */
     .chess-opening { display: none; }
 
@@ -2226,6 +2238,9 @@
       </div>
     </div>
     <div class="chess-mwrap"><div class="chess-mlist" id="cv-moves"></div></div>
+
+    <!-- Volver a la jugada en directo (solo transmisiones en vivo, cuando se navegó a otra jugada) -->
+    <div id="cv-live-back" onclick="cvBackToLive()" style="display:none">▶ Volver a la jugada en directo</div>
 
     <!-- Botones de navegación (antes debajo del tablero): pegados al borde inferior, alineados con el tablero -->
     <div class="chess-nav" style="margin-top:10px;margin-bottom:0">
@@ -13211,6 +13226,7 @@ function _cvSettleNode() {
   faUpdateMarker();
   faUpdateBar();
   cvUpdateClocks();
+  cvUpdateLiveBackBtn();
   cvUpdateNagBadge();
   if (cv.node.move) cvPlayMoveSound(cv.node.move.san);   // sonido de la posición FINAL (no ametralla al navegar rápido)
   obSchedule();
@@ -13234,6 +13250,17 @@ function nodeDepth(node) {
    Recorre hacia atrás buscando la última jugada de cada color con reloj.
    Los ids cv-wclock/cv-belo viajan con el contenido al girar el tablero. */
 var _cvLiveClock = null;  // { wSec, bSec, turn, timerId } – cuenta regresiva en el visor
+// Cuándo LLEGÓ la última jugada real de la partida que se mira (firma partida+jugada → timestamp).
+// La cuenta regresiva descuenta desde ESE momento: si el visitante navega y vuelve a la última
+// jugada, el reloj sigue donde debe (antes se reseteaba al valor del PGN en cada visita).
+var _cvClkArr = { sig: '', t0: 0 };
+function _cvStampLiveArrival() {
+  if (!cv.root || typeof cvLiveEndNode !== 'function') return;
+  var endN = cvLiveEndNode();
+  if (!endN || !endN.move) return;
+  var sig = (cv.gIdx || 0) + '|' + nodeDepth(endN) + '|' + (endN.move.clk || '');
+  if (_cvClkArr.sig !== sig) { _cvClkArr.sig = sig; _cvClkArr.t0 = Date.now(); }
+}
 
 function _cvStopLiveClock() {
   if (_cvLiveClock) { clearInterval(_cvLiveClock.timerId); _cvLiveClock = null; }
@@ -13277,12 +13304,23 @@ function cvUpdateClocks() {
   var _hasClk = !!(wc || bc);
   wEl.classList.toggle('cv-clock-active', _hasClk && _toMove === 'w');
   bEl.classList.toggle('cv-clock-active', _hasClk && _toMove === 'b');
-  // Cuenta regresiva: solo en la última jugada de una partida en curso (Result *)
+  // Cuenta regresiva: solo parado en la última jugada REAL de una partida en curso (Result *).
+  // (cvLiveEndNode y no children.length: las jugadas propias `own` injertadas al final no cuentan.)
   _cvStopLiveClock();
-  if (cv.node && cv.node.children.length === 0 && (wc || bc) &&
+  if (cv.node && cv.node.move && cv.node === cvLiveEndNode() && (wc || bc) &&
       cv.rawPgn && /\[Result\s+"[*]"\]/.test(cv.rawPgn)) {
     var turn = (nodeDepth(cv.node) % 2 === 0) ? 'w' : 'b';
-    _cvStartLiveClock(_clkToSec(wc), _clkToSec(bc), turn);
+    // Descontar desde que la jugada LLEGÓ (no desde que el visitante se paró acá): al navegar
+    // por la partida y volver, el reloj retoma donde va de verdad, no se resetea al valor del PGN.
+    _cvStampLiveArrival();
+    var elapsed = Math.max(0, Math.floor((Date.now() - _cvClkArr.t0) / 1000));
+    var wS = _clkToSec(wc), bS = _clkToSec(bc);
+    if (turn === 'w' && wS >= 0) wS = Math.max(0, wS - elapsed);
+    if (turn === 'b' && bS >= 0) bS = Math.max(0, bS - elapsed);
+    _cvStartLiveClock(wS, bS, turn);
+    // Pintar ya el valor ajustado (el intervalo recién refresca al segundo).
+    if (wc && wS >= 0) wEl.textContent = '⏱ ' + _secToClk(wS);
+    if (bc && bS >= 0) bEl.textContent = '⏱ ' + _secToClk(bS);
   }
 }
 
@@ -13499,6 +13537,18 @@ function renderMoveTable(root) {
   }
   while (node.children.length > 0) {
     var mc = node.children[0];
+    // Jugadas PROPIAS injertadas al FINAL de la partida (análisis del usuario en vivo): no son
+    // parte de la partida real → se muestran como variante entre paréntesis, no como continuación
+    // de la línea principal (si no, el visitante pierde de vista cuál fue la última jugada real).
+    if (mc.own) {
+      flush();
+      var vhOwn = '';
+      for (var vo = 0; vo < node.children.length; vo++) {
+        vhOwn += '<span class="cvar-open">(</span>' + renderVariantLine(node.children[vo]) + '<span class="cvar-close">)</span> ';
+      }
+      out += '<div class="cv-mvar">' + vhOwn + '</div>';
+      break;
+    }
     var depth = nodeDepth(mc);
     var moveNum = Math.ceil(depth / 2);
     var isWhite = (depth % 2 === 1);
@@ -13654,8 +13704,12 @@ function cvNext()  {
   if (cv.node && cv.node.children.length > 0) cvSetNode(cv.node.children[0]);
 }
 function cvLast()  {
+  // Ir al final: si se está en la partida real, frenar en la última jugada REAL (no seguir de
+  // largo hacia las jugadas propias `own` injertadas al final). Dentro de una variante propia,
+  // ir al final de ESA línea.
+  var enPropia = !!(cv.node && cv.node.own);
   var n = cv.node;
-  while (n && n.children.length > 0) n = n.children[0];
+  while (n && n.children.length > 0 && (enPropia || !n.children[0].own)) n = n.children[0];
   if (n) cvSetNode(n);
 }
 // Mantener apretado ◀/▶ para navegar varias jugadas (como las flechas del teclado), en mouse Y touch.
@@ -13680,7 +13734,29 @@ function _cvBindHold(btnId, step) {
 // en vez de saltar al final se muestran una por una (cada _CV_ANIM_MS). Cualquier navegación manual
 // la corta (guard en cvSetNode). _cvAnimStepping evita que la propia reproducción se autocancele.
 var _cvAnimTimer = null, _cvAnimStepping = false, _CV_ANIM_MS = 550;
-function _cvEndDepth(){ var n = cv.root, d = 0; while (n && n.children && n.children.length > 0) { n = n.children[0]; d++; } return d; }
+function _cvEndDepth(){ var n = cv.root, d = 0; while (n && n.children && n.children.length > 0 && !n.children[0].own) { n = n.children[0]; d++; } return d; }
+
+// Último nodo REAL de la partida (la línea principal sin las jugadas propias del usuario, que
+// quedan injertadas como `own` al final). Es "la jugada en directo" en una transmisión en vivo.
+function cvLiveEndNode() {
+  var n = cv.root;
+  while (n && n.children && n.children.length > 0 && !n.children[0].own) n = n.children[0];
+  return n;
+}
+
+// Botón "Volver a la jugada en directo" (estilo Lichess): aparece cuando la partida está EN CURSO
+// y el visitante navegó a otra jugada o está en una variante propia. Lo actualiza el settle.
+function cvBackToLive() {
+  var end = cvLiveEndNode();
+  if (end) cvSetNode(end);
+}
+function cvUpdateLiveBackBtn() {
+  var b = document.getElementById('cv-live-back');
+  if (!b) return;
+  var live = cv.rawPgn && /\[Result\s+"[*]"\]/.test(cv.rawPgn)
+          && ((typeof _liveTimer !== 'undefined' && _liveTimer) || (typeof _tdLiveTimer !== 'undefined' && _tdLiveTimer));
+  b.style.display = (live && cv.node && cv.node !== cvLiveEndNode()) ? 'block' : 'none';
+}
 function _cvAnimateToEnd(fromDepth){
   if (_cvAnimTimer) { clearTimeout(_cvAnimTimer); _cvAnimTimer = null; }
   var n = cv.root; for (var k = 0; k < fromDepth && n.children.length > 0; k++) n = n.children[0];
@@ -14034,6 +14110,7 @@ function cvApplyMove(from, to, promo) {
   } else {
     var newNode = makeNode(tmpChess.fen(), { san: mv.san, from: mv.from, to: mv.to }, cv.node);
     newNode._id = ++_nodeIdCounter;
+    newNode.own = true;   // jugada PROPIA del usuario (análisis): nunca es parte de la partida real
     cv.node.children.push(newNode);
     cvBuildMoveList();
     cvSetNode(newNode);
@@ -14526,7 +14603,15 @@ var sf = { engine:null, loading:false, ready:false, on:false, depth:0, lines:[nu
            // jugadas nuevas el tablero ya cambió mientras seguían entrando evals de la posición vieja
            // → el signo salía al revés. Ahora lo atamos a la posición analizada y se actualiza recién
            // cuando el motor arranca de verdad la nueva (en la barrera readyok).
-           curSide:'w', pending:null, armed:true };
+           // curFen = la POSICIÓN (fen) que el motor está analizando AHORA, mismo criterio que curSide:
+           // el punto del gráfico en vivo se estampa en ESTA posición, no en la del tablero (que puede
+           // haber avanzado mientras el motor seguía en la anterior, p. ej. durante la reproducción
+           // de una tanda de jugadas → los puntos intermedios quedaban con la eval de otra jugada).
+           // searching = hay una búsqueda EN CURSO (se prende al mandar 'go', se apaga al llegar su
+           // 'bestmove'). Clave para las barreras: UCI responde 'isready' AL INSTANTE aunque esté
+           // buscando, así que un 'readyok' no garantiza que la búsqueda vieja ya terminó de hablar.
+           // rokWaiting = llegó el readyok de la barrera del módulo pero falta el bestmove viejo.
+           curSide:'w', curFen:null, pending:null, armed:true, searching:false, rokWaiting:false };
 // Profundidad mínima antes de mover la barra de eval: evita el "salto" de las lecturas ruidosas
 // de baja profundidad al avanzar una jugada. El número de puntaje sí se actualiza desde el inicio.
 // Prof. mínima para mover barra/número/líneas/gráfico al llegar una jugada nueva: por debajo, las
@@ -14623,7 +14708,8 @@ function _sfStartSF18() {
       try { worker.terminate(); } catch (_) {}
       sf.engine = null; sf.ready = false; sf.loading = false;
       sf.lines = [null, null, null]; sf.depth = 0; sf.pending = null; sf.armed = true;
-      _fa.running = false; _fa.armed = false;         // que el gráfico no quede esperando un motor muerto
+      sf.searching = false; sf.rokWaiting = false;    // el motor muerto no va a mandar su bestmove
+      _fa.running = false; _fa.armed = false; _fa.rokSeen = false;   // que el gráfico no quede esperando un motor muerto
       if (typeof _mev !== 'undefined') { _mev.running = false; _mev.armed = false; }
       if (_sfCrashes++ < 2) {
         document.getElementById('sf-depth').textContent = 'Reiniciando el motor…';
@@ -14695,9 +14781,19 @@ function _sfEnsureEmbedded(cb) {
 }
 
 function sfOnMsg(line) {
+  // Registro global: 'bestmove' cierra la búsqueda en curso (sea de quien sea). Va ANTES del ruteo
+  // para que el estado quede al día también cuando el mensaje lo procesa el pase/miniaturas/práctica.
+  if (line.indexOf('bestmove') === 0) sf.searching = false;
   if (typeof prac !== 'undefined' && prac.running) { pracHandleMsg(line); return; }
   if (_fa.running) { faHandleMsg(line); return; }
   if (_mev.running) { mevHandleMsg(line); return; }
+  // Barrera del módulo que estaba esperando el fin de la búsqueda vieja (ver 'readyok' más abajo):
+  // recién con este bestmove el motor terminó de hablar de la posición anterior. Arrancar la nueva.
+  if (line.indexOf('bestmove') === 0 && sf.rokWaiting && !sf.armed && sf.pending) {
+    sf.rokWaiting = false;
+    _sfStartPending();
+    return;
+  }
   if (line === 'uciok') {
     sf.engine.postMessage('setoption name MultiPV value 3');
     // Más memoria para la tabla de transposición (default 16MB): llega a más profundidad
@@ -14712,11 +14808,13 @@ function sfOnMsg(line) {
     // mandamos la posición nueva. Esto evita que una ráfaga de stop/go deje al motor colgado
     // ("no arranca") y deja sf.curSide sincronizado con la posición que de verdad se va a analizar.
     if (!sf.armed && sf.pending) {
-      sf.armed = true;
-      var _p = sf.pending; sf.pending = null;
-      sf.curSide = _p.side;
-      sf.engine.postMessage('position fen ' + _p.fen);
-      sf.engine.postMessage('go infinite');
+      // Si hay una búsqueda vieja EN CURSO, este readyok llegó "de cortesía" (UCI lo responde sin
+      // frenar la búsqueda): después de él todavía entran la eval final y el 'bestmove' viejos.
+      // Esperar ese bestmove (bloque de arriba) antes de arrancar la búsqueda nueva; si no,
+      // curSide/curFen cambian antes de tiempo y la última eval vieja sale con el signo del lado
+      // nuevo (el "salto al otro lado" de la barra al llegar una jugada).
+      if (sf.searching) { sf.rokWaiting = true; return; }
+      _sfStartPending();
       return;
     }
     var _wasReady = sf.ready;
@@ -14747,6 +14845,10 @@ function sfOnMsg(line) {
   var cpM   = line.match(/\bscore cp (-?\d+)\b/);
   var mtM   = line.match(/\bscore mate (-?\d+)\b/);
   if (!cpM && !mtM) return;
+  // Lecturas PROVISORIAS de re-búsqueda (aspiration window): el motor avisa "score cp X lowerbound/
+  // upperbound" mientras re-busca; X es el borde de la ventana, no la eval real (puede salir del lado
+  // contrario en posiciones desequilibradas). No dibujar con ellas: la línea exacta llega enseguida.
+  if (/\b(lower|upper)bound\b/.test(line)) return;
   var score = mtM ? {mate:parseInt(mtM[1])} : {cp:parseInt(cpM[1])};
   sf.lines[mpv] = {depth:depth, score:score, pv:pvArr};
   sf.depth = depth;
@@ -14782,6 +14884,10 @@ function sfAnalyzeNow() {
   var _seed = (cv.node && cv.node.move && cv.node.move.ev)
            || (typeof _faLiveCache !== 'undefined' && cv.chess && _faLiveCache[cv.chess.fen()])
            || null;
+  // La siembra exige la MISMA vara que la barra (_SF_BAR_MINDEPTH): una eval del caché calculada a
+  // prof. 13 (pase cortado por el tope en posición aguda) puede salir del lado contrario → era el
+  // "salto al otro lado" al llegar una jugada nueva. Mate y [%eval] de Lichess (sin .d) van siempre.
+  if (_seed && _seed.mate === undefined && _seed.d !== undefined && _seed.d < _SF_BAR_MINDEPTH) _seed = null;
   if (_seed) {
     var _sp = sfBarPct(_seed, false);
     if (cv.flipped) _sp = 100 - _sp;
@@ -14808,6 +14914,19 @@ function sfRestart(fen, side) {
   sf.armed = false;
   sf.engine.postMessage('stop');
   sf.engine.postMessage('isready');
+}
+
+// Arranca de verdad la búsqueda pendiente del módulo (la dejó sfRestart). Se llama recién cuando el
+// motor está limpio: en el 'readyok' si no había búsqueda en curso, o en el 'bestmove' que la cierra.
+function _sfStartPending() {
+  var _p = sf.pending; sf.pending = null;
+  sf.armed = true;
+  sf.rokWaiting = false;
+  sf.curSide = _p.side;
+  sf.curFen = _p.fen;
+  sf.engine.postMessage('position fen ' + _p.fen);
+  sf.engine.postMessage('go infinite');
+  sf.searching = true;
 }
 
 function sfScoreStr(score, flip) {
@@ -15866,6 +15985,7 @@ function _bcApplyRefreshToViewer(liveKey) {
   else { for (var k = 0; k < prevDepth && cv.node.children.length > 0; k++) cvSetNode(cv.node.children[0]); }
   var abar = document.getElementById('cv-arg-bar');
   if (abar) _bcRenderArgBar(abar);
+  _cvStampLiveArrival();   // registrar cuándo llegó la última jugada (para la cuenta regresiva)
   faMaybeAutoLive();   // auto-mostrar/actualizar el gráfico en vivo con la partida nueva
 }
 
@@ -17450,7 +17570,7 @@ function mevTick() {
   }
   var jobs = mevCollect();
   if (!jobs.length) return;
-  _mev.running = true; _mev.armed = false; _mev.jobs = jobs; _mev.i = 0; _mev.last = null;
+  _mev.running = true; _mev.armed = false; _mev.rokSeen = false; _mev.jobs = jobs; _mev.i = 0; _mev.last = null;
   // Barrera readyok: descarta el 'bestmove' fantasma de una búsqueda anterior (igual que el _fa).
   sf.engine.postMessage('stop');
   sf.engine.postMessage('ucinewgame');
@@ -17469,10 +17589,23 @@ function mevNext() {
   sf.engine.postMessage('stop');
   sf.engine.postMessage('position fen ' + _mev.jobs[_mev.i].fen);
   sf.engine.postMessage('go depth ' + _MEV_DEPTH);
+  sf.searching = true;
 }
 
 function mevHandleMsg(line) {
-  if (!_mev.armed) { if (line.indexOf('readyok') === 0) { _mev.armed = true; mevNext(); } return; }
+  // Misma barrera robusta que el pase: si había una búsqueda en curso, el readyok llega antes que
+  // el bestmove viejo → armar recién en ese bestmove (si no, la eval vieja se cuela en la primera).
+  if (!_mev.armed) {
+    if (line.indexOf('bestmove') === 0) {
+      if (_mev.rokSeen) { _mev.rokSeen = false; _mev.armed = true; mevNext(); }
+      return;
+    }
+    if (line.indexOf('readyok') === 0) {
+      if (sf.searching) { _mev.rokSeen = true; return; }
+      _mev.armed = true; mevNext();
+    }
+    return;
+  }
   if (line.indexOf('info') === 0) {
     var mm = line.match(/\bmultipv (\d+)\b/);
     if (mm && mm[1] !== '1') return;
@@ -17889,6 +18022,7 @@ function _tdApplyViewerRefresh(pgnKey) {
     else cvLast();
   }
   else { var n = cv.root; for (var k = 0; k < prevDepth && n.children.length > 0; k++) { n = n.children[0]; cvSetNode(n); } }
+  _cvStampLiveArrival();   // registrar cuándo llegó la última jugada (para la cuenta regresiva)
   faMaybeAutoLive();   // auto-mostrar/actualizar el gráfico en vivo con las jugadas nuevas
 }
 
@@ -20156,11 +20290,24 @@ function pracSendGo() {
   var lv = PRAC_LEVELS[prac.level];
   sf.engine.postMessage('position fen ' + prac.chess.fen());
   sf.engine.postMessage('go depth ' + lv.depth);
+  sf.searching = true;
   if (prac._cap) clearTimeout(prac._cap);
   prac._cap = setTimeout(function(){ if (sf.engine) sf.engine.postMessage('stop'); }, lv.capMs);
 }
 function pracHandleMsg(line) {
-  if (!prac.armed) { if (line.indexOf('readyok') === 0) { prac.armed = true; pracSendGo(); } return; }
+  // Barrera robusta (ver faHandleMsg): con búsqueda en curso, el readyok llega antes que el
+  // bestmove viejo — que acá se aplicaría como jugada del motor de OTRA posición.
+  if (!prac.armed) {
+    if (line.indexOf('bestmove') === 0) {
+      if (prac.rokSeen) { prac.rokSeen = false; prac.armed = true; pracSendGo(); }
+      return;
+    }
+    if (line.indexOf('readyok') === 0) {
+      if (sf.searching) { prac.rokSeen = true; return; }
+      prac.armed = true; pracSendGo();
+    }
+    return;
+  }
   if (line.indexOf('bestmove') === 0) {
     if (prac._cap) { clearTimeout(prac._cap); prac._cap = null; }
     prac.running = false;
@@ -21122,6 +21269,7 @@ function cvPlayObMove(san) {
   var newNode = makeNode(cv.chess.fen(), { san: mv.san, from: mv.from, to: mv.to, nag: '' }, cv.node);
   cv.chess.undo();
   newNode._id = ++_nodeIdCounter;
+  newNode.own = true;   // jugada elegida por el usuario en el libro: es análisis propio
   cv.node.children.push(newNode);
   cvBuildMoveList();
   cvSetNode(newNode);
@@ -21149,19 +21297,22 @@ var _fa = { running:false, armed:false, results:[], nodes:[], ply:0, lastScore:n
 // FEN → score {cp|mate} (perspectiva blancas). Se PERSISTE en localStorage: así, al reabrir una partida
 // en OTRA pestaña, el gráfico de análisis aparece al toque con las evals ya calculadas, sin que el motor
 // las recalcule. Es seguro compartir por FEN: la eval de una posición no cambia entre pestañas.
-// OJO: clave "fa_eval_cache2" — la v1 quedó contaminada con evals de profundidad 1-5 (un bug hacía
+// OJO: clave "fa_eval_cache3" — la v1 quedó contaminada con evals de profundidad 1-5 (un bug hacía
 // que el módulo en vivo cortara las búsquedas del gráfico a mitad de camino y se cacheara el ruido,
-// a veces con el signo dado vuelta). Se descarta entera y se borra la vieja para liberar espacio.
+// a veces con el signo dado vuelta). La v2 quedó contaminada por el bug de ATRIBUCIÓN del módulo
+// (la eval de una posición se guardaba bajo el fen de otra cuando el tablero reproducía una tanda
+// de jugadas — ver _faFeedModuleEval). Se descartan enteras y se borran para liberar espacio.
 var _faLiveCache = (function(){
   try { localStorage.removeItem('fa_eval_cache'); } catch(e) {}
-  try { return JSON.parse(localStorage.getItem('fa_eval_cache2')) || {}; } catch(e){ return {}; }
+  try { localStorage.removeItem('fa_eval_cache2'); } catch(e) {}
+  try { return JSON.parse(localStorage.getItem('fa_eval_cache3')) || {}; } catch(e){ return {}; }
 })();
 var _faCacheSaveTimer = null;
 function _faSaveLiveCache() {   // debounce: guarda 2s después de la última eval (evita escribir en cada jugada)
   if (_faCacheSaveTimer) clearTimeout(_faCacheSaveTimer);
   _faCacheSaveTimer = setTimeout(function(){
     _faCacheSaveTimer = null;
-    try { localStorage.setItem('fa_eval_cache2', JSON.stringify(_faLiveCache)); } catch(e){ /* quota llena: se ignora */ }
+    try { localStorage.setItem('fa_eval_cache3', JSON.stringify(_faLiveCache)); } catch(e){ /* quota llena: se ignora */ }
   }, 2000);
 }
 // El gráfico en vivo evalúa cada jugada a PROFUNDIDAD fija (no tiempo fijo): así se acerca más a la
@@ -21254,6 +21405,7 @@ function faLiveBuild() {
   var _op = document.getElementById('cv-opening'), _faOp = document.getElementById('fa-opening');
   if (_faOp) _faOp.textContent = _op ? _op.textContent : '';
   faRender(_faInterp(_fa.results));   // dibujar ya con lo que haya
+  faUpdateBar();   // y la barra al toque (valor interpolado si la última aún no tiene eval)
   // ¿Falta (re)evaluar alguna? Lanzar el pase del motor (incremental) que solo calcula esas.
   if (_fa.nodes.some(function(nd, i) { return _faNeedsPassEval(i); })) faLiveEngineStart();
   else { faClassify(); faRender(); faRenderStats(); faApplyNags(); cvUpdateNagBadge(); faUpdateBar(); }
@@ -21268,16 +21420,21 @@ function faLiveEngineStart() {
   }
   if (_fa.running) return;
   mevAbort();
-  _fa.running = true; _fa.armed = false; _fa.ply = 0;
+  _fa.running = true; _fa.armed = false; _fa.rokSeen = false; _fa.ply = 0;
   sf.engine.postMessage('stop');
-  sf.engine.postMessage('ucinewgame');
+  // OJO: acá NO va 'ucinewgame' (el pase manual sí lo manda): borraba la tabla hash con todo lo que
+  // el módulo aprendió analizando 30s la posición anterior (casi idéntica a las que llegan). Con la
+  // hash caliente el pase llega mucho más profundo dentro del mismo tope → menos evals de prof. 13-16
+  // que en posiciones agudas podían salir del lado contrario (el "salto" de la barra y puntos falsos).
   sf.engine.postMessage('setoption name MultiPV value 1');
   sf.engine.postMessage('isready');   // faHandleMsg arranca faNext() al recibir 'readyok'
 }
 
 function faGetNodes() {
+  // Solo la línea principal REAL: las jugadas propias del usuario (`own`, injertadas al final
+  // en vivo) no entran al gráfico ni al análisis.
   var nodes = [], n = cv.root;
-  while (n && n.children.length > 0) { n = n.children[0]; nodes.push(n); }
+  while (n && n.children.length > 0 && !n.children[0].own) { n = n.children[0]; nodes.push(n); }
   return nodes;
 }
 
@@ -21362,7 +21519,7 @@ function startFA() {
   var nodes = faGetNodes();
   if (!nodes.length) return;
   mevAbort();   // el análisis completo (lo pidió el usuario) tiene prioridad sobre la eval de miniaturas
-  _fa.running = true; _fa.armed = false; _fa.live = false; _fa.nodes = nodes;
+  _fa.running = true; _fa.armed = false; _fa.rokSeen = false; _fa.live = false; _fa.nodes = nodes;
   // Sembrar las jugadas que ya traen [%eval] del PGN o que están en el caché del motor: el motor se
   // saltea esas y solo calcula el resto.
   _fa.results = nodes.map(function(nd) { return (nd.move && nd.move.ev) || _faLiveCache[nd.fen] || null; });
@@ -21457,6 +21614,7 @@ function faNext() {
   var capMs = _fa.live ? (deep ? _FA_LIVE_DEEP_CAP_MS : _FA_LIVE_CAP_MS) : _FA_MANUAL_CAP_MS;
   _fa.minD  = _fa.live ? (deep ? _FA_LIVE_DEEP_MIN : _FA_LIVE_MIN) : 8;   // prof. mínima para aceptar la eval de ESTE nodo
   sf.engine.postMessage('go depth ' + depth);
+  sf.searching = true;
   _fa._capTimer = setTimeout(function() { if (sf.engine) sf.engine.postMessage('stop'); }, capMs);
   if (!_fa.live) {   // la barra de progreso es solo para el análisis manual
     var pct = Math.round(_fa.ply / _fa.nodes.length * 100);
@@ -21468,16 +21626,32 @@ function faNext() {
 }
 
 function faHandleMsg(line) {
-  // Barrera: hasta recibir 'readyok' descartamos toda salida vieja del motor
-  // (incluido el 'bestmove' fantasma de la búsqueda en vivo anterior).
+  // Barrera: descartar toda la salida vieja del motor antes de empezar. OJO: 'readyok' solo NO
+  // alcanza — UCI responde 'isready' AL INSTANTE aunque haya una búsqueda corriendo, así que si el
+  // módulo estaba buscando, DESPUÉS del readyok todavía entran su eval final y su 'bestmove'.
+  // (Antes se colaban como si fueran del pase: la eval de OTRA posición aceptada para la jugada
+  // nueva, con el signo dado vuelta al normalizar por el turno equivocado → el pico erróneo del
+  // gráfico al llegar una jugada con el módulo prendido.) Si había búsqueda en curso, el pase se
+  // arma recién en el 'bestmove' que la cierra.
   if (!_fa.armed) {
-    if (line.indexOf('readyok') === 0) { _fa.armed = true; faNext(); }
+    if (line.indexOf('bestmove') === 0) {
+      if (_fa.rokSeen) { _fa.rokSeen = false; _fa.armed = true; faNext(); }
+      return;
+    }
+    if (line.indexOf('readyok') === 0) {
+      if (sf.searching) { _fa.rokSeen = true; return; }   // esperar el bestmove de la búsqueda vieja
+      _fa.armed = true; faNext();
+    }
     return;
   }
   if (line.indexOf('info') === 0) {
     // solo línea principal (multipv 1 o sin multipv)
     var mm = line.match(/\bmultipv (\d+)\b/);
     if (mm && mm[1] !== '1') return;
+    // Descartar lecturas provisorias de re-búsqueda (lowerbound/upperbound): el valor es el borde
+    // de la ventana de búsqueda, no la eval real. Si el tope de tiempo corta justo después de una,
+    // quedaba como "última eval" y el punto del gráfico salía mal.
+    if (/\b(lower|upper)bound\b/.test(line)) return;
     var cpM = line.match(/\bscore cp (-?\d+)\b/);
     var mtM = line.match(/\bscore mate (-?\d+)\b/);
     if (cpM || mtM) {
@@ -21533,8 +21707,13 @@ function faHandleMsg(line) {
 var _faFeedT = 0;
 function _faFeedModuleEval(rawScore, flip) {
   if (typeof _fa === 'undefined' || !_fa.live || _fa.running) return;   // solo en vivo, sin pase corriendo
-  if (!cv.chess || !rawScore) return;
-  var fen = cv.chess.fen();
+  if (!rawScore) return;
+  // El punto se estampa en la posición que el motor ANALIZA (sf.curFen), NO en la del tablero:
+  // cuando llega una tanda de jugadas, el tablero las reproduce de a una mientras el módulo sigue
+  // en una posición anterior (a propósito no se reinicia en los pasos intermedios) → la eval de una
+  // jugada se guardaba como si fuera de otra, con prof. alta, y el pase nunca la corregía.
+  var fen = sf.curFen;
+  if (!fen) return;
   var ws = rawScore.mate !== undefined
     ? { mate: flip ? -rawScore.mate : rawScore.mate }
     : { cp:   flip ? -rawScore.cp   : rawScore.cp };
@@ -21621,6 +21800,9 @@ function faUpdateBar() {
   // Si el módulo en vivo está prendido, él maneja la barra (sfUpdateUI).
   if (typeof sf !== 'undefined' && sf.on) return;
   var scoreEl = document.getElementById('sf-score');
+  // Pase EN VIVO corriendo: conservar lo que se muestra (antes la barra se OCULTABA unos segundos
+  // en cada jugada nueva, hasta que el pase evaluaba). Al terminar, faNext llama de nuevo acá.
+  if (_fa.running && _fa.live && _fa.results.length) return;
   // Sin análisis: barra oculta, tablero limpio.
   if (_fa.running || !_fa.results.length) {
     vbar.classList.remove('show');
@@ -21631,6 +21813,10 @@ function faUpdateBar() {
   if (cv.flipped) vbar.classList.add('flipped'); else vbar.classList.remove('flipped');
   var depth = nodeDepth(cv.node);
   var score = (depth > 0 && depth <= _fa.results.length) ? _fa.results[depth - 1] : null;
+  // Hueco (típico: la jugada del vivo recién llegada, aún sin evaluar — p. ej. con el motor sin
+  // cargar): usar el valor INTERPOLADO, el mismo que dibuja el gráfico, en vez de borrar barra y
+  // número. Cuando el pase la evalúe, se actualiza al valor real.
+  if (!score && depth > 0 && depth <= _fa.results.length) score = _faInterp(_fa.results)[depth - 1];
   if (!score) {
     fill.style.height = '50%';
     if (scoreEl) { scoreEl.textContent = ''; scoreEl.className = 'sf-score sf-neu'; }
@@ -21784,14 +21970,15 @@ function faReset() {
   if (_fa.running) { _fa.running = false; if (sf.engine) { sf.engine.postMessage('stop'); sf.engine.postMessage('setoption name MultiPV value 3'); } }
   _fa.armed = false;
   _fa.results = []; _fa.nodes = []; _fa.ply = 0; _fa.stats = null;
-  if (typeof sf === 'undefined' || !sf.on) {
+  // En modo en vivo NO ocultamos el gráfico NI la barra (faLiveBuild los repuebla enseguida con la
+  // partida nueva, sin parpadeo): ocultar la barra acá hacía que, con el motor apagado, DESAPARECIERA
+  // unos segundos en cada jugada nueva del vivo (hasta que el pase evaluaba). Fuera del vivo, sí.
+  var keepLive = _fa.live && _faLiveEligible();
+  _fa.live = keepLive;
+  if ((typeof sf === 'undefined' || !sf.on) && !keepLive) {
     var vb = document.getElementById('sf-vbar'); if (vb) vb.classList.remove('show');
     var vf = document.getElementById('sf-vbar-fill'); if (vf) vf.style.height = '50%';
   }
-  // En modo en vivo NO ocultamos el gráfico (faLiveBuild lo repuebla enseguida con la partida nueva,
-  // sin parpadeo). Si ya no estamos en una transmisión en vivo, sí se cierra como siempre.
-  var keepLive = _fa.live && _faLiveEligible();
-  _fa.live = keepLive;
   if (!keepLive) {
     var w = document.getElementById('eval-graph-wrap'); if (w) w.style.display = 'none';
     var s = document.getElementById('fa-stats'); if (s) s.innerHTML = '';
