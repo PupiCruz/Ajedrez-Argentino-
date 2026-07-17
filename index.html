@@ -21406,9 +21406,13 @@ function faLiveBuild() {
   if (_faOp) _faOp.textContent = _op ? _op.textContent : '';
   faRender(_faInterp(_fa.results));   // dibujar ya con lo que haya
   faUpdateBar();   // y la barra al toque (valor interpolado si la última aún no tiene eval)
+  // Clasificar y renderizar las ESTADÍSTICAS ya mismo con lo sembrado: al cambiar de partida en
+  // vivo, la caja "Análisis de la partida" quedaba con los nombres y números de la partida
+  // ANTERIOR hasta que el pase terminaba (faReset no la limpia en vivo para no parpadear en cada
+  // refresco). Con esto los nombres son siempre los de la partida abierta; el pase refina después.
+  faClassify(); faRenderStats(); faApplyNags(); cvUpdateNagBadge();
   // ¿Falta (re)evaluar alguna? Lanzar el pase del motor (incremental) que solo calcula esas.
   if (_fa.nodes.some(function(nd, i) { return _faNeedsPassEval(i); })) faLiveEngineStart();
-  else { faClassify(); faRender(); faRenderStats(); faApplyNags(); cvUpdateNagBadge(); faUpdateBar(); }
   faUpdateBuildBtn();
 }
 
@@ -21946,9 +21950,13 @@ function faApplyNags() {
 function faRenderStats() {
   var c = document.getElementById('fa-stats');
   if (!c || !_fa.stats) return;
+  // Nombres desde el PGN ABIERTO (cv.rawPgn): es la fuente de verdad en TODAS las vías. La vía de
+  // torneo (loadPgnIntoViewer) no actualiza cv.games/cv.gIdx, así que leer de ahí mostraba los
+  // jugadores de OTRA partida (lista vieja) hasta que el refresco del vivo la reconstruía.
+  var h = cv.rawPgn ? parsePgnHeaders(cv.rawPgn) : {};
   var g = cv.games && cv.games[cv.gIdx] ? cv.games[cv.gIdx] : null;
-  var wName = g && g.w ? g.w : 'Blancas';
-  var bName = g && g.b ? g.b : 'Negras';
+  var wName = escHtml(h.White || (g && g.w) || 'Blancas');
+  var bName = escHtml(h.Black || (g && g.b) || 'Negras');
   var hasBest = !!_fa.stats.hasBest;
   function col(name, s) {
     var acpl = s.n ? Math.round(s.lossSum / s.n) : 0;
