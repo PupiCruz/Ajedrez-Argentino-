@@ -7318,10 +7318,39 @@ function _fsIdb(fn) {
 function _fsSaveHandle(h) { return _fsIdb(function(store, res, rej) { var r = store.put(h, 'dataDir'); r.onsuccess = function(){ res(true); }; r.onerror = function(){ rej(r.error); }; }); }
 function _fsLoadHandle()  { return _fsIdb(function(store, res, rej) { var r = store.get('dataDir'); r.onsuccess = function(){ res(r.result || null); }; r.onerror = function(){ rej(r.error); }; }); }
 function _fsClearHandle() { return _fsIdb(function(store, res, rej) { var r = store.delete('dataDir'); r.onsuccess = function(){ res(true); }; r.onerror = function(){ rej(r.error); }; }); }
-// Mapa de huellas { rutaRelativa: hash } de lo ÚLTIMO escrito en la carpeta. Va en IndexedDB y no en
-// localStorage: son ~11k entradas (una por archivo de torneo) y no entran en la cuota de localStorage.
-function _fsSaveFps(map) { return _fsIdb(function(store, res, rej) { var r = store.put(map, 'fps'); r.onsuccess = function(){ res(true); }; r.onerror = function(){ rej(r.error); }; }); }
-function _fsLoadFps()    { return _fsIdb(function(store, res, rej) { var r = store.get('fps'); r.onsuccess = function(){ res(r.result || {}); }; r.onerror = function(){ rej(r.error); }; }); }
+// Mapa de huellas { rutaRelativa: hash } de lo ÚLTIMO escrito en la carpeta: registra qué archivos ya
+// están al día para no reescribir los ~10.000 en cada guardado.
+//
+// Vive como ARCHIVO DENTRO de la carpeta (data/_fs-fingerprints.json), no en IndexedDB, POR DISEÑO:
+// así viaja con la carpeta cuando la sincronizás por Drive. Al conectar la MISMA carpeta en otra PC
+// (la notebook), las huellas ya están → no rehace el guardado grande de 25 min. Y como el archivo
+// vive dentro de la carpeta, SIEMPRE describe el estado de ESA carpeta (imposible que quede stale
+// por mezclar carpetas). Está en .gitignore: es tooling de autor, no va a la web.
+var _FS_FPS_FILE = '_fs-fingerprints.json';
+async function _fsSaveFps(dir, map) {
+  try { await _fsWriteFile(dir, _FS_FPS_FILE, JSON.stringify(map)); } catch (e) {}
+  // Cache local rápido, etiquetado con el nombre de la carpeta (para la migración de abajo).
+  try { await _fsIdb(function(store, res, rej) { var r = store.put({ folder: dir.name, map: map }, 'fps'); r.onsuccess = function(){ res(true); }; r.onerror = function(){ rej(r.error); }; }); } catch (e) {}
+}
+async function _fsLoadFps(dir) {
+  // 1) El archivo de la carpeta manda (fuente de verdad, portable).
+  try {
+    var fh = await dir.getFileHandle(_FS_FPS_FILE);
+    var m = JSON.parse(await (await fh.getFile()).text());
+    if (m && typeof m === 'object') return m;
+  } catch (e) {}
+  // 2) Todavía no existe el archivo (recién actualizás a esta versión) → migrar del caché IndexedDB
+  //    de ESTA PC, para no repetir el write de 25 min. Acepta el formato nuevo {folder,map} y el
+  //    viejo (el mapa crudo, que guardó la versión anterior en esta misma carpeta).
+  try {
+    var idb = await _fsIdb(function(store, res, rej) { var r = store.get('fps'); r.onsuccess = function(){ res(r.result || null); }; r.onerror = function(){ rej(r.error); }; });
+    if (idb) {
+      if (idb.map && idb.folder === dir.name) return idb.map;                 // formato nuevo, misma carpeta
+      if (!idb.map && !idb.folder && Object.keys(idb).length) return idb;      // formato viejo (mapa crudo)
+    }
+  } catch (e) {}
+  return {};   // carpeta nueva sin huellas → se escribe todo (correcto)
+}
 
 // ¿Tenemos permiso de ESCRITURA sobre el handle? query no molesta al usuario; request sí puede
 // pedir un click. onlyQuery=true → nunca pide (para saber el estado al dibujar la pestaña).
@@ -7352,8 +7381,7 @@ async function _fsPickDir() {
   if (!(await _fsHasPermission(h, false))) return null;
   _fsDirCache = h;
   try { await _fsSaveHandle(h); } catch (e) {}
-  _fsFileMissing = true;   // carpeta nueva → el próximo guardado reescribe TODO (las huellas eran de otra)
-  return h.name;
+  return h.name;   // las huellas de esta carpeta salen de su propio _fs-fingerprints.json (ver _fsLoadFps)
 }
 
 // Escribe un archivo DENTRO del handle de carpeta. rel puede tener subcarpetas ("t/tz_1.json"):
@@ -7510,11 +7538,11 @@ async function exportDataFile() {
     _saveProgressIndeterminate('Revisando cambios…');
     await _paint();
     var fps = {};
-    try { fps = await _fsLoadFps(); } catch (e) {}
+    try { fps = await _fsLoadFps(dir); } catch (e) {}
     var toWrite = [];
     entries.forEach(function (e) {
       e.hash = _fsHash(e.bytes != null ? e.bytes : e.str, e.ignoreTs);
-      if (_fsFileMissing || fps[e.rel] !== e.hash) toWrite.push(e);
+      if (fps[e.rel] !== e.hash) toWrite.push(e);
     });
 
     var total = toWrite.length, done = 0, falla = null;
@@ -7534,8 +7562,7 @@ async function exportDataFile() {
       if (done % 25 === 0 || done === total) { _saveProgressSet(done, total, 'Escribiendo archivos…'); await _paint(); }
     }
     _fsSubdirCache = null;
-    _fsFileMissing = false;
-    try { await _fsSaveFps(fps); } catch (e) {}
+    try { await _fsSaveFps(dir, fps); } catch (e) {}
     _saveProgressHide();
 
     if (falla) { alert('❌ No se pudo escribir ' + falla + '.\n\nProbá "Elegir carpeta data\\" de nuevo, o usá la descarga.'); return; }
@@ -7579,9 +7606,6 @@ function _fsCollectSaveEntries(authorFiles, split, photos, flyers, manifestJs) {
   flyers.forEach(function (f)       { E.push({ rel: f.name.replace(/^data\//, ''), bytes: f.data }); });
   return E;
 }
-// true fuerza a reescribir TODO en el próximo guardado (tras cambiar de carpeta: las huellas viejas
-// eran de la carpeta anterior). Lo prende _fsPickDir.
-var _fsFileMissing = false;
 
 // Arma el contenido de data/manifest.js (índice liviano + tz + noticias + cuadros CR + jugadores)
 // a partir de un split ya calculado. Centralizado para que los 3 exports generen el MISMO manifest.
