@@ -29,11 +29,13 @@
   .sub { color: var(--text3); font-size: 12.5px; margin-bottom: 18px; }
   .card { background: var(--card); border: 1px solid var(--bd); border-radius: 14px; padding: 16px; margin-bottom: 14px; }
   label { display: block; font-size: 12px; color: var(--text3); font-weight: 600; margin: 12px 0 4px; text-transform: uppercase; letter-spacing: .4px; }
-  input, select {
+  input, select, textarea {
     width: 100%; background: var(--card2); border: 1px solid var(--bd); color: var(--text);
     border-radius: 10px; padding: 11px 12px; font-size: 16px; font-family: inherit; outline: none;
   }
-  input:focus, select:focus { border-color: var(--gold-dim); }
+  textarea { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; line-height: 1.45; resize: vertical; }
+  input:focus, select:focus, textarea:focus { border-color: var(--gold-dim); }
+  input[type=file] { padding: 9px 12px; font-size: 13px; color: var(--text2); }
   .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   button {
     font-family: inherit; cursor: pointer; border-radius: 11px; font-size: 15px; font-weight: 600;
@@ -160,6 +162,21 @@
     <button class="primary" id="save-btn" onclick="saveForm()">✓ Guardar</button>
     <div class="msg" id="form-msg"></div>
   </div>
+
+  <!-- Partidas (PGN): solo para torneos EXISTENTES. Se guardan en data/live-partidas.json y
+       aparecen dentro del torneo en la web (~1-2 min). Después se adoptan al pool desde la PC. -->
+  <div class="card" id="pgn-card" style="display:none">
+    <div style="font-weight:700;font-size:15px;margin-bottom:2px">📋 Partidas (PGN)</div>
+    <div class="hint" id="pgn-have"></div>
+    <label for="f-pgn">Pegar PGN</label>
+    <textarea id="f-pgn" rows="6" placeholder="Pegá acá una o varias partidas en formato PGN…" oninput="updatePgnCount()"></textarea>
+    <label for="f-pgnfile">…o subir un archivo .pgn</label>
+    <input type="file" id="f-pgnfile" accept=".pgn,.txt" onchange="pgnFilePicked(this)">
+    <div class="hint" id="pgn-count"></div>
+    <button class="primary" id="pgn-btn" onclick="uploadPgn()">⬆️ Subir partidas a este torneo</button>
+    <div class="hint">Aparecen en la web en ~1-2 min, dentro de este torneo. Lo definitivo (adoptar al pool) se hace después en la PC.</div>
+    <div class="msg" id="pgn-msg"></div>
+  </div>
 </div>
 
 <!-- ── Pantalla 4: guardado OK ─────────────────────────────────── -->
@@ -180,7 +197,8 @@
 var WORKER = 'https://cr-proxy.mmatiasscruz.workers.dev';
 
 var PIN = '';            // PIN validado (queda en memoria + storage si se pidió recordar)
-var LIVE = { nuevos: [], overrides: {} };   // cambios pendientes (frescos, vía Worker)
+var LIVE = { nuevos: [], overrides: {} };   // cambios pendientes de METADATA (frescos, vía Worker)
+var LIVEPGN = { torneos: {} };              // partidas (PGN) subidas desde el teléfono, por torneo
 var EDIT_ID = null;      // id del torneo en edición (null = crear nuevo)
 var INITIAL = {};        // valores iniciales del formulario, para mandar SOLO lo que cambió
 var FILTER = 'activos';  // 'activos' (en curso + próximos) | 'done' | 'todos'
@@ -250,6 +268,7 @@ async function pinEnter() {
     var j = await api('/admin/live', { pin: pin });
     PIN = pin;
     if (j && j.live) LIVE = j.live;
+    if (j && j.livePgn) LIVEPGN = j.livePgn;
     if ($('pin-remember').checked) { try { localStorage.setItem('edit_pin', pin); } catch (e) {} }
     try { sessionStorage.setItem('edit_pin', pin); } catch (e) {}
     showList();
@@ -352,10 +371,12 @@ function renderList() {
   if (!tours.length) h = '<p style="color:var(--text3);margin-top:14px">No hay torneos ' + (FILTER === 'done' ? 'finalizados' : 'en curso ni próximos') + (q ? ' para “' + esc($('search').value.trim()) + '”' : '') + '.</p>';
   $('list').innerHTML = h;
 
-  var pend = Object.keys((LIVE && LIVE.overrides) || {}).length + ((LIVE && LIVE.nuevos) || []).length;
+  var pgnT = 0;
+  try { var tt = (LIVEPGN && LIVEPGN.torneos) || {}; Object.keys(tt).forEach(function (k) { if (tt[k] && tt[k].games && tt[k].games.length) pgnT++; }); } catch (e) {}
+  var pend = Object.keys((LIVE && LIVE.overrides) || {}).length + ((LIVE && LIVE.nuevos) || []).length + pgnT;
   var cb = $('clear-btn');
   cb.style.display = pend ? '' : 'none';
-  cb.textContent = '🧹 Vaciar los ' + pend + ' cambio(s) pendiente(s) (después de adoptarlos en la PC)';
+  cb.textContent = '🧹 Vaciar los ' + pend + ' cambio(s)/partida(s) pendiente(s) (después de adoptarlos en la PC)';
 }
 
 /* ── Formulario ── */
@@ -383,7 +404,67 @@ function openForm(id) {
   $('f-flyer').value = t.flyerUrl || '';
   INITIAL = collectForm();
   hideMsg('form-msg');
+  // Partidas (PGN): solo para torneos existentes (los que ya tienen id). Al crear uno nuevo,
+  // primero se guarda y después se reabre desde la lista para subirle partidas.
+  var pc = $('pgn-card');
+  if (id) {
+    pc.style.display = '';
+    $('f-pgn').value = ''; var fl = $('f-pgnfile'); if (fl) fl.value = '';
+    $('pgn-count').textContent = ''; hideMsg('pgn-msg');
+    var have = pgnHave(id);
+    $('pgn-have').textContent = have
+      ? ('Ya subiste ' + have + ' partida' + (have !== 1 ? 's' : '') + ' desde el teléfono a este torneo.')
+      : 'Todavía no subiste partidas a este torneo desde el teléfono.';
+  } else {
+    pc.style.display = 'none';
+  }
   show('screen-form');
+}
+
+/* ── Partidas (PGN) ── */
+function pgnHave(id) {
+  try { var t = LIVEPGN.torneos && LIVEPGN.torneos[String(id)]; return (t && t.games) ? t.games.length : 0; } catch (e) { return 0; }
+}
+// Cuenta partidas del texto pegado (cada una empieza con [Event y tiene al menos un número de jugada).
+function pgnCountGames(text) {
+  return String(text || '').replace(/\r\n/g, '\n').split(/(?=\[Event\s+")/)
+    .map(function (s) { return s.trim(); })
+    .filter(function (s) { return s.length > 10 && /\d\./.test(s); }).length;
+}
+function updatePgnCount() {
+  var n = pgnCountGames($('f-pgn').value);
+  $('pgn-count').textContent = n ? (n + ' partida' + (n !== 1 ? 's' : '') + ' detectada' + (n !== 1 ? 's' : '') + '.') : '';
+}
+function pgnFilePicked(inp) {
+  var f = inp.files && inp.files[0];
+  if (!f) return;
+  var rd = new FileReader();
+  rd.onload = function () { $('f-pgn').value = String(rd.result || ''); updatePgnCount(); };
+  rd.onerror = function () { showMsg('pgn-msg', 'err', 'No pude leer el archivo.'); };
+  rd.readAsText(f);
+}
+async function uploadPgn() {
+  if (!EDIT_ID) return;
+  var text = $('f-pgn').value.trim();
+  if (!text) { showMsg('pgn-msg', 'err', 'Pegá el PGN o subí un archivo .pgn.'); return; }
+  if (!pgnCountGames(text)) { showMsg('pgn-msg', 'err', 'No parece haber partidas válidas (¿es un PGN?).'); return; }
+  var t = findTour(EDIT_ID);
+  var btn = $('pgn-btn');
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Subiendo…'; hideMsg('pgn-msg');
+  try {
+    var j = await api('/admin/save', { pin: PIN, op: 'pgn', id: String(EDIT_ID), name: (t && t.name) || '', pgnText: text });
+    if (j && j.livePgn) LIVEPGN = j.livePgn;
+    var added = (j && typeof j.added === 'number') ? j.added : null;
+    var total = (j && typeof j.total === 'number') ? j.total : null;
+    $('f-pgn').value = ''; var fl = $('f-pgnfile'); if (fl) fl.value = ''; $('pgn-count').textContent = '';
+    if (total != null) $('pgn-have').textContent = 'Ya subiste ' + total + ' partida' + (total !== 1 ? 's' : '') + ' desde el teléfono a este torneo.';
+    if (added === 0) showMsg('pgn-msg', 'ok', 'Esas partidas ya estaban subidas. No se agregó ninguna.');
+    else showMsg('pgn-msg', 'ok', '✓ ' + (added != null ? added : '') + ' partida' + (added !== 1 ? 's' : '') + ' subida' + (added !== 1 ? 's' : '') + '. Aparecen en la web en 1-2 min.');
+    renderList();   // refrescar el contador de pendientes
+  } catch (e) {
+    showMsg('pgn-msg', 'err', e.message === 'Failed to fetch' ? 'Sin conexión con el servidor. ¿Hay internet?' : e.message);
+  }
+  btn.disabled = false; btn.textContent = '⬆️ Subir partidas a este torneo';
 }
 
 function collectForm() {
@@ -445,6 +526,8 @@ async function clearPending() {
   try {
     var j = await api('/admin/save', { pin: PIN, op: 'clear' });
     if (j && j.live) LIVE = j.live;
+    var j2 = await api('/admin/save', { pin: PIN, op: 'pgnclear' });
+    if (j2 && j2.livePgn) LIVEPGN = j2.livePgn;
     renderList();
   } catch (e) { alert('No se pudo vaciar: ' + e.message); }
   btn.disabled = false;

@@ -42,6 +42,11 @@
 //        op:'merge'  + id + fields → parcha un torneo EXISTENTE (overrides[id])
 //        op:'nuevo'  + fields      → crea un torneo cáscara (nuevos[], id ph_<timestamp>)
 //        op:'clear'                → vacía el archivo (después de adoptar los cambios en la PC)
+//        op:'pgn'    + id + name + pgnText → agrega partidas (PGN) a un torneo EXISTENTE. Se
+//                                    guardan en OTRO archivo, data/live-partidas.json (las partidas
+//                                    pueden ser grandes; no engordan el JSON de metadata). La web
+//                                    las muestra dentro del torneo; en la PC se adoptan al pool.
+//        op:'pgnclear' [+ id]      → vacía data/live-partidas.json (todo, o un torneo si viene id)
 //    Seguridad:
 //      - Secretos del Worker (Settings → Variables → Secrets, o `wrangler secret put`):
 //          EDIT_PIN  = frase larga que se escribe en el teléfono
@@ -438,10 +443,15 @@ async function puzStats(env) {
 
 const GH_REPO = 'PupiCruz/Ajedrez-Argentino-';
 const GH_BRANCH = 'main';
-const LIVE_PATH = 'data/live-torneos.json';          // ÚNICO archivo que este Worker puede escribir
+const LIVE_PATH = 'data/live-torneos.json';          // metadata de torneos editada desde el teléfono
+const LIVE_PGN_PATH = 'data/live-partidas.json';     // partidas (PGN) subidas desde el teléfono
+// Los DOS de arriba son los ÚNICOS archivos que este Worker puede escribir (rutas fijas).
 const RL_MAX_FAILS = 12;                             // intentos de PIN errados permitidos…
 const RL_WINDOW_S = 3600;                            // …por hora (después, bloqueo de 1 hora)
 const MAX_NUEVOS = 20;                               // tope de torneos "cáscara" pendientes
+const PGN_MAX_GAMES_PER_TOUR = 80;                   // tope de partidas acumuladas por torneo
+const PGN_MAX_GAME_BYTES = 60 * 1024;                // tope de tamaño de UNA partida
+const PGN_MAX_FILE_BYTES = 700 * 1024;              // tope del archivo entero (GitHub API cómodo)
 
 // Campos que el teléfono puede mandar. Cualquier otro se descarta.
 //   url:1 → tiene que ser https://…  ·  max → largo máximo del texto
@@ -575,7 +585,103 @@ async function ghPutLive(env, data, sha, message) {
   }
 }
 
-// POST /admin/live { pin } → el live-torneos.json FRESCO (desde GitHub, no desde Pages).
+// ── Partidas subidas desde el teléfono (data/live-partidas.json) ──
+// Forma: { version, torneos: { "<id de torneo>": { name, games: [<pgn>, …] } } }.
+
+// Texto PGN → lista de partidas sueltas (cada una empieza con [Event). Normaliza CRLF.
+function pgnSplit(text) {
+  return String(text || '').replace(/\r\n/g, '\n').split(/(?=\[Event\s+")/)
+    .map(function (s) { return s.trim(); }).filter(function (s) { return s.length > 10; });
+}
+// Clave barata por JUGADAS (cuerpo sin headers/comentarios/números) para no guardar dos veces la
+// misma partida si el teléfono la sube repetida. El dedup fino contra todo el sitio lo hace la PC.
+function pgnMoveKey(pgn) {
+  return String(pgn || '').replace(/\r\n/g, '\n')
+    .replace(/^\s*\[[^\]]*\]\s*$/gm, '')     // headers
+    .replace(/\{[^}]*\}/g, '')               // comentarios { }
+    .replace(/;[^\n]*/g, '')                 // comentarios ;
+    .replace(/\$\d+/g, '')                   // NAGs
+    .replace(/\d+\.(\.\.)?/g, '')            // números de jugada
+    .replace(/[+#!?]/g, '')
+    .replace(/\s+/g, ' ').trim().toLowerCase().slice(0, 4000);
+}
+function pgnHasMoves(pgn) { return pgnMoveKey(pgn).replace(/\s/g, '').length >= 4; }
+
+// Baja data/live-partidas.json. Si no existe (404), esqueleto vacío con sha null.
+async function ghGetPgn(env) {
+  const url = 'https://api.github.com/repos/' + GH_REPO + '/contents/' + LIVE_PGN_PATH + '?ref=' + GH_BRANCH;
+  const r = await fetch(url, { headers: ghHeaders(env) });
+  if (r.status === 404) return { data: { version: 1, torneos: {} }, sha: null };
+  if (!r.ok) throw new Error('GitHub GET ' + r.status);
+  const j = await r.json();
+  let data;
+  try { data = JSON.parse(b64ToUtf8(j.content)); } catch (e) { data = null; }
+  if (!data || typeof data !== 'object') data = { version: 1, torneos: {} };
+  if (!data.torneos || typeof data.torneos !== 'object') data.torneos = {};
+  return { data, sha: j.sha };
+}
+async function ghPutPgn(env, data, sha, message) {
+  const url = 'https://api.github.com/repos/' + GH_REPO + '/contents/' + LIVE_PGN_PATH;
+  const body = { message: message, content: utf8ToB64(JSON.stringify(data) + '\n'), branch: GH_BRANCH };
+  if (sha) body.sha = sha;
+  const r = await fetch(url, { method: 'PUT', headers: { ...ghHeaders(env), 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!r.ok) {
+    const txt = await r.text();
+    const e = new Error('GitHub PUT ' + r.status + ': ' + txt.slice(0, 200));
+    e.status = r.status;
+    throw e;
+  }
+}
+
+// POST /admin/save con op:'pgn' | 'pgnclear' → trabaja sobre data/live-partidas.json.
+async function adminSavePgn(body, env) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let cur;
+    try { cur = await ghGetPgn(env); } catch (e) { return errJson('No se pudo leer de GitHub: ' + e.message, 502); }
+    const data = cur.data;
+    let msg, extra = {};
+
+    if (body.op === 'pgnclear') {
+      const id = body.id ? String(body.id).slice(0, 80) : '';
+      if (id) { delete data.torneos[id]; msg = 'Teléfono: vaciar partidas de ' + id; }
+      else { data.torneos = {}; msg = 'Teléfono: vaciar todas las partidas subidas'; }
+    } else { // 'pgn'
+      const id = String(body.id || '').slice(0, 80);
+      if (!id) return errJson('Falta el id del torneo', 400);
+      const name = String(body.name || '').replace(/[<>]/g, '').trim().slice(0, 160);
+      const games = pgnSplit(body.pgnText).filter(pgnHasMoves).map(function (g) { return g.slice(0, PGN_MAX_GAME_BYTES); });
+      if (!games.length) return errJson('No encontré ninguna partida válida en el PGN.', 400);
+      const cell = data.torneos[id] || { name: name, games: [] };
+      if (name) cell.name = name;
+      if (!Array.isArray(cell.games)) cell.games = [];
+      const seen = {};
+      cell.games.forEach(function (g) { seen[pgnMoveKey(g)] = true; });
+      let added = 0;
+      for (const g of games) {
+        if (cell.games.length >= PGN_MAX_GAMES_PER_TOUR) break;
+        const k = pgnMoveKey(g);
+        if (seen[k]) continue;
+        seen[k] = true; cell.games.push(g); added++;
+      }
+      data.torneos[id] = cell;
+      if (JSON.stringify(data).length > PGN_MAX_FILE_BYTES)
+        return errJson('Hay demasiadas partidas acumuladas. Adoptalas en la PC y vaciá los pendientes (🧹) antes de subir más.', 400);
+      msg = 'Teléfono: +' + added + ' partida(s) en ' + (name || id);
+      extra = { added: added, total: cell.games.length };
+    }
+
+    try {
+      await ghPutPgn(env, data, cur.sha, msg);
+      return jsonResp(Object.assign({ ok: true, livePgn: data }, extra));
+    } catch (e) {
+      if (e.status === 409 && attempt === 0) continue;   // choque de versiones: releer y reintentar
+      return errJson('No se pudo guardar en GitHub: ' + e.message, 502);
+    }
+  }
+  return errJson('No se pudo guardar (conflicto repetido). Probá de nuevo.', 502);
+}
+
+// POST /admin/live { pin } → live-torneos.json + live-partidas.json FRESCOS (desde GitHub).
 async function adminLive(request, env) {
   if (request.method !== 'POST') return errJson('Usar POST', 405);
   let body; try { body = await request.json(); } catch (e) { return errJson('Body inválido', 400); }
@@ -584,7 +690,9 @@ async function adminLive(request, env) {
   if (!env.GH_TOKEN) return errJson('Falta el secreto GH_TOKEN en el Worker', 503);
   try {
     const { data } = await ghGetLive(env);
-    return jsonResp({ ok: true, live: data });
+    let livePgn = { version: 1, torneos: {} };
+    try { livePgn = (await ghGetPgn(env)).data; } catch (e) { /* si el archivo de partidas falla, seguimos con la metadata */ }
+    return jsonResp({ ok: true, live: data, livePgn: livePgn });
   } catch (e) {
     return errJson('No se pudo leer de GitHub: ' + e.message, 502);
   }
@@ -599,7 +707,9 @@ async function adminSave(request, env) {
   if (!env.GH_TOKEN) return errJson('Falta el secreto GH_TOKEN en el Worker', 503);
 
   const op = body.op;
-  if (op !== 'merge' && op !== 'nuevo' && op !== 'clear') return errJson('Operación inválida (merge | nuevo | clear)', 400);
+  // Partidas (PGN) → otro archivo (data/live-partidas.json), otro flujo.
+  if (op === 'pgn' || op === 'pgnclear') return adminSavePgn(body, env);
+  if (op !== 'merge' && op !== 'nuevo' && op !== 'clear') return errJson('Operación inválida (merge | nuevo | clear | pgn | pgnclear)', 400);
 
   // Leer → modificar → commitear. Si dos guardados chocan (409 de GitHub), reintentar una vez.
   for (let attempt = 0; attempt < 2; attempt++) {

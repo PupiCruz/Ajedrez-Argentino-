@@ -6520,6 +6520,24 @@ async function fetchTournamentGames(id) {
    pasar los cambios a mano al editor (la fuente de la verdad sigue siendo embedded-data.js). */
 var _liveTz = null;          // contenido crudo de data/live-torneos.json (o null)
 var _liveTzApplied = false;  // evita fusionar dos veces sobre el manifest
+var _livePartidas = null;    // contenido de data/live-partidas.json: partidas subidas desde el teléfono
+
+// Partidas subidas desde el teléfono para un torneo (por id del manifest). Se inyectan en el
+// detalle como si fueran partidas subidas a mano; en la PC se adoptan al pool (_liveTzAdopt).
+function _livePgnForTour(id) {
+  var d = _livePartidas;
+  if (!d || !d.torneos) return [];
+  var t = d.torneos[String(id)];
+  if (!t || !Array.isArray(t.games)) return [];
+  return t.games.filter(function (g) { return typeof g === 'string' && g.length > 10; });
+}
+// Torneos del teléfono con partidas YA adoptadas en ESTA PC: mapa { id: cantidad adoptada }.
+// (Local, no viaja: si el teléfono sube más partidas después, la cantidad sube y el banner reaparece.)
+function _livePgnAdoptedMap() { try { return JSON.parse(localStorage.getItem('live_pgn_adopted') || '{}') || {}; } catch (e) { return {}; } }
+function _livePgnMarkAdopted(id, count) {
+  var m = _livePgnAdoptedMap(); m[String(id)] = count;
+  try { localStorage.setItem('live_pgn_adopted', JSON.stringify(m)); } catch (e) {}
+}
 
 // Campos que el teléfono puede pisar de un torneo del manifest. Todo lo demás (partidas,
 // leaders, categorías…) se ignora aunque venga en el archivo: radio de daño mínimo.
@@ -6609,7 +6627,16 @@ function _liveTzPendingItems() {
   var ovs = (d.overrides && typeof d.overrides === 'object') ? d.overrides : {};
   var ovIds = Object.keys(ovs).filter(function(id) { return adopted.indexOf(String(id)) < 0; });
   var nuevos = (Array.isArray(d.nuevos) ? d.nuevos : []).filter(function(n) { return n && n.name && adopted.indexOf(String(n.id)) < 0; });
-  return { ovs: ovs, ovIds: ovIds, nuevos: nuevos, total: ovIds.length + nuevos.length };
+  // Partidas del teléfono con juego nuevo sin adoptar (cada torneo cuenta como un ítem).
+  var pgn = [];
+  var lp = (_livePartidas && _livePartidas.torneos && typeof _livePartidas.torneos === 'object') ? _livePartidas.torneos : {};
+  var padopt = _livePgnAdoptedMap();
+  Object.keys(lp).forEach(function(id) {
+    var t = lp[id]; if (!t || !Array.isArray(t.games) || !t.games.length) return;
+    var count = t.games.length, done = padopt[String(id)] || 0;
+    if (count > done) pgn.push({ id: id, name: t.name || ('torneo ' + id), count: count, newCount: count - done });
+  });
+  return { ovs: ovs, ovIds: ovIds, nuevos: nuevos, pgn: pgn, total: ovIds.length + nuevos.length + pgn.length };
 }
 
 // "Adoptar": pasa los cambios del teléfono a los datos propios de la PC (tz_config / pgn_tournaments),
@@ -6699,11 +6726,40 @@ function _liveTzAdopt() {
     }
   });
 
+  // PARTIDAS del teléfono → al pool (mismo pipeline que _crImportGamesToPool / dbPoolImport:
+  // estampar el evento del torneo, deduplicar contra TODO el sitio, y meter lo nuevo al pool).
+  var pgnAdded = 0, pgnTours = 0;
+  (it.pgn || []).forEach(function(p) {
+    var raw = _livePgnForTour(p.id);
+    if (!raw.length) return;
+    var ev = p.name;   // evento canónico = nombre del torneo (así el detalle las muestra por evento)
+    var stamped = raw.map(function(g) { return _stampEvent(g, ev); });
+    var uniqueIncoming = dedupGamesByMoves(stamped.map(function(g) { return { pgn: g }; }), function(w) { return w.pgn; });
+    var siteIdx = buildSiteDedupIndex();
+    var nuevas = [];
+    uniqueIncoming.forEach(function(w) { if (dedupIndexCovered(siteIdx, w.pgn)) return; dedupIndexAdd(siteIdx, w.pgn); nuevas.push(w.pgn); });
+    if (nuevas.length) {
+      var destT = null;
+      _memTournaments.forEach(function(t) { if (!destT && t.name === ev) destT = t; });
+      if (!destT) { destT = { id: Date.now(), name: ev, location: '', games: [], gameCount: 0, playerOnly: true, source: 'pgn', dbPool: true, loadedAt: Date.now() }; _memTournaments.push(destT); }
+      destT.games = dedupGamesByMoves((destT.games || []).concat(nuevas).map(function(g) { return { pgn: g }; }), function(w) { return w.pgn; }).map(function(w) { return w.pgn; });
+      destT.gameCount = destT.games.length;
+      pgnAdded += nuevas.length;
+    }
+    pgnTours++;
+    _livePgnMarkAdopted(p.id, p.count);
+  });
+  if (pgnTours) pgnMergeToPlayerGames();
+
   saveTzConfig(cfg);
   if (storedTours !== null) lsSaveTours(storedTours);
   _liveMarkAdopted(adoptedIds);
   try { renderTorneos(_lastTorneoFilter); } catch (e) {}
-  alert('✓ Adopté ' + (created ? created + ' torneo(s) nuevo(s)' : '') + (created && patched ? ' y ' : '') + (patched ? patched + ' cambio(s)' : '') + '.\n\n' +
+  var partsMsg = [];
+  if (created) partsMsg.push(created + ' torneo(s) nuevo(s)');
+  if (patched) partsMsg.push(patched + ' cambio(s)');
+  if (pgnAdded) partsMsg.push(pgnAdded + ' partida(s)');
+  alert('✓ Adopté ' + (partsMsg.join(' y ') || 'los cambios') + '.\n\n' +
         'Ya quedaron en tus datos (búscalos en la lista de Torneos).\n\n' +
         'Ahora:\n1) Pestaña Exportar → "Guardar datos en mi carpeta" para conservarlos.\n' +
         '2) En el teléfono (editar.html) tocá 🧹 para vaciar los pendientes.');
@@ -6729,9 +6785,12 @@ function _liveTzAuthorBanner() {
     lines.push('✏️ <b>' + escHtml(nameOf(id) || ('torneo ' + id)) + '</b> — cambió: ' + escHtml(flds));
   });
   it.nuevos.forEach(function(nv) { lines.push('➕ Torneo nuevo: <b>' + escHtml(nv.name) + '</b>'); });
+  (it.pgn || []).forEach(function(p) {
+    lines.push('📋 <b>' + escHtml(p.name) + '</b> — ' + p.newCount + ' partida' + (p.newCount !== 1 ? 's' : '') + ' nueva' + (p.newCount !== 1 ? 's' : '') + ' del teléfono');
+  });
   return '<div style="margin:0 0 14px;padding:13px 15px;border-radius:12px;border:1px solid var(--gold-dim);background:var(--gold-bg);font-size:13px;line-height:1.55;color:var(--text2)">'
     + '<b style="color:var(--gold)">📲 Hay cambios hechos desde el teléfono.</b> '
-    + 'La web publicada ya los muestra. Para tenerlos también en esta PC (y poder subirles partidas/fotos), tocá <b>Adoptar</b>.<br>'
+    + 'La web publicada ya los muestra. Para tenerlos también en esta PC (y sumar las partidas al pool), tocá <b>Adoptar</b>.<br>'
     + lines.join('<br>')
     + '<div style="margin-top:11px;display:flex;gap:9px;flex-wrap:wrap;align-items:center">'
     + '<button onclick="_liveTzAdopt()" style="padding:8px 16px;border-radius:9px;border:1px solid var(--gold);background:var(--gold);color:#1a1508;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">⬇️ Adoptar en esta PC</button>'
@@ -6764,6 +6823,31 @@ function _liveTzInit() {
   } catch (e) {}
 }
 _liveTzInit();
+
+// Arranque: bajar data/live-partidas.json (partidas subidas desde el teléfono). Se inyectan en el
+// detalle del torneo al abrirlo (_livePgnForTour, en openTournamentDetail). Si el archivo llega
+// tarde y ya hay un torneo abierto que tiene partidas del teléfono, se reabre para inyectarlas.
+function _livePgnInit() {
+  try {
+    fetch('data/live-partidas.json?nc=' + Date.now(), { cache: 'no-store' })
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(d) {
+        if (!d || typeof d !== 'object' || !d.torneos) return;
+        _livePartidas = d;
+        // Torneo ya abierto (deep-link o navegación) que justo tiene partidas del teléfono: reabrir.
+        try {
+          var ov = document.getElementById('tour-overlay');
+          if (_ondemand && _tdTourKey != null && ov && ov.classList.contains('open') && _livePgnForTour(_tdTourKey).length) {
+            openTournamentDetail('ls', _tdTourKey);
+          }
+        } catch (e) {}
+        // Modo autor: refrescar el banner si la pestaña Torneos está dibujada.
+        try { if (!_ondemand && document.getElementById('list-torneos')) renderTorneos(_lastTorneoFilter); } catch (e) {}
+      })
+      .catch(function() {});
+  } catch (e) {}
+}
+_livePgnInit();
 
 // On-demand: baja el archivo del jugador (data/p/<id>.json = [{tourName,tourLocation,pgn}],
 // ya deduplicado) y lo inyecta en PLAYER_GAMES['emb_<id>'] agrupado por torneo, así el código
@@ -17197,8 +17281,14 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   // resultados clickeables vía crSyncResultsFromPgn).
   if (activeCat < 0) {
     var _poolG = _tourPoolGames(_tourEventNames(name, games));
-    if (_poolG.length) {
-      games = dedupGamesByMoves(games.concat(_poolG).map(function(p) { return { pgn: p }; }), function(w) { return w.pgn; }).map(function(w) { return w.pgn; });
+    // Partidas subidas desde el teléfono (data/live-partidas.json). Se estampan con el nombre del
+    // torneo (evento) y entran como una fuente más de partidas: agrupan por ronda y se fusionan por
+    // casillero con Chess-Results/Lichess igual que las subidas a mano. El dedup las colapsa si ya
+    // estaban (adoptadas al pool + republicadas), así no salen duplicadas.
+    var _phoneG = _livePgnForTour(id).map(function(g) { return _stampEvent(g, name); });
+    var _extraG = _poolG.concat(_phoneG);
+    if (_extraG.length) {
+      games = dedupGamesByMoves(games.concat(_extraG).map(function(p) { return { pgn: p }; }), function(w) { return w.pgn; }).map(function(w) { return w.pgn; });
     }
   }
 
