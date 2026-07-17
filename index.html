@@ -7318,6 +7318,10 @@ function _fsIdb(fn) {
 function _fsSaveHandle(h) { return _fsIdb(function(store, res, rej) { var r = store.put(h, 'dataDir'); r.onsuccess = function(){ res(true); }; r.onerror = function(){ rej(r.error); }; }); }
 function _fsLoadHandle()  { return _fsIdb(function(store, res, rej) { var r = store.get('dataDir'); r.onsuccess = function(){ res(r.result || null); }; r.onerror = function(){ rej(r.error); }; }); }
 function _fsClearHandle() { return _fsIdb(function(store, res, rej) { var r = store.delete('dataDir'); r.onsuccess = function(){ res(true); }; r.onerror = function(){ rej(r.error); }; }); }
+// Mapa de huellas { rutaRelativa: hash } de lo ÚLTIMO escrito en la carpeta. Va en IndexedDB y no en
+// localStorage: son ~11k entradas (una por archivo de torneo) y no entran en la cuota de localStorage.
+function _fsSaveFps(map) { return _fsIdb(function(store, res, rej) { var r = store.put(map, 'fps'); r.onsuccess = function(){ res(true); }; r.onerror = function(){ rej(r.error); }; }); }
+function _fsLoadFps()    { return _fsIdb(function(store, res, rej) { var r = store.get('fps'); r.onsuccess = function(){ res(r.result || {}); }; r.onerror = function(){ rej(r.error); }; }); }
 
 // ¿Tenemos permiso de ESCRITURA sobre el handle? query no molesta al usuario; request sí puede
 // pedir un click. onlyQuery=true → nunca pide (para saber el estado al dibujar la pestaña).
@@ -7353,14 +7357,93 @@ async function _fsPickDir() {
 }
 
 // Escribe un archivo DENTRO del handle de carpeta. rel puede tener subcarpetas ("t/tz_1.json"):
-// se crean solas. content = string o Blob.
+// se crean solas. content = string, Blob o Uint8Array. Cachea los handles de subcarpeta para no
+// re-resolverlos en cada uno de los miles de archivos de data/t.
+var _fsSubdirCache = null;
 async function _fsWriteFile(dir, rel, content) {
-  var parts = rel.split('/'), name = parts.pop(), d = dir;
-  for (var i = 0; i < parts.length; i++) d = await d.getDirectoryHandle(parts[i], { create: true });
+  var parts = rel.split('/'), name = parts.pop(), d = dir, acc = '';
+  for (var i = 0; i < parts.length; i++) {
+    acc += parts[i] + '/';
+    var cached = _fsSubdirCache && _fsSubdirCache[acc];
+    d = cached || await d.getDirectoryHandle(parts[i], { create: true });
+    if (_fsSubdirCache) _fsSubdirCache[acc] = d;
+  }
   var fh = await d.getFileHandle(name, { create: true });
   var w = await fh.createWritable();
   await w.write(content);
   await w.close();
+}
+
+// Hash de contenido (texto o bytes) para detectar si un archivo cambió. No es criptográfico (djb2),
+// sólo tiene que ser estable y sensible. ignoreFirstLine: para manifest.js, que trae un __DATA_TS__
+// que cambia siempre (si no, "siempre cambió"). Devuelve "hash:largo".
+function _fsHash(content, ignoreFirstLine) {
+  var h1 = 0x811c9dc5, h2 = 0xc2b2ae35, i, n;
+  if (typeof content === 'string') {
+    var s = content;
+    if (ignoreFirstLine) s = s.replace(/^var __DATA_TS__=\d+;\n/, '');
+    n = s.length;
+    for (i = 0; i < n; i++) { var c = s.charCodeAt(i); h1 = Math.imul(h1 ^ c, 0x01000193); h2 = Math.imul(h2 ^ c, 0x85ebca6b); }
+  } else {
+    var b = content; n = b.length;
+    for (i = 0; i < n; i++) { h1 = Math.imul(h1 ^ b[i], 0x01000193); h2 = Math.imul(h2 ^ b[i], 0x85ebca6b); }
+  }
+  return (h1 >>> 0).toString(36) + (h2 >>> 0).toString(36) + ':' + n;
+}
+
+// ── Barra de progreso del guardado ───────────────────────────────────────────────────────────
+// buildSplitData bloquea el hilo ~20-30s; la barra de la fase "Preparando" es una animación CSS
+// (corre en el compositor, NO se congela con el hilo bloqueado) para que se note que trabaja.
+// La fase "Escribiendo" sí es determinada (X de Y) porque entre archivo y archivo cede el hilo.
+function _saveProgressShow(titulo) {
+  var o = document.getElementById('save-progress');
+  if (!o) {
+    o = document.createElement('div');
+    o.id = 'save-progress';
+    o.innerHTML =
+      '<style>@keyframes spIndet{0%{left:-35%}100%{left:100%}}</style>' +
+      '<div style="position:fixed;inset:0;background:rgba(0,0,0,.55);backdrop-filter:blur(3px);z-index:100000;display:flex;align-items:center;justify-content:center">' +
+        '<div style="background:var(--bg2,#181818);border:1px solid var(--border,#333);border-radius:14px;padding:26px 30px;width:min(420px,86vw);box-shadow:0 20px 60px rgba(0,0,0,.5);text-align:center;font-family:inherit">' +
+          '<div style="font-size:30px;margin-bottom:8px">💾</div>' +
+          '<div id="sp-title" style="font-size:15px;font-weight:700;color:var(--text,#eee);margin-bottom:4px"></div>' +
+          '<div id="sp-label" style="font-size:12.5px;color:var(--text2,#aaa);margin-bottom:16px;min-height:16px;line-height:1.4"></div>' +
+          '<div style="position:relative;height:9px;background:var(--bg3,#2a2a2a);border-radius:20px;overflow:hidden">' +
+            '<div id="sp-bar" style="position:absolute;top:0;left:0;height:100%;width:35%;border-radius:20px;background:linear-gradient(90deg,var(--gold-dim,#b8912f),var(--gold,#e8c15a));transition:width .15s ease"></div>' +
+          '</div>' +
+          '<div id="sp-pct" style="font-size:11px;color:var(--text3,#888);margin-top:8px"></div>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(o);
+  }
+  o.style.display = 'block';
+  document.getElementById('sp-title').textContent = titulo || 'Guardando…';
+  _saveProgressIndeterminate('Preparando…');
+}
+// Barra "yendo y viniendo" (no sabemos cuánto falta): animación CSS.
+function _saveProgressIndeterminate(label) {
+  var bar = document.getElementById('sp-bar'); if (!bar) return;
+  bar.style.transition = 'none'; bar.style.width = '35%'; bar.style.animation = 'spIndet 1.1s ease-in-out infinite';
+  var l = document.getElementById('sp-label'); if (l) l.textContent = label || '';
+  var p = document.getElementById('sp-pct'); if (p) p.textContent = '';
+}
+// Barra determinada: done de total.
+function _saveProgressSet(done, total, label) {
+  var bar = document.getElementById('sp-bar'); if (!bar) return;
+  bar.style.animation = 'none'; bar.style.left = '0'; bar.style.transition = 'width .15s ease';
+  var pct = total > 0 ? Math.round(100 * done / total) : 0;
+  bar.style.width = pct + '%';
+  var l = document.getElementById('sp-label'); if (l && label != null) l.textContent = label;
+  var p = document.getElementById('sp-pct'); if (p) p.textContent = done + ' / ' + total;
+}
+function _saveProgressHide() { var o = document.getElementById('save-progress'); if (o) o.style.display = 'none'; }
+// Cede el hilo para que el navegador pinte lo último que pusimos en pantalla. requestAnimationFrame
+// se CONGELA en pestañas de fondo; el setTimeout de respaldo garantiza que el guardado igual avance.
+function _paint() {
+  return new Promise(function(r){
+    var done = false, fin = function(){ if (!done) { done = true; r(); } };
+    try { requestAnimationFrame(fin); } catch(e) {}
+    setTimeout(fin, 50);
+  });
 }
 
 // Descarga SOLO el archivo de datos (data/embedded-data.js + data/embedded-photos.js) para
@@ -7368,79 +7451,133 @@ async function _fsWriteFile(dir, rel, content) {
 // esto alcanza para dejarla al día. Es el botón del día a día (no genera ZIP).
 //
 // Dos caminos:
-//  · CON carpeta conectada (File System Access): escribe DENTRO de data\ los archivos que cambiaron
-//    y nada más (photos/flyers casi nunca cambian → un guardado típico toca 1-2). Un click, sin
-//    mover nada a mano.
-//  · SIN carpeta (Firefox, o si no se conectó): descarga los 4 como siempre y el autor los mueve.
+//  · CON carpeta conectada (File System Access, Chrome): escribe DENTRO de data\ TODO lo que la web
+//    necesita —tu copia de autor + los archivos publicables (manifest, data/t partidas, data/ph
+//    fotos, data/fl flyers, data/p perfiles, libro)— pero SÓLO los que cambiaron. Un guardado típico
+//    (cambiaste una fecha) toca 3 archivos; la 1ª vez con una carpeta nueva los escribe todos (~30s).
+//    Después: doble clic en publicar-web.cmd y ya está en la web, sin el ZIP.
+//  · SIN carpeta (Firefox, o no conectada): descarga los 4 archivos de autor como antes; para las
+//    partidas/fotos/flyers publicables sigue haciendo falta "Preparar archivos para GitHub" (ZIP).
 async function exportDataFile() {
   if (_ondemand) { alert('Esto se usa desde tu carpeta de edición, no en modo publicación.'); return; }
-  try {
+
+  // Contenidos de los 3 archivos de AUTOR (tu copia local completa; el manifest se arma aparte).
+  function _authorFiles() {
     var stored  = JSON.parse(localStorage.getItem('pgn_tournaments') || '[]');
     var allData = _dedupById(stored.concat(_memTournaments));
-    var tzObj   = getTzConfig();
-    // Los 4 archivos, en el orden en que se muestran. `fp` es la clave de huella por archivo.
-    var files = [
-      { name: 'embedded-data.js', fp: 'data',
+    return [
+      { name: 'embedded-data.js',
         content: 'window.__EMBEDDED_DATA__=' + JSON.stringify(allData) + ';\n'
-               + 'window.__EMBEDDED_TZ__='   + JSON.stringify(tzObj)   + ';\n'
+               + 'window.__EMBEDDED_TZ__='   + JSON.stringify(getTzConfig()) + ';\n'
                + 'window.__EMBEDDED_NEWS__=' + JSON.stringify(getNewsItems()) + ';\n'
                + 'window.__EMBEDDED_CR__='   + JSON.stringify(_collectCrData()) + ';\n'
                + _embeddedPlayersJs() },
-      { name: 'embedded-photos.js', fp: 'photos', content: _collectExportPhotosJs() },
-      { name: 'embedded-flyers.js', fp: 'flyers', content: _collectExportFlyersJs() },
-      // manifest.js = lo que LEE la web publicada (tablas + info de torneos). El __DATA_TS__ cambia
-      // en cada build, así que su huella se calcula SIN esa línea (si no, "siempre cambió").
-      { name: 'manifest.js', fp: 'manifest', content: _manifestJsFromSplit(buildSplitData(), Date.now()) }
+      { name: 'embedded-photos.js', content: _collectExportPhotosJs() },
+      { name: 'embedded-flyers.js', content: _collectExportFlyersJs() }
     ];
+  }
 
-    var dir = await _fsGetDir(false);   // pide permiso si hace falta (un click la 1ª vez por sesión)
-    if (dir) {
-      var escritos = [], saltados = [], falla = null;
-      for (var i = 0; i < files.length; i++) {
-        var f = files[i], hkey = 'fs_fp_' + f.fp, h = _fsHashForFp(f);
-        if (_fsFileMissing || localStorage.getItem(hkey) !== h) {
-          try { await _fsWriteFile(dir, f.name, f.content); localStorage.setItem(hkey, h); escritos.push(f.name); }
-          catch (e) { falla = f.name + ': ' + (e && e.message ? e.message : e); break; }
-        } else { saltados.push(f.name); }
-      }
-      _fsFileMissing = false;
-      if (falla) { alert('❌ No se pudo escribir ' + falla + '.\n\nProbá "Elegir carpeta data\\" de nuevo, o usá la descarga.'); return; }
-      try { localStorage.setItem('last_export_fp', _estadoActualFp()); } catch(e){}
-      if (typeof exportTabInit === 'function') { try { exportTabInit(); } catch(e){} }
-      var msg = escritos.length
-        ? '✅ Guardado en tu carpeta.\n\nSe actualizó' + (escritos.length > 1 ? 'ron' : '') + ':\n  • ' + escritos.join('\n  • ')
-          + (saltados.length ? '\n\nSin cambios (no se tocaron):\n  • ' + saltados.join('\n  • ') : '')
-          + '\n\nPara que salga a la web: doble clic en publicar-web.cmd.'
-        : '✓ Ya estaba todo al día. No hubo cambios para guardar.';
-      alert(msg);
-      return;
-    }
+  var dir = null;
+  try { dir = await _fsGetDir(false); } catch (e) {}   // pide permiso si hace falta (1 click por sesión)
 
-    // ── Fallback: descargar los 4 (navegador sin la API, o carpeta no conectada) ──
-    for (var j = 0; j < files.length; j++) {
-      _downloadBlob(new Blob([files[j].content], { type: 'application/javascript' }), files[j].name);
+  // ── SIN carpeta: descargar los 4 (comportamiento de siempre) ──
+  if (!dir) {
+    try {
+      var af = _authorFiles();
+      af.forEach(function (f) { _downloadBlob(new Blob([f.content], { type: 'application/javascript' }), f.name); });
+      _downloadBlob(new Blob([_manifestJsFromSplit(buildSplitData(), Date.now())], { type: 'application/javascript' }), 'manifest.js');
+      try { localStorage.setItem('last_export_fp', _estadoActualFp()); } catch (e) {}
+      if (typeof exportTabInit === 'function') { try { exportTabInit(); } catch (e) {} }
+      alert('✅ ¡Datos al día!\n\nSe descargaron 4 archivos:\n  • embedded-data.js  (tu copia de autor)\n  • embedded-photos.js\n  • embedded-flyers.js  (flyers migrados)\n  • manifest.js  (lo que lee la web)\n\nMovelos a  ajedrez-argentino\\data\\  y reemplazá los que están.\n\nPara que salga a la web: doble clic en publicar-web.cmd.'
+        + (_fsSupported ? '\n\n💡 Tip: con "Elegir carpeta data\\" (arriba) se guardan solos, sin mover nada.' : '')
+        + '\n\nNOTA: con esto actualizás TABLAS e info de torneos. Si subiste PARTIDAS, FOTOS o FLYERS nuevos, usá "Preparar archivos para GitHub".');
+    } catch (e) { alert('No se pudo generar el archivo de datos: ' + (e && e.message ? e.message : e)); }
+    return;
+  }
+
+  // ── CON carpeta: guardado unificado e incremental, con barra de progreso ──
+  _saveProgressShow('Guardando en tu carpeta…');
+  await _paint();
+  try {
+    _saveProgressIndeterminate('Preparando datos… (puede tardar unos segundos)');
+    await _paint();
+    var split    = buildSplitData();
+    var photos   = _collectExportPhotoFiles();          // { index, files:[{name,data:bytes}] }
+    var flyers   = _collectExportFlyerFiles();          // [{name,data:bytes}]
+    var manifest = _manifestJsFromSplit(split, Date.now(), photos.index);
+    var entries  = _fsCollectSaveEntries(_authorFiles(), split, photos, flyers, manifest);
+
+    _saveProgressIndeterminate('Revisando cambios…');
+    await _paint();
+    var fps = {};
+    try { fps = await _fsLoadFps(); } catch (e) {}
+    var toWrite = [];
+    entries.forEach(function (e) {
+      e.hash = _fsHash(e.bytes != null ? e.bytes : e.str, e.ignoreTs);
+      if (_fsFileMissing || fps[e.rel] !== e.hash) toWrite.push(e);
+    });
+
+    var total = toWrite.length, done = 0, falla = null;
+    var cont = { torneos: 0, jugadores: 0, fotos: 0, flyers: 0, base: 0 };
+    _fsSubdirCache = {};   // reusar handles de subcarpeta (t/, p/, ph/, fl/) entre miles de archivos
+    if (total) { _saveProgressSet(0, total, 'Escribiendo archivos…'); await _paint(); }
+    for (var i = 0; i < toWrite.length; i++) {
+      var e = toWrite[i];
+      try { await _fsWriteFile(dir, e.rel, e.bytes != null ? e.bytes : e.str); fps[e.rel] = e.hash; }
+      catch (err) { falla = e.rel + ': ' + (err && err.message ? err.message : err); break; }
+      done++;
+      if (/^t\//.test(e.rel)) cont.torneos++;
+      else if (/^p\//.test(e.rel)) cont.jugadores++;
+      else if (/^ph\//.test(e.rel)) cont.fotos++;
+      else if (/^fl\//.test(e.rel)) cont.flyers++;
+      else cont.base++;
+      if (done % 25 === 0 || done === total) { _saveProgressSet(done, total, 'Escribiendo archivos…'); await _paint(); }
     }
-    try { localStorage.setItem('last_export_fp', _estadoActualFp()); } catch(e){}
-    if (typeof exportTabInit === 'function') { try { exportTabInit(); } catch(e){} }
-    alert('✅ ¡Datos al día!\n\nSe descargaron 4 archivos:\n  • embedded-data.js  (tu copia de autor)\n  • embedded-photos.js\n  • embedded-flyers.js  (flyers migrados)\n  • manifest.js  (lo que lee la web)\n\nMovelos a  ajedrez-argentino\\data\\  y reemplazá los que están.\n\nPara que salga a la web: doble clic en publicar-web.cmd.'
-      + (_fsSupported ? '\n\n💡 Tip: con el botón "Elegir carpeta data\\" se guardan solos, sin mover nada.' : '')
-      + '\n\nNOTA: con esto actualizás TABLAS e info de torneos. Si subiste PARTIDAS, FOTOS o FLYERS nuevos, usá "Preparar archivos para GitHub".');
-  } catch(e) {
-    alert('No se pudo generar el archivo de datos: ' + (e && e.message ? e.message : e));
+    _fsSubdirCache = null;
+    _fsFileMissing = false;
+    try { await _fsSaveFps(fps); } catch (e) {}
+    _saveProgressHide();
+
+    if (falla) { alert('❌ No se pudo escribir ' + falla + '.\n\nProbá "Elegir carpeta data\\" de nuevo, o usá la descarga.'); return; }
+    try { localStorage.setItem('last_export_fp', _estadoActualFp()); } catch (e) {}
+    if (typeof exportTabInit === 'function') { try { exportTabInit(); } catch (e) {} }
+
+    if (!total) { alert('✓ Ya estaba todo al día. No hubo cambios para guardar.'); return; }
+    var det = [];
+    if (cont.torneos)   det.push(cont.torneos + ' torneo' + (cont.torneos !== 1 ? 's' : ''));
+    if (cont.fotos)     det.push(cont.fotos + ' foto' + (cont.fotos !== 1 ? 's' : ''));
+    if (cont.flyers)    det.push(cont.flyers + ' flyer' + (cont.flyers !== 1 ? 's' : ''));
+    if (cont.jugadores) det.push(cont.jugadores + ' perfil' + (cont.jugadores !== 1 ? 'es' : ''));
+    if (cont.base)      det.push(cont.base + ' base');
+    alert('✅ Guardado en tu carpeta.\n\n' + total + ' archivo' + (total !== 1 ? 's' : '') + ' actualizado' + (total !== 1 ? 's' : '')
+      + (det.length ? '  (' + det.join(', ') + ')' : '')
+      + '.\n\nPara que salga a la web: doble clic en publicar-web.cmd.');
+  } catch (e) {
+    _saveProgressHide();
+    alert('No se pudo guardar en la carpeta: ' + (e && e.message ? e.message : e));
   }
 }
 
-// Huella de contenido de un archivo, para saber si cambió desde el último guardado. Para manifest.js
-// se ignora la 1ª línea (var __DATA_TS__=… cambia siempre). Hash rápido no-criptográfico (djb2).
-function _fsHashForFp(f) {
-  var s = f.fp === 'manifest' ? String(f.content).replace(/^var __DATA_TS__=\d+;\n/, '') : String(f.content);
-  var h1 = 0x811c9dc5, h2 = 0xc2b2ae35;
-  for (var i = 0; i < s.length; i++) {
-    var c = s.charCodeAt(i);
-    h1 = Math.imul(h1 ^ c, 0x01000193);
-    h2 = Math.imul(h2 ^ c, 0x85ebca6b);
-  }
-  return (h1 >>> 0).toString(36) + (h2 >>> 0).toString(36) + ':' + s.length;
+// Junta TODOS los archivos de un guardado completo con carpeta: los de autor (raíz) + los publicables
+// (dentro de data\, sin el prefijo "data/"). Cada entrada lleva `str` (texto) o `bytes` (binario).
+function _fsCollectSaveEntries(authorFiles, split, photos, flyers, manifestJs) {
+  function tfn(id) { return String(id).replace(/[^a-z0-9_-]/gi, '_') + '.json'; }
+  var E = [];
+  authorFiles.forEach(function (f) { E.push({ rel: f.name, str: f.content }); });   // copia de autor (raíz)
+  E.push({ rel: 'manifest.js', str: manifestJs, ignoreTs: true });                  // lo que lee la web
+  // Índice de partidas + libro de aperturas del visor publicado.
+  var ge = split.gameEntries, half = Math.ceil(ge.length / 2);
+  E.push({ rel: 'games_0.json', str: JSON.stringify(ge.slice(0, half)) });
+  E.push({ rel: 'games_1.json', str: JSON.stringify(ge.slice(half)) });
+  var bookRows = ge.map(function (g) { return { moves: (g.m || '').split(' ').filter(Boolean), r: g.r }; });
+  E.push({ rel: 'book.json', str: JSON.stringify(_buildOpeningBook(bookRows)) });
+  // Un archivo por torneo (data/t) y por perfil (data/p).
+  Object.keys(split.tFiles).forEach(function (id) { E.push({ rel: 't/' + tfn(id), str: JSON.stringify(split.tFiles[id]) }); });
+  Object.keys(split.pFiles).forEach(function (id) { E.push({ rel: 'p/' + tfn(id), str: JSON.stringify(split.pFiles[id]) }); });
+  // Fotos (data/ph) y flyers (data/fl) sueltos, binarios. Vienen con nombre "data/…": sacar el prefijo.
+  photos.files.forEach(function (f) { E.push({ rel: f.name.replace(/^data\//, ''), bytes: f.data }); });
+  flyers.forEach(function (f)       { E.push({ rel: f.name.replace(/^data\//, ''), bytes: f.data }); });
+  return E;
 }
 // true fuerza a reescribir TODO en el próximo guardado (tras cambiar de carpeta: las huellas viejas
 // eran de la carpeta anterior). Lo prende _fsPickDir.
