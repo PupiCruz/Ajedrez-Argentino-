@@ -4,8 +4,30 @@ $listener = New-Object System.Net.HttpListener
 $listener.Prefixes.Add("http://localhost:$Port/")
 $listener.Start()
 Write-Host "Serving $root on http://localhost:$Port/"
-# Abrir la app sola en el navegador predeterminado (el listener ya esta escuchando).
-try { Start-Process "http://localhost:$Port/" } catch {}
+# Abrir la app sola. Se prefiere CHROME porque Brave (el navegador por defecto de esta PC)
+# desactiva la File System Access API por privacidad -> no aparece "Elegir carpeta data\" ni el
+# guardado directo en la carpeta. Chrome la trae activada. Si Chrome no esta instalado, se cae al
+# navegador por defecto (la app funciona igual, solo con la descarga de archivos de siempre).
+$url = "http://localhost:$Port/"
+$chrome = $null
+foreach ($p in @(
+  "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
+  "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe",
+  "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe")) {
+  if (Test-Path $p) { $chrome = $p; break }
+}
+if (-not $chrome) {
+  try { $chrome = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe' -ErrorAction Stop).'(default)' } catch {}
+}
+try {
+  if ($chrome -and (Test-Path $chrome)) {
+    Write-Host "Abriendo en Chrome (para el guardado directo en la carpeta)"
+    Start-Process $chrome $url
+  } else {
+    Write-Host "Chrome no encontrado; abriendo en el navegador por defecto (sin guardado directo)"
+    Start-Process $url
+  }
+} catch { try { Start-Process $url } catch {} }
 $mime = @{ ".html"="text/html"; ".js"="application/javascript"; ".css"="text/css"; ".json"="application/json"; ".svg"="image/svg+xml"; ".png"="image/png"; ".pgn"="text/plain"; ".wasm"="application/wasm"; ".mp3"="audio/mpeg" }
 while ($listener.IsListening) {
   try {

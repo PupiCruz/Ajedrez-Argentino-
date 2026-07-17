@@ -6148,8 +6148,12 @@ function exportTabInit() {
   h += '<span style="font-size:12.5px;color:var(--text2);line-height:1.4">' + (_dirty ? '<b style="color:#e0a020">Tenés cambios sin guardar en el archivo.</b> Usá el botón dorado de abajo.' : '<b style="color:#28a05a">Todo guardado en el archivo.</b>') + '</span>';
   h += '</div>';
 
-  // BOTÓN PRINCIPAL — Guardar datos en la carpeta (día a día, 1 archivo, sin ZIP)
-  h += '<div style="font-size:12px;color:var(--text2);margin-bottom:10px;line-height:1.5">💾 <b style="color:var(--text2)">Guardar en tu carpeta.</b> Deja al día <i>tu carpeta principal</i>: descarga <i>embedded-data.js</i> y <i>embedded-photos.js</i> para reemplazar en la subcarpeta <i>data\\</i>. <b style="color:var(--text2)">Es lo que usás todos los días.</b></div>';
+  // Conexión con la carpeta data\ (File System Access). Se completa async en _fsRenderFolderRow
+  // (ver más abajo): sin conexión invita a conectarla; conectada muestra el nombre + "cambiar".
+  if (_fsSupported) h += '<div id="fs-folder-row" style="margin-bottom:12px"></div>';
+
+  // BOTÓN PRINCIPAL — Guardar datos en la carpeta (día a día, sin ZIP)
+  h += '<div style="font-size:12px;color:var(--text2);margin-bottom:10px;line-height:1.5">💾 <b style="color:var(--text2)">Guardar en tu carpeta.</b> Deja al día <i>tu carpeta principal</i> (torneos, fotos, flyers y lo que lee la web). <b style="color:var(--text2)">Es lo que usás todos los días.</b></div>';
   h += '<button onclick="exportDataFile()" style="width:100%;padding:13px;background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-size:14px;font-weight:700;border-radius:10px;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:9px;margin-bottom:22px">';
   h += _dlSvg + '<span>Guardar datos en mi carpeta</span></button>';
 
@@ -6181,6 +6185,37 @@ function exportTabInit() {
 
   panel.innerHTML = h;
   lichessTokenStatusInit();
+  if (_fsSupported) _fsRenderFolderRow();
+}
+
+// Dibuja la fila de conexión con la carpeta data\ (async: consultar el permiso no puede ser síncrono).
+async function _fsRenderFolderRow() {
+  var row = document.getElementById('fs-folder-row');
+  if (!row) return;
+  var dir = null;
+  try { dir = await _fsGetDir(true); } catch (e) {}   // onlyQuery: no molestar con un prompt al abrir
+  if (dir) {
+    row.innerHTML = '<div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-radius:9px;background:rgba(40,160,90,.12);border:1px solid rgba(40,160,90,.35)">'
+      + '<span style="font-size:15px">📁</span>'
+      + '<span style="font-size:12px;color:var(--text2);flex:1;line-height:1.4">Conectado a <b style="color:#28a05a">' + escHtml(dir.name) + '\\</b> — al guardar se escribe acá directo.</span>'
+      + '<button onclick="_fsChangeFolder()" style="background:none;border:none;color:var(--text3);font-size:11px;cursor:pointer;font-family:inherit;text-decoration:underline;white-space:nowrap">cambiar</button>'
+      + '</div>';
+  } else {
+    var cache = _fsDirCache;   // hay handle guardado pero sin permiso (revocado al cerrar el navegador)
+    row.innerHTML = '<div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-radius:9px;background:var(--bg3);border:1px dashed var(--border)">'
+      + '<span style="font-size:15px">📂</span>'
+      + '<span style="font-size:12px;color:var(--text2);flex:1;line-height:1.4">' + (cache
+          ? 'Reconectá tu carpeta <b style="color:var(--text2)">' + escHtml(cache.name) + '\\</b> para guardar sin descargar.'
+          : 'Conectá tu carpeta <b style="color:var(--text2)">data\\</b> una vez y guardá con un click, sin mover archivos.') + '</span>'
+      + '<button onclick="_fsChangeFolder()" style="padding:6px 12px;background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-size:11.5px;font-weight:700;border-radius:7px;cursor:pointer;font-family:inherit;white-space:nowrap">' + (cache ? 'Reconectar' : '📁 Elegir carpeta data\\') + '</button>'
+      + '</div>';
+  }
+}
+
+// Elegir/cambiar la carpeta data\. Tras conectarla, el próximo "Guardar datos" escribe adentro.
+async function _fsChangeFolder() {
+  var name = await _fsPickDir();
+  if (name) _fsRenderFolderRow();
 }
 
 function maintTabInit() {
@@ -7256,37 +7291,160 @@ async function exportAuthoringZip() {
   }
 }
 
+/* ── Guardar en la carpeta directamente (File System Access API) ──────────────────────────────
+   Antes "Guardar datos en mi carpeta" DESCARGABA 4 archivos y el autor los movía a mano a data\.
+   Con esta API (Chrome/Edge) se elige la carpeta data\ UNA vez y después se escribe adentro sin
+   pasar por Descargas: un click y listo. El permiso queda guardado (el handle vive en IndexedDB;
+   localStorage no puede guardarlo). En navegadores sin la API (Firefox) todo cae al método viejo.
+
+   La carpeta que se elige es data\ (donde están embedded-*.js y manifest.js). data/t/, data/ph/,
+   data/fl/ son subcarpetas suyas, alcanzables con getDirectoryHandle → lo usará la Fase 3. */
+var _fsSupported = (typeof window.showDirectoryPicker === 'function');
+var _fsDirCache = null;   // handle en memoria de esta sesión (evita ir a IndexedDB cada vez)
+
+// ── IndexedDB mínima para persistir el handle de la carpeta entre sesiones ──
+function _fsIdb(fn) {
+  return new Promise(function(resolve, reject) {
+    var op = indexedDB.open('aa_fs', 1);
+    op.onupgradeneeded = function() { op.result.createObjectStore('handles'); };
+    op.onerror = function() { reject(op.error); };
+    op.onsuccess = function() {
+      var db = op.result;
+      try { fn(db.transaction('handles', 'readwrite').objectStore('handles'), resolve, reject); }
+      catch (e) { reject(e); }
+    };
+  });
+}
+function _fsSaveHandle(h) { return _fsIdb(function(store, res, rej) { var r = store.put(h, 'dataDir'); r.onsuccess = function(){ res(true); }; r.onerror = function(){ rej(r.error); }; }); }
+function _fsLoadHandle()  { return _fsIdb(function(store, res, rej) { var r = store.get('dataDir'); r.onsuccess = function(){ res(r.result || null); }; r.onerror = function(){ rej(r.error); }; }); }
+function _fsClearHandle() { return _fsIdb(function(store, res, rej) { var r = store.delete('dataDir'); r.onsuccess = function(){ res(true); }; r.onerror = function(){ rej(r.error); }; }); }
+
+// ¿Tenemos permiso de ESCRITURA sobre el handle? query no molesta al usuario; request sí puede
+// pedir un click. onlyQuery=true → nunca pide (para saber el estado al dibujar la pestaña).
+async function _fsHasPermission(h, onlyQuery) {
+  if (!h) return false;
+  try {
+    var opts = { mode: 'readwrite' };
+    if ((await h.queryPermission(opts)) === 'granted') return true;
+    if (onlyQuery) return false;
+    return (await h.requestPermission(opts)) === 'granted';
+  } catch (e) { return false; }
+}
+
+// Devuelve el handle de data\ listo para escribir (con permiso), o null. onlyQuery evita el prompt.
+async function _fsGetDir(onlyQuery) {
+  if (!_fsSupported) return null;
+  if (!_fsDirCache) { try { _fsDirCache = await _fsLoadHandle(); } catch (e) { _fsDirCache = null; } }
+  if (!_fsDirCache) return null;
+  return (await _fsHasPermission(_fsDirCache, onlyQuery)) ? _fsDirCache : null;
+}
+
+// Abre el selector de carpeta, guarda el handle. Devuelve el nombre elegido o null si se canceló.
+async function _fsPickDir() {
+  if (!_fsSupported) return null;
+  var h;
+  try { h = await window.showDirectoryPicker({ id: 'aaDataDir', mode: 'readwrite' }); }
+  catch (e) { return null; }   // el usuario canceló
+  if (!(await _fsHasPermission(h, false))) return null;
+  _fsDirCache = h;
+  try { await _fsSaveHandle(h); } catch (e) {}
+  _fsFileMissing = true;   // carpeta nueva → el próximo guardado reescribe TODO (las huellas eran de otra)
+  return h.name;
+}
+
+// Escribe un archivo DENTRO del handle de carpeta. rel puede tener subcarpetas ("t/tz_1.json"):
+// se crean solas. content = string o Blob.
+async function _fsWriteFile(dir, rel, content) {
+  var parts = rel.split('/'), name = parts.pop(), d = dir;
+  for (var i = 0; i < parts.length; i++) d = await d.getDirectoryHandle(parts[i], { create: true });
+  var fh = await d.getFileHandle(name, { create: true });
+  var w = await fh.createWritable();
+  await w.write(content);
+  await w.close();
+}
+
 // Descarga SOLO el archivo de datos (data/embedded-data.js + data/embedded-photos.js) para
 // reemplazarlos en tu carpeta principal. Como la carpeta ya tiene código, piezas y motor, con
 // esto alcanza para dejarla al día. Es el botón del día a día (no genera ZIP).
-function exportDataFile() {
+//
+// Dos caminos:
+//  · CON carpeta conectada (File System Access): escribe DENTRO de data\ los archivos que cambiaron
+//    y nada más (photos/flyers casi nunca cambian → un guardado típico toca 1-2). Un click, sin
+//    mover nada a mano.
+//  · SIN carpeta (Firefox, o si no se conectó): descarga los 4 como siempre y el autor los mueve.
+async function exportDataFile() {
   if (_ondemand) { alert('Esto se usa desde tu carpeta de edición, no en modo publicación.'); return; }
   try {
     var stored  = JSON.parse(localStorage.getItem('pgn_tournaments') || '[]');
     var allData = _dedupById(stored.concat(_memTournaments));
     var tzObj   = getTzConfig();
-    var js = 'window.__EMBEDDED_DATA__=' + JSON.stringify(allData) + ';\n'
-           + 'window.__EMBEDDED_TZ__='   + JSON.stringify(tzObj)   + ';\n'
-           + 'window.__EMBEDDED_NEWS__=' + JSON.stringify(getNewsItems()) + ';\n'
-           + 'window.__EMBEDDED_CR__='   + JSON.stringify(_collectCrData()) + ';\n'
-           + _embeddedPlayersJs();
-    _downloadBlob(new Blob([js], { type: 'application/javascript' }), 'embedded-data.js');
-    _downloadBlob(new Blob([_collectExportPhotosJs()],
-      { type: 'application/javascript' }), 'embedded-photos.js');
-    _downloadBlob(new Blob([_collectExportFlyersJs()],
-      { type: 'application/javascript' }), 'embedded-flyers.js');
-    // También el manifest.js (lo que LEE la web publicada). Así, para actualizar TABLAS o info de
-    // torneos, alcanza con reemplazar manifest.js y pushear — sin generar el ZIP pesado de GitHub.
-    // (Las TABLAS/cruces y la metadata de torneos viajan acá; las PARTIDAS nuevas necesitan el ZIP.)
-    _downloadBlob(new Blob([_manifestJsFromSplit(buildSplitData(), Date.now())],
-      { type: 'application/javascript' }), 'manifest.js');
+    // Los 4 archivos, en el orden en que se muestran. `fp` es la clave de huella por archivo.
+    var files = [
+      { name: 'embedded-data.js', fp: 'data',
+        content: 'window.__EMBEDDED_DATA__=' + JSON.stringify(allData) + ';\n'
+               + 'window.__EMBEDDED_TZ__='   + JSON.stringify(tzObj)   + ';\n'
+               + 'window.__EMBEDDED_NEWS__=' + JSON.stringify(getNewsItems()) + ';\n'
+               + 'window.__EMBEDDED_CR__='   + JSON.stringify(_collectCrData()) + ';\n'
+               + _embeddedPlayersJs() },
+      { name: 'embedded-photos.js', fp: 'photos', content: _collectExportPhotosJs() },
+      { name: 'embedded-flyers.js', fp: 'flyers', content: _collectExportFlyersJs() },
+      // manifest.js = lo que LEE la web publicada (tablas + info de torneos). El __DATA_TS__ cambia
+      // en cada build, así que su huella se calcula SIN esa línea (si no, "siempre cambió").
+      { name: 'manifest.js', fp: 'manifest', content: _manifestJsFromSplit(buildSplitData(), Date.now()) }
+    ];
+
+    var dir = await _fsGetDir(false);   // pide permiso si hace falta (un click la 1ª vez por sesión)
+    if (dir) {
+      var escritos = [], saltados = [], falla = null;
+      for (var i = 0; i < files.length; i++) {
+        var f = files[i], hkey = 'fs_fp_' + f.fp, h = _fsHashForFp(f);
+        if (_fsFileMissing || localStorage.getItem(hkey) !== h) {
+          try { await _fsWriteFile(dir, f.name, f.content); localStorage.setItem(hkey, h); escritos.push(f.name); }
+          catch (e) { falla = f.name + ': ' + (e && e.message ? e.message : e); break; }
+        } else { saltados.push(f.name); }
+      }
+      _fsFileMissing = false;
+      if (falla) { alert('❌ No se pudo escribir ' + falla + '.\n\nProbá "Elegir carpeta data\\" de nuevo, o usá la descarga.'); return; }
+      try { localStorage.setItem('last_export_fp', _estadoActualFp()); } catch(e){}
+      if (typeof exportTabInit === 'function') { try { exportTabInit(); } catch(e){} }
+      var msg = escritos.length
+        ? '✅ Guardado en tu carpeta.\n\nSe actualizó' + (escritos.length > 1 ? 'ron' : '') + ':\n  • ' + escritos.join('\n  • ')
+          + (saltados.length ? '\n\nSin cambios (no se tocaron):\n  • ' + saltados.join('\n  • ') : '')
+          + '\n\nPara que salga a la web: doble clic en publicar-web.cmd.'
+        : '✓ Ya estaba todo al día. No hubo cambios para guardar.';
+      alert(msg);
+      return;
+    }
+
+    // ── Fallback: descargar los 4 (navegador sin la API, o carpeta no conectada) ──
+    for (var j = 0; j < files.length; j++) {
+      _downloadBlob(new Blob([files[j].content], { type: 'application/javascript' }), files[j].name);
+    }
     try { localStorage.setItem('last_export_fp', _estadoActualFp()); } catch(e){}
     if (typeof exportTabInit === 'function') { try { exportTabInit(); } catch(e){} }
-    alert('✅ ¡Datos al día!\n\nSe descargaron 4 archivos:\n  • embedded-data.js  (tu copia de autor)\n  • embedded-photos.js\n  • embedded-flyers.js  (flyers migrados)\n  • manifest.js  (lo que lee la web)\n\nMovelos a  ajedrez-argentino\\data\\  y reemplazá los que están.\n\nPara que salga a la web: doble clic en publicar-web.cmd.\n\nNOTA: con esto actualizás TABLAS e info de torneos. Si subiste PARTIDAS, FOTOS o FLYERS nuevos, usá "Preparar archivos para GitHub" (genera también los archivos de partidas, fotos data/ph y flyers data/fl).');
+    alert('✅ ¡Datos al día!\n\nSe descargaron 4 archivos:\n  • embedded-data.js  (tu copia de autor)\n  • embedded-photos.js\n  • embedded-flyers.js  (flyers migrados)\n  • manifest.js  (lo que lee la web)\n\nMovelos a  ajedrez-argentino\\data\\  y reemplazá los que están.\n\nPara que salga a la web: doble clic en publicar-web.cmd.'
+      + (_fsSupported ? '\n\n💡 Tip: con el botón "Elegir carpeta data\\" se guardan solos, sin mover nada.' : '')
+      + '\n\nNOTA: con esto actualizás TABLAS e info de torneos. Si subiste PARTIDAS, FOTOS o FLYERS nuevos, usá "Preparar archivos para GitHub".');
   } catch(e) {
     alert('No se pudo generar el archivo de datos: ' + (e && e.message ? e.message : e));
   }
 }
+
+// Huella de contenido de un archivo, para saber si cambió desde el último guardado. Para manifest.js
+// se ignora la 1ª línea (var __DATA_TS__=… cambia siempre). Hash rápido no-criptográfico (djb2).
+function _fsHashForFp(f) {
+  var s = f.fp === 'manifest' ? String(f.content).replace(/^var __DATA_TS__=\d+;\n/, '') : String(f.content);
+  var h1 = 0x811c9dc5, h2 = 0xc2b2ae35;
+  for (var i = 0; i < s.length; i++) {
+    var c = s.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 0x01000193);
+    h2 = Math.imul(h2 ^ c, 0x85ebca6b);
+  }
+  return (h1 >>> 0).toString(36) + (h2 >>> 0).toString(36) + ':' + s.length;
+}
+// true fuerza a reescribir TODO en el próximo guardado (tras cambiar de carpeta: las huellas viejas
+// eran de la carpeta anterior). Lo prende _fsPickDir.
+var _fsFileMissing = false;
 
 // Arma el contenido de data/manifest.js (índice liviano + tz + noticias + cuadros CR + jugadores)
 // a partir de un split ya calculado. Centralizado para que los 3 exports generen el MISMO manifest.
