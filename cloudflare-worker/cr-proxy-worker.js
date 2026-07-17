@@ -78,6 +78,9 @@ export default {
     // ── Descarga de Excel de info64 (POST → JSON {url} → bajar el .xlsx) ──
     if (reqUrl.pathname === '/i64xls') return i64Xls(reqUrl, ctx);
 
+    // ── Descarga de las PARTIDAS (PGN) de un torneo de Chess-Results ──
+    if (reqUrl.pathname === '/crpgn') return crPgn(reqUrl, ctx);
+
     // ── Proxy CORS Chess-Results ──
     const target = reqUrl.searchParams.get('url');
     if (!target) return errJson('Falta el parámetro ?url=', 400);
@@ -179,6 +182,164 @@ async function i64Xls(reqUrl, ctx) {
   const resp = new Response(upstream.body, { status: upstream.status, headers });
   if (upstream.ok) ctx.waitUntil(cache.put(cacheKey, resp.clone()));
   return resp;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /crpgn?tnr=<id>[&fide=<id,id,…>][&host=s1.chess-results.com]
+//   → devuelve el PGN con TODAS las partidas que el organizador subió al torneo.
+//
+// Cómo funciona (y por qué necesita al Worker): en la página del torneo, cuando el
+// organizador cargó partidas, aparece "Hay N partidas para descargar" → lleva a
+// PartieSuche.aspx, que tiene un botón "Descargar en formato PGN". Ese botón NO es un
+// link: es un formulario ASP.NET viejo (postback). Para apretarlo hay que hacer 2 pasos:
+//   1) GET a PartieSuche.aspx → guardar las cookies y los campos ocultos del formulario
+//      (__VIEWSTATE, __VIEWSTATEGENERATOR, __EVENTVALIDATION).
+//   2) POST del formulario ENTERO (todos los campos, no solo los ocultos) agregando el
+//      botón cb_DownLoadPGN. Contesta el .pgn como adjunto.
+// El navegador no puede hacer eso (CORS + cookies cross-origin), el Worker sí.
+//
+// Detalles que costaron encontrarse (no tocar sin probar):
+//   · Hay que postear al NODO final (s1/s2.chess-results.com), no a chess-results.com:
+//     el redirect 302 se come el POST y devuelve 411 Length Required.
+//   · Hay que mandar Content-Length explícito (si no, va chunked → 411).
+//   · El formulario completo: si faltan los <select>, la página tira 500.
+//   · combo_anzahl_zeilen = tope de partidas: 1=250 (default), 2=500, 3=1000, 5=2500.
+//     Usamos 5 o un torneo grande se cortaría en las primeras 250.
+//   · fide= filtra por jugador (uno o varios FIDE ID). Es la única forma de filtrar por
+//     persona: el PGN de Chess-Results NO trae los FIDE ID en los headers, así que el
+//     filtro hay que pedírselo a Chess-Results, no hacerlo acá.
+// ─────────────────────────────────────────────────────────────────────────────
+const CR_PGN_MAX_FIDE = 20;   // tope de jugadores por pedido (cada uno = 2 subrequests; el Worker permite 50)
+
+async function crPgn(reqUrl, ctx) {
+  const tnr = (reqUrl.searchParams.get('tnr') || '').trim();
+  if (!/^\d{1,9}$/.test(tnr)) return errJson('Parámetro tnr inválido (debe ser el número del torneo)', 400);
+
+  // Host opcional (el crUrl del torneo puede ser s1/s2/s3). Siempre dentro de chess-results.com.
+  let host = (reqUrl.searchParams.get('host') || 'chess-results.com').trim();
+  if (!ALLOWED_HOST.test(host)) return errJson('Host no permitido (sólo chess-results.com)', 403);
+
+  const fideList = (reqUrl.searchParams.get('fide') || '')
+    .split(',').map(s => s.trim()).filter(s => /^\d{1,9}$/.test(s)).slice(0, CR_PGN_MAX_FIDE);
+
+  // Caché: igual que el resto del Worker. Muchos visitantes mirando el mismo torneo en vivo
+  // comparten esta respuesta → Chess-Results recibe ~1 pedido cada CACHE_SECONDS, no uno por persona.
+  const cache = caches.default;
+  const cacheKey = new Request(reqUrl.toString());
+  const hit = await cache.match(cacheKey);
+  if (hit) return hit;
+
+  let pgn;
+  try {
+    pgn = await crPgnDownload(host, tnr, fideList);
+  } catch (e) {
+    return errJson('No se pudieron bajar las partidas de chess-results: ' + e.message, 502);
+  }
+
+  const headers = corsHeaders();
+  headers.set('Content-Type', 'application/x-chess-pgn; charset=utf-8');
+  headers.set('Cache-Control', 'public, max-age=' + CACHE_SECONDS);
+  const resp = new Response(pgn, { status: 200, headers });
+  ctx.waitUntil(cache.put(cacheKey, resp.clone()));
+  return resp;
+}
+
+// Baja el PGN del torneo. Sin fide → un solo pedido con todas las partidas. Con fide → un
+// pedido por jugador (reusando el formulario ya cargado) y se pegan los resultados.
+// Devuelve '' si el torneo no tiene partidas cargadas (caso normal: la mayoría no las sube).
+async function crPgnDownload(host, tnr, fideList) {
+  const form = await crPgnLoadForm(host, tnr);
+  if (!form) return '';   // no hay página de partidas → el torneo no tiene partidas subidas
+
+  if (!fideList.length) return await crPgnPost(form, tnr, '');
+
+  const partes = [];
+  for (const fide of fideList) {
+    try {
+      const p = await crPgnPost(form, tnr, fide);
+      if (p) partes.push(p);
+    } catch (e) { /* si un jugador falla, seguir con los demás */ }
+  }
+  return partes.join('\n\n');
+}
+
+// Paso 1: carga PartieSuche.aspx y devuelve { url, cookies, fields, btnName, btnValue }.
+async function crPgnLoadForm(host, tnr) {
+  const r = await fetch(`https://${host}/PartieSuche.aspx?lan=2&tnr=${tnr}&art=3`, {
+    headers: { 'User-Agent': CR_UA },
+    redirect: 'follow',
+  });
+  if (!r.ok) throw new Error('PartieSuche HTTP ' + r.status);
+  const html = await r.text();
+
+  const btn = html.match(/name="([^"]*cb_DownLoadPGN)"[^>]*value="([^"]*)"/i);
+  if (!btn) return null;   // sin botón de descarga = torneo sin partidas
+
+  const cookies = (r.headers.getSetCookie ? r.headers.getSetCookie() : [])
+    .map(c => c.split(';')[0]).join('; ');
+  return { url: r.url, cookies, fields: crPgnParseForm(html), btnName: btn[1], btnValue: btn[2] };
+}
+
+// Paso 2: postea el formulario con el botón de descarga apretado. fide='' → todas las partidas.
+async function crPgnPost(form, tnr, fide) {
+  const f = Object.assign({}, form.fields);
+  f[form.btnName] = form.btnValue;
+  crPgnSet(f, /txt_dbkey$/, tnr);                 // acotar la búsqueda a ESTE torneo
+  crPgnSet(f, /combo_anzahl_zeilen$/, '5');       // tope de filas: 5 = 2500 partidas
+  if (fide) crPgnSet(f, /Txt_FideID$/, fide);
+
+  const body = new URLSearchParams(f).toString();
+  const r = await fetch(form.url, {
+    method: 'POST',
+    headers: {
+      'User-Agent': CR_UA,
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Content-Length': String(new TextEncoder().encode(body).length),
+      'Referer': form.url,
+      'Cookie': form.cookies,
+    },
+    body,
+    redirect: 'follow',
+  });
+  if (!r.ok) throw new Error('descarga PGN HTTP ' + r.status);
+  const txt = await r.text();
+  // Si la búsqueda no encontró nada, Chess-Results devuelve la PÁGINA (HTML), no un .pgn.
+  return /\[Event\s/i.test(txt) ? txt : '';
+}
+
+const CR_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+
+// Lee TODOS los campos del <form>: inputs (menos los submit) y selects con su opción elegida.
+// ASP.NET tira 500 si el postback llega sin los campos que espera.
+function crPgnParseForm(html) {
+  const fields = {};
+  let m;
+  const inputRe = /<input\b([^>]*)>/gi;
+  while ((m = inputRe.exec(html))) {
+    const at = m[1];
+    const name = (at.match(/name="([^"]+)"/i) || [])[1];
+    if (!name) continue;
+    const type = ((at.match(/type="([^"]+)"/i) || [])[1] || 'text').toLowerCase();
+    if (type === 'submit') continue;                                        // los botones los ponemos nosotros
+    if ((type === 'checkbox' || type === 'radio') && !/checked/i.test(at)) continue;
+    fields[name] = (at.match(/value="([^"]*)"/i) || [])[1] || '';
+  }
+  const selRe = /<select\b([^>]*)>([\s\S]*?)<\/select>/gi;
+  while ((m = selRe.exec(html))) {
+    const name = (m[1].match(/name="([^"]+)"/i) || [])[1];
+    if (!name) continue;
+    const sel = m[2].match(/<option[^>]*selected[^>]*value="([^"]*)"/i)
+             || m[2].match(/<option[^>]*value="([^"]*)"[^>]*selected/i)
+             || m[2].match(/<option[^>]*value="([^"]*)"/i);
+    fields[name] = sel ? sel[1] : '';
+  }
+  return fields;
+}
+
+// Los names de ASP.NET son largos y con prefijo variable (ctl00$P1$txt_dbkey): se buscan por sufijo.
+function crPgnSet(fields, re, value) {
+  const k = Object.keys(fields).find(k => re.test(k));
+  if (k) fields[k] = value;
 }
 
 function corsHeaders() {

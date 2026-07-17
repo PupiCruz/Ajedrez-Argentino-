@@ -4310,6 +4310,16 @@ function crRenderSection(key) {
   h+='<input type="file" accept=".xlsx" style="display:none" onchange="crImportStandings(\''+ks+'\',this)">📊 Tabla</label>';
   if(_crUrlByKey[key] && /tnr\d+/i.test(_crUrlByKey[key])){
     h+='<button onclick="_crAutoUpdateIndivBtn(\''+ks+'\')" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:rgba(60,130,200,.15);border:1px solid rgba(70,150,220,.4);color:#7ab8e6;font-size:11px;font-weight:600;border-radius:8px;cursor:pointer;font-family:inherit" title="Baja solo todas las rondas + la clasificación desde Chess-Results">🔄 Actualizar desde Chess-Results</button>';
+    // Partidas → pool. En los INTERNACIONALES se ofrecen las dos opciones (por defecto sólo los
+    // argentinos, que es el criterio del autor para lo que queda guardado); en los nacionales, todas.
+    var _esInt = crShowArgLine(_crCategory[key]);
+    var _bs = 'display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:rgba(40,160,90,.15);border:1px solid rgba(50,180,100,.4);color:#5cc98a;font-size:11px;font-weight:600;border-radius:8px;cursor:pointer;font-family:inherit';
+    if(_esInt){
+      h+='<button onclick="_crImportGamesToPool(\''+ks+'\',true)" style="'+_bs+'" title="Baja de Chess-Results SOLO las partidas de los argentinos del torneo y las suma al pool">⬇️ Partidas argentinas al pool</button>';
+      h+='<button onclick="_crImportGamesToPool(\''+ks+'\',false)" style="'+_bs+';opacity:.75" title="Baja TODAS las partidas del torneo al pool">⬇️ Todas</button>';
+    } else {
+      h+='<button onclick="_crImportGamesToPool(\''+ks+'\',false)" style="'+_bs+'" title="Baja las partidas de Chess-Results y las suma al pool (reemplaza bajar el .pgn a mano y subirlo)">⬇️ Partidas al pool</button>';
+    }
   }
   if(_i64UrlByKey[key] && _i64Base(_i64UrlByKey[key])){
     h+='<button onclick="_i64AutoUpdateIndivBtn(\''+ks+'\')" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:rgba(60,130,200,.15);border:1px solid rgba(70,150,220,.4);color:#7ab8e6;font-size:11px;font-weight:600;border-radius:8px;cursor:pointer;font-family:inherit" title="Baja todas las rondas + la clasificación desde info64">🔄 Actualizar desde info64</button>';
@@ -5243,6 +5253,192 @@ async function _crAutoFetchIndiv(crk, crUrl, opts) {
   finally { _crAutoBusy[crk] = false; }
 }
 function _crAutoUpdateIndivBtn(crk) { _crAutoFetchIndiv(crk, _crUrlByKey[crk], {}); }
+
+/* ── PARTIDAS del torneo desde Chess-Results ──────────────────────────────────────────────────
+   Cuando el organizador sube las partidas a Chess-Results (no todos lo hacen), se pueden mostrar
+   EN VIVO sin esperar a que el autor las baje a mano y las suba al pool.
+
+   Son EFÍMERAS: viven en la memoria de esta pestaña y no tocan el pool, el localStorage ni los
+   datos guardados. El pool sólo cambia cuando el autor aprieta el botón de importar. Cuando esas
+   partidas ya están publicadas, ganan el casillero solas y esto deja de hacer falta (ver
+   _tdMergeSlots): Chess-Results es el andamio de lo que todavía no se publicó.
+
+   EN PANTALLA SE TRAEN TODAS, siempre — también en los internacionales. Como no se guardan, no hay
+   nada que "ensuciar" filtrando, y esconderle partidas al visitante no lo beneficia; si sólo quiere
+   ver a los argentinos, el detalle ya tiene el botón "🇦🇷 Solo argentinos" para filtrar la vista.
+   Además así alcanza UN pedido por torneo en vez de uno por jugador.
+   El filtro por argentinos vive donde importa de verdad: al IMPORTAR AL POOL (_crArgFideList), que
+   es donde se decide qué queda guardado para siempre.                                             */
+var _crLiveGames = {};   // crk → [pgn,…] partidas bajadas de Chess-Results en esta sesión
+var _tdCrByRound = {};   // las del torneo ABIERTO agrupadas por ronda (las lee el merge del detalle)
+var _crGamesBusy = {};   // crk → true mientras baja (evita pedidos superpuestos)
+
+// Baja el PGN del torneo por el Worker (que resuelve el postback de ASP.NET y el CORS).
+// fide vacío → todas las partidas; con FIDE IDs → sólo las de esos jugadores.
+async function _crPgnFetch(crUrl, fide) {
+  var m = String(crUrl || '').match(/tnr(\d+)/i);
+  if (!m) return '';
+  var host = 'chess-results.com';
+  try { var hm = String(crUrl).match(/https?:\/\/([^\/]+)/i); if (hm && /chess-results\.com$/i.test(hm[1])) host = hm[1]; } catch (e) {}
+  var u = CR_PROXY + '/crpgn?tnr=' + m[1] + '&host=' + encodeURIComponent(host);
+  if (fide && fide.length) u += '&fide=' + fide.join(',');
+  var res = await fetch(u);
+  if (!res.ok) throw new Error('proxy HTTP ' + res.status);
+  return await res.text();
+}
+
+// Los FIDE ID ARGENTINOS que juegan este torneo, sacados de la tabla que YA bajamos de
+// Chess-Results. _getArgFideSet() reconoce argentinos aunque jueguen con otra bandera (Pichot con
+// ESP). Lo usa el botón de importar al pool en torneos internacionales: hay que pedirle el filtro
+// a Chess-Results porque su PGN no trae los FIDE ID en los headers — acá no se podría saber quién
+// es quién con certeza (por nombre habría homónimos y variantes de escritura).
+function _crArgFideList(crk) {
+  var d = crDataLoad(crk) || {};
+  var arg = _getArgFideSet(), out = [], seen = Object.create(null);
+  (d.standings || []).forEach(function(s) {
+    var f = String(s.fideId || '').replace(/\D/g, '');
+    if (f && arg[f] && !seen[f]) { seen[f] = true; out.push(f); }
+  });
+  return out;
+}
+
+// Agrupa partidas sueltas por ronda, en la forma que usa el detalle ({ronda: [{pgn, h}]}).
+function _crGroupGamesByRound(pgns) {
+  var by = {};
+  (pgns || []).forEach(function(pgn) {
+    var h = parsePgnHeaders(pgn);
+    var rInt = parseInt(h.Round || '') || 0;
+    if (!rInt) return;   // sin ronda no hay casillero posible: se descarta
+    (by[rInt] = by[rInt] || []).push({ pgn: pgn, h: h });
+  });
+  return by;
+}
+
+// Baja TODAS las partidas del torneo y, si sigue abierto en pantalla, las muestra. Silenciosa: si
+// Chess-Results no tiene partidas subidas (el caso más común) o falla, no pasa nada y la web sigue
+// mostrando lo de siempre.
+async function _crAutoFetchGames(crk, crUrl) {
+  if (!crUrl || !/tnr\d+/i.test(crUrl)) return false;
+  if (_crGamesBusy[crk]) return false;
+  _crGamesBusy[crk] = true;
+  try {
+    var arr = _crParsePgnList(await _crPgnFetch(crUrl, []));
+    if (!arr.length) return false;
+    _crLiveGames[crk] = arr;
+    _tdApplyCrGames(crk);
+    return true;
+  } catch (e) { return false; }
+  finally { _crGamesBusy[crk] = false; }
+}
+
+// Texto PGN de Chess-Results → lista de partidas. OJO: viene con finales de línea CRLF; hay que
+// normalizarlos o los parsers que cortan por línea en blanco ven UNA sola partida gigante.
+function _crParsePgnList(txt) {
+  var arr = pgnSplitGames(String(txt || '').replace(/\r\n/g, '\n'));
+  return arr.filter(function(g) { return _moveBody(g).length >= 4; });   // sin jugadas no sirve
+}
+
+// Ancla del torneo abierto para insertarle las partidas de Chess-Results cuando lleguen.
+var _tdCrCtx = null;   // { crk, pgnKey, name, location, typ, url }
+
+// Re-dibuja las partidas del detalle abierto con las de Chess-Results ya fusionadas.
+// Con broadcast manda _tdLiveBuild: se le pide un refresco y él re-mezcla todo, así los relojes de
+// Lichess siguen ganando su casillero. Sin broadcast, se rearma la sección de partidas.
+function _tdApplyCrGames(crk) {
+  var c = _tdCrCtx;
+  if (!c || c.crk !== crk) return;   // el visitante cerró el torneo o abrió otro: no tocar nada
+  _tdCrByRound = _crGroupGamesByRound(_crLiveGames[crk]);
+  if (!Object.keys(_tdCrByRound).length) return;
+  if (_tdLiveCtx) { _tdLiveRefresh(); return; }
+  var sec = document.getElementById('td-games-section');
+  if (!sec) return;
+  // Torneo sin ninguna partida publicada: no hay contexto todavía, se crea ahora. Es el caso normal
+  // de esta función (el torneo cuyas partidas el autor aún no bajó ni publicó).
+  if (!_tdCtx) {
+    _tdCtx = { byRound: {}, games: [], pgnKey: c.pgnKey, name: c.name, location: c.location, built: {} };
+    PGN_DB[c.pgnKey] = { title: c.name, sub: c.location, url: c.url, games: [] };
+  }
+  var byRound = _tdCtx.byRound, roundOrder = Object.keys(byRound).map(function(k) { return parseInt(k) || k; });
+  _tdMergeSlots(byRound, roundOrder, _tdCrByRound, true);
+  roundOrder.sort(function(a, b) { return (parseInt(a) || 0) - (parseInt(b) || 0); });
+  if (!roundOrder.length) return;
+  var games = [];
+  roundOrder.forEach(function(rInt) { (byRound[rInt] || []).forEach(function(g) { games.push(g.pgn); }); });
+  _tdCtx.games = games;
+  _tdCtx.built = {};                                  // los paneles ya dibujados quedaron viejos
+  PGN_DB[c.pgnKey].games = games;                     // el visor lee de acá
+  sec.innerHTML = _tdLocalGamesHtml(byRound, roundOrder, games, c.pgnKey, c.typ);
+  tdBuildRound(roundOrder[0]);
+  // Los cruces enlazan al visor por ronda + nombres: ahora que hay partidas, re-enlazarlos.
+  try { crSyncResultsFromPgn(crk); } catch (e) {}
+}
+
+/* ── Botón de MODO AUTOR: traer las partidas de Chess-Results al POOL ─────────────────────────
+   Reemplaza el paso manual de siempre: entrar a Chess-Results, bajar el .pgn, volver a la app y
+   subirlo con "Elegir archivo". Es el MISMO camino de importación de dbPoolImport (mismo estampado
+   de [Event], mismo dedup, mismo pool), sólo que el archivo lo trae el Worker en vez del mouse.
+
+   soloArgentinos → para los torneos internacionales: le pide a Chess-Results únicamente las
+   partidas de los argentinos que juegan el torneo, cruzando la tabla que ya bajamos contra
+   _getArgFideSet() (que reconoce argentinos con bandera extranjera, como Pichot con ESP).
+
+   El dedup es el de siempre (dedupIndexCovered contra TODO el sitio): si una partida ya está —por
+   ejemplo la versión de Lichess, con relojes y evals, que subiste antes— la entrante de
+   Chess-Results se descarta sola y la que tenías queda intacta. Después de esto hay que "Guardar
+   datos en mi carpeta" y publicar, como con cualquier import.                                    */
+async function _crImportGamesToPool(crk, soloArgentinos) {
+  var st = document.getElementById('cr-status-' + crk);
+  function setS(m) { if (st) st.innerHTML = m; }
+  var crUrl = _crUrlByKey[crk] || '';
+  if (!crUrl || !/tnr\d+/i.test(crUrl)) { setS('❌ Este torneo no tiene una URL de Chess-Results válida.'); return false; }
+  var ev = (_tdCrCtx && _tdCrCtx.crk === crk) ? _tdCrCtx.ev : '';
+  if (!ev) { setS('❌ No pude determinar a qué torneo asignar las partidas.'); return false; }
+  if (_crGamesBusy[crk]) return false;
+  _crGamesBusy[crk] = true;
+  try {
+    var fide = [];
+    if (soloArgentinos) {
+      fide = _crArgFideList(crk);
+      if (!fide.length) { setS('❌ No encontré argentinos en la tabla del torneo. Actualizá primero la tabla con "🔄 Actualizar desde Chess-Results".'); return false; }
+      setS('⏳ Bajando las partidas de ' + fide.length + ' argentino(s)…');
+    } else {
+      setS('⏳ Bajando las partidas…');
+    }
+    var arr = _crParsePgnList(await _crPgnFetch(crUrl, fide));
+    if (!arr.length) { setS('❌ Chess-Results no tiene partidas subidas para este torneo (o todavía no las publicó el organizador).'); return false; }
+
+    // Mismo pipeline que dbPoolImport: estampar el evento del torneo, deduplicar el propio lote y
+    // después contra TODO el sitio (lo que ya está no vuelve a entrar).
+    var stamped = arr.map(function(g) { return _stampEvent(g, ev); });
+    var uniqueIncoming = dedupGamesByMoves(stamped.map(function(p) { return { pgn: p }; }), function(w) { return w.pgn; });
+    var siteIdx = buildSiteDedupIndex();
+    var nuevas = [];
+    uniqueIncoming.forEach(function(w) { if (dedupIndexCovered(siteIdx, w.pgn)) return; dedupIndexAdd(siteIdx, w.pgn); nuevas.push(w.pgn); });
+    var yaEstaban = arr.length - nuevas.length;
+    if (!nuevas.length) { setS('<span style="color:var(--text2)">Las ' + arr.length + ' partidas de Chess-Results ya estaban en la base. No se agregó ninguna.</span>'); return true; }
+
+    // Al contenedor del pool de ESTE evento (el existente con ese nombre, o uno nuevo).
+    var destT = null;
+    _memTournaments.forEach(function(t) { if (!destT && t.name === ev) destT = t; });
+    if (!destT) {
+      destT = { id: Date.now(), name: ev, location: '', games: [], gameCount: 0,
+                playerOnly: true, source: 'pgn', dbPool: true, loadedAt: Date.now() };
+      _memTournaments.push(destT);
+    }
+    destT.games = (destT.games || []).concat(nuevas);
+    // Colapsar prefijos dentro del evento (la versión "en vivo" y la terminada de la misma partida).
+    destT.games = dedupGamesByMoves(destT.games.map(function(p) { return { pgn: p }; }), function(w) { return w.pgn; }).map(function(w) { return w.pgn; });
+    destT.gameCount = destT.games.length;
+    pgnMergeToPlayerGames();
+
+    setS('<span style="color:var(--green)">✓ ' + nuevas.length + ' partida' + (nuevas.length !== 1 ? 's' : '') + ' nueva' + (nuevas.length !== 1 ? 's' : '') +
+         ' al pool' + (yaEstaban ? ' · ' + yaEstaban + ' ya estaban' : '') + '.' +
+         '<br><span style="color:var(--gold);font-size:11px">Acordate de "Guardar datos en mi carpeta" y publicar.</span></span>');
+    try { renderTorneos(_lastTorneoFilter); } catch (e) {}
+    return true;
+  } catch (e) { setS('❌ ' + e.message); return false; }
+  finally { _crGamesBusy[crk] = false; }
+}
 
 // ── Auto-actualización desde info64 (mismo destino que Chess-Results) ──
 // info64 da un xlsx por ronda (/<n>/xls) + la clasificación (/standings_xls) + el ranking
@@ -9193,35 +9389,55 @@ function _pairCandKeys(white, black) {
 // llama SIN withFen (instantáneo); la migración y el botón de mantenimiento lo llaman con withFen.
 // Conserva la copia MÁS COMPLETA de cada partida (y, a igual largo, la de mejor nombre). Las
 // partidas SIN jugadas se deduplican por jugadores+fecha+ronda+evento. Preserva el orden original.
+// "Riqueza" de una copia: qué trae que la otra podría no traer Y que la app no puede recalcular.
+// Desempata cuando dos copias tienen EXACTAMENTE las mismas jugadas — el caso típico es la misma
+// partida vista por el broadcast de Lichess y por Chess-Results (el organizador la sube igual).
+//   [%eval] → gráfico y barra de evaluación sin motor (lo más valioso: no se recupera)
+//   [%clk]  → el reloj de cada jugada
+//   FideId  → el perfil engancha la partida por FIDE ID en vez de por nombre
+// Sin esto el criterio era "gana el nombre más largo", y la copia de Chess-Results —que suele traer
+// el nombre completo del planillero pero ni relojes ni evals— le robaba el lugar a la de Lichess.
+function _gameRichness(pgn) {
+  var s = String(pgn || '');
+  return (/\[%eval/.test(s) ? 4 : 0) + (/\[%clk/.test(s) ? 2 : 0) + (/\[(?:White|Black)FideId\s/i.test(s) ? 1 : 0);
+}
+
 // Campos de IDENTIDAD para deduplicar una partida. Los comparten dedupGamesByMoves (display) y
 // _buildGamesPool (pool único), así "misma partida" se define en UN solo lugar y los dos caminos
 // no se desincronizan. body = jugadas (de _moveBody); h = headers (de parsePgnHeaders).
-function _dedupIdentity(h, body) {
+function _dedupIdentity(h, body, pgn) {
   return {
     date: (h.Date || ''),
     keys: body.length >= 4 ? _pairCandKeys(h.White, h.Black) : null,
     nameLen: (h.White || '').length + (h.Black || '').length,
+    rich: _gameRichness(pgn),
     ek: body.length < 4 ? (_pairKey(h.White, h.Black) + '#' + (h.Date || '') + '#' + (h.Round || '') + '#' + (h.Event || '')) : null
   };
 }
 
+// ¿La copia `a` le gana el lugar a `b` teniendo las MISMAS jugadas? Primero la más rica; a igual
+// riqueza, la de mejor nombre (completo gana a abreviado). Una sola definición para los dos caminos.
+function _dedupBeats(a, b) {
+  return a.rich !== b.rich ? a.rich > b.rich : a.nameLen > b.nameLen;
+}
+
 function dedupGamesByMoves(items, getPgn, withFen) {
   var metas = items.map(function(it) {
-    var pgn = getPgn(it), h = parsePgnHeaders(pgn), body = _moveBody(pgn), id = _dedupIdentity(h, body);
-    return { it: it, body: body, date: id.date, keys: id.keys, nameLen: id.nameLen, ek: id.ek };
+    var pgn = getPgn(it), h = parsePgnHeaders(pgn), body = _moveBody(pgn), id = _dedupIdentity(h, body, pgn);
+    return { it: it, body: body, date: id.date, keys: id.keys, nameLen: id.nameLen, rich: id.rich, ek: id.ek };
   });
   var dropped = new Set();
   // ── 0) SIN jugadas: por jugadores+fecha+ronda+evento.
   var emptySeen = Object.create(null);
   metas.forEach(function(m) { if (m.body.length >= 4 || m.ek == null) return; if (emptySeen[m.ek]) dropped.add(m.it); else emptySeen[m.ek] = true; });
   // ── 1) JUGADAS IDÉNTICAS (cuerpo exacto, NO mira nombres). Barato, atrapa la mayoría. Conserva la
-  //       copia con mejor nombre (más larga de White+Black: nombre completo gana a abreviado).
+  //       copia más RICA (relojes/evals/FideId) y, a igual riqueza, la de mejor nombre (ver _dedupBeats).
   var byBody = Object.create(null);
   metas.forEach(function(m) {
     if (m.body.length < 4 || dropped.has(m.it)) return;
     var c = byBody[m.body];
     if (!c) { byBody[m.body] = m; return; }
-    if (m.nameLen > c.nameLen) { dropped.add(c.it); byBody[m.body] = m; } else dropped.add(m.it);
+    if (_dedupBeats(m, c)) { dropped.add(c.it); byBody[m.body] = m; } else dropped.add(m.it);
   });
   // Buckets por par de apellidos-candidatos (candado tolerante al formato) sobre los sobrevivientes.
   function buildBuckets() {
@@ -10268,9 +10484,9 @@ function _buildGamesPool(withFen) {
     d.tournaments.forEach(function(t) { (t.games || []).forEach(function(g) { (isMem ? mem : canon).push(g); }); });
   }
   function meta(g, isCanon) {
-    var h = parsePgnHeaders(g), body = _moveBody(g), id = _dedupIdentity(h, body);
+    var h = parsePgnHeaders(g), body = _moveBody(g), id = _dedupIdentity(h, body, g);
     return { g: g, canon: isCanon, body: body, ev: (h.Event || ''),
-             date: id.date, keys: id.keys, nameLen: id.nameLen, ek: id.ek };
+             date: id.date, keys: id.keys, nameLen: id.nameLen, rich: id.rich, ek: id.ek };
   }
   var metas = canon.map(function(g) { return meta(g, true); }).concat(mem.map(function(g) { return meta(g, false); }));  // canon PRIMERO (gana empates)
   var dropped = new Set();
@@ -10279,13 +10495,13 @@ function _buildGamesPool(withFen) {
   // 0) sin jugadas
   var emptySeen = Object.create(null);
   metas.forEach(function(m) { if (m.body.length >= 4 || m.ek == null) return; if (emptySeen[m.ek]) dropMem(m); else emptySeen[m.ek] = m; });
-  // 1) cuerpo exacto (conserva canónica > nombre más largo)
+  // 1) cuerpo exacto (conserva canónica > más rica > nombre más largo)
   var byBody = Object.create(null);
   metas.forEach(function(m) {
     if (m.body.length < 4 || dropped.has(m)) return;
     var c = byBody[m.body];
     if (!c) { byBody[m.body] = m; return; }
-    var keepNew = (m.canon && !c.canon) || (m.canon === c.canon && m.nameLen > c.nameLen);
+    var keepNew = (m.canon && !c.canon) || (m.canon === c.canon && _dedupBeats(m, c));
     if (keepNew) { dropMem(c); byBody[m.body] = m; } else dropMem(m);
   });
   function buckets() { var bk = Object.create(null); metas.forEach(function(m) { if (m.body.length < 4 || dropped.has(m) || !m.keys) return; for (var i = 0; i < m.keys.length; i++) (bk[m.keys[i]] = bk[m.keys[i]] || []).push(m); }); return bk; }
@@ -16667,6 +16883,11 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     }
   }
 
+  // La clave de Chess-Results se arma ACÁ (y no más abajo, con la sección de cruces) porque las
+  // partidas que se bajan de Chess-Results se guardan bajo esta clave y hay que fusionarlas antes
+  // de agrupar por ronda.
+  var crk = crKey(type, id) + catSuffix;
+
   // Agrupar partidas por ronda
   var byRound = {};
   var roundOrder = [];
@@ -16679,9 +16900,23 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   });
   roundOrder.sort(function(a, b) { return (parseInt(a)||0) - (parseInt(b)||0); });
   // Guardar las partidas SUBIDAS (a mano + pool) agrupadas por ronda. Si el torneo transmite por
-  // Lichess, _tdLiveBuild usará estas en las rondas donde haya MÁS subidas que las que trae Lichess
-  // (Lichess suele traer solo los tableros de arriba; acá pudiste subir la ronda completa).
+  // Lichess, _tdLiveBuild las fusiona con las del broadcast por casillero (ver _tdMergeSlots).
   _tdUploadedByRound = byRound;
+
+  // Partidas de Chess-Results ya bajadas en esta sesión (al reabrir el torneo, o al volver de un
+  // perfil): se fusionan acá, en el MISMO array que usan los dos caminos de render — con broadcast
+  // (_tdLiveBuild) y sin él. Las subidas quedan aparte en _tdUploadedByRound: son fuentes distintas
+  // y sólo Chess-Results puede aportar rondas nuevas (las del pool se enganchan por nombre y
+  // podrían colar un torneo ajeno).
+  _tdCrByRound = _crGroupGamesByRound(_crLiveGames[crk]);
+  if (Object.keys(_tdCrByRound).length) {
+    _tdUploadedByRound = {};
+    Object.keys(byRound).forEach(function(k) { _tdUploadedByRound[k] = byRound[k].slice(); });
+    _tdMergeSlots(byRound, roundOrder, _tdCrByRound, true);
+    roundOrder.sort(function(a, b) { return (parseInt(a)||0) - (parseInt(b)||0); });
+    games = [];
+    roundOrder.forEach(function(rInt) { (byRound[rInt] || []).forEach(function(g) { games.push(g.pgn); }); });
+  }
   _tdSearch = '';   // limpiar el buscador de tableros al abrir un torneo nuevo
 
   var lbl2 = { live:'EN CURSO', upcoming:'PRÓXIMO', done:'FINALIZADO' };
@@ -16779,9 +17014,18 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     PGN_DB[pgnKey2] = { title: name, sub: location, url: broadcastUrl || crUrl || '', games: games };
     _tdCtx = { byRound: byRound, games: games, pgnKey: pgnKey2, name: name, location: location, built: {} };
   }
+  // Contexto mínimo para poder INSERTAR las partidas de Chess-Results cuando lleguen (tardan ~2s,
+  // la pantalla ya se dibujó). Se setea SIEMPRE, incluso si el torneo todavía no tiene NINGUNA
+  // partida publicada — que es justo el caso más común de esta función (_tdCtx en cambio queda en
+  // null ahí, así que no sirve de ancla).
+  // `ev` = el evento CANÓNICO con el que se estampan las partidas en el pool. Con categorías es
+  // "<Torneo> · <Categoría>" (igual que _poolGamesForCat), si no el nombre del torneo.
+  _tdCrCtx = { crk: crk, pgnKey: pgnKey2, name: name, location: location, typ: typ,
+               url: broadcastUrl || crUrl || '',
+               ev: (activeCat >= 0 && categories && categories[activeCat])
+                     ? _catEventName(name, categories[activeCat].name) : name };
 
   // Sección Chess-Results (emparejamientos + tabla por ronda)
-  var crk = crKey(type, id) + catSuffix;
   _crCategory[crk] = typ; // recordar la categoría para el filtro de argentinos
   _crUrlByKey[crk] = crUrl; // que la sección de equipos sepa el crUrl (botón + auto-fetch)
   _i64UrlByKey[crk] = info64url || ''; // ídem para info64 (botón + auto-fetch)
@@ -16839,15 +17083,21 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   _tdLiveCrKey = crk;   // que el vivo conozca la clave de cruces aunque no haya partidas subidas (solo-broadcast)
   _tdLiveIsTeam = !!isTeam;   // y si es por equipos, para no pisar la sección de equipos con el cuadro individual
   if (hasBroadcast) _tdLoadLiveGames(broadcastId, broadcastUrl, name, location, pgnKey2, typ, status, roundOrder.length > 0);
-  // "Se actualizan solos": en la web publicada, si el torneo está EN VIVO y tiene URL de Chess-Results,
-  // bajar los cuadros frescos al abrir (igual que los broadcasts de Lichess). En modo autor no corre
-  // solo: el autor usa el botón "🔄 Actualizar desde Chess-Results" cuando quiere.
-  if (_ondemand && status === 'live' && crUrl && /tnr\d+/i.test(crUrl)) {
+  // "Se actualizan solos": en la web publicada, si el torneo está EN VIVO o es PRÓXIMO y tiene URL de
+  // Chess-Results, bajar los cuadros frescos al abrir (igual que los broadcasts de Lichess). En modo
+  // autor no corre solo: el autor usa el botón "🔄 Actualizar desde Chess-Results" cuando quiere.
+  // Los PRÓXIMOS también se actualizan: su ranking inicial cambia hasta el día del torneo (se anotan
+  // inscriptos nuevos) y los emparejamientos de la ronda 1 suelen salir la noche anterior. El
+  // auto-fetch ya distingue el caso solo (sin rondas jugadas baja art=0 = ranking inicial sembrado).
+  if (_ondemand && (status === 'live' || status === 'upcoming') && crUrl && /tnr\d+/i.test(crUrl)) {
     if (isTeam) _crAutoFetchTeam(crk, crUrl, { silent: true });
     else _crAutoFetchIndiv(crk, crUrl, { silent: true });
+    // Y las PARTIDAS, si el organizador las subió. Va en paralelo con los cuadros de arriba (no
+    // depende de ellos) y es un solo pedido, que además el Worker cachea para todos los visitantes.
+    _crAutoFetchGames(crk, crUrl);
   }
   // Ídem para info64 (sólo individuales). Si el torneo tiene ambas fuentes, se actualizan las dos.
-  if (_ondemand && status === 'live' && !isTeam && _i64Base(info64url)) {
+  if (_ondemand && (status === 'live' || status === 'upcoming') && !isTeam && _i64Base(info64url)) {
     _i64AutoFetchIndiv(crk, info64url, { silent: true });
   }
   // Si se pidió, bajar directo al apartado de partidas
@@ -17823,23 +18073,77 @@ function _tdLiveFetchMulti(tourIds, name, location, pgnKey, typ, hasFallback) {
 
 // Partidas SUBIDAS (a mano/pool) del torneo abierto, agrupadas por ronda. Lo setea openTournamentDetail.
 var _tdUploadedByRound = {};
-// Si para una ronda hay MÁS partidas subidas a mano que las que trae Lichess, usar las subidas (Lichess
-// suele traer solo los tableros de arriba; el autor pudo subir la ronda completa). Reemplazo por ronda
-// (no mezcla → sin duplicados). Reconstruye y devuelve el array plano de games (en el orden de roundOrder).
-function _tdMergeUploadedRounds(byRound, roundOrder) {
-  var up = _tdUploadedByRound || {};
-  Object.keys(up).forEach(function(rk){
+
+// Llave de CASILLERO de una partida: la ronda ya la da byRound; acá va el PAR DE JUGADORES.
+// Tolera el formato del nombre ("Valerga, Diego" ≡ "Diego Valerga": se ordenan los tokens) y el
+// color (se ordenan los dos jugadores). Usa el nombre COMPLETO a propósito, no el apellido: dos
+// partidas distintas de la misma ronda pueden compartir apellidos (Garcia-Lopez es común en un
+// open grande) y confundirlas escondería una partida real. Un nombre abreviado ("Valerga, D.") no
+// matchea acá — de ese caso se ocupa el dedup por jugadas, que corre después.
+function _tdSlotKey(g) {
+  var h = g.h || (g.h = parsePgnHeaders(g.pgn));
+  var w = nameTokens(h.White || '').sort().join(' ');
+  var b = nameTokens(h.Black || '').sort().join(' ');
+  return w < b ? w + '|' + b : b + '|' + w;
+}
+
+// ¿La partida entrante `a` desaloja a la que ya ocupa el casillero (`b`)?
+function _tdSlotBeats(a, b) {
+  var ba = _moveBody(a.pgn), bb = _moveBody(b.pgn);
+  // La de ahora es un FRAGMENTO de la entrante (el broadcast se cortó a mitad de partida y esta
+  // fuente la tiene completa) → gana la completa: una partida entera sin relojes vale más que un
+  // pedazo con relojes.
+  if (ba.length > bb.length && ba.indexOf(bb) === 0) return true;
+  // Jugadas distintas (error de transcripción de una de las fuentes) → manda la que ya está.
+  if (ba !== bb) return false;
+  // Mismas jugadas → gana la más rica (relojes/evals/FideId). Ver _dedupBeats.
+  return _dedupBeats(_dedupIdentity(a.h || parsePgnHeaders(a.pgn), ba, a.pgn),
+                     _dedupIdentity(b.h || parsePgnHeaders(b.pgn), bb, b.pgn));
+}
+
+// Fusiona otra fuente de partidas (pool / Chess-Results) sobre las del broadcast, por CASILLERO:
+// cada par de jugadores de cada ronda tiene UN lugar. En un torneo, ronda + par identifica una
+// partida unívocamente (dos jugadores se enfrentan una vez por ronda o ninguna), así que la fuente
+// nueva RELLENA los casilleros vacíos y sólo disputa los ocupados si trae algo mejor.
+//
+// Reemplaza al criterio viejo ("si la fuente trae más partidas que Lichess, pisar la ronda entera"),
+// que era reemplazo y no mezcla: para mostrar los 40 tableros de la otra fuente hacía perder los
+// relojes y las evals de los 5 que Lichess sí había transmitido. Ahora quedan los 5 buenos + los 35
+// que faltaban.
+//
+// nuevasRondas=false → sólo rellena rondas que el broadcast ya tiene. Es la protección contra rondas
+// fantasma del POOL: sus partidas se enganchan por nombre de evento y puede colarse un torneo ajeno
+// (Pichot apareciendo como R9-R12 en un torneo de 7 rondas). Para Chess-Results va en true: esas
+// partidas salen del tnr de ESTE torneo, no hay nada que colar.
+function _tdMergeSlots(byRound, roundOrder, srcByRound, nuevasRondas) {
+  Object.keys(srcByRound || {}).forEach(function(rk) {
     var rInt = parseInt(rk); if (isNaN(rInt)) rInt = rk;
-    var upArr = up[rk];
-    var upN = upArr ? upArr.length : 0;
-    var liN = byRound[rInt] ? byRound[rInt].length : 0;
-    // Solo REEMPLAZAR rondas que la transmisión ya tiene (Lichess manda qué rondas existen). NO agregar
-    // rondas nuevas desde el pool: evita rondas fantasma con partidas de otro torneo coladas por nombre
-    // (ej. Alan Pichot apareciendo como R9-R12 en un torneo de menos rondas).
-    if (byRound[rInt] && upN > liN) {
-      byRound[rInt] = upArr.slice();
+    var src = srcByRound[rk] || [];
+    if (!src.length) return;
+    if (!byRound[rInt]) {
+      if (!nuevasRondas) return;
+      byRound[rInt] = []; roundOrder.push(rInt);
     }
+    var arr = byRound[rInt], slot = Object.create(null), tocada = false;
+    arr.forEach(function(g, i) { var k = _tdSlotKey(g); if (slot[k] === undefined) slot[k] = i; });
+    src.forEach(function(g) {
+      var k = _tdSlotKey(g), hit = slot[k];
+      if (hit === undefined) { arr.push(g); slot[k] = arr.length - 1; tocada = true; return; }
+      if (_tdSlotBeats(g, arr[hit])) { arr[hit] = g; tocada = true; }
+    });
+    // Segunda red: la MISMA partida escrita con nombres distintos (uno abreviado) cae en casilleros
+    // distintos y el paso de arriba no la ve. El dedup por huella de jugadas sí la agarra.
+    if (tocada) byRound[rInt] = dedupGamesByMoves(arr, function(g) { return g.pgn; });
   });
+}
+
+// Fusiona sobre las partidas del broadcast las de las otras dos fuentes y devuelve el array plano
+// de games en el orden de roundOrder. El orden importa: el broadcast ya ocupa sus casilleros, las
+// subidas rellenan, y Chess-Results rellena lo que quede. Sólo Chess-Results puede aportar rondas
+// que el broadcast no tenga (ver _tdMergeSlots).
+function _tdMergeUploadedRounds(byRound, roundOrder) {
+  _tdMergeSlots(byRound, roundOrder, _tdUploadedByRound || {}, false);
+  _tdMergeSlots(byRound, roundOrder, _tdCrByRound || {}, true);
   roundOrder.sort(function(a,b){ return (parseInt(a)||0) - (parseInt(b)||0); });
   var games = [];
   roundOrder.forEach(function(rInt){ (byRound[rInt]||[]).forEach(function(g){ games.push(g.pgn); }); });
