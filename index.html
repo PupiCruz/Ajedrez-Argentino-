@@ -4368,15 +4368,24 @@ function crRenderSection(key) {
   h+='<input type="file" accept=".xlsx" style="display:none" onchange="crImportStandings(\''+ks+'\',this)">📊 Tabla</label>';
   if(_crUrlByKey[key] && /tnr\d+/i.test(_crUrlByKey[key])){
     h+='<button onclick="_crAutoUpdateIndivBtn(\''+ks+'\')" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:rgba(60,130,200,.15);border:1px solid rgba(70,150,220,.4);color:#7ab8e6;font-size:11px;font-weight:600;border-radius:8px;cursor:pointer;font-family:inherit" title="Baja solo todas las rondas + la clasificación desde Chess-Results">🔄 Actualizar desde Chess-Results</button>';
-    // Partidas → pool. En los INTERNACIONALES se ofrecen las dos opciones (por defecto sólo los
-    // argentinos, que es el criterio del autor para lo que queda guardado); en los nacionales, todas.
+  }
+  // Partidas → pool. UN solo botón que junta las dos fuentes: las del broadcast de Lichess que ya
+  // están en pantalla (instantáneas) y las de Chess-Results (bajan por red). El dedup por jugadas
+  // hace que la misma partida por las dos vías entre una sola vez, así que no hay que elegir.
+  // Por eso sale también en torneos que sólo tienen Lichess, sin URL de Chess-Results.
+  var _hayCr = !!(_crUrlByKey[key] && /tnr\d+/i.test(_crUrlByKey[key]));
+  var _hayVivo = !!(_tdCtx && _tdCtx.crKey === key && _tdCtx.games && _tdCtx.games.length);
+  if(_hayCr || _hayVivo){
+    // En los INTERNACIONALES se ofrecen las dos opciones (por defecto sólo los argentinos, que es
+    // el criterio del autor para lo que queda guardado); en los nacionales, todas.
     var _esInt = crShowArgLine(_crCategory[key]);
     var _bs = 'display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:rgba(40,160,90,.15);border:1px solid rgba(50,180,100,.4);color:#5cc98a;font-size:11px;font-weight:600;border-radius:8px;cursor:pointer;font-family:inherit';
+    var _fu = _hayCr && _hayVivo ? 'Lichess y Chess-Results' : (_hayVivo ? 'Lichess' : 'Chess-Results');
     if(_esInt){
-      h+='<button onclick="_crImportGamesToPool(\''+ks+'\',true)" style="'+_bs+'" title="Baja de Chess-Results SOLO las partidas de los argentinos del torneo y las suma al pool">⬇️ Partidas argentinas al pool</button>';
-      h+='<button onclick="_crImportGamesToPool(\''+ks+'\',false)" style="'+_bs+';opacity:.75" title="Baja TODAS las partidas del torneo al pool">⬇️ Todas</button>';
+      h+='<button onclick="_crImportGamesToPool(\''+ks+'\',true)" style="'+_bs+'" title="Suma al pool SOLO las partidas de los argentinos del torneo (de '+_fu+')">⬇️ Partidas argentinas al pool</button>';
+      h+='<button onclick="_crImportGamesToPool(\''+ks+'\',false)" style="'+_bs+';opacity:.75" title="Suma al pool TODAS las partidas del torneo (de '+_fu+')">⬇️ Todas</button>';
     } else {
-      h+='<button onclick="_crImportGamesToPool(\''+ks+'\',false)" style="'+_bs+'" title="Baja las partidas de Chess-Results y las suma al pool (reemplaza bajar el .pgn a mano y subirlo)">⬇️ Partidas al pool</button>';
+      h+='<button onclick="_crImportGamesToPool(\''+ks+'\',false)" style="'+_bs+'" title="Suma al pool las partidas del torneo (de '+_fu+'). Reemplaza bajar el .pgn a mano y subirlo.">⬇️ Partidas al pool</button>';
     }
   }
   if(_i64UrlByKey[key] && _i64Base(_i64UrlByKey[key])){
@@ -5593,32 +5602,57 @@ async function _crImportGamesToPool(crk, soloArgentinos) {
   var st = document.getElementById('cr-status-' + crk);
   function setS(m) { if (st) st.innerHTML = m; }
   var crUrl = _crUrlByKey[crk] || '';
-  if (!crUrl || !/tnr\d+/i.test(crUrl)) { setS('❌ Este torneo no tiene una URL de Chess-Results válida.'); return false; }
+  var hasCr = !!(crUrl && /tnr\d+/i.test(crUrl));
+  // Partidas que YA están en pantalla: si el torneo transmite por Lichess, _tdLiveBuild dejó el
+  // set completo del broadcast en _tdCtx.games. No hay que bajarlas de nuevo: se suman al lote y
+  // el dedup por jugadas se encarga de que no se dupliquen con las de Chess-Results.
+  var enPantalla = (_tdCtx && _tdCtx.crKey === crk && _tdCtx.games) ? _tdCtx.games.slice() : [];
+  if (!hasCr && !enPantalla.length) { setS('❌ Este torneo no tiene partidas en pantalla ni una URL de Chess-Results válida.'); return false; }
   var ev = (_tdCrCtx && _tdCrCtx.crk === crk) ? _tdCrCtx.ev : '';
   if (!ev) { setS('❌ No pude determinar a qué torneo asignar las partidas.'); return false; }
   if (_crGamesBusy[crk]) return false;
   _crGamesBusy[crk] = true;
   try {
-    var fide = [];
+    // 1) Las que ya están en pantalla (broadcast de Lichess / subidas). Instantáneo, sin red.
+    var deLichess = enPantalla.map(function(g) { return g.pgn || g; }).filter(Boolean);
     if (soloArgentinos) {
-      fide = _crArgFideList(crk);
-      if (!fide.length) { setS('❌ No encontré argentinos en la tabla del torneo. Actualizá primero la tabla con "🔄 Actualizar desde Chess-Results".'); return false; }
-      setS('⏳ Bajando las partidas de ' + fide.length + ' argentino(s)…');
-    } else {
-      setS('⏳ Bajando las partidas…');
+      deLichess = deLichess.filter(function(p) { return _isArgGame(parsePgnHeaders(p)); });
     }
-    var arr = _crParsePgnList(await _crPgnFetch(crUrl, fide));
-    if (!arr.length) { setS('❌ Chess-Results no tiene partidas subidas para este torneo (o todavía no las publicó el organizador).'); return false; }
+
+    // 2) Las de Chess-Results (esto sí pide red y puede tardar).
+    var deCr = [];
+    if (hasCr) {
+      var fide = [];
+      if (soloArgentinos) {
+        fide = _crArgFideList(crk);
+        if (!fide.length && !deLichess.length) { setS('❌ No encontré argentinos en la tabla del torneo. Actualizá primero la tabla con "🔄 Actualizar desde Chess-Results".'); return false; }
+        if (fide.length) setS('⏳ Bajando las partidas de ' + fide.length + ' argentino(s)…');
+      } else {
+        setS('⏳ Bajando las partidas…');
+      }
+      if (!soloArgentinos || fide.length) {
+        try { deCr = _crParsePgnList(await _crPgnFetch(crUrl, fide)); } catch (e) { deCr = []; }
+      }
+    }
+
+    var arr = deLichess.concat(deCr);
+    if (!arr.length) {
+      setS('❌ No hay partidas para agregar (Chess-Results no las publicó todavía y no hay partidas en pantalla).');
+      return false;
+    }
 
     // Mismo pipeline que dbPoolImport: estampar el evento del torneo, deduplicar el propio lote y
-    // después contra TODO el sitio (lo que ya está no vuelve a entrar).
+    // después contra TODO el sitio (lo que ya está no vuelve a entrar). El dedup por jugadas es el
+    // que hace que la MISMA partida venida de Lichess y de Chess-Results entre una sola vez.
     var stamped = arr.map(function(g) { return _stampEvent(g, ev); });
     var uniqueIncoming = dedupGamesByMoves(stamped.map(function(p) { return { pgn: p }; }), function(w) { return w.pgn; });
     var siteIdx = buildSiteDedupIndex();
     var nuevas = [];
     uniqueIncoming.forEach(function(w) { if (dedupIndexCovered(siteIdx, w.pgn)) return; dedupIndexAdd(siteIdx, w.pgn); nuevas.push(w.pgn); });
     var yaEstaban = arr.length - nuevas.length;
-    if (!nuevas.length) { setS('<span style="color:var(--text2)">Las ' + arr.length + ' partidas de Chess-Results ya estaban en la base. No se agregó ninguna.</span>'); return true; }
+    var _fuente = (deLichess.length && deCr.length) ? 'Lichess + Chess-Results'
+                : (deLichess.length ? 'Lichess' : 'Chess-Results');
+    if (!nuevas.length) { setS('<span style="color:var(--text2)">Las ' + arr.length + ' partidas (' + _fuente + ') ya estaban en la base. No se agregó ninguna.</span>'); return true; }
 
     // Al contenedor del pool de ESTE evento (el existente con ese nombre, o uno nuevo).
     var destT = null;
@@ -5635,7 +5669,7 @@ async function _crImportGamesToPool(crk, soloArgentinos) {
     pgnMergeToPlayerGames();
 
     setS('<span style="color:var(--green)">✓ ' + nuevas.length + ' partida' + (nuevas.length !== 1 ? 's' : '') + ' nueva' + (nuevas.length !== 1 ? 's' : '') +
-         ' al pool' + (yaEstaban ? ' · ' + yaEstaban + ' ya estaban' : '') + '.' +
+         ' al pool <span style="color:var(--text3);font-weight:400">(' + _fuente + ')</span>' + (yaEstaban ? ' · ' + yaEstaban + ' ya estaban' : '') + '.' +
          '<br><span style="color:var(--gold);font-size:11px">Acordate de "Guardar datos en mi carpeta" y publicar.</span></span>');
     try { renderTorneos(_lastTorneoFilter); } catch (e) {}
     return true;
@@ -17836,10 +17870,14 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   if (status !== 'done') {
     var _nr = _tdNextRound(crk, rounds);
     if (_nr) {
+      // Si la próxima es la R1, el torneo todavía no empezó: se lee mejor "El torneo arranca"
+      // que "Próxima ronda: R1" (y no hace falta repetir el número de ronda).
+      var _arranca = (_nr.num === 1);
       h += '<div style="display:flex;align-items:center;gap:9px;margin-top:12px;background:var(--gold-bg);border:1px solid var(--gold-dim);border-radius:9px;padding:9px 13px;flex-wrap:wrap">'
-        + '<span style="font-size:15px">⏳</span>'
-        + '<span style="color:var(--fg-c0);font-size:13.5px">Próxima ronda:</span>'
-        + '<span style="color:var(--gold);font-weight:700;font-size:14px;text-shadow:var(--txt-out)">R' + _nr.num + ' · ' + escHtml(_nr.sched) + '</span>'
+        + '<span style="font-size:15px">' + (_arranca ? '🚩' : '⏳') + '</span>'
+        + '<span style="color:var(--fg-c0);font-size:13.5px">' + (_arranca ? 'El torneo arranca:' : 'Próxima ronda:') + '</span>'
+        + '<span style="color:var(--gold);font-weight:700;font-size:14px;text-shadow:var(--txt-out)">'
+        + (_arranca ? '' : 'R' + _nr.num + ' · ') + escHtml(_nr.sched) + '</span>'
         + '</div>';
     }
   }
