@@ -1697,6 +1697,14 @@
     .tz-flabel{font-size:11px;color:var(--text2);font-weight:600;letter-spacing:.5px;text-transform:uppercase;margin-bottom:6px;display:block}
     .tz-input{width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);font-size:13px;font-family:inherit;padding:9px 12px;border-radius:8px;outline:none;box-sizing:border-box}
     .tz-input:focus{border-color:var(--gold-dim)}
+    /* Fechas y horas: sin color-scheme, Chrome dibuja el iconito del calendario oscuro sobre fondo
+       oscuro y no se ve — por eso daban ganas de tipear la fecha a mano. Con esto el ícono y el
+       calendario desplegable salen en el tema correcto. Además el campo entero abre el calendario
+       al hacer clic (_tzePick), así no hay que apuntarle al iconito. */
+    .tz-input[type=date], .tz-input[type=time]{color-scheme:dark;cursor:pointer}
+    body.light .tz-input[type=date], body.light .tz-input[type=time]{color-scheme:light}
+    .tz-input[type=date]::-webkit-calendar-picker-indicator,
+    .tz-input[type=time]::-webkit-calendar-picker-indicator{cursor:pointer;opacity:.85}
     .tz-sec{border-radius:9px;padding:12px;margin-top:4px}
     .tz-btn-save{width:100%;padding:11px;background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-size:13px;font-weight:700;border-radius:10px;cursor:pointer;font-family:inherit}
     .tz-btn-cancel{width:100%;padding:10px;background:none;border:1px solid var(--border);color:var(--text2);font-size:13px;border-radius:10px;cursor:pointer;font-family:inherit}
@@ -2410,14 +2418,14 @@
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:6px">
       <div><label class="tz-flabel">Fecha de inicio</label>
-        <input id="tze-start" class="tz-input" type="date"></div>
+        <input id="tze-start" class="tz-input" type="date" onclick="_tzePick(this)"></div>
       <div><label class="tz-flabel">Fecha de fin</label>
-        <input id="tze-end" class="tz-input" type="date"></div>
+        <input id="tze-end" class="tz-input" type="date" onclick="_tzePick(this)"></div>
     </div>
     <div style="font-size:11px;color:var(--text3);margin-bottom:12px;line-height:1.4">El estado (Próximo / En curso / Finalizado) se calcula solo según estas fechas. El selector de Estado de arriba solo se usa si dejás las fechas vacías.</div>
     <div style="display:grid;grid-template-columns:110px 1fr;gap:10px;margin-bottom:12px">
       <div><label class="tz-flabel">Rondas</label>
-        <input id="tze-rounds" class="tz-input" type="number" min="1" max="25" placeholder="9" style="text-align:center"></div>
+        <input id="tze-rounds" class="tz-input" type="number" min="1" max="25" placeholder="9" style="text-align:center" oninput="_tzeRenderRoundTimes()"></div>
       <div><label class="tz-flabel">Ritmo de juego <span style="font-weight:400;color:var(--text3)">(opcional)</span></label>
         <input id="tze-timecontrol" class="tz-input" type="text" placeholder="Ej: 90 min + 30 seg"></div>
     </div>
@@ -2449,9 +2457,10 @@
       <div id="tze-flyer-preview" style="margin-top:8px"></div>
     </div>
     <div style="margin-bottom:14px">
-      <label class="tz-flabel">🕒 Horarios de rondas — a mano <span style="font-weight:400;color:var(--text3)">(opcional)</span></label>
-      <textarea id="tze-roundtimes" class="tz-input" placeholder="R1 · Sáb 5 Jul 16:30&#10;R2 · Dom 6 Jul 16:30&#10;R3 · Lun 7 Jul 16:30" style="min-height:78px;resize:vertical;font-family:inherit;line-height:1.4"></textarea>
-      <div style="font-size:11px;color:var(--text3);margin-top:6px;line-height:1.4">Normalmente el día y la hora de cada ronda se toman solos de Chess-Results / info64 (hora local del torneo) y salen arriba de los cruces. Usá esto solo para <b>corregirlos</b> o pasarlos a <b>hora argentina</b>: un renglón por ronda empezando con el número (R1, R2… o Ronda 1). Lo que escribas pisa la hora automática de esa ronda.</div>
+      <label class="tz-flabel">🕒 Horarios de rondas <span style="font-weight:400;color:var(--text3)">(opcional)</span></label>
+      <div id="tze-rt-rows"></div>
+      <div style="font-size:11px;color:var(--text3);margin-top:6px;line-height:1.4">Normalmente el día y la hora de cada ronda se toman solos de Chess-Results / info64, en la <b>hora local del torneo</b>. Lo que cargues acá <b>manda</b>: sirve para pasarlos a <b>hora argentina</b> (un torneo en España que allá se juega 15:00 y acá son las 10:00) o para adelantar el horario de una ronda que Chess-Results todavía no publicó. Dejá vacías las rondas que no quieras tocar.</div>
+      <div id="tze-rt-legacy" style="display:none;margin-top:8px;font-size:11.5px;color:var(--text3);background:var(--gl30);border:1px solid var(--bd14);border-radius:8px;padding:8px 10px;line-height:1.5"></div>
     </div>
     <div class="tz-sec" style="background:rgba(40,90,55,.14);border:1px solid rgba(60,150,90,.25);margin-bottom:14px">
       <label class="tz-flabel" style="color:#8ed6a0">♟ Partidas en Chess.com <span style="font-weight:400;color:var(--text3)">(opcional)</span></label>
@@ -5202,7 +5211,8 @@ async function _teamDoRound(crk,bytes){
 var CR_PROXY = 'https://cr-proxy.mmatiasscruz.workers.dev';
 var _crUrlByKey = {};   // crk -> crUrl del torneo (lo setea openTournamentDetail)
 var _crFormat = {};     // crk -> sistema del torneo elegido a mano: '' | 'swiss' | 'rr' (lo setea openTournamentDetail)
-var _crRoundTimesByKey = {};   // crk -> texto libre de horarios de ronda a mano (override; lo setea openTournamentDetail)
+var _crRoundTimesByKey = {};   // crk -> texto libre de horarios de ronda a mano (sistema viejo; lo setea openTournamentDetail)
+var _crRoundDTByKey = {};      // crk -> { nºronda: "YYYY-MM-DD HH:MM" } cargado con día+hora en el editor
 
 // ── Día/hora de las rondas ──────────────────────────────────────────────────
 // Chess-Results / info64 ponen la fecha y hora en el encabezado de cada ronda ("1. Ronda el
@@ -5251,7 +5261,13 @@ function _crRoundTimeText(roundTimes, roundNum) {
 }
 // Día/hora a mostrar arriba de los cruces de una ronda: manda lo cargado a mano; si no, lo que trae
 // Chess-Results/info64 (data.roundDates). '' si no hay ninguno.
+// Orden de prioridad, el mismo en toda la app: lo que cargó el AUTOR con día+hora manda sobre el
+// texto libre viejo, y los dos le ganan a Chess-Results. Es a propósito: Chess-Results publica la
+// hora LOCAL DEL TORNEO (un torneo en España dice 15:00 y acá son las 10:00), así que el autor
+// necesita poder pasarla a hora argentina y que esa sea la que vale.
 function _crRoundSchedule(data, key, roundNum) {
+  var dt = _crRoundDTByKey[key] && _crRoundDTByKey[key][roundNum];
+  if (dt) return _crFmtRoundDT(dt);
   var man = _crRoundTimeText(_crRoundTimesByKey[key], roundNum);
   if (man) return man;
   if (data && data.roundDates && data.roundDates[roundNum]) return _crFmtRoundDT(data.roundDates[roundNum]);
@@ -5261,8 +5277,10 @@ function _crRoundSchedule(data, key, roundNum) {
 // Fecha/hora de una ronda como Date, o null. Sale de roundDates (Chess-Results/info64), que la
 // guarda como "YYYY-MM-DD HH:MM". El texto libre cargado a mano NO se intenta interpretar: puede
 // venir escrito de cualquier forma y adivinar mal sería peor que no saber.
-function _crRoundDate(data, n) {
-  var s = data && data.roundDates && data.roundDates[n];
+function _crRoundDate(data, n, key) {
+  // Misma prioridad que arriba: si el autor cargó día+hora, ESA es la que se compara con el reloj.
+  var s = (key && _crRoundDTByKey[key] && _crRoundDTByKey[key][n]) ||
+          (data && data.roundDates && data.roundDates[n]);
   if (!s) return null;
   var m = String(s).match(/^(\d{4})-(\d{1,2})-(\d{1,2})[ T](\d{1,2}):(\d{2})/);
   if (!m) return null;
@@ -5272,8 +5290,8 @@ function _crRoundDate(data, n) {
 // ¿La ronda n YA ARRANCÓ? Por hora si la sabemos; si no, por evidencia: si tiene algún resultado
 // cargado es porque arrancó. Sin ninguna de las dos cosas asumimos que NO (mejor callarse que
 // mostrar un aviso que confunda).
-function _crRoundStarted(data, n) {
-  var d = _crRoundDate(data, n);
+function _crRoundStarted(data, n, key) {
+  var d = _crRoundDate(data, n, key);
   if (d) return Date.now() >= d.getTime();
   var pr = (data && data.rounds || {})[n];
   if (pr && pr.some(function(p){ return p && p.res; })) return true;
@@ -5287,8 +5305,8 @@ function _crRoundStarted(data, n) {
 // vive en un solo panel a la vez (el de la última ronda que empezó) y se apaga solo al terminar.
 function _crNextRoundNote(data, key, n) {
   n = parseInt(n); if (!n) return '';
-  if (!_crRoundStarted(data, n)) return '';
-  if (_crRoundStarted(data, n + 1)) return '';
+  if (!_crRoundStarted(data, n, key)) return '';
+  if (_crRoundStarted(data, n + 1, key)) return '';
   var sched = _crRoundSchedule(data, key, n + 1);
   if (!sched) return '';
   return '<div style="display:inline-flex;align-items:center;gap:8px;margin-bottom:10px;font-size:13.5px;background:var(--gold-bg);border:1px solid var(--gold-dim);border-radius:9px;padding:7px 13px;max-width:100%;flex-wrap:wrap">'
@@ -6853,7 +6871,7 @@ function _livePgnMarkAdopted(id, count) {
 // leaders, categorías…) se ignora aunque venga en el archivo: radio de daño mínimo.
 var _LIVE_TZ_FIELDS = ['name','type','location','tournamentDates','startDate','endDate',
                        'rounds','crUrl','weburl','info64url','broadcastId','broadcastUrl',
-                       'timeControl','format','roundTimes','flyerUrl','flyerPos'];
+                       'timeControl','format','roundTimes','roundDT','flyerUrl','flyerPos'];
 
 function _liveTzHasPending(d) {
   d = d || _liveTz;
@@ -6913,7 +6931,7 @@ function _liveTzMerge() {
       gameCount: 0, leaders: [], source: 'pgn',
       crUrl: nv.crUrl || '', weburl: nv.weburl || '', info64url: nv.info64url || '', format: nv.format || '',
       broadcastId: nv.broadcastId || null, broadcastUrl: nv.broadcastUrl || null,
-      categories: null, isTeam: null, rounds: parseInt(nv.rounds, 10) || null, roundTimes: nv.roundTimes || null,
+      categories: null, isTeam: null, rounds: parseInt(nv.rounds, 10) || null, roundTimes: nv.roundTimes || null, roundDT: nv.roundDT || null,
       playerOnly: false, playerId: null, dateKey: 0
     };
     byId[String(entry.id)] = entry;
@@ -6975,7 +6993,7 @@ function _liveTzAdopt() {
       broadcastId: nv.broadcastId || null, broadcastUrl: nv.broadcastUrl || null,
       timeControl: nv.timeControl || null, chesscomUrl: null,
       flyerUrl: nv.flyerUrl || null, flyerPos: nv.flyerPos || (nv.flyerUrl ? '50% 0%' : null),
-      roundTimes: nv.roundTimes || null, format: nv.format || null,
+      roundTimes: nv.roundTimes || null, roundDT: nv.roundDT || null, format: nv.format || null,
       categories: null, isTeam: null, pgnCount: 0, pgnGames: null
     };
     adoptedIds.push(nv.id); created++;
@@ -7001,6 +7019,7 @@ function _liveTzAdopt() {
     if ('timeControl' in o) target.timeControl = o.timeControl || null;
     if ('format' in o) target.format = o.format || null;
     if ('roundTimes' in o) target.roundTimes = o.roundTimes || null;
+    if ('roundDT' in o) target.roundDT = o.roundDT || null;
     if ('flyerUrl' in o) { target.flyerUrl = o.flyerUrl || null; target.flyerPos = o.flyerUrl ? (target.flyerPos || '50% 0%') : null; }
   };
   var storedTours = null;   // se carga perezoso solo si hace falta
@@ -7206,7 +7225,7 @@ function _collectAllTournaments() {
         flyerUrl: d.flyerUrl || '', flyerPos: d.flyerPos || '', about: d.about || '', chesscomUrl: d.chesscomUrl || '',
         crUrl: d.crurl || '', weburl: d.weburl || '', info64url: d.info64url || '', format: d.format || '',
         broadcastId: d.broadcastId || null, broadcastUrl: d.broadcastUrl || null,
-        categories: d.categories || null, isTeam: d.isTeam || null, rounds: d.rounds || null, roundTimes: d.roundTimes || null,
+        categories: d.categories || null, isTeam: d.isTeam || null, rounds: d.rounds || null, roundTimes: d.roundTimes || null, roundDT: d.roundDT || null,
         gameCount: (d.pgnGames || []).length, games: d.pgnGames || [],
         leaders: d.leaders || [], source: 'tz', playerOnly: false, playerId: null
       });
@@ -7228,7 +7247,7 @@ function _tourManifestMeta(entry) {
     source: entry.source || 'pgn', crUrl: entry.crUrl || '', weburl: entry.weburl || '', info64url: entry.info64url || '', format: entry.format || '',
     broadcastId: entry.broadcastId || null,
     broadcastUrl: entry.broadcastUrl || null, categories: entry.categories || null, isTeam: entry.isTeam || null,
-    rounds: entry.rounds || null, roundTimes: entry.roundTimes || null,
+    rounds: entry.rounds || null, roundTimes: entry.roundTimes || null, roundDT: entry.roundDT || null,
     playerOnly: !!entry.playerOnly, playerId: entry.playerId || null,
     dateKey: tourDateKey(entry)
   };
@@ -16284,7 +16303,7 @@ function openTzModal(key) {
     document.getElementById('tze-chesscom').value = '';
     document.getElementById('tze-flyer').value = '';
     _tzeFlyerPos = '50% 0%';
-    document.getElementById('tze-roundtimes').value = '';
+    _tzeLoadRoundTimes(null, '');
     document.getElementById('tze-format').value = '';
     _tzeSetCats([]);
     document.getElementById('tze-isteam').checked = false;
@@ -16312,7 +16331,7 @@ function openTzModal(key) {
       document.getElementById('tze-chesscom').value = data.chesscomUrl || '';
       document.getElementById('tze-flyer').value = data.flyerUrl || '';
       _tzeFlyerPos = data.flyerPos || '50% 0%';
-      document.getElementById('tze-roundtimes').value = data.roundTimes || '';
+      _tzeLoadRoundTimes(data.roundDT, data.roundTimes);
       document.getElementById('tze-format').value = data.format || t.format || '';
       if (data.pgnGames && data.pgnGames.length) _tzeWorkingGames = data.pgnGames.slice();
       _tzeSetCats(data.categories);
@@ -16333,7 +16352,7 @@ function openTzModal(key) {
       document.getElementById('tze-chesscom').value = data.chesscomUrl || '';
       document.getElementById('tze-flyer').value = data.flyerUrl || '';
       _tzeFlyerPos = data.flyerPos || '50% 0%';
-      document.getElementById('tze-roundtimes').value = data.roundTimes || '';
+      _tzeLoadRoundTimes(data.roundDT, data.roundTimes);
       document.getElementById('tze-format').value = data.format || '';
       if (data.pgnGames && data.pgnGames.length) _tzeWorkingGames = data.pgnGames.slice();
       _tzeSetCats(data.categories);
@@ -16359,7 +16378,7 @@ function openTzModal(key) {
       document.getElementById('tze-chesscom').value = entry.chesscomUrl || '';
       document.getElementById('tze-flyer').value = entry.flyerUrl || '';
       _tzeFlyerPos = entry.flyerPos || '50% 0%';
-      document.getElementById('tze-roundtimes').value = entry.roundTimes || '';
+      _tzeLoadRoundTimes(entry.roundDT, entry.roundTimes);
       document.getElementById('tze-format').value = entry.format || '';
       if ((entry.games || []).length) _tzeWorkingGames = entry.games.slice();
       _tzeSetCats(entry.categories);
@@ -16481,7 +16500,8 @@ function saveTzModal() {
   var chesscomUrl = document.getElementById('tze-chesscom').value.trim();
   var flyerUrl    = document.getElementById('tze-flyer').value.trim();
   var flyerPos    = flyerUrl ? (_tzeFlyerPos || '50% 0%') : null;
-  var roundTimes  = document.getElementById('tze-roundtimes').value.trim();
+  var roundDT     = _tzeCollectRoundTimes();   // { nºronda: "YYYY-MM-DD HH:MM" } o null
+  var roundTimes  = _tzeLegacyRoundTimes;      // el texto libre viejo ya no se edita acá: se conserva
   var format      = document.getElementById('tze-format').value;
   var type        = document.getElementById('tze-type').value;
   var cfg = getTzConfig();
@@ -16494,7 +16514,7 @@ function saveTzModal() {
                   startDate:startDate, endDate:endDate, rounds:rounds,
                   status:status, crurl:crurl||null, weburl:weburl||null, info64url:info64url||null, broadcastId:broadcastId||null,
                   broadcastUrl:broadcastUrl||null, timeControl:timeControl||null, chesscomUrl:chesscomUrl||null,
-                  flyerUrl:flyerUrl||null, flyerPos:flyerPos, roundTimes:roundTimes||null, format:format||null, categories:categories.length?categories:null, isTeam:isTeam||null,
+                  flyerUrl:flyerUrl||null, flyerPos:flyerPos, roundTimes:roundTimes||null, roundDT:roundDT||null, format:format||null, categories:categories.length?categories:null, isTeam:isTeam||null,
                   pgnCount:_tzeWorkingGames ? _tzeWorkingGames.length : 0, pgnGames:_tzeWorkingGames||null };
     saveTzConfig(cfg);
   } else if (_tzeKey.indexOf('hc_') === 0) {
@@ -16512,6 +16532,7 @@ function saveTzModal() {
     if (flyerUrl) cfg[_tzeKey].flyerUrl = flyerUrl; else delete cfg[_tzeKey].flyerUrl;
     if (flyerPos) cfg[_tzeKey].flyerPos = flyerPos; else delete cfg[_tzeKey].flyerPos;
     if (roundTimes) cfg[_tzeKey].roundTimes = roundTimes; else delete cfg[_tzeKey].roundTimes;
+    if (roundDT) cfg[_tzeKey].roundDT = roundDT; else delete cfg[_tzeKey].roundDT;
     if (format) cfg[_tzeKey].format = format; else delete cfg[_tzeKey].format;
     if (categories.length) cfg[_tzeKey].categories = categories; else delete cfg[_tzeKey].categories;
     if (isTeam) cfg[_tzeKey].isTeam = true; else delete cfg[_tzeKey].isTeam;
@@ -16523,7 +16544,7 @@ function saveTzModal() {
                      startDate:startDate, endDate:endDate, rounds:rounds,
                      status:status, crurl:crurl||null, weburl:weburl||null, info64url:info64url||null, broadcastId:broadcastId||null,
                      broadcastUrl:broadcastUrl||null, timeControl:timeControl||null, chesscomUrl:chesscomUrl||null,
-                     flyerUrl:flyerUrl||null, flyerPos:flyerPos, roundTimes:roundTimes||null, format:format||null, categories:categories.length?categories:null, isTeam:isTeam||null,
+                     flyerUrl:flyerUrl||null, flyerPos:flyerPos, roundTimes:roundTimes||null, roundDT:roundDT||null, format:format||null, categories:categories.length?categories:null, isTeam:isTeam||null,
                      pgnCount:_tzeWorkingGames ? _tzeWorkingGames.length : 0,
                      pgnGames:_tzeWorkingGames || null };
     saveTzConfig(cfg);
@@ -16540,6 +16561,7 @@ function saveTzModal() {
         tours2[k].flyerUrl = flyerUrl || null;
         tours2[k].flyerPos = flyerPos;
         tours2[k].roundTimes = roundTimes || null;
+        tours2[k].roundDT = roundDT || null;
         tours2[k].format = format || null;
         if (broadcastId) { tours2[k].broadcastId = broadcastId; tours2[k].broadcastUrl = broadcastUrl||null; }
         else { delete tours2[k].broadcastId; delete tours2[k].broadcastUrl; }
@@ -17242,6 +17264,72 @@ function _tourTileHtml(o) {
 }
 
 // Preview en vivo dentro del modal de edición.
+// ── Horarios de ronda del editor ────────────────────────────────────────────
+// Una fila por ronda con día + hora nativos. Se guarda como { "1": "2026-07-18 17:00", … }: el
+// MISMO formato que usa roundDates (lo que trae Chess-Results), así entra en toda la maquinaria
+// que ya existe —mostrarlo, y también comparar con el reloj para saber si la ronda arrancó—.
+// Antes esto era un textarea de texto libre: se veía bien pero no se podía interpretar, así que
+// los horarios cargados a mano no servían para decidir si una ronda ya había empezado.
+function _tzePick(el) { try { if (el && el.showPicker) el.showPicker(); } catch (e) {} }
+var _tzeRoundDT = {};   // borrador del modal abierto: { nºronda: "YYYY-MM-DD HH:MM" }
+var _tzeLegacyRoundTimes = '';   // texto libre del sistema viejo: ya no se edita, pero se conserva
+
+function _tzeRenderRoundTimes() {
+  var box = document.getElementById('tze-rt-rows'); if (!box) return;
+  var n = parseInt((document.getElementById('tze-rounds') || {}).value) || 0;
+  if (n > 25) n = 25;
+  if (!n) {
+    box.innerHTML = '<div style="font-size:11.5px;color:var(--text3);padding:6px 2px">Poné primero cuántas rondas tiene el torneo y acá aparece una fila por ronda.</div>';
+    return;
+  }
+  var h = '<div style="display:flex;flex-direction:column;gap:6px">';
+  for (var i = 1; i <= n; i++) {
+    var v = _tzeRoundDT[i] || '';
+    var d = v.slice(0, 10), t = v.slice(11, 16);
+    h += '<div style="display:grid;grid-template-columns:34px 1fr 92px;gap:6px;align-items:center">'
+      + '<span style="font-size:12px;font-weight:700;color:var(--text2)">R' + i + '</span>'
+      + '<input class="tz-input" type="date" id="tze-rt-d' + i + '" value="' + escHtml(d) + '" onclick="_tzePick(this)" onchange="_tzeRoundTimeChanged(' + i + ')">'
+      + '<input class="tz-input" type="time" id="tze-rt-t' + i + '" value="' + escHtml(t) + '" onclick="_tzePick(this)" onchange="_tzeRoundTimeChanged(' + i + ')">'
+      + '</div>';
+  }
+  h += '</div>';
+  box.innerHTML = h;
+}
+function _tzeRoundTimeChanged(i) {
+  var d = (document.getElementById('tze-rt-d' + i) || {}).value || '';
+  var t = (document.getElementById('tze-rt-t' + i) || {}).value || '';
+  if (d && t) _tzeRoundDT[i] = d + ' ' + t;
+  else if (d) _tzeRoundDT[i] = d;          // sólo día: se muestra la fecha sin hora
+  else delete _tzeRoundDT[i];              // sin día no hay horario que valga
+}
+// Carga el borrador al abrir el modal. Acepta lo nuevo (objeto) y lo viejo (texto libre): el texto
+// viejo NO se convierte —no se puede interpretar sin adivinar— pero se sigue mostrando en la web y
+// se avisa acá para que el autor lo pase cuando quiera.
+function _tzeLoadRoundTimes(roundDT, legacyText) {
+  _tzeRoundDT = {};
+  if (roundDT && typeof roundDT === 'object') {
+    Object.keys(roundDT).forEach(function(k) { var n = parseInt(k); if (n && roundDT[k]) _tzeRoundDT[n] = String(roundDT[k]); });
+  }
+  _tzeRenderRoundTimes();
+  var txt = String(legacyText || '').trim();
+  _tzeLegacyRoundTimes = txt;
+  var leg = document.getElementById('tze-rt-legacy');
+  if (!leg) return;
+  if (txt && !Object.keys(_tzeRoundDT).length) {
+    leg.style.display = 'block';
+    leg.innerHTML = '⚠️ Este torneo tiene los horarios cargados <b>como texto</b>, del sistema anterior:'
+      + '<div style="margin:6px 0;color:var(--text2);white-space:pre-wrap">' + escHtml(txt) + '</div>'
+      + 'Se siguen mostrando igual que hasta ahora. Si los cargás arriba con día y hora, además sirven para saber si una ronda ya arrancó.';
+  } else {
+    leg.style.display = 'none'; leg.innerHTML = '';
+  }
+}
+function _tzeCollectRoundTimes() {
+  var out = {}, hay = false;
+  Object.keys(_tzeRoundDT).forEach(function(k) { if (_tzeRoundDT[k]) { out[k] = _tzeRoundDT[k]; hay = true; } });
+  return hay ? out : null;
+}
+
 function tzeFlyerPreview() {
   var url = (document.getElementById('tze-flyer').value || '').trim();
   var box = document.getElementById('tze-flyer-preview');
@@ -17788,7 +17876,8 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   var leaders = [], games = [], crUrl = '', broadcastId = '', broadcastUrl = '', pgnGames = [];
   var timeControl = '', chesscomUrl = '', flyerUrl = '', flyerPos = '', categories = null, isTeam = false;
   var weburl = '', info64url = '';
-  var roundTimes = '';   // horarios de ronda cargados a mano (override de los que trae Chess-Results/info64)
+  var roundTimes = '';   // horarios de ronda cargados a mano, texto libre del sistema viejo
+  var roundDT = null;    // horarios de ronda cargados con día+hora (pisan a los de Chess-Results)
   var format = '';   // sistema del torneo elegido a mano: '' | 'swiss' | 'rr'
   var loadFailed = false;
   var tzCfg2 = getTzConfig();
@@ -17804,6 +17893,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     crUrl = hcCfg.crurl || t.crurl || ''; broadcastId = hcCfg.broadcastId || ''; broadcastUrl = hcCfg.broadcastUrl || '';
     weburl = hcCfg.weburl || ''; info64url = hcCfg.info64url || '';
     roundTimes = hcCfg.roundTimes || t.roundTimes || '';
+    roundDT = hcCfg.roundDT || t.roundDT || null;
     format = hcCfg.format || t.format || '';
     timeControl = hcCfg.timeControl || t.timeControl || ''; chesscomUrl = hcCfg.chesscomUrl || '';
     flyerUrl = hcCfg.flyerUrl || t.flyerUrl || '';
@@ -17845,6 +17935,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     crUrl = entry.crUrl || ''; broadcastId = entry.broadcastId || ''; broadcastUrl = entry.broadcastUrl || '';
     weburl = entry.weburl || ''; info64url = entry.info64url || '';
     roundTimes = entry.roundTimes || '';
+    roundDT = entry.roundDT || null;
     format = entry.format || '';
     timeControl = entry.timeControl || ''; chesscomUrl = entry.chesscomUrl || '';
     flyerUrl = entry.flyerUrl || '';
@@ -17862,6 +17953,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     crUrl = d.crurl || ''; broadcastId = d.broadcastId || ''; broadcastUrl = d.broadcastUrl || '';
     weburl = d.weburl || ''; info64url = d.info64url || '';
     roundTimes = d.roundTimes || '';
+    roundDT = d.roundDT || null;
     format = d.format || '';
     timeControl = d.timeControl || ''; chesscomUrl = d.chesscomUrl || '';
     flyerUrl = d.flyerUrl || '';
@@ -17915,6 +18007,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   // Los horarios de ronda cargados a mano se registran ACÁ (y no más abajo con la sección de
   // cruces) porque el encabezado los necesita antes, para el aviso de "próxima ronda".
   _crRoundTimesByKey[crk] = roundTimes || '';
+  _crRoundDTByKey[crk] = roundDT || null;
 
   // Agrupar partidas por ronda
   var byRound = {};
