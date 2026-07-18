@@ -17332,9 +17332,10 @@ function _tourPoolGames(eventNames) {
 // aparte — por eso antes no salían en los torneos que transmiten.
 function _tdDlBtnsHtml(nRounds) {
   var s = 'display:inline-flex;align-items:center;gap:4px;padding:5px 11px;background:var(--gl40);border:1px solid var(--bd22);color:var(--fg-d0);font-size:12px;font-weight:600;border-radius:20px;cursor:pointer;font-family:inherit';
+  var t = ' Respeta los filtros: si buscaste un jugador o tenés puesto "Solo argentinos", baja sólo esas.';
   var h = '<span style="display:inline-flex;gap:5px;align-items:center">';
-  h += '<button onclick="_tdDownloadPgn(\'round\')" style="' + s + '" title="Descargar en .pgn las partidas de la ronda que estás viendo">⬇ Ronda</button>';
-  if (nRounds > 1) h += '<button onclick="_tdDownloadPgn(\'all\')" style="' + s + '" title="Descargar en .pgn todas las partidas del torneo">⬇ Torneo</button>';
+  h += '<button onclick="_tdDownloadPgn(\'round\')" style="' + s + '" title="Descargar en .pgn las partidas de la ronda que estás viendo.' + t + '">⬇ Ronda</button>';
+  if (nRounds > 1) h += '<button onclick="_tdDownloadPgn(\'all\')" style="' + s + '" title="Descargar en .pgn todas las partidas del torneo.' + t + '">⬇ Torneo</button>';
   return h + '</span>';
 }
 
@@ -17351,13 +17352,41 @@ function _tdDownloadPgn(scope) {
     Object.keys(_tdCtx.byRound).map(Number).sort(function(a,b){ return a-b; })
       .forEach(function(r){ (_tdCtx.byRound[r] || []).forEach(function(g){ list.push(g); }); });
   }
+  // Se baja EXACTAMENTE lo que estás viendo: los dos filtros de la pantalla se aplican igual que
+  // en tdBuildRound (mismo criterio de búsqueda: minúsculas, sin acentos, matchea cualquier término
+  // contra el nombre de blancas o negras).
   if (_tdArgOnly) list = list.filter(function(g){ return _isArgGame(g.h); });
-  if (!list.length) { alert('No hay partidas para descargar' + (_tdArgOnly ? ' con el filtro de argentinos puesto.' : '.')); return; }
-  var txt = list.map(function(g){ return String(g.pgn || '').trim(); }).filter(Boolean).join('\n\n') + '\n';
+  var terms = _tdSearch ? _tdNorm(_tdSearch).split(/\s+/).filter(Boolean) : [];
+  if (terms.length) {
+    list = list.filter(function(g){
+      var hay = _tdNorm((g.h.White || '') + ' ' + (g.h.Black || ''));
+      return terms.some(function(t){ return hay.indexOf(t) !== -1; });
+    });
+  }
+  if (!list.length) {
+    var porQue = [];
+    if (_tdArgOnly) porQue.push('el filtro de argentinos');
+    if (terms.length) porQue.push('el buscador ("' + _tdSearch + '")');
+    alert('No hay partidas para descargar' + (porQue.length ? ' con ' + porQue.join(' y ') + ' puesto.' : '.'));
+    return;
+  }
+  // Estampar el evento con el nombre del torneo que muestra la web: las partidas llegan de fuentes
+  // distintas (Lichess y Chess-Results escriben el [Event] a su manera) y así el .pgn queda con un
+  // único nombre de torneo, que es lo que espera cualquier base al importarlo.
+  var ev = (_tdCrCtx && _tdCrCtx.ev) || _tdCtx.name || '';
+  var txt = list.map(function(g){
+    var p = String(g.pgn || '').trim();
+    return (p && ev) ? _stampEvent(p, ev) : p;
+  }).filter(Boolean).join('\n\n') + '\n';
   // Sin tildes ni eñes en el nombre del archivo: viaja mejor entre Windows, Android y las bases.
-  var base = (_tdCtx.name || 'torneo').normalize('NFD').replace(/[̀-ͯ]/g, '')
-    .replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-').toLowerCase() || 'torneo';
-  var suf = (scope === 'round' ? '-R' + _tdCurrentRound : '-completo') + (_tdArgOnly ? '-argentinos' : '');
+  function slug(s) {
+    return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+      .replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-').toLowerCase();
+  }
+  var base = slug(_tdCtx.name) || 'torneo';
+  var suf = (scope === 'round' ? '-R' + _tdCurrentRound : '-completo')
+    + (_tdArgOnly ? '-argentinos' : '')
+    + (terms.length ? '-' + slug(_tdSearch).slice(0, 40) : '');
   var a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([txt], { type: 'application/x-chess-pgn' }));
   a.download = base + suf + '.pgn';
