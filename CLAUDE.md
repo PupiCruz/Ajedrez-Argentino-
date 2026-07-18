@@ -30,8 +30,9 @@ El autor **no es programador** y trabaja en español. El objetivo es eventualmen
   `__FLYER_REDIRECT__` = {urlImgur: data/fl/…}. Ambos con `loading="lazy"`. Los flyers se
   migran con el botón "🖼️ Migrar flyers a mi hosting" (baja de imgur vía CORS, achica a
   800px, `_fetchResizeImage`); no se toca el flyerUrl guardado (imgur queda de respaldo,
-  `_flyerSrc` redirige). `manifest.js` está ignorado por git; `data/ph/`, `data/fl/`,
-  `data/t/`, `data/p/` SÍ se publican.
+  `_flyerSrc` redirige). **TODOS estos SÍ van a git** (`manifest.js`, `data/t/`, `data/p/`,
+  `data/ph/`, `data/fl/`): Cloudflare Pages publica directo desde el repo, así que si no
+  estuvieran, la web saldría sin torneos ni fotos.
 - `assets/` — motores Stockfish (self-host), librería de ajedrez, piezas SVG, sonidos.
   **La app no tiene ninguna dependencia externa en runtime** (anda sin internet).
   Motor principal: `stockfish-18-lite-single.{js,wasm}` (SF18 con red neuronal NNUE,
@@ -118,8 +119,15 @@ Rama local `master` → remoto `origin/main` (GitHub `PupiCruz/Ajedrez-Argentino
 Cloudflare Pages redeploya solo al pushear a `main` (~1-2 min) → `chessargentino.pages.dev`.
 El Worker del teléfono (editar.html) también pushea a `main`: si el push de la PC
 rebota, hacer `git fetch` + `git rebase origin/main` y pushear de nuevo.
-Se commitea el código (`index.html`, assets, scripts); **no** se commitea
-`data/embedded-data.js` (datos → Drive).
+**Qué SÍ se commitea:** el código (`index.html`, `editar.html`, assets, scripts) **y los datos
+ya publicados** que consume la web: `data/manifest.js`, `data/t/`, `data/p/`, `data/ph/`,
+`data/fl/`, `data/games_0.json`, `data/games_1.json`, `data/book.json`, `data/datos.json`,
+`data/puzzles.json`, `data/practice.json`, `data/hardcoded.js`, `data/live-*.json`.
+**Qué NO se commitea** (archivos gigantes de autor, van a Drive; están en `.gitignore`):
+`data/embedded-data.js`, `data/embedded-photos.js`, `data/embedded-flyers.js`,
+`data/_fs-fingerprints.json`.
+O sea: cuando cargás torneos, además de "Guardar datos en mi carpeta" (que actualiza los
+embedded-* para Drive) hay que **commitear los `data/` regenerados** o la web no se entera.
 
 ## Memoria por PC (no viaja con esta carpeta)
 Las notas detalladas sesión por sesión que toma Claude viven en el perfil de la PC
