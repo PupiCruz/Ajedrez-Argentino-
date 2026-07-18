@@ -4557,6 +4557,17 @@ function crBuildCrosstable(key,data){
     }); });
     players.sort(function(a,b){ return (startNo[a.name]||999)-(startNo[b.name]||999); });
   }
+  // Torneo que TODAVÍA NO EMPEZÓ: igual que en la tabla de posiciones, ordenar por Elo. Sin esto
+  // el cuadro queda en orden de número de inicio, que no le dice nada al que mira, y encima no
+  // coincidía con la tabla —que ya se ordena por Elo desde el arreglo anterior—.
+  // Las filas y columnas se numeran por posición, así que reordenar no descoloca los cruces.
+  (function(){
+    var jugado=false;
+    Object.keys(data.rounds||{}).forEach(function(rk){ (data.rounds[rk]||[]).forEach(function(p){ if(p&&p.res) jugado=true; }); });
+    if(jugado) return;
+    if((data.standings||[]).some(function(p){ return p&&p.pts; })) return;
+    players=players.slice().sort(function(a,b){ return (b.elo||0)-(a.elo||0); });
+  })();
   var N=players.length;
   if(!N) return '<div style="color:var(--text3);font-size:12px;padding:10px">Sin datos.</div>';
   var pos={}; players.forEach(function(p,i){ pos[p.name]=i; });
@@ -7284,7 +7295,7 @@ function buildSplitData() {
     // (Continental, Bandera) sale con rondas faltantes: el pool NO viaja a la web, pero el
     // t/<id>.json sí. Acá lo dejamos cocinado en el archivo del torneo.
     if (!entry.dbPool) {
-      var _poolG = _tourPoolGames(_tourEventNames(entry.name, games));
+      var _poolG = _tourPoolGames(_tourEventNames(entry.name, games), tourRange(entry));
       if (_poolG.length) {
         games = dedupGamesByMoves(games.concat(_poolG).map(function(p){ return { pgn: p }; }), function(w){ return w.pgn; }).map(function(w){ return w.pgn; });
         entry.games = games; entry.gameCount = games.length;   // que el manifest/tarjeta reflejen el total
@@ -11398,9 +11409,11 @@ function _catsForTourName(name) {
 function _catEventName(tourName, catName) { return (tourName || '').trim() + ' · ' + (catName || '').trim(); }
 // Partidas del pool de UNA categoría (match EXACTO normalizado del evento, sin prefijos, para que
 // no se mezclen categorías cuyos nombres son prefijo una de otra, ej. "Sub-14" vs "Sub-14 Fem").
-function _poolGamesForCat(tourName, catName) {
+function _poolGamesForCat(tourName, catName, range) {
   var ev = _normEvName(_catEventName(tourName, catName)), out = [];
-  _memTournaments.forEach(function(t) { if (t.name && _normEvName(t.name) === ev) (t.games || []).forEach(function(g) { out.push(g); }); });
+  _memTournaments.forEach(function(t) {
+    if (t.name && _normEvName(t.name) === ev) (t.games || []).forEach(function(g) { if (_gameInTourRange(g, range)) out.push(g); });
+  });
   return out;
 }
 // Al elegir un torneo destino en la subida al pool: si tiene categorías, mostrar el 2º selector.
@@ -17426,7 +17439,32 @@ function _normEvName(s) { return (s || '').trim().toLowerCase().replace(/'/g, '"
 // Partidas del pool (_memTournaments, contenedores por evento) cuyos nombres están en eventNames.
 // La comparación es case-insensitive + normaliza comillas. Además tolera que el nombre del pool
 // sea una extensión del nombre del torneo (ej. Event = "Torneo X - $750.000 - SALTA" y torneo = "Torneo X").
-function _tourPoolGames(eventNames) {
+// ¿La partida cae dentro de las fechas del torneo? Dos EDICIONES del mismo torneo comparten el
+// [Event] exacto ("La Proa de Fiesta - ITT" se jugó en marzo y se repite en julio), así que
+// enganchar por nombre solo hacía que las partidas de una edición aparecieran en la otra —y un
+// torneo que todavía no empezó salía con 23 partidas jugadas—.
+// Criterio conservador: sólo se DESCARTA una partida si tiene fecha legible Y cae claramente
+// fuera del rango (3 días de margen, por husos horarios y fechas mal cargadas). Sin fecha, o
+// sin rango del torneo, no hay con qué juzgar y se acepta como hasta ahora.
+function _keyToDate(k) {
+  k = parseInt(k) || 0; if (!k) return null;
+  var d = new Date(Math.floor(k / 10000), Math.floor(k / 100) % 100 - 1, k % 100);
+  return isNaN(d.getTime()) ? null : d;
+}
+var _POOL_DATE_MARGIN = 3 * 86400000;   // 3 días
+function _gameInTourRange(pgn, range) {
+  if (!range || !range.start || !range.end) return true;
+  var s = _keyToDate(range.start), e = _keyToDate(range.end);
+  if (!s || !e) return true;
+  var raw = (parsePgnHeaders(pgn).Date || '').replace(/\?/g, '');
+  var m = raw.match(/^(\d{4})[.\-\/](\d{1,2})[.\-\/](\d{1,2})/);
+  if (!m) return true;
+  var g = _keyToDate(+m[1] * 10000 + +m[2] * 100 + +m[3]);
+  if (!g) return true;
+  return g.getTime() >= s.getTime() - _POOL_DATE_MARGIN && g.getTime() <= e.getTime() + _POOL_DATE_MARGIN;
+}
+
+function _tourPoolGames(eventNames, range) {
   if (!eventNames || !eventNames.length) return [];
   var normed = eventNames.map(_normEvName);
   var out = [];
@@ -17444,7 +17482,7 @@ function _tourPoolGames(eventNames) {
       if (tn.length >= 10 && tn.indexOf(' ') > 0 && ev.indexOf(tn) === 0 && (ev.length === tn.length || /^[\s\-–—,.]/.test(ev[tn.length]))) return true;
       return false;
     });
-    if (match) (t.games || []).forEach(function(g) { out.push(g); });
+    if (match) (t.games || []).forEach(function(g) { if (_gameInTourRange(g, range)) out.push(g); });
   });
   return out;
 }
@@ -17876,6 +17914,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   var leaders = [], games = [], crUrl = '', broadcastId = '', broadcastUrl = '', pgnGames = [];
   var timeControl = '', chesscomUrl = '', flyerUrl = '', flyerPos = '', categories = null, isTeam = false;
   var weburl = '', info64url = '';
+  var tourRng = null;    // rango de fechas del torneo: filtra las partidas del pool por edición
   var roundTimes = '';   // horarios de ronda cargados a mano, texto libre del sistema viejo
   var roundDT = null;    // horarios de ronda cargados con día+hora (pisan a los de Chess-Results)
   var format = '';   // sistema del torneo elegido a mano: '' | 'swiss' | 'rr'
@@ -17888,7 +17927,8 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     if (!t) return;
     var hcCfg = tzCfg2['hc_' + t.id] || {};
     name = t.name; location = t.location; dates = hcCfg.dates || t.dates;
-    status = computeTourStatus(tourRange({ startDate:hcCfg.startDate, endDate:hcCfg.endDate, dates:hcCfg.dates || t.dates }), t.status);
+    tourRng = tourRange({ startDate:hcCfg.startDate, endDate:hcCfg.endDate, dates:hcCfg.dates || t.dates });
+    status = computeTourStatus(tourRng, t.status);
     typ = t.type; rounds = t.rounds; leaders = t.leaders || [];
     crUrl = hcCfg.crurl || t.crurl || ''; broadcastId = hcCfg.broadcastId || ''; broadcastUrl = hcCfg.broadcastUrl || '';
     weburl = hcCfg.weburl || ''; info64url = hcCfg.info64url || '';
@@ -17931,7 +17971,8 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     typ = entry.type || '';
     rounds = entry.rounds || null;   // el manifest sí trae rounds; sin esto la web publicada no mostraba el chip "N rondas"
     var dk = tourDateKey(entry);
-    status = computeTourStatus(tourRange(entry), (dk > 0 && dk >= todayKey()) ? 'upcoming' : 'done');
+    tourRng = tourRange(entry);
+    status = computeTourStatus(tourRng, (dk > 0 && dk >= todayKey()) ? 'upcoming' : 'done');
     crUrl = entry.crUrl || ''; broadcastId = entry.broadcastId || ''; broadcastUrl = entry.broadcastUrl || '';
     weburl = entry.weburl || ''; info64url = entry.info64url || '';
     roundTimes = entry.roundTimes || '';
@@ -17948,7 +17989,8 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     var d = tzCfg2[id];
     if (!d) return;
     name = d.name || ''; location = d.location || ''; dates = d.dates || '';
-    status = computeTourStatus(tourRange(d), d.status);
+    tourRng = tourRange(d);
+    status = computeTourStatus(tourRng, d.status);
     typ = d.type || ''; rounds = d.rounds || null;
     crUrl = d.crurl || ''; broadcastId = d.broadcastId || ''; broadcastUrl = d.broadcastUrl || '';
     weburl = d.weburl || ''; info64url = d.info64url || '';
@@ -17979,7 +18021,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     pgnGames = [];
     // Partidas subidas al pool para ESTA categoría (estampadas "<Torneo> · <Categoría>"). Si la
     // categoría además transmite por Lichess, _tdLoadLiveGames las reemplaza con el set completo.
-    games = _poolGamesForCat(name, _cat.name);
+    games = _poolGamesForCat(name, _cat.name, tourRng);
     catSuffix = '_c' + activeCat;
   }
 
@@ -17988,7 +18030,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   // sin duplicar. NO cambia las posiciones/cruces (siguen del Excel; las partidas solo rellenan los
   // resultados clickeables vía crSyncResultsFromPgn).
   if (activeCat < 0) {
-    var _poolG = _tourPoolGames(_tourEventNames(name, games));
+    var _poolG = _tourPoolGames(_tourEventNames(name, games), tourRng);
     // Partidas subidas desde el teléfono (data/live-partidas.json). Se estampan con el nombre del
     // torneo (evento) y entran como una fuente más de partidas: agrupan por ronda y se fusionan por
     // casillero con Chess-Results/Lichess igual que las subidas a mano. El dedup las colapsa si ya
