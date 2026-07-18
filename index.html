@@ -4002,7 +4002,26 @@ function crPtsStr(n) { return n%1===0.5 ? Math.floor(n)+'½' : String(n); }
 // Pastilla de título UNIFICADA (mismo look que la pestaña Jugadores) para TODA la web: tablas,
 // encabezados del visor, miniaturas. Colores por título (GM dorado · IM azul · FM verde · CM oliva ·
 // femeninos rosa/violeta). Títulos sin color propio caen a la pastilla gris neutra (.p-title-badge).
+// Chess-Results en español (lan=2) escribe los títulos con las siglas castellanas:
+// GMI (Gran Maestro Internacional), MI, MF, GMF, MIF, MFF, MC… En la web mostramos
+// SIEMPRE las siglas FIDE en inglés (GM, IM, FM, WGM, WIM, WFM, CM…), así que las
+// traducimos acá. Se aplica tanto al importar como al mostrar (los torneos ya cargados
+// con las siglas viejas se arreglan solos, sin re-importar).
+var _TITLE_ES = {
+  GMI:'GM', MI:'IM', MF:'FM', MC:'CM', MN:'NM',
+  GMF:'WGM', MIF:'WIM', MFF:'WFM', MCF:'WCM', MNF:'WNM',
+  // Variantes con "F" adelante que también aparecen en algunos torneos
+  FGM:'WGM', FMI:'WIM', FMF:'WFM',
+  // Arena (siglas castellanas)
+  GMA:'AGM', MIA:'AIM', MFA:'AFM', MCA:'ACM'
+};
+function _normTitle(t) {
+  var s = String(t == null ? '' : t).trim().toUpperCase().replace(/[^A-Z]/g, '');
+  if (!s) return '';
+  return _TITLE_ES[s] || s;
+}
 function titleBadge(t) {
+  t = _normTitle(t);
   if (!t) return '';
   var lc = String(t).toLowerCase().replace(/[^a-z]/g, '');
   var known = { gm:1, im:1, fm:1, cm:1, wgm:1, wim:1, wfm:1, wcm:1 };
@@ -4081,23 +4100,44 @@ function _teamFlag(team) {
 // en vez de depender de que el PGN traiga el equipo o de la API de lichess (que no resuelve a todos).
 // Mapa {nombre-normalizado → fed} por clave de cruce (crKey), cacheado. crNormTokens matchea
 // "Campora, Daniel H." con "Daniel H. Campora" (tokens ordenados).
+// El mapa lleva {fed, title}: muchos organizadores suben los PGN SIN el tag Title (y a veces
+// sin el fed), pero la tabla de Chess-Results sí los trae. Además de la clasificación miramos
+// los cruces por ronda (tw/tb), que en algunos torneos traen el título aunque la tabla no.
 var _stdFedCache = {};
 function _tourFedMap(crKey) {
   if (!crKey) return null;
   if (_stdFedCache[crKey]) return _stdFedCache[crKey];
   var m = {};
+  function put(name, fed, title) {
+    if (!name) return;
+    var k = crNormTokens(name); if (!k) return;
+    var e = m[k] || (m[k] = { fed: '', title: '' });
+    if (fed && !e.fed) e.fed = fed;
+    if (title && !e.title) e.title = _normTitle(title);
+  }
   try {
     var d = crDataLoad(crKey);
-    if (d && d.standings) d.standings.forEach(function(s) { if (s && s.name && s.fed) m[crNormTokens(s.name)] = s.fed; });
+    if (d && d.standings) d.standings.forEach(function(s) { if (s) put(s.name, s.fed, s.title); });
+    if (d && d.rounds) Object.keys(d.rounds).forEach(function(r) {
+      (d.rounds[r] || []).forEach(function(p) { if (p) { put(p.w, '', p.tw); put(p.b, '', p.tb); } });
+    });
   } catch (e) {}
   _stdFedCache[crKey] = m;
   return m;
 }
-function _flagByName(name, crKey) {
+function _tourEntryByName(name, crKey) {
   var m = _tourFedMap(crKey);
-  if (!m || !name) return '';
-  var fed = m[crNormTokens(name)];
-  return fed ? _teamFlag(fed) : '';
+  if (!m || !name) return null;
+  return m[crNormTokens(name)] || null;
+}
+function _flagByName(name, crKey) {
+  var e = _tourEntryByName(name, crKey);
+  return (e && e.fed) ? _teamFlag(e.fed) : '';
+}
+// Título del jugador sacado de las tablas del torneo, para cuando el PGN no trae el tag Title.
+function _titleByName(name, crKey) {
+  var e = _tourEntryByName(name, crKey);
+  return (e && e.title) ? e.title : '';
 }
 
 // ── XLSX descompresión (compartida) — usa regex para evitar problemas de namespace XML ──
@@ -4497,22 +4537,26 @@ function crBuildCrosstable(key,data){
       if(!c){ h+='<td style="'+td+';color:var(--text3)"></td>'; continue; }
       var sn=scoreNum(c);
       if(sn!=null){ rowPts+=sn; played=true; }
-      var onclk=' onclick="crCycleResult('+crArg(key)+','+(c.round==null?'null':c.round)+','+crArg(pl.name)+','+crArg(players[j].name)+')"';
+      // Editar resultados es SOLO del modo autor: en la web publicada (_ondemand) la
+      // tabla es de lectura (sin cursor de mano, sin onclick, sin "clic para cambiar").
+      var canEdit=!_ondemand;
+      var onclk=canEdit?' onclick="crCycleResult('+crArg(key)+','+(c.round==null?'null':c.round)+','+crArg(pl.name)+','+crArg(players[j].name)+')"':'';
+      var cur=canEdit?';cursor:pointer':'';
       if(sn!=null){
         var sc=scoreStr(sn);
         var col=sc==='½'?'var(--gold)':(sc==='1'?'#4caf50':'#e05555');
-        var tip='R'+c.round+' · '+(c.white?'⬜':'⬛')+' vs '+escHtml(players[j].name)+' · '+escHtml(c.res)+' · clic para cambiar';
-        h+='<td style="'+td+';font-weight:700;color:'+col+';cursor:pointer" title="'+tip+'"'+onclk+'>'+sc+'</td>';
+        var tip='R'+c.round+' · '+(c.white?'⬜':'⬛')+' vs '+escHtml(players[j].name)+' · '+escHtml(c.res)+(canEdit?' · clic para cambiar':'');
+        h+='<td style="'+td+';font-weight:700;color:'+col+cur+'" title="'+tip+'"'+onclk+'>'+sc+'</td>';
       } else {
-        var tipE='R'+c.round+' · '+(c.white?'⬜':'⬛')+' vs '+escHtml(players[j].name)+' · clic para cargar resultado';
-        h+='<td style="'+td+';color:var(--text3);cursor:pointer" title="'+tipE+'"'+onclk+'>·</td>';
+        var tipE='R'+c.round+' · '+(c.white?'⬜':'⬛')+' vs '+escHtml(players[j].name)+(canEdit?' · clic para cargar resultado':'');
+        h+='<td style="'+td+';color:var(--text3)'+cur+'" title="'+tipE+'"'+onclk+'>·</td>';
       }
     }
     h+='<td style="'+td+';font-weight:700;color:var(--gold)">'+(played?crPtsStr(rowPts):'')+'</td>';
     h+='</tr>';
   }
   h+='</tbody></table></div>';
-  h+='<div style="font-size:12px;color:var(--text3);margin-top:8px;text-align:left;max-width:560px;line-height:1.45">Fila = jugador · columna = rival (nº). Tocá una celda para cargar/cambiar el resultado (1 → ½ → 0 → vacío). Los puntos se calculan solos.</div>';
+  h+='<div style="font-size:12px;color:var(--text3);margin-top:8px;text-align:left;max-width:560px;line-height:1.45">Fila = jugador · columna = rival (nº).'+(_ondemand?'':' Tocá una celda para cargar/cambiar el resultado (1 → ½ → 0 → vacío).')+' Los puntos se calculan solos.</div>';
   return h;
 }
 
@@ -4853,6 +4897,7 @@ function _teamParseRounds(rows){
         if(rIdx<4) continue;
         var eB=parseInt(r[rIdx-1])||'', nB=(r[rIdx-2]||'').trim(), tB=(r[rIdx-3]||'').trim();
         var eW=parseInt(r[rIdx-5])||'', nW=(r[rIdx-6]||'').trim(), tW=(r[rIdx-7]||'').trim();
+        tB=_normTitle(tB); tW=_normTitle(tW);
         if(!_TEAM_TITLES.test(tB)) tB=''; if(!_TEAM_TITLES.test(tW)) tW='';
         cur.boards.push({ tW:tW, nW:_teamStripColor(nW), eW:eW, tB:tB, nB:_teamStripColor(nB), eB:eB, res:_teamNormRes(r[rIdx]) });
       }
@@ -5714,8 +5759,9 @@ async function _crParseRoundAsync(key,bytes){
 // name:'Pichot, Alan'}). info64 no usa columna de título aparte. Si no hay prefijo,
 // devuelve el nombre intacto y título vacío.
 function _crSplitTitle(name){
-  var m=(name||'').match(/^(GM|IM|FM|WGM|WIM|WFM|CM|NM|WCM|AFM|AGM|WNM|AIM)\s+(.+)$/);
-  return m ? {title:m[1], name:m[2].trim()} : {title:'', name:(name||'').trim()};
+  // Acepta las siglas FIDE en inglés y las castellanas de Chess-Results (GMI, MI, MF, MIF…).
+  var m=(name||'').match(/^(GM|IM|FM|WGM|WIM|WFM|CM|NM|WCM|AFM|AGM|WNM|AIM|GMI|MI|MF|MC|MN|GMF|MIF|MFF|MCF|MNF)\s+(.+)$/);
+  return m ? {title:_normTitle(m[1]), name:m[2].trim()} : {title:'', name:(name||'').trim()};
 }
 
 // ── Parser de cruces por ENCABEZADO (1 o varias rondas) ──
@@ -5763,8 +5809,8 @@ function _crParseSections(rows,roundHdrIdx){
       var nameW=(row[cols.wCol]||'').trim(), nameB=(row[cols.bCol]||'').trim();
       if(!nameW||!nameB) continue;
       if(/sin emparejar|bye|^-+$/i.test(nameB)||/sin emparejar|bye/i.test(nameW)) continue;
-      var titleW=(row[cols.wCol-1]||'').trim(); if(!TITLES.test(titleW)) titleW='';
-      var titleB=(row[cols.bCol-1]||'').trim(); if(!TITLES.test(titleB)) titleB='';
+      var titleW=_normTitle(row[cols.wCol-1]); if(!TITLES.test(titleW)) titleW='';
+      var titleB=_normTitle(row[cols.bCol-1]); if(!TITLES.test(titleB)) titleB='';
       // info64 no trae columna de título: lo pega al nombre ("GM Pichot, Alan").
       // Si no detectamos título en su columna y el nombre arranca con uno, lo separamos.
       if(!titleW){ var stw=_crSplitTitle(nameW); titleW=stw.title; nameW=stw.name; }
@@ -5788,6 +5834,7 @@ function _crParseSections(rows,roundHdrIdx){
 // Cicla el resultado de un cruce desde la perspectiva del jugador de la fila:
 // vacío → gana (1) → tablas (½) → pierde (0) → vacío. Edición manual del Cuadro.
 function crCycleResult(key,round,rowName,colName){
+  if(_ondemand) return;   // el visitante no edita resultados
   var data=crDataLoad(key); if(!data||!data.rounds) return;
   var pr=data.rounds[round]; if(!pr) return;
   var pair=null;
@@ -5887,7 +5934,7 @@ function _crParseStandingsRows(rows){
       // Chess-Results deja la celda "Rk." VACÍA para los empatados (comparten puesto
       // con el de arriba). NO descartar esas filas: usar la posición correlativa.
       var rk=parseInt(row[cOrder]); if(!rk) rk=standings.length+1;
-      var title=(row[cTitle]||'').trim(); if(!TITLES.test(title)) title='';
+      var title=_normTitle(row[cTitle]); if(!TITLES.test(title)) title='';
       var fed=cFed>=0?(row[cFed]||'').trim():'';
       var elo=cElo>=0?parseInt(row[cElo])||0:0;
       var pts=(!isInitial&&cPts>=0)?parseFloat((row[cPts]||'0').replace(',','.').replace('½','.5'))||0:0;
@@ -5991,7 +6038,14 @@ function crOpenPlayer(key,name){
   // Header compacto (en tarjeta, con el criterio nuevo: card90 + borde 1px + radio + sombra)
   h+='<div style="background:var(--card90);border:1px solid var(--bd22);border-radius:var(--r-lg);box-shadow:var(--shadow-card);padding:14px 16px;margin-bottom:12px">';
   h+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">';
-  h+='<div style="width:44px;height:44px;border-radius:50%;background:var(--gold-bg);border:1.5px solid var(--gold-dim);display:flex;align-items:center;justify-content:center;font-size:17px;font-weight:700;color:var(--gold);flex-shrink:0">'+(name.charAt(0)||'?')+'</div>';
+  // Avatar: si el jugador tiene perfil argentino CON foto, la mostramos; si no, la inicial.
+  // Mismo criterio que el perfil completo (_photoSrc + _avImgErr como red de contención).
+  var _hdrP = (typeof cvFindPlayer==='function') ? cvFindPlayer(name, info&&info.fideId) : null;
+  var _hdrPhoto = _hdrP ? _photoSrc(_hdrP.id) : null;
+  var _hdrIni = name.charAt(0)||'?';
+  h+='<div data-ini="'+escHtml(_hdrIni)+'" style="width:44px;height:44px;border-radius:50%;background:var(--gold-bg);border:1.5px solid var(--gold-dim);display:flex;align-items:center;justify-content:center;font-size:17px;font-weight:700;color:var(--gold);flex-shrink:0;overflow:hidden">'
+    +(_hdrPhoto ? '<img src="'+_hdrPhoto+'" alt="" loading="lazy" onerror="_avImgErr(this)" style="width:100%;height:100%;object-fit:cover;border-radius:50%">' : escHtml(_hdrIni))
+    +'</div>';
   h+='<div style="flex:1;min-width:0">';
   h+='<div style="font-size:16.5px;font-weight:700;color:var(--white-ink);line-height:1.2;text-shadow:var(--txt-out)">'+crTitleBadge(info&&info.title)+escHtml(name)+'</div>';
   if(info){
@@ -6027,7 +6081,7 @@ function crOpenPlayer(key,name){
   h+='</div>';   // /tarjeta del header
 
   // Botones de acción: perfil argentino completo (si está en PLAYERS) y/o página FIDE
-  var argP = (typeof cvFindPlayer==='function') ? cvFindPlayer(name, info&&info.fideId) : null;
+  var argP = _hdrP;   // ya lo buscamos arriba para el avatar
   var fideId = (info&&info.fideId) ? info.fideId : (argP&&argP.fide_id ? argP.fide_id : '');
   if(argP || fideId){
     h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">';
@@ -10310,8 +10364,9 @@ function _cvRoundMinisHtml(keepPage) {
     var bParts = (h.Black || '?').split(','); var black = bParts.length > 1 ? (bParts[1].trim() + ' ' + bParts[0].trim()) : bParts[0].trim();
     // Título (pastilla) + bandera. La bandera sale de la TABLA DE CRUCES por nombre (tiene a todos);
     // si el torneo no tiene tabla, cae al equipo/país del PGN (Olimpiadas/torneos por equipos).
-    var wTitle = titleBadge(h.WhiteTitle), bTitle = titleBadge(h.BlackTitle);
     var _mCrK = (typeof _tdCtx !== 'undefined' && _tdCtx && _tdCtx.crKey) || null;
+    var wTitle = titleBadge(h.WhiteTitle || _titleByName(white, _mCrK));
+    var bTitle = titleBadge(h.BlackTitle || _titleByName(black, _mCrK));
     var wFlag = _flagByName(white, _mCrK) || _teamFlag(h.WhiteTeam);
     var bFlag = _flagByName(black, _mCrK) || _teamFlag(h.BlackTeam);
     var res = h.Result || '*';
@@ -13764,7 +13819,10 @@ function cvPlayerHtml(title, name, fideId, elo, team, isBlack) {
     if (_ph) avatarStr = '<img class="cv-pav" src="' + escHtml(_ph) + '" alt="" draggable="false" onerror="this.style.display=\'none\'">';
   }
   // Título como pastilla de color (mismo estilo que la pestaña Jugadores, unificado en toda la web).
-  var badge = titleBadge(title);
+  // El crKey del torneo abierto (se usa para bandera Y título, más abajo).
+  var _crK = (_cvFromTournament && typeof _tdCtx !== 'undefined' && _tdCtx && _tdCtx.crKey) || null;
+  // Si el PGN no trae el tag Title, lo sacamos de las tablas del torneo (mismo cableado que la bandera).
+  var badge = titleBadge(title || _titleByName(name, _crK));
   // Nombre clickeable (abre el perfil) — SIN subrayado; se resalta en dorado al pasar el mouse.
   var nameStr = clickable
     ? '<span class="cv-pn-name" title="' + titleAttr + '" onclick="cvClickPlayer(\'' + safeName + '\',\'' + safeFide + '\')">' + escHtml(name) + '</span>'
@@ -13775,7 +13833,6 @@ function cvPlayerHtml(title, name, fideId, elo, team, isBlack) {
   // Bandera: primero de la TABLA DE CRUCES del torneo (sync, tiene a todos), si no del fideId via
   // lichess (async, cvLoadFlag). El crKey solo se usa si la partida es del torneo abierto (no pisar
   // con banderas de un torneo viejo si se abrió una partida suelta).
-  var _crK = (_cvFromTournament && typeof _tdCtx !== 'undefined' && _tdCtx && _tdCtx.crKey) || null;
   var stdFlag = _flagByName(name, _crK);
   var flagStr = (stdFlag || fideId) ? '<span id="' + flagId + '">' + stdFlag + '</span>' : '';
   var sub = (eloStr || flagStr) ? '<span class="cv-psub">' + eloStr + flagStr + '</span>' : '';
@@ -17874,7 +17931,7 @@ function trfRenderStandings(data) {
   data.players.forEach(function(p, idx) {
     var medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : '';
     var rankColor = idx === 0 ? 'var(--gold)' : idx < 3 ? 'var(--text2)' : 'var(--text3)';
-    var titleBadge = p.title ? '<span style="color:var(--gold);font-size:10px;font-weight:700;margin-right:4px">' + escHtml(p.title) + '</span>' : '';
+    var titleBadge = p.title ? '<span style="color:var(--gold);font-size:10px;font-weight:700;margin-right:4px">' + escHtml(_normTitle(p.title)) + '</span>' : '';
     var fedBadge   = p.fed   ? '<span style="color:var(--text3);font-size:10px;margin-left:4px">' + escHtml(p.fed) + '</span>' : '';
     h += '<div style="display:grid;grid-template-columns:36px 1fr 48px 48px;gap:0;padding:8px 12px;border-bottom:1px solid var(--border);align-items:center">';
     h += '<span style="font-size:13px;color:' + rankColor + ';font-weight:700">' + (medal || (idx + 1)) + '</span>';
@@ -17939,8 +17996,8 @@ function trfRenderOneRound(data, rd) {
     h += '<div style="padding:14px;text-align:center;color:var(--text3);font-size:12px">Sin datos para esta ronda</div>';
   }
   pairs.forEach(function(pair, idx) {
-    var wTitle = pair.white.title ? '<span style="color:var(--gold);font-size:10px;font-weight:700;margin-right:3px">' + escHtml(pair.white.title) + '</span>' : '';
-    var bTitle = pair.black.title ? '<span style="color:var(--gold);font-size:10px;font-weight:700;margin-left:3px">'  + escHtml(pair.black.title) + '</span>' : '';
+    var wTitle = pair.white.title ? '<span style="color:var(--gold);font-size:10px;font-weight:700;margin-right:3px">' + escHtml(_normTitle(pair.white.title)) + '</span>' : '';
+    var bTitle = pair.black.title ? '<span style="color:var(--gold);font-size:10px;font-weight:700;margin-left:3px">'  + escHtml(_normTitle(pair.black.title)) + '</span>' : '';
     var wScore = pair.scoreW; var bScore = pair.scoreB;
     var wColor = resultColor[wScore] || 'var(--text2)';
     var bColor = resultColor[bScore] || 'var(--text2)';
@@ -18069,11 +18126,13 @@ function _tdCardHtml(g, flip) {
   var wParts = (g.h.White || '?').split(','); var white = wParts.length > 1 ? (wParts[1].trim() + ' ' + wParts[0].trim()) : wParts[0].trim();
   var bParts = (g.h.Black || '?').split(','); var black = bParts.length > 1 ? (bParts[1].trim() + ' ' + bParts[0].trim()) : bParts[0].trim();
   var res = g.h.Result || '*';
-  var wTitle = titleBadge(g.h.WhiteTitle) + (g.h.WhiteTitle ? ' ' : '');
-  var bTitle = titleBadge(g.h.BlackTitle) + (g.h.BlackTitle ? ' ' : '');
-  // Bandera: de la TABLA DE CRUCES por nombre (tiene a todos los jugadores); si no, del equipo/país
-  // del PGN (Olimpiadas/torneos por equipos).
+  // Bandera y título: de la TABLA DE CRUCES por nombre (tiene a todos los jugadores); si no, del
+  // equipo/país del PGN (Olimpiadas/torneos por equipos). Muchos PGN vienen sin el tag Title.
   var _tdCrK = (_tdCtx && _tdCtx.crKey) || null;
+  var _wt = g.h.WhiteTitle || _titleByName(white, _tdCrK);
+  var _bt = g.h.BlackTitle || _titleByName(black, _tdCrK);
+  var wTitle = titleBadge(_wt) + (_wt ? ' ' : '');
+  var bTitle = titleBadge(_bt) + (_bt ? ' ' : '');
   var wFlag = _flagByName(white, _tdCrK) || _teamFlag(g.h.WhiteTeam);
   var bFlag = _flagByName(black, _tdCrK) || _teamFlag(g.h.BlackTeam);
   var wScore = res === '1-0' ? '1' : res === '0-1' ? '0' : res === '1/2-1/2' ? '½' : '';
