@@ -485,8 +485,6 @@
     .t-card3-mid .t-meta { flex-direction: column; align-items: flex-start; gap: 6px; margin-bottom: 12px; }
     .t-card3-mid .t-meta-item { font-size: 15.5px; color: var(--text); }
     .t-card3-mid .t-leaders { max-width: none; margin-left: 0; margin-right: 0; border-top: none; padding-top: 0; padding-right: 14px; }
-    .progress-bar { height: 3px; background: var(--bg3); border-radius: 2px; margin-top: 12px; overflow: hidden; }
-    .progress-fill { height: 100%; background: var(--gold); border-radius: 2px; transition: width .4s; }
     /* ── PARED DE POSTERS (grilla de torneos) ── Tiles verticales tipo poster, todos del mismo
        tamaño (aspect-ratio fijo) → parejos. Celular: 2 por fila; ≥560px: se acomodan solos (~4-5
        en compu). El detalle completo del torneo aparece al entrar. */
@@ -5198,6 +5196,102 @@ function _crRoundSchedule(data, key, roundNum) {
   if (man) return man;
   if (data && data.roundDates && data.roundDates[roundNum]) return _crFmtRoundDT(data.roundDates[roundNum]);
   return '';
+}
+
+// ── Próxima ronda (para el encabezado del torneo) ───────────────────────────
+// Devuelve {num, sched} de la primera ronda que TODAVÍA NO SE JUGÓ, o null si no hay ninguna
+// pendiente / no sabemos cuándo se juega. "Jugada" = tiene al menos un resultado cargado; una
+// ronda con los cruces publicados pero sin resultados sigue siendo la próxima.
+// Sirve para individuales (data.rounds) y por equipos (data.teamRounds, resultado en los tableros).
+function _tdNextRound(crk, totalRounds) {
+  if (!crk) return null;
+  var data = null;
+  try { data = crDataLoad(crk); } catch (e) {}
+  if (!data) return null;
+  var indiv = data.rounds || {}, team = data.teamRounds || {};
+  function played(n) {
+    var pr = indiv[n];
+    if (pr && pr.length) return pr.some(function(p){ return p && p.res; });
+    var tm = team[n];
+    if (tm && tm.length) return tm.some(function(m){ return (m.boards||[]).some(function(b){ return b && b.res; }); });
+    return false;
+  }
+  // Hasta dónde mirar: el total declarado del torneo o, si no está, la última ronda cargada.
+  var known = Object.keys(indiv).concat(Object.keys(team)).map(Number).filter(function(n){ return n>0; });
+  var top = parseInt(totalRounds) || (known.length ? Math.max.apply(null, known) : 0);
+  if (!top) return null;
+  for (var n = 1; n <= top; n++) {
+    if (played(n)) continue;
+    var sched = _crRoundSchedule(data, crk, n);
+    return sched ? { num: n, sched: sched } : null;   // sin día/hora no mostramos nada
+  }
+  return null;   // están todas jugadas
+}
+
+// ── Podio de un torneo terminado ────────────────────────────────────────────
+// Reemplaza al "hay que abrir la tabla y leer" cuando el torneo ya terminó. Forma de podio de
+// verdad: el 1º elevado en el centro, el 2º a la izquierda y el 3º a la derecha, más bajos.
+// Sirve para individuales (data.standings) y por equipos (data.teamStandings.teams).
+// NO se muestra si la única tabla cargada es el ranking inicial (coronaría por Elo, no por puntos).
+function _tdPodiumHtml(crk, isTeam) {
+  if (!crk) return '';
+  var data = null;
+  try { data = crDataLoad(crk); } catch (e) {}
+  if (!data) return '';
+  var top = [];
+  if (isTeam) {
+    var ts = data.teamStandings;
+    if (!ts || ts.kind === 'initial' || !ts.teams || !ts.teams.length) return '';
+    top = ts.teams.slice(0, 3).map(function(t) {
+      return { name: t.name || '', title: '', score: (t.des && t.des[0] != null) ? String(t.des[0]) : '', sub: '' };
+    });
+  } else {
+    if (data.standingsKind === 'initial' || !data.standings || !data.standings.length) return '';
+    // Si nadie tiene puntos, no hay campeón que mostrar (torneo cargado pero no jugado).
+    if (!data.standings.some(function(p){ return p && p.pts; })) return '';
+    top = data.standings.slice(0, 3).map(function(p) {
+      return { name: p.name || '', title: _normTitle(p.title), score: crPtsStr(p.pts || 0),
+               sub: p.rp ? ('Rp ' + p.rp) : '', fideId: p.fideId };
+    });
+  }
+  if (!top.length) return '';
+  var MED = ['🥇', '🥈', '🥉'];
+  // Alturas del pedestal: el campeón queda más alto. El orden VISUAL es 2º · 1º · 3º.
+  var PED = [54, 34, 22];
+  var COL = ['var(--gold-dim)', '#b9c0c8', '#c08552'];
+  function col(i) {
+    var p = top[i]; if (!p) return '';
+    var ini = (p.name.charAt(0) || '?').toUpperCase();
+    var photo = '';
+    if (!isTeam) {
+      try {
+        var ap = (typeof cvFindPlayer === 'function') ? cvFindPlayer(p.name, p.fideId) : null;
+        if (ap) photo = _photoSrc(ap.id) || '';
+      } catch (e) {}
+    }
+    var av = photo
+      ? '<img src="' + photo + '" alt="" loading="lazy" onerror="_avImgErr(this)" style="width:100%;height:100%;object-fit:cover;border-radius:50%">'
+      : escHtml(ini);
+    var size = i === 0 ? 52 : 42;
+    return '<div style="flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;gap:5px">'
+      + '<div style="font-size:' + (i === 0 ? 26 : 21) + 'px;line-height:1">' + MED[i] + '</div>'
+      + '<div data-ini="' + escHtml(ini) + '" style="width:' + size + 'px;height:' + size + 'px;border-radius:50%;background:var(--bg3);border:2px solid ' + COL[i] + ';display:flex;align-items:center;justify-content:center;font-size:' + (i === 0 ? 18 : 15) + 'px;font-weight:700;color:' + COL[i] + ';overflow:hidden;flex-shrink:0">' + av + '</div>'
+      + '<div style="text-align:center;min-width:0;width:100%">'
+      + (p.title ? titleBadge(p.title) : '')
+      + '<div style="font-size:' + (i === 0 ? 13.5 : 12.5) + 'px;font-weight:' + (i === 0 ? 700 : 600) + ';color:var(--fg-e8);line-height:1.25;text-shadow:var(--txt-out);overflow-wrap:anywhere">' + escHtml(p.name) + '</div>'
+      + '</div>'
+      + '<div style="width:100%;height:' + PED[i] + 'px;border-radius:8px 8px 0 0;background:' + (i === 0 ? 'var(--gold-bg)' : 'var(--gl40)') + ';border:1px solid ' + (i === 0 ? 'var(--gold-dim)' : 'var(--bd22)') + ';border-bottom:none;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;margin-top:2px">'
+      + (p.score ? '<span style="font-size:' + (i === 0 ? 16 : 14) + 'px;font-weight:700;color:' + (i === 0 ? 'var(--gold)' : 'var(--fg-d8)') + ';text-shadow:var(--txt-out)">' + escHtml(p.score) + '</span>' : '')
+      + (p.sub ? '<span style="font-size:10.5px;color:var(--text3)">' + escHtml(p.sub) + '</span>' : '')
+      + '</div>'
+      + '</div>';
+  }
+  var h = '<div style="background:var(--card90);border:1px solid var(--bd22);border-radius:var(--r-lg);box-shadow:var(--shadow-card);padding:14px 16px 0;margin-bottom:18px">';
+  h += '<div style="font-size:11px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:var(--text2);text-align:center;margin-bottom:10px">🏆 ' + (isTeam ? 'Equipos ganadores' : 'Podio final') + '</div>';
+  h += '<div style="display:flex;align-items:flex-end;justify-content:center;gap:8px;max-width:430px;margin:0 auto">';
+  h += col(1) + col(0) + col(2);   // orden visual: 2º · 1º · 3º
+  h += '</div></div>';
+  return h;
 }
 
 // Deriva la URL de export a Excel para una vista (art) y ronda (rd). prt=4&excel=2010 = "bajar como
@@ -17146,6 +17240,33 @@ function _tourPoolGames(eventNames) {
 // Devuelve el HTML del interior de #td-games-section para partidas LOCALES (subidas a mano + pool
 // de argentinos), agrupadas por ronda. Se usa al abrir el torneo (contenido inmediato y RESPALDO):
 // si hay broadcast, _tdLoadLiveGames lo reemplaza con el vivo de Lichess; si el fetch falla, quedan
+// ── Descargar las partidas en .pgn ──────────────────────────────────────────
+// scope 'round' = la ronda que se está mirando · 'all' = el torneo entero.
+// Respeta el filtro "🇦🇷 Solo argentinos" si está puesto (lo que ves es lo que bajás).
+function _tdDownloadPgn(scope) {
+  if (!_tdCtx) return;
+  var list = [];
+  if (scope === 'round' && _tdCurrentRound != null && _tdCtx.byRound[_tdCurrentRound]) {
+    list = _tdCtx.byRound[_tdCurrentRound].slice();
+  } else {
+    scope = 'all';
+    Object.keys(_tdCtx.byRound).map(Number).sort(function(a,b){ return a-b; })
+      .forEach(function(r){ (_tdCtx.byRound[r] || []).forEach(function(g){ list.push(g); }); });
+  }
+  if (_tdArgOnly) list = list.filter(function(g){ return _isArgGame(g.h); });
+  if (!list.length) { alert('No hay partidas para descargar' + (_tdArgOnly ? ' con el filtro de argentinos puesto.' : '.')); return; }
+  var txt = list.map(function(g){ return String(g.pgn || '').trim(); }).filter(Boolean).join('\n\n') + '\n';
+  // Sin tildes ni eñes en el nombre del archivo: viaja mejor entre Windows, Android y las bases.
+  var base = (_tdCtx.name || 'torneo').normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-').toLowerCase() || 'torneo';
+  var suf = (scope === 'round' ? '-R' + _tdCurrentRound : '-completo') + (_tdArgOnly ? '-argentinos' : '');
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([txt], { type: 'application/x-chess-pgn' }));
+  a.download = base + suf + '.pgn';
+  document.body.appendChild(a); a.click();
+  setTimeout(function(){ URL.revokeObjectURL(a.href); if (a.parentNode) a.parentNode.removeChild(a); }, 200);
+}
+
 // estas. Setea _tdArgOnly/_tdCurrentRound.
 function _tdLocalGamesHtml(byRound, roundOrder, games, pgnKey, typ) {
   _tdArgOnly = false;
@@ -17160,6 +17281,14 @@ function _tdLocalGamesHtml(byRound, roundOrder, games, pgnKey, typ) {
   if (argTotal > 0 && crShowArgLine(typ)) {
     h += '<button id="td-arg-btn" onclick="tdToggleArg()" class="arg-toggle' + (_tdArgOnly ? ' on' : '') + '">🇦🇷 Solo argentinos</button>';
   }
+  // Bajar las partidas: la ronda que se está viendo, o el torneo entero.
+  var _dlS = 'display:inline-flex;align-items:center;gap:4px;padding:5px 11px;background:var(--gl40);border:1px solid var(--bd22);color:var(--fg-d0);font-size:12px;font-weight:600;border-radius:20px;cursor:pointer;font-family:inherit';
+  h += '<span style="display:inline-flex;gap:5px;align-items:center">';
+  h += '<button onclick="_tdDownloadPgn(\'round\')" style="' + _dlS + '" title="Descargar en .pgn las partidas de la ronda que estás viendo">⬇ Ronda</button>';
+  if (roundOrder.length > 1) {
+    h += '<button onclick="_tdDownloadPgn(\'all\')" style="' + _dlS + '" title="Descargar en .pgn todas las partidas del torneo">⬇ Torneo</button>';
+  }
+  h += '</span>';
   h += '</div>';
   // Selector de ronda
   h += '<div id="td-rtabs" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">';
@@ -17627,6 +17756,9 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   // partidas que se bajan de Chess-Results se guardan bajo esta clave y hay que fusionarlas antes
   // de agrupar por ronda.
   var crk = crKey(type, id) + catSuffix;
+  // Los horarios de ronda cargados a mano se registran ACÁ (y no más abajo con la sección de
+  // cruces) porque el encabezado los necesita antes, para el aviso de "próxima ronda".
+  _crRoundTimesByKey[crk] = roundTimes || '';
 
   // Agrupar partidas por ronda
   var byRound = {};
@@ -17661,12 +17793,6 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
 
   var lbl2 = { live:'EN CURSO', upcoming:'PRÓXIMO', done:'FINALIZADO' };
   var cls2 = { live:'b-live', upcoming:'b-upcoming', done:'b-done' };
-  var prog = 0;
-  for (var ti = 0; ti < TORNEOS.length; ti++) {
-    if (TORNEOS[ti].name === name && TORNEOS[ti].round) {
-      prog = Math.round((TORNEOS[ti].round / TORNEOS[ti].rounds) * 100); break;
-    }
-  }
 
   // Links externos (Chess.com / Chess-Results / info64 / sitio oficial). Se arman ACÁ para poder
   // ubicarlos en la columna derecha del header (antes iban en una fila aparte debajo del header, que
@@ -17705,6 +17831,18 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   if (rounds)   h += '<span style="background:var(--gl35);border:1px solid var(--bd22);border-radius:20px;padding:4px 13px">🎯 ' + rounds + ' rondas</span>';
   if (timeControl) h += '<span style="background:var(--gl35);border:1px solid var(--bd22);border-radius:20px;padding:4px 13px">⏱ ' + escHtml(timeControl) + '</span>';
   h += '</div>';
+  // Próxima ronda: lo primero que quiere saber el que entra a un torneo que todavía no terminó.
+  // El día/hora ya se muestra adentro de cada ronda, pero ahí hay que ir a buscarlo.
+  if (status !== 'done') {
+    var _nr = _tdNextRound(crk, rounds);
+    if (_nr) {
+      h += '<div style="display:flex;align-items:center;gap:9px;margin-top:12px;background:var(--gold-bg);border:1px solid var(--gold-dim);border-radius:9px;padding:9px 13px;flex-wrap:wrap">'
+        + '<span style="font-size:15px">⏳</span>'
+        + '<span style="color:var(--fg-c0);font-size:13.5px">Próxima ronda:</span>'
+        + '<span style="color:var(--gold);font-weight:700;font-size:14px;text-shadow:var(--txt-out)">R' + _nr.num + ' · ' + escHtml(_nr.sched) + '</span>'
+        + '</div>';
+    }
+  }
   // Argentinos que juegan: SOLO en torneos Internacionales (autodetectados de
   // tabla/cruces/partidas + lista manual).
   var _argDet = crShowArgLine(typ) ? crArgPlayers(type, id, games) : [];
@@ -17738,10 +17876,8 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
       + '</div>';
   }
 
-  // Barra de progreso (live)
-  if (status === 'live' && prog > 0) {
-    h += '<div class="progress-bar" style="margin-bottom:16px"><div class="progress-fill" style="width:' + prog + '%"></div></div>';
-  }
+  // Podio: cuando el torneo terminó, quién ganó tiene que verse sin abrir la tabla.
+  if (status === 'done') h += _tdPodiumHtml(crk, isTeam);
 
   // (Los links externos ahora van en la columna derecha del header — ver linksHtml más arriba.
   // El botón de Lichess sigue como link discreto arriba a la derecha, junto al badge de estado.)
@@ -17770,7 +17906,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   _crUrlByKey[crk] = crUrl; // que la sección de equipos sepa el crUrl (botón + auto-fetch)
   _i64UrlByKey[crk] = info64url || ''; // ídem para info64 (botón + auto-fetch)
   _crFormat[crk] = format || ''; // sistema elegido a mano (override de la heurística suizo/round robin)
-  _crRoundTimesByKey[crk] = roundTimes || ''; // horarios de ronda a mano (pisan los que trae Chess-Results)
+  // (los horarios de ronda a mano ya se registraron arriba, junto a crk)
   if (_tdCtx) { _tdCtx.crKey = crk; _tdCtx.isTeam = isTeam; }
   // Sección Chess-Results: mismo criterio visual que las tarjetas (borde 1px, radio grande, sombra).
   h += '<div style="background:var(--card90);border:1px solid var(--bd22);border-radius:var(--r-lg);padding:16px 18px;margin-bottom:18px;box-shadow:var(--shadow-card)">';
