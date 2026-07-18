@@ -1736,7 +1736,12 @@
     /* ── Podio de torneo terminado ──────────────────────────────────────────────
        Bloques gruesos y redondeados, con una "tapa" clara arriba que los hace ver
        en 3D. overflow:hidden en el marco: nada se escapa del recuadro. */
-    .pod-wrap { position: relative; overflow: hidden; padding: 14px 14px 0; }
+    /* El marco mide lo que mide el podio (no todo el ancho de la pantalla) y queda centrado.
+       Borde dorado doble + resplandor tenue: aire de celebración sin tapar el podio. */
+    .pod-wrap { position: relative; overflow: hidden; padding: 14px 16px 0;
+      width: fit-content; max-width: 100%; margin-left: auto; margin-right: auto;
+      border: 2px solid var(--gold-dim) !important;
+      box-shadow: 0 0 0 4px var(--gold-bg), 0 6px 22px rgba(0,0,0,.22) !important; }
     .pod-row { display: flex; align-items: flex-end; justify-content: center; gap: 10px; max-width: 460px; margin: 0 auto; }
     .pod-col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; }
     .pod-medal { font-size: 21px; line-height: 1; filter: drop-shadow(0 1px 1px rgba(0,0,0,.35)); }
@@ -4651,9 +4656,13 @@ function crBuildRoundPanel(key,pairings,data,roundNum){
   // lo que trajo Chess-Results/info64 en el encabezado de la ronda.
   var _sched=_crRoundSchedule(data,key,roundNum);
   if(_sched){
-    h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:15px;background:var(--gl30);border:1px solid var(--bd14);border-radius:9px;padding:9px 14px">'
+    // inline-flex: la cajita mide lo que dice, no todo el ancho de la columna.
+    h+='<div style="display:inline-flex;align-items:center;gap:8px;margin-bottom:10px;font-size:15px;background:var(--gl30);border:1px solid var(--bd14);border-radius:9px;padding:9px 14px;max-width:100%;flex-wrap:wrap">'
       +'<span style="font-size:17px">🕒</span><span style="color:var(--fg-c0)">Se juega:</span> <span style="font-weight:700;color:var(--fg-e0);text-shadow:var(--txt-out);font-size:15.5px">'+escHtml(_sched)+'</span></div>';
   }
+  // Y cuándo se juega la SIGUIENTE (sólo si esta ya arrancó y aquella todavía no).
+  var _nxt=_crNextRoundNote(data,key,roundNum);
+  if(_nxt) h+='<div>'+_nxt+'</div>';
   // Toggle "Solo argentinos" (mismo estilo que el de la tabla de posiciones)
   if(rShowArg){
     h+='<div style="display:flex;justify-content:flex-end;margin-bottom:8px">';
@@ -5039,9 +5048,10 @@ function _teamRenderRound(matches, roundNum, crk){
   var _tSched='';
   try { _tSched=_crRoundSchedule(crk?crDataLoad(crk):null, crk, roundNum); } catch(e) {}
   if(_tSched){
-    inner+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:15px;background:var(--gl30);border:1px solid var(--bd14);border-radius:9px;padding:9px 14px">'
-      +'<span style="font-size:17px">🕒</span><span style="color:var(--fg-c0)">Se juega:</span> <span style="font-weight:700;color:var(--fg-e0);text-shadow:var(--txt-out);font-size:15.5px">'+escHtml(_tSched)+'</span></div>';
+    inner+='<div><div style="display:inline-flex;align-items:center;gap:8px;margin-bottom:10px;font-size:15px;background:var(--gl30);border:1px solid var(--bd14);border-radius:9px;padding:9px 14px;max-width:100%;flex-wrap:wrap">'
+      +'<span style="font-size:17px">🕒</span><span style="color:var(--fg-c0)">Se juega:</span> <span style="font-weight:700;color:var(--fg-e0);text-shadow:var(--txt-out);font-size:15.5px">'+escHtml(_tSched)+'</span></div></div>';
   }
+  try { var _tNxt=_crNextRoundNote(crk?crDataLoad(crk):null, crk, roundNum); if(_tNxt) inner+='<div>'+_tNxt+'</div>'; } catch(e) {}
   matches.forEach(function(m,mi){
     inner+='<div style="border:1px solid var(--border);border-radius:10px;'+(mi?'margin-top:10px;':'')+'overflow:hidden">';
     inner+='<div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--bg2);font-weight:700;font-size:15px">';
@@ -5240,34 +5250,44 @@ function _crRoundSchedule(data, key, roundNum) {
   return '';
 }
 
-// ── Próxima ronda (para el encabezado del torneo) ───────────────────────────
-// Devuelve {num, sched} de la primera ronda que TODAVÍA NO SE JUGÓ, o null si no hay ninguna
-// pendiente / no sabemos cuándo se juega. "Jugada" = tiene al menos un resultado cargado; una
-// ronda con los cruces publicados pero sin resultados sigue siendo la próxima.
-// Sirve para individuales (data.rounds) y por equipos (data.teamRounds, resultado en los tableros).
-function _tdNextRound(crk, totalRounds) {
-  if (!crk) return null;
-  var data = null;
-  try { data = crDataLoad(crk); } catch (e) {}
-  if (!data) return null;
-  var indiv = data.rounds || {}, team = data.teamRounds || {};
-  function played(n) {
-    var pr = indiv[n];
-    if (pr && pr.length) return pr.some(function(p){ return p && p.res; });
-    var tm = team[n];
-    if (tm && tm.length) return tm.some(function(m){ return (m.boards||[]).some(function(b){ return b && b.res; }); });
-    return false;
-  }
-  // Hasta dónde mirar: el total declarado del torneo o, si no está, la última ronda cargada.
-  var known = Object.keys(indiv).concat(Object.keys(team)).map(Number).filter(function(n){ return n>0; });
-  var top = parseInt(totalRounds) || (known.length ? Math.max.apply(null, known) : 0);
-  if (!top) return null;
-  for (var n = 1; n <= top; n++) {
-    if (played(n)) continue;
-    var sched = _crRoundSchedule(data, crk, n);
-    return sched ? { num: n, sched: sched } : null;   // sin día/hora no mostramos nada
-  }
-  return null;   // están todas jugadas
+// Fecha/hora de una ronda como Date, o null. Sale de roundDates (Chess-Results/info64), que la
+// guarda como "YYYY-MM-DD HH:MM". El texto libre cargado a mano NO se intenta interpretar: puede
+// venir escrito de cualquier forma y adivinar mal sería peor que no saber.
+function _crRoundDate(data, n) {
+  var s = data && data.roundDates && data.roundDates[n];
+  if (!s) return null;
+  var m = String(s).match(/^(\d{4})-(\d{1,2})-(\d{1,2})[ T](\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  var d = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
+  return isNaN(d.getTime()) ? null : d;
+}
+// ¿La ronda n YA ARRANCÓ? Por hora si la sabemos; si no, por evidencia: si tiene algún resultado
+// cargado es porque arrancó. Sin ninguna de las dos cosas asumimos que NO (mejor callarse que
+// mostrar un aviso que confunda).
+function _crRoundStarted(data, n) {
+  var d = _crRoundDate(data, n);
+  if (d) return Date.now() >= d.getTime();
+  var pr = (data && data.rounds || {})[n];
+  if (pr && pr.some(function(p){ return p && p.res; })) return true;
+  var tm = (data && data.teamRounds || {})[n];
+  if (tm && tm.some(function(m){ return (m.boards || []).some(function(b){ return b && b.res; }); })) return true;
+  return false;
+}
+// Aviso "Próxima ronda (la N)" para mostrar DENTRO del panel de la ronda anterior.
+// Sale sólo si: (a) la ronda que estás mirando YA arrancó —así nadie confunde este horario con el
+// de la ronda en curso— y (b) la siguiente TODAVÍA no arrancó. Con esas dos condiciones el aviso
+// vive en un solo panel a la vez (el de la última ronda que empezó) y se apaga solo al terminar.
+function _crNextRoundNote(data, key, n) {
+  n = parseInt(n); if (!n) return '';
+  if (!_crRoundStarted(data, n)) return '';
+  if (_crRoundStarted(data, n + 1)) return '';
+  var sched = _crRoundSchedule(data, key, n + 1);
+  if (!sched) return '';
+  return '<div style="display:inline-flex;align-items:center;gap:8px;margin-bottom:10px;font-size:13.5px;background:var(--gold-bg);border:1px solid var(--gold-dim);border-radius:9px;padding:7px 13px;max-width:100%;flex-wrap:wrap">'
+    + '<span style="font-size:15px">⏭</span>'
+    + '<span style="color:var(--fg-c0)">Próxima ronda (la ' + (n + 1) + '):</span>'
+    + '<span style="font-weight:700;color:var(--gold);text-shadow:var(--txt-out)">' + escHtml(sched) + '</span>'
+    + '</div>';
 }
 
 // ── Podio de un torneo terminado ────────────────────────────────────────────
@@ -17902,20 +17922,24 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   if (rounds)   h += '<span style="background:var(--gl35);border:1px solid var(--bd22);border-radius:20px;padding:4px 13px">🎯 ' + rounds + ' rondas</span>';
   if (timeControl) h += '<span style="background:var(--gl35);border:1px solid var(--bd22);border-radius:20px;padding:4px 13px">⏱ ' + escHtml(timeControl) + '</span>';
   h += '</div>';
-  // Próxima ronda: lo primero que quiere saber el que entra a un torneo que todavía no terminó.
-  // El día/hora ya se muestra adentro de cada ronda, pero ahí hay que ir a buscarlo.
+  // "El torneo arranca": SÓLO mientras no haya ninguna ronda cargada. En cuanto aparece la pestaña
+  // R1 con su día y hora, este cartel repetiría el mismo dato dos veces en la misma pantalla, así
+  // que se apaga. De ahí en más el horario de la próxima ronda vive adentro del panel de la ronda
+  // anterior (_crNextRoundNote), que es donde tiene contexto.
   if (status !== 'done') {
-    var _nr = _tdNextRound(crk, rounds);
-    if (_nr) {
-      // Si la próxima es la R1, el torneo todavía no empezó: se lee mejor "El torneo arranca"
-      // que "Próxima ronda: R1" (y no hace falta repetir el número de ronda).
-      var _arranca = (_nr.num === 1);
-      h += '<div style="display:flex;align-items:center;gap:9px;margin-top:12px;background:var(--gold-bg);border:1px solid var(--gold-dim);border-radius:9px;padding:9px 13px;flex-wrap:wrap">'
-        + '<span style="font-size:15px">' + (_arranca ? '🚩' : '⏳') + '</span>'
-        + '<span style="color:var(--fg-c0);font-size:13.5px">' + (_arranca ? 'El torneo arranca:' : 'Próxima ronda:') + '</span>'
-        + '<span style="color:var(--gold);font-weight:700;font-size:14px;text-shadow:var(--txt-out)">'
-        + (_arranca ? '' : 'R' + _nr.num + ' · ') + escHtml(_nr.sched) + '</span>'
-        + '</div>';
+    var _cd = null;
+    try { _cd = crDataLoad(crk); } catch (e) {}
+    var _hayRondas = !!(_cd && ((_cd.rounds && Object.keys(_cd.rounds).length) ||
+                                (_cd.teamRounds && Object.keys(_cd.teamRounds).length)));
+    if (!_hayRondas) {
+      var _ini = _cd ? _crRoundSchedule(_cd, crk, 1) : '';
+      if (_ini) {
+        h += '<div style="display:inline-flex;align-items:center;gap:9px;margin-top:12px;background:var(--gold-bg);border:1px solid var(--gold-dim);border-radius:9px;padding:9px 13px;max-width:100%;flex-wrap:wrap">'
+          + '<span style="font-size:15px">🚩</span>'
+          + '<span style="color:var(--fg-c0);font-size:13.5px">El torneo arranca:</span>'
+          + '<span style="color:var(--gold);font-weight:700;font-size:14px;text-shadow:var(--txt-out)">' + escHtml(_ini) + '</span>'
+          + '</div>';
+      }
     }
   }
   // Argentinos que juegan: SOLO en torneos Internacionales (autodetectados de
