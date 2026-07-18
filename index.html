@@ -1224,6 +1224,11 @@
     #cv-live-back:active { transform:scale(.97); }
     body.light #cv-live-back { background:rgba(40,155,90,0.13); border-color:rgba(40,150,85,0.5); color:#1f7a44; }
     body.light #cv-live-back:hover { background:rgba(40,155,90,0.22); }
+    /* Aviso discreto "la transmisión está corrigiendo esta partida" (arriba de la lista de jugadas).
+       Mismos verdes que el reloj corriendo pero MUY atenuados: informa sin alarmar. */
+    #cv-fix-note { margin:0 0 6px; padding:6px 10px; text-align:center; font-size:11.5px; line-height:1.35;
+      border-radius:8px; background:rgba(70,180,110,0.10); border:1px solid rgba(95,195,135,0.30); color:#8fc9a6; }
+    body.light #cv-fix-note { background:rgba(40,155,90,0.09); border-color:rgba(40,150,85,0.30); color:#2c7a50; }
     /* El nombre de apertura se oculta del visor (ocupa lugar que se usa para agrandar el tablero). */
     .chess-opening { display: none; }
 
@@ -2293,6 +2298,9 @@
         <div class="sf-line" id="sf-line2"><span class="sf-ln">3</span><span class="sf-lscore sf-pos" id="sf-ls2"></span><span class="sf-lmoves" id="sf-lm2"></span><button class="sf-exp" id="sf-exp2" onclick="sfToggleExpand(2)" title="Ver la variante completa" style="visibility:hidden">⌄</button></div>
       </div>
     </div>
+    <!-- Aviso: el operador de la transmisión está corrigiendo la partida a mano (mandó variantes y la
+         línea principal todavía no avanzó). Evita que parezca que el visor se colgó. -->
+    <div id="cv-fix-note" style="display:none">✎ La transmisión está corrigiendo esta partida · se actualiza sola</div>
     <div class="chess-mwrap"><div class="chess-mlist" id="cv-moves"></div></div>
 
     <!-- Volver a la jugada en directo (solo transmisiones en vivo, cuando se navegó a otra jugada) -->
@@ -14445,6 +14453,7 @@ function cvSelect(i) {
   }
 
   cv.rawPgn = g.pgn || '';
+  cv.bcFixing = false; cvRenderFixNote();   // partida nueva/reconstruida: el aviso de corrección no aplica
   cv.root = buildTree(moves, parseMovenags(cv.rawPgn), parseMoveEvals(cv.rawPgn), parseMoveClocks(cv.rawPgn), startFen);
   _boardBound = false;
   cvBuildMoveList();
@@ -14795,6 +14804,28 @@ function _cvExtendLiveGame(newPgn) {
   return 'extended';
 }
 
+// ¿El PGN trae variantes? (paréntesis en el movetext, fuera de los comentarios {...}). En una
+// transmisión EN VIVO las variantes aparecen cuando el operador está CORRIGIENDO la partida a mano:
+// primero pasa la línea buena como variante y recién después la vuelve línea principal.
+function _pgnHasVariations(pgn) {
+  if (!pgn) return false;
+  var parts = pgn.split(/\r?\n\r?\n/);
+  var mt = parts.length > 1 ? parts.slice(1).join('\n\n') : pgn;
+  var inC = false;
+  for (var i = 0; i < mt.length; i++) {
+    var c = mt[i];
+    if (c === '{') { inC = true; continue; }
+    if (c === '}') { inC = false; continue; }
+    if (!inC && c === '(') return true;
+  }
+  return false;
+}
+// Muestra/oculta el aviso discreto de "la transmisión está corrigiendo esta partida".
+function cvRenderFixNote() {
+  var el = document.getElementById('cv-fix-note');
+  if (el) el.style.display = cv.bcFixing ? 'block' : 'none';
+}
+
 // Aplica `newPgn` (jugadas en vivo) a la partida abierta preservando la navegación del visitante.
 // `meta` = pgMeta(newPgn). Devuelve true si se pudo en caliente; false si hace falta reconstruir.
 function _cvLiveExtendInPlace(newPgn, meta) {
@@ -14803,6 +14834,11 @@ function _cvLiveExtendInPlace(newPgn, meta) {
   var prevDepth = _cvNodeDepth(cv.node);
   var r = _cvExtendLiveGame(newPgn);
   if (r === 'rebuild') return false;
+  // Si llegaron variantes y la línea principal NO avanzó, el operador está corrigiendo la partida a
+  // mano: avisamos discretamente para que no parezca que el visor se colgó. Al volver a avanzar
+  // (o al reconstruir, que pasa por cvSelect) el aviso se va solo.
+  cv.bcFixing = (r === 'same' && _pgnHasVariations(newPgn));
+  cvRenderFixNote();
   cv.rawPgn = newPgn;                                   // el árbol ya refleja el PGN nuevo
   if (meta) {
     cvSetResult(meta.res);
