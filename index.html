@@ -1326,7 +1326,7 @@
     .cv-share-btn { color: var(--gold); border-color: var(--gold-dim); }
 
     /* Lista de jugadas en tabla: nº | blancas | negras */
-    .cv-movetable { font-family: 'Courier New', monospace; font-size: 12.5px; }
+    .cv-movetable { font-family: 'Courier New', monospace; font-size: 13.5px; }
     .cv-mrow { display: grid; grid-template-columns: 30px 1fr 1fr; align-items: baseline; column-gap: 6px; border-radius: 4px; }
     .cv-mrow:nth-of-type(even) { background: var(--zebra); }
     .cv-mnum { color: var(--fg-c0); text-align: right; font-size: 14px; text-shadow:var(--txt-out); }
@@ -1335,6 +1335,9 @@
     .cmv { cursor: pointer; padding: 1px 4px; border-radius: 3px; transition: background-color .1s, border-color .1s, color .1s, box-shadow .1s, transform .1s; }
     .cmv:hover { background: var(--border); color: var(--text); }
     .cmv.on { background: var(--gold); color: #111; font-weight: 700; border-radius: 4px; padding: 1px 5px; box-shadow: 0 0 0 2px rgba(201,162,39,.35); text-shadow: none; }
+    /* Notación figurada: el símbolo de la pieza (K,Q,R,B,N → ♚♛♜♝♞) en la lista de jugadas. Glifo
+       monocromo que toma el color del texto → se ve bien en claro y oscuro. */
+    .cv-fig { font-family: 'Segoe UI Symbol','Noto Sans Symbols 2','DejaVu Sans','Arial Unicode MS',sans-serif; font-size: 1.12em; vertical-align: -0.06em; }
     /* En claro el --gold es marrón oscuro; la jugada en curso se aclara a un dorado más vivo. */
     body.light .cmv.on { background: #f1c84e; color: #3a2900; box-shadow: 0 0 0 2px rgba(176,125,10,.35); }
     /* resaltar también la celda de la jugada actual en la tabla */
@@ -1661,11 +1664,20 @@
     .sf-depth { font-size: 11px; color: var(--text3); margin-left: auto; }
     .sf-lines { display: flex; flex-direction: column; gap: 5px; }
     .sf-line {
-      display: grid; grid-template-columns: 16px 46px 1fr;
+      display: grid; grid-template-columns: 16px 46px 1fr auto;
       align-items: start; gap: 8px;
       background: var(--bg3); border: 1px solid var(--border);
       border-radius: 7px; padding: 7px 10px;
     }
+    /* Jugadas del módulo clickeables (se agregan como variante al tablero, estilo Lichess). */
+    .sf-mv { cursor: pointer; border-radius: 3px; padding: 0 1px; }
+    .sf-mv:hover { background: var(--gold-bg); color: var(--gold); }
+    .sf-mvn { color: var(--text3); }
+    /* Botón para desglosar la fila y ver toda la variante (no solo lo que entra en una línea). */
+    .sf-exp { background: none; border: none; color: var(--text3); cursor: pointer; font-size: 12px; line-height: 1.4; padding: 0 2px; align-self: start; transition: transform .15s; }
+    .sf-exp:hover { color: var(--text); }
+    .sf-line.expanded .sf-lmoves { white-space: normal; overflow: visible; text-overflow: clip; }
+    .sf-line.expanded .sf-exp { transform: rotate(180deg); }
     .sf-ln { color: var(--text3); font-size: 10px; text-align: right; padding-top: 2px; }
     .sf-lscore { font-weight: 700; font-size: 12px; font-variant-numeric: tabular-nums; padding-top: 1px; }
     .sf-pos { color: #72c46b; }
@@ -2232,9 +2244,9 @@
          achican de arriba hacia abajo (flex) sin empujarse para abajo; al apagarse, se re-estiran. -->
     <div id="sf-panel" style="display: none;">
       <div class="sf-lines">
-        <div class="sf-line"><span class="sf-ln">1</span><span class="sf-lscore sf-pos" id="sf-ls0"></span><span class="sf-lmoves" id="sf-lm0"></span></div>
-        <div class="sf-line"><span class="sf-ln">2</span><span class="sf-lscore sf-pos" id="sf-ls1"></span><span class="sf-lmoves" id="sf-lm1"></span></div>
-        <div class="sf-line"><span class="sf-ln">3</span><span class="sf-lscore sf-pos" id="sf-ls2"></span><span class="sf-lmoves" id="sf-lm2"></span></div>
+        <div class="sf-line" id="sf-line0"><span class="sf-ln">1</span><span class="sf-lscore sf-pos" id="sf-ls0"></span><span class="sf-lmoves" id="sf-lm0"></span><button class="sf-exp" id="sf-exp0" onclick="sfToggleExpand(0)" title="Ver la variante completa" style="visibility:hidden">⌄</button></div>
+        <div class="sf-line" id="sf-line1"><span class="sf-ln">2</span><span class="sf-lscore sf-pos" id="sf-ls1"></span><span class="sf-lmoves" id="sf-lm1"></span><button class="sf-exp" id="sf-exp1" onclick="sfToggleExpand(1)" title="Ver la variante completa" style="visibility:hidden">⌄</button></div>
+        <div class="sf-line" id="sf-line2"><span class="sf-ln">3</span><span class="sf-lscore sf-pos" id="sf-ls2"></span><span class="sf-lmoves" id="sf-lm2"></span><button class="sf-exp" id="sf-exp2" onclick="sfToggleExpand(2)" title="Ver la variante completa" style="visibility:hidden">⌄</button></div>
       </div>
     </div>
     <div class="chess-mwrap"><div class="chess-mlist" id="cv-moves"></div></div>
@@ -9075,7 +9087,7 @@ function _obRefreshAll() {
     function bar(w, d, b, c) { var p = function(x) { return c ? Math.round(x / c * 100) : 0; }; return '<div style="flex:1;display:flex;height:12px;border-radius:3px;overflow:hidden;outline:1px solid var(--bd14)"><div style="width:' + p(w) + '%;background:#e8e8e8"></div><div style="width:' + p(d) + '%;background:#888"></div><div style="width:' + p(b) + '%;background:#2a2a2a"></div></div>'; }
     r.nextMoves.slice(0, 10).forEach(function(t) {
       h2 += '<div onclick="obPlay(\'' + escJs(t.san) + '\')" style="display:flex;align-items:center;gap:8px;padding:7px 9px;border:1px solid var(--border);border-radius:8px;margin-bottom:5px;cursor:pointer;background:var(--bg2)">';
-      h2 += '<div style="font-weight:700;color:var(--text);min-width:46px">' + escHtml(t.san) + '</div>';
+      h2 += '<div style="font-weight:700;color:var(--text);min-width:46px">' + cvFanHtml(t.san) + '</div>';
       h2 += '<div style="font-size:12px;color:var(--text2);min-width:46px">' + t.count + '</div>' + bar(t.w, t.d, t.b, t.count) + '</div>';
     });
     // Fila Σ: engloba el resto de las jugadas (11ª en adelante), estilo Lichess.
@@ -12985,7 +12997,7 @@ function _nrRenderMoves() {
   for (var i = 0; i < moves.length; i++) {
     var mIdx = i+1, isAct = mIdx===_nrMini.idx, isW = i%2===0;
     if (isW) html += '<span style="color:var(--text2);padding:1px 1px;margin-right:1px">'+(Math.floor(i/2)+1)+'.</span>';
-    html += '<span onclick="_nrGo('+mIdx+')" style="cursor:pointer;padding:1px 4px;border-radius:3px;margin-right:'+(isW?'2':'8')+'px;'+(isAct?'background:var(--gold-bg);color:var(--gold);':'color:var(--text);')+'">'+_nEsc(moves[i].san)+'</span>';
+    html += '<span onclick="_nrGo('+mIdx+')" style="cursor:pointer;padding:1px 4px;border-radius:3px;margin-right:'+(isW?'2':'8')+'px;'+(isAct?'background:var(--gold-bg);color:var(--gold);':'color:var(--text);')+'">'+cvFanHtml(moves[i].san)+'</span>';
   }
   html += '</div>';
   el.innerHTML = html;
@@ -13788,7 +13800,7 @@ function buildTree(moves, nags, evals, clocks, startFen) {
 function cvSetNode(node) {
   // Si hay una reproducción en curso (jugadas que llegaron en vivo de a varias) y el usuario navega
   // a mano, cortarla. La propia reproducción marca _cvAnimStepping para no autocancelarse.
-  if (_cvAnimTimer && !_cvAnimStepping) { clearTimeout(_cvAnimTimer); _cvAnimTimer = null; }
+  if (_cvAnimTimer && !_cvAnimStepping) { clearTimeout(_cvAnimTimer); _cvAnimTimer = null; _cvLiveCatchup = false; }
   var _prevNode = cv.node;   // para animar el deslizamiento SOLO al avanzar de a una jugada
   cv.node = node;
   cv.sel = null;
@@ -13821,7 +13833,7 @@ function cvSetNode(node) {
   } else {
     var moveNum = Math.ceil(depth / 2);
     var isBlack = (depth % 2 === 0);
-    counterText = isBlack ? moveNum + '…' + node.move.san : moveNum + '.' + node.move.san;
+    counterText = isBlack ? moveNum + '…' + cvFan(node.move.san) : moveNum + '.' + cvFan(node.move.san);
   }
   var _cvCounterEl = document.getElementById('cv-counter'); if (_cvCounterEl) _cvCounterEl.textContent = counterText;
   if (depth > 0) cvClearUserArrows();
@@ -14141,6 +14153,20 @@ function cvBuildMoveList() {
   document.getElementById('cv-moves').innerHTML = h;
 }
 
+// Notación figurada (estilo Lichess/Chess.com): reemplaza las iniciales inglesas de las piezas por
+// su símbolo. En SAN las MAYÚSCULAS K,Q,R,B,N son SIEMPRE piezas (los peones usan la columna en
+// minúscula y el enroque usa 'O'), así que el reemplazo directo es seguro (incluye la promoción "=Q").
+var _CV_FIG = { K:'♚', Q:'♛', R:'♜', B:'♝', N:'♞' };
+// Para la lista de jugadas (HTML): envuelve el glifo en un <span> para poder darle tamaño/alineación.
+function cvFanHtml(san) {
+  if (!san) return '';
+  return san.replace(/[KQRBN]/g, function(c){ return '<span class="cv-fig">' + _CV_FIG[c] + '</span>'; });
+}
+// Para texto plano (el contador flotante de jugada): solo el glifo, sin HTML.
+function cvFan(san) {
+  return san ? san.replace(/[KQRBN]/g, function(c){ return _CV_FIG[c]; }) : san;
+}
+
 /*  renderMoveTable: arma la lista de jugadas como tabla nº | blancas | negras.
     Mantiene los id "cvn<id>" en cada jugada para que el resaltado y el clic anden.
     Las variantes se muestran como una fila aparte, a lo ancho. */
@@ -14172,7 +14198,7 @@ function renderMoveTable(root) {
     var moveNum = Math.ceil(depth / 2);
     var isWhite = (depth % 2 === 1);
     var mv = '<span class="cmv" id="cvn' + mc._id + '" onclick="cvGoNode(' + mc._id + ')">'
-           + mc.move.san + '</span>' + nagSpan(mc.move.nag);
+           + cvFanHtml(mc.move.san) + '</span>' + nagSpan(mc.move.nag);
     if (isWhite) {
       flush();
       row = { num: moveNum, white: mv, black: '' };
@@ -14257,7 +14283,7 @@ function renderVariantLine(startNode) {
     first = false;
 
     h += '<span class="cmv cmv-var" id="cvn' + node._id + '" onclick="cvGoNode('+node._id+')">'
-       + node.move.san + '</span>' + nagSpan(node.move.nag) + ' ';
+       + cvFanHtml(node.move.san) + '</span>' + nagSpan(node.move.nag) + ' ';
 
     // sub-variantes recursivas
     if (node.children.length > 1) {
@@ -14353,6 +14379,10 @@ function _cvBindHold(btnId, step) {
 // en vez de saltar al final se muestran una por una (cada _CV_ANIM_MS). Cualquier navegación manual
 // la corta (guard en cvSetNode). _cvAnimStepping evita que la propia reproducción se autocancele.
 var _cvAnimTimer = null, _cvAnimStepping = false, _CV_ANIM_MS = 550;
+// true mientras corre una reproducción automática de "ponerse al día" con la jugada en directo
+// (llegaron varias jugadas de una). Mientras dura, el visitante SIGUE en vivo: el cartel verde
+// "Volver a la jugada en directo" NO debe aparecer aunque el nodo actual todavía no sea el final.
+var _cvLiveCatchup = false;
 function _cvEndDepth(){ var n = cv.root, d = 0; while (n && n.children && n.children.length > 0 && !n.children[0].own) { n = n.children[0]; d++; } return d; }
 
 // Último nodo REAL de la partida (la línea principal sin las jugadas propias del usuario, que
@@ -14374,19 +14404,101 @@ function cvUpdateLiveBackBtn() {
   if (!b) return;
   var live = cv.rawPgn && /\[Result\s+"[*]"\]/.test(cv.rawPgn)
           && ((typeof _liveTimer !== 'undefined' && _liveTimer) || (typeof _tdLiveTimer !== 'undefined' && _tdLiveTimer));
-  b.style.display = (live && cv.node && cv.node !== cvLiveEndNode()) ? 'block' : 'none';
+  // Durante una reproducción de "ponerse al día" el visitante sigue en vivo → no mostrar el cartel.
+  b.style.display = (live && !_cvLiveCatchup && cv.node && cv.node !== cvLiveEndNode()) ? 'block' : 'none';
 }
 function _cvAnimateToEnd(fromDepth){
   if (_cvAnimTimer) { clearTimeout(_cvAnimTimer); _cvAnimTimer = null; }
-  var n = cv.root; for (var k = 0; k < fromDepth && n.children.length > 0; k++) n = n.children[0];
+  _cvLiveCatchup = true;   // el visitante sigue en vivo mientras dura la reproducción (oculta el cartel verde)
+  var n = cv.root; for (var k = 0; k < fromDepth && n.children.length > 0 && !n.children[0].own; k++) n = n.children[0];
   _cvAnimStepping = true; cvSetNode(n); _cvAnimStepping = false;   // posicionar donde estaba el usuario
+  function finish(){ _cvAnimTimer = null; _cvLiveCatchup = false; cvUpdateLiveBackBtn(); }
   function go(){
-    if (!document.getElementById('chess-overlay').classList.contains('open')) { _cvAnimTimer = null; return; }
-    if (!cv.node || !cv.node.children || cv.node.children.length === 0) { _cvAnimTimer = null; return; }   // llegó al final
+    if (!document.getElementById('chess-overlay').classList.contains('open')) { finish(); return; }
+    // Frenar en la última jugada REAL: no seguir hacia las variantes propias `own` injertadas al final.
+    if (!cv.node || !cv.node.children || cv.node.children.length === 0 || cv.node.children[0].own) { finish(); return; }
     _cvAnimStepping = true; cvNext(); _cvAnimStepping = false;
     _cvAnimTimer = setTimeout(go, _CV_ANIM_MS);
   }
   _cvAnimTimer = setTimeout(go, _CV_ANIM_MS);
+}
+
+// ── Extensión EN CALIENTE de la partida en vivo ─────────────────────────────
+// En vez de reconstruir el árbol en cada refresco (lo que reseteaba la posición del visitante y
+// borraba las variantes que estaba probando), AGREGAMOS solo las jugadas nuevas al final de la
+// línea principal. Así el visitante puede navegar jugadas viejas o probar variantes propias sin que
+// las jugadas que llegan lo interrumpan: aparecen en la notación pero no lo mueven de lugar.
+
+// Reconstruye un árbol lineal (solo línea principal) desde un PGN, igual que cvSelect.
+function _cvBuildTreeFromPgn(pgn) {
+  if (typeof Chess === 'undefined' || !pgn) return null;
+  var fenM = pgn.match(/\[FEN "([^"]+)"\]/);
+  var startFen = fenM ? fenM[1] : '';
+  var tmp = new Chess();
+  var ok = tmp.load_pgn(pgn);
+  if (!ok) { var clean = pgn.replace(/\[Variant[^\]]*\]/g,'').replace(/\[UTC[^\]]*\]/g,''); ok = tmp.load_pgn(clean); }
+  if (!ok) return null;
+  var moves = tmp.history({ verbose: true });
+  return buildTree(moves, parseMovenags(pgn), parseMoveEvals(pgn), parseMoveClocks(pgn), startFen);
+}
+
+// Intenta extender la partida abierta con las jugadas nuevas de `newPgn` SIN reconstruir el árbol.
+// Devuelve: 'extended' (se agregaron jugadas), 'same' (no cambió nada), 'rebuild' (la línea nueva no
+// es continuación de la vieja —corrección/takeback— o cambió la partida → hay que reconstruir).
+function _cvExtendLiveGame(newPgn) {
+  if (!cv.root) return 'rebuild';
+  var newRoot = _cvBuildTreeFromPgn(newPgn);
+  if (!newRoot) return 'rebuild';
+  var oldN = cv.root, newN = newRoot;
+  // Avanzar por la línea principal mientras las jugadas reales coincidan (children[0] no-`own`).
+  while (oldN.children.length > 0 && !oldN.children[0].own && newN.children.length > 0) {
+    if (oldN.children[0].move.san !== newN.children[0].move.san) return 'rebuild';   // divergió
+    oldN = oldN.children[0]; newN = newN.children[0];
+    // Refrescar eval/reloj/símbolo que Lichess pudo completar recién en jugadas ya existentes.
+    if (newN.move.ev  != null) oldN.move.ev  = newN.move.ev;
+    if (newN.move.clk != null) oldN.move.clk = newN.move.clk;
+    if (newN.move.nag)         oldN.move.nag = newN.move.nag;
+  }
+  // ¿La línea vieja tiene una jugada real que la nueva ya no trae? → corrección/takeback → reconstruir.
+  if (oldN.children.length > 0 && !oldN.children[0].own) return 'rebuild';
+  if (newN.children.length === 0) return 'same';   // no llegaron jugadas nuevas
+  // Injertar la cola nueva (newN.children[0] …) al final, DELANTE de cualquier variante propia `own`.
+  var tail = newN.children[0];
+  tail.parent = oldN;
+  oldN.children.unshift(tail);
+  cvBuildMoveList();   // re-renderiza la notación con las jugadas nuevas (reasigna ids)
+  return 'extended';
+}
+
+// Aplica `newPgn` (jugadas en vivo) a la partida abierta preservando la navegación del visitante.
+// `meta` = pgMeta(newPgn). Devuelve true si se pudo en caliente; false si hace falta reconstruir.
+function _cvLiveExtendInPlace(newPgn, meta) {
+  // ¿Estaba siguiendo la jugada en directo? (en el final real, o en plena reproducción de ponerse al día)
+  var followLive = (cv.node === cvLiveEndNode()) || (_cvAnimTimer != null);
+  var prevDepth = _cvNodeDepth(cv.node);
+  var r = _cvExtendLiveGame(newPgn);
+  if (r === 'rebuild') return false;
+  cv.rawPgn = newPgn;                                   // el árbol ya refleja el PGN nuevo
+  if (meta) {
+    cvSetResult(meta.res);
+    var opEl = document.getElementById('cv-opening');
+    if (opEl) opEl.textContent = meta.eco && meta.op ? meta.eco + ' · ' + meta.op : '';
+  }
+  if (r === 'same') { _cvStampLiveArrival(); _cvScheduleSettle(); return true; }
+  // r === 'extended'
+  if (followLive) {
+    // Seguía en vivo: avanzar al nuevo final. Si llegaron varias, reproducirlas de a una.
+    var endDepth = _cvEndDepth();
+    if (endDepth - prevDepth >= 2) _cvAnimateToEnd(prevDepth);
+    else cvLast();
+  } else {
+    // Estaba navegando/probando una variante: NO moverlo. Solo refrescar notación y estado.
+    cvHighlight();          // los ids se reasignaron al re-renderizar: volver a marcar la jugada actual
+    _cvScheduleSettle();    // refrescar relojes/eval de la posición que mira, sin cambiar de nodo
+  }
+  _cvStampLiveArrival();
+  faMaybeAutoLive();
+  return true;
 }
 
 /* ════════════════════════════════════════════════════════
@@ -15111,7 +15223,7 @@ function obRenderLocal(entries, nextSan) {
     var cnt = c >= 1000 ? (Math.round(c / 100) / 10) + 'k' : c;
     var played = san === nextSan;
     html += '<div class="ob-move' + (played ? ' ob-played' : '') + '" onclick="cvPlayObMove(\'' + san + '\')" style="cursor:pointer">'
-          + '<span class="ob-san">' + san + '</span>'
+          + '<span class="ob-san">' + cvFanHtml(san) + '</span>'
           + '<div class="ob-bar"><div class="ob-bar-w" style="width:' + wp + '%"></div><div class="ob-bar-d" style="width:' + dp + '%"></div><div class="ob-bar-b" style="width:' + bp + '%"></div></div>'
           + '<span class="ob-cnt">' + cnt + '</span></div>';
   }
@@ -15575,15 +15687,75 @@ function sfBarPct(score, flip) {
 
 function sfPvSan(pvArr) {
   if (typeof Chess === 'undefined' || !cv.chess || !pvArr || !pvArr.length) return pvArr ? pvArr.slice(0,12).join(' ') : '';
-  var tmp = new Chess(cv.chess.fen());
+  var fen = cv.chess.fen(), fp = fen.split(' '), n = parseInt(fp[5] || '1', 10), w = (fp[1] === 'w');
+  var tmp = new Chess(fen);
   var out = [];
   for (var i = 0; i < Math.min(pvArr.length, 12); i++) {
     var uci = pvArr[i];
     var mv  = tmp.move({from:uci.slice(0,2), to:uci.slice(2,4), promotion:uci[4]||'q'});
     if (!mv) break;
-    out.push(mv.san);
+    if (w) out.push(n + '. ' + mv.san);                        // blancas: "37. Nf3"
+    else { out.push((i === 0 ? n + '… ' : '') + mv.san); n++; }  // negras: "37… Nf6" (el "…" deja claro el color)
+    w = !w;
   }
   return out.join(' ');
+}
+
+// ── Módulo: variantes clickeables + filas desglosables (estilo Lichess) ──────────────
+// _sfShownPv guarda la línea UCI que se está MOSTRANDO en cada fila (para reproducirla al hacer clic,
+// exactamente la que ve el visitante). _sfExpanded recuerda qué filas están desglosadas (multilínea).
+var _sfShownPv = [null, null, null];
+var _sfExpanded = [false, false, false];
+
+// Igual que sfPvSan pero devolviendo HTML: números de jugada + piezas, con cada jugada clickeable.
+// Al hacer clic en la jugada del ply `p`, se reproduce la línea hasta ahí como variante en el tablero.
+function sfRenderPvLine(lineIdx, pvArr) {
+  if (typeof Chess === 'undefined' || !cv.chess || !pvArr || !pvArr.length) return '';
+  var fen = cv.chess.fen(), fp = fen.split(' '), n = parseInt(fp[5] || '1', 10), w = (fp[1] === 'w');
+  var tmp = new Chess(fen), out = [];
+  for (var i = 0; i < Math.min(pvArr.length, 12); i++) {
+    var uci = pvArr[i];
+    var mv  = tmp.move({from:uci.slice(0,2), to:uci.slice(2,4), promotion:uci[4]||'q'});
+    if (!mv) break;
+    var num;
+    if (w) num = n + '.'; else { num = (i === 0 ? n + '…' : ''); n++; }
+    var numHtml = num ? '<span class="sf-mvn">' + num + '</span>' : '';
+    out.push(numHtml + '<span class="sf-mv" onclick="sfPlayPvUpto(' + lineIdx + ',' + i + ')">' + cvFanHtml(mv.san) + '</span>');
+    w = !w;
+  }
+  return out.join(' ');
+}
+
+// Reproduce en el tablero la línea `lineIdx` del módulo hasta el ply `plyIdx` (inclusive), agregando
+// las jugadas como VARIANTE propia (nodos `own`) desde la posición actual, y navega hasta ahí.
+function sfPlayPvUpto(lineIdx, plyIdx) {
+  var pv = _sfShownPv[lineIdx];
+  if (!pv || typeof Chess === 'undefined' || !cv.node) return;
+  var node = cv.node, tmp = new Chess(node.fen);
+  for (var i = 0; i <= plyIdx && i < pv.length; i++) {
+    var uci = pv[i];
+    var mv = tmp.move({from:uci.slice(0,2), to:uci.slice(2,4), promotion:uci[4]||'q'});
+    if (!mv) break;
+    var existing = null;
+    for (var k = 0; k < node.children.length; k++) { if (node.children[k].move.san === mv.san) { existing = node.children[k]; break; } }
+    if (existing) node = existing;
+    else {
+      var nn = makeNode(tmp.fen(), { san:mv.san, from:mv.from, to:mv.to, nag:'' }, node);
+      nn.own = true;             // jugada de análisis: variante, no parte de la partida real
+      node.children.push(nn);
+      node = nn;
+    }
+  }
+  cvBuildMoveList();
+  _cvUserMove = true;            // ya está en el tablero: no animar el deslizamiento
+  cvSetNode(node);
+}
+
+// Desglosa/pliega una fila del módulo para ver la variante completa (varias líneas) o solo la 1ª línea.
+function sfToggleExpand(lineIdx) {
+  _sfExpanded[lineIdx] = !_sfExpanded[lineIdx];
+  var row = document.getElementById('sf-line' + lineIdx);
+  if (row) row.classList.toggle('expanded', _sfExpanded[lineIdx]);
 }
 
 function sfUpdateUI() {
@@ -15632,9 +15804,18 @@ function sfUpdateUI() {
       var ln  = sf.lines[i];
       var els = document.getElementById('sf-ls'+i);
       var elm = document.getElementById('sf-lm'+i);
+      var exp = document.getElementById('sf-exp'+i);
       els.className = 'sf-lscore ' + (ln ? sfScoreCls(ln.score, flip) : 'sf-neu');
       els.textContent = ln ? sfScoreStr(ln.score, flip) : '—';
-      elm.textContent = ln ? sfPvSan(ln.pv) : '';
+      if (ln && ln.pv && ln.pv.length) {
+        _sfShownPv[i] = ln.pv.slice(0, 12);
+        elm.innerHTML = sfRenderPvLine(i, ln.pv);
+        if (exp) exp.style.visibility = 'visible';
+      } else {
+        _sfShownPv[i] = null;
+        elm.innerHTML = '';
+        if (exp) exp.style.visibility = 'hidden';
+      }
     }
   }
 }
@@ -16590,22 +16771,28 @@ function _bcApplyRefreshToViewer(liveKey) {
   if (!data || !data.games || !cv.games) return;
   var prevG = cv.games[cv.gIdx];
   var prevKey = prevG ? (prevG.w + '|' + prevG.b) : null;
-  var prevAtEnd = cv.node && cv.node.children.length === 0;
-  var prevDepth = _cvNodeDepth(cv.node);
   cv.games = data.games.map(pgMeta);
   var newIdx = cv.gIdx;
   if (prevKey) { for (var i = 0; i < cv.games.length; i++) { if ((cv.games[i].w + '|' + cv.games[i].b) === prevKey) { newIdx = i; break; } } }
   if (newIdx >= cv.games.length) newIdx = 0;
   cvBuildGameList();
-  cvSelect(newIdx);   // reconstruye la partida (con jugadas nuevas) y vuelve al inicio
-  // Volver a donde estaba: si miraba la última jugada (en vivo), ir al nuevo final; si revisaba
-  // jugadas anteriores, quedarse en la misma para no interrumpir.
-  if (prevAtEnd) cvLast();
-  else { for (var k = 0; k < prevDepth && cv.node.children.length > 0; k++) cvSetNode(cv.node.children[0]); }
+  // Camino rápido: si sigue abierta la MISMA partida, agregar solo las jugadas nuevas sin reconstruir
+  // el árbol (preserva la posición del visitante y las variantes que esté probando).
+  var _hot = (newIdx === cv.gIdx) && _cvLiveExtendInPlace(data.games[newIdx], cv.games[newIdx]);
+  if (!_hot) {
+    // Reconstrucción completa (cambió la partida, o hubo corrección/takeback): comportamiento anterior.
+    var prevAtEnd = cv.node && cv.node.children.length === 0;
+    var prevDepth = _cvNodeDepth(cv.node);
+    cvSelect(newIdx);   // reconstruye la partida (con jugadas nuevas) y vuelve al inicio
+    // Volver a donde estaba: si miraba la última jugada (en vivo), ir al nuevo final; si revisaba
+    // jugadas anteriores, quedarse en la misma para no interrumpir.
+    if (prevAtEnd) cvLast();
+    else { for (var k = 0; k < prevDepth && cv.node.children.length > 0; k++) cvSetNode(cv.node.children[0]); }
+    _cvStampLiveArrival();   // registrar cuándo llegó la última jugada (para la cuenta regresiva)
+    faMaybeAutoLive();   // auto-mostrar/actualizar el gráfico en vivo con la partida nueva
+  }
   var abar = document.getElementById('cv-arg-bar');
   if (abar) _bcRenderArgBar(abar);
-  _cvStampLiveArrival();   // registrar cuándo llegó la última jugada (para la cuenta regresiva)
-  faMaybeAutoLive();   // auto-mostrar/actualizar el gráfico en vivo con la partida nueva
 }
 
 // Dibuja la barra "🔴 En vivo" del visor (o la oculta si la ronda ya no está en curso).
@@ -18724,6 +18911,11 @@ function _tdApplyViewerRefresh(pgnKey) {
   }
   // Actualizar la partida que se MIRA solo si cambió (jugadas nuevas).
   if (newIdx < 0 || data.games[newIdx] === cv.rawPgn) return;
+  // Camino rápido: agregar solo las jugadas nuevas sin reconstruir el árbol (preserva la posición del
+  // visitante y las variantes que esté probando; las jugadas nuevas aparecen en la notación sin moverlo).
+  cv.gIdx = newIdx;
+  if (_cvLiveExtendInPlace(data.games[newIdx], cv.games[newIdx])) return;
+  // Reconstrucción completa (hubo corrección/takeback): comportamiento anterior.
   var prevAtEnd = cv.node && cv.node.children.length === 0;
   var prevDepth = _cvNodeDepth(cv.node);
   cvSelect(newIdx);
@@ -19934,7 +20126,7 @@ function puzOnSolved() {
 function puzReveal() {
   if (puz.solved || puz.revealed) return;
   puz.revealed = true; puzSetResult(puz.cur.id, 'fail');
-  puzSetFb('hint', '👁', 'Esta es la solución. Recorré las jugadas con ◀ ▶.<div style="margin-top:7px;font-weight:600;color:var(--text);font-family:\'Courier New\',monospace">' + escHtml(puzSanLine(puz.cur)) + '</div>');
+  puzSetFb('hint', '👁', 'Esta es la solución. Recorré las jugadas con ◀ ▶.<div style="margin-top:7px;font-weight:600;color:var(--text);font-family:\'Courier New\',monospace">' + cvFanHtml(puzSanLine(puz.cur)) + '</div>');
   puzSetupReview(puz.cur.solution, true);
   puzRenderActions();
   if (typeof sfStart === 'function' && !sf.engine) sfStart();   // precargar el motor (queda oculto hasta que lo piden)
@@ -20182,7 +20374,7 @@ function puzSfRender() {
   var sc = document.getElementById('puz-eval-score');
   sc.textContent = sfScoreStr(puz.anScore, flip); sc.className = 'sf-score ' + sfScoreCls(puz.anScore, flip);
   document.getElementById('puz-eval-depth').textContent = puz.anDepth ? 'prof. ' + puz.anDepth : '';
-  document.getElementById('puz-eval-line').textContent = puzSfPvSan(puz.anPv);
+  document.getElementById('puz-eval-line').innerHTML = cvFanHtml(puzSfPvSan(puz.anPv));
   var pct = sfBarPct(puz.anScore, flip); if (puz.flipped) pct = 100 - pct;
   var fill = document.getElementById('puz-vbar-fill'); if (fill) fill.style.height = pct + '%';
   var vbar = document.getElementById('puz-vbar'); if (vbar) { if (puz.flipped) vbar.classList.add('flipped'); else vbar.classList.remove('flipped'); }
@@ -20243,7 +20435,7 @@ function puzRenderAuthor() {
   });
   if (!altsHtml) altsHtml = '<span style="color:var(--text3)">(ninguna)</span>';
   var linesHtml = (p.acceptedLines || []).map(function(L, i) {
-    return '<div class="alt-chip" style="font-family:inherit;margin-bottom:4px">' + escHtml(puzLineSan(L)) + '<button onclick="puzRemoveLine(' + i + ')" title="Quitar">✕</button></div>';
+    return '<div class="alt-chip" style="font-family:inherit;margin-bottom:4px">' + cvFanHtml(puzLineSan(L)) + '<button onclick="puzRemoveLine(' + i + ')" title="Quitar">✕</button></div>';
   }).join('');
   if (!linesHtml) linesHtml = '<span style="color:var(--text3)">(ninguno)</span>';
   var qopts = [['','—'],['1','1'],['2','2'],['3','3'],['4','4'],['5','5']].map(function(o) {
@@ -20805,7 +20997,7 @@ function pracRenderMoves() {
     else { parts.push((i === 0 ? n + '…' : '') + prac.hist[i]); n++; }
     w = !w;
   }
-  el.innerHTML = parts.join(' ');
+  el.innerHTML = cvFanHtml(parts.join(' '));
 }
 function pracRenderActions() {
   var el = document.getElementById('prac-actions'); if (!el) return;
@@ -21141,7 +21333,7 @@ function pracSfRender() {
   var sc = document.getElementById('prac-eval-score');
   sc.textContent = sfScoreStr(prac.anScore, flip); sc.className = 'sf-score ' + sfScoreCls(prac.anScore, flip);
   document.getElementById('prac-eval-depth').textContent = prac.anDepth ? 'prof. ' + prac.anDepth : '';
-  document.getElementById('prac-eval-line').textContent = pracSfPvSan(prac.anPv);
+  document.getElementById('prac-eval-line').innerHTML = cvFanHtml(pracSfPvSan(prac.anPv));
   var pct = sfBarPct(prac.anScore, flip); if (prac.flipped) pct = 100 - pct;
   var fill = document.getElementById('prac-vbar-fill'); if (fill) fill.style.height = pct + '%';
   var vbar = document.getElementById('prac-vbar'); if (vbar) { if (prac.flipped) vbar.classList.add('flipped'); else vbar.classList.remove('flipped'); }
