@@ -1210,6 +1210,9 @@
     .chess-pres  { font-size:16px; font-weight:700; color:var(--gold); flex-shrink:0; padding:2px 9px; background:var(--panel0); border:1px solid var(--bd22); border-radius:7px; text-shadow:var(--txt-out); }
     .cv-clock { font-size:13px; color:var(--fg0); flex-shrink:0; font-variant-numeric:tabular-nums; letter-spacing:.3px; background:var(--panel0); border:1px solid var(--bd18); border-radius:6px; padding:2px 7px; min-width:0; text-shadow:var(--txt-out); }
     .cv-clock:empty { background:none; border:none; padding:0; }
+    /* Tiempo consumido por cada jugada (del [%clk] de Lichess), alineado a la DERECHA de su celda para
+       que quede parejo aunque la jugada tenga o no símbolo. Fuente sans (más legible que la mono chica). */
+    .cv-mvtime { margin-left:auto; padding-left:6px; font-size:11px; color:var(--text2); font-family:system-ui,-apple-system,'Segoe UI',sans-serif; font-variant-numeric:tabular-nums; }
     /* Reloj del que le toca mover: resaltado SUAVE (verde tenue). Legible en oscuro y claro. */
     .cv-clock-active { background:rgba(70,180,110,0.16); border-color:rgba(95,195,135,0.55); color:#a3ddb9; }
     body.light .cv-clock-active { background:rgba(40,155,90,0.13); border-color:rgba(40,150,85,0.5); color:#1f7a44; }
@@ -1330,7 +1333,7 @@
     .cv-mrow { display: grid; grid-template-columns: 30px 1fr 1fr; align-items: baseline; column-gap: 6px; border-radius: 4px; }
     .cv-mrow:nth-of-type(even) { background: var(--zebra); }
     .cv-mnum { color: var(--fg-c0); text-align: right; font-size: 14px; text-shadow:var(--txt-out); }
-    .cv-mw, .cv-mb { padding: 2px 2px; white-space: nowrap; min-width: 0; }
+    .cv-mw, .cv-mb { padding: 2px 2px; white-space: nowrap; min-width: 0; display: flex; align-items: baseline; }
     .cv-mvar { font-size: 13px; color: var(--fg-c8); padding: 2px 0 4px 30px; line-height: 1.5; text-shadow:var(--txt-out); }
     .cmv { cursor: pointer; padding: 1px 4px; border-radius: 3px; transition: background-color .1s, border-color .1s, color .1s, box-shadow .1s, transform .1s; }
     .cmv:hover { background: var(--border); color: var(--text); }
@@ -1393,6 +1396,8 @@
     #fa-stats:empty { display:none; }
     .fa-stat-col { flex:1; background:var(--panel0); border:1px solid var(--bd22); border-radius:8px; padding:9px 11px; min-width:0; }
     .fa-stat-name { font-size:12px; font-weight:700; color:var(--text); margin-bottom:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .fa-stat-acc { font-size:12px; color:var(--text2); margin-bottom:6px; }
+    .fa-stat-acc b { font-size:16px; color:var(--gold); font-variant-numeric:tabular-nums; }
     .fa-stat-row { font-size:11px; color:var(--text2); margin-bottom:3px; }
     .fa-stat-row span { font-weight:800; }
     .fa-stat-acpl { font-size:11px; color:var(--text3); margin-top:5px; }
@@ -13913,6 +13918,32 @@ function _cvStartLiveClock(wSec, bSec, turn) {
   };
 }
 
+// Control de tiempo del PGN abierto (cacheado por rawPgn): incremento y base en segundos.
+// "5400+30" → { inc:30, base:5400 }. Se lee del header TimeControl; sin dato → inc 0, base null.
+var _cvTCCache = { pgn: undefined, inc: 0, base: null };
+function _cvClockTC() {
+  if (_cvTCCache.pgn === cv.rawPgn) return _cvTCCache;
+  var tc = cv.rawPgn ? (parsePgnHeaders(cv.rawPgn).TimeControl || '') : '';
+  var mi = tc.match(/\+(\d+)\s*$/), mb = tc.match(/(\d+)/);
+  _cvTCCache = { pgn: cv.rawPgn, inc: mi ? parseInt(mi[1], 10) : 0, base: mb ? parseInt(mb[1], 10) : null };
+  return _cvTCCache;
+}
+// Segundos que consumió la jugada de `node`: (reloj previo del mismo bando − reloj de esta jugada) +
+// incremento. Para la 1ª jugada de cada bando usa el tiempo base. Requiere [%clk] en el PGN.
+function _cvMoveThinkSec(node) {
+  if (!node || !node.move || !node.move.clk) return null;
+  var thisSec = _clkToSec(node.move.clk);
+  if (thisSec < 0) return null;
+  var tc = _cvClockTC();
+  var prev = node.parent && node.parent.parent;   // jugada previa del MISMO bando (dos plies atrás)
+  var prevSec;
+  if (prev && prev.move && prev.move.clk) prevSec = _clkToSec(prev.move.clk);
+  else { if (tc.base == null) return null; prevSec = tc.base; }
+  if (prevSec < 0) return null;
+  var think = prevSec - thisSec + tc.inc;
+  return think >= 0 ? think : null;   // negativo (datos raros / reloj que subió) → no mostrar
+}
+
 function cvUpdateClocks() {
   var wEl = document.getElementById('cv-wclock');
   var bEl = document.getElementById('cv-bclock');
@@ -14166,6 +14197,12 @@ function cvFanHtml(san) {
 function cvFan(san) {
   return san ? san.replace(/[KQRBN]/g, function(c){ return _CV_FIG[c]; }) : san;
 }
+// Tiempo que consumió la jugada de `node`, para mostrar chiquito al lado de la jugada en la notación.
+// Solo si la partida trae [%clk] (Lichess); si no hay dato, cadena vacía (no muestra nada).
+function _cvMoveTimeHtml(node) {
+  var t = (typeof _cvMoveThinkSec === 'function') ? _cvMoveThinkSec(node) : null;
+  return t != null ? '<span class="cv-mvtime">' + _secToClk(t) + '</span>' : '';
+}
 
 /*  renderMoveTable: arma la lista de jugadas como tabla nº | blancas | negras.
     Mantiene los id "cvn<id>" en cada jugada para que el resaltado y el clic anden.
@@ -14198,7 +14235,7 @@ function renderMoveTable(root) {
     var moveNum = Math.ceil(depth / 2);
     var isWhite = (depth % 2 === 1);
     var mv = '<span class="cmv" id="cvn' + mc._id + '" onclick="cvGoNode(' + mc._id + ')">'
-           + cvFanHtml(mc.move.san) + '</span>' + nagSpan(mc.move.nag);
+           + cvFanHtml(mc.move.san) + '</span>' + nagSpan(mc.move.nag) + _cvMoveTimeHtml(mc);
     if (isWhite) {
       flush();
       row = { num: moveNum, white: mv, black: '' };
@@ -22796,8 +22833,8 @@ function _faNeedsPassEval(i) {
 // (ACPL) también cuenta solo jugadas confirmadas. Usa los resultados CRUDOS (no interpolados): un
 // hueco no debe generar una calificación.
 function faClassify() {
-  var st = { w:{best:0,exc:0,good:0,inacc:0,mist:0,blun:0,lossSum:0,n:0},
-             b:{best:0,exc:0,good:0,inacc:0,mist:0,blun:0,lossSum:0,n:0} };
+  var st = { w:{best:0,exc:0,good:0,inacc:0,mist:0,blun:0,lossSum:0,acc:null,n:0},
+             b:{best:0,exc:0,good:0,inacc:0,mist:0,blun:0,lossSum:0,acc:null,n:0} };
   var anyBm = false;
   var R = _fa.results;
   for (var i = 0; i < _fa.nodes.length; i++) {
@@ -22825,8 +22862,51 @@ function faClassify() {
     node.move.nag = sym;
     side.n++; side.lossSum += Math.max(0, loss);
   }
+  var _accs = _faGameAccuracy();   // precisión al estilo Lichess (ponderada por volatilidad + armónica)
+  st.w.acc = _accs.w; st.b.acc = _accs.b;
   st.hasBest = anyBm;   // sin pase del motor (evals del PGN de Lichess) no hay ★ → la fila se oculta
   _fa.stats = st;
+}
+
+// Precisión (accuracy %) de cada jugador, al estilo Lichess. Por cada jugada, precisión = la caída de
+// win% del que movió pasada por la curva de Lichess. El total de cada jugador = promedio de (media
+// PONDERADA por la volatilidad de la posición) y (media ARMÓNICA). Así los blunders —que ocurren en
+// posiciones volátiles— pesan de verdad, en vez de diluirse entre muchas jugadas casi perfectas (que
+// era el defecto del promedio simple). Solo cuenta jugadas confirmadas, igual que la clasificación.
+function _faGameAccuracy() {
+  var nodes = _fa.nodes, R = _fa.results;
+  if (!nodes || !nodes.length) return { w:null, b:null };
+  // Secuencia de win% (POV blancas) posición por posición. wp[0] = inicio (~+0.2); huecos: arrastra el último.
+  var wp = [ _faWinP({cp:20}) ], last = wp[0];
+  for (var i = 0; i < nodes.length; i++) { if (R[i] != null) last = _faWinP(R[i]); wp.push(last); }
+  var moves = [];
+  for (var j = 0; j < nodes.length; j++) {
+    if (!nodes[j].move) continue;
+    var rA = R[j], rB = j === 0 ? {cp:20} : R[j-1];
+    if (!_faSettled(rA, j) || !_faSettled(rB, j-1)) continue;
+    var whiteMoved = (nodeDepth(nodes[j]) % 2 === 1);
+    var dwin = whiteMoved ? (_faWinP(rB) - _faWinP(rA)) : (_faWinP(rA) - _faWinP(rB));
+    var acc = Math.max(0, Math.min(100, 103.1668 * Math.exp(-0.04354 * Math.max(0, dwin)) - 3.1669));
+    moves.push({ acc: acc, white: whiteMoved, pos: j });
+  }
+  if (!moves.length) return { w:null, b:null };
+  var winLen = Math.max(2, Math.min(8, Math.round(nodes.length / 10)));
+  function stdev(a) { var m = 0, k; for (k=0;k<a.length;k++) m += a[k]; m /= a.length; var v = 0; for (k=0;k<a.length;k++) v += (a[k]-m)*(a[k]-m); return Math.sqrt(v/a.length); }
+  function weightAt(pos) { var s = Math.max(0, Math.min(wp.length - winLen, pos)); return Math.min(12, Math.max(0.5, stdev(wp.slice(s, s + winLen)))); }
+  function agg(list) {
+    if (!list.length) return null;
+    var wSum = 0, wAcc = 0, hSum = 0;
+    for (var k = 0; k < list.length; k++) {
+      var wgt = weightAt(list[k].pos);
+      wSum += wgt; wAcc += list[k].acc * wgt;
+      hSum += 1 / Math.max(list[k].acc, 1);
+    }
+    var weighted = wAcc / wSum, harmonic = list.length / hSum;
+    return Math.round((weighted + harmonic) / 2);
+  }
+  var W = [], B = [];
+  for (var m2 = 0; m2 < moves.length; m2++) (moves[m2].white ? W : B).push(moves[m2]);
+  return { w: agg(W), b: agg(B) };
 }
 
 // Recalifica y, SOLO si cambió algún símbolo, re-renderiza la lista de jugadas + stats + badge.
@@ -22865,12 +22945,14 @@ function faRenderStats() {
   var hasBest = !!_fa.stats.hasBest;
   function col(name, s) {
     var acpl = s.n ? Math.round(s.lossSum / s.n) : 0;
+    var acc = (s.acc != null) ? s.acc : null;
     return '<div class="fa-stat-col">'
       + '<div class="fa-stat-name">' + name + '</div>'
+      + (acc != null ? '<div class="fa-stat-acc">Precisión <b>' + acc + '%</b></div>' : '')
       + (hasBest ? '<div class="fa-stat-row"><span class="mq-best">★</span> ' + s.best + ' mejores jugadas</div>' : '')
       + '<div class="fa-stat-row"><span class="mq-inaccuracy">?!</span> ' + s.inacc + ' imprecisiones</div>'
       + '<div class="fa-stat-row"><span class="mq-mistake">?</span> ' + s.mist + ' errores</div>'
-      + '<div class="fa-stat-row"><span class="mq-blunder">??</span> ' + s.blun + ' blunders</div>'
+      + '<div class="fa-stat-row"><span class="mq-blunder">??</span> ' + s.blun + ' colgadas</div>'
       + '<div class="fa-stat-acpl">Pérdida media: <b>' + acpl + '</b> cp</div>'
       + '</div>';
   }
