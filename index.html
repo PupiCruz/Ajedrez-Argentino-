@@ -10086,6 +10086,48 @@ function pgnNameToNatural(s) {
   return s;
 }
 
+// ¿El token `t` está EXPLICADO por alguno de `others`? Vale igual, truncado o inicial: las bases
+// cortan y abrevian los nombres ("Di" por "Diego", "F." por "Felix"), así que un token más corto
+// que sea prefijo de otro cuenta como el mismo.
+function _tokExplained(t, others) {
+  for (var i = 0; i < others.length; i++) {
+    var o = others[i];
+    if (o === t) return true;
+    if (t.length >= 2 && o.indexOf(t) === 0) return true;   // "di" ⊂ "diego"
+    if (o.length >= 2 && t.indexOf(o) === 0) return true;
+    if (_tok1Edit(t, o)) return true;                       // errata de tipeo: "pereira" ≈ "pereyra"
+  }
+  return false;
+}
+// ¿Dos tokens difieren en UNA sola letra (cambiada, agregada o borrada)? Solo para tokens largos
+// (5+), donde una diferencia mínima es casi seguro una errata de la planilla y no otra persona:
+// "pereira"/"pereyra", "aalejandro"/"alejandro". En tokens cortos NO se aplica, porque ahí una
+// letra sí distingue nombres distintos ("ana"/"ane", "luis"/"lucas").
+function _tok1Edit(a, b) {
+  var la = a.length, lb = b.length;
+  if (Math.abs(la - lb) > 1 || Math.min(la, lb) < 5) return false;
+  var i = 0, j = 0, diff = 0;
+  while (i < la && j < lb) {
+    if (a.charAt(i) === b.charAt(j)) { i++; j++; continue; }
+    if (++diff > 1) return false;
+    if (la > lb) i++; else if (lb > la) j++; else { i++; j++; }
+  }
+  if (i < la || j < lb) diff++;
+  return diff <= 1;
+}
+// ¿Dos nombres se contradicen? Solo si CADA lado aporta un token que el otro no explica. Que un
+// lado tenga tokens de más es normal (segundo apellido o segundo nombre que una base soltó) y NO
+// es contradicción; que los dos tengan uno propio, sí (son dos personas distintas, típicamente
+// hermanos con los mismos apellidos).
+function _namesConflict(aTokens, bTokens) {
+  if (!aTokens.length || !bTokens.length) return false;
+  var aExtra = false, bExtra = false;
+  for (var i = 0; i < aTokens.length; i++) if (!_tokExplained(aTokens[i], bTokens)) { aExtra = true; break; }
+  if (!aExtra) return false;
+  for (var j = 0; j < bTokens.length; j++) if (!_tokExplained(bTokens[j], aTokens)) { bExtra = true; break; }
+  return bExtra;
+}
+
 // Devuelve true si el nombre del PGN corresponde al jugador p
 // Estrategia:
 //   1) Si hay WhiteFideId/BlackFideId, matchea por fide_id
@@ -10119,6 +10161,15 @@ function pgnNameMatchesPlayer(pgnName, player) {
 
   // El apellido del jugador debe estar en el PGN
   if (pgnNatural.indexOf(playerLast) < 0 && pgnNorm.indexOf(playerLast) < 0) return false;
+
+  // CANDADO ANTI-HERMANOS. Los dos nombres se CONTRADICEN si cada uno aporta un nombre propio que
+  // el otro no explica (ni truncado ni inicial). Caso real: el jugador "Agustin Duarte Fernandez"
+  // y su hermano "Duarte Fernandez Perseo" comparten los DOS apellidos, y como la app supone que
+  // solo el último token es apellido, tomaba "duarte" como nombre de pila → daba match y las
+  // partidas del hermano caían en el perfil. "agustin" vs "perseo" es la prueba de que no son la
+  // misma persona. Que a un lado le FALTEN tokens (apellido compuesto acortado, nombre truncado,
+  // inicial) sigue siendo válido: el veto pide que ambos lados aporten algo irreconciliable.
+  if (_namesConflict(playerTokens, pgnTokens)) return false;
 
   // Si el jugador tiene nombre(s), al menos uno debe coincidir
   if (playerFirst.length === 0) return true; // solo apellido, alcanza
