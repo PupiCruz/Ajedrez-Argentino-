@@ -18179,9 +18179,20 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     crUrl = _cat.crurl || '';
     chesscomUrl = '';            // las categorías no llevan chess.com (se puede ampliar)
     pgnGames = [];
-    // Partidas subidas al pool para ESTA categoría (estampadas "<Torneo> · <Categoría>"). Si la
-    // categoría además transmite por Lichess, _tdLoadLiveGames las reemplaza con el set completo.
-    games = _poolGamesForCat(name, _cat.name, tourRng);
+    // Partidas de ESTA categoría (estampadas "<Torneo> · <Categoría>"). Vienen de DOS lados y hay
+    // que juntar los dos, porque cada modo tiene solo uno:
+    //   · las YA PUBLICADAS, que llegan en `games` (data/t/<id>.json) mezcladas con las de las otras
+    //     categorías → se filtran por el evento de la categoría activa. En la web publicada esta es
+    //     la ÚNICA fuente (el pool del autor no existe ahí).
+    //   · las del POOL en memoria (_memTournaments), que solo existe en modo autor.
+    // Antes acá se hacía `games = _poolGamesForCat(...)` a secas: en modo autor andaba, pero en la
+    // web publicada tiraba las partidas del archivo y la categoría salía SIN partidas.
+    // Si la categoría además transmite por Lichess, _tdLoadLiveGames las reemplaza con el set completo.
+    var _catEv = _normEvName(_catEventName(name, _cat.name));
+    var _catFile = (games || []).filter(function(p) { return _normEvName(parsePgnHeaders(p).Event || '') === _catEv; });
+    var _catPool = _poolGamesForCat(name, _cat.name, tourRng);
+    games = dedupGamesByMoves(_catFile.concat(_catPool).map(function(p) { return { pgn: p }; }), function(w) { return w.pgn; })
+              .map(function(w) { return w.pgn; });
     catSuffix = '_c' + activeCat;
   }
 
