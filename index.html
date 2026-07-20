@@ -2237,6 +2237,9 @@
     font-size: 13px; line-height: 1.8; min-height: 64px; max-height: 190px; overflow-y: auto; color: var(--fg-d0);
   }
   .gc-moves .gc-num { color: var(--text3); margin-left: 6px; }
+  .gc-moves .gc-mv { cursor: pointer; padding: 1px 4px; border-radius: 4px; }
+  .gc-moves .gc-mv:hover { background: var(--gold-bg); color: var(--gold); }
+  .gc-moves .gc-mv.cur { background: var(--gold); color: var(--bg3); font-weight: 700; }
   .gc-btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
   .gc-btn {
     padding: 8px 12px; background: var(--gl30); border: 1px solid var(--border); color: var(--fg-d8);
@@ -2266,12 +2269,19 @@
           </div>
         </div>
         <div class="gc-btns">
-          <button class="gc-btn" onclick="gcUndo()">↶ Deshacer</button>
-          <button class="gc-btn" onclick="gcFlip()">⇅ Girar</button>
-          <button class="gc-btn" onclick="gcResetMoves()">✕ Borrar jugadas</button>
+          <button class="gc-btn" onclick="gcNavFirst()" title="Ir al principio">⏮</button>
+          <button class="gc-btn" onclick="gcNavPrev()" title="Jugada anterior (←)">◀</button>
+          <span id="gc-nav-pos" style="font-size:12px;color:var(--text3);align-self:center;min-width:44px;text-align:center"></span>
+          <button class="gc-btn" onclick="gcNavNext()" title="Jugada siguiente (→)">▶</button>
+          <button class="gc-btn" onclick="gcNavLast()" title="Ir al final">⏭</button>
           <span id="gc-turn" style="font-size:12px;color:var(--text3);align-self:center;margin-left:auto"></span>
         </div>
-        <div class="gc-sep">Jugadas <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text3)">— tocá una jugada para volver ahí y rehacer desde esa</span></div>
+        <div class="gc-btns">
+          <button class="gc-btn" onclick="gcUndo()" title="Borra la última jugada cargada">↶ Deshacer</button>
+          <button class="gc-btn" onclick="gcFlip()">⇅ Girar</button>
+          <button class="gc-btn" onclick="gcResetMoves()">✕ Borrar jugadas</button>
+        </div>
+        <div class="gc-sep">Jugadas <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text3)">— tocá una para verla; para corregir, retrocedé y jugá la buena</span></div>
         <div class="gc-moves" id="gc-moves"></div>
       </div>
       <div class="gc-panel">
@@ -11824,13 +11834,21 @@ function dbPoolImport() {
    pasar por Lichess para conseguir el PGN. El tablero reusa el render de casillas del visor
    (cvCellInner + las clases .csq/.mf/.mt/.sel/.legal) y el selector de promoción del visor.
 ═══════════════════════════════════════════════════════ */
-var gc = { chess: null, sans: [], moves: [], sel: null, legalDests: [], flipped: false, saved: 0 };
+// gc.sans/moves = la partida ENTERA; gc.fens[i] = posición después de i jugadas; gc.viewIdx = cuántas
+// jugadas se están mostrando (0 = posición inicial, sans.length = final). Navegar solo cambia
+// viewIdx: no toca la partida. Si se juega una jugada estando retrocedido, ESA sí reemplaza lo que
+// venía después (es la forma natural de corregir una jugada mal reproducida).
+var gc = { chess: null, sans: [], moves: [], fens: [], viewIdx: 0, sel: null, legalDests: [], flipped: false, saved: 0 };
 var _gcBoardBound = false, _gcBoardOrient = null;
 var _GC_TITLES = ['', 'GM', 'IM', 'FM', 'CM', 'WGM', 'WIM', 'WFM', 'WCM'];
 
+function gcResetGame() {
+  gc.chess = new Chess(); gc.sans = []; gc.moves = []; gc.fens = [gc.chess.fen()];
+  gc.viewIdx = 0; gc.sel = null; gc.legalDests = [];
+}
 function gcOpen() {
   if (_ondemand) return;                       // herramienta de autor: no existe en la web publicada
-  gc.chess = new Chess(); gc.sans = []; gc.moves = []; gc.sel = null; gc.legalDests = [];
+  gcResetGame();
   _gcBoardBound = false; _gcBoardOrient = null;
   // Selects que se llenan una sola vez por apertura (los torneos pueden haber cambiado).
   var tSel = document.getElementById('gc-tour');
@@ -11858,7 +11876,8 @@ function gcUpdateCount() {
 /* ── Tablero ── */
 function gcRenderBoard(anim) {
   var el = document.getElementById('gc-board'); if (!el || !gc.chess) return;
-  var bd = gc.chess.board(), last = gc.moves.length ? gc.moves[gc.moves.length - 1] : null;
+  // Se dibuja la posición que se está MIRANDO (viewIdx), no necesariamente la última.
+  var bd = gc.chess.board(), last = gc.viewIdx > 0 ? gc.moves[gc.viewIdx - 1] : null;
   var lf = last ? last.from : '', lt = last ? last.to : '';
   var FL = ['a','b','c','d','e','f','g','h'], cells = el.children;
   var full = cells.length !== 64 || _gcBoardOrient !== gc.flipped;
@@ -11893,18 +11912,98 @@ function gcRenderBoard(anim) {
   }
   if (anim && last) _cvSlidePiece(el, last.from, last.to);
   var t = document.getElementById('gc-turn');
-  if (t) t.textContent = 'Mueven ' + (gc.chess.turn() === 'w' ? 'blancas' : 'negras') + ' · jugada ' + (Math.floor(gc.sans.length / 2) + 1);
+  if (t) t.textContent = (gc.viewIdx < gc.sans.length ? '⏸ mirando la jugada ' + gc.viewIdx + ' de ' + gc.sans.length + ' · ' : '')
+    + 'mueven ' + (gc.chess.turn() === 'w' ? 'blancas' : 'negras');
+  var nv = document.getElementById('gc-nav-pos');
+  if (nv) nv.textContent = gc.sans.length ? (gc.viewIdx + ' / ' + gc.sans.length) : '';
 }
+/* ── Recorrer la partida (no borra nada: solo cambia qué posición se mira) ── */
+function gcSetView(i) {
+  if (!gc.fens.length) return;
+  i = Math.max(0, Math.min(i, gc.sans.length));
+  gc.viewIdx = i;
+  gc.chess = new Chess(gc.fens[i]);
+  gc.sel = null; gc.legalDests = [];
+  gcRenderBoard(true); gcRenderMoves();
+}
+function gcNavFirst() { gcSetView(0); }
+function gcNavPrev()  { gcSetView(gc.viewIdx - 1); }
+function gcNavNext()  { gcSetView(gc.viewIdx + 1); }
+function gcNavLast()  { gcSetView(gc.sans.length); }
+// Flechas ← → para recorrer la partida (solo con el panel abierto y fuera de los campos de texto).
+document.addEventListener('keydown', function(e) {
+  var ov = document.getElementById('gc-overlay');
+  if (!ov || !ov.classList.contains('open')) return;
+  if (/^(INPUT|TEXTAREA|SELECT)$/.test((e.target && e.target.tagName) || '')) return;
+  if (e.key === 'ArrowLeft')  { e.preventDefault(); gcNavPrev(); }
+  if (e.key === 'ArrowRight') { e.preventDefault(); gcNavNext(); }
+});
 function gcBindBoard() {
   if (_gcBoardBound) return; _gcBoardBound = true;
   var el = document.getElementById('gc-board');
   el.addEventListener('click', function(e) {
+    if (Date.now() - _gcDragEndTs < 300) return;   // el clic que sigue a soltar un arrastre no cuenta
     var t = e.target.closest('[data-sq]'); if (!t) return; gcHandleClick(t.getAttribute('data-sq'));
   });
+  gcInitDrag(el);
   el.addEventListener('touchend', function(e) {
     e.preventDefault(); var t = e.changedTouches[0], x = document.elementFromPoint(t.clientX, t.clientY);
     var sqEl = x ? x.closest('[data-sq]') : null; if (sqEl) gcHandleClick(sqEl.getAttribute('data-sq'));
   }, { passive: false });
+}
+// Arrastrar piezas (mismo patrón que Practicar/Ejercicios: se clona la pieza y el clon sigue al
+// puntero en su propia capa GPU). Solo con mouse: en touch se mueve tocando origen y destino, que
+// es más preciso en pantalla chica. Si el arrastre no llegó a moverse, se trata como un clic.
+// _gcDragEndTs: momento del último arrastre. El clic que el navegador dispara al soltar se ignora
+// por cercanía en el tiempo. Se usa una MARCA DE TIEMPO y no un flag booleano a propósito: si el
+// arrastre termina fuera del tablero no hay clic que consuma el flag, y un booleano quedaría
+// pegado tragándose el clic siguiente (el bug que apareció al probar).
+var _gcDrag = null, _gcDragEndTs = 0, _gcDragDocBound = false;
+function gcInitDrag(boardEl) {
+  if (!window.matchMedia('(pointer: fine)').matches) return;
+  if (boardEl._gcDragBound) return; boardEl._gcDragBound = true;
+  boardEl.addEventListener('mousedown', function(e) {
+    if (e.button !== 0 || !gc.chess) return;
+    var sqEl = e.target.closest('[data-sq]'); if (!sqEl) return;
+    var sq = sqEl.getAttribute('data-sq'), pc = gc.chess.get(sq);
+    if (!pc || pc.color !== gc.chess.turn()) return;
+    // OJO: cvCellInner le pone data-sq TAMBIÉN al <img>, así que closest() puede devolver la
+    // imagen en vez de la casilla → buscar el img adentro daría null. Se contempla el caso.
+    var img = (e.target.tagName === 'IMG' && e.target.classList.contains('cpc')) ? e.target : sqEl.querySelector('img.cpc');
+    if (!img) return;
+    // Medir tamaño y src ANTES de re-renderizar: gcRenderBoard() puede reemplazar el innerHTML y
+    // dejar este img desprendido (rect 0) → el clon saldría invisible.
+    var rect = img.getBoundingClientRect(), sz = rect.width, imgSrc = img.src;
+    gc.sel = sq; gc.legalDests = gc.chess.moves({ square: sq, verbose: true }).map(function(m) { return m.to; });
+    gcRenderBoard();
+    var clone = document.createElement('img');
+    clone.src = imgSrc;
+    clone.style.cssText = 'position:fixed;pointer-events:none;z-index:9999;width:' + sz + 'px;height:' + sz + 'px;left:0;top:0;transform:translate3d(' + (e.clientX-sz/2) + 'px,' + (e.clientY-sz/2) + 'px,0);will-change:transform;opacity:.88;';
+    document.body.appendChild(clone);
+    var live = document.querySelector('#gc-board [data-sq="' + sq + '"] img.cpc'); if (live) live.style.opacity = '.22';
+    _gcDrag = { sq: sq, clone: clone, sx: e.clientX, sy: e.clientY, moved: false };
+    e.preventDefault();
+  });
+  if (_gcDragDocBound) return; _gcDragDocBound = true;
+  document.addEventListener('mousemove', function(e) {
+    if (!_gcDrag) return;
+    var sz = parseFloat(_gcDrag.clone.style.width);
+    _gcDrag.clone.style.transform = 'translate3d(' + (e.clientX-sz/2) + 'px,' + (e.clientY-sz/2) + 'px,0)';
+    if (!_gcDrag.moved && (Math.abs(e.clientX-_gcDrag.sx) > 4 || Math.abs(e.clientY-_gcDrag.sy) > 4)) _gcDrag.moved = true;
+  });
+  document.addEventListener('mouseup', function(e) {
+    if (!_gcDrag) return;
+    var d = _gcDrag; _gcDrag = null;
+    var lp = document.querySelector('#gc-board [data-sq="' + d.sq + '"] img.cpc'); if (lp) lp.style.opacity = '';
+    if (d.clone.parentNode) d.clone.parentNode.removeChild(d.clone);
+    if (!d.moved) return;                 // no se arrastró: dejar que el clic haga lo suyo (queda seleccionada)
+    _gcDragEndTs = Date.now();
+    var x = document.elementFromPoint(e.clientX, e.clientY), sqEl = x ? x.closest('[data-sq]') : null;
+    if (!sqEl || sqEl.getAttribute('data-sq') === d.sq) { gc.sel = null; gc.legalDests = []; gcRenderBoard(); return; }
+    var to = sqEl.getAttribute('data-sq');
+    if (gc.legalDests.indexOf(to) >= 0) gcTryMove(d.sq, to);
+    else { gc.sel = null; gc.legalDests = []; gcRenderBoard(); }
+  });
 }
 function gcHandleClick(sq) {
   if (!gc.chess) return;
@@ -11938,30 +12037,31 @@ function gcApplyMove(from, to, promo) {
   var m = gc.chess.move({ from: from, to: to, promotion: promo || 'q' });
   gc.sel = null; gc.legalDests = [];
   if (!m) { gcRenderBoard(); return; }
-  gc.sans.push(m.san); gc.moves.push({ from: m.from, to: m.to });
+  // Jugar estando retrocedido REEMPLAZA lo que venía después: así se corrige una jugada mal
+  // reproducida sin tener que borrar la partida entera.
+  if (gc.viewIdx < gc.sans.length) {
+    gc.sans = gc.sans.slice(0, gc.viewIdx);
+    gc.moves = gc.moves.slice(0, gc.viewIdx);
+    gc.fens = gc.fens.slice(0, gc.viewIdx + 1);
+  }
+  gc.sans.push(m.san); gc.moves.push({ from: m.from, to: m.to }); gc.fens.push(gc.chess.fen());
+  gc.viewIdx = gc.sans.length;
   gcRenderBoard(); gcRenderMoves(); gcRefreshSave();
   try { if (typeof cvPlayMoveSound === 'function') cvPlayMoveSound(m.san); } catch (e) {}
 }
+// Borra la ÚLTIMA jugada (distinto de retroceder: acá la jugada se pierde).
 function gcUndo() {
   if (!gc.sans.length) return;
-  gc.chess.undo(); gc.sans.pop(); gc.moves.pop();
-  gc.sel = null; gc.legalDests = [];
-  gcRenderBoard(); gcRenderMoves(); gcRefreshSave();
-}
-// Volver a ANTES de la jugada `i` (0-based): se descartan esa y las siguientes, para rehacer desde
-// ahí. Es el arreglo de "pifié al reproducir": no hay que borrar toda la partida.
-function gcTruncate(i) {
-  if (i < 0 || i >= gc.sans.length) return;
-  var keep = gc.sans.slice(0, i);
-  gc.chess = new Chess(); gc.moves = []; gc.sans = [];
-  keep.forEach(function(san) { var m = gc.chess.move(san); if (m) { gc.sans.push(m.san); gc.moves.push({ from: m.from, to: m.to }); } });
+  gc.sans.pop(); gc.moves.pop(); gc.fens.pop();
+  gc.viewIdx = Math.min(gc.viewIdx, gc.sans.length);
+  gc.chess = new Chess(gc.fens[gc.viewIdx]);
   gc.sel = null; gc.legalDests = [];
   gcRenderBoard(); gcRenderMoves(); gcRefreshSave();
 }
 function gcFlip() { gc.flipped = !gc.flipped; gcRenderBoard(); }
 function gcResetMoves() {
   if (gc.sans.length && !confirm('¿Borrar las ' + gc.sans.length + ' jugadas cargadas?')) return;
-  gc.chess = new Chess(); gc.sans = []; gc.moves = []; gc.sel = null; gc.legalDests = [];
+  gcResetGame();
   gcRenderBoard(); gcRenderMoves(); gcRefreshSave();
 }
 function gcRenderMoves() {
@@ -11970,12 +12070,13 @@ function gcRenderMoves() {
   var h = '';
   for (var i = 0; i < gc.sans.length; i++) {
     if (i % 2 === 0) h += '<span class="gc-num">' + (i/2 + 1) + '.</span> ';
-    h += '<span onclick="gcTruncate(' + i + ')" title="Volver acá y rehacer desde esta jugada" style="cursor:pointer;padding:1px 4px;border-radius:4px"'
-       + ' onmouseover="this.style.background=\'var(--gold-bg)\';this.style.color=\'var(--gold)\'"'
-       + ' onmouseout="this.style.background=\'\';this.style.color=\'\'">' + cvFanHtml(gc.sans[i]) + '</span> ';
+    // Tocar una jugada = MIRAR esa posición (no borra). Para corregirla, se retrocede a la jugada
+    // anterior y se juega la buena: recién ahí se reemplaza lo que seguía.
+    h += '<span class="gc-mv' + (gc.viewIdx === i + 1 ? ' cur' : '') + '" onclick="gcSetView(' + (i+1) + ')" title="Ver esta posición">' + cvFanHtml(gc.sans[i]) + '</span> ';
   }
   el.innerHTML = h;
-  el.scrollTop = el.scrollHeight;
+  var cur = el.querySelector('.gc-mv.cur');
+  if (cur && cur.scrollIntoView) cur.scrollIntoView({ block: 'nearest' }); else el.scrollTop = el.scrollHeight;
 }
 
 /* ── Encabezado + guardado ── */
@@ -12058,7 +12159,7 @@ function gcSave() {
   // siempre se cargan varias del mismo torneo seguidas) y se limpia lo que cambia en cada partida.
   ['gc-wname', 'gc-bname', 'gc-welo', 'gc-belo', 'gc-wfide', 'gc-bfide'].forEach(function(id) { var e = document.getElementById(id); if (e) e.value = ''; });
   ['gc-wtitle', 'gc-btitle', 'gc-result'].forEach(function(id) { var e = document.getElementById(id); if (e) e.value = ''; });
-  gc.chess = new Chess(); gc.sans = []; gc.moves = []; gc.sel = null; gc.legalDests = [];
+  gcResetGame();
   gcRenderBoard(); gcRenderMoves(); gcRefreshSave();
   var wn = document.getElementById('gc-wname'); if (wn) wn.focus();
 }
