@@ -11974,7 +11974,9 @@ function gcInitDrag(boardEl) {
     // Medir tamaño y src ANTES de re-renderizar: gcRenderBoard() puede reemplazar el innerHTML y
     // dejar este img desprendido (rect 0) → el clon saldría invisible.
     var rect = img.getBoundingClientRect(), sz = rect.width, imgSrc = img.src;
+    var _wasSel = (gc.sel === sq);   // ya seleccionada → dejar que el click la suelte
     gc.sel = sq; gc.legalDests = gc.chess.moves({ square: sq, verbose: true }).map(function(m) { return m.to; });
+    if (!_wasSel) _markPressSelect(sq);
     gcRenderBoard();
     var clone = document.createElement('img');
     clone.src = imgSrc;
@@ -12008,7 +12010,7 @@ function gcInitDrag(boardEl) {
 function gcHandleClick(sq) {
   if (!gc.chess) return;
   if (gc.sel) {
-    if (sq === gc.sel) { gc.sel = null; gc.legalDests = []; gcRenderBoard(); return; }
+    if (sq === gc.sel) { if (_isPressSelect(sq)) return; gc.sel = null; gc.legalDests = []; gcRenderBoard(); return; }
     if (gc.legalDests.indexOf(sq) >= 0) { gcTryMove(gc.sel, sq); return; }
   }
   var pc = gc.chess.get(sq);
@@ -15721,8 +15723,12 @@ function cvInitDrag(boardEl) {
     if (!pc || pc.color !== cv.chess.turn()) return;
     var img = sqEl.querySelector('img.cpc');
     if (!img) return;
+    // Si la pieza YA estaba seleccionada, no se marca: así el click que viene la deselecciona
+    // (volver a tocar la misma pieza = soltarla, como en Lichess).
+    var _wasSel = (cv.sel === sq);
     cv.sel = sq;
     cv.legalDests = cv.chess.moves({ square: sq, verbose: true }).map(function(m){ return m.to; });
+    if (!_wasSel) _markPressSelect(sq);
     cvApplyBoardClasses();
     var rect = img.getBoundingClientRect(), sz = rect.width;
     var clone = document.createElement('img');
@@ -15785,6 +15791,22 @@ function cvApplyBoardClasses() {
   });
 }
 
+/* ── Clic-clic (casilla origen → casilla destino) ──────────────────────────────
+   Un clic REAL es mousedown + mouseup + click. El mousedown del arrastre YA deja la pieza
+   seleccionada (hace falta para poder arrastrarla), así que cuando después llega el `click` sobre
+   esa MISMA casilla, el manejador lo tomaba como "tocaste de nuevo la casilla seleccionada" y la
+   deseleccionaba: se veía el resaltado un instante y se apagaba, y el clic en el destino ya no
+   hacía nada. Acá se recuerda qué casilla seleccionó el último mousedown para que ese primer click
+   NO deseleccione. Se consume de una: el segundo clic sobre la misma casilla sí deselecciona.
+   Es común a los 4 tableros (visor, ejercicios, practicar y cargar partida a mano). */
+var _pressSel = null, _pressTs = 0;
+function _markPressSelect(sq) { _pressSel = sq; _pressTs = Date.now(); }
+function _isPressSelect(sq) {
+  if (_pressSel !== sq || Date.now() - _pressTs > 600) return false;
+  _pressSel = null;
+  return true;
+}
+
 /* ── Manejo del clic en casilla ── */
 function cvHandleClick(sq) {
   if (!cv.chess) return;
@@ -15797,6 +15819,7 @@ function cvHandleClick(sq) {
 
   if (cv.sel) {
     if (sq === cv.sel) {
+      if (_isPressSelect(sq)) return;          // es el click del mismo gesto que la seleccionó
       cv.sel = null; cv.legalDests = [];
       cvApplyBoardClasses(); return;
     }
@@ -21301,7 +21324,7 @@ function puzBindBoard() {
   if (_puzBoardBound) return; _puzBoardBound = true;
   var el = document.getElementById('puz-board');
   el.addEventListener('click', function(e) {
-    if (_puzDragSuppress) { _puzDragSuppress = false; return; }
+    if (Date.now() - _puzDragEndTs < 300) return;
     var t = e.target.closest('[data-sq]'); if (!t) return; puzHandleClick(t.getAttribute('data-sq'));
   });
   el.addEventListener('touchend', function(e) {
@@ -21318,7 +21341,7 @@ function puzHandleClick(sq) {
   if (puz.anOn) { puzFreeClick(sq, puzAnalysisMove); return; }   // con el módulo abierto: explorar variantes
   if (puzLocked()) return;
   if (puz.sel) {
-    if (sq === puz.sel) { puz.sel = null; puz.legalDests = []; puzRenderBoard(); return; }
+    if (sq === puz.sel) { if (_isPressSelect(sq)) return; puz.sel = null; puz.legalDests = []; puzRenderBoard(); return; }
     if (puz.legalDests.indexOf(sq) >= 0) { puzTryMove(puz.sel, sq); return; }
   }
   var pc = puz.chess.get(sq);
@@ -21329,7 +21352,7 @@ function puzHandleClick(sq) {
 // En modo autor: selección/jugada libre (la jugada se procesa con `moveFn`).
 function puzFreeClick(sq, moveFn) {
   if (puz.sel) {
-    if (sq === puz.sel) { puz.sel = null; puz.legalDests = []; puzRenderBoard(); return; }
+    if (sq === puz.sel) { if (_isPressSelect(sq)) return; puz.sel = null; puz.legalDests = []; puzRenderBoard(); return; }
     if (puz.legalDests.indexOf(sq) >= 0) { moveFn(puz.sel, sq); return; }
   }
   var pc = puz.chess.get(sq);
@@ -21938,7 +21961,11 @@ function puzSaveJson() {
 }
 
 /* ── Drag & drop del solver (solo PC) ── */
-var _puzDrag = null, _puzDragSuppress = false, _puzDragDocBound = false;
+// _puzDragEndTs: momento del último arrastre, para ignorar el clic que dispara el navegador al
+// soltar. ANTES era un flag booleano que se limpiaba en ese clic; si el arrastre terminaba FUERA
+// del tablero, ese clic nunca llegaba al tablero y el flag quedaba pegado → el siguiente intento
+// de mover con clic-clic se lo tragaba en silencio y parecía que el clic no funcionaba.
+var _puzDrag = null, _puzDragEndTs = 0, _puzDragDocBound = false;
 function puzInitDrag(boardEl) {
   if (!window.matchMedia('(pointer: fine)').matches) return;
   if (boardEl._pzDragBound) return; boardEl._pzDragBound = true;
@@ -21951,7 +21978,9 @@ function puzInitDrag(boardEl) {
     // Medir tamaño y src ANTES de re-renderizar: puzRenderBoard() reemplaza el innerHTML y desprende
     // este img, y getBoundingClientRect() sobre un nodo desprendido da 0 → el clon quedaba invisible.
     var rect = img.getBoundingClientRect(), sz = rect.width, imgSrc = img.src;
+    var _wasSel = (puz.sel === sq);   // ya seleccionada → dejar que el click la suelte
     puz.sel = sq; puz.legalDests = puz.chess.moves({ square:sq, verbose:true }).map(function(m){ return m.to; });
+    if (!_wasSel) _markPressSelect(sq);
     puzRenderBoard();
     var clone = document.createElement('img');
     clone.src = imgSrc;
@@ -21973,7 +22002,7 @@ function puzInitDrag(boardEl) {
     var _lp = document.querySelector('#puz-board [data-sq="' + d.sq + '"] img.cpc'); if (_lp) _lp.style.opacity = '';   // restaurar la pieza (con el diff, si no se movió no se rebuildea → quedaba semitransparente)
     if (d.clone.parentNode) d.clone.parentNode.removeChild(d.clone);
     if (!d.moved) { return; }
-    _puzDragSuppress = true;
+    _puzDragEndTs = Date.now();
     var x = document.elementFromPoint(e.clientX, e.clientY), sqEl = x ? x.closest('[data-sq]') : null;
     if (!sqEl || sqEl.getAttribute('data-sq') === d.sq) { puz.sel = null; puz.legalDests = []; puzRenderBoard(); return; }
     var to = sqEl.getAttribute('data-sq');
@@ -22366,7 +22395,7 @@ function pracBindBoard() {
   if (_pracBoardBound) return; _pracBoardBound = true;
   var el = document.getElementById('prac-board');
   el.addEventListener('click', function(e) {
-    if (_pracDragSuppress) { _pracDragSuppress = false; return; }
+    if (Date.now() - _pracDragEndTs < 300) return;
     var t = e.target.closest('[data-sq]'); if (!t) return; pracHandleClick(t.getAttribute('data-sq'));
   });
   el.addEventListener('touchend', function(e) {
@@ -22380,7 +22409,7 @@ function pracLocked() { return !prac.chess || prac.over || prac.busy || !pracIsL
 function pracHandleClick(sq) {
   if (pracLocked()) return;
   if (prac.sel) {
-    if (sq === prac.sel) { prac.sel = null; prac.legalDests = []; pracRenderBoard(); return; }
+    if (sq === prac.sel) { if (_isPressSelect(sq)) return; prac.sel = null; prac.legalDests = []; pracRenderBoard(); return; }
     if (prac.legalDests.indexOf(sq) >= 0) { pracTryMove(prac.sel, sq); return; }
   }
   var pc = prac.chess.get(sq);
@@ -22758,7 +22787,8 @@ function pracOpenByIdWhenReady(id) {
 }
 
 /* ── Arrastrar piezas en el tablero de práctica (igual que el solver) ── */
-var _pracDrag = null, _pracDragSuppress = false, _pracDragDocBound = false;
+// _pracDragEndTs: ver la nota en _puzDragEndTs (era un flag booleano y se quedaba pegado).
+var _pracDrag = null, _pracDragEndTs = 0, _pracDragDocBound = false;
 function pracInitDrag(boardEl) {
   if (!window.matchMedia('(pointer: fine)').matches) return;
   if (boardEl._prDragBound) return; boardEl._prDragBound = true;
@@ -22771,7 +22801,9 @@ function pracInitDrag(boardEl) {
     // Medir tamaño y src ANTES de re-renderizar: pracRenderBoard() reemplaza el innerHTML y desprende
     // este img, y getBoundingClientRect() sobre un nodo desprendido da 0 → el clon quedaba invisible.
     var rect = img.getBoundingClientRect(), sz = rect.width, imgSrc = img.src;
+    var _wasSel = (prac.sel === sq);   // ya seleccionada → dejar que el click la suelte
     prac.sel = sq; prac.legalDests = prac.chess.moves({ square:sq, verbose:true }).map(function(m){ return m.to; });
+    if (!_wasSel) _markPressSelect(sq);
     pracRenderBoard();
     var clone = document.createElement('img');
     clone.src = imgSrc;
@@ -22792,7 +22824,7 @@ function pracInitDrag(boardEl) {
     var _lp = document.querySelector('#prac-board [data-sq="' + d.sq + '"] img.cpc'); if (_lp) _lp.style.opacity = '';   // restaurar la pieza (con el diff, si no se movió no se rebuildea → quedaba semitransparente)
     if (d.clone.parentNode) d.clone.parentNode.removeChild(d.clone);
     if (!d.moved) { return; }
-    _pracDragSuppress = true;
+    _pracDragEndTs = Date.now();
     var x = document.elementFromPoint(e.clientX, e.clientY), sqEl = x ? x.closest('[data-sq]') : null;
     if (!sqEl || sqEl.getAttribute('data-sq') === d.sq) { prac.sel = null; prac.legalDests = []; pracRenderBoard(); return; }
     var to = sqEl.getAttribute('data-sq');
