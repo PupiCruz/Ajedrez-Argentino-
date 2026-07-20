@@ -2209,6 +2209,123 @@
   </main>
 </div>
 
+<!-- CARGAR PARTIDA A MANO (solo modo autor) — tablero para reproducir la partida de la planilla
+     + los datos del encabezado. Al guardar arma el PGN y lo mete en el pool. -->
+<style>
+  .gc-overlay {
+    display: none; position: fixed; inset: 0; z-index: 1200; background: var(--bg);
+    overflow-y: auto; padding: 18px 16px 40px;
+  }
+  .gc-overlay.open { display: block; }
+  .gc-inner { max-width: 1080px; margin: 0 auto; }
+  .gc-hdr { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+  .gc-hdr h3 { font-size: 20px; font-weight: 800; letter-spacing: -.4px; }
+  .gc-grid { display: grid; grid-template-columns: minmax(0,420px) minmax(0,1fr); gap: 20px; align-items: start; }
+  @media (max-width: 860px) { .gc-grid { grid-template-columns: 1fr; } }
+  .gc-panel { background: var(--card90); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+  .gc-row { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-bottom: 9px; }
+  .gc-f { display: flex; flex-direction: column; gap: 3px; }
+  .gc-f label { font-size: 11px; color: var(--text3); font-weight: 600; }
+  .gc-f input, .gc-f select {
+    padding: 8px 9px; background: var(--bg3); border: 1px solid var(--border); color: var(--text);
+    border-radius: 8px; font-family: inherit; font-size: 13px; outline: none; width: 100%; box-sizing: border-box;
+  }
+  .gc-f input:focus, .gc-f select:focus { border-color: var(--gold-dim); }
+  .gc-sep { font-size: 11px; font-weight: 700; color: var(--gold-dim); text-transform: uppercase; letter-spacing: .8px; margin: 14px 0 8px; }
+  .gc-moves {
+    background: var(--panel0); border: 1px solid var(--border); border-radius: 8px; padding: 10px;
+    font-size: 13px; line-height: 1.8; min-height: 64px; max-height: 190px; overflow-y: auto; color: var(--fg-d0);
+  }
+  .gc-moves .gc-num { color: var(--text3); margin-left: 6px; }
+  .gc-btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .gc-btn {
+    padding: 8px 12px; background: var(--gl30); border: 1px solid var(--border); color: var(--fg-d8);
+    border-radius: 8px; cursor: pointer; font-family: inherit; font-size: 12.5px; font-weight: 600;
+  }
+  .gc-btn:hover { border-color: var(--gold-dim); color: var(--gold); }
+  .gc-save {
+    width: 100%; padding: 12px; margin-top: 12px; background: var(--gold); border: 1px solid var(--gold-dim);
+    color: var(--bg3); font-size: 14px; font-weight: 700; border-radius: 10px; cursor: pointer; font-family: inherit;
+  }
+  .gc-save:disabled { opacity: .45; cursor: not-allowed; }
+  .gc-msg { font-size: 12.5px; margin-top: 9px; line-height: 1.5; }
+</style>
+<div class="gc-overlay" id="gc-overlay">
+  <div class="gc-inner">
+    <div class="gc-hdr">
+      <button class="gc-btn" onclick="gcClose()">← Volver</button>
+      <h3>✏️ Cargar partida a mano</h3>
+      <div style="flex:1"></div>
+      <span id="gc-count" style="font-size:12px;color:var(--text3)"></span>
+    </div>
+    <div class="gc-grid">
+      <div>
+        <div class="chess-board-wrap" style="max-width:none">
+          <div style="position:relative;flex:1;min-width:0">
+            <div class="chess-board" id="gc-board"></div>
+          </div>
+        </div>
+        <div class="gc-btns">
+          <button class="gc-btn" onclick="gcUndo()">↶ Deshacer</button>
+          <button class="gc-btn" onclick="gcFlip()">⇅ Girar</button>
+          <button class="gc-btn" onclick="gcResetMoves()">✕ Borrar jugadas</button>
+          <span id="gc-turn" style="font-size:12px;color:var(--text3);align-self:center;margin-left:auto"></span>
+        </div>
+        <div class="gc-sep">Jugadas <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text3)">— tocá una jugada para volver ahí y rehacer desde esa</span></div>
+        <div class="gc-moves" id="gc-moves"></div>
+      </div>
+      <div class="gc-panel">
+        <div class="gc-sep" style="margin-top:0">Torneo</div>
+        <div class="gc-f" style="margin-bottom:9px">
+          <label>Torneo del sitio (opcional — completa el evento solo)</label>
+          <select id="gc-tour" onchange="gcTourChanged()"></select>
+        </div>
+        <div class="gc-f" style="margin-bottom:9px;display:none" id="gc-cat-wrap">
+          <label>Categoría</label>
+          <select id="gc-cat" onchange="gcCatChanged()"></select>
+        </div>
+        <div class="gc-f" style="margin-bottom:9px">
+          <label>Evento</label>
+          <input id="gc-event" placeholder="Nombre del torneo">
+        </div>
+        <div class="gc-row">
+          <div class="gc-f"><label>Fecha</label><input id="gc-date" type="date"></div>
+          <div class="gc-f"><label>Ronda</label><input id="gc-round" placeholder="1"></div>
+        </div>
+        <div class="gc-f" style="margin-bottom:9px"><label>Sede (opcional)</label><input id="gc-site" placeholder="Ciudad, club"></div>
+
+        <div class="gc-sep">Blancas</div>
+        <div class="gc-f" style="margin-bottom:9px"><label>Nombre</label><input id="gc-wname" placeholder="Apellido, Nombre" oninput="gcRefreshSave()"></div>
+        <div class="gc-row">
+          <div class="gc-f"><label>Elo</label><input id="gc-welo" inputmode="numeric" placeholder="1850"></div>
+          <div class="gc-f"><label>Título</label><select id="gc-wtitle"></select></div>
+        </div>
+        <div class="gc-f" style="margin-bottom:9px"><label>FIDE id (opcional — engancha la partida al perfil aunque el nombre venga distinto)</label><input id="gc-wfide" inputmode="numeric" placeholder="123456"></div>
+
+        <div class="gc-sep">Negras</div>
+        <div class="gc-f" style="margin-bottom:9px"><label>Nombre</label><input id="gc-bname" placeholder="Apellido, Nombre" oninput="gcRefreshSave()"></div>
+        <div class="gc-row">
+          <div class="gc-f"><label>Elo</label><input id="gc-belo" inputmode="numeric" placeholder="1790"></div>
+          <div class="gc-f"><label>Título</label><select id="gc-btitle"></select></div>
+        </div>
+        <div class="gc-f" style="margin-bottom:9px"><label>FIDE id (opcional)</label><input id="gc-bfide" inputmode="numeric" placeholder="123456"></div>
+
+        <div class="gc-sep">Resultado</div>
+        <div class="gc-f"><select id="gc-result" onchange="gcRefreshSave()">
+          <option value="">— Elegí el resultado —</option>
+          <option value="1-0">1-0 (ganan blancas)</option>
+          <option value="0-1">0-1 (ganan negras)</option>
+          <option value="1/2-1/2">½-½ (tablas)</option>
+          <option value="*">* (sin terminar)</option>
+        </select></div>
+
+        <button class="gc-save" id="gc-save" onclick="gcSave()">💾 Guardar y cargar otra</button>
+        <div class="gc-msg" id="gc-msg"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- PROMOTION PICKER -->
 <div class="promo-overlay" id="promo-overlay">
   <div class="promo-box">
@@ -9315,6 +9432,8 @@ function renderDbSearch() {
   h += '<textarea id="dbpool-paste" placeholder="Pegá una o varias partidas en PGN acá…" oninput="dbPoolPasteInput()" style="width:100%;height:84px;background:var(--bg3);border:1px solid var(--border);color:var(--text);font-size:12px;font-family:monospace;padding:9px 11px;border-radius:8px;outline:none;resize:vertical;box-sizing:border-box"></textarea>';
   h += '<button id="dbpool-btn" onclick="dbPoolImport()" style="display:none;width:100%;padding:11px;margin-top:8px;background:var(--green,#2a7);border:none;color:var(--white-ink);font-size:13px;font-weight:700;border-radius:10px;cursor:pointer;font-family:inherit">📥 Agregar a la base de datos</button>';
   h += '<div id="dbpool-result" style="font-size:12px;margin-top:8px;line-height:1.5"></div>';
+  h += '<div style="text-align:center;font-size:11px;color:var(--text3);margin:12px 0 8px">— o si la partida está en papel —</div>';
+  h += '<button onclick="gcOpen()" style="width:100%;padding:11px;background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-size:13px;font-weight:700;border-radius:10px;cursor:pointer;font-family:inherit">✏️ Cargar partida a mano (tablero)</button>';
   h += '</div></details>';
   }
   h += '<div style="margin-bottom:14px">';
@@ -11696,6 +11815,252 @@ function dbPoolImport() {
   if (res) res.innerHTML = '<span style="color:var(--green)">✓ ' + newGames.length + ' partida' + (newGames.length !== 1 ? 's' : '') + ' nueva' + (newGames.length !== 1 ? 's' : '') + ' agregada' + (newGames.length !== 1 ? 's' : '')
     + ' en ' + order.length + ' evento' + (order.length !== 1 ? 's' : '') + (nuevosEventos ? ' (' + nuevosEventos + ' nuevo' + (nuevosEventos !== 1 ? 's' : '') + ')' : '')
     + (skipped ? ' · ' + skipped + ' ya estaban' : '') + '.<br><span style="color:var(--gold);font-size:11px">Acordate de "Guardar datos en mi carpeta".</span></span>';
+}
+
+/* ═══════════════════════════════════════════════════════
+   CARGAR PARTIDA A MANO (solo modo autor)
+   Tablero para reproducir la partida de una planilla + los datos del encabezado. Al guardar arma
+   el PGN y lo mete en el pool, igual que "Subir partidas a la base de datos", pero sin tener que
+   pasar por Lichess para conseguir el PGN. El tablero reusa el render de casillas del visor
+   (cvCellInner + las clases .csq/.mf/.mt/.sel/.legal) y el selector de promoción del visor.
+═══════════════════════════════════════════════════════ */
+var gc = { chess: null, sans: [], moves: [], sel: null, legalDests: [], flipped: false, saved: 0 };
+var _gcBoardBound = false, _gcBoardOrient = null;
+var _GC_TITLES = ['', 'GM', 'IM', 'FM', 'CM', 'WGM', 'WIM', 'WFM', 'WCM'];
+
+function gcOpen() {
+  if (_ondemand) return;                       // herramienta de autor: no existe en la web publicada
+  gc.chess = new Chess(); gc.sans = []; gc.moves = []; gc.sel = null; gc.legalDests = [];
+  _gcBoardBound = false; _gcBoardOrient = null;
+  // Selects que se llenan una sola vez por apertura (los torneos pueden haber cambiado).
+  var tSel = document.getElementById('gc-tour');
+  if (tSel) tSel.innerHTML = _dbPoolTargetOptions();
+  ['gc-wtitle', 'gc-btitle'].forEach(function(id) {
+    var s = document.getElementById(id); if (!s) return;
+    s.innerHTML = _GC_TITLES.map(function(t) { return '<option value="' + t + '">' + (t || '—') + '</option>'; }).join('');
+  });
+  var d = document.getElementById('gc-date');
+  if (d && !d.value) { var n = new Date(); d.value = n.getFullYear() + '-' + String(n.getMonth()+1).padStart(2,'0') + '-' + String(n.getDate()).padStart(2,'0'); }
+  document.getElementById('gc-overlay').classList.add('open');
+  document.body.style.overflow = 'hidden';
+  gcRenderBoard(); gcRenderMoves(); gcRefreshSave(); gcUpdateCount();
+}
+function gcClose() {
+  document.getElementById('gc-overlay').classList.remove('open');
+  document.body.style.overflow = '';
+  if (gc.saved) { try { renderTorneos(_lastTorneoFilter); } catch (e) {} }
+}
+function gcUpdateCount() {
+  var el = document.getElementById('gc-count'); if (!el) return;
+  el.textContent = gc.saved ? ('✓ ' + gc.saved + ' partida' + (gc.saved !== 1 ? 's' : '') + ' cargada' + (gc.saved !== 1 ? 's' : '') + ' en esta tanda') : '';
+}
+
+/* ── Tablero ── */
+function gcRenderBoard(anim) {
+  var el = document.getElementById('gc-board'); if (!el || !gc.chess) return;
+  var bd = gc.chess.board(), last = gc.moves.length ? gc.moves[gc.moves.length - 1] : null;
+  var lf = last ? last.from : '', lt = last ? last.to : '';
+  var FL = ['a','b','c','d','e','f','g','h'], cells = el.children;
+  var full = cells.length !== 64 || _gcBoardOrient !== gc.flipped;
+  if (full) {
+    var h = '';
+    for (var r = 0; r < 8; r++) for (var f = 0; f < 8; f++) {
+      var rr = gc.flipped ? 7-r : r, ff = gc.flipped ? 7-f : f;
+      var sq = FL[ff] + (8-rr), cls = 'csq ' + (((r+f) % 2 === 0) ? 'li' : 'da');
+      if (sq === lf) cls += ' mf';
+      if (sq === lt) cls += ' mt';
+      if (sq === gc.sel) cls += ' sel';
+      var pc = bd[rr][ff];
+      if (gc.legalDests.indexOf(sq) >= 0) cls += pc ? ' legal-cap' : ' legal';
+      h += '<div class="' + cls + '" data-sq="' + sq + '">' + cvCellInner(r, f, rr, ff, sq, pc ? (pc.color + pc.type) : '', FL) + '</div>';
+    }
+    el.innerHTML = h; _gcBoardOrient = gc.flipped; gcBindBoard();
+  } else {
+    var idx = 0;
+    for (var r2 = 0; r2 < 8; r2++) for (var f2 = 0; f2 < 8; f2++) {
+      var cell = cells[idx++];
+      var rr2 = gc.flipped ? 7-r2 : r2, ff2 = gc.flipped ? 7-f2 : f2;
+      var sq2 = FL[ff2] + (8-rr2), cls2 = 'csq ' + (((r2+f2) % 2 === 0) ? 'li' : 'da');
+      if (sq2 === lf) cls2 += ' mf';
+      if (sq2 === lt) cls2 += ' mt';
+      if (sq2 === gc.sel) cls2 += ' sel';
+      var pc2 = bd[rr2][ff2];
+      if (gc.legalDests.indexOf(sq2) >= 0) cls2 += pc2 ? ' legal-cap' : ' legal';
+      if (cell.className !== cls2) cell.className = cls2;
+      var pk2 = pc2 ? (pc2.color + pc2.type) : '';
+      if (cell._pk !== pk2) { cell._pk = pk2; cell.innerHTML = cvCellInner(r2, f2, rr2, ff2, sq2, pk2, FL); }
+    }
+  }
+  if (anim && last) _cvSlidePiece(el, last.from, last.to);
+  var t = document.getElementById('gc-turn');
+  if (t) t.textContent = 'Mueven ' + (gc.chess.turn() === 'w' ? 'blancas' : 'negras') + ' · jugada ' + (Math.floor(gc.sans.length / 2) + 1);
+}
+function gcBindBoard() {
+  if (_gcBoardBound) return; _gcBoardBound = true;
+  var el = document.getElementById('gc-board');
+  el.addEventListener('click', function(e) {
+    var t = e.target.closest('[data-sq]'); if (!t) return; gcHandleClick(t.getAttribute('data-sq'));
+  });
+  el.addEventListener('touchend', function(e) {
+    e.preventDefault(); var t = e.changedTouches[0], x = document.elementFromPoint(t.clientX, t.clientY);
+    var sqEl = x ? x.closest('[data-sq]') : null; if (sqEl) gcHandleClick(sqEl.getAttribute('data-sq'));
+  }, { passive: false });
+}
+function gcHandleClick(sq) {
+  if (!gc.chess) return;
+  if (gc.sel) {
+    if (sq === gc.sel) { gc.sel = null; gc.legalDests = []; gcRenderBoard(); return; }
+    if (gc.legalDests.indexOf(sq) >= 0) { gcTryMove(gc.sel, sq); return; }
+  }
+  var pc = gc.chess.get(sq);
+  if (pc && pc.color === gc.chess.turn()) {
+    gc.sel = sq;
+    gc.legalDests = gc.chess.moves({ square: sq, verbose: true }).map(function(m) { return m.to; });
+  } else { gc.sel = null; gc.legalDests = []; }
+  gcRenderBoard();
+}
+function gcTryMove(from, to) {
+  var pc = gc.chess.get(from);
+  // Promoción: usar el MISMO selector de piezas del visor, con callback (así se puede coronar en
+  // caballo/torre/alfil, que en una planilla pasa). _pendingPromo.cb lo consume promoChoose().
+  if (pc && pc.type === 'p') {
+    var tr = parseInt(to[1], 10);
+    if ((pc.color === 'w' && tr === 8) || (pc.color === 'b' && tr === 1)) {
+      gc.sel = null; gc.legalDests = []; gcRenderBoard();
+      _pendingPromo = { from: from, to: to, color: pc.color, cb: function(piece) { gcApplyMove(from, to, piece); } };
+      promoShow(pc.color);
+      return;
+    }
+  }
+  gcApplyMove(from, to, undefined);
+}
+function gcApplyMove(from, to, promo) {
+  var m = gc.chess.move({ from: from, to: to, promotion: promo || 'q' });
+  gc.sel = null; gc.legalDests = [];
+  if (!m) { gcRenderBoard(); return; }
+  gc.sans.push(m.san); gc.moves.push({ from: m.from, to: m.to });
+  gcRenderBoard(); gcRenderMoves(); gcRefreshSave();
+  try { if (typeof cvPlayMoveSound === 'function') cvPlayMoveSound(m.san); } catch (e) {}
+}
+function gcUndo() {
+  if (!gc.sans.length) return;
+  gc.chess.undo(); gc.sans.pop(); gc.moves.pop();
+  gc.sel = null; gc.legalDests = [];
+  gcRenderBoard(); gcRenderMoves(); gcRefreshSave();
+}
+// Volver a ANTES de la jugada `i` (0-based): se descartan esa y las siguientes, para rehacer desde
+// ahí. Es el arreglo de "pifié al reproducir": no hay que borrar toda la partida.
+function gcTruncate(i) {
+  if (i < 0 || i >= gc.sans.length) return;
+  var keep = gc.sans.slice(0, i);
+  gc.chess = new Chess(); gc.moves = []; gc.sans = [];
+  keep.forEach(function(san) { var m = gc.chess.move(san); if (m) { gc.sans.push(m.san); gc.moves.push({ from: m.from, to: m.to }); } });
+  gc.sel = null; gc.legalDests = [];
+  gcRenderBoard(); gcRenderMoves(); gcRefreshSave();
+}
+function gcFlip() { gc.flipped = !gc.flipped; gcRenderBoard(); }
+function gcResetMoves() {
+  if (gc.sans.length && !confirm('¿Borrar las ' + gc.sans.length + ' jugadas cargadas?')) return;
+  gc.chess = new Chess(); gc.sans = []; gc.moves = []; gc.sel = null; gc.legalDests = [];
+  gcRenderBoard(); gcRenderMoves(); gcRefreshSave();
+}
+function gcRenderMoves() {
+  var el = document.getElementById('gc-moves'); if (!el) return;
+  if (!gc.sans.length) { el.innerHTML = '<span style="color:var(--text3)">Reproducí la partida en el tablero…</span>'; return; }
+  var h = '';
+  for (var i = 0; i < gc.sans.length; i++) {
+    if (i % 2 === 0) h += '<span class="gc-num">' + (i/2 + 1) + '.</span> ';
+    h += '<span onclick="gcTruncate(' + i + ')" title="Volver acá y rehacer desde esta jugada" style="cursor:pointer;padding:1px 4px;border-radius:4px"'
+       + ' onmouseover="this.style.background=\'var(--gold-bg)\';this.style.color=\'var(--gold)\'"'
+       + ' onmouseout="this.style.background=\'\';this.style.color=\'\'">' + cvFanHtml(gc.sans[i]) + '</span> ';
+  }
+  el.innerHTML = h;
+  el.scrollTop = el.scrollHeight;
+}
+
+/* ── Encabezado + guardado ── */
+function gcTourChanged() {
+  var tSel = document.getElementById('gc-tour'), cWrap = document.getElementById('gc-cat-wrap'), cSel = document.getElementById('gc-cat');
+  var cats = tSel && tSel.value ? _catsForTourName(tSel.value) : null;
+  if (cats && cats.length) {
+    cSel.innerHTML = '<option value="">— Elegí la categoría —</option>' + cats.map(function(c) { return '<option value="' + escHtml(c.name || '') + '">' + escHtml(c.name || '') + '</option>'; }).join('');
+    cWrap.style.display = '';
+  } else { cSel.innerHTML = ''; cWrap.style.display = 'none'; }
+  gcCatChanged();
+}
+function gcCatChanged() {
+  var tSel = document.getElementById('gc-tour'), cSel = document.getElementById('gc-cat'), ev = document.getElementById('gc-event');
+  if (!tSel || !ev) return;
+  if (!tSel.value) return;   // "sin torneo": respetar lo que el autor haya escrito a mano
+  ev.value = (cSel && cSel.value) ? _catEventName(tSel.value, cSel.value) : tSel.value;
+  gcRefreshSave();
+}
+function _gcVal(id) { var e = document.getElementById(id); return e ? (e.value || '').trim() : ''; }
+// ¿Está todo lo mínimo para guardar? (los dos nombres, el resultado y al menos una jugada)
+function gcRefreshSave() {
+  var ok = !!(_gcVal('gc-wname') && _gcVal('gc-bname') && _gcVal('gc-result') && gc.sans.length);
+  var b = document.getElementById('gc-save'); if (b) b.disabled = !ok;
+  return ok;
+}
+function _gcTag(k, v) { return '[' + k + ' "' + String(v).replace(/"/g, "'") + '"]\n'; }
+function gcBuildPgn() {
+  var ev = _gcVal('gc-event') || '(Sin evento)';
+  var date = _gcVal('gc-date') ? _gcVal('gc-date').replace(/-/g, '.') : '????.??.??';
+  var res = _gcVal('gc-result') || '*';
+  var s = '';
+  s += _gcTag('Event', ev);
+  s += _gcTag('Site', _gcVal('gc-site') || '?');
+  s += _gcTag('Date', date);
+  s += _gcTag('Round', _gcVal('gc-round') || '?');
+  s += _gcTag('White', _gcVal('gc-wname'));
+  s += _gcTag('Black', _gcVal('gc-bname'));
+  s += _gcTag('Result', res);
+  if (_gcVal('gc-welo')) s += _gcTag('WhiteElo', _gcVal('gc-welo'));
+  if (_gcVal('gc-belo')) s += _gcTag('BlackElo', _gcVal('gc-belo'));
+  if (_gcVal('gc-wtitle')) s += _gcTag('WhiteTitle', _gcVal('gc-wtitle'));
+  if (_gcVal('gc-btitle')) s += _gcTag('BlackTitle', _gcVal('gc-btitle'));
+  if (_gcVal('gc-wfide')) s += _gcTag('WhiteFideId', _gcVal('gc-wfide'));
+  if (_gcVal('gc-bfide')) s += _gcTag('BlackFideId', _gcVal('gc-bfide'));
+  s += '\n';
+  var body = '';
+  for (var i = 0; i < gc.sans.length; i++) {
+    if (i % 2 === 0) body += (i/2 + 1) + '. ';
+    body += gc.sans[i] + ' ';
+  }
+  return s + body + res + '\n';
+}
+function gcSave() {
+  var msg = document.getElementById('gc-msg');
+  if (!gcRefreshSave()) return;
+  var pgn = gcBuildPgn();
+  // Mismo candado que la subida de archivos: si la partida ya está en el sitio, no entra de nuevo.
+  var idx = buildSiteDedupIndex();
+  if (dedupIndexCovered(idx, pgn)) {
+    if (msg) msg.innerHTML = '<span style="color:var(--text2)">Esta partida ya estaba en la base. No se agregó de nuevo.</span>';
+    return;
+  }
+  var ev = (parsePgnHeaders(pgn).Event || '(Sin evento)').trim();
+  var t = null;
+  _memTournaments.forEach(function(x) { if (!t && x.name === ev) t = x; });
+  if (!t) {
+    t = { id: Date.now(), name: ev, location: _gcVal('gc-site') || '', games: [], gameCount: 0, playerOnly: true, source: 'pgn', dbPool: true, loadedAt: Date.now() };
+    _memTournaments.push(t);
+  }
+  t.games = (t.games || []).concat([pgn]);
+  t.games = dedupGamesByMoves(t.games.map(function(p) { return { pgn: p }; }), function(w) { return w.pgn; }).map(function(w) { return w.pgn; });
+  t.gameCount = t.games.length;
+  pgnMergeToPlayerGames();
+  gc.saved++;
+  gcUpdateCount();
+  if (msg) msg.innerHTML = '<span style="color:var(--green)">✓ Guardada en «' + escHtml(ev) + '».</span>'
+    + '<br><span style="color:var(--gold);font-size:11px">Acordate de "Guardar datos en mi carpeta" al terminar la tanda.</span>';
+  // Listo para la próxima de la misma planilla: se CONSERVAN evento, fecha, ronda y sede (casi
+  // siempre se cargan varias del mismo torneo seguidas) y se limpia lo que cambia en cada partida.
+  ['gc-wname', 'gc-bname', 'gc-welo', 'gc-belo', 'gc-wfide', 'gc-bfide'].forEach(function(id) { var e = document.getElementById(id); if (e) e.value = ''; });
+  ['gc-wtitle', 'gc-btitle', 'gc-result'].forEach(function(id) { var e = document.getElementById(id); if (e) e.value = ''; });
+  gc.chess = new Chess(); gc.sans = []; gc.moves = []; gc.sel = null; gc.legalDests = [];
+  gcRenderBoard(); gcRenderMoves(); gcRefreshSave();
+  var wn = document.getElementById('gc-wname'); if (wn) wn.focus();
 }
 
 // Detecta grupos de torneos de PERFIL (playerOnly, en _memTournaments) que son el MISMO evento
@@ -15399,6 +15764,9 @@ function promoChoose(piece) {
   if (_pendingPromo) {
     var p = _pendingPromo;
     _pendingPromo = null;
+    // Con callback (lo usa "Cargar partida a mano"): el selector es genérico y quien lo abrió
+    // decide qué hacer. Sin callback, el comportamiento de siempre: aplicar la jugada al visor.
+    if (p.cb) { p.cb(piece); return; }
     cvApplyMove(p.from, p.to, piece);
   }
 }
