@@ -1017,7 +1017,7 @@
     .n-mv-hdr { padding:10px 14px; background:var(--bg3); border-bottom:1px solid var(--border); }
     .n-mv-body { display:flex; flex-wrap:wrap; }
     .n-mv-board { flex:0 0 auto; }
-    .n-mv-list { flex:1; min-width:130px; padding:8px; overflow-y:auto; }
+    .n-mv-list { flex:1; min-width:130px; padding:8px; overflow-y:auto; position:relative; }  /* relative: offsetTop de las jugadas relativo a la lista (ver _nrRenderMoves) */
     .n-mv-ctrl { display:flex; gap:5px; padding:8px 12px; background:var(--bg3); border-top:1px solid var(--border); align-items:center; }
     .n-mv-btn { padding:4px 10px; background:var(--bg2); border:1px solid var(--border); border-radius:6px; color:var(--text); cursor:pointer; font-size:15px; font-family:inherit; }
     .n-mv-btn:hover { background:var(--gold-bg); border-color:var(--gold-dim); color:var(--gold); }
@@ -2234,7 +2234,8 @@
   .gc-sep { font-size: 11px; font-weight: 700; color: var(--gold-dim); text-transform: uppercase; letter-spacing: .8px; margin: 14px 0 8px; }
   .gc-moves {
     background: var(--panel0); border: 1px solid var(--border); border-radius: 8px; padding: 10px;
-    font-size: 13px; line-height: 1.8; min-height: 64px; max-height: 190px; overflow-y: auto; color: var(--fg-d0);
+    font-size: 13px; line-height: 1.8; height: 190px; overflow-y: auto; color: var(--fg-d0);
+    position: relative;   /* offsetTop de las jugadas relativo a esta cajita (ver gcRenderMoves) */
   }
   .gc-moves .gc-num { color: var(--text3); margin-left: 6px; }
   .gc-moves .gc-mv { cursor: pointer; padding: 1px 4px; border-radius: 4px; }
@@ -12077,8 +12078,12 @@ function gcRenderMoves() {
     h += '<span class="gc-mv' + (gc.viewIdx === i + 1 ? ' cur' : '') + '" onclick="gcSetView(' + (i+1) + ')" title="Ver esta posición">' + cvFanHtml(gc.sans[i]) + '</span> ';
   }
   el.innerHTML = h;
+  // Traer a la vista la jugada actual moviendo SOLO esta cajita. Con scrollIntoView() el navegador
+  // desplaza el ancestro scrolleable más cercano, que acá es el panel entero: el tablero saltaba
+  // para arriba a cada jugada.
   var cur = el.querySelector('.gc-mv.cur');
-  if (cur && cur.scrollIntoView) cur.scrollIntoView({ block: 'nearest' }); else el.scrollTop = el.scrollHeight;
+  if (cur) el.scrollTop = Math.max(0, cur.offsetTop - (el.clientHeight - cur.offsetHeight) / 2);
+  else el.scrollTop = el.scrollHeight;
 }
 
 /* ── Encabezado + guardado ── */
@@ -13974,8 +13979,13 @@ function _nrRenderMoves() {
   }
   html += '</div>';
   el.innerHTML = html;
+  // Mover SOLO esta lista, no el lector entero: scrollIntoView() desplaza el ancestro scrolleable
+  // más cercano (acá, la nota completa) y el tablerito saltaría a cada jugada. Mismo motivo que en
+  // gcRenderMoves().
   var active = el.querySelector('[style*="gold-bg"]');
-  if (active) active.scrollIntoView({block:'nearest'});
+  if (active && el.scrollHeight > el.clientHeight) {
+    el.scrollTop = Math.max(0, active.offsetTop - (el.clientHeight - active.offsetHeight) / 2);
+  }
 }
 
 // Flechas del teclado para el visor embebido
