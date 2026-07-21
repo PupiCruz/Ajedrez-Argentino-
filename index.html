@@ -5820,7 +5820,7 @@ function _crAutoUpdateIndivBtn(crk) { _crAutoFetchIndiv(crk, _crUrlByKey[crk], {
    nada que "ensuciar" filtrando, y esconderle partidas al visitante no lo beneficia; si sólo quiere
    ver a los argentinos, el detalle ya tiene el botón "🇦🇷 Solo argentinos" para filtrar la vista.
    Además así alcanza UN pedido por torneo en vez de uno por jugador.
-   El filtro por argentinos vive donde importa de verdad: al IMPORTAR AL POOL (_crArgFideList), que
+   El filtro por argentinos vive donde importa de verdad: al IMPORTAR AL POOL (_crArgNameKeys), que
    es donde se decide qué queda guardado para siempre.                                             */
 var _crLiveGames = {};   // crk → [pgn,…] partidas bajadas de Chess-Results en esta sesión
 var _tdCrByRound = {};   // las del torneo ABIERTO agrupadas por ronda (las lee el merge del detalle)
@@ -5840,19 +5840,44 @@ async function _crPgnFetch(crUrl, fide) {
   return await res.text();
 }
 
-// Los FIDE ID ARGENTINOS que juegan este torneo, sacados de la tabla que YA bajamos de
-// Chess-Results. _getArgFideSet() reconoce argentinos aunque jueguen con otra bandera (Pichot con
-// ESP). Lo usa el botón de importar al pool en torneos internacionales: hay que pedirle el filtro
-// a Chess-Results porque su PGN no trae los FIDE ID en los headers — acá no se podría saber quién
-// es quién con certeza (por nombre habría homónimos y variantes de escritura).
-function _crArgFideList(crk) {
+// Los jugadores ARGENTINOS de este torneo, sacados de la tabla que YA bajamos de Chess-Results.
+// Devuelve las CLAVES DE NOMBRE (tokens normalizados y ordenados, así "Pascual, Diego" ≡ "Diego
+// Pascual"), porque el filtrado se hace por nombre: el PGN de Chess-Results NO trae federación ni
+// FIDE ID en los headers, y la tabla del torneo es la única fuente que dice quién es de dónde.
+// Como los dos vienen del MISMO torneo de Chess-Results, los nombres coinciden.
+//
+// Se reconoce argentino por, en este orden: (1) federación ARG en la tabla; (2) FIDE ID en el
+// listado argentino —esto agarra a los que juegan con otra bandera, como Pichot con ESP—; (3) el
+// nombre está en nuestra base de jugadores argentinos. OJO: hay tablas de Chess-Results que NO
+// traen la columna FIDE ID (pasó con el Ryck-Open): por eso no alcanza con mirar sólo el fide_id.
+function _crArgNameKeys(crk) {
   var d = crDataLoad(crk) || {};
   var arg = _getArgFideSet(), out = [], seen = Object.create(null);
   (d.standings || []).forEach(function(s) {
-    var f = String(s.fideId || '').replace(/\D/g, '');
-    if (f && arg[f] && !seen[f]) { seen[f] = true; out.push(f); }
+    var nombre = s.name || '';
+    if (!nombre) return;
+    var fed = String(s.fed || '').toUpperCase();
+    var fid = String(s.fideId || '').replace(/\D/g, '');
+    var esArg = (fed === 'ARG') || (fid && arg[fid]) || (!fed && !fid && _isArgPlayer(nombre));
+    if (!esArg) return;
+    var k = _crNameKey(nombre);
+    if (k && !seen[k]) { seen[k] = true; out.push(k); }
   });
   return out;
+}
+// Clave de nombre tolerante al formato ("Pascual, Diego" ≡ "Diego Pascual"): tokens normalizados
+// y ordenados alfabéticamente.
+function _crNameKey(n) { return nameTokens(normStr(String(n || '').replace(/,/g, ' '))).sort().join(' '); }
+
+// Filtra una lista de PGNs dejando sólo las partidas donde juega alguno de esos nombres.
+function _crFilterGamesByNames(games, nameKeys) {
+  if (!nameKeys || !nameKeys.length) return [];
+  var set = Object.create(null);
+  nameKeys.forEach(function(k) { set[k] = true; });
+  return games.filter(function(g) {
+    var h = parsePgnHeaders(g);
+    return set[_crNameKey(h.White)] || set[_crNameKey(h.Black)];
+  });
 }
 
 // Agrupa partidas sueltas por ronda, en la forma que usa el detalle ({ronda: [{pgn, h}]}).
@@ -5954,31 +5979,42 @@ async function _crImportGamesToPool(crk, soloArgentinos) {
   if (_crGamesBusy[crk]) return false;
   _crGamesBusy[crk] = true;
   try {
-    // 1) Las que ya están en pantalla (broadcast de Lichess / subidas). Instantáneo, sin red.
-    var deLichess = enPantalla.map(function(g) { return g.pgn || g; }).filter(Boolean);
-    if (soloArgentinos) {
-      deLichess = deLichess.filter(function(p) { return _isArgGame(parsePgnHeaders(p)); });
-    }
+    // 1) Las que ya están en pantalla (broadcast de Lichess / pool / lo que trajo el vivo de
+    //    Chess-Results). Instantáneo, sin red.
+    var enPant = enPantalla.map(function(g) { return g.pgn || g; }).filter(Boolean);
 
-    // 2) Las de Chess-Results (esto sí pide red y puede tardar).
+    // 2) Las de Chess-Results. Se bajan TODAS en UN pedido y el filtro de argentinos se aplica
+    //    acá — NO se le pide a Chess-Results por FIDE ID. Motivo: hay tablas suyas que no traen la
+    //    columna FIDE ID (pasó con el Ryck-Open) y ahí el filtro por id dejaba la lista vacía y no
+    //    llegaba a pedir nada. Un pedido en vez de uno por jugador, y funciona siempre.
     var deCr = [];
     if (hasCr) {
-      var fide = [];
-      if (soloArgentinos) {
-        fide = _crArgFideList(crk);
-        if (!fide.length && !deLichess.length) { setS('❌ No encontré argentinos en la tabla del torneo. Actualizá primero la tabla con "🔄 Actualizar desde Chess-Results".'); return false; }
-        if (fide.length) setS('⏳ Bajando las partidas de ' + fide.length + ' argentino(s)…');
+      setS('⏳ Bajando las partidas de Chess-Results…');
+      try { deCr = _crParsePgnList(await _crPgnFetch(crUrl, [])); } catch (e) { deCr = []; }
+    }
+    var bajadasCr = deCr.length, porNombre = false;
+
+    if (soloArgentinos) {
+      // Quiénes son argentinos sale de la TABLA del torneo (federación / FIDE ID); el PGN de
+      // Chess-Results no trae ni federación ni id, así que el filtro final es por nombre.
+      var argKeys = _crArgNameKeys(crk);
+      if (argKeys.length) {
+        deCr = _crFilterGamesByNames(deCr, argKeys);
       } else {
-        setS('⏳ Bajando las partidas…');
+        // Sin tabla cargada no sabemos quién es de dónde: se cae al reconocimiento por nombre
+        // contra nuestra base de jugadores argentinos (menos preciso, puede dejar afuera a alguno).
+        porNombre = true;
+        deCr = deCr.filter(function(p) { return _isArgGame(parsePgnHeaders(p)); });
       }
-      if (!soloArgentinos || fide.length) {
-        try { deCr = _crParsePgnList(await _crPgnFetch(crUrl, fide)); } catch (e) { deCr = []; }
-      }
+      enPant = enPant.filter(function(p) { return _isArgGame(parsePgnHeaders(p)); });
     }
 
-    var arr = deLichess.concat(deCr);
+    var arr = enPant.concat(deCr);
     if (!arr.length) {
-      setS('❌ No hay partidas para agregar (Chess-Results no las publicó todavía y no hay partidas en pantalla).');
+      setS(bajadasCr
+        ? '❌ Bajé ' + bajadasCr + ' partidas de Chess-Results, pero ninguna es de un argentino.'
+            + (porNombre ? ' (La tabla del torneo no está cargada: probá "🔄 Actualizar desde Chess-Results" y reintentá.)' : '')
+        : '❌ No hay partidas para agregar (Chess-Results no las publicó todavía y no hay partidas en pantalla).');
       return false;
     }
 
@@ -5991,9 +6027,20 @@ async function _crImportGamesToPool(crk, soloArgentinos) {
     var nuevas = [];
     uniqueIncoming.forEach(function(w) { if (dedupIndexCovered(siteIdx, w.pgn)) return; dedupIndexAdd(siteIdx, w.pgn); nuevas.push(w.pgn); });
     var yaEstaban = arr.length - nuevas.length;
-    var _fuente = (deLichess.length && deCr.length) ? 'Lichess + Chess-Results'
-                : (deLichess.length ? 'Lichess' : 'Chess-Results');
-    if (!nuevas.length) { setS('<span style="color:var(--text2)">Las ' + arr.length + ' partidas (' + _fuente + ') ya estaban en la base. No se agregó ninguna.</span>'); return true; }
+    // De dónde salió cada cosa (antes decía "Lichess" para partidas que venían del pool).
+    var _fuente = (enPant.length && deCr.length) ? 'Chess-Results + las que ya se veían'
+                : (enPant.length ? 'las que ya se veían' : 'Chess-Results');
+    // Detalle de lo que hizo Chess-Results, para que se vea que sí fue a buscarlas.
+    var _detCr = hasCr
+      ? 'Chess-Results: ' + bajadasCr + ' partida' + (bajadasCr !== 1 ? 's' : '') + ' en el torneo'
+          + (soloArgentinos ? ' · ' + deCr.length + ' de argentinos' : '')
+          + (porNombre ? ' (sin tabla cargada: filtré por nombre)' : '')
+      : '';
+    if (!nuevas.length) {
+      setS('<span style="color:var(--text2)">Las ' + arr.length + ' partidas (' + _fuente + ') ya estaban en la base. No se agregó ninguna.'
+        + (_detCr ? '<br><span style="color:var(--text3);font-size:11px">' + _detCr + '</span>' : '') + '</span>');
+      return true;
+    }
 
     // Al contenedor del pool de ESTE evento (el existente con ese nombre, o uno nuevo).
     var destT = null;
@@ -6011,6 +6058,7 @@ async function _crImportGamesToPool(crk, soloArgentinos) {
 
     setS('<span style="color:var(--green)">✓ ' + nuevas.length + ' partida' + (nuevas.length !== 1 ? 's' : '') + ' nueva' + (nuevas.length !== 1 ? 's' : '') +
          ' al pool <span style="color:var(--text3);font-weight:400">(' + _fuente + ')</span>' + (yaEstaban ? ' · ' + yaEstaban + ' ya estaban' : '') + '.' +
+         (_detCr ? '<br><span style="color:var(--text3);font-size:11px">' + _detCr + '</span>' : '') +
          '<br><span style="color:var(--gold);font-size:11px">Acordate de "Guardar datos en mi carpeta" y publicar.</span></span>');
     try { renderTorneos(_lastTorneoFilter); } catch (e) {}
     return true;
