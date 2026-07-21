@@ -2301,7 +2301,11 @@
         </div>
         <div class="gc-row">
           <div class="gc-f"><label>Fecha</label><input id="gc-date" type="date"></div>
-          <div class="gc-f"><label>Ronda</label><input id="gc-round" placeholder="1"></div>
+          <div class="gc-f"><label>Ronda</label><input id="gc-round" placeholder="1" oninput="gcRefreshPairings()"></div>
+        </div>
+        <div class="gc-f" style="margin-bottom:9px;display:none" id="gc-pair-wrap">
+          <label style="color:#7fd487">♟ Cruces de la ronda (elegí uno y se completan los jugadores)</label>
+          <select id="gc-pair" onchange="gcPairChosen()"></select>
         </div>
         <div class="gc-f" style="margin-bottom:9px"><label>Sede (opcional)</label><input id="gc-site" placeholder="Ciudad, club"></div>
 
@@ -11910,6 +11914,7 @@ function gcOpen() {
   if (d && !d.value) { var n = new Date(); d.value = n.getFullYear() + '-' + String(n.getMonth()+1).padStart(2,'0') + '-' + String(n.getDate()).padStart(2,'0'); }
   document.getElementById('gc-overlay').classList.add('open');
   document.body.style.overflow = 'hidden';
+  gcRefreshPairings();   // repoblar el select de torneos resetea la selección → ocultar cruces viejos
   gcRenderBoard(); gcRenderMoves(); gcRefreshSave(); gcUpdateCount();
 }
 function gcClose() {
@@ -12147,8 +12152,73 @@ function gcTourChanged() {
 function gcCatChanged() {
   var tSel = document.getElementById('gc-tour'), cSel = document.getElementById('gc-cat'), ev = document.getElementById('gc-event');
   if (!tSel || !ev) return;
-  if (!tSel.value) return;   // "sin torneo": respetar lo que el autor haya escrito a mano
-  ev.value = (cSel && cSel.value) ? _catEventName(tSel.value, cSel.value) : tSel.value;
+  if (tSel.value) ev.value = (cSel && cSel.value) ? _catEventName(tSel.value, cSel.value) : tSel.value;   // "sin torneo": respetar lo escrito a mano
+  gcRefreshPairings();
+  gcRefreshSave();
+}
+
+/* ── Cruces del torneo → autocompletar jugadores ──
+   Con torneo (y categoría) elegidos y una ronda tipeada, se listan los cruces por mesa que YA
+   están cargados en el torneo (los mismos de la vista de cruces, importados de Chess-Results).
+   Elegir uno completa nombres, elos, títulos, FIDE ids y resultado, sin copiar nada a mano.
+   Los FIDE ids salen de las tablas del torneo (ranking inicial / clasificación traen la columna
+   FIDE-ID) matcheando por nombre exacto normalizado; si la tabla no lo trae, se cae al ranking
+   del sitio con el matcher de perfiles. */
+function _gcTourRef(name) {
+  name = (name || '').trim(); if (!name) return null;
+  try { var tz = getTzConfig(); for (var k in tz) { if (tz[k] && (tz[k].name || '').trim() === name) return { type: 'tz', id: k }; } } catch (e) {}
+  try { for (var i = 0; i < (TORNEOS || []).length; i++) { if ((TORNEOS[i].name || '').trim() === name) return { type: 'hc', id: TORNEOS[i].id }; } } catch (e) {}
+  try { var ls = JSON.parse(localStorage.getItem('pgn_tournaments') || '[]'); for (var j = 0; j < ls.length; j++) { if (!ls[j].playerOnly && (ls[j].name || '').trim() === name) return { type: 'ls', id: ls[j].id }; } } catch (e) {}
+  return null;
+}
+// Cruces/tabla del torneo elegido, respetando la categoría (sufijo _cN, igual que la vista del torneo).
+function _gcCrData() {
+  var tSel = document.getElementById('gc-tour'); if (!tSel || !tSel.value) return null;
+  var ref = _gcTourRef(tSel.value); if (!ref) return null;
+  var sfx = '';
+  var cSel = document.getElementById('gc-cat');
+  if (cSel && cSel.value) {
+    var cats = _catsForTourName(tSel.value) || [];
+    for (var i = 0; i < cats.length; i++) { if ((cats[i].name || '') === cSel.value) { sfx = '_c' + i; break; } }
+  }
+  return crDataLoad(crKey(ref.type, ref.id) + sfx);
+}
+function gcRefreshPairings() {
+  var wrap = document.getElementById('gc-pair-wrap'), sel = document.getElementById('gc-pair');
+  if (!wrap || !sel) return;
+  var rd = _gcVal('gc-round'), data = _gcCrData();
+  var pairs = (rd && data && data.rounds && data.rounds[rd]) ? data.rounds[rd] : null;
+  if (!pairs || !pairs.length) { wrap.style.display = 'none'; sel.innerHTML = ''; return; }
+  var h = '<option value="">— Elegí el cruce (mesa) —</option>';
+  pairs.forEach(function(p, i) {
+    var lbl = (p.m ? p.m + ' · ' : '') + (p.w || '') + (p.ew ? ' (' + p.ew + ')' : '')
+            + '  –  ' + (p.b || '') + (p.eb ? ' (' + p.eb + ')' : '') + (p.res ? '   ' + p.res : '');
+    h += '<option value="' + i + '">' + escHtml(lbl) + '</option>';
+  });
+  sel.innerHTML = h; wrap.style.display = '';
+}
+function _gcFideFor(name, data) {
+  if (!name) return '';
+  var nn = normStr(name);
+  try { var st = (data && data.standings) || []; for (var i = 0; i < st.length; i++) { if (st[i].fideId && normStr(st[i].name) === nn) return st[i].fideId; } } catch (e) {}
+  try { for (var j = 0; j < PLAYERS.length; j++) { if (PLAYERS[j].fide_id && pgnNameMatchesPlayer(name, PLAYERS[j])) return String(PLAYERS[j].fide_id); } } catch (e) {}
+  return '';
+}
+function gcPairChosen() {
+  var sel = document.getElementById('gc-pair'); if (!sel || sel.value === '') return;
+  var rd = _gcVal('gc-round'), data = _gcCrData();
+  var p = (data && data.rounds && data.rounds[rd]) ? data.rounds[rd][parseInt(sel.value, 10)] : null;
+  if (!p) return;
+  function set(id, v) { var e = document.getElementById(id); if (e) e.value = v; }
+  set('gc-wname', p.w || ''); set('gc-bname', p.b || '');
+  set('gc-welo', p.ew || ''); set('gc-belo', p.eb || '');
+  var tw = _normTitle(p.tw || ''), tb = _normTitle(p.tb || '');
+  set('gc-wtitle', _GC_TITLES.indexOf(tw) >= 0 ? tw : '');
+  set('gc-btitle', _GC_TITLES.indexOf(tb) >= 0 ? tb : '');
+  set('gc-wfide', _gcFideFor(p.w, data)); set('gc-bfide', _gcFideFor(p.b, data));
+  // Resultado del cruce si ya está cargado ("1 - 0", "½-½"…). Si no se reconoce, queda a mano.
+  var r = String(p.res || '').replace(/\s+/g, '').replace(/½/g, '1/2');
+  set('gc-result', (r === '1-0' || r === '0-1') ? r : (r === '1/2-1/2' ? '1/2-1/2' : ''));
   gcRefreshSave();
 }
 function _gcVal(id) { var e = document.getElementById(id); return e ? (e.value || '').trim() : ''; }
@@ -12214,6 +12284,7 @@ function gcSave() {
   // siempre se cargan varias del mismo torneo seguidas) y se limpia lo que cambia en cada partida.
   ['gc-wname', 'gc-bname', 'gc-welo', 'gc-belo', 'gc-wfide', 'gc-bfide'].forEach(function(id) { var e = document.getElementById(id); if (e) e.value = ''; });
   ['gc-wtitle', 'gc-btitle', 'gc-result'].forEach(function(id) { var e = document.getElementById(id); if (e) e.value = ''; });
+  gcRefreshPairings();   // re-arma el selector de cruces (vuelve al placeholder, listo para el próximo)
   gcResetGame();
   gcRenderBoard(); gcRenderMoves(); gcRefreshSave();
   var wn = document.getElementById('gc-wname'); if (wn) wn.focus();
