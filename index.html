@@ -9387,8 +9387,12 @@ function _loadGamesIndexAsync(cb) {
   ]).then(function(parts) {
     window.__GAMES_INDEX__ = parts[0].concat(parts[1]);
     _gamesIdxLoading = false;
-    var cbs = _gamesIdxCbs; _gamesIdxCbs = [];
-    cbs.forEach(function(f) { f(); });
+    // El índice de búsqueda se arma ACÁ, en tandas cortas y con el cartel de carga aún
+    // visible, en vez de todo junto en la primera búsqueda (127k partidas ≈ 1,5s congelado).
+    _prebuildDbIdx(function() {
+      var cbs = _gamesIdxCbs; _gamesIdxCbs = [];
+      cbs.forEach(function(f) { f(); });
+    });
   }).catch(function() {
     _gamesIdxLoading = false;
     var cbs = _gamesIdxCbs; _gamesIdxCbs = [];
@@ -9398,16 +9402,35 @@ function _loadGamesIndexAsync(cb) {
 
 var _dbSearchIndex = null;
 function _invalidateDbSearch() { _dbSearchIndex = null; _obIdx = null; }
+// Entrada del buscador para una partida del índice publicado (único lugar que la arma:
+// la usan el armado sincrónico y el armado en tandas).
+function _dbIdxEntry(g) {
+  return { pgn: _reconstructPgn(g), white: g.w||'', black: g.b||'',
+           wt: nameTokens(g.w||''), bt: nameTokens(g.b||''),
+           year: parseInt((g.d||'').slice(0,4))||0, date: g.d||'',
+           result: g.r||'', eco: g.e||'', plies: g.pl||0, event: g.ev||'',
+           t: g.t, gi: g.gi,
+           _we: g.we||0, _be: g.be||0, _m: g.m||'' };
+}
+// Arma _dbSearchIndex de a tandas (setTimeout) para no congelar la UI; llama done() al
+// terminar. Si mientras tanto otro código lo armó entero (búsqueda sincrónica) o los
+// datos cambiaron, lo parcial se descarta sin pisar nada.
+function _prebuildDbIdx(done) {
+  var src = window.__GAMES_INDEX__;
+  if (!_ondemand || !src || _dbSearchIndex) { done(); return; }
+  var out = [], i = 0, LOTE = 10000;
+  (function paso() {
+    if (_dbSearchIndex || src !== window.__GAMES_INDEX__) { done(); return; }
+    var fin = Math.min(i + LOTE, src.length);
+    for (; i < fin; i++) out.push(_dbIdxEntry(src[i]));
+    if (i < src.length) { setTimeout(paso, 0); return; }
+    _dbSearchIndex = out;
+    done();
+  })();
+}
 function _buildDbSearchIndex() {
   if (_ondemand && window.__GAMES_INDEX__) {
-    _dbSearchIndex = window.__GAMES_INDEX__.map(function(g) {
-      return { pgn: _reconstructPgn(g), white: g.w||'', black: g.b||'',
-               wt: nameTokens(g.w||''), bt: nameTokens(g.b||''),
-               year: parseInt((g.d||'').slice(0,4))||0, date: g.d||'',
-               result: g.r||'', eco: g.e||'', plies: g.pl||0, event: g.ev||'',
-               t: g.t, gi: g.gi,
-               _we: g.we||0, _be: g.be||0, _m: g.m||'' };
-    });
+    _dbSearchIndex = window.__GAMES_INDEX__.map(_dbIdxEntry);
     return _dbSearchIndex;
   }
   var all = [];
