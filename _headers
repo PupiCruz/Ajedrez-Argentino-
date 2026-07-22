@@ -15,9 +15,38 @@
 /*
   Cache-Control: no-cache, must-revalidate
 
+# Motor Stockfish MULTI-HILO: para poder usar varios núcleos, el navegador exige que la página
+# esté "aislada" (crossOriginIsolated) — recién ahí habilita SharedArrayBuffer, que es como los
+# hilos del motor comparten memoria. Se piden SOLO acá (la app está toda en "/" e "/index.html"):
+# NO bajo "/*", porque Cloudflare Pages COMBINA las reglas y se le pegarían también a editar.html
+# y 404.html sin necesidad.
+#   - COEP "credentialless" y NO "require-corp": con require-corp se dejarían de ver las imágenes
+#     de otros sitios (flyers de imgur sin migrar, portadas de noticias externas). Con
+#     credentialless se siguen viendo (se piden sin cookies, que es lo que hacen igual).
+#   - Safari no entiende credentialless → ignora el header → la página NO queda aislada → el motor
+#     cae solo al de un hilo de siempre. O sea: mejora donde se puede, nada se rompe donde no.
+# PARA APAGAR EL MULTI-HILO (marcha atrás): borrar los 2 bloques de acá abajo (/ y /index.html) Y
+# TAMBIÉN la línea COEP que está más abajo, bajo "/assets/*". O sea: dejar este archivo como estaba.
+# No hay que tocar nada del index.html: sin estos headers la página no queda aislada, `_sfCanMulti()`
+# da false y el motor arranca el de UN hilo de siempre (verificado: carga
+# stockfish-18-lite-single.js, "id name Stockfish 18 Lite WASM", NO cae al SF16 embebido).
+# Media marcha atrás NO: sacar estos 2 bloques y dejar el COEP de /assets/* es una combinación que
+# no se probó nunca.
+/
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: credentialless
+/index.html
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: credentialless
+
 # Motor Stockfish, piezas, sonidos: nunca cambian entre versiones → cache 1 año.
+# El COEP acá NO es un capricho ni una copia de más: cuando la página está aislada, el navegador
+# exige que el archivo del motor (que corre como "worker") traiga el mismo header, AUNQUE sea de
+# este mismo sitio. Sin esta línea el navegador bloquea el motor SF18 —el multi Y el de un hilo—
+# y la web cae al viejo SF16 embebido. (Verificado en el servidor local: ERR_BLOCKED_BY_RESPONSE.)
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
+  Cross-Origin-Embedder-Policy: credentialless
 
 # Datos VERSIONADOS: la app los pide con "?v=<version>" (la versión sale del manifest.js).
 # Al haber datos nuevos cambia la URL → se bajan frescos. Por eso se cachean 1 año sin

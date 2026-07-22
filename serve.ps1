@@ -43,6 +43,20 @@ while ($listener.IsListening) {
       # tras editar index.html, el navegador siga mostrando la versión vieja al recargar.
       $ctx.Response.Headers.Add("Cache-Control","no-store, no-cache, must-revalidate, max-age=0")
       $ctx.Response.Headers.Add("Pragma","no-cache")
+      # Aislamiento (crossOriginIsolated) para la app: sin estos 2 headers el navegador no habilita
+      # SharedArrayBuffer y el motor multi-hilo NUNCA se puede probar en el servidor local. Son los
+      # mismos que manda Cloudflare en la web publicada (ver "_headers"), y por el mismo criterio se
+      # aplican SOLO a index.html (no a editar.html ni 404.html).
+      if ($rel -eq "index.html") {
+        $ctx.Response.Headers.Add("Cross-Origin-Opener-Policy","same-origin")
+        $ctx.Response.Headers.Add("Cross-Origin-Embedder-Policy","credentialless")
+      }
+      # Con la pagina aislada, el navegador exige que el archivo del MOTOR (corre como "worker")
+      # traiga tambien el COEP, aunque sea del mismo sitio: si no, lo bloquea (ERR_BLOCKED_BY_RESPONSE)
+      # y la app se cae al SF16 embebido. Mismo criterio que "/assets/*" en "_headers".
+      if ($rel -like "assets/*") {
+        $ctx.Response.Headers.Add("Cross-Origin-Embedder-Policy","credentialless")
+      }
       $ctx.Response.ContentLength64 = $bytes.Length
       $ctx.Response.OutputStream.Write($bytes, 0, $bytes.Length)
     } else {

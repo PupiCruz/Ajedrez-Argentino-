@@ -7771,6 +7771,10 @@ var _EXPORT_ASSET_PATHS = [
   'data/hardcoded.js',   // PLAYER_GAMES + PGN_DB (datos curados, ya no inline en el HTML)
   'assets/chess.min.js', // librería de ajedrez local (antes venía de jsDelivr)
   'assets/stockfish-18-lite-single.js','assets/stockfish-18-lite-single.wasm', // motor principal SF18 + red NNUE (por servidor)
+  // OJO: el build MULTI-HILO (assets/stockfish-18-lite.{js,wasm}) NO va en esta lista a propósito.
+  // Esta lista arma el "respaldo completo (ZIP)", que se abre con doble clic (file://) y ahí el
+  // motor que corre es el SF16 embebido → sumar 7MB de un motor que ese ZIP nunca usa. En la web
+  // publicada el multi sí está: assets/ va a git y Cloudflare publica el repo tal cual.
   'assets/stockfish-embedded.js', // SF16 + wasm en base64 (plan B y modo file:// con doble clic)
   'assets/stockfish-nnue-16-single.js','assets/stockfish-nnue-16-single.wasm', // motor local (antes jsDelivr)
   'assets/piezas/wK.svg','assets/piezas/wQ.svg','assets/piezas/wR.svg','assets/piezas/wB.svg','assets/piezas/wN.svg','assets/piezas/wP.svg',
@@ -16617,7 +16621,9 @@ var sf = { engine:null, loading:false, ready:false, on:false, depth:0, lines:[nu
            // 'bestmove'). Clave para las barreras: UCI responde 'isready' AL INSTANTE aunque esté
            // buscando, así que un 'readyok' no garantiza que la búsqueda vieja ya terminó de hablar.
            // rokWaiting = llegó el readyok de la barrera del módulo pero falta el bestmove viejo.
-           curSide:'w', curFen:null, pending:null, armed:true, searching:false, rokWaiting:false };
+           // multi = el motor que está corriendo AHORA es el de varios hilos (ver _sfStartSF18).
+           curSide:'w', curFen:null, pending:null, armed:true, searching:false, rokWaiting:false,
+           multi:false };
 // Profundidad mínima antes de mover la barra de eval: evita el "salto" de las lecturas ruidosas
 // de baja profundidad al avanzar una jugada. El número de puntaje sí se actualiza desde el inicio.
 // Prof. mínima para mover barra/número/líneas/gráfico al llegar una jugada nueva: por debajo, las
@@ -16690,14 +16696,43 @@ function sfStart() {
   if (location.protocol !== 'file:') _sfStartSF18(); else _sfStartEmbedded();
 }
 
-// Motor principal: SF18 lite single-thread. El worker se crea directo desde assets/ y él solo
-// baja su .wasm (mismo nombre, misma carpeta). Si algo falla ANTES de que el motor esté listo
-// (archivo que falta, wasm que no compila en un navegador viejo), caemos al SF16 embebido.
+// Motor principal: SF18 lite. Hay dos builds del MISMO motor y se elige uno solo (nunca se bajan
+// los dos): el de VARIOS HILOS (assets/stockfish-18-lite.js) cuando el navegador lo permite, y si
+// no el de UN hilo de siempre (…-single.js). El worker se crea directo desde assets/ y él solo
+// baja su .wasm (mismo nombre, misma carpeta); los hilos del multi salen de ese mismo archivo.
+// Cadena de respaldo: multi → single → SF16 embebido. Si algo falla ANTES de que el motor esté
+// listo (archivo que falta, wasm que no compila en un navegador viejo), se baja un escalón.
 var _sfCrashes = 0;   // reinicios automáticos del motor en esta pestaña (tope 2, contra loops de error)
+var _sfNoMulti = false;   // el multi ya falló en esta pestaña → ni intentarlo de nuevo
+
+// ¿Se puede usar el motor de varios hilos? Hacen falta las dos cosas: que la página esté AISLADA
+// (los headers COOP/COEP de "_headers" — en Safari no pasa) y que el navegador dé SharedArrayBuffer,
+// que es la memoria compartida donde los hilos se pasan el trabajo. Si falta cualquiera de las dos,
+// se usa el de un hilo, exactamente como hasta hoy.
+function _sfCanMulti() {
+  return !_sfNoMulti && typeof SharedArrayBuffer !== 'undefined'
+      && typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated === true;
+}
+// Cuántos hilos darle. A propósito NO se usan todos los núcleos: el motor ya corre aparte de la
+// página (no la traba), pero comerse la máquina entera calienta el teléfono, funde la batería y
+// deja el resto del navegador lento. Se dejan 2 núcleos libres, con tope de 4 hilos, y en teléfonos
+// tope 2 (donde los núcleos son más chicos y el calor baja la velocidad igual).
+function _sfThreads() {
+  var cores = navigator.hardwareConcurrency || 2;
+  var n = Math.min(4, Math.max(1, cores - 2));
+  if (/Android|iPhone|iPad|iPod|IEMobile|Mobile/i.test(navigator.userAgent || '')) n = Math.min(2, n);
+  return n;
+}
+
 function _sfStartSF18() {
+  var multi = _sfCanMulti();
   var worker;
-  try { worker = new Worker('assets/stockfish-18-lite-single.js'); }
-  catch (err) { _sfStartEmbedded(); return; }
+  try { worker = new Worker(multi ? 'assets/stockfish-18-lite.js' : 'assets/stockfish-18-lite-single.js'); }
+  catch (err) {
+    if (multi) { _sfNoMulti = true; _sfStartSF18(); } else { _sfStartEmbedded(); }
+    return;
+  }
+  sf.multi = multi;
   var fellBack = false;
   worker.onmessage = function(e) { sfOnMsg(e.data); };
   worker.onerror = function(e) {
@@ -16705,14 +16740,21 @@ function _sfStartSF18() {
       fellBack = true;
       try { worker.terminate(); } catch (_) {}
       sf.engine = null;
-      _sfStartEmbedded();
+      sf.multi = false;
+      // El multi que no arranca no es motivo para resignar el SF18: se reintenta con el de un hilo
+      // (el de siempre) y recién si ese también falla se cae al SF16 embebido.
+      if (multi) { _sfNoMulti = true; _sfStartSF18(); } else { _sfStartEmbedded(); }
     } else {
       // Motor caído DESPUÉS de estar listo (p.ej. sin memoria tras un análisis muy largo):
       // reiniciarlo solo (hasta 2 veces por pestaña) para que la transmisión siga sin que el
       // visitante tenga que hacer nada. La barrera readyok relanza el análisis que estuviera
       // en curso (sf.on / ejercicio / practicar).
       try { worker.terminate(); } catch (_) {}
-      sf.engine = null; sf.ready = false; sf.loading = false;
+      // Si el que se cayó era el de varios hilos, el reinicio va con el de UN hilo: la causa más
+      // probable de una caída así es la memoria, y con hilos se usa más. Mejor perder velocidad
+      // que arriesgar una segunda caída en medio de una transmisión.
+      if (multi) _sfNoMulti = true;
+      sf.engine = null; sf.ready = false; sf.loading = false; sf.multi = false;
       sf.lines = [null, null, null]; sf.depth = 0; sf.pending = null; sf.armed = true;
       sf.searching = false; sf.rokWaiting = false;    // el motor muerto no va a mandar su bestmove
       _fa.running = false; _fa.armed = false; _fa.rokSeen = false;   // que el gráfico no quede esperando un motor muerto
@@ -16747,6 +16789,7 @@ function _sfStartEmbedded() {
       var src = window.__SF_JS__
         .split('e={locateFile:function(e){return-1<e.indexOf(".wasm")?r:self.location.origin')
         .join('e={wasmBinary:self.__SFWB__,locateFile:function(e){return-1<e.indexOf(".wasm")?r:self.location.origin');
+      sf.multi = false;   // el embebido es SF16 de un solo hilo
       var burl   = URL.createObjectURL(new Blob([inject + src], {type: 'text/javascript'}));
       var worker = new Worker(burl);
       URL.revokeObjectURL(burl);
@@ -16802,9 +16845,13 @@ function sfOnMsg(line) {
   }
   if (line === 'uciok') {
     sf.engine.postMessage('setoption name MultiPV value 3');
+    // Hilos: solo el build multi los entiende (el de un hilo ignora la opción, pero igual no se le
+    // manda). Va ANTES del Hash, como recomienda Stockfish.
+    if (sf.multi) sf.engine.postMessage('setoption name Threads value ' + _sfThreads());
     // Más memoria para la tabla de transposición (default 16MB): llega a más profundidad
-    // más rápido. 32MB es seguro también en teléfonos.
-    sf.engine.postMessage('setoption name Hash value 32');
+    // más rápido. 32MB es seguro también en teléfonos. Con varios hilos conviene el doble: buscan
+    // más rápido y llenan la tabla antes (64MB también es seguro donde corre el multi).
+    sf.engine.postMessage('setoption name Hash value ' + (sf.multi ? 64 : 32));
     sf.engine.postMessage('isready');
     return;
   }
@@ -17070,7 +17117,12 @@ function sfUpdateUI() {
       _faFeedModuleEval(main.score, flip);
     }
   }
-  document.getElementById('sf-depth').textContent = sf.depth ? 'prof. ' + sf.depth : '';
+  // "prof. 24 · 4 hilos": el agregado de los hilos aparece SOLO cuando corre el motor de varios
+  // hilos, así se ve de un vistazo si el navegador lo habilitó (sin abrir la consola). Con el motor
+  // de un hilo el texto queda igual que siempre.
+  var _dEl = document.getElementById('sf-depth');
+  _dEl.textContent = sf.depth ? 'prof. ' + sf.depth + (sf.multi ? ' · ' + _sfThreads() + ' hilos' : '') : '';
+  _dEl.title = sf.multi ? 'Stockfish 18 con ' + _sfThreads() + ' hilos' : 'Stockfish 18, un hilo';
 
   // three lines — también esperan prof. confiable: hasta _SF_BAR_MINDEPTH se conservan las de la
   // jugada anterior (no se borran ni parpadean con variantes de prof. 1-2 que después cambian).
