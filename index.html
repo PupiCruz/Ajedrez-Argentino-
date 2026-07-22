@@ -11263,11 +11263,17 @@ function playerPgnFileSelected(input, playerId) {
   reader.readAsText(file, 'UTF-8');
 }
 
+// Busca un jugador del ranking por id (null si no está). Antes este mini-loop
+// estaba copiado en cuatro funciones distintas.
+function _playerById(playerId) {
+  for (var i = 0; i < PLAYERS.length; i++) { if (PLAYERS[i].id === playerId) return PLAYERS[i]; }
+  return null;
+}
+
 // Borra TODAS las partidas cargadas en el perfil de un jugador (los torneos
 // playerOnly de ese jugador). NO toca partidas de torneos públicos compartidos.
 function deleteAllPlayerGames(playerId) {
-  var player = null;
-  for (var i = 0; i < PLAYERS.length; i++) { if (PLAYERS[i].id === playerId) { player = PLAYERS[i]; break; } }
+  var player = _playerById(playerId);
   var tours = 0, games = 0;
   _memTournaments.forEach(function(e){ if (e.playerId === playerId) { tours++; games += (e.gameCount || (e.games||[]).length || 0); } });
   if (!tours) {
@@ -11287,8 +11293,7 @@ function deleteAllPlayerGames(playerId) {
 }
 
 function clearPlayerImported(playerId) {
-  var player = null;
-  for (var i = 0; i < PLAYERS.length; i++) { if (PLAYERS[i].id === playerId) { player = PLAYERS[i]; break; } }
+  var player = _playerById(playerId);
   var before = _memTournaments.length;
   function _shouldRemove(e) {
     if (e.playerId === playerId) return true;
@@ -11953,43 +11958,141 @@ function gcUpdateCount() {
   el.textContent = gc.saved ? ('✓ ' + gc.saved + ' partida' + (gc.saved !== 1 ? 's' : '') + ' cargada' + (gc.saved !== 1 ? 's' : '') + ' en esta tanda') : '';
 }
 
+/* ═══ TABLERO COMPARTIDO (Cargar a mano / Ejercicios / Practicar) ═══
+   Un solo lugar para pintar casillas y para la interacción de clic, toque y arrastre.
+   Antes este código vivía copiado en los tres tableros y cada arreglo había que
+   hacerlo tres veces (así apareció el bug del clic roto). Cada tablero pasa su
+   objeto de estado (st: usa st.chess, st.sel, st.legalDests — los tres ya comparten
+   esos nombres) y sus callbacks. El visor principal (cv) tiene su propia interacción
+   más compleja (variantes, en vivo) y NO usa esto. */
+
+// ¿La jugada from→to de esta pieza es una coronación? (peón llegando a la última fila)
+function _bdIsPromo(pc, to) {
+  if (!pc || pc.type !== 'p') return false;
+  var tr = parseInt(to[1], 10);
+  return (pc.color === 'w' && tr === 8) || (pc.color === 'b' && tr === 1);
+}
+
+// Pinta las 64 casillas. Rebuild completo solo si o.full (tablero nuevo o cambió la
+// orientación); si no, actualiza SOLO las casillas que cambian (diff por clase y pieza).
+// o = { flipped, sel, dests, lf, lt, full }. El llamador se encarga de la orientación,
+// del bind y de la animación (eso es distinto en cada tablero).
+function _bdPaint(el, bd, o) {
+  var FL = ['a','b','c','d','e','f','g','h'], cells = el.children;
+  if (o.full) {
+    var h = '';
+    for (var r = 0; r < 8; r++) for (var f = 0; f < 8; f++) {
+      var rr = o.flipped ? 7-r : r, ff = o.flipped ? 7-f : f;
+      var sq = FL[ff] + (8-rr), cls = 'csq ' + (((r+f) % 2 === 0) ? 'li' : 'da');
+      if (sq === o.lf) cls += ' mf';
+      if (sq === o.lt) cls += ' mt';
+      if (sq === o.sel) cls += ' sel';
+      var pc = bd[rr][ff];
+      if (o.dests.indexOf(sq) >= 0) cls += pc ? ' legal-cap' : ' legal';
+      h += '<div class="' + cls + '" data-sq="' + sq + '">' + cvCellInner(r, f, rr, ff, sq, pc ? (pc.color + pc.type) : '', FL) + '</div>';
+    }
+    el.innerHTML = h;
+  } else {
+    var idx = 0;
+    for (var r2 = 0; r2 < 8; r2++) for (var f2 = 0; f2 < 8; f2++) {
+      var cell = cells[idx++];
+      var rr2 = o.flipped ? 7-r2 : r2, ff2 = o.flipped ? 7-f2 : f2;
+      var sq2 = FL[ff2] + (8-rr2), cls2 = 'csq ' + (((r2+f2) % 2 === 0) ? 'li' : 'da');
+      if (sq2 === o.lf) cls2 += ' mf';
+      if (sq2 === o.lt) cls2 += ' mt';
+      if (sq2 === o.sel) cls2 += ' sel';
+      var pc2 = bd[rr2][ff2];
+      if (o.dests.indexOf(sq2) >= 0) cls2 += pc2 ? ' legal-cap' : ' legal';
+      if (cell.className !== cls2) cell.className = cls2;
+      var pk2 = pc2 ? (pc2.color + pc2.type) : '';
+      if (cell._pk !== pk2) { cell._pk = pk2; cell.innerHTML = cvCellInner(r2, f2, rr2, ff2, sq2, pk2, FL); }
+    }
+  }
+}
+
+// Interacción completa de un tablero: clic, toque (touch) y arrastre con mouse.
+// cfg = { canPick():bool  — guardas del modo (quién puede agarrar una pieza ahora)
+//         render():void   — redibuja el tablero (sin animación)
+//         onSquare(sq)    — clic o toque en una casilla
+//         onDrop(from,to) — soltó un arrastre en destino legal }
+// Solo puede haber UN arrastre a la vez en toda la app → un único par de listeners
+// de documento (mousemove/mouseup) atiende a los tres tableros vía _bdDrag.
+var _bdDrag = null, _bdDocBound = false;
+function _bdBindInput(boardEl, st, cfg) {
+  // ts.t: momento del último arrastre. El clic que el navegador dispara al soltar se ignora
+  // por cercanía en el tiempo. Es MARCA DE TIEMPO y no flag booleano a propósito: si el
+  // arrastre termina fuera del tablero no hay clic que consuma el flag, y un booleano
+  // quedaría pegado tragándose el clic siguiente (el bug que apareció al probar).
+  var ts = { t: 0 };
+  boardEl.addEventListener('click', function(e) {
+    if (Date.now() - ts.t < 300) return;   // el clic que sigue a soltar un arrastre no cuenta
+    var t = e.target.closest('[data-sq]'); if (!t) return; cfg.onSquare(t.getAttribute('data-sq'));
+  });
+  boardEl.addEventListener('touchend', function(e) {
+    e.preventDefault(); var t = e.changedTouches[0], x = document.elementFromPoint(t.clientX, t.clientY);
+    var sqEl = x ? x.closest('[data-sq]') : null; if (!sqEl) return; cfg.onSquare(sqEl.getAttribute('data-sq'));
+  }, { passive: false });
+  // Arrastre solo con mouse: en touch se mueve tocando origen y destino, que es más
+  // preciso en pantalla chica. Si el arrastre no llegó a moverse, se trata como un clic.
+  if (!window.matchMedia('(pointer: fine)').matches) return;
+  boardEl.addEventListener('mousedown', function(e) {
+    if (e.button !== 0 || !cfg.canPick()) return;
+    var sqEl = e.target.closest('[data-sq]'); if (!sqEl) return;
+    var sq = sqEl.getAttribute('data-sq'), pc = st.chess.get(sq);
+    if (!pc || pc.color !== st.chess.turn()) return;
+    // OJO: cvCellInner le pone data-sq TAMBIÉN al <img>, así que closest() puede devolver la
+    // imagen en vez de la casilla → buscar el img adentro daría null. Se contempla el caso.
+    var img = (e.target.tagName === 'IMG' && e.target.classList.contains('cpc')) ? e.target : sqEl.querySelector('img.cpc');
+    if (!img) return;
+    // Medir tamaño y src ANTES de re-renderizar: render() puede reemplazar el innerHTML y
+    // dejar este img desprendido (rect 0) → el clon saldría invisible.
+    var rect = img.getBoundingClientRect(), sz = rect.width, imgSrc = img.src;
+    var _wasSel = (st.sel === sq);   // ya seleccionada → dejar que el click la suelte
+    st.sel = sq; st.legalDests = st.chess.moves({ square: sq, verbose: true }).map(function(m) { return m.to; });
+    if (!_wasSel) _markPressSelect(sq);
+    cfg.render();
+    var clone = document.createElement('img');
+    clone.src = imgSrc;
+    // Posicionar por transform + will-change: el clon vive en su propia capa GPU y el compositor
+    // lo mueve sin repintar nada → sigue al puntero pegado.
+    clone.style.cssText = 'position:fixed;pointer-events:none;z-index:9999;width:' + sz + 'px;height:' + sz + 'px;left:0;top:0;transform:translate3d(' + (e.clientX-sz/2) + 'px,' + (e.clientY-sz/2) + 'px,0);will-change:transform;opacity:.88;';
+    document.body.appendChild(clone);
+    var live = boardEl.querySelector('[data-sq="' + sq + '"] img.cpc'); if (live) live.style.opacity = '.22';
+    _bdDrag = { sq: sq, clone: clone, sx: e.clientX, sy: e.clientY, moved: false, el: boardEl, st: st, cfg: cfg, ts: ts };
+    e.preventDefault();
+  });
+  if (_bdDocBound) return; _bdDocBound = true;
+  document.addEventListener('mousemove', function(e) {
+    if (!_bdDrag) return;
+    var sz = parseFloat(_bdDrag.clone.style.width);
+    _bdDrag.clone.style.transform = 'translate3d(' + (e.clientX-sz/2) + 'px,' + (e.clientY-sz/2) + 'px,0)';
+    if (!_bdDrag.moved && (Math.abs(e.clientX-_bdDrag.sx) > 4 || Math.abs(e.clientY-_bdDrag.sy) > 4)) _bdDrag.moved = true;
+  });
+  document.addEventListener('mouseup', function(e) {
+    if (!_bdDrag) return;
+    var d = _bdDrag; _bdDrag = null;
+    // restaurar la pieza de origen (con el diff, si no se movió no se rebuildea → quedaba semitransparente)
+    var lp = d.el.querySelector('[data-sq="' + d.sq + '"] img.cpc'); if (lp) lp.style.opacity = '';
+    if (d.clone.parentNode) d.clone.parentNode.removeChild(d.clone);
+    if (!d.moved) return;                 // no se arrastró: dejar que el clic haga lo suyo (queda seleccionada)
+    d.ts.t = Date.now();
+    var x = document.elementFromPoint(e.clientX, e.clientY), sqEl = x ? x.closest('[data-sq]') : null;
+    if (!sqEl || sqEl.getAttribute('data-sq') === d.sq) { d.st.sel = null; d.st.legalDests = []; d.cfg.render(); return; }
+    var to = sqEl.getAttribute('data-sq');
+    if (d.st.legalDests.indexOf(to) >= 0) d.cfg.onDrop(d.sq, to);
+    else { d.st.sel = null; d.st.legalDests = []; d.cfg.render(); }
+  });
+}
+
 /* ── Tablero ── */
 function gcRenderBoard(anim) {
   var el = document.getElementById('gc-board'); if (!el || !gc.chess) return;
   // Se dibuja la posición que se está MIRANDO (viewIdx), no necesariamente la última.
   var bd = gc.chess.board(), last = gc.viewIdx > 0 ? gc.moves[gc.viewIdx - 1] : null;
   var lf = last ? last.from : '', lt = last ? last.to : '';
-  var FL = ['a','b','c','d','e','f','g','h'], cells = el.children;
-  var full = cells.length !== 64 || _gcBoardOrient !== gc.flipped;
-  if (full) {
-    var h = '';
-    for (var r = 0; r < 8; r++) for (var f = 0; f < 8; f++) {
-      var rr = gc.flipped ? 7-r : r, ff = gc.flipped ? 7-f : f;
-      var sq = FL[ff] + (8-rr), cls = 'csq ' + (((r+f) % 2 === 0) ? 'li' : 'da');
-      if (sq === lf) cls += ' mf';
-      if (sq === lt) cls += ' mt';
-      if (sq === gc.sel) cls += ' sel';
-      var pc = bd[rr][ff];
-      if (gc.legalDests.indexOf(sq) >= 0) cls += pc ? ' legal-cap' : ' legal';
-      h += '<div class="' + cls + '" data-sq="' + sq + '">' + cvCellInner(r, f, rr, ff, sq, pc ? (pc.color + pc.type) : '', FL) + '</div>';
-    }
-    el.innerHTML = h; _gcBoardOrient = gc.flipped; gcBindBoard();
-  } else {
-    var idx = 0;
-    for (var r2 = 0; r2 < 8; r2++) for (var f2 = 0; f2 < 8; f2++) {
-      var cell = cells[idx++];
-      var rr2 = gc.flipped ? 7-r2 : r2, ff2 = gc.flipped ? 7-f2 : f2;
-      var sq2 = FL[ff2] + (8-rr2), cls2 = 'csq ' + (((r2+f2) % 2 === 0) ? 'li' : 'da');
-      if (sq2 === lf) cls2 += ' mf';
-      if (sq2 === lt) cls2 += ' mt';
-      if (sq2 === gc.sel) cls2 += ' sel';
-      var pc2 = bd[rr2][ff2];
-      if (gc.legalDests.indexOf(sq2) >= 0) cls2 += pc2 ? ' legal-cap' : ' legal';
-      if (cell.className !== cls2) cell.className = cls2;
-      var pk2 = pc2 ? (pc2.color + pc2.type) : '';
-      if (cell._pk !== pk2) { cell._pk = pk2; cell.innerHTML = cvCellInner(r2, f2, rr2, ff2, sq2, pk2, FL); }
-    }
-  }
+  var full = el.children.length !== 64 || _gcBoardOrient !== gc.flipped;
+  _bdPaint(el, bd, { flipped: gc.flipped, sel: gc.sel, dests: gc.legalDests, lf: lf, lt: lt, full: full });
+  if (full) { _gcBoardOrient = gc.flipped; gcBindBoard(); }
   if (anim && last) _cvSlidePiece(el, last.from, last.to);
   var t = document.getElementById('gc-turn');
   if (t) t.textContent = (gc.viewIdx < gc.sans.length ? '⏸ mirando la jugada ' + gc.viewIdx + ' de ' + gc.sans.length + ' · ' : '')
@@ -12020,71 +12123,11 @@ document.addEventListener('keydown', function(e) {
 });
 function gcBindBoard() {
   if (_gcBoardBound) return; _gcBoardBound = true;
-  var el = document.getElementById('gc-board');
-  el.addEventListener('click', function(e) {
-    if (Date.now() - _gcDragEndTs < 300) return;   // el clic que sigue a soltar un arrastre no cuenta
-    var t = e.target.closest('[data-sq]'); if (!t) return; gcHandleClick(t.getAttribute('data-sq'));
-  });
-  gcInitDrag(el);
-  el.addEventListener('touchend', function(e) {
-    e.preventDefault(); var t = e.changedTouches[0], x = document.elementFromPoint(t.clientX, t.clientY);
-    var sqEl = x ? x.closest('[data-sq]') : null; if (sqEl) gcHandleClick(sqEl.getAttribute('data-sq'));
-  }, { passive: false });
-}
-// Arrastrar piezas (mismo patrón que Practicar/Ejercicios: se clona la pieza y el clon sigue al
-// puntero en su propia capa GPU). Solo con mouse: en touch se mueve tocando origen y destino, que
-// es más preciso en pantalla chica. Si el arrastre no llegó a moverse, se trata como un clic.
-// _gcDragEndTs: momento del último arrastre. El clic que el navegador dispara al soltar se ignora
-// por cercanía en el tiempo. Se usa una MARCA DE TIEMPO y no un flag booleano a propósito: si el
-// arrastre termina fuera del tablero no hay clic que consuma el flag, y un booleano quedaría
-// pegado tragándose el clic siguiente (el bug que apareció al probar).
-var _gcDrag = null, _gcDragEndTs = 0, _gcDragDocBound = false;
-function gcInitDrag(boardEl) {
-  if (!window.matchMedia('(pointer: fine)').matches) return;
-  if (boardEl._gcDragBound) return; boardEl._gcDragBound = true;
-  boardEl.addEventListener('mousedown', function(e) {
-    if (e.button !== 0 || !gc.chess) return;
-    var sqEl = e.target.closest('[data-sq]'); if (!sqEl) return;
-    var sq = sqEl.getAttribute('data-sq'), pc = gc.chess.get(sq);
-    if (!pc || pc.color !== gc.chess.turn()) return;
-    // OJO: cvCellInner le pone data-sq TAMBIÉN al <img>, así que closest() puede devolver la
-    // imagen en vez de la casilla → buscar el img adentro daría null. Se contempla el caso.
-    var img = (e.target.tagName === 'IMG' && e.target.classList.contains('cpc')) ? e.target : sqEl.querySelector('img.cpc');
-    if (!img) return;
-    // Medir tamaño y src ANTES de re-renderizar: gcRenderBoard() puede reemplazar el innerHTML y
-    // dejar este img desprendido (rect 0) → el clon saldría invisible.
-    var rect = img.getBoundingClientRect(), sz = rect.width, imgSrc = img.src;
-    var _wasSel = (gc.sel === sq);   // ya seleccionada → dejar que el click la suelte
-    gc.sel = sq; gc.legalDests = gc.chess.moves({ square: sq, verbose: true }).map(function(m) { return m.to; });
-    if (!_wasSel) _markPressSelect(sq);
-    gcRenderBoard();
-    var clone = document.createElement('img');
-    clone.src = imgSrc;
-    clone.style.cssText = 'position:fixed;pointer-events:none;z-index:9999;width:' + sz + 'px;height:' + sz + 'px;left:0;top:0;transform:translate3d(' + (e.clientX-sz/2) + 'px,' + (e.clientY-sz/2) + 'px,0);will-change:transform;opacity:.88;';
-    document.body.appendChild(clone);
-    var live = document.querySelector('#gc-board [data-sq="' + sq + '"] img.cpc'); if (live) live.style.opacity = '.22';
-    _gcDrag = { sq: sq, clone: clone, sx: e.clientX, sy: e.clientY, moved: false };
-    e.preventDefault();
-  });
-  if (_gcDragDocBound) return; _gcDragDocBound = true;
-  document.addEventListener('mousemove', function(e) {
-    if (!_gcDrag) return;
-    var sz = parseFloat(_gcDrag.clone.style.width);
-    _gcDrag.clone.style.transform = 'translate3d(' + (e.clientX-sz/2) + 'px,' + (e.clientY-sz/2) + 'px,0)';
-    if (!_gcDrag.moved && (Math.abs(e.clientX-_gcDrag.sx) > 4 || Math.abs(e.clientY-_gcDrag.sy) > 4)) _gcDrag.moved = true;
-  });
-  document.addEventListener('mouseup', function(e) {
-    if (!_gcDrag) return;
-    var d = _gcDrag; _gcDrag = null;
-    var lp = document.querySelector('#gc-board [data-sq="' + d.sq + '"] img.cpc'); if (lp) lp.style.opacity = '';
-    if (d.clone.parentNode) d.clone.parentNode.removeChild(d.clone);
-    if (!d.moved) return;                 // no se arrastró: dejar que el clic haga lo suyo (queda seleccionada)
-    _gcDragEndTs = Date.now();
-    var x = document.elementFromPoint(e.clientX, e.clientY), sqEl = x ? x.closest('[data-sq]') : null;
-    if (!sqEl || sqEl.getAttribute('data-sq') === d.sq) { gc.sel = null; gc.legalDests = []; gcRenderBoard(); return; }
-    var to = sqEl.getAttribute('data-sq');
-    if (gc.legalDests.indexOf(to) >= 0) gcTryMove(d.sq, to);
-    else { gc.sel = null; gc.legalDests = []; gcRenderBoard(); }
+  _bdBindInput(document.getElementById('gc-board'), gc, {
+    canPick: function() { return !!gc.chess; },
+    render: function() { gcRenderBoard(); },
+    onSquare: gcHandleClick,
+    onDrop: gcTryMove
   });
 }
 function gcHandleClick(sq) {
@@ -12104,14 +12147,11 @@ function gcTryMove(from, to) {
   var pc = gc.chess.get(from);
   // Promoción: usar el MISMO selector de piezas del visor, con callback (así se puede coronar en
   // caballo/torre/alfil, que en una planilla pasa). _pendingPromo.cb lo consume promoChoose().
-  if (pc && pc.type === 'p') {
-    var tr = parseInt(to[1], 10);
-    if ((pc.color === 'w' && tr === 8) || (pc.color === 'b' && tr === 1)) {
-      gc.sel = null; gc.legalDests = []; gcRenderBoard();
-      _pendingPromo = { from: from, to: to, color: pc.color, cb: function(piece) { gcApplyMove(from, to, piece); } };
-      promoShow(pc.color);
-      return;
-    }
+  if (_bdIsPromo(pc, to)) {
+    gc.sel = null; gc.legalDests = []; gcRenderBoard();
+    _pendingPromo = { from: from, to: to, color: pc.color, cb: function(piece) { gcApplyMove(from, to, piece); } };
+    promoShow(pc.color);
+    return;
   }
   gcApplyMove(from, to, undefined);
 }
@@ -12729,8 +12769,7 @@ function deleteProfileTour(playerId, cacheKey) {
   });
   lsSaveTours(lsStored);
   pgnMergeToPlayerGames();
-  var player = null;
-  for (var i = 0; i < PLAYERS.length; i++) { if (PLAYERS[i].id === playerId) { player = PLAYERS[i]; break; } }
+  var player = _playerById(playerId);
   if (player) fetchPlayerBroadcastGames(player);
 }
 
@@ -12777,8 +12816,7 @@ function deleteProfileGame(playerId, cacheKey, gi) {
   pgnMergeToPlayerGames();
   if (!removed) { alert('No se pudo ubicar la partida para borrarla.'); return; }
   // Re-render del perfil (mismo camino que deleteProfileTour)
-  var player = null;
-  for (var i = 0; i < PLAYERS.length; i++) { if (PLAYERS[i].id === playerId) { player = PLAYERS[i]; break; } }
+  var player = _playerById(playerId);
   if (player) fetchPlayerBroadcastGames(player);
 }
 
@@ -14620,12 +14658,16 @@ function goTo(sec, btn) {
   // La partida puede haberse abierto SIN torneo de fondo (desde la pestaña Partidas) → limpiar la URL
   // ?torneo=&partida= que pudo quedar, para que la nav deje una URL coherente con la sección.
   if (location.search) { try { history.replaceState({}, '', location.pathname); } catch (_) {} }
+  var secEl = document.getElementById('s-' + sec);
+  if (!secEl) return;   // sección inexistente: no romper (goTo puede llamarse por código)
+  // Si no vino el botón (llamada por código, sin "this"), buscarlo por la sección que abre.
+  if (!btn) btn = document.querySelector('.nav-btn[onclick*="\'' + sec + '\'"]');
   var sections = document.querySelectorAll('.section');
   var navBtns  = document.querySelectorAll('.nav-btn');
   for (var i = 0; i < sections.length; i++) sections[i].classList.remove('active');
   for (var i = 0; i < navBtns.length; i++)  navBtns[i].classList.remove('active');
-  document.getElementById('s-' + sec).classList.add('active');
-  btn.classList.add('active');
+  secEl.classList.add('active');
+  if (btn) btn.classList.add('active');
   document.querySelector('.main').scrollTop = 0;
   _resetHdrForNav();   // mostrar el header y resetear el auto-ocultado al cambiar de sección
   if (sec === 'favoritos') renderPartidas();
@@ -16003,13 +16045,7 @@ function cvTryMove(from, to) {
 
   // detectar si es promoción
   var pc = cv.chess.get(from);
-  var isPromo = false;
-  if (pc && pc.type === 'p') {
-    var toRank = parseInt(to[1]);
-    if ((pc.color === 'w' && toRank === 8) || (pc.color === 'b' && toRank === 1)) {
-      isPromo = true;
-    }
-  }
+  var isPromo = _bdIsPromo(pc, to);
 
   if (isPromo) {
     // guardar movimiento pendiente y mostrar selector
@@ -20807,9 +20843,19 @@ function _routineLevelAuto() {
   return PUZ_LVL_NAME[puz.level] ? puz.level : 'aficionado';
 }
 function _routineLevel() { return routine.level || _routineLevelAuto(); }
+// practice.json se pide UNA sola vez aunque lo necesiten varios a la vez (al abrir la app
+// lo piden pracInit y la rutina casi juntos → antes salían dos descargas iguales).
+var _pracFetchP = null;
+function _pracFetchOnce() {
+  if (!_pracFetchP) {
+    _pracFetchP = fetch('data/practice.json' + _dataV()).then(function(r){ return r.json(); });
+    _pracFetchP.catch(function(){ _pracFetchP = null; });   // si falló, permitir reintentar después
+  }
+  return _pracFetchP;
+}
 function _routineEnsurePractice(cb) {
   if (_pracLoaded || (PRACTICE && PRACTICE.length)) { cb(); return; }
-  fetch('data/practice.json' + _dataV()).then(function(r){ return r.json(); }).then(function(d) {
+  _pracFetchOnce().then(function(d) {
     PRACTICE = Array.isArray(d) ? d : (d.practice || []); _pracLoaded = true; cb();
   }).catch(function(){ cb(); });
 }
@@ -21452,43 +21498,12 @@ function puzMaybeIntro(p) {
 var _puzBoardBound = false, _puzBoardOrient = null;
 function puzRenderBoard(animMove) {
   if (!puz.chess) return;
-  var bd = puz.chess.board(), FL = ['a','b','c','d','e','f','g','h'], el = document.getElementById('puz-board');
-  var cells = el.children;
+  var bd = puz.chess.board(), el = document.getElementById('puz-board');
   // Igual que el visor: rebuild completo solo si el tablero no existe aún o cambió la orientación; si no,
-  // se actualizan SOLO las casillas que cambian (clase y/o pieza). Antes reconstruía las 64 en cada render.
-  var full = cells.length !== 64 || _puzBoardOrient !== puz.flipped;
-  if (full) {
-    var h = '';
-    for (var r=0;r<8;r++) for (var f=0;f<8;f++) {
-      var rr = puz.flipped ? 7-r : r, ff = puz.flipped ? 7-f : f;
-      var sq = FL[ff] + (8-rr), li = (r+f) % 2 === 0, cls = 'csq ' + (li ? 'li' : 'da');
-      if (sq === puz.lastFrom) cls += ' mf';
-      if (sq === puz.lastTo) cls += ' mt';
-      if (sq === puz.sel) cls += ' sel';
-      var pc = bd[rr][ff];
-      if (puz.legalDests.indexOf(sq) >= 0) cls += pc ? ' legal-cap' : ' legal';
-      var pk = pc ? (pc.color + pc.type) : '';
-      h += '<div class="' + cls + '" data-sq="' + sq + '">' + cvCellInner(r, f, rr, ff, sq, pk, FL) + '</div>';
-    }
-    el.innerHTML = h;
-    _puzBoardOrient = puz.flipped;
-    puzBindBoard();
-  } else {
-    var idx = 0;
-    for (var r2=0;r2<8;r2++) for (var f2=0;f2<8;f2++) {
-      var cell = cells[idx++];
-      var rr2 = puz.flipped ? 7-r2 : r2, ff2 = puz.flipped ? 7-f2 : f2;
-      var sq2 = FL[ff2] + (8-rr2), li2 = (r2+f2) % 2 === 0, cls2 = 'csq ' + (li2 ? 'li' : 'da');
-      if (sq2 === puz.lastFrom) cls2 += ' mf';
-      if (sq2 === puz.lastTo) cls2 += ' mt';
-      if (sq2 === puz.sel) cls2 += ' sel';
-      var pc2 = bd[rr2][ff2];
-      if (puz.legalDests.indexOf(sq2) >= 0) cls2 += pc2 ? ' legal-cap' : ' legal';
-      if (cell.className !== cls2) cell.className = cls2;
-      var pk2 = pc2 ? (pc2.color + pc2.type) : '';
-      if (cell._pk !== pk2) { cell._pk = pk2; cell.innerHTML = cvCellInner(r2, f2, rr2, ff2, sq2, pk2, FL); }
-    }
-  }
+  // se actualizan SOLO las casillas que cambian (clase y/o pieza). Pintado compartido: _bdPaint.
+  var full = el.children.length !== 64 || _puzBoardOrient !== puz.flipped;
+  _bdPaint(el, bd, { flipped: puz.flipped, sel: puz.sel, dests: puz.legalDests, lf: puz.lastFrom, lt: puz.lastTo, full: full });
+  if (full) { _puzBoardOrient = puz.flipped; puzBindBoard(); }
   // Deslizamiento estilo Lichess: solo cuando el llamador pasa la movida (jugada del usuario, respuesta,
   // intro, repaso ▶). Las renders de selección/error/pista no lo pasan → no animan.
   if (animMove && animMove.from && animMove.to) _cvSlidePiece(el, animMove.from, animMove.to);
@@ -21496,16 +21511,17 @@ function puzRenderBoard(animMove) {
 }
 function puzBindBoard() {
   if (_puzBoardBound) return; _puzBoardBound = true;
-  var el = document.getElementById('puz-board');
-  el.addEventListener('click', function(e) {
-    if (Date.now() - _puzDragEndTs < 300) return;
-    var t = e.target.closest('[data-sq]'); if (!t) return; puzHandleClick(t.getAttribute('data-sq'));
+  _bdBindInput(document.getElementById('puz-board'), puz, {
+    canPick: function() { return puz.editing || puz.recording || puz.anOn || !puzLocked(); },
+    render: function() { puzRenderBoard(); },
+    onSquare: puzHandleClick,
+    onDrop: function(from, to) {
+      if (puz.recording) puzRecordMove(from, to);
+      else if (puz.editing) puzEditMove(from, to);
+      else if (puz.anOn) puzAnalysisMove(from, to);
+      else puzTryMove(from, to);
+    }
   });
-  el.addEventListener('touchend', function(e) {
-    e.preventDefault(); var t = e.changedTouches[0], x = document.elementFromPoint(t.clientX, t.clientY);
-    var sqEl = x ? x.closest('[data-sq]') : null; if (!sqEl) return; puzHandleClick(sqEl.getAttribute('data-sq'));
-  }, { passive:false });
-  puzInitDrag(el);
   _uaBind('puz-board', 'puz-user-arrows', _puzUA, function() { return puz.flipped; });
 }
 function puzLocked() { return !puz.chess || puz.solved || puz.revealed || puz.reviewing || puz.busy; }
@@ -21543,7 +21559,7 @@ function puzPromoFor(from, to) {
 }
 function puzTryMove(from, to) {
   var pc = puz.chess.get(from), promo;
-  if (pc && pc.type === 'p') { var tr = parseInt(to[1]); if ((pc.color === 'w' && tr === 8) || (pc.color === 'b' && tr === 1)) promo = puzPromoFor(from, to) || 'q'; }
+  if (_bdIsPromo(pc, to)) promo = puzPromoFor(from, to) || 'q';
   puzApplyUserMove(from, to, promo);
 }
 function puzUciEq(a, b) { if (!a || !b) return false; if (a.slice(0,4) !== b.slice(0,4)) return false; var pa = a[4]||'', pb = b[4]||''; return (pa && pb) ? pa === pb : true; }
@@ -21955,7 +21971,7 @@ function puzEditMove(from, to) {
   var s = puz.reviewIdx;   // ply donde estamos parados (0 = posición inicial, antes de solution[0])
   if (s >= puz.cur.solution.length || s % 2 !== 0) { puzAuthorMsg('Pará en una jugada del que resuelve (◀ ▶) para agregar su variante.'); puzRenderBoard(); return; }
   var pc = puz.chess.get(from), promo = '';
-  if (pc && pc.type === 'p') { var tr = parseInt(to[1]); if ((pc.color === 'w' && tr === 8) || (pc.color === 'b' && tr === 1)) promo = 'q'; }
+  if (_bdIsPromo(pc, to)) promo = 'q';
   var test = new Chess(puz.chess.fen()), mv = test.move({ from:from, to:to, promotion:promo || 'q' });
   if (!mv) { puzRenderBoard(); return; }
   var uci = from + to + (mv.promotion || '');
@@ -21996,7 +22012,7 @@ function puzStartRecord() {
 function puzRecordMove(from, to) {
   puz.sel = null; puz.legalDests = [];
   var pc = puz.chess.get(from), promo = '';
-  if (pc && pc.type === 'p') { var tr = parseInt(to[1]); if ((pc.color === 'w' && tr === 8) || (pc.color === 'b' && tr === 1)) promo = 'q'; }
+  if (_bdIsPromo(pc, to)) promo = 'q';
   var mv = puz.chess.move({ from:from, to:to, promotion:promo || 'q' });
   if (!mv) { puzRenderBoard(); return; }
   puz.lastFrom = mv.from; puz.lastTo = mv.to;
@@ -22136,61 +22152,12 @@ function puzSaveJson() {
   puzAuthorMsg('✓ Descargado. Reemplazá data/puzzles.json con este archivo y volvé a publicar.');
 }
 
-/* ── Drag & drop del solver (solo PC) ── */
-// _puzDragEndTs: momento del último arrastre, para ignorar el clic que dispara el navegador al
-// soltar. ANTES era un flag booleano que se limpiaba en ese clic; si el arrastre terminaba FUERA
-// del tablero, ese clic nunca llegaba al tablero y el flag quedaba pegado → el siguiente intento
-// de mover con clic-clic se lo tragaba en silencio y parecía que el clic no funcionaba.
-var _puzDrag = null, _puzDragEndTs = 0, _puzDragDocBound = false;
-function puzInitDrag(boardEl) {
-  if (!window.matchMedia('(pointer: fine)').matches) return;
-  if (boardEl._pzDragBound) return; boardEl._pzDragBound = true;
-  boardEl.addEventListener('mousedown', function(e) {
-    if (e.button !== 0 || (!puz.editing && !puz.recording && !puz.anOn && puzLocked())) return;
-    var sqEl = e.target.closest('[data-sq]'); if (!sqEl) return;
-    var sq = sqEl.getAttribute('data-sq'), pc = puz.chess.get(sq);
-    if (!pc || pc.color !== puz.chess.turn()) return;
-    var img = sqEl.querySelector('img.cpc'); if (!img) return;
-    // Medir tamaño y src ANTES de re-renderizar: puzRenderBoard() reemplaza el innerHTML y desprende
-    // este img, y getBoundingClientRect() sobre un nodo desprendido da 0 → el clon quedaba invisible.
-    var rect = img.getBoundingClientRect(), sz = rect.width, imgSrc = img.src;
-    var _wasSel = (puz.sel === sq);   // ya seleccionada → dejar que el click la suelte
-    puz.sel = sq; puz.legalDests = puz.chess.moves({ square:sq, verbose:true }).map(function(m){ return m.to; });
-    if (!_wasSel) _markPressSelect(sq);
-    puzRenderBoard();
-    var clone = document.createElement('img');
-    clone.src = imgSrc;
-    // Posicionar por transform + will-change: el clon vive en su propia capa GPU y el compositor lo mueve
-    // sin repintar nada → sigue al puntero pegado (el modal ya no tiene backdrop-filter, ver .puz-modal).
-    clone.style.cssText = 'position:fixed;pointer-events:none;z-index:9999;width:' + sz + 'px;height:' + sz + 'px;left:0;top:0;transform:translate3d(' + (e.clientX-sz/2) + 'px,' + (e.clientY-sz/2) + 'px,0);will-change:transform;opacity:.88;';
-    document.body.appendChild(clone);
-    var live = document.querySelector('#puz-board [data-sq="' + sq + '"] img.cpc'); if (live) live.style.opacity = '.22';
-    _puzDrag = { sq:sq, clone:clone, sx:e.clientX, sy:e.clientY, moved:false }; e.preventDefault();
-  });
-  if (_puzDragDocBound) return; _puzDragDocBound = true;
-  document.addEventListener('mousemove', function(e) {
-    if (!_puzDrag) return; var sz = parseFloat(_puzDrag.clone.style.width);
-    _puzDrag.clone.style.transform = 'translate3d(' + (e.clientX-sz/2) + 'px,' + (e.clientY-sz/2) + 'px,0)';
-    if (!_puzDrag.moved && (Math.abs(e.clientX-_puzDrag.sx) > 4 || Math.abs(e.clientY-_puzDrag.sy) > 4)) _puzDrag.moved = true;
-  });
-  document.addEventListener('mouseup', function(e) {
-    if (!_puzDrag) return; var d = _puzDrag; _puzDrag = null;
-    var _lp = document.querySelector('#puz-board [data-sq="' + d.sq + '"] img.cpc'); if (_lp) _lp.style.opacity = '';   // restaurar la pieza (con el diff, si no se movió no se rebuildea → quedaba semitransparente)
-    if (d.clone.parentNode) d.clone.parentNode.removeChild(d.clone);
-    if (!d.moved) { return; }
-    _puzDragEndTs = Date.now();
-    var x = document.elementFromPoint(e.clientX, e.clientY), sqEl = x ? x.closest('[data-sq]') : null;
-    if (!sqEl || sqEl.getAttribute('data-sq') === d.sq) { puz.sel = null; puz.legalDests = []; puzRenderBoard(); return; }
-    var to = sqEl.getAttribute('data-sq');
-    if (puz.legalDests.indexOf(to) >= 0) { if (puz.recording) puzRecordMove(d.sq, to); else if (puz.editing) puzEditMove(d.sq, to); else if (puz.anOn) puzAnalysisMove(d.sq, to); else puzTryMove(d.sq, to); }
-    else { puz.sel = null; puz.legalDests = []; puzRenderBoard(); }
-  });
-}
+/* ── Drag & drop del solver: ahora vive en _bdBindInput (tablero compartido) ── */
 // Con el módulo abierto: el visitante mueve libremente para explorar variantes; el motor reanaliza.
 function puzAnalysisMove(from, to) {
   puz.sel = null; puz.legalDests = [];
   var pc = puz.chess.get(from), promo = '';
-  if (pc && pc.type === 'p') { var tr = parseInt(to[1]); if ((pc.color === 'w' && tr === 8) || (pc.color === 'b' && tr === 1)) promo = 'q'; }
+  if (_bdIsPromo(pc, to)) promo = 'q';
   var m = puz.chess.move({ from:from, to:to, promotion:promo || 'q' });
   if (!m) { puzRenderBoard(); return; }
   puz.lastFrom = m.from; puz.lastTo = m.to;
@@ -22256,7 +22223,7 @@ function pracInit() {
   try { var lv = localStorage.getItem('prac_level'); if (lv && PRAC_LEVELS[lv]) prac.level = lv; } catch(e) {}
   if (!_ondemand) { var _pat = document.getElementById('prac-author-tools'); if (_pat) _pat.style.display = ''; }
   pracSyncLevelChips();
-  fetch('data/practice.json' + _dataV()).then(function(r){ return r.json(); }).then(function(d) {
+  _pracFetchOnce().then(function(d) {
     PRACTICE = Array.isArray(d) ? d : (d.practice || []);
     _pracLoaded = true; pracUpdatePhaseCounts(); pracRenderFilters(); pracRenderList();
   }).catch(function() {
@@ -22526,59 +22493,25 @@ function pracRenderBoard(anim) {
   var live = pracIsLive();
   var rc = new Chess(prac._fens[prac.viewIdx]), bd = rc.board(), mv = prac._moves[prac.viewIdx];
   var lf = mv ? mv.from : '', lt = mv ? mv.to : '';
-  var FL = ['a','b','c','d','e','f','g','h'], el = document.getElementById('prac-board');
-  var cells = el.children;
-  // Igual que el visor y Ejercicios: rebuild completo solo si el tablero no existe o cambió la orientación;
-  // si no, se actualizan SOLO las casillas que cambian. Antes reconstruía las 64 en cada jugada.
-  var full = cells.length !== 64 || _pracBoardOrient !== prac.flipped;
-  if (full) {
-    var h = '';
-    for (var r=0;r<8;r++) for (var f=0;f<8;f++) {
-      var rr = prac.flipped ? 7-r : r, ff = prac.flipped ? 7-f : f;
-      var sq = FL[ff] + (8-rr), li = (r+f) % 2 === 0, cls = 'csq ' + (li ? 'li' : 'da');
-      if (sq === lf) cls += ' mf';
-      if (sq === lt) cls += ' mt';
-      if (live && sq === prac.sel) cls += ' sel';
-      var pc = bd[rr][ff];
-      if (live && prac.legalDests.indexOf(sq) >= 0) cls += pc ? ' legal-cap' : ' legal';
-      var pk = pc ? (pc.color + pc.type) : '';
-      h += '<div class="' + cls + '" data-sq="' + sq + '">' + cvCellInner(r, f, rr, ff, sq, pk, FL) + '</div>';
-    }
-    el.innerHTML = h;
-    _pracBoardOrient = prac.flipped;
-    pracBindBoard();
-  } else {
-    var idx = 0;
-    for (var r2=0;r2<8;r2++) for (var f2=0;f2<8;f2++) {
-      var cell = cells[idx++];
-      var rr2 = prac.flipped ? 7-r2 : r2, ff2 = prac.flipped ? 7-f2 : f2;
-      var sq2 = FL[ff2] + (8-rr2), li2 = (r2+f2) % 2 === 0, cls2 = 'csq ' + (li2 ? 'li' : 'da');
-      if (sq2 === lf) cls2 += ' mf';
-      if (sq2 === lt) cls2 += ' mt';
-      if (live && sq2 === prac.sel) cls2 += ' sel';
-      var pc2 = bd[rr2][ff2];
-      if (live && prac.legalDests.indexOf(sq2) >= 0) cls2 += pc2 ? ' legal-cap' : ' legal';
-      if (cell.className !== cls2) cell.className = cls2;
-      var pk2 = pc2 ? (pc2.color + pc2.type) : '';
-      if (cell._pk !== pk2) { cell._pk = pk2; cell.innerHTML = cvCellInner(r2, f2, rr2, ff2, sq2, pk2, FL); }
-    }
-  }
+  var el = document.getElementById('prac-board');
+  // Igual que el visor y Ejercicios: rebuild completo solo si el tablero no existe o cambió la
+  // orientación; si no, SOLO las casillas que cambian. Pintado compartido: _bdPaint. Fuera de la
+  // posición en vivo (repasando jugadas) no se muestran selección ni destinos legales.
+  var full = el.children.length !== 64 || _pracBoardOrient !== prac.flipped;
+  _bdPaint(el, bd, { flipped: prac.flipped, sel: live ? prac.sel : null, dests: live ? prac.legalDests : [], lf: lf, lt: lt, full: full });
+  if (full) { _pracBoardOrient = prac.flipped; pracBindBoard(); }
   // Deslizamiento estilo Lichess: solo cuando el llamador lo pide (tu jugada, respuesta del motor, ▶).
   if (anim && mv) _cvSlidePiece(el, mv.from, mv.to);
   _uaClear('prac-board', 'prac-user-arrows', _pracUA, prac.flipped);   // limpiar flechas del usuario al cambiar la posición
 }
 function pracBindBoard() {
   if (_pracBoardBound) return; _pracBoardBound = true;
-  var el = document.getElementById('prac-board');
-  el.addEventListener('click', function(e) {
-    if (Date.now() - _pracDragEndTs < 300) return;
-    var t = e.target.closest('[data-sq]'); if (!t) return; pracHandleClick(t.getAttribute('data-sq'));
+  _bdBindInput(document.getElementById('prac-board'), prac, {
+    canPick: function() { return !pracLocked(); },
+    render: function() { pracRenderBoard(); },
+    onSquare: pracHandleClick,
+    onDrop: pracTryMove
   });
-  el.addEventListener('touchend', function(e) {
-    e.preventDefault(); var t = e.changedTouches[0], x = document.elementFromPoint(t.clientX, t.clientY);
-    var sqEl = x ? x.closest('[data-sq]') : null; if (!sqEl) return; pracHandleClick(sqEl.getAttribute('data-sq'));
-  }, { passive:false });
-  pracInitDrag(el);
   _uaBind('prac-board', 'prac-user-arrows', _pracUA, function() { return prac.flipped; });
 }
 function pracLocked() { return !prac.chess || prac.over || prac.busy || !pracIsLive() || prac.chess.turn() !== prac.humanColor; }
@@ -22596,7 +22529,7 @@ function pracHandleClick(sq) {
 function pracTryMove(from, to) {
   if (prac.anOn) pracAnOff();   // jugar en vivo apaga el análisis (el módulo pasa a jugar, no a analizar)
   var pc = prac.chess.get(from), promo;
-  if (pc && pc.type === 'p') { var tr = parseInt(to[1]); if ((pc.color === 'w' && tr === 8) || (pc.color === 'b' && tr === 1)) promo = 'q'; }
+  if (_bdIsPromo(pc, to)) promo = 'q';
   var m = prac.chess.move({ from:from, to:to, promotion:promo || 'q' });
   prac.sel = null; prac.legalDests = [];
   if (!m) { pracRenderBoard(); return; }
@@ -22962,52 +22895,7 @@ function pracOpenByIdWhenReady(id) {
   })();
 }
 
-/* ── Arrastrar piezas en el tablero de práctica (igual que el solver) ── */
-// _pracDragEndTs: ver la nota en _puzDragEndTs (era un flag booleano y se quedaba pegado).
-var _pracDrag = null, _pracDragEndTs = 0, _pracDragDocBound = false;
-function pracInitDrag(boardEl) {
-  if (!window.matchMedia('(pointer: fine)').matches) return;
-  if (boardEl._prDragBound) return; boardEl._prDragBound = true;
-  boardEl.addEventListener('mousedown', function(e) {
-    if (e.button !== 0 || pracLocked()) return;
-    var sqEl = e.target.closest('[data-sq]'); if (!sqEl) return;
-    var sq = sqEl.getAttribute('data-sq'), pc = prac.chess.get(sq);
-    if (!pc || pc.color !== prac.chess.turn()) return;
-    var img = sqEl.querySelector('img.cpc'); if (!img) return;
-    // Medir tamaño y src ANTES de re-renderizar: pracRenderBoard() reemplaza el innerHTML y desprende
-    // este img, y getBoundingClientRect() sobre un nodo desprendido da 0 → el clon quedaba invisible.
-    var rect = img.getBoundingClientRect(), sz = rect.width, imgSrc = img.src;
-    var _wasSel = (prac.sel === sq);   // ya seleccionada → dejar que el click la suelte
-    prac.sel = sq; prac.legalDests = prac.chess.moves({ square:sq, verbose:true }).map(function(m){ return m.to; });
-    if (!_wasSel) _markPressSelect(sq);
-    pracRenderBoard();
-    var clone = document.createElement('img');
-    clone.src = imgSrc;
-    // Ver nota en puzInitDrag: transform+will-change → capa GPU propia, el clon sigue al puntero pegado.
-    clone.style.cssText = 'position:fixed;pointer-events:none;z-index:9999;width:' + sz + 'px;height:' + sz + 'px;left:0;top:0;transform:translate3d(' + (e.clientX-sz/2) + 'px,' + (e.clientY-sz/2) + 'px,0);will-change:transform;opacity:.88;';
-    document.body.appendChild(clone);
-    var live = document.querySelector('#prac-board [data-sq="' + sq + '"] img.cpc'); if (live) live.style.opacity = '.22';
-    _pracDrag = { sq:sq, clone:clone, sx:e.clientX, sy:e.clientY, moved:false }; e.preventDefault();
-  });
-  if (_pracDragDocBound) return; _pracDragDocBound = true;
-  document.addEventListener('mousemove', function(e) {
-    if (!_pracDrag) return; var sz = parseFloat(_pracDrag.clone.style.width);
-    _pracDrag.clone.style.transform = 'translate3d(' + (e.clientX-sz/2) + 'px,' + (e.clientY-sz/2) + 'px,0)';
-    if (!_pracDrag.moved && (Math.abs(e.clientX-_pracDrag.sx) > 4 || Math.abs(e.clientY-_pracDrag.sy) > 4)) _pracDrag.moved = true;
-  });
-  document.addEventListener('mouseup', function(e) {
-    if (!_pracDrag) return; var d = _pracDrag; _pracDrag = null;
-    var _lp = document.querySelector('#prac-board [data-sq="' + d.sq + '"] img.cpc'); if (_lp) _lp.style.opacity = '';   // restaurar la pieza (con el diff, si no se movió no se rebuildea → quedaba semitransparente)
-    if (d.clone.parentNode) d.clone.parentNode.removeChild(d.clone);
-    if (!d.moved) { return; }
-    _pracDragEndTs = Date.now();
-    var x = document.elementFromPoint(e.clientX, e.clientY), sqEl = x ? x.closest('[data-sq]') : null;
-    if (!sqEl || sqEl.getAttribute('data-sq') === d.sq) { prac.sel = null; prac.legalDests = []; pracRenderBoard(); return; }
-    var to = sqEl.getAttribute('data-sq');
-    if (prac.legalDests.indexOf(to) >= 0) { pracTryMove(d.sq, to); }
-    else { prac.sel = null; prac.legalDests = []; pracRenderBoard(); }
-  });
-}
+/* ── Arrastrar piezas en el tablero de práctica: ahora vive en _bdBindInput (tablero compartido) ── */
 
 /* ── Agarradera para agrandar/achicar el tablero del solver y de Practicar (igual que el visor) ──
    Controla el ancho de la columna del tablero con --puz-bw (sobre .puz-board-col) y lo guarda. */
