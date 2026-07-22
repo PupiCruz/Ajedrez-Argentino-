@@ -20765,7 +20765,7 @@ function routineRenderBuilder() {
 //  Reusa el solver y Practicar; sin login, todo del lado del visitante.
 // ───────────────────────────────────────────────────────────────────────────
 var routine = { active:false, steps:[], idx:0, mode:'time', minutes:20, count:5, tacticPct:0.55,
-  inc:{ puz:true, mid:true, fin:true }, midObj:'', finType:'',
+  inc:{ puz:true, mid:true, fin:true }, midObj:'', finType:'', level:'',
   puzClean:0, tEnd:0, tDur:0, _timer:null, _used:{}, _level:'aficionado',
   doneP:0, doneMid:0, doneFin:0 };
 
@@ -20773,7 +20773,14 @@ var _routineBarBtn     = 'padding:6px 12px;border-radius:8px;border:1px solid va
 var _routineBarBtnGold = 'padding:7px 14px;border-radius:8px;border:1px solid var(--gold-dim);background:var(--gold);color:#1a1400;font-size:13px;font-weight:800;cursor:pointer;font-family:inherit';
 var _routineBarX       = 'width:28px;height:28px;border-radius:8px;border:1px solid var(--bd18);background:rgba(0,0,0,0.2);color:var(--text2);font-size:13px;cursor:pointer;font-family:inherit;line-height:1';
 
-function _routineLevel() { var r = puzPlayer().rating; return r < 1400 ? 'inicial' : r < 1800 ? 'aficionado' : r < 2200 ? 'avanzado' : 'maestro'; }
+// Nivel "automático" de la rutina: si el visitante ya acumuló historial resolviendo
+// ejercicios (rating confiable), manda su rating; si no, el nivel que eligió en Ejercicios.
+function _routineLevelAuto() {
+  var P = puzPlayer();
+  if (P.n >= 10 || P.seeded) { var r = P.rating; return r < 1400 ? 'inicial' : r < 1800 ? 'aficionado' : r < 2200 ? 'avanzado' : 'maestro'; }
+  return PUZ_LVL_NAME[puz.level] ? puz.level : 'aficionado';
+}
+function _routineLevel() { return routine.level || _routineLevelAuto(); }
 function _routineEnsurePractice(cb) {
   if (_pracLoaded || (PRACTICE && PRACTICE.length)) { cb(); return; }
   fetch('data/practice.json' + _dataV()).then(function(r){ return r.json(); }).then(function(d) {
@@ -20813,6 +20820,7 @@ function _puzRoutineBuilderHtml() {
   }
   colB += '<div style="font-size:13px;color:var(--text2);margin:0 0 5px;font-weight:700">Incluir:</div>';
   colB += _routineCheck('puz', 'Ejercicios de táctica');
+  if (R.inc.puz) colB += _routineLvlPicker();
   colB += _routineCheck('mid', 'Práctica de medio juego');
   if (R.inc.mid) colB += _routineMidPicker();
   colB += _routineCheck('fin', 'Práctica de finales');
@@ -20846,6 +20854,14 @@ function _routineMidPicker() {
   var opts = [['','Cualquier objetivo'],['ventaja','Convertir ventaja'],['igualada','Posición igualada'],['defensa','Defender posición peor']];
   var h = '<select onchange="routineSetSel(\'midObj\',this.value)" style="' + _routineSelStyle + '">';
   opts.forEach(function(o){ h += '<option value="' + o[0] + '"' + (routine.midObj === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; });
+  return h + '</select>';
+}
+function _routineLvlPicker() {
+  var h = '<select onchange="routineSetSel(\'level\',this.value)" style="' + _routineSelStyle + '">'
+    + '<option value=""' + (routine.level ? '' : ' selected') + '>Nivel automático (' + PUZ_LVL_SHORT[_routineLevelAuto()] + ')</option>';
+  ['inicial','aficionado','avanzado','maestro'].forEach(function(l){
+    h += '<option value="' + l + '"' + (routine.level === l ? ' selected' : '') + '>' + PUZ_LVL_NAME[l] + '</option>';
+  });
   return h + '</select>';
 }
 function _routineFinPicker() {
@@ -21291,6 +21307,9 @@ function puzRenderSource() {
   el.innerHTML = puzSourceHtml(puz.cur) + puzCrowdHtml(puz.cur.id);
 }
 function puzMotifsHtml(p) {
+  // Las etiquetas de motivo (Horquilla, Mate en 2…) espoilean la solución: recién
+  // se muestran cuando el ejercicio quedó resuelto o el visitante vio la solución.
+  if (!puz.solved && !puz.revealed) return '';
   var ths = p.themes || [], seen = {}, out = [];
   for (var i=0;i<ths.length;i++) {
     var t = ths[i]; if (PUZ_MOTIF_SKIP[t]) continue;
@@ -21551,6 +21570,7 @@ function puzOnSolved() {
   if (clean) puzSetFb('ok', '🏆', '¡Correcto! Resolviste el ejercicio.');
   else puzSetFb('ok', '✔', 'Ejercicio completado' + (puz.failed ? ' (hubo algún intento fallido).' : '.'));
   puzSetupReview(puz.played.length ? puz.played : puz.cur.solution, false);
+  document.getElementById('puz-motifs').innerHTML = puzMotifsHtml(puz.cur);   // ahora sí: el motivo ya no espoilea
   puzRenderActions();
   if (typeof sfStart === 'function' && !sf.engine) sfStart();   // precargar el motor (queda oculto hasta que lo piden)
 }
@@ -21559,6 +21579,7 @@ function puzReveal() {
   puz.revealed = true; puzSetResult(puz.cur.id, 'fail');
   puzSetFb('hint', '👁', 'Esta es la solución. Recorré las jugadas con ◀ ▶.<div style="margin-top:7px;font-weight:600;color:var(--text);font-family:\'Courier New\',monospace">' + cvFanHtml(puzSanLine(puz.cur)) + '</div>');
   puzSetupReview(puz.cur.solution, true);
+  document.getElementById('puz-motifs').innerHTML = puzMotifsHtml(puz.cur);   // ahora sí: el motivo ya no espoilea
   puzRenderActions();
   if (typeof sfStart === 'function' && !sf.engine) sfStart();   // precargar el motor (queda oculto hasta que lo piden)
 }
