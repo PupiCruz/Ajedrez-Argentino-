@@ -1690,6 +1690,19 @@
     .sf-lscore { font-weight: 700; font-size: 12px; font-variant-numeric: tabular-nums; padding-top: 1px; }
     .sf-pos { color: #72c46b; }
     .sf-neg { color: #e06868; }
+    /* Botón "¿Qué amenaza?": pregunta al motor qué haría el rival si el que mueve pasara el turno. */
+    .sf-threat-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+    .sf-threat-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: var(--bg3); border: 1px solid var(--border);
+      color: var(--fg0); font-size: 12px; font-weight: 700; font-family: inherit;
+      padding: 6px 12px; border-radius: 7px; cursor: pointer;
+      transition: background .15s, color .15s, border-color .15s, opacity .15s;
+    }
+    .sf-threat-btn:hover:not(:disabled) { background: #3a1c1c; border-color: #8a3b3b; color: #ffb4b4; }
+    body.light .sf-threat-btn:hover:not(:disabled) { background: #f6dede; border-color: #d18a8a; color: #a33; }
+    .sf-threat-btn:disabled { opacity: .4; cursor: default; }
+    .sf-threat-txt { font-size: 12px; color: var(--text3); font-weight: 600; font-variant-numeric: tabular-nums; }
     /* ── Modal torneos ── */
     .tz-modal-overlay{display:none;position:fixed;inset:0;z-index:2000;background:rgba(0,0,0,.75);align-items:center;justify-content:center;padding:16px}
     .tz-modal-overlay.open{display:flex}
@@ -2559,6 +2572,10 @@
         <div class="sf-line" id="sf-line0"><span class="sf-ln">1</span><span class="sf-lscore sf-pos" id="sf-ls0"></span><span class="sf-lmoves" id="sf-lm0"></span><button class="sf-exp" id="sf-exp0" onclick="sfToggleExpand(0)" title="Ver la variante completa" style="visibility:hidden">⌄</button></div>
         <div class="sf-line" id="sf-line1"><span class="sf-ln">2</span><span class="sf-lscore sf-pos" id="sf-ls1"></span><span class="sf-lmoves" id="sf-lm1"></span><button class="sf-exp" id="sf-exp1" onclick="sfToggleExpand(1)" title="Ver la variante completa" style="visibility:hidden">⌄</button></div>
         <div class="sf-line" id="sf-line2"><span class="sf-ln">3</span><span class="sf-lscore sf-pos" id="sf-ls2"></span><span class="sf-lmoves" id="sf-lm2"></span><button class="sf-exp" id="sf-exp2" onclick="sfToggleExpand(2)" title="Ver la variante completa" style="visibility:hidden">⌄</button></div>
+      </div>
+      <div class="sf-threat-row">
+        <button class="sf-threat-btn" id="sf-threat-btn" onclick="thrProbe()" title="¿Qué haría el rival si le tocara mover?">⚠️ ¿Qué amenaza?</button>
+        <span class="sf-threat-txt" id="sf-threat-txt"></span>
       </div>
     </div>
     <!-- Aviso: el operador de la transmisión está corrigiendo la partida a mano (mandó variantes y la
@@ -15167,6 +15184,7 @@ function cvSetNode(node) {
   var _cvCounterEl = document.getElementById('cv-counter'); if (_cvCounterEl) _cvCounterEl.textContent = counterText;
   if (depth > 0) cvClearUserArrows();
   sfClearArrows();
+  if (typeof thrReset === 'function') thrReset();   // borrar la flecha roja de "¿Qué amenaza?" al navegar
   _sfArrowsHold = true;   // congelar flechas del motor hasta que arranque el análisis de la posición nueva
 
   // El trabajo PESADO (barra/marcador de eval, relojes, badge NAG, sonido, libro y motor) se DIFIERE ~140ms:
@@ -15188,6 +15206,7 @@ function _cvSettleNode() {
   cvUpdateClocks();
   cvUpdateLiveBackBtn();
   cvUpdateNagBadge();
+  if (sf.on && typeof thrUpdateBtn === 'function') thrUpdateBtn();   // habilita/deshabilita "¿Qué amenaza?" según jaque/pase
   if (cv.node.move) cvPlayMoveSound(cv.node.move.san);   // sonido de la posición FINAL (no ametralla al navegar rápido)
   obSchedule();
   // No tocar el motor mientras corre el análisis completo: si no, la navegación le roba el turno y el análisis
@@ -16778,6 +16797,7 @@ function sfToggle() {
     document.getElementById('sf-panel').style.display = 'block';
     document.getElementById('sf-vbar').classList.add('show');
     sfStart();
+    thrUpdateBtn();
     // Avisar a las otras pestañas para que apaguen su motor (uno solo a la vez, como Lichess).
     _sfBroadcastOn();
   } else {
@@ -16798,6 +16818,7 @@ function sfTurnOff() {
   document.getElementById('sf-vbar').classList.remove('show');
   document.getElementById('sf-vbar-fill').style.height = '50%';
   sfClearArrows();
+  thrReset();   // por si quedaba una flecha/rótulo de "¿Qué amenaza?"
   // Detiene el análisis (el worker queda ocioso, sin consumir CPU) — salvo que el motor lo esté
   // usando el gráfico en este momento: su búsqueda no es nuestra y no hay que cortársela.
   if (sf.engine && !_fa.running) sf.engine.postMessage('stop');
@@ -16932,6 +16953,7 @@ function sfOnMsg(line) {
   if (typeof prac !== 'undefined' && prac.running) { pracHandleMsg(line); return; }
   if (_fa.running) { faHandleMsg(line); return; }
   if (_mev.running) { mevHandleMsg(line); return; }
+  if (typeof _thr !== 'undefined' && _thr.running) { thrHandleMsg(line); return; }
   // Barrera del módulo que estaba esperando el fin de la búsqueda vieja (ver 'readyok' más abajo):
   // recién con este bestmove el motor terminó de hablar de la posición anterior. Arrancar la nueva.
   if (line.indexOf('bestmove') === 0 && sf.rokWaiting && !sf.armed && sf.pending) {
@@ -23458,12 +23480,151 @@ function sfDrawArrows() {
     var from = center(a.from), to = center(a.to);
     drawArrow(ctx, from.x, from.y, to.x, to.y, sqW, a.w, 'rgba(74,74,80,' + a.a + ')');
   }
+  // Flecha ROJA de la amenaza (botón "¿Qué amenaza?"), por encima de las del motor. Persiste entre
+  // redibujos del análisis en vivo hasta que se navega o vence su temporizador (thrReset/thrClearArrow).
+  if (typeof _thrArrow !== 'undefined' && _thrArrow) {
+    var tf = center(_thrArrow.from), tt = center(_thrArrow.to);
+    // Mismo estilo tenue que la flecha principal del motor (ancho 0.16, alfa ~0.55), pero en rojo.
+    drawArrow(ctx, tf.x, tf.y, tt.x, tt.y, sqW, 0.16, 'rgba(198,58,58,0.52)');
+  }
 }
 
 function sfClearArrows() {
   _sfArrows = [];
   var canvas = document.getElementById('cv-sf-arrows');
   if (canvas) { var ctx = canvas.getContext('2d'); ctx.clearRect(0, 0, canvas.width, canvas.height); }
+}
+
+// ── "¿Qué amenaza?" — truco de pasar el turno ────────────────────────────────────────
+// Le preguntamos al motor qué haría el RIVAL si el que mueve pasara el turno: FEN actual con el turno
+// invertido → su mejor jugada = la amenaza → flecha roja + texto "Amenaza: Dxh7" unos segundos.
+// CLAVE: el motor es COMPARTIDO con el módulo del visor y el pase del gráfico. El probe entra por el
+// MISMO camino de barreras que _mev/_fa (stop → isready → esperar el bestmove viejo → recién ahí
+// arrancar), y al terminar RELANZA el análisis del visor para que siga como si nada. Nunca se inventa
+// un camino paralelo al motor: ahí viven los bugs de signo.
+var _thr = { running:false, armed:false, rokSeen:false, fen:null, tfen:null };
+var _THR_DEPTH = 18;
+var _thrCache = {};    // fenOriginal → {from,to,san} | 'none'
+var _thrArrow = null;  // {from,to} de la flecha roja dibujada ahora (o null)
+var _thrTimer = null;
+
+// FEN con el turno pasado al rival: invierte el lado a mover y anula el al-paso (se pierde al pasar).
+function _threatFen(fen) {
+  var p = fen.split(' ');
+  if (p.length < 4) return null;
+  p[1] = (p[1] === 'w') ? 'b' : 'w';
+  p[3] = '-';
+  return p.join(' ');
+}
+
+// Estado visual del botón: gris si el pase usa el motor, o si el que mueve está en jaque (la amenaza
+// ES el jaque → la posición invertida sería ilegal).
+function thrUpdateBtn() {
+  var b = document.getElementById('sf-threat-btn');
+  if (!b) return;
+  var inChk = !!(cv.chess && cv.chess.in_check());
+  var busy  = (typeof _fa !== 'undefined' && _fa.running);
+  b.disabled = inChk || busy || _thr.running || !cv.chess;
+  b.title = inChk ? 'La amenaza es el jaque'
+          : busy  ? 'El análisis de la partida está usando el motor'
+          : '¿Qué haría el rival si le tocara mover?';
+}
+
+// Mensaje efímero en el rótulo del botón (motivo por el que no se calculó, o "pensando…").
+function thrFlash(msg) {
+  var t = document.getElementById('sf-threat-txt');
+  if (!t) return;
+  clearTimeout(_thrTimer);
+  t.textContent = msg;
+  _thrTimer = setTimeout(function(){ t.textContent = ''; }, 4000);
+}
+
+// Limpia solo la flecha roja y su temporizador (deja que el motor siga dibujando sus flechas).
+function thrClearArrow() {
+  _thrArrow = null;
+  clearTimeout(_thrTimer); _thrTimer = null;
+  sfDrawArrows();
+}
+
+// Reset liviano al navegar: borra estado y rótulo SIN redibujar (el canvas ya lo limpió sfClearArrows).
+function thrReset() {
+  _thrArrow = null;
+  clearTimeout(_thrTimer); _thrTimer = null;
+  var t = document.getElementById('sf-threat-txt'); if (t) t.textContent = '';
+}
+
+function thrProbe() {
+  if (_thr.running) return;                                    // ya hay un probe en curso
+  if (!cv.chess) return;
+  if (typeof _fa !== 'undefined' && _fa.running) { thrFlash('El análisis de la partida está usando el motor…'); return; }
+  if (!sf.ready) { if (!sf.on) sfToggle(); thrFlash('El motor se está cargando…'); return; }
+  if (cv.chess.in_check()) { thrFlash('La amenaza es el jaque.'); return; }
+  var fen = cv.chess.fen();
+  var cached = _thrCache[fen];
+  if (cached) { thrShow(cached, fen); return; }
+  var tf = _threatFen(fen);
+  if (!tf) { thrFlash('No se puede calcular acá.'); return; }
+  // ¿El rival tendría jugadas en la posición invertida? (ahogado/sin movidas → sin amenaza)
+  try { if (new Chess(tf).moves().length === 0) { _thrCache[fen] = 'none'; thrShow('none', fen); return; } } catch (e) {}
+  _thr.running = true; _thr.armed = false; _thr.rokSeen = false; _thr.fen = fen; _thr.tfen = tf;
+  thrUpdateBtn();
+  var t = document.getElementById('sf-threat-txt'); if (t) t.textContent = 'pensando…';
+  // Barrera readyok: MultiPV 1 (solo la mejor), descarta el bestmove fantasma de la búsqueda del visor.
+  sf.engine.postMessage('stop');
+  sf.engine.postMessage('setoption name MultiPV value 1');
+  sf.engine.postMessage('isready');
+}
+
+function thrHandleMsg(line) {
+  // Igual que _mev/_fa: si había una búsqueda del visor en curso, el readyok llega antes que su
+  // bestmove viejo → armar recién en ese bestmove; si no, la eval vieja se colaría en el probe.
+  if (!_thr.armed) {
+    if (line.indexOf('bestmove') === 0) {
+      if (_thr.rokSeen) { _thr.rokSeen = false; _thr.armed = true; thrGo(); }
+      return;
+    }
+    if (line.indexOf('readyok') === 0) {
+      if (sf.searching) { _thr.rokSeen = true; return; }
+      _thr.armed = true; thrGo();
+    }
+    return;
+  }
+  if (line.indexOf('bestmove') === 0) thrFinish(line.split(/\s+/)[1]);
+  // (los 'info' del probe se ignoran: NO tocan la barra ni el puntaje del visor)
+}
+
+function thrGo() {
+  sf.engine.postMessage('position fen ' + _thr.tfen);
+  sf.engine.postMessage('go depth ' + _THR_DEPTH);
+  sf.searching = true;
+}
+
+function thrFinish(uci) {
+  var fen = _thr.fen, tfen = _thr.tfen;
+  var res = 'none';
+  if (uci && uci.length >= 4 && uci !== '(none)') {
+    var from = uci.slice(0,2), to = uci.slice(2,4), san = null;
+    try { var m = new Chess(tfen).move({ from:from, to:to, promotion:uci[4]||'q' }); if (m) san = m.san; } catch (e) {}
+    res = { from:from, to:to, san: san || (from + '→' + to) };
+  }
+  _thrCache[fen] = res;
+  _thr.running = false; _thr.armed = false; _thr.rokSeen = false;
+  sf.engine.postMessage('setoption name MultiPV value 3');   // restaurar para el visor
+  if (sf.on && sf.ready) sfAnalyze();                        // el módulo retoma su análisis del fen actual
+  thrUpdateBtn();
+  if (cv.chess && cv.chess.fen() === fen) thrShow(res, fen);  // ¿seguimos en la misma posición? dibujar
+  else thrClearArrow();
+}
+
+// Dibuja la flecha roja + rótulo, con auto-borrado a los ~6s. Persiste sobre los redibujos del motor.
+function thrShow(res, fen) {
+  clearTimeout(_thrTimer);
+  var t = document.getElementById('sf-threat-txt');
+  if (res === 'none') { if (t) t.textContent = 'sin amenaza directa'; thrClearArrow(); return; }
+  _thrArrow = { from: res.from, to: res.to };
+  if (t) t.textContent = 'Amenaza: ' + (res.san || (res.from + '→' + res.to));
+  sfDrawArrows();
+  _thrTimer = setTimeout(function(){ _thrArrow = null; sfDrawArrows(); if (t) t.textContent = ''; }, 6000);
 }
 
 // Verde tipo lichess para flechas/resaltados dibujados con botón derecho (antes eran naranjas, se
