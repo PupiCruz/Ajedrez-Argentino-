@@ -6974,6 +6974,7 @@ function pgnMergeToPlayerGames() {
     };
   }
   if (typeof _invalidateDbSearch === 'function') _invalidateDbSearch();   // el buscador se reconstruye
+  if (typeof _invalidatePgIndex === 'function') _invalidatePgIndex();     // y el índice jugador→partidas
 }
 
 // Muestra la lista de torneos ya cargados
@@ -10682,29 +10683,62 @@ function buildSiteDedupIndex() {
 }
 
 // Reúne TODAS las partidas de PLAYER_GAMES que corresponden al jugador p
-function gatherGamesForPlayer(player) {
-  var results = []; // [{tourName, tourLocation, pgn}]
-
-  // Recorre todos los jugadores en PLAYER_GAMES
+// ── ÍNDICE INVERSO jugador→partidas ─────────────────────────────────────────
+// Antes, abrir CUALQUIER perfil re-escaneaba TODO PLAYER_GAMES (~138k entradas de partida,
+// la misma partida repetida en varios "dueños") comparando nombres una por una → ~2s por perfil,
+// cada vez. Este índice se arma UNA vez (la 1ª apertura de la sesión) y después cada perfil
+// consulta directo sus candidatos. Clave por TOKEN de nombre (apellido/nombre normalizado) y por
+// FideId; se SOBRE-junta (nunca de menos: pgnNameMatchesPlayer exige que el apellido del jugador
+// aparezca en el nombre del PGN, así que su bucket de apellido siempre lo contiene), y el match
+// preciso pgnGameMatchesPlayer + dedupGamesByMoves filtran igual que antes → MISMO resultado.
+// Se invalida cuando cambia el pool (junto a _invalidateDbSearch, en pgnMergeToPlayerGames).
+var _pgIdx = null;
+function _invalidatePgIndex() { _pgIdx = null; }
+function _buildPgIndex() {
+  var byTok = Object.create(null), byFide = Object.create(null);
+  function bucket(map, key, entry) { (map[key] || (map[key] = [])).push(entry); }
   for (var ownerId in PLAYER_GAMES) {
     var data = PLAYER_GAMES[ownerId];
     if (!data || !data.tournaments) continue;
+    for (var ti = 0; ti < data.tournaments.length; ti++) {
+      var tour = data.tournaments[ti], games = tour.games || [];
+      for (var gi = 0; gi < games.length; gi++) {
+        var pgn = games[gi], hdrs = parsePgnHeaders(pgn);
+        var entry = { tourName: tour.name, tourLocation: tour.location || '', pgn: pgn };
+        var toks = nameTokens(normStr(pgnNameToNatural(hdrs.White || '')))
+             .concat(nameTokens(normStr(pgnNameToNatural(hdrs.Black || ''))));
+        for (var k = 0; k < toks.length; k++) if (toks[k].length >= 2) bucket(byTok, toks[k], entry);
+        if (hdrs.WhiteFideId != null && hdrs.WhiteFideId !== '') bucket(byFide, String(hdrs.WhiteFideId), entry);
+        if (hdrs.BlackFideId != null && hdrs.BlackFideId !== '') bucket(byFide, String(hdrs.BlackFideId), entry);
+      }
+    }
+  }
+  return { byTok: byTok, byFide: byFide };
+}
 
-    data.tournaments.forEach(function(tour) {
-      (tour.games || []).forEach(function(pgn) {
-        // Misma regla que el split on-demand → ver pgnGameMatchesPlayer.
-        if (pgnGameMatchesPlayer(parsePgnHeaders(pgn), player)) {
-          results.push({ tourName: tour.name, tourLocation: tour.location || '', pgn: pgn });
-        }
-      });
-    });
+function gatherGamesForPlayer(player) {
+  if (!_pgIdx) _pgIdx = _buildPgIndex();
+
+  // Candidatos: por FideId + por el APELLIDO del jugador (último token; pgnNameMatchesPlayer lo exige).
+  var cand = [], seen = (typeof Set !== 'undefined') ? new Set() : null;
+  function add(arr) { if (arr) for (var i = 0; i < arr.length; i++) cand.push(arr[i]); }
+  if (player.fide_id != null && player.fide_id !== '') add(_pgIdx.byFide[String(player.fide_id)]);
+  var ptoks = nameTokens(normStr(player.name || ''));
+  if (ptoks.length) add(_pgIdx.byTok[ptoks[ptoks.length - 1]]);
+
+  // Match preciso (MISMA regla que el split on-demand → pgnGameMatchesPlayer) sobre los candidatos.
+  var results = [];
+  for (var c = 0; c < cand.length; c++) {
+    var e = cand[c];
+    if (seen) { if (seen.has(e)) continue; seen.add(e); }   // una entrada puede estar en fide y en tok
+    if (pgnGameMatchesPlayer(parsePgnHeaders(e.pgn), player)) {
+      results.push({ tourName: e.tourName, tourLocation: e.tourLocation, pgn: e.pgn });
+    }
   }
 
-  // Deduplicar: White + Black + Date + Round identifica unívocamente una partida
   // Deduplicar por relación de prefijo de jugadas (ver dedupGamesByMoves): así el perfil no
-  // muestra repetida una partida que vino en dos formatos — distinta fecha/ronda, una con una
-  // jugada de más, o una versión truncada (fragmento). Antes deduplicaba por White|Black|Date|
-  // Round y se le escapaban esas variantes → aparecían duplicadas en la lista.
+  // muestra repetida una partida que vino en dos formatos (distinta fecha/ronda, una jugada de
+  // más, o un fragmento truncado). Igual que antes.
   return dedupGamesByMoves(results, function(r) { return r.pgn; });
 }
 
