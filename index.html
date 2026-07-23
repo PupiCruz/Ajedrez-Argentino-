@@ -10386,6 +10386,22 @@ function pgnNameMatchesPlayer(pgnName, player) {
 
   // Si el jugador tiene nombre(s), al menos uno debe coincidir
   if (playerFirst.length === 0) return true; // solo apellido, alcanza
+
+  // VETO POR INICIALES QUE CONTRADICEN: si el nombre de pila del PGN son SOLO iniciales (ej.
+  // "Rodriguez, F.J") y NINGUNA coincide con la inicial de algún nombre del jugador (S/I/L de
+  // "Santiago Inak Lagares"), es OTRA persona → no matchear. Antes, al ser cortas, las iniciales
+  // se descartaban y la partida caía en la regla permisiva de "solo apellido" (más abajo) → se
+  // pegaba a cualquier homónimo de apellido (caso real: "Rodriguez, F.J" de 1946 en un perfil de hoy).
+  var _givenRaw;
+  if (pgnName.indexOf(',') >= 0) _givenRaw = pgnName.split(',').slice(1).join(' ');
+  else { var _nt = normStr(pgnName).split(' '); _nt.pop(); _givenRaw = _nt.join(' '); }
+  var _gTok = normStr(_givenRaw).split(/\s+/).filter(function(t){ return t.length > 0; });
+  if (_gTok.length && _gTok.every(function(t){ return t.length === 1; })) {
+    var _pInit = {};
+    for (var _pi = 0; _pi < playerFirst.length; _pi++) if (playerFirst[_pi]) _pInit[playerFirst[_pi].charAt(0)] = 1;
+    if (!_gTok.some(function(t){ return _pInit[t.charAt(0)]; })) return false;
+  }
+
   for (var i = 0; i < playerFirst.length; i++) {
     var fn = playerFirst[i];
     if (fn.length < 2) continue;
