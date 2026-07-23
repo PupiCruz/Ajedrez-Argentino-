@@ -7773,6 +7773,7 @@ var _EXPORT_ASSET_PATHS = [
   'assets/stockfish-18-lite-single.js','assets/stockfish-18-lite-single.wasm', // motor principal SF18 + red NNUE (por servidor)
   'assets/stockfish-embedded.js', // SF16 + wasm en base64 (plan B y modo file:// con doble clic)
   'assets/stockfish-nnue-16-single.js','assets/stockfish-nnue-16-single.wasm', // motor local (antes jsDelivr)
+  'assets/aperturas.js', // índice de nombres de aperturas por EPD (lichess CC0, traducido)
   'assets/piezas/wK.svg','assets/piezas/wQ.svg','assets/piezas/wR.svg','assets/piezas/wB.svg','assets/piezas/wN.svg','assets/piezas/wP.svg',
   'assets/piezas/bK.svg','assets/piezas/bQ.svg','assets/piezas/bR.svg','assets/piezas/bB.svg','assets/piezas/bN.svg','assets/piezas/bP.svg',
   'assets/sonidos/Move.mp3','assets/sonidos/Capture.mp3'
@@ -9977,6 +9978,9 @@ async function openPlayer(id) {
   // (negra con logo) para que el visitante vea que no se colgó. Solo si aún no está en caché.
   if (_ondemand && !_playerLoaded[id]) _showLoadingCover('Cargando perfil del jugador…');
   if (_ondemand) { try { await ensurePlayerLoaded(id); } catch (e) {} }
+  // Índice de aperturas (transposiciones): así las columnas "Aperturas más jugadas"
+  // usan los nombres en castellano desde la 1ª vez. Pesa ~64KB gzip, se cachea 1 año.
+  try { await _ensureAperturasAsync(); } catch (e) {}
   _tourReturnToProfile = false;   // perfil abierto en fresco: sin torneo "de vuelta" pendiente
   var rl = { win:'Gana', draw:'Tablas', loss:'Pierde' };
   var rc = { win:'win-d', draw:'draw-d', loss:'loss-d' };
@@ -13115,6 +13119,55 @@ var _ECO_TABLE = (function(){
 // Cache para no recomputar la misma partida dos veces
 var _openingDetectCache = {};
 
+/* ── Índice de nombres de aperturas (assets/aperturas.js, ~64KB gzip) ─────────
+   Base lichess-org/chess-openings (CC0) traducida al castellano en build, indexada
+   por EPD (FEN sin relojes) para reconocer TRANSPOSICIONES. Se baja por demanda vía
+   <script src> (anda en http Y en file:// con doble clic, sin fetch). Formato:
+   window.__APERTURAS__ = { "<epd>": "ECO\tNombre" }.  Se genera con build-aperturas.js. */
+var _apState = 0; // 0=sin cargar, 1=cargando, 2=ok, 3=error
+var _apCbs = [];
+function _ensureAperturas(cb) {
+  if (window.__APERTURAS__) { _apState = 2; if (cb) cb(true); return; }
+  if (_apState === 3) { if (cb) cb(false); return; }
+  if (cb) _apCbs.push(cb);
+  if (_apState === 1) return;
+  _apState = 1;
+  var s = document.createElement('script');
+  s.src = 'assets/aperturas.js';
+  s.onload = function() {
+    var ok = !!window.__APERTURAS__;
+    _apState = ok ? 2 : 3;
+    if (ok) {
+      // Las entradas cacheadas ANTES de cargar el índice usaban el fallback (_ECO_TABLE, sin
+      // transposiciones): limpiar para que se recomputen con el índice EPD.
+      _openingDetectCache = {};
+      // Si el visor ya está abierto, refrescar el nombre en el acto (sin esperar a que el usuario navegue).
+      try {
+        var _ov = document.getElementById('chess-overlay');
+        if (_ov && _ov.classList.contains('open') && typeof cv !== 'undefined' && cv.chess) obLocalUpdate();
+      } catch (e) {}
+    }
+    _apCbs.forEach(function(f){ try { f(ok); } catch(e){} }); _apCbs = [];
+  };
+  s.onerror = function() {
+    _apState = 3;
+    _apCbs.forEach(function(f){ try { f(false); } catch(e){} }); _apCbs = [];
+  };
+  document.head.appendChild(s);
+}
+function _ensureAperturasAsync() { return new Promise(function(res){ _ensureAperturas(res); }); }
+// {eco,name} del ÚLTIMO EPD de la lista que matchea el índice (= nombre vigente), o null.
+function _lookupOpeningByEpds(epds) {
+  var tbl = window.__APERTURAS__;
+  if (!tbl) return null;
+  var best = null;
+  for (var i = 0; i < epds.length; i++) {
+    var v = tbl[epds[i]];
+    if (v) { var t = v.indexOf('\t'); best = { eco: v.slice(0, t), name: v.slice(t + 1) }; }
+  }
+  return best;
+}
+
 function detectOpeningByMoves(pgn) {
   // Extraer bloque de jugadas
   var moveText = pgn.replace(/\[[^\]]*\]/g, '');  // quitar headers
@@ -13136,10 +13189,10 @@ function detectOpeningByMoves(pgn) {
     return _openingDetectCache[cacheKey];
   }
 
-  // Tokenizar: primeras 20 jugadas
+  // Tokenizar: hasta 30 semijugadas (las líneas de apertura nombradas llegan a ~24 plies)
   var tokens = moveText.split(/\s+/);
   var moves = [];
-  for (var i = 0; i < tokens.length && moves.length < 20; i++) {
+  for (var i = 0; i < tokens.length && moves.length < 30; i++) {
     var t = tokens[i];
     if (!t) continue;
     // Saltar números de jugada (1. / 1...), resultados y NAG
@@ -13154,14 +13207,35 @@ function detectOpeningByMoves(pgn) {
 
   var result = null;
   if (moves.length) {
-    var moveStr = moves.join(' ');
-    for (var j = 0; j < _ECO_TABLE.length; j++) {
-      var entry = _ECO_TABLE[j];
-      var pat = entry[0];
-      if (moveStr === pat ||
-          (moveStr.length > pat.length && moveStr.charAt(pat.length) === ' ' && moveStr.indexOf(pat) === 0)) {
-        result = { eco: entry[1], name: entry[2] };
-        break;
+    // Preferir el índice por EPD (assets/aperturas.js): reconoce TRANSPOSICIONES y trae
+    // ~3.900 nombres en castellano. Se replican los SAN con la MISMA chess.js del visor,
+    // así los EPD coinciden exacto con los node.fen. Si el archivo no cargó (o no hay
+    // chess.js), cae al match por prefijo de SAN sobre _ECO_TABLE (comportamiento viejo).
+    if (window.__APERTURAS__ && typeof Chess !== 'undefined') {
+      // Reconstruir con chess.js y quedarse con el ÚLTIMO EPD que matchea (= nombre vigente).
+      // OJO PERF: se corta apenas se sale del libro (varias jugadas seguidas sin match). El nombre
+      // se define en la apertura, así que no hace falta reproducir toda la partida — clave para que
+      // las stats del perfil (una llamada por partida, miles) no se vuelvan lentas. El margen evita
+      // cortar por un hueco puntual del dataset.
+      var _ch = new Chess(), _tbl = window.__APERTURAS__, _since = 0;
+      for (var m2 = 0; m2 < moves.length; m2++) {
+        var _mv; try { _mv = _ch.move(moves[m2]); } catch (e) { _mv = null; }
+        if (!_mv) break;
+        var _epd = _ch.fen().split(' ', 4).join(' ');
+        var _v = _tbl[_epd];
+        if (_v) { var _t = _v.indexOf('\t'); result = { eco: _v.slice(0, _t), name: _v.slice(_t + 1) }; _since = 0; }
+        else if (result && ++_since >= 4) break;   // fuera del libro: nada más profundo va a matchear
+      }
+    } else {
+      var moveStr = moves.join(' ');
+      for (var j = 0; j < _ECO_TABLE.length; j++) {
+        var entry = _ECO_TABLE[j];
+        var pat = entry[0];
+        if (moveStr === pat ||
+            (moveStr.length > pat.length && moveStr.charAt(pat.length) === ' ' && moveStr.indexOf(pat) === 0)) {
+          result = { eco: entry[1], name: entry[2] };
+          break;
+        }
       }
     }
   }
@@ -16185,6 +16259,7 @@ function cvOpenOverlay() {
   }
   var cm = document.querySelector('.chess-modal');
   if (cm) cm.scrollTop = 0;
+  _ensureAperturas();   // índice de nombres de aperturas (por demanda; nombre en vivo en el visor)
   document.getElementById('chess-overlay').classList.add('open');
   _gamePageOn();   // modo PÁGINA: header (logo→Inicio) y nav visibles, no bottom-sheet
   // Ya está la partida abierta: quitar la pantalla de carga del deep-link (si venía de un link directo).
@@ -16464,6 +16539,17 @@ function _cvBookLine() {
 
 function obLocalUpdate() {
   if (!cv.chess) return;
+  var line = _cvBookLine(), key = line.join(' ');
+  // Nombre de la apertura: se setea SIEMPRE y ANTES del libro de jugadas (que puede tardar
+  // en armarse ~20s en modo autor). Solo depende del índice EPD (assets/aperturas.js) con
+  // fallback a _ECO_TABLE, así el nombre aparece enseguida. Alimenta también el gráfico (fa-opening).
+  var op = detectOpeningByMoves(key);
+  var opEl = document.getElementById('cv-opening');
+  if (opEl) opEl.textContent = op ? (op.eco + ' · ' + op.name) : '';
+  // Reflejar en el rótulo VISIBLE (dorado, dentro del gráfico): así el nombre se actualiza
+  // al navegar/entrar jugadas nuevas, no solo al abrir la partida (`.fa-opening:empty` lo oculta).
+  var faOpEl = document.getElementById('fa-opening');
+  if (faOpEl && opEl) faOpEl.textContent = opEl.textContent;
   if (!window.__BOOK__) {
     // En modo autor el libro se arma en memoria (~20s la 1ª vez); avisar para que no parezca colgado.
     if (!_ondemand) {
@@ -16473,11 +16559,6 @@ function obLocalUpdate() {
     }
     _loadBookAsync(obLocalUpdate); return;
   }
-  var line = _cvBookLine(), key = line.join(' ');
-  // Nombre de apertura local (alimenta también el gráfico de análisis vía cv-opening).
-  var op = detectOpeningByMoves(key);
-  var opEl = document.getElementById('cv-opening');
-  if (opEl) opEl.textContent = op ? (op.eco + ' · ' + op.name) : '';
   var entries = window.__BOOK__[key];
   _cvBookGamesUpdate(line);  // refresca la sección opt-in de partidas de la apertura
   if (!entries || !entries.length) { obSetVisible(false); return; }
