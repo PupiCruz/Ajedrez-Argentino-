@@ -12575,7 +12575,9 @@ function renderLocalGames(data, player, resultFilter, colorFilter, openingFilter
     if (colorFilter === 'white' && !isWhiteG) return null;
     if (colorFilter === 'black' &&  isWhiteG) return null;
     if (openingFilter) {
-      var detG = detectOpeningByMoves(pgn);
+      // fast=true: mismo detector liviano que las stats, así el nombre corto coincide con el
+      // de las columnas "Aperturas más jugadas" (si no, el filtro no matchearía) y es instantáneo.
+      var detG = detectOpeningByMoves(pgn, true);
       var opRawG = detG ? detG.name : (hdrs.Opening || '');
       var shortOpG = opRawG ? opRawG.split(':')[0].trim() : '';
       if (shortOpG !== openingFilter) return null;
@@ -13168,7 +13170,11 @@ function _lookupOpeningByEpds(epds) {
   return best;
 }
 
-function detectOpeningByMoves(pgn) {
+// fast=true → detector LIVIANO (match por prefijo de SAN sobre _ECO_TABLE, sin chess.js).
+// Se usa en el PERFIL (stats + filtro): se llama una vez por partida (miles) y no puede
+// reconstruir la posición con chess.js sin colgar el perfil (~6,7ms × 1943 = ~14s). El VISOR
+// llama SIN fast → detector completo por EPD (transposiciones, ~3.900 nombres), 1 sola vez.
+function detectOpeningByMoves(pgn, fast) {
   // Extraer bloque de jugadas
   var moveText = pgn.replace(/\[[^\]]*\]/g, '');  // quitar headers
   moveText = moveText.replace(/\{[^}]*\}/g, '');   // quitar comentarios
@@ -13183,8 +13189,9 @@ function detectOpeningByMoves(pgn) {
 
   moveText = moveText.trim();
 
-  // Clave de caché sobre el texto de jugadas (no sobre los headers que pueden variar)
-  var cacheKey = moveText.slice(0, 120);
+  // Clave de caché sobre el texto de jugadas (no sobre los headers que pueden variar).
+  // El prefijo 'f:' separa la caché del modo liviano de la del completo (dan nombres distintos).
+  var cacheKey = (fast ? 'f:' : '') + moveText.slice(0, 120);
   if (Object.prototype.hasOwnProperty.call(_openingDetectCache, cacheKey)) {
     return _openingDetectCache[cacheKey];
   }
@@ -13211,7 +13218,7 @@ function detectOpeningByMoves(pgn) {
     // ~3.900 nombres en castellano. Se replican los SAN con la MISMA chess.js del visor,
     // así los EPD coinciden exacto con los node.fen. Si el archivo no cargó (o no hay
     // chess.js), cae al match por prefijo de SAN sobre _ECO_TABLE (comportamiento viejo).
-    if (window.__APERTURAS__ && typeof Chess !== 'undefined') {
+    if (!fast && window.__APERTURAS__ && typeof Chess !== 'undefined') {
       // Reconstruir con chess.js y quedarse con el ÚLTIMO EPD que matchea (= nombre vigente).
       // OJO PERF: se corta apenas se sale del libro (varias jugadas seguidas sin match). El nombre
       // se define en la apertura, así que no hace falta reproducir toda la partida — clave para que
@@ -13282,8 +13289,9 @@ function computeStatsFromGames(player, allTours) {
         if (pr === 'win') stats.bWins++; else if (pr === 'loss') stats.bLosses++; else stats.bDraws++;
       }
       // Apertura: detección por jugadas primero (más fiable),
-      // hdrs.Opening solo como fallback si las jugadas no coinciden con la tabla
-      var det = detectOpeningByMoves(pgn);
+      // hdrs.Opening solo como fallback si las jugadas no coinciden con la tabla.
+      // fast=true: el perfil recorre miles de partidas → detector liviano (instantáneo).
+      var det = detectOpeningByMoves(pgn, true);
       var op = det ? det.name : (hdrs.Opening || '');
       if (op) {
         var shortOp = op.split(':')[0].trim();
