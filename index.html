@@ -24532,38 +24532,25 @@ function _faIsBrilliant(node, rBefore, rAfter, whiteMoved, wpB) {
     var f = sq % 8, r = (sq - f) / 8;
     var gain = _seeGain(g, f, r, opp);           // material que gana el rival capturando acá
     if (gain > 0 && gain - capturedByMove >= _FA_BRILL_MIN_NET) {
-      // OJO CLAVADAS: el SEE cuenta como atacante a piezas que en realidad NO capturan porque están
-      // CLAVADAS (falso sacrificio). Confirmar con chess.js que al rival le CONVIENE capturar acá.
+      // OJO CLAVADAS: el SEE cuenta como atacante a piezas CLAVADAS AL REY que no pueden capturar
+      // (falso sacrificio). Confirmar con chess.js que el rival tiene una captura LEGAL de esta
+      // casilla; si no la hay (único atacante clavado al rey), no es sacrificio real.
       var sqName = 'abcdefgh'.charAt(f) + (r + 1);
-      if (_faSacIsReal(node.fen, sqName)) return true;
+      if (_oppHasLegalCaptureOf(node.fen, sqName)) return true;
     }
   }
   return false;
 }
-// ¿El sacrificio en `sqName` es REAL? = ¿el bando a mover en `fen` tiene alguna captura que le deje
-// material? Con chess.js (respeta la legalidad), cubre las DOS clavadas que dan falsos !!:
-//   • ABSOLUTA (al rey): la pieza clavada ni siquiera genera la captura → no hay captura legal.
-//   • RELATIVA (a una pieza más cara, ej. caballo clavado a la dama): la captura es legal, pero tras
-//     ella el que sacrificó recupera esa pieza más cara → al rival NO le conviene (queda en menos).
-// Simula cada captura del rival y mira la mejor recaptura del que movió: si a NINGUNA captura le
-// queda material al rival (colgada − mejor recaptura ≤ 0), no era sacrificio. Sin chess.js no filtra.
-function _faSacIsReal(fen, sqName) {
+// ¿El bando a mover en `fen` tiene alguna captura LEGAL de la casilla `sqName`? chess.js respeta las
+// clavadas ABSOLUTAS (una pieza clavada al rey no genera esa captura). Sin chess.js no filtra.
+function _oppHasLegalCaptureOf(fen, sqName) {
   if (typeof Chess === 'undefined') return true;
   try {
-    var c = new Chess(fen);
-    var pc = c.get(sqName);
-    if (!pc) return true;
-    var hungVal = _pval(pc.type);
-    var caps = c.moves({ verbose: true }).filter(function(m){ return m.to === sqName && m.captured; });
-    if (!caps.length) return false;                          // clavada absoluta / sin captura legal
-    for (var i = 0; i < caps.length; i++) {
-      c.move(caps[i]);
-      var back = 0, rep = c.moves({ verbose: true });        // mejor recaptura del que sacrificó
-      for (var j = 0; j < rep.length; j++) if (rep[j].captured) { var v = _pval(rep[j].captured); if (v > back) back = v; }
-      c.undo();
-      if (hungVal - back > 0) return true;                   // esta captura le deja material → sac REAL
+    var mv = new Chess(fen).moves({ verbose: true });
+    for (var i = 0; i < mv.length; i++) {
+      if (mv[i].to === sqName && mv[i].flags && (mv[i].flags.indexOf('c') >= 0 || mv[i].flags.indexOf('e') >= 0)) return true;
     }
-    return false;                                            // ninguna le conviene → falso sacrificio
+    return false;
   } catch (e) { return true; }
 }
 
