@@ -10728,8 +10728,17 @@ function buildSiteDedupIndex() {
 // aparezca en el nombre del PGN, así que su bucket de apellido siempre lo contiene), y el match
 // preciso pgnGameMatchesPlayer + dedupGamesByMoves filtran igual que antes → MISMO resultado.
 // Se invalida cuando cambia el pool (junto a _invalidateDbSearch, en pgnMergeToPlayerGames).
-var _pgIdx = null;
+var _pgIdx = null, _pgIdxSig = '';
 function _invalidatePgIndex() { _pgIdx = null; }
+// Firma BARATA del pool (nº de dueños + nº de torneos). Si cambia, el índice se rearma solo.
+// CLAVE en modo visitante: las partidas se bajan POR DEMANDA (ensurePlayerLoaded agrega
+// PLAYER_GAMES['emb_'+id] sin pasar por pgnMergeToPlayerGames), así que sin esto el índice
+// quedaba viejo y el 2º perfil salía vacío hasta refrescar.
+function _pgPoolSig() {
+  var owners = 0, tours = 0;
+  for (var k in PLAYER_GAMES) { var d = PLAYER_GAMES[k]; if (d && d.tournaments) { owners++; tours += d.tournaments.length; } }
+  return owners + ':' + tours;
+}
 function _buildPgIndex() {
   var byTok = Object.create(null), byFide = Object.create(null);
   function bucket(map, key, entry) { (map[key] || (map[key] = [])).push(entry); }
@@ -10753,7 +10762,8 @@ function _buildPgIndex() {
 }
 
 function gatherGamesForPlayer(player) {
-  if (!_pgIdx) _pgIdx = _buildPgIndex();
+  var sig = _pgPoolSig();
+  if (!_pgIdx || _pgIdxSig !== sig) { _pgIdx = _buildPgIndex(); _pgIdxSig = sig; }
 
   // Candidatos: por FideId + por el APELLIDO del jugador (último token; pgnNameMatchesPlayer lo exige).
   var cand = [], seen = (typeof Set !== 'undefined') ? new Set() : null;
