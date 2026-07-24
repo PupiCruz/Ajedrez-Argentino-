@@ -24520,6 +24520,7 @@ function _faIsBrilliant(node, rBefore, rAfter, whiteMoved, wpB) {
   if (moverWinBefore >= 95) return false;
   // Cond. 2 (sacrificio genuino) en la posición DESPUÉS de la jugada (rival a mover).
   var g = _fenGrid(node.fen);
+  var parentG = _fenGrid(node.parent.fen);   // posición ANTES de la jugada (para descartar piezas ya colgadas)
   var mover = whiteMoved ? 'w' : 'b', opp = whiteMoved ? 'b' : 'w';
   var capturedByMove = _pieceValAtFen(node.parent.fen, node.move.to);
   // Escanear TODAS las piezas propias de valor ≥ caballo (peones/rey no cuentan): también califica
@@ -24532,9 +24533,14 @@ function _faIsBrilliant(node, rBefore, rAfter, whiteMoved, wpB) {
     var f = sq % 8, r = (sq - f) / 8;
     var gain = _seeGain(g, f, r, opp);           // material que gana el rival capturando acá
     if (gain > 0 && gain - capturedByMove >= _FA_BRILL_MIN_NET) {
-      // OJO CLAVADAS: el SEE cuenta como atacante a piezas CLAVADAS AL REY que no pueden capturar
-      // (falso sacrificio). Confirmar con chess.js que el rival tiene una captura LEGAL de esta
-      // casilla; si no la hay (único atacante clavado al rey), no es sacrificio real.
+      // ¿ESTA MISMA pieza propia YA estaba colgada ANTES de la jugada (misma casilla)? Entonces la
+      // jugada NO la sacrificó (ya venía clavada/suelta) → no es brillante. Caso real: 15.Rb7 con el
+      // caballo f3 clavado a la dama y ya atacado por el peón — el Rb7 no entrega nada nuevo. La pieza
+      // que se MUEVE no estaba en su casilla antes, y las que se destraban por desviación tampoco
+      // estaban colgadas antes → esos sacrificios genuinos NO se descartan.
+      if (parentG[sq] === p && _seeGain(parentG, f, r, opp) > 0) continue;
+      // OJO CLAVADAS AL REY: el SEE cuenta atacantes clavados que no pueden capturar. Confirmar con
+      // chess.js que el rival tiene una captura LEGAL de esta casilla; si no, no es sacrificio real.
       var sqName = 'abcdefgh'.charAt(f) + (r + 1);
       if (_oppHasLegalCaptureOf(node.fen, sqName)) return true;
     }
