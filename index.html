@@ -7135,6 +7135,7 @@ function pgnGetTorneosForList() {
 var _ondemand = (location.search.indexOf('ondemand') >= 0) || (!window.__EMBEDDED_DATA__ && !!window.__MANIFEST__);
 var _manifest = window.__MANIFEST__ || null;
 var _tourGamesCache = {};   // tourId → [pgn...]  (cache de los fetch)
+var _tourFileMeta = {};     // tourId → { name, location }  (del archivo t/<id>.json, para deep-links del pool)
 var _playerLoaded = {};     // playerId → true cuando ya se bajó su archivo de partidas
 var _playerLoadFailed = {}; // playerId → true si el manifest esperaba partidas pero la carga falló
 
@@ -7167,6 +7168,9 @@ async function fetchTournamentGames(id) {
     var j = await r.json();
     var games = (j && j.games) ? j.games : [];
     _tourGamesCache[id] = games;
+    // Nombre/ubicación del archivo del torneo: los usa openTournamentDetail cuando el id NO está
+    // en el manifest (partida del pool abierta por deep-link) para titular la página con el evento real.
+    if (j && (j.name || j.location)) _tourFileMeta[id] = { name: j.name || '', location: j.location || '' };
     _capCache(_tourGamesCache, 30);   // cada entrada es un torneo entero (lo más pesado)
     return games;
   } catch (e) { _tourLoadFailed[id] = true; return []; }
@@ -19016,19 +19020,31 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     if (_ondemand && _manifest) {
       // On-demand: metadata del manifest + partidas por fetch del archivo del torneo.
       for (var jm = 0; jm < _manifest.tournaments.length; jm++) { if (String(_manifest.tournaments[jm].id) === String(id)) { entry = _manifest.tournaments[jm]; break; } }
-      if (!entry) return;
-      entry = Object.assign({}, entry, { games: await fetchTournamentGames(id) });
-      // El fetch es asíncrono: si mientras tanto se abrió OTRO torneo, abandonar para no
-      // renderizar este por encima del nuevo (_tdTourKey lo setea la apertura más reciente).
-      if (_tdTourKey !== id) return;
-      // Un archivo de partidas ausente NO es un error si el torneo no tiene partidas archivadas
-      // (gameCount 0: es EN VIVO o próximo y las partidas llegan por Lichess / Chess-Results) o si
-      // tiene una fuente en vivo que las va a traer. Mostrar el cartel rojo ahí es contradictorio
-      // (aparece justo mientras Lichess trae las partidas). Solo avisamos si DEBERÍA haber archivo.
-      if (_tourLoadFailed[id]) {
-        var _hasLiveSrc = !!(entry.broadcastId || entry.broadcastUrl
-          || (entry.crUrl && /tnr\d+/i.test(entry.crUrl)) || (entry.info64url && _i64Base(entry.info64url)));
-        if ((entry.gameCount || 0) > 0 && !_hasLiveSrc) loadFailed = true;
+      if (!entry) {
+        // El id NO está en el índice del manifest, pero igual puede tener su archivo data/t/<id>.json:
+        // son los torneos del POOL de perfil (playerOnly), cuya metadata se excluye del manifest para
+        // ahorrar peso, pero cuyas partidas SÍ se hornean en su t/<id>.json (lo usa el buscador de la
+        // pestaña Partidas). Sin esto, el link compartible (?torneo=&partida=) de una partida cuyo
+        // torneo de origen es del pool caía en "return" y dejaba al visitante en la pantalla principal.
+        var _poolGames = await fetchTournamentGames(id);
+        if (_tdTourKey !== id) return;                 // se abrió otro torneo mientras bajaba
+        if (!_poolGames.length) return;                // ni manifest ni archivo: nada que mostrar
+        var _fm = _tourFileMeta[id] || {};
+        entry = { id: id, name: _fm.name || 'Partidas', location: _fm.location || '', games: _poolGames, gameCount: _poolGames.length };
+      } else {
+        entry = Object.assign({}, entry, { games: await fetchTournamentGames(id) });
+        // El fetch es asíncrono: si mientras tanto se abrió OTRO torneo, abandonar para no
+        // renderizar este por encima del nuevo (_tdTourKey lo setea la apertura más reciente).
+        if (_tdTourKey !== id) return;
+        // Un archivo de partidas ausente NO es un error si el torneo no tiene partidas archivadas
+        // (gameCount 0: es EN VIVO o próximo y las partidas llegan por Lichess / Chess-Results) o si
+        // tiene una fuente en vivo que las va a traer. Mostrar el cartel rojo ahí es contradictorio
+        // (aparece justo mientras Lichess trae las partidas). Solo avisamos si DEBERÍA haber archivo.
+        if (_tourLoadFailed[id]) {
+          var _hasLiveSrc = !!(entry.broadcastId || entry.broadcastUrl
+            || (entry.crUrl && /tnr\d+/i.test(entry.crUrl)) || (entry.info64url && _i64Base(entry.info64url)));
+          if ((entry.gameCount || 0) > 0 && !_hasLiveSrc) loadFailed = true;
+        }
       }
     } else {
       var tours = JSON.parse(localStorage.getItem('pgn_tournaments') || '[]');
