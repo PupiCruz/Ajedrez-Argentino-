@@ -18366,7 +18366,7 @@ function _tzeRenderRoundTimes() {
     h += '<div style="display:grid;grid-template-columns:34px 1fr 92px;gap:6px;align-items:center">'
       + '<span style="font-size:12px;font-weight:700;color:var(--text2)">R' + i + '</span>'
       + '<input class="tz-input" type="date" id="tze-rt-d' + i + '" value="' + escHtml(d) + '" onclick="_tzePick(this)" onchange="_tzeRoundTimeChanged(' + i + ')">'
-      + '<input class="tz-input" type="time" id="tze-rt-t' + i + '" value="' + escHtml(t) + '" onclick="_tzePick(this)" onchange="_tzeRoundTimeChanged(' + i + ')">'
+      + '<input class="tz-input" type="text" inputmode="numeric" maxlength="5" placeholder="HH:MM" id="tze-rt-t' + i + '" value="' + escHtml(t) + '" onchange="_tzeNormTime(this,' + i + ')">'
       + '</div>';
   }
   h += '</div>';
@@ -18378,6 +18378,27 @@ function _tzeRoundTimeChanged(i) {
   if (d && t) _tzeRoundDT[i] = d + ' ' + t;
   else if (d) _tzeRoundDT[i] = d;          // sólo día: se muestra la fecha sin hora
   else delete _tzeRoundDT[i];              // sin día no hay horario que valga
+}
+// Normaliza lo TECLEADO en el casillero de hora y, de paso, deja los MINUTOS en :00 por defecto.
+// Acepta "14"→14:00, "1430"/"14:30"→14:30, "9"→09:00, "930"→09:30, "8:5"→08:05. Vacío queda vacío.
+// (Antes era <input type=time>: el relojito se abría en la hora ACTUAL —con los minutos en cualquier
+//  lado— y no dejaba tipear sólo la hora. Ahora se escribe directo y los minutos arrancan en 00.)
+function _tzeNormTime(el, i) {
+  var raw = String(el.value || '').trim();
+  if (!raw) { el.value = ''; _tzeRoundTimeChanged(i); return; }
+  var hh, mm;
+  if (raw.indexOf(':') >= 0) {
+    var p = raw.split(':'); hh = parseInt(p[0], 10); mm = (p[1] === '' || p[1] == null) ? 0 : parseInt(p[1], 10);
+  } else {
+    var dig = raw.replace(/\D/g, '');
+    if (dig.length <= 2) { hh = parseInt(dig, 10); mm = 0; }              // sólo la hora → minutos 00
+    else { hh = parseInt(dig.slice(0, dig.length - 2), 10); mm = parseInt(dig.slice(-2), 10); }
+  }
+  if (isNaN(hh)) { el.value = ''; _tzeRoundTimeChanged(i); return; }      // no se entendió → se descarta
+  if (isNaN(mm)) mm = 0;
+  hh = Math.max(0, Math.min(23, hh)); mm = Math.max(0, Math.min(59, mm));
+  el.value = (hh < 10 ? '0' : '') + hh + ':' + (mm < 10 ? '0' : '') + mm;
+  _tzeRoundTimeChanged(i);
 }
 // Carga el borrador al abrir el modal. Acepta lo nuevo (objeto) y lo viejo (texto libre): el texto
 // viejo NO se convierte —no se puede interpretar sin adivinar— pero se sigue mostrando en la web y
