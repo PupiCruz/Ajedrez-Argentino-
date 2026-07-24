@@ -69,7 +69,7 @@ const PHRASES = [
   ["King's Gambit Declined", 'Gambito de Rey Rehusado'],
   ["King's Gambit", 'Gambito de Rey'],
   ["King's Indian Defense", 'India de Rey'],
-  ["King's Indian Attack", 'Ataque India de Rey'],
+  ["King's Indian Attack", 'Ataque Indio de Rey'],
   ["King's Pawn Game", 'Peón de Rey'],
   ["King's Pawn Opening", 'Peón de Rey'],
   ["King's Pawn", 'Peón de Rey'],
