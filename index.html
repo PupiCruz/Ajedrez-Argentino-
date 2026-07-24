@@ -1265,6 +1265,7 @@
     .csq.nagsq-blunder { background-image: linear-gradient(rgba(208,48,48,.5), rgba(208,48,48,.5)), var(--sq-texture); }
     .csq.nagsq-mistake { background-image: linear-gradient(rgba(224,112,32,.5), rgba(224,112,32,.5)), var(--sq-texture); }
     .csq.nagsq-inacc   { background-image: linear-gradient(rgba(212,161,43,.5), rgba(212,161,43,.5)), var(--sq-texture); }
+    .csq.nagsq-brilliant { background-image: linear-gradient(rgba(38,194,163,.5), rgba(38,194,163,.5)), var(--sq-texture); }
     .cpc { width: 88%; height: 88%; display: block; pointer-events: none; }
     .sq-coord {
       position: absolute; font-size: 9.5px; font-weight: 700;
@@ -1350,7 +1351,7 @@
     .cv-mw.cell-on, .cv-mb.cell-on { background: rgba(201,162,39,.12); border-radius: 4px; }
     /* NAG annotations */
     .cmv-nag { font-size: 13px; font-weight: 800; margin-left: 2px; vertical-align: super; line-height: 1; cursor: default; text-shadow: var(--txt-out); }
-    .nag-brilliant { color: #1bca4b; }
+    .nag-brilliant { color: #26c2a3; }
     .nag-good      { color: #7bc868; }
     .nag-interesting { color: #b8d040; }
     .nag-dubious   { color: #d4a12b; }
@@ -1358,7 +1359,7 @@
     .nag-blunder   { color: #d02020; }
     .nag-best      { color: #1bca4b; font-size: 0.85em; }
     /* La jugada hereda el color de su símbolo NAG; si está seleccionada, el dorado manda */
-    .cmv.nag-brilliant { color: #1bca4b; } .cmv.nag-good { color: #7bc868; }
+    .cmv.nag-brilliant { color: #26c2a3; } .cmv.nag-good { color: #7bc868; }
     .cmv.nag-interesting { color: #b8d040; } .cmv.nag-dubious { color: #d4a12b; }
     .cmv.nag-mistake { color: #e06020; } .cmv.nag-blunder { color: #d02020; }
     .cmv.nag-best { color: #1bca4b; }
@@ -1372,6 +1373,7 @@
     #cv-nag-badge.nb-blunder    { background: #d03030; }
     #cv-nag-badge.nb-mistake    { background: #e07020; }
     #cv-nag-badge.nb-inaccuracy { background: #d4a12b; }
+    #cv-nag-badge.nb-brilliant  { background: #26c2a3; }
     .cv-nag-toggle { background: var(--gl40); border: 1px solid var(--bd20); color: var(--fg-e0); border-radius: var(--r-sm); cursor: pointer; font-size: 12px; font-weight: 700; font-family: inherit; padding: 11px 8px; min-width: 0; white-space: nowrap; }
     .cv-nag-toggle.on { border-color: var(--gold-dim); color: var(--gold); background: var(--gold-bg); }
     /* análisis completo de partida */
@@ -1624,6 +1626,7 @@
     .mq-mistake    { color: #e07030; }
     .mq-inaccuracy { color: #d4a12b; }
     .mq-best       { color: #1bca4b; }
+    .mq-brilliant  { color: #26c2a3; }
     .mq-excellent  { color: #7bc868; }
     .mq-good       { color: #96a89b; }
     .mq-good       { color: #7bc868; }
@@ -15963,7 +15966,7 @@ function _cvSlidePiece(boardEl, fromSq, toSq) {
 // toggle "?!" (mismos símbolos que el badge). El tinte real es translúcido (CSS .csq.nagsq-*).
 function _cvNagQ() {
   var mv = cv.node && cv.node.move ? cv.node.move : null;
-  return (_showNagBadges && mv) ? (({ '??':'blunder', '?':'mistake', '?!':'inacc' })[mv.nag] || '') : '';
+  return (_showNagBadges && mv) ? (({ '??':'blunder', '?':'mistake', '?!':'inacc', '!!':'brilliant' })[mv.nag] || '') : '';
 }
 
 function cvRenderBoard() {
@@ -24422,6 +24425,107 @@ function faNum(s) {
   return Math.max(-1000, Math.min(1000, v));
 }
 
+// ── Detector de jugadas BRILLANTES (!!) — receta reimplementada del análisis de freechess ──────────
+// Una brillante es un ASCENSO de la ★ (mejor jugada del motor): además de ser la mejor, debe ser un
+// SACRIFICIO genuino que el motor validó (la eval aguanta después). El "es incomestible" NO se verifica
+// a mano: lo garantizan que sea la mejor Y que la eval siga bien (si la pieza fuera gratis, el motor no
+// la pondría primera). Análisis estático de cambios (SEE) hecho a mano: chess.js 0.10.3 no trae
+// .attackers(). Sesgo CONSERVADOR a propósito: ante la duda NO es brillante (una !! falsa es peor que
+// una perdida). v1 ignora clavadas.
+
+// FEN → grilla de 64 (índice = rank*8 + file; rank 0 = fila 1, file 0 = 'a'). Solo el campo de piezas.
+function _fenGrid(fen) {
+  var rows = (fen || '').split(' ')[0].split('/');
+  var g = new Array(64).fill(null);
+  for (var i = 0; i < 8 && i < rows.length; i++) {
+    var gr = 7 - i, row = rows[i], f = 0;
+    for (var c = 0; c < row.length; c++) {
+      var ch = row[c];
+      if (ch >= '1' && ch <= '8') f += (ch.charCodeAt(0) - 48);
+      else { if (f < 8) g[gr * 8 + f] = ch; f++; }
+    }
+  }
+  return g;
+}
+function _pval(p) {
+  if (!p) return 0;
+  var t = p.toLowerCase();
+  return t === 'p' ? 1 : (t === 'n' || t === 'b') ? 3 : t === 'r' ? 5 : t === 'q' ? 9 : t === 'k' ? 100 : 0;
+}
+function _pieceValAtFen(fen, sqName) {
+  if (!sqName) return 0;
+  var f = 'abcdefgh'.indexOf(sqName[0]), r = parseInt(sqName[1], 10) - 1;
+  if (f < 0 || r < 0 || r > 7) return 0;
+  return _pval(_fenGrid(fen)[r * 8 + f]);
+}
+
+// Lista de atacantes de una casilla (tf,tr) por el bando `side` ('w'/'b'), sobre la grilla `g`. Escanea
+// a mano: peón/caballo/rey por offsets y alfil/torre/dama por rayos con bloqueo. Al re-escanear tras
+// quitar un atacante (en el SEE), los rayos "ven a través" del hueco → maneja los ataques en rayos X.
+function _attackersOf(g, tf, tr, side) {
+  var white = (side === 'w'), res = [];
+  function at(f, r) { return (f < 0 || f > 7 || r < 0 || r > 7) ? null : g[r * 8 + f]; }
+  function mine(p) { return p && /[pnbrqk]/i.test(p) && (white ? p === p.toUpperCase() : p === p.toLowerCase()); }
+  // peones: un peón blanco en (f,r) ataca (f±1, r+1) → para atacar (tf,tr) está en (tf±1, tr∓1)
+  var pr = white ? tr - 1 : tr + 1, pc = white ? 'P' : 'p';
+  if (at(tf - 1, pr) === pc) res.push({ f: tf - 1, r: pr, val: 1, p: pc });
+  if (at(tf + 1, pr) === pc) res.push({ f: tf + 1, r: pr, val: 1, p: pc });
+  var kn = [[1,2],[2,1],[2,-1],[1,-2],[-1,-2],[-2,-1],[-2,1],[-1,2]];
+  for (var i = 0; i < 8; i++) { var f = tf+kn[i][0], r = tr+kn[i][1], p = at(f,r); if (mine(p) && p.toLowerCase()==='n') res.push({f:f,r:r,val:3,p:p}); }
+  var ka = [[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]];
+  for (var j = 0; j < 8; j++) { var f2 = tf+ka[j][0], r2 = tr+ka[j][1], p2 = at(f2,r2); if (mine(p2) && p2.toLowerCase()==='k') res.push({f:f2,r:r2,val:100,p:p2}); }
+  var diag = [[1,1],[1,-1],[-1,1],[-1,-1]];
+  for (var d = 0; d < 4; d++) { for (var s = 1; s < 8; s++) { var f3 = tf+diag[d][0]*s, r3 = tr+diag[d][1]*s, p3 = at(f3,r3); if (f3<0||f3>7||r3<0||r3>7) break; if (!p3) continue; if (mine(p3)) { var t3 = p3.toLowerCase(); if (t3==='b'||t3==='q') res.push({f:f3,r:r3,val:_pval(p3),p:p3}); } break; } }
+  var orth = [[1,0],[-1,0],[0,1],[0,-1]];
+  for (var o = 0; o < 4; o++) { for (var s2 = 1; s2 < 8; s2++) { var f4 = tf+orth[o][0]*s2, r4 = tr+orth[o][1]*s2, p4 = at(f4,r4); if (f4<0||f4>7||r4<0||r4>7) break; if (!p4) continue; if (mine(p4)) { var t4 = p4.toLowerCase(); if (t4==='r'||t4==='q') res.push({f:f4,r:r4,val:_pval(p4),p:p4}); } break; } }
+  return res;
+}
+
+// SEE (static exchange evaluation) sobre la casilla (tf,tr): material NETO que gana el bando `side`
+// capturando ahí, con juego óptimo de ambos (cada lado se planta si capturar lo perjudica). Minimax
+// recursivo directo (claro y fácil de verificar); corre solo en jugadas ★, así que el costo no importa.
+// Los rayos X salen solos: al mover el atacante a la casilla, el siguiente escaneo ve a través del hueco.
+function _seeGain(g, tf, tr, side) {
+  var occ = g[tr * 8 + tf];
+  if (!occ) return 0;
+  var atk = _attackersOf(g, tf, tr, side);
+  if (!atk.length) return 0;                 // este bando no puede capturar
+  var lva = atk[0];                           // atacante de menor valor (secuencia óptima)
+  for (var k = 1; k < atk.length; k++) if (atk[k].val < lva.val) lva = atk[k];
+  var g2 = g.slice();
+  g2[lva.r * 8 + lva.f] = null;               // el atacante deja su casilla…
+  g2[tr * 8 + tf] = lva.p;                     // …y ocupa la casilla objetivo (será el próximo en caer)
+  var reply = _seeGain(g2, tf, tr, side === 'w' ? 'b' : 'w');   // mejor respuesta del rival
+  return Math.max(0, _pval(occ) - reply);     // se captura solo si conviene (si no, se planta → 0)
+}
+
+// Gates de "sacrificio sano" (el motor ya lo probó: es su mejor jugada) + escaneo del sacrificio.
+var _FA_BRILL_MIN_NET = 2;   // el que movió invierte al menos ~2 puntos de material (valor colgado − capturado)
+function _faIsBrilliant(node, rBefore, rAfter, whiteMoved, wpB) {
+  if (!node || !node.fen || !node.parent) return false;
+  // Cond. 3 (soundness, baratas): no quedó perdido, ni ya ganaba de sobra (para no regalar !! en +9).
+  var moverCpAfter = whiteMoved ? faNum(rAfter) : -faNum(rAfter);
+  if (moverCpAfter < -200) return false;
+  var moverWinBefore = whiteMoved ? wpB : (100 - wpB);
+  if (moverWinBefore >= 95) return false;
+  // Cond. 2 (sacrificio genuino) en la posición DESPUÉS de la jugada (rival a mover).
+  var g = _fenGrid(node.fen);
+  var mover = whiteMoved ? 'w' : 'b', opp = whiteMoved ? 'b' : 'w';
+  var capturedByMove = _pieceValAtFen(node.parent.fen, node.move.to);
+  // Escanear TODAS las piezas propias de valor ≥ caballo (peones/rey no cuentan): también califica
+  // dejar colgada OTRA pieza (desviación, despeje de línea), no solo la que se movió.
+  for (var sq = 0; sq < 64; sq++) {
+    var p = g[sq];
+    if (!p || _pval(p) < 3 || _pval(p) >= 100) continue;
+    var ours = (mover === 'w') ? (p === p.toUpperCase()) : (p === p.toLowerCase());
+    if (!ours) continue;
+    var f = sq % 8, r = (sq - f) / 8;
+    var gain = _seeGain(g, f, r, opp);           // material que gana el rival capturando acá
+    if (gain > 0 && gain - capturedByMove >= _FA_BRILL_MIN_NET) return true;
+  }
+  return false;
+}
+
 // Score {cp|mate} (perspectiva blancas) → % de expectativa de victoria de las blancas (0–100).
 // Es la fórmula EXACTA de Lichess (lichess.org/page/accuracy): comprime los centipawns a una
 // escala de "cuánto cambia el resultado esperado", que es lo que de verdad importa: perder
@@ -24471,8 +24575,8 @@ function _faNeedsPassEval(i) {
 // (ACPL) también cuenta solo jugadas confirmadas. Usa los resultados CRUDOS (no interpolados): un
 // hueco no debe generar una calificación.
 function faClassify() {
-  var st = { w:{best:0,exc:0,good:0,inacc:0,mist:0,blun:0,lossSum:0,acc:null,n:0},
-             b:{best:0,exc:0,good:0,inacc:0,mist:0,blun:0,lossSum:0,acc:null,n:0} };
+  var st = { w:{best:0,brill:0,exc:0,good:0,inacc:0,mist:0,blun:0,lossSum:0,acc:null,n:0},
+             b:{best:0,brill:0,exc:0,good:0,inacc:0,mist:0,blun:0,lossSum:0,acc:null,n:0} };
   var anyBm = false;
   var R = _fa.results;
   for (var i = 0; i < _fa.nodes.length; i++) {
@@ -24494,7 +24598,11 @@ function faClassify() {
     if (dwin >= 15)      { sym = '??'; side.blun++; }
     else if (dwin >= 10) { sym = '?';  side.mist++; }
     else if (dwin >= 5)  { sym = '?!'; side.inacc++; }
-    else if (bm && uci === bm) { sym = '★'; side.best++; }
+    else if (bm && uci === bm) {
+      // La mejor jugada del motor ASCIENDE a brillante (!!) si además es un sacrificio genuino y sano.
+      if (_faIsBrilliant(node, rBefore, rAfter, whiteMoved, wpB)) { sym = '!!'; side.brill++; }
+      else { sym = '★'; side.best++; }
+    }
     else if (dwin <= 2)  side.exc++;
     else                 side.good++;
     node.move.nag = sym;
@@ -24587,6 +24695,7 @@ function faRenderStats() {
     return '<div class="fa-stat-col">'
       + '<div class="fa-stat-name">' + name + '</div>'
       + (acc != null ? '<div class="fa-stat-acc">Precisión <b>' + acc + '%</b></div>' : '')
+      + (s.brill ? '<div class="fa-stat-row"><span class="mq-brilliant">!!</span> ' + s.brill + (s.brill === 1 ? ' brillante' : ' brillantes') + '</div>' : '')
       + (hasBest ? '<div class="fa-stat-row"><span class="mq-best">★</span> ' + s.best + ' mejores jugadas</div>' : '')
       + '<div class="fa-stat-row"><span class="mq-inaccuracy">?!</span> ' + s.inacc + ' imprecisiones</div>'
       + '<div class="fa-stat-row"><span class="mq-mistake">?</span> ' + s.mist + ' errores</div>'
@@ -24688,7 +24797,7 @@ function cvUpdateNagBadge() {
   var badge = document.getElementById('cv-nag-badge');
   if (!badge) return;
   var nag = cv.node && cv.node.move ? cv.node.move.nag : '';
-  var cls = { '??':'nb-blunder', '?':'nb-mistake', '?!':'nb-inaccuracy' }[nag];
+  var cls = { '??':'nb-blunder', '?':'nb-mistake', '?!':'nb-inaccuracy', '!!':'nb-brilliant' }[nag];
   if (!_showNagBadges || !cls || !cv.node.move.to) { badge.style.display = 'none'; return; }
   var sq = cv.node.move.to;
   var f = 'abcdefgh'.indexOf(sq[0]);
