@@ -24975,6 +24975,30 @@ function _pieceValAtFen(fen, sqName) {
   return _pval(_fenGrid(fen)[r * 8 + f]);
 }
 
+// Dirección [dx,dy] de la CLAVADA ABSOLUTA (al rey) de la pieza en (af,ar), o null si no está clavada.
+// Una pieza clavada al rey solo puede moverse/capturar A LO LARGO de esa línea (incl. tomar al que la
+// clava); capturar fuera de la línea expondría al rey = ilegal. Se usa para NO contar como atacante/
+// defensor a una pieza clavada que no puede tomar en la casilla objetivo (caso 25.Bb5: el alfil d7,
+// clavado al rey por la torre, no defiende b5 → b5 queda mal defendido y Bb5 NO es sacrificio).
+function _pinDir(g, af, ar) {
+  var pc = g[ar * 8 + af]; if (!pc) return null;
+  var isW = (pc === pc.toUpperCase());
+  function at(f, r){ return (f<0||f>7||r<0||r>7) ? undefined : g[r*8+f]; }
+  var dirs = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
+  for (var i = 0; i < 8; i++) {
+    var dx = dirs[i][0], dy = dirs[i][1], f, r, p, s, king = false;
+    for (s = 1; s < 8; s++) { p = at(af+dx*s, ar+dy*s); if (p === undefined) break; if (!p) continue; king = (p.toLowerCase()==='k' && (p===p.toUpperCase())===isW); break; }
+    if (!king) continue;                                   // de este lado, la 1ª pieza debe ser el rey propio
+    var diagLine = (dx !== 0 && dy !== 0);
+    for (s = 1; s < 8; s++) { p = at(af-dx*s, ar-dy*s); if (p === undefined) break; if (!p) continue;
+      var enemy = ((p===p.toUpperCase()) !== isW), t = p.toLowerCase();
+      if (enemy && ((diagLine && (t==='b'||t==='q')) || (!diagLine && (t==='r'||t==='q')))) return [dx, dy];
+      break;                                               // del lado opuesto, un deslizante enemigo que clava
+    }
+  }
+  return null;
+}
+
 // Lista de atacantes de una casilla (tf,tr) por el bando `side` ('w'/'b'), sobre la grilla `g`. Escanea
 // a mano: peón/caballo/rey por offsets y alfil/torre/dama por rayos con bloqueo. Al re-escanear tras
 // quitar un atacante (en el SEE), los rayos "ven a través" del hueco → maneja los ataques en rayos X.
@@ -24994,7 +25018,12 @@ function _attackersOf(g, tf, tr, side) {
   for (var d = 0; d < 4; d++) { for (var s = 1; s < 8; s++) { var f3 = tf+diag[d][0]*s, r3 = tr+diag[d][1]*s, p3 = at(f3,r3); if (f3<0||f3>7||r3<0||r3>7) break; if (!p3) continue; if (mine(p3)) { var t3 = p3.toLowerCase(); if (t3==='b'||t3==='q') res.push({f:f3,r:r3,val:_pval(p3),p:p3}); } break; } }
   var orth = [[1,0],[-1,0],[0,1],[0,-1]];
   for (var o = 0; o < 4; o++) { for (var s2 = 1; s2 < 8; s2++) { var f4 = tf+orth[o][0]*s2, r4 = tr+orth[o][1]*s2, p4 = at(f4,r4); if (f4<0||f4>7||r4<0||r4>7) break; if (!p4) continue; if (mine(p4)) { var t4 = p4.toLowerCase(); if (t4==='r'||t4==='q') res.push({f:f4,r:r4,val:_pval(p4),p:p4}); } break; } }
-  return res;
+  // Descartar atacantes CLAVADOS al rey que no pueden tomar en (tf,tr): una pieza clavada solo captura
+  // A LO LARGO de la línea de la clavada. Si (tf,tr) no es colineal con esa línea, no es atacante real.
+  return res.filter(function (a) {
+    var pd = _pinDir(g, a.f, a.r);
+    return !pd || ((tf - a.f) * pd[1] === (tr - a.r) * pd[0]);
+  });
 }
 
 // SEE (static exchange evaluation) sobre la casilla (tf,tr): material NETO que gana el bando `side`
