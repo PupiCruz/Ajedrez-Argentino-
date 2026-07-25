@@ -14309,10 +14309,19 @@ function _liveRatingStd(player){
   }
 
   // Lista unificada de configs (nombre, pace, rango de fechas, clave para su cruce).
-  var cfgs = [];
-  try { (typeof TORNEOS !== 'undefined' ? TORNEOS : []).forEach(function(t){ var ov = tzCfg['hc_' + t.id] || {}; cfgs.push({ key:'hc_'+t.id, name:t.name, pace:ov.pace||t.pace||'', rng:tourRange({ startDate:ov.startDate, endDate:ov.endDate, dates:ov.dates||t.dates }) }); }); } catch(e){}
-  try { pgnGetTorneosForList().forEach(function(st){ cfgs.push({ key:'ls_'+st._id, name:st.name, pace:st.pace||'', rng:tourRange(st) }); }); } catch(e){}
-  try { Object.keys(tzCfg).forEach(function(k){ if(k.indexOf('tz_') !== 0) return; var d = tzCfg[k]; cfgs.push({ key:k, name:d.name, pace:d.pace||'', rng:tourRange(d) }); }); } catch(e){}
+  var cfgs = [], _seenCfg = {};
+  function _pushCfg(c){ if(c.key && !_seenCfg[c.key]){ _seenCfg[c.key] = true; cfgs.push(c); } }
+  try { (typeof TORNEOS !== 'undefined' ? TORNEOS : []).forEach(function(t){ var ov = tzCfg['hc_' + t.id] || {}; _pushCfg({ key:'hc_'+t.id, name:t.name, pace:ov.pace||t.pace||'', rng:tourRange({ startDate:ov.startDate, endDate:ov.endDate, dates:ov.dates||t.dates }) }); }); } catch(e){}
+  try { pgnGetTorneosForList().forEach(function(st){ _pushCfg({ key:'ls_'+st._id, name:st.name, pace:st.pace||'', rng:tourRange(st) }); }); } catch(e){}
+  try { Object.keys(tzCfg).forEach(function(k){ if(k.indexOf('tz_') !== 0) return; var d = tzCfg[k]; _pushCfg({ key:k, name:d.name, pace:d.pace||'', rng:tourRange(d) }); }); } catch(e){}
+  // Web PUBLICADA (carga por demanda): los torneos NO viven en los configs sino en _embeddedTournaments;
+  // sus cruces están en __EMBEDDED_CR__. Sin esto, el rating en vivo salía vacío en la web. (En modo autor
+  // los configs mandan y el dedup por `key` evita duplicar.)
+  try { (typeof _embeddedTournaments !== 'undefined' ? _embeddedTournaments : []).forEach(function(t){
+    if(t.playerOnly) return;                                            // playerOnly = pool de perfil, no torneo con cruce
+    var key = t.id; if(!key || !/^(tz_|hc_|ls_)/.test(String(key))) return;
+    _pushCfg({ key:key, name:t.name, pace:t.pace||'', rng:tourRange(t) });
+  }); } catch(e){}
 
   // 1) FUENTE PRINCIPAL: las tablas/cruces. Base = elo del jugador EN ESE CRUCE (info.elo).
   cfgs.forEach(function(c){
