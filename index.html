@@ -6926,6 +6926,8 @@ function maintTabInit() {
   var h = '';
   h += '<div style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.5">Quita las partidas <b style="color:var(--text2)">duplicadas</b> que cargaste a los perfiles (en todo el sitio, no perfil por perfil). No toca los torneos públicos y deja una sola copia de cada partida. Conviene descargar antes la copia de autor.</div>';
   h += '<button onclick="runProfileDedup()" style="width:100%;padding:11px;background:var(--bg3);border:1px solid var(--border);color:var(--text2);font-size:13px;font-weight:600;border-radius:10px;cursor:pointer;font-family:inherit">🧹 Limpiar partidas duplicadas (todo el sitio)</button>';
+  h += '<div style="font-size:12px;color:var(--text3);margin:14px 0 10px;line-height:1.5">Busca y borra las <b style="color:var(--text2)">partidas sin nombres de jugadores</b> (orfanatos que quedan como "R?" al subir un PGN mal completado y no salen en ningún perfil). Te muestra cuántas hay y en qué torneos antes de borrar.</div>';
+  h += '<button onclick="runNamelessSweep()" style="width:100%;padding:11px;background:var(--bg3);border:1px solid var(--border);color:var(--text2);font-size:13px;font-weight:600;border-radius:10px;cursor:pointer;font-family:inherit">🔎 Borrar partidas sin nombres de jugadores</button>';
   h += '<div style="font-size:12px;color:var(--text3);margin:14px 0 10px;line-height:1.5">Une los <b style="color:var(--text2)">torneos duplicados</b> de los perfiles: el mismo evento cargado dos veces con nombres distintos (ej. desde chess-results y desde Lumbras). Junta las partidas en un solo torneo <b style="color:var(--text2)">sin perder ninguna</b> (verifica antes de aplicar). No toca los torneos públicos.</div>';
   h += '<button onclick="runTourMerge()" style="width:100%;padding:11px;background:var(--bg3);border:1px solid var(--border);color:var(--text2);font-size:13px;font-weight:600;border-radius:10px;cursor:pointer;font-family:inherit">🔗 Unir torneos duplicados (perfiles)</button>';
   h += '<div style="font-size:12px;color:var(--text3);margin:14px 0 10px;line-height:1.5"><b style="color:var(--gold)">Migrar a base de datos única</b> (acción de un solo uso). Junta TODAS las partidas de perfil en un pool único por evento, dejando una sola copia de cada una. Los perfiles pasan a leer ese pool → más limpio y rápido. Verifica que no se pierda ninguna partida antes de aplicar. <b style="color:var(--text2)">Bajá tu respaldo completo antes</b>, y "Guardar datos en mi carpeta" enseguida después.</div>';
@@ -11434,6 +11436,149 @@ function deleteAllPlayerGames(playerId) {
   openPlayer(playerId); // re-render completo del perfil (no apila historial: ya está abierto)
 }
 
+// Borra del POOL (base de datos única) TODAS las copias de una partida, identificada por su
+// cuerpo de jugadas (_moveBody). Cubre las 3 fuentes persistentes: _memTournaments (perfiles /
+// base en memoria), localStorage 'pgn_tournaments' (torneos subidos) y los pgnGames de los
+// configs de torneo. Reindexa. Devuelve cuántas copias sacó (-1 si no tiene jugadas para
+// identificarla de forma confiable). Útil para limpiar partidas subidas por error (ej. orfanatos
+// sin nombres/ronda que quedan como "R?" y no se pueden borrar desde ningún perfil).
+function _deletePoolGameByBody(pgn){
+  var target = _moveBody(pgn);
+  if(!target || target.length < 4) return -1;   // sin jugadas: no hay huella confiable
+  var removed = 0;
+  _memTournaments.forEach(function(e){
+    if(!e.games || !e.games.length) return;
+    var before = e.games.length;
+    e.games = e.games.filter(function(g){ return _moveBody(g) !== target; });
+    if(e.games.length !== before){ removed += before - e.games.length; e.gameCount = e.games.length; }
+  });
+  try {
+    var ls = JSON.parse(localStorage.getItem('pgn_tournaments') || '[]'), lsChg = false;
+    ls.forEach(function(e){
+      if(!e.games || !e.games.length) return;
+      var before = e.games.length;
+      e.games = e.games.filter(function(g){ return _moveBody(g) !== target; });
+      if(e.games.length !== before){ removed += before - e.games.length; e.gameCount = e.games.length; lsChg = true; }
+    });
+    if(lsChg) lsSaveTours(ls);
+  } catch(e){}
+  try {
+    var tzCfg = getTzConfig(), cfgChg = false;
+    Object.keys(tzCfg).forEach(function(k){
+      var d = tzCfg[k]; if(!d || !d.pgnGames || !d.pgnGames.length) return;
+      var before = d.pgnGames.length;
+      d.pgnGames = d.pgnGames.filter(function(g){ return _moveBody(g) !== target; });
+      if(d.pgnGames.length !== before){ removed += before - d.pgnGames.length; d.pgnCount = d.pgnGames.length; cfgChg = true; }
+    });
+    if(cfgChg) saveTzConfig(tzCfg);
+  } catch(e){}
+  try { pgnMergeToPlayerGames(); } catch(e){}
+  _pgIdx = null;   // invalidar el índice inverso jugador→partidas (se reconstruye on-demand)
+  return removed;
+}
+
+// Estado de los nombres de una partida (regex barato, corre sobre TODO el pool):
+// 'none' = blancas Y negras vacías/"?"/NN (orfanato); 'half' = falta UN nombre (rival "?");
+// 'full' = las dos con nombre.
+function _badName(x){ x = (x || '').trim(); return !x || /^\?+$/.test(x) || x.toUpperCase() === 'NN'; }
+function _gameNameStatus(pgn){
+  var w = (String(pgn).match(/\[White\s+"([^"]*)"\]/) || [])[1];
+  var b = (String(pgn).match(/\[Black\s+"([^"]*)"\]/) || [])[1];
+  var bw = _badName(w), bb = _badName(b);
+  return (bw && bb) ? 'none' : ((bw || bb) ? 'half' : 'full');
+}
+// Escanea el pool (memoria + LS 'pgn_tournaments' + configs). Cuenta por torneo las 'none' y las 'half'.
+function _scanNamelessPoolGames(){
+  var none = 0, half = 0, byNone = {}, byHalf = {};
+  function scan(entries, gamesKey){
+    (entries || []).forEach(function(e){
+      (e[gamesKey] || []).forEach(function(g){
+        var s = _gameNameStatus(g); if(s === 'full') return;
+        var tn = e.name || '(sin torneo)';
+        if(s === 'none'){ none++; byNone[tn] = (byNone[tn] || 0) + 1; }
+        else { half++; byHalf[tn] = (byHalf[tn] || 0) + 1; }
+      });
+    });
+  }
+  scan(_memTournaments, 'games');
+  try { scan(JSON.parse(localStorage.getItem('pgn_tournaments') || '[]'), 'games'); } catch(e){}
+  try { var tzCfg = getTzConfig(); scan(Object.keys(tzCfg).map(function(k){ return tzCfg[k]; }), 'pgnGames'); } catch(e){}
+  return { none: none, half: half, byNone: byNone, byHalf: byHalf };
+}
+// Borra del pool las partidas cuyo estado esté en `kill` (ej. ['none'] o ['none','half']). Filtra directo
+// por nombre, así también saca las que no tienen jugadas. Reindexa. Devuelve cuántas sacó.
+function _deleteNamelessPoolGames(kill){
+  function drop(g){ return kill.indexOf(_gameNameStatus(g)) >= 0; }
+  var removed = 0;
+  _memTournaments.forEach(function(e){
+    if(!e.games || !e.games.length) return;
+    var b = e.games.length;
+    e.games = e.games.filter(function(g){ return !drop(g); });
+    if(e.games.length !== b){ removed += b - e.games.length; e.gameCount = e.games.length; }
+  });
+  try {
+    var ls = JSON.parse(localStorage.getItem('pgn_tournaments') || '[]'), chg = false;
+    ls.forEach(function(e){ if(!e.games || !e.games.length) return; var b = e.games.length; e.games = e.games.filter(function(g){ return !drop(g); }); if(e.games.length !== b){ removed += b - e.games.length; e.gameCount = e.games.length; chg = true; } });
+    if(chg) lsSaveTours(ls);
+  } catch(e){}
+  try {
+    var tzCfg = getTzConfig(), chg = false;
+    Object.keys(tzCfg).forEach(function(k){ var d = tzCfg[k]; if(!d.pgnGames || !d.pgnGames.length) return; var b = d.pgnGames.length; d.pgnGames = d.pgnGames.filter(function(g){ return !drop(g); }); if(d.pgnGames.length !== b){ removed += b - d.pgnGames.length; d.pgnCount = d.pgnGames.length; chg = true; } });
+    if(chg) saveTzConfig(tzCfg);
+  } catch(e){}
+  try { pgnMergeToPlayerGames(); } catch(e){}
+  _pgIdx = null;   // invalidar índice inverso jugador→partidas
+  return removed;
+}
+// Botón de Mantenimiento: escanea y ofrece borrar en DOS pasos separados: primero los orfanatos (sin
+// ningún nombre, seguros) y después los de un solo nombre (que tienen un jugador real → más cautela).
+function runNamelessSweep(){
+  var s = _scanNamelessPoolGames();
+  if(!s.none && !s.half){ alert('No se encontraron partidas sin nombres ni con un solo nombre en el pool. 🎉'); return; }
+  function detail(byTour){
+    var t = Object.keys(byTour).sort(function(a,b){ return byTour[b] - byTour[a]; });
+    var lines = t.slice(0,12).map(function(n){ return '· ' + n + ': ' + byTour[n]; });
+    return { nTours: t.length, text: lines.join('\n') + (t.length > 12 ? '\n…y ' + (t.length - 12) + ' torneo(s) más.' : '') };
+  }
+  var totalRemoved = 0;
+  if(s.none){
+    var dN = detail(s.byNone);
+    if(confirm('① SIN NINGÚN NOMBRE (orfanatos, seguros de borrar): ' + s.none + ' partida(s) en ' + dN.nTours + ' torneo(s):\n\n' + dN.text + '\n\n¿Borrarlas?')){
+      totalRemoved += _deleteNamelessPoolGames(['none']);
+    }
+  }
+  if(s.half){
+    var dH = detail(s.byHalf);
+    if(confirm('② CON UN SOLO NOMBRE (el rival queda "?"): ' + s.half + ' partida(s) en ' + dH.nTours + ' torneo(s):\n\n' + dH.text
+        + '\n\n⚠️ OJO: estas SÍ tienen un jugador real (ej. Felgaer, Flores). Borrarlas las quita también del perfil de ese jugador, '
+        + 'pero elimina el jugador fantasma "?" de la búsqueda de frecuentes.\n\n¿Borrarlas igual?')){
+      totalRemoved += _deleteNamelessPoolGames(['half']);
+    }
+  }
+  alert(totalRemoved
+    ? '✓ Se borraron ' + totalRemoved + ' partida(s).\n\nAcordate de "Guardar datos en mi carpeta" para que quede firme.'
+    : 'No se borró nada.');
+}
+
+// Handler del botón ✕ de una miniatura de partida (modo autor): borra esa partida del pool.
+function tdDeletePoolGame(ev, gidx){
+  if(ev){ ev.preventDefault(); ev.stopPropagation(); }
+  if(typeof _ondemand !== 'undefined' && _ondemand) return false;   // solo modo autor
+  if(!_tdCtx || !_tdCtx.games) return false;
+  var pgn = _tdCtx.games[gidx];
+  if(!pgn) return false;
+  var hh = parsePgnHeaders(pgn);
+  function nm(x){ if(!x) return '(sin nombre)'; var p = x.split(','); return p.length>1 ? (p[1].trim()+' '+p[0].trim()) : x; }
+  var label = nm(hh.White) + ' vs ' + nm(hh.Black) + (hh.Result && hh.Result !== '*' ? ' (' + hh.Result + ')' : '');
+  if(!confirm('¿Borrar esta partida de la base de datos?\n\n' + label + '\n\nSe quita del pool (perfiles y torneos). No se puede deshacer.\nAcordate de "Guardar datos en mi carpeta" después.')) return false;
+  var n = _deletePoolGameByBody(pgn);
+  if(n <= 0){ alert('No se pudo identificar la partida para borrarla (¿sin jugadas cargadas?).'); return false; }
+  _tdCtx.games = _tdCtx.games.filter(function(g){ return g !== pgn; });
+  Object.keys(_tdCtx.byRound).forEach(function(r){ _tdCtx.byRound[r] = (_tdCtx.byRound[r] || []).filter(function(x){ return x.pgn !== pgn; }); });
+  if(typeof _tdCurrentRound !== 'undefined' && _tdCurrentRound !== null) tdBuildRound(_tdCurrentRound);
+  return false;
+}
+
 function clearPlayerImported(playerId) {
   var player = _playerById(playerId);
   var before = _memTournaments.length;
@@ -14052,6 +14197,20 @@ function _playerEloGamesInPgns(player, pgns){
   });
   return out;
 }
+// Elo propio del jugador según sus PGN (base de la variación cuando el torneo no tiene cruce).
+function _playerOwnEloFromPgns(player, pgns){
+  for(var i=0;i<(pgns||[]).length;i++){
+    var h = parsePgnHeaders(pgns[i]), isWhite;
+    if(player.fide_id && h.WhiteFideId === player.fide_id) isWhite = true;
+    else if(player.fide_id && h.BlackFideId === player.fide_id) isWhite = false;
+    else if(pgnNameMatchesPlayer(h.White || '', player)) isWhite = true;
+    else if(pgnNameMatchesPlayer(h.Black || '', player)) isWhite = false;
+    else continue;
+    var e = parseInt(isWhite ? h.WhiteElo : h.BlackElo, 10);
+    if(e && !isNaN(e) && e >= 100) return e;
+  }
+  return 0;
+}
 // Mayor fecha (YYYYMMDD) de un lote de PGN (fin aproximado del torneo si no hay fechas).
 function _maxPgnDateKey(pgns){
   var mx = 0;
@@ -14135,7 +14294,19 @@ function _liveRatingStd(player){
   if(!cutoff) return { base:base, live:base, delta:0, nTours:0, names:[] };   // sin listado no sabemos el período
   var born = player.born || 0;
   var tzCfg = (typeof getTzConfig === 'function') ? getTzConfig() : {};
-  var all = [], nTours = 0, names = [], seen = {};
+  var totalDelta = 0, nTours = 0, names = [], seen = {};
+
+  // Suma la variación de UN torneo calculada con SU PROPIA base (el elo del jugador en ese cruce,
+  // = el del listado FIDE que le corresponde: un torneo que empieza en junio usa el elo de junio,
+  // aunque termine en julio). Cada torneo se calcula por separado y se suman las variaciones —
+  // igual que hace la tarjeta del jugador, así ambos coinciden.
+  function addTour(name, tourBase, games){
+    if(!games || !games.length) return;
+    var b = parseInt(tourBase, 10); if(!b || isNaN(b) || b <= 0) b = base;
+    var d = _fideEloDelta(b, games, born);
+    if(d == null) return;
+    totalDelta += d; nTours++; names.push(name); seen[_normTourName(name)] = true;
+  }
 
   // Lista unificada de configs (nombre, pace, rango de fechas, clave para su cruce).
   var cfgs = [];
@@ -14143,7 +14314,7 @@ function _liveRatingStd(player){
   try { pgnGetTorneosForList().forEach(function(st){ cfgs.push({ key:'ls_'+st._id, name:st.name, pace:st.pace||'', rng:tourRange(st) }); }); } catch(e){}
   try { Object.keys(tzCfg).forEach(function(k){ if(k.indexOf('tz_') !== 0) return; var d = tzCfg[k]; cfgs.push({ key:k, name:d.name, pace:d.pace||'', rng:tourRange(d) }); }); } catch(e){}
 
-  // 1) FUENTE PRINCIPAL: las tablas/cruces (solo se cargan las de torneos pendientes).
+  // 1) FUENTE PRINCIPAL: las tablas/cruces. Base = elo del jugador EN ESE CRUCE (info.elo).
   cfgs.forEach(function(c){
     if(!_isStandardPace(c.pace)) return;                          // solo clásico
     var end = c.rng && c.rng.end ? c.rng.end : 0;
@@ -14153,12 +14324,11 @@ function _liveRatingStd(player){
     if(!crData || (!crData.rounds && !crData.teamRounds)) return;
     var crName = _crFindPlayerName(crData, player);
     if(!crName) return;
-    var g = _crEloGamesForName(crData, crName);
-    if(!g.length) return;
-    all = all.concat(g); nTours++; names.push(c.name); seen[_normTourName(c.name)] = true;
+    var info = crData.standings ? crData.standings.find(function(s){ return s.name === crName; }) : null;
+    addTour(c.name, info && info.elo, _crEloGamesForName(crData, crName));
   });
 
-  // 2) RESPALDO: torneos SIN tabla cargada → partidas del pool (puede faltar alguna).
+  // 2) RESPALDO: torneos SIN tabla cargada → pool. Base = elo propio del jugador en los PGN.
   try {
     var paceMap = _tourNamePaceMap();
     groupByTournament(gatherGamesForPlayer(player)).forEach(function(gr){
@@ -14166,16 +14336,12 @@ function _liveRatingStd(player){
       if(!_isStandardPace(paceMap[_normTourName(gr.name)] || '')) return;
       var end = _maxPgnDateKey(gr.games);
       if(!end || end < cutoff) return;
-      var g = _playerEloGamesInPgns(player, gr.games);
-      if(!g.length) return;
-      all = all.concat(g); nTours++; names.push(gr.name);
+      addTour(gr.name, _playerOwnEloFromPgns(player, gr.games), _playerEloGamesInPgns(player, gr.games));
     });
   } catch(e){}
 
-  if(!all.length) return { base:base, live:base, delta:0, nTours:0, names:[] };
-  var delta = _fideEloDelta(base, all, born);
-  if(delta == null) return { base:base, live:base, delta:0, nTours:0, names:[] };
-  return { base:base, live: base + Math.round(delta), delta: delta, nTours:nTours, names:names };
+  if(!nTours) return { base:base, live:base, delta:0, nTours:0, names:[] };
+  return { base:base, live: base + Math.round(totalDelta), delta: Math.round(totalDelta*10)/10, nTours:nTours, names:names };
 }
 
 // Performance rating de un torneo a partir de los PGN (fórmula FIDE con tabla dp)
@@ -20047,7 +20213,13 @@ function _tdCardHtml(g, flip) {
   var rowBlack = nameRow(bTitle, black, bFlag, 'b', bScore, bScoreColor, flip ? '4px 7px 6px' : '5px 7px 4px');
   var rowWhite = nameRow(wTitle, white, wFlag, 'w', wScore, wScoreColor, flip ? '5px 7px 4px' : '4px 7px 6px');
   var h = '';
-  h += '<a class="td-card" data-arg="' + isArg + '" href="' + _gameHref(_tdTourKey, globalIdx) + '" onclick="return tdCardClick(event,' + globalIdx + ',\'' + _tdCtx.pgnKey + '\',\'' + escJs(_tdCtx.name) + '\',\'' + escJs(_tdCtx.location) + '\')">';
+  h += '<a class="td-card" data-arg="' + isArg + '" style="position:relative" href="' + _gameHref(_tdTourKey, globalIdx) + '" onclick="return tdCardClick(event,' + globalIdx + ',\'' + _tdCtx.pgnKey + '\',\'' + escJs(_tdCtx.name) + '\',\'' + escJs(_tdCtx.location) + '\')">';
+  // Botón ✕ (solo modo autor): borra esta partida del pool. Útil para orfanatos subidos por error.
+  if (typeof _ondemand === 'undefined' || !_ondemand) {
+    h += '<span onclick="return tdDeletePoolGame(event,' + globalIdx + ')" title="Borrar esta partida del pool" '
+       + 'style="position:absolute;top:2px;right:2px;z-index:6;width:19px;height:19px;display:flex;align-items:center;justify-content:center;'
+       + 'background:rgba(200,50,50,.92);color:#fff;border-radius:50%;font-size:12px;font-weight:700;line-height:1;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.4)">✕</span>';
+  }
   // Arriba el rival del que queda abajo: normal → negras arriba; volteado → blancas arriba.
   h += flip ? rowWhite : rowBlack;
   // El tablero arranca con un placeholder vacío; la posición final se calcula
