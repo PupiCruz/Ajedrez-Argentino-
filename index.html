@@ -2709,6 +2709,15 @@
         <input id="tze-timecontrol" class="tz-input" type="text" placeholder="Ej: 90 min + 30 seg"></div>
     </div>
     <div style="margin-bottom:12px">
+      <label class="tz-flabel">Categoría de ritmo <span style="font-weight:400;color:var(--text3)">(para el rating en vivo)</span></label>
+      <select id="tze-pace" class="tz-input">
+        <option value="standard">Clásico (Standard)</option>
+        <option value="rapid">Rápido</option>
+        <option value="blitz">Blitz</option>
+      </select>
+      <div style="font-size:11px;color:var(--text3);margin-top:6px;line-height:1.4">Se muestra en la ficha del torneo. El <b>rating en vivo</b> solo suma las variaciones de elo de los torneos <b>Clásicos</b>, así que marcá bien los de Rápido/Blitz para no ensuciar el elo standard.</div>
+    </div>
+    <div style="margin-bottom:12px">
       <label class="tz-flabel">Sistema <span style="font-weight:400;color:var(--text3)">(opcional — cómo se muestran los cruces)</span></label>
       <select id="tze-format" class="tz-input">
         <option value="">Detectar solo</option>
@@ -6629,13 +6638,31 @@ function crOpenPlayer(key,name){
   var losses=history.filter(function(h){return h.myRes.startsWith('✗');}).length;
   var pending=history.filter(function(h){return h.myRes.startsWith('⋯');}).length;
 
+  // Perfil argentino del jugador (si lo hay): da foto y año de nacimiento (para el K).
+  var _hdrP = (typeof cvFindPlayer==='function') ? cvFindPlayer(name, info&&info.fideId) : null;
+
+  // Performance FIDE (promedio rivales + dp) y cambio de elo (K·Σ(res−esperado)) del
+  // torneo. Se calculan desde el cruce para mostrarlos aunque Chess-Results no los traiga.
+  var _perfSum=0,_perfN=0,_perfScore=0;
+  history.forEach(function(hh){
+    if(!/^[✓½✗]/.test(hh.myRes)) return;              // solo partidas jugadas
+    var e=parseInt(hh.oppElo,10);
+    if(!e||isNaN(e)||e<100) return;                   // solo rivales con elo válido
+    var c=hh.myRes.charAt(0);
+    _perfSum+=e; _perfN++; _perfScore += (c==='✓')?1:(c==='½')?0.5:0;
+  });
+  var tourPerf=_fidePerformance(_perfSum,_perfScore,_perfN);
+  var _myElo=(info&&info.elo)||(_hdrP&&_hdrP.elo)||0;
+  // La MISMA función que suma el rating en vivo del perfil: variación desde el cruce.
+  var tourEloDelta=_fideEloDelta(_myElo, _crEloGamesForName(data, name), _hdrP&&_hdrP.born);
+
   var h='<div style="padding:8px 2px 16px;max-width:640px;margin:0 auto">';
   // Header compacto (en tarjeta, con el criterio nuevo: card90 + borde 1px + radio + sombra)
   h+='<div style="background:var(--card90);border:1px solid var(--bd22);border-radius:var(--r-lg);box-shadow:var(--shadow-card);padding:14px 16px;margin-bottom:12px">';
   h+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">';
   // Avatar: si el jugador tiene perfil argentino CON foto, la mostramos; si no, la inicial.
   // Mismo criterio que el perfil completo (_photoSrc + _avImgErr como red de contención).
-  var _hdrP = (typeof cvFindPlayer==='function') ? cvFindPlayer(name, info&&info.fideId) : null;
+  // (_hdrP ya se buscó arriba, para el año de nacimiento del cálculo de elo.)
   var _hdrPhoto = _hdrP ? _photoSrc(_hdrP.id) : null;
   var _hdrIni = name.charAt(0)||'?';
   h+='<div data-ini="'+escHtml(_hdrIni)+'" style="width:44px;height:44px;border-radius:50%;background:var(--gold-bg);border:1.5px solid var(--gold-dim);display:flex;align-items:center;justify-content:center;font-size:17px;font-weight:700;color:var(--gold);flex-shrink:0;overflow:hidden">'
@@ -6647,7 +6674,8 @@ function crOpenPlayer(key,name){
     h+='<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:3px;font-size:12px">';
     if(info.fed) h+='<span style="color:var(--fg-c8)">'+crFlagEmoji(info.fed)+' '+info.fed+'</span>';
     if(info.elo) h+='<span style="color:var(--fg-c8)">· ELO '+info.elo+'</span>';
-    if(info.rp)  h+='<span style="color:var(--fg-c8)">· Rp '+info.rp+'</span>';
+    var _rpShow = (parseInt(info.rp,10) > 0) ? info.rp : tourPerf;   // Rp oficial de CR si viene (>0); si no (CR manda 0), la calculada
+    if(_rpShow) h+='<span style="color:var(--gold)" title="Performance del torneo: promedio de rivales + ajuste FIDE por puntaje">· Rp '+_rpShow+'</span>';
     h+='</div>';
   }
   h+='</div>';
@@ -6670,7 +6698,15 @@ function crOpenPlayer(key,name){
     h+='<span style="color:var(--gold);font-weight:600">'+draws+'T</span> · ';
     h+='<span style="color:#e05555;font-weight:600">'+losses+'D</span>';
     if(pending){ h+=' · <span style="color:var(--text3);font-weight:600">'+pending+' por jugar</span>'; }
-    if(info && info.eloVar){ var sign=info.eloVar>0?'+':''; h+='<span style="margin-left:8px;color:'+(info.eloVar>0?'#4caf50':'#e05555')+'">Elo '+sign+info.eloVar+'</span>'; }
+    if(!info && tourPerf){ h+=' · <span style="color:var(--gold);font-weight:700" title="Performance del torneo: promedio de rivales + ajuste FIDE por puntaje">Rp '+tourPerf+'</span>'; }
+    // Cambio de elo: el de Chess-Results si viene; si no, el calculado (K·Σ(res−esperado)).
+    var _evShow = (info && info.eloVar) ? info.eloVar : tourEloDelta;
+    if(_evShow != null){
+      var _evSign = _evShow>0?'+':'';
+      var _evCol  = _evShow>0?'#4caf50':(_evShow<0?'#e05555':'var(--text3)');
+      var _evTit  = (info && info.eloVar) ? 'Variación de elo del torneo (Chess-Results)' : 'Variación de elo estimada: K·Σ(resultado − esperado). K según elo/edad; puede diferir para jugadores nuevos o juveniles.';
+      h+='<span style="margin-left:8px;color:'+_evCol+'" title="'+_evTit+'">Elo '+_evSign+_evShow+'</span>';
+    }
     h+='</div>';
   }
   h+='</div>';   // /tarjeta del header
@@ -10082,6 +10118,20 @@ async function openPlayer(id) {
   if (p.blitz) h += _prat('prat-blz', 'Blitz', p.blitz, _pk.b);
   h += '</div>';
   h += '</div>';   // /prof-top
+  // Rating Standard EN VIVO (estimado): elo publicado + variaciones de torneos clásicos
+  // terminados después del último padrón FIDE. Solo se muestra si hay algo que sumar.
+  var _lr = (typeof _liveRatingStd === 'function') ? _liveRatingStd(p) : null;
+  if (_lr && _lr.nTours && _lr.delta) {
+    var _lrSign = _lr.delta > 0 ? '+' : '';
+    var _lrCol  = _lr.delta > 0 ? 'var(--green)' : 'var(--red)';
+    h += '<div style="margin:2px 0 12px;padding:9px 13px;background:var(--gl35);border:1px solid var(--bd22);border-radius:10px;font-size:13.5px;display:flex;align-items:center;gap:9px;flex-wrap:wrap" '
+       + 'title="Estimado: elo Standard publicado + variaciones de ' + _lr.nTours + ' torneo(s) clásico(s) terminados después del último padrón FIDE. El factor K puede no ser exacto en juveniles o jugadores nuevos.">'
+       + '<span style="color:var(--red);font-weight:700">🔴 En vivo</span>'
+       + '<b style="font-size:17px;color:var(--white-ink)">' + _lr.live + '</b>'
+       + '<span style="color:' + _lrCol + ';font-weight:700">(' + _lrSign + (Math.round(_lr.delta*10)/10) + ')</span>'
+       + '<span style="color:var(--text3);font-size:11.5px">Standard · estimado · ' + _lr.nTours + ' torneo' + (_lr.nTours>1?'s':'') + '</span>'
+       + '</div>';
+  }
   // Gráfico de evolución de Elo (se llena mes a mes con cada padrón FIDE).
   h += _eloChartCard(p);
   h += '<div class="stats-grid">';
@@ -13905,10 +13955,232 @@ function computeBestWins(player, allTours, n) {
   return wins.slice(0, n);
 }
 
-// Performance rating de un torneo (fórmula simplificada FIDE)
+// ── Performance rating FIDE ──────────────────────────────────────────────
+// Tabla oficial FIDE de conversión: p (score en %, redondeado a 2 decimales) →
+// dp (diferencia de rating). Es simétrica —dp(p) = −dp(1−p)— así que basta guardar
+// la mitad p≥0,50 (índices 0..50 = p=0,50 … 1,00) y reflejar para p<0,50.
+var _FIDE_DP50 = [0,7,14,21,29,36,43,50,57,65,72,80,87,95,102,110,117,125,133,141,149,158,166,175,184,193,202,211,220,230,240,251,262,273,284,296,309,322,336,351,366,383,401,422,444,470,501,538,589,677,800];
+function _fideDp(p){
+  if(p<0)p=0; else if(p>1)p=1;
+  var i=Math.round(p*100);                 // 0..100
+  return i>=50 ? _FIDE_DP50[i-50] : -_FIDE_DP50[50-i];
+}
+// Performance de un torneo: Rp = promedio de rivales (redondeado) + dp(score%).
+// Es la misma cuenta que muestra Chess-Results. Devuelve null si no hay rivales
+// con elo válido. (Para NORMAS, FIDE aplica pisos por rival —2200 GM / 2050 IM /
+// 2000 WGM / 1850 WIM— y solo a un rival; eso NO se aplica acá, es otra cuenta.)
+function _fidePerformance(sumOppElo, score, count){
+  if(!count) return null;
+  var Ra = Math.round(sumOppElo / count);
+  return Ra + _fideDp(score / count);
+}
+
+// ── Cambio de elo FIDE por torneo (el campo "FIDE elo +/-") ───────────────
+// Tabla oficial de expectativa: [dif. de rating ≤ umbral] → PD (prob. de ganar
+// del jugador MÁS fuerte). El más débil tiene 1−PD.
+var _FIDE_EXP = [[3,.50],[10,.51],[17,.52],[25,.53],[32,.54],[39,.55],[46,.56],[53,.57],[61,.58],[68,.59],[76,.60],[83,.61],[91,.62],[98,.63],[106,.64],[113,.65],[121,.66],[129,.67],[137,.68],[145,.69],[153,.70],[162,.71],[170,.72],[179,.73],[188,.74],[197,.75],[206,.76],[215,.77],[225,.78],[235,.79],[245,.80],[256,.81],[267,.82],[278,.83],[290,.84],[302,.85],[315,.86],[328,.87],[344,.88],[357,.89],[374,.90],[391,.91],[411,.92],[432,.93],[456,.94],[484,.95],[517,.96],[559,.97],[619,.98],[735,.99]];
+// Score esperado del jugador con elo myElo frente a un rival oppElo. La diferencia
+// se topa en 400 (salvo que el propio jugador sea ≥2650, regla FIDE desde oct-2025).
+function _fideExpected(myElo, oppElo){
+  var D = myElo - oppElo;
+  var cap = (myElo >= 2650) ? Infinity : 400;
+  if(D >  cap) D =  cap;
+  if(D < -cap) D = -cap;
+  var ad = Math.abs(D), ph = 1.0;
+  for(var i=0;i<_FIDE_EXP.length;i++){ if(ad <= _FIDE_EXP[i][0]){ ph = _FIDE_EXP[i][1]; break; } }
+  return D >= 0 ? ph : (1 - ph);
+}
+// Factor K FIDE. No siempre exacto: K=40 para nuevos (<30 partidas) no se puede
+// detectar; para sub-18 con elo<2300 hace falta el año de nacimiento (born).
+function _tourKFactor(elo, born){
+  if(elo >= 2400) return 10;
+  if(born){ var yr = new Date().getFullYear(); if((yr - born) <= 18 && elo < 2300) return 40; }
+  return 20;
+}
+// Cambio de elo de un torneo: K·Σ(resultado − esperado). Redondeado a 1 decimal,
+// como lo muestra Chess-Results. games = [{oppElo, score}], score = 1/0.5/0.
+// Devuelve null si falta el elo propio o no hay partidas con rival rankeado.
+function _fideEloDelta(myElo, games, born){
+  myElo = parseInt(myElo, 10);
+  if(!myElo || isNaN(myElo)) return null;
+  var sum = 0, n = 0;
+  (games || []).forEach(function(g){
+    var e = parseInt(g.oppElo, 10);
+    if(!e || isNaN(e) || e < 100) return;
+    sum += (g.score - _fideExpected(myElo, e)); n++;
+  });
+  if(!n) return null;
+  return Math.round(_tourKFactor(myElo, born) * sum * 10) / 10;
+}
+
+// ── Rating en vivo (Standard) ─────────────────────────────────────────────
+// Categoría de ritmo del torneo. Vacío/desconocido = standard (la mayoría de los
+// broadcasts son clásicos); rápido/blitz se marcan a mano en crear/editar torneo.
+function _isStandardPace(pace){ return pace !== 'rapid' && pace !== 'blitz'; }
+function _paceLabel(pace){
+  if(pace === 'rapid') return '⚡ Rápido';
+  if(pace === 'blitz') return '🚀 Blitz';
+  return '♟ Clásico';   // standard o sin marcar
+}
+// Primer día (clave YYYYMMDD) del mes del listado FIDE cargado. Los torneos que
+// terminan ANTES de esta fecha ya están en el elo publicado (no se suman de nuevo).
+// OJO: el listado del mes M incluye los torneos que terminaron el mes M−1, así que
+// "pendiente" = fin ≥ 1° del mes del listado.
+function _fideListCutoff(){
+  try {
+    var ov = (typeof _rankingOverride === 'function') ? _rankingOverride() : null;
+    var m = ov && ov.month;   // "2026-07"
+    if(m && /^\d{4}-\d{2}$/.test(m)) return parseInt(m.slice(0,4),10)*10000 + parseInt(m.slice(5,7),10)*100 + 1;
+  } catch(e){}
+  return 0;
+}
+// [{oppElo, score}] de las partidas decididas del jugador en un lote de PGN.
+function _playerEloGamesInPgns(player, pgns){
+  var out = [];
+  (pgns || []).forEach(function(pgn){
+    var h = parsePgnHeaders(pgn), res = h.Result || '*';
+    if(res === '*') return;
+    var isWhite;
+    if(player.fide_id && h.WhiteFideId === player.fide_id) isWhite = true;
+    else if(player.fide_id && h.BlackFideId === player.fide_id) isWhite = false;
+    else if(pgnNameMatchesPlayer(h.White || '', player)) isWhite = true;
+    else if(pgnNameMatchesPlayer(h.Black || '', player)) isWhite = false;
+    else return;
+    var oppElo = parseInt(isWhite ? h.BlackElo : h.WhiteElo, 10);
+    if(!oppElo || isNaN(oppElo) || oppElo < 100) return;
+    out.push({ oppElo: oppElo, score: (res === '1/2-1/2') ? 0.5 : (((res === '1-0') === isWhite) ? 1 : 0) });
+  });
+  return out;
+}
+// Mayor fecha (YYYYMMDD) de un lote de PGN (fin aproximado del torneo si no hay fechas).
+function _maxPgnDateKey(pgns){
+  var mx = 0;
+  (pgns || []).forEach(function(pgn){
+    var h = parsePgnHeaders(pgn);
+    var d = (h.Date || h.UTCDate || '').replace(/\?/g, '0').split('.');
+    if(d.length === 3 && parseInt(d[0],10) > 1900){
+      var k = parseInt(d[0],10)*10000 + parseInt(d[1]||0,10)*100 + parseInt(d[2]||0,10);
+      if(k > mx) mx = k;
+    }
+  });
+  return mx;
+}
+// Normaliza un nombre de torneo para emparejar (minúsculas, espacios colapsados).
+function _normTourName(s){ return (s || '').toLowerCase().replace(/\s+/g, ' ').trim(); }
+// ── Resultados desde las TABLAS/CRUCES (fuente completa: siempre traen todos los
+//    resultados del jugador, aunque el torneo no haya subido todas las partidas) ──
+// Resultado CR → score del jugador (según si jugó de blancas). null si no puntúa para elo
+// (por jugar, bye, incomparecencia +--/--+, desconocido).
+function _crResScore(res, isWhite){
+  if(!res || res==='*' || res==='?' || res==='-') return null;
+  if(res==='½-½' || res==='1/2-1/2') return 0.5;
+  if(res==='1-0') return isWhite ? 1 : 0;
+  if(res==='0-1') return isWhite ? 0 : 1;
+  return null;   // +--/--+ (incomparecencias) y otros no cuentan para el rating
+}
+// [{oppElo, score}] del jugador (por su nombre EXACTO en la tabla) desde rondas/cruces.
+function _crEloGamesForName(data, name){
+  var out = [];
+  function add(res, isWhite, oppElo){
+    var sc = _crResScore(res, isWhite); if(sc === null) return;
+    var e = parseInt(oppElo, 10); if(!e || isNaN(e) || e < 100) return;
+    out.push({ oppElo:e, score:sc });
+  }
+  if(data.teamRounds && Object.keys(data.teamRounds).length){
+    Object.keys(data.teamRounds).forEach(function(r){ (data.teamRounds[r]||[]).forEach(function(mt){ (mt.boards||[]).forEach(function(bd){
+      if(bd.nW === name) add(bd.res, true, bd.eB);
+      else if(bd.nB === name) add(bd.res, false, bd.eW);
+    }); }); });
+  } else if(data.rounds){
+    Object.keys(data.rounds).forEach(function(r){ (data.rounds[r]||[]).forEach(function(p){
+      if(p.w === name) add(p.res, true, p.eb);
+      else if(p.b === name) add(p.res, false, p.ew);
+    }); });
+  }
+  return out;
+}
+// Nombre del jugador tal como figura en la tabla (para matchear en las rondas). null si no está.
+// Las standings NO traen fideId → se matchea por nombre (pgnNameMatchesPlayer, formato "Apellido, Nombre").
+function _crFindPlayerName(data, player){
+  var cands = [];
+  if(data.standings) data.standings.forEach(function(s){ if(s && s.name) cands.push(s.name); });
+  if(data.teamRounds) Object.keys(data.teamRounds).forEach(function(r){ (data.teamRounds[r]||[]).forEach(function(mt){ (mt.boards||[]).forEach(function(bd){ if(bd.nW) cands.push(bd.nW); if(bd.nB) cands.push(bd.nB); }); }); });
+  else if(data.rounds) Object.keys(data.rounds).forEach(function(r){ (data.rounds[r]||[]).forEach(function(p){ if(p.w) cands.push(p.w); if(p.b) cands.push(p.b); }); });
+  for(var i=0;i<cands.length;i++){ if(pgnNameMatchesPlayer(cands[i], player)) return cands[i]; }
+  return null;
+}
+// Mapa nombre-de-torneo (normalizado) → pace, a partir de los configs (tz/hc/ls).
+// Sirve para saber el ritmo de un torneo del pool (las partidas del pool se agrupan
+// por nombre de Event, no traen el pace). Sin entrada = standard por defecto.
+function _tourNamePaceMap(){
+  var map = {};
+  try {
+    var tzCfg = (typeof getTzConfig === 'function') ? getTzConfig() : {};
+    Object.keys(tzCfg).forEach(function(k){ var d = tzCfg[k]; if(d && d.name && d.pace) map[_normTourName(d.name)] = d.pace; });
+    (typeof TORNEOS !== 'undefined' ? TORNEOS : []).forEach(function(t){ var ov = tzCfg['hc_' + t.id] || {}; var pc = ov.pace || t.pace; if(t.name && pc) map[_normTourName(t.name)] = pc; });
+    JSON.parse(localStorage.getItem('pgn_tournaments') || '[]').forEach(function(e){ if(e && e.name && e.pace) map[_normTourName(e.name)] = e.pace; });
+  } catch(e){}
+  return map;
+}
+// Rating Standard EN VIVO del jugador = elo publicado + Σ(variaciones de sus torneos
+// clásicos terminados después del corte del listado). Usa la MISMA cuenta que la tarjeta
+// del jugador: los resultados salen de las TABLAS/CRUCES (`_crEloGamesForName`), que traen
+// todos los resultados aunque el torneo no haya subido las partidas. El POOL solo es
+// respaldo para torneos que no tienen tabla cargada. Estimado (K no siempre exacto).
+// Devuelve { base, live, delta, nTours, names } o null si no tiene elo publicado.
+function _liveRatingStd(player){
+  var base = parseInt(player && player.elo, 10);
+  if(!base || isNaN(base) || base <= 0) return null;
+  var cutoff = _fideListCutoff();
+  if(!cutoff) return { base:base, live:base, delta:0, nTours:0, names:[] };   // sin listado no sabemos el período
+  var born = player.born || 0;
+  var tzCfg = (typeof getTzConfig === 'function') ? getTzConfig() : {};
+  var all = [], nTours = 0, names = [], seen = {};
+
+  // Lista unificada de configs (nombre, pace, rango de fechas, clave para su cruce).
+  var cfgs = [];
+  try { (typeof TORNEOS !== 'undefined' ? TORNEOS : []).forEach(function(t){ var ov = tzCfg['hc_' + t.id] || {}; cfgs.push({ key:'hc_'+t.id, name:t.name, pace:ov.pace||t.pace||'', rng:tourRange({ startDate:ov.startDate, endDate:ov.endDate, dates:ov.dates||t.dates }) }); }); } catch(e){}
+  try { pgnGetTorneosForList().forEach(function(st){ cfgs.push({ key:'ls_'+st._id, name:st.name, pace:st.pace||'', rng:tourRange(st) }); }); } catch(e){}
+  try { Object.keys(tzCfg).forEach(function(k){ if(k.indexOf('tz_') !== 0) return; var d = tzCfg[k]; cfgs.push({ key:k, name:d.name, pace:d.pace||'', rng:tourRange(d) }); }); } catch(e){}
+
+  // 1) FUENTE PRINCIPAL: las tablas/cruces (solo se cargan las de torneos pendientes).
+  cfgs.forEach(function(c){
+    if(!_isStandardPace(c.pace)) return;                          // solo clásico
+    var end = c.rng && c.rng.end ? c.rng.end : 0;
+    if(!end || end < cutoff) return;                             // ya está en el elo publicado (o sin fecha)
+    var crData = null;
+    try { crData = crDataLoad(_crKeyForModal(c.key)); } catch(e){}
+    if(!crData || (!crData.rounds && !crData.teamRounds)) return;
+    var crName = _crFindPlayerName(crData, player);
+    if(!crName) return;
+    var g = _crEloGamesForName(crData, crName);
+    if(!g.length) return;
+    all = all.concat(g); nTours++; names.push(c.name); seen[_normTourName(c.name)] = true;
+  });
+
+  // 2) RESPALDO: torneos SIN tabla cargada → partidas del pool (puede faltar alguna).
+  try {
+    var paceMap = _tourNamePaceMap();
+    groupByTournament(gatherGamesForPlayer(player)).forEach(function(gr){
+      if(seen[_normTourName(gr.name)]) return;                                   // ya contado por su tabla
+      if(!_isStandardPace(paceMap[_normTourName(gr.name)] || '')) return;
+      var end = _maxPgnDateKey(gr.games);
+      if(!end || end < cutoff) return;
+      var g = _playerEloGamesInPgns(player, gr.games);
+      if(!g.length) return;
+      all = all.concat(g); nTours++; names.push(gr.name);
+    });
+  } catch(e){}
+
+  if(!all.length) return { base:base, live:base, delta:0, nTours:0, names:[] };
+  var delta = _fideEloDelta(base, all, born);
+  if(delta == null) return { base:base, live:base, delta:0, nTours:0, names:[] };
+  return { base:base, live: base + Math.round(delta), delta: delta, nTours:nTours, names:names };
+}
+
+// Performance rating de un torneo a partir de los PGN (fórmula FIDE con tabla dp)
 function computeTourPerformance(player, games) {
-  var lastName = player.name.trim().split(/\s+/).pop().toLowerCase();
-  var sumOppElo = 0, wins = 0, losses = 0, count = 0;
+  var sumOppElo = 0, score = 0, count = 0;
   (games || []).forEach(function(pgn) {
     var hdrs = parsePgnHeaders(pgn);
     var res = hdrs.Result || '*';
@@ -13923,11 +14195,10 @@ function computeTourPerformance(player, games) {
     if (!oppElo || isNaN(oppElo) || oppElo < 100) return;
     sumOppElo += oppElo;
     count++;
-    var pr = (res === '1/2-1/2') ? 'draw' : ((res === '1-0') === isWhite ? 'win' : 'loss');
-    if (pr === 'win') wins++; else if (pr === 'loss') losses++;
+    if (res === '1/2-1/2') score += 0.5;
+    else if ((res === '1-0') === isWhite) score += 1;
   });
-  if (count === 0) return null;
-  return Math.round(sumOppElo / count + 400 * (wins - losses) / count);
+  return _fidePerformance(sumOppElo, score, count);
 }
 
 function renderOpeningsCol(label, list) {
@@ -17382,6 +17653,7 @@ function openTzModal(key) {
     _tzeFlyerPos = '50% 0%';
     _tzeLoadRoundTimes(null, '');
     document.getElementById('tze-format').value = '';
+    document.getElementById('tze-pace').value = 'standard';
     _tzeSetCats([]);
     document.getElementById('tze-isteam').checked = false;
   } else {
@@ -17410,6 +17682,7 @@ function openTzModal(key) {
       _tzeFlyerPos = data.flyerPos || '50% 0%';
       _tzeLoadRoundTimes(data.roundDT, data.roundTimes);
       document.getElementById('tze-format').value = data.format || t.format || '';
+      document.getElementById('tze-pace').value = data.pace || t.pace || 'standard';
       if (data.pgnGames && data.pgnGames.length) _tzeWorkingGames = data.pgnGames.slice();
       _tzeSetCats(data.categories);
       document.getElementById('tze-isteam').checked = !!data.isTeam;
@@ -17431,6 +17704,7 @@ function openTzModal(key) {
       _tzeFlyerPos = data.flyerPos || '50% 0%';
       _tzeLoadRoundTimes(data.roundDT, data.roundTimes);
       document.getElementById('tze-format').value = data.format || '';
+      document.getElementById('tze-pace').value = data.pace || 'standard';
       if (data.pgnGames && data.pgnGames.length) _tzeWorkingGames = data.pgnGames.slice();
       _tzeSetCats(data.categories);
       document.getElementById('tze-isteam').checked = !!data.isTeam;
@@ -17457,6 +17731,7 @@ function openTzModal(key) {
       _tzeFlyerPos = entry.flyerPos || '50% 0%';
       _tzeLoadRoundTimes(entry.roundDT, entry.roundTimes);
       document.getElementById('tze-format').value = entry.format || '';
+      document.getElementById('tze-pace').value = entry.pace || 'standard';
       if ((entry.games || []).length) _tzeWorkingGames = entry.games.slice();
       _tzeSetCats(entry.categories);
       document.getElementById('tze-isteam').checked = !!entry.isTeam;
@@ -17580,6 +17855,7 @@ function saveTzModal() {
   var roundDT     = _tzeCollectRoundTimes();   // { nºronda: "YYYY-MM-DD HH:MM" } o null
   var roundTimes  = _tzeLegacyRoundTimes;      // el texto libre viejo ya no se edita acá: se conserva
   var format      = document.getElementById('tze-format').value;
+  var pace        = document.getElementById('tze-pace').value;
   var type        = document.getElementById('tze-type').value;
   var cfg = getTzConfig();
   var _savedKey = _tzeKey;
@@ -17591,7 +17867,7 @@ function saveTzModal() {
                   startDate:startDate, endDate:endDate, rounds:rounds,
                   status:status, crurl:crurl||null, weburl:weburl||null, info64url:info64url||null, broadcastId:broadcastId||null,
                   broadcastUrl:broadcastUrl||null, timeControl:timeControl||null, chesscomUrl:chesscomUrl||null,
-                  flyerUrl:flyerUrl||null, flyerPos:flyerPos, roundTimes:roundTimes||null, roundDT:roundDT||null, format:format||null, categories:categories.length?categories:null, isTeam:isTeam||null,
+                  flyerUrl:flyerUrl||null, flyerPos:flyerPos, roundTimes:roundTimes||null, roundDT:roundDT||null, format:format||null, pace:pace||null, categories:categories.length?categories:null, isTeam:isTeam||null,
                   pgnCount:_tzeWorkingGames ? _tzeWorkingGames.length : 0, pgnGames:_tzeWorkingGames||null };
     saveTzConfig(cfg);
   } else if (_tzeKey.indexOf('hc_') === 0) {
@@ -17611,6 +17887,7 @@ function saveTzModal() {
     if (roundTimes) cfg[_tzeKey].roundTimes = roundTimes; else delete cfg[_tzeKey].roundTimes;
     if (roundDT) cfg[_tzeKey].roundDT = roundDT; else delete cfg[_tzeKey].roundDT;
     if (format) cfg[_tzeKey].format = format; else delete cfg[_tzeKey].format;
+    if (pace) cfg[_tzeKey].pace = pace; else delete cfg[_tzeKey].pace;
     if (categories.length) cfg[_tzeKey].categories = categories; else delete cfg[_tzeKey].categories;
     if (isTeam) cfg[_tzeKey].isTeam = true; else delete cfg[_tzeKey].isTeam;
     cfg[_tzeKey].status = status;
@@ -17621,7 +17898,7 @@ function saveTzModal() {
                      startDate:startDate, endDate:endDate, rounds:rounds,
                      status:status, crurl:crurl||null, weburl:weburl||null, info64url:info64url||null, broadcastId:broadcastId||null,
                      broadcastUrl:broadcastUrl||null, timeControl:timeControl||null, chesscomUrl:chesscomUrl||null,
-                     flyerUrl:flyerUrl||null, flyerPos:flyerPos, roundTimes:roundTimes||null, roundDT:roundDT||null, format:format||null, categories:categories.length?categories:null, isTeam:isTeam||null,
+                     flyerUrl:flyerUrl||null, flyerPos:flyerPos, roundTimes:roundTimes||null, roundDT:roundDT||null, format:format||null, pace:pace||null, categories:categories.length?categories:null, isTeam:isTeam||null,
                      pgnCount:_tzeWorkingGames ? _tzeWorkingGames.length : 0,
                      pgnGames:_tzeWorkingGames || null };
     saveTzConfig(cfg);
@@ -17640,6 +17917,7 @@ function saveTzModal() {
         tours2[k].roundTimes = roundTimes || null;
         tours2[k].roundDT = roundDT || null;
         tours2[k].format = format || null;
+        tours2[k].pace = pace || null;
         if (broadcastId) { tours2[k].broadcastId = broadcastId; tours2[k].broadcastUrl = broadcastUrl||null; }
         else { delete tours2[k].broadcastId; delete tours2[k].broadcastUrl; }
         tours2[k].categories = categories.length ? categories : null;
@@ -19015,6 +19293,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   var roundTimes = '';   // horarios de ronda cargados a mano, texto libre del sistema viejo
   var roundDT = null;    // horarios de ronda cargados con día+hora (pisan a los de Chess-Results)
   var format = '';   // sistema del torneo elegido a mano: '' | 'swiss' | 'rr'
+  var pace = '';     // categoría de ritmo: 'standard' | 'rapid' | 'blitz' (vacío = standard)
   var loadFailed = false;
   var tzCfg2 = getTzConfig();
 
@@ -19032,6 +19311,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     roundTimes = hcCfg.roundTimes || t.roundTimes || '';
     roundDT = hcCfg.roundDT || t.roundDT || null;
     format = hcCfg.format || t.format || '';
+    pace = hcCfg.pace || t.pace || '';
     timeControl = hcCfg.timeControl || t.timeControl || ''; chesscomUrl = hcCfg.chesscomUrl || '';
     flyerUrl = hcCfg.flyerUrl || t.flyerUrl || '';
     flyerPos = hcCfg.flyerPos || t.flyerPos || '';
@@ -19087,6 +19367,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     roundTimes = entry.roundTimes || '';
     roundDT = entry.roundDT || null;
     format = entry.format || '';
+    pace = entry.pace || '';
     timeControl = entry.timeControl || ''; chesscomUrl = entry.chesscomUrl || '';
     flyerUrl = entry.flyerUrl || '';
     flyerPos = entry.flyerPos || '';
@@ -19106,6 +19387,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     roundTimes = d.roundTimes || '';
     roundDT = d.roundDT || null;
     format = d.format || '';
+    pace = d.pace || '';
     timeControl = d.timeControl || ''; chesscomUrl = d.chesscomUrl || '';
     flyerUrl = d.flyerUrl || '';
     flyerPos = d.flyerPos || '';
@@ -19241,6 +19523,8 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   if (typ)      h += '<span style="background:var(--gl35);border:1px solid var(--bd22);border-radius:20px;padding:4px 13px">🏷 ' + escHtml(typ) + '</span>';
   if (rounds)   h += '<span style="background:var(--gl35);border:1px solid var(--bd22);border-radius:20px;padding:4px 13px">🎯 ' + rounds + ' rondas</span>';
   if (timeControl) h += '<span style="background:var(--gl35);border:1px solid var(--bd22);border-radius:20px;padding:4px 13px">⏱ ' + escHtml(timeControl) + '</span>';
+  var _paceLbl = _paceLabel(pace);
+  if (_paceLbl) h += '<span style="background:var(--gl35);border:1px solid var(--bd22);border-radius:20px;padding:4px 13px">' + _paceLbl + '</span>';
   h += '</div>';
   // "El torneo arranca": SÓLO mientras no haya ninguna ronda cargada. En cuanto aparece la pestaña
   // R1 con su día y hora, este cartel repetiría el mismo dato dos veces en la misma pantalla, así
