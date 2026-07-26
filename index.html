@@ -437,6 +437,16 @@
       body.game-page .cv-board-col { border-radius: 10px !important; }     /* esquinas apenas redondeadas */
       body.game-page .cv-moves-col, body.game-page .cv-book-col { border-radius: 10px !important; }
       .cv-board-col .cv-player-row { padding-left: 8px !important; padding-right: 8px !important; }  /* nombres/relojes con aire */
+      /* Redimensionar el tablero: SOLO en PC (en el teléfono se oculta el tirador). */
+      #cv-resize { display: none !important; }
+      /* Pestañas Movimientos/Análisis (se arman por JS solo en el teléfono). */
+      .cv-mtabs { display: flex; gap: 6px; margin: 12px 0 10px; }
+      .cv-mtab-btn { flex: 1; padding: 9px 10px; border-radius: 10px; border: 1px solid var(--bd22);
+        background: var(--gl40); color: var(--fg-d0); font-size: 14px; font-weight: 600;
+        font-family: inherit; cursor: pointer; text-shadow: var(--txt-out); }
+      .cv-mtab-btn.active { background: var(--gold-bg); border-color: var(--gold-dim); color: var(--gold); }
+      /* El 📊 del motor es redundante con la pestaña Análisis en el teléfono. */
+      #fa-btn { display: none !important; }
     }
 
     /* ── ENTRENAR: sub-pestañas (segmented control, estilo lúdico) ── */
@@ -16897,9 +16907,102 @@ function cvOpenOverlay() {
   var _dlc = document.getElementById('deeplink-cover'); if (_dlc && _dlc.parentNode) _dlc.parentNode.removeChild(_dlc);
   _cvApplyBoardSize();    // tamaño de tablero elegido por el visitante (si guardó uno)
   _cvBuildPageExtras();   // "Volver al torneo" + miniaturas de la ronda
+  // Reacomodo MÓVIL (pestañas Movimientos/Análisis); en PC no hace nada.
+  _cvAnalysisStarted = false;
+  cvApplyMobileLayout();
+  if (_cvMobileOn) cvMobileTab('moves');   // cada partida abre en la pestaña Movimientos
   // Medir la altura real del tablero DESPUÉS de que el layout esté pintado
   _cvSyncSoon();
 }
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+// LAYOUT MÓVIL DEL VISOR (pestañas Movimientos / Análisis, estilo Lichess)
+// Solo en pantallas ≤600px. En PC el visor sigue con sus 3 columnas (no se toca).
+// Reacomoda las piezas en una sola columna: [← Volver al torneo] · [tablero + navegación dentro] ·
+// [motor, siempre visible] · [pestañas] · panel Movimientos (jugadas + libro) / panel Análisis
+// (gráfico + stats, cálculo perezoso al tocar la pestaña) · [copiar/compartir] · [datos].
+// Al pasar a PC se devuelve cada pieza a su lugar original (guardado en node._cvOrig).
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+var _cvMobileMQ = window.matchMedia('(max-width: 600px)');
+var _cvMobileOn = false, _cvAnalysisStarted = false;
+var _cvMTabs = null, _cvMPanelMoves = null, _cvMPanelAnalysis = null;
+function _cvSaveOrig(n) { if (n && !n._cvOrig) n._cvOrig = { parent: n.parentNode, next: n.nextSibling }; }
+function _cvMEls() {
+  var q = function (s) { return document.querySelector('#chess-overlay ' + s); };
+  return {
+    cols: q('.cv-cols'), boardCol: q('.cv-board-col'),
+    back: document.getElementById('cv-book-back'),
+    nav: q('.chess-nav'), engine: q('.sf-wrap'), sfPanel: document.getElementById('sf-panel'),
+    fixNote: document.getElementById('cv-fix-note'), liveBack: document.getElementById('cv-live-back'),
+    movesLabel: q('.chess-mlabel'), moves: q('.chess-mwrap'),
+    book: document.getElementById('ob-wrap'), bookGames: document.getElementById('cv-book-games'),
+    graph: document.getElementById('eval-graph-wrap'),
+    copy: q('.cv-copy-bar'), lichess: document.getElementById('cv-lichess'), dato: document.getElementById('cv-dato')
+  };
+}
+function _cvToMobile() {
+  var e = _cvMEls();
+  if (!e.cols || !e.boardCol) return;
+  ['back','nav','engine','sfPanel','fixNote','liveBack','movesLabel','moves','book','bookGames','graph','copy','lichess','dato']
+    .forEach(function (k) { _cvSaveOrig(e[k]); });
+  if (!_cvMTabs) {
+    _cvMTabs = document.createElement('div'); _cvMTabs.className = 'cv-mtabs'; _cvMTabs.id = 'cv-mtabs';
+    _cvMTabs.innerHTML = '<button class="cv-mtab-btn active" id="cv-mtab-b-moves" onclick="cvMobileTab(\'moves\')">Movimientos</button>'
+      + '<button class="cv-mtab-btn" id="cv-mtab-b-analysis" onclick="cvMobileTab(\'analysis\')">Análisis</button>';
+    _cvMPanelMoves = document.createElement('div'); _cvMPanelMoves.className = 'cv-mtab-panel'; _cvMPanelMoves.id = 'cv-mtab-moves';
+    _cvMPanelAnalysis = document.createElement('div'); _cvMPanelAnalysis.className = 'cv-mtab-panel'; _cvMPanelAnalysis.id = 'cv-mtab-analysis'; _cvMPanelAnalysis.style.display = 'none';
+  }
+  var cols = e.cols;
+  if (e.back) cols.insertBefore(e.back, e.boardCol);          // ← Volver al torneo, arriba de todo
+  if (e.nav) e.boardCol.appendChild(e.nav);                   // navegación DENTRO del panel del tablero
+  var after = e.boardCol;
+  var put = function (n) { if (n) { cols.insertBefore(n, after.nextSibling); after = n; } };
+  put(e.engine); put(e.sfPanel); put(e.fixNote); put(e.liveBack);   // motor, siempre debajo del tablero
+  put(_cvMTabs); put(_cvMPanelMoves); put(_cvMPanelAnalysis);
+  put(e.copy); put(e.lichess); put(e.dato);                  // copiar/compartir + datos, al fondo
+  if (e.moves) _cvMPanelMoves.appendChild(e.moves);          // pestaña Movimientos: jugadas + libro
+  if (e.book) _cvMPanelMoves.appendChild(e.book);
+  if (e.bookGames) _cvMPanelMoves.appendChild(e.bookGames);
+  if (e.graph) _cvMPanelAnalysis.appendChild(e.graph);       // pestaña Análisis: gráfico + stats
+  if (e.movesLabel) e.movesLabel.style.display = 'none';     // rótulo redundante con la pestaña
+  var mc = document.querySelector('#chess-overlay .cv-moves-col'), bc = document.querySelector('#chess-overlay .cv-book-col');
+  if (mc) mc.style.display = 'none'; if (bc) bc.style.display = 'none';   // columnas ya vacías
+  _cvMobileOn = true;
+}
+function _cvToDesktop() {
+  if (!_cvMobileOn) return;
+  var e = _cvMEls();
+  ['back','nav','engine','sfPanel','fixNote','liveBack','movesLabel','moves','book','bookGames','graph','copy','lichess','dato']
+    .forEach(function (k) { var n = e[k]; if (n && n._cvOrig) n._cvOrig.parent.insertBefore(n, n._cvOrig.next); });
+  if (e.movesLabel) e.movesLabel.style.display = '';
+  var mc = document.querySelector('#chess-overlay .cv-moves-col'), bc = document.querySelector('#chess-overlay .cv-book-col');
+  if (mc) mc.style.display = ''; if (bc) bc.style.display = '';
+  [_cvMTabs, _cvMPanelMoves, _cvMPanelAnalysis].forEach(function (n) { if (n && n.parentNode) n.parentNode.removeChild(n); });
+  _cvMobileOn = false;
+}
+function cvApplyMobileLayout() {
+  if (_cvMobileMQ.matches) _cvToMobile();
+  else if (_cvMobileOn) { _cvToDesktop(); _cvSyncSoon(); }
+}
+function cvMobileTab(which) {
+  var bm = document.getElementById('cv-mtab-b-moves'), ba = document.getElementById('cv-mtab-b-analysis');
+  if (!_cvMPanelMoves || !_cvMPanelAnalysis) return;
+  if (which === 'analysis') {
+    _cvMPanelMoves.style.display = 'none'; _cvMPanelAnalysis.style.display = '';
+    if (bm) bm.classList.remove('active'); if (ba) ba.classList.add('active');
+    if (!_cvAnalysisStarted) {   // cálculo PEREZOSO: arranca el análisis recién al abrir la pestaña
+      _cvAnalysisStarted = true;
+      var gw = document.getElementById('eval-graph-wrap');
+      var shown = gw && gw.style.display !== 'none';
+      if (!shown && typeof faToggle === 'function') { try { faToggle(); } catch (err) {} }
+    }
+  } else {
+    _cvMPanelAnalysis.style.display = 'none'; _cvMPanelMoves.style.display = '';
+    if (ba) ba.classList.remove('active'); if (bm) bm.classList.add('active');
+  }
+}
+if (_cvMobileMQ.addEventListener) _cvMobileMQ.addEventListener('change', cvApplyMobileLayout);
+else if (_cvMobileMQ.addListener) _cvMobileMQ.addListener(cvApplyMobileLayout);
 
 function closeChessViewer(e){
   // En modo PÁGINA, un clic al costado del tablero NO debe cerrar la partida (es una página, no un modal).
