@@ -19406,7 +19406,12 @@ function playerCardClick(e, id) {
 // ── Links / pestañas de PARTIDAS (deep-link ?torneo=<id>&partida=<idx>) ───────────────────────────
 // El link abre el torneo y, dentro, la partida nº idx. Sirve para compartirla y para abrirla en una
 // pestaña/ventana nueva (igual que los torneos y jugadores).
-function _gameHref(tourKey, idx) { return '?torneo=' + encodeURIComponent(tourKey) + '&partida=' + idx; }
+function _gameHref(tourKey, idx, cat) {
+  // Con torneos por categorías, el índice `idx` es relativo a la categoría mostrada, así que el link
+  // debe llevar también `&cat=<C>` o la pestaña nueva cae en la categoría 0 y abre otra partida.
+  var c = (cat != null && cat >= 0) ? '&cat=' + cat : '';
+  return '?torneo=' + encodeURIComponent(tourKey) + c + '&partida=' + idx;
+}
 // Link de una partida abierta desde el PERFIL de un jugador (no mapea a un torneo limpio): se ata al
 // jugador + el torneo nº ti de su historial + la partida nº gi. Abre el perfil y, dentro, esa partida.
 function _playerGameHref(pid, ti, gi) { return '?jugador=' + encodeURIComponent(pid) + '&t=' + ti + '&g=' + gi; }
@@ -19466,9 +19471,9 @@ function _tryOpenPendingDeepGame() {
 }
 
 // Deep-link a una partida: abre el torneo y, cuando sus partidas están listas, abre la nº idx.
-async function _openTourGameDeepLink(tourKey, idx) {
+async function _openTourGameDeepLink(tourKey, idx, catIdx) {
   _pendingDeepGame = { tourKey: String(tourKey), idx: idx };
-  try { await openTournamentDetail(_resolveTourType(tourKey), tourKey); } catch (e) {}
+  try { await openTournamentDetail(_resolveTourType(tourKey), tourKey, false, catIdx); } catch (e) {}
   if (_tryOpenPendingDeepGame()) return;   // partidas subidas / ya cargadas → abre al toque
   // Broadcast: las partidas llegan async. Sondeo rápido (~9s) para el caso normal; si tarda más o hubo
   // un fallo transitorio, el pendiente queda vivo y _tdLiveBuild lo abre en el próximo refresco (30s).
@@ -19814,6 +19819,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
               .map(function(w) { return w.pgn; });
     catSuffix = '_c' + activeCat;
   }
+  _tdActiveCat = activeCat;   // recordar la categoría mostrada para los links de partidas (&cat=<C>)
 
   // Fase 3b: sumar las partidas del POOL (base de datos única) que le corresponden a este torneo por
   // EVENTO, y deduplicar con las guardadas (transición). Así subir rondas a la base las muestra acá
@@ -20346,6 +20352,7 @@ function trfHandleFile(event, trfKey) {
 // Arma (una sola vez) la grilla de miniaturas de una ronda
 var _tdCtx = null;
 var _tdTourKey = null;   // clave del torneo abierto (para armar los links ?torneo=<id>&partida=<idx>)
+var _tdActiveCat = -1;   // categoría mostrada (-1 = torneo sin categorías); va en el link como &cat=<C>
 var _TD_PER_PAGE = 24;   // miniaturas por página (carga fluida con muchos tableros)
 var _tdPage = 0;
 // ── Buscador de tableros por jugador ──────────────────────────────────────────────────────────
@@ -20435,7 +20442,7 @@ function _tdCardHtml(g, flip) {
   var rowBlack = nameRow(bTitle, black, bFlag, 'b', bScore, bScoreColor, flip ? '4px 7px 6px' : '5px 7px 4px');
   var rowWhite = nameRow(wTitle, white, wFlag, 'w', wScore, wScoreColor, flip ? '5px 7px 4px' : '4px 7px 6px');
   var h = '';
-  h += '<a class="td-card" data-arg="' + isArg + '" style="position:relative" href="' + _gameHref(_tdTourKey, globalIdx) + '" onclick="return tdCardClick(event,' + globalIdx + ',\'' + _tdCtx.pgnKey + '\',\'' + escJs(_tdCtx.name) + '\',\'' + escJs(_tdCtx.location) + '\')">';
+  h += '<a class="td-card" data-arg="' + isArg + '" style="position:relative" href="' + _gameHref(_tdTourKey, globalIdx, _tdActiveCat) + '" onclick="return tdCardClick(event,' + globalIdx + ',\'' + _tdCtx.pgnKey + '\',\'' + escJs(_tdCtx.name) + '\',\'' + escJs(_tdCtx.location) + '\')">';
   // Botón ✕ (solo modo autor): borra esta partida del pool. Útil para orfanatos subidos por error.
   if (typeof _ondemand === 'undefined' || !_ondemand) {
     h += '<span onclick="return tdDeletePoolGame(event,' + globalIdx + ')" title="Borrar esta partida del pool" '
@@ -20982,7 +20989,7 @@ function tdOpenGame(idx, pgnKey, tname, tloc) {
   _cvTourGames = data.games;
   // Cada partida del torneo tiene su link propio ?torneo=<id>&partida=<i> (el índice en data.games
   // coincide con el del archivo del torneo en la web, así el link es estable y compartible).
-  _cvShareKeys = (_tdTourKey != null) ? data.games.map(function(_, i) { return { url: _gameHref(_tdTourKey, i), tour: _tdTourKey }; }) : [];
+  _cvShareKeys = (_tdTourKey != null) ? data.games.map(function(_, i) { return { url: _gameHref(_tdTourKey, i, _tdActiveCat), tour: _tdTourKey }; }) : [];
   _cvFromTournament = true;
   _cvTourName  = tname;
   _cvTourLoc   = tloc;
@@ -23842,6 +23849,7 @@ pracInit();
 (function() {
   var params; try { params = new URLSearchParams(location.search); } catch (e) { return; }
   var tk = params.get('torneo'), pk = params.get('jugador'), gk = params.get('partida');
+  var ck = params.get('cat');                          // categoría de la partida compartida: ?torneo=&cat=&partida=
   var ptk = params.get('t'), pgk = params.get('g');   // partida abierta desde un perfil: ?jugador=&t=&g=
   var nk = params.get('noticia');                      // noticia compartida: ?noticia=<id>
   var ek = params.get('ejercicio');                    // ejercicio compartido: ?ejercicio=<id>
@@ -23871,7 +23879,9 @@ pracInit();
     var tbtn = document.querySelector('.nav-btn[onclick*="\'torneos\'"]');
     if (tbtn) { try { goTo('torneos', tbtn); } catch (e) {} }
     try { history.replaceState({}, '', location.pathname); } catch (e) {}
-    if (gk != null && gk !== '' && /^\d+$/.test(gk)) _openTourGameDeepLink(tk, parseInt(gk, 10));
+    var catN = (ck != null && ck !== '' && /^\d+$/.test(ck)) ? parseInt(ck, 10) : undefined;
+    if (gk != null && gk !== '' && /^\d+$/.test(gk)) _openTourGameDeepLink(tk, parseInt(gk, 10), catN);
+    else if (catN != null) openTournamentDetail(_resolveTourType(tk), tk, false, catN);
     else openTournamentByKey(tk);
   } else if (pk) {
     var jbtn = document.querySelector('.nav-btn[onclick*="\'jugadores\'"]');
