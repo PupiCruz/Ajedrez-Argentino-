@@ -17459,9 +17459,11 @@ var sf = { engine:null, loading:false, ready:false, on:false, depth:0, lines:[nu
            // rokWaiting = llegó el readyok de la barrera del módulo pero falta el bestmove viejo.
            // capped = la búsqueda en vivo terminó al llegar al tope (prof. o tiempo) y quedó quieta;
            // deepened = el visitante pidió "Seguir analizando" (go infinite) para ESTA posición;
+           // extended = ya se estiró el tope a prof. mayor por haber llegado rápido (una vez por jugada);
+           // _searchT0 = cuándo arrancó la búsqueda de ESTA posición (para medir "llegó rápido");
            // _capTimer = timer que frena la búsqueda al tope de tiempo (backstop del tope de prof.).
            curSide:'w', curFen:null, pending:null, armed:true, searching:false, rokWaiting:false,
-           capped:false, deepened:false, _capTimer:null };
+           capped:false, deepened:false, extended:false, _searchT0:0, _capTimer:null };
 // Profundidad mínima antes de mover la barra de eval: evita el "salto" de las lecturas ruidosas
 // de baja profundidad al avanzar una jugada. El número de puntaje sí se actualiza desde el inicio.
 // Prof. mínima para mover barra/número/líneas/gráfico al llegar una jugada nueva: por debajo, las
@@ -17483,6 +17485,13 @@ var _sfBarLastT = 0;
 // (sfDeepen → go infinite) por si el visitante quiere ir más hondo. Al cambiar de jugada, se reactiva.
 var _SF_LIVE_MAXDEPTH = 30;
 var _SF_LIVE_MAXMS = 60000;
+// Estiramiento del tope: si el motor llegó a la prof. tope MUY RÁPIDO (típico de finales con pocas
+// piezas, donde prof. 30 sale en segundos y la eval todavía se afina), se estira SOLO esa vez a una
+// prof. mayor. En medio juegos pesados prof. 30 tarda más → NO se estira (se queda liviano). Esto se
+// auto-adapta al equipo: una PC potente estira; un celular lento en posición compleja, no. El backstop
+// de tiempo (_SF_LIVE_MAXMS) sigue firme igual, así que ni estirado se pasa de un minuto.
+var _SF_LIVE_EXTDEPTH = 45;
+var _SF_LIVE_EXTEND_IF_UNDER_MS = 10000;
 
 function sfToggle() {
   if (!sf.on) {
@@ -17659,8 +17668,19 @@ function sfOnMsg(line) {
     return;
   }
   // Búsqueda en vivo que terminó SOLA (llegó al tope de prof. o al backstop de tiempo, SIN navegación:
-  // por eso sigue armed=true y no hay posición pendiente). El motor queda quieto y ofrecemos profundizar.
+  // por eso sigue armed=true y no hay posición pendiente). El motor queda quieto.
   if (line.indexOf('bestmove') === 0 && sf.on && sf.armed && !sf.pending && !sf.deepened) {
+    // ¿Llegó RÁPIDO a la prof. tope (finales)? Estirar UNA vez a prof. mayor, sin reiniciar el
+    // backstop de 60s (el timer sigue corriendo desde el arranque → ni estirado se pasa del minuto).
+    // La hash caliente hace que retrepe a 30 al instante y siga afinando hasta la prof. estirada.
+    if (!sf.extended && sf.depth >= _SF_LIVE_MAXDEPTH
+        && (Date.now() - sf._searchT0) < _SF_LIVE_EXTEND_IF_UNDER_MS) {
+      sf.extended = true;
+      sf.engine.postMessage('go depth ' + _SF_LIVE_EXTDEPTH);
+      sf.searching = true;
+      return;
+    }
+    // Quedó en el tope (o ya estirado, o llegó lento): congelar y ofrecer "Seguir analizando".
     if (sf._capTimer) { clearTimeout(sf._capTimer); sf._capTimer = null; }
     sf.capped = true;
     _sfDeepenBtn(true);
@@ -17802,6 +17822,8 @@ function _sfStartPending() {
   // Posición nueva: arranca SIEMPRE con el tope (aunque en la anterior se hubiera pedido "seguir").
   sf.deepened = false;
   sf.capped = false;
+  sf.extended = false;
+  sf._searchT0 = Date.now();   // para medir si llegó "rápido" a la prof. tope (y estirarlo)
   _sfDeepenBtn(false);
   sf.engine.postMessage('position fen ' + _p.fen);
   sf.engine.postMessage('go depth ' + _SF_LIVE_MAXDEPTH);
