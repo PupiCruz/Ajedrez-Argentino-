@@ -25042,6 +25042,10 @@ function faLiveEngineStart() {
   if (_fa.running) return;
   mevAbort();
   _fa.running = true; _fa.armed = false; _fa.rokSeen = false; _fa.ply = 0;
+  // Cuántas jugadas va a (re)evaluar este pase: el cartel "armando gráfico…" solo sale si son ≥ N
+  // (ver faSetBuilding). Así los refrescos de 1-2 jugadas no reacomodan la columna a cada rato.
+  var _bc = 0; for (var _i = 0; _i < _fa.nodes.length; _i++) if (_faNeedsPassEval(_i)) _bc++;
+  _fa._buildCount = _bc;
   faSetBuilding();
   sf.engine.postMessage('stop');
   // OJO: acá NO va 'ucinewgame' (el pase manual sí lo manda): borraba la tabla hash con todo lo que
@@ -25849,10 +25853,16 @@ function faReset() {
 // El botón "▶ Analizar" (al lado del título) se ve SOLO cuando el gráfico está vacío y el motor no
 // está trabajando: así el visitante entiende que apretándolo se construye. Cuando ya hay datos (o
 // mientras calcula, con "Cancelar" a la vista) se esconde.
+// Mínimo de jugadas a (re)evaluar en un pase EN VIVO para que valga la pena mostrar el cartel. Por
+// debajo (refrescos de 1-2 jugadas) NO se muestra: así el cartel no aparece/desaparece a cada rato
+// reacomodando la columna. El análisis manual (▶ Analizar) muestra el cartel siempre.
+var _FA_BUILDING_MINMOVES = 5;
 // Muestra/oculta el indicador titilante "armando gráfico…" según si el motor está calculando.
 function faSetBuilding() {
   var el = document.getElementById('fa-building'); if (!el) return;
-  el.style.display = (typeof _fa !== 'undefined' && _fa && _fa.running) ? 'flex' : 'none';
+  var show = (typeof _fa !== 'undefined' && _fa && _fa.running);
+  if (show && _fa.live && (_fa._buildCount || 0) < _FA_BUILDING_MINMOVES) show = false;
+  el.style.display = show ? 'flex' : 'none';
 }
 function faUpdateBuildBtn() {
   faSetBuilding();   // el gráfico terminó/arrancó un pase → refrescar el indicador
