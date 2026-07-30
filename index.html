@@ -2891,9 +2891,9 @@
 Peralta, Fernando" style="height:60px;resize:vertical;font-family:inherit"></textarea>
     </div>
     <div class="tz-sec" style="background:rgba(30,60,120,.12);border:1px solid rgba(60,100,200,.2);margin-bottom:14px">
-      <label class="tz-flabel" style="color:#8ab4f8">🔴 Lichess Broadcast <span style="font-weight:400;color:var(--text3)">(opcional)</span></label>
-      <textarea id="tze-broadcast" class="tz-input" rows="2" placeholder="Ej: https://lichess.org/broadcast/nombre-del-torneo/..." style="resize:vertical;font-family:inherit"></textarea>
-      <div style="font-size:11px;color:var(--text3);margin-top:6px;line-height:1.4">Pegá la URL de cualquier página del broadcast en Lichess. Con esto la app carga las partidas automáticamente.<br>Si Lichess parte el torneo en <b style="color:var(--text2)">varias transmisiones</b> (ej. "Matches 1-10" y "Matches 11+"), pegá <b style="color:var(--text2)">una URL por renglón</b> y la app junta todos los tableros de cada ronda.</div>
+      <label class="tz-flabel" style="color:#8ab4f8">🔴 Transmisión en vivo <span style="font-weight:400;color:var(--text3)">(opcional)</span></label>
+      <textarea id="tze-broadcast" class="tz-input" rows="2" placeholder="Ej: https://lichess.org/broadcast/... o https://view.livechesscloud.com/#..." style="resize:vertical;font-family:inherit"></textarea>
+      <div style="font-size:11px;color:var(--text3);margin-top:6px;line-height:1.4">Pegá la URL del broadcast de <b style="color:var(--text2)">Lichess</b> o el link de <b style="color:var(--text2)">livechesscloud</b> (view.livechesscloud.com/#...). Con esto la app carga las partidas automáticamente.<br>Si Lichess parte el torneo en <b style="color:var(--text2)">varias transmisiones</b> (ej. "Matches 1-10" y "Matches 11+"), pegá <b style="color:var(--text2)">una URL por renglón</b> y la app junta todos los tableros de cada ronda.</div>
     </div>
     <div class="tz-sec" style="background:rgba(90,60,120,.12);border:1px solid rgba(140,100,200,.22);margin-bottom:14px">
       <label class="tz-flabel" style="color:#c0a4f0">🏆 Categorías <span style="font-weight:400;color:var(--text3)">(opcional — para torneos con varias categorías)</span></label>
@@ -18206,6 +18206,9 @@ function _tzeCollectCats() {
 function _parseBcInput(raw) {
   raw = (raw || '').trim();
   if (!raw) return { id: null, url: null };
+  // livechesscloud: view.livechesscloud.com/#<uuid> · pool…/get/<uuid>/… · o el UUID pelado.
+  var lcc = raw.match(/livechesscloud\.com\/(?:#|.*\/get\/)([0-9a-fA-F-]{36})/) || (_LCC_UUID_RE.test(raw) ? [null, raw] : null);
+  if (lcc) return { id: lcc[1], url: 'https://view.livechesscloud.com/#' + lcc[1] };
   var m3 = raw.match(/lichess\.org\/broadcast\/[^\/\?#]+\/[^\/\?#]+\/([A-Za-z0-9]{8})(?:[\/\?#]|$)/);
   var m2 = !m3 && raw.match(/lichess\.org\/broadcast\/[^\/\?#]+\/([A-Za-z0-9]{8})(?:[\/\?#]|$)/);
   if (m3 || m2) {
@@ -18580,6 +18583,7 @@ function _markLiveTiles(root) {
 // primero resuelve el tour id desde la URL (que sí trae la ronda) y recién ahí abre.
 function openBroadcastTournament(broadcastId, name, sub, pageUrl) {
   var raw = String(broadcastId || '');
+  if (_isLccId(raw)) { bcOpenLiveGrid(raw, name, sub, pageUrl || _lccExtUrl(raw)); return; }   // livechesscloud (UUID) → misma grilla
   if (/^[A-Za-z0-9]{8}$/.test(raw)) { bcOpenLiveGrid(raw, name, sub, pageUrl); return; }
   var m = (String(pageUrl || '') + ' ' + raw).match(/broadcast\/([^\/\?#\s]+)\/([^\/\?#\s]+)\/([^\/\?#\s]+)/);
   if (m) {
@@ -18755,11 +18759,172 @@ var _BC_REFRESH_MS = 30000;   // cada 30s mientras haya una ronda en vivo
 // Profundidad (Nº de jugadas desde el inicio) de un nodo del árbol del visor.
 function _cvNodeDepth(n) { var d = 0; while (n && n.parent) { d++; n = n.parent; } return d; }
 
+/* ══════════════════ livechesscloud (view.livechesscloud.com) ══════════════════
+   Fuente directa para torneos que NO transmiten por Lichess: pasan el link de
+   view.livechesscloud.com/#<uuid>. La API pública (pool.livechesscloud.com) manda
+   CORS abierto, así que se pide directo desde el navegador (sin Worker/proxy).
+   _lccFetchAll(id, cb) devuelve el MISMO objeto `res` que _bcFetchAll → todo el
+   resto del vivo (visor, grilla, barra roja, auto-refresco, relojes) anda igual. */
+var _LCC_BASE = 'https://1.pool.livechesscloud.com/get';
+var _LCC_REFRESH_MS = 15000;   // livechesscloud se pide directo → más ágil que los 30s de Lichess
+var _lccCache = {};            // "id/ronda/partida" -> { pgn, final } ; las terminadas no se re-piden.
+var _LCC_UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+var _LCC_RESULT = { '1-0':'1-0', '0-1':'0-1', '1/2-1/2':'1/2-1/2', 'WHITEWIN':'1-0', 'BLACKWIN':'0-1', 'DRAW':'1/2-1/2' };
+
+function _isLccId(s) { return _LCC_UUID_RE.test(String(s || '').trim()); }
+function _lccExtUrl(id) { return 'https://view.livechesscloud.com/#' + id; }
+// Intervalo de auto-refresco: livechesscloud (fuente directa) más ágil que Lichess.
+function _liveRefreshMs(id) { return _isLccId(id) ? _LCC_REFRESH_MS : _BC_REFRESH_MS; }
+
+function _lccFullName(p) {
+  if (!p) return '?';
+  if (p.lname === 'BYE') return 'BYE';
+  if (!p.lname && !p.fname) return '?';
+  var first = [p.fname, p.mname].filter(Boolean).join(' ');
+  return [p.lname, first].filter(Boolean).join(', ');
+}
+function _lccIsBye(p) { return !!(p && ((p.lname === 'BYE') || (!p.lname && !p.fname))); }
+function _lccClk(sec) {
+  sec = Math.max(0, Math.round(sec));
+  var h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  return h + ':' + ('0' + m).slice(-2) + ':' + ('0' + s).slice(-2);
+}
+function _lccResult(pairing, g) { return _LCC_RESULT[pairing && pairing.result] || _LCC_RESULT[g && g.result] || '*'; }
+
+// JSON de una partida (game-N.json) + su emparejamiento → PGN estilo broadcast Lichess.
+// Las jugadas vienen como "Nf3 3553+106": [0]=SAN, [1]=reloj (primer nº = segundos restantes).
+function _lccGameToPgn(g, tour, roundNr, date, pairing) {
+  var white = pairing.white, black = pairing.black;
+  var res = _lccResult(pairing, g);
+  var H = [];
+  H.push(['Event', tour.name || tour.id || 'Torneo']);
+  H.push(['Site', tour.location || '?']);
+  H.push(['Date', (date || '????-??-??').replace(/-/g, '.')]);
+  H.push(['Round', String(roundNr)]);
+  H.push(['White', _lccFullName(white)]);
+  H.push(['Black', _lccFullName(black)]);
+  H.push(['Result', res]);
+  if (white && white.fideid) H.push(['WhiteFideId', String(white.fideid)]);
+  if (black && black.fideid) H.push(['BlackFideId', String(black.fideid)]);
+  if (white && white.title) H.push(['WhiteTitle', white.title]);
+  if (black && black.title) H.push(['BlackTitle', black.title]);
+  if (tour.timecontrol) H.push(['TimeControl', tour.timecontrol]);
+  var body = '', moves = (g && g.moves) || [];
+  // Regeneramos el SAN pasando cada jugada por el motor: (a) los eboards a veces mandan SAN con
+  // desambiguación de más ("Nge2" en vez de "Ne2") que el load_pgn ESTRICTO del visor rechaza y corta
+  // la partida; (b) al terminar, el tablero suele registrar jugadas ILEGALES (ruido de acomodar las
+  // piezas) que hay que descartar. Replay con `sloppy` acepta lo raro y `mv.san` da el SAN canónico.
+  var ch = (typeof Chess !== 'undefined') ? new Chess() : null;
+  for (var i = 0; i < moves.length; i++) {
+    var parts = String(moves[i]).split(' '), san = parts[0];
+    if (!san) continue;
+    if (ch) { var mv = ch.move(san, { sloppy: true }); if (!mv) break; san = mv.san; }   // ilegal → cortar (ruido post-partida)
+    if (i % 2 === 0) body += (i / 2 + 1) + '. ';
+    body += san;
+    if (parts[1]) { var sc = parseInt(parts[1].split('+')[0], 10); if (!isNaN(sc)) body += ' { [%clk ' + _lccClk(sc) + '] }'; }
+    body += ' ';
+  }
+  body = (body + res).trim();
+  return H.map(function(h) { return '[' + h[0] + ' "' + String(h[1]).replace(/"/g, "'") + '"]'; }).join('\n') + '\n\n' + body;
+}
+
+// Ejecuta `tasks` con `limit` en paralelo (para no golpear el servidor). worker(task, doneOne).
+function _lccRunPool(tasks, limit, worker, allDone) {
+  var i = 0, finished = 0, total = tasks.length, active = 0;
+  if (!total) { allDone(); return; }
+  function next() {
+    while (active < limit && i < total) {
+      var t = tasks[i++]; active++;
+      worker(t, function() { active--; finished++; if (finished === total) allDone(); else next(); });
+    }
+  }
+  next();
+}
+
+// Baja un torneo de livechesscloud completo y devuelve el mismo `res` que _bcFetchAll.
+function _lccFetchAll(id, cb) {
+  fetch(_LCC_BASE + '/' + id + '/tournament.json')
+    .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(function(tour) {
+      var rounds = tour.rounds || [];
+      var roundNums = [];
+      rounds.forEach(function(rd, i) { if (rd && rd.count > 0) roundNums.push(i + 1); });
+      if (!roundNums.length) { cb({ tourSlug: id, rounds: [], allGames: [], roundsWithGames: [], liveRound: null, isLive: false, _lcc: true }); return; }
+      var isRoundLive = {};
+      rounds.forEach(function(rd, i) { isRoundLive[i + 1] = !!(rd && rd.live > 0); });
+      // Tableros ELECTRÓNICOS: livechesscloud solo tiene jugadas de estos (el resto son pairings
+      // vacíos). Cada game-N.json trae su `serialNr`; si no está en la lista, ese tablero no transmite.
+      var eboardSet = {}; (tour.eboards || []).forEach(function(s) { eboardSet[String(s)] = 1; });
+      // Los tableros electrónicos son SIEMPRE los de arriba (board 1..nEboards): solo bajamos esos,
+      // así no pedimos ~50 tableros vacíos por ronda. Si no hay lista de eboards, bajamos todos.
+      var nEb = (tour.eboards || []).length;
+      // 1) índice (emparejamientos) de cada ronda
+      var indices = {}, pend = roundNums.length;
+      roundNums.forEach(function(n) {
+        fetch(_LCC_BASE + '/' + id + '/round-' + n + '/index.json')
+          .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+          .then(function(idx) { indices[n] = idx; if (--pend === 0) stage2(); })
+          .catch(function() { indices[n] = null; if (--pend === 0) stage2(); });
+      });
+      function stage2() {
+        // 2) tareas: una por partida real (sin BYE). Las terminadas cacheadas se saltan la red.
+        var tasks = [], results = {};
+        roundNums.forEach(function(n) {
+          var idx = indices[n]; if (!idx || !idx.pairings) return;
+          idx.pairings.forEach(function(p, gi) { if (nEb > 0 && gi >= nEb) return; if (!_lccIsBye(p.white) && !_lccIsBye(p.black)) tasks.push({ n: n, g: gi + 1, pairing: p, date: idx.date }); });
+        });
+        _lccRunPool(tasks, 16, function(task, doneOne) {
+          var key = id + '/' + task.n + '/' + task.g, cached = _lccCache[key];
+          if (cached && cached.final) { if (!cached.empty && cached.pgn) results[key] = cached.pgn; doneOne(); return; }
+          fetch(_LCC_BASE + '/' + id + '/round-' + task.n + '/game-' + task.g + '.json?poll')
+            .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+            .then(function(gj) {
+              var hasData = !!((gj.moves && gj.moves.length) || (_lccResult(task.pairing, gj) !== '*'));
+              var isEboard = !!eboardSet[String(gj.serialNr)];
+              if (hasData) results[key] = _lccGameToPgn(gj, tour, task.n, task.date, task.pairing);
+              // Dejar de re-pedir: ronda terminada, o tablero NO electrónico (nunca va a transmitir).
+              // En la ronda en vivo, los tableros electrónicos siguen "abiertos" (final:false) para pollear.
+              var final = !isRoundLive[task.n] || !isEboard;
+              _lccCache[key] = { pgn: results[key] || null, final: final, empty: !hasData };
+              doneOne();
+            })
+            .catch(function() { if (cached && !cached.empty && cached.pgn) results[key] = cached.pgn; doneOne(); });
+        }, function() {
+          // 3) armar el `res` (mismo formato que Lichess)
+          var roundsWithGames = [], allGames = [], liveRound = null, isLive = false;
+          roundNums.forEach(function(n) {
+            var idx = indices[n]; if (!idx) return;
+            var games = [];
+            (idx.pairings || []).forEach(function(p, gi) { var key = id + '/' + n + '/' + (gi + 1); if (results[key]) games.push(results[key]); });
+            if (!games.length) return;
+            var live = !!isRoundLive[n];
+            roundsWithGames.push({ name: 'Ronda ' + n, id: 'lcc-' + id + '-r' + n, slug: String(n), games: games, live: live, finished: !live });
+            allGames = allGames.concat(games);
+            if (live && !liveRound) { isLive = true; liveRound = { name: 'Ronda ' + n, id: 'lcc-' + id + '-r' + n, slug: String(n) }; }
+          });
+          // si tournament.json no marca ninguna en vivo pero la última con partidas tiene resultados "*", tratarla como en vivo
+          if (!isLive) {
+            for (var k = roundsWithGames.length - 1; k >= 0; k--) {
+              if (roundsWithGames[k].games.some(function(pg) { return /\[Result\s+"\*"\]/.test(pg); })) {
+                roundsWithGames[k].live = true; roundsWithGames[k].finished = false;
+                isLive = true; liveRound = { name: roundsWithGames[k].name, id: roundsWithGames[k].id, slug: roundsWithGames[k].slug };
+                break;
+              }
+            }
+          }
+          cb({ tourSlug: id, rounds: rounds, allGames: allGames, roundsWithGames: roundsWithGames, liveRound: isLive ? liveRound : null, isLive: isLive, _lcc: true });
+        });
+      }
+    })
+    .catch(function() { cb(null); });
+}
+
 // Baja metadata del broadcast + el PGN de cada ronda jugada o en curso. cb(null) si falla.
 // Criterio B de "en vivo": además de las rondas que Lichess marca finished/ongoing, bajamos las
 // que ya empezaron por horario (startsAt pasado) aunque el relay esté en pausa; una ronda cuenta
 // como EN VIVO si Lichess la marca ongoing O si tiene partidas con resultado "*" (en curso).
 function _bcFetchAll(broadcastId, cb) {
+  if (_isLccId(broadcastId)) { _lccFetchAll(broadcastId, cb); return; }   // livechesscloud (UUID) → fuente directa
   // SIN token: los broadcasts son públicos y el endpoint del PGN de ronda
   // (lichess.org/broadcast/.../*.pgn) NO soporta el preflight CORS con el header Authorization
   // (responde 404 al OPTIONS), así que si hay un token configurado el navegador BLOQUEA la
@@ -18860,7 +19025,7 @@ function _bcLoad(isRefresh) {
     if (!isRefresh && !res.allGames.length) { alert('El torneo aún no tiene rondas disponibles.'); return; }
 
     var liveKey = '_bc_' + ctx.broadcastId;
-    var bcUrl = ctx.pageUrl || ('https://lichess.org/broadcast/' + ctx.broadcastId);
+    var bcUrl = ctx.pageUrl || (_isLccId(ctx.broadcastId) ? _lccExtUrl(ctx.broadcastId) : 'https://lichess.org/broadcast/' + ctx.broadcastId);
     var argGames = res.allGames.filter(function(pgn) { return _isArgGame(parsePgnHeaders(pgn)); });
     PGN_DB[liveKey] = { title: ctx.name, sub: ctx.sub, url: bcUrl, games: res.allGames };
     PGN_DB[liveKey + '_arg'] = { title: ctx.name, sub: ctx.sub, url: bcUrl, games: argGames };
@@ -18881,7 +19046,7 @@ function _bcLoad(isRefresh) {
     if (_liveTimer) { clearTimeout(_liveTimer); _liveTimer = null; }
     var viewerOpen = document.getElementById('chess-overlay').classList.contains('open');
     if (res.isLive && viewerOpen && _bcBaseKey === liveKey) {
-      _liveTimer = setTimeout(function() { _bcLoad(true); }, _BC_REFRESH_MS);
+      _liveTimer = setTimeout(function() { _bcLoad(true); }, _liveRefreshMs(ctx.broadcastId));
     }
     if (viewerOpen) faMaybeAutoLive();   // auto-mostrar/actualizar el gráfico en vivo
   });
@@ -18925,11 +19090,12 @@ function _bcRenderLiveBar(res) {
   var bar = document.getElementById('cv-live-bar');
   if (!bar) return;
   if (res && res.isLive && res.liveRound) {
-    var rUrl = 'https://lichess.org/broadcast/' + res.tourSlug + '/' + res.liveRound.slug + '/' + res.liveRound.id;
+    var rUrl = res._lcc ? _lccExtUrl(res.tourSlug) : ('https://lichess.org/broadcast/' + res.tourSlug + '/' + res.liveRound.slug + '/' + res.liveRound.id);
+    var srcName = res._lcc ? 'livechesscloud' : 'Lichess';
     bar.innerHTML = '<span style="font-size:12px;color:#e07070">\u{1F534} En vivo \xb7 ' + escHtml(res.liveRound.name || 'Ronda en curso') + ' <span style="opacity:.55;font-weight:400">se actualiza solo</span></span>'
       + '<div style="display:flex;gap:6px">'
       + '<button onclick="refreshLiveBroadcast()" style="background:rgba(220,50,50,0.2);border:1px solid rgba(220,50,50,0.4);color:#e07070;font-size:12px;padding:3px 8px;border-radius:6px;cursor:pointer;font-family:inherit">🔄 Actualizar</button>'
-      + '<a href="' + rUrl + '" target="_blank" style="background:rgba(220,50,50,0.1);border:1px solid rgba(220,50,50,0.3);color:#e07070;font-size:12px;padding:3px 8px;border-radius:6px;text-decoration:none">↗ Lichess</a>'
+      + '<a href="' + rUrl + '" target="_blank" style="background:rgba(220,50,50,0.1);border:1px solid rgba(220,50,50,0.3);color:#e07070;font-size:12px;padding:3px 8px;border-radius:6px;text-decoration:none">↗ ' + srcName + '</a>'
       + '</div>';
     bar.style.display = 'flex';
   } else {
@@ -19908,7 +20074,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   h += '<div style="flex-shrink:0;display:flex;flex-direction:column;align-items:flex-end;gap:6px;margin-top:2px">';
   var _dlb = (status === 'live') ? (' data-livebadge="1"' + (broadcastId ? ' data-bc="' + escHtml(String(broadcastId)) + '"' : '') + (broadcastUrl ? ' data-bcurl="' + escHtml(String(broadcastUrl)) + '"' : '')) : '';
   h += '<span class="badge ' + cls2[status] + '"' + _dlb + '>' + lbl2[status] + '</span>';
-  if (broadcastId) h += '<a href="' + escHtml(broadcastUrl || ('https://lichess.org/broadcast/' + broadcastId)) + '" target="_blank" rel="noopener" style="font-size:11px;color:#8ab4f8;text-decoration:none;white-space:nowrap">⚡ Ver en Lichess ↗</a>';
+  if (broadcastId) { var _isLcc = _isLccId(broadcastId); h += '<a href="' + escHtml(broadcastUrl || (_isLcc ? _lccExtUrl(broadcastId) : 'https://lichess.org/broadcast/' + broadcastId)) + '" target="_blank" rel="noopener" style="font-size:11px;color:#8ab4f8;text-decoration:none;white-space:nowrap">⚡ Ver en ' + (_isLcc ? 'livechesscloud' : 'Lichess') + ' ↗</a>'; }
   h += '</div>';
   h += '</div>';
   h += '<div style="display:flex;flex-wrap:wrap;gap:7px;font-size:13px;color:var(--fg-d0)">';
@@ -21087,7 +21253,7 @@ function _tdLiveFetchMulti(tourIds, name, location, pgnKey, typ, hasFallback) {
     if (!res || !res.roundsWithGames || !res.roundsWithGames.length) { if (!hasFallback) _tdLiveError(null); return; }
     _tdLiveBuild(res, sec, null);
     if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; }
-    if (res.roundsWithGames.some(function(r){ return r.live; })) _tdLiveTimer = setTimeout(_tdLiveRefresh, _BC_REFRESH_MS);
+    if (res.roundsWithGames.some(function(r){ return r.live; })) _tdLiveTimer = setTimeout(_tdLiveRefresh, _liveRefreshMs(_tdLiveCtx && _tdLiveCtx.tourId));
   });
 }
 
@@ -21367,7 +21533,7 @@ function _tdLiveRefresh() {
     if (res && res.roundsWithGames && res.roundsWithGames.length) _tdLiveApplyRefresh(res, sec);
     if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; }
     if (res && res.roundsWithGames && res.roundsWithGames.some(function(r){ return r.live; }) && document.getElementById('td-games-section')) {
-      _tdLiveTimer = setTimeout(_tdLiveRefresh, _BC_REFRESH_MS);
+      _tdLiveTimer = setTimeout(_tdLiveRefresh, _liveRefreshMs(_tdLiveCtx && _tdLiveCtx.tourId));
     }
   });
 }
