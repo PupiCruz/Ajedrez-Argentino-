@@ -1523,7 +1523,13 @@
     .fa-prog-txt { font-size:11px; color:var(--text2); white-space:nowrap; }
     .fa-prog-bar { flex:1; height:4px; background:var(--bg3); border-radius:2px; }
     .fa-prog-fill { height:4px; background:var(--gold); border-radius:2px; width:0%; transition:width .2s; }
-    #eval-graph-container { line-height:0; }
+    #eval-graph-container { line-height:0; position:relative; }
+    .fa-tip { position:absolute; top:4px; transform:translateX(-50%); pointer-events:none;
+      background:var(--bg2); color:var(--text); border:1px solid var(--border);
+      border-radius:6px; padding:3px 8px; font-size:12px; line-height:1.35; white-space:nowrap;
+      box-shadow:0 2px 10px rgba(0,0,0,.28); z-index:6; font-weight:600; }
+    .fa-tip .cv-fig { font-weight:400; }
+    .fa-tip .fa-tip-ev { margin-left:6px; }
     #fa-stats { display:flex; gap:12px; margin-top:10px; }
     #fa-stats:empty { display:none; }
     .fa-stat-col { flex:1; background:var(--panel0); border:1px solid var(--bd22); border-radius:8px; padding:9px 11px; min-width:0; }
@@ -25110,7 +25116,7 @@ function faRender(R) {
   var refs  = '';
   for (var i=10;i<n;i+=10) { var rx=(i*W/n).toFixed(1); refs+='<line x1="'+rx+'" y1="0" x2="'+rx+'" y2="'+H+'" stroke="var(--fa-grid)" stroke-width="1"/>'; }
   c.innerHTML =
-    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none" style="width:100%;height:80px;cursor:pointer;border-radius:6px;display:block" onclick="faClick(event)">'
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none" style="width:100%;height:80px;cursor:pointer;border-radius:6px;display:block" onclick="faClick(event)" onmousemove="faHover(event)" onmouseleave="faHoverEnd()">'
     +'<defs><linearGradient id="evg" x1="0" y1="0" x2="0" y2="1">'
     +'<stop offset="0%" stop-color="var(--fa-white)" stop-opacity="0.95"/>'
     +'<stop offset="48%" stop-color="var(--fa-white)" stop-opacity="0.18"/>'
@@ -25122,8 +25128,37 @@ function faRender(R) {
     +'<path d="'+area+'" fill="url(#evg)"/>'
     +'<line x1="0" y1="'+mid+'" x2="'+W+'" y2="'+mid+'" stroke="var(--fa-mid)" stroke-width="0.8"/>'
     +'<path d="'+curve+'" fill="none" stroke="var(--fa-line)" stroke-width="1.2"/>'
+    +'<line id="fa-hline" x1="0" y1="0" x2="0" y2="'+H+'" stroke="var(--fa-mid)" stroke-width="1" stroke-dasharray="3,2" style="display:none"/>'
     +'<line id="fa-marker" x1="'+(mx||0)+'" y1="0" x2="'+(mx||0)+'" y2="'+H+'" stroke="#c9a227" stroke-width="2"'+(mx?'':' style="display:none"')+'/>'
-    +'</svg>';
+    +'</svg>'
+    +'<div id="fa-tip" class="fa-tip" style="display:none"></div>';
+}
+
+/* Tooltip al recorrer el gráfico con el mouse (estilo Lichess/Chess.com): muestra la jugada
+   de ese punto en notación figurada, su símbolo de calidad (si tiene) y la eval. Además una
+   rayita punteada marca la jugada apuntada. No navega (eso sigue siendo el clic). */
+function faHover(e) {
+  var n = _fa.nodes.length; if (!n) return;
+  var svg = e.currentTarget, rect = svg.getBoundingClientRect();
+  var frac = (e.clientX - rect.left) / rect.width;
+  if (frac < 0) frac = 0; if (frac > 1) frac = 1;
+  var ply = Math.max(0, Math.min(n - 1, Math.floor(frac * n)));
+  var node = _fa.nodes[ply];
+  var tip = document.getElementById('fa-tip'), hline = document.getElementById('fa-hline');
+  if (!node || !node.move || !tip) { faHoverEnd(); return; }
+  var score = _fa.results[ply];
+  if (!score) score = _faInterp(_fa.results)[ply];   // hueco: mismo valor que dibuja la curva
+  var d = nodeDepth(node), mv = Math.ceil(d / 2), white = (d % 2 === 1);
+  var evs = score ? ('<span class="fa-tip-ev">' + sfScoreStr(score, false) + '</span>') : '';
+  tip.innerHTML = mv + (white ? '.' : '…') + ' ' + cvFanHtml(node.move.san) + nagSpan(node.move.nag) + evs;
+  tip.style.display = 'block';
+  var tw = tip.offsetWidth, x = frac * rect.width;
+  tip.style.left = Math.max(tw / 2 + 2, Math.min(rect.width - tw / 2 - 2, x)) + 'px';
+  if (hline) { var hx = ((ply + 0.5) * 500 / n).toFixed(1); hline.setAttribute('x1', hx); hline.setAttribute('x2', hx); hline.style.display = ''; }
+}
+function faHoverEnd() {
+  var tip = document.getElementById('fa-tip'); if (tip) tip.style.display = 'none';
+  var hl = document.getElementById('fa-hline'); if (hl) hl.style.display = 'none';
 }
 
 /* Mover solo la rayita de la posición actual (sin reconstruir todo el gráfico).
