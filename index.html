@@ -571,6 +571,13 @@
     .cat-btn.on { border-color:rgba(140,100,200,.7); background:rgba(140,100,200,.25); color:#c8b0f5; }
     body.light .cat-btn    { background:#efe7f7; border-color:#b49ad8; color:#5b3f86; }
     body.light .cat-btn.on { background:#dcc9f2; border-color:#8a5fc0; color:#4a2f78; }
+    /* Pastilla de jugador argentino: fondo celeste-blanco-celeste (bandera) para distinguir a cada uno. */
+    .arg-chip { display:inline-flex; align-items:center; gap:5px; padding:5px 12px; border-radius:20px;
+      font-size:13.5px; font-weight:600; white-space:nowrap; text-shadow:var(--txt-out); color:var(--fg-e0);
+      background:linear-gradient(180deg, rgba(116,172,223,.30), rgba(116,172,223,.08) 45%, rgba(116,172,223,.30));
+      border:1px solid rgba(116,172,223,.55); }
+    body.light .arg-chip { color:#1c4e82; border-color:#8fbde3;
+      background:linear-gradient(180deg,#d3e6f7,#f6fafe 45%,#d3e6f7); }
 
     /* ── TORNEOS ── */
     .t-top { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 10px; gap: 8px; }
@@ -4371,15 +4378,19 @@ var _crArgCache = {};
 // rondas/cruces (si no hay tabla) y las PARTIDAS SUBIDAS (games: por FED/FideId
 // del header o nombre en PLAYERS). Devuelve [] cuando no corresponde mostrarla.
 // Robusta y barata: try/catch (NUNCA rompe renderTorneos) + caché.
-function crArgPlayers(type, id, games) {
-  var ck = crKey(type, id);
-  // La clave de caché incluye la cantidad de partidas para que un llamado SIN
-  // games no "pise" el resultado de uno CON games (y viceversa).
-  var cacheKey = ck + '|' + ((games && games.length) || 0);
+// `crkOverride` (opcional): en torneos por categorías se pasa la clave de la CATEGORÍA activa
+// (crKey + '_c<N>'), así se detectan los argentinos de ESA categoría (su tabla trae FED) y no los de
+// todo el torneo. Sin override usa la clave del torneo (comportamiento de siempre).
+function crArgPlayers(type, id, games, crkOverride) {
+  var ck = crkOverride || crKey(type, id);
+  var data = {}; try { data = crDataLoad(ck) || {}; } catch (e) { data = {}; }
+  // La clave de caché incluye la cantidad de partidas Y de posiciones para que (a) un llamado SIN games
+  // no "pise" el resultado de uno CON games, y (b) al llegar la tabla async (que empieza vacía) el
+  // resultado se recalcule en vez de servir el [] cacheado del primer render.
+  var cacheKey = ck + '|' + ((games && games.length) || 0) + '|' + ((data.standings && data.standings.length) || 0);
   if (_crArgCache[cacheKey]) return _crArgCache[cacheKey];
   var result = [];
   try {
-    var data = crDataLoad(ck) || {};
     var names = [], seen = {};
     function add(n) { n = (n || '').trim(); if (!n) return; var k = normStr(n); if (!seen[k]) { seen[k] = 1; names.push(n); } }
     // 1) Escritos a mano (uno por renglón o separados por ';')
@@ -4387,44 +4398,28 @@ function crArgPlayers(type, id, games) {
     if (data.argManual) data.argManual.split(/[\n;]+/).forEach(function(s) { s = s.trim(); if (s) manual.push(s); });
     manual.forEach(add);
 
-    // 2) Autodetección. Universo de participantes y quiénes son ARG.
-    // OJO: para el match por nombre usamos _isArgPlayer (tokens exactos), NO
-    // cvFindPlayer (que matchea por substring y daba falsos positivos como
-    // "Colagrande" ≈ "...grande" o "Boabaid" ≈ subcadenas de apellidos argentinos).
-    var fs = (typeof _getArgFideSet === 'function') ? _getArgFideSet() : {};
-    function isArgName(n) { return (typeof _isArgPlayer === 'function') && _isArgPlayer(n); }
-    var participants = {}, argSet = {};
-    function note(name, isArg) {
+    // 2) Autodetección. Mismo criterio ÚNICO que el filtro de partidas y la tabla (_argPersonIsArg):
+    // FED/fide_id mandan; el nombre solo decide cuando no hay ninguno de los dos (evita falsos
+    // positivos de extranjeros con apellido parecido, ej. "Naranjo Diaz"/"Payares Diaz").
+    var argSet = {};
+    function note(name, fed, fideId) {
       var k = normStr(name || ''); if (!k) return;
-      participants[k] = name;
-      if (isArg) argSet[k] = name;
+      if (_argPersonIsArg(name, fed, fideId)) argSet[k] = name;
     }
     var st = (data.standings && data.standings.length) ? data.standings : null;
     if (st) {
-      // La tabla trae FED, que es AUTORITATIVA: si está y no es ARG, el jugador
-      // NO es argentino aunque su nombre coincida con alguien de PLAYERS (evita
-      // falsos positivos por apellidos compuestos, p.ej. "Angulo Perez" / "Da Silva").
-      // El match por nombre solo se usa cuando NO hay FED.
-      st.forEach(function(p) {
-        if (!p) return;
-        var fed = (p.fed || '').toUpperCase();
-        var isArg;
-        if (fed) { isArg = (fed === 'ARG') || (p.fideId && fs[String(p.fideId)]); }
-        else { isArg = (p.fideId && fs[String(p.fideId)]) || isArgName(p.name); }
-        note(p.name, isArg);
-      });
+      st.forEach(function(p) { if (p) note(p.name, p.fed, p.fideId); });
     } else if (data.rounds) {
-      // Solo si NO hay tabla: recorrer rondas/cruces (no traen FED → match en PLAYERS).
+      // Solo si NO hay tabla: rondas/cruces (no traen FED ni fide_id → decide el nombre).
       Object.keys(data.rounds).forEach(function(rk) {
         var arr = data.rounds[rk]; if (!arr || !arr.forEach) return;
         arr.forEach(function(pr) {
           if (!pr) return;
-          [pr.w, pr.b].forEach(function(nm) { if (nm) note(nm, isArgName(nm)); });
+          [pr.w, pr.b].forEach(function(nm) { if (nm) note(nm, '', null); });
         });
       });
     }
-    // Partidas subidas (PGN): detectar por FED/FideId del header o nombre en PLAYERS.
-    // Acotamos el parseo a los primeros 600 chars (los headers van al inicio).
+    // Partidas (PGN): FED/FideId/nombre del header. Acotamos el parseo a los primeros 600 chars.
     if (games && games.length && typeof parsePgnHeaders === 'function') {
       for (var gi = 0; gi < games.length; gi++) {
         var hdrs = parsePgnHeaders(String(games[gi] || '').slice(0, 600));
@@ -4436,8 +4431,8 @@ function crArgPlayers(type, id, games) {
           var _mu = (_ci >= 0 ? _ev.slice(_ci + 1) : _ev).split(' - ');
           if (_mu.length === 2) { if (!w) w = _mu[0].trim(); if (!b) b = _mu[1].trim(); }
         }
-        if (w) note(w, (hdrs.WhiteFed || hdrs.WhiteCountry || '').toUpperCase() === 'ARG' || (hdrs.WhiteFideId && fs[String(hdrs.WhiteFideId)]) || (typeof _isArgPlayer === 'function' && _isArgPlayer(w)));
-        if (b) note(b, (hdrs.BlackFed || hdrs.BlackCountry || '').toUpperCase() === 'ARG' || (hdrs.BlackFideId && fs[String(hdrs.BlackFideId)]) || (typeof _isArgPlayer === 'function' && _isArgPlayer(b)));
+        if (w) note(w, hdrs.WhiteFed || hdrs.WhiteCountry, hdrs.WhiteFideId);
+        if (b) note(b, hdrs.BlackFed || hdrs.BlackCountry, hdrs.BlackFideId);
       }
     }
 
@@ -5189,18 +5184,9 @@ function crBuildStandingsPanel(key,standings){
   var data=crDataLoad(key)||{};
   var isInitial=data.standingsKind==='initial';
 
-  // Detección de argentinos: FED autoritativa; sin FED → FideId argentino o nombre en PLAYERS.
-  var argFs=(typeof _getArgFideSet==='function')?_getArgFideSet():{};
-  function standIsArg(p){
-    if(!p) return false;
-    var fed=(p.fed||'').toUpperCase();
-    if(fed==='ARG') return true;
-    if(p.fideId && argFs[String(p.fideId)]) return true;
-    // Sin FED → nombre en el ranking. Con bandera extranjera → nombre de un adicional argentino
-    // (ej. Pichot → ESP), que no trae fide_id en la tabla y por eso no lo agarraba la FED.
-    if(!fed && typeof _isArgPlayer==='function' && _isArgPlayer(p.name)) return true;
-    return (typeof _isArgAdicionalName==='function') && _isArgAdicionalName(p.name);
-  }
+  // Detección de argentinos: criterio ÚNICO compartido con el filtro de partidas (_argPersonIsArg).
+  // FED/fide_id mandan; el nombre solo decide cuando no hay ninguno de los dos (evita falsos positivos).
+  function standIsArg(p){ return !!p && _argPersonIsArg(p.name, p.fed, p.fideId); }
   // Torneo que TODAVÍA NO EMPEZÓ: la "Clasificación" de Chess-Results tiene a todos en 0
   // puntos y por lo tanto queda ordenada por número de inicio, que no le dice nada a nadie
   // (y encima le pone medallas a los 3 primeros sin haberse jugado una jugada). El propio
@@ -5954,6 +5940,7 @@ async function _crAutoFetchIndiv(crk, crUrl, opts) {
     var isRR = crLooksLikeRoundRobin(data,crk);
     var lastR = Object.keys(data.rounds).map(Number).sort(function(a,b){return a-b;});
     crRefreshSection(crk, isRR ? 'cuadro' : (lastR.length ? lastR[lastR.length-1] : (hasStand ? 'tabla' : null)));
+    try { _tdRefreshArgLine(); } catch(e){}   // ya con la tabla, completar la línea de argentinos
     try { renderTorneos(_lastTorneoFilter); } catch(e){}
     return okR > 0 || hasStand;
   } catch(e) { setS('❌ ' + e.message); return false; }
@@ -6278,6 +6265,7 @@ async function _i64AutoFetchIndiv(crk, i64url, opts) {
     var isRR = crLooksLikeRoundRobin(data,crk);
     var lastR = Object.keys(data.rounds).map(Number).sort(function(a,b){return a-b;});
     crRefreshSection(crk, isRR ? 'cuadro' : (lastR.length ? lastR[lastR.length-1] : (hasStand ? 'tabla' : null)));
+    try { _tdRefreshArgLine(); } catch(e){}   // ya con la tabla, completar la línea de argentinos
     try { renderTorneos(_lastTorneoFilter); } catch(e){}
     return okR > 0 || hasStand;
   } catch(e) { setS('❌ ' + e.message); return false; }
@@ -18415,21 +18403,24 @@ function _isArgAdicionalName(pgnName) {
   if (!_argAdicList.length) return false;
   return _pgnNameMatchesList(pgnName, _argAdicList);
 }
-function _isArgGame(hdrs) {
-  // 1. Código de federación en el PGN
-  var wCtry = (hdrs.WhiteCountry || hdrs.WhiteFed || '').toUpperCase();
-  var bCtry = (hdrs.BlackCountry || hdrs.BlackFed || '').toUpperCase();
-  if (wCtry === 'ARG' || bCtry === 'ARG') return true;
-  // 2. FIDE ID contra el listado argentino
+// Criterio ÚNICO de "es argentino" para UNA persona (una fila de tabla o un lado de una partida). Lo
+// comparten el filtro de partidas (_isArgGame), el de la tabla de Chess-Results (standIsArg) y la
+// línea de argentinos del detalle del torneo. La regla clave —la que hace fiable al filtro de
+// partidas— es: el NOMBRE solo decide cuando NO hay dato duro. Con fide_id que no está en el listado
+// argentino, o con bandera extranjera, NO es argentino aunque el nombre se parezca (evita falsos
+// positivos como "Naranjo Diaz" / "Payares Diaz" / "Juarez Flores" de otras federaciones).
+function _argPersonIsArg(name, fed, fideId) {
+  fed = (fed || '').toUpperCase();
+  if (fed === 'ARG') return true;                       // bandera argentina (autoritativa)
   var fs = _getArgFideSet();
-  if (hdrs.WhiteFideId && fs[String(hdrs.WhiteFideId)]) return true;
-  if (hdrs.BlackFideId && fs[String(hdrs.BlackFideId)]) return true;
-  // 3. Coincidencia de nombre SOLO si el jugador NO trae fide_id en el PGN. Si trae fide_id y no
-  // está en el set argentino, NO es argentino: un nombre parecido (apellido + inicial) no alcanza.
-  // Evita falsos positivos en torneos FIDE (ej. "Juarez Flores", "Baules Rodriguez" en el Continental).
-  if (!hdrs.WhiteFideId && _isArgPlayer(hdrs.White || '')) return true;
-  if (!hdrs.BlackFideId && _isArgPlayer(hdrs.Black || '')) return true;
-  return false;
+  if (fideId && fs[String(fideId)]) return true;        // fide_id argentino (incluye adicionales tipo Pichot)
+  if (fideId) return false;                             // fide_id presente y NO argentino → un nombre parecido no alcanza
+  if (fed) return false;                                // bandera extranjera (y sin fide_id) → tampoco arriesgar el nombre
+  return _isArgPlayer(name || '');                      // sin FED ni fide_id → último recurso: el nombre
+}
+function _isArgGame(hdrs) {
+  return _argPersonIsArg(hdrs.White, hdrs.WhiteCountry || hdrs.WhiteFed, hdrs.WhiteFideId)
+      || _argPersonIsArg(hdrs.Black, hdrs.BlackCountry || hdrs.BlackFed, hdrs.BlackFideId);
 }
 function _openWithArgFilter(pgnKey, title, sub, url, games) {
   var argGames = games.filter(function(pgn) {
@@ -19801,7 +19792,8 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     var _cbc = _parseBcInput(_cat.broadcast || '');
     broadcastId = _cbc.id || ''; broadcastUrl = _cbc.url || '';
     crUrl = _cat.crurl || '';
-    chesscomUrl = '';            // las categorías no llevan chess.com (se puede ampliar)
+    // chesscomUrl y weburl (sitio oficial) son del torneo (no por categoría): se conservan para que
+    // los botones sigan visibles al cambiar de categoría, igual que el "Sitio oficial".
     pgnGames = [];
     // Partidas de ESTA categoría (estampadas "<Torneo> · <Categoría>"). Vienen de DOS lados y hay
     // que juntar los dos, porque cada modo tiene solo uno:
@@ -19940,15 +19932,13 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
       }
     }
   }
-  // Argentinos que juegan: SOLO en torneos Internacionales (autodetectados de
-  // tabla/cruces/partidas + lista manual).
-  var _argDet = crShowArgLine(typ) ? crArgPlayers(type, id, games) : [];
-  if (_argDet.length) {
-    var _argFull = _argDet.join(', ');
-    h += '<div style="font-size:15px;color:var(--fg-d0);margin-top:13px;line-height:1.5" title="' + escHtml(_argFull) + '">'
-      + '🇦🇷 <strong style="color:var(--text)">' + _argDet.length + '</strong> argentino' + (_argDet.length > 1 ? 's' : '') + ': '
-      + '<span style="color:var(--text2)">' + escHtml(_argFull) + '</span></div>';
-  }
+  // Argentinos que juegan: SOLO en torneos Internacionales (autodetectados de tabla/cruces/partidas +
+  // lista manual). Con categorías, se muestran los de la categoría activa (su tabla trae la FED).
+  // Contexto recordado para poder RE-DIBUJAR la línea cuando la tabla de Chess-Results llega async
+  // (en frío se pinta vacía y se completa al terminar el fetch → ver _tdRefreshArgLine).
+  _tdArgTyp = typ; _tdArgCrk = crk; _tdArgGames = games;   // `games` acá = las del torneo/categoría ACTUAL
+  _tdArgCatName = (activeCat >= 0 && categories && categories[activeCat]) ? (categories[activeCat].name || '') : '';
+  h += '<div id="td-arg-line" style="margin-top:13px">' + _tdArgLineHtml() + '</div>';
   // Barra de categorías (si el torneo tiene varias): un botón por categoría, cambia la vista.
   if (categories && categories.length) {
     var _idJs = (typeof id === 'number') ? id : ("'" + escJs(String(id)) + "'");
@@ -20353,6 +20343,40 @@ function trfHandleFile(event, trfKey) {
 var _tdCtx = null;
 var _tdTourKey = null;   // clave del torneo abierto (para armar los links ?torneo=<id>&partida=<idx>)
 var _tdActiveCat = -1;   // categoría mostrada (-1 = torneo sin categorías); va en el link como &cat=<C>
+var _tdArgTyp = '';      // tipo del torneo mostrado (para decidir si va la línea de argentinos)
+var _tdArgCrk = '';      // clave de cruces de la vista actual (torneo o categoría) para detectar argentinos
+var _tdArgCatName = '';  // nombre de la categoría activa (para el rótulo "… en SUB 14F")
+var _tdArgGames = null;  // partidas del torneo ACTUAL (fijadas al armar el encabezado; NO usar _tdCtx, llega tarde)
+
+// HTML de la línea de argentinos que juegan (pastillas celeste-blanco). Usa el contexto de la vista
+// actual (_tdArgCrk = torneo o categoría). Devuelve '' si no corresponde o no hay ninguno todavía.
+function _tdArgLineHtml() {
+  if (_tdTourKey == null || !crShowArgLine(_tdArgTyp)) return '';
+  var type = _resolveTourType(_tdTourKey);
+  // OJO: usar `_tdArgGames` (partidas del torneo ACTUAL, fijadas al armar el encabezado), NO
+  // `_tdCtx` — que en ese punto todavía apunta al torneo ANTERIOR y colaba sus argentinos (ej.
+  // entrar a Granada y luego a Perú sumaba los de Granada). _tdRefreshArgLine lo actualiza al vivo.
+  var det = [];
+  try { det = crArgPlayers(type, _tdTourKey, _tdArgGames, _tdArgCrk) || []; } catch (e) { det = []; }
+  if (!det.length) return '';
+  var chips = det.map(function(n) { return '<span class="arg-chip">' + escHtml(n) + '</span>'; }).join('');
+  var donde = _tdArgCatName ? (' en ' + escHtml(_tdArgCatName)) : '';
+  // Bandera argentina por IMAGEN (el emoji 🇦🇷 no se dibuja en Windows: sale como "AR").
+  var flag = (typeof _flagImg === 'function') ? _flagImg('ARG') : '';
+  return '<div style="font-size:14px;color:var(--text);font-weight:600;margin-bottom:8px;line-height:1.4;display:flex;align-items:center;gap:7px">'
+    + flag + '<span>Argentinos que compiten' + donde + '</span></div>'
+    + '<div style="display:flex;flex-wrap:wrap;gap:7px">' + chips + '</div>';
+}
+// Re-dibuja la línea de argentinos (la tabla de Chess-Results llega async: en frío la línea se pinta
+// vacía y esto la completa cuando el fetch termina). Barato e idempotente.
+function _tdRefreshArgLine() {
+  var el = document.getElementById('td-arg-line');
+  if (!el) return;
+  // Al refrescar (fetch de tabla / partidas del vivo ya listas) `_tdCtx` YA es el torneo actual, así
+  // que acá sí tomamos las partidas frescas de PGN_DB (incluye las del vivo que llegaron después).
+  if (_tdCtx && PGN_DB[_tdCtx.pgnKey] && PGN_DB[_tdCtx.pgnKey].games) _tdArgGames = PGN_DB[_tdCtx.pgnKey].games;
+  el.innerHTML = _tdArgLineHtml();
+}
 var _TD_PER_PAGE = 24;   // miniaturas por página (carga fluida con muchos tableros)
 var _tdPage = 0;
 // ── Buscador de tableros por jugador ──────────────────────────────────────────────────────────
@@ -21207,6 +21231,7 @@ function _tdLiveBuild(res, sec, keepRound) {
   }
   // Si era un refresco (keepRound != null) y el visor está abierto, actualizar la partida que se mira.
   if (keepRound != null) _tdApplyViewerRefresh(_tdCtx.pgnKey);
+  try { _tdRefreshArgLine(); } catch(e){}   // partidas del vivo listas → completar la línea de argentinos
   if (_tdLiveCtx) setTimeout(mevTick, 900);   // evaluar con el motor local las partidas en curso
 }
 
