@@ -16927,6 +16927,9 @@ function cvOpenOverlay() {
   if (_cvRowsSwapped) _cvSwapPlayerRows();
   var _vbar = document.getElementById('sf-vbar');
   if (_vbar) _vbar.classList.remove('flipped');
+  // Partida nueva: no arrastrar el score/líneas del módulo de la partida anterior mientras se arma
+  // el gráfico (el pase le saca el motor al módulo). Dejarlo en "computando" hasta que evalúe.
+  if (sf.on) sfClearLiveDisplay();
   cvRenderBoard();
   if (!_cvHistoryPushed) {
     _cvHistoryPushed = true;
@@ -17769,7 +17772,14 @@ function sfAnalyze() {
   // veces con el signo dado vuelta). Al terminar, el pase relanza este análisis solo (faNext).
   if (_fa.running) return;
   mevAbort();   // el análisis del visor (lo pidió el usuario) tiene prioridad sobre la eval de miniaturas
-  // Silenciar de inmediato la búsqueda de la posición anterior: si no, su 'go infinite'
+  // DESARMAR ya, antes del stop: el 'bestmove' que provoca este stop llega con armed=true y sin
+  // 'pending' todavía (sfRestart corre 280ms después) → la rama del tope lo tomaba por "terminó sola"
+  // y hacía DESTELLAR "Seguir analizando" al navegar. Desarmado, ese bestmove no la dispara. Y de paso
+  // escondemos el botón al instante (no queda colgado los 280ms del debounce).
+  sf.armed = false;
+  sf.capped = false;
+  _sfDeepenBtn(false);
+  // Silenciar de inmediato la búsqueda de la posición anterior: si no, su búsqueda
   // sigue inundando de mensajes (barra, puntaje, flechas) y traba al navegar rápido.
   sf.engine.postMessage('stop');
   if (_sfDebounce) clearTimeout(_sfDebounce);
@@ -18022,6 +18032,29 @@ function sfUpdateUI() {
       }
     }
   }
+}
+
+// Deja el panel del módulo en "computando" (neutro): score '…', las 3 líneas en '—', barra al centro.
+// Se llama al ABRIR una partida nueva: si no, mientras el gráfico arma su pase (que le saca el motor
+// al módulo → sfAnalyze sale por la guarda `_fa.running`), el panel seguía mostrando el score y las
+// líneas de la partida ANTERIOR. No se usa al navegar dentro de la misma partida (ahí se conservan
+// las líneas a propósito para no parpadear).
+function sfClearLiveDisplay() {
+  sf.lines = [null, null, null];
+  sf.depth = 0;
+  var sc = document.getElementById('sf-score');
+  if (sc) { sc.textContent = '…'; sc.className = 'sf-score sf-neu'; }
+  var sd = document.getElementById('sf-depth'); if (sd) sd.textContent = '';
+  for (var i = 0; i < 3; i++) {
+    var els = document.getElementById('sf-ls'+i);
+    var elm = document.getElementById('sf-lm'+i);
+    var exp = document.getElementById('sf-exp'+i);
+    if (els) { els.className = 'sf-lscore sf-neu'; els.textContent = '—'; }
+    if (elm) elm.innerHTML = '';
+    if (exp) exp.style.visibility = 'hidden';
+    if (typeof _sfShownPv !== 'undefined' && _sfShownPv) _sfShownPv[i] = null;
+  }
+  var fill = document.getElementById('sf-vbar-fill'); if (fill) fill.style.height = '50%';
 }
 
 /* ═══════════════════════════════════════════════════════
