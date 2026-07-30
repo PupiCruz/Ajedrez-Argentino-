@@ -2893,7 +2893,7 @@ Peralta, Fernando" style="height:60px;resize:vertical;font-family:inherit"></tex
     <div class="tz-sec" style="background:rgba(30,60,120,.12);border:1px solid rgba(60,100,200,.2);margin-bottom:14px">
       <label class="tz-flabel" style="color:#8ab4f8">🔴 Transmisión en vivo <span style="font-weight:400;color:var(--text3)">(opcional)</span></label>
       <textarea id="tze-broadcast" class="tz-input" rows="2" placeholder="Ej: https://lichess.org/broadcast/... o https://view.livechesscloud.com/#..." style="resize:vertical;font-family:inherit"></textarea>
-      <div style="font-size:11px;color:var(--text3);margin-top:6px;line-height:1.4">Pegá la URL del broadcast de <b style="color:var(--text2)">Lichess</b> o el link de <b style="color:var(--text2)">livechesscloud</b> (view.livechesscloud.com/#...). Con esto la app carga las partidas automáticamente.<br>Si Lichess parte el torneo en <b style="color:var(--text2)">varias transmisiones</b> (ej. "Matches 1-10" y "Matches 11+"), pegá <b style="color:var(--text2)">una URL por renglón</b> y la app junta todos los tableros de cada ronda.</div>
+      <div style="font-size:11px;color:var(--text3);margin-top:6px;line-height:1.4">Pegá la URL del broadcast de <b style="color:var(--text2)">Lichess</b> o el link de <b style="color:var(--text2)">livechesscloud</b> (view.livechesscloud.com/#...). Con esto la app carga las partidas automáticamente.<br>Si hay transmisión en <b style="color:var(--text2)">las dos</b>, pegá los dos links (uno por renglón): la app usa <b style="color:var(--text2)">livechesscloud</b> para las partidas (es más directo) y muestra un botón <b style="color:var(--text2)">"Ver en Lichess"</b>.<br>Si Lichess parte el torneo en <b style="color:var(--text2)">varias transmisiones</b> (ej. "Matches 1-10" y "Matches 11+"), pegá <b style="color:var(--text2)">una URL por renglón</b> y la app junta todos los tableros de cada ronda.</div>
     </div>
     <div class="tz-sec" style="background:rgba(90,60,120,.12);border:1px solid rgba(140,100,200,.22);margin-bottom:14px">
       <label class="tz-flabel" style="color:#c0a4f0">🏆 Categorías <span style="font-weight:400;color:var(--text3)">(opcional — para torneos con varias categorías)</span></label>
@@ -18208,7 +18208,12 @@ function _parseBcInput(raw) {
   if (!raw) return { id: null, url: null };
   // livechesscloud: view.livechesscloud.com/#<uuid> · pool…/get/<uuid>/… · o el UUID pelado.
   var lcc = raw.match(/livechesscloud\.com\/(?:#|.*\/get\/)([0-9a-fA-F-]{36})/) || (_LCC_UUID_RE.test(raw) ? [null, raw] : null);
-  if (lcc) return { id: lcc[1], url: 'https://view.livechesscloud.com/#' + lcc[1] };
+  if (lcc) {
+    // livechesscloud manda las partidas (id = UUID). Si además pegaron un link de Lichess, se guarda
+    // como URL para mostrar el botón "Ver en Lichess" (no se usa para bajar partidas).
+    var lich = raw.match(/https?:\/\/lichess\.org\/broadcast\/\S+/);
+    return { id: lcc[1], url: lich ? lich[0] : ('https://view.livechesscloud.com/#' + lcc[1]) };
+  }
   var m3 = raw.match(/lichess\.org\/broadcast\/[^\/\?#]+\/[^\/\?#]+\/([A-Za-z0-9]{8})(?:[\/\?#]|$)/);
   var m2 = !m3 && raw.match(/lichess\.org\/broadcast\/[^\/\?#]+\/([A-Za-z0-9]{8})(?:[\/\?#]|$)/);
   if (m3 || m2) {
@@ -18583,7 +18588,7 @@ function _markLiveTiles(root) {
 // primero resuelve el tour id desde la URL (que sí trae la ronda) y recién ahí abre.
 function openBroadcastTournament(broadcastId, name, sub, pageUrl) {
   var raw = String(broadcastId || '');
-  if (_isLccId(raw)) { bcOpenLiveGrid(raw, name, sub, pageUrl || _lccExtUrl(raw)); return; }   // livechesscloud (UUID) → misma grilla
+  if (_isLccId(raw)) { bcOpenLiveGrid(raw, name, sub, _lccExtUrl(raw)); return; }   // livechesscloud (UUID) → misma grilla (link propio, no el de Lichess)
   if (/^[A-Za-z0-9]{8}$/.test(raw)) { bcOpenLiveGrid(raw, name, sub, pageUrl); return; }
   var m = (String(pageUrl || '') + ' ' + raw).match(/broadcast\/([^\/\?#\s]+)\/([^\/\?#\s]+)\/([^\/\?#\s]+)/);
   if (m) {
@@ -19025,7 +19030,7 @@ function _bcLoad(isRefresh) {
     if (!isRefresh && !res.allGames.length) { alert('El torneo aún no tiene rondas disponibles.'); return; }
 
     var liveKey = '_bc_' + ctx.broadcastId;
-    var bcUrl = ctx.pageUrl || (_isLccId(ctx.broadcastId) ? _lccExtUrl(ctx.broadcastId) : 'https://lichess.org/broadcast/' + ctx.broadcastId);
+    var bcUrl = _isLccId(ctx.broadcastId) ? _lccExtUrl(ctx.broadcastId) : (ctx.pageUrl || 'https://lichess.org/broadcast/' + ctx.broadcastId);
     var argGames = res.allGames.filter(function(pgn) { return _isArgGame(parsePgnHeaders(pgn)); });
     PGN_DB[liveKey] = { title: ctx.name, sub: ctx.sub, url: bcUrl, games: res.allGames };
     PGN_DB[liveKey + '_arg'] = { title: ctx.name, sub: ctx.sub, url: bcUrl, games: argGames };
@@ -20074,7 +20079,14 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   h += '<div style="flex-shrink:0;display:flex;flex-direction:column;align-items:flex-end;gap:6px;margin-top:2px">';
   var _dlb = (status === 'live') ? (' data-livebadge="1"' + (broadcastId ? ' data-bc="' + escHtml(String(broadcastId)) + '"' : '') + (broadcastUrl ? ' data-bcurl="' + escHtml(String(broadcastUrl)) + '"' : '')) : '';
   h += '<span class="badge ' + cls2[status] + '"' + _dlb + '>' + lbl2[status] + '</span>';
-  if (broadcastId) { var _isLcc = _isLccId(broadcastId); h += '<a href="' + escHtml(broadcastUrl || (_isLcc ? _lccExtUrl(broadcastId) : 'https://lichess.org/broadcast/' + broadcastId)) + '" target="_blank" rel="noopener" style="font-size:11px;color:#8ab4f8;text-decoration:none;white-space:nowrap">⚡ Ver en ' + (_isLcc ? 'livechesscloud' : 'Lichess') + ' ↗</a>'; }
+  if (broadcastId) {
+    var _isLcc = _isLccId(broadcastId);
+    var _lnkCss = 'font-size:11px;color:#8ab4f8;text-decoration:none;white-space:nowrap';
+    // Con livechesscloud como fuente, su propio link + (si lo pegaron) el de Lichess como botón aparte.
+    if (_isLcc) h += '<a href="' + escHtml(_lccExtUrl(broadcastId)) + '" target="_blank" rel="noopener" style="' + _lnkCss + '">⚡ Ver en livechesscloud ↗</a>';
+    var _lichUrl = /lichess\.org\/broadcast/.test(String(broadcastUrl || '')) ? broadcastUrl : (!_isLcc ? (broadcastUrl || 'https://lichess.org/broadcast/' + broadcastId) : null);
+    if (_lichUrl) h += '<a href="' + escHtml(_lichUrl) + '" target="_blank" rel="noopener" style="' + _lnkCss + '">⚡ Ver en Lichess ↗</a>';
+  }
   h += '</div>';
   h += '</div>';
   h += '<div style="display:flex;flex-wrap:wrap;gap:7px;font-size:13px;color:var(--fg-d0)">';
@@ -21210,6 +21222,9 @@ function _tdLiveStop() { if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLive
 
 function _tdLoadLiveGames(broadcastId, broadcastUrl, name, location, pgnKey, typ, status, hasFallback) {
   var raw = String(broadcastId || '');
+  // livechesscloud manda: aunque haya un link de Lichess en broadcastUrl (para el botón "Ver en Lichess"),
+  // las partidas salen de livechesscloud. Sin esto, el scan de URLs de ronda de abajo lo desviaría a Lichess.
+  if (_isLccId(raw)) { _tdLiveFetchMulti([raw], name, location, pgnKey, typ, hasFallback); return; }
   var combined = String(broadcastUrl || '') + ' ' + raw;
   // Un torneo puede tener VARIAS transmisiones (Lichess parte los eventos grandes, ej. "Matches 1-10"
   // y "Matches 11+"): buscamos TODAS las URLs de ronda (broadcast/{slug}/{roundSlug}/{roundId8}) y
