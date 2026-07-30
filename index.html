@@ -4348,7 +4348,14 @@ function crDataLoad(key) {
   return null;
 }
 function crDataSave(key, data) {
-  try { localStorage.setItem(key, JSON.stringify(data)); _crArgCache = {}; _tourSearchIndex = {}; _stdFedCache = {}; } catch(e) { alert('Sin espacio en localStorage'); }
+  try { localStorage.setItem(key, JSON.stringify(data)); _crArgCache = {}; _tourSearchIndex = {}; _stdFedCache = {}; }
+  catch(e) {
+    // Sin espacio: ofrecer liberar el navegador y reintentar ESTE guardado.
+    if (typeof _quotaOffer === 'function' && _quotaOffer()) {
+      try { localStorage.setItem(key, JSON.stringify(data)); _crArgCache = {}; _tourSearchIndex = {}; _stdFedCache = {}; }
+      catch(e2) { alert('Sigue sin haber espacio. Usá 💾 "Guardar datos en mi carpeta" y recargá la página.'); }
+    }
+  }
 }
 // Junta TODOS los cuadros de cruces/tabla (cr2_*) para embeberlos en el archivo, así viajan con
 // los datos (doble clic ⇄ servidor ⇄ web publicada) y no quedan atrapados en un solo navegador.
@@ -6980,6 +6987,10 @@ function exportTabInit() {
   h += '<div style="font-size:12px;color:var(--text2);margin-bottom:10px;line-height:1.5">💾 <b style="color:var(--text2)">Guardar en tu carpeta.</b> Deja al día <i>tu carpeta principal</i> (torneos, fotos, flyers y lo que lee la web). <b style="color:var(--text2)">Es lo que usás todos los días.</b></div>';
   h += '<button onclick="exportDataFile()" style="width:100%;padding:13px;background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-size:14px;font-weight:700;border-radius:10px;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:9px;margin-bottom:22px">';
   h += _dlSvg + '<span>Guardar datos en mi carpeta</span></button>';
+
+  // BOTÓN — Liberar espacio del navegador (cuando aparece "Sin espacio en localStorage")
+  h += '<div style="font-size:12px;color:var(--text3);margin:-8px 0 10px;line-height:1.5">🧹 <b style="color:var(--text2)">¿Te salió <span style="color:var(--gold)">"Sin espacio en localStorage"</span>?</b> Guardá con 💾 arriba y después apretá este botón. Borra del navegador lo que ya quedó en tu carpeta para hacer lugar. <b style="color:var(--text2)">No se pierde nada.</b></div>';
+  h += '<button onclick="liberarEspacioLS()" style="width:100%;padding:12px;background:var(--bg3);border:1px dashed var(--gold-dim);color:var(--gold);font-size:13px;font-weight:700;border-radius:10px;cursor:pointer;font-family:inherit;margin-bottom:22px">🧹 Liberar espacio del navegador</button>';
 
   // BOTÓN 1 — Copia de autor (respaldo completo ocasional)
   h += '<div style="font-size:12px;color:var(--text2);margin-bottom:10px;line-height:1.5">📦 <b style="color:var(--text2)">Respaldo completo (ocasional).</b> ZIP con la app y TODOS tus datos para <b style="color:var(--text2)">respaldar</b> o llevar a una PC que no tiene la carpeta. Descomprimilo y abrí <i>index.html</i>.</div>';
@@ -18063,7 +18074,62 @@ function getTzConfig() {
   try { return JSON.parse(localStorage.getItem('tz_config') || '{}'); } catch(e) { return {}; }
 }
 function lsQuotaAlert() {
+  if (typeof _quotaOffer === 'function') { _quotaOffer(); return; }
   alert('⚠️ Almacenamiento lleno\n\nEl archivo PGN es demasiado grande para guardarlo en este dispositivo.\n\nSolución: exportá el HTML (pestaña Exportar) para no perder lo que ya tenés, luego recargá la página y volvé a intentarlo.');
+}
+
+// ── 🧹 Liberar espacio en el navegador (localStorage) ────────────────────────
+// Mientras editás, el modo autor guarda una copia de trabajo en el navegador
+// (localStorage, tope ~5MB): tablas (cr2_*), fotos y ranking FIDE. Todo eso también
+// vive en la copia EN MEMORIA que se escribe al archivo con "Guardar datos en mi
+// carpeta". Cuando el navegador se llena, este botón VUELCA la copia de trabajo a la
+// copia en memoria (no se pierde nada, aunque no hayas guardado todavía) y borra la
+// del navegador para recuperar espacio. No hace falta recargar. NO toca
+// pgn_tournaments ni tz_config (se leen directo del navegador en varios lugares).
+function _lsBytesUsed() {
+  var t = 0;
+  try { for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); t += ((localStorage.getItem(k) || '').length + k.length) * 2; } } catch (e) {}
+  return t;
+}
+function liberarEspacioLS() {
+  if (_ondemand) { alert('Esto es del modo autor (tu carpeta), no de la web publicada.'); return; }
+  var antes = _lsBytesUsed();
+
+  // 1) Volcar la copia de trabajo del navegador a la copia en memoria, para no perder NADA.
+  try { window.__EMBEDDED_CR__ = _collectCrData(); } catch (e) {}                                          // tablas: embebido ∪ localStorage
+  try { var rk = localStorage.getItem('fide_ranking'); if (rk) window.__EMBEDDED_PLAYERS__ = JSON.parse(rk); } catch (e) {}  // ranking
+  // Las fotos ya viven completas en PLAYER_PHOTOS (memoria); no hay que volcar nada.
+
+  // 2) Borrar del navegador lo que ahora es redundante (queda en memoria y, si guardaste, en el archivo).
+  var borradas = 0;
+  function drop(k) { if (localStorage.getItem(k) != null) { localStorage.removeItem(k); borradas++; } }
+  drop('fa_eval_cache3');   // caché del motor: 100% descartable, se regenera sola
+  drop('player_photos');
+  drop('fide_ranking');
+  for (var i = localStorage.length - 1; i >= 0; i--) { var k = localStorage.key(i); if (k && k.indexOf('cr2_') === 0) drop(k); }
+
+  var despues = _lsBytesUsed();
+  var mb = function (b) { return (b / 1048576).toFixed(2); };
+  if (borradas === 0) {
+    alert('👍 El navegador ya está liviano (' + mb(despues) + ' MB usados). No hacía falta liberar nada.');
+    return true;
+  }
+  alert('🧹 ¡Listo! Se liberaron ' + mb(antes - despues) + ' MB.\n\n'
+      + 'Uso del navegador: ' + mb(antes) + ' MB → ' + mb(despues) + ' MB.\n\n'
+      + 'No se perdió nada: tus tablas, fotos y ranking siguen en la app. '
+      + 'Si hiciste cambios, acordate de 💾 "Guardar datos en mi carpeta" como siempre.');
+  return true;
+}
+// Cartel accionable cuando el navegador se queda sin espacio. Devuelve true si el usuario liberó.
+function _quotaOffer() {
+  if (confirm('⚠️ El navegador se quedó sin espacio (localStorage lleno).\n\n'
+            + 'Se puede solucionar al instante: se borra del navegador solo lo que ya está en la app '
+            + '(tablas, fotos, ranking). No se pierde nada.\n\n'
+            + '¿Liberar espacio ahora?')) {
+    liberarEspacioLS();
+    return true;
+  }
+  return false;
 }
 function lsSaveTours(stored) {
   try { localStorage.setItem('pgn_tournaments', JSON.stringify(stored)); _crArgCache = {}; _tourSearchIndex = {}; return true; }
