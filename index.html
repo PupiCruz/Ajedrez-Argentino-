@@ -1806,6 +1806,13 @@
     body.light .sf-btn.on { background: #d3efdf; border-color: #67bd8f; color: #176b3e; }
     .sf-score { font-size: 14px; font-weight: 700; letter-spacing: -0.4px; font-variant-numeric: tabular-nums; }
     .sf-depth { font-size: 11px; color: var(--text3); margin-left: auto; }
+    .sf-deepen {
+      font-family: inherit; font-size: 11px; font-weight: 700; cursor: pointer;
+      padding: 4px 10px; border-radius: 999px; margin-left: 8px; white-space: nowrap;
+      background: var(--gl42); border: 1px solid var(--bd26); color: var(--fg0);
+      transition: background .15s, border-color .15s, color .15s;
+    }
+    .sf-deepen:hover { background: var(--bd10); border-color: var(--bd45); color: var(--white-ink); }
     .sf-lines { display: flex; flex-direction: column; gap: 5px; }
     .sf-line {
       display: grid; grid-template-columns: 16px 46px 1fr auto;
@@ -2696,6 +2703,7 @@
         <span class="sf-score sf-neu" id="sf-score"></span>
         <button class="fa-btn" id="fa-btn" onclick="faToggle()" title="Análisis de la partida">📊</button>
         <span class="sf-depth" id="sf-depth"></span>
+        <button class="sf-deepen" id="sf-deepen" onclick="sfDeepen()" title="El motor llegó al tope. Tocá para que siga analizando más hondo (usa más CPU)." style="display:none">⏱ Seguir analizando</button>
       </div>
     </div>
 
@@ -17449,7 +17457,11 @@ var sf = { engine:null, loading:false, ready:false, on:false, depth:0, lines:[nu
            // 'bestmove'). Clave para las barreras: UCI responde 'isready' AL INSTANTE aunque esté
            // buscando, así que un 'readyok' no garantiza que la búsqueda vieja ya terminó de hablar.
            // rokWaiting = llegó el readyok de la barrera del módulo pero falta el bestmove viejo.
-           curSide:'w', curFen:null, pending:null, armed:true, searching:false, rokWaiting:false };
+           // capped = la búsqueda en vivo terminó al llegar al tope (prof. o tiempo) y quedó quieta;
+           // deepened = el visitante pidió "Seguir analizando" (go infinite) para ESTA posición;
+           // _capTimer = timer que frena la búsqueda al tope de tiempo (backstop del tope de prof.).
+           curSide:'w', curFen:null, pending:null, armed:true, searching:false, rokWaiting:false,
+           capped:false, deepened:false, _capTimer:null };
 // Profundidad mínima antes de mover la barra de eval: evita el "salto" de las lecturas ruidosas
 // de baja profundidad al avanzar una jugada. El número de puntaje sí se actualiza desde el inicio.
 // Prof. mínima para mover barra/número/líneas/gráfico al llegar una jugada nueva: por debajo, las
@@ -17462,6 +17474,15 @@ var _SF_BAR_MINDEPTH = 14;
 // acelerador, cada paso alcanza a asentarse antes del siguiente → escalones limpios que convergen.
 var _SF_BAR_THROTTLE_MS = 650;
 var _sfBarLastT = 0;
+// TOPE del motor EN VIVO (el del tablero). Sin tope, `go infinite` clava un núcleo al 100% para
+// siempre (drena batería en celular/notebook y en una transmisión dejada abierta calcula sin fin;
+// además en finales con pocas piezas la profundidad se dispara a 200+ sin aportar nada). Con el tope,
+// Stockfish frena solo, congela la eval a la que llegó y el CPU baja a ~0. El tope de PROFUNDIDAD es
+// el mecanismo principal (calidad pareja: 30 ya es fuerte); el de TIEMPO es solo red de seguridad para
+// medio juegos agudos donde llegar a prof. 30 en un hilo tarda. Al frenar aparece "Seguir analizando"
+// (sfDeepen → go infinite) por si el visitante quiere ir más hondo. Al cambiar de jugada, se reactiva.
+var _SF_LIVE_MAXDEPTH = 30;
+var _SF_LIVE_MAXMS = 60000;
 
 function sfToggle() {
   if (!sf.on) {
@@ -17483,6 +17504,8 @@ function sfToggle() {
 function sfTurnOff() {
   if (!sf.on) return;
   sf.on = false;
+  if (sf._capTimer) { clearTimeout(sf._capTimer); sf._capTimer = null; }
+  sf.capped = false; sf.deepened = false; _sfDeepenBtn(false);
   document.getElementById('sf-toggle').classList.remove('on');
   document.getElementById('sf-btn-label').textContent = '🔬 Análisis';
   document.getElementById('sf-panel').style.display = 'none';
@@ -17635,6 +17658,14 @@ function sfOnMsg(line) {
     _sfStartPending();
     return;
   }
+  // Búsqueda en vivo que terminó SOLA (llegó al tope de prof. o al backstop de tiempo, SIN navegación:
+  // por eso sigue armed=true y no hay posición pendiente). El motor queda quieto y ofrecemos profundizar.
+  if (line.indexOf('bestmove') === 0 && sf.on && sf.armed && !sf.pending && !sf.deepened) {
+    if (sf._capTimer) { clearTimeout(sf._capTimer); sf._capTimer = null; }
+    sf.capped = true;
+    _sfDeepenBtn(true);
+    return;
+  }
   if (line === 'uciok') {
     sf.engine.postMessage('setoption name MultiPV value 3');
     // Más memoria para la tabla de transposición (default 16MB): llega a más profundidad
@@ -17717,6 +17748,7 @@ function sfAnalyzeNow() {
   if (!sf.engine || !sf.ready || !sf.on || !cv.chess) return;
   if (_fa.running) return;   // no interrumpir el análisis completo en curso
   _sfArrowsHold = false;   // arranca el análisis de la posición nueva: ya se pueden dibujar sus flechas
+  sf.capped = false; _sfDeepenBtn(false);   // esconder "Seguir analizando" ni bien se pasa de jugada
   sf.lines = [null, null, null];
   sf.depth = 0;
   _sfBarLastT = 0;   // primera lectura confiable de la jugada nueva: aplicarla sin esperar el acelerador
@@ -17767,9 +17799,36 @@ function _sfStartPending() {
   sf.rokWaiting = false;
   sf.curSide = _p.side;
   sf.curFen = _p.fen;
+  // Posición nueva: arranca SIEMPRE con el tope (aunque en la anterior se hubiera pedido "seguir").
+  sf.deepened = false;
+  sf.capped = false;
+  _sfDeepenBtn(false);
   sf.engine.postMessage('position fen ' + _p.fen);
+  sf.engine.postMessage('go depth ' + _SF_LIVE_MAXDEPTH);
+  sf.searching = true;
+  // Backstop de tiempo: si la posición es tan aguda que no llega a la prof. tope, cortar igual. El
+  // 'stop' deja armed=true → su 'bestmove' cae en la rama de "terminó sola" (muestra el botón).
+  if (sf._capTimer) clearTimeout(sf._capTimer);
+  sf._capTimer = setTimeout(function() {
+    sf._capTimer = null;
+    if (sf.engine && sf.searching && sf.armed && !sf.deepened) sf.engine.postMessage('stop');
+  }, _SF_LIVE_MAXMS);
+}
+
+// El visitante pidió ir más hondo: reanuda la búsqueda SIN tope (go infinite) en la posición actual.
+// El motor está quieto (capped) → basta relanzar. El tope vuelve solo al cambiar de jugada.
+function sfDeepen() {
+  if (!sf.engine || !sf.ready || !sf.on || !sf.capped) return;
+  if (sf._capTimer) { clearTimeout(sf._capTimer); sf._capTimer = null; }
+  sf.deepened = true;
+  sf.capped = false;
+  _sfDeepenBtn(false);
   sf.engine.postMessage('go infinite');
   sf.searching = true;
+}
+function _sfDeepenBtn(show) {
+  var b = document.getElementById('sf-deepen');
+  if (b) b.style.display = show ? 'inline-block' : 'none';
 }
 
 function sfScoreStr(score, flip) {
