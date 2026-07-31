@@ -56,6 +56,12 @@
 //        aunque se filtre el PIN, no se puede tocar index.html ni ningún otro archivo.
 //      - Rate-limit de PIN errado con D1 (tabla admin_rl, se crea sola): tras 12 intentos
 //        fallidos en una hora, se bloquea una hora. Sin D1 igual funciona (sin rate-limit).
+//
+// 4) Redacción de noticias con IA (Workers AI)
+//    POST /noticia  (JSON con los datos del torneo) → { ok, title, summary, body, raw }
+//    Requiere el binding de Workers AI llamado AI (Settings → Bindings → Workers AI).
+//    Ver el detalle arriba de la función noticiaAI(). Sin el binding: 503 y la app usa el
+//    generador local. Modelo en NOTICIA_MODEL.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const ALLOWED_HOST = /(^|\.)chess-results\.com$/i;
@@ -85,6 +91,9 @@ export default {
 
     // ── Descarga de las PARTIDAS (PGN) de un torneo de Chess-Results ──
     if (reqUrl.pathname === '/crpgn') return crPgn(reqUrl, ctx);
+
+    // ── Redacción de noticias con IA (Workers AI) ──
+    if (reqUrl.pathname === '/noticia') return noticiaAI(request, env);
 
     // ── Proxy CORS Chess-Results ──
     const target = reqUrl.searchParams.get('url');
@@ -345,6 +354,115 @@ function crPgnParseForm(html) {
 function crPgnSet(fields, re, value) {
   const k = Object.keys(fields).find(k => re.test(k));
   if (k) fields[k] = value;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /noticia — Redacción de una noticia de torneo con IA (Workers AI)
+//   Body (JSON): el paquete que arma la app (_noticiaGatherData): { torneo, campeon,
+//   podio, destacados, argentinos, sorpresas, notasAutor }.
+//   Devuelve: { ok, title, summary, body(HTML), raw }.
+//
+//   Requiere un binding de Workers AI llamado AI:
+//     · Dashboard: el Worker → Settings → Bindings → Add → Workers AI → nombre "AI".
+//     · o wrangler.toml:   [ai]\n   binding = "AI"
+//   Si no está el binding, devuelve 503 y la app cae sola al generador local.
+//
+//   Costo: Workers AI tiene una cuota diaria gratis (Neurons). Una nota consume poco;
+//   para el volumen del sitio (unas notas por día) queda holgado dentro de lo gratis.
+//   Modelos: se prueban en orden (NOTICIA_MODELS) y se usa el PRIMERO que responda. Así, si
+//   Cloudflare descontinúa un modelo (pasó con llama-3.1 el 2026-05-30), sigue andando solo
+//   con el siguiente. Para cambiar la preferencia, reordená/edita la lista.
+// ─────────────────────────────────────────────────────────────────────────────
+const NOTICIA_MODELS = [
+  '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+  '@cf/meta/llama-4-scout-17b-16e-instruct',
+  '@cf/mistralai/mistral-small-3.1-24b-instruct',
+  '@cf/google/gemma-3-12b-it',
+  '@cf/meta/llama-3.2-3b-instruct',
+];
+// Orígenes permitidos (freno suave anti-abuso: que no lo usen desde otros sitios).
+// No es a prueba de balas —un cliente sin navegador puede mandar cualquier Origin— pero
+// alcanza para que no lo cuelguen de otra web. El límite real es la cuota gratis diaria.
+const NOTICIA_ALLOW_ORIGIN = /^(https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?|https:\/\/([a-z0-9-]+\.)*chessargentino\.(ar|pages\.dev)|https:\/\/([a-z0-9-]+\.)*pages\.dev)$/i;
+
+async function noticiaAI(request, env) {
+  if (request.method !== 'POST') return errJson('Usar POST', 405);
+  // Freno suave por Origin (si viene). Sin Origin (fetch server-to-server) se deja pasar.
+  const origin = request.headers.get('Origin');
+  if (origin && !NOTICIA_ALLOW_ORIGIN.test(origin)) return errJson('Origen no permitido', 403);
+  if (!env.AI) return errJson('Falta el binding de Workers AI (AI) en el Worker. Agregalo en Settings → Bindings.', 503);
+
+  let d;
+  try { d = await request.json(); } catch (e) { return errJson('Body inválido', 400); }
+  if (!d || !d.torneo || !d.campeon) return errJson('Faltan datos del torneo', 400);
+
+  const notas = (typeof d.notasAutor === 'string') ? d.notasAutor.slice(0, 2000) : '';
+
+  const sys = 'Sos un periodista de ajedrez argentino. Redactás notas breves, claras y '
+    + 'atractivas en español rioplatense, en tercera persona, con tono informativo y ameno. '
+    + 'Regla de oro: NO inventás nada. Usás SOLO los datos que te paso; si un dato no está, no lo '
+    + 'menciones ni lo supongas. Escribí los nombres de los jugadores exactamente como te los doy. '
+    + 'No repitas frases. No uses markdown, asteriscos ni emojis.';
+
+  // Nacional vs internacional: mismo criterio que la app.
+  const foco = (d.torneo.internacional && d.campeon && d.campeon.arg === false)
+    ? 'Es un torneo INTERNACIONAL con ganador extranjero: contá quién ganó y el podio, pero '
+      + 'CENTRÁ la nota en los jugadores ARGENTINOS que participaron (sus ubicaciones y actuaciones), '
+      + 'usando la lista "argentinos".'
+    : 'Tratá a todos los jugadores por igual: campeón, podio, actuaciones destacadas y sorpresas.';
+
+  const user = 'Redactá una noticia sobre este torneo de ajedrez.\n'
+    + foco + '\n'
+    + 'Aprovechá, cuando corresponda: el campeón y su puntaje, el podio completo, las mejores '
+    + 'performances (Rp), la revelación, quién más rating sumó, las SORPRESAS/batacazos de las '
+    + 'rondas (un jugador que le ganó a otro de mucho más rating), la mejor actuación FEMENINA '
+    + '(lista "femeninas") y la de los JUVENILES/sub-20 (lista "juveniles", con su edad).\n'
+    + 'Cómo se DEFINIÓ el título (objeto "definicion"): si el campeón terminó invicto o con puntaje '
+    + 'perfecto, si se impuso con ventaja de puntos o en el desempate, y el duelo clave (a quién de '
+    + 'buen rating le ganó en el camino). Y de cuántos PAÍSES hubo jugadores ("torneo.paises").\n'
+    + (notas ? ('Datos EXTRA del autor para incorporar naturalmente en la nota (son ciertos, usalos):\n' + notas + '\n') : '')
+    + '\nDATOS DEL TORNEO (JSON):\n' + JSON.stringify(d) + '\n'
+    + '\nRespondé EXACTAMENTE en este formato, sin nada antes ni después:\n'
+    + 'TITULO: <un título atractivo, una sola línea>\n'
+    + 'RESUMEN: <una o dos frases para la tarjeta>\n'
+    + 'CUERPO:\n<3 a 5 párrafos, separados por una línea en blanco>';
+
+  // Probar los modelos en orden; usar el primero que devuelva texto. Un modelo dado de baja o
+  // inexistente tira error → se prueba el siguiente (no gasta inferencia).
+  let out = '', usedModel = '', lastErr = '';
+  const messages = [{ role: 'system', content: sys }, { role: 'user', content: user }];
+  for (const model of NOTICIA_MODELS) {
+    try {
+      const r = await env.AI.run(model, { messages, max_tokens: 900, temperature: 0.6 });
+      const t = (r && (r.response != null ? r.response : r.result)) || '';
+      if (t && String(t).trim()) { out = String(t); usedModel = model; break; }
+    } catch (e) {
+      lastErr = (e && e.message) ? e.message : String(e);
+    }
+  }
+  if (!out) return errJson('La IA no pudo redactar con ningún modelo disponible. Último error: ' + lastErr, 502);
+
+  const parsed = parseNoticia(out);
+  return jsonResp({ ok: true, title: parsed.title, summary: parsed.summary, body: parsed.body, model: usedModel, raw: out });
+}
+
+// Parseo robusto de la respuesta de la IA (formato TITULO/RESUMEN/CUERPO). Si el modelo no
+// respetó el formato, mete todo al cuerpo. Escapa HTML y arma <p> por párrafo.
+function parseNoticia(txt) {
+  txt = String(txt || '').replace(/\r/g, '').replace(/\*\*/g, '').trim();
+  let title = '', summary = '', bodyRaw = '';
+  const mt = txt.match(/T[IÍ]TULO:\s*(.+)/i);
+  const ms = txt.match(/RESUMEN:\s*(.+)/i);
+  const mc = txt.match(/CUERPO:\s*([\s\S]+)/i);
+  if (mt) title = mt[1].trim();
+  if (ms) summary = ms[1].trim();
+  bodyRaw = mc ? mc[1].trim() : txt;
+
+  const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const paras = bodyRaw.split(/\n\s*\n/).map((s) => s.replace(/\n/g, ' ').trim()).filter(Boolean);
+  const body = paras.map((p) => '<p>' + esc(p) + '</p>').join('\n');
+  if (!title) title = (paras[0] || '').replace(/^<p>|<\/p>$/g, '').slice(0, 90);
+  return { title, summary, body };
 }
 
 function corsHeaders() {

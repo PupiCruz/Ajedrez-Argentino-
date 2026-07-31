@@ -5819,9 +5819,13 @@ function _tdPodiumHtml(crk, isTeam) {
 var _tdNewsMeta = null;   // {crk,name,location,dates,typ,isTeam} del torneo abierto (lo setea el detalle)
 
 function _tdCrearNoticiaBtnHtml(){
+  var bs = 'display:inline-flex;align-items:center;gap:7px;padding:10px 18px;background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-size:13.5px;font-weight:700;border-radius:10px;cursor:pointer;font-family:inherit;box-shadow:var(--shadow-card)';
   return '<div style="text-align:center;margin:-4px 0 18px">'
-    + '<button onclick="generarNoticiaTorneo()" style="display:inline-flex;align-items:center;gap:7px;padding:10px 18px;background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-size:13.5px;font-weight:700;border-radius:10px;cursor:pointer;font-family:inherit;box-shadow:var(--shadow-card)">📝 Crear noticia del torneo</button>'
-    + '<div style="font-size:11px;color:var(--text3);margin-top:5px;line-height:1.4">Arma un borrador con los datos del torneo. Después lo retocás y le sumás las fotos.</div>'
+    + '<div style="display:inline-flex;gap:8px;flex-wrap:wrap;justify-content:center">'
+    + '<button onclick="generarNoticiaTorneo()" style="' + bs + '">📝 Crear noticia</button>'
+    + '<button onclick="_noticiaAIOpen()" style="' + bs + '">✨ Redactar con IA</button>'
+    + '</div>'
+    + '<div style="font-size:11px;color:var(--text3);margin-top:6px;line-height:1.45">📝 borrador instantáneo con los datos · ✨ la IA lo redacta más natural (y podés sumarle datos que ella no sabe)</div>'
     + '</div>';
 }
 
@@ -5843,6 +5847,67 @@ function _nnName(p){
 function _nnTitleName(p){
   var t = _normTitle(p.title || '');
   return (t ? t + ' ' : '') + _nnName(p);
+}
+// Año del torneo (para calcular edades de los juveniles): de las fechas o el nombre; si no, hoy.
+function _noticiaYear(m){
+  var s = ((m && m.dates) || '') + ' ' + ((m && m.name) || '');
+  var mm = s.match(/\b(?:19|20)\d{2}\b/);
+  return mm ? parseInt(mm[0], 10) : new Date().getFullYear();
+}
+// Sexo/edad de un jugador de la tabla. La tabla de Chess-Results NO trae ni sexo ni año de
+// nacimiento, así que: femenina = título femenino (W*) —vale para cualquiera— o cruce con el
+// ranking (por FIDE-ID o nombre) que sí tiene `female`. La edad SOLO sale del cruce con el
+// ranking (`born`): funciona para argentinos/conocidos; un extranjero suelto no matchea y queda sin edad.
+// Extras narrativos, todos derivables de la tabla + los cruces (data.rounds):
+//   invicto / puntaje perfecto del campeón · ventaja o desempate en la definición ·
+//   duelo clave (el rival de más elo al que el campeón le ganó) · países participantes.
+// Devuelve nombres CRUDOS (el que llama los pasa por _nnName/nat).
+function _noticiaExtras(data, st, champ){
+  var rounds = data.rounds || {};
+  var nRounds = Object.keys(rounds).length;
+  var eloOf = {}; st.forEach(function(p){ eloOf[p.name] = p.elo || 0; });
+  var champW = 0, champL = 0, champD = 0, champPlayed = 0, champWins = [];
+  Object.keys(rounds).forEach(function(rk){
+    (rounds[rk] || []).forEach(function(p){
+      if (!p || !p.res) return;
+      var isW = (p.w === champ.name), isB = (p.b === champ.name);
+      if (!isW && !isB) return;
+      var rival = isW ? p.b : p.w;
+      if (p.res === '½-½'){ champD++; champPlayed++; }
+      else if (p.res === '1-0'){ if (isW){ champW++; champPlayed++; champWins.push({ rival:rival, elo:eloOf[rival]||0, ronda:parseInt(rk)||rk }); } else { champL++; champPlayed++; } }
+      else if (p.res === '0-1'){ if (isB){ champW++; champPlayed++; champWins.push({ rival:rival, elo:eloOf[rival]||0, ronda:parseInt(rk)||rk }); } else { champL++; champPlayed++; } }
+      // walkover (+-- / --+): no cuenta como partida jugada
+    });
+  });
+  champWins.sort(function(a,b){ return b.elo - a.elo; });
+  var second = st[1] || null;
+  var margin = second ? (champ.pts - second.pts) : null;
+  var coLideres = st.filter(function(p){ return p.pts === champ.pts; }).length;
+  var feds = {}; st.forEach(function(p){ if (p.fed) feds[String(p.fed).toUpperCase()] = 1; });
+  return {
+    invicto: (champPlayed > 0 && champL === 0),
+    perfecto: (champPlayed > 0 && champL === 0 && champD === 0 && nRounds > 0 && champW >= nRounds),
+    margin: margin,
+    desempate: (margin === 0 && coLideres > 1),
+    coLideres: coLideres,
+    dueloClave: (champWins[0] && champWins[0].elo > 0) ? champWins[0] : null,
+    beatRunnerUp: !!(second && champWins.some(function(w){ return w.rival === second.name; })),
+    paises: Object.keys(feds).length,
+    champPlayed: champPlayed
+  };
+}
+
+var _ncMetaCache = {};   // memo por fide_id/nombre: cvFindPlayer es caro y se llama por cada jugador
+function _noticiaPlayerMeta(p){
+  var key = p.fideId ? ('#' + p.fideId) : ('@' + (p.name || ''));
+  if (_ncMetaCache[key]) return _ncMetaCache[key];
+  var female = /^W/.test(_normTitle(p.title || ''));   // WGM/WIM/WFM/WCM/WNM
+  var born = 0;
+  try {
+    var ap = (typeof cvFindPlayer === 'function') ? cvFindPlayer(p.name, p.fideId ? String(p.fideId) : '') : null;
+    if (ap){ if (ap.female) female = true; if (ap.born) born = ap.born; }
+  } catch(e){}
+  return (_ncMetaCache[key] = { female: female, born: born });
 }
 
 function generarNoticiaTorneo(){
@@ -5886,6 +5951,32 @@ function _noticiaIndivDraft(data, m){
     }
   });
 
+  // Mejor femenina / mejor juvenil (sub-20). Como la tabla va ordenada por puesto, el primero que
+  // aparece es el mejor ubicado. Global y, aparte, entre argentinos (para el bloque de internacionales).
+  var _year = _noticiaYear(m);
+  var bestFem = null, bestJuv = null, bestFemArg = null, bestJuvArg = null;
+  st.forEach(function(p){
+    var meta = _noticiaPlayerMeta(p), isA = esArg(p);
+    if (meta.female){ if (!bestFem) bestFem = p; if (isA && !bestFemArg) bestFemArg = p; }
+    if (meta.born){ var edad = _year - meta.born; if (edad >= 4 && edad <= 20){ p._edad = edad; if (!bestJuv) bestJuv = p; if (isA && !bestJuvArg) bestJuvArg = p; } }
+  });
+
+  // Extras: invicto/perfecto, ventaja/desempate, duelo clave, países.
+  var X = _noticiaExtras(data, st, champ);
+  var logro = X.perfecto ? ' con puntaje perfecto' : (X.invicto ? ' e invicto' : '');
+  var pw = (X.margin === 1 || X.margin === 0.5) ? 'punto' : 'puntos';
+  var defParts = function(withDuelo){
+    var d = [];
+    if (X.margin > 0) d.push('se impuso con <strong>' + escHtml(crPtsStr(X.margin)) + ' ' + pw + '</strong> de ventaja');
+    else if (X.desempate) d.push('se consagró tras <strong>desempatar en la cima</strong>' + (X.coLideres > 2 ? (' con otros ' + (X.coLideres - 1) + ' jugadores') : ' con el escolta'));
+    if (withDuelo && X.dueloClave){
+      d.push('en el camino le ganó a <strong>' + escHtml(_nnName({ name:X.dueloClave.rival })) + '</strong>'
+        + (X.dueloClave.elo ? (' (' + X.dueloClave.elo + ')') : '')
+        + (X.dueloClave.ronda ? (' en la ronda ' + X.dueloClave.ronda) : ''));
+    }
+    return d;
+  };
+
   var podLine = function(arr, from){
     var pod = [];
     for (var i = from; i < arr.length && i < 3; i++){
@@ -5901,9 +5992,11 @@ function _noticiaIndivDraft(data, m){
     var fed = champ.fed ? (' (' + escHtml(champ.fed) + ')') : '';
     P.push('<p>El <strong>' + escHtml(m.name) + '</strong>' + ctxSede + ctxFecha + ' tuvo como ganador a <strong>'
       + escHtml(_nnTitleName(champ)) + '</strong>' + fed + ', que se quedó con el título tras sumar <strong>'
-      + escHtml(crPtsStr(champ.pts)) + '</strong> puntos' + (rounds ? (' en ' + rounds + ' rondas') : '')
-      + (champ.rp ? (' y una performance de ' + champ.rp) : '') + '.</p>');
+      + escHtml(crPtsStr(champ.pts)) + '</strong> puntos' + (rounds ? (' en ' + rounds + ' rondas') : '') + logro
+      + (champ.rp ? (', con una performance de ' + champ.rp) : '') + '.</p>');
     P.push(podLine(podium, 1));
+    var dInt = defParts(false);
+    if (dInt.length) P.push('<p>' + _ncCap(dInt.join(', y ')) + '.</p>');
 
     var args = st.filter(esArg);
     if (args.length){
@@ -5924,6 +6017,8 @@ function _noticiaIndivDraft(data, m){
       var dz = [];
       if (aRp && aRp !== best) dz.push('la mejor performance argentina fue la de <strong>' + escHtml(_nnName(aRp)) + '</strong> (Rp ' + aRp.rp + ')');
       if (aGain) dz.push('<strong>' + escHtml(_nnName(aGain)) + '</strong> fue quien más rating sumó (+' + aGain.eloVar + ')');
+      if (bestFemArg && bestFemArg !== best) dz.push('la mejor actuación femenina argentina fue la de <strong>' + escHtml(_nnName(bestFemArg)) + '</strong> (' + (bestFemArg.rank || '?') + 'º)');
+      if (bestJuvArg && bestJuvArg !== best) dz.push('entre los juveniles argentinos se destacó <strong>' + escHtml(_nnName(bestJuvArg)) + '</strong> (' + bestJuvArg._edad + ' años, ' + (bestJuvArg.rank || '?') + 'º)');
       if (dz.length) P.push('<p>' + _ncCap(dz.join('; ')) + '.</p>');
       summary = _nnName(champ) + ' se quedó con el título. La mejor ubicación argentina fue para ' + _nnName(best) + ' (' + (best.rank || '?') + 'º).';
     } else {
@@ -5934,18 +6029,22 @@ function _noticiaIndivDraft(data, m){
     // ── Nacional (o internacional que ganó un argentino): todos por igual ──
     P.push('<p><strong>' + escHtml(_nnTitleName(champ)) + '</strong> se quedó con el <strong>' + escHtml(m.name) + '</strong>'
       + ctxSede + ctxFecha + ' tras sumar <strong>' + escHtml(crPtsStr(champ.pts)) + '</strong> puntos'
-      + (rounds ? (' en ' + rounds + ' rondas') : '') + (champ.rp ? (', con una performance de ' + champ.rp) : '') + '.</p>');
+      + (rounds ? (' en ' + rounds + ' rondas') : '') + logro + (champ.rp ? (', con una performance de ' + champ.rp) : '') + '.</p>');
     P.push(podLine(podium, 1));
+    var dNat = defParts(true);
+    if (dNat.length) P.push('<p>' + _ncCap(dNat.join(', y ')) + '.</p>');
     var dz2 = [];
     if (bestRp && bestRp !== champ) dz2.push('la mejor performance del torneo fue la de <strong>' + escHtml(_nnName(bestRp)) + '</strong> (Rp ' + bestRp.rp + ')');
     if (revel) dz2.push('<strong>' + escHtml(_nnName(revel)) + '</strong> fue la revelación: partía ' + revel._seed + 'º por rating y terminó ' + revel.rank + 'º');
     if (bestGain) dz2.push('<strong>' + escHtml(_nnName(bestGain)) + '</strong> fue quien más rating sumó (+' + bestGain.eloVar + ')');
+    if (bestFem && bestFem !== champ) dz2.push('la mejor actuación femenina fue la de <strong>' + escHtml(_nnName(bestFem)) + '</strong> (' + (bestFem.rank || '?') + 'º)');
+    if (bestJuv && bestJuv !== champ) dz2.push('entre los juveniles se destacó <strong>' + escHtml(_nnName(bestJuv)) + '</strong> (' + bestJuv._edad + ' años, ' + (bestJuv.rank || '?') + 'º)');
     if (dz2.length) P.push('<p>' + _ncCap(dz2.join('; ')) + '.</p>');
     title = _nnName(champ) + ' se quedó con el ' + m.name;
     summary = _nnName(champ) + ' se consagró con ' + crPtsStr(champ.pts) + ' puntos' + (podium[1] ? (', seguido por ' + _nnName(podium[1])) : '') + '.';
   }
 
-  P.push('<p>Participaron ' + N + ' jugadores.</p>');
+  P.push('<p>Participaron ' + N + ' jugadores' + (isIntl && X.paises >= 3 ? (' de ' + X.paises + ' países') : '') + '.</p>');
   P = P.filter(function(x){ return x; });   // sacar párrafos vacíos (podio sin 2º/3º)
 
   return { emoji:'🏆', date:_noticiaFechaHoy(), title:title, summary:summary, body:P.join('\n'), coverImg:'', url:'', pgn:'' };
@@ -5967,6 +6066,180 @@ function _noticiaTeamDraft(data, m){
   P.push('<p>Participaron ' + ts.teams.length + ' equipos.</p>');
   return { emoji:'🏆', date:_noticiaFechaHoy(), title:champ.name + ' se quedó con el ' + m.name,
            summary:champ.name + ' se consagró campeón por equipos.', body:P.join('\n'), coverImg:'', url:'', pgn:'' };
+}
+
+/* ═══════════════════════════════════════════════════════
+   REDACCIÓN CON IA — junta TODA la data del torneo (campeón, podio, performances,
+   revelación, quién más rating sumó y las SORPRESAS/batacazos de las rondas) + los
+   datos extra que escribe el autor, y se lo manda al Worker (/noticia), que llama a
+   la IA de Cloudflare (Workers AI). Si la IA falla, cae al generador local.
+═══════════════════════════════════════════════════════ */
+
+// Arma el JSON compacto que se le manda a la IA. Los nombres ya salen "naturales"
+// (Nombre Apellido). Devuelve null si todavía no hay tabla final con puntajes.
+function _noticiaGatherData(data, m){
+  var st = (data.standings || []).filter(function(p){ return p && p.name; });
+  if (!st.length || data.standingsKind === 'initial') return null;
+  if (!st.some(function(p){ return p && p.pts; })) return null;
+  st = st.slice().sort(function(a,b){ return (a.rank||9999) - (b.rank||9999); });
+  var N = st.length;
+  var isIntl = (typeof crShowArgLine === 'function') && crShowArgLine(m.typ);
+  var esArg = function(p){ try { return _argPersonIsArg(p.name, p.fed, p.fideId); } catch(e){ return false; } };
+  var nat = function(n){ try { return (typeof pgnNameToNatural === 'function') ? pgnNameToNatural(n) : n; } catch(e){ return n; } };
+
+  // Seeds por rating (para la revelación) y mapas nombre→elo/título (para las sorpresas).
+  var seeded = st.filter(function(p){ return p.elo > 0; }).slice().sort(function(a,b){ return b.elo - a.elo; });
+  var seedOf = {}; seeded.forEach(function(p,i){ seedOf[p.name] = i + 1; });
+  var eloOf = {}, titOf = {};
+  st.forEach(function(p){ eloOf[p.name] = p.elo || 0; titOf[p.name] = _normTitle(p.title || ''); });
+
+  var champ = st[0];
+  var podio = st.slice(0, 3).map(function(p){
+    return { pos:p.rank||null, nombre:nat(p.name), titulo:_normTitle(p.title||''), fed:p.fed||'', puntos:crPtsStr(p.pts||0), rp:p.rp||null, arg:esArg(p) };
+  });
+
+  var bestRp = null, bestGain = null, revel = null;
+  st.forEach(function(p){
+    if (p.rp > 0 && (!bestRp || p.rp > bestRp.rp)) bestRp = p;
+    if (p.eloVar > 0 && (!bestGain || p.eloVar > bestGain.eloVar)) bestGain = p;
+    var s = seedOf[p.name];
+    if (s && p.rank && p !== champ){ var over = s - p.rank; if (over >= 4 && p.rank <= Math.ceil(N/2) && (!revel || over > (seedOf[revel.name] - revel.rank))) revel = p; }
+  });
+
+  // Sorpresas: en los cruces (data.rounds), un jugador le gana a otro de MUCHO más elo, o
+  // un titulado (GM/IM/FM…) pierde con uno bastante más bajo. Solo partidas jugadas (1-0 / 0-1).
+  var TIT = /^(GM|IM|FM|WGM|WIM|WFM|CM|WCM)$/;
+  var sorpresas = [];
+  var rounds = data.rounds || {};
+  Object.keys(rounds).forEach(function(rk){
+    (rounds[rk] || []).forEach(function(pr){
+      if (!pr || !pr.res) return;
+      var winner, loser;
+      if (pr.res === '1-0'){ winner = pr.w; loser = pr.b; }
+      else if (pr.res === '0-1'){ winner = pr.b; loser = pr.w; }
+      else return;   // tablas o walkover: no cuenta
+      var we = eloOf[winner] || 0, le = eloOf[loser] || 0;
+      if (!we || !le) return;
+      var diff = le - we, lt = titOf[loser] || '';
+      if (diff >= 250 || (TIT.test(lt) && diff >= 150)){
+        sorpresas.push({ ronda:parseInt(rk)||rk, ganador:nat(winner), ganadorElo:we, perdedor:nat(loser), perdedorTitulo:lt, perdedorElo:le, diff:diff });
+      }
+    });
+  });
+  sorpresas.sort(function(a,b){ return b.diff - a.diff; });
+  sorpresas = sorpresas.slice(0, 5);
+
+  var argentinos = [];
+  if (isIntl){
+    argentinos = st.filter(esArg).slice(0, 10).map(function(p){
+      return { pos:p.rank||null, nombre:nat(p.name), titulo:_normTitle(p.title||''), puntos:crPtsStr(p.pts||0), rp:p.rp||null, delta:p.eloVar||null };
+    });
+  }
+
+  // Femeninas y juveniles (sub-20). Sexo por título W* o cruce con el ranking; edad por año de
+  // nacimiento del ranking (solo jugadores que matchean). La tabla ya va por puesto → orden por mérito.
+  var _year = _noticiaYear(m);
+  var femeninas = [], juveniles = [];
+  st.forEach(function(p){
+    var meta = _noticiaPlayerMeta(p), isA = esArg(p);
+    if (meta.female && femeninas.length < 6)
+      femeninas.push({ pos:p.rank||null, nombre:nat(p.name), titulo:_normTitle(p.title||''), puntos:crPtsStr(p.pts||0), rp:p.rp||null, arg:isA });
+    if (meta.born){ var edad = _year - meta.born; if (edad >= 4 && edad <= 20 && juveniles.length < 6)
+      juveniles.push({ pos:p.rank||null, nombre:nat(p.name), titulo:_normTitle(p.title||''), puntos:crPtsStr(p.pts||0), edad:edad, arg:isA }); }
+  });
+
+  var X = _noticiaExtras(data, st, champ);
+
+  return {
+    torneo:{ nombre:m.name, sede:m.location||'', fechas:m.dates||'', tipo:m.typ||'', internacional:!!isIntl, rondas:(Object.keys(rounds).length||null), participantes:N, paises:X.paises||null },
+    campeon:{ nombre:nat(champ.name), titulo:_normTitle(champ.title||''), fed:champ.fed||'', puntos:crPtsStr(champ.pts||0), rp:champ.rp||null, arg:esArg(champ) },
+    podio:podio,
+    definicion:{
+      invicto: X.invicto,
+      puntajePerfecto: X.perfecto,
+      ventajaPuntos: X.margin > 0 ? crPtsStr(X.margin) : null,
+      desempate: X.desempate,
+      coLideres: X.coLideres > 1 ? X.coLideres : null,
+      dueloClave: X.dueloClave ? { rival:nat(X.dueloClave.rival), elo:X.dueloClave.elo||null, ronda:X.dueloClave.ronda } : null,
+      leGanoAlEscolta: X.beatRunnerUp
+    },
+    destacados:{
+      mejorPerformance: bestRp ? { nombre:nat(bestRp.name), rp:bestRp.rp } : null,
+      masRatingSumo: bestGain ? { nombre:nat(bestGain.name), delta:bestGain.eloVar } : null,
+      revelacion: revel ? { nombre:nat(revel.name), desde:seedOf[revel.name], hasta:revel.rank } : null
+    },
+    argentinos:argentinos,
+    femeninas:femeninas,
+    juveniles:juveniles,
+    sorpresas:sorpresas
+  };
+}
+
+function _noticiaAIOpen(){
+  var m = _tdNewsMeta;
+  if (!m || !m.crk){ alert('Abrí un torneo terminado (con tabla de posiciones) para generar la noticia.'); return; }
+  var ov = document.getElementById('noticia-ai-overlay');
+  if (!ov){
+    ov = document.createElement('div');
+    ov.id = 'noticia-ai-overlay';
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:99998;display:flex;align-items:flex-start;justify-content:center;padding:16px;overflow-y:auto';
+    ov.addEventListener('click', function(e){ if (e.target === ov) _noticiaAIClose(); });
+    document.body.appendChild(ov);
+  }
+  ov.innerHTML = '<div style="background:var(--bg2,#1c1c1e);border:1px solid var(--border);border-radius:14px;max-width:520px;width:100%;padding:20px;font-family:inherit;box-sizing:border-box;margin:24px auto">'
+    + '<div style="font-size:17px;font-weight:700;color:var(--text);margin-bottom:6px">✨ Redactar la noticia con IA</div>'
+    + '<div style="font-size:12.5px;color:var(--text2);line-height:1.5;margin-bottom:14px">La IA arma la nota con los datos del torneo (campeón, podio, performances, revelación y las sorpresas de las rondas). Sumale abajo datos que ella no puede saber y los va a incluir.</div>'
+    + '<label style="display:block;font-size:12px;color:var(--text2);margin-bottom:4px">Datos extra para la nota <span style="font-weight:400">(opcional)</span></label>'
+    + '<textarea id="noticia-ai-notes" rows="6" placeholder="Ej.:&#10;Mareco venía de jugar el Continental y el Panamericano.&#10;Con este 3° puesto clasifica al Mundial por equipos.&#10;Sus próximos torneos serán el Argentino Absoluto y el Sudamericano." style="width:100%;padding:10px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit;font-size:14px;box-sizing:border-box;resize:vertical"></textarea>'
+    + '<div id="noticia-ai-status" style="font-size:12px;color:var(--text3);min-height:16px;margin:8px 0"></div>'
+    + '<div style="display:flex;gap:8px;margin-top:4px">'
+    + '<button id="noticia-ai-go" onclick="_noticiaAIGenerate()" style="flex:1;padding:11px;background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-weight:700;border-radius:9px;cursor:pointer;font-family:inherit">✨ Generar noticia</button>'
+    + '<button onclick="_noticiaAIClose()" style="padding:11px 16px;background:var(--bg3);border:1px solid var(--border);color:var(--text2);border-radius:9px;cursor:pointer;font-family:inherit">Cancelar</button>'
+    + '</div>'
+    + '<div style="font-size:11px;color:var(--text3);margin-top:10px;text-align:center;line-height:1.4">Si la IA no responde, se abre el borrador local automáticamente.</div>'
+    + '</div>';
+  setTimeout(function(){ var t=document.getElementById('noticia-ai-notes'); if(t) t.focus(); }, 50);
+}
+function _noticiaAIClose(){ var ov=document.getElementById('noticia-ai-overlay'); if (ov && ov.parentNode) ov.parentNode.removeChild(ov); }
+
+// Endpoint del Worker que llama a la IA (misma base que el proxy de Chess-Results).
+var NOTICIA_AI_URL = CR_PROXY + '/noticia';
+
+async function _noticiaAIGenerate(){
+  var m = _tdNewsMeta; if (!m || !m.crk) return;
+  var data = null; try { data = crDataLoad(m.crk); } catch(e){}
+  if (!data){ alert('No encontré los datos de este torneo.'); return; }
+  var payload = _noticiaGatherData(data, m);
+  if (!payload){ alert('Todavía no hay una tabla final con puntajes para armar la noticia.'); return; }
+  var notesEl = document.getElementById('noticia-ai-notes');
+  payload.notasAutor = (notesEl ? notesEl.value.trim() : '').slice(0, 2000);
+
+  var statusEl = document.getElementById('noticia-ai-status');
+  var goBtn = document.getElementById('noticia-ai-go');
+  if (goBtn){ goBtn.disabled = true; goBtn.style.opacity = '.6'; }
+  if (statusEl) statusEl.textContent = '✍️ La IA está redactando… (puede tardar unos segundos)';
+
+  var localFallback = function(msg){
+    if (statusEl) statusEl.textContent = '⚠️ ' + msg + ' Abro el borrador local…';
+    setTimeout(function(){
+      _noticiaAIClose();
+      var prefill = m.isTeam ? _noticiaTeamDraft(data, m) : _noticiaIndivDraft(data, m);
+      if (prefill) openNewsEditor(null, prefill);
+    }, 1400);
+  };
+
+  try {
+    var res = await fetch(NOTICIA_AI_URL, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+    if (!res.ok){ var t=''; try{ t=await res.text(); }catch(e){} throw new Error('HTTP ' + res.status + (t?(' — '+t.slice(0,120)):'')); }
+    var j = await res.json();
+    if (!j || (!j.body && !j.title)) throw new Error('la IA devolvió una respuesta vacía');
+    _noticiaAIClose();
+    openNewsEditor(null, { emoji:'🏆', date:_noticiaFechaHoy(), title:j.title||'', summary:j.summary||'', body:j.body||'', coverImg:'', url:'', pgn:'' });
+  } catch(e){
+    localFallback('No se pudo usar la IA (' + (e.message || e) + ').');
+  } finally {
+    if (goBtn){ goBtn.disabled = false; goBtn.style.opacity = '1'; }
+  }
 }
 
 // Deriva la URL de export a Excel para una vista (art) y ronda (rd). prt=4&excel=2010 = "bajar como
