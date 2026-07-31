@@ -5805,6 +5805,170 @@ function _tdPodiumHtml(crk, isTeam) {
   return h;
 }
 
+/* ═══════════════════════════════════════════════════════
+   GENERADOR DE NOTICIAS — arma un BORRADOR de nota con la data final de un
+   torneo (campeón, podio, performances, revelación, quién más rating sumó).
+   Criterio pedido por el autor:
+     · Torneo NACIONAL → todos los jugadores por igual.
+     · Torneo INTERNACIONAL (crShowArgLine por el "tipo") → cuenta al ganador
+       pero se centra en los ARGENTINOS que compitieron.
+   No usa IA ni claves: todo se arma en el navegador con los datos que ya hay.
+   Abre el editor de noticias PRECARGADO para que el autor lo retoque y le
+   sume las fotos antes de guardar.
+═══════════════════════════════════════════════════════ */
+var _tdNewsMeta = null;   // {crk,name,location,dates,typ,isTeam} del torneo abierto (lo setea el detalle)
+
+function _tdCrearNoticiaBtnHtml(){
+  return '<div style="text-align:center;margin:-4px 0 18px">'
+    + '<button onclick="generarNoticiaTorneo()" style="display:inline-flex;align-items:center;gap:7px;padding:10px 18px;background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-size:13.5px;font-weight:700;border-radius:10px;cursor:pointer;font-family:inherit;box-shadow:var(--shadow-card)">📝 Crear noticia del torneo</button>'
+    + '<div style="font-size:11px;color:var(--text3);margin-top:5px;line-height:1.4">Arma un borrador con los datos del torneo. Después lo retocás y le sumás las fotos.</div>'
+    + '</div>';
+}
+
+function _ncCap(s){ return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+function _noticiaFechaHoy(){
+  var M = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+  var d = new Date();
+  return d.getDate() + ' ' + M[d.getMonth()] + ' ' + d.getFullYear();
+}
+// Nombre "natural" para la nota: Chess-Results trae "Apellido, Nombre" → lo pasamos a
+// "Nombre Apellido", que se lee bien en prosa. Para el CUERPO (HTML) el que llama lo pasa
+// por escHtml; para título/resumen (texto plano) se usa tal cual.
+function _nnName(p){
+  var n = p.name || '';
+  try { if (typeof pgnNameToNatural === 'function') n = pgnNameToNatural(n); } catch(e){}
+  return n;
+}
+// Nombre con la pastilla de título en texto (ej. "GM Sandro Mareco").
+function _nnTitleName(p){
+  var t = _normTitle(p.title || '');
+  return (t ? t + ' ' : '') + _nnName(p);
+}
+
+function generarNoticiaTorneo(){
+  var m = _tdNewsMeta;
+  if (!m || !m.crk){ alert('Abrí un torneo terminado (con tabla de posiciones) para generar la noticia.'); return; }
+  var data = null; try { data = crDataLoad(m.crk); } catch(e){}
+  if (!data){ alert('No encontré los datos de este torneo.'); return; }
+  var prefill = m.isTeam ? _noticiaTeamDraft(data, m) : _noticiaIndivDraft(data, m);
+  if (!prefill){ alert('Todavía no hay una tabla final con puntajes para armar la noticia.'); return; }
+  // El editor es un overlay fijo (z-index alto): se abre por encima del detalle del torneo.
+  openNewsEditor(null, prefill);
+}
+
+function _noticiaIndivDraft(data, m){
+  var st = (data.standings || []).filter(function(p){ return p && p.name; });
+  if (!st.length || data.standingsKind === 'initial') return null;
+  if (!st.some(function(p){ return p && p.pts; })) return null;   // cargado pero no jugado
+
+  st = st.slice().sort(function(a,b){ return (a.rank||9999) - (b.rank||9999); });
+  var N = st.length;
+  var isIntl = (typeof crShowArgLine === 'function') && crShowArgLine(m.typ);
+  var esArg = function(p){ try { return _argPersonIsArg(p.name, p.fed, p.fideId); } catch(e){ return false; } };
+
+  // Seeds por rating (para la "revelación": quien más escaló respecto de su ranking inicial).
+  var seeded = st.filter(function(p){ return p.elo > 0; }).slice().sort(function(a,b){ return b.elo - a.elo; });
+  seeded.forEach(function(p,i){ p._seed = i + 1; });
+
+  var champ = st[0], podium = st.slice(0, 3);
+  var rounds = data.rounds ? Object.keys(data.rounds).length : 0;
+  var ctxSede = m.location ? (' disputado en ' + escHtml(m.location)) : '';
+  var ctxFecha = m.dates ? (' (' + escHtml(m.dates) + ')') : '';
+
+  // Destacados globales
+  var bestRp = null, bestGain = null, revel = null;
+  st.forEach(function(p){
+    if (p.rp > 0 && (!bestRp || p.rp > bestRp.rp)) bestRp = p;
+    if (p.eloVar > 0 && (!bestGain || p.eloVar > bestGain.eloVar)) bestGain = p;
+    if (p._seed && p.rank && p !== champ){
+      var over = p._seed - p.rank;
+      if (over >= 4 && p.rank <= Math.ceil(N/2) && (!revel || over > (revel._seed - revel.rank))) revel = p;
+    }
+  });
+
+  var podLine = function(arr, from){
+    var pod = [];
+    for (var i = from; i < arr.length && i < 3; i++){
+      if (arr[i]) pod.push('<strong>' + escHtml(_nnTitleName(arr[i])) + '</strong> (' + escHtml(crPtsStr(arr[i].pts)) + ')');
+    }
+    return pod.length ? '<p>El podio lo completaron ' + pod.join(' y ') + '.</p>' : '';
+  };
+
+  var P = [], title, summary;
+
+  if (isIntl && !esArg(champ)){
+    // ── Internacional con ganador extranjero: contar al ganador, centrarse en los argentinos ──
+    var fed = champ.fed ? (' (' + escHtml(champ.fed) + ')') : '';
+    P.push('<p>El <strong>' + escHtml(m.name) + '</strong>' + ctxSede + ctxFecha + ' tuvo como ganador a <strong>'
+      + escHtml(_nnTitleName(champ)) + '</strong>' + fed + ', que se quedó con el título tras sumar <strong>'
+      + escHtml(crPtsStr(champ.pts)) + '</strong> puntos' + (rounds ? (' en ' + rounds + ' rondas') : '')
+      + (champ.rp ? (' y una performance de ' + champ.rp) : '') + '.</p>');
+    P.push(podLine(podium, 1));
+
+    var args = st.filter(esArg);
+    if (args.length){
+      var best = args[0];
+      var lead = '<p><strong>La actuación argentina.</strong> La mejor ubicación nacional fue para <strong>'
+        + escHtml(_nnTitleName(best)) + '</strong>, ' + (best.rank || '?') + 'º con ' + escHtml(crPtsStr(best.pts)) + ' puntos'
+        + (best.rp ? (' (performance ' + best.rp + ')') : '') + '.';
+      if (args.length > 1){
+        var others = args.slice(1, 6).map(function(p){ return escHtml(_nnTitleName(p)) + ' (' + (p.rank || '?') + 'º)'; });
+        lead += ' También compitieron ' + others.join(', ') + (args.length > 6 ? ' y otros' : '') + '.';
+      }
+      P.push(lead + '</p>');
+      var aRp = null, aGain = null;
+      args.forEach(function(p){
+        if (p.rp > 0 && (!aRp || p.rp > aRp.rp)) aRp = p;
+        if (p.eloVar > 0 && (!aGain || p.eloVar > aGain.eloVar)) aGain = p;
+      });
+      var dz = [];
+      if (aRp && aRp !== best) dz.push('la mejor performance argentina fue la de <strong>' + escHtml(_nnName(aRp)) + '</strong> (Rp ' + aRp.rp + ')');
+      if (aGain) dz.push('<strong>' + escHtml(_nnName(aGain)) + '</strong> fue quien más rating sumó (+' + aGain.eloVar + ')');
+      if (dz.length) P.push('<p>' + _ncCap(dz.join('; ')) + '.</p>');
+      summary = _nnName(champ) + ' se quedó con el título. La mejor ubicación argentina fue para ' + _nnName(best) + ' (' + (best.rank || '?') + 'º).';
+    } else {
+      summary = _nnName(champ) + ' se quedó con el título internacional.';
+    }
+    title = _nnName(champ) + ' ganó el ' + m.name;
+  } else {
+    // ── Nacional (o internacional que ganó un argentino): todos por igual ──
+    P.push('<p><strong>' + escHtml(_nnTitleName(champ)) + '</strong> se quedó con el <strong>' + escHtml(m.name) + '</strong>'
+      + ctxSede + ctxFecha + ' tras sumar <strong>' + escHtml(crPtsStr(champ.pts)) + '</strong> puntos'
+      + (rounds ? (' en ' + rounds + ' rondas') : '') + (champ.rp ? (', con una performance de ' + champ.rp) : '') + '.</p>');
+    P.push(podLine(podium, 1));
+    var dz2 = [];
+    if (bestRp && bestRp !== champ) dz2.push('la mejor performance del torneo fue la de <strong>' + escHtml(_nnName(bestRp)) + '</strong> (Rp ' + bestRp.rp + ')');
+    if (revel) dz2.push('<strong>' + escHtml(_nnName(revel)) + '</strong> fue la revelación: partía ' + revel._seed + 'º por rating y terminó ' + revel.rank + 'º');
+    if (bestGain) dz2.push('<strong>' + escHtml(_nnName(bestGain)) + '</strong> fue quien más rating sumó (+' + bestGain.eloVar + ')');
+    if (dz2.length) P.push('<p>' + _ncCap(dz2.join('; ')) + '.</p>');
+    title = _nnName(champ) + ' se quedó con el ' + m.name;
+    summary = _nnName(champ) + ' se consagró con ' + crPtsStr(champ.pts) + ' puntos' + (podium[1] ? (', seguido por ' + _nnName(podium[1])) : '') + '.';
+  }
+
+  P.push('<p>Participaron ' + N + ' jugadores.</p>');
+  P = P.filter(function(x){ return x; });   // sacar párrafos vacíos (podio sin 2º/3º)
+
+  return { emoji:'🏆', date:_noticiaFechaHoy(), title:title, summary:summary, body:P.join('\n'), coverImg:'', url:'', pgn:'' };
+}
+
+function _noticiaTeamDraft(data, m){
+  var ts = data.teamStandings;
+  if (!ts || ts.kind === 'initial' || !ts.teams || !ts.teams.length) return null;
+  var t = ts.teams.slice(0, 3), champ = t[0];
+  var score = function(x){ return (x.des && x.des[0] != null) ? String(x.des[0]) : ''; };
+  var P = [];
+  P.push('<p>El <strong>' + escHtml(m.name) + '</strong>' + (m.location ? (' disputado en ' + escHtml(m.location)) : '')
+    + (m.dates ? (' (' + escHtml(m.dates) + ')') : '') + ' tuvo como campeón a <strong>' + escHtml(champ.name) + '</strong>'
+    + (score(champ) ? (' con ' + escHtml(score(champ)) + ' puntos') : '') + '.</p>');
+  var pod = [];
+  if (t[1]) pod.push('<strong>' + escHtml(t[1].name) + '</strong>' + (score(t[1]) ? (' (' + escHtml(score(t[1])) + ')') : ''));
+  if (t[2]) pod.push('<strong>' + escHtml(t[2].name) + '</strong>' + (score(t[2]) ? (' (' + escHtml(score(t[2])) + ')') : ''));
+  if (pod.length) P.push('<p>El podio lo completaron ' + pod.join(' y ') + '.</p>');
+  P.push('<p>Participaron ' + ts.teams.length + ' equipos.</p>');
+  return { emoji:'🏆', date:_noticiaFechaHoy(), title:champ.name + ' se quedó con el ' + m.name,
+           summary:champ.name + ' se consagró campeón por equipos.', body:P.join('\n'), coverImg:'', url:'', pgn:'' };
+}
+
 // Deriva la URL de export a Excel para una vista (art) y ronda (rd). prt=4&excel=2010 = "bajar como
 // xlsx". zeilen=99999 = TODAS las filas (equivale a tocar "Mostrar lista completa": sin esto, en
 // torneos de +150 jugadores el Excel se corta en las primeras 150 líneas). Vistas conocidas:
@@ -15002,8 +15166,11 @@ function _nRteEmoji(e){
   var g=document.getElementById('n-emoji-grid'); if(g) g.classList.remove('open');
 }
 
-function openNewsEditor(id){
-  var n = id ? getNewsItems().filter(function(x){ return x.id===id; })[0] : null;
+function openNewsEditor(id, prefill){
+  // `prefill` (opcional): borrador precargado para una noticia NUEVA (id null), ej. el que arma
+  // el generador de noticias de torneos. Se usa como si fuera la noticia a editar, pero sin id,
+  // así "Guardar" crea una noticia nueva y el autor la retoca antes.
+  var n = id ? getNewsItems().filter(function(x){ return x.id===id; })[0] : (prefill || null);
   var ov = document.getElementById('news-editor-overlay');
   if (!ov){
     ov = document.createElement('div');
@@ -15020,7 +15187,7 @@ function openNewsEditor(id){
   var idAttr = id ? _nEscAttr(id) : '';
 
   ov.innerHTML = '<div style="background:var(--bg2,#1c1c1e);border:1px solid var(--border);border-radius:14px;max-width:560px;width:100%;overflow:visible;padding:20px;font-family:inherit;box-sizing:border-box;margin:20px auto">'
-    + '<div style="font-size:17px;font-weight:700;color:var(--text);margin-bottom:16px">' + (n?'Editar noticia':'Nueva noticia') + '</div>'
+    + '<div style="font-size:17px;font-weight:700;color:var(--text);margin-bottom:16px">' + (id?'Editar noticia':'Nueva noticia') + '</div>'
     // Emoji + Fecha
     + '<div style="display:flex;gap:10px">'
     + '<div style="width:80px;flex:none">' + _newsInput('Emoji','news-f-emoji', n?n.emoji:'📰','📰') + '</div>'
@@ -20334,7 +20501,15 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   }
 
   // Podio: cuando el torneo terminó, quién ganó tiene que verse sin abrir la tabla.
-  if (status === 'done') h += _tdPodiumHtml(crk, isTeam);
+  if (status === 'done') {
+    var _podH = _tdPodiumHtml(crk, isTeam);
+    h += _podH;
+    // Botón "Crear noticia" (solo modo autor): si hay podio, hay datos suficientes para el borrador.
+    if (!_ondemand && _podH) {
+      _tdNewsMeta = { crk: crk, name: name, location: location, dates: dates, typ: typ, isTeam: isTeam };
+      h += _tdCrearNoticiaBtnHtml();
+    }
+  }
 
   // (Los links externos ahora van en la columna derecha del header — ver linksHtml más arriba.
   // El botón de Lichess sigue como link discreto arriba a la derecha, junto al badge de estado.)
