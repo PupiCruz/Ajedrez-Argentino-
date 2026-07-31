@@ -16930,6 +16930,7 @@ function cvOpenOverlay() {
   // Partida nueva: no arrastrar el score/líneas del módulo de la partida anterior mientras se arma
   // el gráfico (el pase le saca el motor al módulo). Dejarlo en "computando" hasta que evalúe.
   if (sf.on) sfClearLiveDisplay();
+  _fa._freshGame = true;   // marca "partida recién abierta" → faLiveBuild hace el prelude (analiza la actual)
   cvRenderBoard();
   if (!_cvHistoryPushed) {
     _cvHistoryPushed = true;
@@ -25107,6 +25108,8 @@ function faLiveBuild() {
   if (!nodes.length) return;
   _fa.live = true;
   _fa.nodes = nodes;
+  var _newGame = !!_fa._freshGame;   // "partida recién abierta" (lo pone cvOpenOverlay); consumir SIEMPRE
+  _fa._freshGame = false;            // (aunque este build no tenga jugadas por evaluar) para no preludiar en un refresco
   _fa.results = nodes.map(function(nd, i) {
     var mine = _faLiveCache[nd.fen];                   // NUESTRA eval (módulo/pase, con .d)
     // Las últimas jugadas (las que llegan) prefieren NUESTRA eval con profundidad para poder
@@ -25128,8 +25131,38 @@ function faLiveBuild() {
   // refresco). Con esto los nombres son siempre los de la partida abierta; el pase refina después.
   faClassify(); faRenderStats(); faApplyNags(); cvUpdateNagBadge();
   // ¿Falta (re)evaluar alguna? Lanzar el pase del motor (incremental) que solo calcula esas.
-  if (_fa.nodes.some(function(nd, i) { return _faNeedsPassEval(i); })) faLiveEngineStart();
+  if (_fa.nodes.some(function(nd, i) { return _faNeedsPassEval(i); })) {
+    // PARTIDA NUEVA con el módulo prendido: antes de que el pase del gráfico le saque el motor,
+    // dejar que el módulo analice la POSICIÓN ACTUAL (prof. ~18) y la muestre. Así el visitante ve
+    // ya la valoración + líneas de la posición final (no las de la partida anterior) mientras el
+    // gráfico se dibuja. En refrescos de la MISMA partida (o con el módulo apagado) arranca directo.
+    if (_newGame && sf.on && sf.ready && !sf.deepened && !_fa._preluding) {
+      sfClearLiveDisplay();   // matar líneas/score de la partida anterior
+      sfAnalyze();            // el módulo analiza la posición actual
+      _faPreludeThenPass();   // cuando llegue a prof. _SF_PRELUDE_DEPTH (o timeout), arranca el pase
+    } else {
+      faLiveEngineStart();
+    }
+  }
   faUpdateBuildBtn();
+}
+
+// Espera (sin tocar el ruteo de mensajes: solo mira sf.depth) a que el módulo tenga una eval confiable
+// de la posición actual, y recién ahí arranca el pase del gráfico. Backstop de 4s por si tarda.
+var _SF_PRELUDE_DEPTH = 18;
+function _faPreludeThenPass() {
+  _fa._preluding = true;
+  var t0 = Date.now();
+  (function poll() {
+    if (!_fa.live || _fa.running || !_fa._preluding) { _fa._preluding = false; return; }
+    if (!sf.on) { _fa._preluding = false; faLiveEngineStart(); return; }   // apagaron el módulo → armar igual
+    if (sf.depth >= _SF_PRELUDE_DEPTH || (Date.now() - t0) > 4000) {
+      _fa._preluding = false;
+      faLiveEngineStart();
+      return;
+    }
+    setTimeout(poll, 120);
+  })();
 }
 
 // Arranca el pase del motor para el modo en vivo (solo las jugadas sin eval). Reusa faNext/faHandleMsg.
@@ -25140,6 +25173,11 @@ function faLiveEngineStart() {
   }
   if (_fa.running) return;
   mevAbort();
+  _fa._preluding = false;   // el pase arranca: cancelar cualquier "prelude" del módulo en curso
+  // El pase le saca el motor al módulo: matar el timer del tope del módulo. Si no, un timer viejo
+  // (de una búsqueda del módulo que no llegó a capear) podía disparar un 'stop' EN MEDIO del pase.
+  if (sf._capTimer) { clearTimeout(sf._capTimer); sf._capTimer = null; }
+  sf.capped = false; _sfDeepenBtn(false);   // el pase manda ahora: nada de "Seguir analizando"
   _fa.running = true; _fa.armed = false; _fa.rokSeen = false; _fa.ply = 0;
   // Cuántas jugadas va a (re)evaluar este pase: el cartel "armando gráfico…" solo sale si son ≥ N
   // (ver faSetBuilding). Así los refrescos de 1-2 jugadas no reacomodan la columna a cada rato.
