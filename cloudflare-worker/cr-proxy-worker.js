@@ -394,56 +394,128 @@ async function noticiaAI(request, env) {
 
   let d;
   try { d = await request.json(); } catch (e) { return errJson('Body inválido', 400); }
-  if (!d || !d.torneo || !d.campeon) return errJson('Faltan datos del torneo', 400);
-
+  if (!d || typeof d !== 'object') return errJson('Body inválido', 400);
+  const modo = d.modo || 'torneo';
   const notas = (typeof d.notasAutor === 'string') ? d.notasAutor.slice(0, 2000) : '';
 
-  const sys = 'Sos un periodista de ajedrez argentino. Redactás notas breves, claras y '
-    + 'atractivas en español rioplatense, en tercera persona, con tono informativo y ameno. '
-    + 'Regla de oro: NO inventás nada. Usás SOLO los datos que te paso; si un dato no está, no lo '
-    + 'menciones ni lo supongas. Escribí los nombres de los jugadores exactamente como te los doy. '
-    + 'No repitas frases. No uses markdown, asteriscos ni emojis.';
+  const sys = 'Sos un periodista de ajedrez argentino. Redactás en español rioplatense, claro y ameno, '
+    + 'en tercera persona. Regla de oro: NO inventás nada; usás SOLO los datos que te paso; si un dato no '
+    + 'está, no lo menciones ni lo supongas. Escribí los nombres de los jugadores exactamente como te los '
+    + 'doy. No repitas frases. No uses markdown ni asteriscos.';
 
-  // Nacional vs internacional: mismo criterio que la app.
-  const foco = (d.torneo.internacional && d.campeon && d.campeon.arg === false)
-    ? 'Es un torneo INTERNACIONAL con ganador extranjero: contá quién ganó y el podio, pero '
-      + 'CENTRÁ la nota en los jugadores ARGENTINOS que participaron (sus ubicaciones y actuaciones), '
-      + 'usando la lista "argentinos".'
-    : 'Tratá a todos los jugadores por igual: campeón, podio, actuaciones destacadas y sorpresas.';
+  // ── Modo MEJORAR: puliste un texto que ya escribió el autor (no agrega hechos) ──
+  if (modo === 'mejorar') {
+    const texto = (typeof d.texto === 'string') ? d.texto.slice(0, 6000).trim() : '';
+    if (texto.length < 10) return errJson('Falta el texto a mejorar', 400);
+    const user = 'Mejorá y puliste el siguiente texto para una nota de ajedrez: mejorá la redacción, la '
+      + 'claridad y el ritmo, y corregí errores, pero NO agregues datos ni hechos nuevos y NO cambies los '
+      + 'nombres. Mismo idioma (español), tono periodístico, sin emojis. Devolvé SOLO el texto mejorado, en '
+      + 'párrafos separados por una línea en blanco, sin títulos ni etiquetas.\n\nTEXTO:\n' + texto;
+    let res;
+    try { res = await aiComplete(env, sys, user, 1100); } catch (e) { return errJson('La IA no pudo redactar: ' + e.message, 502); }
+    return jsonResp({ ok: true, body: htmlParas(res.out), model: res.model, raw: res.out });
+  }
 
-  const user = 'Redactá una noticia sobre este torneo de ajedrez.\n'
-    + foco + '\n'
-    + 'Aprovechá, cuando corresponda: el campeón y su puntaje, el podio completo, las mejores '
-    + 'performances (Rp), la revelación, quién más rating sumó, las SORPRESAS/batacazos de las '
-    + 'rondas (un jugador que le ganó a otro de mucho más rating), la mejor actuación FEMENINA '
-    + '(lista "femeninas") y la de los JUVENILES/sub-20 (lista "juveniles", con su edad).\n'
-    + 'Cómo se DEFINIÓ el título (objeto "definicion"): si el campeón terminó invicto o con puntaje '
-    + 'perfecto, si se impuso con ventaja de puntos o en el desempate, y el duelo clave (a quién de '
-    + 'buen rating le ganó en el camino). Y de cuántos PAÍSES hubo jugadores ("torneo.paises").\n'
-    + (notas ? ('Datos EXTRA del autor para incorporar naturalmente en la nota (son ciertos, usalos):\n' + notas + '\n') : '')
-    + '\nDATOS DEL TORNEO (JSON):\n' + JSON.stringify(d) + '\n'
-    + '\nRespondé EXACTAMENTE en este formato, sin nada antes ni después:\n'
-    + 'TITULO: <un título atractivo, una sola línea>\n'
-    + 'RESUMEN: <una o dos frases para la tarjeta>\n'
-    + 'CUERPO:\n<3 a 5 párrafos, separados por una línea en blanco>';
+  // ── Modo REDES: tres posteos (X / Instagram / Facebook) a partir de una noticia ──
+  if (modo === 'redes') {
+    const titulo = String(d.titulo || '').slice(0, 300);
+    const resumen = String(d.resumen || '').slice(0, 600);
+    const cuerpo = String(d.cuerpo || '').slice(0, 4000);
+    const link = String(d.link || '').slice(0, 300);
+    if (!titulo && !cuerpo) return errJson('Faltan datos de la noticia', 400);
+    const user = 'A partir de esta noticia de ajedrez argentino, escribí TRES posteos para redes. No inventes datos.\n'
+      + (titulo ? ('TÍTULO: ' + titulo + '\n') : '')
+      + (resumen ? ('RESUMEN: ' + resumen + '\n') : '')
+      + (cuerpo ? ('NOTA: ' + cuerpo + '\n') : '')
+      + (link ? ('LINK: ' + link + '\n') : '')
+      + (notas ? ('DATOS EXTRA (ciertos, usalos): ' + notas + '\n') : '')
+      + '\nReglas: X hasta 280 caracteres, tono directo, 2-3 hashtags y el link al final. Instagram más cálido '
+      + 'y largo, con emojis moderados, hashtags al final y la línea "🔗 Nota completa: link en la bio". Facebook '
+      + 'informativo, con el link al final. Incluí #AjedrezArgentino entre los hashtags.\n'
+      + '\nRespondé EXACTAMENTE así, con cada separador en su propia línea y nada antes ni después:\n'
+      + '===X===\n<texto para X>\n===INSTAGRAM===\n<texto para Instagram>\n===FACEBOOK===\n<texto para Facebook>';
+    let res;
+    try { res = await aiComplete(env, sys, user, 900); } catch (e) { return errJson('La IA no pudo redactar: ' + e.message, 502); }
+    return jsonResp({ ok: true, redes: parseRedes(res.out), model: res.model, raw: res.out });
+  }
 
-  // Probar los modelos en orden; usar el primero que devuelva texto. Un modelo dado de baja o
-  // inexistente tira error → se prueba el siguiente (no gasta inferencia).
-  let out = '', usedModel = '', lastErr = '';
+  // ── Modos TORNEO / ANTICIPO: nota con TITULO/RESUMEN/CUERPO ──
+  if (!d.torneo) return errJson('Faltan datos del torneo', 400);
+  const esAnticipo = (modo === 'anticipo');
+  if (!esAnticipo && !d.campeon) return errJson('Faltan datos del torneo', 400);
+
+  let user;
+  if (esAnticipo) {
+    // ANTICIPO / previa: el torneo TODAVÍA no se jugó. No hay resultados.
+    const foco = d.torneo.internacional
+      ? 'Es un torneo INTERNACIONAL: mencioná a los favoritos por rating, pero DESTACÁ a los jugadores ARGENTINOS anotados (lista "argentinos").'
+      : 'Tratá a todos los inscriptos por igual; los favoritos salen de la lista "favoritos".';
+    user = 'Redactá un ANTICIPO (previa) de este torneo de ajedrez que TODAVÍA NO se jugó.\n'
+      + 'IMPORTANTE: no hay resultados. No inventes ganadores, posiciones ni partidas. Tono de expectativa, "se viene".\n'
+      + foco + '\n'
+      + 'Aprovechá: la sede y las fechas, el sistema y la cantidad de rondas, los FAVORITOS por rating '
+      + '(lista "favoritos"), los ARGENTINOS anotados (lista "argentinos") y cuántos inscriptos/países hay.\n'
+      + (notas ? ('Datos EXTRA del autor para incorporar naturalmente (son ciertos, usalos):\n' + notas + '\n') : '')
+      + '\nDATOS DEL TORNEO (JSON):\n' + JSON.stringify(d) + '\n'
+      + '\nRespondé EXACTAMENTE en este formato, sin nada antes ni después:\n'
+      + 'TITULO: <un título atractivo de previa, una sola línea>\n'
+      + 'RESUMEN: <una o dos frases para la tarjeta>\n'
+      + 'CUERPO:\n<2 a 4 párrafos, separados por una línea en blanco>';
+  } else {
+    // Nacional vs internacional: mismo criterio que la app.
+    const foco = (d.torneo.internacional && d.campeon && d.campeon.arg === false)
+      ? 'Es un torneo INTERNACIONAL con ganador extranjero: contá quién ganó y el podio, pero '
+        + 'CENTRÁ la nota en los jugadores ARGENTINOS que participaron (sus ubicaciones y actuaciones), '
+        + 'usando la lista "argentinos".'
+      : 'Tratá a todos los jugadores por igual: campeón, podio, actuaciones destacadas y sorpresas.';
+
+    user = 'Redactá una noticia sobre este torneo de ajedrez.\n'
+      + foco + '\n'
+      + 'Aprovechá, cuando corresponda: el campeón y su puntaje, el podio completo, las mejores '
+      + 'performances (Rp), la revelación, quién más rating sumó, las SORPRESAS/batacazos de las '
+      + 'rondas (un jugador que le ganó a otro de mucho más rating), la mejor actuación FEMENINA '
+      + '(lista "femeninas") y la de los JUVENILES/sub-20 (lista "juveniles", con su edad).\n'
+      + 'Cómo se DEFINIÓ el título (objeto "definicion"): si el campeón terminó invicto o con puntaje '
+      + 'perfecto, si se impuso con ventaja de puntos o en el desempate, y el duelo clave (a quién de '
+      + 'buen rating le ganó en el camino). Y de cuántos PAÍSES hubo jugadores ("torneo.paises").\n'
+      + (notas ? ('Datos EXTRA del autor para incorporar naturalmente en la nota (son ciertos, usalos):\n' + notas + '\n') : '')
+      + '\nDATOS DEL TORNEO (JSON):\n' + JSON.stringify(d) + '\n'
+      + '\nRespondé EXACTAMENTE en este formato, sin nada antes ni después:\n'
+      + 'TITULO: <un título atractivo, una sola línea>\n'
+      + 'RESUMEN: <una o dos frases para la tarjeta>\n'
+      + 'CUERPO:\n<3 a 5 párrafos, separados por una línea en blanco>';
+  }
+
+  let res;
+  try { res = await aiComplete(env, sys, user, 900); }
+  catch (e) { return errJson('La IA no pudo redactar con ningún modelo disponible. ' + e.message, 502); }
+  const parsed = parseNoticia(res.out);
+  return jsonResp({ ok: true, title: parsed.title, summary: parsed.summary, body: parsed.body, model: res.model, raw: res.out });
+}
+
+// Corre los modelos de NOTICIA_MODELS en orden y devuelve { out, model } del primero que responda.
+// Un modelo dado de baja o inexistente tira error → se prueba el siguiente. Si fallan todos, lanza.
+async function aiComplete(env, sys, user, maxTokens) {
   const messages = [{ role: 'system', content: sys }, { role: 'user', content: user }];
+  let lastErr = '';
   for (const model of NOTICIA_MODELS) {
     try {
-      const r = await env.AI.run(model, { messages, max_tokens: 900, temperature: 0.6 });
+      const r = await env.AI.run(model, { messages, max_tokens: (maxTokens || 900), temperature: 0.6 });
       const t = (r && (r.response != null ? r.response : r.result)) || '';
-      if (t && String(t).trim()) { out = String(t); usedModel = model; break; }
+      if (t && String(t).trim()) return { out: String(t), model };
     } catch (e) {
       lastErr = (e && e.message) ? e.message : String(e);
     }
   }
-  if (!out) return errJson('La IA no pudo redactar con ningún modelo disponible. Último error: ' + lastErr, 502);
+  throw new Error('Ningún modelo disponible. Último error: ' + lastErr);
+}
 
-  const parsed = parseNoticia(out);
-  return jsonResp({ ok: true, title: parsed.title, summary: parsed.summary, body: parsed.body, model: usedModel, raw: out });
+// Texto plano → párrafos <p> (escapando HTML). Compartido por varias respuestas.
+function htmlParas(txt) {
+  const clean = String(txt || '').replace(/\r/g, '').replace(/\*\*/g, '').trim();
+  const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const paras = clean.split(/\n\s*\n/).map((s) => s.replace(/\n/g, ' ').trim()).filter(Boolean);
+  return paras.map((p) => '<p>' + esc(p) + '</p>').join('\n');
 }
 
 // Parseo robusto de la respuesta de la IA (formato TITULO/RESUMEN/CUERPO). Si el modelo no
@@ -457,12 +529,28 @@ function parseNoticia(txt) {
   if (mt) title = mt[1].trim();
   if (ms) summary = ms[1].trim();
   bodyRaw = mc ? mc[1].trim() : txt;
-
-  const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  const paras = bodyRaw.split(/\n\s*\n/).map((s) => s.replace(/\n/g, ' ').trim()).filter(Boolean);
-  const body = paras.map((p) => '<p>' + esc(p) + '</p>').join('\n');
-  if (!title) title = (paras[0] || '').replace(/^<p>|<\/p>$/g, '').slice(0, 90);
+  const body = htmlParas(bodyRaw);
+  if (!title) title = (bodyRaw.split(/\n\s*\n/)[0] || '').replace(/\n/g, ' ').trim().slice(0, 90);
   return { title, summary, body };
+}
+
+// Parsea los tres posteos de redes (separadores ===X=== / ===INSTAGRAM=== / ===FACEBOOK===).
+// Si el modelo no respetó el formato, devuelve strings vacíos y el cliente conserva la plantilla.
+function parseRedes(txt) {
+  const t = String(txt || '').replace(/\r/g, '').replace(/\*\*/g, '');
+  const out = { x: '', instagram: '', facebook: '' };
+  const re = /===\s*(X|INSTAGRAM|FACEBOOK)\s*===/gi;
+  const parts = [];
+  let m, last = null, lastIdx = 0;
+  while ((m = re.exec(t))) {
+    if (last !== null) parts.push([last, t.slice(lastIdx, m.index).trim()]);
+    last = m[1].toUpperCase(); lastIdx = re.lastIndex;
+  }
+  if (last !== null) parts.push([last, t.slice(lastIdx).trim()]);
+  for (const [k, v] of parts) {
+    if (k === 'X') out.x = v; else if (k === 'INSTAGRAM') out.instagram = v; else if (k === 'FACEBOOK') out.facebook = v;
+  }
+  return out;
 }
 
 function corsHeaders() {

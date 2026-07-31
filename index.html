@@ -5912,13 +5912,77 @@ function _noticiaPlayerMeta(p){
 
 function generarNoticiaTorneo(){
   var m = _tdNewsMeta;
-  if (!m || !m.crk){ alert('Abrí un torneo terminado (con tabla de posiciones) para generar la noticia.'); return; }
+  if (!m || !m.crk){ alert('Abrí un torneo para generar la nota.'); return; }
   var data = null; try { data = crDataLoad(m.crk); } catch(e){}
   if (!data){ alert('No encontré los datos de este torneo.'); return; }
-  var prefill = m.isTeam ? _noticiaTeamDraft(data, m) : _noticiaIndivDraft(data, m);
-  if (!prefill){ alert('Todavía no hay una tabla final con puntajes para armar la noticia.'); return; }
+  // Torneo que se va a jugar → ANTICIPO (previa); terminado → crónica.
+  var prefill = (m.status === 'upcoming')
+    ? _anticipoDraft(data, m)
+    : (m.isTeam ? _noticiaTeamDraft(data, m) : _noticiaIndivDraft(data, m));
+  if (!prefill){ alert(m.status === 'upcoming' ? 'No hay datos suficientes del torneo para el anticipo.' : 'Todavía no hay una tabla final con puntajes para armar la noticia.'); return; }
   // El editor es un overlay fijo (z-index alto): se abre por encima del detalle del torneo.
   openNewsEditor(null, prefill);
+}
+
+/* ── ANTICIPO (previa de un torneo que se va a jugar) ──────────────────────────
+   Usa la lista de inscriptos (ranking inicial: data.standings kind 'initial') para
+   los favoritos por rating y los argentinos anotados, más sede/fechas/sistema. Sin
+   inscriptos cargados igual sirve (previa corta con la metadata + datos del autor). */
+function _anticipoGatherData(data, m){
+  var st = (data.standings || []).filter(function(p){ return p && p.name; });
+  var isIntl = (typeof crShowArgLine === 'function') && crShowArgLine(m.typ);
+  var esArg = function(p){ try { return _argPersonIsArg(p.name, p.fed, p.fideId); } catch(e){ return false; } };
+  var nat = function(n){ try { return (typeof pgnNameToNatural === 'function') ? pgnNameToNatural(n) : n; } catch(e){ return n; } };
+  var byElo = st.slice().sort(function(a,b){ return (b.elo||0) - (a.elo||0); });
+  var favoritos = byElo.filter(function(p){ return p.elo > 0; }).slice(0, 6).map(function(p){
+    return { nombre:nat(p.name), titulo:_normTitle(p.title||''), fed:p.fed||'', elo:p.elo||null };
+  });
+  var argentinos = byElo.filter(esArg).slice(0, 10).map(function(p){
+    return { nombre:nat(p.name), titulo:_normTitle(p.title||''), elo:p.elo||null };
+  });
+  var feds = {}; st.forEach(function(p){ if (p.fed) feds[String(p.fed).toUpperCase()] = 1; });
+  return {
+    modo:'anticipo',
+    torneo:{ nombre:m.name, sede:m.location||'', fechas:m.dates||'', tipo:m.typ||'', internacional:!!isIntl,
+             rondas:(m.rounds||null), sistema:(m.format||''), ritmo:(m.pace||''),
+             inscriptos:(st.length||null), paises:(Object.keys(feds).length||null) },
+    favoritos:favoritos,
+    argentinos: isIntl ? argentinos : []
+  };
+}
+
+function _anticipoDraft(data, m){
+  var g = _anticipoGatherData(data, m), t = g.torneo;
+  var sistema = t.sistema === 'rr' ? 'todos contra todos' : (t.sistema === 'swiss' ? 'sistema suizo' : '');
+  var ritmo = t.ritmo === 'rapid' ? 'rápido' : (t.ritmo === 'blitz' ? 'blitz' : '');
+  var P = [];
+  P.push('<p>Se viene el <strong>' + escHtml(m.name) + '</strong>'
+    + (t.sede ? (' en ' + escHtml(t.sede)) : '') + (t.fechas ? (' del ' + escHtml(t.fechas)) : '')
+    + (t.rondas ? (', a ' + t.rondas + ' rondas') : '') + (sistema ? (' por ' + sistema) : '') + (ritmo ? (' (' + ritmo + ')') : '')
+    + (t.inscriptos ? (', con ' + t.inscriptos + ' inscriptos' + (t.internacional && t.paises >= 3 ? (' de ' + t.paises + ' países') : '')) : '') + '.</p>');
+  if (g.favoritos.length){
+    var fav = g.favoritos.slice(0, 4).map(function(p){ return '<strong>' + escHtml((p.titulo ? p.titulo + ' ' : '') + p.nombre) + '</strong>' + (p.elo ? (' (' + p.elo + ')') : ''); });
+    P.push('<p>Entre los favoritos por rating aparecen ' + fav.join(', ') + '.</p>');
+  }
+  if (t.internacional && g.argentinos.length){
+    var ar = g.argentinos.slice(0, 6).map(function(p){ return escHtml((p.titulo ? p.titulo + ' ' : '') + p.nombre); });
+    P.push('<p><strong>Los argentinos.</strong> Entre los anotados están ' + ar.join(', ') + (g.argentinos.length > 6 ? ' y otros' : '') + '.</p>');
+  }
+  P = P.filter(Boolean);
+  return { emoji:'📅', date:_noticiaFechaHoy(), title:'Se viene el ' + m.name,
+           summary:'Todo lo que hay que saber del ' + m.name + (t.fechas ? (', que se juega ' + t.fechas) : '') + '.',
+           body:P.join('\n'), coverImg:'', url:'', pgn:'' };
+}
+
+function _tdAnticipoBtnHtml(){
+  var bs = 'display:inline-flex;align-items:center;gap:7px;padding:10px 18px;background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-size:13.5px;font-weight:700;border-radius:10px;cursor:pointer;font-family:inherit;box-shadow:var(--shadow-card)';
+  return '<div style="text-align:center;margin:2px 0 18px">'
+    + '<div style="display:inline-flex;gap:8px;flex-wrap:wrap;justify-content:center">'
+    + '<button onclick="generarNoticiaTorneo()" style="' + bs + '">📅 Anticipo</button>'
+    + '<button onclick="_noticiaAIOpen()" style="' + bs + '">✨ Anticipo con IA</button>'
+    + '</div>'
+    + '<div style="font-size:11px;color:var(--text3);margin-top:6px;line-height:1.45">Arma una previa con los inscriptos (favoritos, argentinos, sede y fechas). Con IA queda más redactada; podés sumarle datos.</div>'
+    + '</div>';
 }
 
 function _noticiaIndivDraft(data, m){
@@ -6177,7 +6241,8 @@ function _noticiaGatherData(data, m){
 
 function _noticiaAIOpen(){
   var m = _tdNewsMeta;
-  if (!m || !m.crk){ alert('Abrí un torneo terminado (con tabla de posiciones) para generar la noticia.'); return; }
+  if (!m || !m.crk){ alert('Abrí un torneo para generar la nota con IA.'); return; }
+  var esAnticipo = (m.status === 'upcoming');
   var ov = document.getElementById('noticia-ai-overlay');
   if (!ov){
     ov = document.createElement('div');
@@ -6186,14 +6251,21 @@ function _noticiaAIOpen(){
     ov.addEventListener('click', function(e){ if (e.target === ov) _noticiaAIClose(); });
     document.body.appendChild(ov);
   }
+  var titulo = esAnticipo ? '✨ Escribir el anticipo con IA' : '✨ Redactar la noticia con IA';
+  var ayuda = esAnticipo
+    ? 'La IA arma la previa con los datos del torneo (favoritos por rating, argentinos anotados, sede, fechas y sistema). Sumale abajo lo que ella no sabe (premios, invitados, qué está en juego).'
+    : 'La IA arma la nota con los datos del torneo (campeón, podio, performances, revelación y las sorpresas de las rondas). Sumale abajo datos que ella no puede saber y los va a incluir.';
+  var ph = esAnticipo
+    ? 'Ej.:&#10;Reparte 2 millones de pesos en premios.&#10;Es válido para el ranking nacional.&#10;Se transmite en vivo por el canal de la federación.'
+    : 'Ej.:&#10;Mareco venía de jugar el Continental y el Panamericano.&#10;Con este 3° puesto clasifica al Mundial por equipos.&#10;Sus próximos torneos serán el Argentino Absoluto y el Sudamericano.';
   ov.innerHTML = '<div style="background:var(--bg2,#1c1c1e);border:1px solid var(--border);border-radius:14px;max-width:520px;width:100%;padding:20px;font-family:inherit;box-sizing:border-box;margin:24px auto">'
-    + '<div style="font-size:17px;font-weight:700;color:var(--text);margin-bottom:6px">✨ Redactar la noticia con IA</div>'
-    + '<div style="font-size:12.5px;color:var(--text2);line-height:1.5;margin-bottom:14px">La IA arma la nota con los datos del torneo (campeón, podio, performances, revelación y las sorpresas de las rondas). Sumale abajo datos que ella no puede saber y los va a incluir.</div>'
+    + '<div style="font-size:17px;font-weight:700;color:var(--text);margin-bottom:6px">' + titulo + '</div>'
+    + '<div style="font-size:12.5px;color:var(--text2);line-height:1.5;margin-bottom:14px">' + ayuda + '</div>'
     + '<label style="display:block;font-size:12px;color:var(--text2);margin-bottom:4px">Datos extra para la nota <span style="font-weight:400">(opcional)</span></label>'
-    + '<textarea id="noticia-ai-notes" rows="6" placeholder="Ej.:&#10;Mareco venía de jugar el Continental y el Panamericano.&#10;Con este 3° puesto clasifica al Mundial por equipos.&#10;Sus próximos torneos serán el Argentino Absoluto y el Sudamericano." style="width:100%;padding:10px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit;font-size:14px;box-sizing:border-box;resize:vertical"></textarea>'
+    + '<textarea id="noticia-ai-notes" rows="6" placeholder="' + ph + '" style="width:100%;padding:10px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit;font-size:14px;box-sizing:border-box;resize:vertical"></textarea>'
     + '<div id="noticia-ai-status" style="font-size:12px;color:var(--text3);min-height:16px;margin:8px 0"></div>'
     + '<div style="display:flex;gap:8px;margin-top:4px">'
-    + '<button id="noticia-ai-go" onclick="_noticiaAIGenerate()" style="flex:1;padding:11px;background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-weight:700;border-radius:9px;cursor:pointer;font-family:inherit">✨ Generar noticia</button>'
+    + '<button id="noticia-ai-go" onclick="_noticiaAIGenerate()" style="flex:1;padding:11px;background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-weight:700;border-radius:9px;cursor:pointer;font-family:inherit">' + (esAnticipo ? '✨ Generar anticipo' : '✨ Generar noticia') + '</button>'
     + '<button onclick="_noticiaAIClose()" style="padding:11px 16px;background:var(--bg3);border:1px solid var(--border);color:var(--text2);border-radius:9px;cursor:pointer;font-family:inherit">Cancelar</button>'
     + '</div>'
     + '<div style="font-size:11px;color:var(--text3);margin-top:10px;text-align:center;line-height:1.4">Si la IA no responde, se abre el borrador local automáticamente.</div>'
@@ -6209,10 +6281,12 @@ async function _noticiaAIGenerate(){
   var m = _tdNewsMeta; if (!m || !m.crk) return;
   var data = null; try { data = crDataLoad(m.crk); } catch(e){}
   if (!data){ alert('No encontré los datos de este torneo.'); return; }
-  var payload = _noticiaGatherData(data, m);
+  var esAnticipo = (m.status === 'upcoming');
+  var payload = esAnticipo ? _anticipoGatherData(data, m) : _noticiaGatherData(data, m);
   if (!payload){ alert('Todavía no hay una tabla final con puntajes para armar la noticia.'); return; }
   var notesEl = document.getElementById('noticia-ai-notes');
   payload.notasAutor = (notesEl ? notesEl.value.trim() : '').slice(0, 2000);
+  var emoji = esAnticipo ? '📅' : '🏆';
 
   var statusEl = document.getElementById('noticia-ai-status');
   var goBtn = document.getElementById('noticia-ai-go');
@@ -6223,7 +6297,7 @@ async function _noticiaAIGenerate(){
     if (statusEl) statusEl.textContent = '⚠️ ' + msg + ' Abro el borrador local…';
     setTimeout(function(){
       _noticiaAIClose();
-      var prefill = m.isTeam ? _noticiaTeamDraft(data, m) : _noticiaIndivDraft(data, m);
+      var prefill = esAnticipo ? _anticipoDraft(data, m) : (m.isTeam ? _noticiaTeamDraft(data, m) : _noticiaIndivDraft(data, m));
       if (prefill) openNewsEditor(null, prefill);
     }, 1400);
   };
@@ -6234,7 +6308,7 @@ async function _noticiaAIGenerate(){
     var j = await res.json();
     if (!j || (!j.body && !j.title)) throw new Error('la IA devolvió una respuesta vacía');
     _noticiaAIClose();
-    openNewsEditor(null, { emoji:'🏆', date:_noticiaFechaHoy(), title:j.title||'', summary:j.summary||'', body:j.body||'', coverImg:'', url:'', pgn:'' });
+    openNewsEditor(null, { emoji:emoji, date:_noticiaFechaHoy(), title:j.title||'', summary:j.summary||'', body:j.body||'', coverImg:'', url:'', pgn:'' });
   } catch(e){
     localFallback('No se pudo usar la IA (' + (e.message || e) + ').');
   } finally {
@@ -15490,6 +15564,10 @@ function openNewsEditor(id, prefill){
     + '</div>'
     + '<div id="n-emoji-grid">' + emojiHtml + '</div>'
     + '<div id="news-f-body" class="n-rte-area" contenteditable="true">' + bodyVal + '</div>'
+    + '<div style="margin-top:6px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
+    +   '<button type="button" onclick="_newsImproveBody(this)" style="display:inline-flex;align-items:center;gap:5px;padding:6px 12px;background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-size:12.5px;font-weight:600;border-radius:8px;cursor:pointer;font-family:inherit">✨ Mejorar redacción</button>'
+    +   '<span id="news-improve-status" style="font-size:11.5px;color:var(--text3)"></span>'
+    + '</div>'
     + '</div>'
     // Link externo
     + _newsInput('Link externo (opcional)','news-f-url', n?n.url||'':'','https://...','url')
@@ -15504,6 +15582,38 @@ function openNewsEditor(id, prefill){
     + '</div></div>';
 }
 function closeNewsEditor(){ var ov=document.getElementById('news-editor-overlay'); if (ov && ov.parentNode) ov.parentNode.removeChild(ov); }
+
+// ── "Mejorar redacción" con IA en el editor de noticias ──
+// Toma el texto del cuerpo, se lo manda al Worker (modo 'mejorar') y reemplaza el cuerpo por la
+// versión pulida. Guarda el anterior para poder deshacer. No inventa datos (es solo redacción).
+var _newsImproveUndoHtml = null;
+async function _newsImproveBody(btn){
+  var ed = document.getElementById('news-f-body'); if (!ed) return;
+  var texto = (ed.innerText || ed.textContent || '').replace(/ /g, ' ').trim();
+  if (texto.length < 20){ alert('Escribí un poco más de texto en el cuerpo para que la IA lo mejore.'); return; }
+  var st = document.getElementById('news-improve-status');
+  _newsImproveUndoHtml = ed.innerHTML;
+  btn.disabled = true; btn.style.opacity = '.6'; if (st) st.textContent = '✍️ Mejorando…';
+  try {
+    var res = await fetch(NOTICIA_AI_URL, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ modo:'mejorar', texto:texto }) });
+    if (!res.ok){ var t=''; try{ t=await res.text(); }catch(e){} throw new Error('HTTP ' + res.status + (t?(' — '+t.slice(0,120)):'')); }
+    var j = await res.json();
+    if (!j || !j.body) throw new Error('la IA devolvió una respuesta vacía');
+    ed.innerHTML = j.body;
+    if (typeof _nrCleanBody === 'function') _nrCleanBody(ed);
+    if (st) st.innerHTML = '✓ Mejorado · <a href="#" onclick="_newsImproveUndo(event)" style="color:var(--gold)">deshacer</a>';
+  } catch(e){
+    if (st) st.textContent = '⚠️ No se pudo mejorar (' + (e.message || e) + ').';
+  } finally {
+    btn.disabled = false; btn.style.opacity = '1';
+  }
+}
+function _newsImproveUndo(ev){
+  if (ev) ev.preventDefault();
+  var ed = document.getElementById('news-f-body');
+  if (ed && _newsImproveUndoHtml != null) ed.innerHTML = _newsImproveUndoHtml;
+  var st = document.getElementById('news-improve-status'); if (st) st.textContent = '';
+}
 
 /* ═══════════════════════════════════════════════════════
    ASISTENTE DE POSTEO — de una noticia genera una PLACA (imagen) para redes
@@ -15723,9 +15833,10 @@ function _socSetFmt(f){ var ov=document.getElementById('soc-overlay'); if(!ov) r
 function _socSetTheme(t){ var ov=document.getElementById('soc-overlay'); if(!ov) return; _socState.theme=t; ov.innerHTML=_socModalHtml(); _socRender(); }
 function _socNet(which, name, taId, rows) {
   return '<div class="soc-net"><div class="soc-net-hd"><span class="soc-net-name">'+name+'</span><span class="soc-count" id="'+taId+'-cnt"></span></div>'
-    + '<textarea class="soc-ta" id="'+taId+'" rows="'+rows+'" readonly></textarea>'
+    + '<textarea class="soc-ta" id="'+taId+'" rows="'+rows+'" oninput="_socTaCount(\''+taId+'\')"></textarea>'
     + '<button class="soc-copy" onclick="_socCopyText(\''+which+'\',this)">Copiar texto</button></div>';
 }
+function _socTaCount(id){ var e=document.getElementById(id), c=document.getElementById(id+'-cnt'); if (e && c) c.textContent = e.value.length + ' caract.'; }
 function _socCurNews(){ var items=getNewsItems(); for(var i=0;i<items.length;i++) if(items[i].id===_socState.id) return items[i]; return null; }
 function _socModalHtml() {
   var n = _socCurNews(), hasCover = !!(n && n.coverImg && n.coverImg.length);
@@ -15743,6 +15854,10 @@ function _socModalHtml() {
     +     '<button class="soc-btn" onclick="_socDownload(this)">⬇ Descargar imagen</button>'
     +     '<button class="soc-btn ghost" onclick="_socCopyImg(this)">📋 Copiar imagen</button>'
     +   '</div>'
+    +   '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:6px 0 2px">'
+    +     '<button class="soc-btn" onclick="_socAIGenerate(this)">✨ Redactar textos con IA</button>'
+    +     '<span id="soc-ai-status" style="font-size:11.5px;color:var(--text3)"></span>'
+    +   '</div>'
     +   _socNet('x','𝕏 · Twitter','soc-ta-x',6)
     +   _socNet('ig','📸 Instagram','soc-ta-ig',8)
     +   _socNet('fb','📘 Facebook','soc-ta-fb',6)
@@ -15756,6 +15871,30 @@ function _socRender() {
   var cv = document.getElementById('soc-canvas'); if (cv) _socDrawPlaca(cv, n, _socState.theme, _socState.fmt);
   var fill = function(taId, txt){ var e=document.getElementById(taId); if (e){ e.value = txt; var c=document.getElementById(taId+'-cnt'); if (c) c.textContent = txt.length+' caract.'; } };
   fill('soc-ta-x', _socTextX(n)); fill('soc-ta-ig', _socTextIG(n)); fill('soc-ta-fb', _socTextFB(n));
+}
+// Genera los tres posteos con IA (Worker modo 'redes') y los pone en los cuadros de texto.
+// Si la IA falla, quedan las plantillas. Los cuadros son editables, así que se pueden retocar.
+async function _socAIGenerate(btn){
+  var n = _socCurNews(); if (!n){ return; }
+  var tmp = document.createElement('div'); tmp.innerHTML = n.body || '';
+  var cuerpo = (tmp.innerText || tmp.textContent || '').replace(/ /g, ' ').trim();
+  var payload = { modo:'redes', titulo:n.title || '', resumen:(n.summary || n.text || ''), cuerpo:cuerpo, link:(typeof _socLink==='function' ? _socLink(n.id) : '') };
+  var st = document.getElementById('soc-ai-status');
+  btn.disabled = true; btn.style.opacity = '.6'; if (st) st.textContent = '✍️ Escribiendo…';
+  try {
+    var res = await fetch(NOTICIA_AI_URL, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+    if (!res.ok){ var t=''; try{ t=await res.text(); }catch(e){} throw new Error('HTTP ' + res.status + (t?(' — '+t.slice(0,120)):'')); }
+    var j = await res.json();
+    var r = j && j.redes;
+    if (!r || (!r.x && !r.instagram && !r.facebook)) throw new Error('la IA devolvió una respuesta vacía');
+    var setTa = function(id, val){ if (val){ var e=document.getElementById(id); if (e){ e.value = val; _socTaCount(id); } } };
+    setTa('soc-ta-x', r.x); setTa('soc-ta-ig', r.instagram); setTa('soc-ta-fb', r.facebook);
+    if (st) st.innerHTML = '✓ Listos · <a href="#" onclick="_socRender();var s=document.getElementById(\'soc-ai-status\');if(s)s.textContent=\'\';return false" style="color:var(--gold)">volver a las plantillas</a>';
+  } catch(e){
+    if (st) st.textContent = '⚠️ No se pudo (' + (e.message || e) + '). Quedan las plantillas.';
+  } finally {
+    btn.disabled = false; btn.style.opacity = '1';
+  }
 }
 function _socFlash(btn, msg){ if (!btn) return; var old = btn.getAttribute('data-lbl') || btn.textContent; btn.setAttribute('data-lbl', old); btn.textContent = '✓ '+msg; setTimeout(function(){ btn.textContent = btn.getAttribute('data-lbl'); }, 1500); }
 function _socDownload(btn) {
@@ -20779,9 +20918,13 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     h += _podH;
     // Botón "Crear noticia" (solo modo autor): si hay podio, hay datos suficientes para el borrador.
     if (!_ondemand && _podH) {
-      _tdNewsMeta = { crk: crk, name: name, location: location, dates: dates, typ: typ, isTeam: isTeam };
+      _tdNewsMeta = { crk: crk, name: name, location: location, dates: dates, typ: typ, isTeam: isTeam, status: 'done', rounds: rounds, format: format, pace: pace };
       h += _tdCrearNoticiaBtnHtml();
     }
+  } else if (status === 'upcoming' && !_ondemand) {
+    // Torneo que se va a jugar → botón de ANTICIPO (previa) en modo autor.
+    _tdNewsMeta = { crk: crk, name: name, location: location, dates: dates, typ: typ, isTeam: isTeam, status: 'upcoming', rounds: rounds, format: format, pace: pace };
+    h += _tdAnticipoBtnHtml();
   }
 
   // (Los links externos ahora van en la columna derecha del header — ver linksHtml más arriba.
