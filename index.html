@@ -1518,6 +1518,9 @@
     .fa-build-btn:hover { background:var(--gold); color:#000; }
     /* Placeholder cuando todavía no se analizó: el recuadro no queda vacío. */
     .fa-empty { background:var(--fa-bg); border-radius:6px; padding:18px 14px; text-align:center; font-size:11px; color:var(--text3); line-height:1.55; cursor:pointer; }
+    /* Botón para REABRIR el gráfico tras cerrarlo con la ✕ (en el teléfono no hay 📊 visible). */
+    .fa-reopen-btn { margin-top:14px; width:100%; background:var(--gl40); border:1px solid var(--bd22); border-radius:10px; color:var(--fg0); font-size:14px; font-weight:600; font-family:inherit; padding:11px 12px; cursor:pointer; text-shadow:var(--txt-out); transition:background-color .15s, border-color .15s, color .15s; }
+    .fa-reopen-btn:hover { border-color:var(--gold-dim); color:var(--gold); background:var(--gold-bg); }
     .fa-empty b { color:var(--gold); }
     .fa-prog-row { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
     .fa-prog-txt { font-size:11px; color:var(--text2); white-space:nowrap; }
@@ -2765,6 +2768,9 @@
       <div id="eval-graph-container"></div>
       <div id="fa-stats"></div>
     </div>
+    <!-- Reabrir el gráfico después de cerrarlo con la ✕. Sobre todo en el teléfono, donde el 📊 está
+         oculto y la pestaña Estadísticas ya quedó "iniciada" (volver a tocarla no lo reabre sola). -->
+    <button class="fa-reopen-btn" id="fa-reopen" onclick="faToggle()" style="display:none;">📊 Ver gráfico de análisis</button>
 
     <!-- LIBRO DE APERTURAS (local, base argentina) -->
     <div class="ob-wrap" id="ob-wrap" style="display: block;">
@@ -17531,6 +17537,7 @@ function cvOpenOverlay() {
   _cvBuildPageExtras();   // "Volver al torneo" + miniaturas de la ronda
   // Reacomodo MÓVIL (pestañas Movimientos/Análisis); en PC no hace nada.
   _cvAnalysisStarted = false;
+  var _rb = document.getElementById('fa-reopen'); if (_rb) _rb.style.display = 'none';   // botón de reabrir: limpio en cada partida
   cvApplyMobileLayout();
   if (_cvMobileOn) cvMobileTab('moves');   // cada partida abre en la pestaña Movimientos
   // Medir la altura real del tablero DESPUÉS de que el layout esté pintado
@@ -17558,14 +17565,14 @@ function _cvMEls() {
     fixNote: document.getElementById('cv-fix-note'), liveBack: document.getElementById('cv-live-back'),
     movesLabel: q('.chess-mlabel'), moves: q('.chess-mwrap'),
     book: document.getElementById('ob-wrap'), bookGames: document.getElementById('cv-book-games'),
-    graph: document.getElementById('eval-graph-wrap'),
+    graph: document.getElementById('eval-graph-wrap'), reopen: document.getElementById('fa-reopen'),
     copy: q('.cv-copy-bar'), lichess: document.getElementById('cv-lichess'), dato: document.getElementById('cv-dato')
   };
 }
 function _cvToMobile() {
   var e = _cvMEls();
   if (!e.cols || !e.boardCol) return;
-  ['back','nav','engine','sfPanel','fixNote','liveBack','movesLabel','moves','book','bookGames','graph','copy','lichess','dato']
+  ['back','nav','engine','sfPanel','fixNote','liveBack','movesLabel','moves','book','bookGames','graph','reopen','copy','lichess','dato']
     .forEach(function (k) { _cvSaveOrig(e[k]); });
   if (!_cvMTabs) {
     _cvMTabs = document.createElement('div'); _cvMTabs.className = 'cv-mtabs'; _cvMTabs.id = 'cv-mtabs';
@@ -17586,6 +17593,7 @@ function _cvToMobile() {
   if (e.book) _cvMPanelMoves.appendChild(e.book);
   if (e.bookGames) _cvMPanelMoves.appendChild(e.bookGames);
   if (e.graph) _cvMPanelAnalysis.appendChild(e.graph);       // pestaña Análisis: gráfico + stats
+  if (e.reopen) _cvMPanelAnalysis.appendChild(e.reopen);     // …y el botón para reabrirlo tras la ✕
   if (e.movesLabel) e.movesLabel.style.display = 'none';     // rótulo redundante con la pestaña
   var mc = document.querySelector('#chess-overlay .cv-moves-col'), bc = document.querySelector('#chess-overlay .cv-book-col');
   if (mc) mc.style.display = 'none'; if (bc) bc.style.display = 'none';   // columnas ya vacías
@@ -17594,7 +17602,7 @@ function _cvToMobile() {
 function _cvToDesktop() {
   if (!_cvMobileOn) return;
   var e = _cvMEls();
-  ['back','nav','engine','sfPanel','fixNote','liveBack','movesLabel','moves','book','bookGames','graph','copy','lichess','dato']
+  ['back','nav','engine','sfPanel','fixNote','liveBack','movesLabel','moves','book','bookGames','graph','reopen','copy','lichess','dato']
     .forEach(function (k) { var n = e[k]; if (n && n._cvOrig) n._cvOrig.parent.insertBefore(n, n._cvOrig.next); });
   if (e.movesLabel) e.movesLabel.style.display = '';
   var mc = document.querySelector('#chess-overlay .cv-moves-col'), bc = document.querySelector('#chess-overlay .cv-book-col');
@@ -25630,8 +25638,11 @@ function _faSaveLiveCache() {   // debounce: guarda 2s después de la última ev
 // valoración del módulo en vivo en posiciones muy ganadas, sin desperdiciar tiempo en las quietas.
 // _FA_LIVE_CAP_MS es el tope por jugada (las posiciones agudas no frenan el dibujado). Subí la
 // profundidad para más exactitud (más lento) o bajala para más velocidad.
-var _FA_LIVE_DEPTH = 20;
-var _FA_LIVE_CAP_MS = 1500;
+// El presupuesto LIVIANO (historial) va igualado al análisis MANUAL del pool (prof. 18, 0,45s):
+// así el gráfico de una partida en vivo se dibuja tan rápido como el 📊 del pool. La "cola" (las
+// últimas jugadas, la posición que el visitante mira) sí usa el presupuesto PROFUNDO de abajo.
+var _FA_LIVE_DEPTH = 18;
+var _FA_LIVE_CAP_MS = 450;
 // Prof. mínima para aceptar CUALQUIER eval del vivo (también el historial): una eval de prof. 8-11
 // en posición aguda puede salir del lado equivocado y quedaba cacheada para siempre. Si no llega,
 // hueco interpolado + reintento en el próximo refresco (la hash precalentada llega más lejos).
@@ -25645,7 +25656,7 @@ var _FA_LIVE_MIN = 12;
 // está prendido) hasta prof. 30, así que no hace falta gastar mucho tiempo profundo en más de la cola.
 // Con la cola corta, cuando llegan VARIAS jugadas juntas el pase las evalúa a todas dentro de la
 // ventana de refresco (antes 6 profundas tardaban ~28s y algunas quedaban sin corregir hasta el
-// siguiente refresco). Las demás usan el presupuesto liviano de arriba (prof. 20, 1,5s), suficiente.
+// siguiente refresco). Las demás usan el presupuesto liviano de arriba (prof. 18, 0,45s), suficiente.
 var _FA_LIVE_DEEP_N      = 2;     // cuántas jugadas finales cuentan como "cola" profunda
 var _FA_LIVE_DEEP_DEPTH  = 22;    // profundidad objetivo de la cola
 var _FA_LIVE_DEEP_CAP_MS = 3000;  // tope de tiempo por jugada de la cola
@@ -25689,6 +25700,11 @@ function _faInterp(R) {
 function faMaybeAutoLive() {
   if (typeof _fa === 'undefined') return;
   if (!_faLiveEligible() || _faLiveHidden) return;   // solo en vivo y si el visitante no lo cerró
+  // En el TELÉFONO el gráfico vive en la pestaña "Estadísticas", oculta hasta que el visitante la toca.
+  // No lo construimos —ni le sacamos el motor al módulo en vivo— hasta que abra esa pestaña: así al
+  // entrar a una partida en vivo se ve el MÓDULO encendido enseguida (no el gráfico dibujándose solo,
+  // que hacía pensar que el motor en vivo no andaba). Al tocar "Estadísticas", cvMobileTab lo arranca.
+  if (_cvMobileOn && !_cvAnalysisStarted) return;
   if (_fa.running) return;                           // ya está calculando
   _fa.live = true;
   faLiveBuild();
@@ -25797,6 +25813,7 @@ function faGetNodes() {
 
 function faToggle() {
   if (_fa.running) { cancelFA(); return; }
+  var _rb = document.getElementById('fa-reopen'); if (_rb) _rb.style.display = 'none';   // se está (re)abriendo
   // El botón 📊 vuelve a habilitar el gráfico si el visitante lo había cerrado.
   _faLiveHidden = false;
   try { localStorage.removeItem('fa_live_hidden'); } catch(e) {}
@@ -25929,6 +25946,7 @@ function faCloseGraph() {
   }
   var w = document.getElementById('eval-graph-wrap'); if (w) w.style.display = 'none';
   var b = document.getElementById('fa-btn'); if (b) b.classList.remove('active');
+  var r = document.getElementById('fa-reopen'); if (r) r.style.display = '';   // botón para reabrirlo
 }
 
 function faNext() {
