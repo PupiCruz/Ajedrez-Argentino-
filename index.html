@@ -831,6 +831,11 @@
     .cv-rm-name .cv-rm-clk { flex-shrink: 0; font-size: 12px; color: var(--fg-d8); font-variant-numeric: tabular-nums; }
     @media (max-width: 480px) { .cv-rm-name .cv-rm-clk { display: none; } }
     .cv-rm-name .cv-rm-res { font-weight: 700; flex-shrink: 0; }
+    /* Barra de evaluación PEGADA POR FUERA del tablero (no encima): cuando la miniatura tiene barra se
+       reserva una franja a la izquierda (padding) y la barra —position:absolute;left:0— vive ahí, así
+       no tapa la columna 'a'. Con box-sizing:border-box el tablero se achica y se corre a la derecha.
+       Sin barra no se aplica el padding → el tablero queda centrado como antes. */
+    .td-bd.has-ev { padding-left: 8px; }
     /* Agarradera para redimensionar el tablero (esquina inferior derecha). Solo en modo página. */
     #cv-resize {
       /* Área de clic chica y pegada al vértice: si es grande, tomar una pieza en h1/a8 se computa como
@@ -11824,6 +11829,7 @@ function _cvRoundMinisHtml(keepPage) {
     var bFlag = _flagByName(black, _mCrK) || _teamFlag(h.BlackTeam);
     var res = h.Result || '*';
     var ff = tdFinalFenCached(pgn);
+    var mEv = _liveEvalFor(ff.fen, ff.ev);
     var href = sk ? sk.url : '#';
     var wClk = ff.wc ? '<span class="cv-rm-clk">' + escHtml(fmtClock(ff.wc)) + '</span>' : '';
     var bClk = ff.bc ? '<span class="cv-rm-clk">' + escHtml(fmtClock(ff.bc)) + '</span>' : '';
@@ -11831,7 +11837,7 @@ function _cvRoundMinisHtml(keepPage) {
     var wResClr = res === '1-0' ? 'var(--green)' : res === '0-1' ? 'var(--red)' : 'var(--text2)';
     cards += '<a class="cv-rm-card' + (i === _cvTourIdx ? ' active' : '') + '" href="' + href + '" onclick="return tdGameNavClick(event,' + i + ')">'
       + '<div class="cv-rm-name">' + bTitle + '<span class="cv-rm-nm">' + escHtml(black) + '</span>' + bFlag + bClk + '<span class="cv-rm-res" style="color:' + bResClr + '">' + (res === '0-1' ? '1' : res === '1-0' ? '0' : res === '1/2-1/2' ? '½' : '') + '</span></div>'
-      + '<div class="td-bd" style="position:relative">' + tdMiniFen(ff.fen, ff.last) + _tdEvalBarHtml(_liveEvalFor(ff.fen, ff.ev)) + '</div>'
+      + '<div class="td-bd' + (mEv != null ? ' has-ev' : '') + '" style="position:relative">' + tdMiniFen(ff.fen, ff.last) + _tdEvalBarHtml(mEv) + '</div>'
       + '<div class="cv-rm-name">' + wTitle + '<span class="cv-rm-nm">' + escHtml(white) + '</span>' + wFlag + wClk + '<span class="cv-rm-res" style="color:' + wResClr + '">' + (res === '1-0' ? '1' : res === '0-1' ? '0' : res === '1/2-1/2' ? '½' : '') + '</span></div>'
       + '</a>';
   });
@@ -19495,7 +19501,7 @@ function _bcGridRender() {
     }
     h += '<div class="bcgrid-card" data-arg="' + isArg + '" onclick="bcGridOpenGame(' + idx + ')" style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;cursor:pointer;overflow:hidden" onmouseover="this.style.borderColor=\'var(--gold-dim)\'" onmouseout="this.style.borderColor=\'var(--border)\'">';
     h += '<div style="display:flex;gap:5px;padding:5px 7px 4px"><div style="flex:1;font-size:12px;line-height:1.25;color:var(--fg0);text-shadow:var(--txt-out)">' + escHtml(black) + '</div><span style="font-size:12px;font-weight:700;color:' + bsc + '">' + bScore + '</span></div>';
-    h += '<div style="position:relative">' + board + _tdEvalBarHtml(_gr.ev) + '</div>';
+    h += '<div style="position:relative' + (_gr.ev != null ? ';padding-left:8px' : '') + '">' + board + _tdEvalBarHtml(_gr.ev) + '</div>';
     h += '<div style="display:flex;gap:5px;padding:4px 7px 6px"><div style="flex:1;font-size:12px;line-height:1.25;color:var(--fg0);text-shadow:var(--txt-out)">' + escHtml(white) + '</div><span style="font-size:12px;font-weight:700;color:' + wsc + '">' + wScore + '</span></div>';
     h += '</div>';
   });
@@ -21438,8 +21444,13 @@ function _tdCardHtml(g, flip) {
   // Fila de un jugador (nombre + reloj + puntaje). El id del reloj queda atado al COLOR (w/b), no a
   // la posición, así _tdSetClocks lo encuentra aunque la fila esté arriba o abajo.
   function nameRow(title, name, flag, clkId, score, scoreColor, pad){
+    // Nombre en un span propio con truncado (…): así NUNCA envuelve a 2 líneas y todas las tarjetas
+    // quedan a la misma altura (si no, un nombre largo empujaba el tablero y los descolocaba en el
+    // teléfono). Título y bandera van como ítems flex aparte, para que no se corten (igual que .cv-rm-name).
     return '<div style="display:flex;align-items:center;gap:5px;padding:' + pad + '">'
-      + '<div style="flex:1;font-size:12px;line-height:1.25;color:var(--fg0);text-shadow:var(--txt-out)">' + title + escHtml(name) + (flag ? ' ' + flag : '') + '</div>'
+      + (title || '')
+      + '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;line-height:1.25;color:var(--fg0);text-shadow:var(--txt-out)">' + escHtml(name) + '</span>'
+      + (flag ? '<span style="flex-shrink:0;display:inline-flex;align-items:center">' + flag + '</span>' : '')
       + '<span class="td-clk" id="td-clk-' + clkId + '-' + globalIdx + '" style="font-size:12px;font-variant-numeric:tabular-nums;color:var(--fg-c8);flex-shrink:0;text-shadow:var(--txt-out)"></span>'
       + '<span class="td-score" id="td-score-' + clkId + '-' + globalIdx + '" style="font-size:13px;font-weight:700;color:' + scoreColor + ';flex-shrink:0;text-shadow:var(--txt-out)">' + score + '</span>'
       + '</div>';
@@ -21686,8 +21697,10 @@ function tdFillBoards(rInt) {
         html += '<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none">'
           + '<span style="background:rgba(20,20,25,.82);color:var(--white-ink);font-size:18px;font-weight:800;letter-spacing:1px;padding:6px 14px;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,.4)">' + resBig + '</span></div>';
       }
-      html += _tdEvalBarHtml(_liveEvalFor(rr.fen, rr.ev), flip);   // barrita: [%eval] del PGN o, en vivo, motor local
+      var _ev = _liveEvalFor(rr.fen, rr.ev);
+      html += _tdEvalBarHtml(_ev, flip);   // barrita: [%eval] del PGN o, en vivo, motor local
       el.innerHTML = html;
+      el.classList.toggle('has-ev', _ev != null);   // reserva la franja izquierda solo si hay barra
       el.setAttribute('data-fen', fen);   // para comparar en el refresco incremental (solo redibuja los que cambian)
       _tdSetCellKeys(el, fen, rr.last, flip);    // memoriza pieza/resaltado por casilla → permite parchear solo lo que cambia
       _tdSetClocks(el, gidx, fen, rr);     // relojes (valor fijo + base para el countdown corriendo)
@@ -21752,7 +21765,8 @@ function _tdSetScoreCells(gidx, res) {
 function _tdSetEvalBar(el, ev, flip) {
   if (flip === undefined) flip = !!(el.getAttribute && el.getAttribute('data-flip') === '1');
   var bar = el.querySelector(':scope > .td-evbar');
-  if (!ev) { if (bar) bar.parentNode.removeChild(bar); return; }
+  if (!ev) { if (bar) bar.parentNode.removeChild(bar); if (el.classList) el.classList.remove('has-ev'); return; }
+  if (el.classList) el.classList.add('has-ev');   // reserva la franja izquierda para la barra
   if (!bar) { el.insertAdjacentHTML('beforeend', _tdEvalBarHtml(ev, flip)); return; }
   var fill = bar.firstElementChild;
   if (fill) fill.style.height = sfBarPct(ev, false) + '%';
