@@ -14591,13 +14591,31 @@ async function updateRankingFromFile(input) {
       parsed = _parseFideTable(await file.text(), extraIds);  // fallback: navegadores sin streaming
     }
     if (!parsed.active.length) { alert('No se encontraron jugadores ARG con elo ≥ ' + _FIDE_MIN_ELO + ' en ese archivo.\n\n¿Es el listado FIDE? (players_list_foa.txt — con rápido y blitz — o el standard_rating_list.txt)'); return; }
-    // El foa no trae el mes en el encabezado (el standard viejo sí). Si no se detectó, lo deducimos
-    // de la fecha del archivo (se descarga en el mes correspondiente). El resumen lo muestra para confirmar.
+    // El foa no trae el mes en el encabezado (el standard viejo sí). Si no se detectó, se lo PREGUNTAMOS
+    // al autor: NO se puede deducir con confianza de la fecha del archivo (el que FIDE publica a fin de
+    // mes tiene fecha del mes anterior, así que dos padrones distintos pueden caer en el mismo mes y
+    // pisarse en el historial). El mes elige a qué punto del gráfico va; si dos archivos comparten mes,
+    // el segundo reemplaza al primero.
     if (!parsed.month) {
-      var _d = new Date(file.lastModified || Date.now());
       var _mn = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
-      parsed.month = _d.getFullYear() + '-' + String(_d.getMonth() + 1).padStart(2, '0');
-      parsed.monthLabel = _mn[_d.getMonth()] + ' ' + _d.getFullYear();
+      var _d = new Date(file.lastModified || Date.now());
+      var _guess = _d.getFullYear() + '-' + String(_d.getMonth() + 1).padStart(2, '0');
+      var _ans = prompt(
+        'Este padrón no dice el mes en el encabezado.\n\n' +
+        '¿A qué mes corresponde? Escribilo como AAAA-MM.\n' +
+        '  • 2026-07 = julio 2026\n' +
+        '  • 2026-08 = agosto 2026\n\n' +
+        'OJO: el padrón que FIDE publica a FIN de mes es el del mes SIGUIENTE\n' +
+        '(el de fin de julio es el de agosto). Cada mes tiene que ser distinto,\n' +
+        'si no el nuevo pisa al anterior en el gráfico de evolución.\n\n' +
+        '(Sugerido por la fecha del archivo: ' + _guess + ')',
+        _guess);
+      if (_ans == null) return;   // canceló
+      _ans = _ans.trim();
+      var _m = _ans.match(/^(\d{4})-(\d{2})$/);
+      if (!_m || +_m[2] < 1 || +_m[2] > 12) { alert('Mes inválido. Escribilo como AAAA-MM, por ejemplo 2026-08.'); return; }
+      parsed.month = _ans;
+      parsed.monthLabel = _mn[+_m[2] - 1] + ' ' + _m[1];
     }
     var built = _buildRankingFromActive(parsed);
     var msg = '📋 Tabla detectada: ' + (built.monthLabel || '(mes no reconocido)') + '\n\n'
