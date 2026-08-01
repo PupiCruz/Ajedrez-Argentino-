@@ -5860,6 +5860,38 @@ function _tdCrearNoticiaBtnHtml(){
     + '</div>';
 }
 
+// ── Podio del detalle: se dibuja en un contenedor fijo (#td-podium-box) y se puede refrescar
+// cuando llega una clasificación nueva por el auto-fetch, sin recargar ni esperar al otro día. ──
+var _tdPodiumCtx = null;   // {crk,isTeam,name,location,dates,typ,rounds,format,pace,status} del torneo abierto
+// ¿Hay una clasificación FINAL cargada? Sirve para mostrar el podio apenas se sube la última tabla,
+// aunque el torneo todavía figure "en vivo" el último día. Individuales: el encabezado de
+// Chess-Results/info64 dice "Clasificación Final" (standingsFinal). Equipos: no hay señal fiable de
+// "final" (la tabla de equipos no trae ese rótulo), así que ahí el podio sigue esperando a 'done'.
+function _tdHasFinalStandings(crk, isTeam){
+  if (!crk || isTeam) return false;
+  var d = null; try { d = crDataLoad(crk); } catch(e){}
+  return !!(d && d.standingsFinal && d.standings && d.standings.length);
+}
+// HTML interno del contenedor del podio (vacío si todavía no hay a quién coronar).
+function _tdPodiumInnerHtml(){
+  var c = _tdPodiumCtx; if (!c) return '';
+  if (c.status !== 'done' && !_tdHasFinalStandings(c.crk, c.isTeam)) return '';
+  var podH = _tdPodiumHtml(c.crk, c.isTeam);
+  if (!podH) return '';
+  // Botón "Crear noticia" (solo modo autor): si hay podio, hay datos suficientes para el borrador.
+  if (!_ondemand) {
+    _tdNewsMeta = { crk:c.crk, name:c.name, location:c.location, dates:c.dates, typ:c.typ, isTeam:c.isTeam, status:'done', rounds:c.rounds, format:c.format, pace:c.pace };
+    podH += _tdCrearNoticiaBtnHtml();
+  }
+  return podH;
+}
+// Re-dibuja el podio del torneo abierto (lo llaman los auto-fetch al terminar de bajar la tabla).
+function _tdRefreshPodium(crk){
+  if (!_tdPodiumCtx || _tdPodiumCtx.crk !== crk) return;
+  var box = document.getElementById('td-podium-box');
+  if (box) box.innerHTML = _tdPodiumInnerHtml();
+}
+
 function _ncCap(s){ return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 function _noticiaFechaHoy(){
   var M = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
@@ -6441,6 +6473,7 @@ async function _crAutoFetchTeam(crk, crUrl, opts) {
     var rn = Object.keys(data.teamRounds).map(Number).sort(function(a,b){return a-b;});
     if (!opts.silent) setS('✓ Actualizado desde Chess-Results — ' + okR + ' ronda(s)' + (data.teamStandings ? ' + tabla' : '') + (_ondemand ? '' : '. Acordate de "Guardar datos en mi carpeta" y publicar.'));
     _teamRefresh(crk, rn.length ? rn[rn.length-1] : (data.teamStandings ? 'tabla' : null));
+    try { _tdRefreshPodium(crk); } catch(e){}  // si llegó la tabla de equipos y el torneo terminó, mostrar el podio
     return okR > 0 || !!data.teamStandings;
   } catch(e) { setS('❌ ' + e.message); return false; }
   finally { _crAutoBusy[crk] = false; }
@@ -6504,6 +6537,7 @@ async function _crAutoFetchIndiv(crk, crUrl, opts) {
     var lastR = Object.keys(data.rounds).map(Number).sort(function(a,b){return a-b;});
     crRefreshSection(crk, isRR ? 'cuadro' : (lastR.length ? lastR[lastR.length-1] : (hasStand ? 'tabla' : null)));
     try { _tdRefreshArgLine(); } catch(e){}   // ya con la tabla, completar la línea de argentinos
+    try { _tdRefreshPodium(crk); } catch(e){}  // si llegó la clasificación final, mostrar el podio ya
     try { renderTorneos(_lastTorneoFilter); } catch(e){}
     return okR > 0 || hasStand;
   } catch(e) { setS('❌ ' + e.message); return false; }
@@ -6829,6 +6863,7 @@ async function _i64AutoFetchIndiv(crk, i64url, opts) {
     var lastR = Object.keys(data.rounds).map(Number).sort(function(a,b){return a-b;});
     crRefreshSection(crk, isRR ? 'cuadro' : (lastR.length ? lastR[lastR.length-1] : (hasStand ? 'tabla' : null)));
     try { _tdRefreshArgLine(); } catch(e){}   // ya con la tabla, completar la línea de argentinos
+    try { _tdRefreshPodium(crk); } catch(e){}  // si llegó la clasificación final, mostrar el podio ya
     try { renderTorneos(_lastTorneoFilter); } catch(e){}
     return okR > 0 || hasStand;
   } catch(e) { setS('❌ ' + e.message); return false; }
@@ -11653,6 +11688,22 @@ function computeTourStatus(rng, fallback) {
   if (tk < rng.start) return 'upcoming';
   if (tk > rng.end) return 'done';
   return 'live';
+}
+
+// ¿El torneo terminó dentro de la ventana reciente? Los cuadros de Chess-Results/info64 (y con
+// ellos el podio) sólo cambian mientras el torneo se juega y en los primeros días de subir las
+// tablas finales; después quedan fijos. Por eso seguimos bajándolos unos días tras terminar —para
+// que el podio salga aunque el autor todavía no publicó— pero NO para siempre (torneos viejos
+// re-pedirían Chess-Results en cada visita, un pedido inútil que además a veces ya no existe).
+var _CR_RECENT_DONE_DAYS = 14;
+function _crWithinRecentDone(rng){
+  if (!rng || !rng.end) return false;
+  var iso = _keyToIso(rng.end); if (!iso) return false;
+  var end = new Date(iso + 'T00:00:00');
+  if (isNaN(end.getTime())) return false;
+  var today = new Date(); today.setHours(0, 0, 0, 0);
+  var days = Math.round((today - end) / 86400000);
+  return days >= 0 && days <= _CR_RECENT_DONE_DAYS;
 }
 
 // ── Fechas exactas (ISO "YYYY-MM-DD") usadas por los selectores del formulario ──
@@ -20950,16 +21001,13 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
       + '</div>';
   }
 
-  // Podio: cuando el torneo terminó, quién ganó tiene que verse sin abrir la tabla.
-  if (status === 'done') {
-    var _podH = _tdPodiumHtml(crk, isTeam);
-    h += _podH;
-    // Botón "Crear noticia" (solo modo autor): si hay podio, hay datos suficientes para el borrador.
-    if (!_ondemand && _podH) {
-      _tdNewsMeta = { crk: crk, name: name, location: location, dates: dates, typ: typ, isTeam: isTeam, status: 'done', rounds: rounds, format: format, pace: pace };
-      h += _tdCrearNoticiaBtnHtml();
-    }
-  } else if (status === 'upcoming' && !_ondemand) {
+  // Podio: cuando el torneo terminó —o apenas se sube la clasificación FINAL, aunque el torneo
+  // figure "en vivo" el último día— quién ganó tiene que verse sin abrir la tabla. El contenedor va
+  // SIEMPRE (aunque esté vacío) para poder rellenarlo cuando la tabla final llegue por el auto-fetch,
+  // sin recargar ni esperar al otro día (lo refresca _tdRefreshPodium desde los _crAutoFetch*).
+  _tdPodiumCtx = { crk: crk, isTeam: isTeam, name: name, location: location, dates: dates, typ: typ, rounds: rounds, format: format, pace: pace, status: status };
+  h += '<div id="td-podium-box">' + _tdPodiumInnerHtml() + '</div>';
+  if (status === 'upcoming' && !_ondemand) {
     // Torneo que se va a jugar → botón de ANTICIPO (previa) en modo autor.
     _tdNewsMeta = { crk: crk, name: name, location: location, dates: dates, typ: typ, isTeam: isTeam, status: 'upcoming', rounds: rounds, format: format, pace: pace };
     h += _tdAnticipoBtnHtml();
@@ -21051,7 +21099,11 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   // Los PRÓXIMOS también se actualizan: su ranking inicial cambia hasta el día del torneo (se anotan
   // inscriptos nuevos) y los emparejamientos de la ronda 1 suelen salir la noche anterior. El
   // auto-fetch ya distingue el caso solo (sin rondas jugadas baja art=0 = ranking inicial sembrado).
-  if (_ondemand && (status === 'live' || status === 'upcoming') && crUrl && /tnr\d+/i.test(crUrl)) {
+  // Además de EN VIVO y PRÓXIMO, seguimos bajando los cuadros los primeros días DESPUÉS de terminar
+  // (_crWithinRecentDone): así el podio y la clasificación final salen apenas el organizador las sube
+  // a Chess-Results/info64, aunque el autor todavía no haya publicado las tablas finales al sitio.
+  var _crAutoOk = (status === 'live' || status === 'upcoming' || (status === 'done' && _crWithinRecentDone(tourRng)));
+  if (_ondemand && _crAutoOk && crUrl && /tnr\d+/i.test(crUrl)) {
     if (isTeam) _crAutoFetchTeam(crk, crUrl, { silent: true });
     else _crAutoFetchIndiv(crk, crUrl, { silent: true });
   }
@@ -21065,7 +21117,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     _crAutoFetchGames(crk, crUrl);
   }
   // Ídem para info64 (sólo individuales). Si el torneo tiene ambas fuentes, se actualizan las dos.
-  if (_ondemand && (status === 'live' || status === 'upcoming') && !isTeam && _i64Base(info64url)) {
+  if (_ondemand && _crAutoOk && !isTeam && _i64Base(info64url)) {
     _i64AutoFetchIndiv(crk, info64url, { silent: true });
   }
   // Si se pidió, bajar directo al apartado de partidas
