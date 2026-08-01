@@ -4591,18 +4591,19 @@ function _tourFedMap(crKey) {
   if (!crKey) return null;
   if (_stdFedCache[crKey]) return _stdFedCache[crKey];
   var m = {};
-  function put(name, fed, title) {
+  function put(name, fed, title, elo) {
     if (!name) return;
     var k = crNormTokens(name); if (!k) return;
-    var e = m[k] || (m[k] = { fed: '', title: '' });
+    var e = m[k] || (m[k] = { fed: '', title: '', elo: 0 });
     if (fed && !e.fed) e.fed = fed;
     if (title && !e.title) e.title = _normTitle(title);
+    if (elo && !e.elo) e.elo = parseInt(elo) || 0;
   }
   try {
     var d = crDataLoad(crKey);
-    if (d && d.standings) d.standings.forEach(function(s) { if (s) put(s.name, s.fed, s.title); });
+    if (d && d.standings) d.standings.forEach(function(s) { if (s) put(s.name, s.fed, s.title, s.elo); });
     if (d && d.rounds) Object.keys(d.rounds).forEach(function(r) {
-      (d.rounds[r] || []).forEach(function(p) { if (p) { put(p.w, '', p.tw); put(p.b, '', p.tb); } });
+      (d.rounds[r] || []).forEach(function(p) { if (p) { put(p.w, '', p.tw, p.ew); put(p.b, '', p.tb, p.eb); } });
     });
   } catch (e) {}
   _stdFedCache[crKey] = m;
@@ -4621,6 +4622,13 @@ function _flagByName(name, crKey) {
 function _titleByName(name, crKey) {
   var e = _tourEntryByName(name, crKey);
   return (e && e.title) ? e.title : '';
+}
+// Elo del jugador sacado de las tablas del torneo (misma fuente que la clasificación). En un torneo
+// blitz o rápido la tabla trae el elo de ESE ritmo; el PGN del broadcast a veces trae el clásico. Para
+// que el visor muestre el MISMO elo que las tablas, esto tiene prioridad sobre el elo del PGN.
+function _eloByName(name, crKey) {
+  var e = _tourEntryByName(name, crKey);
+  return (e && e.elo) ? e.elo : 0;
 }
 
 // ── XLSX descompresión (compartida) — usa regex para evitar problemas de namespace XML ──
@@ -16296,6 +16304,10 @@ function cvPlayerHtml(title, name, fideId, elo, team, isBlack) {
   var nameStr = clickable
     ? '<span class="cv-pn-name" title="' + titleAttr + '" onclick="cvClickPlayer(\'' + safeName + '\',\'' + safeFide + '\')">' + escHtml(name) + '</span>'
     : '<span class="cv-pn-name" style="cursor:default">' + escHtml(name) + '</span>';
+  // Elo: si la partida es de un torneo, preferir el de las TABLAS (mismo ritmo que la clasificación —
+  // en un torneo blitz muestra el blitz, no el clásico que a veces trae el PGN del broadcast).
+  var _tourElo = _eloByName(name, _crK);
+  if (_tourElo) elo = _tourElo;
   // Sub-renglón (debajo del nombre): ELO + bandera. La bandera la llena cvLoadFlag por fideId (async).
   var eloStr = elo ? '<span class="cv-pelo">' + escHtml(elo) + '</span>' : '';
   var flagId = isBlack ? 'cv-bflag' : 'cv-wflag';
@@ -21429,7 +21441,7 @@ function _tdCardHtml(g, flip) {
     return '<div style="display:flex;align-items:center;gap:5px;padding:' + pad + '">'
       + '<div style="flex:1;font-size:12px;line-height:1.25;color:var(--fg0);text-shadow:var(--txt-out)">' + title + escHtml(name) + (flag ? ' ' + flag : '') + '</div>'
       + '<span class="td-clk" id="td-clk-' + clkId + '-' + globalIdx + '" style="font-size:12px;font-variant-numeric:tabular-nums;color:var(--fg-c8);flex-shrink:0;text-shadow:var(--txt-out)"></span>'
-      + '<span style="font-size:13px;font-weight:700;color:' + scoreColor + ';flex-shrink:0;text-shadow:var(--txt-out)">' + score + '</span>'
+      + '<span class="td-score" id="td-score-' + clkId + '-' + globalIdx + '" style="font-size:13px;font-weight:700;color:' + scoreColor + ';flex-shrink:0;text-shadow:var(--txt-out)">' + score + '</span>'
       + '</div>';
   }
   var rowBlack = nameRow(bTitle, black, bFlag, 'b', bScore, bScoreColor, flip ? '4px 7px 6px' : '5px 7px 4px');
@@ -21721,6 +21733,20 @@ function _tdEvalBarHtml(ev, flip) {
   return '<div class="td-evbar" style="position:absolute;top:0;bottom:0;left:0;width:8px;background:#33312e;z-index:3;border-radius:3px 0 0 3px;overflow:hidden;pointer-events:none">'
        + '<div class="td-evbar-fill" style="position:absolute;left:0;right:0;' + (flip?'top':'bottom') + ':0;height:' + pct + '%;background:#f2f2f0;transition:height .35s ease"></div></div>';
 }
+// Actualiza los puntajes (1/0/½) de una miniatura ya dibujada cuando la partida TERMINA en vivo.
+// Lichess suele cerrar la partida (abandono, bandera, tablas acordadas) SIN una jugada nueva: el FEN
+// no cambia y la ruta de parcheo del tablero no toca el marcador, así que los puntajes recién
+// aparecían al recargar la página. Por eso los seteamos aparte, por COLOR (w/b), no por posición.
+function _tdSetScoreCells(gidx, res) {
+  var wScore = res === '1-0' ? '1' : res === '0-1' ? '0' : res === '1/2-1/2' ? '½' : '';
+  var bScore = res === '1-0' ? '0' : res === '0-1' ? '1' : res === '1/2-1/2' ? '½' : '';
+  var wColor = res === '1-0' ? 'var(--green)' : res === '0-1' ? 'var(--red)' : 'var(--text2)';
+  var bColor = res === '0-1' ? 'var(--green)' : res === '1-0' ? 'var(--red)' : 'var(--text2)';
+  var ws = document.getElementById('td-score-w-' + gidx);
+  var bs = document.getElementById('td-score-b-' + gidx);
+  if (ws) { ws.textContent = wScore; ws.style.color = wColor; }
+  if (bs) { bs.textContent = bScore; bs.style.color = bColor; }
+}
 // Crea o actualiza la barrita de un mini-tablero ya dibujado (ruta de refresco en vivo). flip se toma
 // del data-flip del tablero si no se pasa (la vista por equipos voltea las mesas pares).
 function _tdSetEvalBar(el, ev, flip) {
@@ -22000,8 +22026,30 @@ var _tdLiveCtx = null;   // { tourId, pgnKey, name, location, typ }
 // de cruces no se re-renderizaba al llegar el vivo y faltaba el botón "♟ Ver partidas".
 var _tdLiveCrKey = null;
 var _tdLiveIsTeam = false;   // si el torneo es por equipos: el vivo NO debe re-renderizar la sección como cuadro individual
+var _tdIdlePolls = 0;        // refrescos consecutivos SIN ronda en curso (hueco entre rondas)
+var _TD_MAX_IDLE = 40;       // tope de sondeos "en el hueco" (a 30s ≈ 20 min) antes de rendirse
 
-function _tdLiveStop() { if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; } _tdLiveCtx = null; _tdStopClocks(); mevAbort(); }
+// ¿Seguir sondeando el broadcast? Sí si hay una ronda EN CURSO (se reinicia el contador de huecos).
+// Si no (hueco entre rondas), seguir mientras Lichess anuncie una ronda que TODAVÍA no terminó, para
+// que la SIGUIENTE ronda aparezca sola sin recargar la página. Acotado a _TD_MAX_IDLE sondeos para no
+// quedar sondeando indefinidamente un torneo que ya terminó o que hizo una pausa larga.
+function _tdKeepPolling(res) {
+  if (!res || !res.roundsWithGames || !res.roundsWithGames.length) return false;
+  if (res.roundsWithGames.some(function(r){ return r.live; })) { _tdIdlePolls = 0; return true; }
+  var pendiente;
+  if (res.rounds && res.rounds.length && !res._lcc) {
+    // Calendario de Lichess (transmisión única): ronda sin terminar que ya arrancó o arranca pronto.
+    var now = Date.now(), WINDOW = 3 * 3600 * 1000;   // 3 h de margen entre rondas
+    pendiente = res.rounds.some(function(r){ return !r.finished && (r.ongoing || !r.startsAt || r.startsAt <= now + WINDOW); });
+  } else {
+    // Multi-transmisión o livechesscloud (sin calendario fiable): seguir si alguna ronda cargada aún no terminó.
+    pendiente = res.roundsWithGames.some(function(r){ return !r.finished; });
+  }
+  if (!pendiente) { _tdIdlePolls = 0; return false; }   // todo finalizado → torneo terminado
+  return (++_tdIdlePolls <= _TD_MAX_IDLE);               // el hueco se hizo muy largo → el visitante recarga
+}
+
+function _tdLiveStop() { if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; } _tdLiveCtx = null; _tdIdlePolls = 0; _tdStopClocks(); mevAbort(); }
 
 function _tdLoadLiveGames(broadcastId, broadcastUrl, name, location, pgnKey, typ, status, hasFallback) {
   var raw = String(broadcastId || '');
@@ -22051,7 +22099,7 @@ function _tdLiveFetchMulti(tourIds, name, location, pgnKey, typ, hasFallback) {
     if (!res || !res.roundsWithGames || !res.roundsWithGames.length) { if (!hasFallback) _tdLiveError(null); return; }
     _tdLiveBuild(res, sec, null);
     if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; }
-    if (res.roundsWithGames.some(function(r){ return r.live; })) _tdLiveTimer = setTimeout(_tdLiveRefresh, _liveRefreshMs(_tdLiveCtx && _tdLiveCtx.tourId));
+    if (_tdKeepPolling(res)) _tdLiveTimer = setTimeout(_tdLiveRefresh, _liveRefreshMs(_tdLiveCtx && _tdLiveCtx.tourId));
   });
 }
 
@@ -22240,6 +22288,14 @@ function _tdLiveApplyRefresh(res, sec) {
     var gidx = parseInt(el.getAttribute('data-gidx'));
     var newPgn = games[gidx];
     if (newPgn === undefined) continue;
+    // La partida terminó → marcar 1/0/½ AUNQUE el FEN no cambie (abandono/bandera/tablas sin jugada
+    // nueva caen al `continue` de abajo). El puntaje vive en spans propios de la tarjeta, no en el
+    // tablero, así que la ruta de parcheo del tablero no lo tocaba: se actualiza acá, por color.
+    var newRes = parsePgnHeaders(newPgn).Result || '*';
+    if (newRes !== (el.getAttribute('data-res') || '*')) {
+      el.setAttribute('data-res', newRes);
+      _tdSetScoreCells(gidx, newRes);
+    }
     var rr = tdFinalFenCached(newPgn);
     if (rr.fen === el.getAttribute('data-fen')) {
       // Misma posición, pero pudo aparecer el %eval del PGN (Lichess solo lo agrega al TERMINAR la
@@ -22330,7 +22386,7 @@ function _tdLiveRefresh() {
     if (!sec) { _tdLiveStop(); return; }
     if (res && res.roundsWithGames && res.roundsWithGames.length) _tdLiveApplyRefresh(res, sec);
     if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; }
-    if (res && res.roundsWithGames && res.roundsWithGames.some(function(r){ return r.live; }) && document.getElementById('td-games-section')) {
+    if (_tdKeepPolling(res) && document.getElementById('td-games-section')) {
       _tdLiveTimer = setTimeout(_tdLiveRefresh, _liveRefreshMs(_tdLiveCtx && _tdLiveCtx.tourId));
     }
   });
