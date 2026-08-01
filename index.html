@@ -430,8 +430,10 @@
        reloj, así que el nombre entra bien tal como está). */
     @media (max-width: 600px) {
       .td-detail-lower { padding-left: 9px !important; padding-right: 9px !important; }
-      .td-detail-lower .p-title-badge { font-size: 8.5px; padding: 1px 4px; letter-spacing: .2px; }
-      .td-detail-lower .flag-ic { height: 0.74em; }
+      /* margin-right:0 → la pastilla queda pegada al nombre (antes 4px + gap la separaban bastante). */
+      .td-detail-lower .p-title-badge { font-size: 8.5px; padding: 1px 4px; letter-spacing: .2px; margin-right: 0; }
+      .td-detail-lower .flag-ic { height: 0.68em; }
+      .td-detail-lower .td-clk { font-size: 11px !important; }   /* reloj un pelín más chico */
     }
 
     /* ── VISOR DE PARTIDAS en el teléfono ──
@@ -21457,12 +21459,13 @@ function _tdCardHtml(g, flip) {
     // Nombre en un span propio con truncado (…): así NUNCA envuelve a 2 líneas y todas las tarjetas
     // quedan a la misma altura (si no, un nombre largo empujaba el tablero y los descolocaba en el
     // teléfono). Título y bandera van como ítems flex aparte, para que no se corten (igual que .cv-rm-name).
+    // El resultado ya NO va acá (ahora va centrado sobre el tablero, _tdResBadgeHtml): el reloj queda
+    // como último ítem y se corre solo a la derecha, ganando el lugar que ocupaba el 1/0/½.
     return '<div style="display:flex;align-items:center;gap:5px;padding:' + pad + '">'
       + (title || '')
       + '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;line-height:1.25;color:var(--fg0);text-shadow:var(--txt-out)">' + escHtml(name) + '</span>'
       + (flag ? '<span style="flex-shrink:0;display:inline-flex;align-items:center">' + flag + '</span>' : '')
       + '<span class="td-clk" id="td-clk-' + clkId + '-' + globalIdx + '" style="font-size:12px;font-variant-numeric:tabular-nums;color:var(--fg-c8);flex-shrink:0;text-shadow:var(--txt-out)"></span>'
-      + '<span class="td-score" id="td-score-' + clkId + '-' + globalIdx + '" style="font-size:13px;font-weight:700;color:' + scoreColor + ';flex-shrink:0;text-shadow:var(--txt-out)">' + score + '</span>'
       + '</div>';
   }
   var rowBlack = nameRow(bTitle, black, bFlag, 'b', bScore, bScoreColor, flip ? '4px 7px 6px' : '5px 7px 4px');
@@ -21701,12 +21704,8 @@ function tdFillBoards(rInt) {
       var fen = rr.fen;
       var flip = el.getAttribute('data-flip') === '1';   // vista por equipos: tableros pares dados vuelta
       var html = tdMiniFen(fen, rr.last, flip);
-      if (fen.split(' ')[0] === START) {
-        var res = el.getAttribute('data-res') || '*';
-        var resBig = res === '1/2-1/2' ? '½-½' : (res === '*' ? '·' : res);
-        html += '<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none">'
-          + '<span style="background:rgba(20,20,25,.82);color:var(--white-ink);font-size:18px;font-weight:800;letter-spacing:1px;padding:6px 14px;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,.4)">' + resBig + '</span></div>';
-      }
+      // Resultado centrado sobre el tablero (partidas terminadas) o '·' si aún no arrancó.
+      html += _tdResBadgeHtml(el.getAttribute('data-res') || '*', fen.split(' ')[0] === START);
       var _ev = _liveEvalFor(rr.fen, rr.ev);
       html += _tdEvalBarHtml(_ev, flip);   // barrita: [%eval] del PGN o, en vivo, motor local
       el.innerHTML = html;
@@ -21756,19 +21755,27 @@ function _tdEvalBarHtml(ev, flip) {
   return '<div class="td-evbar" style="position:absolute;top:0;bottom:0;left:0;width:8px;background:#33312e;z-index:3;border-radius:3px 0 0 3px;overflow:hidden;pointer-events:none">'
        + '<div class="td-evbar-fill" style="position:absolute;left:0;right:0;' + (flip?'top':'bottom') + ':0;height:' + pct + '%;background:#f2f2f0;transition:height .35s ease"></div></div>';
 }
-// Actualiza los puntajes (1/0/½) de una miniatura ya dibujada cuando la partida TERMINA en vivo.
-// Lichess suele cerrar la partida (abandono, bandera, tablas acordadas) SIN una jugada nueva: el FEN
-// no cambia y la ruta de parcheo del tablero no toca el marcador, así que los puntajes recién
-// aparecían al recargar la página. Por eso los seteamos aparte, por COLOR (w/b), no por posición.
-function _tdSetScoreCells(gidx, res) {
-  var wScore = res === '1-0' ? '1' : res === '0-1' ? '0' : res === '1/2-1/2' ? '½' : '';
-  var bScore = res === '1-0' ? '0' : res === '0-1' ? '1' : res === '1/2-1/2' ? '½' : '';
-  var wColor = res === '1-0' ? 'var(--green)' : res === '0-1' ? 'var(--red)' : 'var(--text2)';
-  var bColor = res === '0-1' ? 'var(--green)' : res === '1-0' ? 'var(--red)' : 'var(--text2)';
-  var ws = document.getElementById('td-score-w-' + gidx);
-  var bs = document.getElementById('td-score-b-' + gidx);
-  if (ws) { ws.textContent = wScore; ws.style.color = wColor; }
-  if (bs) { bs.textContent = bScore; bs.style.color = bColor; }
+// Badge de resultado en el CENTRO del mini-tablero. Antes el 1/0/½ iba al costado de cada nombre y
+// se reservaba un lugar a la derecha; ahora el resultado va centrado sobre el tablero (se ve más y
+// libera ese lugar para el reloj). isStart: partida sin jugadas → '·' (o el resultado si ya se
+// definió por bye/incomparecencia). En curso con posición → '' (no tapa el tablero).
+function _tdResBadgeHtml(res, isStart) {
+  var decided = res && res !== '*';
+  if (!decided && !isStart) return '';
+  var big = res === '1/2-1/2' ? '½-½' : (res === '*' ? '·' : res);
+  return '<div class="td-res-badge" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;z-index:4">'
+    + '<span style="background:rgba(20,20,25,.82);color:var(--white-ink);font-size:16px;font-weight:800;letter-spacing:1px;padding:5px 12px;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,.4)">' + big + '</span></div>';
+}
+// Crea/actualiza/quita el badge de resultado de un mini-tablero YA dibujado (refresco en vivo). Al
+// terminar una partida —aunque sea SIN jugada nueva (abandono/bandera/tablas): el FEN no cambia y la
+// ruta de parcheo del tablero no lo tocaría— hay que ponerlo acá para que aparezca sin recargar.
+function _tdSetResultBadge(el, res) {
+  var START = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR';
+  var isStart = (el.getAttribute('data-fen') || '').split(' ')[0] === START;
+  var existing = el.querySelector(':scope > .td-res-badge');
+  if (existing) existing.remove();
+  var html = _tdResBadgeHtml(res, isStart);
+  if (html) el.insertAdjacentHTML('beforeend', html);
 }
 // Crea o actualiza la barrita de un mini-tablero ya dibujado (ruta de refresco en vivo). flip se toma
 // del data-flip del tablero si no se pasa (la vista por equipos voltea las mesas pares).
@@ -22312,13 +22319,12 @@ function _tdLiveApplyRefresh(res, sec) {
     var gidx = parseInt(el.getAttribute('data-gidx'));
     var newPgn = games[gidx];
     if (newPgn === undefined) continue;
-    // La partida terminó → marcar 1/0/½ AUNQUE el FEN no cambie (abandono/bandera/tablas sin jugada
-    // nueva caen al `continue` de abajo). El puntaje vive en spans propios de la tarjeta, no en el
-    // tablero, así que la ruta de parcheo del tablero no lo tocaba: se actualiza acá, por color.
+    // La partida terminó → poner el resultado centrado AUNQUE el FEN no cambie (abandono/bandera/tablas
+    // sin jugada nueva caen al `continue` de abajo, sin tocar el tablero): se actualiza acá.
     var newRes = parsePgnHeaders(newPgn).Result || '*';
     if (newRes !== (el.getAttribute('data-res') || '*')) {
       el.setAttribute('data-res', newRes);
-      _tdSetScoreCells(gidx, newRes);
+      _tdSetResultBadge(el, newRes);
     }
     var rr = tdFinalFenCached(newPgn);
     if (rr.fen === el.getAttribute('data-fen')) {
