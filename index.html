@@ -19864,6 +19864,21 @@ function _lccFetchAll(id, cb) {
     .catch(function() { cb(null); });
 }
 
+// Lichess crea automáticamente una ronda/capítulo VACÍO de relleno ([Event "Round N: Chapter 1"]
+// sin jugadores ni jugadas, cuerpo " *") para la próxima ronda. Normalmente tiene startsAt futuro y el
+// filtro startsAt<=now la saltea; pero si el organizador le pone mal la hora (ej. la ronda 7 con una hora
+// ANTERIOR a la 6, como pasó en la Copa Independencia del Perú), se cuela y aparece una ronda fantasma con
+// un tablero "?·?" en posición inicial. Descartamos esas partidas de relleno: sin jugadores (ni White ni
+// Black reales) y sin jugadas. Una partida recién emparejada (con jugadores, 0 jugadas) NO es relleno.
+function _bcIsPlaceholderGame(pgn) {
+  if (!pgn) return true;
+  var w = (pgn.match(/\[White\s+"([^"]*)"/) || [null, ''])[1].trim();
+  var b = (pgn.match(/\[Black\s+"([^"]*)"/) || [null, ''])[1].trim();
+  if ((w && w !== '?') || (b && b !== '?')) return false;   // tiene jugadores → es una partida real
+  var body = pgn.replace(/\[[^\]]*\]\s*/g, '').trim();       // sin cabeceras
+  return !/\d+\.\s*[A-Za-z0]/.test(body);                    // sin jugadores y sin jugadas → relleno
+}
+
 // Baja metadata del broadcast + el PGN de cada ronda jugada o en curso. cb(null) si falla.
 // Criterio B de "en vivo": además de las rondas que Lichess marca finished/ongoing, bajamos las
 // que ya empezaron por horario (startsAt pasado) aunque el relay esté en pausa; una ronda cuenta
@@ -19901,7 +19916,7 @@ function _bcFetchAll(broadcastId, cb) {
         // Rondas con sus partidas (para la grilla de tableros). `live` = esa ronda está en curso.
         var roundsWithGames = [];
         rounds.forEach(function(r) {
-          if (!byRound[r.id]) return;
+          if (!byRound[r.id] || !byRound[r.id].length) return;   // ronda sin partidas reales (solo relleno) → no crear pestaña fantasma
           var rLive = !!r.ongoing || (liveRound && r.id === liveRound.id && liveHasProgress);
           roundsWithGames.push({ name: r.name, id: r.id, slug: r.slug, games: byRound[r.id], live: !!rLive, finished: !!r.finished });
         });
@@ -19914,7 +19929,7 @@ function _bcFetchAll(broadcastId, cb) {
         var pgnUrl = 'https://lichess.org/api/broadcast/round/' + round.id + '.pgn';
         fetch(pgnUrl)
           .then(function(r) { return r.text(); })
-          .then(function(pgn) { byRound[round.id] = pgn.trim().split(/\n\n(?=\[Event )/).filter(function(g) { return g.trim(); }); pending--; done(); })
+          .then(function(pgn) { byRound[round.id] = pgn.trim().split(/\n\n(?=\[Event )/).filter(function(g) { return g.trim() && !_bcIsPlaceholderGame(g); }); pending--; done(); })
           .catch(function() { byRound[round.id] = []; pending--; done(); });
       });
     })
@@ -22489,6 +22504,7 @@ function _tdMergeUploadedRounds(byRound, roundOrder) {
 function _tdLiveBuild(res, sec, keepRound) {
   var byRound = {}, roundOrder = [], liveRoundInt = null;
   res.roundsWithGames.forEach(function(r, ri) {
+    if (!r.games || !r.games.length) return;   // ronda vacía (relleno de Lichess) → sin pestaña fantasma
     var mm = (r.name||'').match(/(\d+)/);
     var rInt = mm ? parseInt(mm[1]) : (ri + 1);
     if (!byRound[rInt]) { byRound[rInt] = []; roundOrder.push(rInt); }
@@ -22565,6 +22581,7 @@ function _tdLiveApplyRefresh(res, sec) {
   var curR = _tdCurrentRound;
   var byRound = {}, roundOrder = [];
   res.roundsWithGames.forEach(function(r, ri) {
+    if (!r.games || !r.games.length) return;   // ronda vacía (relleno de Lichess) → sin pestaña fantasma
     var mm = (r.name||'').match(/(\d+)/);
     var rInt = mm ? parseInt(mm[1]) : (ri + 1);
     if (!byRound[rInt]) { byRound[rInt] = []; roundOrder.push(rInt); }
