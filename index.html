@@ -20693,6 +20693,68 @@ function tourFromProfileClick(e, type, id) {
 // _tdLiveBuild la abre en cuanto la lista de partidas está lista (carga inicial O refresco a los 30s).
 var _pendingDeepGame = null;   // { tourKey, idx }
 
+// ── Apertura instantánea de partidas en pestaña nueva (compartir entre pestañas) ──────────────────
+// Cuando seguís un torneo en vivo y abrís una partida en una PESTAÑA NUEVA, esa pestaña arranca vacía
+// y tenía que reconstruir el torneo entero + rebajar toda la transmisión de Lichess antes de mostrar
+// nada (lento, y encima dependía de tu conexión a Lichess). Ahora, antes de ir a Lichess, la pestaña
+// nueva le pregunta a las otras pestañas abiertas por un canal interno (BroadcastChannel) si alguna ya
+// tiene ese torneo cargado; si sí, le pasa los tableros ya listos y la partida abre AL INSTANTE, sin
+// tocar Lichess. El fetch real igual corre en segundo plano y refresca. Si no hay otra pestaña (ej. un
+// link compartido a otra persona), cae solo al camino normal de siempre.
+var _tdShareChan = (typeof BroadcastChannel !== 'undefined') ? new BroadcastChannel('aa-tour-share') : null;
+var _tdShareLast = null;               // { tourKey, res, ts } del torneo que ESTA pestaña tiene a la vista
+var _tdSeedResByTour = {};             // res que otra pestaña nos pasó, para pintar YA (consumido en _tdLoadLiveGames)
+var _TD_SHARE_TTL = 5 * 60 * 1000;     // no respondemos con datos más viejos que esto (el fetch de fondo igual refresca)
+var _TD_SHARE_WAIT = 500;              // cuánto esperamos la respuesta de otra pestaña antes de caer al camino normal
+// Guarda lo que esta pestaña muestra, para poder pasárselo a una pestaña nueva que lo pida.
+function _tdShareRemember(res) {
+  if (!res || !res.roundsWithGames || !res.roundsWithGames.length) return;
+  _tdShareLast = { tourKey: String(_tdTourKey), res: res, ts: Date.now() };
+}
+// Otra pestaña pide un torneo: si lo tenemos fresco, se lo mandamos. (Un BroadcastChannel no recibe sus
+// propios mensajes, así que esto solo contesta pedidos de OTRAS pestañas.)
+if (_tdShareChan) {
+  _tdShareChan.addEventListener('message', function(ev) {
+    var d = ev.data; if (!d || d.type !== 'tour_req') return;
+    var last = _tdShareLast;
+    if (last && String(last.tourKey) === String(d.tourKey) && (Date.now() - last.ts) < _TD_SHARE_TTL) {
+      try { _tdShareChan.postMessage({ type: 'tour_resp', reqId: d.reqId, tourKey: d.tourKey, res: last.res }); } catch (e) {}
+    }
+  });
+}
+// Le pide a las otras pestañas el res de un torneo. Resuelve con el res (instantáneo) o null tras el timeout.
+function _tdRequestPeerSeed(tourKey) {
+  return new Promise(function(resolve) {
+    if (!_tdShareChan) { resolve(null); return; }
+    var reqId = 'q' + Date.now() + '_' + Math.random().toString(36).slice(2), done = false;
+    var onMsg = function(ev) {
+      var d = ev.data;
+      if (done || !d || d.type !== 'tour_resp' || d.reqId !== reqId || String(d.tourKey) !== String(tourKey)) return;
+      done = true; _tdShareChan.removeEventListener('message', onMsg); resolve(d.res || null);
+    };
+    _tdShareChan.addEventListener('message', onMsg);
+    try { _tdShareChan.postMessage({ type: 'tour_req', reqId: reqId, tourKey: String(tourKey) }); } catch (e) {}
+    setTimeout(function() { if (!done) { done = true; _tdShareChan.removeEventListener('message', onMsg); resolve(null); } }, _TD_SHARE_WAIT);
+  });
+}
+// ¿El torneo tiene transmisión de Lichess? Solo ahí vale la pena esperar a otra pestaña (las partidas
+// subidas/pool ya abren rápido). Evita sumarle la espera a los deep-links que no la necesitan.
+function _tourHasBroadcast(key) {
+  try {
+    if (_ondemand) {
+      if (_manifest && _manifest.tournaments) {
+        for (var i = 0; i < _manifest.tournaments.length; i++) { var e = _manifest.tournaments[i]; if (String(e.id) === String(key)) return !!(e.broadcastId || e.broadcastUrl); }
+      }
+      return false;
+    }
+    if (typeof TORNEOS !== 'undefined') {
+      for (var j = 0; j < TORNEOS.length; j++) { if (String(TORNEOS[j].id) === String(key)) { var hc = getTzConfig()['hc_' + TORNEOS[j].id] || {}; return !!(hc.broadcastId || hc.broadcastUrl || TORNEOS[j].broadcastId || TORNEOS[j].broadcastUrl); } }
+    }
+    var d = getTzConfig()[key]; if (d) return !!(d.broadcastId || d.broadcastUrl);
+  } catch (e) {}
+  return false;
+}
+
 // Intenta abrir la partida pendiente si ya está disponible. Devuelve true si abrió. Si el visitante
 // navegó a otro torneo / cerró todo, descarta el pendiente. No hace nada si ya hay un visor abierto.
 function _tryOpenPendingDeepGame() {
@@ -20714,6 +20776,11 @@ function _tryOpenPendingDeepGame() {
 // Deep-link a una partida: abre el torneo y, cuando sus partidas están listas, abre la nº idx.
 async function _openTourGameDeepLink(tourKey, idx, catIdx) {
   _pendingDeepGame = { tourKey: String(tourKey), idx: idx };
+  // Camino rápido: si otra pestaña ya tiene este torneo en vivo, que nos pase los tableros para abrir al
+  // instante (sin ir a Lichess). Solo esperamos en torneos con transmisión (los demás ya abren rápido).
+  if (_tourHasBroadcast(tourKey)) {
+    try { var _seed = await _tdRequestPeerSeed(tourKey); if (_seed && _pendingDeepGame) _tdSeedResByTour[String(tourKey)] = _seed; } catch (e) {}
+  }
   try { await openTournamentDetail(_resolveTourType(tourKey), tourKey, false, catIdx); } catch (e) {}
   if (_tryOpenPendingDeepGame()) return;   // partidas subidas / ya cargadas → abre al toque
   // Broadcast: las partidas llegan async. Sondeo rápido (~9s) para el caso normal; si tarda más o hubo
@@ -22370,6 +22437,18 @@ function _tdKeepPolling(res) {
 function _tdLiveStop() { if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; } _tdLiveCtx = null; _tdIdlePolls = 0; _tdStopClocks(); mevAbort(); }
 
 function _tdLoadLiveGames(broadcastId, broadcastUrl, name, location, pgnKey, typ, status, hasFallback) {
+  // Camino rápido entre pestañas: si otra pestaña nos pasó este torneo, pintamos sus tableros YA y
+  // abrimos la partida del deep-link al instante, sin resolver ids ni ir a Lichess. El fetch real sigue
+  // abajo y refresca en segundo plano (reemplaza esta pintada con los datos frescos).
+  var _seed = _tdSeedResByTour[String(_tdTourKey)];
+  if (_seed) {
+    delete _tdSeedResByTour[String(_tdTourKey)];
+    var _sec0 = document.getElementById('td-games-section');
+    if (_sec0 && _seed.roundsWithGames && _seed.roundsWithGames.length) {
+      _tdLiveCtx = { tourIds: [], key: '__seed__', tourId: null, pgnKey: pgnKey, name: name, location: location, typ: typ, hasFallback: !!hasFallback, crKey: _tdLiveCrKey, isTeam: !!_tdLiveIsTeam };
+      try { _tdLiveBuild(_seed, _sec0, null); _tdShareRemember(_seed); } catch (e) {}
+    }
+  }
   var raw = String(broadcastId || '');
   // livechesscloud manda: aunque haya un link de Lichess en broadcastUrl (para el botón "Ver en Lichess"),
   // las partidas salen de livechesscloud. Sin esto, el scan de URLs de ronda de abajo lo desviaría a Lichess.
@@ -22416,6 +22495,7 @@ function _tdLiveFetchMulti(tourIds, name, location, pgnKey, typ, hasFallback) {
     // Sin partidas en el broadcast: si ya se muestran las subidas (respaldo), dejarlas; si no, avisar.
     if (!res || !res.roundsWithGames || !res.roundsWithGames.length) { if (!hasFallback) _tdLiveError(null); return; }
     _tdLiveBuild(res, sec, null);
+    _tdShareRemember(res);   // guardar para pasárselo a una pestaña nueva que abra una partida
     if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; }
     if (_tdKeepPolling(res)) _tdLiveTimer = setTimeout(_tdLiveRefresh, _liveRefreshMs(_tdLiveCtx && _tdLiveCtx.tourId));
   });
@@ -22703,7 +22783,7 @@ function _tdLiveRefresh() {
     if (!_tdLiveCtx || _tdLiveCtx.key !== key) return;
     var sec = document.getElementById('td-games-section');
     if (!sec) { _tdLiveStop(); return; }
-    if (res && res.roundsWithGames && res.roundsWithGames.length) _tdLiveApplyRefresh(res, sec);
+    if (res && res.roundsWithGames && res.roundsWithGames.length) { _tdLiveApplyRefresh(res, sec); _tdShareRemember(res); }
     if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; }
     if (_tdKeepPolling(res) && document.getElementById('td-games-section')) {
       _tdLiveTimer = setTimeout(_tdLiveRefresh, _liveRefreshMs(_tdLiveCtx && _tdLiveCtx.tourId));
