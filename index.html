@@ -1658,7 +1658,8 @@
     .puz-eval-top { display: flex; align-items: center; gap: 9px; }
     .puz-eval-depth { font-size: 11px; color: var(--text3); }
     .puz-eval-line { font-size: 13px; color: var(--fg-d8); font-family: 'Courier New', monospace; line-height: 1.5; margin-top: 5px; word-break: break-word; max-height: 60px; overflow-y: auto; }
-    #puz-arrow, #prac-arrow { position: absolute; inset: 0; pointer-events: none; z-index: 4; }
+    /* inset:4px = el borde del tablero; así el viewBox 0..8 mapea sobre la grilla interior y la flecha no sale corrida */
+    #puz-arrow, #prac-arrow { position: absolute; inset: 4px; pointer-events: none; z-index: 4; }
     .puz-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
     .puz-bar h2 { font-size: 18px; color: var(--text); }
     .puz-bar .puz-lvl { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--gold);
@@ -23827,7 +23828,10 @@ function _puzReconBeforeFen(p) {
 // jaque sintetizado), respetando el botón de silencio del solver.
 function puzIntroSound(p) {
   if (!puzSndCfg().on) return;
-  if (puz.chess.in_check()) _playSynthCheck();
+  var pm = p.pm || '';   // UCI de la jugada de intro; el rey moviendo 2 columnas = enroque
+  var isCastle = pm === 'e1g1' || pm === 'e1c1' || pm === 'e8g8' || pm === 'e8c8';
+  if (isCastle) _playCastle();
+  else if (puz.chess.in_check()) _playSynthCheck();
   else if (p.pc) _loadAndPlay('Capture');
   else _loadAndPlay('Move');
 }
@@ -25576,11 +25580,46 @@ function _playSynthCheck() {
   } catch(e) {}
 }
 
+// Reproduce un buffer ya decodificado con un retardo (para encadenar/superponer sonidos con precisión).
+function _playBufferDelayed(buf, delay) {
+  try {
+    var c = _getAudioCtx(), s = c.createBufferSource();
+    s.buffer = buf; s.connect(c.destination); s.start(c.currentTime + (delay || 0));
+  } catch(e) {}
+}
+
+// Enroque: "golpe firme" (madera sintetizada) entrelazado con el "movimiento normal", que entra sobre la
+// 2ª mitad del golpe (~60ms). Variante G elegida por el autor en el probador de sonidos. Es distinto del
+// toc simple para que O-O / O-O-O se distingan de oído del resto de las jugadas.
+function _playCastle() {
+  try {
+    // 1) golpe firme: ráfaga corta de ruido con pasa-banda ~ madera
+    var c = _getAudioCtx(), t = c.currentTime, dur = 0.13;
+    var n = Math.floor(c.sampleRate * dur), b = c.createBuffer(1, n, c.sampleRate), d = b.getChannelData(0);
+    for (var i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 2.4);
+    var src = c.createBufferSource(); src.buffer = b;
+    var bp = c.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 255; bp.Q.value = 3.2;
+    var g = c.createGain(); g.gain.setValueAtTime(0.9, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    src.connect(bp); bp.connect(g); g.connect(c.destination); src.start(t); src.stop(t + dur);
+    // 2) el "movimiento normal" entrando a ~60ms. Si ya está en caché suena alineado; si no, se decodifica
+    //    y entra apenas después (Move casi siempre está caliente porque suena en cada jugada).
+    var key = 'standard/Move';
+    if (_soundCache[key]) { _playBufferDelayed(_soundCache[key], 0.06); return; }
+    var ctx = _getAudioCtx();
+    fetch('assets/sonidos/Move.mp3').then(function(r){ return r.arrayBuffer(); })
+      .then(function(ab){ return ctx.decodeAudioData(ab); })
+      .then(function(buf){ _soundCache[key] = buf; _playBufferDelayed(buf, 0.06); })
+      .catch(function(){});
+  } catch(e) { try { _loadAndPlay('Move'); } catch(_) {} }
+}
+
 function cvPlayMoveSound(san) {
   san = san || '';
+  var isCastle  = san.indexOf('O-O') >= 0 || san.indexOf('0-0') >= 0;   // enroque (O-O / O-O-O)
   var isCheck   = san.indexOf('+') >= 0 || san.indexOf('#') >= 0;
   var isCapture = san.indexOf('x') >= 0;
-  if (isCheck)        _playSynthCheck();
+  if (isCastle)       _playCastle();      // el enroque manda aunque sea con jaque (O-O+)
+  else if (isCheck)   _playSynthCheck();
   else if (isCapture) _loadAndPlay('Capture');
   else                _loadAndPlay('Move');
 }
@@ -25597,6 +25636,7 @@ var _sfArrows = [];      // [{from, to, width, alpha}] — del motor
 var _sfArrowsHold = false;
 var _highlights = {};    // {sq: true}
 var _arrowDragFrom = null;
+var _arrowDragTo = null;   // casilla bajo el puntero mientras se arrastra (para la previsualización en vivo)
 var _sfCanvasW = 0, _sfCanvasH = 0;  // último tamaño conocido del canvas de flechas del motor
 var _cvCanvasW = 0, _cvCanvasH = 0;  // último tamaño conocido del canvas de flechas del usuario
 
@@ -25636,8 +25676,9 @@ function cvUpdateSfArrows() {
   if (!sf.on) { sfClearArrows(); return; }
   if (_sfArrowsHold) return;   // navegación reciente: no dibujar flechas de la posición vieja
   _sfArrows = [];
-  var widths = [0.16, 0.10, 0.06];
-  var alphas = [0.55, 0.40, 0.28];
+  // Un poco más gruesas las tres; la 3ª variante era muy finita (0.06 ≈ 3px) → se sube más su grosor y alfa.
+  var widths = [0.20, 0.14, 0.105];
+  var alphas = [0.55, 0.42, 0.34];
   for (var i = 0; i < 3; i++) {
     var ln = sf.lines[i];
     if (!ln || !ln.pv || !ln.pv[0]) continue;
@@ -25663,12 +25704,16 @@ function sfDrawArrows() {
   var ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   if (!sf.on) return;
-  var sqW = canvas.width / 8, sqH = canvas.height / 8;
+  // Misma geometría que las flechas del usuario: descuenta el borde de 4px del tablero (si no, la flecha
+  // sale corrida y una casilla más grande de lo real). _boardGrid ubica la grilla 8×8 DENTRO del borde.
+  var g = board ? _boardGrid(board, canvas)
+                : { ox: 0, oy: 0, sqW: canvas.width / 8, sqH: canvas.height / 8 };
+  var sqW = g.sqW;
   function center(sq) {
     var f = 'abcdefgh'.indexOf(sq[0]);
     var r = 8 - parseInt(sq[1]);
     if (cv.flipped) { f = 7 - f; r = 7 - r; }
-    return { x: (f + 0.5) * sqW, y: (r + 0.5) * sqH };
+    return { x: g.ox + (f + 0.5) * g.sqW, y: g.oy + (r + 0.5) * g.sqH };
   }
   // dibujar de la más débil a la más fuerte para que la principal quede arriba
   for (var i = _sfArrows.length - 1; i >= 0; i--) {
@@ -25882,6 +25927,17 @@ function cvDrawArrows() {
     var from = sqCenter(arr.from), to = sqCenter(arr.to);
     drawArrow(ctx, from.x, from.y, to.x, to.y, g.sqW, 0.18, _UA_ARROW);
   });
+  // Trazo EN CURSO (mientras mantenés el botón derecho y arrastrás): la flecha sigue al puntero,
+  // alargándose/achicándose casilla a casilla. Si estás sobre la casilla de origen, previsualiza el resaltado.
+  if (_arrowDragFrom) {
+    if (_arrowDragTo && _arrowDragTo !== _arrowDragFrom) {
+      var pf = sqCenter(_arrowDragFrom), pt = sqCenter(_arrowDragTo);
+      drawArrow(ctx, pf.x, pf.y, pt.x, pt.y, g.sqW, 0.18, _UA_ARROW);
+    } else if (_arrowDragTo === _arrowDragFrom) {
+      var po = sqOrigin(_arrowDragFrom);
+      ctx.fillStyle = _UA_HL; ctx.fillRect(po.x, po.y, g.sqW, g.sqH);
+    }
+  }
 }
 
 function cvClearUserArrows() { _arrows = []; _highlights = {}; cvDrawArrows(); }
@@ -25891,35 +25947,45 @@ function cvInitArrowEvents() {
   if (!inner || inner._arrowsBound) return;
   inner._arrowsBound = true;
   inner.addEventListener('mousedown', function(e) {
-    if (e.button === 2) { e.preventDefault(); _arrowDragFrom = cvSqFromEvent(e); }
+    if (e.button === 2) { e.preventDefault(); _arrowDragFrom = cvSqFromEvent(e); _arrowDragTo = _arrowDragFrom; cvDrawArrows(); }
+  });
+  inner.addEventListener('mousemove', function(e) {
+    if (!_arrowDragFrom) return;
+    var sq = cvSqFromEvent(e);
+    if (sq !== _arrowDragTo) { _arrowDragTo = sq; cvDrawArrows(); }   // la flecha en curso sigue al puntero
   });
   inner.addEventListener('mouseup', function(e) {
     if (e.button !== 2) return;
     e.preventDefault();
     var to = cvSqFromEvent(e);
-    if (!to) { _arrowDragFrom = null; return; }
-    if (_arrowDragFrom && _arrowDragFrom !== to) {
-      // Es una flecha
-      var exists = _arrows.findIndex(function(a) { return a.from === _arrowDragFrom && a.to === to; });
-      if (exists >= 0) _arrows.splice(exists, 1);
-      else _arrows.push({ from: _arrowDragFrom, to: to });
-    } else if (_arrowDragFrom === to) {
-      // Es un highlight
-      if (_highlights[to]) delete _highlights[to];
-      else _highlights[to] = true;
+    if (_arrowDragFrom && to) {
+      if (_arrowDragFrom !== to) {
+        // Es una flecha: la agrega o, si ya estaba, la quita
+        var exists = _arrows.findIndex(function(a) { return a.from === _arrowDragFrom && a.to === to; });
+        if (exists >= 0) _arrows.splice(exists, 1);
+        else _arrows.push({ from: _arrowDragFrom, to: to });
+      } else {
+        // Es un highlight
+        if (_highlights[to]) delete _highlights[to];
+        else _highlights[to] = true;
+      }
     }
-    _arrowDragFrom = null;
+    _arrowDragFrom = null; _arrowDragTo = null;
     cvDrawArrows();
   });
   inner.addEventListener('contextmenu', function(e) { e.preventDefault(); });
+  // Si soltás el botón derecho FUERA del tablero, cancelar el trazo pendiente (el mouseup del tablero no dispara).
+  document.addEventListener('mouseup', function(e) {
+    if (e.button === 2 && _arrowDragFrom) { _arrowDragFrom = null; _arrowDragTo = null; cvDrawArrows(); }
+  });
 }
 
 /* ── Flechas/highlights con clic derecho para los tableros de Ejercicios y Practicar ──
    (el visor principal tiene el suyo en cvInitArrowEvents). Reutiliza drawArrow(). Estado por
    tablero: { arrows:[{from,to}], highlights:{sq:true}, dragFrom, cw, ch }. Se limpian al re-renderizar
    el tablero (cualquier jugada/selección/giro/nueva posición), igual que en lichess. */
-var _puzUA  = { arrows: [], highlights: {}, dragFrom: null, cw: 0, ch: 0 };
-var _pracUA = { arrows: [], highlights: {}, dragFrom: null, cw: 0, ch: 0 };
+var _puzUA  = { arrows: [], highlights: {}, dragFrom: null, dragTo: null, cw: 0, ch: 0 };
+var _pracUA = { arrows: [], highlights: {}, dragFrom: null, dragTo: null, cw: 0, ch: 0 };
 function _uaDraw(boardId, canvasId, st, flipped) {
   var canvas = document.getElementById(canvasId); if (!canvas) return;
   var board = document.getElementById(boardId);
@@ -25936,8 +26002,17 @@ function _uaDraw(boardId, canvasId, st, flipped) {
     var f = origin(a.from), t = origin(a.to);
     drawArrow(ctx, f.x + g.sqW / 2, f.y + g.sqH / 2, t.x + g.sqW / 2, t.y + g.sqH / 2, g.sqW, 0.18, _UA_ARROW);
   });
+  // Trazo EN CURSO: la flecha sigue al puntero mientras arrastrás; sobre la casilla de origen previsualiza el resaltado.
+  if (st.dragFrom) {
+    if (st.dragTo && st.dragTo !== st.dragFrom) {
+      var pf = origin(st.dragFrom), pt = origin(st.dragTo);
+      drawArrow(ctx, pf.x + g.sqW / 2, pf.y + g.sqH / 2, pt.x + g.sqW / 2, pt.y + g.sqH / 2, g.sqW, 0.18, _UA_ARROW);
+    } else if (st.dragTo === st.dragFrom) {
+      var po = origin(st.dragFrom); ctx.fillStyle = _UA_HL; ctx.fillRect(po.x, po.y, g.sqW, g.sqH);
+    }
+  }
 }
-function _uaClear(boardId, canvasId, st, flipped) { st.arrows = []; st.highlights = {}; st.dragFrom = null; _uaDraw(boardId, canvasId, st, flipped); }
+function _uaClear(boardId, canvasId, st, flipped) { st.arrows = []; st.highlights = {}; st.dragFrom = null; st.dragTo = null; _uaDraw(boardId, canvasId, st, flipped); }
 function _uaBind(boardId, canvasId, st, getFlipped) {
   var board = document.getElementById(boardId); if (!board) return;
   var wrap = board.parentElement; if (!wrap || wrap._uaBound) return; wrap._uaBound = true;
@@ -25948,7 +26023,12 @@ function _uaBind(boardId, canvasId, st, getFlipped) {
     if (getFlipped()) { f = 7 - f; r = 7 - r; }
     return 'abcdefgh'[f] + (8 - r);
   }
-  wrap.addEventListener('mousedown', function(e) { if (e.button === 2) { e.preventDefault(); st.dragFrom = sqFrom(e); } });
+  wrap.addEventListener('mousedown', function(e) { if (e.button === 2) { e.preventDefault(); st.dragFrom = sqFrom(e); st.dragTo = st.dragFrom; _uaDraw(boardId, canvasId, st, getFlipped()); } });
+  wrap.addEventListener('mousemove', function(e) {
+    if (!st.dragFrom) return;
+    var sq = sqFrom(e);
+    if (sq !== st.dragTo) { st.dragTo = sq; _uaDraw(boardId, canvasId, st, getFlipped()); }   // la flecha en curso sigue al puntero
+  });
   wrap.addEventListener('mouseup', function(e) {
     if (e.button !== 2) return; e.preventDefault();
     var to = sqFrom(e);
@@ -25960,10 +26040,14 @@ function _uaBind(boardId, canvasId, st, getFlipped) {
         if (st.highlights[to]) delete st.highlights[to]; else st.highlights[to] = true;
       }
     }
-    st.dragFrom = null;
+    st.dragFrom = null; st.dragTo = null;
     _uaDraw(boardId, canvasId, st, getFlipped());
   });
   wrap.addEventListener('contextmenu', function(e) { e.preventDefault(); });
+  // Si soltás el botón derecho FUERA del tablero, cancelar el trazo pendiente.
+  document.addEventListener('mouseup', function(e) {
+    if (e.button === 2 && st.dragFrom) { st.dragFrom = null; st.dragTo = null; _uaDraw(boardId, canvasId, st, getFlipped()); }
+  });
 }
 
 /* ═══════════════════════════════════════════════════════
