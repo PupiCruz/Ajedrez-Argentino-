@@ -6477,6 +6477,22 @@ async function _crDiscoverRounds(crUrl, pairArt) {
   } catch(e) { return null; }
 }
 
+// Saca cuántas rondas tiene el torneo del ENCABEZADO de la clasificación (art=0), que Chess-Results
+// sí trae siempre: "Clasificación Final después de 11 rondas", "…después de la ronda 5", "after 8
+// rounds", etc. Sirve de respaldo cuando _crDiscoverRounds no encuentra los links "art=3&rd=N"
+// (Chess-Results dejó de ponerlos en torneos como las Olimpiadas). Devuelve el nº o null.
+function _teamRoundsFromStandings(rows){
+  var best = 0;
+  (rows||[]).forEach(function(r){
+    var line = (r||[]).join(' ');
+    var m = line.match(/(?:despu[eé]s de|after)\s+(\d+)\s+(?:ronda|round)/i);
+    if (m) best = Math.max(best, parseInt(m[1]));
+    var re = /(?:ronda|round|runde)\s+(\d+)/ig, mm;
+    while ((mm = re.exec(line)) !== null) best = Math.max(best, parseInt(mm[1]));
+  });
+  return best || null;
+}
+
 // Baja TODAS las rondas de cruces + la clasificación de un torneo por equipos, las pasa por los
 // parsers existentes y las guarda. silent=true → actualización en vivo (sin mensajes de estado).
 async function _crAutoFetchTeam(crk, crUrl, opts) {
@@ -6486,28 +6502,33 @@ async function _crAutoFetchTeam(crk, crUrl, opts) {
   if (!crUrl || !/tnr\d+/i.test(crUrl)) { setS('❌ Este torneo no tiene una URL de Chess-Results válida (debe contener tnr<número>).'); return false; }
   if (_crAutoBusy[crk]) return false; _crAutoBusy[crk] = true;
   try {
-    setS('⏳ Buscando rondas en Chess-Results…');
-    var maxR = await _crDiscoverRounds(crUrl);
-    if (!maxR) { setS('❌ No se encontraron rondas en la página de Chess-Results.'); return false; }
+    setS('⏳ Bajando clasificación…');
     var data = crDataLoad(crk) || {};
     if (!data.teamRounds) data.teamRounds = {};
-    var okR = 0;
-    for (var r = 1; r <= maxR; r++) {
-      setS('⏳ Bajando cruces ronda ' + r + '/' + maxR + '…');
-      try {
-        var rows = await crExtractXlsx(await _crProxyFetch(_crExportUrl(crUrl, 3, r)));
-        var parsed = _teamParseRounds(rows), nums = Object.keys(parsed);
-        if (nums.length) { nums.forEach(function(n){ data.teamRounds[n] = parsed[n]; }); okR++; }
-      } catch(e) { /* si una ronda falla, seguir con las demás */ }
-    }
-    setS('⏳ Bajando clasificación…');
+    // 1) CLASIFICACIÓN primero (art=0, sin rd = la actual/final). Nos da la tabla Y, por el encabezado,
+    //    cuántas rondas hay. Chess-Results dejó de exponer los links "art=3&rd=N" en varios torneos
+    //    (Olimpiadas), así que _crDiscoverRounds devuelve null aunque el export por ronda SÍ funcione:
+    //    el nº de rondas lo sacamos del encabezado de la clasificación (o, si tampoco, sondeando).
+    var maxR = await _crDiscoverRounds(crUrl);   // camino rápido viejo (si el torneo aún trae los links)
     try {
-      // La clasificación (art=0) puede llegar a MENOS rondas que los emparejamientos (la última
-      // ronda puede estar emparejada pero no jugada): descubrir su propio máximo.
-      var standR = await _crDiscoverRounds(crUrl, 0) || maxR;
-      var stand = _teamParseStandings(await crExtractXlsx(await _crProxyFetch(_crExportUrl(crUrl, 0, standR))));
+      var srows = await crExtractXlsx(await _crProxyFetch(_crExportUrl(crUrl, 0, null)));
+      var stand = _teamParseStandings(srows);
       if (stand && stand.teams && stand.teams.length) data.teamStandings = stand;
+      if (!maxR) maxR = _teamRoundsFromStandings(srows);
     } catch(e) {}
+    // 2) CRUCES por ronda. Con maxR conocido, 1..maxR. Si no, MODO SONDEO: pedimos ronda 1, 2, 3…
+    //    hasta que una baje bien pero venga SIN cruces (ronda no emparejada = fin del torneo jugado).
+    var probe = !maxR, cap = maxR || 40, okR = 0;
+    for (var r = 1; r <= cap; r++) {
+      setS('⏳ Bajando cruces ronda ' + r + (maxR ? '/' + maxR : '') + '…');
+      var got = null;   // null = falló el fetch (no cortar el sondeo); {} = bajó ok pero sin cruces (fin)
+      for (var attempt = 0; attempt < 2 && got == null; attempt++) {
+        try { got = _teamParseRounds(await crExtractXlsx(await _crProxyFetch(_crExportUrl(crUrl, 3, r)))); }
+        catch(e) { /* reintento una vez para no saltear una ronda por un error de red puntual */ }
+      }
+      if (got && Object.keys(got).length) { Object.keys(got).forEach(function(n){ data.teamRounds[n] = got[n]; }); okR++; }
+      else if (probe && got) break;   // sondeo: ronda que bajó ok pero sin cruces = no hay más
+    }
     crDataSave(crk, data);
     var rn = Object.keys(data.teamRounds).map(Number).sort(function(a,b){return a-b;});
     if (!opts.silent) setS('✓ Actualizado desde Chess-Results — ' + okR + ' ronda(s)' + (data.teamStandings ? ' + tabla' : '') + (_ondemand ? '' : '. Acordate de "Guardar datos en mi carpeta" y publicar.'));
@@ -6953,8 +6974,9 @@ async function _liveStandingsFetch(crk, crUrl, info64url, isTeam) {
     var data = crDataLoad(crk) || { rounds:{}, standings:[] };
     if (isTeam) {
       if (!crUrl || !/tnr\d+/i.test(crUrl)) return;
-      var standR = await _crDiscoverRounds(crUrl, 0);
-      var stand = _teamParseStandings(await crExtractXlsx(await _crProxyFetch(_crExportUrl(crUrl, 0, standR))));
+      // art=0 SIN rd = la clasificación actual/final. No hace falta descubrir la ronda (Chess-Results
+      // ya no expone esos links en varios torneos, y el export sin rd trae la tabla igual).
+      var stand = _teamParseStandings(await crExtractXlsx(await _crProxyFetch(_crExportUrl(crUrl, 0, null))));
       if (stand && stand.teams && stand.teams.length) { data.teamStandings = stand; crDataSave(crk, data); renderTorneos(_lastTorneoFilter); }
       return;
     }
@@ -19719,6 +19741,19 @@ var _BC_REFRESH_MS = 30000;   // cada 30s mientras haya una ronda en vivo
 // Profundidad (Nº de jugadas desde el inicio) de un nodo del árbol del visor.
 function _cvNodeDepth(n) { var d = 0; while (n && n.parent) { d++; n = n.parent; } return d; }
 
+// fetch con CORTE POR TIEMPO: si Lichess/livechesscloud no responde en `ms`, aborta el pedido en vez de
+// quedarse colgado para siempre. Un fetch colgado (sin timeout) congelaba la cadena de auto-refresco en vivo
+// (el callback nunca llegaba → los tableros dejaban de actualizarse hasta apretar F5). Al abortar, el pedido
+// rechaza → el `.catch` de siempre corre → la cadena sigue viva. Si el navegador no tiene AbortController,
+// hace un fetch normal (peor caso: el watchdog de más abajo igual relanza la cadena).
+function _fetchTO(url, ms) {
+  var ac = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  var t = ac ? setTimeout(function(){ try { ac.abort(); } catch (e) {} }, ms || 15000) : null;
+  var p = fetch(url, ac ? { signal: ac.signal } : undefined);
+  if (t) p = p.then(function(r){ clearTimeout(t); return r; }, function(e){ clearTimeout(t); throw e; });
+  return p;
+}
+
 /* ══════════════════ livechesscloud (view.livechesscloud.com) ══════════════════
    Fuente directa para torneos que NO transmiten por Lichess: pasan el link de
    view.livechesscloud.com/#<uuid>. La API pública (pool.livechesscloud.com) manda
@@ -19803,7 +19838,7 @@ function _lccRunPool(tasks, limit, worker, allDone) {
 
 // Baja un torneo de livechesscloud completo y devuelve el mismo `res` que _bcFetchAll.
 function _lccFetchAll(id, cb) {
-  fetch(_LCC_BASE + '/' + id + '/tournament.json')
+  _fetchTO(_LCC_BASE + '/' + id + '/tournament.json', 12000)
     .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
     .then(function(tour) {
       var rounds = tour.rounds || [];
@@ -19821,7 +19856,7 @@ function _lccFetchAll(id, cb) {
       // 1) índice (emparejamientos) de cada ronda
       var indices = {}, pend = roundNums.length;
       roundNums.forEach(function(n) {
-        fetch(_LCC_BASE + '/' + id + '/round-' + n + '/index.json')
+        _fetchTO(_LCC_BASE + '/' + id + '/round-' + n + '/index.json', 12000)
           .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
           .then(function(idx) { indices[n] = idx; if (--pend === 0) stage2(); })
           .catch(function() { indices[n] = null; if (--pend === 0) stage2(); });
@@ -19836,7 +19871,7 @@ function _lccFetchAll(id, cb) {
         _lccRunPool(tasks, 16, function(task, doneOne) {
           var key = id + '/' + task.n + '/' + task.g, cached = _lccCache[key];
           if (cached && cached.final) { if (!cached.empty && cached.pgn) results[key] = cached.pgn; doneOne(); return; }
-          fetch(_LCC_BASE + '/' + id + '/round-' + task.n + '/game-' + task.g + '.json?poll')
+          _fetchTO(_LCC_BASE + '/' + id + '/round-' + task.n + '/game-' + task.g + '.json?poll', 15000)
             .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
             .then(function(gj) {
               var hasData = !!((gj.moves && gj.moves.length) || (_lccResult(task.pairing, gj) !== '*'));
@@ -19905,7 +19940,7 @@ function _bcFetchAll(broadcastId, cb) {
   // (responde 404 al OPTIONS), así que si hay un token configurado el navegador BLOQUEA la
   // descarga de las partidas y caen al respaldo local. Sin token son requests "simples" → andan.
   var url = 'https://lichess.org/api/broadcast/' + broadcastId;
-  fetch(url)
+  _fetchTO(url, 12000)
     .then(function(r) {
       if (!r.ok) throw new Error('HTTP ' + r.status); return r.json();
     })
@@ -19942,7 +19977,7 @@ function _bcFetchAll(broadcastId, cb) {
         // para CUALQUIER origen; el web route NO manda CORS desde dominios como Netlify, así que las
         // partidas no se descargaban en la web publicada (sí desde localhost). Solo necesita el roundId.
         var pgnUrl = 'https://lichess.org/api/broadcast/round/' + round.id + '.pgn';
-        fetch(pgnUrl)
+        _fetchTO(pgnUrl, 15000)
           .then(function(r) { return r.text(); })
           .then(function(pgn) { byRound[round.id] = pgn.trim().split(/\n\n(?=\[Event )/).filter(function(g) { return g.trim() && !_bcIsPlaceholderGame(g); }); pending--; done(); })
           .catch(function() { byRound[round.id] = []; pending--; done(); });
@@ -22430,6 +22465,29 @@ var _tdLiveCrKey = null;
 var _tdLiveIsTeam = false;   // si el torneo es por equipos: el vivo NO debe re-renderizar la sección como cuadro individual
 var _tdIdlePolls = 0;        // refrescos consecutivos SIN ronda en curso (hueco entre rondas)
 var _TD_MAX_IDLE = 40;       // tope de sondeos "en el hueco" (a 30s ≈ 20 min) antes de rendirse
+var _tdFetchFails = 0;       // fetches consecutivos que fallaron (res null/vacío = error de red/Lichess)
+var _TD_MAX_FETCH_FAILS = 80; // ~40 min de fallos SEGUIDOS antes de rendirse (rarísimo; cubre caídas largas)
+var _tdLastGood = 0;         // Date.now() del último fetch que trajo datos (lo vigila el watchdog)
+var _tdPollGen = 0;          // "generación" del sondeo: descarta callbacks de fetches viejos o colgados
+var _tdWatchdog = null;      // supervisor INDEPENDIENTE de la cadena de sondeo (por si la cadena se muere)
+var _TD_WATCHDOG_MS = 20000; // el supervisor se despierta cada 20s a chequear que el vivo siga fresco
+
+// ── WATCHDOG: red de seguridad del auto-refresco en vivo ─────────────────────────────────────────
+// La cadena de sondeo (_tdLiveRefresh → fetch → reprograma el timer) puede morir en silencio: un error
+// transitorio, un fetch colgado o una excepción dejaban los tableros congelados hasta que el visitante
+// apretaba F5. Este supervisor corre aparte: si hace demasiado que no llega un fetch CON DATOS mientras
+// deberíamos estar en vivo, relanza la cadena solo (equivale al F5 pero sin recargar la página ni sacar
+// al visitante de la partida que está mirando).
+function _tdStartWatchdog() {
+  if (_tdWatchdog) return;
+  _tdWatchdog = setInterval(function() {
+    if (!_tdLiveCtx || !document.getElementById('td-games-section')) { _tdStopWatchdog(); return; }
+    if (document.hidden) return;   // pestaña en segundo plano: los timers ya se frenan solos; no forzar
+    var budget = _liveRefreshMs(_tdLiveCtx && _tdLiveCtx.tourId) * 2.5 + 8000;  // margen sobre el intervalo normal
+    if (_tdLastGood && (Date.now() - _tdLastGood) > budget) _tdLiveRefresh();   // la cadena se colgó/murió → revivirla
+  }, _TD_WATCHDOG_MS);
+}
+function _tdStopWatchdog() { if (_tdWatchdog) { clearInterval(_tdWatchdog); _tdWatchdog = null; } }
 
 // ¿Seguir sondeando el broadcast? Sí si hay una ronda EN CURSO (se reinicia el contador de huecos).
 // Si no (hueco entre rondas), seguir mientras Lichess anuncie una ronda que TODAVÍA no terminó, para
@@ -22451,7 +22509,7 @@ function _tdKeepPolling(res) {
   return (++_tdIdlePolls <= _TD_MAX_IDLE);               // el hueco se hizo muy largo → el visitante recarga
 }
 
-function _tdLiveStop() { if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; } _tdLiveCtx = null; _tdIdlePolls = 0; _tdStopClocks(); mevAbort(); }
+function _tdLiveStop() { if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; } _tdStopWatchdog(); _tdPollGen++; _tdLiveCtx = null; _tdIdlePolls = 0; _tdFetchFails = 0; _tdLastGood = 0; _tdStopClocks(); mevAbort(); }
 
 function _tdLoadLiveGames(broadcastId, broadcastUrl, name, location, pgnKey, typ, status, hasFallback) {
   // Camino rápido entre pestañas: si otra pestaña nos pasó este torneo, pintamos sus tableros YA y
@@ -22513,8 +22571,9 @@ function _tdLiveFetchMulti(tourIds, name, location, pgnKey, typ, hasFallback) {
     if (!res || !res.roundsWithGames || !res.roundsWithGames.length) { if (!hasFallback) _tdLiveError(null); return; }
     _tdLiveBuild(res, sec, null);
     _tdShareRemember(res);   // guardar para pasárselo a una pestaña nueva que abra una partida
+    _tdLastGood = Date.now(); _tdFetchFails = 0;   // primer fetch OK: arranca el reloj que vigila el watchdog
     if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; }
-    if (_tdKeepPolling(res)) _tdLiveTimer = setTimeout(_tdLiveRefresh, _liveRefreshMs(_tdLiveCtx && _tdLiveCtx.tourId));
+    if (_tdKeepPolling(res)) { _tdLiveTimer = setTimeout(_tdLiveRefresh, _liveRefreshMs(_tdLiveCtx && _tdLiveCtx.tourId)); _tdStartWatchdog(); }
   });
 }
 
@@ -22795,15 +22854,34 @@ function _tdApplyViewerRefresh(pgnKey) {
 
 function _tdLiveRefresh() {
   if (!_tdLiveCtx) return;
+  // Absorber cualquier timer pendiente y marcar una generación nueva: así, si el watchdog nos llama
+  // mientras había un fetch viejo en vuelo (o colgado), ese callback viejo queda invalidado y NO
+  // reprograma un segundo timer (evita cadenas de sondeo duplicadas).
+  if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; }
+  var gen = ++_tdPollGen;
   var key = _tdLiveCtx.key, tourIds = _tdLiveCtx.tourIds || [_tdLiveCtx.tourId];
   _bcFetchAllMulti(tourIds, function(res){
+    if (gen !== _tdPollGen) return;                       // callback de un fetch viejo/colgado → descartar
     if (!_tdLiveCtx || _tdLiveCtx.key !== key) return;
     var sec = document.getElementById('td-games-section');
     if (!sec) { _tdLiveStop(); return; }
-    if (res && res.roundsWithGames && res.roundsWithGames.length) { _tdLiveApplyRefresh(res, sec); _tdShareRemember(res); }
+    var hasData = !!(res && res.roundsWithGames && res.roundsWithGames.length), keep;
+    if (hasData) {
+      _tdLastGood = Date.now(); _tdFetchFails = 0;
+      // try/catch: si _tdLiveApplyRefresh explota (dato raro), NO debe romper la reprogramación del timer.
+      try { _tdLiveApplyRefresh(res, sec); _tdShareRemember(res); } catch (e) {}
+      keep = _tdKeepPolling(res);
+    } else {
+      // res null/vacío = error TRANSITORIO (Lichess caído un momento, corte de red, timeout). ANTES esto
+      // mataba el sondeo para siempre (había que apretar F5); ahora reintentamos hasta un tope generoso.
+      keep = (++_tdFetchFails <= _TD_MAX_FETCH_FAILS);
+    }
     if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; }
-    if (_tdKeepPolling(res) && document.getElementById('td-games-section')) {
+    if (keep && document.getElementById('td-games-section')) {
       _tdLiveTimer = setTimeout(_tdLiveRefresh, _liveRefreshMs(_tdLiveCtx && _tdLiveCtx.tourId));
+      _tdStartWatchdog();
+    } else {
+      _tdStopWatchdog();
     }
   });
 }
