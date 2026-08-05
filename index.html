@@ -5511,6 +5511,37 @@ function _teamParseRounds(rows){
   return out;
 }
 
+// Parser de EMPAREJAMIENTOS DE LOS EQUIPOS (Chess-Results art=2): los cruces PAÍS vs PAÍS con el
+// marcador del match (ej. Kazakhstan 2 : 2 USA), SIN la formación por tablero. Chess-Results los
+// publica ANTES que la formación (art=3), porque la composición de cada equipo se define a último
+// momento. Encabezado: No.|No.Ini.|FED|Equipo|Pts.|PM|Res.| : |Res.|PM|Pts.|Equipo|FED|No.Ini.
+// Devuelve {num:[crosses]}; cada cross: {no,aFed,aName,aPts,aRes,bRes,bPts,bName,bFed}.
+function _teamParseCrosses(rows){
+  var num=null;
+  for(var i=0;i<rows.length;i++){ var line=rows[i].join(' '); var m=line.match(/(\d+)\.\s*Ronda/i)||line.match(/Ronda\s+(\d+)/i)||line.match(/Round\s+(\d+)/i); if(m){ num=parseInt(m[1]); break; } }
+  var hi=-1;
+  for(var i2=0;i2<rows.length;i2++){ var r0=rows[i2]; if(r0.indexOf(':')>=0 && r0.some(function(x){return /^equipo$/i.test((x||'').trim());})){ hi=i2; break; } }
+  if(hi<0) return {};
+  var hdr=rows[hi], sep=hdr.indexOf(':'); if(sep<0) return {};
+  function findCol(re,from,to){ for(var c=from;c<to;c++){ if(re.test((hdr[c]||'').trim())) return c; } return -1; }
+  var aFed=findCol(/^fed$/i,0,sep), aName=findCol(/^equipo$/i,0,sep), aPts=findCol(/^pts/i,0,sep), aRes=-1;
+  for(var c=sep-1;c>=0;c--){ if(/^res/i.test((hdr[c]||'').trim())){ aRes=c; break; } }
+  var bRes=-1; for(var c2=sep+1;c2<hdr.length;c2++){ if(/^res/i.test((hdr[c2]||'').trim())){ bRes=c2; break; } }
+  var bName=findCol(/^equipo$/i,sep+1,hdr.length), bFed=findCol(/^fed$/i,sep+1,hdr.length), bPts=-1;
+  for(var c3=sep+1;c3<hdr.length;c3++){ if(/^pts/i.test((hdr[c3]||'').trim())){ bPts=c3; break; } }
+  var out=[];
+  for(var i3=hi+1;i3<rows.length;i3++){
+    var r=rows[i3]; if(!r.length) continue;
+    var aN=((aName>=0?r[aName]:'')||'').replace(/\s*\*\).*/,'').trim(); if(!aN) continue;   // "*)" = nota al pie
+    var bN=((bName>=0?r[bName]:'')||'').replace(/\s*\*\).*/,'').trim();
+    out.push({ no:(r[0]||'').trim(), aFed:((aFed>=0?r[aFed]:'')||'').trim(), aName:aN, aPts:((aPts>=0?r[aPts]:'')||'').trim(),
+      aRes:((aRes>=0?r[aRes]:'')||'').trim(), bRes:((bRes>=0?r[bRes]:'')||'').trim(),
+      bPts:((bPts>=0?r[bPts]:'')||'').trim(), bName:bN, bFed:((bFed>=0?r[bFed]:'')||'').trim() });
+  }
+  if(!out.length) return {};
+  var res={}; res[num||1]=out; return res;
+}
+
 // ── Render por equipos ──
 function _teamRenderStandings(standings){
   var teams=standings&&standings.teams;
@@ -5547,6 +5578,16 @@ function _teamRenderStandings(standings){
 function _teamColorDot(isWhite){
   return '<span title="'+(isWhite?'Juega con blancas':'Juega con negras')+'" style="display:inline-block;flex-shrink:0;width:13px;height:13px;border-radius:50%;border:1px solid #777;background:'+(isWhite?'#f2f2f2':'#1e1e1e')+'"></span>';
 }
+// "India (IND)" → { clean:"India", flag:<img bandera> }. Si no trae "(FED)", intenta la bandera por el
+// nombre del país. Se usa en el encabezado del cruce para mostrar la banderita en vez de la abreviatura.
+function _teamCountryParts(name){
+  var s=String(name||'');
+  var m=s.match(/\(([A-Za-z]{3})\)\s*$/);
+  var fed=m?m[1].toUpperCase():'';
+  var clean=s.replace(/\s*\([A-Za-z]{3}\)\s*$/,'').trim();
+  var flag=fed?crFlagEmoji(fed):_teamFlag(clean);
+  return { clean:clean||s, flag:flag };
+}
 function _teamRenderRound(matches, roundNum, crk){
   if(!matches||!matches.length) return '<div style="color:var(--text3);font-size:12px;padding:10px">Sin datos.</div>';
   // Nombre clickeable → abre las estadísticas del jugador en el torneo (crOpenPlayer lee teamRounds).
@@ -5564,16 +5605,17 @@ function _teamRenderRound(matches, roundNum, crk){
   try { var _tNxt=_crNextRoundNote(crk?crDataLoad(crk):null, crk, roundNum); if(_tNxt) inner+='<div>'+_tNxt+'</div>'; } catch(e) {}
   matches.forEach(function(m,mi){
     inner+='<div style="border:1px solid var(--border);border-radius:10px;'+(mi?'margin-top:10px;':'')+'overflow:hidden">';
-    inner+='<div style="display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--bg2);font-weight:700;font-size:15px">';
-    inner+='<span style="flex:1;min-width:0;text-align:right;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(m.aName||'')+'</span>';
+    var _ca=_teamCountryParts(m.aName), _cb=_teamCountryParts(m.bName);
+    inner+='<div style="display:flex;align-items:center;gap:10px;padding:11px 16px;background:var(--bg2);font-weight:700;font-size:15.5px">';
+    inner+='<span style="flex:1;min-width:0;display:flex;align-items:center;justify-content:flex-end;gap:8px;overflow:hidden"><span style="color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(_ca.clean)+'</span>'+_ca.flag+'</span>';
     inner+='<span style="flex-shrink:0;color:var(--gold);background:var(--bg3);border-radius:6px;padding:3px 12px">'+escHtml(m.score||'')+'</span>';
-    inner+='<span style="flex:1;min-width:0;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(m.bName||'')+'</span>';
+    inner+='<span style="flex:1;min-width:0;display:flex;align-items:center;gap:8px;overflow:hidden">'+_cb.flag+'<span style="color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(_cb.clean)+'</span></span>';
     inner+='</div>';
     (m.boards||[]).forEach(function(b,bi){
       // El color ALTERNA por mesa: mesa 1 (impar) el equipo de la izquierda va con blancas; mesa 2
       // (par) con negras; etc. (nW = columna izquierda/equipo A, nB = derecha/equipo B; NO son colores).
       var leftIsWhite = (bi % 2 === 0);
-      inner+='<div style="display:flex;align-items:center;gap:6px;padding:8px 14px;border-top:1px solid var(--border);font-size:14px">';
+      inner+='<div style="display:flex;align-items:center;gap:6px;padding:9px 16px;border-top:1px solid var(--border);font-size:15px">';
       inner+=side(b.tW,b.nW,b.eW,true);
       inner+=_teamColorDot(leftIsWhite);    // color del jugador de la izquierda en esta mesa
       // Resultado clickeable: abre la partida del broadcast que coincide con ese tablero (por ronda
@@ -5590,7 +5632,36 @@ function _teamRenderRound(matches, roundNum, crk){
     inner+='</div>';
   });
   // Recuadro con scroll interno (las partidas de la ronda no quedan empujadas tan abajo), centrado.
-  return '<div style="max-height:560px;overflow-y:auto;border:1px solid var(--border);border-radius:12px;padding:12px;background:var(--bg2);margin-left:auto;margin-right:auto;max-width:680px">'+inner+'</div>';
+  // En PC sobra lugar a los costados: ancho más generoso (860) para que los nombres no se corten.
+  return '<div style="max-height:560px;overflow-y:auto;border:1px solid var(--border);border-radius:12px;padding:12px;background:var(--bg2);margin-left:auto;margin-right:auto;max-width:860px">'+inner+'</div>';
+}
+// Render de los CRUCES POR PAÍSES (art=2): una fila por match, país vs país con el marcador. Es la
+// vista "rápida" que sale antes que la formación. Si esa ronda ya tiene formación cargada, cada fila
+// es clickeable y salta a la formación (bottom row). Resalta los cruces con Argentina.
+function _teamRenderCrosses(crosses, roundNum, crk, hasFormation){
+  if(!crosses||!crosses.length) return '<div style="color:var(--text3);font-size:12px;padding:10px">Sin cruces cargados.</div>';
+  var ks=(crk||'').replace(/'/g,"\\'");
+  var inner='';
+  var _tSched=''; try { _tSched=_crRoundSchedule(crk?crDataLoad(crk):null, crk, roundNum); } catch(e) {}
+  if(_tSched){
+    inner+='<div style="display:inline-flex;align-items:center;gap:8px;margin-bottom:10px;font-size:14px;background:var(--gl30);border:1px solid var(--bd14);border-radius:9px;padding:8px 13px;max-width:100%;flex-wrap:wrap">'
+      +'<span style="font-size:16px">🕒</span><span style="color:var(--fg-c0)">Se juega:</span> <span style="font-weight:700;color:var(--fg-e0);text-shadow:var(--txt-out)">'+escHtml(_tSched)+'</span></div>';
+  }
+  if(hasFormation) inner+='<div style="font-size:11px;color:var(--text3);margin-bottom:8px">Tocá un cruce para ver la formación tablero por tablero.</div>';
+  crosses.forEach(function(m){
+    var arg=(m.aFed==='ARG'||m.bFed==='ARG');
+    var clk=hasFormation ? ' onclick="_teamShowTab(\''+ks+'\','+(roundNum!=null?roundNum:'null')+')" title="Ver la formación de este cruce" style="cursor:pointer;' : ' style="';
+    inner+='<div'+clk+'display:flex;align-items:center;gap:8px;padding:11px 14px;border:1px solid '+(arg?'var(--gold-dim)':'var(--border)')+';border-radius:10px;margin-top:8px;background:'+(arg?'var(--gl30)':'var(--bg2)')+'">';
+    inner+='<span style="flex:1;min-width:0;display:flex;align-items:center;justify-content:flex-end;gap:7px;overflow:hidden">';
+    inner+='<span style="color:var(--text);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(m.aName)+'</span>'+crFlagEmoji(m.aFed);
+    inner+='</span>';
+    inner+='<span style="flex-shrink:0;color:var(--gold);background:var(--bg3);border-radius:6px;padding:4px 13px;font-weight:700;font-size:15px;white-space:nowrap">'+escHtml(m.aRes||'')+' : '+escHtml(m.bRes||'')+'</span>';
+    inner+='<span style="flex:1;min-width:0;display:flex;align-items:center;gap:7px;overflow:hidden">';
+    inner+=crFlagEmoji(m.bFed)+'<span style="color:var(--text);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(m.bName||'(libre)')+'</span>';
+    inner+='</span>';
+    inner+='</div>';
+  });
+  return '<div style="max-height:560px;overflow-y:auto;border:1px solid var(--border);border-radius:12px;padding:12px;background:var(--bg2);margin-left:auto;margin-right:auto;max-width:860px">'+inner+'</div>';
 }
 // Clic en el resultado de un tablero del cuadro de cruces por equipos: busca la partida del broadcast
 // (por ronda + nombres, igual que el cuadro individual) y la abre en el visor.
@@ -5605,16 +5676,19 @@ function _teamRenderSection(crk,data){
   var ks=crk.replace(/'/g,"\\'");
   data=data||{};
   var rounds=data.teamRounds||{};
+  var crosses=data.teamCrosses||{};
   var roundNums=Object.keys(rounds).map(Number).sort(function(a,b){return a-b;});
+  var crossNums=Object.keys(crosses).map(Number).sort(function(a,b){return a-b;});
   var hasStand=!!(data.teamStandings&&data.teamStandings.teams&&data.teamStandings.teams.length);
-  var defaultTab=roundNums.length?roundNums[roundNums.length-1]:(hasStand?'tabla':null);
+  // Landing: última ronda con FORMACIÓN; si no hay, última con CRUCES; si no, la tabla.
+  var defaultTab=roundNums.length?roundNums[roundNums.length-1]:(crossNums.length?('x'+crossNums[crossNums.length-1]):(hasStand?'tabla':null));
   var delBtn=function(label,onclick){ return _ondemand?'':'<div style="display:flex;justify-content:flex-end;margin-bottom:8px"><button onclick="'+onclick+'" style="padding:5px 11px;border-radius:8px;border:1px solid rgba(200,70,70,.35);background:rgba(200,60,60,.1);color:#e07070;font-size:11.5px;font-weight:600;cursor:pointer;font-family:inherit">✕ '+label+'</button></div>'; };
   var h='<div id="cr-section-'+crk+'" style="margin-bottom:20px">';
   h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px">';
   h+='<span style="font-size:11px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:var(--text2)">🏆 Resultados por equipos</span>';
   if(!_ondemand){
     h+='<div style="display:flex;gap:6px;align-items:center">';
-    h+='<label style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:var(--bg3);border:1px solid var(--border);color:var(--text2);font-size:11px;font-weight:600;border-radius:8px;cursor:pointer;font-family:inherit" title="Excel de emparejamientos por mesas (una ronda)"><input type="file" accept=".xlsx" style="display:none" onchange="_teamImportRound(\''+ks+'\',this)">♟ Cruces equipos</label>';
+    h+='<label style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:var(--bg3);border:1px solid var(--border);color:var(--text2);font-size:11px;font-weight:600;border-radius:8px;cursor:pointer;font-family:inherit" title="Subí el Excel de una ronda: cruces por países (art=2) o formación por mesas (art=3). Se detecta solo."><input type="file" accept=".xlsx" style="display:none" onchange="_teamImportRound(\''+ks+'\',this)">♟ Subir ronda</label>';
     h+='<label style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-size:11px;font-weight:600;border-radius:8px;cursor:pointer;font-family:inherit" title="Excel de la clasificación final por equipos"><input type="file" accept=".xlsx" style="display:none" onchange="_teamImportStandings(\''+ks+'\',this)">📊 Tabla equipos</label>';
     if(_crUrlByKey[crk] && /tnr\d+/i.test(_crUrlByKey[crk])){
       h+='<button onclick="_crAutoUpdateTeamBtn(\''+ks+'\')" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:rgba(60,130,200,.15);border:1px solid rgba(70,150,220,.4);color:#7ab8e6;font-size:11px;font-weight:600;border-radius:8px;cursor:pointer;font-family:inherit" title="Baja solo todas las rondas + la clasificación desde Chess-Results">🔄 Actualizar desde Chess-Results</button>';
@@ -5623,34 +5697,60 @@ function _teamRenderSection(crk,data){
   }
   h+='</div>';
   h+='<div id="cr-status-'+crk+'" style="font-size:11px;color:var(--text3);min-height:14px;margin-bottom:6px"></div>';
-  if(!roundNums.length&&!hasStand){
+  if(!roundNums.length&&!crossNums.length&&!hasStand){
     h+='<div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center;color:var(--text3);font-size:12px;line-height:1.6">';
-    h+=_ondemand?'Sin datos por equipos cargados todavía.':'Importá los Excel de Chess-Results por equipos:<br><b style="color:var(--text2)">♟ Cruces equipos</b> (emparejamientos por mesas, una ronda) · <b style="color:var(--gold)">📊 Tabla equipos</b> (clasificación final).';
+    h+=_ondemand?'Sin datos por equipos cargados todavía.':'Importá los Excel de Chess-Results por equipos:<br><b style="color:#7ab8e6">🌍 Cruces por países</b> (art=2) · <b style="color:var(--text2)">♟ Formaciones</b> (por mesas, art=3) · <b style="color:var(--gold)">📊 Tabla</b> (clasificación).';
     h+='</div></div>';
     return h;
   }
-  h+='<div id="cr-tabs-'+crk+'" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">';
-  roundNums.forEach(function(r){ var on=r===defaultTab; h+='<button onclick="_teamShowTab(\''+ks+'\','+r+')" id="cr-rtab-'+crk+'-'+r+'" style="padding:6px 14px;border-radius:20px;border:1px solid '+(on?'var(--gold-dim)':'var(--border)')+';background:'+(on?'var(--gold-bg)':'var(--bg3)')+';color:'+(on?'var(--gold)':'var(--text2)')+';font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">R'+r+'</button>'; });
-  if(hasStand){ var onT=defaultTab==='tabla'; h+='<button onclick="_teamShowTab(\''+ks+'\',\'tabla\')" id="cr-rtab-'+crk+'-tabla" style="padding:6px 14px;border-radius:20px;border:1px solid '+(onT?'var(--gold-dim)':'var(--border)')+';background:'+(onT?'var(--gold-bg)':'var(--bg3)')+';color:'+(onT?'var(--gold)':'var(--text2)')+';font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">📊 Tabla</button>'; }
-  h+='</div>';
-  roundNums.forEach(function(r){ h+='<div id="cr-panel-'+crk+'-'+r+'" style="display:'+(r===defaultTab?'block':'none')+'">'+delBtn('Borrar ronda R'+r,"_teamDeleteRound('"+ks+"',"+r+")")+_teamRenderRound(rounds[r], r, crk)+'</div>'; });
+  // Botón de ronda/tabla. Mismo diseño que los botones de rondas de PARTIDAS (borde 2px + fondo glass,
+  // legibles en modo oscuro). blue=true → acento AZUL (cruces por países); false → DORADO (formación/tabla).
+  var tabBtn=function(tab,label,blue){ var on=String(defaultTab)===String(tab); var bg=on?(blue?'rgba(70,140,210,.20)':'var(--gold-bg)'):'var(--gl40)'; var col=on?(blue?'#7ab8e6':'var(--gold)'):'var(--fg-d0)'; var bd=on?(blue?'rgba(80,155,225,.6)':'var(--gold-dim)'):'var(--bd22)'; return '<button onclick="_teamShowTab(\''+ks+'\',\''+tab+'\')" id="cr-rtab-'+crk+'-'+tab+'" style="padding:7px 15px;border-radius:20px;border:2px solid '+bd+';background:'+bg+';color:'+col+';font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit;text-shadow:var(--txt-out)">'+label+'</button>'; };
+  var rowLbl='font-size:10.5px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--text2);display:inline-flex;align-items:center;gap:5px;min-width:126px';
+  h+='<div id="cr-tabs-'+crk+'">';
+  // Renglón 1: CRUCES POR PAÍSES (azul) — solo si hay
+  if(crossNums.length){
+    h+='<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px">';
+    h+='<span style="'+rowLbl+'" title="País vs país con el marcador. Salen antes que la formación.">🌍 Cruces por países</span>';
+    crossNums.forEach(function(r){ h+=tabBtn('x'+r,'R'+r,true); });
+    h+='</div>';
+  }
+  // Renglón 2: FORMACIONES (dorado) + Tabla
+  if(roundNums.length){
+    h+='<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:14px">';
+    h+='<span style="'+rowLbl+'" title="La composición de cada equipo, tablero por tablero.">♟ Formaciones</span>';
+    roundNums.forEach(function(r){ h+=tabBtn(''+r,'R'+r,false); });
+    if(hasStand) h+=tabBtn('tabla','📊 Tabla',false);
+    h+='</div>';
+  } else if(hasStand){
+    h+='<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">'+tabBtn('tabla','📊 Tabla',false)+'</div>';
+  }
+  h+='</div>';   // /cr-tabs
+  crossNums.forEach(function(r){ h+='<div id="cr-panel-'+crk+'-x'+r+'" style="display:'+(String(defaultTab)===('x'+r)?'block':'none')+'">'+delBtn('Borrar cruces R'+r,"_teamDeleteCross('"+ks+"',"+r+")")+_teamRenderCrosses(crosses[r], r, crk, !!rounds[r])+'</div>'; });
+  roundNums.forEach(function(r){ h+='<div id="cr-panel-'+crk+'-'+r+'" style="display:'+(String(defaultTab)===String(r)?'block':'none')+'">'+delBtn('Borrar formación R'+r,"_teamDeleteRound('"+ks+"',"+r+")")+_teamRenderRound(rounds[r], r, crk)+'</div>'; });
   if(hasStand){ h+='<div id="cr-panel-'+crk+'-tabla" style="display:'+(defaultTab==='tabla'?'block':'none')+'">'+delBtn('Borrar tabla',"_teamDeleteStandings('"+ks+"')")+_teamRenderStandings(data.teamStandings)+'</div>'; }
   h+='</div>';
   return h;
 }
 function _teamShowTab(crk,tab){
-  var tabs=document.getElementById('cr-tabs-'+crk); if(!tabs) return;
-  tabs.querySelectorAll('button').forEach(function(b){ b.style.background='var(--bg3)';b.style.color='var(--text2)';b.style.borderColor='var(--border)'; });
-  var data=crDataLoad(crk)||{}; var rn=data.teamRounds?Object.keys(data.teamRounds):[];
-  rn.forEach(function(r){ var p=document.getElementById('cr-panel-'+crk+'-'+r); if(p) p.style.display='none'; });
-  var tp=document.getElementById('cr-panel-'+crk+'-tabla'); if(tp) tp.style.display='none';
-  var ab=document.getElementById('cr-rtab-'+crk+'-'+tab); if(ab){ab.style.background='var(--gold-bg)';ab.style.color='var(--gold)';ab.style.borderColor='var(--gold-dim)';}
+  tab=String(tab);
+  // Apagar TODOS los botones de los dos renglones (cruces + formaciones + tabla). Mismo estilo que los
+  // botones de rondas de la sección de PARTIDAS (borde 2px + fondo glass), que se ven bien en oscuro.
+  var tabs=document.getElementById('cr-tabs-'+crk);
+  if(tabs) tabs.querySelectorAll('button').forEach(function(b){ b.style.background='var(--gl40)';b.style.color='var(--fg-d0)';b.style.borderColor='var(--bd22)'; });
+  // Ocultar TODOS los paneles de la sección (cruces "x<r>", formaciones "<r>" y "tabla").
+  var sec=document.getElementById('cr-section-'+crk);
+  if(sec) sec.querySelectorAll('div[id^="cr-panel-'+crk+'-"]').forEach(function(p){ p.style.display='none'; });
+  // Prender el botón activo con su acento (azul = cruces por países; dorado = formación/tabla).
+  var ab=document.getElementById('cr-rtab-'+crk+'-'+tab);
+  if(ab){ var blue=tab.charAt(0)==='x'; ab.style.background=blue?'rgba(70,140,210,.20)':'var(--gold-bg)'; ab.style.color=blue?'#7ab8e6':'var(--gold)'; ab.style.borderColor=blue?'rgba(80,155,225,.6)':'var(--gold-dim)'; }
   var ap=document.getElementById('cr-panel-'+crk+'-'+tab); if(ap) ap.style.display='block';
-  // Sentido inverso: al cambiar la ronda en los cruces por equipos, mover también la ronda de la
-  // sección de PARTIDAS (si esa ronda está cargada). Guard _crSyncing evita el rebote con tdShowRound.
-  if(!_crSyncing && tab!=='tabla' && document.getElementById('td-rtab-'+tab)){
+  // Sentido inverso: al cambiar de ronda (CRUCES "x<r>" o FORMACIÓN "<r>"), mover también la ronda de
+  // la sección de PARTIDAS si está cargada. La tabla no sincroniza. Guard _crSyncing evita el rebote.
+  var rnum = /^x?(\d+)$/.test(tab) ? tab.replace(/^x/,'') : null;
+  if(!_crSyncing && rnum && document.getElementById('td-rtab-'+rnum)){
     _crSyncing=true;
-    try { tdShowRound(parseInt(tab), (typeof _tdCtx!=='undefined'&&_tdCtx)?_tdCtx.pgnKey:''); } catch(e){}
+    try { tdShowRound(parseInt(rnum), (typeof _tdCtx!=='undefined'&&_tdCtx)?_tdCtx.pgnKey:''); } catch(e){}
     _crSyncing=false;
   }
 }
@@ -5660,10 +5760,18 @@ function _teamRefresh(crk,tab){
   if(tab!=null) setTimeout(function(){ _teamShowTab(crk,tab); },30);
 }
 function _teamDeleteRound(crk,r){
-  if(!confirm('¿Borrar la ronda '+r+' de este torneo por equipos?')) return;
+  if(!confirm('¿Borrar la FORMACIÓN (tablero por tablero) de la ronda '+r+'?')) return;
   var data=crDataLoad(crk)||{}; if(data.teamRounds) delete data.teamRounds[r]; crDataSave(crk,data);
   var rem=data.teamRounds?Object.keys(data.teamRounds).map(Number).sort(function(a,b){return a-b;}):[];
-  _teamRefresh(crk, rem.length?rem[rem.length-1]:(data.teamStandings?'tabla':null));
+  var cr=data.teamCrosses?Object.keys(data.teamCrosses).map(Number).sort(function(a,b){return a-b;}):[];
+  _teamRefresh(crk, rem.length?rem[rem.length-1]:(cr.length?('x'+cr[cr.length-1]):(data.teamStandings?'tabla':null)));
+}
+function _teamDeleteCross(crk,r){
+  if(!confirm('¿Borrar los CRUCES por países de la ronda '+r+'?')) return;
+  var data=crDataLoad(crk)||{}; if(data.teamCrosses) delete data.teamCrosses[r]; crDataSave(crk,data);
+  var cr=data.teamCrosses?Object.keys(data.teamCrosses).map(Number).sort(function(a,b){return a-b;}):[];
+  var rem=data.teamRounds?Object.keys(data.teamRounds).map(Number).sort(function(a,b){return a-b;}):[];
+  _teamRefresh(crk, rem.length?rem[rem.length-1]:(cr.length?('x'+cr[cr.length-1]):(data.teamStandings?'tabla':null)));
 }
 function _teamDeleteStandings(crk){
   if(!confirm('¿Borrar la tabla por equipos?')) return;
@@ -5687,13 +5795,26 @@ async function _teamDoRound(crk,bytes){
   var st=document.getElementById('cr-status-'+crk); function setS(m){ if(st)st.textContent=m; }
   try{
     var rows=await crExtractXlsx(bytes);
+    // Un mismo botón acepta los dos Excel: "Emparejamientos de los equipos" (art=2 = cruces por países)
+    // o "Emparejamientos por mesas" (art=3 = formación). Detectamos cuál es por el título del encabezado.
+    var titulo=rows.slice(0,8).map(function(r){return r.join(' ');}).join(' | ');
+    var esCruces=/Emparejamientos?\s+de\s+los?\s+equipos|team[\s-]*pairings/i.test(titulo) && !/por\s+mesas|by\s+board/i.test(titulo);
+    var data=crDataLoad(crk)||{};
+    if(esCruces){
+      var pc=_teamParseCrosses(rows); var nc=Object.keys(pc);
+      if(!nc.length){ setS('❌ No se reconocieron los cruces por países.'); return; }
+      if(!data.teamCrosses) data.teamCrosses={};
+      nc.forEach(function(n){ data.teamCrosses[n]=pc[n]; }); crDataSave(crk,data);
+      setS('✓ Cruces por países — ronda '+nc[nc.length-1]+' ('+pc[nc[nc.length-1]].length+' matches)'); _teamRefresh(crk,'x'+parseInt(nc[nc.length-1]));
+      return;
+    }
     var parsed=_teamParseRounds(rows);
     var nums=Object.keys(parsed);
     if(!nums.length){ setS('❌ No se reconocieron emparejamientos por equipos.'); return; }
-    var data=crDataLoad(crk)||{}; if(!data.teamRounds) data.teamRounds={};
+    if(!data.teamRounds) data.teamRounds={};
     nums.forEach(function(n){ data.teamRounds[n]=parsed[n]; }); crDataSave(crk,data);
     var tot=nums.reduce(function(s,n){return s+parsed[n].length;},0);
-    setS('✓ '+nums.length+' ronda(s) — '+tot+' matches'); _teamRefresh(crk,parseInt(nums[nums.length-1]));
+    setS('✓ Formación — '+nums.length+' ronda(s), '+tot+' matches'); _teamRefresh(crk,parseInt(nums[nums.length-1]));
   }catch(err){ setS('❌ '+err.message); }
 }
 
@@ -6505,6 +6626,7 @@ async function _crAutoFetchTeam(crk, crUrl, opts) {
     setS('⏳ Bajando clasificación…');
     var data = crDataLoad(crk) || {};
     if (!data.teamRounds) data.teamRounds = {};
+    if (!data.teamCrosses) data.teamCrosses = {};
     // 1) CLASIFICACIÓN primero (art=0, sin rd = la actual/final). Nos da la tabla Y, por el encabezado,
     //    cuántas rondas hay. Chess-Results dejó de exponer los links "art=3&rd=N" en varios torneos
     //    (Olimpiadas), así que _crDiscoverRounds devuelve null aunque el export por ronda SÍ funcione:
@@ -6516,23 +6638,29 @@ async function _crAutoFetchTeam(crk, crUrl, opts) {
       if (stand && stand.teams && stand.teams.length) data.teamStandings = stand;
       if (!maxR) maxR = _teamRoundsFromStandings(srows);
     } catch(e) {}
-    // 2) CRUCES por ronda. Con maxR conocido, 1..maxR. Si no, MODO SONDEO: pedimos ronda 1, 2, 3…
-    //    hasta que una baje bien pero venga SIN cruces (ronda no emparejada = fin del torneo jugado).
-    var probe = !maxR, cap = maxR || 40, okR = 0;
+    // 2) Por ronda bajamos DOS vistas en paralelo: CRUCES POR PAÍSES (art=2, salen antes, país vs país)
+    //    y FORMACIÓN por mesas (art=3, la composición tablero por tablero). Con maxR conocido vamos
+    //    1..maxR+1 (la +1 agarra la ronda en curso, cuyos cruces ya salieron aunque la formación no).
+    //    Sin maxR, MODO SONDEO hasta una ronda que no tenga NI cruces NI formación (no existe = fin).
+    var probe = !maxR, cap = maxR ? maxR + 1 : 40, okR = 0;
     for (var r = 1; r <= cap; r++) {
-      setS('⏳ Bajando cruces ronda ' + r + (maxR ? '/' + maxR : '') + '…');
-      var got = null;   // null = falló el fetch (no cortar el sondeo); {} = bajó ok pero sin cruces (fin)
-      for (var attempt = 0; attempt < 2 && got == null; attempt++) {
-        try { got = _teamParseRounds(await crExtractXlsx(await _crProxyFetch(_crExportUrl(crUrl, 3, r)))); }
-        catch(e) { /* reintento una vez para no saltear una ronda por un error de red puntual */ }
-      }
-      if (got && Object.keys(got).length) { Object.keys(got).forEach(function(n){ data.teamRounds[n] = got[n]; }); okR++; }
-      else if (probe && got) break;   // sondeo: ronda que bajó ok pero sin cruces = no hay más
+      setS('⏳ Bajando ronda ' + r + (maxR ? '/' + maxR : '') + '…');
+      var crossP = _crProxyFetch(_crExportUrl(crUrl, 2, r)).then(crExtractXlsx).then(_teamParseCrosses).catch(function(){ return null; });
+      var compP  = _crProxyFetch(_crExportUrl(crUrl, 3, r)).then(crExtractXlsx).then(_teamParseRounds).catch(function(){ return null; });
+      var pair = await Promise.all([crossP, compP]);
+      var cross = pair[0], comp = pair[1];
+      var gotCross = cross && Object.keys(cross).length;
+      var gotComp  = comp  && Object.keys(comp).length;
+      if (gotCross) Object.keys(cross).forEach(function(n){ data.teamCrosses[n] = cross[n]; });
+      if (gotComp)  Object.keys(comp).forEach(function(n){ data.teamRounds[n]  = comp[n]; });
+      if (gotCross || gotComp) okR++;
+      else if (probe && cross !== null && comp !== null) break;   // ambos bajaron ok y vacíos = no hay más
     }
     crDataSave(crk, data);
     var rn = Object.keys(data.teamRounds).map(Number).sort(function(a,b){return a-b;});
+    var xn = Object.keys(data.teamCrosses).map(Number).sort(function(a,b){return a-b;});
     if (!opts.silent) setS('✓ Actualizado desde Chess-Results — ' + okR + ' ronda(s)' + (data.teamStandings ? ' + tabla' : '') + (_ondemand ? '' : '. Acordate de "Guardar datos en mi carpeta" y publicar.'));
-    _teamRefresh(crk, rn.length ? rn[rn.length-1] : (data.teamStandings ? 'tabla' : null));
+    _teamRefresh(crk, rn.length ? rn[rn.length-1] : (xn.length ? ('x'+xn[xn.length-1]) : (data.teamStandings ? 'tabla' : null)));
     try { _tdRefreshPodium(crk); } catch(e){}  // si llegó la tabla de equipos y el torneo terminó, mostrar el podio
     return okR > 0 || !!data.teamStandings;
   } catch(e) { setS('❌ ' + e.message); return false; }
@@ -7453,6 +7581,13 @@ function crOpenPlayer(key,name){
     h+='<div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;margin-left:8px">';
     h+='<span style="font-size:18px;font-weight:700;color:var(--text);line-height:1">'+medal+'</span>';
     h+='<span style="font-size:12px;color:var(--text3)">pos</span>';
+    h+='</div>';
+  } else if(wins+draws+losses>0){
+    // Torneo POR EQUIPOS: no hay tabla individual (info=null), pero el puntaje acumulado del jugador
+    // sale de sus tableros. Lo mostramos arriba a la derecha, igual que en los torneos individuales.
+    h+='<div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;margin-left:4px">';
+    h+='<span style="font-size:22px;font-weight:700;color:var(--gold);line-height:1">'+crPtsStr(wins+draws*0.5)+'</span>';
+    h+='<span style="font-size:12px;color:var(--text3)">de '+(wins+draws+losses)+'</span>';
     h+='</div>';
   }
   h+='</div>';
