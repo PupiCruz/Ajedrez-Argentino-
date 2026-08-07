@@ -5629,6 +5629,14 @@ function _teamNorm(name){ var s=String(name||'').replace(/\s*\([A-Za-z]{3}\)\s*$
 // Clave del PAR de equipos por nombre (ordenada) — reemplaza a _teamFedKey para vincular cruce↔formación
 // dentro de la sección de cuadros (funciona para países y clubes por igual).
 function _teamPairKey(nameA, nameB){ return [_teamNorm(nameA),_teamNorm(nameB)].filter(Boolean).sort().join('__'); }
+// Clave del match para el salto "ver el match en Partidas" (ojito). Usa el par de FEDERACIONES si ambos
+// equipos resuelven a un código (PAÍSES: Olimpiada; robusto aunque los nombres difieran entre Lichess y CR).
+// Para CLUBES (torneos nacionales, sin código de país) cae a la clave por NOMBRE (_teamPairKey), que sirve
+// igual porque partidas y cuadros salen de la misma fuente (Chess-Results) con los mismos nombres. Sin este
+// fallback, los clubes quedaban con fedKey vacío y el ojito no aparecía.
+function _teamMatchKey(nameA, nameB, data){
+  return _teamFedKey(_teamResolveFed(nameA, data), _teamResolveFed(nameB, data)) || _teamPairKey(nameA, nameB);
+}
 // Un lado del encabezado del cruce: bandera + nombre del país, CLICKEABLE → abre el panel de
 // performance del equipo (crOpenCountry). right=true alinea a la derecha (equipo A). Clickeable para
 // TODOS los equipos (países Y clubes): se pasa el NOMBRE (crOpenCountry lo resuelve). La bandera solo
@@ -5688,7 +5696,7 @@ function _tdRunPendingMatchJump(){
       var games=(_tdCtx.byRound&&_tdCtx.byRound[j.round])||[];
       var matches=_tdTeamMatches(games);
       var _ck=_tdCtx.crKey, _ckData=_ck?crDataLoad(_ck):null, idx=-1;
-      for(var i=0;i<matches.length;i++){ if(_teamFedKey(_teamResolveFed(matches[i].teamA,_ckData),_teamResolveFed(matches[i].teamB,_ckData))===j.fedKey){ idx=i; break; } }
+      for(var i=0;i<matches.length;i++){ if(_teamMatchKey(matches[i].teamA,matches[i].teamB,_ckData)===j.fedKey){ idx=i; break; } }
       if(idx>=0){ _tdPage=Math.floor(idx/_TD_TEAM_PER_PAGE); if(_tdCurrentRound===j.round) tdBuildRound(j.round); }
     }catch(e){}
     setTimeout(function(){
@@ -5723,7 +5731,7 @@ function _teamRenderRound(matches, roundNum, crk){
     var _pk=_teamPairKey(m.aName,m.bName);  // id por NOMBRE para vincular cruce↔formación (países y clubes)
     // clave por FED para el salto a Partidas: resolvemos el nombre→fed (aunque no traiga "(FED)", ej.
     // "Bulgaria"), para que coincida con el id del match en la grilla de partidas (que también resuelve).
-    var _fk=_teamFedKey(_teamResolveFed(m.aName,_rdata), _teamResolveFed(m.bName,_rdata));
+    var _fk=_teamMatchKey(m.aName, m.bName, _rdata);
     // Intercalado POR MATCH (no por renglón): TODO el bloque (encabezado equipo-vs-equipo + tableros) toma
     // el mismo tinte, porque header y tableros son transparentes y dejan ver el fondo del bloque.
     inner+='<div id="tm-'+crk+'-'+roundNum+'-'+_pk+'" style="border:1px solid var(--bd14);border-radius:10px;'+(mi?'margin-top:10px;':'')+'overflow:hidden;background:'+(mi%2===1?'var(--zebra)':'transparent')+'">';
@@ -7814,7 +7822,7 @@ function crOpenCountry(key, who){
       var _hasG=_tdRoundReachable(hh.round);
       // fedKey resuelto por NOMBRE (para que coincida con el id del match en la grilla de partidas,
       // aunque los nombres no traigan "(FED)", ej. "Bulgaria" / "United States of America").
-      var _rfk=_teamFedKey(_teamResolveFed(cname, data), _teamResolveFed(hh.oppName, data));
+      var _rfk=_teamMatchKey(cname, hh.oppName, data);
       var resHtml=(_hasG&&_rfk)
         ? '<span onclick="_teamGotoMatchInGames('+hh.round+',\''+_rfk+'\')" title="Ver el match en Partidas" style="cursor:pointer;color:'+col+'">'+lbl+' <span style="font-size:12px;color:var(--blue)">👁</span></span>'
         : '<span style="color:'+col+'">'+lbl+'</span>';
@@ -22607,7 +22615,7 @@ function tdBuildRoundTeams(rInt, panel, roundGames) {
   pageView.forEach(function(o, k) {
     var m = o.m, mi = o.idx;
     // id por par de federaciones → para saltar acá desde el ojito del panel de país (_teamGotoMatchInGames).
-    var _mfk = _ckHasTeam ? _teamFedKey(_teamResolveFed(m.teamA,_ckData), _teamResolveFed(m.teamB,_ckData)) : '';
+    var _mfk = _ckHasTeam ? _teamMatchKey(m.teamA, m.teamB, _ckData) : '';
     // Cada match ocupa todo el ancho de la grilla (grid-column:1/-1) y adentro lleva su propia
     // grilla de tableros. Así no pelea con el grid de 4 columnas del panel de la ronda.
     h += '<div'+(_mfk?' id="tdm-'+rInt+'-'+_mfk+'"':'')+' style="grid-column:1/-1;margin-top:' + (k ? '18' : '2') + 'px">';
