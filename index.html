@@ -4848,9 +4848,12 @@ function crOpenGame(round, wName, bName){
   var idx=crFindGameIdx(round, wName, bName);
   if(idx>=0 && _tdCtx){ tdOpenGame(idx, _tdCtx.pgnKey, _tdCtx.name, _tdCtx.location); return; }
   if(round!=null && _tdCtx && _tdLiveCtx && _tdLiveCtx.onDemand && _tdRoundReachable(round)){
+    // La ronda puede no estar bajada todavía: mostrar "Cargando partida…" mientras la traemos (Lichess+CR).
+    _showLoadingCover('Cargando partida…');
     _tdEnsureRoundLoaded(parseInt(round)||round, function(){
-      var i2=crFindGameIdx(round, wName, bName);
-      if(i2>=0 && _tdCtx) tdOpenGame(i2, _tdCtx.pgnKey, _tdCtx.name, _tdCtx.location);
+      var i2=(_tdCtx)?crFindGameIdx(round, wName, bName):-1;
+      if(i2>=0 && _tdCtx){ tdOpenGame(i2, _tdCtx.pgnKey, _tdCtx.name, _tdCtx.location); }   // cvOpenOverlay saca el cover
+      else { _removeDeepLinkCover(); _tdToast('Esta partida no se transmitió.'); }           // no está en Lichess/CR/pool
     });
   }
 }
@@ -5690,6 +5693,7 @@ function _tdRunPendingMatchJump(){
       var target=el||document.getElementById('td-partidas-anchor')||document.getElementById('td-games-section');
       if(target) target.scrollIntoView({behavior:'smooth', block:'center'});
       if(el){ var p=el.style.boxShadow; el.style.transition='box-shadow .25s'; el.style.boxShadow='0 0 0 2px var(--gold)'; setTimeout(function(){ el.style.boxShadow=p||''; }, 1900); }
+      else { _tdToast('Este match no se transmitió.'); }   // la ronda cargó pero el enfrentamiento no está
     }, 120);
   });
 }
@@ -6892,13 +6896,16 @@ var _crGamesBusy = {};   // crk → true mientras baja (evita pedidos superpuest
 
 // Baja el PGN del torneo por el Worker (que resuelve el postback de ASP.NET y el CORS).
 // fide vacío → todas las partidas; con FIDE IDs → sólo las de esos jugadores.
-async function _crPgnFetch(crUrl, fide) {
+// rd (opcional) → sólo esa ronda (el Worker setea txt_rdvon/txt_rdbis): para la carga on-demand
+// por ronda en torneos grandes (Olimpiada), donde bajar TODO al entrar es lentísimo.
+async function _crPgnFetch(crUrl, fide, rd) {
   var m = String(crUrl || '').match(/tnr(\d+)/i);
   if (!m) return '';
   var host = 'chess-results.com';
   try { var hm = String(crUrl).match(/https?:\/\/([^\/]+)/i); if (hm && /chess-results\.com$/i.test(hm[1])) host = hm[1]; } catch (e) {}
   var u = CR_PROXY + '/crpgn?tnr=' + m[1] + '&host=' + encodeURIComponent(host);
   if (fide && fide.length) u += '&fide=' + fide.join(',');
+  if (rd != null && /^\d{1,3}$/.test(String(rd))) u += '&rd=' + rd;
   var res = await fetch(u);
   if (!res.ok) throw new Error('proxy HTTP ' + res.status);
   return await res.text();
@@ -6971,6 +6978,69 @@ async function _crAutoFetchGames(crk, crUrl) {
     return true;
   } catch (e) { return false; }
   finally { _crGamesBusy[crk] = false; }
+}
+
+// ── Chess-Results ON-DEMAND por ronda ────────────────────────────────────────────────────────
+// En torneos con transmisión de Lichess on-demand (Olimpiada: ~4030 partidas) NO bajamos TODAS
+// las de Chess-Results al entrar: bajamos SÓLO la ronda que se abre (Worker /crpgn&rd=N). Se
+// engancha en la misma maquinaria que el on-demand de Lichess (_tdFetchRoundOnDemand): cuando la
+// ronda de CR llega, se mergea en _tdCrByRound[rInt] y se re-arma esa ronda.
+var _crRoundBusy = {};   // "crk|rInt" → true mientras baja esa ronda de CR (evita pedidos superpuestos)
+
+// ¿Hay una fuente de Chess-Results para el torneo on-demand abierto? (crUrl con tnr)
+function _crOnDemandUrl() {
+  if (!(typeof _tdLiveCtx !== 'undefined' && _tdLiveCtx && _tdLiveCtx.onDemand)) return '';
+  var crk = _tdLiveCtx.crKey, u = crk ? _crUrlByKey[crk] : '';
+  return (u && /tnr\d+/i.test(u)) ? u : '';
+}
+
+// Baja las partidas de Chess-Results de UNA ronda y las mergea en el detalle abierto. force=true
+// re-baja aunque ya se haya bajado (para la ronda en vivo, que sigue sumando partidas).
+function _crFetchRoundOnDemand(rInt, force) {
+  var crUrl = _crOnDemandUrl();
+  if (!crUrl) return;
+  var crk = _tdLiveCtx.crKey, bkey = crk + '|' + rInt;
+  if (_crRoundBusy[bkey]) return;
+  if (!_tdLiveCtx._crFetched) _tdLiveCtx._crFetched = {};
+  if (_tdLiveCtx._crFetched[rInt] && !force) return;   // ya bajada
+  _crRoundBusy[bkey] = true;
+  var key = _tdLiveCtx.key;
+  _crPgnFetch(crUrl, [], rInt).then(function(txt) {
+    _crRoundBusy[bkey] = false;
+    if (!_tdLiveCtx || _tdLiveCtx.key !== key || !_tdCtx) return;   // cambió de torneo mientras tanto
+    _tdLiveCtx._crFetched[rInt] = true;
+    var arr = _crParsePgnList(txt);
+    if (!arr.length) return;   // CR no tiene (todavía) partidas de esta ronda
+    var grouped = _crGroupGamesByRound(arr);
+    var gamesR = grouped[rInt] || [];
+    // Si CR no rotuló la ronda (raro), tomar todo lo que llegó: el pedido ya fue acotado a rInt.
+    if (!gamesR.length) Object.keys(grouped).forEach(function(k) { gamesR = gamesR.concat(grouped[k]); });
+    if (!gamesR.length) return;
+    _tdCrByRound[rInt] = gamesR;
+    _tdMergeOneRound(rInt);        // fusiona CR + pool en esa ronda (dedup por casillero/jugadas)
+    _tdRebuildFlatGames();         // refresca games plano + PGN_DB (visor/deep-link)
+    if (_pendingDeepGame) _tryOpenPendingDeepGame();
+    if (_tdCurrentRound === rInt && document.getElementById('td-round-' + rInt)) {
+      tdBuildRound(rInt); _tdStartClocks(); if (_tdLiveCtx) setTimeout(mevTick, 900);
+    }
+    // Enlazar los resultados del cuadro de cruces con las partidas nuevas (individuales; equipos no).
+    try { if (_tdCtx.crKey && !(_tdLiveCtx && _tdLiveCtx.isTeam)) crSyncResultsFromPgn(_tdCtx.crKey); } catch (e) {}
+  }).catch(function() { _crRoundBusy[bkey] = false; });
+}
+
+// Toast flotante breve (arriba y al centro). Para avisos livianos (ej. "esta partida no se transmitió").
+function _tdToast(msg) {
+  try {
+    var t = document.getElementById('td-toast');
+    if (!t) { t = document.createElement('div'); t.id = 'td-toast'; document.body.appendChild(t); }
+    t.style.cssText = 'position:fixed;top:64px;left:50%;transform:translateX(-50%);z-index:100000;'
+      + 'background:rgba(30,30,30,.96);color:#f0f0f0;padding:9px 18px;border-radius:22px;font-weight:600;'
+      + 'font-size:13.5px;box-shadow:0 5px 18px rgba(0,0,0,.5);font-family:inherit;pointer-events:none;'
+      + 'max-width:88vw;text-align:center;transition:opacity .4s;opacity:1';
+    t.textContent = msg;
+    clearTimeout(t._tmr); t.style.opacity = '1';
+    t._tmr = setTimeout(function() { t.style.opacity = '0'; }, 2800);
+  } catch (e) {}
 }
 
 // Texto PGN de Chess-Results → lista de partidas. OJO: viene con finales de línea CRLF; hay que
@@ -22043,10 +22113,12 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   // Las PARTIDAS de Chess-Results se bajan SIEMPRE que haya tnr, esté el torneo en vivo, próximo o
   // TERMINADO. Los cuadros de arriba sólo cambian mientras el torneo se juega, pero las partidas no:
   // muchos organizadores las suben DESPUÉS de terminar (y a veces suben más que las que transmitió
-  // Lichess). Con la condición vieja —sólo live/upcoming— esas nunca se pedían y el visitante veía
-  // únicamente las del broadcast. Es un solo pedido y el Worker lo cachea para todos los visitantes;
-  // el merge por casillero deja los relojes y evals de Lichess donde los hay y agrega el resto.
-  if (_ondemand && crUrl && /tnr\d+/i.test(crUrl)) {
+  // Lichess). El merge por casillero deja los relojes y evals de Lichess donde los hay y agrega el resto.
+  //   · CON transmisión de Lichess (hasBroadcast): NO bajamos todo acá. Lo maneja la maquinaria del
+  //     vivo: on-demand baja CR ronda por ronda (_crFetchRoundOnDemand); el respaldo EAGER baja todo.
+  //     Así la Olimpiada (~4030 partidas) no baja todo el PGN de CR al entrar.
+  //   · SIN transmisión: torneos chicos (nacionales) → un solo pedido con todo, como siempre.
+  if (_ondemand && !hasBroadcast && crUrl && /tnr\d+/i.test(crUrl)) {
     _crAutoFetchGames(crk, crUrl);
   }
   // Ídem para info64 (sólo individuales). Si el torneo tiene ambas fuentes, se actualizan las dos.
@@ -22977,9 +23049,11 @@ var _tdCurrentRound = null;
 function tdShowRound(rInt, pgnKey2) {
   _tdCurrentRound = rInt;
   _tdPage = 0;   // al cambiar de ronda, volver a la página 1
-  // ON-DEMAND: si la ronda no está cargada (ni por Lichess ni por el pool) y hay metadata para bajarla,
-  // bajarla ahora. tdBuildRound de abajo muestra "cargando…" mientras tanto y el callback la re-arma.
-  if (_tdCtx && !(_tdCtx.byRound[rInt] && _tdCtx.byRound[rInt].length) && _tdLiveCtx && _tdLiveCtx.onDemand) {
+  // ON-DEMAND: bajar la ronda del broadcast/CR si TODAVÍA no se pidió. OJO issue #4: no alcanza con
+  // mirar si byRound[rInt] tiene partidas — el POOL (argentinos) puede haberla rellenado parcialmente y
+  // eso escondía el resto de los tableros. Nos guiamos por _fetched (rondas ya pedidas al remoto), así la
+  // ronda completa se baja igual y el merge suma lo que faltaba. tdBuildRound muestra lo que haya + "cargando".
+  if (_tdCtx && _tdLiveCtx && _tdLiveCtx.onDemand && !(_tdLiveCtx._fetched && _tdLiveCtx._fetched[rInt])) {
     var _rm = (_tdLiveCtx.roundsMeta || []).filter(function(r){ return r.num === rInt; })[0];
     if (_rm && _rm.roundIds && _rm.roundIds.length) _tdFetchRoundOnDemand(rInt, _rm.roundIds);
   }
@@ -23173,9 +23247,12 @@ function _tdLiveFetchMulti(tourIds, name, location, pgnKey, typ, hasFallback) {
     var sec = document.getElementById('td-games-section');
     if (!sec) return;
     if (!merged) { _tdLiveFetchMultiEager(tourIds, key, hasFallback); return; }   // metadata falló → respaldo eager
-    _tdLiveCtx.onDemand = true; _tdLiveCtx.roundsMeta = merged.roundsMeta; _tdLiveCtx.currentNum = merged.currentNum; _tdLiveCtx._loading = {};
+    _tdLiveCtx.onDemand = true; _tdLiveCtx.roundsMeta = merged.roundsMeta; _tdLiveCtx.currentNum = merged.currentNum;
+    _tdLiveCtx._loading = {}; _tdLiveCtx._fetched = {}; _tdLiveCtx._crFetched = {};
+    _tdLiveCtx._fetched[merged.currentNum] = true;   // la ronda actual llega con este init (Lichess)
     var res = _bcOnDemandRes(merged, currentGames);
     _tdLiveBuild(res, sec, null);
+    _crFetchRoundOnDemand(merged.currentNum, true);   // Chess-Results de la ronda actual (además de Lichess)
     _tdShareRemember(res);
     _tdLastGood = Date.now(); _tdFetchFails = 0;
     if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; }
@@ -23191,6 +23268,10 @@ function _tdLiveFetchMultiEager(tourIds, key, hasFallback) {
     if (!res || !res.roundsWithGames || !res.roundsWithGames.length) { if (!hasFallback) _tdLiveError(null); return; }
     _tdLiveBuild(res, sec, null);
     _tdShareRemember(res);
+    // EAGER (livechesscloud o respaldo si falló la metadata de Lichess): no hay maquinaria on-demand por
+    // ronda, así que las partidas de Chess-Results se bajan TODAS de una (comportamiento original).
+    var _crk = _tdLiveCtx && _tdLiveCtx.crKey, _crU = _crk ? _crUrlByKey[_crk] : '';
+    if (_crU && /tnr\d+/i.test(_crU)) _crAutoFetchGames(_crk, _crU);
     _tdLastGood = Date.now(); _tdFetchFails = 0;
     if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; }
     if (_tdKeepPolling(res)) { _tdLiveTimer = setTimeout(_tdLiveRefresh, _liveRefreshMs(_tdLiveCtx && _tdLiveCtx.tourId)); _tdStartWatchdog(); }
@@ -23298,7 +23379,10 @@ function _tdRebuildFlatGames() {
 function _tdFetchRoundOnDemand(rInt, roundIds) {
   if (!_tdLiveCtx) return;
   if (!_tdLiveCtx._loading) _tdLiveCtx._loading = {};
-  if (_tdLiveCtx._loading[rInt]) return;   // ya se está bajando
+  if (!_tdLiveCtx._fetched) _tdLiveCtx._fetched = {};
+  _tdLiveCtx._fetched[rInt] = true;   // registrar que esta ronda ya se pidió al remoto (broadcast/CR)
+  _crFetchRoundOnDemand(rInt);        // Chess-Results de esta ronda, en paralelo con Lichess
+  if (_tdLiveCtx._loading[rInt]) return;   // ya se está bajando (Lichess)
   _tdLiveCtx._loading[rInt] = true;
   var key = _tdLiveCtx.key;
   _bcFetchRoundPgns(roundIds, function(gs){
@@ -23319,17 +23403,22 @@ function _tdFetchRoundOnDemand(rInt, roundIds) {
 // deep-link a una partida). Si no es on-demand o no hay metadata, llama cb() con lo que haya.
 function _tdEnsureRoundLoaded(round, cb) {
   if (!_tdCtx) { if (cb) cb(); return; }
-  if (_tdCtx.byRound[round] && _tdCtx.byRound[round].length) { if (cb) cb(); return; }
-  if (_tdLiveCtx && _tdLiveCtx.onDemand) {
+  var od = _tdLiveCtx && _tdLiveCtx.onDemand;
+  if (!od) { if (cb) cb(); return; }   // no on-demand: lo que haya cargado es todo lo que hay
+  // Si la ronda todavía no se pidió al remoto, pedirla (aunque el pool ya la haya rellenado: issue #4).
+  if (!(_tdLiveCtx._fetched && _tdLiveCtx._fetched[round])) {
     var rm = (_tdLiveCtx.roundsMeta || []).filter(function(r){ return r.num === round; })[0];
-    if (rm && rm.roundIds && rm.roundIds.length) {
-      _tdFetchRoundOnDemand(round, rm.roundIds);
-      var tries = 0;
-      (function w(){ if ((_tdCtx && _tdCtx.byRound[round] && _tdCtx.byRound[round].length) || !_tdLiveCtx || tries++ > 45) { if (cb) cb(); } else setTimeout(w, 120); })();
-      return;
-    }
+    if (rm && rm.roundIds && rm.roundIds.length) _tdFetchRoundOnDemand(round, rm.roundIds);
+    else if (_crOnDemandUrl()) _crFetchRoundOnDemand(round);   // sin ids de Lichess pero con CR
+    else { if (cb) cb(); return; }
   }
-  if (cb) cb();
+  // Esperar a que TERMINEN los pedidos de esa ronda (Lichess + Chess-Results), no sólo a que aparezca la
+  // primera partida: el pool pudo rellenarla parcialmente y la partida buscada llega recién con el remoto.
+  var crk = _tdLiveCtx.crKey, tries = 0;
+  (function w(){
+    var busy = _tdLiveCtx && (((_tdLiveCtx._loading || {})[round]) || _crRoundBusy[crk + '|' + round]);
+    if (!_tdLiveCtx || !busy || tries++ > 60) { if (cb) cb(); } else setTimeout(w, 120);
+  })();
 }
 // Asegura que TODAS las rondas estén cargadas (secuencial, para no rate-limitear). Para "descargar torneo".
 function _tdEnsureAllLoaded(cb, onProgress) {
@@ -23626,6 +23715,8 @@ function _tdLiveRefreshOnDemand(gen, key, tourIds) {
 function _tdOnDemandApplyRefresh(merged, currentGames, sec) {
   if (!_tdCtx) return;
   var curNum = merged.currentNum;
+  if (_tdLiveCtx) { if (!_tdLiveCtx._fetched) _tdLiveCtx._fetched = {}; _tdLiveCtx._fetched[curNum] = true; }
+  _crFetchRoundOnDemand(curNum, true);   // la ronda en vivo sigue sumando partidas en Chess-Results
   var tabsOk = merged.roundsMeta.every(function(r){ return document.getElementById('td-rtab-' + r.num); });
   if (!tabsOk) { _tdLiveBuild(_bcOnDemandRes(merged, currentGames), sec, _tdCurrentRound); return; }
   _tdCtx.byRound[curNum] = (currentGames || []).map(function(pgn){ return { pgn: pgn, h: parsePgnHeaders(pgn) }; });

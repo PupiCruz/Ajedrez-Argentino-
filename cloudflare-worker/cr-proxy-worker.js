@@ -199,8 +199,12 @@ async function i64Xls(reqUrl, ctx) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GET /crpgn?tnr=<id>[&fide=<id,id,…>][&host=s1.chess-results.com]
-//   → devuelve el PGN con TODAS las partidas que el organizador subió al torneo.
+// GET /crpgn?tnr=<id>[&fide=<id,id,…>][&host=s1.chess-results.com][&rd=N]
+//   → devuelve el PGN con las partidas que el organizador subió al torneo.
+//   · rd=N (opcional): baja SOLO la ronda N (setea txt_rdvon=txt_rdbis=N en el
+//     formulario). Sin rd, baja TODAS las rondas (comportamiento original). Sirve para
+//     la carga on-demand por ronda: en torneos grandes (Olimpiada, ~4000 partidas) bajar
+//     todo al entrar es lentísimo. La caché es por URL, así que &rd= separa cada ronda.
 //
 // Cómo funciona (y por qué necesita al Worker): en la página del torneo, cuando el
 // organizador cargó partidas, aparece "Hay N partidas para descargar" → lleva a
@@ -236,6 +240,10 @@ async function crPgn(reqUrl, ctx) {
   const fideList = (reqUrl.searchParams.get('fide') || '')
     .split(',').map(s => s.trim()).filter(s => /^\d{1,9}$/.test(s)).slice(0, CR_PGN_MAX_FIDE);
 
+  // rd=N (opcional): filtrar por ronda. '' = todas (como siempre).
+  const rdRaw = (reqUrl.searchParams.get('rd') || '').trim();
+  const rd = /^\d{1,3}$/.test(rdRaw) ? rdRaw : '';
+
   // Caché: igual que el resto del Worker. Muchos visitantes mirando el mismo torneo en vivo
   // comparten esta respuesta → Chess-Results recibe ~1 pedido cada CACHE_SECONDS, no uno por persona.
   const cache = caches.default;
@@ -245,7 +253,7 @@ async function crPgn(reqUrl, ctx) {
 
   let pgn;
   try {
-    pgn = await crPgnDownload(host, tnr, fideList);
+    pgn = await crPgnDownload(host, tnr, fideList, rd);
   } catch (e) {
     return errJson('No se pudieron bajar las partidas de chess-results: ' + e.message, 502);
   }
@@ -261,16 +269,16 @@ async function crPgn(reqUrl, ctx) {
 // Baja el PGN del torneo. Sin fide → un solo pedido con todas las partidas. Con fide → un
 // pedido por jugador (reusando el formulario ya cargado) y se pegan los resultados.
 // Devuelve '' si el torneo no tiene partidas cargadas (caso normal: la mayoría no las sube).
-async function crPgnDownload(host, tnr, fideList) {
+async function crPgnDownload(host, tnr, fideList, rd) {
   const form = await crPgnLoadForm(host, tnr);
   if (!form) return '';   // no hay página de partidas → el torneo no tiene partidas subidas
 
-  if (!fideList.length) return await crPgnPost(form, tnr, '');
+  if (!fideList.length) return await crPgnPost(form, tnr, '', rd);
 
   const partes = [];
   for (const fide of fideList) {
     try {
-      const p = await crPgnPost(form, tnr, fide);
+      const p = await crPgnPost(form, tnr, fide, rd);
       if (p) partes.push(p);
     } catch (e) { /* si un jugador falla, seguir con los demás */ }
   }
@@ -295,12 +303,14 @@ async function crPgnLoadForm(host, tnr) {
 }
 
 // Paso 2: postea el formulario con el botón de descarga apretado. fide='' → todas las partidas.
-async function crPgnPost(form, tnr, fide) {
+// rd='' → todas las rondas; rd=N → solo esa ronda (txt_rdvon=txt_rdbis=N).
+async function crPgnPost(form, tnr, fide, rd) {
   const f = Object.assign({}, form.fields);
   f[form.btnName] = form.btnValue;
   crPgnSet(f, /txt_dbkey$/, tnr);                 // acotar la búsqueda a ESTE torneo
   crPgnSet(f, /combo_anzahl_zeilen$/, '5');       // tope de filas: 5 = 2500 partidas
   if (fide) crPgnSet(f, /Txt_FideID$/, fide);
+  if (rd) { crPgnSet(f, /txt_rdvon$/, rd); crPgnSet(f, /txt_rdbis$/, rd); }  // ronda desde/hasta = N
 
   const body = new URLSearchParams(f).toString();
   const r = await fetch(form.url, {
