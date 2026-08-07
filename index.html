@@ -5669,18 +5669,21 @@ function _tdRoundReachable(round){
 var _tdPendingMatchJump=null;
 function _teamGotoMatchInGames(round, fedKey){
   _tdPendingMatchJump={ round:round, fedKey:fedKey };
+  // Pantalla "Cargando match…" mientras se cierra el panel, se cambia de ronda y (si hace falta) se baja
+  // la ronda on-demand. Se saca al aterrizar en el match (o al avisar que no está).
+  _showLoadingCover('Cargando match…');
   if(_crPlayerHistoryPushed){ history.back(); }   // popstate → crClosePlayer restaura el torneo (async)
   else { crClosePlayer(); }                        // sync
   setTimeout(_tdRunPendingMatchJump, 180);
 }
 function _tdRunPendingMatchJump(){
-  var j=_tdPendingMatchJump; if(!j) return; _tdPendingMatchJump=null;
-  if(typeof _tdCtx==='undefined' || !_tdCtx) return;
+  var j=_tdPendingMatchJump; if(!j) { _removeDeepLinkCover(); return; } _tdPendingMatchJump=null;
+  if(typeof _tdCtx==='undefined' || !_tdCtx) { _removeDeepLinkCover(); return; }
   if(document.getElementById('td-rtab-'+j.round)) { try{ tdShowRound(j.round, _tdCtx.pgnKey); }catch(e){} }
   // La ronda puede estar bajándose on-demand (recién la abrimos): esperar a que cargue antes de ubicar
   // el match y hacer scroll. _tdEnsureRoundLoaded llama al cb cuando está lista (o con lo que haya).
   _tdEnsureRoundLoaded(j.round, function(){
-    if(!_tdCtx) return;
+    if(!_tdCtx) { _removeDeepLinkCover(); return; }
     try{
       var games=(_tdCtx.byRound&&_tdCtx.byRound[j.round])||[];
       var matches=_tdTeamMatches(games);
@@ -5691,6 +5694,7 @@ function _tdRunPendingMatchJump(){
     setTimeout(function(){
       var el=document.getElementById('tdm-'+j.round+'-'+j.fedKey);
       var target=el||document.getElementById('td-partidas-anchor')||document.getElementById('td-games-section');
+      _removeDeepLinkCover();   // ya podemos mostrar la sección de partidas (con el match resaltado)
       if(target) target.scrollIntoView({behavior:'smooth', block:'center'});
       if(el){ var p=el.style.boxShadow; el.style.transition='box-shadow .25s'; el.style.boxShadow='0 0 0 2px var(--gold)'; setTimeout(function(){ el.style.boxShadow=p||''; }, 1900); }
       else { _tdToast('Este match no se transmitió.'); }   // la ronda cargó pero el enfrentamiento no está
