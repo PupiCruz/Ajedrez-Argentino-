@@ -23146,6 +23146,14 @@ function tdOpenGame(idx, pgnKey, tname, tloc) {
    Si el torneo tiene transmisión de Lichess, #td-games-section muestra esas partidas por ronda
    (vivo + terminadas) en lugar de las subidas. Reusa _tdCtx + tdBuildRound + tdShowRound. */
 var _tdLiveTimer = null;
+// True MIENTRAS un refresco del vivo está en vuelo. _tdLiveRefresh pone _tdLiveTimer=null al ARRANCAR
+// (para absorber timers pendientes), y lo vuelve a agendar recién al final del callback —justo DESPUÉS
+// de actualizar el visor—. En esa ventana el gráfico en vivo se redibuja (vía _cvLiveExtendInPlace →
+// faMaybeAutoLive), pero _faLiveEligible veía el timer en null y lo tomaba como "no en vivo" → el
+// gráfico dejaba de actualizarse con las jugadas que llegaban. Este flag mantiene la elegibilidad
+// durante el fetch. (El camino del broadcast directo, _bcLoad, no sufría esto porque limpia su timer
+// DESPUÉS de actualizar el visor.)
+var _tdLiveInFlight = false;
 var _tdLiveCtx = null;   // { tourId, pgnKey, name, location, typ }
 // Clave de cruces del torneo recién abierto. La guardamos aparte porque en torneos SOLO-broadcast
 // (sin partidas subidas) _tdCtx arranca null, y sin esto _tdLiveBuild perdía el crKey → la sección
@@ -23198,7 +23206,7 @@ function _tdKeepPolling(res) {
   return (++_tdIdlePolls <= _TD_MAX_IDLE);               // el hueco se hizo muy largo → el visitante recarga
 }
 
-function _tdLiveStop() { if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; } _tdStopWatchdog(); _tdPollGen++; _tdLiveCtx = null; _tdIdlePolls = 0; _tdFetchFails = 0; _tdLastGood = 0; _tdStopClocks(); mevAbort(); }
+function _tdLiveStop() { if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; } _tdLiveInFlight = false; _tdStopWatchdog(); _tdPollGen++; _tdLiveCtx = null; _tdIdlePolls = 0; _tdFetchFails = 0; _tdLastGood = 0; _tdStopClocks(); mevAbort(); }
 
 function _tdLoadLiveGames(broadcastId, broadcastUrl, name, location, pgnKey, typ, status, hasFallback) {
   // Camino rápido entre pestañas: si otra pestaña nos pasó este torneo, pintamos sus tableros YA y
@@ -23671,6 +23679,7 @@ function _tdLiveRefresh() {
   // mientras había un fetch viejo en vuelo (o colgado), ese callback viejo queda invalidado y NO
   // reprograma un segundo timer (evita cadenas de sondeo duplicadas).
   if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; }
+  _tdLiveInFlight = true;   // el timer queda en null durante el fetch: mantener "en vivo" para el gráfico
   var gen = ++_tdPollGen;
   var key = _tdLiveCtx.key, tourIds = _tdLiveCtx.tourIds || [_tdLiveCtx.tourId];
   if (_tdLiveCtx.onDemand) { _tdLiveRefreshOnDemand(gen, key, tourIds); return; }   // on-demand: solo la ronda viva
@@ -23690,6 +23699,7 @@ function _tdLiveRefresh() {
       // mataba el sondeo para siempre (había que apretar F5); ahora reintentamos hasta un tope generoso.
       keep = (++_tdFetchFails <= _TD_MAX_FETCH_FAILS);
     }
+    _tdLiveInFlight = false;   // fetch terminado: la elegibilidad vuelve a depender del timer
     if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; }
     if (keep && document.getElementById('td-games-section')) {
       _tdLiveTimer = setTimeout(_tdLiveRefresh, _liveRefreshMs(_tdLiveCtx && _tdLiveCtx.tourId));
@@ -23718,6 +23728,7 @@ function _tdLiveRefreshOnDemand(gen, key, tourIds) {
     } else {
       keep = (++_tdFetchFails <= _TD_MAX_FETCH_FAILS);
     }
+    _tdLiveInFlight = false;   // fetch terminado: la elegibilidad vuelve a depender del timer
     if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; }
     if (keep && document.getElementById('td-games-section')) {
       _tdLiveTimer = setTimeout(_tdLiveRefresh, _liveRefreshMs(_tdLiveCtx && _tdLiveCtx.tourId));
@@ -27168,7 +27179,8 @@ try { _faLiveHidden = (localStorage.getItem('fa_live_hidden') === '1'); } catch(
 // Estamos en un visor de transmisión EN VIVO (hay un refresco automático de Lichess programado).
 function _faLiveEligible() {
   if (!document.getElementById('chess-overlay').classList.contains('open')) return false;
-  return !!((typeof _liveTimer !== 'undefined' && _liveTimer) || (typeof _tdLiveTimer !== 'undefined' && _tdLiveTimer));
+  return !!((typeof _liveTimer !== 'undefined' && _liveTimer) || (typeof _tdLiveTimer !== 'undefined' && _tdLiveTimer)
+            || (typeof _tdLiveInFlight !== 'undefined' && _tdLiveInFlight));   // en vuelo un refresco: sigue siendo "en vivo"
 }
 
 // Interpola los huecos (null) de un array de scores para que el gráfico no se corte. Devuelve una COPIA
