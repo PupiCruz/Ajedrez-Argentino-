@@ -4841,11 +4841,18 @@ function crFindGameIdx(round, wName, bName){
   var hit=idx.byKey[rkey+'|'+wt+'|'+bt];
   return hit===undefined ? -1 : hit;
 }
-// Abre el visor de la partida subida correspondiente a un cruce, si existe.
+// Abre el visor de la partida correspondiente a un cruce, si existe. En on-demand, si esa ronda todavía
+// no se cargó, la baja primero y reintenta (así el "Ver partida" del panel de jugador anda en TODAS las
+// rondas, no solo las abiertas).
 function crOpenGame(round, wName, bName){
   var idx=crFindGameIdx(round, wName, bName);
-  if(idx<0 || !_tdCtx) return;
-  tdOpenGame(idx, _tdCtx.pgnKey, _tdCtx.name, _tdCtx.location);
+  if(idx>=0 && _tdCtx){ tdOpenGame(idx, _tdCtx.pgnKey, _tdCtx.name, _tdCtx.location); return; }
+  if(round!=null && _tdCtx && _tdLiveCtx && _tdLiveCtx.onDemand && _tdRoundReachable(round)){
+    _tdEnsureRoundLoaded(parseInt(round)||round, function(){
+      var i2=crFindGameIdx(round, wName, bName);
+      if(i2>=0 && _tdCtx) tdOpenGame(i2, _tdCtx.pgnKey, _tdCtx.name, _tdCtx.location);
+    });
+  }
 }
 
 // Sincroniza los resultados del Cuadro de cruces con las partidas PGN subidas.
@@ -5452,7 +5459,7 @@ function _teamParseStandings(rows){
   function col(re){ for(var c=0;c<hdr.length;c++){ if(re.test((hdr[c]||'').trim())) return c; } return -1; }
   var cTeam=col(/^(equipo|team)$/i);
   if(cTeam<0) return null;
-  var cRk=col(/^Rk/i), cNo=col(/^No/i), cPart=col(/^(partidas|games|matches)$/i), cElo=col(/elo/i);
+  var cRk=col(/^Rk/i), cNo=col(/^No/i), cPart=col(/^(partidas|games|matches)$/i), cElo=col(/elo/i), cFed=col(/^fed$/i);
   var cPlus=-1,cEq=-1,cMin=-1;
   for(var c=0;c<hdr.length;c++){ var v=(hdr[c]||'').trim(); if(v==='+'&&cPlus<0)cPlus=c; else if(v==='='&&cEq<0)cEq=c; else if(v==='-'&&cMin<0)cMin=c; }
   var desCols=[]; for(var c2=0;c2<hdr.length;c2++){ if(/^Des/i.test((hdr[c2]||'').trim())) desCols.push(c2); }
@@ -5464,7 +5471,7 @@ function _teamParseStandings(rows){
     if(!row.length || row.join('').trim()===''){ if(teams.length) break; else continue; }
     var rk=parseInt(row[rkCol]); var name=(row[cTeam]||'').trim();
     if(isNaN(rk)||!name) continue;
-    var t={ rk:rk, name:name };
+    var t={ rk:rk, name:name, fed:(cFed>=0?(row[cFed]||'').trim().toUpperCase():'') };
     if(isFinal){
       t.played=((cPart>=0?row[cPart]:'')||'')+''; t.w=((cPlus>=0?row[cPlus]:'')||'')+'';
       t.d=((cEq>=0?row[cEq]:'')||'')+''; t.l=((cMin>=0?row[cMin]:'')||'')+'';
@@ -5523,12 +5530,16 @@ function _teamParseCrosses(rows){
   for(var i2=0;i2<rows.length;i2++){ var r0=rows[i2]; if(r0.indexOf(':')>=0 && r0.some(function(x){return /^equipo$/i.test((x||'').trim());})){ hi=i2; break; } }
   if(hi<0) return {};
   var hdr=rows[hi], sep=hdr.indexOf(':'); if(sep<0) return {};
-  function findCol(re,from,to){ for(var c=from;c<to;c++){ if(re.test((hdr[c]||'').trim())) return c; } return -1; }
-  var aFed=findCol(/^fed$/i,0,sep), aName=findCol(/^equipo$/i,0,sep), aPts=findCol(/^pts/i,0,sep), aRes=-1;
-  for(var c=sep-1;c>=0;c--){ if(/^res/i.test((hdr[c]||'').trim())){ aRes=c; break; } }
+  function findAll(re){ var a=[]; for(var c=0;c<hdr.length;c++){ if(re.test((hdr[c]||'').trim())) a.push(c); } return a; }
+  // Las DOS columnas "Equipo": la 1ª = equipo A, la 2ª = equipo B. En los CLUBES (formato compacto sin
+  // FED) ambas van ANTES del ":"; en las OLIMPIADAS una a cada lado. Tomarlas por orden cubre los dos.
+  var eqCols=findAll(/^(equipo|team)$/i); if(eqCols.length<2) return {};
+  var aName=eqCols[0], bName=eqCols[1];
+  var aRes=-1; for(var c=sep-1;c>=0;c--){ if(/^res/i.test((hdr[c]||'').trim())){ aRes=c; break; } }
   var bRes=-1; for(var c2=sep+1;c2<hdr.length;c2++){ if(/^res/i.test((hdr[c2]||'').trim())){ bRes=c2; break; } }
-  var bName=findCol(/^equipo$/i,sep+1,hdr.length), bFed=findCol(/^fed$/i,sep+1,hdr.length), bPts=-1;
-  for(var c3=sep+1;c3<hdr.length;c3++){ if(/^pts/i.test((hdr[c3]||'').trim())){ bPts=c3; break; } }
+  // FED y Pts (opcionales; los clubes no los traen): cada columna va al equipo más cercano.
+  var aFed=-1,bFed=-1; findAll(/^fed$/i).forEach(function(c){ if(Math.abs(c-aName)<=Math.abs(c-bName)){ if(aFed<0)aFed=c; } else if(bFed<0) bFed=c; });
+  var aPts=-1,bPts=-1; findAll(/^pts/i).forEach(function(c){ if(Math.abs(c-aName)<=Math.abs(c-bName)){ if(aPts<0)aPts=c; } else if(bPts<0) bPts=c; });
   var out=[];
   for(var i3=hi+1;i3<rows.length;i3++){
     var r=rows[i3]; if(!r.length) continue;
@@ -5543,23 +5554,34 @@ function _teamParseCrosses(rows){
 }
 
 // ── Render por equipos ──
-function _teamRenderStandings(standings){
+function _teamRenderStandings(standings, crk){
   var teams=standings&&standings.teams;
   if(!teams||!teams.length) return '<div style="color:var(--text3);font-size:12px;padding:10px">Sin tabla cargada.</div>';
+  var _sdata=crk?crDataLoad(crk):null;   // para resolver país→fed en datos viejos sin la sigla
   var initial=standings.kind==='initial';
-  var th='padding:9px 10px;color:var(--text2);font-weight:600;font-size:12px;text-align:center;background:var(--bg2);border-bottom:2px solid var(--border);white-space:nowrap;position:sticky;top:0';
-  var td='padding:9px 10px;border-bottom:1px solid var(--border);text-align:center;font-size:14px';
+  var th='padding:9px 10px;color:var(--text2);font-weight:600;font-size:12.5px;text-align:center;background:var(--bg2);border-bottom:2px solid var(--border);white-space:nowrap;position:sticky;top:0';
+  var td='padding:9px 10px;border-bottom:1px solid var(--bd14);text-align:center;font-size:15px';
   var nDes=initial?0:teams.reduce(function(m,t){return Math.max(m,(t.des||[]).length);},0);
-  var h='<div style="max-height:560px;overflow:auto;border:1px solid var(--border);border-radius:10px;width:-moz-fit-content;width:fit-content;max-width:100%;margin-left:auto;margin-right:auto">';
-  h+='<table style="border-collapse:collapse;white-space:nowrap;margin:0"><thead><tr>';
+  // Mismo marco que las tablas de cruces/formación (ancho 860, radio 12) para que las tres queden iguales.
+  var h='<div style="max-height:560px;overflow:auto;border:1px solid var(--border);border-radius:12px;max-width:860px;margin-left:auto;margin-right:auto">';
+  h+='<table style="border-collapse:collapse;white-space:nowrap;margin:0;width:100%"><thead><tr>';
   h+='<th style="'+th+'">#</th><th style="'+th+';text-align:left">Equipo</th>';
   if(initial){ h+='<th style="'+th+'">Elo medio</th>'; }
   else { h+='<th style="'+th+'">Part.</th><th style="'+th+'">+</th><th style="'+th+'">=</th><th style="'+th+'">−</th>'; for(var d=0;d<nDes;d++) h+='<th style="'+th+'">Des '+(d+1)+'</th>'; }
   h+='</tr></thead><tbody>';
   teams.forEach(function(t,i){
-    h+='<tr>';
+    var _fed=t.fed||_teamResolveFed(t.name,_sdata);
+    var _isArg=(_fed==='ARG');
+    // Zebra (renglón alterno) como en las tablas suizas normales; y si el filtro "Solo argentinos" está
+    // activo, resaltar la fila de Argentina (la tabla NO se filtra: se conserva la posición en el ranking).
+    var rowBg=(_teamArgOnly&&_isArg)?'background:var(--gold-bg)':(i%2===1?'background:var(--zebra)':'');
+    h+='<tr style="'+rowBg+'">';
     h+='<td style="'+td+';color:var(--text3)">'+escHtml(String(t.rk||i+1))+'</td>';
-    h+='<td style="'+td+';text-align:left;font-weight:600;color:var(--text)">'+escHtml(t.name||'')+'</td>';
+    var _flag=_fed?crFlagEmoji(_fed):'';   // bandera solo si es país; los clubes van sin bandera
+    var _nm=(crk&&t.name)
+      ? '<span onclick="crOpenCountry('+crArg(crk)+','+crArg(t.name)+')" title="Ver la performance de '+escHtml(t.name||'')+'" style="cursor:pointer;display:inline-flex;align-items:center;gap:7px" onmouseover="this.style.color=\'var(--gold)\'" onmouseout="this.style.color=\'\'">'+(_flag?_flag+' ':'')+'<span>'+escHtml(t.name||'')+'</span></span>'
+      : ((_flag?_flag+' ':'')+escHtml(t.name||''));
+    h+='<td style="'+td+';text-align:left;font-weight:'+(_isArg?'800':'600')+';color:'+((_teamArgOnly&&_isArg)?'var(--gold)':'var(--text)')+'">'+_nm+'</td>';
     if(initial){ h+='<td style="'+td+';color:var(--text2)">'+escHtml(String(t.eloAvg||''))+'</td>'; }
     else {
       h+='<td style="'+td+'">'+escHtml(String(t.played||''))+'</td>';
@@ -5586,10 +5608,94 @@ function _teamCountryParts(name){
   var fed=m?m[1].toUpperCase():'';
   var clean=s.replace(/\s*\([A-Za-z]{3}\)\s*$/,'').trim();
   var flag=fed?crFlagEmoji(fed):_teamFlag(clean);
-  return { clean:clean||s, flag:flag };
+  return { clean:clean||s, flag:flag, fed:fed };
+}
+// Clave estable de un cruce por el PAR de federaciones (ordenadas), para vincular un cruce con su
+// formación en la sección de PARTIDAS (país vs país). Ej: {IND,USA} → "IND-USA". Solo aplica a países
+// (el PGN de Lichess trae el equipo como código/nombre de país); para clubes no hay fed ni partidas.
+function _teamFedKey(fedA, fedB){
+  return [fedA,fedB].filter(Boolean).map(function(x){return String(x).toUpperCase();}).sort().join('-');
+}
+// Identidad GENÉRICA de un equipo por su NOMBRE (sirve para países Y clubes): saca "(FED)", baja a
+// minúsculas y deja solo alfanumérico. "Argentina (ARG)" y "Argentina" → "argentina"; "Club Atlético
+// Temperley" → "clubatlticotemperley". Es estable entre cruces (art=2) y formación (art=3), que salen
+// de la misma fuente (Chess-Results), así que sirve para vincularlos aunque no haya código de país.
+function _teamNorm(name){ var s=String(name||'').replace(/\s*\([A-Za-z]{3}\)\s*$/,'').toLowerCase();
+  try{ s=s.normalize('NFD').replace(/[̀-ͯ]/g,''); }catch(e){}   // sacar acentos (Círculo≡Circulo)
+  return s.replace(/[^a-z0-9]+/g,''); }
+// Clave del PAR de equipos por nombre (ordenada) — reemplaza a _teamFedKey para vincular cruce↔formación
+// dentro de la sección de cuadros (funciona para países y clubes por igual).
+function _teamPairKey(nameA, nameB){ return [_teamNorm(nameA),_teamNorm(nameB)].filter(Boolean).sort().join('__'); }
+// Un lado del encabezado del cruce: bandera + nombre del país, CLICKEABLE → abre el panel de
+// performance del equipo (crOpenCountry). right=true alinea a la derecha (equipo A). Clickeable para
+// TODOS los equipos (países Y clubes): se pasa el NOMBRE (crOpenCountry lo resuelve). La bandera solo
+// aparece si el nombre trae código de país.
+function _teamCountrySide(crk, parts, right){
+  var nameSpan='<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(parts.clean)+'</span>';
+  var content= right ? (nameSpan+parts.flag) : (parts.flag+nameSpan);
+  var base='flex:1;min-width:0;display:flex;align-items:center;'+(right?'justify-content:flex-end;':'')+'gap:8px;overflow:hidden;color:var(--text)';
+  if(!parts.clean) return '<span style="'+base+'">'+content+'</span>';
+  return '<span onclick="crOpenCountry('+crArg(crk)+','+crArg(parts.clean)+')" title="Ver la performance de '+escHtml(parts.clean)+'" style="'+base+';cursor:pointer" onmouseover="this.style.color=\'var(--gold)\'" onmouseout="this.style.color=\'var(--text)\'">'+content+'</span>';
+}
+// Salto desde un cruce por países (art=2) a SU formación (art=3): cambia a la pestaña de formación de
+// esa ronda y hace scroll al match exacto (por la clave de federaciones), resaltándolo un instante.
+function _teamGotoFormation(crk, round, fedKey){
+  _teamShowTab(crk, round);
+  setTimeout(function(){
+    var el=fedKey?document.getElementById('tm-'+crk+'-'+round+'-'+fedKey):null;
+    if(!el) return;
+    el.scrollIntoView({behavior:'smooth', block:'center'});
+    var prev=el.style.boxShadow; el.style.transition='box-shadow .25s'; el.style.boxShadow='0 0 0 2px var(--gold)';
+    setTimeout(function(){ el.style.boxShadow=prev||''; }, 1700);
+  }, 90);
+}
+// Filtro "Solo argentinos" de los cuadros por equipos: deja solo los cruces/formación donde juega ARG.
+var _teamArgOnly=false;
+var _teamCurTab={};   // crk -> pestaña activa (para re-aplicarla al togglear el filtro)
+function _teamToggleArg(crk){ _teamArgOnly=!_teamArgOnly; _teamRefresh(crk, _teamCurTab[crk]); }
+function _teamMatchIsArg(m){ return _teamCountryParts(m.aName).fed==='ARG' || _teamCountryParts(m.bName).fed==='ARG'; }
+function _teamCrossIsArg(m){ return (m.aFed||'').toUpperCase()==='ARG' || (m.bFed||'').toUpperCase()==='ARG'; }
+// ¿Se puede llegar a las partidas de esta ronda? Sí si ya está cargada O si es on-demand y hay metadata
+// para bajarla (aunque el visitante todavía no la haya abierto). Para mostrar el ojito en TODAS las rondas.
+function _tdRoundReachable(round){
+  if(typeof _tdCtx!=='undefined'&&_tdCtx&&_tdCtx.byRound&&_tdCtx.byRound[round]&&_tdCtx.byRound[round].length) return true;
+  return !!(typeof _tdLiveCtx!=='undefined'&&_tdLiveCtx&&_tdLiveCtx.onDemand&&(_tdLiveCtx.roundsMeta||[]).some(function(r){return r.num===round;}));
+}
+// Ojito del panel de país → llevar a ESE match en la sección de PARTIDAS (abajo del detalle del torneo):
+// cierra el panel, cambia a la ronda, salta a la página del match (si está paginado) y hace scroll+resalto.
+var _tdPendingMatchJump=null;
+function _teamGotoMatchInGames(round, fedKey){
+  _tdPendingMatchJump={ round:round, fedKey:fedKey };
+  if(_crPlayerHistoryPushed){ history.back(); }   // popstate → crClosePlayer restaura el torneo (async)
+  else { crClosePlayer(); }                        // sync
+  setTimeout(_tdRunPendingMatchJump, 180);
+}
+function _tdRunPendingMatchJump(){
+  var j=_tdPendingMatchJump; if(!j) return; _tdPendingMatchJump=null;
+  if(typeof _tdCtx==='undefined' || !_tdCtx) return;
+  if(document.getElementById('td-rtab-'+j.round)) { try{ tdShowRound(j.round, _tdCtx.pgnKey); }catch(e){} }
+  // La ronda puede estar bajándose on-demand (recién la abrimos): esperar a que cargue antes de ubicar
+  // el match y hacer scroll. _tdEnsureRoundLoaded llama al cb cuando está lista (o con lo que haya).
+  _tdEnsureRoundLoaded(j.round, function(){
+    if(!_tdCtx) return;
+    try{
+      var games=(_tdCtx.byRound&&_tdCtx.byRound[j.round])||[];
+      var matches=_tdTeamMatches(games);
+      var _ck=_tdCtx.crKey, _ckData=_ck?crDataLoad(_ck):null, idx=-1;
+      for(var i=0;i<matches.length;i++){ if(_teamFedKey(_teamResolveFed(matches[i].teamA,_ckData),_teamResolveFed(matches[i].teamB,_ckData))===j.fedKey){ idx=i; break; } }
+      if(idx>=0){ _tdPage=Math.floor(idx/_TD_TEAM_PER_PAGE); if(_tdCurrentRound===j.round) tdBuildRound(j.round); }
+    }catch(e){}
+    setTimeout(function(){
+      var el=document.getElementById('tdm-'+j.round+'-'+j.fedKey);
+      var target=el||document.getElementById('td-partidas-anchor')||document.getElementById('td-games-section');
+      if(target) target.scrollIntoView({behavior:'smooth', block:'center'});
+      if(el){ var p=el.style.boxShadow; el.style.transition='box-shadow .25s'; el.style.boxShadow='0 0 0 2px var(--gold)'; setTimeout(function(){ el.style.boxShadow=p||''; }, 1900); }
+    }, 120);
+  });
 }
 function _teamRenderRound(matches, roundNum, crk){
-  if(!matches||!matches.length) return '<div style="color:var(--text3);font-size:12px;padding:10px">Sin datos.</div>';
+  if(_teamArgOnly) matches=(matches||[]).filter(_teamMatchIsArg);
+  if(!matches||!matches.length) return '<div style="color:var(--text3);font-size:12px;padding:10px">'+(_teamArgOnly?'🇦🇷 Argentina no juega en esta ronda.':'Sin datos.')+'</div>';
   // Nombre clickeable → abre las estadísticas del jugador en el torneo (crOpenPlayer lee teamRounds).
   function nameClk(n){ return n ? '<span onclick="crOpenPlayer('+crArg(crk||'')+','+crArg(n)+')" title="Ver estadísticas del jugador" style="cursor:pointer;border-bottom:1px dotted transparent" onmouseover="this.style.borderBottomColor=\'var(--gold)\';this.style.color=\'var(--gold)\'" onmouseout="this.style.borderBottomColor=\'transparent\';this.style.color=\'\'">'+escHtml(n)+'</span>' : ''; }
   function side(t,n,e,right){ return '<span style="flex:1;min-width:0;text-align:'+(right?'right':'left')+';color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(t?'<b style="color:var(--gold);font-size:11px">'+escHtml(t)+'</b> ':'')+nameClk(n)+(e?' <span style="color:var(--text3);font-size:12px">'+escHtml(String(e))+'</span>':'')+'</span>'; }
@@ -5603,19 +5709,33 @@ function _teamRenderRound(matches, roundNum, crk){
       +'<span style="font-size:17px">🕒</span><span style="color:var(--fg-c0)">Se juega:</span> <span style="font-weight:700;color:var(--fg-e0);text-shadow:var(--txt-out);font-size:15.5px">'+escHtml(_tSched)+'</span></div></div>';
   }
   try { var _tNxt=_crNextRoundNote(crk?crDataLoad(crk):null, crk, roundNum); if(_tNxt) inner+='<div>'+_tNxt+'</div>'; } catch(e) {}
+  var _rdata=crk?crDataLoad(crk):null;
   matches.forEach(function(m,mi){
-    inner+='<div style="border:1px solid var(--border);border-radius:10px;'+(mi?'margin-top:10px;':'')+'overflow:hidden">';
     var _ca=_teamCountryParts(m.aName), _cb=_teamCountryParts(m.bName);
-    inner+='<div style="display:flex;align-items:center;gap:10px;padding:11px 16px;background:var(--bg2);font-weight:700;font-size:15.5px">';
-    inner+='<span style="flex:1;min-width:0;display:flex;align-items:center;justify-content:flex-end;gap:8px;overflow:hidden"><span style="color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(_ca.clean)+'</span>'+_ca.flag+'</span>';
-    inner+='<span style="flex-shrink:0;color:var(--gold);background:var(--bg3);border-radius:6px;padding:3px 12px">'+escHtml(m.score||'')+'</span>';
-    inner+='<span style="flex:1;min-width:0;display:flex;align-items:center;gap:8px;overflow:hidden">'+_cb.flag+'<span style="color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(_cb.clean)+'</span></span>';
+    var _pk=_teamPairKey(m.aName,m.bName);  // id por NOMBRE para vincular cruce↔formación (países y clubes)
+    // clave por FED para el salto a Partidas: resolvemos el nombre→fed (aunque no traiga "(FED)", ej.
+    // "Bulgaria"), para que coincida con el id del match en la grilla de partidas (que también resuelve).
+    var _fk=_teamFedKey(_teamResolveFed(m.aName,_rdata), _teamResolveFed(m.bName,_rdata));
+    // Intercalado POR MATCH (no por renglón): TODO el bloque (encabezado equipo-vs-equipo + tableros) toma
+    // el mismo tinte, porque header y tableros son transparentes y dejan ver el fondo del bloque.
+    inner+='<div id="tm-'+crk+'-'+roundNum+'-'+_pk+'" style="border:1px solid var(--bd14);border-radius:10px;'+(mi?'margin-top:10px;':'')+'overflow:hidden;background:'+(mi%2===1?'var(--zebra)':'transparent')+'">';
+    inner+='<div style="display:flex;align-items:center;gap:10px;padding:11px 16px;border-bottom:1px solid var(--bd14);font-weight:700;font-size:15.5px">';
+    inner+=_teamCountrySide(crk,_ca,true);
+    // El marcador es clickeable → ver ESE match en la sección de Partidas (mismo salto que el ojito del
+    // panel de país). Solo si esa ronda tiene partidas cargadas del vivo.
+    var _hasGm=_tdRoundReachable(roundNum);
+    if(_hasGm&&_fk){
+      inner+='<span onclick="_teamGotoMatchInGames('+(roundNum!=null?roundNum:'null')+',\''+_fk+'\')" title="Ver el match en Partidas" style="flex-shrink:0;color:var(--gold);background:var(--bg3);border-radius:6px;padding:3px 12px;cursor:pointer" onmouseover="this.style.background=\'var(--gl40)\'" onmouseout="this.style.background=\'var(--bg3)\'">'+escHtml(m.score||'')+' <span style="font-size:11px;color:var(--blue)">👁</span></span>';
+    } else {
+      inner+='<span style="flex-shrink:0;color:var(--gold);background:var(--bg3);border-radius:6px;padding:3px 12px">'+escHtml(m.score||'')+'</span>';
+    }
+    inner+=_teamCountrySide(crk,_cb,false);
     inner+='</div>';
     (m.boards||[]).forEach(function(b,bi){
       // El color ALTERNA por mesa: mesa 1 (impar) el equipo de la izquierda va con blancas; mesa 2
       // (par) con negras; etc. (nW = columna izquierda/equipo A, nB = derecha/equipo B; NO son colores).
       var leftIsWhite = (bi % 2 === 0);
-      inner+='<div style="display:flex;align-items:center;gap:6px;padding:9px 16px;border-top:1px solid var(--border);font-size:15px">';
+      inner+='<div style="display:flex;align-items:center;gap:6px;padding:9px 16px;'+(bi?'border-top:1px solid var(--bd14);':'')+'font-size:15px">';
       inner+=side(b.tW,b.nW,b.eW,true);
       inner+=_teamColorDot(leftIsWhite);    // color del jugador de la izquierda en esta mesa
       // Resultado clickeable: abre la partida del broadcast que coincide con ese tablero (por ronda
@@ -5639,7 +5759,8 @@ function _teamRenderRound(matches, roundNum, crk){
 // vista "rápida" que sale antes que la formación. Si esa ronda ya tiene formación cargada, cada fila
 // es clickeable y salta a la formación (bottom row). Resalta los cruces con Argentina.
 function _teamRenderCrosses(crosses, roundNum, crk, hasFormation){
-  if(!crosses||!crosses.length) return '<div style="color:var(--text3);font-size:12px;padding:10px">Sin cruces cargados.</div>';
+  if(_teamArgOnly) crosses=(crosses||[]).filter(_teamCrossIsArg);
+  if(!crosses||!crosses.length) return '<div style="color:var(--text3);font-size:12px;padding:10px">'+(_teamArgOnly?'🇦🇷 Argentina no juega en esta ronda.':'Sin cruces cargados.')+'</div>';
   var ks=(crk||'').replace(/'/g,"\\'");
   var inner='';
   var _tSched=''; try { _tSched=_crRoundSchedule(crk?crDataLoad(crk):null, crk, roundNum); } catch(e) {}
@@ -5648,10 +5769,12 @@ function _teamRenderCrosses(crosses, roundNum, crk, hasFormation){
       +'<span style="font-size:16px">🕒</span><span style="color:var(--fg-c0)">Se juega:</span> <span style="font-weight:700;color:var(--fg-e0);text-shadow:var(--txt-out)">'+escHtml(_tSched)+'</span></div>';
   }
   if(hasFormation) inner+='<div style="font-size:11px;color:var(--text3);margin-bottom:8px">Tocá un cruce para ver la formación tablero por tablero.</div>';
-  crosses.forEach(function(m){
+  crosses.forEach(function(m,ci){
     var arg=(m.aFed==='ARG'||m.bFed==='ARG');
-    var clk=hasFormation ? ' onclick="_teamShowTab(\''+ks+'\','+(roundNum!=null?roundNum:'null')+')" title="Ver la formación de este cruce" style="cursor:pointer;' : ' style="';
-    inner+='<div'+clk+'display:flex;align-items:center;gap:8px;padding:11px 14px;border:1px solid '+(arg?'var(--gold-dim)':'var(--border)')+';border-radius:10px;margin-top:8px;background:'+(arg?'var(--gl30)':'var(--bg2)')+'">';
+    var _pk=_teamPairKey(m.aName,m.bName);   // clave por nombre (vincula con la formación; sirve p/ clubes)
+    var clk=(hasFormation&&_pk) ? ' onclick="_teamGotoFormation(\''+ks+'\','+(roundNum!=null?roundNum:'null')+',\''+_pk+'\')" title="Ver la formación de este cruce" style="cursor:pointer;' : ' style="';
+    var _cbg=arg?'var(--gl30)':(ci%2===1?'var(--zebra)':'var(--bg2)');   // intercalado por match (ARG resaltado)
+    inner+='<div'+clk+'display:flex;align-items:center;gap:8px;padding:11px 14px;border:1px solid '+(arg?'var(--gold-dim)':'var(--bd14)')+';border-radius:10px;margin-top:8px;background:'+_cbg+'">';
     inner+='<span style="flex:1;min-width:0;display:flex;align-items:center;justify-content:flex-end;gap:7px;overflow:hidden">';
     inner+='<span style="color:var(--text);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(m.aName)+'</span>'+crFlagEmoji(m.aFed);
     inner+='</span>';
@@ -5680,6 +5803,15 @@ function _teamRenderSection(crk,data){
   var roundNums=Object.keys(rounds).map(Number).sort(function(a,b){return a-b;});
   var crossNums=Object.keys(crosses).map(Number).sort(function(a,b){return a-b;});
   var hasStand=!!(data.teamStandings&&data.teamStandings.teams&&data.teamStandings.teams.length);
+  // ¿Los equipos son PAÍSES (tienen código FIDE) o CLUBES? Para rotular "por países" vs "por equipos".
+  var _areCountries=(function(){
+    function chk(nm,fed){ var f=(fed&&_FED_ISO[String(fed).toUpperCase()])?fed:_teamCountryParts(nm).fed; return !!(f&&_FED_ISO[String(f).toUpperCase()]); }
+    var got=false;
+    (crossNums.length?crosses[crossNums[0]]:[]).slice(0,4).forEach(function(m){ if(chk(m.aName,m.aFed)||chk(m.bName,m.bFed)) got=true; });
+    if(!got) (roundNums.length?rounds[roundNums[0]]:[]).slice(0,4).forEach(function(m){ if(chk(m.aName)||chk(m.bName)) got=true; });
+    return got;
+  })();
+  var _crucesLbl=_areCountries?'🌍 Cruces por países':'🤝 Cruces por equipos';
   // Landing: última ronda con FORMACIÓN; si no hay, última con CRUCES; si no, la tabla.
   var defaultTab=roundNums.length?roundNums[roundNums.length-1]:(crossNums.length?('x'+crossNums[crossNums.length-1]):(hasStand?'tabla':null));
   var delBtn=function(label,onclick){ return _ondemand?'':'<div style="display:flex;justify-content:flex-end;margin-bottom:8px"><button onclick="'+onclick+'" style="padding:5px 11px;border-radius:8px;border:1px solid rgba(200,70,70,.35);background:rgba(200,60,60,.1);color:#e07070;font-size:11.5px;font-weight:600;cursor:pointer;font-family:inherit">✕ '+label+'</button></div>'; };
@@ -5703,6 +5835,11 @@ function _teamRenderSection(crk,data){
     h+='</div></div>';
     return h;
   }
+  // Filtro visitante "Solo argentinos" (mismo botón que la sección de partidas): solo si el torneo
+  // tiene a Argentina. Filtra los cruces y la formación al match de ARG en cada ronda.
+  var _hasArg = crossNums.some(function(r){ return (crosses[r]||[]).some(_teamCrossIsArg); }) || roundNums.some(function(r){ return (rounds[r]||[]).some(_teamMatchIsArg); });
+  if(!_hasArg) _teamArgOnly=false;   // sin ARG no hay botón para apagarlo → que un filtro pegado de otro torneo no deje todo vacío
+  if(_hasArg){ h+='<div style="margin-bottom:12px"><button onclick="_teamToggleArg(\''+ks+'\')" class="arg-toggle'+(_teamArgOnly?' on':'')+'">🇦🇷 Solo argentinos</button></div>'; }
   // Botón de ronda/tabla. Mismo diseño que los botones de rondas de PARTIDAS (borde 2px + fondo glass,
   // legibles en modo oscuro). blue=true → acento AZUL (cruces por países); false → DORADO (formación/tabla).
   var tabBtn=function(tab,label,blue){ var on=String(defaultTab)===String(tab); var bg=on?(blue?'rgba(70,140,210,.20)':'var(--gold-bg)'):'var(--gl40)'; var col=on?(blue?'#7ab8e6':'var(--gold)'):'var(--fg-d0)'; var bd=on?(blue?'rgba(80,155,225,.6)':'var(--gold-dim)'):'var(--bd22)'; return '<button onclick="_teamShowTab(\''+ks+'\',\''+tab+'\')" id="cr-rtab-'+crk+'-'+tab+'" style="padding:7px 15px;border-radius:20px;border:2px solid '+bd+';background:'+bg+';color:'+col+';font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit;text-shadow:var(--txt-out)">'+label+'</button>'; };
@@ -5711,7 +5848,7 @@ function _teamRenderSection(crk,data){
   // Renglón 1: CRUCES POR PAÍSES (azul) — solo si hay
   if(crossNums.length){
     h+='<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px">';
-    h+='<span style="'+rowLbl+'" title="País vs país con el marcador. Salen antes que la formación.">🌍 Cruces por países</span>';
+    h+='<span style="'+rowLbl+'" title="Equipo vs equipo con el marcador. Salen antes que la formación.">'+_crucesLbl+'</span>';
     crossNums.forEach(function(r){ h+=tabBtn('x'+r,'R'+r,true); });
     h+='</div>';
   }
@@ -5728,12 +5865,13 @@ function _teamRenderSection(crk,data){
   h+='</div>';   // /cr-tabs
   crossNums.forEach(function(r){ h+='<div id="cr-panel-'+crk+'-x'+r+'" style="display:'+(String(defaultTab)===('x'+r)?'block':'none')+'">'+delBtn('Borrar cruces R'+r,"_teamDeleteCross('"+ks+"',"+r+")")+_teamRenderCrosses(crosses[r], r, crk, !!rounds[r])+'</div>'; });
   roundNums.forEach(function(r){ h+='<div id="cr-panel-'+crk+'-'+r+'" style="display:'+(String(defaultTab)===String(r)?'block':'none')+'">'+delBtn('Borrar formación R'+r,"_teamDeleteRound('"+ks+"',"+r+")")+_teamRenderRound(rounds[r], r, crk)+'</div>'; });
-  if(hasStand){ h+='<div id="cr-panel-'+crk+'-tabla" style="display:'+(defaultTab==='tabla'?'block':'none')+'">'+delBtn('Borrar tabla',"_teamDeleteStandings('"+ks+"')")+_teamRenderStandings(data.teamStandings)+'</div>'; }
+  if(hasStand){ h+='<div id="cr-panel-'+crk+'-tabla" style="display:'+(defaultTab==='tabla'?'block':'none')+'">'+delBtn('Borrar tabla',"_teamDeleteStandings('"+ks+"')")+_teamRenderStandings(data.teamStandings, crk)+'</div>'; }
   h+='</div>';
   return h;
 }
 function _teamShowTab(crk,tab){
   tab=String(tab);
+  _teamCurTab[crk]=tab;   // recordar la pestaña activa (para re-aplicarla al togglear "Solo argentinos")
   // Apagar TODOS los botones de los dos renglones (cruces + formaciones + tabla). Mismo estilo que los
   // botones de rondas de la sección de PARTIDAS (borde 2px + fondo glass), que se ven bien en oscuro.
   var tabs=document.getElementById('cr-tabs-'+crk);
@@ -7480,8 +7618,169 @@ async function _crParseStandingsAsync(key,bytes){
 }
 
 // ── Perfil de jugador ──
-var _crPlayerModal=null;
+var _crViewStack=[];   // pila de contenidos previos del modal del torneo → "← Volver" anidado (tabla → país → jugador)
 var _crPlayerHistoryPushed=false;
+
+// Resuelve un país a su federación (3 letras) desde un código FED o desde un nombre ("India",
+// "United States of America"). Usa los cruces/formación del torneo (traen nombre + fed juntos) y, de
+// respaldo, el mapa global nombre→fed. Sirve para clickear países en cualquier vista (cruces,
+// formación, tabla, partidas), tengan o no la sigla a mano.
+function _teamResolveFed(who, data){
+  var s=String(who||'').trim(); if(!s) return '';
+  if(/^[A-Za-z]{3}$/.test(s) && _FED_ISO[s.toUpperCase()]) return s.toUpperCase();
+  var lo=s.toLowerCase().replace(/\s*\([a-z]{3}\)\s*$/i,'').trim(), found='';
+  var scan=function(nm,fed){ if(!found && nm && fed && String(nm).toLowerCase().replace(/\s*\([a-z]{3}\)\s*$/i,'').trim()===lo) found=String(fed).toUpperCase(); };
+  var xr=(data&&data.teamCrosses)||{}; Object.keys(xr).forEach(function(r){ (xr[r]||[]).forEach(function(m){ scan(m.aName,m.aFed); scan(m.bName,m.bFed); }); });
+  if(!found){ var tr=(data&&data.teamRounds)||{}; Object.keys(tr).forEach(function(r){ (tr[r]||[]).forEach(function(m){ var pa=_teamCountryParts(m.aName),pb=_teamCountryParts(m.bName); if(!found&&pa.fed&&pa.clean.toLowerCase()===lo)found=pa.fed; if(!found&&pb.fed&&pb.clean.toLowerCase()===lo)found=pb.fed; }); }); }
+  // La TABLA de posiciones trae el FED de cada equipo (columna FED): resuelve nombres oficiales largos
+  // que el mapa Intl no tiene (ej. "United States of America" → USA).
+  if(!found && data && data.teamStandings && data.teamStandings.teams){ data.teamStandings.teams.forEach(function(t){ scan(t.name, t.fed); }); }
+  return found || _NAME_FED[lo] || '';
+}
+// Puntos de un tablero "1-0"/"0-1"/"½-½" como [ptsIzquierda, ptsDerecha] (izq = equipo A / columna nW).
+function _teamResPts(res){
+  var s=String(res||'').replace(/\s/g,'');
+  if(s==='1-0'||s==='+-'||s==='1-0F') return [1,0];
+  if(s==='0-1'||s==='-+'||s==='0-1F') return [0,1];
+  if(/^(½-½|0\.5-0\.5|1\/2-1\/2|=-=)$/.test(s)) return [0.5,0.5];
+  var m=s.match(/^([0-9.½]+)-([0-9.½]+)$/); if(m){ var f=function(x){return /½/.test(x)?(parseFloat(x)||0)+0.5:parseFloat(x);}; var a=f(m[1]),b=f(m[2]); if(!isNaN(a)&&!isNaN(b)) return [a,b]; }
+  return null;
+}
+// Panel de PERFORMANCE DE UN PAÍS (equivalente a crOpenPlayer, pero para un equipo). Se abre al tocar
+// el nombre de un país en la formación, en la tabla de posiciones o en las partidas. Arma el historial
+// de MATCHES (rival + marcador + resultado) desde los cruces por países (o, si no hay, desde la
+// formación) + el plantel con el puntaje individual de cada jugador. Reusa el modal de crOpenPlayer.
+function crOpenCountry(key, who){
+  var data=crDataLoad(key); if(!data||!who) return;
+  var wS=String(who).trim(); if(!wS) return;
+  // Identidad del equipo por NOMBRE (sirve para países Y clubes). Si me pasan un código FED de país,
+  // lo uso como alias (el PGN de Lichess/tabla a veces trae el código en vez del nombre completo).
+  var targetFed=(/^[A-Za-z]{3}$/.test(wS) && _FED_ISO[wS.toUpperCase()]) ? wS.toUpperCase() : _teamCountryParts(wS).fed;
+  var targetNorm=_teamNorm(wS);
+  function isMe(name, fedField){
+    if(targetNorm && _teamNorm(name)===targetNorm) return true;
+    if(targetFed && ((String(fedField||'').toUpperCase()===targetFed) || _teamCountryParts(name).fed===targetFed)) return true;
+    return false;
+  }
+  function pscore(x){ x=String(x==null?'':x).trim().replace(',','.'); if(x===''||x==='-') return null; if(/½/.test(x)) return (parseFloat(x)||0)+0.5; var v=parseFloat(x); return isNaN(v)?null:v; }
+  var cname=_teamCountryParts(wS).clean||wS, cfed=targetFed, byR={};
+  // MERGE por ronda. La FORMACIÓN (art=3) manda: es completa y confiable (identifica bien al equipo
+  // aunque juegue de "visitante"/columna B; el parser de cruces de CLUBES a veces desubica esa columna).
+  // Los CRUCES (art=2) solo RELLENAN las rondas que la formación todavía no tiene (útil en el vivo de
+  // Olimpiadas, donde el cruce sale antes que la formación). Así no se pierde ninguna ronda.
+  var tr=data.teamRounds||{};
+  Object.keys(tr).forEach(function(r){
+    (tr[r]||[]).forEach(function(m){
+      var pa=_teamCountryParts(m.aName), pb=_teamCountryParts(m.bName), meA=isMe(m.aName,''), meB=isMe(m.bName,''); if(!meA&&!meB) return;
+      var mine=meA?pa:pb; cname=mine.clean||cname; if(!cfed&&mine.fed) cfed=mine.fed;
+      var my=0,opp=0,any=false;
+      (m.boards||[]).forEach(function(b){ var rp=_teamResPts(b.res); if(!rp) return; any=true; my+=meA?rp[0]:rp[1]; opp+=meA?rp[1]:rp[0]; });
+      var op=meA?pb:pa;
+      byR[r]={round:+r, oppFed:op.fed, oppName:op.clean||op.fed, my:any?my:null, opp:any?opp:null, res:any?(my>opp?'won':my<opp?'lost':'draw'):'pend'};
+    });
+  });
+  var xr=data.teamCrosses||{};
+  Object.keys(xr).forEach(function(r){
+    if(byR[r]) return;   // esa ronda ya la tiene la formación → no la piso
+    (xr[r]||[]).forEach(function(m){
+      var meA=isMe(m.aName,m.aFed), meB=isMe(m.bName,m.bFed); if(!meA&&!meB) return;
+      var mine=_teamCountryParts(meA?m.aName:m.bName); cname=mine.clean||cname;
+      if(!cfed){ cfed=mine.fed || (String(meA?m.aFed:m.bFed||'').toUpperCase()); }
+      var my=pscore(meA?m.aRes:m.bRes), opp=pscore(meA?m.bRes:m.aRes);
+      var op=_teamCountryParts(meA?m.bName:m.aName);
+      byR[r]={round:+r, oppFed:(meA?m.bFed:m.aFed)||op.fed, oppName:op.clean||(meA?m.bName:m.aName), my:my, opp:opp,
+              res:(my==null||opp==null)?'pend':(my>opp?'won':(my<opp?'lost':'draw'))};
+    });
+  });
+  var hist=Object.keys(byR).map(Number).sort(function(a,b){return a-b;}).map(function(r){return byR[r];});
+  var W=hist.filter(function(h){return h.res==='won';}).length, D=hist.filter(function(h){return h.res==='draw';}).length, L=hist.filter(function(h){return h.res==='lost';}).length;
+  var boardPts=hist.reduce(function(s,h){return s+(h.my||0);},0), matchPts=W*2+D;
+  var tinfo=null;
+  if(data.teamStandings&&data.teamStandings.teams){ tinfo=data.teamStandings.teams.find(function(t){ return isMe(t.name, t.fed); })||null; }
+  // Plantel: jugadores que jugaron para el país + su puntaje individual (clickeable a su performance).
+  var roster={}, rorder=[];
+  Object.keys(tr).map(Number).sort(function(a,b){return a-b;}).forEach(function(r){
+    (tr[r]||[]).forEach(function(m){
+      var meA=isMe(m.aName,''), meB=isMe(m.bName,''); if(!meA&&!meB) return;
+      (m.boards||[]).forEach(function(b){ var nm=meA?b.nW:b.nB; if(!nm) return; var rp=_teamResPts(b.res);
+        if(!roster[nm]){ roster[nm]={score:0,games:0,title:meA?b.tW:b.tB,elo:meA?b.eW:b.eB}; rorder.push(nm); }
+        if(rp){ roster[nm].score+=meA?rp[0]:rp[1]; roster[nm].games++; } });
+    });
+  });
+  if(!cfed) cfed=_teamResolveFed(cname, data);   // países sin "(FED)" en el nombre: resolver para la bandera
+
+  var h='<div style="padding:8px 2px 16px;max-width:660px;margin:0 auto">';
+  h+='<div style="background:var(--card90);border:1px solid var(--bd22);border-radius:var(--r-lg);box-shadow:var(--shadow-card);padding:14px 16px;margin-bottom:12px">';
+  h+='<div style="display:flex;align-items:center;gap:12px">';
+  var _fl=cfed?crFlagEmoji(cfed):'';
+  if(_fl) h+='<div style="flex-shrink:0;font-size:0;line-height:0;border-radius:6px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.4)">'+_fl+'</div>';
+  h+='<div style="flex:1;min-width:0">';
+  h+='<div style="font-size:18px;font-weight:700;color:var(--white-ink);line-height:1.15;text-shadow:var(--txt-out)">'+escHtml(cname)+(cfed?' <span style="font-size:12.5px;color:var(--fg-c8);font-weight:600">'+escHtml(cfed)+'</span>':'')+'</div>';
+  h+='<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:3px;font-size:13px;color:var(--text2)">';
+  h+='<span style="color:#4caf50;font-weight:600">'+W+' ganó</span> · <span style="color:var(--gold);font-weight:600">'+D+' empató</span> · <span style="color:#e05555;font-weight:600">'+L+' perdió</span>';
+  h+='</div></div>';
+  h+='<div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;margin-left:4px">';
+  h+='<span style="font-size:22px;font-weight:700;color:var(--gold);line-height:1">'+crPtsStr(boardPts)+'</span>';
+  h+='<span style="font-size:11.5px;color:var(--text3)">pts tablero</span>';
+  h+='</div>';
+  if(tinfo&&tinfo.rk){ var medal=tinfo.rk===1?'🥇':tinfo.rk===2?'🥈':tinfo.rk===3?'🥉':'#'+tinfo.rk;
+    h+='<div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;margin-left:10px"><span style="font-size:18px;font-weight:700;color:var(--text);line-height:1">'+medal+'</span><span style="font-size:11.5px;color:var(--text3)">pos</span></div>'; }
+  h+='</div>';   // /header
+
+  if(hist.length){
+    h+='<div style="background:var(--card90);border:1px solid var(--bd22);border-radius:var(--r-lg);box-shadow:var(--shadow-card);padding:6px 14px 10px;margin-bottom:12px">';
+    h+='<div style="font-size:11px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--text2);padding:8px 0 6px">Recorrido por ronda</div>';
+    h+='<table style="width:100%;border-collapse:collapse;font-size:14.5px">';
+    hist.forEach(function(hh){
+      var col=hh.res==='won'?'#4caf50':hh.res==='draw'?'var(--gold)':hh.res==='lost'?'#e05555':'var(--text3)';
+      var lbl=hh.res==='won'?'Ganó':hh.res==='draw'?'Empató':hh.res==='lost'?'Perdió':'—';
+      var marc=(hh.my==null?'':crPtsStr(hh.my))+' : '+(hh.opp==null?'':crPtsStr(hh.opp));
+      // Ojito → ir al match en Partidas. En on-demand aparece en TODAS las rondas alcanzables (la baja
+      // al tocarlo). Solo se oculta si el torneo no tiene sección de partidas (_tdRoundReachable false).
+      var _hasG=_tdRoundReachable(hh.round);
+      // fedKey resuelto por NOMBRE (para que coincida con el id del match en la grilla de partidas,
+      // aunque los nombres no traigan "(FED)", ej. "Bulgaria" / "United States of America").
+      var _rfk=_teamFedKey(_teamResolveFed(cname, data), _teamResolveFed(hh.oppName, data));
+      var resHtml=(_hasG&&_rfk)
+        ? '<span onclick="_teamGotoMatchInGames('+hh.round+',\''+_rfk+'\')" title="Ver el match en Partidas" style="cursor:pointer;color:'+col+'">'+lbl+' <span style="font-size:12px;color:var(--blue)">👁</span></span>'
+        : '<span style="color:'+col+'">'+lbl+'</span>';
+      h+='<tr style="border-top:1px solid var(--bd14)">';
+      h+='<td style="padding:8px 6px;color:var(--text3);text-align:center;width:34px">R'+hh.round+'</td>';
+      // Rival clickeable → abre SU panel de performance (país/club), navegando de panel en panel (como
+      // los rivales del panel de jugador). Se pasa el nombre; crOpenCountry lo resuelve.
+      var _oppClk = hh.oppName ? ' onclick="crOpenCountry('+crArg(key)+','+crArg(hh.oppName)+')" title="Ver la performance de '+escHtml(hh.oppName)+'" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;color:var(--text)" onmouseover="this.style.color=\'var(--gold)\'" onmouseout="this.style.color=\'var(--text)\'"' : ' style="display:inline-flex;align-items:center;gap:6px;color:var(--text)"';
+      h+='<td style="padding:8px 6px"><span'+_oppClk+'>'+(crFlagEmoji(hh.oppFed)||'')+'<span>'+escHtml(hh.oppName||'')+'</span></span></td>';
+      h+='<td style="padding:8px 6px;text-align:center;font-weight:700;color:var(--text);white-space:nowrap">'+marc+'</td>';
+      h+='<td style="padding:8px 6px;text-align:right;font-weight:700;white-space:nowrap">'+resHtml+'</td>';
+      h+='</tr>';
+    });
+    h+='</table></div>';
+  }
+  if(rorder.length){
+    h+='<div style="background:var(--card90);border:1px solid var(--bd22);border-radius:var(--r-lg);box-shadow:var(--shadow-card);padding:6px 14px 10px">';
+    h+='<div style="font-size:11px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--text2);padding:8px 0 6px">Plantel</div>';
+    h+='<table style="width:100%;border-collapse:collapse;font-size:14.5px">';
+    rorder.forEach(function(nm){ var p=roster[nm];
+      h+='<tr style="border-top:1px solid var(--bd14)">';
+      h+='<td style="padding:8px 6px"><span onclick="crOpenPlayer('+crArg(key)+','+crArg(nm)+')" title="Ver la performance del jugador" style="cursor:pointer;color:var(--text)" onmouseover="this.style.color=\'var(--gold)\'" onmouseout="this.style.color=\'var(--text)\'">'+crTitleBadge(p.title)+escHtml(nm)+(p.elo?' <span style="color:var(--text3);font-size:12.5px">'+escHtml(String(p.elo))+'</span>':'')+'</span></td>';
+      h+='<td style="padding:8px 6px;text-align:right;font-weight:700;color:var(--gold);white-space:nowrap">'+crPtsStr(p.score)+'<span style="color:var(--text3);font-weight:400;font-size:12.5px"> de '+p.games+'</span></td>';
+      h+='</tr>';
+    });
+    h+='</table></div>';
+  }
+  h+='</div>';
+
+  var modalBody=document.getElementById('tour-modal-body');
+  if(modalBody){
+    _crViewStack.push(modalBody.innerHTML);
+    modalBody.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 16px 0">'
+      +'<button onclick="crBackToTour()" style="display:flex;align-items:center;gap:6px;background:none;border:none;color:var(--text2);font-size:13px;cursor:pointer;padding:0;font-family:inherit">← Volver</button>'
+      +'<button onclick="crCloseAllPanels()" title="Cerrar y volver al detalle del torneo" style="display:flex;align-items:center;gap:5px;background:var(--gl40);border:1px solid var(--bd20);border-radius:8px;color:var(--fg-e0);font-size:12.5px;font-weight:600;cursor:pointer;padding:5px 11px;font-family:inherit;text-shadow:var(--txt-out)">✕ Cerrar</button>'
+      +'</div>'+h;
+    var mm=document.querySelector('#tour-overlay .modal'); if(mm) mm.scrollTop=0;
+    if(!_crPlayerHistoryPushed){ _crPlayerHistoryPushed=true; window.history.pushState({ crPlayer:true }, ''); }
+  }
+}
 
 function crOpenPlayer(key,name){
   var data=crDataLoad(key); if(!data) return;
@@ -7641,7 +7940,9 @@ function crOpenPlayer(key,name){
       var resBg=hh.myRes.startsWith('✓')?'rgba(76,175,80,0.28)':hh.myRes.startsWith('½')?'rgba(180,140,30,0.28)':hh.myRes.startsWith('⋯')?'rgba(100,100,100,0.18)':'rgba(220,80,80,0.28)';
       var resShort=hh.myRes.startsWith('✓')?'✓ Ganó':hh.myRes.startsWith('½')?'½ Tablas':hh.myRes.startsWith('⋯')?'⋯ Por jugar':'✗ Perdió';
       var hw=hh.color==='Blancas'?name:hh.opp, hb=hh.color==='Blancas'?hh.opp:name;
+      // En on-demand mostramos el 👁 aunque la ronda no esté cargada (crOpenGame la baja al tocar).
       var hgIdx=crFindGameIdx(hh.round,hw,hb);
+      var _canOpen = hgIdx>=0 || (hh.round!=null && _tdRoundReachable(hh.round));
       h+='<tr style="border-bottom:1px solid var(--bd10)">';
       h+='<td style="padding:8px 3px;text-align:center;font-weight:700;color:var(--white-ink);text-shadow:'+_ts+'">'+hh.round+'</td>';
       h+='<td class="crp-rival" style="padding:8px 6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
@@ -7649,7 +7950,7 @@ function crOpenPlayer(key,name){
         +(hh.oppElo?'<span class="crp-elo">('+hh.oppElo+')</span>':'')
         +'</td>';
       h+='<td class="cph-color" style="padding:8px 3px;text-align:center;font-size:15px">'+(hh.color==='Blancas'?'⬜':'⬛')+'</td>';
-      if(hgIdx>=0){
+      if(_canOpen){
         h+='<td style="padding:5px 6px;text-align:center;cursor:pointer;white-space:nowrap" title="Ver partida" onclick="crOpenGame('+(hh.round==null?'null':hh.round)+','+crArg(hw)+','+crArg(hb)+')">'
           +'<span class="cph-resbtn" style="display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:7px;background:'+resBg+';border:1px solid '+resColor+';font-weight:700;font-size:13px;color:'+resColor+';text-shadow:'+_ts+'">'+resShort+' <span style="font-size:12px;opacity:.85">👁</span></span>'
           +'</td>';
@@ -7671,8 +7972,11 @@ function crOpenPlayer(key,name){
   var modalBody=document.getElementById('tour-modal-body');
   if(modalBody){
     // Guardar contenido anterior para volver
-    if(!_crPlayerModal){ _crPlayerModal={ prev: modalBody.innerHTML }; }
-    modalBody.innerHTML='<button onclick="crBackToTour()" style="display:flex;align-items:center;gap:6px;background:none;border:none;color:var(--text2);font-size:13px;cursor:pointer;padding:10px 16px 0;font-family:inherit">← Volver al torneo</button>'+h;
+    _crViewStack.push(modalBody.innerHTML);
+    modalBody.innerHTML='<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 16px 0">'
+      +'<button onclick="crBackToTour()" style="display:flex;align-items:center;gap:6px;background:none;border:none;color:var(--text2);font-size:13px;cursor:pointer;padding:0;font-family:inherit">← Volver</button>'
+      +'<button onclick="crCloseAllPanels()" title="Cerrar y volver al detalle del torneo" style="display:flex;align-items:center;gap:5px;background:var(--gl40);border:1px solid var(--bd20);border-radius:8px;color:var(--fg-e0);font-size:12.5px;font-weight:600;cursor:pointer;padding:5px 11px;font-family:inherit;text-shadow:var(--txt-out)">✕ Cerrar</button>'
+      +'</div>'+h;
     var m=document.querySelector('#tour-overlay .modal');
     if(m) m.scrollTop=0;
     // Empujar una entrada de historial propia para que el botón Atrás cierre el
@@ -7683,19 +7987,32 @@ function crOpenPlayer(key,name){
   }
 }
 
-// Restaura la tabla del torneo (cierre "puro": NO toca el historial). Lo llama el
-// popstate tras consumir la entrada; los disparadores de UI usan crBackToTour().
+// Cierre TOTAL de las sub-vistas (país/jugador): vuelve al torneo (el fondo de la pila) y la vacía.
+// NO toca el historial (lo llama el popstate del botón Atrás del navegador, que es coarse: cierra todo).
 function crClosePlayer(){
-  if(!_crPlayerModal) return;
+  if(!_crViewStack.length) return;
   var modalBody=document.getElementById('tour-modal-body');
-  if(modalBody) modalBody.innerHTML=_crPlayerModal.prev;
-  _crPlayerModal=null;
+  if(modalBody) modalBody.innerHTML=_crViewStack[0];   // el detalle del torneo (fondo de la pila)
+  _crViewStack=[];
 }
 
-// Disparador de UI (botón "Volver", clic fuera): delega en history.back() para que
-// el popstate haga el cierre real una sola vez. Mantiene el historial sincronizado.
+// Botón "← Volver" de las sub-vistas: navega UN nivel (jugador → país → torneo). Si todavía queda una
+// sub-vista anterior en la pila (ej. el panel del país abajo del jugador), vuelve a ELLA sin tocar el
+// historial. Recién en el último nivel vuelve al torneo consumiendo la entrada de historial.
 function crBackToTour(){
+  if(_crViewStack.length>1){
+    var prev=_crViewStack.pop();
+    var mb=document.getElementById('tour-modal-body'); if(mb) mb.innerHTML=prev;
+    var m=document.querySelector('#tour-overlay .modal'); if(m) m.scrollTop=0;
+    return;
+  }
   if(_crPlayerHistoryPushed){ history.back(); }
+  else { crClosePlayer(); }
+}
+// Botón "✕ Cerrar" de los paneles: cierra TODA la pila de sub-vistas de una y vuelve al detalle del
+// torneo (sin tener que apretar "← Volver" una vez por panel). crClosePlayer vacía _crViewStack entero.
+function crCloseAllPanels(){
+  if(_crPlayerHistoryPushed){ history.back(); }   // popstate → crClosePlayer restaura el torneo y vacía la pila
   else { crClosePlayer(); }
 }
 
@@ -7704,10 +8021,10 @@ function crBackToTour(){
 // encima reutilizando la entrada del visor de stats, así Atrás / clic-fuera del
 // perfil vuelven al torneo en vez de salir.
 function crGoToProfile(id){
-  if(_crPlayerModal){
+  if(_crViewStack.length){
     var mb=document.getElementById('tour-modal-body');
-    if(mb) mb.innerHTML=_crPlayerModal.prev;   // restaurar la tabla detrás del perfil
-    _crPlayerModal=null;
+    if(mb) mb.innerHTML=_crViewStack[0];   // restaurar el torneo detrás del perfil (cierra todas las sub-vistas)
+    _crViewStack=[];
   }
   var hadCr=_crPlayerHistoryPushed;
   _crPlayerHistoryPushed=false;          // cedemos la entrada al perfil
@@ -18025,7 +18342,7 @@ window.addEventListener('popstate', function() {
   }
   var tour = document.getElementById('tour-overlay');
   // Visor de stats del jugador (vive DENTRO del tour-overlay): volver a la tabla
-  if (tour && tour.classList.contains('open') && _crPlayerModal) {
+  if (tour && tour.classList.contains('open') && _crViewStack.length) {
     _crPlayerHistoryPushed = false;
     crClosePlayer();
     return;
@@ -20156,6 +20473,75 @@ function _bcMergeResults(results) {
   return { tourSlug: results[0].tourSlug, rounds: [], allGames: allGames, isLive: results.some(function(r){ return r.isLive; }), liveRound: null, roundsWithGames: roundsWithGames };
 }
 
+// ── Carga ON-DEMAND del vivo (Lichess) ───────────────────────────────────────────────────────────
+// En vez de bajar TODAS las rondas de todas las sub-transmisiones al entrar (55+ requests en las
+// Olimpiadas → tarda varios segundos y rate-limitea), bajamos solo la METADATA (lista de rondas, un
+// JSON chico) + las partidas de la ronda ACTUAL. Las rondas anteriores se bajan cuando el visitante
+// las abre (tdShowRound) y quedan cacheadas. El refresco en vivo solo re-pide la ronda en curso.
+// El buscador y "Solo argentinos" operan por ronda (sobre la visible), así que no hace falta cargar todo.
+function _bcFetchMeta(tourId, cb){
+  _fetchTO('https://lichess.org/api/broadcast/' + tourId, 12000)
+    .then(function(r){ if(!r.ok) throw 0; return r.json(); })
+    .then(function(data){ cb({ tourSlug: data.tour && data.tour.slug, rounds: (data.tour && data.tour.rounds) || data.rounds || [] }); })
+    .catch(function(){ cb(null); });
+}
+function _bcFetchMetaMulti(tourIds, cb){
+  var out = new Array(tourIds.length), pending = tourIds.length;
+  tourIds.forEach(function(t, i){ _bcFetchMeta(t, function(m){ out[i] = m; if(--pending === 0) cb(out.filter(Boolean)); }); });
+}
+// Fusiona la metadata por NÚMERO de ronda. Solo lista las rondas ya EMPEZADAS (finished/ongoing/
+// startsAt<=ahora). Cada ronda lleva sus roundIds (uno por sub-transmisión) para bajarla después.
+function _bcMergeMeta(metas){
+  if(!metas || !metas.length) return null;
+  var now = Date.now(), byNum = {};
+  metas.forEach(function(meta){ (meta.rounds || []).forEach(function(r){
+    if(!(r.finished || r.ongoing || (r.startsAt && r.startsAt <= now))) return;   // futuras/relleno: sin pestaña
+    var mm = (r.name || '').match(/(\d+)/), num = mm ? parseInt(mm[1]) : null; if(num == null) return;
+    if(!byNum[num]) byNum[num] = { num: num, name: r.name, live: false, finished: true, roundIds: [] };
+    byNum[num].roundIds.push(r.id);
+    if(r.ongoing) byNum[num].live = true;
+    byNum[num].finished = byNum[num].finished && !!r.finished;
+  }); });
+  var nums = Object.keys(byNum).map(Number).sort(function(a,b){return a-b;});
+  if(!nums.length) return null;
+  var roundsMeta = nums.map(function(n){ return byNum[n]; });
+  var liveNums = roundsMeta.filter(function(r){ return r.live; }).map(function(r){ return r.num; });
+  var currentNum = liveNums.length ? Math.max.apply(null, liveNums) : nums[nums.length - 1];
+  return { roundsMeta: roundsMeta, currentNum: currentNum };
+}
+// Baja los PGN de UNA ronda (varios roundIds = esa ronda en cada sub-transmisión) → array de PGNs.
+function _bcFetchRoundPgns(roundIds, cb){
+  if(!roundIds || !roundIds.length){ cb([]); return; }
+  var parts = new Array(roundIds.length), pending = roundIds.length;
+  roundIds.forEach(function(id, i){
+    _fetchTO('https://lichess.org/api/broadcast/round/' + id + '.pgn', 15000)
+      .then(function(r){ return r.text(); })
+      .then(function(pgn){ parts[i] = pgn.trim().split(/\n\n(?=\[Event )/).filter(function(g){ return g.trim() && !_bcIsPlaceholderGame(g); }); if(--pending === 0) cb([].concat.apply([], parts)); })
+      .catch(function(){ parts[i] = []; if(--pending === 0) cb([].concat.apply([], parts)); });
+  });
+}
+// Init on-demand: metadata de todas las transmisiones + PGN solo de la ronda actual. cb(merged, games)
+// o cb(null) si la metadata falla (→ el caller cae al camino EAGER de respaldo).
+function _bcFetchOnDemandInit(tourIds, cb){
+  _bcFetchMetaMulti(tourIds, function(metas){
+    var merged = _bcMergeMeta(metas);
+    if(!merged){ cb(null); return; }
+    var cur = merged.roundsMeta.filter(function(r){ return r.num === merged.currentNum; })[0];
+    _bcFetchRoundPgns(cur ? cur.roundIds : [], function(games){ cb(merged, games || []); });
+  });
+}
+// Arma el `res` (formato _tdLiveBuild) desde la metadata on-demand: la ronda actual con partidas, las
+// demás como pestañas vacías. _ondemandLive hace que _tdLiveBuild muestre TODAS las pestañas.
+function _bcOnDemandRes(merged, currentGames){
+  var rwg = merged.roundsMeta.map(function(rm){
+    return { name: 'Ronda ' + rm.num, num: rm.num, id: 'od-' + rm.num, slug: String(rm.num),
+             games: (rm.num === merged.currentNum) ? currentGames : [], live: !!rm.live, finished: !!rm.finished };
+  });
+  var isLive = merged.roundsMeta.some(function(r){ return r.live; });
+  return { tourSlug: null, rounds: [], allGames: currentGames, isLive: isLive,
+           liveRound: isLive ? { name: 'Ronda ' + merged.currentNum } : null, roundsWithGames: rwg, _ondemandLive: true };
+}
+
 // Carga (isRefresh=false) o recarga (true) el broadcast activo. En recarga, actualiza los datos
 // en segundo plano y preserva la partida y la jugada que el visitante está mirando.
 function _bcLoad(isRefresh) {
@@ -20590,7 +20976,7 @@ var _tourReturnToProfile = false;
 function openTourFromProfile(type, id) {
   var ov = document.getElementById('overlay');
   if (ov) ov.classList.remove('open');   // ocultar el perfil (se reabre al volver)
-  _crPlayerModal = null;                 // descartar estado del visor de stats si quedó
+  _crViewStack = [];                     // descartar estado del visor de stats/país si quedó
   _tourReturnToProfile = true;           // recordar que hay que volver al perfil
   // El perfil conserva su entrada (_playerHistoryPushed sigue true); el torneo apila la suya.
   _tourHistoryPushed = false;
@@ -20684,8 +21070,26 @@ function _tdDlBtnsHtml(nRounds) {
 // ── Descargar las partidas en .pgn ──────────────────────────────────────────
 // scope 'round' = la ronda que se está mirando · 'all' = el torneo entero.
 // Respeta el filtro "🇦🇷 Solo argentinos" si está puesto (lo que ves es lo que bajás).
+// Cartelito de progreso mientras se bajan las rondas que faltan (para "bajar torneo" on-demand).
+function _tdDlProgress(done, total) {
+  var d = document.getElementById('td-dl-progress');
+  if (done < 0) { if (d && d.parentNode) d.parentNode.removeChild(d); return; }
+  if (!d) { d = document.createElement('div'); d.id = 'td-dl-progress'; d.style.cssText = 'position:fixed;left:50%;top:18px;transform:translateX(-50%);z-index:100000;background:var(--card90);border:1px solid var(--bd22);border-radius:10px;padding:10px 16px;color:var(--white-ink);font-size:13px;font-weight:600;box-shadow:0 8px 26px rgba(0,0,0,.5)'; document.body.appendChild(d); }
+  d.textContent = '⏳ Bajando rondas para el .pgn… ' + Math.min(done + 1, total) + '/' + total;
+}
 function _tdDownloadPgn(scope) {
   if (!_tdCtx) return;
+  // ON-DEMAND: "bajar torneo" necesita TODAS las rondas. Si faltan (no se abrieron), bajarlas primero
+  // (con progreso) y reintentar. "bajar ronda" no lo necesita (la ronda visible ya está cargada).
+  if (scope === 'all' && _tdLiveCtx && _tdLiveCtx.onDemand) {
+    var faltan = (_tdLiveCtx.roundsMeta || []).some(function(rm){ return !(_tdCtx.byRound[rm.num] && _tdCtx.byRound[rm.num].length) && rm.roundIds && rm.roundIds.length; });
+    if (faltan) {
+      if (!confirm('Para bajar el torneo completo hay que traer de Lichess las rondas que todavía no abriste. Puede tardar unos segundos. ¿Seguir?')) return;
+      _tdDlProgress(0, (_tdLiveCtx.roundsMeta || []).length);
+      _tdEnsureAllLoaded(function(){ _tdDlProgress(-1); _tdDownloadPgn('all'); }, function(done, total){ _tdDlProgress(done, total); });
+      return;
+    }
+  }
   var list = [];
   if (scope === 'round' && _tdCurrentRound != null && _tdCtx.byRound[_tdCurrentRound]) {
     list = _tdCtx.byRound[_tdCurrentRound].slice();
@@ -20836,7 +21240,26 @@ function _gameHref(tourKey, idx, cat) {
   // Con torneos por categorías, el índice `idx` es relativo a la categoría mostrada, así que el link
   // debe llevar también `&cat=<C>` o la pestaña nueva cae en la categoría 0 y abre otra partida.
   var c = (cat != null && cat >= 0) ? '&cat=' + cat : '';
-  return '?torneo=' + encodeURIComponent(tourKey) + c + '&partida=' + idx;
+  // ON-DEMAND: agregamos la RONDA + posición dentro de la ronda (&r=&g=). Así, al abrir el link, solo
+  // se baja ESA ronda de Lichess en vez de todo el torneo. El `&partida=<idx>` global queda de respaldo
+  // (links viejos, torneos no-vivo). La posición dentro de la ronda es estable (mismo orden al re-bajar).
+  var extra = '';
+  try { var ri = _tdIdxToRound(idx); if (ri && ri.round != null) extra = '&r=' + ri.round + '&g=' + ri.within; } catch(e){}
+  return '?torneo=' + encodeURIComponent(tourKey) + c + '&partida=' + idx + extra;
+}
+// Mapea un índice GLOBAL de _tdCtx.games a {round, within} (posición dentro de su ronda). null si no aplica.
+function _tdIdxToRound(idx) {
+  if (typeof _tdCtx === 'undefined' || !_tdCtx || !_tdCtx.byRound) return null;
+  var ord = Object.keys(_tdCtx.byRound).map(Number).sort(function(a,b){ return a - b; }), acc = 0;
+  for (var k = 0; k < ord.length; k++) { var r = ord[k], len = (_tdCtx.byRound[r]||[]).length; if (idx < acc + len) return { round: r, within: idx - acc }; acc += len; }
+  return null;
+}
+// Inverso: {round, within} → índice GLOBAL en el _tdCtx.games ACTUAL (con las rondas cargadas ahora).
+function _tdRoundWithinToIdx(round, within) {
+  if (typeof _tdCtx === 'undefined' || !_tdCtx || !_tdCtx.byRound) return -1;
+  var ord = Object.keys(_tdCtx.byRound).map(Number).sort(function(a,b){ return a - b; }), acc = 0;
+  for (var k = 0; k < ord.length; k++) { if (ord[k] === round) return acc + within; acc += (_tdCtx.byRound[ord[k]]||[]).length; }
+  return -1;
 }
 // Link de una partida abierta desde el PERFIL de un jugador (no mapea a un torneo limpio): se ata al
 // jugador + el torneo nº ti de su historial + la partida nº gi. Abre el perfil y, dentro, esa partida.
@@ -20950,7 +21373,27 @@ function _tryOpenPendingDeepGame() {
   if (!to || !to.classList.contains('open') || String(_tdTourKey) !== String(p.tourKey)) { _pendingDeepGame = null; return false; }
   var co = document.getElementById('chess-overlay');
   if (co && co.classList.contains('open')) { _pendingDeepGame = null; return false; }   // ya hay una partida abierta
-  if (_tdCtx && _tdCtx.games && p.idx >= 0 && p.idx < _tdCtx.games.length) {
+  if (!_tdCtx) return false;
+  // ON-DEMAND con ronda conocida (link nuevo &r=&g=): bajamos SOLO esa ronda y abrimos la partida por su
+  // posición dentro de la ronda (índice global recalculado con lo que haya cargado ahora).
+  if (p.round != null && _tdLiveCtx && _tdLiveCtx.onDemand) {
+    if (!p.__loading) {
+      p.__loading = true;
+      _tdEnsureRoundLoaded(p.round, function(){
+        if (_pendingDeepGame !== p) return;   // se abrió / cambió de torneo mientras tanto
+        var arr = (_tdCtx.byRound && _tdCtx.byRound[p.round]) || [];
+        var w = (p.within != null) ? p.within : 0;
+        if (arr.length && w >= 0 && w < arr.length) {
+          var gi = _tdRoundWithinToIdx(p.round, w);
+          if (gi >= 0) { _pendingDeepGame = null; tdOpenGame(gi, _tdCtx.pgnKey, _tdCtx.name, _tdCtx.location); return; }
+        }
+        p.round = null; p.__loading = false;   // no se pudo → caer al índice global en el próximo intento
+      });
+    }
+    return false;
+  }
+  // Camino de siempre: índice GLOBAL (torneo con todo cargado / no on-demand / link viejo).
+  if (_tdCtx.games && p.idx >= 0 && p.idx < _tdCtx.games.length) {
     _pendingDeepGame = null;
     tdOpenGame(p.idx, _tdCtx.pgnKey, _tdCtx.name, _tdCtx.location);
     return true;
@@ -20959,8 +21402,9 @@ function _tryOpenPendingDeepGame() {
 }
 
 // Deep-link a una partida: abre el torneo y, cuando sus partidas están listas, abre la nº idx.
-async function _openTourGameDeepLink(tourKey, idx, catIdx) {
-  _pendingDeepGame = { tourKey: String(tourKey), idx: idx };
+// round/within (opcionales, link on-demand): para bajar solo esa ronda en vez de todo el torneo.
+async function _openTourGameDeepLink(tourKey, idx, catIdx, round, within) {
+  _pendingDeepGame = { tourKey: String(tourKey), idx: idx, round: (round != null ? round : null), within: (within != null ? within : null) };
   // Camino rápido: si otra pestaña ya tiene este torneo en vivo, que nos pase los tableros para abrir al
   // instante (sin ir a Lichess). Solo esperamos en torneos con transmisión (los demás ya abren rápido).
   if (_tourHasBroadcast(tourKey)) {
@@ -21943,6 +22387,12 @@ function tdBuildRound(rInt) {
   if (!_tdCtx) return;
   var panel = document.getElementById('td-round-' + rInt);
   if (!panel) return;
+  // ON-DEMAND: si esta ronda se está bajando (no tiene partidas todavía), mostrar "cargando" en vez del
+  // "sin tableros". El callback de _tdFetchRoundOnDemand vuelve a llamar a tdBuildRound cuando llegan.
+  if (_tdLiveCtx && _tdLiveCtx._loading && _tdLiveCtx._loading[rInt] && !(_tdCtx.byRound[rInt] && _tdCtx.byRound[rInt].length)) {
+    panel.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:34px 0;color:var(--text3);font-size:13px">⏳ Cargando ronda ' + rInt + '…</div>';
+    return;
+  }
   var _roundGames = _tdCtx.byRound[rInt] || [];
   // Torneos POR EQUIPOS con tags [WhiteTeam]/[BlackTeam] (los trae la transmisión de Lichess):
   // agrupar los tableros por enfrentamiento (Equipo A vs Equipo B) con su marcador, estilo chess.com.
@@ -22070,16 +22520,25 @@ function tdBuildRoundTeams(rInt, panel, roundGames) {
   if (_tdPage < 0) _tdPage = 0;
   var startIdx = _tdPage * _TD_TEAM_PER_PAGE;
   var pageView = view.slice(startIdx, startIdx + _TD_TEAM_PER_PAGE);
+  // Nombre de país clickeable → panel de performance del país. Solo si esta crk tiene cargados los
+  // cuadros por equipos (cruces/formación), si no el panel saldría vacío.
+  var _ck = (typeof _tdCtx!=='undefined' && _tdCtx) ? _tdCtx.crKey : null;
+  var _ckData = _ck ? crDataLoad(_ck) : null;
+  var _ckHasTeam = !!(_ckData && ((_ckData.teamRounds && Object.keys(_ckData.teamRounds).length) || (_ckData.teamCrosses && Object.keys(_ckData.teamCrosses).length)));
+  function _tdTeamName(n){ var e = escHtml(n||''); if(!_ckHasTeam || !n) return e;
+    return '<span onclick="crOpenCountry('+crArg(_ck)+','+crArg(n)+')" title="Ver la performance del país" style="cursor:pointer" onmouseover="this.style.color=\'var(--gold)\'" onmouseout="this.style.color=\'\'">'+e+'</span>'; }
   var h = '';
   pageView.forEach(function(o, k) {
     var m = o.m, mi = o.idx;
+    // id por par de federaciones → para saltar acá desde el ojito del panel de país (_teamGotoMatchInGames).
+    var _mfk = _ckHasTeam ? _teamFedKey(_teamResolveFed(m.teamA,_ckData), _teamResolveFed(m.teamB,_ckData)) : '';
     // Cada match ocupa todo el ancho de la grilla (grid-column:1/-1) y adentro lleva su propia
     // grilla de tableros. Así no pelea con el grid de 4 columnas del panel de la ronda.
-    h += '<div style="grid-column:1/-1;margin-top:' + (k ? '18' : '2') + 'px">';
+    h += '<div'+(_mfk?' id="tdm-'+rInt+'-'+_mfk+'"':'')+' style="grid-column:1/-1;margin-top:' + (k ? '18' : '2') + 'px">';
     h += '<div style="display:flex;align-items:center;gap:10px;padding:9px 14px;background:var(--bg2);border:1px solid var(--border);border-radius:10px;margin-bottom:9px;font-weight:700">';
-    h += '<span style="flex:1;min-width:0;text-align:right;color:var(--text);font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHtml(m.teamA) + '</span>';
+    h += '<span style="flex:1;min-width:0;text-align:right;color:var(--text);font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + _tdTeamName(m.teamA) + '</span>';
     h += '<span id="td-mscore-' + rInt + '-' + mi + '" style="flex-shrink:0;color:var(--gold);background:var(--bg3);border-radius:6px;padding:3px 12px;font-variant-numeric:tabular-nums">' + _fmtHalf(m.a) + ' : ' + _fmtHalf(m.b) + '</span>';
-    h += '<span style="flex:1;min-width:0;color:var(--text);font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHtml(m.teamB) + '</span>';
+    h += '<span style="flex:1;min-width:0;color:var(--text);font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + _tdTeamName(m.teamB) + '</span>';
     h += '</div>';
     // Todos los tableros del enfrentamiento en UNA fila (N columnas iguales). max-width topea el tamaño
     // (~215px por tablero) para que, al filtrar y quedar 1-2 tableros, no se hagan gigantes.
@@ -22518,7 +22977,13 @@ var _tdCurrentRound = null;
 function tdShowRound(rInt, pgnKey2) {
   _tdCurrentRound = rInt;
   _tdPage = 0;   // al cambiar de ronda, volver a la página 1
-  tdBuildRound(rInt); // arma la ronda
+  // ON-DEMAND: si la ronda no está cargada (ni por Lichess ni por el pool) y hay metadata para bajarla,
+  // bajarla ahora. tdBuildRound de abajo muestra "cargando…" mientras tanto y el callback la re-arma.
+  if (_tdCtx && !(_tdCtx.byRound[rInt] && _tdCtx.byRound[rInt].length) && _tdLiveCtx && _tdLiveCtx.onDemand) {
+    var _rm = (_tdLiveCtx.roundsMeta || []).filter(function(r){ return r.num === rInt; })[0];
+    if (_rm && _rm.roundIds && _rm.roundIds.length) _tdFetchRoundOnDemand(rInt, _rm.roundIds);
+  }
+  tdBuildRound(rInt); // arma la ronda (o el cartel "cargando" si está en camino)
   // Ocultar todas las rondas y desactivar tabs
   document.querySelectorAll('[id^="td-round-"]').forEach(function(el) { el.style.display = 'none'; });
   document.querySelectorAll('[id^="td-rtab-"]').forEach(function(btn) {
@@ -22564,7 +23029,7 @@ function tdToggleArg() {
 function closeTourDetail(e) {
   if (e && e.target !== document.getElementById('tour-overlay')) return;
   // Si hay un visor de stats abierto, volver a la tabla (delegando en popstate)
-  if (_crPlayerModal) { crBackToTour(); return; }
+  if (_crViewStack.length) { crBackToTour(); return; }
   // Si el torneo se abrió desde un perfil, delegamos en popstate (cierra el torneo
   // y reabre el perfil) en vez de cerrar la pila entera.
   if (_tourReturnToProfile && _tourHistoryPushed) { history.back(); return; }
@@ -22698,15 +23163,35 @@ function _tdLiveError(url, detail) {
 function _tdLiveFetchMulti(tourIds, name, location, pgnKey, typ, hasFallback) {
   var key = tourIds.slice().sort().join(',');   // identifica este set de transmisiones (para descartar respuestas viejas)
   _tdLiveCtx = { tourIds: tourIds, key: key, tourId: tourIds[0], pgnKey: pgnKey, name: name, location: location, typ: typ, hasFallback: !!hasFallback, crKey: _tdLiveCrKey, isTeam: !!_tdLiveIsTeam };
+  // Camino EAGER (baja todo) cuando: es livechesscloud (el on-demand por ronda es solo Lichess por ahora),
+  // O hay un deep-link VIEJO a una partida (?partida=N sin &r=): su índice es global y necesita todo
+  // cargado. Los links NUEVOS (&r=&g=) traen la ronda → van por on-demand (bajan solo esa ronda).
+  if (tourIds.some(function(t){ return _isLccId(t); }) || (_pendingDeepGame && _pendingDeepGame.round == null)) { _tdLiveFetchMultiEager(tourIds, key, hasFallback); return; }
+  // Lichess: ON-DEMAND. Metadata (liviana) + partidas de la ronda actual; las demás al abrirlas.
+  _bcFetchOnDemandInit(tourIds, function(merged, currentGames){
+    if (!_tdLiveCtx || _tdLiveCtx.key !== key) return;
+    var sec = document.getElementById('td-games-section');
+    if (!sec) return;
+    if (!merged) { _tdLiveFetchMultiEager(tourIds, key, hasFallback); return; }   // metadata falló → respaldo eager
+    _tdLiveCtx.onDemand = true; _tdLiveCtx.roundsMeta = merged.roundsMeta; _tdLiveCtx.currentNum = merged.currentNum; _tdLiveCtx._loading = {};
+    var res = _bcOnDemandRes(merged, currentGames);
+    _tdLiveBuild(res, sec, null);
+    _tdShareRemember(res);
+    _tdLastGood = Date.now(); _tdFetchFails = 0;
+    if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; }
+    if (_tdKeepPolling(res)) { _tdLiveTimer = setTimeout(_tdLiveRefresh, _liveRefreshMs(_tdLiveCtx && _tdLiveCtx.tourId)); _tdStartWatchdog(); }
+  });
+}
+// Camino EAGER (baja TODAS las rondas): para livechesscloud y como respaldo si la metadata de Lichess falla.
+function _tdLiveFetchMultiEager(tourIds, key, hasFallback) {
   _bcFetchAllMulti(tourIds, function(res){
     if (!_tdLiveCtx || _tdLiveCtx.key !== key) return;
     var sec = document.getElementById('td-games-section');
     if (!sec) return;
-    // Sin partidas en el broadcast: si ya se muestran las subidas (respaldo), dejarlas; si no, avisar.
     if (!res || !res.roundsWithGames || !res.roundsWithGames.length) { if (!hasFallback) _tdLiveError(null); return; }
     _tdLiveBuild(res, sec, null);
-    _tdShareRemember(res);   // guardar para pasárselo a una pestaña nueva que abra una partida
-    _tdLastGood = Date.now(); _tdFetchFails = 0;   // primer fetch OK: arranca el reloj que vigila el watchdog
+    _tdShareRemember(res);
+    _tdLastGood = Date.now(); _tdFetchFails = 0;
     if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; }
     if (_tdKeepPolling(res)) { _tdLiveTimer = setTimeout(_tdLiveRefresh, _liveRefreshMs(_tdLiveCtx && _tdLiveCtx.tourId)); _tdStartWatchdog(); }
   });
@@ -22791,6 +23276,79 @@ function _tdMergeUploadedRounds(byRound, roundOrder) {
   return games;
 }
 
+// Fusiona el pool/Chess-Results en UNA sola ronda (para el on-demand, que baja de a una).
+function _tdMergeOneRound(rInt) {
+  if (!_tdCtx || !_tdCtx.byRound) return;
+  var bo = {}; bo[rInt] = _tdCtx.byRound[rInt] || []; var ord = [rInt];
+  var su = {}; if (_tdUploadedByRound && _tdUploadedByRound[rInt]) su[rInt] = _tdUploadedByRound[rInt];
+  var sc = {}; if (_tdCrByRound && _tdCrByRound[rInt]) sc[rInt] = _tdCrByRound[rInt];
+  _tdMergeSlots(bo, ord, su, false);
+  _tdMergeSlots(bo, ord, sc, true);
+  _tdCtx.byRound[rInt] = bo[rInt] || [];
+}
+// Rearma el array plano de games + PGN_DB desde byRound (tras cargar una ronda on-demand → visor/deep-link).
+function _tdRebuildFlatGames() {
+  if (!_tdCtx) return;
+  var games = [], ord = Object.keys(_tdCtx.byRound).map(Number).sort(function(a,b){ return a - b; });
+  ord.forEach(function(r){ (_tdCtx.byRound[r]||[]).forEach(function(g){ games.push(g.pgn); }); });
+  _tdCtx.games = games;
+  if (_tdLiveCtx) PGN_DB[_tdLiveCtx.pgnKey] = { title: _tdLiveCtx.name, sub: _tdLiveCtx.location, url: '', games: games };
+}
+// Baja UNA ronda anterior on-demand (al abrir su pestaña) y re-arma esa ronda cuando llegan las partidas.
+function _tdFetchRoundOnDemand(rInt, roundIds) {
+  if (!_tdLiveCtx) return;
+  if (!_tdLiveCtx._loading) _tdLiveCtx._loading = {};
+  if (_tdLiveCtx._loading[rInt]) return;   // ya se está bajando
+  _tdLiveCtx._loading[rInt] = true;
+  var key = _tdLiveCtx.key;
+  _bcFetchRoundPgns(roundIds, function(gs){
+    if (!_tdLiveCtx || _tdLiveCtx.key !== key) return;   // cambió de torneo mientras tanto → descartar
+    delete _tdLiveCtx._loading[rInt];
+    if (!_tdCtx) return;
+    _tdCtx.byRound[rInt] = (gs || []).map(function(pgn){ return { pgn: pgn, h: parsePgnHeaders(pgn) }; });
+    _tdMergeOneRound(rInt);            // sumar pool/Chess-Results de esa ronda + dedup
+    _tdRebuildFlatGames();             // refrescar games plano + PGN_DB (para el visor/deep-link)
+    if (_pendingDeepGame) _tryOpenPendingDeepGame();
+    if (_tdCurrentRound === rInt && document.getElementById('td-round-' + rInt)) {
+      tdBuildRound(rInt); _tdStartClocks(); if (_tdLiveCtx) setTimeout(mevTick, 900);
+    }
+  });
+}
+// Asegura que UNA ronda esté cargada (la baja on-demand si hace falta) y llama cb() cuando está lista.
+// Sirve para acciones que apuntan a una ronda que el visitante todavía no abrió (ojito del panel,
+// deep-link a una partida). Si no es on-demand o no hay metadata, llama cb() con lo que haya.
+function _tdEnsureRoundLoaded(round, cb) {
+  if (!_tdCtx) { if (cb) cb(); return; }
+  if (_tdCtx.byRound[round] && _tdCtx.byRound[round].length) { if (cb) cb(); return; }
+  if (_tdLiveCtx && _tdLiveCtx.onDemand) {
+    var rm = (_tdLiveCtx.roundsMeta || []).filter(function(r){ return r.num === round; })[0];
+    if (rm && rm.roundIds && rm.roundIds.length) {
+      _tdFetchRoundOnDemand(round, rm.roundIds);
+      var tries = 0;
+      (function w(){ if ((_tdCtx && _tdCtx.byRound[round] && _tdCtx.byRound[round].length) || !_tdLiveCtx || tries++ > 45) { if (cb) cb(); } else setTimeout(w, 120); })();
+      return;
+    }
+  }
+  if (cb) cb();
+}
+// Asegura que TODAS las rondas estén cargadas (secuencial, para no rate-limitear). Para "descargar torneo".
+function _tdEnsureAllLoaded(cb, onProgress) {
+  if (!_tdCtx || !_tdLiveCtx || !_tdLiveCtx.onDemand) { if (cb) cb(); return; }
+  var pending = (_tdLiveCtx.roundsMeta || []).filter(function(rm){ return !(_tdCtx.byRound[rm.num] && _tdCtx.byRound[rm.num].length) && rm.roundIds && rm.roundIds.length; });
+  if (!pending.length) { if (cb) cb(); return; }
+  var i = 0, key = _tdLiveCtx.key;
+  (function next(){
+    if (!_tdLiveCtx || _tdLiveCtx.key !== key) return;
+    if (i >= pending.length) { _tdRebuildFlatGames(); if (cb) cb(); return; }
+    if (onProgress) onProgress(i, pending.length);
+    var rm = pending[i++];
+    _bcFetchRoundPgns(rm.roundIds, function(gs){
+      if (_tdCtx) { _tdCtx.byRound[rm.num] = (gs || []).map(function(pgn){ return { pgn: pgn, h: parsePgnHeaders(pgn) }; }); _tdMergeOneRound(rm.num); }
+      next();
+    });
+  })();
+}
+
 // keepRound: ronda a re-seleccionar tras un refresco (preserva la pestaña del usuario).
 function _tdLiveBuild(res, sec, keepRound) {
   var byRound = {}, roundOrder = [], liveRoundInt = null;
@@ -22802,20 +23360,29 @@ function _tdLiveBuild(res, sec, keepRound) {
     r.games.forEach(function(pgn){ byRound[rInt].push({ pgn: pgn, h: parsePgnHeaders(pgn) }); });
     if (r.live) liveRoundInt = rInt;
   });
+  var ctx = _tdLiveCtx;
+  // ON-DEMAND: registrar TODAS las rondas META como casilleros (vacíos) ANTES de mergear el pool, así
+  // el merge del pool (que solo rellena rondas ya existentes) les carga las partidas locales a las
+  // rondas anteriores en torneos NACIONALES. Las que queden vacías se bajan de Lichess al abrirlas.
+  if (res._ondemandLive && ctx && ctx.roundsMeta) {
+    ctx.roundsMeta.forEach(function(rm){ if (!byRound[rm.num]) { byRound[rm.num] = []; roundOrder.push(rm.num); } });
+  }
   // Incorpora las subidas en las rondas donde superen a Lichess y arma el array plano de games.
   var games = _tdMergeUploadedRounds(byRound, roundOrder);
-  var ctx = _tdLiveCtx;
   PGN_DB[ctx.pgnKey] = { title: ctx.name, sub: ctx.location, url: '', games: games };
   _tdCtx = { byRound: byRound, games: games, pgnKey: ctx.pgnKey, name: ctx.name, location: ctx.location, built: {}, crKey: (_tdCtx && _tdCtx.crKey) || ctx.crKey || null, isTeam: !!(ctx && ctx.isTeam) };
   // Deep-link (?torneo=&partida=): ya tenemos la lista de partidas del vivo → abrir la pendiente si la
   // hay. Corre tanto en la carga inicial como en cada refresco (30s), así una partida que no estaba
   // lista (o falló su fetch) se abre en cuanto aparece, sin depender de un sondeo con tope fijo.
   if (_pendingDeepGame) _tryOpenPendingDeepGame();
-  var startRound = (keepRound != null && byRound[keepRound]) ? keepRound : (liveRoundInt || roundOrder[roundOrder.length - 1] || roundOrder[0]);
+  // En on-demand arrancamos SIEMPRE en la ronda actual (la única cargada); si no, la lógica de siempre.
+  var startRound = (keepRound != null && byRound[keepRound]) ? keepRound
+    : ((res._ondemandLive && ctx && ctx.currentNum && (byRound[ctx.currentNum] || roundOrder.indexOf(ctx.currentNum) >= 0)) ? ctx.currentNum
+       : (liveRoundInt || roundOrder[roundOrder.length - 1] || roundOrder[0]));
   _tdArgOnly = false;
   _tdCurrentRound = startRound;
   var argTotal = 0;
-  roundOrder.forEach(function(rInt){ byRound[rInt].forEach(function(g){ if (_isArgGame(g.h)) argTotal++; }); });
+  roundOrder.forEach(function(rInt){ (byRound[rInt]||[]).forEach(function(g){ if (_isArgGame(g.h)) argTotal++; }); });
   var liveInts = {};
   res.roundsWithGames.forEach(function(r){ if (r.live) { var mm=(r.name||'').match(/(\d+)/); if (mm) liveInts[parseInt(mm[1])] = true; } });
   var h = '';
@@ -22858,6 +23425,13 @@ function _tdLiveBuild(res, sec, keepRound) {
       // que crShowTab rebote a tdShowRound y cambie la ronda visible (sacaba de la ronda en vivo).
       if (_tab != null) { _crSyncing = true; try { crRefreshSection(_k, _tab); } catch(e){} _crSyncing = false; }
     } catch(e){}
+  }
+  // Torneos POR EQUIPOS: al llegar las partidas del vivo (carga inicial), re-renderizar la sección de
+  // equipos para que aparezcan los ojitos "ver en Partidas" y los marcadores clickeables — al PRIMER
+  // render de la formación _tdLiveCtx todavía era null (las partidas cargan después) y no salían. Una
+  // sola vez (keepRound==null), no en cada refresco, para no descolocar la pestaña del visitante.
+  if (keepRound == null && _tdLiveCtx && _tdLiveCtx.isTeam && _tdCtx.crKey && document.getElementById('cr-section-' + _tdCtx.crKey)) {
+    try { _crSyncing = true; _teamRefresh(_tdCtx.crKey, _teamCurTab[_tdCtx.crKey]); _crSyncing = false; } catch(e){ _crSyncing = false; }
   }
   // Si era un refresco (keepRound != null) y el visor está abierto, actualizar la partida que se mira.
   if (keepRound != null) _tdApplyViewerRefresh(_tdCtx.pgnKey);
@@ -22995,6 +23569,7 @@ function _tdLiveRefresh() {
   if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; }
   var gen = ++_tdPollGen;
   var key = _tdLiveCtx.key, tourIds = _tdLiveCtx.tourIds || [_tdLiveCtx.tourId];
+  if (_tdLiveCtx.onDemand) { _tdLiveRefreshOnDemand(gen, key, tourIds); return; }   // on-demand: solo la ronda viva
   _bcFetchAllMulti(tourIds, function(res){
     if (gen !== _tdPollGen) return;                       // callback de un fetch viejo/colgado → descartar
     if (!_tdLiveCtx || _tdLiveCtx.key !== key) return;
@@ -23019,6 +23594,48 @@ function _tdLiveRefresh() {
       _tdStopWatchdog();
     }
   });
+}
+
+// Refresco ON-DEMAND: re-baja la metadata (detecta rondas nuevas / la que pasó a en vivo) + las partidas
+// de la ronda ACTUAL (la única que cambia). Las rondas terminadas quedan cacheadas, no se re-piden.
+function _tdLiveRefreshOnDemand(gen, key, tourIds) {
+  _bcFetchOnDemandInit(tourIds, function(merged, currentGames){
+    if (gen !== _tdPollGen) return;
+    if (!_tdLiveCtx || _tdLiveCtx.key !== key) return;
+    var sec = document.getElementById('td-games-section');
+    if (!sec) { _tdLiveStop(); return; }
+    var keep;
+    if (merged) {
+      _tdLastGood = Date.now(); _tdFetchFails = 0;
+      _tdLiveCtx.roundsMeta = merged.roundsMeta; _tdLiveCtx.currentNum = merged.currentNum;
+      var res = _bcOnDemandRes(merged, currentGames);
+      try { _tdOnDemandApplyRefresh(merged, currentGames, sec); _tdShareRemember(res); } catch(e) {}
+      keep = _tdKeepPolling(res);
+    } else {
+      keep = (++_tdFetchFails <= _TD_MAX_FETCH_FAILS);
+    }
+    if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; }
+    if (keep && document.getElementById('td-games-section')) {
+      _tdLiveTimer = setTimeout(_tdLiveRefresh, _liveRefreshMs(_tdLiveCtx && _tdLiveCtx.tourId));
+      _tdStartWatchdog();
+    } else { _tdStopWatchdog(); }
+  });
+}
+// Si aparecieron rondas nuevas (cambió el set de pestañas) → reconstruye; si no, actualiza SOLO la ronda
+// actual (la viva) con las partidas frescas + pool, sin re-armar ni re-bajar el resto.
+function _tdOnDemandApplyRefresh(merged, currentGames, sec) {
+  if (!_tdCtx) return;
+  var curNum = merged.currentNum;
+  var tabsOk = merged.roundsMeta.every(function(r){ return document.getElementById('td-rtab-' + r.num); });
+  if (!tabsOk) { _tdLiveBuild(_bcOnDemandRes(merged, currentGames), sec, _tdCurrentRound); return; }
+  _tdCtx.byRound[curNum] = (currentGames || []).map(function(pgn){ return { pgn: pgn, h: parsePgnHeaders(pgn) }; });
+  _tdMergeOneRound(curNum);
+  _tdRebuildFlatGames();
+  if (_pendingDeepGame) _tryOpenPendingDeepGame();
+  if (_tdCurrentRound === curNum && document.getElementById('td-round-' + curNum)) tdBuildRound(curNum);
+  _tdApplyViewerRefresh(_tdCtx.pgnKey);
+  try { _tdRefreshArgLine(); } catch(e) {}
+  if (_tdLiveCtx) setTimeout(mevTick, 900);
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -25565,7 +26182,11 @@ pracInit();
     if (tbtn) { try { goTo('torneos', tbtn); } catch (e) {} }
     try { history.replaceState({}, '', location.pathname); } catch (e) {}
     var catN = (ck != null && ck !== '' && /^\d+$/.test(ck)) ? parseInt(ck, 10) : undefined;
-    if (gk != null && gk !== '' && /^\d+$/.test(gk)) _openTourGameDeepLink(tk, parseInt(gk, 10), catN);
+    // Ronda + posición dentro de la ronda (link on-demand): para bajar solo esa ronda. 'g' se reusa acá
+    // (en un link de torneo significa "posición en la ronda"; en uno de perfil, "índice de partida").
+    var rkN = (params.get('r') != null && /^\d+$/.test(params.get('r'))) ? parseInt(params.get('r'), 10) : null;
+    var gwN = (pgk != null && pgk !== '' && /^\d+$/.test(pgk)) ? parseInt(pgk, 10) : null;
+    if (gk != null && gk !== '' && /^\d+$/.test(gk)) _openTourGameDeepLink(tk, parseInt(gk, 10), catN, rkN, gwN);
     else if (catN != null) openTournamentDetail(_resolveTourType(tk), tk, false, catN);
     else openTournamentByKey(tk);
   } else if (pk) {
