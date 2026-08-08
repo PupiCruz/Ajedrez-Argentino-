@@ -4296,7 +4296,7 @@ function renderTorneos(filter) {
         var _hcCfg = tzCfg['hc_' + t.id] || {};
         html += _tourTileHtml({
           flyerUrl: _hcCfg.flyerUrl || t.flyerUrl, flyerPos: _hcCfg.flyerPos || t.flyerPos, name: t.name, dates: _hcCfg.dates || t.dates, status: status,
-          bcId: _hcCfg.broadcastId || '', bcUrl: _hcCfg.broadcastUrl || '',
+          bcId: _hcCfg.broadcastId || '', bcUrl: _hcCfg.broadcastUrl || '', cats: _hcCfg.categories || t.categories,
           href: _tourHref(t.id), clickKey: "'" + escJs(String(t.id)) + "'",
           editHtml: _ondemand ? '' : ('<div class="t-tile-edit"><button onclick="openTzModal(\'hc_' + t.id + '\')" title="Editar" class="t-tile-ebtn">✏️</button><button onclick="torneoDel(' + origIdx + ')" title="Ocultar" class="t-tile-ebtn">✕</button></div>')
         });
@@ -4311,7 +4311,7 @@ function renderTorneos(filter) {
         var _lsIdArg = "'" + escJs(String(st._id)) + "'";
         html += _tourTileHtml({
           flyerUrl: st.flyerUrl, flyerPos: st.flyerPos, name: st.name, dates: st.dates, status: status,
-          bcId: st.broadcastId || '', bcUrl: st.broadcastUrl || '',
+          bcId: st.broadcastId || '', bcUrl: st.broadcastUrl || '', cats: st.categories,
           href: _tourHref(st._id), clickKey: _lsIdArg,
           editHtml: _ondemand ? '' : ('<div class="t-tile-edit"><button onclick="openTzModal(\'ls_' + st._id + '\')" title="Editar" class="t-tile-ebtn">✏️</button><button onclick="pgnDeleteTorneo(' + st._id + ')" title="Eliminar" class="t-tile-ebtn">✕</button></div>')
         });
@@ -4320,7 +4320,7 @@ function renderTorneos(filter) {
         var st2 = item._status || 'upcoming';
         html += _tourTileHtml({
           flyerUrl: d.flyerUrl, flyerPos: d.flyerPos, name: d.name || '', dates: d.dates, status: st2,
-          bcId: d.broadcastId || '', bcUrl: d.broadcastUrl || '',
+          bcId: d.broadcastId || '', bcUrl: d.broadcastUrl || '', cats: d.categories,
           href: _tourHref(tzk), clickKey: "'" + escJs(tzk) + "'",
           editHtml: _ondemand ? '' : ('<div class="t-tile-edit"><button onclick="openTzModal(\'' + tzk + '\')" title="Editar" class="t-tile-ebtn">✏️</button></div>')
         });
@@ -8432,6 +8432,7 @@ function pgnGetTorneosForList() {
         crUrl: entry.crUrl || '', weburl: entry.weburl || '', info64url: entry.info64url || '',
         format: entry.format || '',
         broadcastId: entry.broadcastId || null, broadcastUrl: entry.broadcastUrl || null,
+        categories: entry.categories || null,   // para el badge "EN VIVO" de torneos con grupos (broadcast por categoría)
         rounds: entry.rounds || null,
         status: status, _dateKey: dk
       };
@@ -8467,6 +8468,7 @@ function pgnGetTorneosForList() {
       format: entry.format || '',
       broadcastId: entry.broadcastId || null,
       broadcastUrl: entry.broadcastUrl || null,
+      categories: entry.categories || null,   // para el badge "EN VIVO" de torneos con grupos (broadcast por categoría)
       rounds: entry.rounds || null,
       status: status,
       _dateKey: dk
@@ -20895,7 +20897,14 @@ function _tourTileHtml(o) {
   h += '<a class="t-tile" href="' + o.href + '" onclick="return tourCardClick(event,' + o.clickKey + ')">';
   h += '<div class="t-tile-fallback"><span class="pc">♞</span></div>';
   if (o.flyerUrl) h += '<img class="t-tile-img" src="' + escHtml(_flyerSrc(o.flyerUrl)) + '" alt="" loading="lazy"' + (o.flyerPos ? ' style="' + _flyerCropCss(o.flyerPos) + '"' : '') + ' onerror="this.style.display=\'none\'">';
-  var _lb = (o.status === 'live') ? (' data-livebadge="1"' + (o.bcId ? ' data-bc="' + escHtml(String(o.bcId)) + '"' : '') + (o.bcUrl ? ' data-bcurl="' + escHtml(String(o.bcUrl)) + '"' : '')) : '';
+  // Fuente de Lichess para confirmar "EN VIVO ahora": el broadcast del torneo o, si va por categoría
+  // (grupos A/B, sin broadcast a nivel torneo), el de la PRIMERA categoría que transmita. Sin esto, los
+  // torneos con categorías nunca pasaban de "EN CURSO" a "🔴 EN VIVO".
+  var _bcId = o.bcId, _bcUrl = o.bcUrl;
+  if (!_bcId && !_bcUrl && o.cats && o.cats.length) {
+    for (var _ci = 0; _ci < o.cats.length; _ci++) { if (o.cats[_ci] && o.cats[_ci].broadcast) { _bcUrl = o.cats[_ci].broadcast; break; } }
+  }
+  var _lb = (o.status === 'live') ? (' data-livebadge="1"' + (_bcId ? ' data-bc="' + escHtml(String(_bcId)) + '"' : '') + (_bcUrl ? ' data-bcurl="' + escHtml(String(_bcUrl)) + '"' : '')) : '';
   h += '<div class="t-tile-badge"><span class="badge ' + (cls[o.status] || 'b-upcoming') + '"' + _lb + '>' + (lbl[o.status] || '') + '</span></div>';
   h += '<div class="t-tile-foot"><div class="t-tile-name">' + escHtml(o.name || '') + '</div>';
   if (o.dates) h += '<div class="t-tile-date">' + escHtml(o.dates) + '</div>';
@@ -21782,7 +21791,9 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
         // (aparece justo mientras Lichess trae las partidas). Solo avisamos si DEBERÍA haber archivo.
         if (_tourLoadFailed[id]) {
           var _hasLiveSrc = !!(entry.broadcastId || entry.broadcastUrl
-            || (entry.crUrl && /tnr\d+/i.test(entry.crUrl)) || (entry.info64url && _i64Base(entry.info64url)));
+            || (entry.crUrl && /tnr\d+/i.test(entry.crUrl)) || (entry.info64url && _i64Base(entry.info64url))
+            // torneos con grupos: la fuente en vivo va por categoría (broadcast / crurl)
+            || (entry.categories && entry.categories.some(function(c){ return c && (c.broadcast || (c.crurl && /tnr\d+/i.test(c.crurl))); })));
           if ((entry.gameCount || 0) > 0 && !_hasLiveSrc) loadFailed = true;
         }
       }
@@ -23163,14 +23174,15 @@ function tdOpenGame(idx, pgnKey, tname, tloc) {
    Si el torneo tiene transmisión de Lichess, #td-games-section muestra esas partidas por ronda
    (vivo + terminadas) en lugar de las subidas. Reusa _tdCtx + tdBuildRound + tdShowRound. */
 var _tdLiveTimer = null;
-// True MIENTRAS un refresco del vivo está en vuelo. _tdLiveRefresh pone _tdLiveTimer=null al ARRANCAR
-// (para absorber timers pendientes), y lo vuelve a agendar recién al final del callback —justo DESPUÉS
-// de actualizar el visor—. En esa ventana el gráfico en vivo se redibuja (vía _cvLiveExtendInPlace →
-// faMaybeAutoLive), pero _faLiveEligible veía el timer en null y lo tomaba como "no en vivo" → el
-// gráfico dejaba de actualizarse con las jugadas que llegaban. Este flag mantiene la elegibilidad
-// durante el fetch. (El camino del broadcast directo, _bcLoad, no sufría esto porque limpia su timer
-// DESPUÉS de actualizar el visor.)
-var _tdLiveInFlight = false;
+// ESTADO ESTABLE "estoy siguiendo una transmisión en vivo (detalle de torneo)". Es la señal que usa
+// _faLiveEligible para saber si el gráfico de análisis debe mantenerse en modo VIVO (auto-actualizarse
+// con las jugadas que llegan). NO se ata al _tdLiveTimer: ese timer se pone en null al arrancar cada
+// refresco y se re-agenda al final —y JUSTO en esa ventana llega la jugada y se intenta redibujar el
+// gráfico—; atar la elegibilidad al timer hacía que el gráfico dejara de actualizarse (y no cubría la
+// carga inicial). _tdLivePolling vive todo el seguimiento: se prende al abrir el torneo con transmisión
+// y se apaga solo cuando el sondeo realmente termina (torneo cerrado, o Lichess ya no da ronda en vivo).
+// Se resetea al abrir CUALQUIER torneo (openTournamentDetail) para que no quede "pegado" en uno sin vivo.
+var _tdLivePolling = false;
 var _tdLiveCtx = null;   // { tourId, pgnKey, name, location, typ }
 // Clave de cruces del torneo recién abierto. La guardamos aparte porque en torneos SOLO-broadcast
 // (sin partidas subidas) _tdCtx arranca null, y sin esto _tdLiveBuild perdía el crKey → la sección
@@ -23223,9 +23235,10 @@ function _tdKeepPolling(res) {
   return (++_tdIdlePolls <= _TD_MAX_IDLE);               // el hueco se hizo muy largo → el visitante recarga
 }
 
-function _tdLiveStop() { if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; } _tdLiveInFlight = false; _tdStopWatchdog(); _tdPollGen++; _tdLiveCtx = null; _tdIdlePolls = 0; _tdFetchFails = 0; _tdLastGood = 0; _tdStopClocks(); mevAbort(); }
+function _tdLiveStop() { if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; } _tdLivePolling = false; _tdStopWatchdog(); _tdPollGen++; _tdLiveCtx = null; _tdIdlePolls = 0; _tdFetchFails = 0; _tdLastGood = 0; _tdStopClocks(); mevAbort(); }
 
 function _tdLoadLiveGames(broadcastId, broadcastUrl, name, location, pgnKey, typ, status, hasFallback) {
+  _tdLivePolling = true;   // arrancamos a seguir una transmisión → el gráfico debe estar en modo vivo (incluye la carga inicial y el seed). Se apaga solo cuando el sondeo termina.
   // Camino rápido entre pestañas: si otra pestaña nos pasó este torneo, pintamos sus tableros YA y
   // abrimos la partida del deep-link al instante, sin resolver ids ni ir a Lichess. El fetch real sigue
   // abajo y refresca en segundo plano (reemplaza esta pintada con los datos frescos).
@@ -23270,6 +23283,7 @@ function _tdLoadLiveGames(broadcastId, broadcastUrl, name, location, pgnKey, typ
 }
 
 function _tdLiveError(url, detail) {
+  _tdLivePolling = false;   // no hay transmisión viva que seguir → el gráfico usa el análisis normal
   var sec = document.getElementById('td-games-section');
   if (sec) sec.innerHTML = '<div style="text-align:center;padding:30px 0;color:var(--text3);font-size:13px">No se pudieron cargar las partidas en vivo.' + (url ? '<br><a href="' + escHtml(url) + '" target="_blank" style="color:var(--gold)">Ver en Lichess ↗</a>' : '') + (detail ? '<br><span style="font-size:11px;opacity:.6">' + escHtml(detail) + '</span>' : '') + '</div>';
 }
@@ -23296,7 +23310,8 @@ function _tdLiveFetchMulti(tourIds, name, location, pgnKey, typ, hasFallback) {
     _tdShareRemember(res);
     _tdLastGood = Date.now(); _tdFetchFails = 0;
     if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; }
-    if (_tdKeepPolling(res)) { _tdLiveTimer = setTimeout(_tdLiveRefresh, _liveRefreshMs(_tdLiveCtx && _tdLiveCtx.tourId)); _tdStartWatchdog(); }
+    _tdLivePolling = _tdKeepPolling(res);   // si el torneo ya no está en vivo, salir de modo vivo (gráfico → análisis normal)
+    if (_tdLivePolling) { _tdLiveTimer = setTimeout(_tdLiveRefresh, _liveRefreshMs(_tdLiveCtx && _tdLiveCtx.tourId)); _tdStartWatchdog(); }
   });
 }
 // Camino EAGER (baja TODAS las rondas): para livechesscloud y como respaldo si la metadata de Lichess falla.
@@ -23305,7 +23320,7 @@ function _tdLiveFetchMultiEager(tourIds, key, hasFallback) {
     if (!_tdLiveCtx || _tdLiveCtx.key !== key) return;
     var sec = document.getElementById('td-games-section');
     if (!sec) return;
-    if (!res || !res.roundsWithGames || !res.roundsWithGames.length) { if (!hasFallback) _tdLiveError(null); return; }
+    if (!res || !res.roundsWithGames || !res.roundsWithGames.length) { _tdLivePolling = false; if (!hasFallback) _tdLiveError(null); return; }
     _tdLiveBuild(res, sec, null);
     _tdShareRemember(res);
     // EAGER (livechesscloud o respaldo si falló la metadata de Lichess): no hay maquinaria on-demand por
@@ -23314,7 +23329,8 @@ function _tdLiveFetchMultiEager(tourIds, key, hasFallback) {
     if (_crU && /tnr\d+/i.test(_crU)) _crAutoFetchGames(_crk, _crU);
     _tdLastGood = Date.now(); _tdFetchFails = 0;
     if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; }
-    if (_tdKeepPolling(res)) { _tdLiveTimer = setTimeout(_tdLiveRefresh, _liveRefreshMs(_tdLiveCtx && _tdLiveCtx.tourId)); _tdStartWatchdog(); }
+    _tdLivePolling = _tdKeepPolling(res);   // si el torneo ya no está en vivo, salir de modo vivo (gráfico → análisis normal)
+    if (_tdLivePolling) { _tdLiveTimer = setTimeout(_tdLiveRefresh, _liveRefreshMs(_tdLiveCtx && _tdLiveCtx.tourId)); _tdStartWatchdog(); }
   });
 }
 
@@ -23696,7 +23712,6 @@ function _tdLiveRefresh() {
   // mientras había un fetch viejo en vuelo (o colgado), ese callback viejo queda invalidado y NO
   // reprograma un segundo timer (evita cadenas de sondeo duplicadas).
   if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; }
-  _tdLiveInFlight = true;   // el timer queda en null durante el fetch: mantener "en vivo" para el gráfico
   var gen = ++_tdPollGen;
   var key = _tdLiveCtx.key, tourIds = _tdLiveCtx.tourIds || [_tdLiveCtx.tourId];
   if (_tdLiveCtx.onDemand) { _tdLiveRefreshOnDemand(gen, key, tourIds); return; }   // on-demand: solo la ronda viva
@@ -23716,7 +23731,7 @@ function _tdLiveRefresh() {
       // mataba el sondeo para siempre (había que apretar F5); ahora reintentamos hasta un tope generoso.
       keep = (++_tdFetchFails <= _TD_MAX_FETCH_FAILS);
     }
-    _tdLiveInFlight = false;   // fetch terminado: la elegibilidad vuelve a depender del timer
+    _tdLivePolling = !!(keep && document.getElementById('td-games-section'));   // ¿seguimos en vivo?
     if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; }
     if (keep && document.getElementById('td-games-section')) {
       _tdLiveTimer = setTimeout(_tdLiveRefresh, _liveRefreshMs(_tdLiveCtx && _tdLiveCtx.tourId));
@@ -23745,7 +23760,7 @@ function _tdLiveRefreshOnDemand(gen, key, tourIds) {
     } else {
       keep = (++_tdFetchFails <= _TD_MAX_FETCH_FAILS);
     }
-    _tdLiveInFlight = false;   // fetch terminado: la elegibilidad vuelve a depender del timer
+    _tdLivePolling = !!(keep && document.getElementById('td-games-section'));   // ¿seguimos en vivo?
     if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; }
     if (keep && document.getElementById('td-games-section')) {
       _tdLiveTimer = setTimeout(_tdLiveRefresh, _liveRefreshMs(_tdLiveCtx && _tdLiveCtx.tourId));
@@ -27196,8 +27211,9 @@ try { _faLiveHidden = (localStorage.getItem('fa_live_hidden') === '1'); } catch(
 // Estamos en un visor de transmisión EN VIVO (hay un refresco automático de Lichess programado).
 function _faLiveEligible() {
   if (!document.getElementById('chess-overlay').classList.contains('open')) return false;
-  return !!((typeof _liveTimer !== 'undefined' && _liveTimer) || (typeof _tdLiveTimer !== 'undefined' && _tdLiveTimer)
-            || (typeof _tdLiveInFlight !== 'undefined' && _tdLiveInFlight));   // en vuelo un refresco: sigue siendo "en vivo"
+  // _liveTimer: visor de broadcast directo (su timer NO se anula a mitad de ciclo). _tdLivePolling:
+  // seguimiento en vivo desde el detalle de torneo (estado estable, inmune al vaivén de _tdLiveTimer).
+  return !!((typeof _liveTimer !== 'undefined' && _liveTimer) || (typeof _tdLivePolling !== 'undefined' && _tdLivePolling));
 }
 
 // Interpola los huecos (null) de un array de scores para que el gráfico no se corte. Devuelve una COPIA
