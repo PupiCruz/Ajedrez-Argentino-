@@ -21432,18 +21432,22 @@ function _tdRequestPeerSeed(tourKey) {
 }
 // ¿El torneo tiene transmisión de Lichess? Solo ahí vale la pena esperar a otra pestaña (las partidas
 // subidas/pool ya abren rápido). Evita sumarle la espera a los deep-links que no la necesitan.
+// ¿Alguna categoría del torneo transmite? (torneos con grupos A/B: el broadcast va por categoría, no en
+// el nivel del torneo). Sin esto, _tourHasBroadcast daba false para esos torneos y NO se pedía el seed a
+// otras pestañas → la apertura en pestaña nueva volvía a bajar la ronda a Lichess en vez de ser instantánea.
+function _catsHaveBroadcast(cats){ return !!(cats && cats.some && cats.some(function(c){ return c && c.broadcast; })); }
 function _tourHasBroadcast(key) {
   try {
     if (_ondemand) {
       if (_manifest && _manifest.tournaments) {
-        for (var i = 0; i < _manifest.tournaments.length; i++) { var e = _manifest.tournaments[i]; if (String(e.id) === String(key)) return !!(e.broadcastId || e.broadcastUrl); }
+        for (var i = 0; i < _manifest.tournaments.length; i++) { var e = _manifest.tournaments[i]; if (String(e.id) === String(key)) return !!(e.broadcastId || e.broadcastUrl || _catsHaveBroadcast(e.categories)); }
       }
       return false;
     }
     if (typeof TORNEOS !== 'undefined') {
-      for (var j = 0; j < TORNEOS.length; j++) { if (String(TORNEOS[j].id) === String(key)) { var hc = getTzConfig()['hc_' + TORNEOS[j].id] || {}; return !!(hc.broadcastId || hc.broadcastUrl || TORNEOS[j].broadcastId || TORNEOS[j].broadcastUrl); } }
+      for (var j = 0; j < TORNEOS.length; j++) { if (String(TORNEOS[j].id) === String(key)) { var hc = getTzConfig()['hc_' + TORNEOS[j].id] || {}; return !!(hc.broadcastId || hc.broadcastUrl || TORNEOS[j].broadcastId || TORNEOS[j].broadcastUrl || _catsHaveBroadcast(hc.categories) || _catsHaveBroadcast(TORNEOS[j].categories)); } }
     }
-    var d = getTzConfig()[key]; if (d) return !!(d.broadcastId || d.broadcastUrl);
+    var d = getTzConfig()[key]; if (d) return !!(d.broadcastId || d.broadcastUrl || _catsHaveBroadcast(d.categories));
   } catch (e) {}
   return false;
 }
@@ -21459,23 +21463,36 @@ function _tryOpenPendingDeepGame() {
   var co = document.getElementById('chess-overlay');
   if (co && co.classList.contains('open')) { _pendingDeepGame = null; return false; }   // ya hay una partida abierta
   if (!_tdCtx) return false;
-  // ON-DEMAND con ronda conocida (link nuevo &r=&g=): bajamos SOLO esa ronda y abrimos la partida por su
-  // posición dentro de la ronda (índice global recalculado con lo que haya cargado ahora).
-  if (p.round != null && _tdLiveCtx && _tdLiveCtx.onDemand) {
-    if (!p.__loading) {
-      p.__loading = true;
-      _tdEnsureRoundLoaded(p.round, function(){
-        if (_pendingDeepGame !== p) return;   // se abrió / cambió de torneo mientras tanto
-        var arr = (_tdCtx.byRound && _tdCtx.byRound[p.round]) || [];
-        var w = (p.within != null) ? p.within : 0;
-        if (arr.length && w >= 0 && w < arr.length) {
-          var gi = _tdRoundWithinToIdx(p.round, w);
-          if (gi >= 0) { _pendingDeepGame = null; tdOpenGame(gi, _tdCtx.pgnKey, _tdCtx.name, _tdCtx.location); return; }
-        }
-        p.round = null; p.__loading = false;   // no se pudo → caer al índice global en el próximo intento
-      });
+  // ON-DEMAND con ronda conocida (link nuevo &r=&g=): abrir por ronda + posición dentro de la ronda.
+  if (p.round != null) {
+    // ¿La ronda YA está cargada? (seed que nos pasó otra pestaña, o ya bajada antes) → abrir AL INSTANTE.
+    // Sin esto, cuando el seed traía la ronda igual esperábamos el fetch on-demand (los "segundos" de más).
+    var arrNow = (_tdCtx.byRound && _tdCtx.byRound[p.round]) || [];
+    if (arrNow.length) {
+      var wNow = (p.within != null) ? p.within : 0;
+      if (wNow >= 0 && wNow < arrNow.length) {
+        var giNow = _tdRoundWithinToIdx(p.round, wNow);
+        if (giNow >= 0) { _pendingDeepGame = null; tdOpenGame(giNow, _tdCtx.pgnKey, _tdCtx.name, _tdCtx.location); return true; }
+      }
     }
-    return false;
+    // No está cargada y el torneo es on-demand → bajar SOLO esa ronda y abrir cuando llegue.
+    if (_tdLiveCtx && _tdLiveCtx.onDemand) {
+      if (!p.__loading) {
+        p.__loading = true;
+        _tdEnsureRoundLoaded(p.round, function(){
+          if (_pendingDeepGame !== p) return;   // se abrió / cambió de torneo mientras tanto
+          var arr = (_tdCtx.byRound && _tdCtx.byRound[p.round]) || [];
+          var w = (p.within != null) ? p.within : 0;
+          if (arr.length && w >= 0 && w < arr.length) {
+            var gi = _tdRoundWithinToIdx(p.round, w);
+            if (gi >= 0) { _pendingDeepGame = null; tdOpenGame(gi, _tdCtx.pgnKey, _tdCtx.name, _tdCtx.location); return; }
+          }
+          p.round = null; p.__loading = false;   // no se pudo → caer al índice global en el próximo intento
+        });
+      }
+      return false;
+    }
+    // Ni cargada ni on-demand → seguir al índice global de abajo (link viejo / torneo eager).
   }
   // Camino de siempre: índice GLOBAL (torneo con todo cargado / no on-demand / link viejo).
   if (_tdCtx.games && p.idx >= 0 && p.idx < _tdCtx.games.length) {
