@@ -27269,8 +27269,8 @@ function faLiveBuild() {
     var mine = _faLiveCache[nd.fen];                   // NUESTRA eval (módulo/pase, con .d)
     // Las últimas jugadas (las que llegan) prefieren NUESTRA eval con profundidad para poder
     // calificarlas; el resto usa el [%eval] de Lichess (rápido) y cae a la nuestra si no hay.
-    if (i >= nodes.length - _FA_LIVE_TRUST_EV_AFTER && mine) return mine;
-    return (nd.move && nd.move.ev) || mine || null;
+    var r = (i >= nodes.length - _FA_LIVE_TRUST_EV_AFTER && mine) ? mine : ((nd.move && nd.move.ev) || mine || null);
+    return _faFixMate0(r, nd.fen);   // firmar el {mate:0} del jaque mate según el turno (si no, saldría como derrota)
   });
   document.getElementById('eval-graph-wrap').style.display = 'block';
   document.getElementById('fa-prog-row').style.display = 'none';
@@ -27607,6 +27607,7 @@ function faHandleMsg(line) {
     var bmM = line.match(/^bestmove ([a-h][1-8][a-h][1-8][qrbn]?)/);
     if (bmM) score.bm = bmM[1];
     score.d = _fa.lastDepth || 0;   // profundidad a la que se calculó (para diferir la calificación)
+    score = _faFixMate0(score, node.fen);   // jaque mate: firmar el {mate:0} según el turno (si no, cae como derrota)
     _fa.results[_fa.ply] = score;
     // Cachear SIEMPRE (vivo y manual) por FEN y persistir: así, al cerrar el gráfico con la ✕ y
     // reabrirlo (o abrir la partida en otra pestaña), se dibuja al instante sin recalcular nada.
@@ -27786,6 +27787,19 @@ function faNum(s) {
   if (!s) return 0;
   var v = s.mate !== undefined ? (s.mate > 0 ? 1000 : -1000) : s.cp;
   return Math.max(-1000, Math.min(1000, v));
+}
+
+// Un JAQUE MATE llega como score {mate:0} (el lado a mover está mateado) y así PIERDE el signo: tanto
+// _faWinP como faNum lo leen como derrota de las blancas → el jaque mate (la MEJOR jugada) se calificaba
+// como ?? y el gráfico se desplomaba al final. Lo firmamos a perspectiva de BLANCAS según de quién es el
+// turno en la posición ya mateada: si mueven negras y están mateadas → ganan blancas (+); si mueven
+// blancas y están mateadas → ganan negras (−). (No toca ningún otro score.)
+function _faFixMate0(score, fen) {
+  if (!score || score.mate !== 0) return score;
+  var out = { mate: (String(fen || '').split(' ')[1] === 'b') ? 1 : -1 };
+  if (score.d !== undefined) out.d = score.d;
+  if (score.bm) out.bm = score.bm;
+  return out;
 }
 
 // ── Detector de jugadas BRILLANTES (!!) — receta reimplementada del análisis de freechess ──────────
@@ -28191,7 +28205,7 @@ function faAutoShow() {
   document.getElementById('fa-cancel-btn').style.display = 'none';
   document.getElementById('fa-btn').classList.remove('active');
   if (!nodes.length) { faRenderEmpty(); faUpdateBuildBtn(); return; }
-  var R = nodes.map(function(nd){ return (nd.move && nd.move.ev) || _faLiveCache[nd.fen] || null; });
+  var R = nodes.map(function(nd){ return _faFixMate0((nd.move && nd.move.ev) || _faLiveCache[nd.fen] || null, nd.fen); });
   var have = R.filter(function(r){ return r != null; }).length;
   if (have / nodes.length >= 0.8) {   // suficientes datos → dibujar sin motor
     _fa.nodes = nodes; _fa.results = _faInterp(R); _fa.running = false; _fa.live = false;
