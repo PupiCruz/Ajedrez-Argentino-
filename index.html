@@ -120,6 +120,9 @@
       --cc-bg:      rgba(40,90,55,.18);   /* botón "Ver partidas · Chess.com" (verde) */
       --cc-bd:      rgba(60,150,90,.35);
       --cc-fg:      #8ed6a0;
+      --wa-bg:      rgba(37,211,102,.16);  /* botón "Contacto por WhatsApp" (verde WhatsApp) */
+      --wa-bd:      rgba(37,211,102,.5);
+      --wa-fg:      #25d366;
       --about-bg:   rgba(0,0,0,0.22);     /* caja "Acerca del evento": un toque más oscuro que la tarjeta */
       --card90:     rgba(26,28,38,0.90);  /* fondo de tarjetas/paneles sólidos */
       --panel1:     #1a1c26;       /* panel sólido (inputs, columnas) */
@@ -219,6 +222,9 @@
       --cc-bg:      rgba(60,150,90,.20);   /* Chess.com en claro: verde reforzado para que se lea */
       --cc-bd:      rgba(47,143,99,.55);
       --cc-fg:      #1c7340;       /* verde oscuro legible sobre el botón claro */
+      --wa-bg:      rgba(37,211,102,.22);  /* WhatsApp en claro: verde reforzado */
+      --wa-bd:      rgba(18,140,62,.6);
+      --wa-fg:      #0d7a34;       /* verde oscuro legible sobre el botón claro */
       --about-bg:   rgba(120,85,20,0.14);  /* caja "Acerca del evento" en claro: tinte café (un toque más oscuro que el tostado) */
       --panel0:     #ecddb2;       /* panel sólido más hundido → tostado un poco más profundo */
       --panel-mini: #e8ddc4;
@@ -2886,10 +2892,13 @@
       <div><label class="tz-flabel">📋 Director/a del torneo <span style="font-weight:400;color:var(--text3)">(opcional)</span></label>
         <input id="tze-director" class="tz-input" type="text" placeholder="Nombre del director/a"></div>
     </div>
-    <div style="margin-bottom:12px">
-      <label class="tz-flabel">⚖ Árbitro principal <span style="font-weight:400;color:var(--text3)">(opcional)</span></label>
-      <input id="tze-arbiter" class="tz-input" type="text" placeholder="Nombre del árbitro">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+      <div><label class="tz-flabel">⚖ Árbitro principal <span style="font-weight:400;color:var(--text3)">(opcional)</span></label>
+        <input id="tze-arbiter" class="tz-input" type="text" placeholder="Nombre del árbitro"></div>
+      <div><label class="tz-flabel">💬 WhatsApp de contacto <span style="font-weight:400;color:var(--text3)">(opcional)</span></label>
+        <input id="tze-whatsapp" class="tz-input" type="text" placeholder="Ej: +54 9 11 1234-5678"></div>
     </div>
+    <div style="font-size:11px;color:var(--text3);margin-top:-6px;margin-bottom:12px;line-height:1.4">Poné el número con código de país (Argentina = <b>+54 9</b>). Aparece como botón verde <b>“💬 Contacto”</b> que abre el chat de WhatsApp con el organizador.</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:6px">
       <div><label class="tz-flabel">Fecha de inicio</label>
         <input id="tze-start" class="tz-input" type="date" onclick="_tzePick(this)"></div>
@@ -8912,7 +8921,7 @@ function _collectAllTournaments() {
       out.push({
         id: k, name: d.name, type: d.type || '', timeControl: d.timeControl || '',
         location: d.location || '', tournamentDates: d.dates || '',
-        venue: d.venue || '', venueMap: d.venueMap || '', organizer: d.organizer || '', director: d.director || '', arbiter: d.arbiter || '',
+        venue: d.venue || '', venueMap: d.venueMap || '', organizer: d.organizer || '', director: d.director || '', arbiter: d.arbiter || '', whatsapp: d.whatsapp || '',
         startDate: d.startDate || null, endDate: d.endDate || null,
         flyerUrl: d.flyerUrl || '', flyerPos: d.flyerPos || '', about: d.about || '', chesscomUrl: d.chesscomUrl || '',
         crUrl: d.crurl || '', weburl: d.weburl || '', info64url: d.info64url || '', regurl: d.regurl || '', format: d.format || '', pace: d.pace || '',
@@ -8934,7 +8943,7 @@ function _tourManifestMeta(entry) {
     id: entry.id, name: entry.name, type: entry.type || '',
     timeControl: entry.timeControl || '', chesscomUrl: entry.chesscomUrl || '',
     flyerUrl: entry.flyerUrl || '', flyerPos: entry.flyerPos || '', about: entry.about || '', tournamentDates: entry.tournamentDates || '', loadedAt: entry.loadedAt || '',
-    venue: entry.venue || '', venueMap: entry.venueMap || '', organizer: entry.organizer || '', director: entry.director || '', arbiter: entry.arbiter || '',
+    venue: entry.venue || '', venueMap: entry.venueMap || '', organizer: entry.organizer || '', director: entry.director || '', arbiter: entry.arbiter || '', whatsapp: entry.whatsapp || '',
     startDate: entry.startDate || null, endDate: entry.endDate || null, location: entry.location || '',
     gameCount: entry.gameCount || ((entry.games || []).length), leaders: leaders,
     source: entry.source || 'pgn', crUrl: entry.crUrl || '', weburl: entry.weburl || '', info64url: entry.info64url || '', regurl: entry.regurl || '', format: entry.format || '', pace: entry.pace || '',
@@ -19815,6 +19824,13 @@ function linkWebUrl(url) {
 function linkInscription(url) {
   return '<a href="' + escHtml(url) + '" target="_blank" rel="noopener" class="pgn-btn" style="display:block;text-align:center;text-decoration:none;background:var(--gold-bg);border-color:var(--gold-dim);color:var(--gold);font-weight:700">📝 Formulario de inscripción ↗</a>';
 }
+// Botón "Contacto por WhatsApp": abre el chat con el organizador. wa.me necesita el número en
+// formato internacional SOLO con dígitos (sin +, espacios ni guiones), así que se limpia acá.
+function linkWhatsapp(num) {
+  var digits = (num || '').replace(/[^0-9]/g, '');
+  if (!digits) return '';
+  return '<a href="https://wa.me/' + digits + '" target="_blank" rel="noopener" class="pgn-btn" style="display:block;text-align:center;text-decoration:none;padding:10px 12px;line-height:1.25;background:var(--wa-bg);border-color:var(--wa-bd);color:var(--wa-fg);font-weight:700">💬 Contacto por WhatsApp ↗</a>';
+}
 // Título de sección en negrita para las columnas de la tarjeta (Detalles / Clasificados / Acerca).
 // Mismo borde negro que el título del torneo (.t-name) para que se despeguen del fondo.
 function _card3Heading(text) {
@@ -19932,6 +19948,7 @@ function openTzModal(key) {
     document.getElementById('tze-organizer').value = '';
     document.getElementById('tze-director').value = '';
     document.getElementById('tze-arbiter').value = '';
+    document.getElementById('tze-whatsapp').value = '';
     _tzeSetDates('', '', '');
     document.getElementById('tze-rounds').value = '';
     document.getElementById('tze-crurl').value = '';
@@ -19967,6 +19984,7 @@ function openTzModal(key) {
       document.getElementById('tze-organizer').value = data.organizer || '';
       document.getElementById('tze-director').value  = data.director || '';
       document.getElementById('tze-arbiter').value   = data.arbiter || '';
+      document.getElementById('tze-whatsapp').value  = data.whatsapp || '';
       _tzeSetDates(data.startDate, data.endDate, data.dates || t.dates);
       document.getElementById('tze-rounds').value  = t.rounds || '';
       document.getElementById('tze-crurl').value   = data.crurl || '';
@@ -19995,6 +20013,7 @@ function openTzModal(key) {
       document.getElementById('tze-organizer').value = data.organizer || '';
       document.getElementById('tze-director').value  = data.director || '';
       document.getElementById('tze-arbiter').value   = data.arbiter || '';
+      document.getElementById('tze-whatsapp').value  = data.whatsapp || '';
       _tzeSetDates(data.startDate, data.endDate, data.dates);
       document.getElementById('tze-rounds').value  = data.rounds || '';
       document.getElementById('tze-crurl').value   = data.crurl || '';
@@ -20028,6 +20047,7 @@ function openTzModal(key) {
       document.getElementById('tze-organizer').value = entry.organizer || '';
       document.getElementById('tze-director').value  = entry.director || '';
       document.getElementById('tze-arbiter').value   = entry.arbiter || '';
+      document.getElementById('tze-whatsapp').value  = entry.whatsapp || '';
       _tzeSetDates(entry.startDate, entry.endDate, entry.tournamentDates);
       document.getElementById('tze-rounds').value  = '';
       document.getElementById('tze-crurl').value   = entry.crUrl || '';
@@ -20163,6 +20183,7 @@ function saveTzModal() {
   var organizer   = document.getElementById('tze-organizer').value.trim();
   var director    = document.getElementById('tze-director').value.trim();
   var arbiter     = document.getElementById('tze-arbiter').value.trim();
+  var whatsapp    = document.getElementById('tze-whatsapp').value.trim();
   var startDate   = document.getElementById('tze-start').value || null;
   var endDate     = document.getElementById('tze-end').value || null;
   if (startDate && endDate && startDate > endDate) { alert('La fecha de inicio no puede ser posterior a la fecha de fin.'); return; }
@@ -20187,7 +20208,7 @@ function saveTzModal() {
   if (_tzeKey === null) {
     var nkey = 'tz_' + Date.now();
     _savedKey = nkey;
-    cfg[nkey] = { name:name, type:type, location:loc, venue:venue||null, venueMap:venueMap||null, organizer:organizer||null, director:director||null, arbiter:arbiter||null, dates:dates,
+    cfg[nkey] = { name:name, type:type, location:loc, venue:venue||null, venueMap:venueMap||null, organizer:organizer||null, director:director||null, arbiter:arbiter||null, whatsapp:whatsapp||null, dates:dates,
                   startDate:startDate, endDate:endDate, rounds:rounds,
                   status:status, crurl:crurl||null, weburl:weburl||null, info64url:info64url||null, regurl:regurl||null, broadcastId:broadcastId||null,
                   broadcastUrl:broadcastUrl||null, timeControl:timeControl||null, chesscomUrl:chesscomUrl||null,
@@ -20214,6 +20235,7 @@ function saveTzModal() {
     if (organizer) cfg[_tzeKey].organizer = organizer; else delete cfg[_tzeKey].organizer;
     if (director) cfg[_tzeKey].director = director; else delete cfg[_tzeKey].director;
     if (arbiter) cfg[_tzeKey].arbiter = arbiter; else delete cfg[_tzeKey].arbiter;
+    if (whatsapp) cfg[_tzeKey].whatsapp = whatsapp; else delete cfg[_tzeKey].whatsapp;
     if (roundTimes) cfg[_tzeKey].roundTimes = roundTimes; else delete cfg[_tzeKey].roundTimes;
     if (roundDT) cfg[_tzeKey].roundDT = roundDT; else delete cfg[_tzeKey].roundDT;
     if (format) cfg[_tzeKey].format = format; else delete cfg[_tzeKey].format;
@@ -20224,7 +20246,7 @@ function saveTzModal() {
     cfg[_tzeKey].pgnGames = _tzeWorkingGames || null; cfg[_tzeKey].pgnCount = _tzeWorkingGames ? _tzeWorkingGames.length : 0;
     saveTzConfig(cfg);
   } else if (_tzeKey.indexOf('tz_') === 0) {
-    cfg[_tzeKey] = { name:name, type:type, location:loc, venue:venue||null, venueMap:venueMap||null, organizer:organizer||null, director:director||null, arbiter:arbiter||null, dates:dates,
+    cfg[_tzeKey] = { name:name, type:type, location:loc, venue:venue||null, venueMap:venueMap||null, organizer:organizer||null, director:director||null, arbiter:arbiter||null, whatsapp:whatsapp||null, dates:dates,
                      startDate:startDate, endDate:endDate, rounds:rounds,
                      status:status, crurl:crurl||null, weburl:weburl||null, info64url:info64url||null, regurl:regurl||null, broadcastId:broadcastId||null,
                      broadcastUrl:broadcastUrl||null, timeControl:timeControl||null, chesscomUrl:chesscomUrl||null,
@@ -20249,6 +20271,7 @@ function saveTzModal() {
         tours2[k].organizer = organizer || null;
         tours2[k].director = director || null;
         tours2[k].arbiter = arbiter || null;
+        tours2[k].whatsapp = whatsapp || null;
         tours2[k].roundTimes = roundTimes || null;
         tours2[k].roundDT = roundDT || null;
         tours2[k].format = format || null;
@@ -22150,6 +22173,104 @@ function _cvApplyBoardSize() {
   else bind();
 })();
 
+// ── Editar un dato POR CATEGORÍA clickeando el panelcito (chip) del encabezado ──────────────
+// Solo en modo autor (!_ondemand) y con una categoría activa. Guarda el override dentro del
+// objeto de la categoría (categories[i].pace/rounds/timeControl/dates/type/location); si el campo
+// queda vacío, se borra y la categoría vuelve a heredar el dato general del torneo.
+var _tdChipType = null, _tdChipId = null, _tdChipCat = -1;
+var _TD_CHIP_FIELDS = {
+  dates:       { label: '📅 Fechas de esta categoría', type: 'text',   placeholder: 'Ej: 7 al 12 de septiembre de 2026' },
+  location:    { label: '📍 Lugar de esta categoría',  type: 'text',   placeholder: 'Ciudad, país' },
+  type:        { label: '🏷 Tipo de esta categoría',   type: 'text',   placeholder: 'Ej: Internacional' },
+  rounds:      { label: '🎯 Rondas de esta categoría', type: 'number', placeholder: 'Ej: 9' },
+  timeControl: { label: '⏱ Ritmo (tiempo) de esta categoría', type: 'text', placeholder: 'Ej: 90 min + 30 seg' },
+  pace:        { label: '♟ Categoría de ritmo', type: 'select', options: [['standard','♟ Clásico (Standard)'],['rapid','⚡ Rápido'],['blitz','🚀 Blitz']] }
+};
+// Devuelve { cats, save } para leer/escribir el array de categorías del torneo en su almacén.
+function _tdCatStore(type, id) {
+  if (type === 'hc') {
+    var cfg = getTzConfig();
+    var key = 'hc_' + id;
+    var d = cfg[key] || (cfg[key] = {});
+    var cats = d.categories;
+    if (!cats) {   // primera edición: se clona la lista base de TORNEOS a un override propio
+      var t = null; for (var i = 0; i < TORNEOS.length; i++) { if (TORNEOS[i].id == id) { t = TORNEOS[i]; break; } }
+      cats = (t && t.categories) ? JSON.parse(JSON.stringify(t.categories)) : [];
+    }
+    return { cats: cats, save: function () { d.categories = cats; saveTzConfig(cfg); } };
+  }
+  if (type === 'tz') {
+    var cfg2 = getTzConfig();
+    var d2 = cfg2[id]; if (!d2) return null;
+    var cats2 = d2.categories || [];
+    return { cats: cats2, save: function () { d2.categories = cats2; saveTzConfig(cfg2); } };
+  }
+  if (type === 'ls') {
+    var tours = JSON.parse(localStorage.getItem('pgn_tournaments') || '[]');
+    var entry = null; for (var j = 0; j < tours.length; j++) { if (tours[j].id == id) { entry = tours[j]; break; } }
+    if (!entry) return null;
+    var cats3 = entry.categories || [];
+    return { cats: cats3, save: function () { entry.categories = cats3; lsSaveTours(tours); } };
+  }
+  return null;
+}
+function _tdSaveCatField(field, value) {
+  var st = _tdCatStore(_tdChipType, _tdChipId);
+  if (!st || !st.cats[_tdChipCat]) return;
+  var cat = st.cats[_tdChipCat];
+  if (field === 'rounds') {
+    var n = parseInt(value, 10);
+    if (n > 0) cat.rounds = n; else delete cat.rounds;
+  } else if (field === 'pace') {
+    if (value) cat.pace = value; else delete cat.pace;   // 'standard' también se guarda (pisa el ritmo general)
+  } else {
+    var v = (value || '').trim();
+    if (v) cat[field] = v; else delete cat[field];
+  }
+  st.save();
+}
+function _tdCloseChipEdit() { var ov = document.getElementById('td-chip-edit-ov'); if (ov) ov.remove(); }
+function _tdCommitChipEdit(field) {
+  var inp = document.getElementById('td-chip-input'); if (!inp) return;
+  _tdSaveCatField(field, inp.value);
+  _tdCloseChipEdit();
+  openTournamentDetail(_tdChipType, _tdChipId, false, _tdChipCat);
+}
+function _tdEditCatChip(field) {
+  var cf = _TD_CHIP_FIELDS[field]; if (!cf) return;
+  var st = _tdCatStore(_tdChipType, _tdChipId);
+  var cat = (st && st.cats[_tdChipCat]) ? st.cats[_tdChipCat] : {};
+  var cur = cat[field];
+  var catName = cat.name || ('Categoría ' + (_tdChipCat + 1));
+  _tdCloseChipEdit();
+  var ov = document.createElement('div');
+  ov.id = 'td-chip-edit-ov';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:100002;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:20px';
+  var ctl;
+  if (cf.type === 'select') {
+    ctl = '<select id="td-chip-input" class="tz-input">' + cf.options.map(function (o) {
+      return '<option value="' + o[0] + '"' + (((cur || 'standard') === o[0]) ? ' selected' : '') + '>' + o[1] + '</option>';
+    }).join('') + '</select>';
+  } else {
+    ctl = '<input id="td-chip-input" class="tz-input" type="' + (cf.type === 'number' ? 'number' : 'text') + '" ' + (cf.type === 'number' ? 'min="1" max="25" ' : '') + 'placeholder="' + escHtml(cf.placeholder || '') + '" value="' + escHtml(cur != null ? String(cur) : '') + '">';
+  }
+  ov.innerHTML = '<div style="background:var(--card90);border:1px solid var(--bd22);border-radius:14px;padding:20px;max-width:420px;width:100%;box-shadow:var(--shadow-card)">'
+    + '<div style="font-weight:700;color:var(--text);font-size:16px;margin-bottom:4px">' + escHtml(cf.label) + '</div>'
+    + '<div style="color:var(--text3);font-size:12.5px;margin-bottom:14px;line-height:1.4">Solo para la categoría <b style="color:var(--text2)">' + escHtml(catName) + '</b>.' + (cf.type !== 'select' ? ' Dejalo vacío para volver a usar el dato general del torneo.' : '') + '</div>'
+    + ctl
+    + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px">'
+    + '<button onclick="_tdCloseChipEdit()" style="padding:8px 14px;background:var(--gl35);border:1px solid var(--bd22);color:var(--text2);border-radius:9px;cursor:pointer;font-family:inherit;font-size:13px">Cancelar</button>'
+    + '<button onclick="_tdCommitChipEdit(\'' + field + '\')" style="padding:8px 16px;background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-weight:700;border-radius:9px;cursor:pointer;font-family:inherit;font-size:13px">✓ Guardar</button>'
+    + '</div></div>';
+  document.body.appendChild(ov);
+  ov.addEventListener('click', function (e) { if (e.target === ov) _tdCloseChipEdit(); });
+  var inp = document.getElementById('td-chip-input');
+  if (inp) {
+    inp.focus(); if (inp.select) { try { inp.select(); } catch (e) {} }
+    inp.addEventListener('keydown', function (e) { if (e.key === 'Enter' && inp.tagName !== 'SELECT') { e.preventDefault(); _tdCommitChipEdit(field); } });
+  }
+}
+
 async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   _tdLiveStop();   // cortar el auto-refresco del vivo del torneo anterior (si lo había)
   _tdTourKey = id; // para los links de partidas (?torneo=<id>&partida=<idx>)
@@ -22157,7 +22278,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   var leaders = [], games = [], crUrl = '', broadcastId = '', broadcastUrl = '', pgnGames = [];
   var timeControl = '', chesscomUrl = '', flyerUrl = '', flyerPos = '', categories = null, isTeam = false;
   var weburl = '', info64url = '', regurl = '';
-  var venue = '', venueMap = '', organizer = '', director = '', arbiter = '';
+  var venue = '', venueMap = '', organizer = '', director = '', arbiter = '', whatsapp = '';
   var tourRng = null;    // rango de fechas del torneo: filtra las partidas del pool por edición
   var roundTimes = '';   // horarios de ronda cargados a mano, texto libre del sistema viejo
   var roundDT = null;    // horarios de ronda cargados con día+hora (pisan a los de Chess-Results)
@@ -22186,6 +22307,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     flyerPos = hcCfg.flyerPos || t.flyerPos || '';
     venue = hcCfg.venue || t.venue || ''; venueMap = hcCfg.venueMap || t.venueMap || '';
     organizer = hcCfg.organizer || t.organizer || ''; director = hcCfg.director || t.director || ''; arbiter = hcCfg.arbiter || t.arbiter || '';
+    whatsapp = hcCfg.whatsapp || t.whatsapp || '';
     categories = hcCfg.categories || t.categories || null;
     isTeam = !!(hcCfg.isTeam || t.isTeam);
     pgnGames = hcCfg.pgnGames || [];
@@ -22246,6 +22368,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     flyerPos = entry.flyerPos || '';
     venue = entry.venue || ''; venueMap = entry.venueMap || '';
     organizer = entry.organizer || ''; director = entry.director || ''; arbiter = entry.arbiter || '';
+    whatsapp = entry.whatsapp || '';
     categories = entry.categories || null;
     isTeam = !!entry.isTeam;
     games = entry.games || [];
@@ -22268,6 +22391,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     flyerPos = d.flyerPos || '';
     venue = d.venue || ''; venueMap = d.venueMap || '';
     organizer = d.organizer || ''; director = d.director || ''; arbiter = d.arbiter || '';
+    whatsapp = d.whatsapp || '';
     categories = d.categories || null;
     isTeam = !!d.isTeam;
     pgnGames = d.pgnGames || [];
@@ -22285,6 +22409,15 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     var _cbc = _parseBcInput(_cat.broadcast || '');
     broadcastId = _cbc.id || ''; broadcastUrl = _cbc.url || '';
     crUrl = _cat.crurl || '';
+    // Overrides por categoría (opcionales): cada categoría puede tener su propio ritmo, rondas,
+    // control de tiempo, fechas, tipo o sistema. Si el campo NO está cargado en la categoría, se
+    // hereda el valor del torneo. Estos se editan clickeando los panelcitos (chips) del encabezado.
+    if (_cat.pace != null && _cat.pace !== '')        pace = _cat.pace;
+    if (_cat.rounds != null && _cat.rounds !== '')    rounds = _cat.rounds;
+    if (_cat.timeControl)                             timeControl = _cat.timeControl;
+    if (_cat.dates)                                   dates = _cat.dates;
+    if (_cat.type)                                    typ = _cat.type;
+    if (_cat.format)                                  format = _cat.format;
     // chesscomUrl y weburl (sitio oficial) son del torneo (no por categoría): se conservan para que
     // los botones sigan visibles al cambiar de categoría, igual que el "Sitio oficial".
     pgnGames = [];
@@ -22369,12 +22502,14 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   // Links externos (Chess.com / Chess-Results / info64 / sitio oficial). Se arman ACÁ para poder
   // ubicarlos en la columna derecha del header (antes iban en una fila aparte debajo del header, que
   // empujaba la tabla hacia abajo). El botón de Lichess sigue aparte (link discreto arriba a la derecha).
-  var hasLinks = crUrl || chesscomUrl || info64url || weburl || regurl;
+  var waLink = linkWhatsapp(whatsapp);
+  var hasLinks = crUrl || chesscomUrl || info64url || weburl || regurl || waLink;
   var linksHtml = '';
   if (hasLinks) {
     linksHtml += '<div style="flex:0 0 210px;min-width:170px;display:flex;flex-direction:column">';
     linksHtml += '<div style="background:var(--gl30);border:1px solid var(--bd14);border-radius:12px;padding:2px 12px 12px">';
     if (regurl)      linksHtml += linkInscription(regurl);
+    if (waLink)      linksHtml += waLink;
     if (chesscomUrl) linksHtml += linkChesscom(chesscomUrl);
     if (crUrl)       linksHtml += linkChessResults(crUrl);
     if (info64url)   linksHtml += linkInfo64(info64url);
@@ -22406,18 +22541,32 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   }
   h += '</div>';
   h += '</div>';
+  // Panelcitos (chips) del encabezado. Con una CATEGORÍA activa y en modo autor, los datos que
+  // pueden variar entre categorías (fechas, lugar, tipo, rondas, tiempo, ritmo) se vuelven
+  // clickeables (✏️) para editarlos SOLO en esa categoría. _tdEditCatChip usa estas 3 variables.
+  _tdChipType = type; _tdChipId = id; _tdChipCat = activeCat;
+  var _chipEdit = (!_ondemand && activeCat >= 0);
+  var _chipBase = 'background:var(--gl35);border:1px solid var(--bd22);border-radius:20px;padding:4px 13px';
+  function _chip(inner, field) {
+    if (_chipEdit && field) return '<span onclick="_tdEditCatChip(\'' + field + '\')" role="button" tabindex="0" title="Editar solo para esta categoría" style="' + _chipBase + ';cursor:pointer">' + inner + ' <span style="opacity:.5;font-size:11px">✏️</span></span>';
+    return '<span style="' + _chipBase + '">' + inner + '</span>';
+  }
+  // Chip vacío "➕" para AGREGAR a la categoría un dato que todavía no tiene (solo en modo edición).
+  function _chipAdd(field, label) {
+    return '<span onclick="_tdEditCatChip(\'' + field + '\')" role="button" tabindex="0" title="Agregar solo para esta categoría" style="background:transparent;border:1px dashed var(--bd22);border-radius:20px;padding:4px 13px;cursor:pointer;color:var(--text3)">➕ ' + label + '</span>';
+  }
   h += '<div style="display:flex;flex-wrap:wrap;gap:7px;font-size:13px;color:var(--fg-d0)">';
-  if (dates)    h += '<span style="background:var(--gl35);border:1px solid var(--bd22);border-radius:20px;padding:4px 13px">📅 ' + escHtml(dates) + '</span>';
-  if (location) h += '<span style="background:var(--gl35);border:1px solid var(--bd22);border-radius:20px;padding:4px 13px">📍 ' + escHtml(location) + '</span>';
-  if (venue)    h += '<span onclick="openVenueMap()" role="button" tabindex="0" title="Ver en el mapa" style="background:var(--gl35);border:1px solid var(--bd22);border-radius:20px;padding:4px 13px;cursor:pointer">🏛 ' + escHtml(venue) + ' <span style="opacity:.65">🗺</span></span>';
-  if (typ)      h += '<span style="background:var(--gl35);border:1px solid var(--bd22);border-radius:20px;padding:4px 13px">🏷 ' + escHtml(typ) + '</span>';
-  if (rounds)   h += '<span style="background:var(--gl35);border:1px solid var(--bd22);border-radius:20px;padding:4px 13px">🎯 ' + rounds + ' rondas</span>';
-  if (timeControl) h += '<span style="background:var(--gl35);border:1px solid var(--bd22);border-radius:20px;padding:4px 13px">⏱ ' + escHtml(timeControl) + '</span>';
+  if (dates)       h += _chip('📅 ' + escHtml(dates), 'dates');           else if (_chipEdit) h += _chipAdd('dates', 'Fechas');
+  if (location)    h += _chip('📍 ' + escHtml(location), 'location');     else if (_chipEdit) h += _chipAdd('location', 'Lugar');
+  if (venue)    h += '<span onclick="openVenueMap()" role="button" tabindex="0" title="Ver en el mapa" style="' + _chipBase + ';cursor:pointer">🏛 ' + escHtml(venue) + ' <span style="opacity:.65">🗺</span></span>';
+  if (typ)         h += _chip('🏷 ' + escHtml(typ), 'type');              else if (_chipEdit) h += _chipAdd('type', 'Tipo');
+  if (rounds)      h += _chip('🎯 ' + rounds + ' rondas', 'rounds');      else if (_chipEdit) h += _chipAdd('rounds', 'Rondas');
+  if (timeControl) h += _chip('⏱ ' + escHtml(timeControl), 'timeControl'); else if (_chipEdit) h += _chipAdd('timeControl', 'Tiempo');
   var _paceLbl = _paceLabel(pace);
-  if (_paceLbl) h += '<span style="background:var(--gl35);border:1px solid var(--bd22);border-radius:20px;padding:4px 13px">' + _paceLbl + '</span>';
-  if (organizer) h += '<span style="background:var(--gl35);border:1px solid var(--bd22);border-radius:20px;padding:4px 13px" title="Organizador">👥 ' + escHtml(organizer) + '</span>';
-  if (director)  h += '<span style="background:var(--gl35);border:1px solid var(--bd22);border-radius:20px;padding:4px 13px" title="Director/a del torneo">📋 ' + escHtml(director) + '</span>';
-  if (arbiter)   h += '<span style="background:var(--gl35);border:1px solid var(--bd22);border-radius:20px;padding:4px 13px" title="Árbitro principal">⚖ ' + escHtml(arbiter) + '</span>';
+  if (_paceLbl) h += _chip(_paceLbl, 'pace');
+  if (organizer) h += '<span style="' + _chipBase + '" title="Organizador">👥 ' + escHtml(organizer) + '</span>';
+  if (director)  h += '<span style="' + _chipBase + '" title="Director/a del torneo">📋 ' + escHtml(director) + '</span>';
+  if (arbiter)   h += '<span style="' + _chipBase + '" title="Árbitro principal">⚖ ' + escHtml(arbiter) + '</span>';
   h += '</div>';
   // "El torneo arranca": SÓLO mientras no haya ninguna ronda cargada. En cuanto aparece la pestaña
   // R1 con su día y hora, este cartel repetiría el mismo dato dos veces en la misma pantalla, así
