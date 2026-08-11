@@ -15851,6 +15851,7 @@ var _newsReaderCurrentId = null;
 function _newsEditBtns(id) {
   return '<div style="position:absolute;top:6px;right:6px;display:flex;gap:3px;z-index:2">'
     + '<button title="Preparar para redes" onclick="event.preventDefault();event.stopPropagation();openSocialAssistant(\'' + _nEscAttr(id) + '\')" style="background:rgba(0,0,0,.55);border:none;color:var(--white-ink);font-size:11px;cursor:pointer;padding:4px 8px;border-radius:6px;font-family:inherit">📣</button>'
+    + '<button title="Video para TikTok" onclick="event.preventDefault();event.stopPropagation();openTikTokMaker(\'' + _nEscAttr(id) + '\')" style="background:rgba(0,0,0,.55);border:none;color:var(--white-ink);font-size:11px;cursor:pointer;padding:4px 8px;border-radius:6px;font-family:inherit">🎬</button>'
     + '<button onclick="event.preventDefault();event.stopPropagation();openNewsEditor(\'' + _nEscAttr(id) + '\')" style="background:rgba(0,0,0,.55);border:none;color:var(--white-ink);font-size:11px;cursor:pointer;padding:4px 8px;border-radius:6px;font-family:inherit">✏️ Editar</button>'
     + '<button onclick="event.preventDefault();event.stopPropagation();deleteNewsItem(\'' + _nEscAttr(id) + '\')" style="background:rgba(0,0,0,.55);border:none;color:#f99;font-size:13px;cursor:pointer;padding:4px 7px;border-radius:6px">✕</button>'
     + '</div>';
@@ -15984,6 +15985,7 @@ function openNewsReader(id) {
   var editBtn = document.getElementById('n-reader-edit-btn');
   if (editBtn) editBtn.innerHTML = !_ondemand ? (''
     + '<button onclick="openSocialAssistant(\'' + _nEscAttr(id) + '\')" style="background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-size:13px;padding:6px 12px;border-radius:8px;cursor:pointer;font-family:inherit;margin-right:6px">📣 Redes</button>'
+    + '<button onclick="openTikTokMaker(\'' + _nEscAttr(id) + '\')" style="background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-size:13px;padding:6px 12px;border-radius:8px;cursor:pointer;font-family:inherit;margin-right:6px">🎬 TikTok</button>'
     + '<button onclick="openNewsEditor(\'' + _nEscAttr(id) + '\')" style="background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-size:13px;padding:6px 12px;border-radius:8px;cursor:pointer;font-family:inherit">✏️ Editar</button>') : '';
   // URL propia de la noticia (compartible). Si ya estaba abierta (al re-renderizar tras editar),
   // solo actualizamos la URL sin apilar otra entrada.
@@ -16631,6 +16633,431 @@ function _socCopyText(which, btn) {
   if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(e.value).then(done).catch(function(){ e.select(); try{document.execCommand('copy');}catch(_){} done(); });
   else { e.focus(); e.select(); try{document.execCommand('copy');}catch(_){} done(); }
 }
+/* ═══════════════════════════════════════════════════════
+   GENERADOR DE VIDEO PARA TIKTOK (modo autor)
+   Recorre las fotos de la noticia (portada + las del cuerpo) en formato vertical
+   9:16, con Ken Burns + transiciones + textos que se leen en pantalla, y un cierre
+   de marca invitando a la web. Todo en el navegador (canvas + MediaRecorder).
+   Sale SIN música a propósito: la música se agrega en TikTok al subir el video
+   (así no la silencian por copyright). El MP4 (H.264+AAC) lo hace el propio Chrome.
+═══════════════════════════════════════════════════════ */
+var TT_W = 1080, TT_H = 1920, TT_OUTRO = 3.3;
+var _ttState = { id:null, items:[], transition:'mix', perPhoto:3.0, outro:true, rendering:false, rafPreview:0, lastUrl:null };
+
+// Junta las fotos de la noticia: portada + todas las <img> del cuerpo (sin repetir).
+function _ttGatherPhotos(n){
+  var out=[], seen={};
+  function add(src){ if(src && !seen[src]){ seen[src]=1; out.push(src); } }
+  if(n.coverImg) add(n.coverImg);
+  if(n.body){ var d=document.createElement('div'); d.innerHTML=n.body;
+    var imgs=d.querySelectorAll('img'); for(var i=0;i<imgs.length;i++) add(imgs[i].getAttribute('src')); }
+  return out;
+}
+// Carga una imagen intentando CORS (para poder exportar el video); si el host no lo permite,
+// reintenta sin CORS (se ve pero "mancha" el canvas → no se puede grabar).
+function _ttLoadImg(src){
+  return new Promise(function(res,rej){
+    if(!src){ rej('sin src'); return; }
+    if(/^data:/.test(src)){ var d=new Image(); d.onload=function(){res({img:d,cors:true});}; d.onerror=function(){rej('no carga');}; d.src=src; return; }
+    var im=new Image(); im.crossOrigin='anonymous';
+    im.onload=function(){ res({img:im,cors:true}); };
+    im.onerror=function(){ var i2=new Image(); i2.onload=function(){ res({img:i2,cors:false}); }; i2.onerror=function(){ rej('no carga'); }; i2.src=src; };
+    im.src=src;
+  });
+}
+// Precarga las fotos actuales + logo + fondo de marca. Devuelve {assets, tainted}.
+function _ttEnsureLoaded(){
+  return new Promise(function(resolve){
+    var its=_ttState.items, a={}, tainted=false, done=false;
+    if(!its.length){ resolve({assets:a,tainted:false}); return; }
+    var pending=its.length+2;
+    function fin(){ if(done) return; done=true; resolve({assets:a,tainted:tainted}); }
+    function one(key,src,brand){
+      _ttLoadImg(src).then(function(r){ a[key]=r.img; if(!brand && !r.cors) tainted=true; })
+        .catch(function(){}).then(function(){ if(--pending<=0) fin(); });
+    }
+    for(var i=0;i<its.length;i++) one('p'+i, its[i].src, false);
+    one('logo','assets/logo.png',true);
+    one('fondo','assets/fondo-oscuro.jpg',true);
+  });
+}
+function _ttBuildScene(assets){
+  var frames=[];
+  for(var i=0;i<_ttState.items.length;i++){ var im=assets['p'+i]; if(im) frames.push({img:im, cap:_ttState.items[i].cap||''}); }
+  return { frames:frames, logo:assets.logo, fondo:assets.fondo };
+}
+function _ttEase(p){ p=Math.max(0,Math.min(1,p)); return p*p*(3-2*p); }
+function _ttKindFor(idx){ var m=_ttState.transition; if(m==='mix') return ['fade','slide','zoom'][idx%3]; return m; }
+function _ttTotalSecs(){ return _ttState.items.length*_ttState.perPhoto + (_ttState.outro?TT_OUTRO:0); }
+function _ttTotalLabel(){ return _ttTotalSecs().toFixed(1)+'s'; }
+
+// Dibuja una imagen "cover" (recortada para llenar) con un zoom z y un desplazamiento (ox,oy).
+function _ttCoverScaled(ctx,img,z,ox,oy){
+  var W=TT_W,H=TT_H, ir=img.width/img.height, cr=W/H, dw,dh;
+  if(ir>cr){ dh=H*z; dw=dh*ir; } else { dw=W*z; dh=dw/ir; }
+  ctx.drawImage(img,(W-dw)/2+ox,(H-dh)/2+oy,dw,dh);
+}
+// Ken Burns por foto: zoom lento (alterna in/out) + paneo suave (varía la dirección por índice).
+function _ttDrawKB(ctx,img,idx,prog){
+  var W=TT_W,H=TT_H, z0=1.06, z1=1.18, zin=(idx%2===0);
+  var z = zin ? z0+(z1-z0)*prog : z1-(z1-z0)*prog;
+  var pan=0.05, dir=idx%4;
+  var ox=(dir===0?1:dir===2?-1:0)*pan*W*(prog-0.5);
+  var oy=(dir===1?1:dir===3?-1:0)*pan*H*(prog-0.5);
+  _ttCoverScaled(ctx,img,z,ox,oy);
+}
+// Texto que se lee sobre la foto: bloque centrado, en "zona segura" (lejos de los botones de TikTok),
+// con panel translúcido y fade+subida al aparecer.
+function _ttDrawCaption(ctx,text,appear){
+  if(!text) return;
+  var W=TT_W,H=TT_H;
+  ctx.save();
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  var fs=Math.round(W*0.058);
+  var fam='800 %px system-ui,"Segoe UI",Roboto,Arial,sans-serif';
+  ctx.font=fam.replace('%',fs); var maxW=W*0.80;
+  var lines=_socWrap(ctx,text,maxW);
+  while(lines.length>3 && fs>34){ fs-=4; ctx.font=fam.replace('%',fs); lines=_socWrap(ctx,text,maxW); }
+  var lineH=Math.round(fs*1.22), blockH=lines.length*lineH, cx=W/2, top=H*0.63-blockH/2;
+  var padX=Math.round(W*0.055), padY=Math.round(fs*0.55), pw=0, i;
+  for(i=0;i<lines.length;i++) pw=Math.max(pw, ctx.measureText(lines[i]).width);
+  pw=Math.min(W*0.9, pw+padX*2); var ph=blockH+padY*2;
+  ctx.globalAlpha=appear;
+  ctx.translate(0,(1-appear)*30);
+  _socRoundRect(ctx, cx-pw/2, top-padY, pw, ph, Math.round(fs*0.45));
+  ctx.fillStyle='rgba(10,12,20,0.52)'; ctx.fill();
+  _socRoundRect(ctx, cx-pw/2, top+ph-padY-Math.round(fs*0.14), pw, Math.round(fs*0.14), 0);
+  ctx.fillStyle='rgba(240,192,74,0.9)'; ctx.fill();
+  ctx.fillStyle='#fff'; ctx.shadowColor='rgba(0,0,0,0.6)'; ctx.shadowBlur=8; ctx.shadowOffsetY=2;
+  for(i=0;i<lines.length;i++) ctx.fillText(lines[i], cx, top+lineH/2+i*lineH);
+  ctx.restore();
+}
+// Cierre de marca: última foto → funde a fondo oscuro con logo + wordmark + pill de la web.
+function _ttDrawOutro(ctx,lt,scene,noUnderlay){
+  var W=TT_W,H=TT_H, fr=scene.frames, n=fr.length;
+  if(n && !noUnderlay) _ttDrawKB(ctx, fr[n-1].img, n-1, 1);   // funde desde la última foto (solo en el video)
+  var fade=noUnderlay?1:Math.min(1, lt/0.5);
+  ctx.save(); ctx.globalAlpha=fade;
+  if(scene.fondo){ _ttCoverScaled(ctx, scene.fondo, 1.05+0.05*Math.min(1,lt/3.2), 0, 0); }
+  else { var g=ctx.createLinearGradient(0,0,0,H); g.addColorStop(0,'#101a2e'); g.addColorStop(1,'#060a12'); ctx.fillStyle=g; ctx.fillRect(0,0,W,H); }
+  var ov=ctx.createLinearGradient(0,0,0,H); ov.addColorStop(0,'rgba(6,9,16,.6)'); ov.addColorStop(.5,'rgba(6,9,16,.4)'); ov.addColorStop(1,'rgba(6,9,16,.8)');
+  ctx.fillStyle=ov; ctx.fillRect(0,0,W,H);
+  ctx.restore();
+  var appear=_ttEase(Math.min(1, Math.max(0,(lt-0.15))/0.6)), contentA=fade*appear;
+  var cx=W/2, float=Math.sin(Math.max(0,lt-0.7)*1.6)*7, y=H*0.29+(1-appear)*44+float;
+  ctx.save(); ctx.globalAlpha=contentA;
+  var L=Math.round(W*0.27);
+  if(scene.logo){
+    ctx.save();
+    ctx.shadowColor='rgba(240,192,74,.45)'; ctx.shadowBlur=W*0.05;
+    _socRoundRect(ctx,cx-L/2,y,L,L,Math.round(L*0.28)); ctx.fillStyle='#0e1626'; ctx.fill();
+    ctx.shadowColor='transparent';
+    _socRoundRect(ctx,cx-L/2,y,L,L,Math.round(L*0.28)); ctx.clip();
+    ctx.drawImage(scene.logo,cx-L/2,y,L,L);
+    ctx.restore();
+    ctx.lineWidth=Math.max(2,W*0.004); ctx.strokeStyle='rgba(240,192,74,.65)';
+    _socRoundRect(ctx,cx-L/2,y,L,L,Math.round(L*0.28)); ctx.stroke();
+  }
+  y+=L+H*0.028;
+  var ws=Math.round(W*0.088);
+  ctx.font='800 '+ws+'px system-ui,"Segoe UI",Roboto,Arial,sans-serif';
+  ctx.textBaseline='top'; ctx.textAlign='left';
+  var t1='Chess', t2='Argentino', w1=ctx.measureText(t1).width, w2=ctx.measureText(t2).width, sx=cx-(w1+w2)/2;
+  ctx.shadowColor='rgba(0,0,0,.55)'; ctx.shadowBlur=12; ctx.shadowOffsetY=3;
+  ctx.fillStyle='#f6ecd2'; ctx.fillText(t1,sx,y);
+  ctx.fillStyle='#f0c04a'; ctx.fillText(t2,sx+w1,y);
+  ctx.shadowColor='transparent'; ctx.shadowOffsetY=0;
+  y+=ws*1.42;
+  ctx.textAlign='center';
+  var ss=Math.round(W*0.041);
+  ctx.font='600 '+ss+'px system-ui,"Segoe UI",Roboto,Arial,sans-serif';
+  ctx.fillStyle='rgba(246,236,210,.9)';
+  ctx.fillText('Seguí todo el ajedrez argentino', cx, y);
+  y+=ss*2.1;
+  var pAppear=_ttEase(Math.min(1, Math.max(0,(lt-0.55))/0.5));
+  var pillFs=Math.round(W*0.05);
+  ctx.font='800 '+pillFs+'px system-ui,"Segoe UI",Roboto,Arial,sans-serif';
+  var dom='📲 chessargentino.ar', dw=ctx.measureText(dom).width;
+  var pillW=dw+pillFs*1.5, pillH=pillFs*1.9, ps=0.88+0.12*pAppear;
+  ctx.globalAlpha=contentA*pAppear;
+  ctx.save();
+  ctx.translate(cx,y+pillH/2); ctx.scale(ps,ps); ctx.translate(-cx,-(y+pillH/2));
+  ctx.shadowColor='rgba(240,192,74,.55)'; ctx.shadowBlur=W*0.035;
+  _socRoundRect(ctx,cx-pillW/2,y,pillW,pillH,pillH/2); ctx.fillStyle='#f0c04a'; ctx.fill();
+  ctx.shadowColor='transparent';
+  ctx.fillStyle='#1a1400'; ctx.textBaseline='middle'; ctx.fillText(dom, cx, y+pillH/2+1);
+  ctx.restore();
+  ctx.restore();
+}
+// Un frame del video en el tiempo t (segundos). Sirve igual para la vista previa y para grabar.
+function _ttDrawFrame(ctx,t,scene){
+  var W=TT_W,H=TT_H, fr=scene.frames, n=fr.length, D=_ttState.perPhoto;
+  ctx.setTransform(1,0,0,1,0,0); ctx.globalAlpha=1;
+  ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
+  if(!n) return;
+  var photosDur=n*D;
+  if(t>=photosDur && _ttState.outro){ _ttDrawOutro(ctx, t-photosDur, scene); return; }
+  var idx=Math.min(n-1, Math.floor(t/D)), local=t-idx*D, T=Math.min(0.6, D*0.30);
+  if(idx>0 && local<T){
+    var p=_ttEase(local/T), kind=_ttKindFor(idx);
+    ctx.save();
+    if(kind==='slide') ctx.translate(-W*p,0);
+    _ttDrawKB(ctx, fr[idx-1].img, idx-1, Math.min(1.12,(D+local)/D));
+    ctx.restore();
+    ctx.save();
+    if(kind==='slide'){ ctx.translate(W*(1-p),0); }
+    else if(kind==='zoom'){ var s=0.72+0.28*p; ctx.translate(W/2,H/2); ctx.scale(s,s); ctx.translate(-W/2,-H/2); ctx.globalAlpha=p; }
+    else { ctx.globalAlpha=p; }
+    _ttDrawKB(ctx, fr[idx].img, idx, local/D);
+    ctx.restore(); ctx.globalAlpha=1;
+  } else {
+    _ttDrawKB(ctx, fr[idx].img, idx, local/D);
+  }
+  var cap=fr[idx].cap;
+  if(cap){ _ttDrawCaption(ctx, cap, _ttEase(Math.max(0,Math.min(1,(local-T)/0.45)))); }
+}
+
+// ── UI ──
+function openTikTokMaker(id){
+  var items=getNewsItems(), n=null;
+  for(var i=0;i<items.length;i++) if(items[i].id===id){ n=items[i]; break; }
+  if(!n) return;
+  var photos=_ttGatherPhotos(n);
+  _ttState.id=id; _ttState.rendering=false;
+  if(_ttState.lastUrl){ try{URL.revokeObjectURL(_ttState.lastUrl);}catch(e){} _ttState.lastUrl=null; }
+  _ttState.items=photos.map(function(src,idx){ return { src:src, cap: idx===0 ? (n.title||'') : '' }; });
+  _ttState.transition='mix'; _ttState.perPhoto=3.0; _ttState.outro=true;
+  var ov=document.getElementById('tt-overlay');
+  if(!ov){
+    ov=document.createElement('div'); ov.id='tt-overlay';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:100001;display:flex;align-items:flex-start;justify-content:center;padding:14px;overflow-y:auto';
+    ov.addEventListener('click', function(e){ if(e.target===ov) closeTikTokMaker(); });
+    document.body.appendChild(ov);
+  }
+  ov.innerHTML=_ttModalHtml(n);
+  _ttRenderList();
+  _ttDrawStaticPreview();
+}
+function closeTikTokMaker(){
+  _ttPreviewStop();
+  if(_ttState.lastUrl){ try{URL.revokeObjectURL(_ttState.lastUrl);}catch(e){} _ttState.lastUrl=null; }
+  var ov=document.getElementById('tt-overlay'); if(ov&&ov.parentNode) ov.parentNode.removeChild(ov);
+}
+function _ttTransSeg(){
+  var opts=[['fade','Fundido'],['slide','Deslizar'],['zoom','Zoom'],['mix','Mezcla']], out='';
+  opts.forEach(function(o){
+    var on=(_ttState.transition===o[0]);
+    out+='<button onclick="_ttSetTransition(\''+o[0]+'\')" style="padding:6px 12px;border-radius:8px;cursor:pointer;font-family:inherit;font-size:12.5px;font-weight:600;border:1px solid '+(on?'var(--gold-dim)':'var(--border)')+';background:'+(on?'var(--gold-bg)':'var(--bg3)')+';color:'+(on?'var(--gold)':'var(--text2)')+'">'+o[1]+'</button>';
+  });
+  return out;
+}
+function _ttModalHtml(n){
+  return '<div class="tt-modal" onclick="event.stopPropagation()" style="background:var(--bg2,#1c1c1e);border:1px solid var(--border);border-radius:16px;max-width:640px;width:100%;padding:18px;box-sizing:border-box;margin:16px auto;font-family:inherit">'
+   +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><span style="font-size:22px">🎬</span><h3 style="margin:0;font-size:18px;color:var(--text);flex:1">Video para TikTok</h3><button onclick="closeTikTokMaker()" style="background:none;border:none;color:var(--text2);font-size:26px;cursor:pointer;line-height:1;padding:0 4px">×</button></div>'
+   +'<div style="font-size:12.5px;color:var(--text2);line-height:1.5;margin-bottom:14px">Arma un video vertical (9:16) recorriendo las fotos de la noticia, con transiciones y tus textos en pantalla. Sale <b>sin música</b>: la elegís en TikTok al subir el video.</div>'
+   +'<div style="display:flex;gap:16px;flex-wrap:wrap">'
+     +'<div style="flex:0 0 auto;width:230px;max-width:100%;margin:0 auto">'
+       +'<div style="position:relative;width:230px;height:409px;background:#000;border-radius:14px;overflow:hidden;border:1px solid var(--border)">'
+         +'<canvas id="tt-canvas" style="width:100%;height:100%;display:block"></canvas>'
+         +'<div id="tt-scrub" style="position:absolute;left:0;bottom:0;height:3px;width:0;background:var(--gold)"></div>'
+       +'</div>'
+       +'<button id="tt-play" onclick="_ttTogglePreview()" style="width:100%;margin-top:8px;padding:9px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:9px;cursor:pointer;font-family:inherit;font-weight:600">▶ Vista previa</button>'
+       +'<div id="tt-dur" style="text-align:center;font-size:11.5px;color:var(--text3);margin-top:5px">Duración: '+_ttTotalLabel()+'</div>'
+     +'</div>'
+     +'<div style="flex:1;min-width:240px">'
+       +'<div style="font-size:12px;color:var(--text2);margin-bottom:5px;font-weight:600">Transición</div>'
+       +'<div id="tt-trans" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">'+_ttTransSeg()+'</div>'
+       +'<div style="font-size:12px;color:var(--text2);margin-bottom:5px;font-weight:600">Segundos por foto: <span id="tt-pp-lbl">'+_ttState.perPhoto.toFixed(1)+'s</span></div>'
+       +'<input id="tt-pp" type="range" min="1.8" max="8" step="0.1" value="'+_ttState.perPhoto+'" oninput="_ttSetPerPhoto(this.value)" style="width:100%;margin-bottom:14px;accent-color:var(--gold)">'
+       +'<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);cursor:pointer"><input type="checkbox" id="tt-outro" '+(_ttState.outro?'checked':'')+' onchange="_ttToggleOutro(this.checked)" style="accent-color:var(--gold);width:16px;height:16px"> Cierre con invitación a la web</label>'
+       +'<button onclick="_ttDownloadOutro(this)" style="margin-top:12px;width:100%;padding:9px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:9px;cursor:pointer;font-family:inherit;font-size:12.5px;font-weight:600">⬇ Bajar imagen del cierre (para redes)</button>'
+     +'</div>'
+   +'</div>'
+   +'<div style="font-size:12px;color:var(--text2);margin:16px 0 6px;font-weight:600">Fotos y textos <span style="font-weight:400">(cada texto se lee en pantalla sobre su foto · arrastá con ↑↓ para reordenar)</span></div>'
+   +'<div id="tt-list"></div>'
+   +'<input id="tt-file" type="file" accept="image/*" multiple style="display:none" onchange="_ttAddPhotos(this)">'
+   +'<button onclick="document.getElementById(\'tt-file\').click()" style="width:100%;padding:9px;background:var(--bg3);border:1px dashed var(--border);color:var(--text2);border-radius:9px;cursor:pointer;font-family:inherit;font-size:12.5px;font-weight:600;margin-bottom:4px">➕ Agregar foto de mi compu (solo para el video)</button>'
+   +'<div id="tt-status" style="font-size:12px;color:#e0a060;margin:8px 0;min-height:16px;line-height:1.4"></div>'
+   +'<div id="tt-prog" style="display:none;margin:8px 0"><div style="height:8px;background:var(--bg3);border-radius:6px;overflow:hidden"><div id="tt-prog-bar" style="height:100%;width:0;background:var(--gold);transition:width .12s linear"></div></div><div style="text-align:center;font-size:11px;color:var(--text3);margin-top:4px">Generando… <span id="tt-prog-txt">0%</span> · no cambies de pestaña</div></div>'
+   +'<button id="tt-gen" onclick="_ttGenerate(this)" style="width:100%;padding:13px;background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-weight:700;font-size:15px;border-radius:11px;cursor:pointer;font-family:inherit;margin-top:4px">🎬 Generar video MP4</button>'
+   +'<div id="tt-result" style="display:none;margin-top:14px"></div>'
+   +'</div>';
+}
+function _ttRenderList(){
+  var el=document.getElementById('tt-list'); if(!el) return;
+  var its=_ttState.items;
+  if(!its.length){ el.innerHTML='<div style="font-size:12.5px;color:var(--text3);background:var(--bg3);border-radius:10px;padding:14px;line-height:1.5">Esta noticia todavía no tiene fotos. Agregale una foto de portada o fotos en el cuerpo, guardá, y volvé a abrir esta herramienta.</div>'; return; }
+  var h='', i;
+  for(i=0;i<its.length;i++){
+    var bs='padding:5px 0;background:none;border:none;color:var(--text2);font-size:16px;cursor:pointer;line-height:1';
+    h+='<div style="display:flex;gap:10px;align-items:flex-start;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:8px;margin-bottom:8px">'
+      +'<div style="flex:none;width:52px;height:70px;border-radius:6px;overflow:hidden;background:#000;position:relative">'
+      +'<img src="'+_nEscAttr(its[i].src)+'" style="width:100%;height:100%;object-fit:cover" onerror="this.style.opacity=.15">'
+      +'<span style="position:absolute;top:2px;left:2px;background:rgba(0,0,0,.65);color:#fff;font-size:10px;padding:0 5px;border-radius:6px;font-weight:700">'+(i+1)+'</span></div>'
+      +'<div style="flex:1;min-width:0">'
+      +'<textarea id="tt-cap-'+i+'" rows="2" placeholder="Texto que se lee en pantalla (opcional)" oninput="_ttSetCap('+i+',this.value)" style="width:100%;padding:7px;background:var(--bg2,#1c1c1e);border:1px solid var(--border);border-radius:7px;color:var(--text);font-family:inherit;font-size:13px;box-sizing:border-box;resize:vertical">'+_nEsc(its[i].cap||'')+'</textarea>'
+      +'<div style="display:flex;gap:10px;margin-top:2px">'
+      +'<button title="Subir" onclick="_ttMove('+i+',-1)" style="'+bs+(i===0?';opacity:.3;pointer-events:none':'')+'">↑</button>'
+      +'<button title="Bajar" onclick="_ttMove('+i+',1)" style="'+bs+(i===its.length-1?';opacity:.3;pointer-events:none':'')+'">↓</button>'
+      +'<button title="Quitar del video" onclick="_ttRemove('+i+')" style="'+bs+';color:#e07070;margin-left:auto">🗑</button>'
+      +'</div></div></div>';
+  }
+  el.innerHTML=h;
+}
+function _ttSetCap(i,v){ if(_ttState.items[i]) _ttState.items[i].cap=v; }
+function _ttMove(i,dir){
+  var j=i+dir, a=_ttState.items; if(j<0||j>=a.length) return;
+  var t=a[i]; a[i]=a[j]; a[j]=t;
+  _ttRenderList(); _ttUpdateDur(); _ttDrawStaticPreview();
+}
+function _ttRemove(i){
+  _ttState.items.splice(i,1);
+  _ttRenderList(); _ttUpdateDur(); _ttDrawStaticPreview();
+}
+// Suma fotos desde la compu (van EMBEBIDAS como data URI → seguras para exportar; no se guardan en la noticia).
+function _ttAddPhotos(input){
+  var files=input.files; if(!files||!files.length){ return; }
+  var pend=files.length;
+  function fin(){ if(--pend<=0){ _ttRenderList(); _ttUpdateDur(); _ttDrawStaticPreview(); } }
+  Array.prototype.forEach.call(files, function(f){
+    if(!/^image\//.test(f.type)){ fin(); return; }
+    var r=new FileReader();
+    r.onload=function(){ _ttState.items.push({ src:r.result, cap:'' }); fin(); };
+    r.onerror=function(){ fin(); };
+    r.readAsDataURL(f);
+  });
+  input.value='';
+}
+// Baja la placa del cierre (marca + web) sola, en PNG, para usar en redes. Sin la foto de fondo
+// del video (noUnderlay) para que no se "manche" el canvas aunque alguna foto sea link externo.
+function _ttDownloadOutro(btn){
+  _ttEnsureLoaded().then(function(info){
+    var scene=_ttBuildScene(info.assets);
+    var cv=document.createElement('canvas'); cv.width=TT_W; cv.height=TT_H;
+    var ctx=cv.getContext('2d');
+    _ttDrawOutro(ctx, 2.6, scene, true);
+    cv.toBlob(function(blob){
+      if(!blob){ _ttStatus('No se pudo generar la imagen del cierre.'); return; }
+      var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='chessargentino-cierre.png';
+      document.body.appendChild(a); a.click();
+      setTimeout(function(){ URL.revokeObjectURL(a.href); if(a.parentNode) a.parentNode.removeChild(a); }, 200);
+      if(btn && typeof _socFlash==='function') _socFlash(btn,'Descargada');
+    }, 'image/png');
+  });
+}
+function _ttSetTransition(m){ _ttState.transition=m; var e=document.getElementById('tt-trans'); if(e) e.innerHTML=_ttTransSeg(); _ttDrawStaticPreview(); }
+function _ttSetPerPhoto(v){ _ttState.perPhoto=parseFloat(v)||3; var l=document.getElementById('tt-pp-lbl'); if(l) l.textContent=_ttState.perPhoto.toFixed(1)+'s'; _ttUpdateDur(); }
+function _ttToggleOutro(on){ _ttState.outro=!!on; _ttUpdateDur(); }
+function _ttUpdateDur(){ var e=document.getElementById('tt-dur'); if(e) e.textContent='Duración: '+_ttTotalLabel(); }
+function _ttStatus(msg){ var e=document.getElementById('tt-status'); if(e) e.textContent=msg||''; }
+function _ttDrawStaticPreview(){
+  _ttEnsureLoaded().then(function(info){
+    var scene=_ttBuildScene(info.assets);
+    var cv=document.getElementById('tt-canvas'); if(!cv) return;
+    cv.width=TT_W; cv.height=TT_H; var ctx=cv.getContext('2d');
+    if(scene.frames.length) _ttDrawFrame(ctx,0.02,scene);
+    else { ctx.fillStyle='#111'; ctx.fillRect(0,0,TT_W,TT_H); }
+    _ttStatus(info.tainted ? '⚠️ Hay fotos que son links externos (sin permiso CORS): la vista previa se ve, pero para EXPORTAR el video subilas/embebelas en la noticia.' : '');
+  });
+}
+function _ttSetPlayBtn(playing){ var b=document.getElementById('tt-play'); if(b) b.textContent=playing?'⏸ Pausar':'▶ Vista previa'; }
+function _ttPreviewStop(){ if(_ttState.rafPreview){ cancelAnimationFrame(_ttState.rafPreview); _ttState.rafPreview=0; } _ttSetPlayBtn(false); }
+function _ttTogglePreview(){ if(_ttState.rafPreview){ _ttPreviewStop(); } else { _ttPreviewPlay(); } }
+function _ttPreviewPlay(){
+  _ttPreviewStop();
+  _ttEnsureLoaded().then(function(info){
+    var scene=_ttBuildScene(info.assets); if(!scene.frames.length) return;
+    var cv=document.getElementById('tt-canvas'); if(!cv) return;
+    cv.width=TT_W; cv.height=TT_H; var ctx=cv.getContext('2d');
+    var total=_ttTotalSecs(), t0=performance.now();
+    _ttSetPlayBtn(true);
+    function loop(){
+      var t=(performance.now()-t0)/1000;
+      if(t>=total){ _ttDrawFrame(ctx,total-0.002,scene); var sc=document.getElementById('tt-scrub'); if(sc) sc.style.width='100%'; _ttState.rafPreview=0; _ttSetPlayBtn(false); return; }
+      _ttDrawFrame(ctx,t,scene);
+      var s=document.getElementById('tt-scrub'); if(s) s.style.width=Math.round(t/total*100)+'%';
+      _ttState.rafPreview=requestAnimationFrame(loop);
+    }
+    _ttState.rafPreview=requestAnimationFrame(loop);
+  });
+}
+function _ttPickMime(){
+  var c=['video/mp4;codecs=avc1.640029,mp4a.40.2','video/mp4;codecs=avc1.4d4028,mp4a.40.2','video/mp4;codecs=avc1.42E01E,mp4a.40.2','video/mp4','video/webm;codecs=vp9','video/webm'];
+  for(var i=0;i<c.length;i++){ if(window.MediaRecorder&&MediaRecorder.isTypeSupported(c[i])) return c[i]; }
+  return 'video/webm';
+}
+function _ttProgress(p){
+  var box=document.getElementById('tt-prog'); if(box) box.style.display='';
+  var bar=document.getElementById('tt-prog-bar'); if(bar) bar.style.width=Math.round(p*100)+'%';
+  var txt=document.getElementById('tt-prog-txt'); if(txt) txt.textContent=Math.round(p*100)+'%';
+}
+function _ttSetGenUI(on){
+  var b=document.getElementById('tt-gen'); if(b){ b.disabled=on; b.style.opacity=on?'.6':'1'; b.textContent=on?'Generando…':'🎬 Generar video MP4'; }
+  if(on){ var r=document.getElementById('tt-result'); if(r){ r.style.display='none'; r.innerHTML=''; } }
+  else { var box=document.getElementById('tt-prog'); if(box) box.style.display='none'; }
+}
+async function _ttGenerate(btn){
+  if(_ttState.rendering) return;
+  _ttPreviewStop();
+  _ttStatus('');
+  var info=await _ttEnsureLoaded();
+  var scene=_ttBuildScene(info.assets);
+  if(!scene.frames.length){ _ttStatus('No hay fotos para armar el video.'); return; }
+  if(info.tainted){ _ttStatus('⚠️ Una o más fotos son links externos sin permiso CORS: no se puede exportar. Subí/embebé esas fotos en la noticia y probá de nuevo.'); return; }
+  _ttState.rendering=true; _ttSetGenUI(true); _ttProgress(0);
+  try{
+    var blob=await _ttRecord(scene, _ttProgress);
+    _ttShowResult(blob);
+  }catch(e){ _ttStatus('⚠️ No se pudo generar ('+(e && (e.message||e))+').'); }
+  finally{ _ttState.rendering=false; _ttSetGenUI(false); }
+}
+function _ttRecord(scene, onProg){
+  return new Promise(function(resolve,reject){
+    try{
+      var cv=document.createElement('canvas'); cv.width=TT_W; cv.height=TT_H;
+      var ctx=cv.getContext('2d');
+      _ttDrawFrame(ctx,0,scene);
+      var vstream=cv.captureStream(30), stream=new MediaStream();
+      vstream.getVideoTracks().forEach(function(t){ stream.addTrack(t); });
+      // Pista de audio en silencio (AAC) para que el MP4 tenga audio y TikTok lo trague sin drama.
+      var ac=null;
+      try{
+        var AC=window.AudioContext||window.webkitAudioContext;
+        ac=new AC(); var dst=ac.createMediaStreamDestination();
+        var osc=ac.createOscillator(), g=ac.createGain(); g.gain.value=0; osc.connect(g); g.connect(dst); osc.start();
+        dst.stream.getAudioTracks().forEach(function(t){ stream.addTrack(t); });
+      }catch(e){}
+      var mime=_ttPickMime();
+      var rec=new MediaRecorder(stream, {mimeType:mime, videoBitsPerSecond:9000000});
+      var chunks=[]; rec.ondataavailable=function(e){ if(e.data&&e.data.size) chunks.push(e.data); };
+      rec.onerror=function(e){ try{if(ac)ac.close();}catch(_){} reject(e.error||new Error('MediaRecorder')); };
+      rec.onstop=function(){ try{if(ac)ac.close();}catch(_){} resolve(new Blob(chunks,{type:mime.split(';')[0]})); };
+      var total=_ttTotalSecs(), t0=performance.now(), stopping=false;
+      rec.start();
+      function loop(){
+        var t=(performance.now()-t0)/1000;
+        if(t>=total){ if(stopping) return; stopping=true; _ttDrawFrame(ctx,total-0.002,scene); onProg(1); setTimeout(function(){ try{rec.stop();}catch(e){} },150); return; }
+        _ttDrawFrame(ctx,t,scene); onProg(t/total);
+        requestAnimationFrame(loop);
+      }
+      requestAnimationFrame(loop);
+    }catch(e){ reject(e); }
+  });
+}
+function _ttShowResult(blob){
+  var isMp4=/mp4/.test(blob.type);
+  if(_ttState.lastUrl){ try{URL.revokeObjectURL(_ttState.lastUrl);}catch(e){} }
+  var url=URL.createObjectURL(blob); _ttState.lastUrl=url;
+  var kb=Math.round(blob.size/1024), sizeTxt=kb>1024?(kb/1024).toFixed(1)+' MB':kb+' KB';
+  var w=document.getElementById('tt-result'); if(!w) return;
+  w.style.display='';
+  w.innerHTML='<div style="font-weight:700;color:var(--gold);margin-bottom:8px">✅ Video listo · '+(isMp4?'MP4':'WebM')+' · '+sizeTxt+'</div>'
+    +'<video src="'+url+'" controls playsinline loop style="width:100%;max-width:230px;display:block;margin:0 auto 10px;border-radius:12px;background:#000"></video>'
+    +'<a href="'+url+'" download="chessargentino-tiktok.'+(isMp4?'mp4':'webm')+'" style="display:block;text-align:center;padding:12px;background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-weight:700;border-radius:10px;text-decoration:none;font-family:inherit">⬇ Descargar video</a>'
+    +(isMp4?'':'<div style="font-size:11.5px;color:#e0a060;margin-top:8px;line-height:1.4">Tu navegador no pudo hacer MP4 y guardó WebM. Se sube igual desde la compu; para MP4 seguro, usá Chrome actualizado.</div>')
+    +'<div style="font-size:12px;color:var(--text2);line-height:1.55;margin-top:12px;background:var(--bg3);border-radius:10px;padding:11px">🎵 <b>La música se agrega en TikTok:</b> subí este video, tocá <b>“Agregar sonido”</b> y elegí la canción que quieras. El video sale sin música a propósito, así no te lo silencian por copyright.</div>';
+}
+
 function saveNewsFromEditor(id){
   var g = function(x){ var el=document.getElementById(x); return el?(el.value||'').trim():''; };
   var emoji = g('news-f-emoji')||'📰', date=g('news-f-date'), title=g('news-f-title');
