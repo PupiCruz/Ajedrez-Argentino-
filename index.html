@@ -2066,6 +2066,13 @@
         </svg>
         <span>Noticias</span>
       </button>
+      <button class="nav-btn" onclick="goTo('vivo',this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M8 2h8"></path><path d="M9 2v2.789a4 4 0 0 1-.672 2.219l-.656.984A4 4 0 0 0 7 10.212V20a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-9.789a4 4 0 0 0-.672-2.219l-.656-.984A4 4 0 0 1 15 4.788V2"></path>
+          <path d="M7 15a6.472 6.472 0 0 1 5 0 6.47 6.47 0 0 0 5 0"></path>
+        </svg>
+        <span>Jugar</span>
+      </button>
       <button class="nav-btn nav-heart" onclick="goTo('apoyar',this)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
           <path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l1.1 1.1L12 21.2l7.7-7.7 1.1-1.1a5.5 5.5 0 0 0 0-7.8z"></path>
@@ -2398,6 +2405,215 @@
             <li>Mandando PGNs, planillas o fotos de torneos que no estén cargados.</li>
             <li>Avisando si ves un nombre mal escrito, un resultado equivocado o algo que no anda.</li>
           </ul>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ── JUGAR EN VIVO (PvP en tiempo real) ── -->
+    <style id="lv-style">
+      #s-vivo .lv-lobby { max-width: 560px; margin: 0 auto; }
+      .lv-lobby-card { background:var(--card90); border:1px solid var(--border); border-radius:var(--r-lg); padding:20px; margin-bottom:16px; box-shadow:var(--shadow-card); }
+      .lv-lobby-card h3 { font-size:19px; font-weight:800; margin:0 0 6px; letter-spacing:-.3px; }
+      .lv-lobby-card h4 { font-size:15px; font-weight:700; margin:0 0 8px; }
+      .lv-lobby-card p { color:var(--text2); font-size:13.5px; margin:0 0 14px; line-height:1.5; }
+      .lv-field { display:block; margin-bottom:12px; font-size:13px; color:var(--text2); }
+      .lv-field select, .lv-field input, #lv-join-id, #lv-link { font-family:inherit; font-size:14px; padding:9px 11px; border-radius:var(--r-sm); border:1px solid var(--border); background:var(--bg2); color:var(--text); width:100%; margin-top:5px; }
+      .lv-btn-main, .lv-btn-sec { font-family:inherit; font-weight:700; font-size:14px; padding:11px 16px; border-radius:var(--r-md); cursor:pointer; border:1px solid transparent; transition:filter .15s, opacity .15s; }
+      .lv-btn-main { background:var(--gold-bg); border-color:var(--gold-dim); color:var(--gold); width:100%; }
+      .lv-btn-sec { background:var(--bg2); border-color:var(--border); color:var(--text); }
+      .lv-btn-main:hover, .lv-btn-sec:hover { filter:brightness(1.08); }
+      .lv-btn-main:disabled, .lv-btn-sec:disabled { opacity:.45; cursor:default; filter:none; }
+      #lv-lobby-msg { text-align:center; color:var(--red); font-size:13px; min-height:18px; }
+
+      /* Layout de 3 columnas (izq: avisos+controles · centro: tablero · der: notación) */
+      #lv-game { display:flex; gap:16px; align-items:flex-start; justify-content:center; max-width:1180px; margin:0 auto; flex-wrap:wrap; }
+      .lv-col { background:var(--card90); border:1px solid var(--border); border-radius:var(--r-lg); box-shadow:var(--shadow-card); }
+      .lv-left, .lv-right { width:270px; flex:0 0 270px; padding:14px; align-self:stretch; display:flex; flex-direction:column; }
+      .lv-center { display:flex; flex-direction:column; width:min(var(--puz-bw, 480px), 100%); flex:0 0 auto; }
+      .lv-col-title { font-size:12px; font-weight:800; letter-spacing:.6px; text-transform:uppercase; color:var(--text3); margin:0 0 10px; }
+
+      .lv-share { background:var(--gold-bg); border:1px dashed var(--gold-dim); border-radius:var(--r-md); padding:11px; margin-bottom:12px; font-size:12.5px; line-height:1.4; }
+      .lv-share-row { display:flex; gap:8px; margin-top:8px; }
+      .lv-share-row #lv-link { flex:1; min-width:0; font-size:11.5px; font-family:inherit; padding:8px; border-radius:var(--r-sm); border:1px solid var(--border); background:var(--bg2); color:var(--text); }
+      .lv-share-row button { flex:0 0 auto; padding:8px 10px; }
+      .lv-player { display:flex; justify-content:space-between; align-items:center; padding:7px 12px; background:var(--card90); border:1px solid var(--border); }
+      .lv-top { border-bottom:none; border-radius:var(--r-md) var(--r-md) 0 0; }
+      .lv-bottom { border-top:none; border-radius:0 0 var(--r-md) var(--r-md); }
+      .lv-pname { font-weight:700; font-size:14px; display:flex; align-items:center; gap:7px; }
+      .lv-pname .lv-conn { font-size:11px; color:var(--red); font-weight:600; }
+      .lv-clock { font-variant-numeric:tabular-nums; font-weight:800; font-size:24px; letter-spacing:.5px; padding:2px 12px; border-radius:8px; background:var(--bg2); min-width:88px; text-align:center; transition:opacity .2s; }
+      .lv-clock.lv-run { background:var(--gold-bg); color:var(--gold); }
+      .lv-clock.lv-low { color:var(--red) !important; }
+      .lv-clock.lv-idle { opacity:.5; }
+
+      .lv-board-wrap { position:relative; width:100%; aspect-ratio:1/1; }
+      .lv-board { position:absolute; inset:0; display:grid; grid-template-columns:repeat(8,1fr); grid-template-rows:repeat(8,1fr); border:3px solid var(--board-bd, #4a3a24); overflow:hidden; user-select:none; touch-action:none; }
+      .lv-sq { position:relative; display:flex; align-items:center; justify-content:center; }
+      .lv-sq.l { background:var(--sq-l, #f0d9b5); } .lv-sq.d { background:var(--sq-d, #b58863); }
+      .lv-sq.sel::after { content:''; position:absolute; inset:0; background:var(--sq-hl-l, #f6f669); opacity:.5; }
+      .lv-sq.last::after { content:''; position:absolute; inset:0; background:var(--sq-hl-d, #cdd16a); opacity:.42; }
+      .lv-sq.premove::after { content:''; position:absolute; inset:0; background:#4f9bff; opacity:.42; }
+      .lv-sq.check { box-shadow: inset 0 0 0 4px rgba(220,40,40,.85); border-radius:2px; }
+      .lv-sq img { width:92%; height:92%; position:relative; z-index:2; pointer-events:none; -webkit-user-drag:none; }
+      .lv-sq.dragging img { opacity:.28; }
+      .lv-dot { position:absolute; z-index:1; width:32%; height:32%; border-radius:50%; background:rgba(0,0,0,.28); }
+      .lv-dot.cap { width:88%; height:88%; background:none; border:5px solid rgba(0,0,0,.26); box-sizing:border-box; border-radius:50%; }
+      body.light .lv-dot { background:rgba(0,0,0,.22); }
+      .lv-drag-ghost { position:fixed; z-index:2000; pointer-events:none; width:11vw; height:11vw; max-width:64px; max-height:64px; transform:translate(-50%,-50%); }
+
+      .lv-promo { position:absolute; inset:0; z-index:20; background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; }
+      .lv-promo-inner { background:var(--panel1, #fff); border-radius:var(--r-md); padding:10px; display:flex; gap:6px; box-shadow:var(--shadow-hover); }
+      .lv-promo-inner img { width:15vw; height:15vw; max-width:74px; max-height:74px; cursor:pointer; border-radius:8px; padding:4px; }
+      .lv-promo-inner img:hover { background:var(--gold-bg); }
+
+      .lv-banner { position:absolute; inset:0; z-index:25; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; background:rgba(15,15,20,.62); color:#fff; text-align:center; padding:20px; border-radius:2px; }
+      .lv-banner .lv-b-title { font-size:23px; font-weight:800; letter-spacing:-.3px; }
+      .lv-banner .lv-b-sub { font-size:14px; opacity:.9; }
+      .lv-banner button { margin-top:10px; }
+
+      /* Capa de flechas / resaltados (clic derecho), encima de las piezas */
+      #lv-arrows { position:absolute; inset:3px; z-index:5; pointer-events:none; overflow:visible; }
+      /* Agarradera para redimensionar (esquina inferior derecha), igual que el visor */
+      #lv-resize { position:absolute; right:0; bottom:0; width:14px; height:14px; display:flex; align-items:flex-end; justify-content:flex-end; color:var(--text3); cursor:nwse-resize; z-index:8; touch-action:none; transition:color .15s; }
+      #lv-resize:hover { color:var(--gold); }
+      /* Barra de navegación (columna derecha, abajo): copiada del visor */
+      .lv-navbar { display:flex; gap:4px; margin-top:12px; padding-top:12px; border-top:1px solid var(--border); }
+      .lv-navbar button { flex:1; padding:9px 4px; font-size:14px; font-family:inherit; background:var(--bg2); border:1px solid var(--border); color:var(--text); border-radius:var(--r-sm); cursor:pointer; line-height:1; transition:filter .12s; }
+      .lv-navbar button:hover { filter:brightness(1.08); }
+      .lv-navbar button:disabled { opacity:.4; cursor:default; filter:none; }
+      .lv-navbar button svg { display:block; margin:0 auto; vertical-align:middle; }
+
+      .lv-status { font-size:13.5px; color:var(--text2); margin:0 0 12px; min-height:20px; line-height:1.45; }
+      .lv-status b { color:var(--text); }
+      .lv-prompt { display:flex; flex-direction:column; gap:8px; background:var(--gold-bg); border:1px solid var(--gold-dim); border-radius:var(--r-md); padding:10px; margin-bottom:12px; font-size:13px; color:var(--text); }
+      .lv-prompt .lv-prompt-row { display:flex; gap:8px; }
+      .lv-prompt .lv-prompt-row button { flex:1; padding:7px; }
+      .lv-controls { display:flex; flex-direction:column; gap:8px; }
+      .lv-controls button { width:100%; }
+      .lv-tools { display:flex; gap:8px; margin-top:12px; padding-top:12px; border-top:1px solid var(--border); }
+      .lv-tools button { flex:1; font-size:12.5px; padding:8px 6px; }
+
+      /* Notación de jugadas (columna derecha) */
+      .lv-moves { flex:1; overflow-y:auto; max-height:min(var(--puz-bw, 480px), 62vh); margin:0 -4px; }
+      .lv-mv-row { display:grid; grid-template-columns:34px 1fr 1fr; align-items:center; font-size:13.5px; }
+      .lv-mv-row:nth-child(odd) { background:var(--bd08, rgba(128,128,128,.08)); }
+      .lv-mv-num { color:var(--text3); text-align:right; padding-right:8px; font-variant-numeric:tabular-nums; }
+      .lv-mv-san { padding:4px 7px; border-radius:5px; }
+      .lv-mv-san[data-ply] { cursor:pointer; }
+      .lv-mv-san[data-ply]:hover { background:var(--bd15, rgba(128,128,128,.15)); }
+      .lv-mv-san.last { background:var(--gold-bg); color:var(--gold); font-weight:700; }
+      .lv-moves-empty { color:var(--text3); font-size:12.5px; padding:6px 4px; }
+
+      @media (max-width:920px) {
+        #lv-game { gap:12px; }
+        .lv-center { order:1; width:min(var(--puz-bw, 480px), 100%); margin:0 auto; }
+        .lv-left { order:2; } .lv-right { order:3; }
+        .lv-left, .lv-right { width:100%; flex-basis:100%; max-width:560px; margin:0 auto; }
+        .lv-moves { max-height:230px; }
+      }
+      @media (max-width:600px) { .lv-clock { font-size:22px; min-width:78px; } .lv-banner .lv-b-title { font-size:20px; } }
+    </style>
+    <section class="section" id="s-vivo">
+      <div class="pg-head">
+        <h2>♟️ Jugar en vivo</h2>
+        <p>Desafiá a un amigo a una partida en tiempo real</p>
+      </div>
+
+      <div id="lv-lobby" class="lv-lobby">
+        <div class="lv-lobby-card">
+          <h3>Desafiá a un amigo</h3>
+          <p>Creá una sala, elegí el ritmo y mandale el link a tu rival. El que crea la sala juega con blancas.</p>
+          <label class="lv-field">Ritmo de juego
+            <select id="lv-tc">
+              <option value="0,0">Sin reloj</option>
+              <option value="60,0">1+0 · Bala</option>
+              <option value="180,0">3+0 · Blitz</option>
+              <option value="180,2">3+2 · Blitz</option>
+              <option value="300,0" selected>5+0 · Blitz</option>
+              <option value="300,3">5+3 · Blitz</option>
+              <option value="600,0">10+0 · Rápida</option>
+              <option value="600,5">10+5 · Rápida</option>
+              <option value="900,10">15+10 · Rápida</option>
+            </select>
+          </label>
+          <label class="lv-field">Tu nombre (opcional)
+            <input id="lv-name" maxlength="24" placeholder="Anónimo">
+          </label>
+          <button id="lv-create" class="lv-btn-main">Crear sala y jugar</button>
+        </div>
+        <div class="lv-lobby-card">
+          <h4>¿Te pasaron un id de sala?</h4>
+          <input id="lv-join-id" maxlength="16" placeholder="id de sala (ej: a1b2c3d4)">
+          <button id="lv-join" class="lv-btn-sec" style="width:100%;margin-top:10px">Unirme a la sala</button>
+        </div>
+        <p id="lv-lobby-msg"></p>
+      </div>
+
+      <div id="lv-game" style="display:none">
+
+        <!-- IZQUIERDA: avisos + controles de la partida -->
+        <div class="lv-col lv-left">
+          <div class="lv-col-title">Partida</div>
+          <div id="lv-share" class="lv-share" style="display:none">
+            <span>👋 Compartí este link con tu rival y esperá a que entre:</span>
+            <div class="lv-share-row">
+              <input id="lv-link" readonly>
+              <button id="lv-copy" class="lv-btn-sec">Copiar</button>
+            </div>
+          </div>
+          <div id="lv-status" class="lv-status"></div>
+          <div id="lv-drawprompt" class="lv-prompt" style="display:none">
+            <span>🤝 Tu rival ofrece tablas.</span>
+            <div class="lv-prompt-row">
+              <button id="lv-draw-yes" class="lv-btn-sec">Aceptar</button>
+              <button id="lv-draw-no" class="lv-btn-sec">Rechazar</button>
+            </div>
+          </div>
+          <div class="lv-controls">
+            <button id="lv-abort" class="lv-btn-sec" style="display:none">✕ Abortar</button>
+            <button id="lv-offerdraw" class="lv-btn-sec" style="display:none">🤝 Ofrecer tablas</button>
+            <button id="lv-resign" class="lv-btn-sec" style="display:none">🏳️ Rendirme</button>
+            <button id="lv-rematch" class="lv-btn-main" style="display:none">Revancha 🔁</button>
+            <button id="lv-exit" class="lv-btn-sec">← Volver al menú</button>
+          </div>
+          <div class="lv-tools">
+            <button id="lv-copypgn" class="lv-btn-sec">📋 Copiar PGN</button>
+            <button id="lv-copyfen" class="lv-btn-sec">Copiar FEN</button>
+          </div>
+        </div>
+
+        <!-- CENTRO: tablero + jugadores -->
+        <div class="lv-center">
+          <div class="lv-player lv-top">
+            <span class="lv-pname" id="lv-name-top">Rival</span>
+            <span class="lv-clock lv-idle" id="lv-clk-top">--:--</span>
+          </div>
+          <div class="lv-board-wrap">
+            <div id="lv-board" class="lv-board"></div>
+            <svg id="lv-arrows" viewBox="0 0 8 8" preserveAspectRatio="none"></svg>
+            <div id="lv-resize" title="Arrastrá para agrandar o achicar el tablero (se guarda)" aria-label="Cambiar tamaño del tablero"><svg viewBox="0 0 12 12" width="12" height="12" fill="none"><path d="M11 4.5 L4.5 11 M11 8.5 L8.5 11" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"></path></svg></div>
+            <div id="lv-promo" class="lv-promo" style="display:none"></div>
+            <div id="lv-banner" class="lv-banner" style="display:none"></div>
+          </div>
+          <div class="lv-player lv-bottom">
+            <span class="lv-pname" id="lv-name-bot">Vos</span>
+            <span class="lv-clock lv-idle" id="lv-clk-bot">--:--</span>
+          </div>
+        </div>
+
+        <!-- DERECHA: notación de jugadas + controles -->
+        <div class="lv-col lv-right">
+          <div class="lv-col-title">Movimientos</div>
+          <div id="lv-moves" class="lv-moves"></div>
+          <div class="lv-navbar">
+            <button id="lv-nav-first" title="Primera jugada">|◀</button>
+            <button id="lv-nav-prev" title="Jugada anterior">◀</button>
+            <button id="lv-nav-next" title="Jugada siguiente">▶</button>
+            <button id="lv-nav-last" title="Volver a la posición actual">▶|</button>
+            <button id="lv-nav-flip" title="Girar tablero" aria-label="Girar tablero"><svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4 4 7l3 3"></path><path d="M4 7h9a3 3 0 0 1 3 3"></path><path d="m13 16 3-3-3-3"></path><path d="M16 13H7a3 3 0 0 1-3-3"></path></svg></button>
+            <button id="lv-nav-color" title="Cambiar color del tablero" aria-label="Cambiar color del tablero"><svg viewBox="0 0 20 20" width="16" height="16"><rect x="3" y="3" width="14" height="14" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.7"></rect><path d="M10 3v14H5.5A2.5 2.5 0 0 1 3 14.5v-9A2.5 2.5 0 0 1 5.5 3H10z" fill="currentColor"></path></svg></button>
+          </div>
         </div>
 
       </div>
@@ -29080,5 +29296,710 @@ function cvUpdateNagBadge() {
 })();
 </script>
 
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     JUGAR EN VIVO (PvP) — cliente. Habla con el arbitrito (Durable Object) por
+     WebSocket. Reusa piezas (assets/piezas), sonidos (cvPlayMoveSound/_playCastle)
+     y chess.js (global) del resto de la app.
+     ══════════════════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+  'use strict';
+  var PROD_URL = 'https://ajedrez-vivo.mmatiasscruz.workers.dev';
+  var GRACE_MS = 30000;
+  var FILES = ['a','b','c','d','e','f','g','h'];
+  function $(id){ return document.getElementById(id); }
+
+  // Estado del cliente
+  var ws=null, lvSala=null, lvToken='', lvMyColor=null;
+  var lvFen='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+  var lvChess=null, lvTurn='w', lvStatus='waiting', lvLastMove=null;
+  var lvNames={}, lvPlayers={}, lvDrawOffer=null, lvMoves=[];
+  var lvManualFlip=false, lvResultCode='*';
+  var lvArrows=[], lvHighlights={}, lvRmDown=null, lvViewPly=null, lvPrevMovesLen=0;
+  var lvSelected=null, lvPremove=null, lvSuppressClick=false, lvDrag=null;
+  var lvClock=null, lvClockSyncAt=0, lvTicker=null, lvLowWarned=false;
+  var lvIntentionalClose=false, lvReconnectTries=0, lvReconnectTimer=null;
+  var lvPendingSoundId=null, lvLastSoundId=null, lvEndSoundDone=false;
+  var lvPrevStatus='waiting', lvWakeLock=null;
+
+  // ── URL del arbitrito: por defecto PRODUCCIÓN (así en modo autor jugás de verdad
+  //    contra el arbitrito publicado). Para desarrollo local: ?vivolocal=1 o
+  //    localStorage.lv_server = 'local' | 'http://host:port'.
+  //    Se captura UNA vez al cargar (goTo limpia location.search, así que si lo
+  //    leyéramos tarde se perdería el ?vivolocal). ─────────────────────────────
+  var DEV_BASE = (function(){
+    try {
+      var qs=new URLSearchParams(location.search||'');
+      if(qs.get('vivolocal')==='1') return 'http://localhost:8787';
+      var m=localStorage.getItem('lv_server');
+      if(m==='local') return 'http://localhost:8787';
+      if(m && /^https?:\/\//.test(m)) return m.replace(/\/$/,'');
+    } catch(e){}
+    return '';
+  })();
+  function serverBase(){ return DEV_BASE || PROD_URL; }
+  function isDev(){ return !!DEV_BASE; }
+
+  // ── FEN → matriz [rank8..rank1][a..h] ───────────────────────────────────────
+  function fenBoard(fen){
+    return fen.split(' ')[0].split('/').map(function(r){
+      var out=[];
+      for(var i=0;i<r.length;i++){ var ch=r[i];
+        if(/\d/.test(ch)){ for(var k=0;k<+ch;k++) out.push(null); }
+        else out.push({ type: ch.toLowerCase(), color: (ch===ch.toUpperCase())?'w':'b' });
+      }
+      return out;
+    });
+  }
+  function sqName(r,f){ return FILES[f]+(8-r); }
+  function rcOf(name){ return { r: 8-(+name[1]), f: FILES.indexOf(name[0]) }; }
+  function pieceAt(name){ var b=fenBoard(lvFen), p=rcOf(name); return b[p.r][p.f]; }
+  function isStartFen(fen){ return fen.indexOf('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w')===0; }
+  function pieceImg(pc){ return 'assets/piezas/'+pc.color+pc.type.toUpperCase()+'.svg'; }
+
+  // ── Render del tablero ──────────────────────────────────────────────────────
+  function isFlipped(){ return (lvMyColor==='b') !== lvManualFlip; }
+
+  // ── Modo revisión: navegar por jugadas pasadas sin salir de la partida en vivo ──
+  function liveView(){ return lvViewPly===null || lvViewPly>=lvMoves.length; }
+  function curPly(){ return (lvViewPly===null)?lvMoves.length:lvViewPly; }
+  // Posición y última jugada de lo que se está VIENDO (en vivo o una jugada pasada).
+  function computeView(){
+    if(liveView()) return { fen:lvFen, last:lvLastMove, live:true };
+    try {
+      var c=new Chess(), lm=null;
+      for(var i=0;i<lvViewPly;i++) lm=c.move(lvMoves[i]);
+      return { fen:c.fen(), last: lm?{from:lm.from,to:lm.to,san:lm.san}:null, live:false };
+    } catch(e){ return { fen:lvFen, last:lvLastMove, live:true }; }
+  }
+
+  function renderBoard(){
+    var el=$('lv-board'); if(!el) return;
+    var view=computeView();
+    var board=fenBoard(view.fen);
+    var flip=isFlipped();
+    var rs=flip?[7,6,5,4,3,2,1,0]:[0,1,2,3,4,5,6,7];
+    var fs=flip?[7,6,5,4,3,2,1,0]:[0,1,2,3,4,5,6,7];
+    // Puntitos de destinos legales (solo en vivo, en mi turno y con pieza elegida)
+    var dots={};
+    if(view.live && lvSelected && lvChess && lvTurn===lvMyColor && lvStatus==='playing'){
+      try { lvChess.moves({square:lvSelected, verbose:true}).forEach(function(m){ dots[m.to]=true; }); } catch(e){}
+    }
+    // Rey en jaque (de la posición que se ve)
+    var checkSq=null;
+    try { var tc=view.live?lvChess:new Chess(view.fen);
+      if(tc && tc.in_check()){ var kb=board, kc=tc.turn();
+        for(var r=0;r<8;r++) for(var f=0;f<8;f++){ var pc0=kb[r][f]; if(pc0&&pc0.type==='k'&&pc0.color===kc) checkSq=sqName(r,f); }
+      } } catch(e){}
+    var last=view.last;
+    var html='';
+    for(var ri=0;ri<8;ri++){ for(var fi=0;fi<8;fi++){
+      var r=rs[ri], f=fs[fi], name=sqName(r,f);
+      var cls='lv-sq '+(((r+f)%2)?'d':'l');
+      if(name===lvSelected) cls+=' sel';
+      if(last && (last.from===name||last.to===name)) cls+=' last';
+      if(lvPremove && (lvPremove.from===name||lvPremove.to===name)) cls+=' premove';
+      if(name===checkSq) cls+=' check';
+      var pc=board[r][f], inner='';
+      if(pc) inner+='<img src="'+pieceImg(pc)+'" draggable="false">';
+      if(dots[name]) inner+='<span class="lv-dot'+(pc?' cap':'')+'"></span>';
+      html+='<div class="'+cls+'" data-sq="'+name+'">'+inner+'</div>';
+    }}
+    el.innerHTML=html;
+    renderArrows();
+  }
+
+  // ── Flechas y resaltados (clic derecho), en una capa SVG sobre el tablero ─────
+  function displayPos(name){
+    var p=rcOf(name), flip=isFlipped();
+    var dcol=flip?7-p.f:p.f, drow=flip?7-p.r:p.r;
+    return { x:dcol+0.5, y:drow+0.5, col:dcol, row:drow };
+  }
+  function renderArrows(){
+    var svg=$('lv-arrows'); if(!svg) return;
+    var s='';
+    for(var sq in lvHighlights){ if(!lvHighlights[sq]) continue;
+      var h=displayPos(sq);
+      s+='<rect x="'+(h.col+0.04)+'" y="'+(h.row+0.04)+'" width="0.92" height="0.92" rx="0.1" fill="#15a34a" fill-opacity="0.42"/>';
+    }
+    for(var i=0;i<lvArrows.length;i++){
+      var a=displayPos(lvArrows[i].from), b=displayPos(lvArrows[i].to);
+      var dx=b.x-a.x, dy=b.y-a.y, len=Math.sqrt(dx*dx+dy*dy); if(len<0.1) continue;
+      var ux=dx/len, uy=dy/len;
+      var sx=a.x+ux*0.34, sy=a.y+uy*0.34;             // arranca fuera del centro de la pieza
+      var hx=b.x-ux*0.30, hy=b.y-uy*0.30;             // base de la cabeza
+      var w=0.14, hw=0.24;                            // grosor de línea y de cabeza
+      var px=-uy, py=ux;                              // perpendicular
+      s+='<line x1="'+sx+'" y1="'+sy+'" x2="'+hx+'" y2="'+hy+'" stroke="#e8823a" stroke-width="'+w+'" stroke-linecap="round" opacity="0.9"/>';
+      s+='<polygon points="'+b.x+','+b.y+' '+(hx+px*hw)+','+(hy+py*hw)+' '+(hx-px*hw)+','+(hy-py*hw)+'" fill="#e8823a" opacity="0.9"/>';
+    }
+    svg.innerHTML=s;
+  }
+  function clearShapes(){ if(lvArrows.length||Object.keys(lvHighlights).length){ lvArrows=[]; lvHighlights={}; renderArrows(); } }
+  function toggleArrow(from,to){
+    for(var i=0;i<lvArrows.length;i++){ if(lvArrows[i].from===from && lvArrows[i].to===to){ lvArrows.splice(i,1); return; } }
+    lvArrows.push({from:from,to:to});
+  }
+  // Casilla bajo el puntero, calculada por coordenadas del tablero (robusto, como el visor).
+  function sqUnder(e){
+    var board=$('lv-board'); if(!board) return null;
+    var r=board.getBoundingClientRect(); if(!r.width) return null;
+    var x=e.clientX-r.left, y=e.clientY-r.top;
+    if(x<0||y<0||x>=r.width||y>=r.height) return null;
+    var f=Math.floor(x/(r.width/8)), rr=Math.floor(y/(r.height/8));
+    if(f<0||f>7||rr<0||rr>7) return null;
+    if(isFlipped()){ f=7-f; rr=7-rr; }
+    return FILES[f]+(8-rr);
+  }
+
+  // ── Navegación entre jugadas ─────────────────────────────────────────────────
+  function goPly(p){
+    if(p===null || p>=lvMoves.length) lvViewPly=null; else lvViewPly=Math.max(0,p);
+    lvSelected=null; renderBoard(); renderMoves(); updateNav();
+  }
+  function updateNav(){
+    var atStart=(curPly()<=0), atLive=liveView();
+    function dis(id,on){ var e=$(id); if(e) e.disabled=on; }
+    dis('lv-nav-first',atStart); dis('lv-nav-prev',atStart);
+    dis('lv-nav-next',atLive); dis('lv-nav-last',atLive);
+  }
+
+  // ── Notación de jugadas (columna derecha) ───────────────────────────────────
+  function esc(s){ return String(s).replace(/[<>&]/g, function(c){ return c==='<'?'&lt;':c==='>'?'&gt;':'&amp;'; }); }
+  function renderMoves(){
+    var el=$('lv-moves'); if(!el) return;
+    if(!lvMoves.length){ el.innerHTML='<div class="lv-moves-empty">Sin jugadas todavía.</div>'; return; }
+    var cur=curPly(), n=lvMoves.length, html='';
+    for(var i=0;i<n;i+=2){
+      var num=(i/2)+1, w=lvMoves[i], b=lvMoves[i+1];
+      html+='<div class="lv-mv-row"><span class="lv-mv-num">'+num+'.</span>'+
+            '<span class="lv-mv-san'+((cur===i+1)?' last':'')+'" data-ply="'+(i+1)+'">'+esc(w)+'</span>'+
+            (b?'<span class="lv-mv-san'+((cur===i+2)?' last':'')+'" data-ply="'+(i+2)+'">'+esc(b)+'</span>':'<span></span>')+
+            '</div>';
+    }
+    el.innerHTML=html;
+    var hl=el.querySelector('.lv-mv-san.last');
+    if(hl){ el.scrollTop=Math.max(0, hl.offsetTop-el.clientHeight/2); } else el.scrollTop=el.scrollHeight;
+  }
+
+  // ── PGN / FEN ───────────────────────────────────────────────────────────────
+  function pad2(n){ return (n<10?'0':'')+n; }
+  function resultCode(r){
+    switch(r&&r.reason){
+      case 'checkmate': return r.winner==='w'?'1-0':'0-1';
+      case 'flag': case 'resign': case 'abandon': return r.by==='w'?'0-1':'1-0';
+      case 'flag-draw': case 'draw-agree': case 'stalemate': case 'material':
+      case 'threefold': case 'fifty': case 'draw': return '1/2-1/2';
+      default: return '*';
+    }
+  }
+  function buildPGN(){
+    var wN=lvNames.w||'Blancas', bN=lvNames.b||'Negras', res=lvResultCode||'*';
+    var d=new Date(), ds=d.getFullYear()+'.'+pad2(d.getMonth()+1)+'.'+pad2(d.getDate());
+    var h='[Event "Partida en vivo — ChessArgentino"]\n[Site "chessargentino.ar"]\n[Date "'+ds+'"]\n'+
+          '[White "'+wN+'"]\n[Black "'+bN+'"]\n[Result "'+res+'"]\n\n';
+    var mv='';
+    for(var i=0;i<lvMoves.length;i++){ if(i%2===0) mv+=((i/2)+1)+'. '; mv+=lvMoves[i]+' '; }
+    return h+(mv+res).trim()+'\n';
+  }
+  function clip(text, btn, okLabel){
+    var prev=btn?btn.textContent:'';
+    var done=function(){ if(btn){ btn.textContent=okLabel||'✓ Copiado'; setTimeout(function(){ btn.textContent=prev; },1500); } };
+    if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done).catch(function(){ done(); });
+    else { try { var ta=document.createElement('textarea'); ta.value=text; ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); } catch(e){} done(); }
+  }
+
+  // ── Tamaño del tablero (redimensionar) + girar ──────────────────────────────
+  function flipBoard(){ lvManualFlip=!lvManualFlip; renderBoard(); renderClocks(); updateNames(); }
+
+  // ── Sonidos propios del vivo (inicio / fin / oferta de tablas / poco tiempo) ──
+  function tone(freqs, dur, type, vol){
+    try {
+      var c=_getAudioCtx(), t=c.currentTime;
+      freqs.forEach(function(fr,i){
+        var o=c.createOscillator(), g=c.createGain();
+        o.connect(g); g.connect(c.destination); o.type=type||'sine'; o.frequency.value=fr;
+        var t0=t+i*(dur*0.7);
+        g.gain.setValueAtTime(vol||0.18, t0);
+        g.gain.exponentialRampToValueAtTime(0.001, t0+dur);
+        o.start(t0); o.stop(t0+dur);
+      });
+    } catch(e){}
+  }
+  function sndStart(){ tone([523,784], 0.16, 'sine', 0.2); }
+  function sndEnd(){ tone([392,262], 0.28, 'triangle', 0.2); }
+  function sndDraw(){ tone([660,660], 0.18, 'sine', 0.16); }
+  function sndLow(){ tone([880], 0.12, 'square', 0.14); }
+
+  // ── Reloj (cálculo por marca temporal, inmune a pestañas de fondo) ──────────
+  function fmt(ms){ if(ms==null) return '--:--'; ms=Math.max(0,ms);
+    var tot=Math.ceil(ms/1000), m=Math.floor(tot/60), s=String(tot%60).padStart(2,'0');
+    return m+':'+s;
+  }
+  function liveMs(side){
+    if(!lvClock) return null;
+    var v=(side==='w')?lvClock.w:lvClock.b; if(v==null) return null;
+    if(lvClock.running===side && lvStatus==='playing') v-=(Date.now()-lvClockSyncAt);
+    return Math.max(0,v);
+  }
+  function applyClock(clk){
+    lvClock=clk?{w:clk.w,b:clk.b,running:clk.running,inc:clk.inc}:null;
+    lvClockSyncAt=Date.now();
+    if(!lvClock) lvLowWarned=false;
+    renderClocks();
+  }
+  function renderClocks(){
+    var hasClock=!!lvClock;
+    var bottom=isFlipped()?'b':'w', top=(bottom==='w')?'b':'w';
+    var eb=$('lv-clk-bot'), et=$('lv-clk-top');
+    if(!eb||!et) return;
+    if(!hasClock){ eb.textContent='—'; et.textContent='—'; eb.className='lv-clock lv-idle'; et.className='lv-clock lv-idle'; return; }
+    var mb=liveMs(bottom), mt=liveMs(top);
+    eb.textContent=fmt(mb); et.textContent=fmt(mt);
+    eb.className='lv-clock'+(lvClock.running===bottom?' lv-run':' lv-idle')+((mb!=null&&mb<10000)?' lv-low':'');
+    et.className='lv-clock'+(lvClock.running===top?' lv-run':' lv-idle')+((mt!=null&&mt<10000)?' lv-low':'');
+    // aviso de poco tiempo (una sola vez), solo para mi reloj
+    if(lvClock.running===lvMyColor && mb!=null && mb<10000 && mb>0 && !lvLowWarned){ lvLowWarned=true; sndLow(); }
+    if(mb!=null && mb>=10000) lvLowWarned=false;
+  }
+  function startTicker(){ if(!lvTicker) lvTicker=setInterval(renderClocks,250); }
+
+  // ── Wake lock (pantalla del teléfono encendida; solo https) ──────────────────
+  function acquireWake(){ try {
+    if('wakeLock' in navigator && !lvWakeLock && document.visibilityState==='visible'){
+      navigator.wakeLock.request('screen').then(function(l){ lvWakeLock=l; l.addEventListener('release',function(){ lvWakeLock=null; }); }).catch(function(){});
+    }
+  } catch(e){} }
+  function releaseWake(){ try { if(lvWakeLock){ lvWakeLock.release(); lvWakeLock=null; } } catch(e){} }
+  document.addEventListener('visibilitychange', function(){
+    if(document.visibilityState==='visible' && lvStatus==='playing') acquireWake();
+  });
+
+  // ── Interacción: clic-clic + arrastre (pointer events) + premove ─────────────
+  function needsPromo(from,to){ var pc=pieceAt(from); return !!(pc && pc.type==='p' && (to[1]==='8'||to[1]==='1')); }
+
+  function onTap(name){
+    if(lvStatus!=='playing' || lvMyColor==='spec') return;
+    var pc=pieceAt(name);
+    if(lvSelected){
+      if(name===lvSelected){ lvSelected=null; renderBoard(); return; }
+      if(pc && pc.color===lvMyColor){ lvSelected=name; renderBoard(); return; }
+      var from=lvSelected; lvSelected=null; tryUserMove(from,name); return;
+    }
+    if(pc && pc.color===lvMyColor){ lvSelected=name; renderBoard(); }
+    else if(lvPremove){ lvPremove=null; renderBoard(); }   // clic fuera cancela el premove
+  }
+
+  function tryUserMove(from,to){
+    var myTurn=(lvTurn===lvMyColor);
+    if(!myTurn){
+      // Premove: encolar (sin validar del todo; se dispara al llegar mi turno).
+      var tp=pieceAt(to); if(tp && tp.color===lvMyColor){ lvSelected=null; renderBoard(); return; }
+      var promo; if(needsPromo(from,to)) promo='q';
+      lvPremove={from:from,to:to,promotion:promo}; lvSelected=null; renderBoard(); return;
+    }
+    var legal=[]; try { legal=lvChess.moves({square:from,verbose:true}).filter(function(m){return m.to===to;}); } catch(e){}
+    if(!legal.length){ lvSelected=null; renderBoard(); return; }
+    if(needsPromo(from,to)){ showPromo(from,to); return; }
+    doMove(from,to,undefined);
+  }
+
+  function doMove(from,to,promo){
+    var mv=null; try { mv=lvChess.move({from:from,to:to,promotion:promo}); } catch(e){ mv=null; }
+    if(!mv){ lvSelected=null; renderBoard(); return; }
+    lvFen=lvChess.fen(); lvTurn=lvChess.turn();
+    lvLastMove={from:from,to:to,san:mv.san};
+    lvPendingSoundId=from+to+lvFen;
+    try { cvPlayMoveSound(mv.san); } catch(e){}
+    lvMoves.push(mv.san); lvPrevMovesLen=lvMoves.length; lvViewPly=null;
+    lvSelected=null; lvPremove=null; clearShapes();
+    renderBoard(); updateControls(); renderMoves(); updateNav();
+    send({type:'move',from:from,to:to,promotion:promo});
+    setStatus(myTurnText());
+  }
+
+  function showPromo(from,to){
+    hidePromo();
+    var el=$('lv-promo'); if(!el) return;
+    var pieces=['q','r','b','n'];
+    var html='<div class="lv-promo-inner">';
+    pieces.forEach(function(p){ html+='<img data-p="'+p+'" src="assets/piezas/'+lvMyColor+p.toUpperCase()+'.svg">'; });
+    html+='</div>';
+    el.innerHTML=html; el.style.display='flex';
+    el.querySelectorAll('img').forEach(function(img){
+      img.addEventListener('click', function(){ hidePromo(); doMove(from,to,img.getAttribute('data-p')); });
+    });
+    el.addEventListener('click', function bg(ev){ if(ev.target===el){ hidePromo(); lvSelected=null; renderBoard(); } }, {once:true});
+  }
+  function hidePromo(){ var el=$('lv-promo'); if(el){ el.style.display='none'; el.innerHTML=''; } }
+
+  function wireBoard(){
+    var board=$('lv-board'); if(!board || board._lvWired) return; board._lvWired=true;
+    board.addEventListener('contextmenu', function(e){ e.preventDefault(); });
+    board.addEventListener('pointerdown', function(e){
+      var sq=e.target.closest ? e.target.closest('.lv-sq') : null;
+      var name=sq?sq.getAttribute('data-sq'):null;
+      // Clic DERECHO: empezar una flecha o un resaltado (permitido siempre, hasta mirando/revisando).
+      if(e.button===2){ if(name) lvRmDown={from:name}; e.preventDefault(); return; }
+      if(e.button!==0 && e.button!==undefined) return;
+      // Clic IZQUIERDO: limpia flechas/resaltados dibujados.
+      clearShapes();
+      // Si estás revisando una jugada pasada, el primer clic vuelve a la posición actual.
+      if(!liveView()){ lvViewPly=null; lvSuppressClick=true; renderBoard(); renderMoves(); updateNav(); return; }
+      if(lvStatus!=='playing' || lvMyColor==='spec' || !name) return;
+      var pc=pieceAt(name);
+      if(!(pc && pc.color===lvMyColor)) return;
+      lvDrag={from:name, x:e.clientX, y:e.clientY, moved:false, ghost:null, pc:pc};
+    });
+    board.addEventListener('pointermove', function(e){
+      if(!lvDrag) return;
+      if(!lvDrag.moved){
+        if(Math.abs(e.clientX-lvDrag.x)+Math.abs(e.clientY-lvDrag.y)<7) return;
+        lvDrag.moved=true; lvSelected=lvDrag.from; renderBoard();
+        var g=document.createElement('div'); g.className='lv-drag-ghost';
+        g.innerHTML='<img src="'+pieceImg(lvDrag.pc)+'" style="width:100%;height:100%">';
+        document.body.appendChild(g); lvDrag.ghost=g;
+        var src=board.querySelector('[data-sq="'+lvDrag.from+'"]'); if(src) src.classList.add('dragging');
+      }
+      if(lvDrag.ghost){ lvDrag.ghost.style.left=e.clientX+'px'; lvDrag.ghost.style.top=e.clientY+'px'; }
+      e.preventDefault();
+    });
+    window.addEventListener('pointerup', function(e){
+      // Cierre de una flecha/resaltado con clic derecho.
+      if(lvRmDown){ var rf=lvRmDown.from; lvRmDown=null; var rt=sqUnder(e);
+        if(rf && rt){ if(rf===rt){ lvHighlights[rf]=!lvHighlights[rf]; } else { toggleArrow(rf,rt); } renderArrows(); }
+        return; }
+      if(!lvDrag) return; var d=lvDrag; lvDrag=null;
+      if(d.ghost) d.ghost.remove();
+      if(!d.moved) return;   // fue un toque, lo maneja el 'click'
+      lvSuppressClick=true;
+      var to=sqUnder(e);
+      if(to && to!==d.from){ lvSelected=null; tryUserMove(d.from,to); }
+      else { lvSelected=null; renderBoard(); }
+    });
+    board.addEventListener('click', function(e){
+      if(lvSuppressClick){ lvSuppressClick=false; return; }
+      var sq=e.target.closest ? e.target.closest('.lv-sq') : null; if(!sq) return;
+      onTap(sq.getAttribute('data-sq'));
+    });
+  }
+
+  // ── Textos de estado y de resultado ─────────────────────────────────────────
+  function setStatus(html){ var el=$('lv-status'); if(el) el.innerHTML=html; }
+  function myTurnText(){
+    if(lvStatus!=='playing') return '';
+    if(lvMyColor==='spec') return 'Mirando la partida — juegan '+(lvNames.w||'Blancas')+' vs '+(lvNames.b||'Negras');
+    var t=(lvTurn===lvMyColor)?'<b>Tu turno</b>':'Turno del rival';
+    var opp=(lvMyColor==='w')?'b':'w';
+    var connKey=(opp==='w')?'connW':'connB';
+    if(lvPlayers && lvPlayers[connKey]===false) t+=' · <span style="color:var(--red)">rival reconectando…</span>';
+    return t;
+  }
+
+  // Devuelve {out:'win'|'lose'|'draw', title, sub}. `r` = {reason, by, winner}
+  function describeResult(r){
+    var me=lvMyColor, spec=(me==='spec');
+    function whoWins(color){ return color==='w'?(lvNames.w||'Blancas'):(lvNames.b||'Negras'); }
+    function win(sub){ return {out:'win', title:'¡Ganaste!', sub:sub}; }
+    function lose(sub){ return {out:'lose', title:'Perdiste', sub:sub}; }
+    function draw(sub){ return {out:'draw', title:'Tablas', sub:sub}; }
+    function specWin(color,sub){ return {out:'draw', title:'Ganan '+(color==='w'?'blancas':'negras'), sub:sub}; }
+    switch(r.reason){
+      case 'checkmate':
+        if(spec) return specWin(r.winner,'Jaque mate');
+        return (r.winner===me)?win('Jaque mate'):lose('Jaque mate');
+      case 'flag':
+        if(spec) return specWin(r.by==='w'?'b':'w','Caída de bandera');
+        return (r.by===me)?lose('Te quedaste sin tiempo'):win('Tu rival se quedó sin tiempo');
+      case 'flag-draw': return draw('Bandera con material insuficiente');
+      case 'resign':
+        if(spec) return specWin(r.by==='w'?'b':'w','Abandono');
+        return (r.by===me)?lose('Abandonaste'):win('Tu rival abandonó');
+      case 'abandon':
+        if(spec) return specWin(r.by==='w'?'b':'w','Desconexión');
+        return (r.by===me)?lose('Te desconectaste'):win('Tu rival se desconectó');
+      case 'abort': return {out:'draw', title:'Partida abortada', sub:'No cuenta como resultado'};
+      case 'draw-agree': return draw('Tablas acordadas');
+      case 'stalemate': return draw('Rey ahogado');
+      case 'material': return draw('Material insuficiente');
+      case 'threefold': return draw('Triple repetición');
+      case 'fifty': return draw('Regla de las 50 jugadas');
+      default: return draw('Fin de la partida');
+    }
+  }
+
+  function showResult(r){
+    var d=describeResult(r);
+    lvResultCode=resultCode(r);
+    var el=$('lv-banner'); if(!el) return;
+    var color = d.out==='win' ? '#7dd88a' : d.out==='lose' ? '#ff8a8a' : '#f0d98a';
+    el.innerHTML='<div class="lv-b-title" style="color:'+color+'">'+d.title+'</div>'+
+                 '<div class="lv-b-sub">'+d.sub+'</div>';
+    el.style.display='flex';
+    setStatus(d.title+' · '+d.sub);
+    if(!lvEndSoundDone){ lvEndSoundDone=true; sndEnd(); }
+    updateControls();
+  }
+  function hideBanner(){ var el=$('lv-banner'); if(el){ el.style.display='none'; el.innerHTML=''; } }
+
+  // ── Actualización de nombres, controles y oferta de tablas ──────────────────
+  function updateNames(){
+    var bottom=isFlipped()?'b':'w', top=(bottom==='w')?'b':'w';
+    function label(color){
+      var nm=lvNames[color] || (color==='w'?'Blancas':'Negras');
+      var mine=(color===lvMyColor);
+      var connKey=(color==='w')?'connW':'connB';
+      var dis=(lvPlayers && lvPlayers[connKey]===false && lvPlayers[color==='w'?'w':'b']) ? ' <span class="lv-conn">(reconectando…)</span>' : '';
+      return (color==='w'?'⚪ ':'⚫ ')+nm+(mine?' <span style="color:var(--text3)">(vos)</span>':'')+dis;
+    }
+    var nb=$('lv-name-bot'), nt=$('lv-name-top');
+    if(nb) nb.innerHTML=label(bottom);
+    if(nt) nt.innerHTML=label(top);
+  }
+  function updateControls(){
+    var playing=(lvStatus==='playing'), finished=(lvStatus==='finished');
+    var amPlayer=(lvMyColor==='w'||lvMyColor==='b');
+    var noMoves=(!lvLastMove && isStartFen(lvFen));
+    function show(id,on){ var e=$(id); if(e) e.style.display=on?'':'none'; }
+    show('lv-abort', playing && amPlayer && noMoves);
+    show('lv-offerdraw', playing && amPlayer && !lvDrawOffer);
+    show('lv-resign', playing && amPlayer);
+    show('lv-rematch', finished && amPlayer);
+    var rm=$('lv-rematch'); if(rm && finished){ rm.disabled=false; rm.textContent='Revancha 🔁'; }
+  }
+  function updateDrawPrompt(){
+    var el=$('lv-drawprompt'); if(!el) return;
+    var incoming=(lvDrawOffer && lvDrawOffer!==lvMyColor && lvStatus==='playing' && lvMyColor!=='spec');
+    el.style.display=incoming?'flex':'none';
+  }
+
+  // ── Conexión / mensajes ─────────────────────────────────────────────────────
+  function send(o){ if(ws && ws.readyState===1) ws.send(JSON.stringify(o)); }
+  function maybeSendConfig(){
+    if(lvMyColor==='w' && lvStatus==='waiting'){
+      var v=($('lv-tc')&&$('lv-tc').value)||'0,0'; var parts=v.split(',');
+      send({type:'config', base:+parts[0]||0, inc:+parts[1]||0});
+    }
+  }
+
+  function applyState(m){
+    var prev=lvStatus, wasLive=liveView();
+    lvFen=m.fen; try { lvChess=new Chess(m.fen); } catch(e){ lvChess=new Chess(); }
+    lvTurn=m.turn; lvStatus=m.status;
+    if(m.names) lvNames=m.names; if(m.players) lvPlayers=m.players;
+    if(m.moves){ if(m.moves.length>lvPrevMovesLen) clearShapes(); lvMoves=m.moves; }
+    if(m.lastMove) lvLastMove=m.lastMove;
+    // Modo revisión: si estabas en vivo seguís en vivo; si mirabas una jugada pasada, te quedás ahí.
+    if(wasLive) lvViewPly=null; else lvViewPly=Math.min(lvViewPly, lvMoves.length);
+    lvPrevMovesLen=lvMoves.length;
+    lvDrawOffer=('drawOffer' in m)?(m.drawOffer||null):lvDrawOffer;
+    // sonido de la jugada (evita duplicar con la que ya sonó localmente)
+    if(m.lastMove){
+      var id=m.lastMove.from+m.lastMove.to+m.fen;
+      if(id!==lvPendingSoundId && id!==lvLastSoundId){ try { cvPlayMoveSound(m.lastMove.san); } catch(e){} }
+      lvLastSoundId=id;
+    }
+    lvPendingSoundId=null;
+    if('clock' in m) applyClock(m.clock);
+    if(prev!=='playing' && lvStatus==='playing'){ sndStart(); lvEndSoundDone=false; }
+    if(lvStatus==='playing') acquireWake(); else releaseWake();
+    lvSelected=null;
+    renderBoard(); updateNames(); renderClocks(); updateControls(); updateDrawPrompt(); renderMoves(); updateNav();
+    if(lvStatus!=='finished') hideBanner();
+    updateShare();
+    // Disparo del premove al llegar mi turno
+    if(lvPremove && lvTurn===lvMyColor && lvStatus==='playing'){
+      var p=lvPremove; lvPremove=null;
+      var ok=false; try { ok=lvChess.moves({square:p.from,verbose:true}).some(function(x){return x.to===p.to;}); } catch(e){}
+      if(ok) doMove(p.from,p.to,p.promotion); else renderBoard();
+    }
+    if(lvStatus==='finished' && m.gameOver) showResult(m.gameOver);
+    else if(lvStatus!=='finished') setStatus(waitingOrTurnText());
+  }
+  function waitingOrTurnText(){
+    if(lvStatus==='waiting'){
+      if(lvMyColor==='w' && !lvPlayers.b) return 'Esperando a que entre tu rival… (compartí el link 👆)';
+      return 'Esperando para empezar…';
+    }
+    return myTurnText();
+  }
+
+  function connect(id){
+    var base=serverBase();
+    var url=base.replace(/^http/,'ws')+'/sala/'+id+'/ws';
+    var nm=''; try { nm=(localStorage.getItem('lv_name')||'').slice(0,24); } catch(e){}
+    var q=[]; if(lvToken) q.push('token='+encodeURIComponent(lvToken)); if(nm) q.push('name='+encodeURIComponent(nm));
+    if(q.length) url+='?'+q.join('&');
+    try { ws=new WebSocket(url); } catch(e){ setStatus('No pude conectar ⚠️'); return; }
+    ws.onopen=function(){ lvReconnectTries=0; };
+    ws.onmessage=function(e){
+      var m; try { m=JSON.parse(e.data); } catch(_){ return; }
+      handle(m);
+    };
+    ws.onclose=function(){
+      if(lvIntentionalClose) return;
+      if(lvStatus==='finished') return;
+      // Reintento con backoff: el token nos devuelve al mismo asiento.
+      if(lvReconnectTries<8){
+        lvReconnectTries++;
+        setStatus('Conexión perdida — reconectando… ('+lvReconnectTries+')');
+        lvReconnectTimer=setTimeout(function(){ if(lvSala) connect(lvSala); }, Math.min(1500*lvReconnectTries, 6000));
+      } else { setStatus('No se pudo reconectar. Tocá "Salir" y volvé a entrar por el link.'); }
+    };
+    ws.onerror=function(){};
+  }
+
+  function handle(m){
+    if(m.type==='init'){
+      lvMyColor=m.color;
+      if(m.token){ lvToken=m.token; try { localStorage.setItem('lv_tok_'+lvSala, lvToken); } catch(e){} }
+      lvNames=m.names||{}; lvPlayers=m.players||{};
+      lvEndSoundDone=false;
+      applyState(m);
+      maybeSendConfig();
+      updateShare();
+    } else if(m.type==='state'){
+      applyState(m);
+    } else if(m.type==='illegal'){
+      lvSelected=null; lvPremove=null; renderBoard();
+      setStatus('Jugada ilegal ✋'); setTimeout(function(){ if(lvStatus==='playing') setStatus(myTurnText()); }, 1200);
+    } else if(m.type==='gameover'){
+      lvStatus='finished'; if(lvClock) lvClock.running=null; renderClocks();
+      releaseWake(); showResult(m); updateControls();
+    } else if(m.type==='draw-offered'){
+      if(m.by===lvMyColor){ setStatus('Ofreciste tablas — esperando respuesta…'); }
+      else { lvDrawOffer=m.by; sndDraw(); updateDrawPrompt(); updateControls(); }
+    } else if(m.type==='draw-declined'){
+      lvDrawOffer=null; updateDrawPrompt(); updateControls();
+      if(!m.auto) setStatus('Tablas rechazadas.');
+      setTimeout(function(){ if(lvStatus==='playing') setStatus(myTurnText()); }, 1200);
+    } else if(m.type==='rematch-offer'){
+      if(m.by===lvMyColor){ var rm=$('lv-rematch'); if(rm){ rm.textContent='Esperando al rival…'; rm.disabled=true; } }
+      else setStatus('🔁 Tu rival quiere la revancha — tocá "Revancha".');
+    } else if(m.type==='newgame'){
+      lvMyColor=m.color; lvLastMove=null; lvPremove=null; lvLastSoundId=null; lvEndSoundDone=false;
+      lvMoves=[]; lvResultCode='*'; lvViewPly=null; lvPrevMovesLen=0; lvNames=m.names||lvNames; clearShapes(); hideBanner();
+      applyState(m);
+    } else if(m.type==='opponent-disconnected'){
+      lvPlayers[m.color==='w'?'connW':'connB']=false; updateNames();
+      setStatus('Rival desconectado — esperando que vuelva…');
+    } else if(m.type==='opponent-reconnected'){
+      lvPlayers[m.color==='w'?'connW':'connB']=true; updateNames();
+      if(lvStatus==='playing') setStatus(myTurnText());
+    }
+  }
+
+  function updateShare(){
+    var el=$('lv-share'); if(!el) return;
+    var showIt=(lvStatus==='waiting' && lvMyColor==='w' && !lvPlayers.b);
+    el.style.display=showIt?'':'none';
+    if(showIt){
+      // En modo dev el link arrastra &vivolocal=1 para que la 2ª ventana también use el arbitrito local.
+      var link=location.origin+location.pathname+'?sala='+lvSala+(isDev()?'&vivolocal=1':'');
+      var inp=$('lv-link'); if(inp) inp.value=link;
+    }
+  }
+
+  // ── Navegación entre lobby y juego ──────────────────────────────────────────
+  function showGame(){ $('lv-lobby').style.display='none'; $('lv-game').style.display=''; }
+  function showLobby(){ $('lv-game').style.display='none'; $('lv-lobby').style.display=''; }
+  // Mantenemos ?sala=<id> en la URL DURANTE la partida: así un F5 / corte de wifi
+  // vuelve al mismo asiento (init la relee y reingresa con el token guardado).
+  function setSalaUrl(id){ try { history.replaceState({}, '', location.pathname+'?sala='+id+(isDev()?'&vivolocal=1':'')); } catch(e){} }
+
+  function resetState(){
+    lvMyColor=null; lvFen='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+    lvChess=null; lvTurn='w'; lvStatus='waiting'; lvLastMove=null; lvNames={}; lvPlayers={};
+    lvSelected=null; lvPremove=null; lvDrawOffer=null; lvClock=null; lvLowWarned=false;
+    lvPendingSoundId=null; lvLastSoundId=null; lvEndSoundDone=false;
+    lvMoves=[]; lvManualFlip=false; lvResultCode='*';
+    lvArrows=[]; lvHighlights={}; lvRmDown=null; lvViewPly=null; lvPrevMovesLen=0;
+    hideBanner(); hidePromo(); renderMoves(); renderArrows(); updateNav();
+  }
+
+  function create(){
+    var base=serverBase();
+    setLobbyMsg('');
+    try { localStorage.setItem('lv_name', ($('lv-name').value||'').trim().slice(0,24)); } catch(e){}
+    $('lv-create').disabled=true;
+    fetch(base+'/sala/nueva', {method:'POST'})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        $('lv-create').disabled=false;
+        if(!d || !d.id){ setLobbyMsg('No pude crear la sala ⚠️'); return; }
+        lvSala=d.id; lvToken=''; try { localStorage.removeItem('lv_tok_'+d.id); } catch(e){}
+        resetState(); showGame(); wireBoard(); startTicker(); renderBoard(); setSalaUrl(d.id);
+        lvIntentionalClose=false; connect(d.id);
+      })
+      .catch(function(){ $('lv-create').disabled=false; setLobbyMsg('No pude crear la sala. ¿Hay internet? ¿El arbitrito está publicado?'); });
+  }
+  function join(id){
+    id=(id||'').trim().replace(/[^A-Za-z0-9_-]/g,''); if(!id) return;
+    lvSala=id; try { lvToken=localStorage.getItem('lv_tok_'+id)||''; } catch(e){ lvToken=''; }
+    // Solo pisar el nombre guardado si el campo del lobby trae algo (en el deep-link está vacío).
+    try { var nm=($('lv-name')&&$('lv-name').value||'').trim().slice(0,24); if(nm) localStorage.setItem('lv_name', nm); } catch(e){}
+    resetState(); showGame(); wireBoard(); startTicker(); renderBoard(); setSalaUrl(id);
+    lvIntentionalClose=false; connect(id);
+  }
+  function exit(){
+    lvIntentionalClose=true; if(lvReconnectTimer) clearTimeout(lvReconnectTimer);
+    try { if(ws) ws.close(); } catch(e){} ws=null;
+    resetState(); showLobby(); setStatus('');
+    if(location.search.indexOf('sala=')>=0){ try { history.replaceState({}, '', location.pathname); } catch(e){} }
+  }
+  function setLobbyMsg(t){ var e=$('lv-lobby-msg'); if(e) e.textContent=t||''; }
+
+  // ── Cableado de botones ─────────────────────────────────────────────────────
+  function wireButtons(){
+    var b;
+    if((b=$('lv-create'))) b.onclick=create;
+    if((b=$('lv-join'))) b.onclick=function(){ join($('lv-join-id').value); };
+    if((b=$('lv-join-id'))) b.onkeydown=function(e){ if(e.key==='Enter') join(b.value); };
+    if((b=$('lv-copy'))) b.onclick=function(){
+      var inp=$('lv-link'); if(!inp) return; inp.select();
+      var done=function(){ b.textContent='✓ Copiado'; setTimeout(function(){ b.textContent='Copiar'; },1500); };
+      if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(inp.value).then(done).catch(function(){ try{document.execCommand('copy');}catch(_){}done(); });
+      else { try{document.execCommand('copy');}catch(_){}done(); }
+    };
+    if((b=$('lv-resign'))) b.onclick=function(){ if(lvStatus==='playing' && confirm('¿Seguro que querés rendirte?')) send({type:'resign'}); };
+    if((b=$('lv-abort'))) b.onclick=function(){ send({type:'abort'}); };
+    if((b=$('lv-offerdraw'))) b.onclick=function(){ send({type:'draw-offer'}); setStatus('Ofreciste tablas — esperando respuesta…'); };
+    if((b=$('lv-draw-yes'))) b.onclick=function(){ send({type:'draw-accept'}); updateDrawPrompt(); };
+    if((b=$('lv-draw-no'))) b.onclick=function(){ send({type:'draw-decline'}); lvDrawOffer=null; updateDrawPrompt(); updateControls(); };
+    if((b=$('lv-rematch'))) b.onclick=function(){ send({type:'rematch'}); b.textContent='Esperando al rival…'; b.disabled=true; };
+    if((b=$('lv-exit'))) b.onclick=exit;
+    if((b=$('lv-copypgn'))) b.onclick=function(){ clip(buildPGN(), b, '✓ PGN copiado'); };
+    if((b=$('lv-copyfen'))) b.onclick=function(){ clip(computeView().fen, b, '✓ FEN copiado'); };
+    // Barra de navegación (columna derecha) — como el visor
+    if((b=$('lv-nav-first'))) b.onclick=function(){ goPly(0); };
+    if((b=$('lv-nav-prev'))) b.onclick=function(){ goPly(curPly()-1); };
+    if((b=$('lv-nav-next'))) b.onclick=function(){ goPly(curPly()+1); };
+    if((b=$('lv-nav-last'))) b.onclick=function(){ goPly(null); };
+    if((b=$('lv-nav-flip'))) b.onclick=flipBoard;
+    if((b=$('lv-nav-color'))) b.onclick=function(){ if(typeof toggleBoard==='function') toggleBoard(); };
+    // Navegar tocando una jugada de la lista
+    var mvEl=$('lv-moves'); if(mvEl && !mvEl._lvWired){ mvEl._lvWired=true; mvEl.addEventListener('click', function(e){ var s=e.target.closest?e.target.closest('.lv-mv-san'):null; if(s && s.getAttribute('data-ply')!=null) goPly(+s.getAttribute('data-ply')); }); }
+    // Redimensionar arrastrando la esquina inferior derecha (mismo mecanismo que el visor)
+    if(typeof _puzBindBoardResize==='function') _puzBindBoardResize('lv-resize','lv-game','lv-board','lv_board_size');
+    if(typeof _puzApplyBoardSize==='function') _puzApplyBoardSize('lv-game','lv_board_size');
+    // Nombre guardado
+    try { var nm=localStorage.getItem('lv_name'); if(nm && $('lv-name')) $('lv-name').value=nm; } catch(e){}
+  }
+
+  // ── Arranque ────────────────────────────────────────────────────────────────
+  function init(){
+    wireButtons();
+    // Deep-link: ?sala=<id> → ir a "Jugar en vivo" y unirse a la sala.
+    var sala=null; try { sala=new URLSearchParams(location.search||'').get('sala'); } catch(e){}
+    if(sala){
+      // goTo limpia la URL; join() la vuelve a poner en ?sala=<id> (para que F5 reingrese).
+      try { var btn=document.querySelector('.nav-btn[onclick*="\'vivo\'"]'); if(typeof goTo==='function') goTo('vivo', btn); } catch(e){}
+      join(sala);
+    }
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', init); else init();
+})();
+</script>
 
 </body></html>
