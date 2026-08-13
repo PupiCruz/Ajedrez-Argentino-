@@ -20460,6 +20460,13 @@ function _getArgFideSet() {
 // _isArgPlayer usa PLAYERS entero; _isArgAdicionalName usa solo los adicionales argentinos (para el
 // filtro "Solo argentinos" de la tabla de Chess-Results, donde el adicional viene con bandera
 // extranjera y sin fide_id, así que no lo agarran ni la FED ni el fide_id).
+// Partículas de apellidos compuestos (di/de/del/da/van/von/dos/la…). La app supone "último token =
+// apellido, el resto = nombres de pila", así que para el argentino "Guillermo Di Benedetto" tomaba
+// "di" como NOMBRE → cualquier extranjero "Di Benedetto Edoardo" (que también tiene "di") matcheaba.
+// No se usan como nombre de pila para decidir el match. VALIDADO sobre 7.532 nombres de tabla: saca 3
+// falsos positivos extranjeros (Di Benedetto italiano, "De Lima"/"Macedo" brasileños), 0 legítimos.
+var _NAME_PARTICLES = {di:1,de:1,del:1,della:1,dello:1,degli:1,da:1,das:1,dos:1,do:1,van:1,von:1,der:1,den:1,du:1,la:1,le:1,las:1,los:1,san:1,santa:1,santo:1,mac:1,mc:1,vander:1};
+function _isNameParticle(t){ return _NAME_PARTICLES[t] === 1; }
 function _pgnNameMatchesList(pgnName, list) {
   if (!pgnName) return false;
   var i, j, p, ptoks, pLast, pFirst, fn;
@@ -20468,7 +20475,7 @@ function _pgnNameMatchesList(pgnName, list) {
     var parts = pgnName.split(',');
     var pgnLastNorm  = normStr(parts[0].trim()); // ej. "gomez alvarez"
     var pgnFirstNorm = normStr(parts[1].trim()); // ej. "alejandro"
-    var pgnFToks  = pgnFirstNorm.split(' ').filter(function(t){ return t.length > 1; });
+    var pgnFToks  = pgnFirstNorm.split(' ').filter(function(t){ return t.length > 1 && !_isNameParticle(t); });
     var pgnFToks1 = pgnFirstNorm.split(' ').filter(function(t){ return t.length === 1; });
     for (i = 0; i < list.length; i++) {
       p = list[i];
@@ -20478,7 +20485,7 @@ function _pgnNameMatchesList(pgnName, list) {
       // El apellido PGN debe ser exactamente pLast o terminar en " pLast"
       // "gomez alvarez" no termina en "gomez" → no matchea "Alejandro Gomez"
       if (pgnLastNorm !== pLast && !pgnLastNorm.endsWith(' ' + pLast)) continue;
-      pFirst = ptoks.slice(0, ptoks.length - 1);
+      pFirst = ptoks.slice(0, ptoks.length - 1).filter(function(t){ return !_isNameParticle(t); });
       if (!pFirst.length) return true;
       for (j = 0; j < pFirst.length; j++) {
         fn = pFirst[j];
@@ -20499,7 +20506,7 @@ function _pgnNameMatchesList(pgnName, list) {
       if (!ptoks.length) continue;
       pLast = ptoks[ptoks.length - 1];
       if (ntoks.indexOf(pLast) < 0) continue;
-      pFirst = ptoks.slice(0, ptoks.length - 1);
+      pFirst = ptoks.slice(0, ptoks.length - 1).filter(function(t){ return !_isNameParticle(t); });
       if (!pFirst.length) return true;
       for (j = 0; j < pFirst.length; j++) {
         fn = pFirst[j];
