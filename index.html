@@ -8604,7 +8604,7 @@ async function _crEnsureLiveRating(player) {
       var here = _crKeysForTour(t.id).some(function(k) {
         var s = window.__CR_NAMES__ && window.__CR_NAMES__[k];
         if (!s) return false;
-        return s.split('|').some(function(nm) { try { return pgnNameMatchesPlayer(nm, player); } catch (e) { return false; } });
+        return s.split('|').some(function(nm) { try { return pgnNameMatchesPlayer(nm, player) && !_crSurnameConflict(nm, player); } catch (e) { return false; } });
       });
       if (here) ids.push(t.id);
     });
@@ -15721,14 +15721,37 @@ function _crEloGamesForName(data, name){
   }
   return out;
 }
+// Veto de apellido AJENO para nombres de tabla (Chess-Results). Las tablas guardan el nombre
+// APELLIDO(S) primero y SIN coma (ej. "Flores Quillas Diego Saul") → la regla de apellido compuesto
+// de pgnNameMatchesPlayer (que necesita la coma) no se dispara y "Diego Flores" (GM) matcheaba a
+// "Flores Quillas, Diego Saul" (otra persona). Este veto ubica el bloque de apellido —todo lo previo
+// al primer nombre de pila del jugador— y rechaza si aporta un apellido que el jugador NO tiene
+// (ej. "Quillas" ∉ "Diego Flores"). Solo actúa en formato apellido-primero: si el nombre de pila está
+// al inicio (gi=0) o no aparece, no opina. VALIDADO sobre las 136 tablas: de 747 matches saca 1
+// (el falso Flores Quillas/Diego Flores), 0 legítimos. NO toca pgnNameMatchesPlayer (el pool grande).
+function _crSurnameConflict(candName, player){
+  if(!candName || candName.indexOf(',') >= 0) return false;         // con coma ya lo cubre pgnNameMatchesPlayer
+  var pTok = nameTokens(player.name); if(pTok.length < 2) return false;
+  var pLast = pTok[pTok.length - 1];
+  var pGiven = pTok.slice(0, pTok.length - 1);
+  var pSet = {}; pTok.forEach(function(t){ pSet[t] = 1; });
+  var cTok = nameTokens(normStr(candName)); if(!cTok.length) return false;
+  var gi = -1;
+  for(var i = 0; i < cTok.length; i++){ if(pGiven.indexOf(cTok[i]) >= 0){ gi = i; break; } }
+  if(gi <= 0) return false;                                          // nombre de pila al inicio o ausente → no opinamos
+  var block = cTok.slice(0, gi);                                     // bloque de apellido (apellido-primero)
+  if(block.indexOf(pLast) < 0) return false;                         // el bloque ni siquiera tiene su apellido → no opinamos
+  for(var j = 0; j < block.length; j++){ if(!pSet[block[j]]) return true; }   // apellido ajeno → otra persona
+  return false;
+}
 // Nombre del jugador tal como figura en la tabla (para matchear en las rondas). null si no está.
-// Las standings NO traen fideId → se matchea por nombre (pgnNameMatchesPlayer, formato "Apellido, Nombre").
+// Las standings NO traen fideId → se matchea por nombre (pgnNameMatchesPlayer + veto _crSurnameConflict).
 function _crFindPlayerName(data, player){
   var cands = [];
   if(data.standings) data.standings.forEach(function(s){ if(s && s.name) cands.push(s.name); });
   if(data.teamRounds) Object.keys(data.teamRounds).forEach(function(r){ (data.teamRounds[r]||[]).forEach(function(mt){ (mt.boards||[]).forEach(function(bd){ if(bd.nW) cands.push(bd.nW); if(bd.nB) cands.push(bd.nB); }); }); });
   else if(data.rounds) Object.keys(data.rounds).forEach(function(r){ (data.rounds[r]||[]).forEach(function(p){ if(p.w) cands.push(p.w); if(p.b) cands.push(p.b); }); });
-  for(var i=0;i<cands.length;i++){ if(pgnNameMatchesPlayer(cands[i], player)) return cands[i]; }
+  for(var i=0;i<cands.length;i++){ if(pgnNameMatchesPlayer(cands[i], player) && !_crSurnameConflict(cands[i], player)) return cands[i]; }
   return null;
 }
 // Mapa nombre-de-torneo (normalizado) → pace, a partir de los configs (tz/hc/ls).
@@ -15737,6 +15760,10 @@ function _crFindPlayerName(data, player){
 function _tourNamePaceMap(){
   var map = {};
   try {
+    // Web PUBLICADA: el ritmo de cada torneo vive en el manifest (_embeddedTournaments), NO en
+    // tzConfig/localStorage (que ahí están vacíos). Sin esto, un torneo del pool marcado rápido/blitz
+    // (ej. simultáneas) se veía "sin ritmo" → se asumía clásico → se colaba en el rating en vivo.
+    (typeof _embeddedTournaments !== 'undefined' ? _embeddedTournaments : []).forEach(function(t){ if(t && t.name && t.pace) map[_normTourName(t.name)] = t.pace; });
     var tzCfg = (typeof getTzConfig === 'function') ? getTzConfig() : {};
     Object.keys(tzCfg).forEach(function(k){ var d = tzCfg[k]; if(d && d.name && d.pace) map[_normTourName(d.name)] = d.pace; });
     (typeof TORNEOS !== 'undefined' ? TORNEOS : []).forEach(function(t){ var ov = tzCfg['hc_' + t.id] || {}; var pc = ov.pace || t.pace; if(t.name && pc) map[_normTourName(t.name)] = pc; });
