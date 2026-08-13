@@ -2516,6 +2516,8 @@
       .lv-prompt .lv-prompt-row button { flex:1; padding:7px; }
       .lv-controls { display:flex; flex-direction:column; gap:8px; }
       .lv-controls button { width:100%; }
+      /* Al terminar la partida, "Volver al menú" se resalta para que sea obvio cómo salir */
+      #lv-exit.lv-exit-hot { border-color:var(--gold-dim); color:var(--gold); font-weight:800; background:var(--gold-bg); }
       .lv-tools { display:flex; gap:8px; margin-top:12px; padding-top:12px; border-top:1px solid var(--border); }
       .lv-tools button { flex:1; font-size:12.5px; padding:8px 6px; }
 
@@ -2601,7 +2603,7 @@
             <button id="lv-offerdraw" class="lv-btn-sec" style="display:none">🤝 Ofrecer tablas</button>
             <button id="lv-resign" class="lv-btn-sec" style="display:none">🏳️ Rendirme</button>
             <button id="lv-rematch" class="lv-btn-main" style="display:none">Revancha 🔁</button>
-            <button id="lv-exit" class="lv-btn-sec">← Volver al menú</button>
+            <button id="lv-exit" class="lv-btn-sec">🏠 Volver al menú</button>
           </div>
           <div class="lv-tools">
             <button id="lv-copypgn" class="lv-btn-sec">📋 Copiar PGN</button>
@@ -29345,6 +29347,7 @@ function cvUpdateNagBadge() {
   var lvArrows=[], lvHighlights={}, lvRmDown=null, lvViewPly=null, lvPrevMovesLen=0;
   var lvSelected=null, lvPremove=null, lvSuppressClick=false, lvDrag=null;
   var lvClock=null, lvClockSyncAt=0, lvTicker=null, lvLowWarned=false;
+  var lvDiscTimer=null, lvDiscUntil=0;   // cuenta regresiva cuando el rival se desconecta
   var lvIntentionalClose=false, lvReconnectTries=0, lvReconnectTimer=null;
   var lvPendingSoundId=null, lvLastSoundId=null, lvEndSoundDone=false;
   var lvPrevStatus='waiting', lvWakeLock=null;
@@ -29591,6 +29594,19 @@ function cvUpdateNagBadge() {
   }
   function startTicker(){ if(!lvTicker) lvTicker=setInterval(renderClocks,250); }
 
+  // ── Cuenta regresiva por desconexión del rival (30s; el server termina la partida) ──
+  function startDiscCountdown(graceMs){
+    stopDiscCountdown();
+    lvDiscUntil=Date.now()+(graceMs||30000);
+    var tick=function(){
+      var left=Math.max(0, Math.ceil((lvDiscUntil-Date.now())/1000));
+      setStatus('⏳ Rival desconectado. Si no vuelve, ganás por abandono en <b>'+left+'s</b>…');
+      if(left<=0) stopDiscCountdown();   // al llegar a 0 el server manda el resultado
+    };
+    tick(); lvDiscTimer=setInterval(tick, 500);
+  }
+  function stopDiscCountdown(){ if(lvDiscTimer){ clearInterval(lvDiscTimer); lvDiscTimer=null; } }
+
   // ── Wake lock (pantalla del teléfono encendida; solo https) ──────────────────
   function acquireWake(){ try {
     if('wakeLock' in navigator && !lvWakeLock && document.visibilityState==='visible'){
@@ -29812,6 +29828,7 @@ function cvUpdateNagBadge() {
     show('lv-resign', playing && amPlayer);
     show('lv-rematch', finished && amPlayer);
     var rm=$('lv-rematch'); if(rm && finished){ rm.disabled=false; rm.textContent='Revancha 🔁'; }
+    var ex=$('lv-exit'); if(ex) ex.classList.toggle('lv-exit-hot', finished);
   }
   function updateDrawPrompt(){
     var el=$('lv-drawprompt'); if(!el) return;
@@ -29832,6 +29849,9 @@ function cvUpdateNagBadge() {
     var prev=lvStatus, wasLive=liveView();
     lvFen=m.fen; try { lvChess=new Chess(m.fen); } catch(e){ lvChess=new Chess(); }
     lvTurn=m.turn; lvStatus=m.status;
+    // Si la partida ya no está en juego (mate/tablas/bandera/etc.), cortar la cuenta
+    // regresiva de desconexión: nunca quedarse esperando los 30s si el juego ya terminó.
+    if(lvStatus!=='playing') stopDiscCountdown();
     if(m.names) lvNames=m.names; if(m.players) lvPlayers=m.players;
     if(m.moves){ if(m.moves.length>lvPrevMovesLen) clearShapes(); lvMoves=m.moves; }
     if(m.lastMove) lvLastMove=m.lastMove;
@@ -29910,7 +29930,7 @@ function cvUpdateNagBadge() {
       setStatus('Jugada ilegal ✋'); setTimeout(function(){ if(lvStatus==='playing') setStatus(myTurnText()); }, 1200);
     } else if(m.type==='gameover'){
       lvStatus='finished'; if(lvClock) lvClock.running=null; renderClocks();
-      releaseWake(); showResult(m); updateControls();
+      stopDiscCountdown(); releaseWake(); showResult(m); updateControls();
     } else if(m.type==='draw-offered'){
       if(m.by===lvMyColor){ setStatus('Ofreciste tablas — esperando respuesta…'); }
       else { lvDrawOffer=m.by; sndDraw(); updateDrawPrompt(); updateControls(); }
@@ -29927,9 +29947,10 @@ function cvUpdateNagBadge() {
       applyState(m);
     } else if(m.type==='opponent-disconnected'){
       lvPlayers[m.color==='w'?'connW':'connB']=false; updateNames();
-      setStatus('Rival desconectado — esperando que vuelva…');
+      if(lvStatus==='playing') startDiscCountdown(m.grace);
     } else if(m.type==='opponent-reconnected'){
       lvPlayers[m.color==='w'?'connW':'connB']=true; updateNames();
+      stopDiscCountdown();
       if(lvStatus==='playing') setStatus(myTurnText());
     }
   }
@@ -29959,7 +29980,7 @@ function cvUpdateNagBadge() {
     lvPendingSoundId=null; lvLastSoundId=null; lvEndSoundDone=false;
     lvMoves=[]; lvManualFlip=false; lvResultCode='*';
     lvArrows=[]; lvHighlights={}; lvRmDown=null; lvViewPly=null; lvPrevMovesLen=0;
-    lvResult=null; lvBannerDismissed=false;
+    lvResult=null; lvBannerDismissed=false; stopDiscCountdown();
     hideBanner(); hidePromo(); renderResult(); renderMoves(); renderArrows(); updateNav();
   }
 
@@ -30000,10 +30021,10 @@ function cvUpdateNagBadge() {
     var b;
     if((b=$('lv-create'))) b.onclick=create;
     if((b=$('lv-join'))) b.onclick=function(){ join($('lv-join-id').value); };
-    if((b=$('lv-join-id'))) b.onkeydown=function(e){ if(e.key==='Enter') join(b.value); };
+    if((b=$('lv-join-id'))) b.onkeydown=function(e){ if(e.key==='Enter') join(this.value); };
     if((b=$('lv-copy'))) b.onclick=function(){
-      var inp=$('lv-link'); if(!inp) return; inp.select();
-      var done=function(){ b.textContent='✓ Copiado'; setTimeout(function(){ b.textContent='Copiar'; },1500); };
+      var self=this, inp=$('lv-link'); if(!inp) return; inp.select();
+      var done=function(){ self.textContent='✓ Copiado'; setTimeout(function(){ self.textContent='Copiar'; },1500); };
       if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(inp.value).then(done).catch(function(){ try{document.execCommand('copy');}catch(_){}done(); });
       else { try{document.execCommand('copy');}catch(_){}done(); }
     };
@@ -30012,11 +30033,11 @@ function cvUpdateNagBadge() {
     if((b=$('lv-offerdraw'))) b.onclick=function(){ send({type:'draw-offer'}); setStatus('Ofreciste tablas — esperando respuesta…'); };
     if((b=$('lv-draw-yes'))) b.onclick=function(){ send({type:'draw-accept'}); updateDrawPrompt(); };
     if((b=$('lv-draw-no'))) b.onclick=function(){ send({type:'draw-decline'}); lvDrawOffer=null; updateDrawPrompt(); updateControls(); };
-    if((b=$('lv-rematch'))) b.onclick=function(){ send({type:'rematch'}); b.textContent='Esperando al rival…'; b.disabled=true; };
+    if((b=$('lv-rematch'))) b.onclick=function(){ send({type:'rematch'}); this.textContent='Esperando al rival…'; this.disabled=true; };
     if((b=$('lv-exit'))) b.onclick=exit;
     if((b=$('lv-banner'))) b.onclick=function(){ lvBannerDismissed=true; renderResult(); };
-    if((b=$('lv-copypgn'))) b.onclick=function(){ clip(buildPGN(), b, '✓ PGN copiado'); };
-    if((b=$('lv-copyfen'))) b.onclick=function(){ clip(computeView().fen, b, '✓ FEN copiado'); };
+    if((b=$('lv-copypgn'))) b.onclick=function(){ clip(buildPGN(), this, '✓ PGN copiado'); };
+    if((b=$('lv-copyfen'))) b.onclick=function(){ clip(computeView().fen, this, '✓ FEN copiado'); };
     // Barra de navegación (columna derecha) — como el visor
     if((b=$('lv-nav-first'))) b.onclick=function(){ goPly(0); };
     if((b=$('lv-nav-prev'))) b.onclick=function(){ goPly(curPly()-1); };
