@@ -17138,6 +17138,7 @@ function goTo(sec, btn) {
   document.querySelector('.main').scrollTop = 0;
   _resetHdrForNav();   // mostrar el header y resetear el auto-ocultado al cambiar de sección
   if (sec === 'favoritos') renderPartidas();
+  if (sec === 'entrenar') _trainEnsureData();   // carga por demanda: ejercicios/prácticas solo al entrar acá
   try { localStorage.setItem('last_section', sec); } catch(e) {}
 }
 
@@ -25139,8 +25140,13 @@ function puzInit() {
   for (var i=0;i<chips.length;i++) chips[i].classList.toggle('active', chips[i].getAttribute('onclick').indexOf("'"+puz.level+"'") >= 0);
   puzRenderStatsPanel();
   routineRenderBuilder();
-  _routineEnsurePractice(function(){ routineRenderBuilder(); });   // para el selector de tipos de final en el armador de rutina
-  puzLoadStats();
+  // Los datos pesados (puzzles.json ~431KB, practice.json ~412KB, stats colectivas) se
+  // cargan POR DEMANDA al entrar a "Entrenar" (ver _trainEnsureData), no en cada visita.
+}
+
+var _puzFetchStarted = false;
+function _puzEnsureLoaded() {
+  if (_puzFetchStarted) return; _puzFetchStarted = true;
   fetch('data/puzzles.json' + _dataV()).then(function(r){ return r.json(); }).then(function(d) {
     PUZZLES = Array.isArray(d) ? d : (d.puzzles || []);
     _puzLoaded = true; puzUpdateChipCounts(); puzRenderList();
@@ -25148,6 +25154,25 @@ function puzInit() {
     _puzLoaded = true; var el = document.getElementById('puz-list');
     if (el) el.innerHTML = '<div style="text-align:center;padding:32px;color:var(--red);font-size:13px">No se pudieron cargar los ejercicios.</div>';
   });
+}
+var _pracRenderStarted = false;
+function _pracEnsureLoaded() {
+  if (_pracRenderStarted) return; _pracRenderStarted = true;
+  _pracFetchOnce().then(function(d) {
+    PRACTICE = Array.isArray(d) ? d : (d.practice || []);
+    _pracLoaded = true; pracUpdatePhaseCounts(); pracRenderFilters(); pracRenderList();
+    routineRenderBuilder();
+  }).catch(function() {
+    _pracLoaded = true; var el = document.getElementById('prac-list');
+    if (el) el.innerHTML = '<div style="text-align:center;padding:32px;color:var(--red);font-size:13px">No se pudieron cargar las posiciones de práctica.</div>';
+  });
+}
+// Carga por demanda de TODO lo de "Entrenar" (ejercicios + prácticas + stats colectivas).
+// Se dispara al ENTRAR a la sección, no en cada visita a la web (antes se bajaba siempre).
+var _trainDataStarted = false;
+function _trainEnsureData() {
+  if (_trainDataStarted) return; _trainDataStarted = true;
+  _puzEnsureLoaded(); _pracEnsureLoaded(); puzLoadStats();
 }
 
 function puzUpdateChipCounts() {
@@ -26155,13 +26180,7 @@ function pracInit() {
   try { var lv = localStorage.getItem('prac_level'); if (lv && PRAC_LEVELS[lv]) prac.level = lv; } catch(e) {}
   if (!_ondemand) { var _pat = document.getElementById('prac-author-tools'); if (_pat) _pat.style.display = ''; }
   pracSyncLevelChips();
-  _pracFetchOnce().then(function(d) {
-    PRACTICE = Array.isArray(d) ? d : (d.practice || []);
-    _pracLoaded = true; pracUpdatePhaseCounts(); pracRenderFilters(); pracRenderList();
-  }).catch(function() {
-    _pracLoaded = true; var el = document.getElementById('prac-list');
-    if (el) el.innerHTML = '<div style="text-align:center;padding:32px;color:var(--red);font-size:13px">No se pudieron cargar las posiciones de práctica.</div>';
-  });
+  // practice.json se carga por demanda al entrar a "Entrenar" (ver _trainEnsureData).
 }
 
 function pracItems(phase) {
@@ -26874,6 +26893,10 @@ _cvBindHold('cv-btn-prev', cvPrev);
 _cvBindHold('cv-btn-next', cvNext);
 
 pracInit();
+
+// Si la app arrancó ya en "Entrenar" (sección restaurada de la última visita), cargar sus
+// datos ahora: en ese caso el restore toca clases directo y no llama a goTo.
+try { var _seEl0 = document.getElementById('s-entrenar'); if (_seEl0 && _seEl0.classList.contains('active')) _trainEnsureData(); } catch(e){}
 
 // Deep-link: si la URL trae ?torneo=<id> o ?jugador=<id> (link compartido o pestaña nueva), abrir
 // eso. Dejamos el historial como [lista, detalle] (replaceState a la URL limpia + el push del
