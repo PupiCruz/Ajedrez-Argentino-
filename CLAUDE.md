@@ -22,8 +22,15 @@ El autor **no es programador** y trabaja en español. El objetivo es eventualmen
 - `data/embedded-flyers.js` — flyers de torneos migrados (base64) + mapa de redirección
   imgur→data/fl. También SOLO modo autor local (gitignored, va a Drive).
 - `data/hardcoded.js` — datos curados (PLAYER_GAMES + PGN_DB).
-- `data/manifest.js`, `data/t/`, `data/p/`, `data/ph/`, `data/fl/` — "pedacitos" para la
+- `data/manifest.js`, `data/t/`, `data/p/`, `data/ph/`, `data/fl/`, `data/cr/` — "pedacitos" para la
   web publicada (carga por demanda). **Se regeneran solos al publicar**; no se tocan a mano.
+  `data/cr/<clave>.json` = CUADROS de cruces/tabla por torneo (uno por clave `cr2_*`). Antes viajaban
+  EMBEBIDOS en manifest.js (~6,8MB, lo que más pesaba al abrir); ahora el manifest solo lleva
+  `__CR_INDEX__` (qué claves existen) + `__CR_NAMES__` (nombres de cada tabla, para el buscador) y el
+  cruce completo se baja al abrir el torneo (`_crEnsureLoaded`). Bajó el manifest de 8,9MB→2,5MB
+  (brotli 852KB→343KB). El rating en vivo del perfil baja solo los cruces clásicos recientes del
+  jugador (`_crEnsureLiveRating`). OJO modo autor: embedded-data.js pobla `__EMBEDDED_CR__` completo y
+  manifest.js lo conserva con `|| {}` (no lo pisa).
   `data/ph/<id>.jpg` = FOTOS sueltas (una por jugador); el manifest lleva `__PHOTO_INDEX__`
   = {id: ext} de quién tiene foto. `data/fl/<key>.jpg` = FLYERS self-hosteados (antes eran
   links de imgur, lentísimos ~1-9s; ahora en Cloudflare ~0,1s); el manifest lleva
@@ -31,7 +38,7 @@ El autor **no es programador** y trabaja en español. El objetivo es eventualmen
   migran con el botón "🖼️ Migrar flyers a mi hosting" (baja de imgur vía CORS, achica a
   800px, `_fetchResizeImage`); no se toca el flyerUrl guardado (imgur queda de respaldo,
   `_flyerSrc` redirige). **TODOS estos SÍ van a git** (`manifest.js`, `data/t/`, `data/p/`,
-  `data/ph/`, `data/fl/`): Cloudflare Pages publica directo desde el repo, así que si no
+  `data/ph/`, `data/fl/`, `data/cr/`): Cloudflare Pages publica directo desde el repo, así que si no
   estuvieran, la web saldría sin torneos ni fotos.
 - `assets/` — motores Stockfish (self-host), librería de ajedrez, piezas SVG, sonidos.
   **La app no tiene ninguna dependencia externa en runtime** (anda sin internet).
@@ -121,7 +128,7 @@ El Worker del teléfono (editar.html) también pushea a `main`: si el push de la
 rebota, hacer `git fetch` + `git rebase origin/main` y pushear de nuevo.
 **Qué SÍ se commitea:** el código (`index.html`, `editar.html`, assets, scripts) **y los datos
 ya publicados** que consume la web: `data/manifest.js`, `data/t/`, `data/p/`, `data/ph/`,
-`data/fl/`, `data/games_0.json`, `data/games_1.json`, `data/book.json`, `data/datos.json`,
+`data/fl/`, `data/cr/`, `data/games_0.json`, `data/games_1.json`, `data/book.json`, `data/datos.json`,
 `data/puzzles.json`, `data/practice.json`, `data/hardcoded.js`, `data/live-*.json`.
 **Qué NO se commitea** (archivos gigantes de autor, van a Drive; están en `.gitignore`):
 `data/embedded-data.js`, `data/embedded-photos.js`, `data/embedded-flyers.js`,

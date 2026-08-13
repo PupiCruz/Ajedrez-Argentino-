@@ -4188,12 +4188,21 @@ function _tourStandList(item) {
   if (_tourSearchIndex[ck] != null) return _tourSearchIndex[ck];
   var list = [];
   try {
-    var data = crDataLoad(ck);
-    if (data) {
-      if (data.standings && data.standings.length)
-        data.standings.forEach(function(p){ if (p && p.name) list.push(_normTxt(p.name)); });
-      if (data.argManual)
-        data.argManual.split(/[\n;]+/).forEach(function(s){ s = s.trim(); if (s) list.push(_normTxt(s)); });
+    // Web publicada: los nombres de la tabla viven en el índice compacto __CR_NAMES__ (el cruce
+    // completo se baja recién al abrir el torneo). Autor/eager: se leen del CR en memoria.
+    if (_ondemand && window.__CR_NAMES__) {
+      _crKeysForTour(ti[1]).forEach(function(k){
+        var s = window.__CR_NAMES__[k];
+        if (s) s.split('|').forEach(function(nm){ nm = nm.trim(); if (nm) list.push(_normTxt(nm)); });
+      });
+    } else {
+      var data = crDataLoad(ck);
+      if (data) {
+        if (data.standings && data.standings.length)
+          data.standings.forEach(function(p){ if (p && p.name) list.push(_normTxt(p.name)); });
+        if (data.argManual)
+          data.argManual.split(/[\n;]+/).forEach(function(s){ s = s.trim(); if (s) list.push(_normTxt(s)); });
+      }
     }
   } catch(e) {}
   _tourSearchIndex[ck] = list;
@@ -8537,6 +8546,72 @@ async function fetchTournamentGames(id) {
   } catch (e) { _tourLoadFailed[id] = true; return []; }
 }
 
+/* ── CR por demanda (data/cr/<key>.json) ─────────────────────────────────────────────
+   Los cuadros de cruces/tabla (cr2_*) ya NO viajan embebidos en manifest.js (eran ~6,8MB,
+   lo que más pesaba al abrir). El manifest lleva solo __CR_INDEX__ (qué claves existen) y
+   __CR_NAMES__ (nombres de cada tabla, para el buscador). El cruce COMPLETO se baja recién
+   al abrir el torneo, y se deja en window.__EMBEDDED_CR__ para que crDataLoad (síncrono, con
+   ~40 llamadores) lo lea igual que antes, sin refactor. En modo autor/eager no corre nada. */
+var _crLoadedTour = {};   // id de torneo → true cuando ya se intentó bajar su(s) cruce(s)
+// Claves CR (del índice) que pertenecen a un torneo: mismo sufijo que su id saneado (base y _cN).
+// Misma regla de sufijo que usa el fallback de crDataLoad, así base y categorías caen juntas.
+function _crKeysForTour(id) {
+  var sid = String(id).replace(/[^a-z0-9]/gi, '_');
+  var idx = window.__CR_INDEX__ || [];
+  var out = [];
+  for (var i = 0; i < idx.length; i++) {
+    var k = idx[i], m = String(k).match(/^cr2_[a-z]+_(.+)$/);
+    if (!m) continue;
+    var suf = m[1];
+    if (suf === sid || suf.indexOf(sid + '_') === 0) out.push(k);
+  }
+  return out;
+}
+// Baja (una vez) los cruces de un torneo y los deja en __EMBEDDED_CR__. Idempotente y tolerante:
+// si un archivo falta o falla, se ignora (el render cae al estado vacío, como un torneo sin tabla).
+async function _crEnsureLoaded(id) {
+  if (!_ondemand || id == null || _crLoadedTour[id]) return;
+  _crLoadedTour[id] = true;
+  var keys = _crKeysForTour(id);
+  if (!keys.length) return;
+  if (!window.__EMBEDDED_CR__) window.__EMBEDDED_CR__ = {};
+  await Promise.all(keys.map(async function(k) {
+    if (window.__EMBEDDED_CR__[k]) return;
+    try {
+      var r = await fetch('data/cr/' + k + '.json' + _dataV());
+      if (r.ok) window.__EMBEDDED_CR__[k] = await r.json();
+    } catch (e) {}
+  }));
+  // Cachés que dependen del contenido CR (índice de búsqueda, argentinos, feds): invalidar.
+  _crArgCache = {}; _tourSearchIndex = {}; _stdFedCache = {};
+}
+// Para el rating en vivo del perfil (_liveRatingStd): baja SOLO los cruces de los torneos CLÁSICOS
+// terminados después del último padrón FIDE EN LOS QUE ESTE JUGADOR aparece. El "aparece" se decide
+// con __CR_NAMES__ (el índice de nombres que ya viene en el manifest) → no baja ningún cruce de más:
+// típicamente 0-5 archivos por perfil, no las decenas de torneos recientes que hay en total.
+async function _crEnsureLiveRating(player) {
+  if (!_ondemand || !player) return;
+  var cutoff = 0;
+  try { cutoff = (typeof _fideListCutoff === 'function') ? _fideListCutoff() : 0; } catch (e) {}
+  if (!cutoff) return;
+  var ids = [];
+  try {
+    (typeof _embeddedTournaments !== 'undefined' ? _embeddedTournaments : []).forEach(function(t) {
+      if (!t || t.playerOnly) return;
+      if (typeof _isStandardPace === 'function' && !_isStandardPace(t.pace || '')) return;
+      var rng = tourRange(t), end = rng && rng.end ? rng.end : 0;
+      if (!end || end < cutoff) return;
+      var here = _crKeysForTour(t.id).some(function(k) {
+        var s = window.__CR_NAMES__ && window.__CR_NAMES__[k];
+        if (!s) return false;
+        return s.split('|').some(function(nm) { try { return pgnNameMatchesPlayer(nm, player); } catch (e) { return false; } });
+      });
+      if (here) ids.push(t.id);
+    });
+  } catch (e) {}
+  await Promise.all(ids.map(function(id) { return _crEnsureLoaded(id); }));
+}
+
 /* ── Cambios hechos desde el teléfono (editar.html → Worker → data/live-torneos.json) ──
    El teléfono no toca manifest.js (un typo ahí rompe TODA la web): sus cambios van a un
    JSON aparte que acá se lee con fetch + try/catch y se FUSIONA. Si el archivo falta,
@@ -9074,7 +9149,24 @@ function buildSplitData() {
     });
     if (ss.w + ss.d + ss.l > 0) playerStats[spid] = ss;
   }
-  return { manifest: { tournaments: tournaments, playerIndex: playerIndex, playerStats: playerStats }, tFiles: tFiles, pFiles: pFiles, gameEntries: gameEntries };
+  // Cuadros de cruces/tabla (cr2_*) → un archivo por clave (data/cr/<key>.json), carga por demanda.
+  // Eran ~6,8MB EAGER dentro de manifest.js (lo que MÁS pesaba al abrir la web). Ahora el manifest
+  // lleva solo: (1) el ÍNDICE de claves que existen como archivo, y (2) un índice compacto de NOMBRES
+  // de cada tabla (para que el buscador de Torneos siga encontrando por jugador sin bajar el cruce).
+  // El cruce completo (posiciones + grilla de rondas) se baja recién al abrir el torneo (_crEnsureLoaded).
+  var crAll = _collectCrData();
+  var crFiles = {}, crIndex = [], crNames = {};
+  Object.keys(crAll).forEach(function(k) {
+    var d = crAll[k];
+    if (!d) return;
+    crFiles[k] = d;
+    crIndex.push(k);
+    var nm = [];
+    if (d.standings) d.standings.forEach(function(p) { if (p && p.name) nm.push(p.name); });
+    if (d.argManual) String(d.argManual).split(/[\n;]+/).forEach(function(s) { s = s.trim(); if (s) nm.push(s); });
+    if (nm.length) crNames[k] = nm.join('|');
+  });
+  return { manifest: { tournaments: tournaments, playerIndex: playerIndex, playerStats: playerStats }, tFiles: tFiles, pFiles: pFiles, gameEntries: gameEntries, crFiles: crFiles, crIndex: crIndex, crNames: crNames };
 }
 
 function pgnDeleteTorneo(id) {
@@ -9662,8 +9754,8 @@ async function exportDataFile() {
     });
 
     var total = toWrite.length, done = 0, falla = null;
-    var cont = { torneos: 0, jugadores: 0, fotos: 0, flyers: 0, base: 0 };
-    _fsSubdirCache = {};   // reusar handles de subcarpeta (t/, p/, ph/, fl/) entre miles de archivos
+    var cont = { torneos: 0, jugadores: 0, fotos: 0, flyers: 0, cruces: 0, base: 0 };
+    _fsSubdirCache = {};   // reusar handles de subcarpeta (t/, p/, ph/, fl/, cr/) entre miles de archivos
     if (total) { _saveProgressSet(0, total, 'Escribiendo archivos…'); await _paint(); }
     for (var i = 0; i < toWrite.length; i++) {
       var e = toWrite[i];
@@ -9674,6 +9766,7 @@ async function exportDataFile() {
       else if (/^p\//.test(e.rel)) cont.jugadores++;
       else if (/^ph\//.test(e.rel)) cont.fotos++;
       else if (/^fl\//.test(e.rel)) cont.flyers++;
+      else if (/^cr\//.test(e.rel)) cont.cruces++;
       else cont.base++;
       if (done % 25 === 0 || done === total) { _saveProgressSet(done, total, 'Escribiendo archivos…'); await _paint(); }
     }
@@ -9690,6 +9783,7 @@ async function exportDataFile() {
     if (cont.torneos)   det.push(cont.torneos + ' torneo' + (cont.torneos !== 1 ? 's' : ''));
     if (cont.fotos)     det.push(cont.fotos + ' foto' + (cont.fotos !== 1 ? 's' : ''));
     if (cont.flyers)    det.push(cont.flyers + ' flyer' + (cont.flyers !== 1 ? 's' : ''));
+    if (cont.cruces)    det.push(cont.cruces + ' cruce' + (cont.cruces !== 1 ? 's' : ''));
     if (cont.jugadores) det.push(cont.jugadores + ' perfil' + (cont.jugadores !== 1 ? 'es' : ''));
     if (cont.base)      det.push(cont.base + ' base');
     alert('✅ Guardado en tu carpeta.\n\n' + total + ' archivo' + (total !== 1 ? 's' : '') + ' actualizado' + (total !== 1 ? 's' : '')
@@ -9717,6 +9811,8 @@ function _fsCollectSaveEntries(authorFiles, split, photos, flyers, manifestJs) {
   // Un archivo por torneo (data/t) y por perfil (data/p).
   Object.keys(split.tFiles).forEach(function (id) { E.push({ rel: 't/' + tfn(id), str: JSON.stringify(split.tFiles[id]) }); });
   Object.keys(split.pFiles).forEach(function (id) { E.push({ rel: 'p/' + tfn(id), str: JSON.stringify(split.pFiles[id]) }); });
+  // Cuadros de cruces por demanda (data/cr/<key>.json). La clave ya está saneada (cr2_ + alfanum/_).
+  Object.keys(split.crFiles || {}).forEach(function (k) { E.push({ rel: 'cr/' + k + '.json', str: JSON.stringify(split.crFiles[k]) }); });
   // Fotos (data/ph) y flyers (data/fl) sueltos, binarios. Vienen con nombre "data/…": sacar el prefijo.
   photos.files.forEach(function (f) { E.push({ rel: f.name.replace(/^data\//, ''), bytes: f.data }); });
   flyers.forEach(function (f)       { E.push({ rel: f.name.replace(/^data\//, ''), bytes: f.data }); });
@@ -9732,7 +9828,13 @@ function _manifestJsFromSplit(split, ts, photoIndex) {
        + 'window.__MANIFEST__=' + JSON.stringify(split.manifest).replace(/</g, '\\u003c') + ';\n'
        + 'window.__EMBEDDED_TZ__='   + JSON.stringify(getTzConfig()) + ';\n'
        + 'window.__EMBEDDED_NEWS__=' + JSON.stringify(getNewsItems()).replace(/</g, '\\u003c') + ';\n'
-       + 'window.__EMBEDDED_CR__='   + JSON.stringify(_collectCrData()).replace(/</g, '\\u003c') + ';\n'
+       // Los cruces se bajan por demanda (data/cr/<key>.json). OJO: en modo AUTOR local se cargan
+       // embedded-data.js (con el CR completo) Y este manifest, en ese orden → NO pisar con {} o el
+       // autor perdería las tablas. `|| {}` conserva lo que puso embedded-data; en la web publicada
+       // (sin embedded-data) queda {} y lo llena _crEnsureLoaded.
+       + 'window.__EMBEDDED_CR__=window.__EMBEDDED_CR__||{};\n'
+       + 'window.__CR_INDEX__='     + JSON.stringify(split.crIndex || []).replace(/</g, '\\u003c') + ';\n'
+       + 'window.__CR_NAMES__='     + JSON.stringify(split.crNames || {}).replace(/</g, '\\u003c') + ';\n'
        + 'window.__PHOTO_INDEX__='   + JSON.stringify(photoIndex) + ';\n'
        + 'window.__FLYER_REDIRECT__=' + JSON.stringify(_flyerRedirectMap()).replace(/</g, '\\u003c') + ';\n'
        + _embeddedPlayersJs();
@@ -9774,6 +9876,8 @@ async function exportGithubData() {
     zipEntries.push({ name: 'data/book.json', data: enc.encode(JSON.stringify(_buildOpeningBook(_bookRows2))) });
     Object.keys(split.tFiles).forEach(function(id) { zipEntries.push({ name: 'data/t/' + _tfn(id), data: enc.encode(JSON.stringify(split.tFiles[id])) }); });
     Object.keys(split.pFiles).forEach(function(id) { zipEntries.push({ name: 'data/p/' + _tfn(id), data: enc.encode(JSON.stringify(split.pFiles[id])) }); });
+    // Cuadros de cruces por demanda (data/cr/<key>.json). La clave ya viene saneada.
+    Object.keys(split.crFiles || {}).forEach(function(k) { zipEntries.push({ name: 'data/cr/' + k + '.json', data: enc.encode(JSON.stringify(split.crFiles[k])) }); });
     var zipBlob = await _buildZip(zipEntries);
     _downloadBlob(zipBlob, 'datos-para-github.zip');
     setTimeout(function() {
@@ -11366,6 +11470,9 @@ async function openPlayer(id) {
   // (negra con logo) para que el visitante vea que no se colgó. Solo si aún no está en caché.
   if (_ondemand && !_playerLoaded[id]) _showLoadingCover('Cargando perfil del jugador…');
   if (_ondemand) { try { await ensurePlayerLoaded(id); } catch (e) {} }
+  // Rating Standard EN VIVO: necesita los cruces de los torneos clásicos recientes (post-padrón) de
+  // este jugador. En la web publicada se bajan por demanda → traerlos antes de calcular (_liveRatingStd).
+  if (_ondemand) { try { await _crEnsureLiveRating(p); } catch (e) {} }
   // Índice de aperturas (transposiciones): así las columnas "Aperturas más jugadas"
   // usan los nombres en castellano desde la 1ª vez. Pesa ~64KB gzip, se cachea 1 año.
   try { await _ensureAperturasAsync(); } catch (e) {}
@@ -22275,6 +22382,9 @@ function _tdEditCatChip(field) {
 async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   _tdLiveStop();   // cortar el auto-refresco del vivo del torneo anterior (si lo había)
   _tdTourKey = id; // para los links de partidas (?torneo=<id>&partida=<idx>)
+  // Web publicada: los cruces de este torneo se bajan por demanda. Se arranca ACÁ (solapa con la
+  // baja de partidas de abajo) y se espera antes de armar los cruces (más abajo, en `crk`).
+  var _crPrefetch = _ondemand ? _crEnsureLoaded(id) : null;
   var name = '', location = '', dates = '', status = 'upcoming', typ = '', rounds = null;
   var leaders = [], games = [], crUrl = '', broadcastId = '', broadcastUrl = '', pgnGames = [];
   var timeControl = '', chesscomUrl = '', flyerUrl = '', flyerPos = '', categories = null, isTeam = false;
@@ -22457,6 +22567,8 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     }
   }
 
+  // Esperar a que estén los cruces de este torneo (bajados por demanda) antes de leerlos.
+  if (_crPrefetch) { try { await _crPrefetch; } catch (e) {} if (_tdTourKey !== id) return; }
   // La clave de Chess-Results se arma ACÁ (y no más abajo, con la sección de cruces) porque las
   // partidas que se bajan de Chess-Results se guardan bajo esta clave y hay que fusionarlas antes
   // de agrupar por ronda.
