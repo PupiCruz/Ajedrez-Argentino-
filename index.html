@@ -29434,6 +29434,7 @@ function cvUpdateNagBadge() {
   var lvChess=null, lvTurn='w', lvStatus='waiting', lvLastMove=null;
   var lvNames={}, lvPlayers={}, lvDrawOffer=null, lvMoves=[];
   var lvManualFlip=false, lvResultCode='*', lvResult=null, lvBannerDismissed=false;
+  var lvRenderedFen='';   // FEN que está dibujado ahora (para saltear el redibujado del eco y no cortar la animación)
   var lvArrows=[], lvHighlights={}, lvRmDown=null, lvViewPly=null, lvPrevMovesLen=0;
   var lvSelected=null, lvPremove=null, lvSuppressClick=false, lvDrag=null;
   var lvClock=null, lvClockSyncAt=0, lvTicker=null, lvLowWarned=false;
@@ -29536,7 +29537,34 @@ function cvUpdateNagBadge() {
       html+='<div class="'+cls+'" data-sq="'+name+'">'+inner+'</div>';
     }}
     el.innerHTML=html;
+    lvRenderedFen=view.fen;
     renderArrows();
+  }
+
+  // Desliza la pieza de fromSq a toSq (misma técnica que el visor `_cvSlidePiece`):
+  // la pieza YA está en destino tras renderBoard; la arrancamos desplazada al origen
+  // con transform y la animamos a 0. Se usa para la jugada del RIVAL.
+  var LV_SLIDE_MS = (typeof _CV_SLIDE_MS!=='undefined') ? _CV_SLIDE_MS : 160;
+  function lvSlidePiece(fromSq, toSq){
+    var boardEl=$('lv-board'); if(!boardEl || document.hidden) return;
+    var toCell=boardEl.querySelector('[data-sq="'+toSq+'"]');
+    var fromCell=boardEl.querySelector('[data-sq="'+fromSq+'"]');
+    if(!toCell || !fromCell) return;
+    var img=toCell.querySelector('img'); if(!img) return;
+    var dx=fromCell.offsetLeft-toCell.offsetLeft, dy=fromCell.offsetTop-toCell.offsetTop;
+    if(!dx && !dy) return;
+    var cleared=false;
+    function done(){ if(cleared) return; cleared=true; img.style.transition=''; img.style.transform=''; img.style.zIndex=''; img.removeEventListener('transitionend', done); }
+    img.style.transition='none';
+    img.style.transform='translate('+dx+'px,'+dy+'px)';
+    img.style.zIndex='3';                    // por encima de las casillas vecinas mientras se desliza
+    void img.offsetWidth;                     // fuerza el layout para que el transform inicial "pegue"
+    (window.requestAnimationFrame||function(f){setTimeout(f,16);})(function(){
+      img.style.transition='transform '+LV_SLIDE_MS+'ms ease-out';
+      img.style.transform='translate(0,0)';
+      img.addEventListener('transitionend', done);
+    });
+    setTimeout(done, LV_SLIDE_MS+140);        // respaldo por si rAF/transitionend no llegan
   }
 
   // ── Flechas y resaltados (clic derecho), en una capa SVG sobre el tablero ─────
@@ -29545,6 +29573,18 @@ function cvUpdateNagBadge() {
     var dcol=flip?7-p.f:p.f, drow=flip?7-p.r:p.r;
     return { x:dcol+0.5, y:drow+0.5, col:dcol, row:drow };
   }
+  // SVG de una flecha from→to (usado para las fijas y para el PREVIEW en vivo)
+  function arrowSvg(from, to){
+    var a=displayPos(from), b=displayPos(to);
+    var dx=b.x-a.x, dy=b.y-a.y, len=Math.sqrt(dx*dx+dy*dy); if(len<0.1) return '';
+    var ux=dx/len, uy=dy/len;
+    var sx=a.x+ux*0.34, sy=a.y+uy*0.34;             // arranca fuera del centro de la pieza
+    var hx=b.x-ux*0.30, hy=b.y-uy*0.30;             // base de la cabeza
+    var w=0.14, hw=0.24;                            // grosor de línea y de cabeza
+    var px=-uy, py=ux;                              // perpendicular
+    return '<line x1="'+sx+'" y1="'+sy+'" x2="'+hx+'" y2="'+hy+'" stroke="#e8823a" stroke-width="'+w+'" stroke-linecap="round" opacity="0.9"/>'+
+           '<polygon points="'+b.x+','+b.y+' '+(hx+px*hw)+','+(hy+py*hw)+' '+(hx-px*hw)+','+(hy-py*hw)+'" fill="#e8823a" opacity="0.9"/>';
+  }
   function renderArrows(){
     var svg=$('lv-arrows'); if(!svg) return;
     var s='';
@@ -29552,17 +29592,9 @@ function cvUpdateNagBadge() {
       var h=displayPos(sq);
       s+='<rect x="'+(h.col+0.04)+'" y="'+(h.row+0.04)+'" width="0.92" height="0.92" rx="0.1" fill="#15a34a" fill-opacity="0.42"/>';
     }
-    for(var i=0;i<lvArrows.length;i++){
-      var a=displayPos(lvArrows[i].from), b=displayPos(lvArrows[i].to);
-      var dx=b.x-a.x, dy=b.y-a.y, len=Math.sqrt(dx*dx+dy*dy); if(len<0.1) continue;
-      var ux=dx/len, uy=dy/len;
-      var sx=a.x+ux*0.34, sy=a.y+uy*0.34;             // arranca fuera del centro de la pieza
-      var hx=b.x-ux*0.30, hy=b.y-uy*0.30;             // base de la cabeza
-      var w=0.14, hw=0.24;                            // grosor de línea y de cabeza
-      var px=-uy, py=ux;                              // perpendicular
-      s+='<line x1="'+sx+'" y1="'+sy+'" x2="'+hx+'" y2="'+hy+'" stroke="#e8823a" stroke-width="'+w+'" stroke-linecap="round" opacity="0.9"/>';
-      s+='<polygon points="'+b.x+','+b.y+' '+(hx+px*hw)+','+(hy+py*hw)+' '+(hx-px*hw)+','+(hy-py*hw)+'" fill="#e8823a" opacity="0.9"/>';
-    }
+    for(var i=0;i<lvArrows.length;i++) s+=arrowSvg(lvArrows[i].from, lvArrows[i].to);
+    // Flecha en vivo: mientras arrastrás con el clic derecho, sigue el puntero.
+    if(lvRmDown && lvRmDown.to && lvRmDown.to!==lvRmDown.from) s+=arrowSvg(lvRmDown.from, lvRmDown.to);
     svg.innerHTML=s;
   }
   function clearShapes(){ if(lvArrows.length||Object.keys(lvHighlights).length){ lvArrows=[]; lvHighlights={}; renderArrows(); } }
@@ -29762,7 +29794,7 @@ function cvUpdateNagBadge() {
     else if(lvPremove){ lvPremove=null; renderBoard(); }   // clic fuera cancela el premove
   }
 
-  function tryUserMove(from,to){
+  function tryUserMove(from,to,viaDrag){
     var myTurn=(lvTurn===lvMyColor);
     if(!myTurn){
       // Premove: encolar cualquier from→to (incluida RECAPTURA sobre una casilla propia,
@@ -29773,10 +29805,11 @@ function cvUpdateNagBadge() {
     var legal=[]; try { legal=lvChess.moves({square:from,verbose:true}).filter(function(m){return m.to===to;}); } catch(e){}
     if(!legal.length){ lvSelected=null; renderBoard(); return; }
     if(needsPromo(from,to)){ showPromo(from,to); return; }
-    doMove(from,to,undefined);
+    doMove(from,to,undefined,viaDrag);
   }
 
-  function doMove(from,to,promo){
+  // viaDrag=true → NO animar (el arrastre ya movió la pieza). Clic-clic y premoves animan.
+  function doMove(from,to,promo,viaDrag){
     var mv=null; try { mv=lvChess.move({from:from,to:to,promotion:promo}); } catch(e){ mv=null; }
     if(!mv){ lvSelected=null; renderBoard(); return; }
     lvFen=lvChess.fen(); lvTurn=lvChess.turn();
@@ -29785,7 +29818,9 @@ function cvUpdateNagBadge() {
     try { cvPlayMoveSound(mv.san); } catch(e){}
     lvMoves.push(mv.san); lvPrevMovesLen=lvMoves.length; lvViewPly=null;
     lvSelected=null; lvPremove=null; clearShapes();
-    renderBoard(); updateControls(); renderMoves(); updateNav();
+    renderBoard();
+    if(!viaDrag) lvSlidePiece(from,to);   // animar clic-clic y premoves; el arrastre no
+    updateControls(); renderMoves(); updateNav();
     send({type:'move',from:from,to:to,promotion:promo});
     setStatus(myTurnText());
   }
@@ -29812,7 +29847,7 @@ function cvUpdateNagBadge() {
       var sq=e.target.closest ? e.target.closest('.lv-sq') : null;
       var name=sq?sq.getAttribute('data-sq'):null;
       // Clic DERECHO: empezar una flecha o un resaltado (permitido siempre, hasta mirando/revisando).
-      if(e.button===2){ if(name) lvRmDown={from:name}; e.preventDefault(); return; }
+      if(e.button===2){ if(name) lvRmDown={from:name, to:null}; e.preventDefault(); return; }
       if(e.button!==0 && e.button!==undefined) return;
       if(inCountdown()) return;   // durante la cuenta regresiva el tablero está bloqueado
       // Clic IZQUIERDO: limpia flechas/resaltados dibujados.
@@ -29825,6 +29860,8 @@ function cvUpdateNagBadge() {
       lvDrag={from:name, x:e.clientX, y:e.clientY, moved:false, ghost:null, pc:pc};
     });
     board.addEventListener('pointermove', function(e){
+      // Flecha con clic derecho: seguí el puntero y redibujá el preview al cambiar de casilla.
+      if(lvRmDown){ var rto=sqUnder(e); if(rto!==lvRmDown.to){ lvRmDown.to=rto; renderArrows(); } e.preventDefault(); return; }
       if(!lvDrag) return;
       if(!lvDrag.moved){
         if(Math.abs(e.clientX-lvDrag.x)+Math.abs(e.clientY-lvDrag.y)<7) return;
@@ -29847,7 +29884,7 @@ function cvUpdateNagBadge() {
       if(!d.moved) return;   // fue un toque, lo maneja el 'click'
       lvSuppressClick=true;
       var to=sqUnder(e);
-      if(to && to!==d.from){ lvSelected=null; tryUserMove(d.from,to); }
+      if(to && to!==d.from){ lvSelected=null; tryUserMove(d.from,to,true); }   // arrastre: sin animación
       else { lvSelected=null; renderBoard(); }
     });
     board.addEventListener('click', function(e){
@@ -30000,10 +30037,12 @@ function cvUpdateNagBadge() {
     if(wasLive) lvViewPly=null; else lvViewPly=Math.min(lvViewPly, lvMoves.length);
     lvPrevMovesLen=lvMoves.length;
     lvDrawOffer=('drawOffer' in m)?(m.drawOffer||null):lvDrawOffer;
-    // sonido de la jugada (evita duplicar con la que ya sonó localmente)
+    // sonido + animación de la jugada (evita duplicar con la que ya sonó/mostré localmente).
+    // slideMove queda seteado SOLO si es una jugada nueva (la del rival), no el eco de la mía.
+    var slideMove=null;
     if(m.lastMove){
       var id=m.lastMove.from+m.lastMove.to+m.fen;
-      if(id!==lvPendingSoundId && id!==lvLastSoundId){ try { cvPlayMoveSound(m.lastMove.san); } catch(e){} }
+      if(id!==lvPendingSoundId && id!==lvLastSoundId){ try { cvPlayMoveSound(m.lastMove.san); } catch(e){} slideMove=m.lastMove; }
       lvLastSoundId=id;
     }
     lvPendingSoundId=null;
@@ -30015,7 +30054,15 @@ function cvUpdateNagBadge() {
     if(prev!=='playing' && lvStatus==='playing'){ lvEndSoundDone=false; if(!cdActive) sndStart(); }
     if(lvStatus==='playing') acquireWake(); else releaseWake();
     lvSelected=null;
-    renderBoard(); updateNames(); renderClocks(); updateControls(); updateDrawPrompt(); renderMoves(); updateNav();
+    var _bEl=$('lv-board'), hadBoard=!!(_bEl && _bEl.children.length===64);
+    // Eco de MI propia jugada (misma posición que ya dibujé): no redibujar, así no se
+    // corta la animación de deslizamiento en curso. Conservador: ante la duda, redibuja.
+    var pureEcho = (slideMove===null && liveView() && !lvPremove && hadBoard && lvFen===lvRenderedFen);
+    if(!pureEcho){
+      renderBoard();
+      if(slideMove && hadBoard && liveView() && !inCountdown()) lvSlidePiece(slideMove.from, slideMove.to);
+    }
+    updateNames(); renderClocks(); updateControls(); updateDrawPrompt(); renderMoves(); updateNav();
     updateShare();
     // Disparo del premove al llegar mi turno (no durante la cuenta regresiva)
     if(lvPremove && lvTurn===lvMyColor && lvStatus==='playing' && !inCountdown()){
