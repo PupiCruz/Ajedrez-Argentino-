@@ -29365,7 +29365,7 @@ function cvUpdateNagBadge() {
   var lvSelected=null, lvPremove=null, lvSuppressClick=false, lvDrag=null;
   var lvClock=null, lvClockSyncAt=0, lvTicker=null, lvLowWarned=false;
   var lvDiscTimer=null, lvDiscUntil=0;   // cuenta regresiva cuando el rival se desconecta
-  var lvCdUntil=0, lvCdTimer=null, lvCdLast=null;   // cuenta regresiva de arranque "3… 2… 1… ¡Ya!"
+  var lvCdUntil=0, lvCdTimeouts=[];   // cuenta regresiva de arranque "3… 2… 1… ¡Ya!"
   var lvIntentionalClose=false, lvReconnectTries=0, lvReconnectTimer=null;
   var lvPendingSoundId=null, lvLastSoundId=null, lvEndSoundDone=false;
   var lvPrevStatus='waiting', lvWakeLock=null;
@@ -29625,32 +29625,31 @@ function cvUpdateNagBadge() {
   }
   function stopDiscCountdown(){ if(lvDiscTimer){ clearInterval(lvDiscTimer); lvDiscTimer=null; } }
 
-  // ── Cuenta regresiva de arranque "3… 2… 1… ¡Ya!" (el reloj recién corre al final) ──
+  // ── Cuenta regresiva de arranque "3… 2… 1… ¡Ya!" ────────────────────────────
+  // Animación LOCAL de duración fija: cada número dura 1s exacto y siempre arranca
+  // en 3 (no se recorta por la latencia). El reloj lo arranca el SERVIDOR al final,
+  // así que no se pierde tiempo de partida. Bloquea el tablero durante la cuenta.
   function inCountdown(){ return lvCdUntil>Date.now(); }
   function startArrancaCountdown(until){
     if(!until || until<=Date.now()) return;
-    if(lvCdUntil===until && lvCdTimer) return;   // ya corriendo para este arranque
-    lvCdUntil=until; lvCdLast=null;
+    if(lvCdTimeouts.length) return;              // ya corriendo
+    lvCdUntil=Date.now()+3000;                   // el tablero se desbloquea al "¡Ya!"
     var el=$('lv-countdown'); if(!el) return;
     el.style.display='flex';
     lvSelected=null; lvPremove=null; renderBoard();
-    var render=function(){
-      var msLeft=lvCdUntil-Date.now();
-      if(msLeft<=0){
-        if(lvCdLast!=='go'){ lvCdLast='go'; el.innerHTML='<div class="lv-cd-num lv-cd-go lv-cd-pop">¡Ya!</div>'; sndStart(); }
-        if(msLeft<-500) stopArrancaCountdown();
-        return;
-      }
-      var n=Math.ceil(msLeft/1000);
-      if(n!==lvCdLast){ lvCdLast=n; el.innerHTML='<div class="lv-cd-num lv-cd-pop">'+n+'</div>'; tone([360+(4-n)*90],0.12,'sine',0.15); }
-    };
-    render(); if(lvCdTimer) clearInterval(lvCdTimer); lvCdTimer=setInterval(render,100);
+    var num=function(txt,go){ el.innerHTML='<div class="lv-cd-num'+(go?' lv-cd-go':'')+' lv-cd-pop">'+txt+'</div>'; };
+    var beep=function(f){ tone([f],0.13,'sine',0.16); };
+    num('3'); beep(360);
+    lvCdTimeouts.push(setTimeout(function(){ num('2'); beep(450); }, 1000));
+    lvCdTimeouts.push(setTimeout(function(){ num('1'); beep(560); }, 2000));
+    lvCdTimeouts.push(setTimeout(function(){ num('¡Ya!', true); sndStart(); }, 3000));
+    lvCdTimeouts.push(setTimeout(function(){ stopArrancaCountdown(); }, 3650));
   }
   function stopArrancaCountdown(){
-    if(lvCdTimer){ clearInterval(lvCdTimer); lvCdTimer=null; }
-    lvCdUntil=0; lvCdLast=null;
+    for(var i=0;i<lvCdTimeouts.length;i++) clearTimeout(lvCdTimeouts[i]);
+    lvCdTimeouts=[]; lvCdUntil=0;
     var el=$('lv-countdown'); if(el){ el.style.display='none'; el.innerHTML=''; }
-    if(lvStatus==='playing') setStatus(myTurnText());
+    if(lvStatus==='playing') { renderBoard(); setStatus(myTurnText()); }
   }
 
   // ── Wake lock (pantalla del teléfono encendida; solo https) ──────────────────
