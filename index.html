@@ -2514,6 +2514,7 @@
       .lv-prompt { display:flex; flex-direction:column; gap:8px; background:var(--gold-bg); border:1px solid var(--gold-dim); border-radius:var(--r-md); padding:10px; margin-bottom:12px; font-size:13px; color:var(--text); }
       .lv-prompt .lv-prompt-row { display:flex; gap:8px; }
       .lv-prompt .lv-prompt-row button { flex:1; padding:7px; }
+      .lv-prompt-danger { background:rgba(224,49,49,.12); border-color:rgba(224,49,49,.5); }
       .lv-controls { display:flex; flex-direction:column; gap:8px; }
       .lv-controls button { width:100%; }
       /* Al terminar la partida, "Volver al menú" se resalta para que sea obvio cómo salir */
@@ -2598,10 +2599,18 @@
               <button id="lv-draw-no" class="lv-btn-sec">Rechazar</button>
             </div>
           </div>
+          <div id="lv-resign-confirm" class="lv-prompt lv-prompt-danger" style="display:none">
+            <span>🏳️ ¿Seguro que querés rendirte?</span>
+            <div class="lv-prompt-row">
+              <button id="lv-resign-yes" class="lv-btn-sec">Sí, rendirme</button>
+              <button id="lv-resign-no" class="lv-btn-sec">Cancelar</button>
+            </div>
+          </div>
           <div class="lv-controls">
             <button id="lv-abort" class="lv-btn-sec" style="display:none">✕ Abortar</button>
             <button id="lv-offerdraw" class="lv-btn-sec" style="display:none">🤝 Ofrecer tablas</button>
             <button id="lv-resign" class="lv-btn-sec" style="display:none">🏳️ Rendirme</button>
+            <button id="lv-analyze" class="lv-btn-sec" style="display:none">🔬 Analizar partida</button>
             <button id="lv-rematch" class="lv-btn-main" style="display:none">Revancha 🔁</button>
             <button id="lv-exit" class="lv-btn-sec">🏠 Volver al menú</button>
           </div>
@@ -29811,7 +29820,8 @@ function cvUpdateNagBadge() {
       var nm=lvNames[color] || (color==='w'?'Blancas':'Negras');
       var mine=(color===lvMyColor);
       var connKey=(color==='w')?'connW':'connB';
-      var dis=(lvPlayers && lvPlayers[connKey]===false && lvPlayers[color==='w'?'w':'b']) ? ' <span class="lv-conn">(reconectando…)</span>' : '';
+      // "(reconectando…)" solo mientras se juega: al terminar la partida no tiene sentido.
+      var dis=(lvStatus==='playing' && lvPlayers && lvPlayers[connKey]===false && lvPlayers[color==='w'?'w':'b']) ? ' <span class="lv-conn">(reconectando…)</span>' : '';
       return (color==='w'?'⚪ ':'⚫ ')+nm+(mine?' <span style="color:var(--text3)">(vos)</span>':'')+dis;
     }
     var nb=$('lv-name-bot'), nt=$('lv-name-top');
@@ -29826,9 +29836,11 @@ function cvUpdateNagBadge() {
     show('lv-abort', playing && amPlayer && noMoves);
     show('lv-offerdraw', playing && amPlayer && !lvDrawOffer);
     show('lv-resign', playing && amPlayer);
+    show('lv-analyze', finished && lvMoves.length>0);   // analizar la partida en el visor completo
     show('lv-rematch', finished && amPlayer);
     var rm=$('lv-rematch'); if(rm && finished){ rm.disabled=false; rm.textContent='Revancha 🔁'; }
     var ex=$('lv-exit'); if(ex) ex.classList.toggle('lv-exit-hot', finished);
+    var rc=$('lv-resign-confirm'); if(rc && !playing) rc.style.display='none';   // cerrar el "¿seguro?" al terminar
   }
   function updateDrawPrompt(){
     var el=$('lv-drawprompt'); if(!el) return;
@@ -29981,6 +29993,7 @@ function cvUpdateNagBadge() {
     lvMoves=[]; lvManualFlip=false; lvResultCode='*';
     lvArrows=[]; lvHighlights={}; lvRmDown=null; lvViewPly=null; lvPrevMovesLen=0;
     lvResult=null; lvBannerDismissed=false; stopDiscCountdown();
+    var rc=$('lv-resign-confirm'); if(rc) rc.style.display='none';
     hideBanner(); hidePromo(); renderResult(); renderMoves(); renderArrows(); updateNav();
   }
 
@@ -30028,7 +30041,10 @@ function cvUpdateNagBadge() {
       if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(inp.value).then(done).catch(function(){ try{document.execCommand('copy');}catch(_){}done(); });
       else { try{document.execCommand('copy');}catch(_){}done(); }
     };
-    if((b=$('lv-resign'))) b.onclick=function(){ if(lvStatus==='playing' && confirm('¿Seguro que querés rendirte?')) send({type:'resign'}); };
+    if((b=$('lv-resign'))) b.onclick=function(){ if(lvStatus==='playing'){ var p=$('lv-resign-confirm'); if(p) p.style.display='flex'; } };
+    if((b=$('lv-resign-yes'))) b.onclick=function(){ var p=$('lv-resign-confirm'); if(p) p.style.display='none'; if(lvStatus==='playing') send({type:'resign'}); };
+    if((b=$('lv-resign-no'))) b.onclick=function(){ var p=$('lv-resign-confirm'); if(p) p.style.display='none'; };
+    if((b=$('lv-analyze'))) b.onclick=function(){ try { if(typeof loadPgnIntoViewer==='function') loadPgnIntoViewer(buildPGN()); } catch(e){} };
     if((b=$('lv-abort'))) b.onclick=function(){ send({type:'abort'}); };
     if((b=$('lv-offerdraw'))) b.onclick=function(){ send({type:'draw-offer'}); setStatus('Ofreciste tablas — esperando respuesta…'); };
     if((b=$('lv-draw-yes'))) b.onclick=function(){ send({type:'draw-accept'}); updateDrawPrompt(); };
