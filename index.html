@@ -2483,6 +2483,13 @@
       .lv-banner-win  .lv-b-title { color:#2f9e44; } .lv-banner-lose .lv-b-title { color:#e03131; } .lv-banner-draw .lv-b-title { color:#e8850c; }
       .lv-b-sub { font-size:14px; color:var(--text2); font-weight:600; }
       .lv-b-hint { font-size:11px; color:var(--text3); margin-top:6px; }
+      /* Cuenta regresiva de arranque "3… 2… 1… ¡Ya!" (caricaturesca, rebota) */
+      .lv-countdown { position:absolute; inset:0; z-index:27; display:flex; align-items:center; justify-content:center; pointer-events:none; border-radius:2px; background:rgba(18,18,24,.42); backdrop-filter:blur(2px); -webkit-backdrop-filter:blur(2px); }
+      .lv-cd-num { font-size:min(34vw,150px); font-weight:900; line-height:1; color:#fff; letter-spacing:-4px; text-shadow:0 8px 30px rgba(0,0,0,.6); }
+      .lv-cd-num.lv-cd-go { color:#7dd88a; font-size:min(20vw,88px); letter-spacing:-1px; }
+      .lv-cd-pop { animation:lvCdPop .5s cubic-bezier(.18,1.5,.4,1); }
+      @keyframes lvCdPop { 0%{ transform:scale(.2) rotate(-14deg); opacity:0; } 45%{ transform:scale(1.2) rotate(5deg); opacity:1; } 100%{ transform:scale(1) rotate(0); opacity:1; } }
+      @media (prefers-reduced-motion: reduce) { .lv-cd-pop { animation:none; } }
       @keyframes lvPop { from { opacity:0; transform:scale(.6); } to { opacity:1; transform:scale(1); } }
       @keyframes lvWobble { 0%,100%{ transform:rotate(-7deg) } 50%{ transform:rotate(7deg) scale(1.06) } }
       @media (prefers-reduced-motion: reduce) { .lv-banner, .lv-b-emoji { animation:none; } }
@@ -2632,6 +2639,7 @@
             <div id="lv-resize" title="Arrastrá para agrandar o achicar el tablero (se guarda)" aria-label="Cambiar tamaño del tablero"><svg viewBox="0 0 12 12" width="12" height="12" fill="none"><path d="M11 4.5 L4.5 11 M11 8.5 L8.5 11" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"></path></svg></div>
             <div id="lv-promo" class="lv-promo" style="display:none"></div>
             <div id="lv-banner" class="lv-banner" style="display:none"></div>
+            <div id="lv-countdown" class="lv-countdown" style="display:none"></div>
           </div>
           <div class="lv-player lv-bottom">
             <span class="lv-pname" id="lv-name-bot">Vos</span>
@@ -29357,6 +29365,7 @@ function cvUpdateNagBadge() {
   var lvSelected=null, lvPremove=null, lvSuppressClick=false, lvDrag=null;
   var lvClock=null, lvClockSyncAt=0, lvTicker=null, lvLowWarned=false;
   var lvDiscTimer=null, lvDiscUntil=0;   // cuenta regresiva cuando el rival se desconecta
+  var lvCdUntil=0, lvCdTimer=null, lvCdLast=null;   // cuenta regresiva de arranque "3… 2… 1… ¡Ya!"
   var lvIntentionalClose=false, lvReconnectTries=0, lvReconnectTimer=null;
   var lvPendingSoundId=null, lvLastSoundId=null, lvEndSoundDone=false;
   var lvPrevStatus='waiting', lvWakeLock=null;
@@ -29616,6 +29625,34 @@ function cvUpdateNagBadge() {
   }
   function stopDiscCountdown(){ if(lvDiscTimer){ clearInterval(lvDiscTimer); lvDiscTimer=null; } }
 
+  // ── Cuenta regresiva de arranque "3… 2… 1… ¡Ya!" (el reloj recién corre al final) ──
+  function inCountdown(){ return lvCdUntil>Date.now(); }
+  function startArrancaCountdown(until){
+    if(!until || until<=Date.now()) return;
+    if(lvCdUntil===until && lvCdTimer) return;   // ya corriendo para este arranque
+    lvCdUntil=until; lvCdLast=null;
+    var el=$('lv-countdown'); if(!el) return;
+    el.style.display='flex';
+    lvSelected=null; lvPremove=null; renderBoard();
+    var render=function(){
+      var msLeft=lvCdUntil-Date.now();
+      if(msLeft<=0){
+        if(lvCdLast!=='go'){ lvCdLast='go'; el.innerHTML='<div class="lv-cd-num lv-cd-go lv-cd-pop">¡Ya!</div>'; sndStart(); }
+        if(msLeft<-500) stopArrancaCountdown();
+        return;
+      }
+      var n=Math.ceil(msLeft/1000);
+      if(n!==lvCdLast){ lvCdLast=n; el.innerHTML='<div class="lv-cd-num lv-cd-pop">'+n+'</div>'; tone([360+(4-n)*90],0.12,'sine',0.15); }
+    };
+    render(); if(lvCdTimer) clearInterval(lvCdTimer); lvCdTimer=setInterval(render,100);
+  }
+  function stopArrancaCountdown(){
+    if(lvCdTimer){ clearInterval(lvCdTimer); lvCdTimer=null; }
+    lvCdUntil=0; lvCdLast=null;
+    var el=$('lv-countdown'); if(el){ el.style.display='none'; el.innerHTML=''; }
+    if(lvStatus==='playing') setStatus(myTurnText());
+  }
+
   // ── Wake lock (pantalla del teléfono encendida; solo https) ──────────────────
   function acquireWake(){ try {
     if('wakeLock' in navigator && !lvWakeLock && document.visibilityState==='visible'){
@@ -29631,7 +29668,7 @@ function cvUpdateNagBadge() {
   function needsPromo(from,to){ var pc=pieceAt(from); return !!(pc && pc.type==='p' && (to[1]==='8'||to[1]==='1')); }
 
   function onTap(name){
-    if(lvStatus!=='playing' || lvMyColor==='spec') return;
+    if(lvStatus!=='playing' || lvMyColor==='spec' || inCountdown()) return;
     var pc=pieceAt(name), myTurn=(lvTurn===lvMyColor);
     if(lvSelected){
       if(name===lvSelected){ lvSelected=null; renderBoard(); return; }
@@ -29696,6 +29733,7 @@ function cvUpdateNagBadge() {
       // Clic DERECHO: empezar una flecha o un resaltado (permitido siempre, hasta mirando/revisando).
       if(e.button===2){ if(name) lvRmDown={from:name}; e.preventDefault(); return; }
       if(e.button!==0 && e.button!==undefined) return;
+      if(inCountdown()) return;   // durante la cuenta regresiva el tablero está bloqueado
       // Clic IZQUIERDO: limpia flechas/resaltados dibujados.
       clearShapes();
       // Si estás revisando una jugada pasada, el primer clic vuelve a la posición actual.
@@ -29879,13 +29917,17 @@ function cvUpdateNagBadge() {
     }
     lvPendingSoundId=null;
     if('clock' in m) applyClock(m.clock);
-    if(prev!=='playing' && lvStatus==='playing'){ sndStart(); lvEndSoundDone=false; }
+    // Cuenta regresiva de arranque: si el server manda startAt futuro, animar 3…2…1…
+    var cdActive = (m.startAt && m.startAt>Date.now());
+    if(cdActive) startArrancaCountdown(m.startAt);
+    // Sonido de inicio: si hay cuenta regresiva, suena al "¡Ya!" (no ahora).
+    if(prev!=='playing' && lvStatus==='playing'){ lvEndSoundDone=false; if(!cdActive) sndStart(); }
     if(lvStatus==='playing') acquireWake(); else releaseWake();
     lvSelected=null;
     renderBoard(); updateNames(); renderClocks(); updateControls(); updateDrawPrompt(); renderMoves(); updateNav();
     updateShare();
-    // Disparo del premove al llegar mi turno
-    if(lvPremove && lvTurn===lvMyColor && lvStatus==='playing'){
+    // Disparo del premove al llegar mi turno (no durante la cuenta regresiva)
+    if(lvPremove && lvTurn===lvMyColor && lvStatus==='playing' && !inCountdown()){
       var p=lvPremove; lvPremove=null;
       var ok=false; try { ok=lvChess.moves({square:p.from,verbose:true}).some(function(x){return x.to===p.to;}); } catch(e){}
       if(ok) doMove(p.from,p.to,p.promotion); else renderBoard();
@@ -29992,7 +30034,7 @@ function cvUpdateNagBadge() {
     lvPendingSoundId=null; lvLastSoundId=null; lvEndSoundDone=false;
     lvMoves=[]; lvManualFlip=false; lvResultCode='*';
     lvArrows=[]; lvHighlights={}; lvRmDown=null; lvViewPly=null; lvPrevMovesLen=0;
-    lvResult=null; lvBannerDismissed=false; stopDiscCountdown();
+    lvResult=null; lvBannerDismissed=false; stopDiscCountdown(); stopArrancaCountdown();
     var rc=$('lv-resign-confirm'); if(rc) rc.style.display='none';
     hideBanner(); hidePromo(); renderResult(); renderMoves(); renderArrows(); updateNav();
   }
