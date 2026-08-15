@@ -4949,6 +4949,45 @@ function crFlagEmoji(fed) {
   return _flagImg(fed) || escHtml(String(fed));
 }
 
+// ── Torneos con federaciones REGIONALES de España ────────────────────────────────────────────
+// Los campeonatos de España traen como "federación" la COMUNIDAD AUTÓNOMA (CAT, VAL, GAL…), no el
+// país — y a los EXTRANJEROS también (Ivanchuk figura como CNT/Cantabria, Oro como ARA/Aragón). O sea,
+// la tabla NO tiene la nacionalidad real. Además varias regiones coinciden con códigos FIDE de país
+// (AND=Andorra, CAN=Canadá, MAD=Madagascar) → bandera errada. En estos torneos: en la tabla/tarjetas
+// mostramos 🇦🇷 solo a los argentinos que la app conoce y NADA al resto (cero banderas equivocadas); la
+// nacionalidad real de cualquiera se ve al abrir la partida en el visor (cvLoadFlag la resuelve por FIDE
+// id vía Lichess). Los torneos normales (fed = país real) no se tocan.
+var _ES_REGION_FEDS = {AND:1,ARA:1,AST:1,BAL:1,CAN:1,CAT:1,CNT:1,CTL:1,CTM:1,EXT:1,GAL:1,MAD:1,MEL:1,MUR:1,NAV:1,VAL:1,VAS:1,RIO:1,CEU:1};
+// Regiones que NO coinciden con ningún país FIDE: su sola presencia (≥2 distintas) delata el torneo regional.
+var _ES_REGION_UNIQUE = {ARA:1,AST:1,BAL:1,CAT:1,CNT:1,CTL:1,CTM:1,EXT:1,GAL:1,MEL:1,MUR:1,NAV:1,VAL:1,VAS:1,RIO:1,CEU:1};
+var _esRegionalCache = {};
+function _tourIsESRegional(crKey) {
+  if (!crKey) return false;
+  if (_esRegionalCache.hasOwnProperty(crKey)) return _esRegionalCache[crKey];
+  var st;
+  try { var d = crDataLoad(crKey); st = (d && d.standings) || []; } catch (e) { st = []; }
+  if (!st.length) return false;   // la tabla todavía no cargó (on-demand) → no cachear, reintentar luego
+  var seen = {};
+  for (var i = 0; i < st.length; i++) {
+    var f = (st[i] && st[i].fed || '').toUpperCase();
+    if (_ES_REGION_UNIQUE[f]) seen[f] = 1;
+  }
+  var res = Object.keys(seen).length >= 2;
+  _esRegionalCache[crKey] = res;   // cachear (true/false) una vez que hay datos
+  return res;
+}
+// ¿Argentino que la app ya conoce? (por FIDE id en el ranking/adicionales, o por nombre)
+function _isKnownArgPlayer(name, fideId) {
+  try {
+    if (fideId && typeof _getArgFideSet === 'function') { var s = _getArgFideSet(); if (s && (s.has ? s.has(String(fideId)) : s[String(fideId)])) return true; }
+    if (typeof _isArgPlayer === 'function' && _isArgPlayer(name)) return true;
+    if (typeof _isArgAdicionalName === 'function' && _isArgAdicionalName(name)) return true;
+  } catch (e) {}
+  return false;
+}
+// Bandera para tabla/tarjetas en un torneo español-regional: 🇦🇷 a argentinos conocidos, nada al resto.
+function _esRegFlag(name, fideId) { return _isKnownArgPlayer(name, fideId) ? _flagImg('ARG') : ''; }
+
 // Bandera de un "equipo" del PGN (header WhiteTeam/BlackTeam). En las Olimpiadas y torneos por
 // equipos eso trae el país — a veces como código FIDE ("ARG") y a veces como nombre ("Argentina").
 // Resuelve ambos. El nombre→código se arma una vez con Intl.DisplayNames (es + en).
@@ -5013,7 +5052,8 @@ function _tourEntryByName(name, crKey) {
   if (!m || !name) return null;
   return m[crNormTokens(name)] || null;
 }
-function _flagByName(name, crKey) {
+function _flagByName(name, crKey, fideId) {
+  if (_tourIsESRegional(crKey)) return _esRegFlag(name, fideId);   // fed regional (no es país) → 🇦🇷 solo argentinos
   var e = _tourEntryByName(name, crKey);
   return (e && e.fed) ? _teamFlag(e.fed) : '';
 }
@@ -5390,7 +5430,7 @@ function crBuildCrosstable(key,data){
   var ks=key.replace(/'/g,"\\'");
   var players;
   if(data.standings&&data.standings.length){
-    players=data.standings.map(function(s){ return {name:s.name,title:s.title,fed:s.fed,elo:s.elo}; });
+    players=data.standings.map(function(s){ return {name:s.name,title:s.title,fed:s.fed,elo:s.elo,fide:s.fideId}; });
   } else {
     // Sin tabla aún: derivar jugadores de los cruces y ordenarlos por número de inicio.
     var seen={}; players=[]; var startNo={};
@@ -5462,7 +5502,7 @@ function crBuildCrosstable(key,data){
     h+='<td class="cr-xt-nametd" style="'+nameTd+';cursor:pointer" onclick="crOpenPlayer('+crArg(key)+','+crArg(pl.name)+')">'
       +'<span class="cr-xt-name" style="display:flex;align-items:center;gap:6px;min-width:430px;max-width:560px">'
       +'<span class="cr-tslot" style="'+slotTitle+'">'+crTitleBadge(pl.title)+'</span>'
-      +'<span class="cr-xt-fslot" style="'+slotFlag+'">'+(pl.fed?crFlagEmoji(pl.fed):'')+'</span>'
+      +'<span class="cr-xt-fslot" style="'+slotFlag+'">'+(pl.fed?(_tourIsESRegional(key)?_esRegFlag(pl.name,pl.fide):crFlagEmoji(pl.fed)):'')+'</span>'
       +'<span style="'+slotName+'">'+escHtml(pl.name)+'</span>'
       +'<span class="cr-xt-elo" style="'+slotElo+'">'+(pl.elo||'')+'</span>'
       +'</span></td>';
@@ -5502,7 +5542,7 @@ function crBuildRoundPanel(key,pairings,data,roundNum){
   var fedMap={};
   if(data&&data.standings){ data.standings.forEach(function(s){ if(s.name&&s.fed) fedMap[s.name]=s.fed; }); }
   function fedOf(name){ return fedMap[name]||''; }
-  function flagCell(name){ var f=fedOf(name); return f?'<span title="'+f+'">'+crFlagEmoji(f)+'</span>':''; }
+  function flagCell(name){ if(_tourIsESRegional(key)){ var af=_esRegFlag(name,''); return af?'<span>'+af+'</span>':''; } var f=fedOf(name); return f?'<span title="'+f+'">'+crFlagEmoji(f)+'</span>':''; }
 
   // Detección de argentinos (igual criterio que la tabla): FED de la tabla de posiciones;
   // sin FED → nombre en PLAYERS. Una mesa es "argentina" si juega un argentino con blancas o negras.
@@ -5679,7 +5719,7 @@ function crBuildStandingsPanel(key,standings){
       +'<td style="'+td+';text-align:center;width:34px;font-size:13px">'+medal+'</td>'
       +'<td style="'+td+';text-align:center">'+crTitleBadge(p.title)+'</td>'
       +'<td style="'+td+';text-align:left;color:var(--text);font-size:14.5px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-shadow:var(--txt-out)">'+escHtml(p.name)+'</td>'
-      +'<td style="'+td+';text-align:center;color:var(--text2);font-size:12px;white-space:nowrap">'+(p.fed?crFlagEmoji(p.fed)+'<span class="fed-txt"> '+escHtml(p.fed)+'</span>':'')+'</td>'
+      +'<td style="'+td+';text-align:center;color:var(--text2);font-size:12px;white-space:nowrap">'+(p.fed?(_tourIsESRegional(key)?_esRegFlag(p.name,p.fideId):crFlagEmoji(p.fed))+'<span class="fed-txt"> '+escHtml(p.fed)+'</span>':'')+'</td>'
       +'<td style="'+td+';text-align:center;color:var(--fg-e8);font-size:15px;font-weight:600;text-shadow:var(--txt-out)">'+(p.elo||'')+'</td>'
       +'<td style="'+td+';text-align:right;font-weight:700;color:var(--fg-e8);font-size:15px;white-space:nowrap;text-shadow:var(--txt-out)">'+(isInitial?'':crPtsStr(p.pts))+'</td>'
       +'<td class="col-var" style="'+td+';text-align:center;color:var(--text3);font-size:12px;white-space:nowrap">'+eloVarHtml+'</td>'
@@ -12931,8 +12971,8 @@ function _cvRoundMinisHtml(keepPage) {
     var _mCrK = (typeof _tdCtx !== 'undefined' && _tdCtx && _tdCtx.crKey) || null;
     var wTitle = titleBadge(h.WhiteTitle || _titleByName(white, _mCrK));
     var bTitle = titleBadge(h.BlackTitle || _titleByName(black, _mCrK));
-    var wFlag = _flagByName(white, _mCrK) || _teamFlag(h.WhiteTeam);
-    var bFlag = _flagByName(black, _mCrK) || _teamFlag(h.BlackTeam);
+    var wFlag = _flagByName(white, _mCrK, h.WhiteFideId) || _teamFlag(h.WhiteTeam);
+    var bFlag = _flagByName(black, _mCrK, h.BlackFideId) || _teamFlag(h.BlackTeam);
     var res = h.Result || '*';
     var ff = tdFinalFenCached(pgn);
     var mEv = _liveEvalFor(ff.fen, ff.ev);
@@ -17902,7 +17942,7 @@ function cvPlayerHtml(title, name, fideId, elo, team, isBlack) {
   // Bandera: primero de la TABLA DE CRUCES del torneo (sync, tiene a todos), si no del fideId via
   // lichess (async, cvLoadFlag). El crKey solo se usa si la partida es del torneo abierto (no pisar
   // con banderas de un torneo viejo si se abrió una partida suelta).
-  var stdFlag = _flagByName(name, _crK);
+  var stdFlag = _flagByName(name, _crK, fideId);
   var flagStr = (stdFlag || fideId) ? '<span id="' + flagId + '">' + stdFlag + '</span>' : '';
   var sub = (eloStr || flagStr) ? '<span class="cv-psub">' + eloStr + flagStr + '</span>' : '';
   return avatarStr + '<span class="cv-pcol"><span class="cv-pn">' + badge + nameStr + '</span>' + sub + '</span>';
@@ -23717,8 +23757,8 @@ function _tdCardHtml(g, flip) {
   var _bt = g.h.BlackTitle || _titleByName(black, _tdCrK);
   var wTitle = titleBadge(_wt) + (_wt ? ' ' : '');
   var bTitle = titleBadge(_bt) + (_bt ? ' ' : '');
-  var wFlag = _flagByName(white, _tdCrK) || _teamFlag(g.h.WhiteTeam);
-  var bFlag = _flagByName(black, _tdCrK) || _teamFlag(g.h.BlackTeam);
+  var wFlag = _flagByName(white, _tdCrK, g.h.WhiteFideId) || _teamFlag(g.h.WhiteTeam);
+  var bFlag = _flagByName(black, _tdCrK, g.h.BlackFideId) || _teamFlag(g.h.BlackTeam);
   var wScore = res === '1-0' ? '1' : res === '0-1' ? '0' : res === '1/2-1/2' ? '½' : '';
   var bScore = res === '1-0' ? '0' : res === '0-1' ? '1' : res === '1/2-1/2' ? '½' : '';
   var wScoreColor = res === '1-0' ? 'var(--green)' : res === '0-1' ? 'var(--red)' : 'var(--text2)';
