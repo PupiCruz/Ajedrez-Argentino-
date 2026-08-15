@@ -29484,6 +29484,9 @@ function cvUpdateNagBadge() {
   function rcOf(name){ return { r: 8-(+name[1]), f: FILES.indexOf(name[0]) }; }
   function pieceAt(name){ var b=fenBoard(lvFen), p=rcOf(name); return b[p.r][p.f]; }
   function isStartFen(fen){ return fen.indexOf('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w')===0; }
+  // Clave de POSICIÓN (piezas + turno): ignora al-paso/enroque/relojes, donde chess.js 0.10.3 (cliente)
+  // y 1.4.0 (server) difieren. Se usa para saber si el tablero dibujado ya coincide con el estado nuevo.
+  function posKey(f){ return f ? f.split(' ').slice(0,2).join(' ') : ''; }
   function pieceImg(pc){ return 'assets/piezas/'+pc.color+pc.type.toUpperCase()+'.svg'; }
 
   // ── Render del tablero ──────────────────────────────────────────────────────
@@ -29814,9 +29817,11 @@ function cvUpdateNagBadge() {
     if(!mv){ lvSelected=null; renderBoard(); return; }
     lvFen=lvChess.fen(); lvTurn=lvChess.turn();
     lvLastMove={from:from,to:to,san:mv.san};
-    lvPendingSoundId=from+to+lvFen;
     try { cvPlayMoveSound(mv.san); } catch(e){}
     lvMoves.push(mv.san); lvPrevMovesLen=lvMoves.length; lvViewPly=null;
+    // Clave anti-duplicado por JUGADA (no por FEN): el FEN del cliente (chess.js 0.10.3) y el del
+    // servidor (1.4.0) difieren en el campo "al paso" tras avanzar 2 el peón, y eso rompía el dedup.
+    lvPendingSoundId=from+to+':'+lvMoves.length;
     lvSelected=null; lvPremove=null; clearShapes();
     renderBoard();
     if(!viaDrag) lvSlidePiece(from,to);   // animar clic-clic y premoves; el arrastre no
@@ -30041,7 +30046,8 @@ function cvUpdateNagBadge() {
     // slideMove queda seteado SOLO si es una jugada nueva (la del rival), no el eco de la mía.
     var slideMove=null;
     if(m.lastMove){
-      var id=m.lastMove.from+m.lastMove.to+m.fen;
+      var ply=(m.moves ? m.moves.length : lvMoves.length);
+      var id=m.lastMove.from+m.lastMove.to+':'+ply;   // misma clave por jugada que en doMove
       if(id!==lvPendingSoundId && id!==lvLastSoundId){ try { cvPlayMoveSound(m.lastMove.san); } catch(e){} slideMove=m.lastMove; }
       lvLastSoundId=id;
     }
@@ -30057,7 +30063,7 @@ function cvUpdateNagBadge() {
     var _bEl=$('lv-board'), hadBoard=!!(_bEl && _bEl.children.length===64);
     // Eco de MI propia jugada (misma posición que ya dibujé): no redibujar, así no se
     // corta la animación de deslizamiento en curso. Conservador: ante la duda, redibuja.
-    var pureEcho = (slideMove===null && liveView() && !lvPremove && hadBoard && lvFen===lvRenderedFen);
+    var pureEcho = (slideMove===null && liveView() && !lvPremove && hadBoard && posKey(lvFen)===posKey(lvRenderedFen));
     if(!pureEcho){
       renderBoard();
       if(slideMove && hadBoard && liveView() && !inCountdown()) lvSlidePiece(slideMove.from, slideMove.to);
