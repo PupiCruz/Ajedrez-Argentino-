@@ -5385,26 +5385,33 @@ function crBuildTabsAndPanels(key,data){
   }
   h+='</div>';
 
+  // Paneles PEREZOSOS: solo se arma el de la pestaña activa; los demás quedan vacíos con data-lazy y se
+  // construyen al tocar su pestaña (crShowTab). Antes se armaban TODOS de una (cuadro + ~11 rondas, cientos
+  // de cruces cada uno) aunque solo se vea uno → ~7s de freeze al entrar (y otra vez al refrescar/cambiar
+  // de categoría). Con esto, entrar arma solo la tabla (~0,7s) y cada ronda se arma al abrirla.
   // Panel cuadro (round robin)
   if(isRR){
-    h+='<div id="cr-panel-'+key+'-cuadro" style="display:'+(defaultTab==='cuadro'?'block':'none')+'">';
-    h+=crBuildCrosstable(key,data);
-    h+='</div>';
+    var _cuA=(defaultTab==='cuadro');
+    h+='<div id="cr-panel-'+key+'-cuadro"'+(_cuA?'':' data-lazy="1"')+' style="display:'+(_cuA?'block':'none')+'">'+(_cuA?crBuildCrosstable(key,data):'')+'</div>';
   }
   // Paneles ronda
   roundNums.forEach(function(r){
     var active=(r===defaultTab);
-    h+='<div id="cr-panel-'+key+'-'+r+'" style="display:'+(active?'block':'none')+'">';
-    h+=crBuildRoundPanel(key,data.rounds[r],data,r);
-    h+='</div>';
+    h+='<div id="cr-panel-'+key+'-'+r+'"'+(active?'':' data-lazy="1"')+' style="display:'+(active?'block':'none')+'">'+(active?crBuildRoundPanel(key,data.rounds[r],data,r):'')+'</div>';
   });
   // Panel tabla
   if(hasStandings){
-    h+='<div id="cr-panel-'+key+'-tabla" style="display:'+(defaultTab==='tabla'?'block':'none')+'">';
-    h+=crBuildStandingsPanel(key,data.standings);
-    h+='</div>';
+    var _tbA=(defaultTab==='tabla');
+    h+='<div id="cr-panel-'+key+'-tabla"'+(_tbA?'':' data-lazy="1"')+' style="display:'+(_tbA?'block':'none')+'">'+(_tbA?crBuildStandingsPanel(key,data.standings):'')+'</div>';
   }
   return h;
+}
+// Arma el contenido de UN panel (para construirlo perezosamente al tocar su pestaña). tab = 'tabla' |
+// 'cuadro' | número de ronda.
+function _crBuildPanelContent(key,data,tab){
+  if(tab==='tabla')  return crBuildStandingsPanel(key,data.standings);
+  if(tab==='cuadro') return crBuildCrosstable(key,data);
+  return crBuildRoundPanel(key,data.rounds[tab],data,tab);
 }
 
 // Heurística: ¿el torneo es todos-contra-todos? Pocos jugadores y tantas rondas
@@ -5648,7 +5655,7 @@ function crToggleRoundArg(key){
   if(!data || !data.rounds) return;
   Object.keys(data.rounds).map(Number).forEach(function(r){
     var panel=document.getElementById('cr-panel-'+key+'-'+r);
-    if(panel) panel.innerHTML=crBuildRoundPanel(key,data.rounds[r],data,r);
+    if(panel && !panel.getAttribute('data-lazy')) panel.innerHTML=crBuildRoundPanel(key,data.rounds[r],data,r);   // solo los ya armados
   });
 }
 // Toggle del filtro "Solo argentinos" en la tabla de posiciones/ranking.
@@ -5822,7 +5829,10 @@ function crShowTab(key,tab){
   var activeBtn=document.getElementById('cr-rtab-'+key+'-'+tab);
   if(activeBtn){activeBtn.style.background='var(--gold-bg)';activeBtn.style.color='var(--gold)';activeBtn.style.borderColor='var(--gold-dim)';activeBtn.style.borderWidth='2px';activeBtn.style.textShadow=_ts;}
   var activePanel=document.getElementById('cr-panel-'+key+'-'+tab);
-  if(activePanel) activePanel.style.display='block';
+  if(activePanel){
+    if(activePanel.getAttribute('data-lazy')){ activePanel.removeAttribute('data-lazy'); try{ activePanel.innerHTML=_crBuildPanelContent(key,data,tab); }catch(e){} }
+    activePanel.style.display='block';
+  }
   // Sincronizar la sección de partidas subidas con la ronda elegida en los cruces.
   // El guard evita el rebote cuando la llamada vino del sentido inverso (partidas → cruces).
   if(!_crSyncing && tab!=='tabla' && tab!=='cuadro' && document.getElementById('td-rtab-'+tab)){
@@ -13040,6 +13050,11 @@ async function openTourGameByIndex(idx) {
     if (_cvTourIdx !== idx) return;          // el usuario navegó a otra mientras se bajaba
     if (full) { _cvTourGames[idx] = full; pgn = full; }
   }
+  // Arreglo de PGN "sucio" al ABRIR (no a las cientos de la grilla, que trababa la entrada): los tableros
+  // DGT LiveChess (sichess) dejan jugadas ilegales al final que el load_pgn ESTRICTO del visor rechaza,
+  // cortando la partida. _siFixPgn regenera el SAN y corta el ruido; si el PGN ya está limpio, no cambia.
+  // Idempotente y cacheado en _cvTourGames[idx] → reabrir/navegar no lo recalcula.
+  if (typeof _siFixPgn === 'function') { var _fx = _siFixPgn(pgn); if (_fx !== pgn) { _cvTourGames[idx] = _fx; pgn = _fx; } }
   loadPgnIntoViewer(pgn, _cvTourName, _cvTourLoc, idx);
   // Actualizar la barra de direcciones con el link de ESTA partida (al navegar prev/sig dentro del
   // visor). El primer push lo hace cvOpenOverlay; acá solo reemplazamos para no apilar historial.
@@ -21575,7 +21590,10 @@ function _siFetchAll(id, cb) {
       _fetchTO(_siProxy(url), 15000)
         .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
         .then(function(txt){
-          var games = _siSplitGames(txt).filter(function(g){ return !_bcIsPlaceholderGame(g); }).map(_siFixPgn);
+          // OJO: NO arreglamos (_siFixPgn) las partidas acá — hacerlo sobre las cientos de la ronda
+          // trababa la entrada ~11s (chess.js tarda ~60ms por partida). La grilla tolera el PGN crudo
+          // (tdFinalFen usa replay sloppy); el arreglo estricto se aplica AL ABRIR la partida en el visor.
+          var games = _siSplitGames(txt).filter(function(g){ return !_bcIsPlaceholderGame(g); });
           var anyLive = games.some(function(g){ return /\[Result\s+"\*"\]/.test(g); });
           _siCache[url] = { games: games, final: games.length > 0 && !anyLive };   // terminada = tiene partidas y ninguna en curso
           results[rn] = games;
@@ -22958,6 +22976,10 @@ function _tdEditCatChip(field) {
 async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   _tdLiveStop();   // cortar el auto-refresco del vivo del torneo anterior (si lo había)
   _tdTourKey = id; // para los links de partidas (?torneo=<id>&partida=<idx>)
+  // Cartel "Cargando torneo…" mientras se arma el detalle. El deep-link (link directo) ya lo mostraba;
+  // esto lo agrega también al entrar por el flyer (antes quedaba la pantalla quieta unos segundos). Es
+  // idempotente (si ya hay uno, no lo pisa) y lo saca _removeDeepLinkCover() cuando el detalle ya abrió.
+  if (typeof _showLoadingCover === 'function') _showLoadingCover('Cargando torneo…');
   // Web publicada: los cruces de este torneo se bajan por demanda. Se arranca ACÁ (solapa con la
   // baja de partidas de abajo) y se espera antes de armar los cruces (más abajo, en `crk`).
   var _crPrefetch = _ondemand ? _crEnsureLoaded(id) : null;
@@ -22977,7 +22999,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   if (type === 'hc') {
     var t = null;
     for (var i = 0; i < TORNEOS.length; i++) { if (TORNEOS[i].id == id) { t = TORNEOS[i]; break; } }
-    if (!t) return;
+    if (!t) { _removeDeepLinkCover(); return; }
     var hcCfg = tzCfg2['hc_' + t.id] || {};
     name = t.name; location = t.location; dates = hcCfg.dates || t.dates;
     tourRng = tourRange({ startDate:hcCfg.startDate, endDate:hcCfg.endDate, dates:hcCfg.dates || t.dates });
@@ -23013,7 +23035,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
         // torneo de origen es del pool caía en "return" y dejaba al visitante en la pantalla principal.
         var _poolGames = await fetchTournamentGames(id);
         if (_tdTourKey !== id) return;                 // se abrió otro torneo mientras bajaba
-        if (!_poolGames.length) return;                // ni manifest ni archivo: nada que mostrar
+        if (!_poolGames.length) { _removeDeepLinkCover(); return; }   // ni manifest ni archivo: nada que mostrar
         var _fm = _tourFileMeta[id] || {};
         entry = { id: id, name: _fm.name || 'Partidas', location: _fm.location || '', games: _poolGames, gameCount: _poolGames.length };
       } else {
@@ -23037,7 +23059,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
       var tours = JSON.parse(localStorage.getItem('pgn_tournaments') || '[]');
       for (var j = 0; j < tours.length; j++) { if (tours[j].id == id) { entry = tours[j]; break; } }
     }
-    if (!entry) return;
+    if (!entry) { _removeDeepLinkCover(); return; }
     name = entry.name; location = entry.location || ''; dates = entry.tournamentDates || entry.loadedAt;
     typ = entry.type || '';
     rounds = entry.rounds || null;   // el manifest sí trae rounds; sin esto la web publicada no mostraba el chip "N rondas"
