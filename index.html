@@ -4753,11 +4753,11 @@ function crDataLoad(key) {
   return null;
 }
 function crDataSave(key, data) {
-  try { localStorage.setItem(key, JSON.stringify(data)); _crArgCache = {}; _tourSearchIndex = {}; _stdFedCache = {}; }
+  try { localStorage.setItem(key, JSON.stringify(data)); _crArgCache = {}; _tourSearchIndex = {}; _stdFedCache = {}; _manualArgCache = {}; }
   catch(e) {
     // Sin espacio: ofrecer liberar el navegador y reintentar ESTE guardado.
     if (typeof _quotaOffer === 'function' && _quotaOffer()) {
-      try { localStorage.setItem(key, JSON.stringify(data)); _crArgCache = {}; _tourSearchIndex = {}; _stdFedCache = {}; }
+      try { localStorage.setItem(key, JSON.stringify(data)); _crArgCache = {}; _tourSearchIndex = {}; _stdFedCache = {}; _manualArgCache = {}; }
       catch(e2) { alert('Sigue sin haber espacio. Usá 💾 "Guardar datos en mi carpeta" y recargá la página.'); }
     }
   }
@@ -4865,7 +4865,9 @@ function crArgPlayers(type, id, games, crkOverride) {
     // El criterio de "mostrar o no" lo decide el llamador según la categoría del
     // torneo (solo Internacional). Acá devolvemos todos los argentinos detectados;
     // si no hay ninguno (ni manual), [].
-    Object.keys(argSet).forEach(function(k) { add(argSet[k]); });
+    // Si el autor marcó jugadores A MANO, ESA lista manda: no sumar la autodetección (que en
+    // torneos raros mete falsos positivos). La autodetección queda solo como respaldo sin selección.
+    if (!manual.length) Object.keys(argSet).forEach(function(k) { add(argSet[k]); });
     result = names;
   } catch (e) { console.error('crArgPlayers', e); result = []; }
   _crArgCache[cacheKey] = result;
@@ -5656,16 +5658,33 @@ function crToggleStandingsArg(key){
   var panel=document.getElementById('cr-panel-'+key+'-tabla');
   if(panel && data) panel.innerHTML=crBuildStandingsPanel(key,data.standings);
 }
+// Modo autor: marca/desmarca a un jugador como argentino A MANO (data.argManual). Esa selección MANDA
+// en los tres filtros (chips "Argentinos que compiten", partidas/tarjetas y tabla); la autodetección
+// queda de respaldo solo mientras no marques a nadie. Se guarda en los datos del torneo y se publica.
+function crToggleArgManual(key,name){
+  var d=crDataLoad(key)||{rounds:{},standings:[]};
+  var list=String(d.argManual||'').split(/[\n;]+/).map(function(s){return s.trim();}).filter(Boolean);
+  var k=crNormTokens(name),i=-1;
+  for(var j=0;j<list.length;j++){ if(crNormTokens(list[j])===k){ i=j; break; } }
+  if(i>=0) list.splice(i,1); else list.push(name);
+  if(list.length) d.argManual=list.join('\n'); else delete d.argManual;
+  crDataSave(key,d);                    // guarda + invalida cachés (_crArgCache/_stdFedCache/_manualArgCache)
+  var panel=document.getElementById('cr-panel-'+key+'-tabla');
+  if(panel) panel.innerHTML=crBuildStandingsPanel(key,(crDataLoad(key)||{}).standings||[]);
+  try{ if(typeof _tdRefreshArgLine==='function') _tdRefreshArgLine(); }catch(e){}   // refrescar chips si están en pantalla
+}
 
 function crBuildStandingsPanel(key,standings){
   if(!standings||!standings.length) return '<div style="color:var(--text3);font-size:12px;padding:10px">Sin datos.</div>';
   var ks=key.replace(/'/g,"\\'");
   var data=crDataLoad(key)||{};
   var isInitial=data.standingsKind==='initial';
+  var _author=(typeof _ondemand==='undefined'||!_ondemand);   // modo autor → se puede marcar argentinos a mano
+  var _hasManual=_hasManualArg(key);
 
   // Detección de argentinos: criterio ÚNICO compartido con el filtro de partidas (_argPersonIsArg).
   // FED/fide_id mandan; el nombre solo decide cuando no hay ninguno de los dos (evita falsos positivos).
-  function standIsArg(p){ return !!p && _argPersonIsArg(p.name, p.fed, p.fideId); }
+  function standIsArg(p){ return !!p && (_hasManualArg(key) ? _isArgManual(p.name, key) : _argPersonIsArg(p.name, p.fed, p.fideId)); }
   // Torneo que TODAVÍA NO EMPEZÓ: la "Clasificación" de Chess-Results tiene a todos en 0
   // puntos y por lo tanto queda ordenada por número de inicio, que no le dice nada a nadie
   // (y encima le pone medallas a los 3 primeros sin haberse jugado una jugada). El propio
@@ -5702,6 +5721,11 @@ function crBuildStandingsPanel(key,standings){
     labelHtml+='<button onclick="crToggleStandingsArg('+crArg(key)+')" class="arg-toggle'+(argOnly?' on':'')+'">🇦🇷 Solo argentinos ('+argCount+')'+(argOnly?' ✓':'')+'</button>';
   }
   labelHtml+='</div>';
+  // Pista para el autor: en torneos internacionales puede marcar a mano quiénes son argentinos.
+  if(_author && isIntl){
+    labelHtml+='<div style="max-width:600px;margin:-4px auto 8px;font-size:11px;color:var(--text3);line-height:1.4">Tocá la 🇦🇷 junto a cada nombre para marcar/desmarcar argentinos a mano. '
+      +(_hasManual?'<b style="color:var(--text2)">Tu selección manda</b> en los filtros (la autodetección queda de respaldo).':'Si no marcás a nadie, se usa la autodetección de siempre.')+'</div>';
+  }
 
   var td='padding:7px 6px;border-bottom:1px solid var(--bd10)';
   function rowHtml(p,rank,idx){
@@ -5710,10 +5734,14 @@ function crBuildStandingsPanel(key,standings){
     var ns=crArg(p.name),ks2=crArg(key);
     var eloVarHtml='—';
     if(p.eloVar){ var sign=p.eloVar>0?'+':''; eloVarHtml='<span style="color:'+(p.eloVar>0?'#4caf50':p.eloVar<0?'#e05555':'var(--text3)')+';font-weight:600">'+sign+p.eloVar+'</span>'; }
+    // Modo autor: toggle 🇦🇷 para marcar/desmarcar al jugador como argentino a mano (opacado si no está marcado).
+    var argMark=(_author&&isIntl)
+      ? '<span onclick="event.stopPropagation();crToggleArgManual('+ks2+','+ns+')" title="Marcar/desmarcar como argentino" style="cursor:pointer;margin-left:7px;vertical-align:middle;display:inline-flex;opacity:'+(_isArgManual(p.name,key)?'1':'0.22')+'">'+(typeof _flagImg==='function'?_flagImg('ARG'):'🇦🇷')+'</span>'
+      : '';
     return '<tr style="cursor:pointer;'+rowBg+'" onclick="crOpenPlayer('+ks2+','+ns+')">'
       +'<td style="'+td+';text-align:center;width:34px;font-size:13px">'+medal+'</td>'
       +'<td style="'+td+';text-align:center">'+crTitleBadge(p.title)+'</td>'
-      +'<td style="'+td+';text-align:left;color:var(--text);font-size:14.5px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-shadow:var(--txt-out)">'+escHtml(p.name)+'</td>'
+      +'<td style="'+td+';text-align:left;color:var(--text);font-size:14.5px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-shadow:var(--txt-out)">'+escHtml(p.name)+argMark+'</td>'
       +'<td style="'+td+';text-align:center;color:var(--text2);font-size:12px;white-space:nowrap">'+(p.fed?(_tourIsESRegional(key)?_esRegFlag(p.name,p.fideId):crFlagEmoji(p.fed))+'<span class="fed-txt"> '+escHtml(p.fed)+'</span>':'')+'</td>'
       +'<td style="'+td+';text-align:center;color:var(--fg-e8);font-size:15px;font-weight:600;text-shadow:var(--txt-out)">'+(p.elo||'')+'</td>'
       +'<td style="'+td+';text-align:right;font-weight:700;color:var(--fg-e8);font-size:15px;white-space:nowrap;text-shadow:var(--txt-out)">'+(isInitial?'':crPtsStr(p.pts))+'</td>'
@@ -20917,7 +20945,32 @@ function _isArgGame(hdrs) {
 // vienen "pelados"), los BUSCA en la tabla del torneo por nombre — donde sí están para todos. Así la
 // detección no cae al match por nombre (que da falsos positivos con apellidos españoles parecidos, ej.
 // Uzcategui/Lopez Gomez) cuando el torneo tiene tabla con fide_id. Sin tabla, es igual que antes.
+// ── Selección MANUAL de argentinos por torneo (data.argManual) ───────────────────────────────
+// El autor marca a mano quiénes son argentinos (clic en la tabla). Si un torneo tiene selección
+// manual, ESA MANDA en los tres filtros (chips, partidas/tarjetas, tabla) y la autodetección queda
+// solo de respaldo para los torneos SIN selección. Es lo más confiable en torneos raros (federaciones
+// regionales españolas, PGN sin fide_id, etc.). El set se cachea por CONTENIDO (se rearma al cambiar).
+var _manualArgCache = {};
+function _tourManualArgSet(crKey) {
+  if (!crKey) return null;
+  var d; try { d = crDataLoad(crKey); } catch (e) { d = null; }
+  var raw = (d && d.argManual) || '';
+  var c = _manualArgCache[crKey];
+  if (c && c.raw === raw) return c.set;
+  var set = null;
+  if (raw) {
+    set = {};
+    String(raw).split(/[\n;]+/).forEach(function (s) { s = s.trim(); if (s) { var k = crNormTokens(s); if (k) set[k] = 1; } });
+    if (!Object.keys(set).length) set = null;
+  }
+  _manualArgCache[crKey] = { raw: raw, set: set };
+  return set;
+}
+function _hasManualArg(crKey) { return !!_tourManualArgSet(crKey); }
+function _isArgManual(name, crKey) { var s = _tourManualArgSet(crKey); return s ? !!s[crNormTokens(name || '')] : false; }
+
 function _argPersonInTour(name, fed, fideId, crKey) {
+  if (crKey && _hasManualArg(crKey)) return _isArgManual(name, crKey);   // selección MANUAL del autor manda
   if (!fed && !fideId && crKey) {
     var e = _tourEntryByName(name, crKey);
     if (e) { fed = e.fed; fideId = e.fide; }
