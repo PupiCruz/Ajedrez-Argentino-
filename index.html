@@ -4556,12 +4556,12 @@ function renderTorneos(filter) {
     if (_hiddenTorneos.indexOf(i) >= 0) return;
     var ov = tzCfg['hc_' + t.id] || {};
     var rng = tourRange({ startDate:ov.startDate, endDate:ov.endDate, dates:ov.dates || t.dates });
-    items.push({ _type:'hardcoded', _origIdx:i, _status:computeTourStatus(rng, t.status),
+    items.push({ _type:'hardcoded', _origIdx:i, _status:(ov.finished ? 'done' : computeTourStatus(rng, t.status)),
                  _startKey:(rng && rng.start) || 0, _endKey:(rng && rng.end) || 0, _t:t });
   });
   pgnGetTorneosForList().forEach(function(st) {
     var rng = tourRange(st);
-    var status = rng ? computeTourStatus(rng, st.status) : st.status;
+    var status = st.finished ? 'done' : (rng ? computeTourStatus(rng, st.status) : st.status);
     items.push({ _type:'stored', _status:status,
                  _startKey:(rng && rng.start) || st._dateKey, _endKey:(rng && rng.end) || st._dateKey, _st:st });
   });
@@ -4569,7 +4569,7 @@ function renderTorneos(filter) {
     if (key.indexOf('tz_') !== 0) return;
     var d = tzCfg[key];
     var rng = tourRange(d);
-    var st = computeTourStatus(rng, d.status);
+    var st = d.finished ? 'done' : computeTourStatus(rng, d.status);
     items.push({ _type:'tzconfig', _status:st,
                  _startKey:(rng && rng.start) || 0, _endKey:(rng && rng.end) || 0, _key:key, _data:d });
   });
@@ -9401,7 +9401,7 @@ function _collectAllTournaments() {
         broadcastId: d.broadcastId || null, broadcastUrl: d.broadcastUrl || null,
         categories: d.categories || null, isTeam: d.isTeam || null, rounds: d.rounds || null, roundTimes: d.roundTimes || null, roundDT: d.roundDT || null,
         gameCount: (d.pgnGames || []).length, games: d.pgnGames || [],
-        leaders: d.leaders || [], source: 'tz', playerOnly: false, playerId: null
+        leaders: d.leaders || [], source: 'tz', playerOnly: false, playerId: null, finished: d.finished || null
       });
     }
   } catch (e) {}
@@ -9424,6 +9424,7 @@ function _tourManifestMeta(entry) {
     broadcastUrl: entry.broadcastUrl || null, categories: entry.categories || null, isTeam: entry.isTeam || null,
     rounds: entry.rounds || null, roundTimes: entry.roundTimes || null, roundDT: entry.roundDT || null,
     playerOnly: !!entry.playerOnly, playerId: entry.playerId || null,
+    finished: entry.finished || null,
     dateKey: tourDateKey(entry)
   };
 }
@@ -20668,21 +20669,30 @@ function tzeAddCatRow(name, bc, cr) {
   list.appendChild(row);
 }
 // Vuelca las categorías guardadas en las filas del panel (al abrir Editar). [] limpia las filas.
+// Copia de las categorías tal como estaban al abrir el editor. El formulario solo muestra/edita
+// name/broadcast/crurl, pero cada categoría también guarda overrides que se editan en el DETALLE
+// (pace, fechas propias, finalizado, rondas…). Guardamos el original para NO perderlos al guardar.
+var _tzeOrigCats = [];
 function _tzeSetCats(cats) {
+  _tzeOrigCats = cats ? JSON.parse(JSON.stringify(cats)) : [];
   var list = document.getElementById('tze-cat-list'); if (!list) return;
   list.innerHTML = '';
   (cats || []).forEach(function(c) { tzeAddCatRow(c.name, c.broadcast, c.crurl); });
 }
-// Lee las filas → array de categorías (descarta filas totalmente vacías).
+// Lee las filas → array de categorías (descarta filas totalmente vacías). Conserva los overrides por
+// categoría del original (por índice): solo pisa name/broadcast/crurl del formulario. Sin esto, editar el
+// torneo (ej. actualizar tablas) borraba las fechas/ritmo/finalizado que el autor puso por pestaña.
 function _tzeCollectCats() {
   var rows = document.querySelectorAll('#tze-cat-list .tze-cat-row');
   var out = [];
-  rows.forEach(function(r) {
+  rows.forEach(function(r, i) {
     var name = (r.querySelector('.tze-cat-name').value || '').trim();
     var bc   = (r.querySelector('.tze-cat-bc').value || '').trim();
     var cr   = (r.querySelector('.tze-cat-cr').value || '').trim();
     if (!name && !bc && !cr) return;   // fila vacía → ignorar
-    out.push({ name: name, broadcast: bc || null, crurl: cr || null });
+    var base = (_tzeOrigCats && _tzeOrigCats[i]) ? Object.assign({}, _tzeOrigCats[i]) : {};
+    base.name = name; base.broadcast = bc || null; base.crurl = cr || null;
+    out.push(base);
   });
   return out;
 }
@@ -22882,6 +22892,8 @@ function _cvApplyBoardSize() {
 var _tdChipType = null, _tdChipId = null, _tdChipCat = -1;
 var _TD_CHIP_FIELDS = {
   dates:       { label: '📅 Fechas de esta categoría', type: 'text',   placeholder: 'Ej: 7 al 12 de septiembre de 2026' },
+  startDate:   { label: '📅 Fecha de INICIO de esta categoría', type: 'date' },
+  endDate:     { label: '📅 Fecha de FIN de esta categoría', type: 'date' },
   location:    { label: '📍 Lugar de esta categoría',  type: 'text',   placeholder: 'Ciudad, país' },
   type:        { label: '🏷 Tipo de esta categoría',   type: 'text',   placeholder: 'Ej: Internacional' },
   rounds:      { label: '🎯 Rondas de esta categoría', type: 'number', placeholder: 'Ej: 9' },
@@ -22938,6 +22950,48 @@ function _tdCommitChipEdit(field) {
   _tdCloseChipEdit();
   openTournamentDetail(_tdChipType, _tdChipId, false, _tdChipCat);
 }
+// ── "Finalizado" manual (por categoría o por torneo sin categorías) ─────────────────────────────
+// Marca una categoría/torneo como TERMINADO a mano: corta el sondeo (deja de re-pedir partidas al worker)
+// y muestra el podio, aunque el calendario todavía lo dé en vivo. Por categoría vive en cat.finished;
+// por torneo, en el override del torneo (d.finished / entry.finished). Se guarda y se publica.
+function _tdTourFinished(type, id) {
+  try {
+    if (type === 'hc') { var c = getTzConfig()['hc_' + id]; return !!(c && c.finished); }
+    if (type === 'tz') { var d = getTzConfig()[id]; return !!(d && d.finished); }
+    if (type === 'ls') {
+      if (_ondemand && _manifest && _manifest.tournaments) {
+        for (var i = 0; i < _manifest.tournaments.length; i++) { if (String(_manifest.tournaments[i].id) === String(id)) return !!_manifest.tournaments[i].finished; }
+        return false;
+      }
+      var tours = JSON.parse(localStorage.getItem('pgn_tournaments') || '[]');
+      for (var j = 0; j < tours.length; j++) { if (tours[j].id == id) return !!tours[j].finished; }
+    }
+  } catch (e) {}
+  return false;
+}
+function _tdTourFinishedSet(type, id, val) {
+  try {
+    if (type === 'hc') { var cfg = getTzConfig(); var kk = 'hc_' + id; var c = cfg[kk] || (cfg[kk] = {}); if (val) c.finished = true; else delete c.finished; saveTzConfig(cfg); return; }
+    if (type === 'tz') { var cfg2 = getTzConfig(); var d = cfg2[id]; if (!d) return; if (val) d.finished = true; else delete d.finished; saveTzConfig(cfg2); return; }
+    if (type === 'ls') { var tours = JSON.parse(localStorage.getItem('pgn_tournaments') || '[]'); for (var j = 0; j < tours.length; j++) { if (tours[j].id == id) { if (val) tours[j].finished = true; else delete tours[j].finished; lsSaveTours(tours); return; } } }
+  } catch (e) {}
+}
+function _tdCurrentFinished() {
+  if (_tdChipCat >= 0) { var st = _tdCatStore(_tdChipType, _tdChipId); return !!(st && st.cats[_tdChipCat] && st.cats[_tdChipCat].finished); }
+  return _tdTourFinished(_tdChipType, _tdChipId);
+}
+function _tdToggleFinished() {
+  var now = !_tdCurrentFinished();
+  if (now && !confirm('¿Marcar como FINALIZADO' + (_tdChipCat >= 0 ? ' esta categoría' : ' este torneo') + '?\n\nDeja de pedir las partidas cada rato (para no gastar pedidos) y muestra el podio. Lo podés desmarcar cuando quieras.')) return;
+  if (_tdChipCat >= 0) {
+    var st = _tdCatStore(_tdChipType, _tdChipId); if (!st || !st.cats[_tdChipCat]) return;
+    if (now) st.cats[_tdChipCat].finished = true; else delete st.cats[_tdChipCat].finished;
+    st.save();
+  } else {
+    _tdTourFinishedSet(_tdChipType, _tdChipId, now);
+  }
+  openTournamentDetail(_tdChipType, _tdChipId, false, _tdChipCat);
+}
 function _tdEditCatChip(field) {
   var cf = _TD_CHIP_FIELDS[field]; if (!cf) return;
   var st = _tdCatStore(_tdChipType, _tdChipId);
@@ -22954,7 +23008,8 @@ function _tdEditCatChip(field) {
       return '<option value="' + o[0] + '"' + (((cur || 'standard') === o[0]) ? ' selected' : '') + '>' + o[1] + '</option>';
     }).join('') + '</select>';
   } else {
-    ctl = '<input id="td-chip-input" class="tz-input" type="' + (cf.type === 'number' ? 'number' : 'text') + '" ' + (cf.type === 'number' ? 'min="1" max="25" ' : '') + 'placeholder="' + escHtml(cf.placeholder || '') + '" value="' + escHtml(cur != null ? String(cur) : '') + '">';
+    var _it = cf.type === 'number' ? 'number' : (cf.type === 'date' ? 'date' : 'text');
+    ctl = '<input id="td-chip-input" class="tz-input" type="' + _it + '" ' + (cf.type === 'number' ? 'min="1" max="25" ' : '') + 'placeholder="' + escHtml(cf.placeholder || '') + '" value="' + escHtml(cur != null ? String(cur) : '') + '">';
   }
   ov.innerHTML = '<div style="background:var(--card90);border:1px solid var(--bd22);border-radius:14px;padding:20px;max-width:420px;width:100%;box-shadow:var(--shadow-card)">'
     + '<div style="font-weight:700;color:var(--text);font-size:16px;margin-bottom:4px">' + escHtml(cf.label) + '</div>'
@@ -23131,6 +23186,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     if (_cat.rounds != null && _cat.rounds !== '')    rounds = _cat.rounds;
     if (_cat.timeControl)                             timeControl = _cat.timeControl;
     if (_cat.dates)                                   dates = _cat.dates;
+    else if (_cat.startDate || _cat.endDate)          dates = formatDateRangeText(_cat.startDate, _cat.endDate) || dates;   // fecha propia de la categoría
     if (_cat.type)                                    typ = _cat.type;
     if (_cat.format)                                  format = _cat.format;
     // chesscomUrl y weburl (sitio oficial) son del torneo (no por categoría): se conservan para que
@@ -23153,6 +23209,18 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     catSuffix = '_c' + activeCat;
   }
   _tdActiveCat = activeCat;   // recordar la categoría mostrada para los links de partidas (&cat=<C>)
+
+  // ── Estado EFECTIVO de la vista (categoría activa o torneo sin categorías) ──────────────────────
+  // "Finalizado" MANUAL manda: corta el sondeo (no re-pedir partidas al worker) y muestra el podio, aunque
+  // el calendario todavía lo dé en vivo. Si no está finalizado a mano, una CATEGORÍA usa su propio rango de
+  // fechas (cada pestaña su estado); si no tiene, hereda el estado del torneo.
+  var manuallyFinished = false;
+  if (activeCat >= 0 && _cat) {
+    if (_cat.finished) { status = 'done'; manuallyFinished = true; }
+    else if (_cat.startDate || _cat.endDate) status = computeTourStatus(tourRange({ startDate: _cat.startDate, endDate: _cat.endDate }), status);
+  } else if (_tdTourFinished(type, id)) {
+    status = 'done'; manuallyFinished = true;
+  }
 
   // Fase 3b: sumar las partidas del POOL (base de datos única) que le corresponden a este torneo por
   // EVENTO, y deduplicar con las guardadas (transición). Así subir rondas a la base las muestra acá
@@ -23248,6 +23316,12 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   h += '<div style="flex-shrink:0;display:flex;flex-direction:column;align-items:flex-end;gap:6px;margin-top:2px">';
   var _dlb = (status === 'live') ? (' data-livebadge="1"' + (broadcastId ? ' data-bc="' + escHtml(String(broadcastId)) + '"' : '') + (broadcastUrl ? ' data-bcurl="' + escHtml(String(broadcastUrl)) + '"' : '')) : '';
   h += '<span class="badge ' + cls2[status] + '"' + _dlb + '>' + lbl2[status] + '</span>';
+  // Modo autor: botón para marcar FINALIZADO (por categoría si hay pestañas, o el torneo). Corta el sondeo
+  // (no re-pedir partidas al worker) y muestra el podio, aunque el calendario todavía lo dé en vivo.
+  if (!_ondemand) {
+    var _mfLbl = manuallyFinished ? '✓ Finalizado (no pide más)' : '🏁 Marcar finalizado';
+    h += '<button onclick="_tdToggleFinished()" title="' + (manuallyFinished ? 'Está marcado finalizado a mano. Tocá para reactivar el seguimiento en vivo.' : 'Marca ' + (activeCat >= 0 ? 'esta categoría' : 'el torneo') + ' como finalizado: deja de pedir partidas (ahorra pedidos) y muestra el podio.') + '" style="font-size:11px;padding:3px 9px;border-radius:7px;cursor:pointer;font-family:inherit;white-space:nowrap;border:1px solid ' + (manuallyFinished ? 'var(--gold-dim)' : 'var(--bd22)') + ';background:' + (manuallyFinished ? 'var(--gold-bg)' : 'var(--gl40)') + ';color:' + (manuallyFinished ? 'var(--gold)' : 'var(--text2)') + '">' + _mfLbl + '</button>';
+  }
   if (broadcastId) {
     var _isLcc = _isLccId(broadcastId);
     var _isSi = _isSiId(broadcastId);
@@ -23433,6 +23507,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   // cargar el vivo: con la apertura instantánea entre pestañas la partida se abre SINCRÓNICAMENTE dentro de
   // _tdLoadLiveGames y pone su propio ?torneo=&partida=; si el push del torneo quedara después, lo pisaría.
   if (!_tourHistoryPushed) { _tourHistoryPushed = true; history.pushState({ tourDetail: true }, '', _tourHref(id)); }
+  _tdLiveNoPoll = manuallyFinished;   // finalizado a mano → baja las partidas UNA vez pero NO sondea (cero fuga al worker)
   if (hasBroadcast) _tdLoadLiveGames(broadcastId, broadcastUrl, name, location, pgnKey2, typ, status, roundOrder.length > 0);
   // "Se actualizan solos": en la web publicada, si el torneo está EN VIVO o es PRÓXIMO y tiene URL de
   // Chess-Results, bajar los cuadros frescos al abrir (igual que los broadcasts de Lichess). En modo
@@ -24469,6 +24544,7 @@ function tdOpenGame(idx, pgnKey, tname, tloc) {
    Si el torneo tiene transmisión de Lichess, #td-games-section muestra esas partidas por ronda
    (vivo + terminadas) en lugar de las subidas. Reusa _tdCtx + tdBuildRound + tdShowRound. */
 var _tdLiveTimer = null;
+var _tdLiveNoPoll = false;   // torneo/categoría FINALIZADO a mano → mostrar partidas pero NO sondear (cero fuga al worker)
 // ESTADO ESTABLE "estoy siguiendo una transmisión en vivo (detalle de torneo)". Es la señal que usa
 // _faLiveEligible para saber si el gráfico de análisis debe mantenerse en modo VIVO (auto-actualizarse
 // con las jugadas que llegan). NO se ata al _tdLiveTimer: ese timer se pone en null al arrancar cada
@@ -24515,6 +24591,7 @@ function _tdStopWatchdog() { if (_tdWatchdog) { clearInterval(_tdWatchdog); _tdW
 // que la SIGUIENTE ronda aparezca sola sin recargar la página. Acotado a _TD_MAX_IDLE sondeos para no
 // quedar sondeando indefinidamente un torneo que ya terminó o que hizo una pausa larga.
 function _tdKeepPolling(res) {
+  if (_tdLiveNoPoll) { _tdIdlePolls = 0; return false; }   // finalizado a mano → nunca sondear
   if (!res || !res.roundsWithGames || !res.roundsWithGames.length) return false;
   if (res.roundsWithGames.some(function(r){ return r.live; })) { _tdIdlePolls = 0; return true; }
   var pendiente;
@@ -24536,7 +24613,7 @@ function _tdKeepPolling(res) {
   return (++_tdIdlePolls <= _TD_MAX_IDLE);               // el hueco se hizo muy largo → el visitante recarga
 }
 
-function _tdLiveStop() { if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; } _tdLivePolling = false; _tdStopWatchdog(); _tdPollGen++; _tdLiveCtx = null; _tdIdlePolls = 0; _tdFetchFails = 0; _tdLastGood = 0; _tdStopClocks(); mevAbort(); }
+function _tdLiveStop() { if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; } _tdLivePolling = false; _tdLiveNoPoll = false; _tdStopWatchdog(); _tdPollGen++; _tdLiveCtx = null; _tdIdlePolls = 0; _tdFetchFails = 0; _tdLastGood = 0; _tdStopClocks(); mevAbort(); }
 
 function _tdLoadLiveGames(broadcastId, broadcastUrl, name, location, pgnKey, typ, status, hasFallback) {
   // OJO: NO prender acá _tdLivePolling. Al abrir en PESTAÑA NUEVA todavía no sabemos si el torneo está
@@ -24558,11 +24635,19 @@ function _tdLoadLiveGames(broadcastId, broadcastUrl, name, location, pgnKey, typ
     }
   }
   var raw = String(broadcastId || '');
-  // Si otra pestaña ya nos pasó el torneo COMPLETO y NO está en vivo, no re-bajar nada: el seed trae todas
-  // las rondas y no van a cambiar. Solo para fuentes EAGER (sichess/livechesscloud), cuyo seed es completo
-  // (Lichess es on-demand: su seed puede traer una sola ronda, así que ahí sí seguimos al fetch). En vivo
-  // también seguimos (para recibir jugadas nuevas). Ahorra las ~11 descargas de ronda en pestaña nueva.
-  if (_seedApplied && status !== 'live' && (_isSiId(raw) || _isLccId(raw))) return;
+  // Si otra pestaña ya nos pasó el torneo COMPLETO (fuentes EAGER: sichess/livechesscloud, cuyo seed trae
+  // TODAS las rondas), NO re-bajamos las ~11 rondas al abrir: el seed alcanza para pintar la grilla y abrir
+  // la partida del deep-link al instante (esto es lo que trababa la apertura en pestaña nueva). Si el torneo
+  // está EN VIVO, agendamos el PRIMER refresco como un poll normal (para recibir jugadas nuevas) en vez de
+  // bloquear la apertura con las descargas. Si ya terminó, ni eso: el seed es definitivo.
+  // (Lichess es on-demand: su seed puede traer una sola ronda, así que ahí NO cortamos: seguimos al fetch.)
+  if (_seedApplied && (_isSiId(raw) || _isLccId(raw))) {
+    if (status === 'live') {
+      var _sk = String(_tdTourKey);
+      setTimeout(function(){ if (String(_tdTourKey) === _sk) { try { _tdLiveFetchMulti([raw], name, location, pgnKey, typ, hasFallback); } catch (e) {} } }, _liveRefreshMs(raw));
+    }
+    return;
+  }
   // livechesscloud manda: aunque haya un link de Lichess en broadcastUrl (para el botón "Ver en Lichess"),
   // las partidas salen de livechesscloud. Sin esto, el scan de URLs de ronda de abajo lo desviaría a Lichess.
   if (_isLccId(raw)) { _tdLiveFetchMulti([raw], name, location, pgnKey, typ, hasFallback); return; }
