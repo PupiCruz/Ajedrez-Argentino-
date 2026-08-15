@@ -4830,7 +4830,7 @@ function crArgPlayers(type, id, games, crkOverride) {
     var argSet = {};
     function note(name, fed, fideId) {
       var k = normStr(name || ''); if (!k) return;
-      if (_argPersonIsArg(name, fed, fideId)) argSet[k] = name;
+      if (_argPersonInTour(name, fed, fideId, ck)) argSet[k] = name;   // sin fed/fide en el PGN → lo busca en la tabla
     }
     var st = (data.standings && data.standings.length) ? data.standings : null;
     if (st) {
@@ -5029,17 +5029,18 @@ function _tourFedMap(crKey) {
   if (!crKey) return null;
   if (_stdFedCache[crKey]) return _stdFedCache[crKey];
   var m = {};
-  function put(name, fed, title, elo) {
+  function put(name, fed, title, elo, fide) {
     if (!name) return;
     var k = crNormTokens(name); if (!k) return;
-    var e = m[k] || (m[k] = { fed: '', title: '', elo: 0 });
+    var e = m[k] || (m[k] = { fed: '', title: '', elo: 0, fide: '' });
     if (fed && !e.fed) e.fed = fed;
     if (title && !e.title) e.title = _normTitle(title);
     if (elo && !e.elo) e.elo = parseInt(elo) || 0;
+    if (fide && !e.fide) e.fide = String(fide);
   }
   try {
     var d = crDataLoad(crKey);
-    if (d && d.standings) d.standings.forEach(function(s) { if (s) put(s.name, s.fed, s.title, s.elo); });
+    if (d && d.standings) d.standings.forEach(function(s) { if (s) put(s.name, s.fed, s.title, s.elo, s.fideId); });
     if (d && d.rounds) Object.keys(d.rounds).forEach(function(r) {
       (d.rounds[r] || []).forEach(function(p) { if (p) { put(p.w, '', p.tw, p.ew); put(p.b, '', p.tb, p.eb); } });
     });
@@ -5544,16 +5545,10 @@ function crBuildRoundPanel(key,pairings,data,roundNum){
   function fedOf(name){ return fedMap[name]||''; }
   function flagCell(name){ if(_tourIsESRegional(key)){ var af=_esRegFlag(name,''); return af?'<span>'+af+'</span>':''; } var f=fedOf(name); return f?'<span title="'+f+'">'+crFlagEmoji(f)+'</span>':''; }
 
-  // Detección de argentinos (igual criterio que la tabla): FED de la tabla de posiciones;
-  // sin FED → nombre en PLAYERS. Una mesa es "argentina" si juega un argentino con blancas o negras.
-  function rPlayerIsArg(name){
-    var fed=(fedMap[name]||'').toUpperCase();
-    if(fed==='ARG') return true;
-    // Sin FED → nombre en el ranking. Con bandera extranjera → nombre de un adicional argentino
-    // (ej. Pichot → ESP): así el filtro "Solo argentinos" también los incluye en los cruces.
-    if(!fed && typeof _isArgPlayer==='function' && _isArgPlayer(name)) return true;
-    return (typeof _isArgAdicionalName==='function') && _isArgAdicionalName(name);
-  }
+  // Detección de argentinos: criterio ÚNICO (_argPersonInTour) — resuelve fed y fide_id por nombre desde
+  // la tabla del torneo, así los argentinos con federación REGIONAL española (Oro=ARA) salen por su
+  // fide_id y los extranjeros con apellido parecido (Uzcategui) NO. Una mesa es "argentina" si juega uno.
+  function rPlayerIsArg(name){ return _argPersonInTour(name, '', '', key); }
   // Anotar cada cruce con su mesa original (para no renumerar al filtar) y si involucra argentinos.
   var rRows=pairings.map(function(p,idx){ return {p:p, mesa:p.m||String(idx+1), arg:rPlayerIsArg(p.w)||rPlayerIsArg(p.b)}; });
   var rArgCount=rRows.filter(function(r){return r.arg;}).length;
@@ -20918,6 +20913,24 @@ function _isArgGame(hdrs) {
   return _argPersonIsArg(hdrs.White, hdrs.WhiteCountry || hdrs.WhiteFed, hdrs.WhiteFideId)
       || _argPersonIsArg(hdrs.Black, hdrs.BlackCountry || hdrs.BlackFed, hdrs.BlackFideId);
 }
+// Igual que _argPersonIsArg pero, si el PGN NO trae fed ni fide_id (ej. sichess/DGT LiveChess, que
+// vienen "pelados"), los BUSCA en la tabla del torneo por nombre — donde sí están para todos. Así la
+// detección no cae al match por nombre (que da falsos positivos con apellidos españoles parecidos, ej.
+// Uzcategui/Lopez Gomez) cuando el torneo tiene tabla con fide_id. Sin tabla, es igual que antes.
+function _argPersonInTour(name, fed, fideId, crKey) {
+  if (!fed && !fideId && crKey) {
+    var e = _tourEntryByName(name, crKey);
+    if (e) { fed = e.fed; fideId = e.fide; }
+  }
+  return _argPersonIsArg(name, fed, fideId);
+}
+function _argGameInTour(hdrs, crKey) {
+  return _argPersonInTour(hdrs.White, hdrs.WhiteCountry || hdrs.WhiteFed, hdrs.WhiteFideId, crKey)
+      || _argPersonInTour(hdrs.Black, hdrs.BlackCountry || hdrs.BlackFed, hdrs.BlackFideId, crKey);
+}
+// ¿Partida con argentino, en el detalle del torneo abierto? Usa la clave de cruces de la vista actual
+// (torneo o categoría) para resolver por fide_id de la tabla cuando el PGN viene sin fed/fide (sichess).
+function _tdIsArgGame(hdrs) { return _argGameInTour(hdrs, _tdArgCrk || (typeof _tdCtx !== 'undefined' && _tdCtx && _tdCtx.crKey) || null); }
 function _openWithArgFilter(pgnKey, title, sub, url, games) {
   var argGames = games.filter(function(pgn) {
     return _isArgGame(parsePgnHeaders(pgn));
@@ -22263,7 +22276,7 @@ function _tdDownloadPgn(scope) {
   // Se baja EXACTAMENTE lo que estás viendo: los dos filtros de la pantalla se aplican igual que
   // en tdBuildRound (mismo criterio de búsqueda: minúsculas, sin acentos, matchea cualquier término
   // contra el nombre de blancas o negras).
-  if (_tdArgOnly) list = list.filter(function(g){ return _isArgGame(g.h); });
+  if (_tdArgOnly) list = list.filter(function(g){ return _tdIsArgGame(g.h); });
   var terms = _tdSearch ? _tdNorm(_tdSearch).split(/\s+/).filter(Boolean) : [];
   if (terms.length) {
     list = list.filter(function(g){
@@ -22316,7 +22329,7 @@ function _tdLocalGamesHtml(byRound, roundOrder, games, pgnKey, typ) {
   _tdArgOnly = false;
   _tdCurrentRound = roundOrder[0];
   var argTotal = 0;
-  roundOrder.forEach(function(rInt){ byRound[rInt].forEach(function(g){ if (_isArgGame(g.h)) argTotal++; }); });
+  roundOrder.forEach(function(rInt){ byRound[rInt].forEach(function(g){ if (_tdIsArgGame(g.h)) argTotal++; }); });
   var h = '';
   h += '<div id="td-partidas-anchor" style="display:flex;align-items:center;justify-content:space-between;gap:8px;row-gap:10px;margin-bottom:16px;flex-wrap:wrap;scroll-margin-top:10px">';
   h += '<span style="font-size:14px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:var(--fg-e0);text-shadow:var(--txt-out)">Partidas (' + games.length + ')</span>';
@@ -23723,7 +23736,7 @@ function tdBuildRound(rInt) {
     return;
   }
   var _all = _roundGames;
-  if (_tdArgOnly) _all = _all.filter(function(g){ return _isArgGame(g.h); });   // filtrar ANTES de paginar (los argentinos juntos)
+  if (_tdArgOnly) _all = _all.filter(function(g){ return _tdIsArgGame(g.h); });   // filtrar ANTES de paginar (los argentinos juntos)
   if (_tdSearch) {   // buscador: dejar solo los tableros cuyo nombre (blancas o negras) matchee algún término
     var _terms = _tdNorm(_tdSearch).split(/\s+/).filter(Boolean);
     if (_terms.length) _all = _all.filter(function(g){ var _hay = _tdNorm((g.h.White||'') + ' ' + (g.h.Black||'')); return _terms.some(function(t){ return _hay.indexOf(t) !== -1; }); });
@@ -23763,7 +23776,7 @@ function _tdCardHtml(g, flip) {
   var bScore = res === '1-0' ? '0' : res === '0-1' ? '1' : res === '1/2-1/2' ? '½' : '';
   var wScoreColor = res === '1-0' ? 'var(--green)' : res === '0-1' ? 'var(--red)' : 'var(--text2)';
   var bScoreColor = res === '0-1' ? 'var(--green)' : res === '1-0' ? 'var(--red)' : 'var(--text2)';
-  var isArg = _isArgGame(g.h) ? '1' : '0';
+  var isArg = _tdIsArgGame(g.h) ? '1' : '0';
   // Fila de un jugador (nombre + reloj + puntaje). El id del reloj queda atado al COLOR (w/b), no a
   // la posición, así _tdSetClocks lo encuentra aunque la fila esté arriba o abajo.
   function nameRow(title, name, flag, clkId, score, scoreColor, pad){
@@ -23832,7 +23845,7 @@ function tdBuildRoundTeams(rInt, panel, roundGames) {
     var _terms = _tdSearch ? _tdNorm(_tdSearch).split(/\s+/).filter(Boolean) : [];
     view = view.map(function(o) {
       var bs = o.m.boards;
-      if (_tdArgOnly) bs = bs.filter(function(g) { return _isArgGame(g.h); });
+      if (_tdArgOnly) bs = bs.filter(function(g) { return _tdIsArgGame(g.h); });
       if (_terms.length) bs = bs.filter(function(g) { var hay = _tdNorm((g.h.White||'') + ' ' + (g.h.Black||'')); return _terms.some(function(t) { return hay.indexOf(t) !== -1; }); });
       return bs.length ? { m: { teamA: o.m.teamA, teamB: o.m.teamB, boards: bs, a: o.m.a, b: o.m.b }, idx: o.idx } : null;
     }).filter(Boolean);
@@ -24746,7 +24759,7 @@ function _tdLiveBuild(res, sec, keepRound) {
   _tdArgOnly = false;
   _tdCurrentRound = startRound;
   var argTotal = 0;
-  roundOrder.forEach(function(rInt){ (byRound[rInt]||[]).forEach(function(g){ if (_isArgGame(g.h)) argTotal++; }); });
+  roundOrder.forEach(function(rInt){ (byRound[rInt]||[]).forEach(function(g){ if (_tdIsArgGame(g.h)) argTotal++; }); });
   var liveInts = {};
   res.roundsWithGames.forEach(function(r){ if (r.live) { var mm=(r.name||'').match(/(\d+)/); if (mm) liveInts[parseInt(mm[1])] = true; } });
   var h = '';
