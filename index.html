@@ -16163,15 +16163,28 @@ function _crFindPlayerName(data, player){
 // por nombre de Event, no traen el pace). Sin entrada = standard por defecto.
 function _tourNamePaceMap(){
   var map = {};
+  // Agrega el nombre del torneo → su ritmo, Y (si tiene CATEGORÍAS) el nombre de evento de CADA categoría
+  // ("<Torneo> · <Categoría>") → el ritmo de ESA categoría. Sin esto, las partidas de un torneo por
+  // pestañas se estampan "… · Blitz"/"… · Rápido", que NO están en el mapa (solo estaba el nombre pelado)
+  // → se tomaban como clásico → el blitz/rápido se colaba en el rating en vivo (Standard) de Oro/Pichot.
+  function add(name, pace, cats){
+    if(!name) return;
+    if(pace) map[_normTourName(name)] = pace;
+    if(cats && cats.forEach) cats.forEach(function(c){
+      if(!c || !c.name) return;
+      var ev = (typeof _catEventName === 'function') ? _catEventName(name, c.name) : (name + ' · ' + c.name);
+      map[_normTourName(ev)] = c.pace || pace || 'standard';   // ritmo de la CATEGORÍA (o hereda el del torneo)
+    });
+  }
   try {
     // Web PUBLICADA: el ritmo de cada torneo vive en el manifest (_embeddedTournaments), NO en
     // tzConfig/localStorage (que ahí están vacíos). Sin esto, un torneo del pool marcado rápido/blitz
     // (ej. simultáneas) se veía "sin ritmo" → se asumía clásico → se colaba en el rating en vivo.
-    (typeof _embeddedTournaments !== 'undefined' ? _embeddedTournaments : []).forEach(function(t){ if(t && t.name && t.pace) map[_normTourName(t.name)] = t.pace; });
+    (typeof _embeddedTournaments !== 'undefined' ? _embeddedTournaments : []).forEach(function(t){ if(t && t.name) add(t.name, t.pace, t.categories); });
     var tzCfg = (typeof getTzConfig === 'function') ? getTzConfig() : {};
-    Object.keys(tzCfg).forEach(function(k){ var d = tzCfg[k]; if(d && d.name && d.pace) map[_normTourName(d.name)] = d.pace; });
-    (typeof TORNEOS !== 'undefined' ? TORNEOS : []).forEach(function(t){ var ov = tzCfg['hc_' + t.id] || {}; var pc = ov.pace || t.pace; if(t.name && pc) map[_normTourName(t.name)] = pc; });
-    JSON.parse(localStorage.getItem('pgn_tournaments') || '[]').forEach(function(e){ if(e && e.name && e.pace) map[_normTourName(e.name)] = e.pace; });
+    Object.keys(tzCfg).forEach(function(k){ var d = tzCfg[k]; if(d && d.name) add(d.name, d.pace, d.categories); });
+    (typeof TORNEOS !== 'undefined' ? TORNEOS : []).forEach(function(t){ var ov = tzCfg['hc_' + t.id] || {}; add(t.name, ov.pace || t.pace, ov.categories || t.categories); });
+    JSON.parse(localStorage.getItem('pgn_tournaments') || '[]').forEach(function(e){ if(e && e.name) add(e.name, e.pace, e.categories); });
   } catch(e){}
   return map;
 }
