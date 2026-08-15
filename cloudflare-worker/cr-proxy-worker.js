@@ -66,8 +66,10 @@
 
 const ALLOWED_HOST = /(^|\.)chess-results\.com$/i;
 const ALLOWED_HOST_I64 = /(^|\.)info64\.org$/i;
+const ALLOWED_HOST_SI = /(^|\.)sichess\.com$/i;
 const CACHE_SECONDS = 120;
 const STATS_CACHE_SECONDS = 30;
+const SI_CACHE_SECONDS = 15;   // vivo: caché corta para que las jugadas nuevas lleguen rápido
 
 export default {
   async fetch(request, env, ctx) {
@@ -91,6 +93,9 @@ export default {
 
     // ── Descarga de las PARTIDAS (PGN) de un torneo de Chess-Results ──
     if (reqUrl.pathname === '/crpgn') return crPgn(reqUrl, ctx);
+
+    // ── Proxy CORS de sichess.com (PGN en vivo por ronda + su config.js) ──
+    if (reqUrl.pathname === '/sipgn') return siPgn(reqUrl, ctx);
 
     // ── Redacción de noticias con IA (Workers AI) ──
     if (reqUrl.pathname === '/noticia') return noticiaAI(request, env);
@@ -332,6 +337,48 @@ async function crPgnPost(form, tnr, fide, rd) {
 }
 
 const CR_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /sipgn?url=<URL de sichess.com>
+//   → proxy CORS para sichess.com, que NO manda headers CORS (el navegador bloquea
+//     el fetch directo). Sirve para torneos capturados con DGT LiveChess que sichess
+//     publica como PGN por ronda (.../games/<evento>/<NN>/games.pgn) y para su config.js
+//     (que lista qué rondas hay). Sólo deja pasar sichess.com y sólo archivos .pgn/.js
+//     (no es un proxy abierto). Caché corta (SI_CACHE_SECONDS) porque es en vivo: muchos
+//     visitantes comparten la respuesta y sichess recibe ~1 pedido por ronda cada 15s.
+// ─────────────────────────────────────────────────────────────────────────────
+async function siPgn(reqUrl, ctx) {
+  const target = reqUrl.searchParams.get('url');
+  if (!target) return errJson('Falta el parámetro ?url=', 400);
+  let t;
+  try { t = new URL(target); }
+  catch (e) { return errJson('URL inválida', 400); }
+  if (t.protocol !== 'https:' || !ALLOWED_HOST_SI.test(t.hostname)) {
+    return errJson('Host no permitido (sólo sichess.com)', 403);
+  }
+  if (!/\.(pgn|js)$/i.test(t.pathname)) return errJson('Sólo se permiten archivos .pgn o .js', 403);
+
+  const cache = caches.default;
+  const cacheKey = new Request(reqUrl.toString());
+  const hit = await cache.match(cacheKey);
+  if (hit) return hit;
+
+  let upstream;
+  try {
+    upstream = await fetch(t.toString(), { headers: { 'User-Agent': CR_UA }, redirect: 'follow' });
+  } catch (e) {
+    return errJson('No se pudo bajar de sichess: ' + e.message, 502);
+  }
+
+  const headers = corsHeaders();
+  headers.set('Content-Type', /\.js$/i.test(t.pathname)
+    ? 'application/javascript; charset=utf-8'
+    : 'application/x-chess-pgn; charset=utf-8');
+  headers.set('Cache-Control', 'public, max-age=' + SI_CACHE_SECONDS);
+  const resp = new Response(upstream.body, { status: upstream.status, headers });
+  if (upstream.ok) ctx.waitUntil(cache.put(cacheKey, resp.clone()));
+  return resp;
+}
 
 // Lee TODOS los campos del <form>: inputs (menos los submit) y selects con su opción elegida.
 // ASP.NET tira 500 si el postback llega sin los campos que espera.

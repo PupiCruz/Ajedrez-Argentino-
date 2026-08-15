@@ -3296,8 +3296,8 @@ Peralta, Fernando" style="height:60px;resize:vertical;font-family:inherit"></tex
     </div>
     <div class="tz-sec" style="background:rgba(30,60,120,.12);border:1px solid rgba(60,100,200,.2);margin-bottom:14px">
       <label class="tz-flabel" style="color:#8ab4f8">🔴 Transmisión en vivo <span style="font-weight:400;color:var(--text3)">(opcional)</span></label>
-      <textarea id="tze-broadcast" class="tz-input" rows="2" placeholder="Ej: https://lichess.org/broadcast/... o https://view.livechesscloud.com/#..." style="resize:vertical;font-family:inherit"></textarea>
-      <div style="font-size:11px;color:var(--text3);margin-top:6px;line-height:1.4">Pegá la URL del broadcast de <b style="color:var(--text2)">Lichess</b> o el link de <b style="color:var(--text2)">livechesscloud</b> (view.livechesscloud.com/#...). Con esto la app carga las partidas automáticamente.<br>Si hay transmisión en <b style="color:var(--text2)">las dos</b>, pegá los dos links (uno por renglón): la app usa <b style="color:var(--text2)">livechesscloud</b> para las partidas (es más directo) y muestra un botón <b style="color:var(--text2)">"Ver en Lichess"</b>.<br>Si Lichess parte el torneo en <b style="color:var(--text2)">varias transmisiones</b> (ej. "Matches 1-10" y "Matches 11+"), pegá <b style="color:var(--text2)">una URL por renglón</b> y la app junta todos los tableros de cada ronda.</div>
+      <textarea id="tze-broadcast" class="tz-input" rows="2" placeholder="Ej: https://lichess.org/broadcast/... · https://view.livechesscloud.com/#... · https://sichess.com/torneos/..." style="resize:vertical;font-family:inherit"></textarea>
+      <div style="font-size:11px;color:var(--text3);margin-top:6px;line-height:1.4">Pegá la URL del broadcast de <b style="color:var(--text2)">Lichess</b>, el link de <b style="color:var(--text2)">livechesscloud</b> (view.livechesscloud.com/#...) o la página del torneo en <b style="color:var(--text2)">sichess</b> (sichess.com/torneos/...). Con esto la app carga las partidas automáticamente.<br>Si hay transmisión en <b style="color:var(--text2)">las dos</b>, pegá los dos links (uno por renglón): la app usa <b style="color:var(--text2)">livechesscloud</b> para las partidas (es más directo) y muestra un botón <b style="color:var(--text2)">"Ver en Lichess"</b>.<br>Si Lichess parte el torneo en <b style="color:var(--text2)">varias transmisiones</b> (ej. "Matches 1-10" y "Matches 11+"), pegá <b style="color:var(--text2)">una URL por renglón</b> y la app junta todos los tableros de cada ronda.</div>
     </div>
     <div class="tz-sec" style="background:rgba(90,60,120,.12);border:1px solid rgba(140,100,200,.22);margin-bottom:14px">
       <label class="tz-flabel" style="color:#c0a4f0">🏆 Categorías <span style="font-weight:400;color:var(--text3)">(opcional — para torneos con varias categorías)</span></label>
@@ -20623,6 +20623,10 @@ function _parseBcInput(raw) {
     var lich = raw.match(/https?:\/\/lichess\.org\/broadcast\/\S+/);
     return { id: lcc[1], url: lich ? lich[0] : ('https://view.livechesscloud.com/#' + lcc[1]) };
   }
+  // sichess: página de torneo (sichess.com/torneos/<evento>/<slug>/…). Las partidas salen de su
+  // games.pgn por ronda (vía Worker, porque sichess no manda CORS). id = 'si:<path de la página>'.
+  var si = raw.match(/sichess\.com\/(torneos\/[^\s?#]+?)\/?(?:index\.html?)?(?:[?#].*)?$/i);
+  if (si) { var sp = si[1].replace(/\/+$/, ''); return { id: 'si:' + sp, url: 'https://sichess.com/' + sp + '/' }; }
   var m3 = raw.match(/lichess\.org\/broadcast\/[^\/\?#]+\/[^\/\?#]+\/([A-Za-z0-9]{8})(?:[\/\?#]|$)/);
   var m2 = !m3 && raw.match(/lichess\.org\/broadcast\/[^\/\?#]+\/([A-Za-z0-9]{8})(?:[\/\?#]|$)/);
   if (m3 || m2) {
@@ -21025,6 +21029,7 @@ function _markLiveTiles(root) {
 function openBroadcastTournament(broadcastId, name, sub, pageUrl) {
   var raw = String(broadcastId || '');
   if (_isLccId(raw)) { bcOpenLiveGrid(raw, name, sub, _lccExtUrl(raw)); return; }   // livechesscloud (UUID) → misma grilla (link propio, no el de Lichess)
+  if (_isSiId(raw))  { bcOpenLiveGrid(raw, name, sub, _siExtUrl(raw)); return; }     // sichess (si:…) → misma grilla (link propio a sichess)
   if (/^[A-Za-z0-9]{8}$/.test(raw)) { bcOpenLiveGrid(raw, name, sub, pageUrl); return; }
   var m = (String(pageUrl || '') + ' ' + raw).match(/broadcast\/([^\/\?#\s]+)\/([^\/\?#\s]+)\/([^\/\?#\s]+)/);
   if (m) {
@@ -21228,7 +21233,7 @@ var _LCC_RESULT = { '1-0':'1-0', '0-1':'0-1', '1/2-1/2':'1/2-1/2', 'WHITEWIN':'1
 function _isLccId(s) { return _LCC_UUID_RE.test(String(s || '').trim()); }
 function _lccExtUrl(id) { return 'https://view.livechesscloud.com/#' + id; }
 // Intervalo de auto-refresco: livechesscloud (fuente directa) más ágil que Lichess.
-function _liveRefreshMs(id) { return _isLccId(id) ? _LCC_REFRESH_MS : _BC_REFRESH_MS; }
+function _liveRefreshMs(id) { return _isSiId(id) ? _SI_REFRESH_MS : (_isLccId(id) ? _LCC_REFRESH_MS : _BC_REFRESH_MS); }
 
 function _lccFullName(p) {
   if (!p) return '?';
@@ -21373,6 +21378,108 @@ function _lccFetchAll(id, cb) {
     .catch(function() { cb(null); });
 }
 
+/* ══════════════════ sichess (sichess.com) ══════════════════
+   Torneos capturados con DGT LiveChess que sichess publica como games.pgn por ronda
+   (una carpeta NN/ por ronda). sichess NO manda CORS, así que las descargas pasan por
+   el Worker (/sipgn?url=). id = 'si:<path de la página de torneo>'. _siFetchAll devuelve
+   el MISMO objeto `res` que _bcFetchAll → el resto del vivo (visor, grilla, barra roja,
+   auto-refresco, relojes) anda igual. Las rondas ya terminadas se cachean y no se re-piden. */
+var _SI_REFRESH_MS = 15000;
+var _siCache = {};   // url de ronda -> { games:[pgn…], final } ; las terminadas no vuelven a la red.
+
+function _isSiId(s) { return /^si:/.test(String(s || '').trim()); }
+function _siPath(id) { return String(id).replace(/^si:/, '').replace(/\/+$/, ''); }
+function _siExtUrl(id) { return 'https://sichess.com/' + _siPath(id) + '/'; }
+function _siProxy(url) { return CR_PROXY + '/sipgn?url=' + encodeURIComponent(url); }
+
+// Parte un PGN con varias partidas en partidas sueltas (cada una arranca en [Event …]).
+function _siSplitGames(text) {
+  return String(text || '').replace(/\r\n/g, '\n').split(/(?=\[Event\s+")/)
+    .map(function(s){ return s.trim(); }).filter(function(s){ return /\[White\s/.test(s); });
+}
+
+// Los tableros DGT LiveChess a veces mandan SAN con desambiguación de más (ej. "Nge2" donde alcanza
+// "Ne2") que el load_pgn ESTRICTO del visor rechaza y corta la partida. Si la carga estricta falla,
+// regeneramos las jugadas con replay `sloppy` (SAN canónico) conservando los relojes {[%clk …]} de cada
+// jugada — igual criterio que livechesscloud. Si la carga estricta ya anda, la partida se deja intacta.
+function _siFixPgn(pgn) {
+  if (typeof Chess === 'undefined') return pgn;
+  var body = pgn.replace(/^\s*(?:\[[^\]]*\]\s*)+/, '');
+  var clean = body.replace(/\{[^}]*\}/g, ' ').replace(/\d+\.(\.\.)?/g, ' ');
+  var moveTokens = clean.match(/[a-hKQRBNO][^\s{}]+|O-O(?:-O)?/g) || [];
+  var okStrict = false;
+  try { var p = new Chess(); okStrict = p.load_pgn(pgn) && p.history().length >= moveTokens.length; } catch (e) {}
+  if (okStrict) return pgn;
+  var headers = (pgn.match(/^\s*(?:\[[^\]]*\]\s*)+/) || [''])[0].trim();
+  var tokens = body.replace(/\d+\.(\.\.)?/g, ' ').match(/\{[^}]*\}|[^\s]+/g) || [];
+  var moves = [];
+  for (var i = 0; i < tokens.length; i++) {
+    var tk = tokens[i];
+    if (tk[0] === '{') { if (moves.length) moves[moves.length - 1].cmt = tk; continue; }
+    if (/^(1-0|0-1|1\/2-1\/2|\*)$/.test(tk)) continue;
+    moves.push({ san: tk, cmt: '' });
+  }
+  var ch = new Chess(), mv = '';
+  for (var j = 0; j < moves.length; j++) {
+    var r = null; try { r = ch.move(moves[j].san, { sloppy: true }); } catch (e) {}
+    if (!r) break;   // jugada ilegal (ruido post-partida del eboard) → cortar acá
+    if (j % 2 === 0) mv += (j / 2 + 1) + '. ';
+    mv += r.san + (moves[j].cmt ? ' ' + moves[j].cmt : '') + ' ';
+  }
+  var result = (pgn.match(/\[Result\s+"([^"]*)"\]/) || [null, '*'])[1];
+  return headers + '\n\n' + (mv + result).trim();
+}
+
+// Baja el config.js de la página de sichess (vía Worker) y devuelve, EN ORDEN, las URLs
+// absolutas de games.pgn de cada ronda. El config define allPGNs.push({ "pgn": "../../../games/…/NN/games.pgn" }).
+function _siRoundUrls(id, cb) {
+  _fetchTO(_siProxy(_siExtUrl(id) + 'assets/is/config.js'), 12000)
+    .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+    .then(function(js){
+      var urls = [], re = /["']pgn["']\s*:\s*["']([^"']+games\.pgn)["']/gi, m;
+      while ((m = re.exec(js))) {
+        var gm = m[1].match(/games\/.*\/\d+\/games\.pgn$/i);   // recorta el "../../../" relativo
+        urls.push('https://sichess.com/' + (gm ? gm[0] : m[1].replace(/^(?:\.\.\/)+/, '')));
+      }
+      cb(urls);
+    })
+    .catch(function(){ cb(null); });
+}
+
+// Baja todas las rondas de un torneo de sichess y arma el `res` (mismo formato que Lichess).
+function _siFetchAll(id, cb) {
+  _siRoundUrls(id, function(urls){
+    if (!urls || !urls.length) { cb(null); return; }
+    var results = {}, pend = urls.length;
+    function finish() {
+      var roundsWithGames = [], allGames = [], liveRound = null, isLive = false;
+      urls.forEach(function(url, i){
+        var rn = i + 1, games = results[rn] || [];
+        if (!games.length) return;   // ronda futura sin partidas todavía → no crear pestaña vacía
+        var anyLive = games.some(function(g){ return /\[Result\s+"\*"\]/.test(g); });
+        roundsWithGames.push({ name: 'Ronda ' + rn, id: 'si-' + rn, slug: String(rn), games: games, live: anyLive, finished: !anyLive });
+        allGames = allGames.concat(games);
+        if (anyLive && !liveRound) { isLive = true; liveRound = { name: 'Ronda ' + rn, id: 'si-' + rn, slug: String(rn) }; }
+      });
+      cb({ tourSlug: id, rounds: [], allGames: allGames, roundsWithGames: roundsWithGames, liveRound: isLive ? liveRound : null, isLive: isLive, _si: true, _siRounds: urls.length });
+    }
+    urls.forEach(function(url, i){
+      var rn = i + 1, cached = _siCache[url];
+      if (cached && cached.final) { results[rn] = cached.games; if (--pend === 0) finish(); return; }
+      _fetchTO(_siProxy(url), 15000)
+        .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+        .then(function(txt){
+          var games = _siSplitGames(txt).filter(function(g){ return !_bcIsPlaceholderGame(g); }).map(_siFixPgn);
+          var anyLive = games.some(function(g){ return /\[Result\s+"\*"\]/.test(g); });
+          _siCache[url] = { games: games, final: games.length > 0 && !anyLive };   // terminada = tiene partidas y ninguna en curso
+          results[rn] = games;
+          if (--pend === 0) finish();
+        })
+        .catch(function(){ results[rn] = (cached && cached.games) || []; if (--pend === 0) finish(); });
+    });
+  });
+}
+
 // Lichess crea automáticamente una ronda/capítulo VACÍO de relleno ([Event "Round N: Chapter 1"]
 // sin jugadores ni jugadas, cuerpo " *") para la próxima ronda. Normalmente tiene startsAt futuro y el
 // filtro startsAt<=now la saltea; pero si el organizador le pone mal la hora (ej. la ronda 7 con una hora
@@ -21393,6 +21500,7 @@ function _bcIsPlaceholderGame(pgn) {
 // que ya empezaron por horario (startsAt pasado) aunque el relay esté en pausa; una ronda cuenta
 // como EN VIVO si Lichess la marca ongoing O si tiene partidas con resultado "*" (en curso).
 function _bcFetchAll(broadcastId, cb) {
+  if (_isSiId(broadcastId)) { _siFetchAll(broadcastId, cb); return; }     // sichess (si:…) → PGN por ronda vía Worker
   if (_isLccId(broadcastId)) { _lccFetchAll(broadcastId, cb); return; }   // livechesscloud (UUID) → fuente directa
   // SIN token: los broadcasts son públicos y el endpoint del PGN de ronda
   // (lichess.org/broadcast/.../*.pgn) NO soporta el preflight CORS con el header Authorization
@@ -21628,8 +21736,8 @@ function _bcRenderLiveBar(res) {
   var bar = document.getElementById('cv-live-bar');
   if (!bar) return;
   if (res && res.isLive && res.liveRound) {
-    var rUrl = res._lcc ? _lccExtUrl(res.tourSlug) : ('https://lichess.org/broadcast/' + res.tourSlug + '/' + res.liveRound.slug + '/' + res.liveRound.id);
-    var srcName = res._lcc ? 'livechesscloud' : 'Lichess';
+    var rUrl = res._si ? _siExtUrl(res.tourSlug) : (res._lcc ? _lccExtUrl(res.tourSlug) : ('https://lichess.org/broadcast/' + res.tourSlug + '/' + res.liveRound.slug + '/' + res.liveRound.id));
+    var srcName = res._si ? 'sichess' : (res._lcc ? 'livechesscloud' : 'Lichess');
     bar.innerHTML = '<span style="font-size:12px;color:#e07070">\u{1F534} En vivo \xb7 ' + escHtml(res.liveRound.name || 'Ronda en curso') + ' <span style="opacity:.55;font-weight:400">se actualiza solo</span></span>'
       + '<div style="display:flex;gap:6px">'
       + '<button onclick="refreshLiveBroadcast()" style="background:rgba(220,50,50,0.2);border:1px solid rgba(220,50,50,0.4);color:#e07070;font-size:12px;padding:3px 8px;border-radius:6px;cursor:pointer;font-family:inherit">🔄 Actualizar</button>'
@@ -23014,10 +23122,12 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   h += '<span class="badge ' + cls2[status] + '"' + _dlb + '>' + lbl2[status] + '</span>';
   if (broadcastId) {
     var _isLcc = _isLccId(broadcastId);
+    var _isSi = _isSiId(broadcastId);
     var _lnkCss = 'font-size:11px;color:#8ab4f8;text-decoration:none;white-space:nowrap';
     // Con livechesscloud como fuente, su propio link + (si lo pegaron) el de Lichess como botón aparte.
     if (_isLcc) h += '<a href="' + escHtml(_lccExtUrl(broadcastId)) + '" target="_blank" rel="noopener" style="' + _lnkCss + '">⚡ Ver en livechesscloud ↗</a>';
-    var _lichUrl = /lichess\.org\/broadcast/.test(String(broadcastUrl || '')) ? broadcastUrl : (!_isLcc ? (broadcastUrl || 'https://lichess.org/broadcast/' + broadcastId) : null);
+    if (_isSi)  h += '<a href="' + escHtml(_siExtUrl(broadcastId)) + '" target="_blank" rel="noopener" style="' + _lnkCss + '">⚡ Ver en sichess ↗</a>';
+    var _lichUrl = /lichess\.org\/broadcast/.test(String(broadcastUrl || '')) ? broadcastUrl : ((!_isLcc && !_isSi) ? (broadcastUrl || 'https://lichess.org/broadcast/' + broadcastId) : null);
     if (_lichUrl) h += '<a href="' + escHtml(_lichUrl) + '" target="_blank" rel="noopener" style="' + _lnkCss + '">⚡ Ver en Lichess ↗</a>';
   }
   h += '</div>';
@@ -24280,7 +24390,13 @@ function _tdKeepPolling(res) {
   if (!res || !res.roundsWithGames || !res.roundsWithGames.length) return false;
   if (res.roundsWithGames.some(function(r){ return r.live; })) { _tdIdlePolls = 0; return true; }
   var pendiente;
-  if (res.rounds && res.rounds.length && !res._lcc) {
+  if (res._si) {
+    // sichess: del config sabemos cuántas rondas tiene el torneo. Entre rondas (todas las cargadas
+    // terminadas) seguir sondeando mientras falten rondas por jugar, para que la siguiente aparezca
+    // sola sin recargar. El tope _TD_MAX_IDLE corta si la pausa se hace muy larga.
+    pendiente = res.roundsWithGames.some(function(r){ return !r.finished; })
+             || (res.roundsWithGames.length < (res._siRounds || 0));
+  } else if (res.rounds && res.rounds.length && !res._lcc) {
     // Calendario de Lichess (transmisión única): ronda sin terminar que ya arrancó o arranca pronto.
     var now = Date.now(), WINDOW = 3 * 3600 * 1000;   // 3 h de margen entre rondas
     pendiente = res.rounds.some(function(r){ return !r.finished && (r.ongoing || !r.startsAt || r.startsAt <= now + WINDOW); });
@@ -24317,6 +24433,7 @@ function _tdLoadLiveGames(broadcastId, broadcastUrl, name, location, pgnKey, typ
   // livechesscloud manda: aunque haya un link de Lichess en broadcastUrl (para el botón "Ver en Lichess"),
   // las partidas salen de livechesscloud. Sin esto, el scan de URLs de ronda de abajo lo desviaría a Lichess.
   if (_isLccId(raw)) { _tdLiveFetchMulti([raw], name, location, pgnKey, typ, hasFallback); return; }
+  if (_isSiId(raw))  { _tdLiveFetchMulti([raw], name, location, pgnKey, typ, hasFallback); return; }   // sichess (si:…) → misma vía eager
   var combined = String(broadcastUrl || '') + ' ' + raw;
   // Un torneo puede tener VARIAS transmisiones (Lichess parte los eventos grandes, ej. "Matches 1-10"
   // y "Matches 11+"): buscamos TODAS las URLs de ronda (broadcast/{slug}/{roundSlug}/{roundId8}) y
@@ -24356,7 +24473,7 @@ function _tdLiveFetchMulti(tourIds, name, location, pgnKey, typ, hasFallback) {
   // Camino EAGER (baja todo) cuando: es livechesscloud (el on-demand por ronda es solo Lichess por ahora),
   // O hay un deep-link VIEJO a una partida (?partida=N sin &r=): su índice es global y necesita todo
   // cargado. Los links NUEVOS (&r=&g=) traen la ronda → van por on-demand (bajan solo esa ronda).
-  if (tourIds.some(function(t){ return _isLccId(t); }) || (_pendingDeepGame && _pendingDeepGame.round == null)) { _tdLiveFetchMultiEager(tourIds, key, hasFallback); return; }
+  if (tourIds.some(function(t){ return _isLccId(t) || _isSiId(t); }) || (_pendingDeepGame && _pendingDeepGame.round == null)) { _tdLiveFetchMultiEager(tourIds, key, hasFallback); return; }
   // Lichess: ON-DEMAND. Metadata (liviana) + partidas de la ronda actual; las demás al abrirlas.
   _bcFetchOnDemandInit(tourIds, function(merged, currentGames){
     if (!_tdLiveCtx || _tdLiveCtx.key !== key) return;
@@ -24594,7 +24711,7 @@ function _tdLiveBuild(res, sec, keepRound) {
   res.roundsWithGames.forEach(function(r){ if (r.live) { var mm=(r.name||'').match(/(\d+)/); if (mm) liveInts[parseInt(mm[1])] = true; } });
   var h = '';
   h += '<div id="td-partidas-anchor" style="display:flex;align-items:center;justify-content:space-between;gap:8px;row-gap:10px;margin-bottom:16px;flex-wrap:wrap;scroll-margin-top:10px">';
-  h += '<span style="font-size:14px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:var(--fg-e0);text-shadow:var(--txt-out)">Partidas · ' + (res._lcc ? 'livechesscloud' : 'Lichess') + '</span>';
+  h += '<span style="font-size:14px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:var(--fg-e0);text-shadow:var(--txt-out)">Partidas · ' + (res._si ? 'sichess' : (res._lcc ? 'livechesscloud' : 'Lichess')) + '</span>';
   h += _tdSearchBoxHtml();
   if (argTotal > 0 && crShowArgLine(ctx.typ)) {
     h += '<button id="td-arg-btn" onclick="tdToggleArg()" class="arg-toggle' + (_tdArgOnly ? ' on' : '') + '">🇦🇷 Solo argentinos</button>';
