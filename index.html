@@ -24548,16 +24548,21 @@ function _tdLoadLiveGames(broadcastId, broadcastUrl, name, location, pgnKey, typ
   // Camino rápido entre pestañas: si otra pestaña nos pasó este torneo, pintamos sus tableros YA y
   // abrimos la partida del deep-link al instante, sin resolver ids ni ir a Lichess. El fetch real sigue
   // abajo y refresca en segundo plano (reemplaza esta pintada con los datos frescos).
-  var _seed = _tdSeedResByTour[String(_tdTourKey)];
+  var _seed = _tdSeedResByTour[String(_tdTourKey)], _seedApplied = false;
   if (_seed) {
     delete _tdSeedResByTour[String(_tdTourKey)];
     var _sec0 = document.getElementById('td-games-section');
     if (_sec0 && _seed.roundsWithGames && _seed.roundsWithGames.length) {
       _tdLiveCtx = { tourIds: [], key: '__seed__', tourId: null, pgnKey: pgnKey, name: name, location: location, typ: typ, hasFallback: !!hasFallback, crKey: _tdLiveCrKey, isTeam: !!_tdLiveIsTeam };
-      try { _tdLiveBuild(_seed, _sec0, null); _tdShareRemember(_seed); } catch (e) {}
+      try { _tdLiveBuild(_seed, _sec0, null); _tdShareRemember(_seed); _seedApplied = true; } catch (e) {}
     }
   }
   var raw = String(broadcastId || '');
+  // Si otra pestaña ya nos pasó el torneo COMPLETO y NO está en vivo, no re-bajar nada: el seed trae todas
+  // las rondas y no van a cambiar. Solo para fuentes EAGER (sichess/livechesscloud), cuyo seed es completo
+  // (Lichess es on-demand: su seed puede traer una sola ronda, así que ahí sí seguimos al fetch). En vivo
+  // también seguimos (para recibir jugadas nuevas). Ahorra las ~11 descargas de ronda en pestaña nueva.
+  if (_seedApplied && status !== 'live' && (_isSiId(raw) || _isLccId(raw))) return;
   // livechesscloud manda: aunque haya un link de Lichess en broadcastUrl (para el botón "Ver en Lichess"),
   // las partidas salen de livechesscloud. Sin esto, el scan de URLs de ronda de abajo lo desviaría a Lichess.
   if (_isLccId(raw)) { _tdLiveFetchMulti([raw], name, location, pgnKey, typ, hasFallback); return; }
