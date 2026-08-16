@@ -6,6 +6,11 @@
 <meta name="robots" content="noindex, nofollow">
 <title>Editar torneos — Ajedrez Argentino</title>
 <link rel="icon" href="assets/logo-hd.jpg">
+<!-- Para agregar a la pantalla de inicio del teléfono como ícono con nombre "Editar". -->
+<link rel="apple-touch-icon" href="assets/logo-hd.jpg">
+<meta name="apple-mobile-web-app-title" content="Editar">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <style>
   /* Página liviana para editar torneos DESDE EL TELÉFONO. No carga la app grande:
      solo el índice de torneos (data/manifest.js) y habla con el Worker, que es el
@@ -82,6 +87,98 @@
   .list-count { font-size: 12px; color: var(--text3); margin: 2px 0 2px; }
   .foot { margin-top: 26px; border-top: 1px solid var(--bd); padding-top: 14px; }
   .foot p { font-size: 12px; color: var(--text3); }
+
+  /* ═══════════ Cargar partida en el tablero (mismo tablero que la PC) ═══════════ */
+  /* Variables de colores del tablero (tema oscuro "mar helado" de la app). */
+  #gc-overlay {
+    --sq-l: #dde8ef; --sq-d: #658da6; --sq-hl-l: #f6f669; --sq-hl-d: #cdd16a;
+    --sq-co-l: #5d7790; --sq-co-d: #e8edf2; --board-bd: #51687c; --board-bd2: #8099af;
+    position: fixed; inset: 0; z-index: 8000; background: var(--bg);
+    overflow-y: auto; -webkit-overflow-scrolling: touch; display: none;
+    padding: 12px 12px calc(24px + env(safe-area-inset-bottom));
+  }
+  #gc-overlay.open { display: block; }
+  .gc-hdr { display: flex; align-items: center; gap: 10px; max-width: 460px; margin: 0 auto 12px; }
+  .gc-hdr h3 { font-size: 16px; font-weight: 700; margin: 0; }
+  .gc-hdr .gc-count { font-size: 11.5px; color: var(--green); margin-left: auto; text-align: right; }
+  .gc-wrap { max-width: 460px; margin: 0 auto; }
+  .chess-board {
+    display: grid; grid-template-columns: repeat(8, 1fr); width: 100%;
+    border: 4px solid var(--board-bd);
+    box-shadow: 0 0 0 1px var(--board-bd2), 0 4px 18px rgba(0,0,0,0.5);
+    border-radius: 4px; overflow: hidden; touch-action: manipulation;
+  }
+  .csq {
+    aspect-ratio: 1; display: flex; align-items: center; justify-content: center;
+    line-height: 1; user-select: none; -webkit-user-select: none; position: relative;
+  }
+  .csq.li { background-color: var(--sq-l); }
+  .csq.da { background-color: var(--sq-d); }
+  .csq.mf.li, .csq.mt.li { background-color: var(--sq-hl-l); }
+  .csq.mf.da, .csq.mt.da { background-color: var(--sq-hl-d); }
+  .csq.sel { background: #7fc97f !important; }
+  .csq.legal::after {
+    content: ''; position: absolute; width: 30%; height: 30%; border-radius: 50%;
+    background: rgba(0,0,0,.28); pointer-events: none;
+  }
+  .csq.legal-cap::after {
+    content: ''; position: absolute; inset: 0; border-radius: 2px;
+    box-shadow: inset 0 0 0 4px rgba(0,0,0,.28); pointer-events: none;
+  }
+  .cpc { width: 88%; height: 88%; display: block; pointer-events: none; }
+  .sq-coord { position: absolute; font-size: 9.5px; font-weight: 700; line-height: 1; pointer-events: none; opacity: .9; }
+  .sq-rank { top: 2px; left: 3px; }
+  .sq-file { bottom: 2px; right: 3px; }
+  .csq.li .sq-coord { color: var(--sq-co-l); }
+  .csq.da .sq-coord { color: var(--sq-co-d); }
+  .csq.mf .sq-coord, .csq.mt .sq-coord { color: #666; }
+
+  .gc-btns { display: flex; gap: 6px; margin-top: 10px; }
+  .gc-btns button {
+    flex: 1 1 0; min-width: 0; margin-top: 0; padding: 11px 4px; font-size: 15px;
+    background: var(--card2); border: 1px solid var(--bd); color: var(--text); border-radius: 10px;
+  }
+  .gc-navpos { font-size: 12px; color: var(--text3); align-self: center; min-width: 42px; text-align: center; }
+  .gc-turn { font-size: 12px; color: var(--text3); margin: 8px 0 0; text-align: center; }
+  .gc-sep {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--gold);
+    font-weight: 700; margin: 16px 0 6px; border-top: 1px solid var(--bd); padding-top: 12px;
+  }
+  .gc-moves {
+    background: var(--card2); border: 1px solid var(--bd); border-radius: 10px;
+    padding: 10px 12px; margin-top: 8px; min-height: 46px; max-height: 120px; overflow-y: auto;
+    font-size: 14px; line-height: 1.9;
+  }
+  .gc-num { color: var(--text3); font-weight: 700; margin-left: 4px; }
+  .gc-mv { cursor: pointer; padding: 1px 4px; border-radius: 4px; }
+  .gc-mv.cur { background: var(--gold-bg); color: var(--gold); font-weight: 700; }
+  .gc-fig { font-family: "Segoe UI Symbol", "Noto Sans Symbols2", system-ui; }
+  #gc-overlay label { margin-top: 10px; }
+  .gc-save {
+    width: 100%; margin-top: 16px; padding: 14px; background: var(--gold); border: 1px solid var(--gold);
+    color: #1a1508; font-size: 15px; font-weight: 700; border-radius: 11px; cursor: pointer; font-family: inherit;
+  }
+  .gc-save:disabled { opacity: .5; cursor: default; }
+  .gc-pairhint { color: #7fd487 !important; }
+
+  /* Selector de coronación */
+  .promo-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.75); z-index: 9000;
+    display: none; align-items: center; justify-content: center;
+  }
+  .promo-overlay.open { display: flex; }
+  .promo-box {
+    background: var(--card); border: 1px solid var(--bd); border-radius: 16px; padding: 20px 18px;
+    display: flex; flex-direction: column; align-items: center; gap: 14px;
+  }
+  .promo-label { font-size: 13px; color: var(--text2); font-weight: 600; }
+  .promo-pieces { display: flex; gap: 10px; }
+  .promo-btn {
+    width: 64px; height: 64px; border-radius: 10px; background: var(--card2); border: 1px solid var(--bd);
+    cursor: pointer; display: flex; align-items: center; justify-content: center; margin: 0; padding: 0;
+  }
+  .promo-btn img { width: 48px; height: 48px; pointer-events: none; }
+  .promo-cancel { font-size: 12px; color: var(--text3); background: none; border: none; cursor: pointer; font-family: inherit; padding: 4px 8px; margin: 0; width: auto; }
 </style>
 </head>
 <body>
@@ -168,7 +265,9 @@
   <div class="card" id="pgn-card" style="display:none">
     <div style="font-weight:700;font-size:15px;margin-bottom:2px">📋 Partidas (PGN)</div>
     <div class="hint" id="pgn-have"></div>
-    <label for="f-pgn">Pegar PGN</label>
+    <button class="primary" id="gc-open-btn" onclick="gcOpen()" style="margin-top:12px">♟️ Cargar jugando en el tablero</button>
+    <div class="hint">Lo más rápido desde el teléfono: reproducís la partida en un tablero y elegís el cruce de la ronda para completar los jugadores solos.</div>
+    <label for="f-pgn" style="margin-top:16px">…o pegar PGN</label>
     <textarea id="f-pgn" rows="6" placeholder="Pegá acá una o varias partidas en formato PGN…" oninput="updatePgnCount()"></textarea>
     <label for="f-pgnfile">…o subir un archivo .pgn</label>
     <input type="file" id="f-pgnfile" accept=".pgn,.txt" onchange="pgnFilePicked(this)">
@@ -189,6 +288,85 @@
   </div>
 </div>
 
+<!-- ── Cargar partida en el tablero (overlay a pantalla completa) ── -->
+<div id="gc-overlay">
+  <div class="gc-hdr">
+    <button class="back" onclick="gcClose()" style="margin:0">‹ Volver</button>
+    <h3>♟️ Cargar partida</h3>
+    <span class="gc-count" id="gc-count"></span>
+  </div>
+  <div class="gc-wrap">
+    <div class="chess-board" id="gc-board"></div>
+    <div class="gc-btns">
+      <button onclick="gcNavFirst()" title="Ir al principio">⏮</button>
+      <button onclick="gcNavPrev()" title="Anterior">◀</button>
+      <span class="gc-navpos" id="gc-nav-pos"></span>
+      <button onclick="gcNavNext()" title="Siguiente">▶</button>
+      <button onclick="gcNavLast()" title="Ir al final">⏭</button>
+    </div>
+    <div class="gc-btns">
+      <button onclick="gcUndo()">↶ Deshacer</button>
+      <button onclick="gcFlip()">⇅ Girar</button>
+      <button onclick="gcResetMoves()">✕ Borrar</button>
+    </div>
+    <div class="gc-turn" id="gc-turn"></div>
+    <div class="gc-sep">Jugadas <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text3)">— tocá origen y destino; para corregir, retrocedé y jugá la buena</span></div>
+    <div class="gc-moves" id="gc-moves"></div>
+
+    <div class="gc-sep">Torneo</div>
+    <div id="gc-tour-name" style="font-size:14px;color:var(--text2);margin-bottom:4px"></div>
+    <div class="row2">
+      <div><label for="gc-round">Ronda</label><input id="gc-round" inputmode="numeric" placeholder="1" oninput="gcRefreshPairings()"></div>
+      <div><label for="gc-date">Fecha</label><input id="gc-date" type="date"></div>
+    </div>
+    <div id="gc-pair-wrap" style="display:none">
+      <label for="gc-pair" class="gc-pairhint">♟ Cruce de la ronda (elegí uno y se completan los jugadores)</label>
+      <select id="gc-pair" onchange="gcPairChosen()"></select>
+    </div>
+
+    <div class="gc-sep">Blancas</div>
+    <label for="gc-wname">Nombre</label>
+    <input id="gc-wname" placeholder="Apellido, Nombre" oninput="gcRefreshSave()">
+    <div class="row2">
+      <div><label for="gc-welo">Elo</label><input id="gc-welo" inputmode="numeric" placeholder="1850"></div>
+      <div><label for="gc-wtitle">Título</label><select id="gc-wtitle"></select></div>
+    </div>
+    <label for="gc-wfide">FIDE id (opcional)</label>
+    <input id="gc-wfide" inputmode="numeric" placeholder="123456">
+
+    <div class="gc-sep">Negras</div>
+    <label for="gc-bname">Nombre</label>
+    <input id="gc-bname" placeholder="Apellido, Nombre" oninput="gcRefreshSave()">
+    <div class="row2">
+      <div><label for="gc-belo">Elo</label><input id="gc-belo" inputmode="numeric" placeholder="1790"></div>
+      <div><label for="gc-btitle">Título</label><select id="gc-btitle"></select></div>
+    </div>
+    <label for="gc-bfide">FIDE id (opcional)</label>
+    <input id="gc-bfide" inputmode="numeric" placeholder="123456">
+
+    <div class="gc-sep">Resultado</div>
+    <select id="gc-result" onchange="gcRefreshSave()">
+      <option value="">— Elegí el resultado —</option>
+      <option value="1-0">1-0 (ganan blancas)</option>
+      <option value="0-1">0-1 (ganan negras)</option>
+      <option value="1/2-1/2">½-½ (tablas)</option>
+      <option value="*">* (sin terminar)</option>
+    </select>
+
+    <button class="gc-save" id="gc-save" onclick="gcSave()">⬆️ Subir partida y cargar otra</button>
+    <div class="msg" id="gc-msg"></div>
+  </div>
+</div>
+
+<div class="promo-overlay" id="promo-overlay">
+  <div class="promo-box">
+    <div class="promo-label">Elegí la pieza</div>
+    <div class="promo-pieces" id="promo-pieces"></div>
+    <button class="promo-cancel" onclick="promoCancelClick()">Cancelar</button>
+  </div>
+</div>
+
+<script src="assets/chess.min.js"></script>
 <script src="data/manifest.js"></script>
 <script>
 'use strict';
@@ -543,6 +721,460 @@ async function clearPending() {
   }
   $('pin').addEventListener('keydown', function(e) { if (e.key === 'Enter') pinEnter(); });
 })();
+</script>
+
+<!-- ═══════════ Cargar partida en el tablero ═══════════
+     Portado del "Cargar partida a mano" de la PC (index.html). El tablero valida con
+     chess.min.js, dibuja piezas de assets/piezas/, y los cruces salen de data/cr/*.json
+     (bajados por demanda; el índice viene en el manifest). Al guardar arma un PGN y lo
+     sube por el MISMO caño que "Pegar PGN" (Worker op:'pgn' → data/live-partidas.json). -->
+<script>
+'use strict';
+var WP_BASE = 'assets/piezas/';
+var WP = {'wk':'wK','wq':'wQ','wr':'wR','wb':'wB','wn':'wN','wp':'wP',
+          'bk':'bK','bq':'bQ','br':'bR','bb':'bB','bn':'bN','bp':'bP'};
+var GC_TITLES = ['', 'GM', 'IM', 'FM', 'CM', 'WGM', 'WIM', 'WFM', 'WCM'];
+var _CV_FIG = { K:'♚', Q:'♛', R:'♜', B:'♝', N:'♞' };
+var _TITLE_ES = {
+  GMI:'GM', MI:'IM', MF:'FM', MC:'CM', MN:'NM',
+  GMF:'WGM', MIF:'WIM', MFF:'WFM', MCF:'WCM', MNF:'WNM',
+  FGM:'WGM', FMI:'WIM', FMF:'WFM', GMA:'AGM', MIA:'AIM', MFA:'AFM', MCA:'ACM'
+};
+function _normTitle(t) {
+  var s = String(t == null ? '' : t).trim().toUpperCase().replace(/[^A-Z]/g, '');
+  if (!s) return '';
+  return _TITLE_ES[s] || s;
+}
+function normStr(s) {
+  if (!s) return '';
+  return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+function cvFanHtml(san) {
+  if (!san) return '';
+  return String(san).replace(/[KQRBN]/g, function(c){ return '<span class="gc-fig">' + _CV_FIG[c] + '</span>'; });
+}
+
+var gc = { chess: null, sans: [], moves: [], fens: [], viewIdx: 0, sel: null, legalDests: [], flipped: false, saved: 0 };
+var _gcBoardBound = false, _gcBoardOrient = null;
+function gcResetGame() {
+  gc.chess = new Chess(); gc.sans = []; gc.moves = []; gc.fens = [gc.chess.fen()];
+  gc.viewIdx = 0; gc.sel = null; gc.legalDests = [];
+}
+
+/* ── Pinta una casilla (coordenadas + pieza) ── */
+function cvCellInner(r, f, rr, ff, sq, pk, FL) {
+  var coords = '';
+  if (f === 0) coords += '<span class="sq-coord sq-rank">' + (8 - rr) + '</span>';
+  if (r === 7) coords += '<span class="sq-coord sq-file">' + FL[ff] + '</span>';
+  var ch = '';
+  if (pk) {
+    var key = WP[pk] || '';
+    if (key) ch = '<img class="cpc" src="' + WP_BASE + key + '.svg" alt="" draggable="false" data-sq="' + sq + '">';
+  }
+  return coords + ch;
+}
+// Pinta las 64 casillas (rebuild completo si o.full; si no, solo las que cambian).
+function _bdPaint(el, bd, o) {
+  var FL = ['a','b','c','d','e','f','g','h'], cells = el.children;
+  if (o.full) {
+    var h = '';
+    for (var r = 0; r < 8; r++) for (var f = 0; f < 8; f++) {
+      var rr = o.flipped ? 7-r : r, ff = o.flipped ? 7-f : f;
+      var sq = FL[ff] + (8-rr), cls = 'csq ' + (((r+f) % 2 === 0) ? 'li' : 'da');
+      if (sq === o.lf) cls += ' mf';
+      if (sq === o.lt) cls += ' mt';
+      if (sq === o.sel) cls += ' sel';
+      var pc = bd[rr][ff];
+      if (o.dests.indexOf(sq) >= 0) cls += pc ? ' legal-cap' : ' legal';
+      h += '<div class="' + cls + '" data-sq="' + sq + '">' + cvCellInner(r, f, rr, ff, sq, pc ? (pc.color + pc.type) : '', FL) + '</div>';
+    }
+    el.innerHTML = h;
+  } else {
+    var idx = 0;
+    for (var r2 = 0; r2 < 8; r2++) for (var f2 = 0; f2 < 8; f2++) {
+      var cell = cells[idx++];
+      var rr2 = o.flipped ? 7-r2 : r2, ff2 = o.flipped ? 7-f2 : f2;
+      var sq2 = FL[ff2] + (8-rr2), cls2 = 'csq ' + (((r2+f2) % 2 === 0) ? 'li' : 'da');
+      if (sq2 === o.lf) cls2 += ' mf';
+      if (sq2 === o.lt) cls2 += ' mt';
+      if (sq2 === o.sel) cls2 += ' sel';
+      var pc2 = bd[rr2][ff2];
+      if (o.dests.indexOf(sq2) >= 0) cls2 += pc2 ? ' legal-cap' : ' legal';
+      if (cell.className !== cls2) cell.className = cls2;
+      var pk2 = pc2 ? (pc2.color + pc2.type) : '';
+      if (cell._pk !== pk2) { cell._pk = pk2; cell.innerHTML = cvCellInner(r2, f2, rr2, ff2, sq2, pk2, FL); }
+    }
+  }
+}
+
+// ¿La jugada de esta pieza es coronación? (peón a la última fila)
+function _bdIsPromo(pc, to) {
+  if (!pc || pc.type !== 'p') return false;
+  var tr = parseInt(to[1], 10);
+  return (pc.color === 'w' && tr === 8) || (pc.color === 'b' && tr === 1);
+}
+
+// Marca de tiempo del gesto que selecciona, para que el click posterior no la deseleccione.
+var _pressSel = null, _pressTs = 0;
+function _markPressSelect(sq) { _pressSel = sq; _pressTs = Date.now(); }
+function _isPressSelect(sq) {
+  if (_pressSel !== sq || Date.now() - _pressTs > 600) return false;
+  _pressSel = null; return true;
+}
+
+// Interacción: en el teléfono se mueve tocando origen y destino (touchend → onSquare).
+// El arrastre con mouse solo se activa en punteros finos (PC), por si abren editar.html en PC.
+var _bdDrag = null, _bdDocBound = false;
+function _bdBindInput(boardEl, st, cfg) {
+  var ts = { t: 0 };
+  boardEl.addEventListener('click', function(e) {
+    if (Date.now() - ts.t < 300) return;
+    var t = e.target.closest('[data-sq]'); if (!t) return; cfg.onSquare(t.getAttribute('data-sq'));
+  });
+  boardEl.addEventListener('touchend', function(e) {
+    e.preventDefault(); var t = e.changedTouches[0], x = document.elementFromPoint(t.clientX, t.clientY);
+    var sqEl = x ? x.closest('[data-sq]') : null; if (!sqEl) return; cfg.onSquare(sqEl.getAttribute('data-sq'));
+  }, { passive: false });
+  if (!window.matchMedia('(pointer: fine)').matches) return;
+  boardEl.addEventListener('mousedown', function(e) {
+    if (e.button !== 0 || !cfg.canPick()) return;
+    var sqEl = e.target.closest('[data-sq]'); if (!sqEl) return;
+    var sq = sqEl.getAttribute('data-sq'), pc = st.chess.get(sq);
+    if (!pc || pc.color !== st.chess.turn()) return;
+    var img = (e.target.tagName === 'IMG' && e.target.classList.contains('cpc')) ? e.target : sqEl.querySelector('img.cpc');
+    if (!img) return;
+    var rect = img.getBoundingClientRect(), sz = rect.width, imgSrc = img.src;
+    var _wasSel = (st.sel === sq);
+    st.sel = sq; st.legalDests = st.chess.moves({ square: sq, verbose: true }).map(function(m) { return m.to; });
+    if (!_wasSel) _markPressSelect(sq);
+    cfg.render();
+    var clone = document.createElement('img');
+    clone.src = imgSrc;
+    clone.style.cssText = 'position:fixed;pointer-events:none;z-index:9999;width:' + sz + 'px;height:' + sz + 'px;left:0;top:0;transform:translate3d(' + (e.clientX-sz/2) + 'px,' + (e.clientY-sz/2) + 'px,0);will-change:transform;opacity:.88;';
+    document.body.appendChild(clone);
+    var live = boardEl.querySelector('[data-sq="' + sq + '"] img.cpc'); if (live) live.style.opacity = '.22';
+    _bdDrag = { sq: sq, clone: clone, sx: e.clientX, sy: e.clientY, moved: false, el: boardEl, st: st, cfg: cfg, ts: ts };
+    e.preventDefault();
+  });
+  if (_bdDocBound) return; _bdDocBound = true;
+  document.addEventListener('mousemove', function(e) {
+    if (!_bdDrag) return;
+    var sz = parseFloat(_bdDrag.clone.style.width);
+    _bdDrag.clone.style.transform = 'translate3d(' + (e.clientX-sz/2) + 'px,' + (e.clientY-sz/2) + 'px,0)';
+    if (!_bdDrag.moved && (Math.abs(e.clientX-_bdDrag.sx) > 4 || Math.abs(e.clientY-_bdDrag.sy) > 4)) _bdDrag.moved = true;
+  });
+  document.addEventListener('mouseup', function(e) {
+    if (!_bdDrag) return;
+    var d = _bdDrag; _bdDrag = null;
+    var lp = d.el.querySelector('[data-sq="' + d.sq + '"] img.cpc'); if (lp) lp.style.opacity = '';
+    if (d.clone.parentNode) d.clone.parentNode.removeChild(d.clone);
+    if (!d.moved) return;
+    d.ts.t = Date.now();
+    var x = document.elementFromPoint(e.clientX, e.clientY), sqEl = x ? x.closest('[data-sq]') : null;
+    if (!sqEl || sqEl.getAttribute('data-sq') === d.sq) { d.st.sel = null; d.st.legalDests = []; d.cfg.render(); return; }
+    var to = sqEl.getAttribute('data-sq');
+    if (d.st.legalDests.indexOf(to) >= 0) d.cfg.onDrop(d.sq, to);
+    else { d.st.sel = null; d.st.legalDests = []; d.cfg.render(); }
+  });
+}
+
+/* ── Tablero ── */
+function gcRenderBoard() {
+  var el = document.getElementById('gc-board'); if (!el || !gc.chess) return;
+  var bd = gc.chess.board(), last = gc.viewIdx > 0 ? gc.moves[gc.viewIdx - 1] : null;
+  var lf = last ? last.from : '', lt = last ? last.to : '';
+  var full = el.children.length !== 64 || _gcBoardOrient !== gc.flipped;
+  _bdPaint(el, bd, { flipped: gc.flipped, sel: gc.sel, dests: gc.legalDests, lf: lf, lt: lt, full: full });
+  if (full) { _gcBoardOrient = gc.flipped; gcBindBoard(); }
+  var t = document.getElementById('gc-turn');
+  if (t) t.textContent = (gc.viewIdx < gc.sans.length ? '⏸ mirando la jugada ' + gc.viewIdx + ' de ' + gc.sans.length + ' · ' : '')
+    + 'mueven ' + (gc.chess.turn() === 'w' ? 'blancas' : 'negras');
+  var nv = document.getElementById('gc-nav-pos');
+  if (nv) nv.textContent = gc.sans.length ? (gc.viewIdx + ' / ' + gc.sans.length) : '';
+}
+function gcBindBoard() {
+  if (_gcBoardBound) return; _gcBoardBound = true;
+  _bdBindInput(document.getElementById('gc-board'), gc, {
+    canPick: function() { return !!gc.chess; },
+    render: function() { gcRenderBoard(); },
+    onSquare: gcHandleClick,
+    onDrop: gcTryMove
+  });
+}
+function gcHandleClick(sq) {
+  if (!gc.chess) return;
+  if (gc.sel) {
+    if (sq === gc.sel) { if (_isPressSelect(sq)) return; gc.sel = null; gc.legalDests = []; gcRenderBoard(); return; }
+    if (gc.legalDests.indexOf(sq) >= 0) { gcTryMove(gc.sel, sq); return; }
+  }
+  var pc = gc.chess.get(sq);
+  if (pc && pc.color === gc.chess.turn()) {
+    gc.sel = sq;
+    gc.legalDests = gc.chess.moves({ square: sq, verbose: true }).map(function(m) { return m.to; });
+  } else { gc.sel = null; gc.legalDests = []; }
+  gcRenderBoard();
+}
+var _pendingPromo = null;
+function gcTryMove(from, to) {
+  var pc = gc.chess.get(from);
+  if (_bdIsPromo(pc, to)) {
+    gc.sel = null; gc.legalDests = []; gcRenderBoard();
+    _pendingPromo = { from: from, to: to, color: pc.color, cb: function(piece) { gcApplyMove(from, to, piece); } };
+    promoShow(pc.color);
+    return;
+  }
+  gcApplyMove(from, to, undefined);
+}
+function gcApplyMove(from, to, promo) {
+  var m = gc.chess.move({ from: from, to: to, promotion: promo || 'q' });
+  gc.sel = null; gc.legalDests = [];
+  if (!m) { gcRenderBoard(); return; }
+  if (gc.viewIdx < gc.sans.length) {
+    gc.sans = gc.sans.slice(0, gc.viewIdx);
+    gc.moves = gc.moves.slice(0, gc.viewIdx);
+    gc.fens = gc.fens.slice(0, gc.viewIdx + 1);
+  }
+  gc.sans.push(m.san); gc.moves.push({ from: m.from, to: m.to }); gc.fens.push(gc.chess.fen());
+  gc.viewIdx = gc.sans.length;
+  gcRenderBoard(); gcRenderMoves(); gcRefreshSave();
+}
+function gcUndo() {
+  if (!gc.sans.length) return;
+  gc.sans.pop(); gc.moves.pop(); gc.fens.pop();
+  gc.viewIdx = Math.min(gc.viewIdx, gc.sans.length);
+  gc.chess = new Chess(gc.fens[gc.viewIdx]);
+  gc.sel = null; gc.legalDests = [];
+  gcRenderBoard(); gcRenderMoves(); gcRefreshSave();
+}
+function gcFlip() { gc.flipped = !gc.flipped; gcRenderBoard(); }
+function gcResetMoves() {
+  if (gc.sans.length && !confirm('¿Borrar las ' + gc.sans.length + ' jugadas cargadas?')) return;
+  gcResetGame(); gcRenderBoard(); gcRenderMoves(); gcRefreshSave();
+}
+function gcRenderMoves() {
+  var el = document.getElementById('gc-moves'); if (!el) return;
+  if (!gc.sans.length) { el.innerHTML = '<span style="color:var(--text3)">Reproducí la partida en el tablero…</span>'; return; }
+  var h = '';
+  for (var i = 0; i < gc.sans.length; i++) {
+    if (i % 2 === 0) h += '<span class="gc-num">' + (i/2 + 1) + '.</span> ';
+    h += '<span class="gc-mv' + (gc.viewIdx === i + 1 ? ' cur' : '') + '" onclick="gcSetView(' + (i+1) + ')">' + cvFanHtml(gc.sans[i]) + '</span> ';
+  }
+  el.innerHTML = h;
+  var cur = el.querySelector('.gc-mv.cur');
+  if (cur) el.scrollTop = Math.max(0, cur.offsetTop - (el.clientHeight - cur.offsetHeight) / 2);
+  else el.scrollTop = el.scrollHeight;
+}
+function gcSetView(i) {
+  if (!gc.fens.length) return;
+  i = Math.max(0, Math.min(i, gc.sans.length));
+  gc.viewIdx = i;
+  gc.chess = new Chess(gc.fens[i]);
+  gc.sel = null; gc.legalDests = [];
+  gcRenderBoard(); gcRenderMoves();
+}
+function gcNavFirst() { gcSetView(0); }
+function gcNavPrev()  { gcSetView(gc.viewIdx - 1); }
+function gcNavNext()  { gcSetView(gc.viewIdx + 1); }
+function gcNavLast()  { gcSetView(gc.sans.length); }
+document.addEventListener('keydown', function(e) {
+  var ov = document.getElementById('gc-overlay');
+  if (!ov || !ov.classList.contains('open')) return;
+  if (/^(INPUT|TEXTAREA|SELECT)$/.test((e.target && e.target.tagName) || '')) return;
+  if (e.key === 'ArrowLeft')  { e.preventDefault(); gcNavPrev(); }
+  if (e.key === 'ArrowRight') { e.preventDefault(); gcNavNext(); }
+});
+
+/* ── Coronación (mismo selector que la PC) ── */
+function promoShow(color) {
+  var pieces = ['q','r','b','n'], labels = { q:'Reina', r:'Torre', b:'Alfil', n:'Caballo' }, html = '';
+  for (var i = 0; i < pieces.length; i++) {
+    var p = pieces[i], key = WP[color + p];
+    html += '<button class="promo-btn" onclick="promoChoose(\'' + p + '\')"><img src="' + WP_BASE + key + '.svg" alt="' + labels[p] + '"></button>';
+  }
+  document.getElementById('promo-pieces').innerHTML = html;
+  document.getElementById('promo-overlay').classList.add('open');
+}
+function promoChoose(piece) {
+  document.getElementById('promo-overlay').classList.remove('open');
+  if (_pendingPromo) { var p = _pendingPromo; _pendingPromo = null; if (p.cb) p.cb(piece); }
+}
+function promoCancelClick() {
+  document.getElementById('promo-overlay').classList.remove('open');
+  _pendingPromo = null;
+}
+
+/* ── Abrir / cerrar ── */
+function gcOpen() {
+  if (typeof EDIT_ID === 'undefined' || !EDIT_ID) { alert('Abrí primero un torneo para cargarle partidas.'); return; }
+  gcResetGame();
+  _gcBoardBound = false; _gcBoardOrient = null;
+  var tour = (typeof findTour === 'function') ? findTour(EDIT_ID) : null;
+  GC_CUR = { id: String(EDIT_ID), name: (tour && tour.name) || '' };
+  var nm = document.getElementById('gc-tour-name'); if (nm) nm.textContent = GC_CUR.name || '(este torneo)';
+  ['gc-wtitle', 'gc-btitle'].forEach(function(id) {
+    var s = document.getElementById(id); if (!s) return;
+    s.innerHTML = GC_TITLES.map(function(t) { return '<option value="' + t + '">' + (t || '—') + '</option>'; }).join('');
+  });
+  var d = document.getElementById('gc-date');
+  if (d && !d.value) { var n = new Date(); d.value = n.getFullYear() + '-' + String(n.getMonth()+1).padStart(2,'0') + '-' + String(n.getDate()).padStart(2,'0'); }
+  ['gc-wname','gc-bname','gc-welo','gc-belo','gc-wfide','gc-bfide'].forEach(function(id){ var e=document.getElementById(id); if(e) e.value=''; });
+  ['gc-wtitle','gc-btitle','gc-result'].forEach(function(id){ var e=document.getElementById(id); if(e) e.value=''; });
+  var msg = document.getElementById('gc-msg'); if (msg) { msg.className = 'msg'; msg.textContent = ''; }
+  gc.saved = 0; gcUpdateCount();
+  document.getElementById('gc-overlay').classList.add('open');
+  document.body.style.overflow = 'hidden';
+  gcLoadCr(GC_CUR.id);          // baja los cruces del torneo (async) y refresca el selector
+  gcRefreshPairings(); gcRenderBoard(); gcRenderMoves(); gcRefreshSave();
+}
+function gcClose() {
+  document.getElementById('gc-overlay').classList.remove('open');
+  document.body.style.overflow = '';
+  try { renderList(); } catch (e) {}   // refrescar el contador de pendientes de la lista
+}
+function gcUpdateCount() {
+  var el = document.getElementById('gc-count'); if (!el) return;
+  el.textContent = gc.saved ? ('✓ ' + gc.saved + ' subida' + (gc.saved !== 1 ? 's' : '') + ' en esta tanda') : '';
+}
+
+/* ── Cruces del torneo → autocompletar jugadores ──
+   El índice de claves CR viene en el manifest (__CR_INDEX__). Las claves de un torneo comparten
+   el sufijo de su id saneado (base y categorías _cN). Se bajan una vez y se fusionan las rondas
+   de todas las tablas (así el mismo selector cubre torneo simple y por categorías). */
+var GC_CUR = { id: null, name: '' };
+var GC_CR = { forId: null, rounds: {}, standings: [] };
+function _gcCrKeysForTour(id) {
+  var sid = String(id).replace(/[^a-z0-9]/gi, '_');
+  var idx = window.__CR_INDEX__ || [], out = [];
+  for (var i = 0; i < idx.length; i++) {
+    var k = idx[i], m = String(k).match(/^cr2_[a-z]+_(.+)$/);
+    if (!m) continue;
+    var suf = m[1];
+    if (suf === sid || suf.indexOf(sid + '_') === 0) out.push(k);
+  }
+  return out;
+}
+async function gcLoadCr(id) {
+  GC_CR = { forId: String(id), rounds: {}, standings: [] };
+  var keys = _gcCrKeysForTour(id);
+  if (!keys.length) { gcRefreshPairings(); return; }
+  await Promise.all(keys.map(async function(k) {
+    try {
+      var r = await fetch('data/cr/' + k + '.json');
+      if (!r.ok) return;
+      var data = await r.json();
+      if (data && data.rounds) {
+        Object.keys(data.rounds).forEach(function(rn) {
+          var arr = data.rounds[rn]; if (!Array.isArray(arr)) return;
+          (GC_CR.rounds[rn] = GC_CR.rounds[rn] || []).push.apply(GC_CR.rounds[rn], arr);
+        });
+      }
+      if (data && Array.isArray(data.standings)) GC_CR.standings.push.apply(GC_CR.standings, data.standings);
+    } catch (e) {}
+  }));
+  if (GC_CUR.id === String(id)) gcRefreshPairings();   // si no cambió de torneo mientras bajaba
+}
+function _gcVal(id) { var e = document.getElementById(id); return e ? (e.value || '').trim() : ''; }
+function gcRefreshPairings() {
+  var wrap = document.getElementById('gc-pair-wrap'), sel = document.getElementById('gc-pair');
+  if (!wrap || !sel) return;
+  var rd = _gcVal('gc-round');
+  var pairs = (rd && GC_CR.rounds && GC_CR.rounds[rd]) ? GC_CR.rounds[rd] : null;
+  if (!pairs || !pairs.length) { wrap.style.display = 'none'; sel.innerHTML = ''; return; }
+  var h = '<option value="">— Elegí el cruce (mesa) —</option>';
+  pairs.forEach(function(p, i) {
+    var lbl = (p.m ? p.m + ' · ' : '') + (p.w || '') + (p.ew ? ' (' + p.ew + ')' : '')
+            + '  –  ' + (p.b || '') + (p.eb ? ' (' + p.eb + ')' : '') + (p.res ? '   ' + p.res : '');
+    h += '<option value="' + i + '">' + esc(lbl) + '</option>';
+  });
+  sel.innerHTML = h; wrap.style.display = '';
+}
+function _gcFideFor(name) {
+  if (!name) return '';
+  var nn = normStr(name), st = GC_CR.standings || [];
+  for (var i = 0; i < st.length; i++) { if (st[i].fideId && normStr(st[i].name) === nn) return String(st[i].fideId); }
+  return '';
+}
+function gcPairChosen() {
+  var sel = document.getElementById('gc-pair'); if (!sel || sel.value === '') return;
+  var rd = _gcVal('gc-round');
+  var p = (GC_CR.rounds && GC_CR.rounds[rd]) ? GC_CR.rounds[rd][parseInt(sel.value, 10)] : null;
+  if (!p) return;
+  function set(id, v) { var e = document.getElementById(id); if (e) e.value = v; }
+  set('gc-wname', p.w || ''); set('gc-bname', p.b || '');
+  set('gc-welo', p.ew || ''); set('gc-belo', p.eb || '');
+  var tw = _normTitle(p.tw || ''), tb = _normTitle(p.tb || '');
+  set('gc-wtitle', GC_TITLES.indexOf(tw) >= 0 ? tw : '');
+  set('gc-btitle', GC_TITLES.indexOf(tb) >= 0 ? tb : '');
+  set('gc-wfide', _gcFideFor(p.w)); set('gc-bfide', _gcFideFor(p.b));
+  var r = String(p.res || '').replace(/\s+/g, '').replace(/½/g, '1/2');
+  set('gc-result', (r === '1-0' || r === '0-1') ? r : (r === '1/2-1/2' ? '1/2-1/2' : ''));
+  gcRefreshSave();
+}
+
+/* ── Guardar: armar PGN y subirlo por el caño de "Pegar PGN" (Worker op:'pgn') ── */
+function gcRefreshSave() {
+  var ok = !!(_gcVal('gc-wname') && _gcVal('gc-bname') && _gcVal('gc-result') && gc.sans.length);
+  var b = document.getElementById('gc-save'); if (b) b.disabled = !ok;
+  return ok;
+}
+function _gcTag(k, v) { return '[' + k + ' "' + String(v).replace(/"/g, "'") + '"]\n'; }
+function gcBuildPgn() {
+  var ev = GC_CUR.name || '(Sin evento)';
+  var date = _gcVal('gc-date') ? _gcVal('gc-date').replace(/-/g, '.') : '????.??.??';
+  var res = _gcVal('gc-result') || '*';
+  var s = '';
+  s += _gcTag('Event', ev);
+  s += _gcTag('Site', '?');
+  s += _gcTag('Date', date);
+  s += _gcTag('Round', _gcVal('gc-round') || '?');
+  s += _gcTag('White', _gcVal('gc-wname'));
+  s += _gcTag('Black', _gcVal('gc-bname'));
+  s += _gcTag('Result', res);
+  if (_gcVal('gc-welo')) s += _gcTag('WhiteElo', _gcVal('gc-welo'));
+  if (_gcVal('gc-belo')) s += _gcTag('BlackElo', _gcVal('gc-belo'));
+  if (_gcVal('gc-wtitle')) s += _gcTag('WhiteTitle', _gcVal('gc-wtitle'));
+  if (_gcVal('gc-btitle')) s += _gcTag('BlackTitle', _gcVal('gc-btitle'));
+  if (_gcVal('gc-wfide')) s += _gcTag('WhiteFideId', _gcVal('gc-wfide'));
+  if (_gcVal('gc-bfide')) s += _gcTag('BlackFideId', _gcVal('gc-bfide'));
+  s += '\n';
+  var body = '';
+  for (var i = 0; i < gc.sans.length; i++) {
+    if (i % 2 === 0) body += (i/2 + 1) + '. ';
+    body += gc.sans[i] + ' ';
+  }
+  return s + body + res + '\n';
+}
+async function gcSave() {
+  var msg = document.getElementById('gc-msg');
+  if (!gcRefreshSave()) return;
+  if (!GC_CUR.id) { if (msg) { msg.className = 'msg err'; msg.textContent = 'No hay torneo activo.'; } return; }
+  var pgn = gcBuildPgn();
+  var btn = document.getElementById('gc-save');
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Subiendo…';
+  if (msg) { msg.className = 'msg'; msg.textContent = ''; }
+  try {
+    var j = await api('/admin/save', { pin: PIN, op: 'pgn', id: GC_CUR.id, name: GC_CUR.name || '', pgnText: pgn });
+    if (j && j.livePgn) LIVEPGN = j.livePgn;
+    var added = (j && typeof j.added === 'number') ? j.added : null;
+    if (added === 0) {
+      if (msg) { msg.className = 'msg ok'; msg.textContent = 'Esa partida ya estaba subida. No se agregó de nuevo.'; }
+    } else {
+      gc.saved++; gcUpdateCount();
+      if (msg) { msg.className = 'msg ok'; msg.innerHTML = '✓ Partida subida. Aparece en la web en 1-2 min. Cargá la próxima 👇'; }
+    }
+    // Listo para la próxima de la misma planilla: se conserva ronda y fecha; se limpia el resto.
+    ['gc-wname','gc-bname','gc-welo','gc-belo','gc-wfide','gc-bfide'].forEach(function(id){ var e=document.getElementById(id); if(e) e.value=''; });
+    ['gc-wtitle','gc-btitle','gc-result'].forEach(function(id){ var e=document.getElementById(id); if(e) e.value=''; });
+    gcRefreshPairings();
+    gcResetGame(); gcRenderBoard(); gcRenderMoves(); gcRefreshSave();
+    var wn = document.getElementById('gc-wname'); if (wn) wn.focus();
+    window.scrollTo(0, 0);
+  } catch (e) {
+    if (msg) { msg.className = 'msg err'; msg.textContent = e.message === 'Failed to fetch' ? 'Sin conexión con el servidor. ¿Hay internet?' : e.message; }
+  }
+  btn.disabled = false; btn.textContent = '⬆️ Subir partida y cargar otra';
+}
 </script>
 </body>
 </html>
