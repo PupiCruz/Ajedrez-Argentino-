@@ -4586,7 +4586,7 @@ function renderTorneos(filter) {
   });
 
   // Tarjetas "vivas": en la web publicada, refrescar los líderes de los torneos en curso
-  // (baja solo la tabla por el Worker, con enfriamiento de 90s; re-renderiza al llegar).
+  // (baja solo la tabla por el Worker, con enfriamiento de 10 min; re-renderiza al llegar).
   if (_ondemand) _refreshLiveLeaders(items, tzCfg);
 
   // Apply filter
@@ -7701,7 +7701,13 @@ function _i64AutoUpdateIndivBtn(crk) { _i64AutoFetchIndiv(crk, _i64UrlByKey[crk]
 // (no las rondas) de cada torneo en vivo, vía el Worker (que cachea), y re-renderizamos.
 // El detalle del torneo ya se auto-actualiza solo al abrirlo; esto es para la lista.
 var _liveLeaderAt = {};            // crk -> timestamp del último refresco
-var _LIVE_LEADER_MS = 90000;       // no volver a pedir la misma tabla antes de 90s
+// FRENO (no es un poll activo): evita re-pedir la MISMA tabla de la lista si ya se pidió hace poco.
+// Se dispara cuando la lista se re-dibuja (cargar, filtrar, buscar, volver a la lista), no solo.
+// 10 min: las mini-tablas de las TARJETAS se refrescan como mucho 1 vez cada 10' por torneo, para no
+// gastar requests del Worker de gusto. Un F5 resetea este mapa (arranca vacío) → siempre trae fresco;
+// y ENTRAR al detalle del torneo NO pasa por acá (tiene su propio auto-refresco al abrir), así que
+// abrir el torneo sigue mostrando la tabla al día. (Antes 90s; subido para aliviar el Worker.)
+var _LIVE_LEADER_MS = 600000;      // no volver a pedir la misma tabla de la LISTA antes de 10 min
 function _liveItemSource(item, tzCfg) {
   if (item._status !== 'live') return null;
   if (item._type === 'hardcoded') {
@@ -21349,7 +21355,8 @@ function bcGridClose() {
 
 // Contexto del broadcast abierto, para el auto-refresco en vivo.
 var _liveCtx = null;
-var _BC_REFRESH_MS = 30000;   // cada 30s mientras haya una ronda en vivo
+var _BC_REFRESH_MS = 15000;   // cada 15s mientras haya una ronda en vivo (Lichess va directo del navegador,
+                              // no por el Worker; por IP son ~4 req/min, carga trivial). Antes 30s.
 
 // Profundidad (Nº de jugadas desde el inicio) de un nodo del árbol del visor.
 function _cvNodeDepth(n) { var d = 0; while (n && n.parent) { d++; n = n.parent; } return d; }
@@ -21535,6 +21542,13 @@ function _lccFetchAll(id, cb) {
    auto-refresco, relojes) anda igual. Las rondas ya terminadas se cachean y no se re-piden. */
 var _SI_REFRESH_MS = 15000;
 var _siCache = {};   // url de ronda -> { games:[pgn…], final } ; las terminadas no vuelven a la red.
+// Optimización A (ahorro de requests al Worker /sipgn): el config.js de sichess (la LISTA de rondas)
+// casi no cambia durante el torneo, pero antes se bajaba en CADA refresco (cada 15s) = ~la mitad de las
+// llamadas a /sipgn al pedo. Ahora se cachea por torneo y solo se re-baja cuando hace falta descubrir una
+// ronda nueva: la 1ª vez, o ENTRE rondas (la última bajada no vio ninguna ronda en curso). Mientras hay
+// una ronda EN VIVO —el caso que machaca cada 15s— se reusa la lista cacheada y no se pide el config.
+var _siUrlsCache = {};   // id de torneo -> [urls de games.pgn por ronda] (config.js ya parseado)
+var _siLastLive = {};    // id de torneo -> ¿la última bajada encontró una ronda EN CURSO?
 
 function _isSiId(s) { return /^si:/.test(String(s || '').trim()); }
 function _siPath(id) { return String(id).replace(/^si:/, '').replace(/\/+$/, ''); }
@@ -21581,7 +21595,8 @@ function _siFixPgn(pgn) {
 
 // Baja el config.js de la página de sichess (vía Worker) y devuelve, EN ORDEN, las URLs
 // absolutas de games.pgn de cada ronda. El config define allPGNs.push({ "pgn": "../../../games/…/NN/games.pgn" }).
-function _siRoundUrls(id, cb) {
+function _siRoundUrls(id, cb, force) {
+  if (!force && _siUrlsCache[id]) { cb(_siUrlsCache[id]); return; }   // lista ya cacheada → no re-bajar config.js
   _fetchTO(_siProxy(_siExtUrl(id) + 'assets/is/config.js'), 12000)
     .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
     .then(function(js){
@@ -21590,13 +21605,18 @@ function _siRoundUrls(id, cb) {
         var gm = m[1].match(/games\/.*\/\d+\/games\.pgn$/i);   // recorta el "../../../" relativo
         urls.push('https://sichess.com/' + (gm ? gm[0] : m[1].replace(/^(?:\.\.\/)+/, '')));
       }
+      if (urls.length) _siUrlsCache[id] = urls;   // guardar la lista para reusarla en los refrescos siguientes
       cb(urls);
     })
-    .catch(function(){ cb(null); });
+    .catch(function(){ cb(_siUrlsCache[id] || null); });   // config caído pero ya teníamos la lista → seguir con ella
 }
 
 // Baja todas las rondas de un torneo de sichess y arma el `res` (mismo formato que Lichess).
 function _siFetchAll(id, cb) {
+  // Bajar el config.js (lista de rondas) solo si aún no lo tenemos, o si la última bajada no vio ninguna
+  // ronda en curso (estamos entre rondas → puede haber aparecido una nueva). Con una ronda EN VIVO se
+  // reusa la lista cacheada → no se pega a /sipgn por el config cada 15s (ver _siUrlsCache).
+  var force = !_siUrlsCache[id] || !_siLastLive[id];
   _siRoundUrls(id, function(urls){
     if (!urls || !urls.length) { cb(null); return; }
     var results = {}, pend = urls.length;
@@ -21610,6 +21630,7 @@ function _siFetchAll(id, cb) {
         allGames = allGames.concat(games);
         if (anyLive && !liveRound) { isLive = true; liveRound = { name: 'Ronda ' + rn, id: 'si-' + rn, slug: String(rn) }; }
       });
+      _siLastLive[id] = isLive;   // recordar el estado: decide si el próximo refresco re-baja el config
       cb({ tourSlug: id, rounds: [], allGames: allGames, roundsWithGames: roundsWithGames, liveRound: isLive ? liveRound : null, isLive: isLive, _si: true, _siRounds: urls.length });
     }
     urls.forEach(function(url, i){
@@ -21629,7 +21650,7 @@ function _siFetchAll(id, cb) {
         })
         .catch(function(){ results[rn] = (cached && cached.games) || []; if (--pend === 0) finish(); });
     });
-  });
+  }, force);
 }
 
 // Lichess crea automáticamente una ronda/capítulo VACÍO de relleno ([Event "Round N: Chapter 1"]
