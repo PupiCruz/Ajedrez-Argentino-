@@ -3268,6 +3268,10 @@
       <input id="tze-info64" class="tz-input" type="url" placeholder="https://info64.org/...">
     </div>
     <div style="margin-bottom:14px">
+      <label class="tz-flabel">📊 Link vesus <span style="font-weight:400;color:var(--text3)">(opcional — resultados/clasificación, torneos italianos/europeos)</span></label>
+      <input id="tze-vesus" class="tz-input" type="url" placeholder="https://vesus.org/tournament/...">
+    </div>
+    <div style="margin-bottom:14px">
       <label class="tz-flabel">📝 Formulario de inscripción <span style="font-weight:400;color:var(--text3)">(opcional)</span></label>
       <input id="tze-regurl" class="tz-input" type="url" placeholder="https://docs.google.com/forms/...">
       <div style="font-size:11px;color:var(--text3);margin-top:6px;line-height:1.4">Pegá el link del formulario de inscripción (Google Forms, la web del torneo, etc.). Aparece como un botón destacado en la ficha del torneo.</div>
@@ -5332,6 +5336,9 @@ function crRenderSection(key) {
   }
   if(_i64UrlByKey[key] && _i64Base(_i64UrlByKey[key])){
     h+='<button onclick="_i64AutoUpdateIndivBtn(\''+ks+'\')" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:rgba(60,130,200,.15);border:1px solid rgba(70,150,220,.4);color:#7ab8e6;font-size:11px;font-weight:600;border-radius:8px;cursor:pointer;font-family:inherit" title="Baja todas las rondas + la clasificación desde info64">🔄 Actualizar desde info64</button>';
+  }
+  if(_vsUrlByKey[key] && _vsKey(_vsUrlByKey[key])){
+    h+='<button onclick="_vsAutoUpdateIndivBtn(\''+ks+'\')" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:rgba(60,130,200,.15);border:1px solid rgba(70,150,220,.4);color:#7ab8e6;font-size:11px;font-weight:600;border-radius:8px;cursor:pointer;font-family:inherit" title="Baja todas las rondas + la clasificación desde vesus">🔄 Actualizar desde vesus</button>';
   }
   h+='</div>';
   }
@@ -7695,6 +7702,150 @@ async function _i64AutoFetchIndiv(crk, i64url, opts) {
 }
 function _i64AutoUpdateIndivBtn(crk) { _i64AutoFetchIndiv(crk, _i64UrlByKey[crk], {}); }
 
+// ── vesus.org (chess-results italiano) ──────────────────────────────────────────────
+// vesus no da Excel: su API entrega TODO el torneo en JSON (clasificación + resultados por
+// ronda). El Worker (/vspgn) hace el trabajo sucio (CORS + persisted-query SSE + Origin) y nos
+// devuelve el objeto tal cual. Acá sólo lo convertimos al MISMO cuadro interno que Chess-Results/
+// info64 (standings + rounds), así el render, el match de argentinos, banderas y FIDE salen gratis.
+var _vsUrlByKey = {};   // crk -> URL de vesus del torneo (lo setea openTournamentDetail)
+// shortKey del torneo desde cualquier forma de URL de vesus. Ej: https://vesus.org/tournament/bzgvsEZA?…
+function _vsKey(url) { var m = String(url || '').match(/vesus\.org\/tournament\/([A-Za-z0-9_-]{4,20})/i); return m ? m[1] : null; }
+function _vsBase(url) { var k = _vsKey(url); return k ? ('https://vesus.org/tournament/' + k) : null; }
+// Baja el JSON del torneo por el Worker.
+async function _vsFetch(key) {
+  var res = await fetch(CR_PROXY + '/vspgn?key=' + encodeURIComponent(key));
+  if (!res.ok) throw new Error('proxy HTTP ' + res.status);
+  return await res.json();
+}
+// Resultado (desde la perspectiva del jugador que reporta) → string "1-0"/"0-1"/"½-½". rc = primer
+// carácter del código de matches ("1w8" → '1'). '-' (pendiente) y forfeits raros → '' (sin resultado;
+// el punto igual está en la clasificación). isWhite = el que reporta jugó con blancas.
+function _vsResStr(rc, isWhite) {
+  if (rc === '1' || rc === '+') return isWhite ? '1-0' : '0-1';
+  if (rc === '0') return isWhite ? '0-1' : '1-0';
+  if (rc === '½' || rc === '=' || rc === 's' || rc === 'S') return '½-½';
+  return '';
+}
+// Resultado del array pairings[] (respaldo de la ronda en juego, por si matches no la listó).
+function _vsPairRes(v) {
+  if (!v) return '';
+  var s = String(v).replace(/0\.5/g, '½').replace(/\s/g, '');
+  if (s === '1-0' || s === '0-1' || s === '½-½') return s;
+  if (s === '1' || s === '+') return '1-0';
+  if (s === '0') return '0-1';
+  return '';
+}
+// JSON de vesus (tournamentUpdate) → { name, standings:[…], rounds:{…} } igual que Chess-Results.
+// Las rondas se reconstruyen desde players[].matches: en torneos jugados vesus vacía pairings[] y deja
+// el historial ahí (código "resultado+color+rankedId del rival": "1w8", "½b10", "-w29" pendiente, 0=bye).
+function _vsBuildData(tu) {
+  var data = { name: (tu && tu.name) || '', standings: [], rounds: {}, roundDates: {} };
+  if (!tu || typeof tu !== 'object') return data;
+  var byRanked = {};
+  (tu.players || []).forEach(function(p) { if (p && p.rankedId != null) byRanked[p.rankedId] = p; });
+  // Clasificación
+  (tu.players || []).forEach(function(p) {
+    if (!p) return;
+    data.standings.push({
+      name: p.name || '', fed: p.federation || '', title: _normTitle(p.title || ''),
+      elo: (p.fideRating || p.rating || 0), fideId: (p.fideId != null ? String(p.fideId) : ''),
+      pts: (p.points != null ? p.points : 0),
+      // vesus deja rank en null hasta que arranca el torneo: caemos al nº de sembrado (rankedId), como
+      // el ranking inicial de Chess-Results, para no mostrar "#null" en el panel del jugador.
+      rank: (p.rank != null ? p.rank : (p.rankedId != null ? p.rankedId : null)),
+      rp: (p.performanceRating || 0), eloVar: (p.ratingChange || 0),
+      startNo: (p.rankedId != null ? p.rankedId : null)
+    });
+  });
+  // Mesas de la(s) ronda(s) publicada(s), que sólo vienen en pairings[].
+  var boardOf = {};
+  (tu.pairings || []).forEach(function(pr) {
+    if (!pr || pr.round == null || pr.whiteId == null || pr.blackId == null) return;
+    var pk = Math.min(pr.whiteId, pr.blackId) + '-' + Math.max(pr.whiteId, pr.blackId);
+    (boardOf[pr.round] = boardOf[pr.round] || {})[pk] = pr.board;
+  });
+  var byPairByRound = {};
+  function addRow(r, wId, bId, res, board) {
+    var pk = Math.min(wId, bId) + '-' + Math.max(wId, bId);
+    var reg = byPairByRound[r] = byPairByRound[r] || {};
+    var list = data.rounds[r] = data.rounds[r] || [];
+    if (reg[pk] != null) {   // el otro jugador ya reportó este juego: completar lo que falte
+      var ex = list[reg[pk]];
+      if (ex && !ex.res && res) ex.res = res;
+      if (ex && (ex.m == null || ex.m === '') && board != null) ex.m = String(board);
+      return;
+    }
+    var W = byRanked[wId], B = byRanked[bId];
+    reg[pk] = list.length;
+    list.push({
+      w: W ? W.name : '', b: B ? B.name : '',
+      tw: W ? _normTitle(W.title || '') : '', tb: B ? _normTitle(B.title || '') : '',
+      ew: W ? (W.fideRating || W.rating || 0) : 0, eb: B ? (B.fideRating || B.rating || 0) : 0,
+      sw: wId, sb: bId, m: (board != null ? String(board) : ''), res: res || ''
+    });
+  }
+  var maxR = 0; (tu.players || []).forEach(function(p) { if (p && p.matches) maxR = Math.max(maxR, p.matches.length); });
+  for (var r = 1; r <= maxR; r++) {
+    (tu.players || []).forEach(function(p) {
+      if (!p || !p.matches) return;
+      var raw = p.matches[r - 1]; if (!raw) return;
+      var mm = String(raw).match(/^(.)([wb])(-?\d+)$/); if (!mm) return;
+      var rc = mm[1], isW = (mm[2] === 'w'), oppId = parseInt(mm[3], 10);
+      if (!oppId || !byRanked[oppId]) return;   // 0 = bye / rival fuera de lista
+      var wId = isW ? p.rankedId : oppId, bId = isW ? oppId : p.rankedId;
+      var pk = Math.min(wId, bId) + '-' + Math.max(wId, bId);
+      var board = (boardOf[r] && boardOf[r][pk] != null) ? boardOf[r][pk] : null;
+      addRow(r, wId, bId, _vsResStr(rc, isW), board);
+    });
+  }
+  // Ronda en juego: asegurar emparejamientos que matches no trajo (con mesa y, si vino, resultado).
+  (tu.pairings || []).forEach(function(pr) {
+    if (!pr || pr.round == null || !pr.whiteId || !pr.blackId) return;
+    addRow(pr.round, pr.whiteId, pr.blackId, _vsPairRes(pr.result), pr.board);
+  });
+  // Orden por mesa dentro de cada ronda (los sin mesa, por número de sembrado, al final).
+  Object.keys(data.rounds).forEach(function(rk) {
+    var list = data.rounds[rk];
+    list.sort(function(a, b) { var am = parseInt(a.m), bm = parseInt(b.m); if (am && bm) return am - bm; if (am) return -1; if (bm) return 1; return (a.sw || 0) - (b.sw || 0); });
+    list.forEach(function(x, i) { if (!x.m) x.m = String(i + 1); });
+  });
+  return data;
+}
+// Actualiza el cuadro de un torneo desde vesus (mismo destino/flujo que _i64AutoFetchIndiv).
+async function _vsAutoFetchIndiv(crk, vsurl, opts) {
+  opts = opts || {};
+  var st = document.getElementById('cr-status-' + crk);
+  function setS(m) { if (st && !opts.silent) st.textContent = m; }
+  var key = _vsKey(vsurl);
+  if (!key) { setS('❌ Este torneo no tiene una URL de vesus válida (debe ser https://vesus.org/tournament/…).'); return false; }
+  if (_crAutoBusy[crk]) return false; _crAutoBusy[crk] = true;
+  try {
+    setS('⏳ Bajando tabla desde vesus…');
+    var tu = await _vsFetch(key);
+    if (!tu || !(tu.players && tu.players.length)) { setS('❌ vesus no devolvió datos de este torneo.'); return false; }
+    var vd = _vsBuildData(tu);
+    var data = crDataLoad(crk) || {};
+    if (!data.name) data.name = vd.name;
+    data.standings = vd.standings;
+    data.standingsKind = 'standings';
+    data.rounds = vd.rounds;   // vesus es la fuente de la verdad de las tablas
+    // ¿Terminó? (todas las rondas publicadas y jugadas) → marcar clasificación final para el podio.
+    var playedR = Object.keys(vd.rounds).length;
+    if (tu.rounds && playedR >= tu.rounds && vd.standings.length) data.standingsFinal = true; else delete data.standingsFinal;
+    crDataSave(crk, data);
+    if (!opts.silent) setS('✓ Actualizado desde vesus — ' + playedR + ' ronda(s) + tabla' + (_ondemand ? '' : '. Acordate de "Guardar datos en mi carpeta" y publicar.'));
+    var isRR = crLooksLikeRoundRobin(data, crk);
+    var lastR = Object.keys(data.rounds).map(Number).sort(function(a, b) { return a - b; });
+    crRefreshSection(crk, isRR ? 'cuadro' : (lastR.length ? lastR[lastR.length - 1] : 'tabla'));
+    try { _tdRefreshArgLine(); } catch (e) {}
+    try { _tdRefreshPodium(crk); } catch (e) {}
+    try { renderTorneos(_lastTorneoFilter); } catch (e) {}
+    return true;
+  } catch (e) { setS('❌ ' + e.message); return false; }
+  finally { _crAutoBusy[crk] = false; }
+}
+function _vsAutoUpdateIndivBtn(crk) { _vsAutoFetchIndiv(crk, _vsUrlByKey[crk], {}); }
+
 // ── Tarjetas "vivas": refrescar los líderes de los torneos EN CURSO en la lista ──
 // En la web publicada, los podios de las tarjetas vienen congelados del último "publicar".
 // Para que se vean al día durante un torneo, al renderizar la lista bajamos SOLO la tabla
@@ -8851,7 +9002,7 @@ function pgnGetTorneosForList() {
         flyerUrl: entry.flyerUrl || '', flyerPos: entry.flyerPos || '', about: entry.about || '', dates: entry.tournamentDates || entry.loadedAt,
         startDate: entry.startDate || null, endDate: entry.endDate || null, location: entry.location || '',
         gameCount: entry.gameCount || 0, leaders: entry.leaders || [], source: entry.source || 'pgn',
-        crUrl: entry.crUrl || '', weburl: entry.weburl || '', info64url: entry.info64url || '',
+        crUrl: entry.crUrl || '', weburl: entry.weburl || '', info64url: entry.info64url || '', vesusurl: entry.vesusurl || '',
         format: entry.format || '',
         broadcastId: entry.broadcastId || null, broadcastUrl: entry.broadcastUrl || null,
         categories: entry.categories || null,   // para el badge "EN VIVO" de torneos con grupos (broadcast por categoría)
@@ -8887,6 +9038,7 @@ function pgnGetTorneosForList() {
       crUrl: entry.crUrl || '',
       weburl: entry.weburl || '',
       info64url: entry.info64url || '',
+      vesusurl: entry.vesusurl || '',
       format: entry.format || '',
       broadcastId: entry.broadcastId || null,
       broadcastUrl: entry.broadcastUrl || null,
@@ -9403,7 +9555,7 @@ function _collectAllTournaments() {
         venue: d.venue || '', venueMap: d.venueMap || '', organizer: d.organizer || '', director: d.director || '', arbiter: d.arbiter || '', whatsapp: d.whatsapp || '',
         startDate: d.startDate || null, endDate: d.endDate || null,
         flyerUrl: d.flyerUrl || '', flyerPos: d.flyerPos || '', about: d.about || '', chesscomUrl: d.chesscomUrl || '',
-        crUrl: d.crurl || '', weburl: d.weburl || '', info64url: d.info64url || '', regurl: d.regurl || '', format: d.format || '', pace: d.pace || '',
+        crUrl: d.crurl || '', weburl: d.weburl || '', info64url: d.info64url || '', vesusurl: d.vesusurl || '', regurl: d.regurl || '', format: d.format || '', pace: d.pace || '',
         broadcastId: d.broadcastId || null, broadcastUrl: d.broadcastUrl || null,
         categories: d.categories || null, isTeam: d.isTeam || null, rounds: d.rounds || null, roundTimes: d.roundTimes || null, roundDT: d.roundDT || null,
         gameCount: (d.pgnGames || []).length, games: d.pgnGames || [],
@@ -9425,7 +9577,7 @@ function _tourManifestMeta(entry) {
     venue: entry.venue || '', venueMap: entry.venueMap || '', organizer: entry.organizer || '', director: entry.director || '', arbiter: entry.arbiter || '', whatsapp: entry.whatsapp || '',
     startDate: entry.startDate || null, endDate: entry.endDate || null, location: entry.location || '',
     gameCount: entry.gameCount || ((entry.games || []).length), leaders: leaders,
-    source: entry.source || 'pgn', crUrl: entry.crUrl || '', weburl: entry.weburl || '', info64url: entry.info64url || '', regurl: entry.regurl || '', format: entry.format || '', pace: entry.pace || '',
+    source: entry.source || 'pgn', crUrl: entry.crUrl || '', weburl: entry.weburl || '', info64url: entry.info64url || '', vesusurl: entry.vesusurl || '', regurl: entry.regurl || '', format: entry.format || '', pace: entry.pace || '',
     broadcastId: entry.broadcastId || null,
     broadcastUrl: entry.broadcastUrl || null, categories: entry.categories || null, isTeam: entry.isTeam || null,
     rounds: entry.rounds || null, roundTimes: entry.roundTimes || null, roundDT: entry.roundDT || null,
@@ -20520,6 +20672,7 @@ function openTzModal(key) {
     document.getElementById('tze-crurl').value = '';
     document.getElementById('tze-weburl').value = '';
     document.getElementById('tze-info64').value = '';
+    document.getElementById('tze-vesus').value = '';
     document.getElementById('tze-regurl').value = '';
     document.getElementById('tze-broadcast').value = '';
     document.getElementById('tze-timecontrol').value = '';
@@ -20556,6 +20709,7 @@ function openTzModal(key) {
       document.getElementById('tze-crurl').value   = data.crurl || '';
       document.getElementById('tze-weburl').value  = data.weburl || '';
       document.getElementById('tze-info64').value  = data.info64url || '';
+      document.getElementById('tze-vesus').value   = data.vesusurl || '';
       document.getElementById('tze-regurl').value  = data.regurl || '';
       document.getElementById('tze-broadcast').value = data.broadcastUrl || data.broadcastId || '';
       document.getElementById('tze-timecontrol').value = data.timeControl || t.timeControl || '';
@@ -20585,6 +20739,7 @@ function openTzModal(key) {
       document.getElementById('tze-crurl').value   = data.crurl || '';
       document.getElementById('tze-weburl').value  = data.weburl || '';
       document.getElementById('tze-info64').value  = data.info64url || '';
+      document.getElementById('tze-vesus').value   = data.vesusurl || '';
       document.getElementById('tze-regurl').value  = data.regurl || '';
       document.getElementById('tze-broadcast').value = data.broadcastUrl || data.broadcastId || '';
       document.getElementById('tze-timecontrol').value = data.timeControl || '';
@@ -20619,6 +20774,7 @@ function openTzModal(key) {
       document.getElementById('tze-crurl').value   = entry.crUrl || '';
       document.getElementById('tze-weburl').value  = entry.weburl || '';
       document.getElementById('tze-info64').value  = entry.info64url || '';
+      document.getElementById('tze-vesus').value   = entry.vesusurl || '';
       document.getElementById('tze-regurl').value  = entry.regurl || '';
       document.getElementById('tze-broadcast').value = entry.broadcastUrl || entry.broadcastId || '';
       document.getElementById('tze-timecontrol').value = entry.timeControl || '';
@@ -20771,6 +20927,7 @@ function saveTzModal() {
   var crurl       = document.getElementById('tze-crurl').value.trim();
   var weburl      = document.getElementById('tze-weburl').value.trim();
   var info64url   = document.getElementById('tze-info64').value.trim();
+  var vesusurl    = document.getElementById('tze-vesus').value.trim();
   var regurl      = document.getElementById('tze-regurl').value.trim();
   var timeControl = document.getElementById('tze-timecontrol').value.trim();
   var chesscomUrl = document.getElementById('tze-chesscom').value.trim();
@@ -20789,7 +20946,7 @@ function saveTzModal() {
     _savedKey = nkey;
     cfg[nkey] = { name:name, type:type, location:loc, venue:venue||null, venueMap:venueMap||null, organizer:organizer||null, director:director||null, arbiter:arbiter||null, whatsapp:whatsapp||null, dates:dates,
                   startDate:startDate, endDate:endDate, rounds:rounds,
-                  status:status, crurl:crurl||null, weburl:weburl||null, info64url:info64url||null, regurl:regurl||null, broadcastId:broadcastId||null,
+                  status:status, crurl:crurl||null, weburl:weburl||null, info64url:info64url||null, vesusurl:vesusurl||null, regurl:regurl||null, broadcastId:broadcastId||null,
                   broadcastUrl:broadcastUrl||null, timeControl:timeControl||null, chesscomUrl:chesscomUrl||null,
                   flyerUrl:flyerUrl||null, flyerPos:flyerPos, roundTimes:roundTimes||null, roundDT:roundDT||null, format:format||null, pace:pace||null, categories:categories.length?categories:null, isTeam:isTeam||null,
                   pgnCount:_tzeWorkingGames ? _tzeWorkingGames.length : 0, pgnGames:_tzeWorkingGames||null };
@@ -20804,6 +20961,7 @@ function saveTzModal() {
     if (crurl)  cfg[_tzeKey].crurl  = crurl; else delete cfg[_tzeKey].crurl;
     if (weburl) cfg[_tzeKey].weburl = weburl; else delete cfg[_tzeKey].weburl;
     if (info64url) cfg[_tzeKey].info64url = info64url; else delete cfg[_tzeKey].info64url;
+    if (vesusurl) cfg[_tzeKey].vesusurl = vesusurl; else delete cfg[_tzeKey].vesusurl;
     if (regurl) cfg[_tzeKey].regurl = regurl; else delete cfg[_tzeKey].regurl;
     if (timeControl) cfg[_tzeKey].timeControl = timeControl; else delete cfg[_tzeKey].timeControl;
     if (chesscomUrl) cfg[_tzeKey].chesscomUrl = chesscomUrl; else delete cfg[_tzeKey].chesscomUrl;
@@ -20827,7 +20985,7 @@ function saveTzModal() {
   } else if (_tzeKey.indexOf('tz_') === 0) {
     cfg[_tzeKey] = { name:name, type:type, location:loc, venue:venue||null, venueMap:venueMap||null, organizer:organizer||null, director:director||null, arbiter:arbiter||null, whatsapp:whatsapp||null, dates:dates,
                      startDate:startDate, endDate:endDate, rounds:rounds,
-                     status:status, crurl:crurl||null, weburl:weburl||null, info64url:info64url||null, regurl:regurl||null, broadcastId:broadcastId||null,
+                     status:status, crurl:crurl||null, weburl:weburl||null, info64url:info64url||null, vesusurl:vesusurl||null, regurl:regurl||null, broadcastId:broadcastId||null,
                      broadcastUrl:broadcastUrl||null, timeControl:timeControl||null, chesscomUrl:chesscomUrl||null,
                      flyerUrl:flyerUrl||null, flyerPos:flyerPos, roundTimes:roundTimes||null, roundDT:roundDT||null, format:format||null, pace:pace||null, categories:categories.length?categories:null, isTeam:isTeam||null,
                      pgnCount:_tzeWorkingGames ? _tzeWorkingGames.length : 0,
@@ -20841,7 +20999,7 @@ function saveTzModal() {
         tours2[k].name = name; tours2[k].location = loc; tours2[k].type = type;
         tours2[k].tournamentDates = dates; tours2[k].startDate = startDate; tours2[k].endDate = endDate;
         tours2[k].crUrl = crurl || null;
-        tours2[k].weburl = weburl || null; tours2[k].info64url = info64url || null; tours2[k].regurl = regurl || null;
+        tours2[k].weburl = weburl || null; tours2[k].info64url = info64url || null; tours2[k].vesusurl = vesusurl || null; tours2[k].regurl = regurl || null;
         tours2[k].timeControl = timeControl || null; tours2[k].chesscomUrl = chesscomUrl || null;
         tours2[k].flyerUrl = flyerUrl || null;
         tours2[k].flyerPos = flyerPos;
@@ -23080,7 +23238,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   var name = '', location = '', dates = '', status = 'upcoming', typ = '', rounds = null;
   var leaders = [], games = [], crUrl = '', broadcastId = '', broadcastUrl = '', pgnGames = [];
   var timeControl = '', chesscomUrl = '', flyerUrl = '', flyerPos = '', categories = null, isTeam = false;
-  var weburl = '', info64url = '', regurl = '';
+  var weburl = '', info64url = '', vesusurl = '', regurl = '';
   var venue = '', venueMap = '', organizer = '', director = '', arbiter = '', whatsapp = '';
   var tourRng = null;    // rango de fechas del torneo: filtra las partidas del pool por edición
   var roundTimes = '';   // horarios de ronda cargados a mano, texto libre del sistema viejo
@@ -23100,7 +23258,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     status = computeTourStatus(tourRng, t.status);
     typ = t.type; rounds = t.rounds; leaders = t.leaders || [];
     crUrl = hcCfg.crurl || t.crurl || ''; broadcastId = hcCfg.broadcastId || ''; broadcastUrl = hcCfg.broadcastUrl || '';
-    weburl = hcCfg.weburl || ''; info64url = hcCfg.info64url || ''; regurl = hcCfg.regurl || t.regurl || '';
+    weburl = hcCfg.weburl || ''; info64url = hcCfg.info64url || ''; vesusurl = hcCfg.vesusurl || ''; regurl = hcCfg.regurl || t.regurl || '';
     roundTimes = hcCfg.roundTimes || t.roundTimes || '';
     roundDT = hcCfg.roundDT || t.roundDT || null;
     format = hcCfg.format || t.format || '';
@@ -23161,7 +23319,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     tourRng = tourRange(entry);
     status = computeTourStatus(tourRng, (dk > 0 && dk >= todayKey()) ? 'upcoming' : 'done');
     crUrl = entry.crUrl || ''; broadcastId = entry.broadcastId || ''; broadcastUrl = entry.broadcastUrl || '';
-    weburl = entry.weburl || ''; info64url = entry.info64url || ''; regurl = entry.regurl || '';
+    weburl = entry.weburl || ''; info64url = entry.info64url || ''; vesusurl = entry.vesusurl || ''; regurl = entry.regurl || '';
     roundTimes = entry.roundTimes || '';
     roundDT = entry.roundDT || null;
     format = entry.format || '';
@@ -23184,7 +23342,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     status = computeTourStatus(tourRng, d.status);
     typ = d.type || ''; rounds = d.rounds || null;
     crUrl = d.crurl || ''; broadcastId = d.broadcastId || ''; broadcastUrl = d.broadcastUrl || '';
-    weburl = d.weburl || ''; info64url = d.info64url || ''; regurl = d.regurl || '';
+    weburl = d.weburl || ''; info64url = d.info64url || ''; vesusurl = d.vesusurl || ''; regurl = d.regurl || '';
     roundTimes = d.roundTimes || '';
     roundDT = d.roundDT || null;
     format = d.format || '';
@@ -23218,6 +23376,9 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     // "Actualizar desde info64" + tabla + auto-fetch), NO como Chess-Results; si no, queda en crUrl.
     info64url = _cat.info64url || '';
     if (!info64url && crUrl && typeof _i64Base === 'function' && _i64Base(crUrl)) { info64url = crUrl; crUrl = ''; }
+    // Igual que info64: si la fila de la categoría trae un link de vesus (en su campo de resultados), enrutarlo como vesus.
+    vesusurl = _cat.vesusurl || '';
+    if (!vesusurl && crUrl && _vsKey(crUrl)) { vesusurl = crUrl; crUrl = ''; }
     // Overrides por categoría (opcionales): cada categoría puede tener su propio ritmo, rondas,
     // control de tiempo, fechas, tipo o sistema. Si el campo NO está cargado en la categoría, se
     // hereda el valor del torneo. Estos se editan clickeando los panelcitos (chips) del encabezado.
@@ -23489,6 +23650,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   _crCategory[crk] = typ; // recordar la categoría para el filtro de argentinos
   _crUrlByKey[crk] = crUrl; // que la sección de equipos sepa el crUrl (botón + auto-fetch)
   _i64UrlByKey[crk] = info64url || ''; // ídem para info64 (botón + auto-fetch)
+  _vsUrlByKey[crk] = vesusurl || ''; // ídem para vesus (botón + auto-fetch)
   _crFormat[crk] = format || ''; // sistema elegido a mano (override de la heurística suizo/round robin)
   // (los horarios de ronda a mano ya se registraron arriba, junto a crk)
   if (_tdCtx) { _tdCtx.crKey = crk; _tdCtx.isTeam = isTeam; }
@@ -23576,6 +23738,11 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   // Ídem para info64 (sólo individuales). Si el torneo tiene ambas fuentes, se actualizan las dos.
   if (_ondemand && _crAutoOk && !isTeam && _i64Base(info64url)) {
     _i64AutoFetchIndiv(crk, info64url, { silent: true });
+  }
+  // Ídem para vesus: en la web publicada, si el torneo está en vivo/próximo/recién terminado y tiene
+  // link de vesus, bajar la tabla fresca al abrir (aunque el autor todavía no la haya actualizado).
+  if (_ondemand && _crAutoOk && !isTeam && _vsKey(vesusurl)) {
+    _vsAutoFetchIndiv(crk, vesusurl, { silent: true });
   }
   // Si se pidió, bajar directo al apartado de partidas
   if (scrollToGames && m) {

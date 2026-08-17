@@ -97,6 +97,9 @@ export default {
     // ── Proxy CORS de sichess.com (PGN en vivo por ronda + su config.js) ──
     if (reqUrl.pathname === '/sipgn') return siPgn(reqUrl, ctx);
 
+    // ── Tablas de vesus.org (clasificación + emparejamientos en JSON) ──
+    if (reqUrl.pathname === '/vspgn') return vsPgn(reqUrl, ctx);
+
     // ── Redacción de noticias con IA (Workers AI) ──
     if (reqUrl.pathname === '/noticia') return noticiaAI(request, env);
 
@@ -378,6 +381,148 @@ async function siPgn(reqUrl, ctx) {
   const resp = new Response(upstream.body, { status: upstream.status, headers });
   if (upstream.ok) ctx.waitUntil(cache.put(cacheKey, resp.clone()));
   return resp;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /vspgn?key=<shortKey>
+//   → devuelve en JSON los datos de un torneo de vesus.org: metadata + la
+//     CLASIFICACIÓN (players[]: nombre, título, federación, FIDE id, rating, puntos,
+//     rank, performance, cambio de elo, resultado por ronda) + los EMPAREJAMIENTOS
+//     (pairings[]: ronda, tablero, blancas/negras por rankedId, resultado).
+//
+// Cómo funciona (y por qué necesita al Worker):
+//   vesus es una SPA (React/Relay) sin datos en el HTML; los trae de su API GraphQL
+//   (api.vesus.org/graphql) que NO manda CORS. Además la API es "persisted-query only":
+//   sólo acepta consultas pre-registradas por un docId (un hash), no consultas libres, y
+//   la data en vivo llega por una subscription servida con Server-Sent Events (SSE). El
+//   navegador de la app no puede ni saltear el CORS ni sostener ese POST; el Worker sí:
+//   hace UN POST con Accept: text/event-stream, lee el PRIMER evento (una foto completa
+//   del torneo) y lo devuelve como JSON normal. No sostiene el stream: cada visita es una
+//   foto, cacheada VS_CACHE_SECONDS (las tablas cambian por ronda, no jugada a jugada).
+//
+// docId: es un hash del texto de la query; vesus lo puede cambiar al actualizar su web.
+//   Arrancamos con el último conocido (VS_DOCID) y, SÓLO si vesus lo rechaza, lo volvemos
+//   a sacar solo del bundle de vesus (vsScrapeDocId) y reintentamos. Así no se rompe nunca.
+// ─────────────────────────────────────────────────────────────────────────────
+const VS_API = 'https://api.vesus.org/graphql';
+const VS_SITE = 'https://vesus.org';
+const VS_CACHE_SECONDS = 60;
+// docId de la subscription TournamentPage_Subscription (último conocido). Si vesus lo cambia,
+// vsScrapeDocId() lo actualiza solo y esta variable queda pisada mientras viva el isolate.
+let VS_DOCID = '2b7be2c69372d525856bc40916204211';
+
+async function vsPgn(reqUrl, ctx) {
+  const key = (reqUrl.searchParams.get('key') || '').trim();
+  if (!/^[A-Za-z0-9]{4,20}$/.test(key)) return errJson('Parámetro key inválido (shortKey de vesus)', 400);
+
+  // Caché por URL: muchos visitantes mirando el mismo torneo comparten esta respuesta.
+  const cache = caches.default;
+  const cacheKey = new Request(reqUrl.toString());
+  const hit = await cache.match(cacheKey);
+  if (hit) return hit;
+
+  let data;
+  try {
+    data = await vsFetchData(key, VS_DOCID);
+    if (data === '__BADDOC__') {                 // el docId caducó: sacar uno fresco y reintentar
+      const fresh = await vsScrapeDocId();
+      if (fresh) { VS_DOCID = fresh; data = await vsFetchData(key, VS_DOCID); }
+    }
+  } catch (e) {
+    return errJson('No se pudo bajar de vesus: ' + e.message, 502);
+  }
+  if (data === '__BADDOC__') return errJson('vesus cambió su API (docId) y no se pudo resolver', 502);
+  if (data == null) return errJson('vesus no devolvió datos para ese torneo (¿shortKey correcto?)', 404);
+
+  const headers = corsHeaders();
+  headers.set('Content-Type', 'application/json; charset=utf-8');
+  headers.set('Cache-Control', 'public, max-age=' + VS_CACHE_SECONDS);
+  const resp = new Response(JSON.stringify(data), { status: 200, headers });
+  ctx.waitUntil(cache.put(cacheKey, resp.clone()));
+  return resp;
+}
+
+// POST SSE a la API de vesus y lee el PRIMER evento con payload. Devuelve el objeto
+// tournamentUpdate, null si no vino, o '__BADDOC__' si el docId ya no sirve.
+async function vsFetchData(key, docId) {
+  const body = JSON.stringify({
+    operationName: 'TournamentPage_Subscription',
+    variables: { shortKey: key, hasGames: false, hasResults: true, hasCompletedPublishedRounds: false, canNoLongerBeUpdated: false },
+    docId,
+  });
+  // OJO: vesus valida el header Origin (sin él responde 500 "Invalid origin"). Hay que mandarlo.
+  const r = await fetch(VS_API, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'text/event-stream',
+      'User-Agent': CR_UA,
+      'Origin': VS_SITE,
+      'Referer': VS_SITE + '/',
+    },
+    body,
+  });
+  if (!r.ok) throw new Error('vesus HTTP ' + r.status);
+
+  // El stream trae líneas ": " (heartbeat), "event: next" y "data: {…}". Leemos hasta poder
+  // parsear una línea data: como JSON (mientras el chunk esté cortado, JSON.parse falla y seguimos).
+  const reader = r.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '', payload = null;
+  const started = Date.now();
+  while (Date.now() - started < 10000) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    payload = vsExtractEvent(buf);
+    if (payload) break;
+    if (buf.length > 800000) break;   // tope de seguridad
+  }
+  try { reader.cancel(); } catch (e) {}
+  if (!payload) return null;
+  if (payload.errors) {
+    const msg = JSON.stringify(payload.errors);
+    if (/PersistedQuery/i.test(msg)) return '__BADDOC__';
+    throw new Error('GraphQL: ' + msg.slice(0, 140));
+  }
+  return (payload.data && payload.data.tournamentUpdate) ? payload.data.tournamentUpdate : null;
+}
+
+// Busca en el buffer SSE la primera línea "data:" que parsee como JSON completo.
+function vsExtractEvent(buf) {
+  const lines = buf.split('\n');
+  for (const ln of lines) {
+    if (ln.charCodeAt(0) !== 100 || !ln.startsWith('data:')) continue;   // 'd'
+    const js = ln.slice(5).trim();
+    if (js.length < 2) continue;
+    try { return JSON.parse(js); } catch (e) { /* chunk cortado: seguir acumulando */ }
+  }
+  return null;
+}
+
+// Saca el docId ACTUAL de TournamentPage_Subscription del bundle de vesus. El HTML referencia
+// el entry principal; el docId vive en un chunk que el entry importa (Relay compila el id ahí).
+// Cap de 44 chunks para no pasarnos del límite de subrequests del Worker (50). Se corre rara vez
+// (sólo cuando el docId guardado caducó), así que el costo es despreciable.
+async function vsScrapeDocId() {
+  const RE = /id:"([0-9a-f]{32})",metadata:\{[^}]*\},name:"TournamentPage_Subscription"/;
+  try {
+    const idx = await (await fetch(VS_SITE + '/', { headers: { 'User-Agent': CR_UA } })).text();
+    const entry = (idx.match(/\/static\/js\/[A-Za-z0-9_-]+\.js/) || [])[0];
+    if (!entry) return null;
+    const et = await (await fetch(VS_SITE + entry, { headers: { 'User-Agent': CR_UA } })).text();
+    let m = et.match(RE);
+    if (m) return m[1];
+    const chunks = [...new Set(et.match(/[A-Za-z0-9_]+-[A-Za-z0-9_-]{8}\.js/g) || [])].slice(0, 44);
+    for (const c of chunks) {
+      try {
+        const ct = await (await fetch(VS_SITE + '/static/js/' + c, { headers: { 'User-Agent': CR_UA } })).text();
+        m = ct.match(RE);
+        if (m) return m[1];
+      } catch (e) {}
+    }
+  } catch (e) {}
+  return null;
 }
 
 // Lee TODOS los campos del <form>: inputs (menos los submit) y selects con su opción elegida.
