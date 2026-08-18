@@ -23576,11 +23576,19 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   if (status !== 'done') {
     var _cd = null;
     try { _cd = crDataLoad(crk); } catch (e) {}
-    var _hayRondas = !!(_cd && ((_cd.rounds && Object.keys(_cd.rounds).length) ||
-                                (_cd.teamRounds && Object.keys(_cd.teamRounds).length)));
-    if (!_hayRondas) {
-      var _ini = _cd ? _crRoundSchedule(_cd, crk, 1) : '';
-      if (_ini) {
+    var _ini = _cd ? _crRoundSchedule(_cd, crk, 1) : '';
+    if (_ini) {
+      // Mostrar SÓLO mientras el torneo TODAVÍA no arrancó. Antes se miraba si el cruce traía
+      // rondas (_cd.rounds/_cd.teamRounds), pero los torneos que se siguen por Lichess/broadcast
+      // NO cargan sus rondas en el cruce → el cartel quedaba pegado hasta en torneos ya jugados
+      // (con podio final incluido). Si sabemos la fecha/hora real de la R1, alcanza con compararla
+      // con el reloj; si sólo hay texto libre sin fecha, caemos al viejo indicio (rondas cargadas
+      // o partidas ya agrupadas).
+      var _r1 = _crRoundDate(_cd, 1, crk);
+      var _hayRondas = !!(_cd && ((_cd.rounds && Object.keys(_cd.rounds).length) ||
+                                  (_cd.teamRounds && Object.keys(_cd.teamRounds).length)));
+      var _empezo = _r1 ? (Date.now() >= _r1.getTime()) : (_hayRondas || (games && games.length > 0));
+      if (!_empezo) {
         h += '<div style="display:inline-flex;align-items:center;gap:9px;margin-top:12px;background:var(--gold-bg);border:1px solid var(--gold-dim);border-radius:9px;padding:9px 13px;max-width:100%;flex-wrap:wrap">'
           + '<span style="font-size:15px">🚩</span>'
           + '<span style="color:var(--fg-c0);font-size:13.5px">El torneo arranca:</span>'
