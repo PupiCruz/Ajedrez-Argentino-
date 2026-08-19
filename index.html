@@ -5058,6 +5058,28 @@ function _crMaybeBakeFeds(key) {
   if (!_crIsAuthor() || _crFedBakeTried[key]) return;
   if (crFedMissingCount(key) > 0) setTimeout(function() { crBakeFedsFromLichess(key); }, 40);
 }
+// Al RE-BAJAR la tabla de Chess-Results/info64 (ronda tras ronda), los standings nuevos vuelven a venir
+// SIN la columna FED (el export no la trae) → se perderían las banderas que ya se resolvieron/guardaron.
+// Traspasa las feds conocidas de la tabla VIEJA a la NUEVA (match por fide_id y, si no, por nombre
+// normalizado) y de paso desde la caché de Lichess. Solo rellena las que faltan (no pisa las que traiga
+// la fuente nueva, p.ej. vesus). Así el autor no tiene que re-traer banderas en cada actualización.
+function _crCarryOverFeds(oldStd, newStd) {
+  if (!newStd || !newStd.length) return newStd;
+  var byFide = {}, byName = {};
+  (oldStd || []).forEach(function(s) {
+    if (s && s.fed) {
+      if (s.fideId) byFide[String(s.fideId)] = s.fed;
+      var k = crNormTokens(s.name); if (k && !byName[k]) byName[k] = s.fed;
+    }
+  });
+  newStd.forEach(function(s) {
+    if (!s || s.fed) return;
+    if (s.fideId && byFide[String(s.fideId)]) { s.fed = byFide[String(s.fideId)]; return; }
+    if (s.fideId && _fideCountryCache[String(s.fideId)]) { s.fed = _fideCountryCache[String(s.fideId)]; return; }
+    var k = crNormTokens(s.name); if (k && byName[k]) s.fed = byName[k];
+  });
+  return newStd;
+}
 
 // ── Torneos con federaciones REGIONALES de España ────────────────────────────────────────────
 // Los campeonatos de España traen como "federación" la COMUNIDAD AUTÓNOMA (CAT, VAL, GAL…), no el
@@ -7397,6 +7419,7 @@ async function _crAutoFetchIndiv(crk, crUrl, opts) {
     try {
       var ps = _crParseStandingsRows(await crExtractXlsx(await _crProxyFetch(_crExportUrl(crUrl, standArt, null))));
       if (ps.standings.length) {
+        _crCarryOverFeds(data.standings, ps.standings);   // conservar banderas ya resueltas al re-bajar la tabla
         data.standings = ps.standings; data.standingsKind = ps.kind;
         delete data.standingsRound; delete data.standingsFinal;
         if (ps.round != null) data.standingsRound = ps.round;
@@ -7789,6 +7812,7 @@ async function _i64AutoFetchIndiv(crk, i64url, opts) {
     try {
       var ps = _crParseStandingsRows(await crExtractXlsx(await _i64ProxyFetch(_i64ExportUrl(i64url, standKind))));
       if (ps.standings.length) {
+        _crCarryOverFeds(data.standings, ps.standings);   // conservar banderas ya resueltas al re-bajar la tabla
         data.standings = ps.standings; data.standingsKind = ps.kind;
         delete data.standingsRound; delete data.standingsFinal;
         if (ps.round != null) data.standingsRound = ps.round;
@@ -7943,6 +7967,7 @@ async function _vsAutoFetchIndiv(crk, vsurl, opts) {
     var vd = _vsBuildData(tu);
     var data = crDataLoad(crk) || {};
     if (!data.name) data.name = vd.name;
+    _crCarryOverFeds(data.standings, vd.standings);   // conservar banderas ya resueltas al re-bajar la tabla
     data.standings = vd.standings;
     data.standingsKind = 'standings';
     data.rounds = vd.rounds;   // vesus es la fuente de la verdad de las tablas
@@ -8024,6 +8049,7 @@ async function _liveStandingsFetch(crk, crUrl, info64url, isTeam) {
     if (!rows) return;
     var ps = _crParseStandingsRows(rows);
     if (ps.standings.length) {
+      _crCarryOverFeds(data.standings, ps.standings);   // conservar banderas ya resueltas al re-bajar la tabla
       data.standings = ps.standings; data.standingsKind = ps.kind;
       delete data.standingsRound; delete data.standingsFinal;
       if (ps.round != null) data.standingsRound = ps.round;
@@ -8380,6 +8406,7 @@ async function _crParseStandingsAsync(key,bytes){
     var parsed=_crParseStandingsRows(rows);
     if(!parsed.standings.length) throw new Error('No se encontraron jugadores en la tabla');
     var data=crDataLoad(key)||{rounds:{},standings:[]};
+    _crCarryOverFeds(data.standings, parsed.standings);   // conservar banderas ya resueltas al re-bajar la tabla
     data.standings=parsed.standings;
     data.standingsKind=parsed.kind;
     delete data.standingsRound; delete data.standingsFinal;
