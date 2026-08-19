@@ -84,6 +84,11 @@ export default {
     if (reqUrl.pathname === '/puzstats') return puzStats(env);
     if (reqUrl.pathname === '/puzhit')   return puzHit(reqUrl, env);
 
+    // ── Cuentas de usuario: login con Lichess (OAuth2 + PKCE) ──
+    if (reqUrl.pathname === '/auth/lichess') return authLichess(request, env);
+    if (reqUrl.pathname === '/me')           return authMe(request, env);
+    if (reqUrl.pathname === '/logout')       return authLogout(request, env);
+
     // ── Edición desde el teléfono (editar.html) ──
     if (reqUrl.pathname === '/admin/live') return adminLive(request, env);
     if (reqUrl.pathname === '/admin/save') return adminSave(request, env);
@@ -841,6 +846,173 @@ async function puzStats(env) {
     out[row.id] = o;
   }
   return jsonResp(out, 200, STATS_CACHE_SECONDS);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CUENTAS DE USUARIO — login con Lichess (OAuth2 + PKCE, sin contraseñas propias)
+//   POST /auth/lichess  { code, code_verifier, redirect_uri }
+//        Canjea el código de Lichess por un token, pregunta "¿quién sos?" (/api/account),
+//        guarda/actualiza al usuario en D1 y devuelve UNA SESIÓN PROPIA { token, user }.
+//        La web guarda ese `token` (en localStorage) y lo manda como Authorization: Bearer.
+//   GET  /me       (Authorization: Bearer <sesión>) → { user }  ó  401 si no hay sesión.
+//   POST /logout   (Authorization: Bearer <sesión>) → borra la sesión.
+//
+// PKCE = flujo público: NO necesita client-secret ni registrar una app en Lichess.
+// La contraseña la escribe el usuario EN lichess.org; la web nunca la ve. Guardamos
+// sólo identidad + rating (el token de Lichess se usa una vez y se revoca en el acto).
+// Las tablas se crean solas (como admin_rl): cero trabajo en la consola de D1.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const LICHESS_HOST = 'https://lichess.org';
+const SESSION_TTL_DAYS = 180;   // cuánto dura la sesión sin volver a loguear (~6 meses)
+
+// Crea las tablas si no existen. `usuarios` = personas; `sessions` = tokens de login.
+async function ensureUserTables(env) {
+  await env.DB.prepare(
+    'CREATE TABLE IF NOT EXISTS usuarios (' +
+    'id TEXT PRIMARY KEY, provider TEXT, prov_id TEXT, username TEXT, ' +
+    'rating INTEGER, title TEXT, created_at INTEGER, last_login INTEGER)'
+  ).run();
+  // Un usuario por (proveedor, id del proveedor): evita duplicados del mismo Lichess.
+  await env.DB.prepare(
+    'CREATE UNIQUE INDEX IF NOT EXISTS ux_usuarios_prov ON usuarios(provider, prov_id)'
+  ).run();
+  await env.DB.prepare(
+    'CREATE TABLE IF NOT EXISTS sessions (' +
+    'token TEXT PRIMARY KEY, user_id TEXT, created_at INTEGER, expires INTEGER)'
+  ).run();
+}
+
+// Sólo lo que es seguro mostrar a cualquiera (nunca el token de Lichess ni datos internos).
+function publicUser(u) {
+  return { id: u.id, provider: u.provider, username: u.username, rating: u.rating || null, title: u.title || null };
+}
+
+// Mejor rating "serio" del jugador (preferimos partidas largas; ignoramos provisionales si hay firme).
+function lichessBestRating(acc) {
+  const p = acc && acc.perfs;
+  if (!p) return null;
+  const order = ['classical', 'rapid', 'blitz', 'bullet'];
+  for (const k of order) if (p[k] && p[k].rating && !p[k].prov) return p[k].rating;
+  for (const k of order) if (p[k] && p[k].rating) return p[k].rating;
+  return null;
+}
+
+// POST /auth/lichess — canje del código + alta/actualización del usuario + sesión.
+async function authLichess(request, env) {
+  if (request.method !== 'POST') return errJson('Usá POST', 405);
+  if (!env.DB) return errJson('Falta el binding D1 (DB)', 500);
+  let body;
+  try { body = await request.json(); } catch (e) { return errJson('JSON inválido', 400); }
+  const code = String(body.code || '');
+  const verifier = String(body.code_verifier || '');
+  const redirectUri = String(body.redirect_uri || '');
+  if (!code || !verifier || !redirectUri) return errJson('Faltan parámetros (code, code_verifier, redirect_uri)', 400);
+  // En PKCE el client_id puede ser cualquier URL nuestra; usamos el propio redirect_uri.
+  const clientId = redirectUri;
+
+  // (1) Canjear el código por un token de acceso de Lichess.
+  let tok;
+  try {
+    const r = await fetch(LICHESS_HOST + '/api/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        code_verifier: verifier,
+        redirect_uri: redirectUri,
+        client_id: clientId,
+      }),
+    });
+    tok = await r.json();
+    if (!r.ok || !tok.access_token) {
+      return errJson('Lichess rechazó el login: ' + (tok && (tok.error_description || tok.error) || r.status), 401);
+    }
+  } catch (e) { return errJson('No se pudo canjear el token con Lichess: ' + e.message, 502); }
+
+  // (2) ¿Quién es? Identidad + rating (scope vacío alcanza para /api/account).
+  let acc;
+  try {
+    const r = await fetch(LICHESS_HOST + '/api/account', {
+      headers: { 'Authorization': 'Bearer ' + tok.access_token },
+    });
+    acc = await r.json();
+    if (!r.ok || !acc.id) return errJson('No se pudo leer la cuenta de Lichess', 502);
+  } catch (e) { return errJson('No se pudo leer la cuenta de Lichess: ' + e.message, 502); }
+
+  // Buenos modales: ya tenemos la identidad, revocamos el token de Lichess (no lo guardamos).
+  try {
+    await fetch(LICHESS_HOST + '/api/token', {
+      method: 'DELETE', headers: { 'Authorization': 'Bearer ' + tok.access_token },
+    });
+  } catch (e) { /* si falla la revocación, el token igual caduca solo; no es crítico */ }
+
+  // (3) Alta o actualización del usuario + creación de la sesión.
+  await ensureUserTables(env);
+  const provId = String(acc.id);
+  const username = String(acc.username || acc.id).slice(0, 40);
+  const rating = lichessBestRating(acc);
+  const title = acc.title ? String(acc.title).slice(0, 10) : null;
+  const now = Math.floor(Date.now() / 1000);
+
+  let userId;
+  try {
+    const existing = await env.DB.prepare('SELECT id FROM usuarios WHERE provider=?1 AND prov_id=?2')
+      .bind('lichess', provId).first();
+    if (existing) {
+      userId = existing.id;
+      await env.DB.prepare('UPDATE usuarios SET username=?2, rating=?3, title=?4, last_login=?5 WHERE id=?1')
+        .bind(userId, username, rating, title, now).run();
+    } else {
+      userId = 'u_' + crypto.randomUUID().replace(/-/g, '').slice(0, 24);
+      await env.DB.prepare(
+        'INSERT INTO usuarios (id, provider, prov_id, username, rating, title, created_at, last_login) ' +
+        'VALUES (?1,?2,?3,?4,?5,?6,?7,?7)'
+      ).bind(userId, 'lichess', provId, username, rating, title, now).run();
+    }
+    const sToken = (crypto.randomUUID() + crypto.randomUUID()).replace(/-/g, '');
+    const expires = now + SESSION_TTL_DAYS * 86400;
+    await env.DB.prepare('INSERT INTO sessions (token, user_id, created_at, expires) VALUES (?1,?2,?3,?4)')
+      .bind(sToken, userId, now, expires).run();
+    return jsonResp({ token: sToken, user: publicUser({ id: userId, provider: 'lichess', username, rating, title }) });
+  } catch (e) { return errJson('D1 error: ' + e.message, 500); }
+}
+
+// Devuelve la fila del usuario dueño de la sesión del header Authorization, o null.
+async function sessionUser(request, env) {
+  if (!env.DB) return null;
+  const auth = request.headers.get('Authorization') || '';
+  const m = auth.match(/^Bearer\s+(.+)$/i);
+  if (!m) return null;
+  const token = m[1].trim();
+  let row;
+  try {
+    row = await env.DB.prepare(
+      'SELECT u.id, u.provider, u.username, u.rating, u.title, s.expires ' +
+      'FROM sessions s JOIN usuarios u ON u.id = s.user_id WHERE s.token = ?1'
+    ).bind(token).first();
+  } catch (e) { return null; }
+  if (!row) return null;
+  if (row.expires && row.expires < Math.floor(Date.now() / 1000)) return null;
+  return row;
+}
+
+// GET /me → { user } si la sesión es válida, 401 si no.
+async function authMe(request, env) {
+  const u = await sessionUser(request, env);
+  if (!u) return errJson('No autenticado', 401);
+  return jsonResp({ user: publicUser(u) });
+}
+
+// POST /logout → borra la sesión del token que manda.
+async function authLogout(request, env) {
+  const auth = request.headers.get('Authorization') || '';
+  const m = auth.match(/^Bearer\s+(.+)$/i);
+  if (m && env.DB) {
+    try { await env.DB.prepare('DELETE FROM sessions WHERE token=?1').bind(m[1].trim()).run(); } catch (e) {}
+  }
+  return jsonResp({ ok: true });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

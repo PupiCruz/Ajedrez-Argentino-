@@ -272,7 +272,7 @@
     header {
       display: flex; align-items: center; justify-content: flex-start;
       padding: 10px 18px; background: var(--bg);
-      border-bottom: 1px solid var(--border); gap: 18px;
+      border-bottom: 1px solid var(--border); gap: 12px;
       /* Auto-ocultar estilo Lichess: el header FLOTA fijo arriba y se esconde deslizándose con transform
          (capa GPU, NO toca el layout → cero reflow, cero salto). El contenido reserva su alto real con
          padding-top:var(--hdr-real), que nunca cambia. El JS mide ese alto en --hdr-real. */
@@ -2076,6 +2076,7 @@
       </a>
       <span class="h-sep"></span>
     </div>
+    <div id="aa-account" class="aa-account"></div>
     <button id="theme-toggle" class="theme-toggle" onclick="toggleTheme()" title="Cambiar entre claro y oscuro" aria-label="Cambiar tema">🌙</button>
   </header>
 
@@ -31097,6 +31098,443 @@ function cvUpdateNagBadge() {
       try { var btn=document.querySelector('.nav-btn[onclick*="\'vivo\'"]'); if(typeof goTo==='function') goTo('vivo', btn); } catch(e){}
       join(sala);
     }
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', init); else init();
+})();
+</script>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     CUENTAS DE USUARIO — Fase 1: login con Lichess (OAuth2 + PKCE)
+     La contraseña la escribe el usuario EN lichess.org; esta web nunca la ve.
+     El Worker canjea el código y nos devuelve una sesión propia (token) que
+     guardamos en localStorage y mandamos como Authorization: Bearer.
+     ══════════════════════════════════════════════════════════════════════════ -->
+<style>
+  .aa-account{display:flex;align-items:center;margin-left:6px;position:relative;font-family:inherit}
+  .aa-login-btn{display:inline-flex;align-items:center;gap:6px;cursor:pointer;border:none;
+    background:linear-gradient(135deg,#7c5cff,#4f46e5);color:#fff;font-weight:700;font-size:.86rem;
+    padding:8px 15px;border-radius:999px;line-height:1;box-shadow:0 3px 10px rgba(79,70,229,.35);
+    transition:transform .12s,box-shadow .15s,filter .15s;white-space:nowrap}
+  .aa-login-btn:hover{filter:brightness(1.08);box-shadow:0 5px 16px rgba(79,70,229,.5);transform:translateY(-1px)}
+  .aa-login-btn:active{transform:translateY(0)}
+  .aa-knight{font-size:1.15rem;line-height:1;filter:drop-shadow(0 1px 1px rgba(0,0,0,.25))}
+  .aa-pill{display:inline-flex;align-items:center;gap:8px;cursor:pointer;border:1px solid var(--border);
+    background:var(--bg3);color:var(--text);padding:5px 11px 5px 5px;border-radius:999px;line-height:1;
+    transition:border-color .15s}
+  .aa-pill:hover{border-color:var(--gold)}
+  .aa-av{width:28px;height:28px;flex:0 0 auto;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;
+    font-weight:700;font-size:.85rem;color:#fff;background:linear-gradient(135deg,#7c5cff,#4f46e5);position:relative}
+  .aa-dot{position:absolute;right:-1px;bottom:-1px;width:9px;height:9px;border-radius:50%;background:#3fb950;
+    border:2px solid var(--bg)}
+  /* Nombre y rating al lado del avatar: sólo en pantallas anchas (en laptops el nav ya
+     llena la barra). En pantallas angostas la píldora es avatar+flechita; el nombre igual
+     aparece en el menú al hacer clic. */
+  .aa-name{display:inline-block;font-weight:600;font-size:.82rem;max-width:104px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .aa-rat{display:none;font-size:.72rem;color:var(--text2);font-weight:600}
+  @media(min-width:1400px){ .aa-rat{display:inline} }
+  /* Con sesión iniciada, el botón de tema ☀/🌙 del header se va (pasa al menú del usuario)
+     y ese espacio lo usa el nick. En teléfono (≤900) el tema ya vive en el hamburguesa. */
+  @media(min-width:901px){ body.aa-authed header #theme-toggle{display:none} }
+  .aa-caret{color:var(--text2);font-size:.7rem}
+  .aa-menu{position:absolute;top:calc(100% + 8px);right:0;min-width:210px;background:var(--bg3);
+    border:1px solid var(--border);border-radius:14px;box-shadow:0 14px 40px rgba(0,0,0,.35);
+    padding:8px;z-index:9999;display:none;animation:aaMenuIn .12s ease}
+  .aa-menu.open{display:block}
+  @keyframes aaMenuIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+  .aa-menu-head{padding:9px 11px 11px;border-bottom:1px solid var(--border);margin-bottom:6px}
+  .aa-menu-head .n{font-weight:700;font-size:.95rem;color:var(--text)}
+  .aa-menu-head .s{font-size:.76rem;color:var(--text2);margin-top:2px}
+  .aa-item{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:none;border:0;color:var(--text);
+    cursor:pointer;padding:9px 11px;border-radius:9px;font-size:.88rem;font-family:inherit}
+  .aa-item:hover{background:var(--bg2)}
+  .aa-item.aa-danger{color:#e5484d}
+  .aa-soon{margin-left:auto;font-size:.64rem;color:var(--text3,#888);font-weight:700;letter-spacing:.03em;text-transform:uppercase}
+  /* Cartel aclaratorio (privacidad) antes de mandar a Lichess */
+  .aa-modal-back{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:100001;display:flex;
+    align-items:center;justify-content:center;padding:20px;opacity:0;transition:opacity .18s}
+  .aa-modal-back.open{opacity:1}
+  .aa-modal{background:var(--bg3);border:1px solid var(--border);border-radius:18px;max-width:390px;width:100%;
+    padding:24px 22px 20px;box-shadow:0 20px 60px rgba(0,0,0,.5);text-align:center;
+    transform:translateY(10px) scale(.98);transition:transform .18s}
+  .aa-modal-back.open .aa-modal{transform:none}
+  .aa-modal-ic{width:58px;height:58px;margin:0 auto 12px;border-radius:16px;display:flex;align-items:center;
+    justify-content:center;font-size:32px;color:#fff;background:linear-gradient(135deg,#7c5cff,#4f46e5);
+    box-shadow:0 6px 18px rgba(79,70,229,.4)}
+  .aa-modal-h{font-size:1.25rem;font-weight:800;color:var(--text);margin:0 0 8px}
+  .aa-modal-p{font-size:.9rem;color:var(--text2);line-height:1.5;margin:0 0 14px}
+  .aa-modal-ul{list-style:none;padding:0;margin:0 0 18px;text-align:left;display:grid;gap:8px}
+  .aa-modal-ul li{font-size:.87rem;color:var(--text);background:var(--bg2);border:1px solid var(--border);
+    border-radius:10px;padding:10px 12px;line-height:1.35}
+  .aa-modal-btns{display:flex;gap:10px}
+  .aa-modal-cancel{flex:0 0 auto;padding:11px 16px;border-radius:11px;border:1px solid var(--border);
+    background:none;color:var(--text2);font-weight:600;font-size:.9rem;cursor:pointer;font-family:inherit}
+  .aa-modal-cancel:hover{background:var(--bg2)}
+  .aa-modal-go{flex:1;padding:11px 16px;border-radius:11px;border:none;color:#fff;font-weight:700;font-size:.9rem;
+    cursor:pointer;font-family:inherit;background:linear-gradient(135deg,#7c5cff,#4f46e5);
+    box-shadow:0 4px 14px rgba(79,70,229,.4);white-space:nowrap;transition:filter .15s}
+  .aa-modal-go:hover{filter:brightness(1.08)}
+  .aa-toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:#161b22;color:#fff;
+    border:1px solid rgba(255,255,255,.16);padding:11px 18px;border-radius:12px;font-size:.9rem;z-index:100000;
+    box-shadow:0 10px 30px rgba(0,0,0,.5);opacity:0;transition:opacity .2s,transform .2s;pointer-events:none}
+  .aa-toast.show{opacity:1;transform:translateX(-50%) translateY(-4px)}
+  @media(max-width:380px){.aa-login-btn{padding:7px 10px}.aa-login-btn .aa-txt{font-size:.8rem}}
+
+  /* ── Menú hamburguesa (SOLO teléfono ≤760px): botón flotante abajo a la derecha que
+        despliega las pestañas + el cambio de tema claro/oscuro. En el teléfono el nav de
+        arriba y el botón ☀/🌙 se ocultan (no entraban con el usuario). ── */
+  .aa-fab{display:none}
+  .aa-sheet-back{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9998;opacity:0;
+    transition:opacity .2s;pointer-events:none}
+  .aa-sheet-back.open{opacity:1;pointer-events:auto}
+  .aa-sheet{position:fixed;left:0;right:0;bottom:0;z-index:9999;background:var(--bg3);
+    border-top-left-radius:20px;border-top-right-radius:20px;border-top:1px solid var(--border);
+    box-shadow:0 -8px 30px rgba(0,0,0,.4);padding:10px 12px calc(18px + env(safe-area-inset-bottom,0px));
+    transform:translateY(110%);transition:transform .24s cubic-bezier(.2,.9,.3,1);max-height:82vh;overflow:auto}
+  .aa-sheet.open{transform:translateY(0)}
+  .aa-sheet-grab{width:42px;height:4px;border-radius:2px;background:var(--border);margin:6px auto 12px}
+  .aa-sheet-lbl{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--text3,#888);
+    font-weight:700;margin:4px 10px 6px}
+  .aa-sheet-item{display:flex;align-items:center;gap:14px;width:100%;text-align:left;border:none;background:none;
+    color:var(--text);font-family:inherit;font-size:1.02rem;font-weight:600;padding:13px 12px;border-radius:12px;cursor:pointer}
+  .aa-sheet-item .em{font-size:1.3rem;width:26px;text-align:center;flex:0 0 auto}
+  .aa-sheet-item:active{background:var(--bg2)}
+  .aa-sheet-item.active{color:var(--gold);background:var(--gold-bg,rgba(255,195,64,.12))}
+  .aa-sheet-item .chk{margin-left:auto;color:var(--gold);font-weight:700;font-size:.9rem}
+  .aa-sheet-sep{height:1px;background:var(--border);margin:8px 8px}
+  /* Banda intermedia (901–1269px, tablets/laptops chicas): el nav de arriba se muestra pero
+     SÓLO con emojis (las 7 pestañas con texto completo necesitan ~1270px). Así nunca desborda
+     ni tapa al usuario. Debajo de 900px el nav se oculta y aparece el hamburguesa. */
+  @media(max-width:1269px){
+    header nav .nav-btn span:not(.nav-emoji){display:none}
+    header nav .nav-btn{padding:8px 9px;gap:0}
+  }
+  @media(max-width:900px){
+    header nav{display:none !important}
+    header #theme-toggle{display:none !important}
+    .aa-fab{display:flex;align-items:center;justify-content:center;position:fixed;right:16px;
+      bottom:calc(16px + env(safe-area-inset-bottom,0px));width:56px;height:56px;border-radius:50%;z-index:9997;
+      background:linear-gradient(135deg,#7c5cff,#4f46e5);color:#fff;border:none;font-size:23px;
+      box-shadow:0 6px 20px rgba(0,0,0,.4);cursor:pointer;transition:transform .15s}
+    .aa-fab:active{transform:scale(.93)}
+  }
+</style>
+<script>
+(function(){
+  'use strict';
+  var PROXY = (typeof CR_PROXY!=='undefined' && CR_PROXY) ? CR_PROXY : 'https://cr-proxy.mmatiasscruz.workers.dev';
+  var LS_SESSION='aa_session', LS_USER='aa_user', SS_VERIFIER='aa_pkce_verifier', SS_STATE='aa_oauth_state', SS_RETURN='aa_return';
+
+  function b64url(bytes){
+    var s=''; var b=new Uint8Array(bytes);
+    for(var i=0;i<b.length;i++) s+=String.fromCharCode(b[i]);
+    return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+  }
+  function randStr(n){
+    var a=new Uint8Array(n); crypto.getRandomValues(a); return b64url(a).slice(0,n);
+  }
+  async function sha256(str){
+    var data=new TextEncoder().encode(str);
+    return await crypto.subtle.digest('SHA-256', data);
+  }
+  function redirectUri(){ return location.origin + location.pathname; }
+
+  function getSession(){ try{return localStorage.getItem(LS_SESSION)||'';}catch(e){return '';} }
+  function getUser(){ try{return JSON.parse(localStorage.getItem(LS_USER)||'null');}catch(e){return null;} }
+  function setAuth(token,user){
+    try{
+      if(token) localStorage.setItem(LS_SESSION,token); else localStorage.removeItem(LS_SESSION);
+      if(user)  localStorage.setItem(LS_USER,JSON.stringify(user)); else localStorage.removeItem(LS_USER);
+    }catch(e){}
+    window.aaCurrentUser = user||null;
+    render();
+    try{ document.dispatchEvent(new CustomEvent('aa-auth-changed',{detail:{user:user||null}})); }catch(e){}
+  }
+
+  function toast(msg){
+    var t=document.createElement('div'); t.className='aa-toast'; t.textContent=msg; document.body.appendChild(t);
+    setTimeout(function(){ t.classList.add('show'); }, 10);
+    setTimeout(function(){ t.classList.remove('show'); setTimeout(function(){ t.remove(); },250); }, 2200);
+  }
+
+  // ── Arrancar el login: generar PKCE y mandar a Lichess ──
+  async function login(){
+    if(!crypto.subtle){ toast('Tu navegador no soporta el login seguro.'); return; }
+    var verifier=randStr(64), state=randStr(24);
+    var challenge=b64url(await sha256(verifier));
+    try{
+      sessionStorage.setItem(SS_VERIFIER,verifier);
+      sessionStorage.setItem(SS_STATE,state);
+      sessionStorage.setItem(SS_RETURN, location.href);
+    }catch(e){}
+    var p=new URLSearchParams({
+      response_type:'code',
+      client_id:redirectUri(),
+      redirect_uri:redirectUri(),
+      code_challenge_method:'S256',
+      code_challenge:challenge,
+      state:state
+    });
+    location.href='https://lichess.org/oauth?'+p.toString();
+  }
+
+  // ── Volver de Lichess: canjear el código por nuestra sesión ──
+  async function handleCallback(){
+    var qs=new URLSearchParams(location.search);
+    var code=qs.get('code'), state=qs.get('state'), err=qs.get('error');
+    var pendingState=(function(){try{return sessionStorage.getItem(SS_STATE);}catch(e){return null;}})();
+    if(!code && !err) return false;
+    if(!pendingState) return false;              // no fuimos nosotros los que iniciamos → no tocar
+    if(state!==pendingState){ cleanUrl(); return false; }
+
+    var verifier=(function(){try{return sessionStorage.getItem(SS_VERIFIER);}catch(e){return null;}})();
+    try{ sessionStorage.removeItem(SS_VERIFIER); sessionStorage.removeItem(SS_STATE); }catch(e){}
+    cleanUrl();
+
+    if(err){ toast('No se completó el login en Lichess.'); return true; }
+    if(!verifier){ toast('Se perdió el login, probá de nuevo.'); return true; }
+
+    renderBusy('Entrando…');
+    try{
+      var r=await fetch(PROXY+'/auth/lichess',{
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({ code:code, code_verifier:verifier, redirect_uri:redirectUri() })
+      });
+      var data=await r.json();
+      if(!r.ok || !data.token){ throw new Error(data.error||('HTTP '+r.status)); }
+      setAuth(data.token, data.user);
+      toast('¡Hola, '+(data.user&&data.user.username||'')+'! Ya entraste.');
+    }catch(e){
+      setAuth('', null);
+      toast('No se pudo completar el login: '+e.message);
+    }
+    return true;
+  }
+
+  // Saca ?code/&state/&error del URL sin recargar (respeta el resto de la ruta).
+  function cleanUrl(){
+    try{
+      var u=new URL(location.href);
+      ['code','state','error','error_description','iss'].forEach(function(k){ u.searchParams.delete(k); });
+      history.replaceState(null,'',u.pathname+(u.search?u.search:'')+u.hash);
+    }catch(e){}
+  }
+
+  async function logout(){
+    var tok=getSession();
+    setAuth('', null);
+    closeMenu();
+    toast('Saliste de tu cuenta.');
+    if(tok){ try{ await fetch(PROXY+'/logout',{method:'POST',headers:{'Authorization':'Bearer '+tok}}); }catch(e){} }
+  }
+
+  // Cartel aclaratorio antes de mandar a Lichess: deja claro que la web NO ve la
+  // contraseña ni el e-mail y que no puede tocar la cuenta de Lichess.
+  function showLoginInfo(){
+    var back=document.createElement('div'); back.className='aa-modal-back';
+    back.innerHTML=
+      '<div class="aa-modal" role="dialog" aria-modal="true" aria-label="Entrar con Lichess">'+
+        '<div class="aa-modal-ic">&#9822;</div>'+
+        '<h3 class="aa-modal-h">Entrar con Lichess</h3>'+
+        '<p class="aa-modal-p">Vas a iniciar sesión en <b>lichess.org</b>. Tu contraseña la escribís <b>allá</b>: esta web nunca la ve.</p>'+
+        '<ul class="aa-modal-ul">'+
+          '<li>🔒 No vemos tu contraseña ni tu e-mail.</li>'+
+          '<li>♟️ No podemos jugar ni tocar nada en tu cuenta de Lichess.</li>'+
+          '<li>👤 Sólo usamos tu nombre de usuario y tu rating (ya son públicos).</li>'+
+        '</ul>'+
+        '<div class="aa-modal-btns">'+
+          '<button class="aa-modal-cancel" type="button">Cancelar</button>'+
+          '<button class="aa-modal-go" type="button">Continuar a Lichess &#9822;</button>'+
+        '</div>'+
+      '</div>';
+    document.body.appendChild(back);
+    function close(){ back.remove(); document.removeEventListener('keydown', onKey); }
+    function onKey(e){ if(e.key==='Escape') close(); }
+    back.addEventListener('click', function(e){ if(e.target===back) close(); });
+    back.querySelector('.aa-modal-cancel').addEventListener('click', close);
+    back.querySelector('.aa-modal-go').addEventListener('click', function(){ close(); login(); });
+    document.addEventListener('keydown', onKey);
+    setTimeout(function(){ back.classList.add('open'); }, 10);
+  }
+
+  // Revalidar la sesión contra el Worker (por si caducó o fue borrada en otro lado).
+  async function verify(){
+    var tok=getSession(); if(!tok) return;
+    try{
+      var r=await fetch(PROXY+'/me',{headers:{'Authorization':'Bearer '+tok}});
+      if(r.status===401){ setAuth('', null); return; }
+      if(r.ok){ var d=await r.json(); if(d && d.user) setAuth(tok, d.user); }
+    }catch(e){ /* sin conexión: dejamos lo cacheado */ }
+  }
+
+  // ── UI ──
+  function el(){ return document.getElementById('aa-account'); }
+  function initials(name){ return (name||'?').trim().slice(0,2).toUpperCase(); }
+
+  function render(){
+    var box=el(); if(!box) return;
+    var u=window.aaCurrentUser!==undefined?window.aaCurrentUser:getUser();
+    window.aaCurrentUser=u;
+    document.body.classList.toggle('aa-authed', !!u);   // libera el botón de tema del header
+    if(!u){
+      box.innerHTML='';
+      var btn=document.createElement('button');
+      btn.className='aa-login-btn'; btn.type='button';
+      btn.title='Entrar con tu cuenta de Lichess';
+      btn.innerHTML='<span class="aa-knight" aria-hidden="true">♞</span><span class="aa-txt">Entrar</span>';
+      btn.addEventListener('click', showLoginInfo);
+      box.appendChild(btn);
+      return;
+    }
+    box.innerHTML='';
+    var pill=document.createElement('button');
+    pill.className='aa-pill'; pill.type='button';
+    var rat=u.rating?('<span class="aa-rat">'+u.rating+'</span>'):'';
+    var ttl=u.title?('<span class="aa-rat" style="color:#e0a838">'+u.title+'</span> '):'';
+    pill.innerHTML='<span class="aa-av">'+initials(u.username)+'<span class="aa-dot"></span></span>'+
+      '<span class="aa-name">'+ttl+escapeHtml(u.username)+'</span>'+rat+'<span class="aa-caret">▾</span>';
+    pill.addEventListener('click', function(ev){ ev.stopPropagation(); toggleMenu(u); });
+    box.appendChild(pill);
+  }
+
+  function renderBusy(txt){
+    var box=el(); if(!box) return;
+    box.innerHTML='<span class="aa-login-btn" style="cursor:default;opacity:.75">'+
+      '<span class="aa-txt">'+escapeHtml(txt)+'</span></span>';
+  }
+
+  function toggleMenu(u){
+    var box=el(), existing=box.querySelector('.aa-menu');
+    if(existing){ closeMenu(); return; }
+    var m=document.createElement('div'); m.className='aa-menu';
+    var soon='<span class="aa-soon">pronto</span>';
+    var light=document.body.classList.contains('light');
+    m.innerHTML=
+      '<div class="aa-menu-head"><div class="n">'+escapeHtml(u.username)+'</div>'+
+        '<div class="s">Conectado con Lichess'+(u.rating?(' · '+u.rating):'')+'</div></div>'+
+      '<button class="aa-item" data-a="perfil">👤 Mi perfil '+soon+'</button>'+
+      '<button class="aa-item" data-a="partidas">♟️ Mis partidas '+soon+'</button>'+
+      '<button class="aa-item" data-a="prefs">⚙️ Preferencias '+soon+'</button>'+
+      '<button class="aa-item" data-a="tema"><span class="aa-tema-ic">'+(light?'☀️':'🌙')+'</span>'+
+        '<span class="aa-tema-lbl">'+(light?'Tema claro':'Tema oscuro')+'</span></button>'+
+      '<button class="aa-item aa-danger" data-a="salir">🚪 Salir</button>';
+    box.appendChild(m);
+    m.classList.add('open');   // directo (en pestañas ocultas el rAF se pausa y no abriría)
+    m.addEventListener('click', function(ev){
+      var b=ev.target.closest('.aa-item'); if(!b) return;
+      var a=b.getAttribute('data-a');
+      if(a==='salir'){ logout(); return; }
+      if(a==='tema'){
+        if(typeof toggleTheme==='function') toggleTheme();
+        var nowLight=document.body.classList.contains('light');
+        var ic=b.querySelector('.aa-tema-ic'), lbl=b.querySelector('.aa-tema-lbl');
+        if(ic) ic.textContent=nowLight?'☀️':'🌙';
+        if(lbl) lbl.textContent=nowLight?'Tema claro':'Tema oscuro';
+        return;   // no cerrar el menú: que se vea el cambio
+      }
+      toast('Esa parte llega en la próxima etapa 🙂'); closeMenu();
+    });
+    setTimeout(function(){ document.addEventListener('click', onDocClick); }, 0);
+  }
+  function closeMenu(){
+    var m=document.querySelector('.aa-account .aa-menu'); if(m) m.remove();
+    document.removeEventListener('click', onDocClick);
+  }
+  function onDocClick(ev){ if(!ev.target.closest('.aa-account')) closeMenu(); }
+
+  function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+
+  // Expuesto por si otras partes de la app lo necesitan.
+  window.aaAuth = { login:login, logout:logout, getUser:function(){return window.aaCurrentUser||getUser();},
+    getToken:getSession, onChange:function(cb){ document.addEventListener('aa-auth-changed',function(e){cb(e.detail.user);}); } };
+
+  async function boot(){
+    render();                 // pinta ya con lo cacheado (sin parpadeo)
+    var handled=await handleCallback();
+    if(!handled) verify();    // revalida en segundo plano
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+
+<!-- ══ Menú hamburguesa del teléfono: pestañas + tema (botón flotante ☰ abajo a la derecha) ══ -->
+<script>
+(function(){
+  'use strict';
+  var fab, back, sheet, open=false;
+
+  function build(){
+    fab=document.createElement('button');
+    fab.className='aa-fab'; fab.type='button'; fab.setAttribute('aria-label','Menú');
+    fab.innerHTML='☰';
+    fab.addEventListener('click', function(e){ e.stopPropagation(); toggle(); });
+
+    back=document.createElement('div'); back.className='aa-sheet-back';
+    back.addEventListener('click', close);
+
+    sheet=document.createElement('div'); sheet.className='aa-sheet';
+    sheet.setAttribute('role','dialog'); sheet.setAttribute('aria-label','Navegación');
+    sheet.addEventListener('click', function(e){ e.stopPropagation(); });
+
+    document.body.appendChild(fab);
+    document.body.appendChild(back);
+    document.body.appendChild(sheet);
+  }
+
+  // Arma el contenido leyendo las pestañas reales del header (así nunca se desincroniza).
+  function fill(){
+    var navBtns=document.querySelectorAll('header nav .nav-btn');
+    var html='<div class="aa-sheet-grab"></div><div class="aa-sheet-lbl">Ir a</div>';
+    navBtns.forEach(function(b, i){
+      var emEl=b.querySelector('.nav-emoji');
+      var em=emEl?emEl.textContent:'•';
+      var lblEl=b.querySelector('span:not(.nav-emoji)');
+      var lbl=lblEl?lblEl.textContent.trim():('Sección '+(i+1));
+      var act=b.classList.contains('active')?' active':'';
+      html+='<button class="aa-sheet-item'+act+'" data-nav="'+i+'"><span class="em">'+em+'</span>'+
+        '<span>'+lbl+'</span>'+(act?'<span class="chk">✓</span>':'')+'</button>';
+    });
+    var light=document.body.classList.contains('light');
+    html+='<div class="aa-sheet-sep"></div>';
+    html+='<button class="aa-sheet-item" data-act="tema"><span class="em">'+(light?'☀️':'🌙')+'</span>'+
+      '<span>'+(light?'Tema claro':'Tema oscuro')+'</span>'+
+      '<span class="chk" style="font-weight:600;color:var(--text2)">'+(light?'cambiar a oscuro':'cambiar a claro')+'</span></button>';
+    sheet.innerHTML=html;
+
+    sheet.querySelectorAll('.aa-sheet-item').forEach(function(it){
+      it.addEventListener('click', function(){
+        if(it.getAttribute('data-act')==='tema'){
+          if(typeof toggleTheme==='function') toggleTheme();
+          fill();   // refrescar el rótulo (claro/oscuro) sin cerrar
+          return;
+        }
+        var idx=parseInt(it.getAttribute('data-nav'),10);
+        var target=document.querySelectorAll('header nav .nav-btn')[idx];
+        close();
+        if(target) target.click();   // reusa goTo() y toda la lógica existente
+      });
+    });
+  }
+
+  function toggle(){ open?close():openSheet(); }
+  function openSheet(){
+    fill(); open=true;
+    back.classList.add('open');
+    // Sin requestAnimationFrame: el panel ya está en el DOM con su transform base, así que el
+    // toggle de clase igual anima. (Además, en pestañas ocultas el rAF se pausa y no abriría.)
+    sheet.classList.add('open');
+    fab.innerHTML='✕';
+  }
+  function close(){
+    open=false;
+    sheet.classList.remove('open'); back.classList.remove('open');
+    fab.innerHTML='☰';
+  }
+
+  function init(){
+    build();
+    // Cerrar con Escape (por si acaso) y mantener el ícono en sincronía al navegar por código.
+    document.addEventListener('keydown', function(e){ if(e.key==='Escape' && open) close(); });
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();
