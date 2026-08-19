@@ -4955,6 +4955,27 @@ function crFlagEmoji(fed) {
   return _flagImg(fed) || escHtml(String(fed));
 }
 
+// ── Bandera por FIDE id cuando la TABLA del torneo no trae federación ─────────────────────────
+// Muchos cuadros de Round Robin (cargados a mano o importados sin la columna FED) traen el fide_id
+// de cada jugador pero el fed vacío → sin bandera. Dejamos un hueco con id y lo llenamos async por
+// FIDE id, la misma vía que el visor (cvLoadFlag → lichess + caché _fideCountryCache). No aplica a
+// los torneos español-regionales (ahí la política es 🇦🇷 solo a argentinos y NADA al resto).
+var _crFideFlagQ = [];
+var _crFideFlagSeq = 0;
+function _crFideFlagSlot(fideId) {
+  if (!fideId) return '';
+  var id = 'crff_' + (_crFideFlagSeq++);
+  _crFideFlagQ.push({ id: id, fide: String(fideId) });
+  return '<span id="' + id + '"></span>';
+}
+function _crFlushFideFlags() {
+  if (!_crFideFlagQ.length) return;
+  var q = _crFideFlagQ; _crFideFlagQ = [];   // el HTML ya se insertó sincrónicamente: resolvemos apenas cede el hilo
+  setTimeout(function() {   // setTimeout y no rAF: rAF se pausa con la pestaña oculta y las banderas no cargarían
+    q.forEach(function(x) { try { cvLoadFlag(x.id, x.fide); } catch (e) {} });
+  }, 0);
+}
+
 // ── Torneos con federaciones REGIONALES de España ────────────────────────────────────────────
 // Los campeonatos de España traen como "federación" la COMUNIDAD AUTÓNOMA (CAT, VAL, GAL…), no el
 // país — y a los EXTRANJEROS también (Ivanchuk figura como CNT/Cantabria, Oro como ARA/Aragón). O sea,
@@ -5520,7 +5541,7 @@ function crBuildCrosstable(key,data){
     h+='<td class="cr-xt-nametd" style="'+nameTd+';cursor:pointer" onclick="crOpenPlayer('+crArg(key)+','+crArg(pl.name)+')">'
       +'<span class="cr-xt-name" style="display:flex;align-items:center;gap:6px;min-width:430px;max-width:560px">'
       +'<span class="cr-tslot" style="'+slotTitle+'">'+crTitleBadge(pl.title)+'</span>'
-      +'<span class="cr-xt-fslot" style="'+slotFlag+'">'+(pl.fed?(_tourIsESRegional(key)?_esRegFlag(pl.name,pl.fide):crFlagEmoji(pl.fed)):'')+'</span>'
+      +'<span class="cr-xt-fslot" style="'+slotFlag+'">'+(pl.fed?(_tourIsESRegional(key)?_esRegFlag(pl.name,pl.fide):crFlagEmoji(pl.fed)):(_tourIsESRegional(key)?'':_crFideFlagSlot(pl.fide)))+'</span>'
       +'<span style="'+slotName+'">'+escHtml(pl.name)+'</span>'
       +'<span class="cr-xt-elo" style="'+slotElo+'">'+(pl.elo||'')+'</span>'
       +'</span></td>';
@@ -5550,6 +5571,7 @@ function crBuildCrosstable(key,data){
   }
   h+='</tbody></table></div>';
   h+='<div style="font-size:12px;color:var(--text3);margin-top:8px;text-align:left;max-width:560px;line-height:1.45">Fila = jugador · columna = rival (nº).'+(_ondemand?'':' Tocá una celda para cargar/cambiar el resultado (1 → ½ → 0 → vacío).')+' Los puntos se calculan solos.</div>';
+  _crFlushFideFlags();   // banderas por FIDE id para los jugadores sin fed en la tabla
   return h;
 }
 
@@ -5757,7 +5779,7 @@ function crBuildStandingsPanel(key,standings){
       +'<td style="'+td+';text-align:center;width:34px;font-size:13px">'+medal+'</td>'
       +'<td style="'+td+';text-align:center">'+crTitleBadge(p.title)+'</td>'
       +'<td style="'+td+';text-align:left;color:var(--text);font-size:14.5px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-shadow:var(--txt-out)">'+escHtml(p.name)+argMark+'</td>'
-      +'<td style="'+td+';text-align:center;color:var(--text2);font-size:12px;white-space:nowrap">'+(p.fed?(_tourIsESRegional(key)?_esRegFlag(p.name,p.fideId):crFlagEmoji(p.fed))+'<span class="fed-txt"> '+escHtml(p.fed)+'</span>':'')+'</td>'
+      +'<td style="'+td+';text-align:center;color:var(--text2);font-size:12px;white-space:nowrap">'+(p.fed?(_tourIsESRegional(key)?_esRegFlag(p.name,p.fideId):crFlagEmoji(p.fed))+'<span class="fed-txt"> '+escHtml(p.fed)+'</span>':(_tourIsESRegional(key)?'':_crFideFlagSlot(p.fideId)))+'</td>'
       +'<td style="'+td+';text-align:center;color:var(--fg-e8);font-size:15px;font-weight:600;text-shadow:var(--txt-out)">'+(p.elo||'')+'</td>'
       +'<td style="'+td+';text-align:right;font-weight:700;color:var(--fg-e8);font-size:15px;white-space:nowrap;text-shadow:var(--txt-out)">'+(isInitial?'':crPtsStr(p.pts))+'</td>'
       +'<td class="col-var" style="'+td+';text-align:center;color:var(--text3);font-size:12px;white-space:nowrap">'+eloVarHtml+'</td>'
@@ -5787,6 +5809,7 @@ function crBuildStandingsPanel(key,standings){
     var argRows=allRows.filter(function(r){return r.arg;});
     h+='<tbody>'+argRows.map(function(r,i){return rowHtml(r.p,r.rank,i);}).join('')+'</tbody>';
     h+='</table></div>';
+    _crFlushFideFlags();
     return h;
   }
   var top20=allRows.slice(0,20), rest=allRows.slice(20);
@@ -5799,6 +5822,7 @@ function crBuildStandingsPanel(key,standings){
     h+='<button onclick="crToggleRest(\''+ks+'\',this)" style="width:100%;padding:10px;background:var(--gl40);border:none;border-top:1px solid var(--bd12);color:var(--fg-d0);font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">Ver tabla completa ('+total+' jugadores)</button>';
   }
   h+='</div>';
+  _crFlushFideFlags();
   return h;
 }
 
@@ -18114,7 +18138,7 @@ function cvLoadFlag(spanId, fideId) {
   fetch('https://lichess.org/api/fide/player/' + fideId, { headers: headers })
     .then(function(r) { if (!r.ok) throw new Error(r.status); return r.json(); })
     .then(function(d) {
-      var fed = (d.fed || '').toUpperCase();
+      var fed = (d.federation || d.fed || '').toUpperCase();   // el API de lichess usa "federation" (no "fed")
       _fideCountryCache[fideId] = fed;
       _capCache(_fideCountryCache, 500);
       var flag = fed ? _flagImg(fed) : '';
