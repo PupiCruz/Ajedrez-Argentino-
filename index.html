@@ -4956,24 +4956,107 @@ function crFlagEmoji(fed) {
 }
 
 // ── Bandera por FIDE id cuando la TABLA del torneo no trae federación ─────────────────────────
-// Muchos cuadros de Round Robin (cargados a mano o importados sin la columna FED) traen el fide_id
-// de cada jugador pero el fed vacío → sin bandera. Dejamos un hueco con id y lo llenamos async por
-// FIDE id, la misma vía que el visor (cvLoadFlag → lichess + caché _fideCountryCache). No aplica a
-// los torneos español-regionales (ahí la política es 🇦🇷 solo a argentinos y NADA al resto).
+// Muchos cuadros (Round Robin cargados a mano, o importados sin la columna FED) traen el fide_id
+// de cada jugador pero el fed vacío → sin bandera. Hay dos vías, y la clave es NO pegarle a Lichess
+// una y otra vez (con 300 jugadores serían 300 pedidos EN CADA visita → rate limit y banderas que
+// no cargan):
+//   • MODO AUTOR: crBakeFedsFromLichess() busca la federación UNA vez (con throttling) y la GUARDA
+//     dentro del torneo (crDataSave). A partir de ahí las banderas salen de los datos: instantáneas,
+//     offline y publicadas → ningún visitante vuelve a consultar Lichess.
+//   • WEB PUBLICADA: como el autor ya guardó las banderas, casi nunca hace falta; si igual quedara
+//     algún jugador sin fed, el respaldo por celda (_crFideFlagSlot) las pide a Lichess con throttling.
+// Nada de esto aplica a los torneos español-regionales (ahí la política es 🇦🇷 solo a argentinos).
 var _crFideFlagQ = [];
 var _crFideFlagSeq = 0;
+function _crIsAuthor() { return (typeof _ondemand === 'undefined' || !_ondemand); }
 function _crFideFlagSlot(fideId) {
   if (!fideId) return '';
+  if (_crIsAuthor()) return '';   // modo autor: lo rellena y GUARDA crBakeFedsFromLichess (no hueco async)
   var id = 'crff_' + (_crFideFlagSeq++);
   _crFideFlagQ.push({ id: id, fide: String(fideId) });
   return '<span id="' + id + '"></span>';
 }
+// Rellena los huecos por celda (solo web publicada) DE A POCOS: dispara cvLoadFlag en tandas chicas
+// con una pausa, así aunque haya cientos de jugadores no se largan cientos de pedidos a la vez.
 function _crFlushFideFlags() {
   if (!_crFideFlagQ.length) return;
-  var q = _crFideFlagQ; _crFideFlagQ = [];   // el HTML ya se insertó sincrónicamente: resolvemos apenas cede el hilo
-  setTimeout(function() {   // setTimeout y no rAF: rAF se pausa con la pestaña oculta y las banderas no cargarían
-    q.forEach(function(x) { try { cvLoadFlag(x.id, x.fide); } catch (e) {} });
-  }, 0);
+  var q = _crFideFlagQ; _crFideFlagQ = [];
+  var i = 0, CHUNK = 5, GAP = 250;
+  (function pump() {   // setTimeout (no rAF: rAF se pausa con la pestaña oculta)
+    var end = Math.min(i + CHUNK, q.length);
+    for (; i < end; i++) { try { cvLoadFlag(q[i].id, q[i].fide); } catch (e) {} }
+    if (i < q.length) setTimeout(pump, GAP);
+  })();
+}
+
+// ── Rellenar + GUARDAR las federaciones faltantes desde Lichess (modo autor, una sola vez) ────
+var _crFedBakeTried = {};   // crk -> true : ya lo intentamos en esta sesión (no re-disparar en cada render)
+var _crFedBaking = {};      // crk -> true : hay un rellenado en curso para ese torneo
+function crFedMissingCount(key) {
+  var d = crDataLoad(key);
+  if (!d || !d.standings) return 0;
+  var seen = {}, n = 0;
+  d.standings.forEach(function(s) { if (s && s.fideId && !s.fed && /^\d+$/.test(String(s.fideId)) && !seen[s.fideId]) { seen[s.fideId] = 1; n++; } });
+  return n;
+}
+function crBakeFedsFromLichess(key, opts) {
+  opts = opts || {};
+  if (!_crIsAuthor()) return;            // la web publicada ya trae las banderas guardadas
+  if (_crFedBaking[key]) return;         // ya hay uno corriendo
+  var data = crDataLoad(key);
+  if (!data || !data.standings || !data.standings.length) return;
+  var pend = {};                         // dedup por fide_id
+  data.standings.forEach(function(s) { if (s && s.fideId && !s.fed && /^\d+$/.test(String(s.fideId))) pend[String(s.fideId)] = 1; });
+  var ids = Object.keys(pend);
+  if (!ids.length) { if (opts.onDone) try { opts.onDone(0, 0); } catch (e) {} return; }
+  _crFedBaking[key] = true; _crFedBakeTried[key] = true;
+  var headers = { 'Accept': 'application/json' };
+  if (typeof LICHESS_TOKEN !== 'undefined' && LICHESS_TOKEN) headers['Authorization'] = 'Bearer ' + LICHESS_TOKEN;
+  var idx = 0, done = 0, resolved = 0, total = ids.length, dirty = false, ended = false;
+  function apply(fideId, fed) {
+    _fideCountryCache[fideId] = fed || '';
+    if (fed) { data.standings.forEach(function(s) { if (s && String(s.fideId) === fideId && !s.fed) { s.fed = fed; dirty = true; } }); resolved++; }
+  }
+  function step() { done++; if (opts.progress) try { opts.progress(done, total, resolved); } catch (e) {} if (done >= total) finish(); else setTimeout(worker, 80); }
+  function finish() {
+    if (ended) return; ended = true;
+    _crFedBaking[key] = false;
+    if (dirty) crDataSave(key, data);   // ← acá quedan GUARDADAS: viajan al publicar, no se re-consultan
+    if (opts.onDone) try { opts.onDone(resolved, total); } catch (e) {}
+    if (dirty && !opts.noRefresh) { try { crRefreshSection(key, _crActiveTab[key]); } catch (e) {} }
+  }
+  function worker() {
+    if (idx >= ids.length) return;
+    var fideId = ids[idx++];
+    if (_fideCountryCache.hasOwnProperty(fideId)) { apply(fideId, _fideCountryCache[fideId]); return step(); }
+    fetch('https://lichess.org/api/fide/player/' + fideId, { headers: headers })
+      .then(function(r) { if (r.status === 429) { var e = new Error('429'); e.rl = 1; throw e; } if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function(d) { apply(fideId, (d.federation || d.fed || '').toUpperCase()); step(); })
+      .catch(function(e) {
+        if (e && e.rl) { idx--; setTimeout(worker, 4000); return; }   // rate limit: esperar y reintentar el mismo id
+        step();   // otro error (404/red): lo dejamos sin bandera; el botón permite reintentar
+      });
+  }
+  var CONC = Math.min(4, ids.length);
+  for (var w = 0; w < CONC; w++) worker();
+}
+// Botón manual "traer banderas faltantes" (modo autor). Muestra progreso; al terminar, el propio
+// bake re-renderiza la sección con las banderas ya guardadas.
+function crBakeFedsBtn(key, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Buscando banderas en Lichess…'; }
+  crBakeFedsFromLichess(key, {
+    force: true,
+    progress: function(done, total) { if (btn) btn.textContent = '⏳ ' + done + '/' + total + '…'; },
+    onDone: function(resolved) {
+      if (btn && !resolved) btn.textContent = '— No se pudo (¿sin internet o Lichess ocupado?) · reintentá';
+      if (btn && resolved) { btn.disabled = true; }   // si resolvió algo, el re-render reemplaza el botón
+    }
+  });
+}
+// Si el torneo tiene jugadores con fide_id pero sin bandera, dispara el rellenado UNA vez (modo autor).
+function _crMaybeBakeFeds(key) {
+  if (!_crIsAuthor() || _crFedBakeTried[key]) return;
+  if (crFedMissingCount(key) > 0) setTimeout(function() { crBakeFedsFromLichess(key); }, 40);
 }
 
 // ── Torneos con federaciones REGIONALES de España ────────────────────────────────────────────
@@ -5467,6 +5550,7 @@ function crLooksLikeRoundRobin(data,key){
 // La columna Pts se calcula sola sumando los resultados cargados.
 function crBuildCrosstable(key,data){
   var ks=key.replace(/'/g,"\\'");
+  _crMaybeBakeFeds(key);   // modo autor: si faltan banderas (fide_id sin fed), traerlas de Lichess y guardarlas (1 vez)
   var players;
   if(data.standings&&data.standings.length){
     players=data.standings.map(function(s){ return {name:s.name,title:s.title,fed:s.fed,elo:s.elo,fide:s.fideId}; });
@@ -5571,7 +5655,9 @@ function crBuildCrosstable(key,data){
   }
   h+='</tbody></table></div>';
   h+='<div style="font-size:12px;color:var(--text3);margin-top:8px;text-align:left;max-width:560px;line-height:1.45">Fila = jugador · columna = rival (nº).'+(_ondemand?'':' Tocá una celda para cargar/cambiar el resultado (1 → ½ → 0 → vacío).')+' Los puntos se calculan solos.</div>';
-  _crFlushFideFlags();   // banderas por FIDE id para los jugadores sin fed en la tabla
+  // Modo autor: si aún faltan banderas (Lichess ocupado, sin internet, o jugador sin fide_id), botón para reintentar.
+  if(_crIsAuthor()){ var _miss=crFedMissingCount(key); if(_miss){ h+='<div style="margin-top:10px;text-align:left"><button onclick="crBakeFedsBtn('+crArg(key)+',this)" style="padding:7px 12px;background:var(--gl40);border:1px solid var(--bd18);border-radius:8px;color:var(--fg-d0);font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">🏴 Traer '+_miss+' bandera'+(_miss>1?'s':'')+' faltante'+(_miss>1?'s':'')+' de Lichess (se guardan)</button></div>'; } }
+  _crFlushFideFlags();   // banderas por FIDE id para los jugadores sin fed en la tabla (solo web publicada)
   return h;
 }
 
@@ -5713,6 +5799,7 @@ function crToggleArgManual(key,name){
 
 function crBuildStandingsPanel(key,standings){
   if(!standings||!standings.length) return '<div style="color:var(--text3);font-size:12px;padding:10px">Sin datos.</div>';
+  _crMaybeBakeFeds(key);   // modo autor: traer y guardar banderas faltantes (fide_id sin fed) 1 vez
   var ks=key.replace(/'/g,"\\'");
   var data=crDataLoad(key)||{};
   var isInitial=data.standingsKind==='initial';
@@ -5801,6 +5888,8 @@ function crBuildStandingsPanel(key,standings){
     +'</tr></thead>';
 
   var h=labelHtml;
+  // Modo autor: si faltan banderas (jugadores con fide_id pero sin fed), botón para traerlas de Lichess y guardarlas.
+  if(_author){ var _miss=crFedMissingCount(key); if(_miss){ h+='<div style="max-width:600px;margin:0 auto 8px;text-align:left"><button onclick="crBakeFedsBtn('+crArg(key)+',this)" style="padding:7px 12px;background:var(--gl40);border:1px solid var(--bd18);border-radius:8px;color:var(--fg-d0);font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">🏴 Traer '+_miss+' bandera'+(_miss>1?'s':'')+' faltante'+(_miss>1?'s':'')+' de Lichess (se guardan)</button></div>'; } }
   h+='<div style="max-height:520px;overflow-y:auto;background:var(--tbl-bg);border:1px solid var(--bd18);border-radius:10px;max-width:600px;margin:0 auto">';
   h+='<table class="cr-standings" style="width:100%;table-layout:fixed;border-collapse:collapse">';
   h+=thead;
