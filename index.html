@@ -2494,14 +2494,19 @@
         background:linear-gradient(135deg,#ffd257,#f0a830); box-shadow:0 6px 18px rgba(240,168,48,.42);
         animation:lvPop .3s cubic-bezier(.2,1.2,.5,1); }
       .lv-inc-pill:hover { filter:brightness(1.05); }
-      /* Presencia: píldora "🟢 N en línea" + tarjeta con los seguidos conectados (para desafiarlos). */
-      .lv-online-pill { display:inline-flex; align-items:center; gap:6px; padding:9px 14px; border-radius:999px; cursor:pointer;
+      /* Presencia: contenedor ABAJO a la DERECHA (esquinado, estilo Lichess). Crece hacia arriba. */
+      #lv-online-host { position:fixed; right:12px; bottom:12px; z-index:100001;
+        display:flex; flex-direction:column; align-items:flex-end; gap:8px; max-width:calc(100vw - 24px);
+        pointer-events:none; }
+      #lv-online-host > * { pointer-events:auto; }
+      /* Píldora "🟢 N en línea" + tarjeta con los seguidos conectados (para desafiarlos). */
+      .lv-online-pill { display:inline-flex; align-items:center; gap:6px; padding:8px 13px; border-radius:999px; cursor:pointer;
         font-family:inherit; font-size:13px; font-weight:800; color:#fff; border:none;
         background:linear-gradient(135deg,#52b788,#2e9e6b); box-shadow:0 6px 18px rgba(46,158,107,.38);
         animation:lvPop .3s cubic-bezier(.2,1.2,.5,1); }
       .lv-online-pill:hover { filter:brightness(1.06); }
-      .lv-online-card { width:240px; max-width:calc(100vw - 28px); padding:10px 12px; border-radius:14px;
-        background:var(--bg3); border:1px solid var(--border); box-shadow:0 10px 28px rgba(0,0,0,.4);
+      .lv-online-card { width:240px; max-width:calc(100vw - 28px); max-height:60vh; overflow-y:auto; padding:10px 12px;
+        border-radius:14px; background:var(--bg3); border:1px solid var(--border); box-shadow:0 10px 28px rgba(0,0,0,.4);
         animation:lvPop .3s cubic-bezier(.2,1.2,.5,1); }
       .lv-online-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; }
       .lv-online-head b { color:var(--text); font-size:13px; }
@@ -2512,6 +2517,14 @@
       .lv-online-nm { flex:1; color:var(--text); font-size:13px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
       .lv-online-ch { flex:0 0 auto; padding:5px 9px; border-radius:8px; border:1px solid var(--border); background:var(--bg2); cursor:pointer; font-size:13px; }
       .lv-online-ch:hover { background:var(--border); }
+      /* Lista "En línea para jugar" (dentro de la pestaña Jugar) */
+      .lv-player-item { display:flex; align-items:center; gap:9px; padding:9px 4px; border-bottom:1px solid var(--border); }
+      .lv-player-item:last-child { border-bottom:none; }
+      .lv-player-nm { flex:1; font-weight:600; color:var(--text); font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+      .lv-player-foll { color:var(--gold); }
+      .lv-player-ch { flex:0 0 auto; padding:6px 11px; border-radius:8px; border:none; cursor:pointer; font-size:13px; font-weight:700;
+        color:#fff; font-family:inherit; white-space:nowrap; background:linear-gradient(135deg,#7c5cff,#4f46e5); }
+      .lv-player-ch:hover { filter:brightness(1.06); }
       .lv-lobby-card h3 { font-size:19px; font-weight:800; margin:0 0 6px; letter-spacing:-.3px; }
       .lv-lobby-card h4 { font-size:15px; font-weight:700; margin:0 0 8px; }
       .lv-lobby-card p { color:var(--text2); font-size:13.5px; margin:0 0 14px; line-height:1.5; }
@@ -2708,6 +2721,13 @@
             </div>
             <div id="lv-chal-list" class="lv-chal-list"></div>
             <div class="lv-chal-conn" id="lv-chal-conn"></div>
+          </div>
+          <div class="lv-chal-panel" id="lv-players-panel" style="display:none">
+            <div class="lv-chal-head">
+              <h3>🟢 En línea para jugar</h3>
+              <span class="lv-chal-count" id="lv-players-count"></span>
+            </div>
+            <div id="lv-players-list" class="lv-chal-list"></div>
           </div>
         </div>
       </div>
@@ -30296,7 +30316,8 @@ function cvUpdateNagBadge() {
   var lvIncCollapseTimer=null, lvIncExpiryTimer=null;
   var lvChallengeWaiting=null;     // {target,name} mientras espero que acepten mi desafío dirigido
   var lvFollowingList=[], lvFollowingIds={};   // a quién sigo (id->username), para cruzar con online
-  var lvOnlineSet={}, lvOnlineNames={};        // userIds en línea (id->true) + su nombre (id->username)
+  var lvOnlineSet={}, lvOnlineNames={};        // userIds CONECTADOS (app abierta) → botón verde de seguidos
+  var lvAvailSet={};                            // userIds DISPONIBLES (en Jugar) → lista de "jugadores para desafiar"
   var lvOnlineExpanded=false;      // ¿lista de en-línea desplegada (true) o píldora (false)?
   // Conectar al lobby al loguearse (aunque no estés en Jugar): así recibís desafíos dirigidos y
   // figurás "en línea" desde cualquier pestaña. Al desloguearse, cerrar si ya no hace falta.
@@ -31054,6 +31075,7 @@ function cvUpdateNagBadge() {
         } else {
           lobbySend({type:'create', id:lvMyChallenge.id, name:lvMyChallenge.name, base:lvMyChallenge.base, inc:lvMyChallenge.inc, seat:lvMyColor, rating:lvMyChallenge.rating, prov:lvMyChallenge.prov});
         }
+        lvSetAvailable();   // esperando/​jugando → disponible
         updatePendingPill();
       }
     } else if(m.type==='state'){
@@ -31197,6 +31219,7 @@ function cvUpdateNagBadge() {
     lvPubParams=null; lvAccepting=null; lvSeatPref=null;
     try { if(ws) ws.close(); } catch(e){} ws=null;
     resetState(); showLobby(); setStatus(''); renderChallenges(); updatePendingPill();
+    lvSetAvailable();   // ya no estoy esperando/​jugando → recalcular disponibilidad
     // Si salgo del desafío sin estar en la pestaña, cerrar el lobby que quedó en segundo plano.
     if(!lvOnTab && lobbyWs) lobbyClose();
     if(location.search.indexOf('sala=')>=0){ try { history.replaceState({}, '', location.pathname); } catch(e){} }
@@ -31219,6 +31242,9 @@ function cvUpdateNagBadge() {
   // ¿Mantener el lobby conectado? Sí si estás en la pestaña Jugar, o tenés un desafío/partida,
   // o estás LOGUEADO (para recibir desafíos dirigidos y figurar "en línea" desde cualquier pestaña).
   function lvKeepLobby(){ return lvOnTab || !!lvMyChallenge || !!lvAuthUser(); }
+  // "Disponible" para jugar = estás en la pestaña Jugar (o esperando/jugando). La PRESENCIA se basa en
+  // esto: el que sólo mira un torneo NO figura en línea; el que está en Jugar, sí.
+  function lvSetAvailable(){ lobbySend({type:'available', on:(lvOnTab || !!lvMyChallenge)}); }
   function lobbyConnect(){
     if(lobbyWs && (lobbyWs.readyState===0 || lobbyWs.readyState===1)) return;
     lvLobbyIntentional=false;
@@ -31233,6 +31259,7 @@ function cvUpdateNagBadge() {
         if(lvMyChallenge.target) lobbySend({type:'challenge-direct', id:lvMyChallenge.id, target:lvMyChallenge.target, name:lvMyChallenge.name, base:lvMyChallenge.base, inc:lvMyChallenge.inc, seat:lvMyChallenge.seat, rating:lvMyChallenge.rating, prov:lvMyChallenge.prov});
         else lobbySend({type:'create', id:lvMyChallenge.id, name:lvMyChallenge.name, base:lvMyChallenge.base, inc:lvMyChallenge.inc, seat:lvMyChallenge.seat, rating:lvMyChallenge.rating, prov:lvMyChallenge.prov});
       }
+      lvSetAvailable();   // al (re)conectar, informar mi disponibilidad
     };
     lobbyWs.onmessage=function(e){ var m; try{ m=JSON.parse(e.data); }catch(_){ return; } handleLobby(m); };
     lobbyWs.onclose=function(){
@@ -31266,10 +31293,17 @@ function cvUpdateNagBadge() {
       lvChallengeWaiting=null; lvToast((m.by||'Tu rival')+' rechazó el desafío.'); exit();
     }
     else if(m.type==='challenge-error'){ lvChallengeWaiting=null; lvToast('No se pudo enviar el desafío.'); exit(); }
-    // ── Presencia (quién está en línea) ──
-    else if(m.type==='presence-init'){ lvOnlineSet={}; lvOnlineNames={}; (m.online||[]).forEach(function(u){ lvOnlineSet[u.userId]=true; if(u.username) lvOnlineNames[u.userId]=u.username; }); renderOnlinePill(); }
+    // ── Presencia: CONECTADO (botón verde de seguidos) + DISPONIBLE (lista de jugadores en Jugar) ──
+    else if(m.type==='presence-init'){
+      lvOnlineSet={}; lvOnlineNames={}; lvAvailSet={};
+      (m.online||[]).forEach(function(u){ lvOnlineSet[u.userId]=true; if(u.username) lvOnlineNames[u.userId]=u.username; });
+      (m.available||[]).forEach(function(u){ lvAvailSet[u.userId]=true; if(u.username) lvOnlineNames[u.userId]=u.username; });
+      renderOnlinePill(); renderAvailPlayers();
+    }
     else if(m.type==='presence-online'){ lvOnlineSet[m.userId]=true; if(m.username) lvOnlineNames[m.userId]=m.username; renderOnlinePill(); }
     else if(m.type==='presence-offline'){ delete lvOnlineSet[m.userId]; renderOnlinePill(); }
+    else if(m.type==='avail-on'){ lvAvailSet[m.userId]=true; if(m.username) lvOnlineNames[m.userId]=m.username; renderAvailPlayers(); }
+    else if(m.type==='avail-off'){ delete lvAvailSet[m.userId]; renderAvailPlayers(); }
   }
 
   // ── Desafíos ENTRANTES (alguien me reta). El cartel grande se muestra un rato y se COLAPSA a una
@@ -31328,6 +31362,13 @@ function cvUpdateNagBadge() {
   }
 
   // ── PRESENCIA: mostrar cuáles de los que sigo están EN LÍNEA (para desafiarlos) ──
+  // La píldora de "en línea" vive ABAJO a la DERECHA (esquinada, molesta lo menos posible), aparte
+  // del apilador de arriba (#lv-notices, para desafíos). Abajo-izquierda queda para el chat futuro.
+  function lvOnlineHost(){
+    var h=document.getElementById('lv-online-host');
+    if(!h){ h=document.createElement('div'); h.id='lv-online-host'; document.body.appendChild(h); }
+    return h;
+  }
   function lvProxy(){ return (typeof CR_PROXY!=='undefined' && CR_PROXY) ? CR_PROXY : 'https://cr-proxy.mmatiasscruz.workers.dev'; }
   function lvFetchFollowing(){
     var tok=lvAuthToken();
@@ -31346,7 +31387,7 @@ function cvUpdateNagBadge() {
     return out;
   }
   function renderOnlinePill(){
-    var host=lvNoticeHost();
+    var host=lvOnlineHost();
     var oc=document.getElementById('lv-online'); if(oc) oc.remove();
     var op=document.getElementById('lv-online-pill'); if(op) op.remove();
     var list=lvFollowedOnline();
@@ -31372,6 +31413,29 @@ function cvUpdateNagBadge() {
       host.appendChild(p);
       p.onclick=function(){ lvOnlineExpanded=true; renderOnlinePill(); };
     }
+  }
+  // Lista de "jugadores disponibles" (en la pestaña Jugar) — cualquiera, siga o no. Se ve DENTRO de Jugar.
+  function renderAvailPlayers(){
+    var list=$('lv-players-list'), panel=$('lv-players-panel'), cnt=$('lv-players-count'); if(!list) return;
+    var me=lvAuthUser(), myId=me?me.id:null, arr=[];
+    for(var id in lvAvailSet){ if(!lvAvailSet[id] || id===myId) continue; arr.push({ id:id, username:lvOnlineNames[id]||id }); }
+    arr.sort(function(a,b){ return (a.username||'').localeCompare(b.username||''); });
+    if(cnt) cnt.textContent=arr.length?('· '+arr.length):'';
+    if(!arr.length){ if(panel) panel.style.display='none'; list.innerHTML=''; return; }
+    if(panel) panel.style.display='';
+    var html='';
+    for(var i=0;i<arr.length;i++){
+      var u=arr[i], foll=lvFollowingIds.hasOwnProperty(u.id);
+      html+='<div class="lv-player-item"><span class="lv-online-dot"></span>'+
+        '<span class="lv-player-nm aa-nick-clk" data-uprofile="'+lvEsc(u.username)+'">'+lvEsc(u.username)+(foll?' <span class="lv-player-foll" title="Lo seguís">★</span>':'')+'</span>'+
+        '<button type="button" class="lv-player-ch" data-uid="'+lvEsc(u.id)+'" data-nm="'+lvEsc(u.username)+'">⚔️ Desafiar</button></div>';
+    }
+    list.innerHTML=html;
+    list.querySelectorAll('.lv-player-ch').forEach(function(b){ b.onclick=function(){
+      var uid=b.getAttribute('data-uid'), nm=b.getAttribute('data-nm');
+      if(window.aaProfile && window.aaProfile.challenge) window.aaProfile.challenge(uid, nm);
+      else lvChallengeUser(uid, nm, 300, 0, 'rnd');
+    }; });
   }
   window.__lvIsOnline=function(userId){ return !!lvOnlineSet[userId]; };   // lo usa el perfil (punto verde)
 
@@ -31445,10 +31509,10 @@ function cvUpdateNagBadge() {
   function goToVivoGame(){ try{ if(typeof goTo==='function') goTo('vivo'); }catch(e){} showGame(); updatePendingPill(); }
 
   // Enganches para que goTo avise al entrar/salir de la pestaña "Jugar".
-  window.__lvVivoShow=function(){ lvOnTab=true; lvUpdateIdentityUI(); renderChallenges(); lobbyConnect(); updatePendingPill(); };
+  window.__lvVivoShow=function(){ lvOnTab=true; lvUpdateIdentityUI(); renderChallenges(); renderAvailPlayers(); lobbyConnect(); lvSetAvailable(); updatePendingPill(); };
   // Al salir de la pestaña: si tengo un desafío abierto (o partida en curso), mantengo el
   // lobby conectado en segundo plano para que el reto siga listado y me traigan al empezar.
-  window.__lvVivoHide=function(){ lvOnTab=false; if(!lvKeepLobby()) lobbyClose(); updatePendingPill(); };
+  window.__lvVivoHide=function(){ lvOnTab=false; lvSetAvailable(); if(!lvKeepLobby()) lobbyClose(); updatePendingPill(); };
 
   // ── Cableado de botones ─────────────────────────────────────────────────────
   function wireButtons(){
