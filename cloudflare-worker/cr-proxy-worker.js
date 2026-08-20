@@ -88,6 +88,7 @@ export default {
     if (reqUrl.pathname === '/auth/lichess') return authLichess(request, env);
     if (reqUrl.pathname === '/me')           return authMe(request, env);
     if (reqUrl.pathname === '/logout')       return authLogout(request, env);
+    if (reqUrl.pathname.startsWith('/u/'))   return publicProfile(reqUrl, env);   // GET público → perfil de <usuario>
 
     // ── Rating de partidas en vivo (PvP) — propio del sitio, server-authoritative ──
     if (reqUrl.pathname === '/rating/me')     return ratingMe(request, env);      // GET  Bearer → mis 3 ratings
@@ -1087,6 +1088,49 @@ async function ratingMe(request, env) {
     ratings[c] = r.rating; games[c] = r.games; prov[c] = ratingIsProv(r.games);
   }
   return jsonResp({ id: u.id, username: u.username, ratings, games, prov });
+}
+
+// GET /u/<usuario> — PERFIL PÚBLICO de cualquier jugador (SIN auth). Sólo datos públicos:
+// identidad + rating de Lichess + los 3 ratings del sitio + táctica (rating/resueltos).
+// Nunca el token de Lichess ni e-mail. Si el usuario no existe (ej. un invitado de una
+// partida) → 404 "sin perfil". Búsqueda por nombre sin distinguir mayúsculas.
+async function publicProfile(reqUrl, env) {
+  if (!env.DB) return errJson('Falta el binding D1 (DB)', 500);
+  let handle = '';
+  try { handle = decodeURIComponent(reqUrl.pathname.slice(3)); } catch (e) { handle = reqUrl.pathname.slice(3); }
+  handle = String(handle).replace(/\/+$/, '').trim().slice(0, 40);
+  if (!handle) return errJson('Falta el usuario', 400);
+  await ensureUserTables(env);
+  const u = await env.DB.prepare(
+    'SELECT id, username, rating, title FROM usuarios WHERE LOWER(username)=LOWER(?1)'
+  ).bind(handle).first();
+  if (!u) return errJson('Este jugador no tiene perfil en el sitio', 404);
+
+  // Los 3 ratings del sitio (bullet/blitz/rápido).
+  await ensureRatingTables(env);
+  const cats = ['bullet', 'blitz', 'rapid'];
+  const ratings = {}, games = {}, prov = {};
+  for (const c of cats) {
+    const r = await getRating(env, u.id, c);
+    ratings[c] = r.rating; games[c] = r.games; prov[c] = ratingIsProv(r.games);
+  }
+
+  // Táctica (pública, como el puzzle rating de Lichess): rating del blob + resueltos de la columna.
+  let tactic = null;
+  try {
+    await ensurePuzProgressTable(env);
+    const row = await env.DB.prepare('SELECT data, solved FROM user_puzzle WHERE user_id=?1').bind(u.id).first();
+    if (row) {
+      let rt = null;
+      try { const b = JSON.parse(row.data || 'null'); if (b && b.rating != null) rt = Math.round(b.rating); } catch (e) {}
+      tactic = { rating: rt, solved: row.solved || 0 };
+    }
+  } catch (e) { /* si falla la táctica, el perfil sale igual sin ella */ }
+
+  return jsonResp({
+    id: u.id, username: u.username, title: u.title || null, ratingLichess: u.rating || null,
+    ratings, games, prov, tactic,
+  });
 }
 
 // POST /rating/report  (header X-Vivo-Secret) — SÓLO lo llama el worker de vivo cuando

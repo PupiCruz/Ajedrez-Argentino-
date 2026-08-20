@@ -30231,7 +30231,17 @@ function cvUpdateNagBadge() {
   var lvFen='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
   var lvChess=null, lvTurn='w', lvStatus='waiting', lvLastMove=null;
   var lvNames={}, lvPlayers={}, lvDrawOffer=null, lvMoves=[];
+  var lvUsers={};       // {w:<usuario del sitio>|null, b:…} — sólo asientos LOGUEADOS → nick clickeable al perfil
   var lvRatings=null;   // {w:{r,prov}|null, b:{…}, cat} — rating del sitio de cada asiento (para las chapitas)
+  // Clic en un nick con perfil (rival o el mío) → abre el overlay de ese usuario. Delegado (sirve para las
+  // chapitas de la partida y las tarjetas del lobby, que se re-pintan con innerHTML).
+  document.addEventListener('click', function(ev){
+    var t=ev.target; if(t && t.nodeType!==1) t=t.parentElement;
+    var el=(t && t.closest) ? t.closest('[data-uprofile]') : null; if(!el) return;
+    var nick=el.getAttribute('data-uprofile'); if(!nick) return;
+    ev.preventDefault(); ev.stopPropagation();
+    if(window.aaProfile && window.aaProfile.open) window.aaProfile.open({username:nick});
+  });
   var lvRatingMsg='';   // texto del cambio de MI rating al terminar (ej. "⚡ Blitz: +12 → 1212")
   var lvManualFlip=false, lvResultCode='*', lvResult=null, lvBannerDismissed=false;
   var lvRenderedFen='';   // FEN que está dibujado ahora (para saltear el redibujado del eco y no cortar la animación)
@@ -30804,7 +30814,10 @@ function cvUpdateNagBadge() {
       // Rating del sitio de ese asiento (si el jugador está logueado).
       var ri=lvRatings && lvRatings[color];
       var rat=ri ? ' <span class="lv-plate-rat">'+ri.r+(ri.prov?'?':'')+'</span>' : '';
-      return (color==='w'?'⚪ ':'⚫ ')+lvEsc(nm)+rat+(mine?' <span style="color:var(--text3)">(vos)</span>':'')+dis;
+      // Si el asiento es un usuario del sitio (logueado), el nick abre su perfil al tocarlo.
+      var nmHtml=lvEsc(nm), acct=lvUsers && lvUsers[color];
+      if(acct) nmHtml='<span class="aa-nick-clk" data-uprofile="'+lvEsc(acct)+'" title="Ver el perfil de '+lvEsc(acct)+'">'+nmHtml+'</span>';
+      return (color==='w'?'⚪ ':'⚫ ')+nmHtml+rat+(mine?' <span style="color:var(--text3)">(vos)</span>':'')+dis;
     }
     var nb=$('lv-name-bot'), nt=$('lv-name-top');
     if(nb) nb.innerHTML=label(bottom);
@@ -30872,6 +30885,7 @@ function cvUpdateNagBadge() {
     // regresiva de desconexión: nunca quedarse esperando los 30s si el juego ya terminó.
     if(lvStatus!=='playing') stopDiscCountdown();
     if(m.names) lvNames=m.names; if(m.players) lvPlayers=m.players;
+    if(m.users) lvUsers=m.users;
     if(m.ratings) lvRatings=m.ratings;
     if(m.moves){ if(m.moves.length>lvPrevMovesLen) clearShapes(); lvMoves=m.moves; }
     if(m.lastMove) lvLastMove=m.lastMove;
@@ -31030,7 +31044,7 @@ function cvUpdateNagBadge() {
 
   function resetState(){
     lvMyColor=null; lvFen='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
-    lvChess=null; lvTurn='w'; lvStatus='waiting'; lvLastMove=null; lvNames={}; lvPlayers={};
+    lvChess=null; lvTurn='w'; lvStatus='waiting'; lvLastMove=null; lvNames={}; lvUsers={}; lvPlayers={};
     lvRatings=null; lvRatingMsg='';
     lvSelected=null; lvPremove=null; lvDrawOffer=null; lvClock=null; lvLowWarned=false;
     lvPendingSoundId=null; lvLastSoundId=null; lvEndSoundDone=false;
@@ -31620,7 +31634,7 @@ function cvUpdateNagBadge() {
     m.innerHTML=
       '<div class="aa-menu-head"><div class="n">'+escapeHtml(u.username)+'</div>'+
         '<div class="s">Conectado con Lichess'+(u.rating?(' · '+u.rating):'')+'</div></div>'+
-      '<button class="aa-item" data-a="perfil">👤 Mi perfil '+soon+'</button>'+
+      '<button class="aa-item" data-a="perfil">👤 Mi perfil</button>'+
       '<button class="aa-item" data-a="partidas">♟️ Mis partidas '+soon+'</button>'+
       '<button class="aa-item" data-a="prefs">⚙️ Preferencias '+soon+'</button>'+
       '<button class="aa-item" data-a="tema"><span class="aa-tema-ic">'+(light?'☀️':'🌙')+'</span>'+
@@ -31632,6 +31646,7 @@ function cvUpdateNagBadge() {
       var b=ev.target.closest('.aa-item'); if(!b) return;
       var a=b.getAttribute('data-a');
       if(a==='salir'){ logout(); return; }
+      if(a==='perfil'){ closeMenu(); if(window.aaProfile&&window.aaProfile.open) window.aaProfile.open(); return; }
       if(a==='tema'){
         if(typeof toggleTheme==='function') toggleTheme();
         var nowLight=document.body.classList.contains('light');
@@ -31665,6 +31680,323 @@ function cvUpdateNagBadge() {
     if(!handled) verify();    // revalida en segundo plano
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+
+<!-- ══ Pantalla "Mi perfil" (overlay). v1 SIN backend: usa sólo datos ya disponibles en el
+        navegador — identidad (aaAuth.getUser), los 3 ratings del sitio (aaAuth.getRatings) y el
+        rating de táctica (puzPlayer()). El historial/FIDE/ranking llegan en fases con el Worker. ══ -->
+<style>
+  .aa-prof-back{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100001;display:flex;
+    align-items:flex-start;justify-content:center;padding:26px 16px;overflow-y:auto;opacity:0;
+    transition:opacity .18s;-webkit-overflow-scrolling:touch}
+  .aa-prof-back.open{opacity:1}
+  .aa-prof{background:var(--bg3);border:1px solid var(--border);border-radius:20px;max-width:560px;width:100%;
+    position:relative;box-shadow:0 24px 70px rgba(0,0,0,.55);padding:26px 24px 22px;margin:auto;
+    transform:translateY(12px) scale(.985);transition:transform .18s}
+  .aa-prof-back.open .aa-prof{transform:none}
+  .aa-prof-x{position:absolute;top:14px;right:14px;width:34px;height:34px;border-radius:10px;border:1px solid var(--border);
+    background:var(--bg2);color:var(--text2);font-size:20px;line-height:1;cursor:pointer;font-family:inherit;
+    display:flex;align-items:center;justify-content:center;transition:background .15s}
+  .aa-prof-x:hover{background:var(--border);color:var(--text)}
+  /* Cabecera: avatar + nombre + estado */
+  .aa-prof-hero{display:flex;gap:16px;align-items:center;padding-right:30px}
+  .aa-prof-av{position:relative;flex:0 0 auto;width:68px;height:68px;border-radius:20px;display:flex;
+    align-items:center;justify-content:center;font-size:1.55rem;font-weight:800;color:#fff;letter-spacing:.02em;
+    background:linear-gradient(135deg,#7c5cff,#4f46e5);box-shadow:0 8px 22px rgba(79,70,229,.42)}
+  .aa-prof-dot{position:absolute;right:-2px;bottom:-2px;width:16px;height:16px;border-radius:50%;
+    background:#2ecc71;border:3px solid var(--bg3)}
+  .aa-prof-id{min-width:0}
+  .aa-prof-name{font-size:1.4rem;font-weight:800;color:var(--text);line-height:1.15;
+    display:flex;align-items:center;gap:8px;flex-wrap:wrap;word-break:break-word}
+  .aa-prof-ttl{font-size:.72rem;font-weight:800;color:#1a1206;background:var(--gold);border-radius:6px;
+    padding:2px 6px;letter-spacing:.02em}
+  .aa-prof-sub{font-size:.82rem;color:var(--text2);margin-top:5px;display:flex;align-items:center;gap:6px}
+  .aa-prof-sub .on{color:#2ecc71;font-weight:700}
+  .aa-prof-lich{display:inline-flex;align-items:center;gap:5px;margin-top:9px;font-size:.8rem;color:var(--text2);
+    background:var(--bg2);border:1px solid var(--border);border-radius:9px;padding:4px 10px;font-weight:600}
+  .aa-prof-lich b{color:var(--text)}
+  /* Rótulos de sección */
+  .aa-prof-lbl{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--text3,#9a9a9a);
+    font-weight:800;margin:22px 2px 10px}
+  /* Los 3 ratings del sitio */
+  .aa-prof-rats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+  .aa-prof-rat{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:14px 10px 12px;text-align:center}
+  .aa-prof-rat-ic{font-size:1.5rem;line-height:1}
+  .aa-prof-rat-cat{font-size:.74rem;color:var(--text2);font-weight:700;margin-top:5px;text-transform:uppercase;letter-spacing:.03em}
+  .aa-prof-rat-val{font-size:1.7rem;font-weight:800;color:var(--text);margin-top:4px;line-height:1}
+  .aa-prof-rat-val .prov{font-size:.9rem;color:var(--gold);font-weight:700;margin-left:1px}
+  .aa-prof-rat-games{font-size:.72rem;color:var(--text3,#9a9a9a);margin-top:5px}
+  /* Táctica */
+  .aa-prof-tact{display:flex;align-items:center;gap:16px;background:var(--bg2);border:1px solid var(--border);
+    border-radius:14px;padding:15px 16px}
+  .aa-prof-tact-main{display:flex;flex-direction:column;line-height:1.05}
+  .aa-prof-tact-val{font-size:1.9rem;font-weight:800;color:var(--text)}
+  .aa-prof-tact-cap{font-size:.74rem;color:var(--text2);font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin-top:3px}
+  .aa-prof-tact-meta{margin-left:auto;display:flex;gap:20px;text-align:center}
+  .aa-prof-tact-meta .v{font-size:1.2rem;font-weight:800;color:var(--text)}
+  .aa-prof-tact-meta .k{font-size:.68rem;color:var(--text3,#9a9a9a);text-transform:uppercase;letter-spacing:.03em;margin-top:2px}
+  /* Pie: lo que viene */
+  .aa-prof-soon{margin-top:20px;font-size:.8rem;color:var(--text3,#9a9a9a);line-height:1.5;
+    border-top:1px dashed var(--border);padding-top:14px}
+  .aa-prof-soon b{color:var(--text2)}
+  @media(max-width:480px){
+    .aa-prof{padding:22px 16px 18px}
+    .aa-prof-name{font-size:1.2rem}
+    .aa-prof-av{width:58px;height:58px;font-size:1.3rem}
+    .aa-prof-rats{gap:7px}
+    .aa-prof-rat{padding:11px 5px 10px}
+    .aa-prof-rat-val{font-size:1.4rem}
+    .aa-prof-tact{flex-wrap:wrap}
+    .aa-prof-tact-meta{margin-left:0;width:100%;justify-content:space-around;gap:8px}
+  }
+  /* Estados de carga/error al abrir el perfil de otra persona */
+  .aa-prof-loading,.aa-prof-error{padding:38px 12px;text-align:center;color:var(--text2);font-size:.95rem;line-height:1.5}
+  /* Botones de acción en el perfil ajeno (Desafiar / Seguir) */
+  .aa-prof-actions{display:flex;gap:10px;margin-top:16px}
+  .aa-prof-btn{flex:1;display:flex;align-items:center;justify-content:center;gap:7px;padding:11px 12px;border-radius:12px;
+    border:1px solid var(--border);background:var(--bg2);color:var(--text);font-weight:700;font-size:.9rem;cursor:pointer;font-family:inherit}
+  .aa-prof-btn:hover{background:var(--border)}
+  .aa-prof-btn.primary{border:none;color:#fff;background:linear-gradient(135deg,#7c5cff,#4f46e5);box-shadow:0 4px 14px rgba(79,70,229,.35)}
+  .aa-prof-mini{font-size:.6rem;font-weight:800;letter-spacing:.03em;text-transform:uppercase;
+    padding:1px 5px;border-radius:5px;background:rgba(255,255,255,.2)}
+  .aa-prof-btn:not(.primary) .aa-prof-mini{background:var(--border);color:var(--text3,#9a9a9a)}
+  /* Barra inferior: copiar link + nota "pronto" */
+  .aa-prof-foot{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:18px;border-top:1px dashed var(--border);padding-top:14px}
+  .aa-prof-copy{display:inline-flex;align-items:center;gap:6px;padding:8px 12px;border-radius:10px;border:1px solid var(--border);
+    background:var(--bg2);color:var(--text2);font-weight:600;font-size:.82rem;cursor:pointer;font-family:inherit;white-space:nowrap}
+  .aa-prof-copy:hover{background:var(--border);color:var(--text)}
+  .aa-prof-foot-note{font-size:.78rem;color:var(--text3,#9a9a9a);line-height:1.45;flex:1;min-width:150px}
+  .aa-prof-foot-note b{color:var(--text2)}
+  /* Nick clickeable (nombre del rival en la partida en vivo / lobby) */
+  .aa-nick-clk{cursor:pointer;border-bottom:1px dotted currentColor}
+  .aa-nick-clk:hover{opacity:.82}
+</style>
+<script>
+(function(){
+  'use strict';
+  var PROXY = (typeof CR_PROXY!=='undefined' && CR_PROXY) ? CR_PROXY : 'https://cr-proxy.mmatiasscruz.workers.dev';
+  var CATS=[{k:'bullet',ic:'🔫',n:'Bullet'},{k:'blitz',ic:'⚡',n:'Blitz'},{k:'rapid',ic:'🐢',n:'Rápido'}];
+  var backEl=null, onRat=null, onAuth=null, onKey=null;
+  var curNick='';     // usuario que se está mostrando (con su mayúsc/minúsc real); '' si cerrado
+  var reqId=0;        // para descartar respuestas de fetch viejas al cambiar de perfil
+
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function initials(name){ return (name||'?').trim().slice(0,2).toUpperCase(); }
+
+  function myUser(){ try{ return window.aaAuth ? window.aaAuth.getUser() : null; }catch(e){ return null; } }
+  function myRatings(){ try{ return window.aaAuth && window.aaAuth.getRatings ? window.aaAuth.getRatings() : null; }catch(e){ return null; } }
+  function myTactic(){
+    try{ if(typeof puzPlayer==='function'){ var P=puzPlayer()||{};
+      return { rating:Math.round(P.rating||1200), solved:P.solved||0, best:P.bestStreak||0 }; } }catch(e){}
+    return { rating:1200, solved:0, best:0 };
+  }
+  function toast(msg){
+    var t=document.createElement('div'); t.className='aa-toast'; t.textContent=msg; document.body.appendChild(t);
+    setTimeout(function(){ t.classList.add('show'); }, 10);
+    setTimeout(function(){ t.classList.remove('show'); setTimeout(function(){ t.remove(); },250); }, 2200);
+  }
+  function lower(s){ return String(s||'').toLowerCase(); }
+  function isSelfShowing(){ var u=myUser(); return !!(u && curNick && lower(u.username)===lower(curNick)); }
+
+  // ── Normalización a un objeto de perfil común (mío = local; ajeno = respuesta del Worker) ──
+  function selfProfile(){
+    var u=myUser(); if(!u) return null;
+    var R=myRatings()||{}, t=myTactic();
+    return { username:u.username, title:u.title||null, ratingLichess:u.rating||null,
+      ratings:R.ratings||{}, games:R.games||{}, prov:R.prov||{},
+      tactic:{ rating:t.rating, solved:t.solved }, isSelf:true, online:true };
+  }
+  function fromResponse(d){
+    return { username:d.username, title:d.title||null, ratingLichess:d.ratingLichess||null,
+      ratings:d.ratings||{}, games:d.games||{}, prov:d.prov||{},
+      tactic:d.tactic||null, isSelf:false, online:false };
+  }
+
+  // ── Armado del HTML ──
+  function ratCardsHtml(P){
+    return CATS.map(function(c){
+      var val=(P.ratings&&P.ratings[c.k]!=null)?P.ratings[c.k]:1500;
+      var g=(P.games&&P.games[c.k])?P.games[c.k]:0;
+      var prov=!!(P.prov&&P.prov[c.k]);
+      var gTxt=g===0?'sin partidas':(g+' '+(g===1?'partida':'partidas'));
+      return '<div class="aa-prof-rat">'+
+        '<div class="aa-prof-rat-ic">'+c.ic+'</div>'+
+        '<div class="aa-prof-rat-cat">'+c.n+'</div>'+
+        '<div class="aa-prof-rat-val">'+val+(prov?'<span class="prov" title="Rating provisional (pocas partidas)">?</span>':'')+'</div>'+
+        '<div class="aa-prof-rat-games">'+gTxt+'</div>'+
+      '</div>';
+    }).join('');
+  }
+  function heroHtml(P){
+    var ttl=P.title?('<span class="aa-prof-ttl">'+esc(P.title)+'</span>'):'';
+    var lich=P.ratingLichess?('<div class="aa-prof-lich">♞ Lichess <b>'+esc(P.ratingLichess)+'</b></div>'):'';
+    var dot=P.online?'<span class="aa-prof-dot"></span>':'';
+    var sub=P.isSelf?'<span class="on">● En línea</span> · Conectado con Lichess':'Perfil del sitio';
+    return '<div class="aa-prof-hero">'+
+        '<div class="aa-prof-av">'+esc(initials(P.username))+dot+'</div>'+
+        '<div class="aa-prof-id">'+
+          '<div class="aa-prof-name">'+ttl+esc(P.username)+'</div>'+
+          '<div class="aa-prof-sub">'+sub+'</div>'+
+          lich+
+        '</div>'+
+      '</div>';
+  }
+  function actionsHtml(P){
+    if(P.isSelf) return '';
+    return '<div class="aa-prof-actions">'+
+      '<button class="aa-prof-btn primary" data-act="challenge">⚔️ Desafiar <span class="aa-prof-mini">pronto</span></button>'+
+      '<button class="aa-prof-btn" data-act="follow">➕ Seguir <span class="aa-prof-mini">pronto</span></button>'+
+    '</div>';
+  }
+  function tacticHtml(P){
+    var T=P.tactic, has=!!(T && (T.rating!=null || (T.solved||0)>0)) || P.isSelf;
+    if(!has) return '';
+    var rt=(T&&T.rating!=null)?T.rating:'—', sv=(T&&T.solved)||0;
+    var best=P.isSelf?myTactic().best:null;
+    var bestHtml=(best!=null)?('<div><div class="v">'+best+'</div><div class="k">mejor racha</div></div>'):'';
+    return '<div class="aa-prof-lbl">Táctica</div>'+
+      '<div class="aa-prof-tact">'+
+        '<span style="font-size:1.9rem;line-height:1">🎯</span>'+
+        '<div class="aa-prof-tact-main">'+
+          '<span class="aa-prof-tact-val">'+rt+'</span>'+
+          '<span class="aa-prof-tact-cap">Rating de táctica</span>'+
+        '</div>'+
+        '<div class="aa-prof-tact-meta">'+
+          '<div><div class="v">'+sv+'</div><div class="k">resueltos</div></div>'+
+          bestHtml+
+        '</div>'+
+      '</div>';
+  }
+  function footHtml(P){
+    var note=P.isSelf
+      ? '<b>Pronto:</b> historial de tus partidas, ficha FIDE vinculada y ranking del sitio.'
+      : '<b>Pronto:</b> desafiar y seguir a otros jugadores.';
+    return '<div class="aa-prof-foot">'+
+      '<button class="aa-prof-copy" data-act="copy">🔗 Copiar link</button>'+
+      '<span class="aa-prof-foot-note">'+note+'</span>'+
+    '</div>';
+  }
+  function profileHtml(P){
+    return heroHtml(P)+actionsHtml(P)+
+      '<div class="aa-prof-lbl">'+(P.isSelf?'Tus ratings del sitio':'Ratings del sitio')+'</div>'+
+      '<div class="aa-prof-rats">'+ratCardsHtml(P)+'</div>'+
+      tacticHtml(P)+footHtml(P);
+  }
+
+  // ── Pintado dentro de la tarjeta ──
+  function setCard(html){
+    if(!backEl) return;
+    var card=backEl.querySelector('.aa-prof'); if(!card) return;
+    card.innerHTML='<button class="aa-prof-x" type="button" aria-label="Cerrar">×</button>'+html;
+    card.querySelector('.aa-prof-x').addEventListener('click', requestClose);
+    var cp=card.querySelector('[data-act="copy"]'); if(cp) cp.addEventListener('click', copyLink);
+    var ch=card.querySelector('[data-act="challenge"]'); if(ch) ch.addEventListener('click', function(){ toast('Desafiar llega en la próxima etapa ⚔️'); });
+    var fo=card.querySelector('[data-act="follow"]'); if(fo) fo.addEventListener('click', function(){ toast('Seguir llega en la próxima etapa 🙂'); });
+  }
+  function paintProfile(P){ curNick=P.username||curNick; setCard(profileHtml(P)); }
+  function paintLoading(nick){ setCard('<div class="aa-prof-loading">Cargando perfil de <b>'+esc(nick)+'</b>…</div>'); }
+  function paintError(msg){ setCard('<div class="aa-prof-error">'+esc(msg)+'</div>'); }
+
+  function copyLink(){
+    var url=location.origin+location.pathname+'#u='+encodeURIComponent(curNick||'');
+    function ok(){ toast('Link copiado ✅'); }
+    function fb(){ try{ var ta=document.createElement('textarea'); ta.value=url; ta.style.position='fixed'; ta.style.opacity='0';
+      document.body.appendChild(ta); ta.focus(); ta.select(); document.execCommand('copy'); ta.remove(); ok(); }catch(e){ toast('No se pudo copiar'); } }
+    try{ if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(ok, fb); else fb(); }catch(e){ fb(); }
+  }
+
+  // ── Apertura / ruteo ──
+  function ensureOpen(){
+    if(backEl) return;
+    backEl=document.createElement('div'); backEl.className='aa-prof-back';
+    backEl.setAttribute('role','dialog'); backEl.setAttribute('aria-modal','true'); backEl.setAttribute('aria-label','Perfil');
+    var card=document.createElement('div'); card.className='aa-prof';
+    card.addEventListener('click', function(e){ e.stopPropagation(); });
+    backEl.appendChild(card);
+    backEl.addEventListener('click', requestClose);   // clic afuera = cerrar
+    document.body.appendChild(backEl);
+    setTimeout(function(){ if(backEl) backEl.classList.add('open'); }, 10);   // en pestaña oculta el rAF se pausa → setTimeout
+    onRat=function(){ if(backEl && isSelfShowing()){ var P=selfProfile(); if(P) paintProfile(P); } };
+    document.addEventListener('aa-ratings-changed', onRat);
+    onAuth=function(e){ if(!(e.detail&&e.detail.user) && isSelfShowing()) requestClose(); };  // me deslogueé viendo MI perfil
+    document.addEventListener('aa-auth-changed', onAuth);
+    onKey=function(e){ if(e.key==='Escape') requestClose(); };
+    document.addEventListener('keydown', onKey);
+  }
+
+  function openByNick(nick){
+    nick=String(nick||'').trim(); if(!nick) return;
+    var u=myUser(), isSelf=!!(u && lower(u.username)===lower(nick));
+    ensureOpen();
+    curNick=nick;
+    setHash(nick);
+    var myReq=++reqId;
+    if(isSelf){
+      var P=selfProfile();
+      if(P){ paintProfile(P); try{ if(window.aaAuth&&window.aaAuth.refreshRatings) window.aaAuth.refreshRatings(); }catch(e){} }
+      else paintError('Iniciá sesión para ver tu perfil.');
+      return;
+    }
+    paintLoading(nick);
+    fetch(PROXY+'/u/'+encodeURIComponent(nick)).then(function(r){
+      if(r.status===404) return {__nf:true};
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      return r.json();
+    }).then(function(d){
+      if(myReq!==reqId) return;   // el usuario cambió de perfil o cerró: descartar
+      if(d && d.__nf){ paintError('Este jugador no tiene perfil en el sitio (juega como invitado).'); return; }
+      paintProfile(fromResponse(d));
+    }).catch(function(){
+      if(myReq!==reqId) return;
+      paintError('No se pudo cargar el perfil. Probá de nuevo.');
+    });
+  }
+
+  function open(opts){
+    opts=opts||{};
+    if(opts.username){ openByNick(opts.username); return; }
+    var u=myUser();
+    if(!u){ if(window.aaAuth&&window.aaAuth.login) window.aaAuth.login(); return; }   // sin sesión: mandar a login
+    openByNick(u.username);
+  }
+
+  function requestClose(){   // cierre pedido por el usuario (× / Escape / clic afuera)
+    if(location.hash && /(?:^|#|&)u=/.test(location.hash)){
+      try{ history.replaceState(null,'',location.pathname+location.search); }catch(e){ location.hash=''; }
+    }
+    doClose();
+  }
+  function doClose(){
+    if(!backEl) return;
+    var b=backEl; backEl=null; curNick=''; reqId++;
+    b.classList.remove('open');
+    if(onRat){ document.removeEventListener('aa-ratings-changed', onRat); onRat=null; }
+    if(onAuth){ document.removeEventListener('aa-auth-changed', onAuth); onAuth=null; }
+    if(onKey){ document.removeEventListener('keydown', onKey); onKey=null; }
+    setTimeout(function(){ b.remove(); }, 200);
+  }
+
+  // Sincroniza la URL (#u=nick) sin recargar. onHash() compara contra curNick → no reabre en bucle.
+  function setHash(nick){
+    var want='u='+encodeURIComponent(nick);
+    if(location.hash.replace(/^#/,'')!==want){ try{ location.hash=want; }catch(e){} }
+  }
+  function parseHash(){
+    var m=/(?:^|&)u=([^&]+)/.exec(location.hash.replace(/^#/,''));
+    if(!m) return null;
+    try{ return decodeURIComponent(m[1]); }catch(e){ return m[1]; }
+  }
+  function onHash(){
+    var nick=parseHash();
+    if(nick){ if(lower(nick)!==lower(curNick)) openByNick(nick); }
+    else if(backEl) doClose();
+  }
+  window.addEventListener('hashchange', onHash);
+  if(parseHash()) setTimeout(onHash, 0);   // deep-link al abrir con #u=nick
+
+  window.aaProfile = { open:open, close:requestClose };
 })();
 </script>
 
