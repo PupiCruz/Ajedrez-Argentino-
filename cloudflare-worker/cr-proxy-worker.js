@@ -93,6 +93,9 @@ export default {
     if (reqUrl.pathname === '/rating/me')     return ratingMe(request, env);      // GET  Bearer → mis 3 ratings
     if (reqUrl.pathname === '/rating/report') return ratingReport(request, env);  // POST secreto (sólo el worker de vivo)
 
+    // ── Progreso de EJERCICIOS atado a la cuenta (viaja entre dispositivos) ──
+    if (reqUrl.pathname === '/puz/progress')  return puzProgress(request, env);   // GET (leer) / POST (guardar), Bearer
+
     // ── Edición desde el teléfono (editar.html) ──
     if (reqUrl.pathname === '/admin/live') return adminLive(request, env);
     if (reqUrl.pathname === '/admin/save') return adminSave(request, env);
@@ -1146,6 +1149,58 @@ async function ratingReport(request, env) {
     white: { rating: newW, delta: newW - rw.rating, games: rw.games + 1, prov: ratingIsProv(rw.games + 1) },
     black: { rating: newB, delta: newB - rb.rating, games: rb.games + 1, prov: ratingIsProv(rb.games + 1) },
   });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PROGRESO DE EJERCICIOS ATADO A LA CUENTA — /puz/progress
+// ─────────────────────────────────────────────────────────────────────────────
+// El progreso de táctica (rating, resueltos, rachas, calendario) vivía SÓLO en el
+// navegador (localStorage). Acá lo guardamos por usuario así viaja entre dispositivos.
+// No es competitivo (es progreso personal), así que alcanza con guardar el "blob" que
+// arma el cliente; no hace falta recalcularlo en el servidor.
+//   GET  /puz/progress  (Bearer) → { progress: <blob|null>, solved }
+//   POST /puz/progress  (Bearer, body = blob JSON) → { ok:true }
+const PUZ_PROGRESS_MAX = 200000;   // tope de tamaño del blob (~200 KB, de sobra)
+
+async function ensurePuzProgressTable(env) {
+  await env.DB.prepare(
+    'CREATE TABLE IF NOT EXISTS user_puzzle (' +
+    'user_id TEXT PRIMARY KEY, data TEXT, solved INTEGER, updated INTEGER)'
+  ).run();
+}
+
+async function puzProgress(request, env) {
+  if (!env.DB) return errJson('Falta el binding D1 (DB)', 500);
+  const u = await sessionUser(request, env);
+  if (!u) return errJson('No autenticado', 401);
+  await ensurePuzProgressTable(env);
+
+  if (request.method === 'GET') {
+    const row = await env.DB.prepare('SELECT data, solved FROM user_puzzle WHERE user_id=?1').bind(u.id).first();
+    if (!row || !row.data) return jsonResp({ progress: null, solved: 0 });
+    let progress = null;
+    try { progress = JSON.parse(row.data); } catch (e) { progress = null; }
+    return jsonResp({ progress, solved: row.solved || 0 });
+  }
+
+  if (request.method === 'POST') {
+    const text = await request.text();
+    if (!text || text.length > PUZ_PROGRESS_MAX) return errJson('Blob inválido o demasiado grande', 400);
+    let obj;
+    try { obj = JSON.parse(text); } catch (e) { return errJson('JSON inválido', 400); }
+    if (!obj || typeof obj !== 'object') return errJson('Blob inválido', 400);
+    const solved = Math.max(0, Math.floor(+obj.solved || +obj.n || 0));
+    const now = Math.floor(Date.now() / 1000);
+    try {
+      await env.DB.prepare(
+        'INSERT INTO user_puzzle (user_id, data, solved, updated) VALUES (?1,?2,?3,?4) ' +
+        'ON CONFLICT(user_id) DO UPDATE SET data=?2, solved=?3, updated=?4'
+      ).bind(u.id, text, solved, now).run();
+    } catch (e) { return errJson('D1 error: ' + e.message, 500); }
+    return jsonResp({ ok: true });
+  }
+
+  return errJson('Método no soportado', 405);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
