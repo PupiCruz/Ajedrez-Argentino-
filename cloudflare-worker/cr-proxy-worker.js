@@ -88,7 +88,9 @@ export default {
     if (reqUrl.pathname === '/auth/lichess') return authLichess(request, env);
     if (reqUrl.pathname === '/me')           return authMe(request, env);
     if (reqUrl.pathname === '/logout')       return authLogout(request, env);
-    if (reqUrl.pathname.startsWith('/u/'))   return publicProfile(reqUrl, env);   // GET público → perfil de <usuario>
+    if (reqUrl.pathname.startsWith('/u/'))   return publicProfile(request, reqUrl, env);   // GET público → perfil de <usuario>
+    if (reqUrl.pathname === '/follow')       return followToggle(request, env, true);      // POST Bearer {userId}
+    if (reqUrl.pathname === '/unfollow')     return followToggle(request, env, false);     // POST Bearer {userId}
 
     // ── Rating de partidas en vivo (PvP) — propio del sitio, server-authoritative ──
     if (reqUrl.pathname === '/rating/me')     return ratingMe(request, env);      // GET  Bearer → mis 3 ratings
@@ -1094,7 +1096,7 @@ async function ratingMe(request, env) {
 // identidad + rating de Lichess + los 3 ratings del sitio + táctica (rating/resueltos).
 // Nunca el token de Lichess ni e-mail. Si el usuario no existe (ej. un invitado de una
 // partida) → 404 "sin perfil". Búsqueda por nombre sin distinguir mayúsculas.
-async function publicProfile(reqUrl, env) {
+async function publicProfile(request, reqUrl, env) {
   if (!env.DB) return errJson('Falta el binding D1 (DB)', 500);
   let handle = '';
   try { handle = decodeURIComponent(reqUrl.pathname.slice(3)); } catch (e) { handle = reqUrl.pathname.slice(3); }
@@ -1127,10 +1129,60 @@ async function publicProfile(reqUrl, env) {
     }
   } catch (e) { /* si falla la táctica, el perfil sale igual sin ella */ }
 
+  // Seguidores / siguiendo (públicos) + si el que pregunta (si mandó su sesión) ya lo sigue.
+  let followers = 0, following = 0, youFollow = false;
+  try {
+    await ensureFollowTable(env);
+    const a = await env.DB.prepare('SELECT COUNT(*) AS n FROM follows WHERE followee_id=?1').bind(u.id).first();
+    const b = await env.DB.prepare('SELECT COUNT(*) AS n FROM follows WHERE follower_id=?1').bind(u.id).first();
+    followers = (a && a.n) || 0; following = (b && b.n) || 0;
+    const me = await sessionUser(request, env);   // opcional: /u/ no exige login
+    if (me && me.id !== u.id) {
+      const f = await env.DB.prepare('SELECT 1 AS x FROM follows WHERE follower_id=?1 AND followee_id=?2').bind(me.id, u.id).first();
+      youFollow = !!f;
+    }
+  } catch (e) { /* si falla, el perfil sale igual sin seguidores */ }
+
   return jsonResp({
     id: u.id, username: u.username, title: u.title || null, ratingLichess: u.rating || null,
-    ratings, games, prov, tactic,
+    ratings, games, prov, tactic, followers, following, youFollow,
   });
+}
+
+// Crea (si falta) la tabla de "seguir". Mismo patrón perezoso que las demás.
+async function ensureFollowTable(env) {
+  await env.DB.prepare(
+    'CREATE TABLE IF NOT EXISTS follows (follower_id TEXT NOT NULL, followee_id TEXT NOT NULL, ' +
+    'created_at INTEGER, PRIMARY KEY (follower_id, followee_id))'
+  ).run();
+}
+
+// POST /follow  ·  POST /unfollow   (Authorization: Bearer <sesión>, body { userId })
+// follower = el dueño de la sesión; followee = userId del body.
+async function followToggle(request, env, follow) {
+  if (request.method !== 'POST') return errJson('Usá POST', 405);
+  if (!env.DB) return errJson('Falta el binding D1 (DB)', 500);
+  const me = await sessionUser(request, env);
+  if (!me) return errJson('No autenticado', 401);
+  let body; try { body = await request.json(); } catch (e) { return errJson('JSON inválido', 400); }
+  const target = String(body.userId || '');
+  if (!target) return errJson('Falta userId', 400);
+  if (target === me.id) return errJson('No podés seguirte a vos mismo', 400);
+  await ensureUserTables(env);
+  await ensureFollowTable(env);
+  const exists = await env.DB.prepare('SELECT id FROM usuarios WHERE id=?1').bind(target).first();
+  if (!exists) return errJson('Usuario no encontrado', 404);
+  const now = Math.floor(Date.now() / 1000);
+  try {
+    if (follow) {
+      await env.DB.prepare('INSERT OR IGNORE INTO follows (follower_id, followee_id, created_at) VALUES (?1,?2,?3)')
+        .bind(me.id, target, now).run();
+    } else {
+      await env.DB.prepare('DELETE FROM follows WHERE follower_id=?1 AND followee_id=?2').bind(me.id, target).run();
+    }
+  } catch (e) { return errJson('D1 error: ' + e.message, 500); }
+  const fc = await env.DB.prepare('SELECT COUNT(*) AS n FROM follows WHERE followee_id=?1').bind(target).first();
+  return jsonResp({ ok: true, following: !!follow, followers: (fc && fc.n) || 0 });
 }
 
 // POST /rating/report  (header X-Vivo-Secret) — SÓLO lo llama el worker de vivo cuando

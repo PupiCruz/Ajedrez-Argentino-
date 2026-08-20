@@ -2465,6 +2465,23 @@
       .lv-pending-btns { display:flex; gap:6px; }
       .lv-pending-btns button { flex:1; padding:6px 8px; font-size:12px; white-space:nowrap; }
       @media (max-width:600px){ .lv-pending { left:10px; bottom:10px; width:190px; } }
+      /* Cartel de DESAFÍO ENTRANTE (alguien te reta): arriba al centro, bien visible en cualquier pestaña. */
+      .lv-incoming { position:fixed; left:50%; top:16px; transform:translateX(-50%); z-index:100002;
+        display:flex; align-items:center; gap:14px; padding:12px 16px; border-radius:14px;
+        background:var(--bg3); border:1px solid var(--gold-dim); box-shadow:0 12px 34px rgba(0,0,0,.45);
+        animation:lvPop .3s cubic-bezier(.2,1.2,.5,1); max-width:calc(100vw - 24px); }
+      .lv-inc-txt { display:flex; flex-direction:column; line-height:1.3; }
+      .lv-inc-txt b { color:var(--text); font-size:14.5px; }
+      .lv-inc-txt span { color:var(--text2); font-size:12.5px; margin-top:2px; }
+      .lv-inc-rat { color:var(--gold); font-weight:800; }
+      .lv-inc-btns { display:flex; gap:8px; flex:0 0 auto; }
+      .lv-inc-btns button { padding:8px 14px; border-radius:10px; font-size:13px; font-weight:700; cursor:pointer;
+        font-family:inherit; border:1px solid var(--border); white-space:nowrap; }
+      .lv-inc-no { background:var(--bg2); color:var(--text2); }
+      .lv-inc-no:hover { background:var(--border); color:var(--text); }
+      .lv-inc-yes { border:none; color:#fff; background:linear-gradient(135deg,#52b788,#2e9e6b); box-shadow:0 4px 14px rgba(46,158,107,.4); }
+      .lv-inc-yes:hover { filter:brightness(1.06); }
+      @media (max-width:520px){ .lv-incoming { flex-direction:column; align-items:stretch; gap:10px; width:calc(100vw - 24px); } .lv-inc-btns button { flex:1; } }
       .lv-lobby-card h3 { font-size:19px; font-weight:800; margin:0 0 6px; letter-spacing:-.3px; }
       .lv-lobby-card h4 { font-size:15px; font-weight:700; margin:0 0 8px; }
       .lv-lobby-card p { color:var(--text2); font-size:13.5px; margin:0 0 14px; line-height:1.5; }
@@ -17997,6 +18014,8 @@ function goTo(sec, btn) {
   if (_pl && _pl.classList.contains('open')) {
     _pl.classList.remove('open'); _playerPageOff(); _playerHistoryPushed = false; _tourReturnToProfile = false;
   }
+  // Si hay un PERFIL DE USUARIO abierto como página, cerrarlo también (la nav navega a la sección elegida).
+  if (document.body.classList.contains('prof-page') && window.aaProfile && window.aaProfile.close) { try { window.aaProfile.close(); } catch (_) {} }
   // La partida puede haberse abierto SIN torneo de fondo (desde la pestaña Partidas) → limpiar la URL
   // ?torneo=&partida= que pudo quedar, para que la nav deje una URL coherente con la sección.
   if (location.search) { try { history.replaceState({}, '', location.pathname); } catch (_) {} }
@@ -30242,6 +30261,14 @@ function cvUpdateNagBadge() {
     ev.preventDefault(); ev.stopPropagation();
     if(window.aaProfile && window.aaProfile.open) window.aaProfile.open({username:nick, peek:true});   // vistazo (overlay)
   });
+  var lvIncomingTimer=null;        // auto-cierre del cartel de desafío entrante
+  var lvChallengeWaiting=null;     // {target,name} mientras espero que acepten mi desafío dirigido
+  // Conectar al lobby al loguearse (aunque no estés en Jugar): así recibís desafíos dirigidos y
+  // figurás "en línea" desde cualquier pestaña. Al desloguearse, cerrar si ya no hace falta.
+  document.addEventListener('aa-auth-changed', function(e){
+    try{ if(e.detail && e.detail.user) lobbyConnect(); else if(!lvKeepLobby()) lobbyClose(); }catch(_){}
+  });
+  setTimeout(function(){ try{ if(lvAuthUser()) lobbyConnect(); }catch(_){} }, 1400);   // ya logueado al abrir
   var lvRatingMsg='';   // texto del cambio de MI rating al terminar (ej. "⚡ Blitz: +12 → 1212")
   var lvManualFlip=false, lvResultCode='*', lvResult=null, lvBannerDismissed=false;
   var lvRenderedFen='';   // FEN que está dibujado ahora (para saltear el redibujado del eco y no cortar la animación)
@@ -30977,10 +31004,17 @@ function cvUpdateNagBadge() {
       maybeSendConfig();
       updateShare();
       // Publico mi desafío en el lobby recién ahora, ya sentado (blancas o negras) y esperando.
+      // Si es DIRIGIDO (desde un perfil), va como challenge-direct; si no, como desafío abierto.
       if(lvPubParams && (lvMyColor==='w'||lvMyColor==='b') && lvStatus==='waiting'){
-        lvMyChallenge={ id:lvSala, name:lvPubParams.name, base:lvPubParams.base, inc:lvPubParams.inc, seat:lvMyColor, rating:lvPubParams.rating, prov:lvPubParams.prov };
-        lvPubParams=null;
-        lobbyConnect(); lobbySend({type:'create', id:lvMyChallenge.id, name:lvMyChallenge.name, base:lvMyChallenge.base, inc:lvMyChallenge.inc, seat:lvMyColor, rating:lvMyChallenge.rating, prov:lvMyChallenge.prov});
+        var pp=lvPubParams; lvPubParams=null;
+        lvMyChallenge={ id:lvSala, name:pp.name, base:pp.base, inc:pp.inc, seat:lvMyColor, rating:pp.rating, prov:pp.prov, target:pp.target||null, targetName:pp.targetName||null };
+        lobbyConnect();
+        if(pp.target){
+          lobbySend({type:'challenge-direct', id:lvMyChallenge.id, target:pp.target, name:lvMyChallenge.name, base:lvMyChallenge.base, inc:lvMyChallenge.inc, seat:lvMyColor, rating:lvMyChallenge.rating, prov:lvMyChallenge.prov});
+          setStatus('Desafío enviado a '+(pp.targetName||'tu rival')+' — esperando respuesta…');
+        } else {
+          lobbySend({type:'create', id:lvMyChallenge.id, name:lvMyChallenge.name, base:lvMyChallenge.base, inc:lvMyChallenge.inc, seat:lvMyColor, rating:lvMyChallenge.rating, prov:lvMyChallenge.prov});
+        }
         updatePendingPill();
       }
     } else if(m.type==='state'){
@@ -31142,21 +31176,28 @@ function cvUpdateNagBadge() {
   }
   function setChalConn(t){ var e=$('lv-chal-conn'); if(e) e.textContent=t||''; }
   function lobbySend(o){ try{ if(lobbyWs && lobbyWs.readyState===1) lobbyWs.send(JSON.stringify(o)); }catch(e){} }
+  // ¿Mantener el lobby conectado? Sí si estás en la pestaña Jugar, o tenés un desafío/partida,
+  // o estás LOGUEADO (para recibir desafíos dirigidos y figurar "en línea" desde cualquier pestaña).
+  function lvKeepLobby(){ return lvOnTab || !!lvMyChallenge || !!lvAuthUser(); }
   function lobbyConnect(){
     if(lobbyWs && (lobbyWs.readyState===0 || lobbyWs.readyState===1)) return;
     lvLobbyIntentional=false;
-    var url=serverBase().replace(/^http/,'ws')+'/lobby/ws';
+    var tok=lvAuthToken();
+    var url=serverBase().replace(/^http/,'ws')+'/lobby/ws'+(tok?('?auth='+encodeURIComponent(tok)):'');
     try{ lobbyWs=new WebSocket(url); }catch(e){ setChalConn('No pude conectar al lobby.'); return; }
     setChalConn('Conectando…');
     lobbyWs.onopen=function(){
       lvLobbyTries=0; setChalConn('');
       // Si soy anfitrión esperando, re-publico mi desafío (el DO lo perdió al caerse el ws).
-      if(lvMyChallenge && lvStatus==='waiting') lobbySend({type:'create', id:lvMyChallenge.id, name:lvMyChallenge.name, base:lvMyChallenge.base, inc:lvMyChallenge.inc, seat:lvMyChallenge.seat, rating:lvMyChallenge.rating, prov:lvMyChallenge.prov});
+      if(lvMyChallenge && lvStatus==='waiting'){
+        if(lvMyChallenge.target) lobbySend({type:'challenge-direct', id:lvMyChallenge.id, target:lvMyChallenge.target, name:lvMyChallenge.name, base:lvMyChallenge.base, inc:lvMyChallenge.inc, seat:lvMyChallenge.seat, rating:lvMyChallenge.rating, prov:lvMyChallenge.prov});
+        else lobbySend({type:'create', id:lvMyChallenge.id, name:lvMyChallenge.name, base:lvMyChallenge.base, inc:lvMyChallenge.inc, seat:lvMyChallenge.seat, rating:lvMyChallenge.rating, prov:lvMyChallenge.prov});
+      }
     };
     lobbyWs.onmessage=function(e){ var m; try{ m=JSON.parse(e.data); }catch(_){ return; } handleLobby(m); };
     lobbyWs.onclose=function(){
       lobbyWs=null;
-      if(!lvOnTab || lvLobbyIntentional) return;   // salimos de la pestaña → no reconectar
+      if(lvLobbyIntentional || !lvKeepLobby()) return;   // ya no hace falta → no reconectar
       if(lvLobbyTries<10){ lvLobbyTries++; setChalConn('Reconectando al lobby…'); lvLobbyTimer=setTimeout(lobbyConnect, Math.min(1200*lvLobbyTries,6000)); }
       else setChalConn('Sin conexión al lobby.');
     };
@@ -31173,7 +31214,64 @@ function cvUpdateNagBadge() {
     else if(m.type==='challenge-remove'){ lvChallenges=lvChallenges.filter(function(c){return c.id!==m.id;}); renderChallenges(); }
     else if(m.type==='accepted'){ if(m.id===lvAccepting){ lvAccepting=null; join(m.id); } }
     else if(m.type==='taken'){ if(m.id===lvAccepting){ lvAccepting=null; setLobbyMsg('Ese desafío ya no está disponible 😕'); } lvChallenges=lvChallenges.filter(function(c){return c.id!==m.id;}); renderChallenges(); }
+    // ── Desafíos DIRIGIDOS ──
+    else if(m.type==='challenge-incoming'){ lvShowIncoming(m); }                 // me desafían: cartel
+    else if(m.type==='challenge-sent'){ setStatus('Desafío enviado — esperando respuesta…'); }
+    else if(m.type==='challenge-unavailable'){                                   // el rival no está conectado
+      var nm=(lvChallengeWaiting&&lvChallengeWaiting.name)||'Ese jugador';
+      lvChallengeWaiting=null; lvToast(nm+' no está disponible ahora mismo 😕'); exit();
+    }
+    else if(m.type==='challenge-declined'){                                      // el rival rechazó
+      lvChallengeWaiting=null; lvToast((m.by||'Tu rival')+' rechazó el desafío.'); exit();
+    }
+    else if(m.type==='challenge-error'){ lvChallengeWaiting=null; lvToast('No se pudo enviar el desafío.'); exit(); }
   }
+
+  // Cartel flotante cuando ALGUIEN te desafía (aparece en cualquier pestaña de la app).
+  function lvShowIncoming(m){
+    lvDismissIncoming();
+    var d=document.createElement('div'); d.id='lv-incoming'; d.className='lv-incoming';
+    var who=lvEsc((m.from&&m.from.name)||'Alguien');
+    var rat=(m.from&&m.from.rating!=null)?(' <span class="lv-inc-rat">'+m.from.rating+(m.from.prov?'?':'')+'</span>'):'';
+    d.innerHTML='<div class="lv-inc-txt"><b>⚔️ '+who+rat+' te desafía</b><span>'+lvEsc(tcLabel(m.base,m.inc))+'</span></div>'+
+      '<div class="lv-inc-btns"><button type="button" class="lv-inc-no">Rechazar</button>'+
+      '<button type="button" class="lv-inc-yes">Aceptar</button></div>';
+    document.body.appendChild(d);
+    d.querySelector('.lv-inc-yes').onclick=function(){ var id=m.id; lvDismissIncoming(); acceptChallenge(id); goToVivoGame(); };
+    d.querySelector('.lv-inc-no').onclick=function(){ lobbySend({type:'challenge-decline', id:m.id}); lvDismissIncoming(); };
+    try{ if(typeof sndDraw==='function') sndDraw(); }catch(e){}
+    lvIncomingTimer=setTimeout(lvDismissIncoming, 30000);   // caduca solo a los 30s
+  }
+  function lvDismissIncoming(){ var e=$('lv-incoming'); if(e) e.remove(); if(lvIncomingTimer){ clearTimeout(lvIncomingTimer); lvIncomingTimer=null; } }
+
+  // Toast simple del vivo (reusa el estilo .aa-toast del módulo de cuentas).
+  function lvToast(msg){
+    var t=document.createElement('div'); t.className='aa-toast'; t.textContent=msg; document.body.appendChild(t);
+    setTimeout(function(){ t.classList.add('show'); }, 10);
+    setTimeout(function(){ t.classList.remove('show'); setTimeout(function(){ t.remove(); },250); }, 2600);
+  }
+
+  // Desafiar a un usuario puntual (lo llama el perfil). Crea una sala, me siento de anfitrión
+  // y mando el desafío DIRIGIDO. Requiere estar logueado (el rival también, y conectado).
+  function lvChallengeUser(target, targetName, cBase, cInc, seatSel){
+    if(!lvAuthUser()){ if(window.aaAuth&&window.aaAuth.login) window.aaAuth.login(); return; }
+    cBase=Math.max(0,Math.min(3600,Math.floor(+cBase||0))); cInc=Math.max(0,Math.min(60,Math.floor(+cInc||0)));
+    var pnm=lvPlayerName()||'Anónimo';
+    var myR=lvMyRating(lvTcCategory(cBase,cInc));
+    lvSeatPref=(seatSel==='w')?'w':(seatSel==='b')?'b':(Math.random()<0.5?'w':'b');
+    lvPubParams={ name:pnm, base:cBase, inc:cInc, rating:myR?myR.r:null, prov:myR?myR.prov:false, target:target, targetName:targetName };
+    lvMyChallenge=null; lvChallengeWaiting={ target:target, name:targetName };
+    fetch(serverBase()+'/sala/nueva', {method:'POST'})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if(!d || !d.id){ lvToast('No pude crear la sala ⚠️'); lvChallengeWaiting=null; return; }
+        lvSala=d.id; lvToken=''; try { localStorage.removeItem('lv_tok_'+d.id); } catch(e){}
+        resetState(); showGame(); wireBoard(); startTicker(); renderBoard(); setSalaUrl(d.id);
+        lvIntentionalClose=false; connect(d.id); goToVivoGame();
+      })
+      .catch(function(){ lvChallengeWaiting=null; lvToast('No pude crear la sala. ¿Hay internet?'); });
+  }
+  window.__lvChallengeUser=lvChallengeUser;   // lo usa la pantalla de perfil
   function renderChallenges(){
     var list=$('lv-chal-list'), cnt=$('lv-chal-count'); if(!list) return;
     var arr=lvChallenges.slice().sort(function(a,b){ return (b.createdAt||0)-(a.createdAt||0); });
@@ -31219,7 +31317,7 @@ function cvUpdateNagBadge() {
   window.__lvVivoShow=function(){ lvOnTab=true; lvUpdateIdentityUI(); renderChallenges(); lobbyConnect(); updatePendingPill(); };
   // Al salir de la pestaña: si tengo un desafío abierto (o partida en curso), mantengo el
   // lobby conectado en segundo plano para que el reto siga listado y me traigan al empezar.
-  window.__lvVivoHide=function(){ lvOnTab=false; if(!lvMyChallenge) lobbyClose(); updatePendingPill(); };
+  window.__lvVivoHide=function(){ lvOnTab=false; if(!lvKeepLobby()) lobbyClose(); updatePendingPill(); };
 
   // ── Cableado de botones ─────────────────────────────────────────────────────
   function wireButtons(){
@@ -31768,30 +31866,44 @@ function cvUpdateNagBadge() {
   .aa-prof-copy:hover{background:var(--border);color:var(--text)}
   .aa-prof-foot-note{font-size:.78rem;color:var(--text3,#9a9a9a);line-height:1.45;flex:1;min-width:150px}
   .aa-prof-foot-note b{color:var(--text2)}
+  /* Contadores de seguidores / siguiendo */
+  .aa-prof-counts{font-size:.85rem;color:var(--text2);margin-top:12px}
+  .aa-prof-counts b{color:var(--text);font-weight:800}
+  /* Diálogo "Desafiar": selector de ritmo + color */
+  .aa-ch-tc{width:100%;padding:11px 12px;border-radius:11px;border:1px solid var(--border);background:var(--bg2);
+    color:var(--text);font-family:inherit;font-size:.92rem;margin-bottom:12px}
+  .aa-ch-color{display:flex;gap:8px;margin-bottom:18px}
+  .aa-ch-seg{flex:1;padding:9px 5px;border-radius:10px;border:1px solid var(--border);background:var(--bg2);
+    color:var(--text2);font-weight:700;font-size:.8rem;cursor:pointer;font-family:inherit}
+  .aa-ch-seg.on{border-color:var(--gold);color:var(--text);background:var(--gold-bg,var(--bg3))}
   /* Nick clickeable (nombre del rival en la partida en vivo / lobby) */
   .aa-nick-clk{cursor:pointer;border-bottom:1px dotted currentColor}
   .aa-nick-clk:hover{opacity:.82}
-  /* ── Perfil como PÁGINA completa (pantalla entera, con barra y "Volver") ── */
-  .aa-profpage-back{position:fixed;inset:0;z-index:99999;background:var(--bg);overflow-y:auto;opacity:0;
+  /* ── Perfil como PÁGINA completa: mismo criterio que torneo / perfil de jugador → el HEADER y la
+        NAV del sitio quedan visibles arriba (para navegar), subiéndolos por encima con body.prof-page.
+        La página va DEBAJO del header (z-190). El contenido reserva el alto real del header. ── */
+  body.prof-page header, body.prof-page nav { z-index: 210; }
+  .aa-profpage-back{position:fixed;inset:0;z-index:190;overflow-y:auto;opacity:0;
+    background:var(--bg) var(--bg-img) center center / cover fixed no-repeat;
     transition:opacity .18s;-webkit-overflow-scrolling:touch}
   .aa-profpage-back.open{opacity:1}
   .aa-profpage{min-height:100%;display:flex;flex-direction:column}
-  .aa-profpage-bar{position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:12px;padding:11px 14px;
-    background:var(--bg2);border-bottom:1px solid var(--border)}
-  .aa-profpage-back-btn{display:inline-flex;align-items:center;gap:6px;padding:8px 13px;border-radius:10px;border:1px solid var(--border);
-    background:var(--bg3);color:var(--text);font-weight:700;font-size:.88rem;cursor:pointer;font-family:inherit;white-space:nowrap}
-  .aa-profpage-back-btn:hover{background:var(--border)}
-  .aa-profpage-title{font-weight:800;color:var(--text);font-size:1rem;flex:1;text-align:center;
-    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .aa-profpage-wrap{flex:1;display:flex;justify-content:center;padding:26px 16px 64px}
+  .aa-profpage-wrap{flex:1;display:flex;justify-content:center;
+    padding:calc(18px + var(--hdr-real)) 16px calc(var(--nav-h) + 28px)}
   .aa-profpage-body{width:100%;max-width:640px}
+  /* Fila propia del perfil (Volver + Copiar link). NO sticky: el header del sitio ya está arriba. */
+  .aa-pp-top{display:flex;align-items:center;gap:10px;margin-bottom:18px}
+  .aa-pp-btn{display:inline-flex;align-items:center;gap:6px;padding:8px 13px;border-radius:10px;border:1px solid var(--border);
+    background:var(--bg3);color:var(--text);font-weight:700;font-size:.85rem;cursor:pointer;font-family:inherit;white-space:nowrap}
+  .aa-pp-btn:hover{background:var(--border)}
+  .aa-pp-spacer{flex:1}
   /* En la página, el avatar y el nombre van un poco más grandes */
   .aa-profpage-body .aa-prof-av{width:82px;height:82px;font-size:1.9rem;border-radius:24px}
   .aa-profpage-body .aa-prof-name{font-size:1.7rem}
   @media(max-width:480px){
     .aa-profpage-body .aa-prof-av{width:64px;height:64px;font-size:1.4rem}
     .aa-profpage-body .aa-prof-name{font-size:1.3rem}
-    .aa-profpage-wrap{padding:20px 12px 48px}
+    .aa-profpage-wrap{padding-left:12px;padding-right:12px}
   }
 </style>
 <script>
@@ -31802,6 +31914,7 @@ function cvUpdateNagBadge() {
   var backEl=null, onRat=null, onAuth=null, onKey=null;
   var curNick='';     // usuario que se está mostrando (con su mayúsc/minúsc real); '' si cerrado
   var curMode=null;   // 'overlay' (vistazo) | 'page' (página completa) | null (cerrado)
+  var curProfile=null;// objeto P del perfil que se está mostrando (para el botón Seguir)
   var reqId=0;        // para descartar respuestas de fetch viejas al cambiar de perfil
 
   function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){
@@ -31827,14 +31940,15 @@ function cvUpdateNagBadge() {
   function selfProfile(){
     var u=myUser(); if(!u) return null;
     var R=myRatings()||{}, t=myTactic();
-    return { username:u.username, title:u.title||null, ratingLichess:u.rating||null,
+    return { id:u.id||null, username:u.username, title:u.title||null, ratingLichess:u.rating||null,
       ratings:R.ratings||{}, games:R.games||{}, prov:R.prov||{},
-      tactic:{ rating:t.rating, solved:t.solved }, isSelf:true, online:true };
+      tactic:{ rating:t.rating, solved:t.solved }, isSelf:true, online:true };   // followers/following los trae fetchSelfCounts
   }
   function fromResponse(d){
-    return { username:d.username, title:d.title||null, ratingLichess:d.ratingLichess||null,
+    return { id:d.id||null, username:d.username, title:d.title||null, ratingLichess:d.ratingLichess||null,
       ratings:d.ratings||{}, games:d.games||{}, prov:d.prov||{},
-      tactic:d.tactic||null, isSelf:false, online:false };
+      tactic:d.tactic||null, isSelf:false, online:false,
+      followers:d.followers, following:d.following, youFollow:!!d.youFollow };
   }
 
   // ── Armado del HTML ──
@@ -31868,10 +31982,17 @@ function cvUpdateNagBadge() {
   }
   function actionsHtml(P, mode){
     if(P.isSelf || mode!=='page') return '';   // Desafiar/Seguir sólo en la PÁGINA (el overlay es un vistazo)
+    var following=!!P.youFollow;
+    var followBtn='<button class="aa-prof-btn" data-act="follow">'+(following?'✓ Siguiendo':'➕ Seguir')+'</button>';
     return '<div class="aa-prof-actions">'+
-      '<button class="aa-prof-btn primary" data-act="challenge">⚔️ Desafiar <span class="aa-prof-mini">pronto</span></button>'+
-      '<button class="aa-prof-btn" data-act="follow">➕ Seguir <span class="aa-prof-mini">pronto</span></button>'+
+      '<button class="aa-prof-btn primary" data-act="challenge">⚔️ Desafiar</button>'+
+      followBtn+
     '</div>';
+  }
+  function countsHtml(P){
+    if(typeof P.followers!=='number' && typeof P.following!=='number') return '';
+    var f=P.followers||0, g=P.following||0;
+    return '<div class="aa-prof-counts"><b>'+f+'</b> '+(f===1?'seguidor':'seguidores')+' · <b>'+g+'</b> siguiendo</div>';
   }
   function tacticHtml(P){
     var T=P.tactic, has=!!(T && (T.rating!=null || (T.solved||0)>0)) || P.isSelf;
@@ -31902,7 +32023,7 @@ function cvUpdateNagBadge() {
     return '<div class="aa-prof-foot"><span class="aa-prof-foot-note">'+note+'</span></div>';
   }
   function profileHtml(P, mode){
-    return heroHtml(P)+actionsHtml(P,mode)+
+    return heroHtml(P)+countsHtml(P)+actionsHtml(P,mode)+
       '<div class="aa-prof-lbl">'+(P.isSelf?'Tus ratings del sitio':'Ratings del sitio')+'</div>'+
       '<div class="aa-prof-rats">'+ratCardsHtml(P)+'</div>'+
       tacticHtml(P)+footHtml(P,mode);
@@ -31912,18 +32033,92 @@ function cvUpdateNagBadge() {
   function contentNode(){ return backEl ? (curMode==='page' ? backEl.querySelector('.aa-profpage-body') : backEl.querySelector('.aa-prof')) : null; }
   function setContent(html){
     var node=contentNode(); if(!node) return;
-    if(curMode==='page'){ node.innerHTML=html; }
-    else {
+    if(curMode==='page'){
+      node.innerHTML='<div class="aa-pp-top"><button class="aa-pp-btn" data-act="back" type="button">← Volver</button>'+
+        '<span class="aa-pp-spacer"></span><button class="aa-pp-btn" data-act="copy" type="button">🔗 Copiar link</button></div>'+html;
+      var bk=node.querySelector('[data-act="back"]'); if(bk) bk.addEventListener('click', requestClose);
+    } else {
       node.innerHTML='<button class="aa-prof-x" type="button" aria-label="Cerrar">×</button>'+html;
       var x=node.querySelector('.aa-prof-x'); if(x) x.addEventListener('click', requestClose);
     }
     var cp=node.querySelector('[data-act="copy"]'); if(cp) cp.addEventListener('click', copyLink);
-    var ch=node.querySelector('[data-act="challenge"]'); if(ch) ch.addEventListener('click', function(){ toast('Desafiar llega en la próxima etapa ⚔️'); });
-    var fo=node.querySelector('[data-act="follow"]'); if(fo) fo.addEventListener('click', function(){ toast('Seguir llega en la próxima etapa 🙂'); });
+    var ch=node.querySelector('[data-act="challenge"]'); if(ch) ch.addEventListener('click', function(){ openChallengeDialog(curProfile); });
+    var fo=node.querySelector('[data-act="follow"]'); if(fo) fo.addEventListener('click', function(){ doFollowToggle(fo); });
     var fl=node.querySelector('[data-act="full"]'); if(fl) fl.addEventListener('click', function(){ openView(curNick, 'page'); });   // overlay → página
   }
-  function setBarTitle(t){ if(!backEl||curMode!=='page') return; var el=backEl.querySelector('.aa-profpage-title'); if(el) el.textContent=t||'Perfil'; }
-  function paintProfile(P){ curNick=P.username||curNick; setBarTitle(curNick); setContent(profileHtml(P, curMode)); }
+  function paintProfile(P){ curProfile=P; curNick=P.username||curNick; setContent(profileHtml(P, curMode)); }
+
+  // Seguir / dejar de seguir al perfil que se está mostrando (requiere sesión).
+  function doFollowToggle(btn){
+    var tok=(window.aaAuth&&window.aaAuth.getToken)?window.aaAuth.getToken():'';
+    if(!tok){ if(window.aaAuth&&window.aaAuth.login) window.aaAuth.login(); return; }   // sin sesión: mandar a login
+    if(!curProfile||!curProfile.id) return;
+    var willFollow=!curProfile.youFollow, P=curProfile;
+    if(btn) btn.disabled=true;
+    fetch(PROXY+(willFollow?'/follow':'/unfollow'),{ method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},
+      body:JSON.stringify({userId:P.id}) })
+      .then(function(r){ return r.ok?r.json():Promise.reject(); })
+      .then(function(d){
+        P.youFollow=!!d.following;
+        if(typeof d.followers==='number') P.followers=d.followers;
+        if(curProfile===P) paintProfile(P);
+      })
+      .catch(function(){ if(btn) btn.disabled=false; toast('No se pudo actualizar. Probá de nuevo.'); });
+  }
+  // Mi perfil se pinta con datos locales (instantáneo); los contadores de seguidores los trae el Worker.
+  function fetchSelfCounts(P, myReq){
+    var tok=(window.aaAuth&&window.aaAuth.getToken)?window.aaAuth.getToken():'';
+    var h={}; if(tok) h['Authorization']='Bearer '+tok;
+    fetch(PROXY+'/u/'+encodeURIComponent(P.username),{headers:h}).then(function(r){ return r.ok?r.json():null; }).then(function(d){
+      if(!d || myReq!==reqId) return;   // el usuario cambió de perfil / cerró
+      P.followers=d.followers; P.following=d.following;
+      if(curProfile===P) paintProfile(P);
+    }).catch(function(){});
+  }
+
+  // Diálogo "Desafiar a <usuario>": elegir ritmo + color → dispara el desafío dirigido del vivo.
+  function openChallengeDialog(P){
+    if(!P || !P.id) return;
+    var tok=(window.aaAuth&&window.aaAuth.getToken)?window.aaAuth.getToken():'';
+    if(!tok){ if(window.aaAuth&&window.aaAuth.login) window.aaAuth.login(); return; }   // hay que estar logueado
+    var opts=[['300,0','5+0 · Blitz'],['180,0','3+0 · Blitz'],['180,2','3+2 · Blitz'],['300,3','5+3 · Blitz'],
+      ['600,0','10+0 · Rápida'],['600,5','10+5 · Rápida'],['900,10','15+10 · Rápida'],['60,0','1+0 · Bala'],['0,0','Sin reloj']];
+    var optHtml=opts.map(function(o){ return '<option value="'+o[0]+'"'+(o[0]==='300,0'?' selected':'')+'>'+o[1]+'</option>'; }).join('');
+    var back=document.createElement('div'); back.className='aa-modal-back';
+    back.innerHTML='<div class="aa-modal" role="dialog" aria-modal="true" aria-label="Desafiar">'+
+      '<div class="aa-modal-ic">⚔️</div>'+
+      '<h3 class="aa-modal-h">Desafiar a '+esc(P.username)+'</h3>'+
+      '<p class="aa-modal-p">Elegí el ritmo. El desafío le llega al instante si está en línea.</p>'+
+      '<select class="aa-ch-tc">'+optHtml+'</select>'+
+      '<div class="aa-ch-color">'+
+        '<button type="button" class="aa-ch-seg" data-seat="w">⚪ Blancas</button>'+
+        '<button type="button" class="aa-ch-seg on" data-seat="rnd">🎲 Al azar</button>'+
+        '<button type="button" class="aa-ch-seg" data-seat="b">⚫ Negras</button>'+
+      '</div>'+
+      '<div class="aa-modal-btns">'+
+        '<button class="aa-modal-cancel" type="button">Cancelar</button>'+
+        '<button class="aa-modal-go" type="button">Enviar desafío ⚔️</button>'+
+      '</div>'+
+    '</div>';
+    document.body.appendChild(back);
+    var seat='rnd';
+    back.querySelectorAll('.aa-ch-seg').forEach(function(s){ s.addEventListener('click', function(){
+      back.querySelectorAll('.aa-ch-seg').forEach(function(x){ x.classList.remove('on'); }); s.classList.add('on'); seat=s.getAttribute('data-seat'); }); });
+    function close(){ back.remove(); document.removeEventListener('keydown', onKey); }
+    function onKey(e){ if(e.key==='Escape') close(); }
+    back.addEventListener('click', function(e){ if(e.target===back) close(); });
+    back.querySelector('.aa-modal-cancel').addEventListener('click', close);
+    document.addEventListener('keydown', onKey);
+    back.querySelector('.aa-modal-go').addEventListener('click', function(){
+      var v=((back.querySelector('.aa-ch-tc')||{}).value||'300,0').split(','), b=+v[0]||0, inc=+v[1]||0;
+      var uid=P.id, unm=P.username;
+      close(); requestClose();   // cerrar diálogo + perfil (nos vamos a la partida)
+      if(window.__lvChallengeUser) window.__lvChallengeUser(uid, unm, b, inc, seat);
+      else toast('El módulo de juego no está listo.');
+    });
+    setTimeout(function(){ back.classList.add('open'); }, 10);
+  }
   function paintLoading(nick){ setContent('<div class="aa-prof-loading">Cargando perfil de <b>'+esc(nick)+'</b>…</div>'); }
   function paintError(msg){ setContent('<div class="aa-prof-error">'+esc(msg)+'</div>'); }
 
@@ -31952,6 +32147,7 @@ function cvUpdateNagBadge() {
   }
   function hardRemove(){   // saca el contenedor SIN resetear curNick (se usa al cambiar de modo)
     detachListeners();
+    document.body.classList.remove('prof-page');
     if(backEl){ var b=backEl; backEl=null; if(b.parentNode) b.parentNode.removeChild(b); }
   }
   function ensureContainer(mode){
@@ -31962,17 +32158,10 @@ function cvUpdateNagBadge() {
     backEl.setAttribute('role','dialog'); backEl.setAttribute('aria-modal','true'); backEl.setAttribute('aria-label','Perfil');
     if(mode==='page'){
       backEl.className='aa-profpage-back';
-      backEl.innerHTML='<div class="aa-profpage">'+
-        '<div class="aa-profpage-bar">'+
-          '<button class="aa-profpage-back-btn" data-act="back" type="button">← Volver</button>'+
-          '<span class="aa-profpage-title">Perfil</span>'+
-          '<button class="aa-prof-copy" data-act="copy" type="button">🔗 Copiar link</button>'+
-        '</div>'+
-        '<div class="aa-profpage-wrap"><div class="aa-profpage-body"></div></div>'+
-      '</div>';
-      backEl.querySelector('[data-act="back"]').addEventListener('click', requestClose);
-      backEl.querySelector('.aa-profpage-bar [data-act="copy"]').addEventListener('click', copyLink);
+      backEl.innerHTML='<div class="aa-profpage"><div class="aa-profpage-wrap"><div class="aa-profpage-body"></div></div></div>';
+      document.body.classList.add('prof-page');   // sube el header/nav del sitio por encima (navegación)
     } else {
+      document.body.classList.remove('prof-page');
       backEl.className='aa-prof-back';
       var card=document.createElement('div'); card.className='aa-prof';
       card.addEventListener('click', function(e){ e.stopPropagation(); });
@@ -31991,16 +32180,16 @@ function cvUpdateNagBadge() {
     ensureContainer(mode);
     curNick=nick;
     if(mode==='page') setHash(nick);       // la PÁGINA es la dueña de la URL compartible
-    if(mode==='page') setBarTitle(nick);
     var myReq=++reqId;
     if(isSelf){
       var P=selfProfile();
-      if(P){ paintProfile(P); try{ if(window.aaAuth&&window.aaAuth.refreshRatings) window.aaAuth.refreshRatings(); }catch(e){} }
+      if(P){ paintProfile(P); try{ if(window.aaAuth&&window.aaAuth.refreshRatings) window.aaAuth.refreshRatings(); }catch(e){} fetchSelfCounts(P, myReq); }
       else paintError('Iniciá sesión para ver tu perfil.');
       return;
     }
     paintLoading(nick);
-    fetch(PROXY+'/u/'+encodeURIComponent(nick)).then(function(r){
+    var _h={}, _tk=(window.aaAuth&&window.aaAuth.getToken)?window.aaAuth.getToken():''; if(_tk) _h['Authorization']='Bearer '+_tk;
+    fetch(PROXY+'/u/'+encodeURIComponent(nick), {headers:_h}).then(function(r){
       if(r.status===404) return {__nf:true};
       if(!r.ok) throw new Error('HTTP '+r.status);
       return r.json();
@@ -32035,6 +32224,7 @@ function cvUpdateNagBadge() {
     if(!backEl) return;
     var b=backEl; backEl=null; curNick=''; curMode=null; reqId++;
     detachListeners();
+    document.body.classList.remove('prof-page');
     b.classList.remove('open');
     setTimeout(function(){ if(b.parentNode) b.parentNode.removeChild(b); }, 200);
   }
