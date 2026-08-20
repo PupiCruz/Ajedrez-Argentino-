@@ -30240,7 +30240,7 @@ function cvUpdateNagBadge() {
     var el=(t && t.closest) ? t.closest('[data-uprofile]') : null; if(!el) return;
     var nick=el.getAttribute('data-uprofile'); if(!nick) return;
     ev.preventDefault(); ev.stopPropagation();
-    if(window.aaProfile && window.aaProfile.open) window.aaProfile.open({username:nick});
+    if(window.aaProfile && window.aaProfile.open) window.aaProfile.open({username:nick, peek:true});   // vistazo (overlay)
   });
   var lvRatingMsg='';   // texto del cambio de MI rating al terminar (ej. "⚡ Blitz: +12 → 1212")
   var lvManualFlip=false, lvResultCode='*', lvResult=null, lvBannerDismissed=false;
@@ -31771,6 +31771,28 @@ function cvUpdateNagBadge() {
   /* Nick clickeable (nombre del rival en la partida en vivo / lobby) */
   .aa-nick-clk{cursor:pointer;border-bottom:1px dotted currentColor}
   .aa-nick-clk:hover{opacity:.82}
+  /* ── Perfil como PÁGINA completa (pantalla entera, con barra y "Volver") ── */
+  .aa-profpage-back{position:fixed;inset:0;z-index:99999;background:var(--bg);overflow-y:auto;opacity:0;
+    transition:opacity .18s;-webkit-overflow-scrolling:touch}
+  .aa-profpage-back.open{opacity:1}
+  .aa-profpage{min-height:100%;display:flex;flex-direction:column}
+  .aa-profpage-bar{position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:12px;padding:11px 14px;
+    background:var(--bg2);border-bottom:1px solid var(--border)}
+  .aa-profpage-back-btn{display:inline-flex;align-items:center;gap:6px;padding:8px 13px;border-radius:10px;border:1px solid var(--border);
+    background:var(--bg3);color:var(--text);font-weight:700;font-size:.88rem;cursor:pointer;font-family:inherit;white-space:nowrap}
+  .aa-profpage-back-btn:hover{background:var(--border)}
+  .aa-profpage-title{font-weight:800;color:var(--text);font-size:1rem;flex:1;text-align:center;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .aa-profpage-wrap{flex:1;display:flex;justify-content:center;padding:26px 16px 64px}
+  .aa-profpage-body{width:100%;max-width:640px}
+  /* En la página, el avatar y el nombre van un poco más grandes */
+  .aa-profpage-body .aa-prof-av{width:82px;height:82px;font-size:1.9rem;border-radius:24px}
+  .aa-profpage-body .aa-prof-name{font-size:1.7rem}
+  @media(max-width:480px){
+    .aa-profpage-body .aa-prof-av{width:64px;height:64px;font-size:1.4rem}
+    .aa-profpage-body .aa-prof-name{font-size:1.3rem}
+    .aa-profpage-wrap{padding:20px 12px 48px}
+  }
 </style>
 <script>
 (function(){
@@ -31779,6 +31801,7 @@ function cvUpdateNagBadge() {
   var CATS=[{k:'bullet',ic:'🔫',n:'Bullet'},{k:'blitz',ic:'⚡',n:'Blitz'},{k:'rapid',ic:'🐢',n:'Rápido'}];
   var backEl=null, onRat=null, onAuth=null, onKey=null;
   var curNick='';     // usuario que se está mostrando (con su mayúsc/minúsc real); '' si cerrado
+  var curMode=null;   // 'overlay' (vistazo) | 'page' (página completa) | null (cerrado)
   var reqId=0;        // para descartar respuestas de fetch viejas al cambiar de perfil
 
   function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){
@@ -31843,8 +31866,8 @@ function cvUpdateNagBadge() {
         '</div>'+
       '</div>';
   }
-  function actionsHtml(P){
-    if(P.isSelf) return '';
+  function actionsHtml(P, mode){
+    if(P.isSelf || mode!=='page') return '';   // Desafiar/Seguir sólo en la PÁGINA (el overlay es un vistazo)
     return '<div class="aa-prof-actions">'+
       '<button class="aa-prof-btn primary" data-act="challenge">⚔️ Desafiar <span class="aa-prof-mini">pronto</span></button>'+
       '<button class="aa-prof-btn" data-act="follow">➕ Seguir <span class="aa-prof-mini">pronto</span></button>'+
@@ -31869,35 +31892,40 @@ function cvUpdateNagBadge() {
         '</div>'+
       '</div>';
   }
-  function footHtml(P){
+  function footHtml(P, mode){
+    if(mode==='overlay'){   // el vistazo: un solo botón que lleva a la página completa
+      return '<div class="aa-prof-foot"><button class="aa-prof-btn primary" data-act="full" style="flex:1">👤 Ver perfil completo</button></div>';
+    }
     var note=P.isSelf
-      ? '<b>Pronto:</b> historial de tus partidas, ficha FIDE vinculada y ranking del sitio.'
-      : '<b>Pronto:</b> desafiar y seguir a otros jugadores.';
-    return '<div class="aa-prof-foot">'+
-      '<button class="aa-prof-copy" data-act="copy">🔗 Copiar link</button>'+
-      '<span class="aa-prof-foot-note">'+note+'</span>'+
-    '</div>';
+      ? '<b>Pronto:</b> historial de tus partidas con el gráfico de progreso de tu elo, ficha FIDE vinculada y ranking del sitio.'
+      : '<b>Pronto:</b> historial de partidas con el gráfico de progreso de elo de este jugador.';
+    return '<div class="aa-prof-foot"><span class="aa-prof-foot-note">'+note+'</span></div>';
   }
-  function profileHtml(P){
-    return heroHtml(P)+actionsHtml(P)+
+  function profileHtml(P, mode){
+    return heroHtml(P)+actionsHtml(P,mode)+
       '<div class="aa-prof-lbl">'+(P.isSelf?'Tus ratings del sitio':'Ratings del sitio')+'</div>'+
       '<div class="aa-prof-rats">'+ratCardsHtml(P)+'</div>'+
-      tacticHtml(P)+footHtml(P);
+      tacticHtml(P)+footHtml(P,mode);
   }
 
-  // ── Pintado dentro de la tarjeta ──
-  function setCard(html){
-    if(!backEl) return;
-    var card=backEl.querySelector('.aa-prof'); if(!card) return;
-    card.innerHTML='<button class="aa-prof-x" type="button" aria-label="Cerrar">×</button>'+html;
-    card.querySelector('.aa-prof-x').addEventListener('click', requestClose);
-    var cp=card.querySelector('[data-act="copy"]'); if(cp) cp.addEventListener('click', copyLink);
-    var ch=card.querySelector('[data-act="challenge"]'); if(ch) ch.addEventListener('click', function(){ toast('Desafiar llega en la próxima etapa ⚔️'); });
-    var fo=card.querySelector('[data-act="follow"]'); if(fo) fo.addEventListener('click', function(){ toast('Seguir llega en la próxima etapa 🙂'); });
+  // ── Pintado dentro del contenedor (overlay = tarjeta; page = cuerpo con barra propia) ──
+  function contentNode(){ return backEl ? (curMode==='page' ? backEl.querySelector('.aa-profpage-body') : backEl.querySelector('.aa-prof')) : null; }
+  function setContent(html){
+    var node=contentNode(); if(!node) return;
+    if(curMode==='page'){ node.innerHTML=html; }
+    else {
+      node.innerHTML='<button class="aa-prof-x" type="button" aria-label="Cerrar">×</button>'+html;
+      var x=node.querySelector('.aa-prof-x'); if(x) x.addEventListener('click', requestClose);
+    }
+    var cp=node.querySelector('[data-act="copy"]'); if(cp) cp.addEventListener('click', copyLink);
+    var ch=node.querySelector('[data-act="challenge"]'); if(ch) ch.addEventListener('click', function(){ toast('Desafiar llega en la próxima etapa ⚔️'); });
+    var fo=node.querySelector('[data-act="follow"]'); if(fo) fo.addEventListener('click', function(){ toast('Seguir llega en la próxima etapa 🙂'); });
+    var fl=node.querySelector('[data-act="full"]'); if(fl) fl.addEventListener('click', function(){ openView(curNick, 'page'); });   // overlay → página
   }
-  function paintProfile(P){ curNick=P.username||curNick; setCard(profileHtml(P)); }
-  function paintLoading(nick){ setCard('<div class="aa-prof-loading">Cargando perfil de <b>'+esc(nick)+'</b>…</div>'); }
-  function paintError(msg){ setCard('<div class="aa-prof-error">'+esc(msg)+'</div>'); }
+  function setBarTitle(t){ if(!backEl||curMode!=='page') return; var el=backEl.querySelector('.aa-profpage-title'); if(el) el.textContent=t||'Perfil'; }
+  function paintProfile(P){ curNick=P.username||curNick; setBarTitle(curNick); setContent(profileHtml(P, curMode)); }
+  function paintLoading(nick){ setContent('<div class="aa-prof-loading">Cargando perfil de <b>'+esc(nick)+'</b>…</div>'); }
+  function paintError(msg){ setContent('<div class="aa-prof-error">'+esc(msg)+'</div>'); }
 
   function copyLink(){
     var url=location.origin+location.pathname+'#u='+encodeURIComponent(curNick||'');
@@ -31907,31 +31935,63 @@ function cvUpdateNagBadge() {
     try{ if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(ok, fb); else fb(); }catch(e){ fb(); }
   }
 
-  // ── Apertura / ruteo ──
-  function ensureOpen(){
-    if(backEl) return;
-    backEl=document.createElement('div'); backEl.className='aa-prof-back';
-    backEl.setAttribute('role','dialog'); backEl.setAttribute('aria-modal','true'); backEl.setAttribute('aria-label','Perfil');
-    var card=document.createElement('div'); card.className='aa-prof';
-    card.addEventListener('click', function(e){ e.stopPropagation(); });
-    backEl.appendChild(card);
-    backEl.addEventListener('click', requestClose);   // clic afuera = cerrar
-    document.body.appendChild(backEl);
-    setTimeout(function(){ if(backEl) backEl.classList.add('open'); }, 10);   // en pestaña oculta el rAF se pausa → setTimeout
+  // ── Contenedor + listeners globales ──
+  function detachListeners(){
+    if(onRat){ document.removeEventListener('aa-ratings-changed', onRat); onRat=null; }
+    if(onAuth){ document.removeEventListener('aa-auth-changed', onAuth); onAuth=null; }
+    if(onKey){ document.removeEventListener('keydown', onKey); onKey=null; }
+  }
+  function attachListeners(){
+    detachListeners();
     onRat=function(){ if(backEl && isSelfShowing()){ var P=selfProfile(); if(P) paintProfile(P); } };
     document.addEventListener('aa-ratings-changed', onRat);
-    onAuth=function(e){ if(!(e.detail&&e.detail.user) && isSelfShowing()) requestClose(); };  // me deslogueé viendo MI perfil
+    onAuth=function(e){ if(!(e.detail&&e.detail.user) && isSelfShowing()) requestClose(); };   // me deslogueé viendo MI perfil
     document.addEventListener('aa-auth-changed', onAuth);
     onKey=function(e){ if(e.key==='Escape') requestClose(); };
     document.addEventListener('keydown', onKey);
   }
+  function hardRemove(){   // saca el contenedor SIN resetear curNick (se usa al cambiar de modo)
+    detachListeners();
+    if(backEl){ var b=backEl; backEl=null; if(b.parentNode) b.parentNode.removeChild(b); }
+  }
+  function ensureContainer(mode){
+    if(backEl && curMode===mode) return;              // ya está el contenedor del modo pedido
+    if(backEl && curMode!==mode) hardRemove();        // cambio de modo: reconstruir
+    curMode=mode;
+    backEl=document.createElement('div');
+    backEl.setAttribute('role','dialog'); backEl.setAttribute('aria-modal','true'); backEl.setAttribute('aria-label','Perfil');
+    if(mode==='page'){
+      backEl.className='aa-profpage-back';
+      backEl.innerHTML='<div class="aa-profpage">'+
+        '<div class="aa-profpage-bar">'+
+          '<button class="aa-profpage-back-btn" data-act="back" type="button">← Volver</button>'+
+          '<span class="aa-profpage-title">Perfil</span>'+
+          '<button class="aa-prof-copy" data-act="copy" type="button">🔗 Copiar link</button>'+
+        '</div>'+
+        '<div class="aa-profpage-wrap"><div class="aa-profpage-body"></div></div>'+
+      '</div>';
+      backEl.querySelector('[data-act="back"]').addEventListener('click', requestClose);
+      backEl.querySelector('.aa-profpage-bar [data-act="copy"]').addEventListener('click', copyLink);
+    } else {
+      backEl.className='aa-prof-back';
+      var card=document.createElement('div'); card.className='aa-prof';
+      card.addEventListener('click', function(e){ e.stopPropagation(); });
+      backEl.appendChild(card);
+      backEl.addEventListener('click', requestClose);   // clic afuera = cerrar (sólo overlay)
+    }
+    document.body.appendChild(backEl);
+    setTimeout(function(){ if(backEl) backEl.classList.add('open'); }, 10);   // en pestaña oculta el rAF se pausa → setTimeout
+    attachListeners();
+  }
 
-  function openByNick(nick){
+  // Abre el perfil de <nick> en el modo pedido ('overlay' = vistazo, 'page' = página completa).
+  function openView(nick, mode){
     nick=String(nick||'').trim(); if(!nick) return;
     var u=myUser(), isSelf=!!(u && lower(u.username)===lower(nick));
-    ensureOpen();
+    ensureContainer(mode);
     curNick=nick;
-    setHash(nick);
+    if(mode==='page') setHash(nick);       // la PÁGINA es la dueña de la URL compartible
+    if(mode==='page') setBarTitle(nick);
     var myReq=++reqId;
     if(isSelf){
       var P=selfProfile();
@@ -31954,15 +32014,18 @@ function cvUpdateNagBadge() {
     });
   }
 
+  //  open()                       → MI perfil, PÁGINA completa (botón "Mi perfil").
+  //  open({username})             → perfil de otro, PÁGINA completa.
+  //  open({username, peek:true})  → OVERLAY (vistazo), p. ej. al tocar el nick del rival.
   function open(opts){
     opts=opts||{};
-    if(opts.username){ openByNick(opts.username); return; }
+    if(opts.username){ openView(opts.username, opts.peek?'overlay':'page'); return; }
     var u=myUser();
     if(!u){ if(window.aaAuth&&window.aaAuth.login) window.aaAuth.login(); return; }   // sin sesión: mandar a login
-    openByNick(u.username);
+    openView(u.username, 'page');
   }
 
-  function requestClose(){   // cierre pedido por el usuario (× / Escape / clic afuera)
+  function requestClose(){   // cierre pedido por el usuario (× / ← Volver / Escape / clic afuera)
     if(location.hash && /(?:^|#|&)u=/.test(location.hash)){
       try{ history.replaceState(null,'',location.pathname+location.search); }catch(e){ location.hash=''; }
     }
@@ -31970,12 +32033,10 @@ function cvUpdateNagBadge() {
   }
   function doClose(){
     if(!backEl) return;
-    var b=backEl; backEl=null; curNick=''; reqId++;
+    var b=backEl; backEl=null; curNick=''; curMode=null; reqId++;
+    detachListeners();
     b.classList.remove('open');
-    if(onRat){ document.removeEventListener('aa-ratings-changed', onRat); onRat=null; }
-    if(onAuth){ document.removeEventListener('aa-auth-changed', onAuth); onAuth=null; }
-    if(onKey){ document.removeEventListener('keydown', onKey); onKey=null; }
-    setTimeout(function(){ b.remove(); }, 200);
+    setTimeout(function(){ if(b.parentNode) b.parentNode.removeChild(b); }, 200);
   }
 
   // Sincroniza la URL (#u=nick) sin recargar. onHash() compara contra curNick → no reabre en bucle.
@@ -31990,8 +32051,8 @@ function cvUpdateNagBadge() {
   }
   function onHash(){
     var nick=parseHash();
-    if(nick){ if(lower(nick)!==lower(curNick)) openByNick(nick); }
-    else if(backEl) doClose();
+    if(nick){ if(curMode!=='page' || lower(nick)!==lower(curNick)) openView(nick, 'page'); }   // #u=nick → PÁGINA
+    else if(backEl && curMode==='page') doClose();   // se limpió el hash → cerrar la página
   }
   window.addEventListener('hashchange', onHash);
   if(parseHash()) setTimeout(onHash, 0);   // deep-link al abrir con #u=nick
