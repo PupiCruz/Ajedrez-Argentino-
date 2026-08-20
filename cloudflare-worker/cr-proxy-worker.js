@@ -89,6 +89,10 @@ export default {
     if (reqUrl.pathname === '/me')           return authMe(request, env);
     if (reqUrl.pathname === '/logout')       return authLogout(request, env);
 
+    // ── Rating de partidas en vivo (PvP) — propio del sitio, server-authoritative ──
+    if (reqUrl.pathname === '/rating/me')     return ratingMe(request, env);      // GET  Bearer → mis 3 ratings
+    if (reqUrl.pathname === '/rating/report') return ratingReport(request, env);  // POST secreto (sólo el worker de vivo)
+
     // ── Edición desde el teléfono (editar.html) ──
     if (reqUrl.pathname === '/admin/live') return adminLive(request, env);
     if (reqUrl.pathname === '/admin/save') return adminSave(request, env);
@@ -1013,6 +1017,135 @@ async function authLogout(request, env) {
     try { await env.DB.prepare('DELETE FROM sessions WHERE token=?1').bind(m[1].trim()).run(); } catch (e) {}
   }
   return jsonResp({ ok: true });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RATING DE PARTIDAS EN VIVO (PvP) — propio del sitio, calculado en el SERVIDOR
+// ─────────────────────────────────────────────────────────────────────────────
+// Reglas (idénticas en espíritu al rating de los ejercicios de la web):
+//   • Todos arrancan LIMPIOS en SITE_START_RATING (no se copia nada de Lichess, así
+//     nadie cree que jugar acá le mueve el rating de Lichess).
+//   • Elo con K PROVISIONAL: las primeras partidas mueven mucho el número y después
+//     se calma (K 40 → 24 → 16 según cuántas partidas lleva en esa categoría).
+//   • Tres categorías por ritmo, con el criterio de Lichess (estimado = base + 40·inc):
+//        ≤179s bullet · ≤479s blitz · resto rápido.
+//   • Sólo el worker de vivo puede reportar resultados (header X-Vivo-Secret), así
+//     nadie se infla el rating desde la consola. Idempotente por gameId.
+const SITE_START_RATING = 1500;
+
+// Categoría del ritmo. base/inc en SEGUNDOS. estimado = base + 40·inc (criterio Lichess).
+function ratingCategory(base, inc) {
+  const est = (Number(base) || 0) + 40 * (Number(inc) || 0);
+  if (est <= 179) return 'bullet';
+  if (est <= 479) return 'blitz';
+  return 'rapid';
+}
+// K del JUGADOR: provisional al principio (rating incierto), después se calma.
+function playerK(games) { if (games < 15) return 40; if (games < 50) return 24; return 16; }
+function ratingIsProv(games) { return games < 15; }
+function clampPlayerRating(r) { return Math.max(100, Math.min(3200, Math.round(r))); }
+
+// Crea (si faltan) las tablas de rating. Mismo patrón perezoso que ensureUserTables.
+async function ensureRatingTables(env) {
+  await env.DB.prepare(
+    'CREATE TABLE IF NOT EXISTS ratings (' +
+    'user_id TEXT NOT NULL, category TEXT NOT NULL, ' +
+    'rating INTEGER NOT NULL DEFAULT ' + SITE_START_RATING + ', ' +
+    'games INTEGER NOT NULL DEFAULT 0, updated INTEGER, ' +
+    'PRIMARY KEY (user_id, category))'
+  ).run();
+  // Log de partidas rateadas: da idempotencia (no re-ratear la misma) y sirve de auditoría.
+  await env.DB.prepare(
+    'CREATE TABLE IF NOT EXISTS rated_games (' +
+    'game_id TEXT PRIMARY KEY, category TEXT, white_id TEXT, black_id TEXT, result TEXT, ' +
+    'white_before INTEGER, white_after INTEGER, black_before INTEGER, black_after INTEGER, ts INTEGER)'
+  ).run();
+}
+
+// Rating actual de un usuario en una categoría. Si nunca jugó, devuelve el default
+// SIN insertar (la fila se crea recién al terminar su primera partida).
+async function getRating(env, userId, category) {
+  const row = await env.DB.prepare('SELECT rating, games FROM ratings WHERE user_id=?1 AND category=?2')
+    .bind(userId, category).first();
+  if (row) return { rating: row.rating, games: row.games };
+  return { rating: SITE_START_RATING, games: 0 };
+}
+
+// GET /rating/me  (Authorization: Bearer <sesión>) → mis 3 ratings del sitio.
+async function ratingMe(request, env) {
+  if (!env.DB) return errJson('Falta el binding D1 (DB)', 500);
+  const u = await sessionUser(request, env);
+  if (!u) return errJson('No autenticado', 401);
+  await ensureRatingTables(env);
+  const cats = ['bullet', 'blitz', 'rapid'];
+  const ratings = {}, games = {}, prov = {};
+  for (const c of cats) {
+    const r = await getRating(env, u.id, c);
+    ratings[c] = r.rating; games[c] = r.games; prov[c] = ratingIsProv(r.games);
+  }
+  return jsonResp({ id: u.id, username: u.username, ratings, games, prov });
+}
+
+// POST /rating/report  (header X-Vivo-Secret) — SÓLO lo llama el worker de vivo cuando
+// una partida termina de verdad. body { gameId, white, black, result:'w'|'b'|'draw', base, inc }
+// (white/black = ids de usuario). Devuelve los nuevos ratings + el delta de cada uno.
+async function ratingReport(request, env) {
+  if (request.method !== 'POST') return errJson('Usá POST', 405);
+  if (!env.DB) return errJson('Falta el binding D1 (DB)', 500);
+  const secret = request.headers.get('X-Vivo-Secret') || '';
+  if (!env.VIVO_SECRET || secret !== env.VIVO_SECRET) return errJson('No autorizado', 403);
+  let body;
+  try { body = await request.json(); } catch (e) { return errJson('JSON inválido', 400); }
+  const gameId = String(body.gameId || '').slice(0, 80);
+  const white = String(body.white || '');
+  const black = String(body.black || '');
+  const result = String(body.result || '');
+  const category = ratingCategory(body.base, body.inc);
+  if (!gameId || !white || !black) return errJson('Faltan datos (gameId, white, black)', 400);
+  if (white === black) return errJson('Una cuenta no puede jugar contra sí misma', 400);
+  if (result !== 'w' && result !== 'b' && result !== 'draw') return errJson('result inválido', 400);
+  await ensureRatingTables(env);
+
+  // Idempotencia: si esta partida ya se rateó, devolvemos lo guardado sin re-aplicar.
+  const prev = await env.DB.prepare('SELECT * FROM rated_games WHERE game_id=?1').bind(gameId).first();
+  if (prev) {
+    return jsonResp({
+      already: true, category: prev.category,
+      white: { rating: prev.white_after, delta: prev.white_after - prev.white_before },
+      black: { rating: prev.black_after, delta: prev.black_after - prev.black_before },
+    });
+  }
+
+  const rw = await getRating(env, white, category);
+  const rb = await getRating(env, black, category);
+  const Sw = result === 'w' ? 1 : result === 'draw' ? 0.5 : 0;
+  const Sb = 1 - Sw;
+  const Ew = 1 / (1 + Math.pow(10, (rb.rating - rw.rating) / 400));   // prob. esperada de que gane blancas
+  const Eb = 1 - Ew;
+  const newW = clampPlayerRating(rw.rating + playerK(rw.games) * (Sw - Ew));
+  const newB = clampPlayerRating(rb.rating + playerK(rb.games) * (Sb - Eb));
+  const now = Math.floor(Date.now() / 1000);
+
+  // Persistir ambos ratings (+1 partida) y dejar el log de la partida, en una sola tanda.
+  try {
+    await env.DB.batch([
+      env.DB.prepare('INSERT INTO ratings (user_id, category, rating, games, updated) VALUES (?1,?2,?3,1,?4) ' +
+        'ON CONFLICT(user_id, category) DO UPDATE SET rating=?3, games=games+1, updated=?4')
+        .bind(white, category, newW, now),
+      env.DB.prepare('INSERT INTO ratings (user_id, category, rating, games, updated) VALUES (?1,?2,?3,1,?4) ' +
+        'ON CONFLICT(user_id, category) DO UPDATE SET rating=?3, games=games+1, updated=?4')
+        .bind(black, category, newB, now),
+      env.DB.prepare('INSERT INTO rated_games (game_id, category, white_id, black_id, result, ' +
+        'white_before, white_after, black_before, black_after, ts) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)')
+        .bind(gameId, category, white, black, result, rw.rating, newW, rb.rating, newB, now),
+    ]);
+  } catch (e) { return errJson('D1 error: ' + e.message, 500); }
+
+  return jsonResp({
+    category,
+    white: { rating: newW, delta: newW - rw.rating, games: rw.games + 1, prov: ratingIsProv(rw.games + 1) },
+    black: { rating: newB, delta: newB - rb.rating, games: rb.games + 1, prov: ratingIsProv(rb.games + 1) },
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

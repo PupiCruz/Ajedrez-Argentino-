@@ -2421,7 +2421,21 @@
       .lv-chal-item:hover { filter:brightness(1.06); border-color:var(--gold-dim); }
       .lv-chal-info { display:flex; flex-direction:column; gap:2px; min-width:0; }
       .lv-chal-name { font-weight:800; font-size:14.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      .lv-chal-rat { font-weight:800; font-size:12.5px; color:var(--gold); background:var(--gold-bg); border:1px solid var(--gold-dim); border-radius:999px; padding:1px 7px; margin-left:2px; }
       .lv-chal-tc { font-size:12px; color:var(--text2); font-weight:600; }
+      /* Chip de identidad (panel Crear, cuando estás logueado) */
+      .lv-identity { border:1px solid var(--border); background:var(--bg2); border-radius:var(--r-sm); padding:10px 12px; margin-bottom:12px; }
+      .lv-id-line { font-size:13.5px; color:var(--text); }
+      .lv-id-title { color:#e0a838; font-weight:800; }
+      .lv-id-rat { display:inline-block; margin-top:6px; font-size:13px; color:var(--text2); font-weight:600; }
+      .lv-id-rat b { color:var(--text); font-weight:800; }
+      .lv-id-rat-new { font-style:italic; opacity:.85; }
+      .lv-id-prov { font-size:10.5px; text-transform:uppercase; letter-spacing:.4px; color:var(--text3); border:1px solid var(--border); border-radius:4px; padding:0 4px; margin-left:3px; }
+      .lv-anon-note { font-size:12px; color:var(--text2); background:var(--bg2); border:1px dashed var(--border); border-radius:var(--r-sm); padding:9px 11px; margin:0 0 12px; line-height:1.4; }
+      /* Rating junto al nombre en las chapitas de la partida */
+      .lv-plate-rat { font-size:12px; font-weight:800; color:var(--gold); margin-left:2px; }
+      /* Cambio de rating dentro del cartel de resultado */
+      .lv-res-rating { margin-top:8px; font-size:13px; font-weight:800; color:var(--text); background:var(--bg2); border:1px solid var(--border); border-radius:var(--r-sm); padding:6px 10px; }
       .lv-chal-go { flex:0 0 auto; font-size:12.5px; font-weight:800; padding:7px 13px; border-radius:var(--r-sm); background:var(--gold-bg); border:1px solid var(--gold-dim); color:var(--gold); white-space:nowrap; }
       .lv-chal-item.lv-chal-mine { cursor:default; opacity:.72; }
       .lv-chal-item.lv-chal-mine:hover { filter:none; border-color:var(--border); }
@@ -2624,9 +2638,11 @@
                 <button type="button" class="lv-seg" data-seat="b">⚫ Negras</button>
               </div>
             </label>
-            <label class="lv-field">Tu nombre (opcional)
+            <div id="lv-identity" class="lv-identity" style="display:none"></div>
+            <label id="lv-name-field" class="lv-field">Tu nombre (opcional)
               <input id="lv-name" maxlength="24" placeholder="Anónimo">
             </label>
+            <p id="lv-anon-note" class="lv-anon-note" style="display:none">💡 <b>Entrá con Lichess</b> (arriba a la derecha) para jugar con tu usuario y que tus partidas sumen <b>rating</b> del sitio.</p>
             <button id="lv-create" class="lv-btn-main">Crear desafío</button>
           </div>
           <div class="lv-lobby-card">
@@ -30131,6 +30147,8 @@ function cvUpdateNagBadge() {
   var lvFen='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
   var lvChess=null, lvTurn='w', lvStatus='waiting', lvLastMove=null;
   var lvNames={}, lvPlayers={}, lvDrawOffer=null, lvMoves=[];
+  var lvRatings=null;   // {w:{r,prov}|null, b:{…}, cat} — rating del sitio de cada asiento (para las chapitas)
+  var lvRatingMsg='';   // texto del cambio de MI rating al terminar (ej. "⚡ Blitz: +12 → 1212")
   var lvManualFlip=false, lvResultCode='*', lvResult=null, lvBannerDismissed=false;
   var lvRenderedFen='';   // FEN que está dibujado ahora (para saltear el redibujado del eco y no cortar la animación)
   var lvArrows=[], lvHighlights={}, lvRmDown=null, lvViewPly=null, lvPrevMovesLen=0;
@@ -30166,6 +30184,23 @@ function cvUpdateNagBadge() {
   })();
   function serverBase(){ return DEV_BASE || PROD_URL; }
   function isDev(){ return !!DEV_BASE; }
+
+  // ── Puente con el login (window.aaAuth): identidad + rating propio del sitio ──
+  function lvAuthUser(){ try{ return window.aaAuth ? window.aaAuth.getUser() : null; }catch(e){ return null; } }
+  function lvAuthToken(){ try{ return window.aaAuth ? (window.aaAuth.getToken()||'') : ''; }catch(e){ return ''; } }
+  function lvSiteRatings(){ try{ return window.aaAuth ? window.aaAuth.getRatings() : null; }catch(e){ return null; } }
+  // Categoría del ritmo (mismo criterio que el servidor: estimado = base + 40·inc, en seg).
+  function lvTcCategory(base,inc){ var est=(+base||0)+40*(+inc||0); return est<=179?'bullet':est<=479?'blitz':'rapid'; }
+  var LV_CAT_LABEL={ bullet:'🔫 Bullet', blitz:'⚡ Blitz', rapid:'🐢 Rápido' };
+  // Mi rating del sitio en una categoría (o null si no estoy logueado / no lo trajo aún).
+  function lvMyRating(cat){ var R=lvSiteRatings(); if(!R||!R.ratings) return null; var v=R.ratings[cat];
+    if(typeof v!=='number') return null; return { r:v, prov:!!(R.prov&&R.prov[cat]) }; }
+  // Nombre a usar en la partida: si estoy logueado, mi usuario de Lichess (verificado);
+  // si no, el nombre manual del campo (o lo guardado). El servidor igual manda el suyo.
+  function lvPlayerName(){ var u=lvAuthUser(); if(u&&u.username) return u.username.slice(0,40);
+    try{ return (($('lv-name')&&$('lv-name').value)||localStorage.getItem('lv_name')||'').trim().slice(0,24); }catch(e){ return ''; } }
+  // Muestra un rating con "?" si es provisional. `ri` = {r,prov} o null.
+  function lvRatTxt(ri){ if(!ri) return ''; return ri.r+(ri.prov?'?':''); }
 
   // ── FEN → matriz [rank8..rank1][a..h] ───────────────────────────────────────
   function fenBoard(fen){
@@ -30661,8 +30696,9 @@ function cvUpdateNagBadge() {
     var d=lvResult;
     var emoji = d.out==='win'?'🏆':d.out==='lose'?'😔':'🤝';
     var cls = d.out==='win'?'win':d.out==='lose'?'lose':'draw';
+    var ratHtml = lvRatingMsg ? '<div class="lv-res-rating">'+esc(lvRatingMsg)+'</div>' : '';
     if(card){ card.className='lv-result lv-result-'+cls; card.style.display='block';
-      card.innerHTML='<div class="lv-res-emoji">'+emoji+'</div><div class="lv-res-title">'+esc(d.title)+'</div><div class="lv-res-sub">'+esc(d.sub)+'</div>'; }
+      card.innerHTML='<div class="lv-res-emoji">'+emoji+'</div><div class="lv-res-title">'+esc(d.title)+'</div><div class="lv-res-sub">'+esc(d.sub)+'</div>'+ratHtml; }
     if(banner){
       if(liveView() && !lvBannerDismissed){
         banner.className='lv-banner lv-banner-'+cls; banner.style.display='flex';
@@ -30681,11 +30717,29 @@ function cvUpdateNagBadge() {
       var connKey=(color==='w')?'connW':'connB';
       // "(reconectando…)" solo mientras se juega: al terminar la partida no tiene sentido.
       var dis=(lvStatus==='playing' && lvPlayers && lvPlayers[connKey]===false && lvPlayers[color==='w'?'w':'b']) ? ' <span class="lv-conn">(reconectando…)</span>' : '';
-      return (color==='w'?'⚪ ':'⚫ ')+nm+(mine?' <span style="color:var(--text3)">(vos)</span>':'')+dis;
+      // Rating del sitio de ese asiento (si el jugador está logueado).
+      var ri=lvRatings && lvRatings[color];
+      var rat=ri ? ' <span class="lv-plate-rat">'+ri.r+(ri.prov?'?':'')+'</span>' : '';
+      return (color==='w'?'⚪ ':'⚫ ')+lvEsc(nm)+rat+(mine?' <span style="color:var(--text3)">(vos)</span>':'')+dis;
     }
     var nb=$('lv-name-bot'), nt=$('lv-name-top');
     if(nb) nb.innerHTML=label(bottom);
     if(nt) nt.innerHTML=label(top);
+  }
+  // Llega al terminar una partida RATEADA (los dos logueados): actualiza chapitas + mi cambio.
+  function lvOnRatingUpdate(m){
+    if(!m || !m.category) return;
+    lvRatings=lvRatings||{}; lvRatings.cat=m.category;
+    if(m.w) lvRatings.w={ r:m.w.rating, prov:!!m.w.prov };
+    if(m.b) lvRatings.b={ r:m.b.rating, prov:!!m.b.prov };
+    updateNames();
+    var mine=(lvMyColor==='w')?m.w:(lvMyColor==='b')?m.b:null;
+    if(mine){
+      var d=mine.delta||0, sign=(d>0?'+':'');
+      lvRatingMsg=(LV_CAT_LABEL[m.category]||m.category)+': '+sign+d+' → '+mine.rating+(mine.prov?' (provisional)':'');
+      renderResult();
+      try{ if(window.aaAuth && window.aaAuth.refreshRatings) window.aaAuth.refreshRatings(); }catch(e){}   // refresca mi cache para el lobby
+    }
   }
   function updateControls(){
     var playing=(lvStatus==='playing'), finished=(lvStatus==='finished');
@@ -30734,6 +30788,7 @@ function cvUpdateNagBadge() {
     // regresiva de desconexión: nunca quedarse esperando los 30s si el juego ya terminó.
     if(lvStatus!=='playing') stopDiscCountdown();
     if(m.names) lvNames=m.names; if(m.players) lvPlayers=m.players;
+    if(m.ratings) lvRatings=m.ratings;
     if(m.moves){ if(m.moves.length>lvPrevMovesLen) clearShapes(); lvMoves=m.moves; }
     if(m.lastMove) lvLastMove=m.lastMove;
     // Modo revisión: si estabas en vivo seguís en vivo; si mirabas una jugada pasada, te quedás ahí.
@@ -30789,9 +30844,11 @@ function cvUpdateNagBadge() {
   function connect(id){
     var base=serverBase();
     var url=base.replace(/^http/,'ws')+'/sala/'+id+'/ws';
-    var nm=''; try { nm=(localStorage.getItem('lv_name')||'').slice(0,24); } catch(e){}
+    var nm=lvPlayerName();
     var q=[]; if(lvToken) q.push('token='+encodeURIComponent(lvToken)); if(nm) q.push('name='+encodeURIComponent(nm));
     if(lvSeatPref==='w'||lvSeatPref==='b') q.push('seat='+lvSeatPref);   // color pedido por el creador
+    // Token de sesión de la cuenta → el servidor sabe quién soy y ratea la partida.
+    var auth=lvAuthToken(); if(auth) q.push('auth='+encodeURIComponent(auth));
     if(q.length) url+='?'+q.join('&');
     try { ws=new WebSocket(url); } catch(e){ setStatus('No pude conectar ⚠️'); return; }
     ws.onopen=function(){ lvReconnectTries=0; };
@@ -30823,9 +30880,9 @@ function cvUpdateNagBadge() {
       updateShare();
       // Publico mi desafío en el lobby recién ahora, ya sentado (blancas o negras) y esperando.
       if(lvPubParams && (lvMyColor==='w'||lvMyColor==='b') && lvStatus==='waiting'){
-        lvMyChallenge={ id:lvSala, name:lvPubParams.name, base:lvPubParams.base, inc:lvPubParams.inc, seat:lvMyColor };
+        lvMyChallenge={ id:lvSala, name:lvPubParams.name, base:lvPubParams.base, inc:lvPubParams.inc, seat:lvMyColor, rating:lvPubParams.rating, prov:lvPubParams.prov };
         lvPubParams=null;
-        lobbyConnect(); lobbySend({type:'create', id:lvMyChallenge.id, name:lvMyChallenge.name, base:lvMyChallenge.base, inc:lvMyChallenge.inc, seat:lvMyColor});
+        lobbyConnect(); lobbySend({type:'create', id:lvMyChallenge.id, name:lvMyChallenge.name, base:lvMyChallenge.base, inc:lvMyChallenge.inc, seat:lvMyColor, rating:lvMyChallenge.rating, prov:lvMyChallenge.prov});
         updatePendingPill();
       }
     } else if(m.type==='state'){
@@ -30836,6 +30893,8 @@ function cvUpdateNagBadge() {
     } else if(m.type==='gameover'){
       lvStatus='finished'; if(lvClock) lvClock.running=null; renderClocks();
       stopDiscCountdown(); releaseWake(); showResult(m); updateControls();
+    } else if(m.type==='rating'){
+      lvOnRatingUpdate(m);
     } else if(m.type==='draw-offered'){
       if(m.by===lvMyColor){ setStatus('Ofreciste tablas — esperando respuesta…'); }
       else { lvDrawOffer=m.by; sndDraw(); updateDrawPrompt(); updateControls(); }
@@ -30848,7 +30907,7 @@ function cvUpdateNagBadge() {
       else setStatus('🔁 Tu rival quiere la revancha — tocá "Revancha".');
     } else if(m.type==='newgame'){
       lvMyColor=m.color; lvLastMove=null; lvPremove=null; lvLastSoundId=null; lvEndSoundDone=false;
-      lvMoves=[]; lvResultCode='*'; lvResult=null; lvBannerDismissed=false; lvViewPly=null; lvPrevMovesLen=0; lvNames=m.names||lvNames; clearShapes(); hideBanner();
+      lvMoves=[]; lvResultCode='*'; lvResult=null; lvBannerDismissed=false; lvViewPly=null; lvPrevMovesLen=0; lvNames=m.names||lvNames; lvRatingMsg=''; clearShapes(); hideBanner();
       applyState(m);
     } else if(m.type==='opponent-disconnected'){
       lvPlayers[m.color==='w'?'connW':'connB']=false; updateNames();
@@ -30888,6 +30947,7 @@ function cvUpdateNagBadge() {
   function resetState(){
     lvMyColor=null; lvFen='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
     lvChess=null; lvTurn='w'; lvStatus='waiting'; lvLastMove=null; lvNames={}; lvPlayers={};
+    lvRatings=null; lvRatingMsg='';
     lvSelected=null; lvPremove=null; lvDrawOffer=null; lvClock=null; lvLowWarned=false;
     lvPendingSoundId=null; lvLastSoundId=null; lvEndSoundDone=false;
     lvMoves=[]; lvManualFlip=false; lvResultCode='*';
@@ -30897,18 +30957,45 @@ function cvUpdateNagBadge() {
     hideBanner(); hidePromo(); renderResult(); renderMoves(); renderArrows(); updateNav();
   }
 
+  // Chip de identidad del panel de crear: si estás logueado muestra tu usuario + tu rating
+  // del sitio en la categoría del ritmo elegido, y esconde el campo de nombre manual.
+  function lvUpdateIdentityUI(){
+    var chip=$('lv-identity'), nameField=$('lv-name-field'), anon=$('lv-anon-note');
+    var u=lvAuthUser();
+    if(u && u.username){
+      var tcv=(($('lv-tc')&&$('lv-tc').value)||'0,0').split(',');
+      var cat=lvTcCategory(+tcv[0]||0, +tcv[1]||0);
+      var ri=lvMyRating(cat);
+      var ratHtml = ri
+        ? '<span class="lv-id-rat">'+LV_CAT_LABEL[cat]+' <b>'+ri.r+(ri.prov?'?':'')+'</b>'+(ri.prov?' <span class="lv-id-prov">provisional</span>':'')+'</span>'
+        : '<span class="lv-id-rat lv-id-rat-new">'+LV_CAT_LABEL[cat]+' · sin partidas todavía</span>';
+      var ttl=u.title?('<span class="lv-id-title">'+esc(u.title)+'</span> '):'';
+      if(chip){ chip.style.display=''; chip.innerHTML='<div class="lv-id-line">Jugás como '+ttl+'<b>'+esc(u.username)+'</b></div>'+ratHtml; }
+      if(nameField) nameField.style.display='none';
+      if(anon) anon.style.display='none';
+    } else {
+      if(chip) chip.style.display='none';
+      if(nameField) nameField.style.display='';
+      if(anon) anon.style.display='';
+    }
+  }
+
   function create(){
     var base=serverBase();
     setLobbyMsg('');
-    try { localStorage.setItem('lv_name', ($('lv-name').value||'').trim().slice(0,24)); } catch(e){}
+    try { if($('lv-name')) localStorage.setItem('lv_name', ($('lv-name').value||'').trim().slice(0,24)); } catch(e){}
     // Preparo la publicación del desafío en el lobby: se manda en cuanto quede
     // sentado de blancas (en el 'init'), así el desafío recién aparece con el asiento tomado.
-    var pnm=(($('lv-name')&&$('lv-name').value)||'').trim().slice(0,24)||'Anónimo';
+    // Si estoy logueado, el nombre es mi usuario de Lichess (verificado); si no, el manual.
+    var pnm=lvPlayerName()||'Anónimo';
     var tcv=(($('lv-tc')&&$('lv-tc').value)||'0,0').split(',');
+    var cBase=+tcv[0]||0, cInc=+tcv[1]||0;
+    // Mi rating del sitio en la categoría de este ritmo (para mostrar en la tarjeta del lobby).
+    var myR=lvMyRating(lvTcCategory(cBase,cInc));
     // Color elegido: blancas / negras / al azar (el azar se resuelve acá a un color concreto).
     var seatSel='rnd', on=document.querySelector('#lv-color .lv-seg.lv-seg-on'); if(on) seatSel=on.getAttribute('data-seat');
     lvSeatPref=(seatSel==='w')?'w':(seatSel==='b')?'b':(Math.random()<0.5?'w':'b');
-    lvPubParams={ name:pnm, base:+tcv[0]||0, inc:+tcv[1]||0 };
+    lvPubParams={ name:pnm, base:cBase, inc:cInc, rating:myR?myR.r:null, prov:myR?myR.prov:false };
     lvMyChallenge=null;
     $('lv-create').disabled=true;
     fetch(base+'/sala/nueva', {method:'POST'})
@@ -30966,7 +31053,7 @@ function cvUpdateNagBadge() {
     lobbyWs.onopen=function(){
       lvLobbyTries=0; setChalConn('');
       // Si soy anfitrión esperando, re-publico mi desafío (el DO lo perdió al caerse el ws).
-      if(lvMyChallenge && lvStatus==='waiting') lobbySend({type:'create', id:lvMyChallenge.id, name:lvMyChallenge.name, base:lvMyChallenge.base, inc:lvMyChallenge.inc});
+      if(lvMyChallenge && lvStatus==='waiting') lobbySend({type:'create', id:lvMyChallenge.id, name:lvMyChallenge.name, base:lvMyChallenge.base, inc:lvMyChallenge.inc, seat:lvMyChallenge.seat, rating:lvMyChallenge.rating, prov:lvMyChallenge.prov});
     };
     lobbyWs.onmessage=function(e){ var m; try{ m=JSON.parse(e.data); }catch(_){ return; } handleLobby(m); };
     lobbyWs.onclose=function(){
@@ -30998,8 +31085,9 @@ function cvUpdateNagBadge() {
     for(var i=0;i<arr.length;i++){
       var c=arr[i], mine=!!(lvMyChallenge && c.id===lvMyChallenge.id);
       var youIcon=(c.seat==='b')?'⚪':'⚫';   // el creador juega c.seat → vos jugás el otro
+      var ratTxt=(c.rating!=null)?(' <span class="lv-chal-rat">'+c.rating+(c.prov?'?':'')+'</span>'):'';
       html+='<div class="lv-chal-item'+(mine?' lv-chal-mine':'')+'" data-id="'+lvEsc(c.id)+'">'
-        +'<div class="lv-chal-info"><span class="lv-chal-name">'+lvEsc(c.name||'Anónimo')+'</span>'
+        +'<div class="lv-chal-info"><span class="lv-chal-name">'+lvEsc(c.name||'Anónimo')+ratTxt+'</span>'
         +'<span class="lv-chal-tc">'+tcLabel(c.base,c.inc)+' <span class="lv-chal-you">· jugás '+youIcon+'</span></span></div>'
         +'<span class="lv-chal-go">'+(mine?'Tu desafío':'Entrar')+'</span></div>';
     }
@@ -31030,7 +31118,7 @@ function cvUpdateNagBadge() {
   function goToVivoGame(){ try{ if(typeof goTo==='function') goTo('vivo'); }catch(e){} showGame(); updatePendingPill(); }
 
   // Enganches para que goTo avise al entrar/salir de la pestaña "Jugar".
-  window.__lvVivoShow=function(){ lvOnTab=true; renderChallenges(); lobbyConnect(); updatePendingPill(); };
+  window.__lvVivoShow=function(){ lvOnTab=true; lvUpdateIdentityUI(); renderChallenges(); lobbyConnect(); updatePendingPill(); };
   // Al salir de la pestaña: si tengo un desafío abierto (o partida en curso), mantengo el
   // lobby conectado en segundo plano para que el reto siga listado y me traigan al empezar.
   window.__lvVivoHide=function(){ lvOnTab=false; if(!lvMyChallenge) lobbyClose(); updatePendingPill(); };
@@ -31044,6 +31132,14 @@ function cvUpdateNagBadge() {
     if(segs.length){
       try{ var sv=localStorage.getItem('lv_seat'); if(sv){ segs.forEach(function(x){ x.classList.toggle('lv-seg-on', x.getAttribute('data-seat')===sv); }); } }catch(e){}
       segs.forEach(function(s){ s.onclick=function(){ segs.forEach(function(x){ x.classList.remove('lv-seg-on'); }); this.classList.add('lv-seg-on'); try{ localStorage.setItem('lv_seat', this.getAttribute('data-seat')); }catch(e){} }; });
+    }
+    // Al cambiar el ritmo, refrescar el rating mostrado en el chip de identidad.
+    if((b=$('lv-tc'))) b.onchange=lvUpdateIdentityUI;
+    lvUpdateIdentityUI();
+    // Reaccionar a login/logout y a la llegada de mis ratings del sitio (una sola vez).
+    if(!window.__lvAuthWired && window.aaAuth){
+      window.__lvAuthWired=true;
+      try{ window.aaAuth.onChange(lvUpdateIdentityUI); window.aaAuth.onRatingsChange(lvUpdateIdentityUI); }catch(e){}
     }
     if((b=$('lv-join'))) b.onclick=function(){ join($('lv-join-id').value); };
     if((b=$('lv-join-id'))) b.onkeydown=function(e){ if(e.key==='Enter') join(this.value); };
@@ -31226,7 +31322,7 @@ function cvUpdateNagBadge() {
 (function(){
   'use strict';
   var PROXY = (typeof CR_PROXY!=='undefined' && CR_PROXY) ? CR_PROXY : 'https://cr-proxy.mmatiasscruz.workers.dev';
-  var LS_SESSION='aa_session', LS_USER='aa_user', SS_VERIFIER='aa_pkce_verifier', SS_STATE='aa_oauth_state', SS_RETURN='aa_return';
+  var LS_SESSION='aa_session', LS_USER='aa_user', LS_RATINGS='aa_ratings', SS_VERIFIER='aa_pkce_verifier', SS_STATE='aa_oauth_state', SS_RETURN='aa_return';
 
   function b64url(bytes){
     var s=''; var b=new Uint8Array(bytes);
@@ -31252,6 +31348,31 @@ function cvUpdateNagBadge() {
     window.aaCurrentUser = user||null;
     render();
     try{ document.dispatchEvent(new CustomEvent('aa-auth-changed',{detail:{user:user||null}})); }catch(e){}
+    // Los ratings del sitio (bullet/blitz/rápido) se traen/limpian según el login.
+    if(token) fetchRatings(); else setRatings(null);
+  }
+
+  // ── Ratings PROPIOS del sitio (bullet/blitz/rápido). Distintos del rating de Lichess:
+  //    arrancan limpios y se calculan en el servidor con cada partida en vivo. ──
+  var _aaRatings=null;
+  function getRatings(){
+    if(_aaRatings!==null) return _aaRatings;
+    try{ _aaRatings=JSON.parse(localStorage.getItem(LS_RATINGS)||'null'); }catch(e){ _aaRatings=null; }
+    return _aaRatings;
+  }
+  function setRatings(r){
+    _aaRatings=r||null;
+    try{ if(r) localStorage.setItem(LS_RATINGS,JSON.stringify(r)); else localStorage.removeItem(LS_RATINGS); }catch(e){}
+    try{ document.dispatchEvent(new CustomEvent('aa-ratings-changed',{detail:{ratings:_aaRatings}})); }catch(e){}
+  }
+  async function fetchRatings(){
+    var tok=getSession(); if(!tok){ setRatings(null); return null; }
+    try{
+      var r=await fetch(PROXY+'/rating/me',{headers:{'Authorization':'Bearer '+tok}});
+      if(r.status===401){ return getRatings(); }   // sesión vencida: la maneja verify()
+      if(r.ok){ var d=await r.json(); if(d && d.ratings){ setRatings({ ratings:d.ratings, games:d.games||{}, prov:d.prov||{} }); return _aaRatings; } }
+    }catch(e){ /* sin conexión: dejamos lo cacheado */ }
+    return getRatings();
   }
 
   function toast(msg){
@@ -31450,7 +31571,9 @@ function cvUpdateNagBadge() {
 
   // Expuesto por si otras partes de la app lo necesitan.
   window.aaAuth = { login:login, logout:logout, getUser:function(){return window.aaCurrentUser||getUser();},
-    getToken:getSession, onChange:function(cb){ document.addEventListener('aa-auth-changed',function(e){cb(e.detail.user);}); } };
+    getToken:getSession, onChange:function(cb){ document.addEventListener('aa-auth-changed',function(e){cb(e.detail.user);}); },
+    getRatings:getRatings, refreshRatings:fetchRatings,
+    onRatingsChange:function(cb){ document.addEventListener('aa-ratings-changed',function(e){cb(e.detail.ratings);}); } };
 
   async function boot(){
     render();                 // pinta ya con lo cacheado (sin parpadeo)
