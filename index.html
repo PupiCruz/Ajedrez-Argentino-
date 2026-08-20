@@ -25805,30 +25805,55 @@ function puzSyncPush() {
 }
 // Trae el progreso de la cuenta y adopta el que tenga MÁS ejercicios resueltos (así nunca
 // se pierde el historial más grande). Si la cuenta está vacía, sube el local como semilla.
+// Identidad y "dueño" del progreso guardado en ESTE navegador. Sirve para no mezclar
+// cuentas: si cambio de cuenta en el mismo navegador, el cache de la otra NO se hereda.
+function _puzAuthUserId() { try { var u = window.aaAuth && window.aaAuth.getUser(); return (u && u.id) ? u.id : ''; } catch(e) { return ''; } }
+function _puzOwner() { try { return localStorage.getItem('puz_owner') || ''; } catch(e) { return ''; } }
+function _puzSetOwner(id) { try { localStorage.setItem('puz_owner', id || ''); } catch(e) {} }
+function _puzDefaultPlayer() {
+  return { rating: 1200, n: 0, seeded: false, solved: 0, ok: 0, fail: 0, streak: 0, bestStreak: 0,
+           best: 1200, byLevel: {}, days: {}, dailyDate: '', dailyCount: 0, lastId: '', hist: [] };
+}
+// Pisa el progreso local con `obj` (o con el default si es null), sin disparar un push.
+function _puzSetLocal(obj) {
+  _puzSyncApplying = true;
+  var P = _puzDefaultPlayer();
+  if (obj) for (var k in P) if (obj[k] !== undefined) P[k] = obj[k];
+  _puzPlayer = P;
+  try { localStorage.setItem('puz_player', JSON.stringify(P)); } catch(e) {}
+  _puzSyncApplying = false;
+  _puzRefreshProgressUI();
+}
+// Al desloguear: dejo el progreso local en blanco (el de la cuenta está a salvo en el
+// servidor) para que la próxima cuenta —o el modo anónimo— NO vea el elo de la anterior.
+function _puzResetLocal() { _puzSetLocal(null); _puzSetOwner(''); }
+
+// Trae el progreso de la cuenta al loguearse. Reglas:
+//  • El progreso local sólo "cuenta" si es de ESTA misma cuenta o de una sesión anónima
+//    (no de otra cuenta) → cambiar de cuenta no hereda el elo de la otra.
+//  • Entre el local elegible y la cuenta, gana el que tenga más ejercicios resueltos.
+//  • Cuenta vacía + cache de OTRA cuenta → arranco limpio para esta cuenta.
 function puzSyncPull() {
   var tok = _puzAuthTok(); if (!tok) return;
+  var uid = _puzAuthUserId();
   fetch(CR_PROXY + '/puz/progress', { headers: { 'Authorization': 'Bearer ' + tok } })
     .then(function(r){ return r.ok ? r.json() : null; })
     .then(function(d){
       if (!d) return;
       var local = puzPlayer();
       var srv = d.progress || null;
-      var localN = (local.solved || local.n || 0);
+      var owner = _puzOwner();
+      var foreign = (owner !== '' && owner !== uid);        // el cache local es de OTRA cuenta
+      var localN = foreign ? -1 : (local.solved || local.n || 0);
       var srvN = srv ? (srv.solved || srv.n || 0) : -1;
       if (srv && srvN >= localN) {
-        // La cuenta va igual o más adelante → adopto lo de la cuenta en este dispositivo.
-        _puzSyncApplying = true;
-        var P = { rating: 1200, n: 0, seeded: false, solved: 0, ok: 0, fail: 0, streak: 0, bestStreak: 0,
-                  best: 1200, byLevel: {}, days: {}, dailyDate: '', dailyCount: 0, lastId: '', hist: [] };
-        for (var k in P) if (srv[k] !== undefined) P[k] = srv[k];
-        _puzPlayer = P;
-        try { localStorage.setItem('puz_player', JSON.stringify(P)); } catch(e) {}
-        _puzSyncApplying = false;
-        _puzRefreshProgressUI();
+        _puzSetLocal(srv);          // la cuenta va igual o más adelante → adopto su progreso
+      } else if (foreign) {
+        _puzSetLocal(null);         // cuenta vacía + cache ajeno → arranco limpio para esta cuenta
       } else if (localN > 0) {
-        // El local va más adelante (o la cuenta estaba vacía) → subo el local como fuente.
-        puzSyncPush();
+        puzSyncPush();              // el local (mío o anónimo) va adelante → lo subo como fuente
       }
+      _puzSetOwner(uid);            // de acá en más, este navegador guarda el progreso de ESTA cuenta
     }).catch(function(){});
 }
 function _puzRefreshProgressUI() {
@@ -25836,8 +25861,11 @@ function _puzRefreshProgressUI() {
   try { if (typeof puzRenderSession === 'function') puzRenderSession(); } catch(e) {}
   try { if (typeof puzRenderList === 'function' && _puzLoaded) puzRenderList(); } catch(e) {}
 }
-// Al loguearse (o al abrir la web con una sesión ya activa), traer el progreso de la cuenta.
-try { document.addEventListener('aa-auth-changed', function(e){ if (e.detail && e.detail.user) puzSyncPull(); }); } catch(e) {}
+// Al loguearse: traer el progreso de la cuenta. Al desloguear: limpiar el local (no mezclar).
+try { document.addEventListener('aa-auth-changed', function(e){
+  var u = e.detail && e.detail.user;
+  if (u) puzSyncPull(); else _puzResetLocal();
+}); } catch(e) {}
 
 function _puzTodayKey() { var d = new Date(); return d.getFullYear() + '-' + ('0'+(d.getMonth()+1)).slice(-2) + '-' + ('0'+d.getDate()).slice(-2); }
 // K del visitante: provisional al principio (rating incierto), después se calma.
