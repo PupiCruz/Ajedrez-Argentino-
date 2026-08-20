@@ -91,6 +91,7 @@ export default {
     if (reqUrl.pathname.startsWith('/u/'))   return publicProfile(request, reqUrl, env);   // GET público → perfil de <usuario>
     if (reqUrl.pathname === '/follow')       return followToggle(request, env, true);      // POST Bearer {userId}
     if (reqUrl.pathname === '/unfollow')     return followToggle(request, env, false);     // POST Bearer {userId}
+    if (reqUrl.pathname === '/following')     return followingList(request, env);           // GET Bearer → a quién sigo
 
     // ── Rating de partidas en vivo (PvP) — propio del sitio, server-authoritative ──
     if (reqUrl.pathname === '/rating/me')     return ratingMe(request, env);      // GET  Bearer → mis 3 ratings
@@ -1183,6 +1184,24 @@ async function followToggle(request, env, follow) {
   } catch (e) { return errJson('D1 error: ' + e.message, 500); }
   const fc = await env.DB.prepare('SELECT COUNT(*) AS n FROM follows WHERE followee_id=?1').bind(target).first();
   return jsonResp({ ok: true, following: !!follow, followers: (fc && fc.n) || 0 });
+}
+
+// GET /following  (Authorization: Bearer) → lista de {id, username} de los usuarios que sigo.
+// La usa el cliente para cruzar con "quién está en línea" (presencia del salón).
+async function followingList(request, env) {
+  if (!env.DB) return errJson('Falta el binding D1 (DB)', 500);
+  const me = await sessionUser(request, env);
+  if (!me) return errJson('No autenticado', 401);
+  await ensureUserTables(env);
+  await ensureFollowTable(env);
+  let rows;
+  try {
+    rows = await env.DB.prepare(
+      'SELECT u.id, u.username FROM follows f JOIN usuarios u ON u.id = f.followee_id WHERE f.follower_id=?1'
+    ).bind(me.id).all();
+  } catch (e) { return errJson('D1 error: ' + e.message, 500); }
+  const list = (rows && rows.results) ? rows.results.map((r) => ({ id: r.id, username: r.username })) : [];
+  return jsonResp({ following: list });
 }
 
 // POST /rating/report  (header X-Vivo-Secret) — SÓLO lo llama el worker de vivo cuando

@@ -2494,6 +2494,24 @@
         background:linear-gradient(135deg,#ffd257,#f0a830); box-shadow:0 6px 18px rgba(240,168,48,.42);
         animation:lvPop .3s cubic-bezier(.2,1.2,.5,1); }
       .lv-inc-pill:hover { filter:brightness(1.05); }
+      /* Presencia: píldora "🟢 N en línea" + tarjeta con los seguidos conectados (para desafiarlos). */
+      .lv-online-pill { display:inline-flex; align-items:center; gap:6px; padding:9px 14px; border-radius:999px; cursor:pointer;
+        font-family:inherit; font-size:13px; font-weight:800; color:#fff; border:none;
+        background:linear-gradient(135deg,#52b788,#2e9e6b); box-shadow:0 6px 18px rgba(46,158,107,.38);
+        animation:lvPop .3s cubic-bezier(.2,1.2,.5,1); }
+      .lv-online-pill:hover { filter:brightness(1.06); }
+      .lv-online-card { width:240px; max-width:calc(100vw - 28px); padding:10px 12px; border-radius:14px;
+        background:var(--bg3); border:1px solid var(--border); box-shadow:0 10px 28px rgba(0,0,0,.4);
+        animation:lvPop .3s cubic-bezier(.2,1.2,.5,1); }
+      .lv-online-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; }
+      .lv-online-head b { color:var(--text); font-size:13px; }
+      .lv-online-x { background:none; border:none; color:var(--text2); font-size:18px; line-height:1; cursor:pointer; font-family:inherit; padding:0 2px; }
+      .lv-online-x:hover { color:var(--text); }
+      .lv-online-row { display:flex; align-items:center; gap:8px; padding:5px 2px; }
+      .lv-online-dot { width:9px; height:9px; border-radius:50%; background:#2ecc71; flex:0 0 auto; }
+      .lv-online-nm { flex:1; color:var(--text); font-size:13px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+      .lv-online-ch { flex:0 0 auto; padding:5px 9px; border-radius:8px; border:1px solid var(--border); background:var(--bg2); cursor:pointer; font-size:13px; }
+      .lv-online-ch:hover { background:var(--border); }
       .lv-lobby-card h3 { font-size:19px; font-weight:800; margin:0 0 6px; letter-spacing:-.3px; }
       .lv-lobby-card h4 { font-size:15px; font-weight:700; margin:0 0 8px; }
       .lv-lobby-card p { color:var(--text2); font-size:13.5px; margin:0 0 14px; line-height:1.5; }
@@ -30277,12 +30295,19 @@ function cvUpdateNagBadge() {
   var lvIncExpanded=false;         // ¿cartel grande (true) o píldora colapsada (false)?
   var lvIncCollapseTimer=null, lvIncExpiryTimer=null;
   var lvChallengeWaiting=null;     // {target,name} mientras espero que acepten mi desafío dirigido
+  var lvFollowingList=[], lvFollowingIds={};   // a quién sigo (id->username), para cruzar con online
+  var lvOnlineSet={}, lvOnlineNames={};        // userIds en línea (id->true) + su nombre (id->username)
+  var lvOnlineExpanded=false;      // ¿lista de en-línea desplegada (true) o píldora (false)?
   // Conectar al lobby al loguearse (aunque no estés en Jugar): así recibís desafíos dirigidos y
   // figurás "en línea" desde cualquier pestaña. Al desloguearse, cerrar si ya no hace falta.
   document.addEventListener('aa-auth-changed', function(e){
-    try{ if(e.detail && e.detail.user) lobbyConnect(); else if(!lvKeepLobby()) lobbyClose(); }catch(_){}
+    try{
+      if(e.detail && e.detail.user){ lobbyConnect(); lvFetchFollowing(); }
+      else { if(!lvKeepLobby()) lobbyClose(); lvFollowingList=[]; lvFollowingIds={}; lvOnlineSet={}; lvOnlineNames={}; renderOnlinePill(); }
+    }catch(_){}
   });
-  setTimeout(function(){ try{ if(lvAuthUser()) lobbyConnect(); }catch(_){} }, 1400);   // ya logueado al abrir
+  document.addEventListener('aa-follows-changed', function(){ try{ lvFetchFollowing(); }catch(_){} });   // seguí/dejé de seguir
+  setTimeout(function(){ try{ if(lvAuthUser()){ lobbyConnect(); lvFetchFollowing(); } }catch(_){} }, 1400);   // ya logueado al abrir
   var lvRatingMsg='';   // texto del cambio de MI rating al terminar (ej. "⚡ Blitz: +12 → 1212")
   var lvManualFlip=false, lvResultCode='*', lvResult=null, lvBannerDismissed=false;
   var lvRenderedFen='';   // FEN que está dibujado ahora (para saltear el redibujado del eco y no cortar la animación)
@@ -31241,6 +31266,10 @@ function cvUpdateNagBadge() {
       lvChallengeWaiting=null; lvToast((m.by||'Tu rival')+' rechazó el desafío.'); exit();
     }
     else if(m.type==='challenge-error'){ lvChallengeWaiting=null; lvToast('No se pudo enviar el desafío.'); exit(); }
+    // ── Presencia (quién está en línea) ──
+    else if(m.type==='presence-init'){ lvOnlineSet={}; lvOnlineNames={}; (m.online||[]).forEach(function(u){ lvOnlineSet[u.userId]=true; if(u.username) lvOnlineNames[u.userId]=u.username; }); renderOnlinePill(); }
+    else if(m.type==='presence-online'){ lvOnlineSet[m.userId]=true; if(m.username) lvOnlineNames[m.userId]=m.username; renderOnlinePill(); }
+    else if(m.type==='presence-offline'){ delete lvOnlineSet[m.userId]; renderOnlinePill(); }
   }
 
   // ── Desafíos ENTRANTES (alguien me reta). El cartel grande se muestra un rato y se COLAPSA a una
@@ -31297,6 +31326,54 @@ function cvUpdateNagBadge() {
       p.onclick=function(){ lvIncExpanded=true; lvRenderIncoming(); };
     }
   }
+
+  // ── PRESENCIA: mostrar cuáles de los que sigo están EN LÍNEA (para desafiarlos) ──
+  function lvProxy(){ return (typeof CR_PROXY!=='undefined' && CR_PROXY) ? CR_PROXY : 'https://cr-proxy.mmatiasscruz.workers.dev'; }
+  function lvFetchFollowing(){
+    var tok=lvAuthToken();
+    if(!tok){ lvFollowingList=[]; lvFollowingIds={}; renderOnlinePill(); return; }
+    fetch(lvProxy()+'/following',{headers:{'Authorization':'Bearer '+tok}})
+      .then(function(r){ return r.ok?r.json():null; })
+      .then(function(d){ if(d && d.following){ lvFollowingList=d.following; lvFollowingIds={};
+        lvFollowingList.forEach(function(u){ lvFollowingIds[u.id]=u.username; }); renderOnlinePill(); } })
+      .catch(function(){});
+  }
+  function lvFollowedOnline(){
+    var out=[], me=lvAuthUser(), myId=me?me.id:null;
+    for(var id in lvOnlineSet){ if(!lvOnlineSet[id] || id===myId) continue;
+      if(lvFollowingIds.hasOwnProperty(id)) out.push({ id:id, username:lvFollowingIds[id]||lvOnlineNames[id]||id }); }
+    out.sort(function(a,b){ return (a.username||'').localeCompare(b.username||''); });
+    return out;
+  }
+  function renderOnlinePill(){
+    var host=lvNoticeHost();
+    var oc=document.getElementById('lv-online'); if(oc) oc.remove();
+    var op=document.getElementById('lv-online-pill'); if(op) op.remove();
+    var list=lvFollowedOnline();
+    if(!list.length){ lvOnlineExpanded=false; return; }
+    if(lvOnlineExpanded){
+      var rows=list.map(function(u){
+        return '<div class="lv-online-row"><span class="lv-online-dot"></span>'+
+          '<span class="lv-online-nm aa-nick-clk" data-uprofile="'+lvEsc(u.username)+'">'+lvEsc(u.username)+'</span>'+
+          '<button type="button" class="lv-online-ch" data-uid="'+lvEsc(u.id)+'" data-nm="'+lvEsc(u.username)+'" title="Desafiar">⚔️</button></div>';
+      }).join('');
+      var d=document.createElement('div'); d.id='lv-online'; d.className='lv-online-card';
+      d.innerHTML='<div class="lv-online-head"><b>🟢 En línea ('+list.length+')</b><button type="button" class="lv-online-x" aria-label="Cerrar">×</button></div>'+rows;
+      host.appendChild(d);
+      d.querySelector('.lv-online-x').onclick=function(){ lvOnlineExpanded=false; renderOnlinePill(); };
+      d.querySelectorAll('.lv-online-ch').forEach(function(b){ b.onclick=function(){
+        var uid=b.getAttribute('data-uid'), nm=b.getAttribute('data-nm');
+        if(window.aaProfile && window.aaProfile.challenge) window.aaProfile.challenge(uid, nm);
+        else lvChallengeUser(uid, nm, 300, 0, 'rnd');
+      }; });
+    } else {
+      var p=document.createElement('button'); p.id='lv-online-pill'; p.className='lv-online-pill'; p.type='button';
+      p.innerHTML='🟢 '+list.length+' en línea';
+      host.appendChild(p);
+      p.onclick=function(){ lvOnlineExpanded=true; renderOnlinePill(); };
+    }
+  }
+  window.__lvIsOnline=function(userId){ return !!lvOnlineSet[userId]; };   // lo usa el perfil (punto verde)
 
   // Toast simple del vivo (reusa el estilo .aa-toast del módulo de cuentas).
   function lvToast(msg){
@@ -32117,6 +32194,7 @@ function cvUpdateNagBadge() {
         P.youFollow=!!d.following;
         if(typeof d.followers==='number') P.followers=d.followers;
         if(curProfile===P) paintProfile(P);
+        try{ document.dispatchEvent(new CustomEvent('aa-follows-changed')); }catch(e){}   // refresca la presencia
       })
       .catch(function(){ if(btn) btn.disabled=false; toast('No se pudo actualizar. Probá de nuevo.'); });
   }
@@ -32301,7 +32379,8 @@ function cvUpdateNagBadge() {
   window.addEventListener('hashchange', onHash);
   if(parseHash()) setTimeout(onHash, 0);   // deep-link al abrir con #u=nick
 
-  window.aaProfile = { open:open, close:requestClose };
+  window.aaProfile = { open:open, close:requestClose,
+    challenge:function(id, username){ openChallengeDialog({ id:id, username:username }); } };   // retar desde la lista "en línea"
 })();
 </script>
 
