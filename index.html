@@ -13319,13 +13319,13 @@ function _cvBuildPageExtras() {
   // tablero entra arriba sin scrollear, estilo chess.com).
   if (backbar) { backbar.style.display = 'none'; backbar.innerHTML = ''; }
   if (bookBack) {
-    var _fromTrain = _cvFromPuzzle || _cvFromPractice;   // partida abierta desde Ejercicios/Practicar
+    var _fromTrain = _cvFromPuzzle || _cvFromPractice || _cvFromProfile;   // partida abierta desde Ejercicios/Practicar/Perfil
     if ((sk && sk.tour != null) || _fromTrain) {
       bookBack.style.display = '';
       var _arrowSvg = '<svg class="cv-bb-ic" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"></polyline></svg>';
       if (_fromTrain) {
-        // Volver AL ejercicio/práctica (no a un torneo): caja clicable con el rótulo correcto.
-        var _bl = _cvFromPuzzle ? 'Volver al ejercicio' : 'Volver a la práctica';
+        // Volver AL ejercicio/práctica/perfil (no a un torneo): caja clicable con el rótulo correcto.
+        var _bl = _cvFromPuzzle ? 'Volver al ejercicio' : _cvFromPractice ? 'Volver a la práctica' : 'Volver al perfil';
         bookBack.innerHTML = '<button class="cv-bb-btn" onclick="cvBackToTournament()" title="' + _bl + '" aria-label="' + _bl + '">'
           + _arrowSvg + '<span class="cv-bb-name">' + _bl + '</span></button>';
       } else if (_cvTourName && _cvFromTournament) {
@@ -13351,11 +13351,12 @@ function cvBackToTournament() {
   // Si la partida se abrió desde un ejercicio/práctica ("Ver la partida original"), este botón
   // debe volver AL ejercicio, no a un torneo. El visor ya empujó su entrada de historial, así que
   // delegamos en Atrás (el popstate reabre el ejercicio/práctica, igual que el botón del navegador).
-  if (_cvFromPuzzle || _cvFromPractice) {
+  if (_cvFromPuzzle || _cvFromPractice || _cvFromProfile) {
     if (_cvHistoryPushed) { history.back(); return; }
     closeChessViewer();
     if (_cvFromPuzzle)  { _cvFromPuzzle  = false; puzReopenAfterGame(); }
-    else                { _cvFromPractice = false; pracReopenAfterGame(); }
+    else if (_cvFromPractice) { _cvFromPractice = false; pracReopenAfterGame(); }
+    else { var _pn = _cvFromProfile; _cvFromProfile = null; if (window.aaProfile && window.aaProfile.reopen) window.aaProfile.reopen(_pn); }
     return;
   }
   var sk = _cvShareKeys[_cvTourIdx];
@@ -18046,7 +18047,7 @@ function deleteNewsItem(id){
 function goTo(sec, btn) {
   // El visor de partidas ahora es una PÁGINA y la nav queda clickeable por encima → si hay una partida
   // abierta, cerrarla también (antes la tapaba el overlay y bastaba el popstate).
-  _cvFromPuzzle = false; _cvFromPractice = false;
+  _cvFromPuzzle = false; _cvFromPractice = false; _cvFromProfile = null;
   var _pz = document.getElementById('puz-overlay');
   if (_pz && _pz.classList.contains('open')) { if (typeof puzSfOff === 'function') puzSfOff(); _puzHistoryPushed = false; _pz.classList.remove('open'); _puzPageOff(); puz.cur = null; puz.editing = false; }
   var _prc = document.getElementById('prac-overlay');
@@ -19791,6 +19792,7 @@ window.addEventListener('popstate', function() {
     // Si la partida se abrió desde un ejercicio ("Ver la partida original"), Atrás vuelve AL ejercicio.
     if (_cvFromPuzzle) { _cvFromPuzzle = false; puzReopenAfterGame(); }
     else if (_cvFromPractice) { _cvFromPractice = false; pracReopenAfterGame(); }
+    else if (_cvFromProfile) { var _pn = _cvFromProfile; _cvFromProfile = null; if (window.aaProfile && window.aaProfile.reopen) window.aaProfile.reopen(_pn); }
     return;
   }
   var bcg = document.getElementById('bcgrid-overlay');
@@ -25777,6 +25779,7 @@ var puz = { level:'inicial', list:[], idx:0, cur:null, chess:null, flipped:false
   anOn:false, anScore:null, anDepth:0, anPv:null, anBestUci:null, lines:[], recording:false, recLine:[], _srcGame:null, _srcGameMaybe:false };
 var _puzHistoryPushed = false;
 var _cvFromPuzzle = false;   // el visor se abrió desde un ejercicio ("Ver la partida original"): al cerrarlo, volver al ejercicio
+var _cvFromProfile = null;   // el visor se abrió desde el HISTORIAL de un perfil (nick): al cerrarlo, volver a ese perfil
 function _puzPageOn() { document.body.classList.add('puz-page'); _resetHdrForNav(); }
 function _puzPageOff() { document.body.classList.remove('puz-page'); _resetHdrForNav(); }
 
@@ -32262,10 +32265,13 @@ function cvUpdateNagBadge() {
       '<div class="aa-prof-hist" data-hist></div>';
   }
   function profileHtml(P, mode){
+    // El historial + gráfico solo en el perfil COMPLETO (page). El vistazo (overlay) es rápido:
+    // identidad + ratings + táctica, y de ahí "Ver perfil completo".
+    var hist=(mode==='page')?histBlockHtml(P):'';
     return heroHtml(P)+countsHtml(P)+actionsHtml(P,mode)+
       '<div class="aa-prof-lbl">'+(P.isSelf?'Tus ratings del sitio':'Ratings del sitio')+'</div>'+
       '<div class="aa-prof-rats">'+ratCardsHtml(P)+'</div>'+
-      tacticHtml(P)+histBlockHtml(P)+footHtml(P,mode);
+      tacticHtml(P)+hist+footHtml(P,mode);
   }
 
   // ── Pintado dentro del contenedor (overlay = tarjeta; page = cuerpo con barra propia) ──
@@ -32390,9 +32396,12 @@ function cvUpdateNagBadge() {
   }
   function openGameInViewer(g){
     if(typeof loadPgnIntoViewer!=='function'){ toast('El visor no está disponible.'); return; }
-    var pgn=buildPgn(g);
-    requestClose();   // cerrar el perfil (overlay o página) antes de abrir el visor
-    setTimeout(function(){ try{ loadPgnIntoViewer(pgn, '', '', 0); }catch(e){ toast('No se pudo abrir la partida.'); } }, 230);
+    var pgn=buildPgn(g), nick=curNick;
+    // Marca "vengo del perfil de <nick>": al volver Atrás desde el visor se reabre este perfil
+    // (mismo mecanismo que _cvFromPuzzle). Ver el popstate y cvBackToTournament en el visor.
+    try{ window._cvFromProfile=nick; }catch(e){}
+    hardRemove(); curNick=''; curMode=null; reqId++;   // sacar la página del perfil (y su body.prof-page) sin tocar el hash
+    try{ loadPgnIntoViewer(pgn, '', '', 0); }catch(e){ toast('No se pudo abrir la partida.'); }
   }
   function rowHtml(g, i){
     var oc=g.outcome, badge=oc==='win'?'<span class="aa-hist-r win">G</span>':
@@ -32536,6 +32545,7 @@ function cvUpdateNagBadge() {
   // Abre el perfil de <nick> en el modo pedido ('overlay' = vistazo, 'page' = página completa).
   function openView(nick, mode){
     nick=String(nick||'').trim(); if(!nick) return;
+    if(backEl && curMode===mode && lower(curNick)===lower(nick)) return;   // ya abierto igual → no reabrir (evita doble apertura popstate+hashchange)
     var u=myUser(), isSelf=!!(u && lower(u.username)===lower(nick));
     ensureContainer(mode);
     curNick=nick;
@@ -32557,7 +32567,7 @@ function cvUpdateNagBadge() {
       if(myReq!==reqId) return;   // el usuario cambió de perfil o cerró: descartar
       if(d && d.__nf){ paintError('Este jugador no tiene perfil en el sitio (juega como invitado).'); return; }
       paintProfile(fromResponse(d));
-      fetchGames(nick, myReq);
+      if(mode==='page') fetchGames(nick, myReq);   // el historial solo en el perfil completo
     }).catch(function(){
       if(myReq!==reqId) return;
       paintError('No se pudo cargar el perfil. Probá de nuevo.');
@@ -32609,6 +32619,7 @@ function cvUpdateNagBadge() {
   if(parseHash()) setTimeout(onHash, 0);   // deep-link al abrir con #u=nick
 
   window.aaProfile = { open:open, close:requestClose,
+    reopen:function(nick){ openView(nick, 'page'); },   // reabrir el perfil (page) al volver Atrás desde una partida
     challenge:function(id, username){ openChallengeDialog({ id:id, username:username }); } };   // retar desde la lista "en línea"
 })();
 </script>
