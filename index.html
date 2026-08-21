@@ -13635,17 +13635,20 @@ function _openVivoGame(g, fromNick) {
   _cvTourIdx = 0;
   loadPgnIntoViewer(_cvTourGames[0], '', '', 0);
 }
-// Deep-link ?vg=<id>: baja la partida del cr-proxy y la abre. cvOpenOverlay quita la portada.
-function _openVivoGameDeepLink(gameId) {
+// Baja UNA partida PvP del cr-proxy (por id) y la abre en el visor. Se usa para el deep-link
+// ?vg=<id> (fromNick vacío) y para el clic en el historial del perfil (fromNick = ese perfil,
+// para que "Volver" regrese ahí). Las jugadas ya NO viajan en la lista → se bajan acá.
+function _openVivoGameDeepLink(gameId, fromNick) {
   gameId = String(gameId || '').trim();
   if (!gameId) { _removeDeepLinkCover(); return; }
+  _showLoadingCover('Cargando partida…');   // tapar el fetch; cvOpenOverlay la quita al abrir
   fetch(_PVP_PROXY + '/rating/game?id=' + encodeURIComponent(gameId)).then(function (r) {
     if (r.status === 404) return { __nf: true };
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return r.json();
   }).then(function (g) {
     if (g && g.__nf) { _removeDeepLinkCover(); alert('No se encontró esa partida.'); return; }
-    _openVivoGame(g, null);
+    _openVivoGame(g, fromNick || null);
   }).catch(function () { _removeDeepLinkCover(); alert('No se pudo cargar la partida. Probá de nuevo.'); });
 }
 
@@ -18309,8 +18312,18 @@ function cvFindPlayer(name, fideId) {
 }
 
 // Click en nombre de jugador en el visor
+// ¿La partida abierta es una PvP del sitio (link ?vg=…)? → los nicks abren la ficha del sitio.
+function _cvGameIsVivo() {
+  var sk = _cvShareKeys[_cvTourIdx];
+  return !!(sk && sk.url && /(?:^|[?&])vg=/.test(sk.url));
+}
 function cvClickPlayer(name, fideId) {
   var found = cvFindPlayer(name, fideId);
+  // Partida PvP del sitio y sin match FIDE: abrir la ficha del sitio (mismo vistazo que en el vivo).
+  if (!found && !fideId && name && window.aaProfile && window.aaProfile.open) {
+    window.aaProfile.open({ username: name, peek: true });
+    return;
+  }
   if (found) {
     // Instantánea de la partida que se está viendo, para poder VOLVER a ella con Atrás. Se captura
     // ANTES de cerrar el visor (closeChessViewer pone _cvHistoryPushed=false).
@@ -18405,10 +18418,11 @@ function cvLoadFlag(spanId, fideId) {
 function cvPlayerHtml(title, name, fideId, elo, team, isBlack) {
   if (!name) return '';
   var found = cvFindPlayer(name, fideId);
-  var clickable = found || fideId;
+  var isVivo = _cvGameIsVivo();            // partida PvP del sitio: el nick abre la ficha del sitio
+  var clickable = found || fideId || isVivo;
   var safeName = escJs(name);              // escapa ' " < > \ → seguro dentro del onclick="…(' … ')"
   var safeFide = escJs(fideId || '');
-  var titleAttr = found ? 'Ver perfil' : 'Ver en FIDE';
+  var titleAttr = (found || isVivo) ? 'Ver perfil' : 'Ver en FIDE';
   // Avatar (foto de perfil) GRANDE a la izquierda — solo si el jugador tiene foto (autor o publicado
   // via _photoSrc). onerror lo esconde si no carga.
   var avatarStr = '';
@@ -32136,6 +32150,9 @@ function cvUpdateNagBadge() {
   .aa-hist-delta{flex:0 0 auto;font-weight:800;font-size:.82rem;min-width:36px;text-align:right;color:var(--text3,#9a9a9a)}
   .aa-hist-delta.up{color:#2ecc71} .aa-hist-delta.down{color:#e05a5a}
   .aa-hist-date{flex:0 0 auto;font-size:.72rem;color:var(--text3,#9a9a9a);min-width:54px;text-align:right}
+  .aa-hist-more{display:block;width:100%;margin-top:8px;padding:9px;border-radius:11px;border:1px dashed var(--border);
+    background:transparent;color:var(--text2);font-weight:700;font-size:.82rem;cursor:pointer;font-family:inherit}
+  .aa-hist-more:hover{background:var(--bg2);color:var(--text)}
   @media(max-width:480px){
     .aa-hist-date{display:none}
     .aa-hist-row{gap:7px;padding:8px 9px}
@@ -32531,13 +32548,13 @@ function cvUpdateNagBadge() {
     return ('0'+d.getDate()).slice(-2)+'/'+('0'+(d.getMonth()+1)).slice(-2)+'/'+String(d.getFullYear()).slice(-2); }
   // El PGN + link propio (?vg=<id>) los arma _openVivoGame/_pvpGamePgn (top-level, reusados por el deep-link).
   function openGameInViewer(g){
-    if(typeof _openVivoGame!=='function'){ toast('El visor no está disponible.'); return; }
-    var nick=curNick;
-    // Sacar la página del perfil (y su body.prof-page) sin tocar el hash. _openVivoGame marca el
-    // origen (_cvFromProfile=nick) para que "Volver" reabra este perfil, y le pone el link propio
-    // ?vg=<id> a la partida (compartible). Ver _openVivoGame / popstate / cvBackToTournament.
+    if(!g || !g.gameId || typeof _openVivoGameDeepLink!=='function'){ toast('El visor no está disponible.'); return; }
+    var nick=curNick, id=g.gameId;
+    // Sacar la página del perfil (y su body.prof-page) sin tocar el hash. _openVivoGameDeepLink baja
+    // las jugadas por id (la lista es liviana, sin jugadas), marca el origen (_cvFromProfile=nick)
+    // para que "Volver" reabra este perfil, y le pone el link propio ?vg=<id>.
     hardRemove(); curNick=''; curMode=null; reqId++;
-    try{ _openVivoGame(g, nick); }catch(e){ toast('No se pudo abrir la partida.'); }
+    _openVivoGameDeepLink(id, nick);
   }
   function rowHtml(g, i){
     var oc=g.outcome, badge=oc==='win'?'<span class="aa-hist-r win">G</span>':
@@ -32596,15 +32613,27 @@ function cvUpdateNagBadge() {
       return '<button type="button" class="aa-hist-tab'+(c.k===def?' on':'')+'" data-cat="'+c.k+'">'+c.ic+' '+esc(c.n)+'</button>';
     }).join('')+'</div>'):'';
     node.innerHTML=tabs+'<div class="aa-hist-graph"></div>'+
-      '<div class="aa-hist-list">'+games.map(rowHtml).join('')+'</div>';
+      '<div class="aa-hist-list" data-list></div><div class="aa-hist-morewrap"></div>';
     drawGraph(node.querySelector('.aa-hist-graph'), byCat[def], def);
     node.querySelectorAll('.aa-hist-tab').forEach(function(t){ t.addEventListener('click', function(){
       node.querySelectorAll('.aa-hist-tab').forEach(function(x){ x.classList.remove('on'); }); t.classList.add('on');
       var ck=t.getAttribute('data-cat'); drawGraph(node.querySelector('.aa-hist-graph'), byCat[ck], ck);
     }); });
-    node.querySelectorAll('.aa-hist-row').forEach(function(r){ r.addEventListener('click', function(){
+    // Lista acotada: se muestran las últimas HIST_PAGE y "Ver más" revela de a HIST_PAGE (ya bajadas).
+    var HIST_PAGE=20, shown=Math.min(HIST_PAGE, games.length);
+    var listEl=node.querySelector('[data-list]'), moreWrap=node.querySelector('.aa-hist-morewrap');
+    function renderRows(){
+      listEl.innerHTML=games.slice(0, shown).map(rowHtml).join('');   // slice desde 0 → data-gi = índice absoluto
+      moreWrap.innerHTML=(shown<games.length)
+        ? '<button type="button" class="aa-hist-more">Ver partidas más antiguas ('+(games.length-shown)+')</button>' : '';
+      var mb=moreWrap.querySelector('.aa-hist-more');
+      if(mb) mb.addEventListener('click', function(){ shown=Math.min(shown+HIST_PAGE, games.length); renderRows(); });
+    }
+    renderRows();
+    listEl.addEventListener('click', function(e){   // delegación: cubre las filas que se agregan con "Ver más"
+      var r=e.target.closest('.aa-hist-row'); if(!r) return;
       var gi=+r.getAttribute('data-gi'); if(games[gi]) openGameInViewer(games[gi]);
-    }); });
+    });
   }
   function histNode(){ var c=contentNode(); return c?c.querySelector('[data-hist]'):null; }
   // Trae el historial de <nick> (o lo pinta del cache) en el nodo actual. myReq descarta respuestas viejas.
@@ -32612,7 +32641,7 @@ function cvUpdateNagBadge() {
     var key=lower(nick), node=histNode();
     if(gamesCache[key]!==undefined){ if(node) paintHist(node, gamesCache[key]); return; }
     if(node) paintHist(node, null);   // cargando
-    fetch(PROXY+'/rating/games?user='+encodeURIComponent(nick)+'&limit=80').then(function(r){
+    fetch(PROXY+'/rating/games?user='+encodeURIComponent(nick)+'&limit=500').then(function(r){
       if(r.status===404) return { games:[] };
       if(!r.ok) throw new Error('HTTP '+r.status);
       return r.json();
