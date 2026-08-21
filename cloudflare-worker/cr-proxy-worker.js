@@ -96,6 +96,7 @@ export default {
     // ── Rating de partidas en vivo (PvP) — propio del sitio, server-authoritative ──
     if (reqUrl.pathname === '/rating/me')     return ratingMe(request, env);      // GET  Bearer → mis 3 ratings
     if (reqUrl.pathname === '/rating/report') return ratingReport(request, env);  // POST secreto (sólo el worker de vivo)
+    if (reqUrl.pathname === '/rating/games')  return ratingGames(request, reqUrl, env); // GET público ?user= → historial de partidas
 
     // ── Progreso de EJERCICIOS atado a la cuenta (viaja entre dispositivos) ──
     if (reqUrl.pathname === '/puz/progress')  return puzProgress(request, env);   // GET (leer) / POST (guardar), Bearer
@@ -1053,6 +1054,7 @@ function ratingIsProv(games) { return games < 15; }
 function clampPlayerRating(r) { return Math.max(100, Math.min(3200, Math.round(r))); }
 
 // Crea (si faltan) las tablas de rating. Mismo patrón perezoso que ensureUserTables.
+let _ratedGamesMigrated = false;   // se hace una sola vez por isolate (evita PRAGMA en cada request)
 async function ensureRatingTables(env) {
   await env.DB.prepare(
     'CREATE TABLE IF NOT EXISTS ratings (' +
@@ -1062,11 +1064,26 @@ async function ensureRatingTables(env) {
     'PRIMARY KEY (user_id, category))'
   ).run();
   // Log de partidas rateadas: da idempotencia (no re-ratear la misma) y sirve de auditoría.
+  // moves/white_name/black_name se agregaron después (historial revivible) → se migran abajo.
   await env.DB.prepare(
     'CREATE TABLE IF NOT EXISTS rated_games (' +
     'game_id TEXT PRIMARY KEY, category TEXT, white_id TEXT, black_id TEXT, result TEXT, ' +
-    'white_before INTEGER, white_after INTEGER, black_before INTEGER, black_after INTEGER, ts INTEGER)'
+    'white_before INTEGER, white_after INTEGER, black_before INTEGER, black_after INTEGER, ts INTEGER, ' +
+    'moves TEXT, white_name TEXT, black_name TEXT)'
   ).run();
+  // Migración perezosa: la tabla ya existía en producción SIN las 3 columnas nuevas. Las agrego
+  // si faltan (ALTER TABLE ADD COLUMN es barato y no re-escribe filas). Una sola vez por isolate.
+  if (_ratedGamesMigrated) return;
+  try {
+    const info = await env.DB.prepare('PRAGMA table_info(rated_games)').all();
+    const cols = new Set(((info && info.results) || []).map((r) => r.name));
+    const want = { moves: 'TEXT', white_name: 'TEXT', black_name: 'TEXT' };
+    for (const name in want) {
+      if (cols.has(name)) continue;
+      try { await env.DB.prepare('ALTER TABLE rated_games ADD COLUMN ' + name + ' ' + want[name]).run(); } catch (e) {}
+    }
+    _ratedGamesMigrated = true;
+  } catch (e) { /* si falla, se reintenta en la próxima llamada */ }
 }
 
 // Rating actual de un usuario en una categoría. Si nunca jugó, devuelve el default
@@ -1219,6 +1236,9 @@ async function ratingReport(request, env) {
   const black = String(body.black || '');
   const result = String(body.result || '');
   const category = ratingCategory(body.base, body.inc);
+  const moves = String(body.moves || '').slice(0, 20000);         // jugadas SAN (para revivir en el visor)
+  const wname = String(body.wname || '').slice(0, 60);
+  const bname = String(body.bname || '').slice(0, 60);
   if (!gameId || !white || !black) return errJson('Faltan datos (gameId, white, black)', 400);
   if (white === black) return errJson('Una cuenta no puede jugar contra sí misma', 400);
   if (result !== 'w' && result !== 'b' && result !== 'draw') return errJson('result inválido', 400);
@@ -1254,8 +1274,9 @@ async function ratingReport(request, env) {
         'ON CONFLICT(user_id, category) DO UPDATE SET rating=?3, games=games+1, updated=?4')
         .bind(black, category, newB, now),
       env.DB.prepare('INSERT INTO rated_games (game_id, category, white_id, black_id, result, ' +
-        'white_before, white_after, black_before, black_after, ts) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)')
-        .bind(gameId, category, white, black, result, rw.rating, newW, rb.rating, newB, now),
+        'white_before, white_after, black_before, black_after, ts, moves, white_name, black_name) ' +
+        'VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)')
+        .bind(gameId, category, white, black, result, rw.rating, newW, rb.rating, newB, now, moves, wname, bname),
     ]);
   } catch (e) { return errJson('D1 error: ' + e.message, 500); }
 
@@ -1264,6 +1285,49 @@ async function ratingReport(request, env) {
     white: { rating: newW, delta: newW - rw.rating, games: rw.games + 1, prov: ratingIsProv(rw.games + 1) },
     black: { rating: newB, delta: newB - rb.rating, games: rb.games + 1, prov: ratingIsProv(rb.games + 1) },
   });
+}
+
+// GET /rating/games?user=<usuario>[&limit=N]  — PÚBLICO (mismo criterio que /u/): historial de
+// partidas rateadas de un jugador, ya "orientado" hacia él (rival, color, resultado, delta) +
+// las jugadas para revivirla en el visor. Devuelve las más nuevas primero. Sirve para la lista
+// del perfil Y para el gráfico de progreso de elo (con los rating "después" + la fecha).
+async function ratingGames(request, reqUrl, env) {
+  if (!env.DB) return errJson('Falta el binding D1 (DB)', 500);
+  const handle = String(reqUrl.searchParams.get('user') || '').trim().slice(0, 40);
+  if (!handle) return errJson('Falta el usuario', 400);
+  let limit = parseInt(reqUrl.searchParams.get('limit') || '80', 10);
+  if (!(limit > 0)) limit = 80;
+  limit = Math.min(limit, 150);
+  await ensureUserTables(env);
+  const u = await env.DB.prepare('SELECT id, username FROM usuarios WHERE LOWER(username)=LOWER(?1)').bind(handle).first();
+  if (!u) return errJson('Este jugador no tiene perfil en el sitio', 404);
+  await ensureRatingTables(env);
+  let rows;
+  try {
+    rows = await env.DB.prepare(
+      'SELECT game_id, category, white_id, black_id, result, white_before, white_after, ' +
+      'black_before, black_after, ts, moves, white_name, black_name FROM rated_games ' +
+      'WHERE white_id=?1 OR black_id=?1 ORDER BY ts DESC LIMIT ?2'
+    ).bind(u.id, limit).all();
+  } catch (e) { return errJson('D1 error: ' + e.message, 500); }
+  const list = ((rows && rows.results) || []).map((r) => {
+    const iAmWhite = (r.white_id === u.id);
+    const color = iAmWhite ? 'w' : 'b';
+    const before = iAmWhite ? r.white_before : r.black_before;
+    const after = iAmWhite ? r.white_after : r.black_after;
+    // resultado desde MI punto de vista
+    let outcome = 'draw';
+    if (r.result === 'w') outcome = iAmWhite ? 'win' : 'loss';
+    else if (r.result === 'b') outcome = iAmWhite ? 'loss' : 'win';
+    return {
+      gameId: r.game_id, category: r.category, ts: r.ts,
+      color, opponent: (iAmWhite ? r.black_name : r.white_name) || 'Invitado',
+      outcome, before, after, delta: (after != null && before != null) ? (after - before) : null,
+      result: r.result, white: r.white_name || 'Blancas', black: r.black_name || 'Negras',
+      moves: r.moves || '',
+    };
+  });
+  return jsonResp({ id: u.id, username: u.username, games: list });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
