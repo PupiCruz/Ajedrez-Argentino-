@@ -2644,8 +2644,21 @@
       .lv-controls button { width:100%; }
       /* Al terminar la partida, "Volver al menú" se resalta para que sea obvio cómo salir */
       #lv-exit.lv-exit-hot { border-color:var(--gold-dim); color:var(--gold); font-weight:800; background:var(--gold-bg); }
-      .lv-tools { display:flex; gap:8px; margin-top:12px; padding-top:12px; border-top:1px solid var(--border); }
-      .lv-tools button { flex:1; font-size:12.5px; padding:8px 6px; }
+      /* Chat de la partida (columna izquierda, ocupa el espacio que queda debajo de los controles) */
+      .lv-chat { display:flex; flex-direction:column; flex:1 1 auto; min-height:150px; margin-top:12px; padding-top:12px; border-top:1px solid var(--border); }
+      .lv-chat-title { font-size:12px; font-weight:800; letter-spacing:.6px; text-transform:uppercase; color:var(--text3); margin:0 0 8px; }
+      .lv-chat-msgs { flex:1 1 auto; min-height:90px; max-height:min(var(--puz-bw, 480px), 46vh); overflow-y:auto; margin:0 -4px 8px; padding:0 4px; display:flex; flex-direction:column; gap:6px; }
+      .lv-chat-empty { color:var(--text3); font-size:12.5px; padding:6px 4px; margin:auto 0; text-align:center; }
+      .lv-chat-msg { max-width:88%; padding:6px 9px; border-radius:12px; font-size:13px; line-height:1.35; word-wrap:break-word; overflow-wrap:anywhere; }
+      .lv-chat-msg .lv-chat-nm { display:block; font-size:10.5px; font-weight:700; color:var(--text3); margin-bottom:1px; letter-spacing:.2px; }
+      .lv-chat-them { align-self:flex-start; background:var(--bg2); border:1px solid var(--border); border-bottom-left-radius:4px; }
+      .lv-chat-mine { align-self:flex-end; background:var(--gold-bg); border:1px solid var(--gold-dim); border-bottom-right-radius:4px; }
+      .lv-chat-mine .lv-chat-nm { color:var(--gold); text-align:right; }
+      .lv-chat-sys { align-self:center; background:none; color:var(--text3); font-size:11.5px; font-style:italic; padding:2px 6px; }
+      .lv-chat-inrow { display:flex; gap:6px; align-items:center; }
+      .lv-chat-input { flex:1; min-width:0; font-family:inherit; font-size:13px; padding:8px 10px; border-radius:999px; border:1px solid var(--border); background:var(--bg2); color:var(--text); outline:none; }
+      .lv-chat-input:focus { border-color:var(--gold-dim); }
+      .lv-chat-inrow button { flex:0 0 auto; width:38px; padding:8px 0; border-radius:50%; font-size:14px; line-height:1; }
 
       /* Notación de jugadas (columna derecha) */
       .lv-moves { flex:1; overflow-y:auto; max-height:min(var(--puz-bw, 480px), 62vh); margin:0 -4px; }
@@ -2769,9 +2782,13 @@
             <button id="lv-rematch" class="lv-btn-main" style="display:none">Revancha 🔁</button>
             <button id="lv-exit" class="lv-btn-sec">🏠 Volver al menú</button>
           </div>
-          <div class="lv-tools">
-            <button id="lv-copypgn" class="lv-btn-sec">📋 Copiar PGN</button>
-            <button id="lv-copyfen" class="lv-btn-sec">Copiar FEN</button>
+          <div id="lv-chat" class="lv-chat" style="display:none">
+            <div class="lv-chat-title">💬 Chat</div>
+            <div id="lv-chat-msgs" class="lv-chat-msgs"><div class="lv-chat-empty">Saludá a tu rival 👋</div></div>
+            <div class="lv-chat-inrow">
+              <input id="lv-chat-input" class="lv-chat-input" maxlength="300" autocomplete="off" placeholder="Escribí un mensaje…" aria-label="Mensaje de chat">
+              <button id="lv-chat-send" class="lv-btn-sec" title="Enviar" aria-label="Enviar mensaje">➤</button>
+            </div>
           </div>
         </div>
 
@@ -31008,6 +31025,7 @@ function cvUpdateNagBadge() {
     var rm=$('lv-rematch'); if(rm && finished){ rm.disabled=false; rm.textContent='Revancha 🔁'; }
     var ex=$('lv-exit'); if(ex) ex.classList.toggle('lv-exit-hot', finished);
     var rc=$('lv-resign-confirm'); if(rc && !playing) rc.style.display='none';   // cerrar el "¿seguro?" al terminar
+    updateChat();
   }
   function updateDrawPrompt(){
     var el=$('lv-drawprompt'); if(!el) return;
@@ -31172,6 +31190,7 @@ function cvUpdateNagBadge() {
     } else if(m.type==='newgame'){
       lvMyColor=m.color; lvLastMove=null; lvPremove=null; lvLastSoundId=null; lvEndSoundDone=false;
       lvMoves=[]; lvResultCode='*'; lvResult=null; lvBannerDismissed=false; lvViewPly=null; lvPrevMovesLen=0; lvNames=m.names||lvNames; lvRatingMsg=''; clearShapes(); hideBanner();
+      lvClearChat();   // revancha = partida nueva → chat en limpio
       applyState(m);
     } else if(m.type==='opponent-disconnected'){
       lvPlayers[m.color==='w'?'connW':'connB']=false; updateNames();
@@ -31180,7 +31199,43 @@ function cvUpdateNagBadge() {
       lvPlayers[m.color==='w'?'connW':'connB']=true; updateNames();
       stopDiscCountdown();
       if(lvStatus==='playing') setStatus(myTurnText());
+    } else if(m.type==='chat'){
+      lvAddChat(m);
     }
+  }
+
+  // ── Chat de la partida ──────────────────────────────────────────────────────
+  // Muestra el chat cuando hay con quién hablar (rival sentado o partida terminada).
+  function updateChat(){
+    var el=$('lv-chat'); if(!el) return;
+    var amHere=(lvMyColor==='w'||lvMyColor==='b'||lvMyColor==='spec');
+    var bothSeated=!!(lvPlayers && lvPlayers.w && lvPlayers.b);
+    el.style.display=(amHere && (bothSeated || lvStatus==='finished'))?'flex':'none';
+  }
+  // Agrega un mensaje al chat. m = { color, name?, text }.
+  function lvAddChat(m){
+    var box=$('lv-chat-msgs'); if(!box) return;
+    var em=box.querySelector('.lv-chat-empty'); if(em) em.remove();
+    var text=String(m.text==null?'':m.text).slice(0,300); if(!text.trim()) return;
+    var mine=(m.color===lvMyColor && m.color!=='spec');
+    var nm=mine ? 'Vos'
+      : (m.name || (m.color==='w'?(lvNames.w||'Blancas'):m.color==='b'?(lvNames.b||'Negras'):'Espectador'));
+    var div=document.createElement('div');
+    div.className='lv-chat-msg '+(mine?'lv-chat-mine':'lv-chat-them');
+    div.innerHTML='<span class="lv-chat-nm">'+lvEsc(nm)+'</span>'+lvEsc(text);
+    var atBottom=(box.scrollHeight - box.scrollTop - box.clientHeight < 40);
+    box.appendChild(div);
+    if(atBottom || mine) box.scrollTop=box.scrollHeight;   // auto-scroll salvo que estés leyendo arriba
+  }
+  function lvClearChat(){
+    var box=$('lv-chat-msgs'); if(box) box.innerHTML='<div class="lv-chat-empty">Saludá a tu rival 👋</div>';
+  }
+  function lvSendChat(){
+    var inp=$('lv-chat-input'); if(!inp) return;
+    var text=inp.value.replace(/\s+/g,' ').trim(); if(!text) return;
+    if(lvMyColor==='spec'){ inp.value=''; return; }   // los mirones no escriben en esta versión
+    send({type:'chat', text:text.slice(0,300)});
+    inp.value=''; inp.focus();
   }
 
   function updateShare(){
@@ -31288,7 +31343,7 @@ function cvUpdateNagBadge() {
     if(lvMyChallenge){ lobbySend({type:'cancel'}); lvMyChallenge=null; }
     lvPubParams=null; lvAccepting=null; lvSeatPref=null;
     try { if(ws) ws.close(); } catch(e){} ws=null;
-    resetState(); showLobby(); setStatus(''); renderChallenges(); updatePendingPill();
+    resetState(); lvClearChat(); showLobby(); setStatus(''); renderChallenges(); updatePendingPill();
     lvSetAvailable();   // ya no estoy esperando/​jugando → recalcular disponibilidad
     // Si salgo del desafío sin estar en la pestaña, cerrar el lobby que quedó en segundo plano.
     if(!lvOnTab && lobbyWs) lobbyClose();
@@ -31627,8 +31682,8 @@ function cvUpdateNagBadge() {
     if((b=$('lv-rematch'))) b.onclick=function(){ send({type:'rematch'}); this.textContent='Esperando al rival…'; this.disabled=true; };
     if((b=$('lv-exit'))) b.onclick=exit;
     if((b=$('lv-banner'))) b.onclick=function(){ lvBannerDismissed=true; renderResult(); };
-    if((b=$('lv-copypgn'))) b.onclick=function(){ clip(buildPGN(), this, '✓ PGN copiado'); };
-    if((b=$('lv-copyfen'))) b.onclick=function(){ clip(computeView().fen, this, '✓ FEN copiado'); };
+    if((b=$('lv-chat-send'))) b.onclick=lvSendChat;
+    if((b=$('lv-chat-input'))) b.onkeydown=function(e){ if(e.key==='Enter'){ e.preventDefault(); lvSendChat(); } };
     // Barra de navegación (columna derecha) — como el visor
     if((b=$('lv-nav-first'))) b.onclick=function(){ goPly(0); };
     if((b=$('lv-nav-prev'))) b.onclick=function(){ goPly(curPly()-1); };
