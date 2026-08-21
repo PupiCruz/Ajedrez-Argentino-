@@ -2644,8 +2644,11 @@
       .lv-controls button { width:100%; }
       /* Al terminar la partida, "Volver al menú" se resalta para que sea obvio cómo salir */
       #lv-exit.lv-exit-hot { border-color:var(--gold-dim); color:var(--gold); font-weight:800; background:var(--gold-bg); }
-      /* Chat de la partida (columna izquierda, debajo de los controles) */
-      .lv-chat { display:flex; flex-direction:column; margin-top:12px; padding-top:12px; border-top:1px solid var(--border); }
+      /* Chat de la partida (columna izquierda, debajo de los controles). En pantalla ancha
+         llena el espacio que queda hasta el borde inferior del tablero (columna alineada por
+         lvSyncCols) y scrollea adentro; en móvil se topa (ver @media más abajo). */
+      .lv-chat { display:flex; flex-direction:column; flex:1 1 auto; min-height:0; margin-top:12px; padding-top:12px; border-top:1px solid var(--border); }
+      .lv-chat.is-collapsed { flex:0 0 auto; }
       .lv-chat-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:0 0 8px; }
       .lv-chat-title { font-size:12px; font-weight:800; letter-spacing:.6px; text-transform:uppercase; color:var(--text3); }
       /* Cruz para ocultar / botón para volver a mostrar */
@@ -2656,7 +2659,7 @@
       .lv-chat.is-collapsed .lv-chat-head { margin-bottom:0; cursor:pointer; }
       /* Puntito de "mensaje nuevo" cuando el chat está oculto */
       .lv-chat.is-collapsed.has-unread .lv-chat-title::after { content:'●'; color:var(--gold); font-size:9px; margin-left:7px; vertical-align:middle; animation:lvPop .3s cubic-bezier(.2,1.2,.5,1); }
-      .lv-chat-msgs { max-height:200px; overflow-y:auto; margin:0 -4px 8px; padding:0 4px; display:flex; flex-direction:column; gap:6px; }
+      .lv-chat-msgs { flex:1 1 auto; min-height:0; overflow-y:auto; margin:0 -4px 8px; padding:0 4px; display:flex; flex-direction:column; gap:6px; }
       .lv-chat-empty { color:var(--text3); font-size:12.5px; padding:6px 4px; margin:auto 0; text-align:center; }
       .lv-chat-msg { max-width:88%; padding:6px 9px; border-radius:12px; font-size:13px; line-height:1.35; word-wrap:break-word; overflow-wrap:anywhere; }
       .lv-chat-msg .lv-chat-nm { display:block; font-size:10.5px; font-weight:700; color:var(--text3); margin-bottom:1px; letter-spacing:.2px; }
@@ -2669,8 +2672,9 @@
       .lv-chat-input:focus { border-color:var(--gold-dim); }
       .lv-chat-inrow button { flex:0 0 auto; width:38px; padding:8px 0; border-radius:50%; font-size:14px; line-height:1; }
 
-      /* Notación de jugadas (columna derecha) */
-      .lv-moves { flex:1; overflow-y:auto; max-height:min(var(--puz-bw, 480px), 62vh); margin:0 -4px; }
+      /* Notación de jugadas (columna derecha): llena la columna (alineada al tablero por
+         lvSyncCols) y scrollea adentro. El tope en móvil lo pone el @media de abajo. */
+      .lv-moves { flex:1 1 auto; min-height:0; overflow-y:auto; margin:0 -4px; }
       .lv-mv-row { display:grid; grid-template-columns:34px 1fr 1fr; align-items:center; font-size:13.5px; }
       .lv-mv-row:nth-child(odd) { background:var(--bd08, rgba(128,128,128,.08)); }
       .lv-mv-num { color:var(--text3); text-align:right; padding-right:8px; font-variant-numeric:tabular-nums; }
@@ -2680,12 +2684,21 @@
       .lv-mv-san.last { background:var(--gold-bg); color:var(--gold); font-weight:700; }
       .lv-moves-empty { color:var(--text3); font-size:12.5px; padding:6px 4px; }
 
+      /* Pantalla ancha (columnas lado a lado): tope de respaldo para que la columna no crezca
+         más que el tablero antes de que lvSyncCols la fije exacto. Tablero ≈ ancho + filas de
+         jugadores (~92px). */
+      @media (min-width:921px) {
+        .lv-left, .lv-right { max-height:calc(var(--puz-bw, 480px) + 92px); overflow:hidden; }
+      }
       @media (max-width:920px) {
         #lv-game { gap:12px; }
         .lv-center { order:1; width:min(var(--puz-bw, 480px), 100%); margin:0 auto; }
         .lv-left { order:2; } .lv-right { order:3; }
         .lv-left, .lv-right { width:100%; flex-basis:100%; max-width:560px; margin:0 auto; }
         .lv-moves { max-height:230px; }
+        /* En móvil (apilado) el chat no llena una columna: se topa y scrollea. */
+        .lv-chat { flex:0 0 auto; }
+        .lv-chat-msgs { flex:0 0 auto; max-height:200px; }
       }
       @media (max-width:600px) { .lv-clock { font-size:22px; min-width:78px; } .lv-banner .lv-b-title { font-size:20px; } }
     </style>
@@ -31108,6 +31121,7 @@ function cvUpdateNagBadge() {
     }
     updateNames(); renderClocks(); updateControls(); updateDrawPrompt(); renderMoves(); updateNav();
     updateShare();
+    lvSyncColsSoon();   // reasentó el layout (nombres/relojes/estado) → realinear columnas al tablero
     // Disparo del premove al llegar mi turno (no durante la cuenta regresiva)
     if(lvPremove && lvTurn===lvMyColor && lvStatus==='playing' && !inCountdown()){
       var p=lvPremove; lvPremove=null;
@@ -31262,6 +31276,26 @@ function cvUpdateNagBadge() {
     if(save){ try{ localStorage.setItem('lv_chat_hidden', collapsed?'1':'0'); }catch(e){} }
   }
   function lvToggleChat(){ var el=$('lv-chat'); lvSetChatCollapsed(!(el && el.classList.contains('is-collapsed')), true); }
+
+  // ── Alinear las 3 columnas al tablero (como el visor principal) ──────────────
+  // Mide la altura del centro (tablero + relojes) y se la fija a izquierda y derecha; el
+  // contenido interno (chat / notación) scrollea. Solo en pantalla ancha (columnas lado a
+  // lado). Mismo mecanismo que cvSyncSideColHeight del visor.
+  function lvSyncCols(){
+    var game=$('lv-game'); if(!game || game.style.display==='none') return;
+    var center=game.querySelector('.lv-center');
+    var sides=[game.querySelector('.lv-left'), game.querySelector('.lv-right')];
+    var wide=window.innerWidth>=921 && center;
+    if(!wide){ sides.forEach(function(c){ if(c){ c.style.height=''; c.style.maxHeight=''; } }); return; }
+    var h=center.offsetHeight; if(!h) return;
+    sides.forEach(function(c){ if(c){ c.style.height=h+'px'; c.style.maxHeight=h+'px'; } });
+  }
+  // Doble rAF (cuando el layout ya pintó) + respaldo por setTimeout (por si el rAF viene
+  // throttleado o el layout todavía no asentó, ej. al entrar a la partida).
+  function lvSyncColsSoon(){
+    requestAnimationFrame(function(){ requestAnimationFrame(lvSyncCols); });
+    setTimeout(lvSyncCols, 130);
+  }
   function lvSendChat(){
     var inp=$('lv-chat-input'); if(!inp) return;
     var text=inp.value.replace(/\s+/g,' ').trim(); if(!text) return;
@@ -31288,7 +31322,8 @@ function cvUpdateNagBadge() {
   // de todo sin scrollear; al volver al lobby lo mostramos de nuevo.
   function showGame(){ $('lv-lobby').style.display='none'; $('lv-game').style.display='';
     var h=$('lv-pghead'); if(h) h.style.display='none';
-    try{ var m=document.querySelector('.main'); if(m) m.scrollTop=0; }catch(e){} }
+    try{ var m=document.querySelector('.main'); if(m) m.scrollTop=0; }catch(e){}
+    lvSyncColsSoon(); }
   function showLobby(){ $('lv-game').style.display='none'; $('lv-lobby').style.display='';
     var h=$('lv-pghead'); if(h) h.style.display=''; }
   // Mantenemos ?sala=<id> en la URL DURANTE la partida: así un F5 / corte de wifi
@@ -31723,6 +31758,14 @@ function cvUpdateNagBadge() {
       var el=$('lv-chat'); if(el && el.classList.contains('is-collapsed')) lvSetChatCollapsed(false, true);
     };
     try { lvSetChatCollapsed(localStorage.getItem('lv_chat_hidden')==='1', false); } catch(e){}
+    // Mantener las 3 columnas alineadas al tablero: observar el centro (cambia al redimensionar
+    // el tablero o al entrar a la partida) + el resize de ventana (cambio de breakpoint).
+    var _center=document.querySelector('#lv-game .lv-center');
+    if(_center && window.ResizeObserver && !_center._lvRO){
+      _center._lvRO=new ResizeObserver(function(){ lvSyncCols(); });
+      try{ _center._lvRO.observe(_center); }catch(e){}
+    }
+    if(!window.__lvColResize){ window.__lvColResize=true; window.addEventListener('resize', lvSyncCols); }
     // Barra de navegación (columna derecha) — como el visor
     if((b=$('lv-nav-first'))) b.onclick=function(){ goPly(0); };
     if((b=$('lv-nav-prev'))) b.onclick=function(){ goPly(curPly()-1); };
@@ -31735,6 +31778,10 @@ function cvUpdateNagBadge() {
     // Redimensionar arrastrando la esquina inferior derecha (mismo mecanismo que el visor)
     if(typeof _puzBindBoardResize==='function') _puzBindBoardResize('lv-resize','lv-game','lv-board','lv_board_size');
     if(typeof _puzApplyBoardSize==='function') _puzApplyBoardSize('lv-game','lv_board_size');
+    // Al arrastrar el tamaño del tablero cambia --puz-bw (sin avisar) → realinear las columnas
+    // en vivo durante el drag y al soltar. (El ResizeObserver es respaldo; esto es lo seguro.)
+    var _rz=$('lv-resize'); if(_rz && !_rz._lvSyncBound){ _rz._lvSyncBound=true;
+      _rz.addEventListener('pointermove', lvSyncCols); _rz.addEventListener('pointerup', lvSyncColsSoon); }
     // Nombre guardado
     try { var nm=localStorage.getItem('lv_name'); if(nm && $('lv-name')) $('lv-name').value=nm; } catch(e){}
   }
