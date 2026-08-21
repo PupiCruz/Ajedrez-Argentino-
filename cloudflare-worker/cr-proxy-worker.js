@@ -92,6 +92,7 @@ export default {
     if (reqUrl.pathname === '/follow')       return followToggle(request, env, true);      // POST Bearer {userId}
     if (reqUrl.pathname === '/unfollow')     return followToggle(request, env, false);     // POST Bearer {userId}
     if (reqUrl.pathname === '/following')     return followingList(request, env);           // GET Bearer → a quién sigo
+    if (reqUrl.pathname === '/profile')       return saveProfile(request, env);             // POST Bearer {name,country,bio} → fichita
 
     // ── Rating de partidas en vivo (PvP) — propio del sitio, server-authoritative ──
     if (reqUrl.pathname === '/rating/me')     return ratingMe(request, env);      // GET  Bearer → mis 3 ratings
@@ -880,11 +881,13 @@ const LICHESS_HOST = 'https://lichess.org';
 const SESSION_TTL_DAYS = 180;   // cuánto dura la sesión sin volver a loguear (~6 meses)
 
 // Crea las tablas si no existen. `usuarios` = personas; `sessions` = tokens de login.
+let _usuariosMigrated = false;   // fichita editable: se agregan las columnas una vez por isolate
 async function ensureUserTables(env) {
   await env.DB.prepare(
     'CREATE TABLE IF NOT EXISTS usuarios (' +
     'id TEXT PRIMARY KEY, provider TEXT, prov_id TEXT, username TEXT, ' +
-    'rating INTEGER, title TEXT, created_at INTEGER, last_login INTEGER)'
+    'rating INTEGER, title TEXT, created_at INTEGER, last_login INTEGER, ' +
+    'display_name TEXT, country TEXT, bio TEXT)'
   ).run();
   // Un usuario por (proveedor, id del proveedor): evita duplicados del mismo Lichess.
   await env.DB.prepare(
@@ -894,6 +897,18 @@ async function ensureUserTables(env) {
     'CREATE TABLE IF NOT EXISTS sessions (' +
     'token TEXT PRIMARY KEY, user_id TEXT, created_at INTEGER, expires INTEGER)'
   ).run();
+  // Migración perezosa: la tabla usuarios ya existía SIN la fichita (display_name/country/bio).
+  if (_usuariosMigrated) return;
+  try {
+    const info = await env.DB.prepare('PRAGMA table_info(usuarios)').all();
+    const cols = new Set(((info && info.results) || []).map((r) => r.name));
+    const want = { display_name: 'TEXT', country: 'TEXT', bio: 'TEXT' };
+    for (const name in want) {
+      if (cols.has(name)) continue;
+      try { await env.DB.prepare('ALTER TABLE usuarios ADD COLUMN ' + name + ' ' + want[name]).run(); } catch (e) {}
+    }
+    _usuariosMigrated = true;
+  } catch (e) { /* reintenta en la próxima */ }
 }
 
 // Sólo lo que es seguro mostrar a cualquiera (nunca el token de Lichess ni datos internos).
@@ -1123,7 +1138,7 @@ async function publicProfile(request, reqUrl, env) {
   if (!handle) return errJson('Falta el usuario', 400);
   await ensureUserTables(env);
   const u = await env.DB.prepare(
-    'SELECT id, username, rating, title FROM usuarios WHERE LOWER(username)=LOWER(?1)'
+    'SELECT id, username, rating, title, display_name, country, bio, created_at FROM usuarios WHERE LOWER(username)=LOWER(?1)'
   ).bind(handle).first();
   if (!u) return errJson('Este jugador no tiene perfil en el sitio', 404);
 
@@ -1164,8 +1179,29 @@ async function publicProfile(request, reqUrl, env) {
 
   return jsonResp({
     id: u.id, username: u.username, title: u.title || null, ratingLichess: u.rating || null,
+    name: u.display_name || null, country: u.country || null, bio: u.bio || null, createdAt: u.created_at || null,
     ratings, games, prov, tactic, followers, following, youFollow,
   });
+}
+
+// POST /profile  (Authorization: Bearer)  body { name, country, bio } → guarda la fichita editable
+// del usuario logueado (nombre a mostrar, país, nota). Devuelve lo guardado ya recortado.
+async function saveProfile(request, env) {
+  if (request.method !== 'POST') return errJson('Usá POST', 405);
+  if (!env.DB) return errJson('Falta el binding D1 (DB)', 500);
+  const me = await sessionUser(request, env);
+  if (!me) return errJson('No autenticado', 401);
+  let body; try { body = await request.json(); } catch (e) { return errJson('JSON inválido', 400); }
+  // Recortes y saneo: nombre y país cortos; nota con tope. \r\n de la nota se normalizan a \n.
+  const name = String(body.name || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 40);
+  const country = String(body.country || '').trim().toUpperCase().replace(/[^A-Z]/g, '').slice(0, 3);
+  const bio = String(body.bio || '').replace(/\r\n/g, '\n').replace(/[ \t]+\n/g, '\n').trim().slice(0, 200);
+  await ensureUserTables(env);
+  try {
+    await env.DB.prepare('UPDATE usuarios SET display_name=?1, country=?2, bio=?3 WHERE id=?4')
+      .bind(name || null, country || null, bio || null, me.id).run();
+  } catch (e) { return errJson('D1 error: ' + e.message, 500); }
+  return jsonResp({ ok: true, name: name || null, country: country || null, bio: bio || null });
 }
 
 // Crea (si falta) la tabla de "seguir". Mismo patrón perezoso que las demás.
