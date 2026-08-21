@@ -36,7 +36,7 @@
     try {
       var p = new URLSearchParams(location.search || '');
       var label = null;
-      if (p.get('partida') || (p.get('jugador') && p.get('t') && p.get('g'))) label = 'Cargando partida…';
+      if (p.get('partida') || p.get('vg') || (p.get('jugador') && p.get('t') && p.get('g'))) label = 'Cargando partida…';
       else if (p.get('torneo')) label = 'Cargando torneo…';
       else if (p.get('jugador')) label = 'Cargando jugador…';
       else if (p.get('ejercicio')) label = 'Cargando ejercicio…';
@@ -13600,6 +13600,53 @@ function loadPgnIntoViewer(pgn, tourName, tourLoc, activeIdx) {
     if (sf.engine) sf.engine.postMessage('stop');
   }
   faAutoShow();   // mostrar SIEMPRE el gráfico (con datos si los hay, o el botón Analizar si no)
+}
+
+// ══ Partidas PvP (en vivo) con link propio compartible: ?vg=<gameId> ══
+// El historial del perfil abre partidas sueltas; para que tengan URL propia (como las de torneo)
+// se les arma un PGN y una clave compartible ?vg=<id>. El deep-link las baja del cr-proxy.
+var _PVP_PROXY = (typeof CR_PROXY !== 'undefined' && CR_PROXY) ? CR_PROXY : 'https://cr-proxy.mmatiasscruz.workers.dev';
+function _pvpResTok(r) { return r === 'w' ? '1-0' : r === 'b' ? '0-1' : '1/2-1/2'; }
+function _pvpHdrName(s) { return (String(s == null ? '?' : s).replace(/[\\"\r\n]/g, '').slice(0, 60)) || '?'; }
+// La D1 guarda las jugadas en SAN separadas por espacio; se les ponen los números de jugada para
+// que el load_pgn ESTRICTO del visor las acepte.
+function _pvpNumberMoves(san) {
+  var arr = String(san || '').trim().split(/\s+/), out = [], n = 1, i;
+  if (arr.length === 1 && arr[0] === '') return '';
+  for (i = 0; i < arr.length; i += 2) { out.push(n + '. ' + arr[i] + (arr[i + 1] ? (' ' + arr[i + 1]) : '')); n++; }
+  return out.join(' ');
+}
+function _pvpGamePgn(g) {
+  var d = new Date((g.ts || 0) * 1000);
+  var dt = d.getFullYear() + '.' + ('0' + (d.getMonth() + 1)).slice(-2) + '.' + ('0' + d.getDate()).slice(-2);
+  var mv = _pvpNumberMoves(g.moves), tok = _pvpResTok(g.result);
+  return '[Event "Partida en vivo · chessargentino"]\n[Site "chessargentino.ar"]\n[Date "' + dt + '"]\n' +
+    '[White "' + _pvpHdrName(g.white) + '"]\n[Black "' + _pvpHdrName(g.black) + '"]\n[Result "' + tok + '"]\n\n' +
+    (mv ? mv + ' ' : '') + tok + '\n';
+}
+// Abre una partida PvP en el visor con su link propio ?vg=<id>. fromNick (opcional) = perfil al
+// que vuelve el botón "Volver al perfil". g = {gameId, ts, white, black, result, moves}.
+function _openVivoGame(g, fromNick) {
+  if (!g || !g.gameId || !ensureChessLib()) return;
+  _cvFromProfile = fromNick || null;
+  _cvFromTournament = false;
+  _cvTourGames = [_pvpGamePgn(g)];
+  _cvShareKeys = [{ url: '?vg=' + encodeURIComponent(g.gameId), tour: null }];
+  _cvTourIdx = 0;
+  loadPgnIntoViewer(_cvTourGames[0], '', '', 0);
+}
+// Deep-link ?vg=<id>: baja la partida del cr-proxy y la abre. cvOpenOverlay quita la portada.
+function _openVivoGameDeepLink(gameId) {
+  gameId = String(gameId || '').trim();
+  if (!gameId) { _removeDeepLinkCover(); return; }
+  fetch(_PVP_PROXY + '/rating/game?id=' + encodeURIComponent(gameId)).then(function (r) {
+    if (r.status === 404) return { __nf: true };
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }).then(function (g) {
+    if (g && g.__nf) { _removeDeepLinkCover(); alert('No se encontró esa partida.'); return; }
+    _openVivoGame(g, null);
+  }).catch(function () { _removeDeepLinkCover(); alert('No se pudo cargar la partida. Probá de nuevo.'); });
 }
 
 // Almacena los torneos del último jugador abierto para navegación
@@ -28259,6 +28306,12 @@ try { var _seEl0 = document.getElementById('s-entrenar'); if (_seEl0 && _seEl0.c
   var nk = params.get('noticia');                      // noticia compartida: ?noticia=<id>
   var ek = params.get('ejercicio');                    // ejercicio compartido: ?ejercicio=<id>
   var pak = params.get('practica');                    // práctica compartida: ?practica=<id>
+  var vgk = params.get('vg');                          // partida PvP (en vivo) compartida: ?vg=<gameId>
+  if (vgk) {
+    try { history.replaceState({}, '', location.pathname); } catch (e) {}
+    _openVivoGameDeepLink(vgk);
+    return;
+  }
   if (ek) {
     var ebtn = document.querySelector('.nav-btn[onclick*="\'entrenar\'"]');
     if (ebtn) { try { goTo('entrenar', ebtn); trainTab('ejercicios'); } catch (e) {} }
@@ -32376,32 +32429,15 @@ function cvUpdateNagBadge() {
   function catInfo(k){ for(var i=0;i<CATS.length;i++){ if(CATS[i].k===k) return CATS[i]; } return {k:k,ic:'',n:k||''}; }
   function fmtDate(ts){ if(!ts) return ''; var d=new Date(ts*1000);
     return ('0'+d.getDate()).slice(-2)+'/'+('0'+(d.getMonth()+1)).slice(-2)+'/'+String(d.getFullYear()).slice(-2); }
-  function resTok(r){ return r==='w'?'1-0':r==='b'?'0-1':'1/2-1/2'; }
-  function hdrName(s){ return (String(s==null?'?':s).replace(/[\\"\r\n]/g,'').slice(0,60))||'?'; }
-  // La D1 guarda las jugadas en SAN separadas por espacio ("e4 e5 Nf3…"); les pongo los números
-  // de jugada para que el load_pgn ESTRICTO del visor las acepte.
-  function numberMoves(san){
-    var arr=String(san||'').trim().split(/\s+/), out=[], n=1, i;
-    if(arr.length===1 && arr[0]==='') return '';
-    for(i=0;i<arr.length;i+=2){ out.push(n+'. '+arr[i]+(arr[i+1]?(' '+arr[i+1]):'')); n++; }
-    return out.join(' ');
-  }
-  function buildPgn(g){
-    var d=new Date((g.ts||0)*1000);
-    var dt=d.getFullYear()+'.'+('0'+(d.getMonth()+1)).slice(-2)+'.'+('0'+d.getDate()).slice(-2);
-    var mv=numberMoves(g.moves), tok=resTok(g.result);
-    return '[Event "Partida en vivo · chessargentino"]\n[Site "chessargentino.ar"]\n[Date "'+dt+'"]\n'+
-      '[White "'+hdrName(g.white)+'"]\n[Black "'+hdrName(g.black)+'"]\n[Result "'+tok+'"]\n\n'+
-      (mv?mv+' ':'')+tok+'\n';
-  }
+  // El PGN + link propio (?vg=<id>) los arma _openVivoGame/_pvpGamePgn (top-level, reusados por el deep-link).
   function openGameInViewer(g){
-    if(typeof loadPgnIntoViewer!=='function'){ toast('El visor no está disponible.'); return; }
-    var pgn=buildPgn(g), nick=curNick;
-    // Marca "vengo del perfil de <nick>": al volver Atrás desde el visor se reabre este perfil
-    // (mismo mecanismo que _cvFromPuzzle). Ver el popstate y cvBackToTournament en el visor.
-    try{ window._cvFromProfile=nick; }catch(e){}
-    hardRemove(); curNick=''; curMode=null; reqId++;   // sacar la página del perfil (y su body.prof-page) sin tocar el hash
-    try{ loadPgnIntoViewer(pgn, '', '', 0); }catch(e){ toast('No se pudo abrir la partida.'); }
+    if(typeof _openVivoGame!=='function'){ toast('El visor no está disponible.'); return; }
+    var nick=curNick;
+    // Sacar la página del perfil (y su body.prof-page) sin tocar el hash. _openVivoGame marca el
+    // origen (_cvFromProfile=nick) para que "Volver" reabra este perfil, y le pone el link propio
+    // ?vg=<id> a la partida (compartible). Ver _openVivoGame / popstate / cvBackToTournament.
+    hardRemove(); curNick=''; curMode=null; reqId++;
+    try{ _openVivoGame(g, nick); }catch(e){ toast('No se pudo abrir la partida.'); }
   }
   function rowHtml(g, i){
     var oc=g.outcome, badge=oc==='win'?'<span class="aa-hist-r win">G</span>':

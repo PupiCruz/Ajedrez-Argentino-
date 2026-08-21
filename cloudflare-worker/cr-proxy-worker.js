@@ -97,6 +97,7 @@ export default {
     if (reqUrl.pathname === '/rating/me')     return ratingMe(request, env);      // GET  Bearer → mis 3 ratings
     if (reqUrl.pathname === '/rating/report') return ratingReport(request, env);  // POST secreto (sólo el worker de vivo)
     if (reqUrl.pathname === '/rating/games')  return ratingGames(request, reqUrl, env); // GET público ?user= → historial de partidas
+    if (reqUrl.pathname === '/rating/game')   return ratingGame(request, reqUrl, env);  // GET público ?id= → una partida (link compartible)
 
     // ── Progreso de EJERCICIOS atado a la cuenta (viaja entre dispositivos) ──
     if (reqUrl.pathname === '/puz/progress')  return puzProgress(request, env);   // GET (leer) / POST (guardar), Bearer
@@ -1328,6 +1329,31 @@ async function ratingGames(request, reqUrl, env) {
     };
   });
   return jsonResp({ id: u.id, username: u.username, games: list });
+}
+
+// GET /rating/game?id=<gameId>  — PÚBLICO: UNA partida por su id (para el link compartible
+// ?vg=<gameId>). Devuelve los datos crudos que el cliente necesita para armar el PGN y abrirla
+// en el visor. 404 si no existe.
+async function ratingGame(request, reqUrl, env) {
+  if (!env.DB) return errJson('Falta el binding D1 (DB)', 500);
+  const id = String(reqUrl.searchParams.get('id') || '').trim().slice(0, 80);
+  if (!id) return errJson('Falta el id', 400);
+  await ensureRatingTables(env);
+  let r;
+  try {
+    r = await env.DB.prepare(
+      'SELECT game_id, category, white_id, black_id, result, white_before, white_after, ' +
+      'black_before, black_after, ts, moves, white_name, black_name FROM rated_games WHERE game_id=?1'
+    ).bind(id).first();
+  } catch (e) { return errJson('D1 error: ' + e.message, 500); }
+  if (!r) return errJson('Partida no encontrada', 404);
+  return jsonResp({
+    gameId: r.game_id, category: r.category, ts: r.ts, result: r.result,
+    white: r.white_name || 'Blancas', black: r.black_name || 'Negras',
+    whiteBefore: r.white_before, whiteAfter: r.white_after,
+    blackBefore: r.black_before, blackAfter: r.black_after,
+    moves: r.moves || '',
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
