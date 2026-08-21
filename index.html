@@ -30431,6 +30431,7 @@ function cvUpdateNagBadge() {
   var lvOnlineSet={}, lvOnlineNames={};        // userIds CONECTADOS (app abierta) → botón verde de seguidos
   var lvAvailSet={};                            // userIds DISPONIBLES (en Jugar) → lista de "jugadores para desafiar"
   var lvOnlineExpanded=false;      // ¿lista de en-línea desplegada (true) o píldora (false)?
+  var lvOnlineChangeCbs=[];        // suscriptores (el menú hamburguesa) a cambios de "en línea"
   // Conectar al lobby al loguearse (aunque no estés en Jugar): así recibís desafíos dirigidos y
   // figurás "en línea" desde cualquier pestaña. Al desloguearse, cerrar si ya no hace falta.
   document.addEventListener('aa-auth-changed', function(e){
@@ -31339,6 +31340,7 @@ function cvUpdateNagBadge() {
     lvMoves=[]; lvManualFlip=false; lvResultCode='*';
     lvArrows=[]; lvHighlights={}; lvRmDown=null; lvViewPly=null; lvPrevMovesLen=0;
     lvResult=null; lvBannerDismissed=false; stopDiscCountdown(); stopArrancaCountdown();
+    lvClearChat();   // partida nueva (crear/unirse/aceptar) → chat en limpio. NO se llama en la reconexión.
     var rc=$('lv-resign-confirm'); if(rc) rc.style.display='none';
     hideBanner(); hidePromo(); renderResult(); renderMoves(); renderArrows(); updateNav();
   }
@@ -31410,7 +31412,7 @@ function cvUpdateNagBadge() {
     if(lvMyChallenge){ lobbySend({type:'cancel'}); lvMyChallenge=null; }
     lvPubParams=null; lvAccepting=null; lvSeatPref=null;
     try { if(ws) ws.close(); } catch(e){} ws=null;
-    resetState(); lvClearChat(); showLobby(); setStatus(''); renderChallenges(); updatePendingPill();
+    resetState(); showLobby(); setStatus(''); renderChallenges(); updatePendingPill();   // resetState ya limpia el chat
     lvSetAvailable();   // ya no estoy esperando/​jugando → recalcular disponibilidad
     // Si salgo del desafío sin estar en la pestaña, cerrar el lobby que quedó en segundo plano.
     if(!lvOnTab && lobbyWs) lobbyClose();
@@ -31584,7 +31586,7 @@ function cvUpdateNagBadge() {
     var oc=document.getElementById('lv-online'); if(oc) oc.remove();
     var op=document.getElementById('lv-online-pill'); if(op) op.remove();
     var list=lvFollowedOnline();
-    if(!list.length){ lvOnlineExpanded=false; return; }
+    if(!list.length){ lvOnlineExpanded=false; lvOnlineChangeCbs.forEach(function(fn){ try{ fn(); }catch(e){} }); return; }
     if(lvOnlineExpanded){
       var rows=list.map(function(u){
         return '<div class="lv-online-row"><span class="lv-online-dot"></span>'+
@@ -31606,6 +31608,8 @@ function cvUpdateNagBadge() {
       host.appendChild(p);
       p.onclick=function(){ lvOnlineExpanded=true; renderOnlinePill(); };
     }
+    // Avisar a los suscriptores (el menú hamburguesa) que cambió la lista de "en línea".
+    lvOnlineChangeCbs.forEach(function(fn){ try{ fn(); }catch(e){} });
   }
   // Lista de "jugadores disponibles" (en la pestaña Jugar) — cualquiera, siga o no. Se ve DENTRO de Jugar.
   function renderAvailPlayers(){
@@ -31799,6 +31803,19 @@ function cvUpdateNagBadge() {
     }
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', init); else init();
+
+  // API para el menú hamburguesa del teléfono: leer los seguidos en línea, suscribirse a los
+  // cambios (para refrescar el contador) y desafiar a uno. Así el globito flotante puede pasar a
+  // ser una fila del menú cuando está abierto (sin pisarse con el ☰).
+  window.aaOnline = {
+    list: function(){ return lvFollowedOnline(); },
+    count: function(){ return lvFollowedOnline().length; },
+    challenge: function(id, username){
+      if(window.aaProfile && window.aaProfile.challenge) window.aaProfile.challenge(id, username);
+      else lvChallengeUser(id, username, 300, 0, 'rnd');
+    },
+    onChange: function(fn){ if(typeof fn==='function') lvOnlineChangeCbs.push(fn); }
+  };
 })();
 </script>
 
@@ -31900,6 +31917,31 @@ function cvUpdateNagBadge() {
   .aa-sheet-item.active{color:var(--gold);background:var(--gold-bg,rgba(255,195,64,.12))}
   .aa-sheet-item .chk{margin-left:auto;color:var(--gold);font-weight:700;font-size:.9rem}
   .aa-sheet-sep{height:1px;background:var(--border);margin:8px 8px}
+  /* Fila "en línea" del menú: el › a la derecha indica que abre la columna lateral. */
+  .aa-sheet-item .go{margin-left:auto;color:var(--text3,#888);font-weight:700;font-size:1.2rem;line-height:1}
+  .aa-sheet-item .aa-online-badge{margin-left:auto;display:inline-flex;align-items:center;gap:7px;color:var(--text2)}
+  .aa-sheet-item .aa-online-badge .go{margin-left:0}
+  /* Columna lateral (derecha) con los seguidos en línea — se abre desde la fila del menú, en vez
+     de desplegarse hacia arriba (que taparía las opciones de arriba). */
+  .aa-online-col{position:fixed;top:0;right:0;bottom:0;width:min(300px,86vw);z-index:10001;
+    background:var(--bg3);border-left:1px solid var(--border);box-shadow:-10px 0 34px rgba(0,0,0,.45);
+    transform:translateX(100%);transition:transform .24s cubic-bezier(.2,.9,.3,1);
+    display:flex;flex-direction:column;padding-top:env(safe-area-inset-top,0px);
+    padding-bottom:calc(10px + env(safe-area-inset-bottom,0px));overflow:hidden}
+  .aa-online-col.open{transform:translateX(0)}
+  .aa-oc-head{display:flex;align-items:center;gap:10px;padding:14px 12px 10px;border-bottom:1px solid var(--border);flex:0 0 auto}
+  .aa-oc-back{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;flex:0 0 auto;
+    border:1px solid var(--border);background:var(--bg2);color:var(--text);border-radius:9px;cursor:pointer;font-size:19px;font-family:inherit;line-height:1}
+  .aa-oc-back:active{background:var(--bg)}
+  .aa-oc-title{font-weight:800;font-size:1.02rem;color:var(--text)}
+  .aa-oc-list{flex:1 1 auto;overflow-y:auto;padding:6px 8px}
+  .aa-oc-row{display:flex;align-items:center;gap:10px;width:100%;text-align:left;border:none;background:none;
+    color:var(--text);font-family:inherit;padding:11px 8px;border-radius:11px;cursor:pointer}
+  .aa-oc-row:active{background:var(--bg2)}
+  .aa-oc-dot{width:9px;height:9px;border-radius:50%;background:#2ecc71;flex:0 0 auto;box-shadow:0 0 0 3px rgba(46,204,113,.18)}
+  .aa-oc-nm{flex:1;font-weight:600;font-size:.98rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .aa-oc-ch{flex:0 0 auto;font-size:1.15rem}
+  .aa-oc-empty{color:var(--text3,#888);font-size:.9rem;text-align:center;padding:22px 12px}
   /* Banda intermedia (901–1269px, tablets/laptops chicas): el nav de arriba se muestra pero
      SÓLO con emojis (las 7 pestañas con texto completo necesitan ~1270px). Así nunca desborda
      ni tapa al usuario. Debajo de 900px el nav se oculta y aparece el hamburguesa. */
@@ -31919,6 +31961,10 @@ function cvUpdateNagBadge() {
       background:linear-gradient(135deg,#7c5cff,#4f46e5);color:#fff;border:none;font-size:23px;
       box-shadow:0 6px 20px rgba(0,0,0,.4);cursor:pointer;transition:transform .15s}
     .aa-fab:active{transform:scale(.93)}
+    /* El globito "en línea" comparte esquina con el ☰: lo subimos por encima del botón para que
+       no se pisen (menú cerrado). Con el menú ABIERTO se esconde y pasa a ser una fila del menú. */
+    #lv-online-host{bottom:calc(84px + env(safe-area-inset-bottom,0px))}
+    body.aa-menu-open #lv-online-host{display:none}
   }
 </style>
 <script>
@@ -32946,7 +32992,7 @@ function cvUpdateNagBadge() {
 <script>
 (function(){
   'use strict';
-  var fab, back, sheet, open=false;
+  var fab, back, sheet, col, open=false, colOpen=false;
 
   function build(){
     fab=document.createElement('button');
@@ -32961,9 +33007,20 @@ function cvUpdateNagBadge() {
     sheet.setAttribute('role','dialog'); sheet.setAttribute('aria-label','Navegación');
     sheet.addEventListener('click', function(e){ e.stopPropagation(); });
 
+    // Columna lateral (derecha) con los seguidos en línea. Se abre desde la fila del menú.
+    col=document.createElement('div'); col.className='aa-online-col';
+    col.setAttribute('role','dialog'); col.setAttribute('aria-label','Seguidos en línea');
+    col.addEventListener('click', function(e){ e.stopPropagation(); });
+
     document.body.appendChild(fab);
     document.body.appendChild(back);
     document.body.appendChild(sheet);
+    document.body.appendChild(col);
+
+    // Refrescar la fila/columna cuando cambia quién está en línea (mientras el menú está abierto).
+    try { if(window.aaOnline && window.aaOnline.onChange) window.aaOnline.onChange(function(){
+      if(open) fill(); if(colOpen) renderCol();
+    }); } catch(e){}
   }
 
   // Arma el contenido leyendo las pestañas reales del header (así nunca se desincroniza).
@@ -32979,6 +33036,14 @@ function cvUpdateNagBadge() {
       html+='<button class="aa-sheet-item'+act+'" data-nav="'+i+'"><span class="em">'+em+'</span>'+
         '<span>'+lbl+'</span>'+(act?'<span class="chk">✓</span>':'')+'</button>';
     });
+    // Fila "en línea" (seguidos conectados): sólo si hay alguno. Al tocarla abre la columna
+    // lateral (NO se despliega hacia arriba, así no tapa las opciones de arriba).
+    var onCount=0; try { if(window.aaOnline && window.aaOnline.count) onCount=window.aaOnline.count(); } catch(e){}
+    if(onCount>0){
+      html+='<div class="aa-sheet-sep"></div>';
+      html+='<button class="aa-sheet-item" data-act="online"><span class="em">🟢</span>'+
+        '<span>En línea</span><span class="aa-online-badge"><b>'+onCount+'</b><span class="go">›</span></span></button>';
+    }
     var light=document.body.classList.contains('light');
     html+='<div class="aa-sheet-sep"></div>';
     html+='<button class="aa-sheet-item" data-act="tema"><span class="em">'+(light?'☀️':'🌙')+'</span>'+
@@ -32988,11 +33053,13 @@ function cvUpdateNagBadge() {
 
     sheet.querySelectorAll('.aa-sheet-item').forEach(function(it){
       it.addEventListener('click', function(){
-        if(it.getAttribute('data-act')==='tema'){
+        var act=it.getAttribute('data-act');
+        if(act==='tema'){
           if(typeof toggleTheme==='function') toggleTheme();
           fill();   // refrescar el rótulo (claro/oscuro) sin cerrar
           return;
         }
+        if(act==='online'){ openCol(); return; }   // abre la columna lateral, sin cerrar el menú
         var idx=parseInt(it.getAttribute('data-nav'),10);
         var target=document.querySelectorAll('header nav .nav-btn')[idx];
         close();
@@ -33001,9 +33068,35 @@ function cvUpdateNagBadge() {
     });
   }
 
+  // ── Columna lateral de "en línea" ──────────────────────────────────────────
+  function renderCol(){
+    var list=[]; try { if(window.aaOnline && window.aaOnline.list) list=window.aaOnline.list()||[]; } catch(e){}
+    var h='<div class="aa-oc-head"><button class="aa-oc-back" type="button" aria-label="Volver">‹</button>'+
+      '<span class="aa-oc-title">🟢 En línea ('+list.length+')</span></div><div class="aa-oc-list">';
+    if(!list.length){ h+='<div class="aa-oc-empty">No hay seguidos en línea ahora.</div>'; }
+    else { list.forEach(function(u){
+      h+='<button class="aa-oc-row" type="button" data-uid="'+esc(u.id)+'" data-nm="'+esc(u.username)+'">'+
+        '<span class="aa-oc-dot"></span><span class="aa-oc-nm">'+esc(u.username)+'</span><span class="aa-oc-ch">⚔️</span></button>';
+    }); }
+    h+='</div>';
+    col.innerHTML=h;
+    col.querySelector('.aa-oc-back').addEventListener('click', closeCol);
+    col.querySelectorAll('.aa-oc-row').forEach(function(r){
+      r.addEventListener('click', function(){
+        var uid=r.getAttribute('data-uid'), nm=r.getAttribute('data-nm');
+        closeCol(); close();                       // cerrar menú → el diálogo de desafío toma el foco
+        try { if(window.aaOnline && window.aaOnline.challenge) window.aaOnline.challenge(uid, nm); } catch(e){}
+      });
+    });
+  }
+  function openCol(){ renderCol(); colOpen=true; col.classList.add('open'); }
+  function closeCol(){ colOpen=false; if(col) col.classList.remove('open'); }
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+
   function toggle(){ open?close():openSheet(); }
   function openSheet(){
     fill(); open=true;
+    document.body.classList.add('aa-menu-open');   // esconde el globito flotante "en línea"
     back.classList.add('open');
     // Sin requestAnimationFrame: el panel ya está en el DOM con su transform base, así que el
     // toggle de clase igual anima. (Además, en pestañas ocultas el rAF se pausa y no abriría.)
@@ -33011,7 +33104,8 @@ function cvUpdateNagBadge() {
     fab.innerHTML='✕';
   }
   function close(){
-    open=false;
+    open=false; closeCol();
+    document.body.classList.remove('aa-menu-open');
     sheet.classList.remove('open'); back.classList.remove('open');
     fab.innerHTML='☰';
   }
@@ -33019,7 +33113,7 @@ function cvUpdateNagBadge() {
   function init(){
     build();
     // Cerrar con Escape (por si acaso) y mantener el ícono en sincronía al navegar por código.
-    document.addEventListener('keydown', function(e){ if(e.key==='Escape' && open) close(); });
+    document.addEventListener('keydown', function(e){ if(e.key==='Escape'){ if(colOpen) closeCol(); else if(open) close(); } });
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();
