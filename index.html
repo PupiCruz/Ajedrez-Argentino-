@@ -2644,10 +2644,19 @@
       .lv-controls button { width:100%; }
       /* Al terminar la partida, "Volver al menú" se resalta para que sea obvio cómo salir */
       #lv-exit.lv-exit-hot { border-color:var(--gold-dim); color:var(--gold); font-weight:800; background:var(--gold-bg); }
-      /* Chat de la partida (columna izquierda, ocupa el espacio que queda debajo de los controles) */
-      .lv-chat { display:flex; flex-direction:column; flex:1 1 auto; min-height:150px; margin-top:12px; padding-top:12px; border-top:1px solid var(--border); }
-      .lv-chat-title { font-size:12px; font-weight:800; letter-spacing:.6px; text-transform:uppercase; color:var(--text3); margin:0 0 8px; }
-      .lv-chat-msgs { flex:1 1 auto; min-height:90px; max-height:min(var(--puz-bw, 480px), 46vh); overflow-y:auto; margin:0 -4px 8px; padding:0 4px; display:flex; flex-direction:column; gap:6px; }
+      /* Chat de la partida (columna izquierda, debajo de los controles) */
+      .lv-chat { display:flex; flex-direction:column; margin-top:12px; padding-top:12px; border-top:1px solid var(--border); }
+      .lv-chat-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:0 0 8px; }
+      .lv-chat-title { font-size:12px; font-weight:800; letter-spacing:.6px; text-transform:uppercase; color:var(--text3); }
+      /* Cruz para ocultar / botón para volver a mostrar */
+      .lv-chat-x { background:none; border:none; color:var(--text3); font-size:15px; line-height:1; cursor:pointer; font-family:inherit; padding:3px 6px; border-radius:6px; transition:color .15s, background .15s; }
+      .lv-chat-x:hover { color:var(--text); background:var(--bd08, rgba(128,128,128,.08)); }
+      /* Colapsado: sólo queda el encabezado (con la opción de volver a mostrar) */
+      .lv-chat.is-collapsed .lv-chat-msgs, .lv-chat.is-collapsed .lv-chat-inrow { display:none; }
+      .lv-chat.is-collapsed .lv-chat-head { margin-bottom:0; cursor:pointer; }
+      /* Puntito de "mensaje nuevo" cuando el chat está oculto */
+      .lv-chat.is-collapsed.has-unread .lv-chat-title::after { content:'●'; color:var(--gold); font-size:9px; margin-left:7px; vertical-align:middle; animation:lvPop .3s cubic-bezier(.2,1.2,.5,1); }
+      .lv-chat-msgs { max-height:200px; overflow-y:auto; margin:0 -4px 8px; padding:0 4px; display:flex; flex-direction:column; gap:6px; }
       .lv-chat-empty { color:var(--text3); font-size:12.5px; padding:6px 4px; margin:auto 0; text-align:center; }
       .lv-chat-msg { max-width:88%; padding:6px 9px; border-radius:12px; font-size:13px; line-height:1.35; word-wrap:break-word; overflow-wrap:anywhere; }
       .lv-chat-msg .lv-chat-nm { display:block; font-size:10.5px; font-weight:700; color:var(--text3); margin-bottom:1px; letter-spacing:.2px; }
@@ -2783,7 +2792,10 @@
             <button id="lv-exit" class="lv-btn-sec">🏠 Volver al menú</button>
           </div>
           <div id="lv-chat" class="lv-chat" style="display:none">
-            <div class="lv-chat-title">💬 Chat</div>
+            <div class="lv-chat-head" id="lv-chat-head">
+              <span class="lv-chat-title">💬 Chat</span>
+              <button id="lv-chat-toggle" class="lv-chat-x" type="button" title="Ocultar chat" aria-label="Ocultar chat">✕</button>
+            </div>
             <div id="lv-chat-msgs" class="lv-chat-msgs"><div class="lv-chat-empty">Saludá a tu rival 👋</div></div>
             <div class="lv-chat-inrow">
               <input id="lv-chat-input" class="lv-chat-input" maxlength="300" autocomplete="off" placeholder="Escribí un mensaje…" aria-label="Mensaje de chat">
@@ -31226,10 +31238,30 @@ function cvUpdateNagBadge() {
     var atBottom=(box.scrollHeight - box.scrollTop - box.clientHeight < 40);
     box.appendChild(div);
     if(atBottom || mine) box.scrollTop=box.scrollHeight;   // auto-scroll salvo que estés leyendo arriba
+    // Si el chat está oculto y llega un mensaje del rival, marco "no leído" (puntito).
+    var el=$('lv-chat');
+    if(!mine && el && el.classList.contains('is-collapsed')) el.classList.add('has-unread');
   }
   function lvClearChat(){
     var box=$('lv-chat-msgs'); if(box) box.innerHTML='<div class="lv-chat-empty">Saludá a tu rival 👋</div>';
+    var el=$('lv-chat'); if(el) el.classList.remove('has-unread');
   }
+  // Ocultar / mostrar el chat (la cruz). Recuerda la preferencia entre partidas.
+  function lvSetChatCollapsed(collapsed, save){
+    var el=$('lv-chat'), btn=$('lv-chat-toggle'); if(!el) return;
+    el.classList.toggle('is-collapsed', collapsed);
+    if(!collapsed){
+      el.classList.remove('has-unread');
+      var box=$('lv-chat-msgs'); if(box) box.scrollTop=box.scrollHeight;
+    }
+    if(btn){
+      btn.textContent=collapsed?'💬':'✕';
+      btn.title=collapsed?'Mostrar chat':'Ocultar chat';
+      btn.setAttribute('aria-label', btn.title);
+    }
+    if(save){ try{ localStorage.setItem('lv_chat_hidden', collapsed?'1':'0'); }catch(e){} }
+  }
+  function lvToggleChat(){ var el=$('lv-chat'); lvSetChatCollapsed(!(el && el.classList.contains('is-collapsed')), true); }
   function lvSendChat(){
     var inp=$('lv-chat-input'); if(!inp) return;
     var text=inp.value.replace(/\s+/g,' ').trim(); if(!text) return;
@@ -31684,6 +31716,13 @@ function cvUpdateNagBadge() {
     if((b=$('lv-banner'))) b.onclick=function(){ lvBannerDismissed=true; renderResult(); };
     if((b=$('lv-chat-send'))) b.onclick=lvSendChat;
     if((b=$('lv-chat-input'))) b.onkeydown=function(e){ if(e.key==='Enter'){ e.preventDefault(); lvSendChat(); } };
+    // Cruz para ocultar/mostrar el chat. Clic en el botón alterna; clic en el encabezado
+    // (cuando está oculto) lo vuelve a mostrar.
+    if((b=$('lv-chat-head'))) b.onclick=function(e){
+      if(e.target.closest && e.target.closest('#lv-chat-toggle')){ lvToggleChat(); return; }
+      var el=$('lv-chat'); if(el && el.classList.contains('is-collapsed')) lvSetChatCollapsed(false, true);
+    };
+    try { lvSetChatCollapsed(localStorage.getItem('lv_chat_hidden')==='1', false); } catch(e){}
     // Barra de navegación (columna derecha) — como el visor
     if((b=$('lv-nav-first'))) b.onclick=function(){ goPly(0); };
     if((b=$('lv-nav-prev'))) b.onclick=function(){ goPly(curPly()-1); };
