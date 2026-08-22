@@ -6791,6 +6791,11 @@ async function _teamDoRound(crk,bytes){
 // El Worker (Cloudflare) los baja del lado servidor y los reenvía con CORS. Acá derivamos las URLs
 // de export del crUrl del torneo, bajamos vía proxy y REUSAMOS los parsers de siempre.
 var CR_PROXY = 'https://cr-proxy.mmatiasscruz.workers.dev';
+// Todas las llamadas al API de broadcast de Lichess pasan por el Worker (proxy con caché):
+// muchos visitantes mirando el mismo torneo en vivo comparten UNA sola bajada, así Lichess
+// no nos tira 429 ("demasiadas peticiones"). _liApi arma la URL proxeada a partir del "resto"
+// del path (ej: 'round/abcd1234.pgn' o '<slug>/<roundSlug>/<roundId>' o '<tourId>').
+function _liApi(rest) { return CR_PROXY + '/libc?url=' + encodeURIComponent('https://lichess.org/api/broadcast/' + rest); }
 var _crUrlByKey = {};   // crk -> crUrl del torneo (lo setea openTournamentDetail)
 var _crFormat = {};     // crk -> sistema del torneo elegido a mano: '' | 'swiss' | 'rr' (lo setea openTournamentDetail)
 var _crRoundTimesByKey = {};   // crk -> texto libre de horarios de ronda a mano (sistema viejo; lo setea openTournamentDetail)
@@ -18951,8 +18956,8 @@ var _bcBaseKey = null;
 var _bcArgMode = false;
 
 function openLiveBroadcast(slug, roundSlug, roundId) {
-  // Endpoint /api/ para el PGN (manda CORS desde cualquier origen; el web route no — ver _bcFetchAll).
-  var url = 'https://lichess.org/api/broadcast/round/' + roundId + '.pgn';
+  // Endpoint /api/ para el PGN, vía Worker (proxy con caché, mata el 429 con muchos visitantes).
+  var url = _liApi('round/' + roundId + '.pgn');
   var broadcastUrl = 'https://lichess.org/broadcast/' + slug + '/' + roundSlug + '/' + roundId;
   _liveParams = { slug:slug, roundSlug:roundSlug, roundId:roundId };
   if (_liveTimer) { clearTimeout(_liveTimer); _liveTimer = null; }
@@ -21725,10 +21730,10 @@ function toggleBcArgFilter() {
 // Resuelve el tour id corto de Lichess (ej "jaDEEkUm") a partir de los 3 segmentos de una URL
 // de broadcast (slug / round-slug / round-id). La API /api/broadcast/{id} NO acepta el slug
 // largo del torneo (da 404), por eso hay que resolver el id corto. cb recibe el tourId o null.
-function bcResolveTourId(slug, roundSlug, roundId, cb) {
-  // SIN token (endpoint público). Mandar Authorization fuerza un preflight CORS que rompe la
-  // descarga del PGN de ronda (ver nota en _bcFetchAll). Sin token siempre resuelve.
-  var url = 'https://lichess.org/api/broadcast/' + slug + '/' + roundSlug + '/' + roundId;
+function bcResolveTourId(slug, roundSlug, roundId, cb, _retry) {
+  // Vía Worker (proxy con caché). SIN token (endpoint público). Mandar Authorization fuerza un
+  // preflight CORS que rompe la descarga del PGN de ronda (ver nota en _bcFetchAll).
+  var url = _liApi(slug + '/' + roundSlug + '/' + roundId);
   fetch(url)
     .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
     .then(function(j) {
@@ -21736,7 +21741,13 @@ function bcResolveTourId(slug, roundSlug, roundId, cb) {
       var detail = tid ? null : ('respuesta sin tour.id: ' + (j ? JSON.stringify(Object.keys(j)) : 'null'));
       cb(tid || null, detail);
     })
-    .catch(function(e) { cb(null, 'fetch error: ' + (e && e.message)); });
+    .catch(function(e) {
+      // Un tropiezo puntual (429/red) NO debe tirar toda la carga en vivo: reintentar UNA vez
+      // tras un respiro. (La resolución del id de torneo la cachea el Worker 1 h, así que esto
+      // casi nunca falla, pero por las dudas no morimos al primer intento.)
+      if (!_retry) { setTimeout(function() { bcResolveTourId(slug, roundSlug, roundId, cb, true); }, 2500); return; }
+      cb(null, 'fetch error: ' + (e && e.message));
+    });
 }
 
 // ── Indicador "🔴 EN VIVO" en la lista de torneos ──────────────────────────────
@@ -21765,7 +21776,7 @@ function _bcIsTourLive(tourId, cb) {
   if (c && (Date.now() - c.ts) < _BC_LIVE_TTL) { cb(c.live); return; }
   // SIN token (endpoint público; ver nota en _bcFetchAll).
   var set = function(live) { _bcLiveCache[tourId] = { live: live, ts: Date.now() }; cb(live); };
-  fetch('https://lichess.org/api/broadcast/' + tourId)
+  fetch(_liApi(tourId))
     .then(function(r) { if (!r.ok) throw 0; return r.json(); })
     .then(function(data) {
       var rounds = data.rounds || [], tourSlug = data.tour && data.tour.slug, now = Date.now();
@@ -21775,7 +21786,7 @@ function _bcIsTourLive(tourId, cb) {
       var cand = null;
       for (var j = 0; j < rounds.length; j++) { if (!rounds[j].finished && rounds[j].startsAt && rounds[j].startsAt <= now) { cand = rounds[j]; break; } }
       if (!cand) { set(false); return; }
-      fetch('https://lichess.org/api/broadcast/round/' + cand.id + '.pgn')
+      fetch(_liApi('round/' + cand.id + '.pgn'))
         .then(function(r) { return r.text(); })
         .then(function(pgn) { set(/\[Result\s+"\*"\]/.test(pgn)); })
         .catch(function() { set(false); });
@@ -22011,8 +22022,10 @@ function bcGridClose() {
 
 // Contexto del broadcast abierto, para el auto-refresco en vivo.
 var _liveCtx = null;
-var _BC_REFRESH_MS = 15000;   // cada 15s mientras haya una ronda en vivo (Lichess va directo del navegador,
-                              // no por el Worker; por IP son ~4 req/min, carga trivial). Antes 30s.
+var _BC_REFRESH_MS = 30000;   // cada 30s mientras haya una ronda en vivo. Ahora va por el Worker (proxy con
+                              // caché): cada sondeo cuenta como 1 request del plan gratis de Cloudflare, así
+                              // que 30s (en vez de 15s) evita inflar el presupuesto diario con varios torneos
+                              // en vivo a la vez. La caché del Worker igual protege a Lichess del 429.
 
 // Profundidad (Nº de jugadas desde el inicio) de un nodo del árbol del visor.
 function _cvNodeDepth(n) { var d = 0; while (n && n.parent) { d++; n = n.parent; } return d; }
@@ -22335,7 +22348,7 @@ function _bcFetchAll(broadcastId, cb) {
   // (lichess.org/broadcast/.../*.pgn) NO soporta el preflight CORS con el header Authorization
   // (responde 404 al OPTIONS), así que si hay un token configurado el navegador BLOQUEA la
   // descarga de las partidas y caen al respaldo local. Sin token son requests "simples" → andan.
-  var url = 'https://lichess.org/api/broadcast/' + broadcastId;
+  var url = _liApi(broadcastId);
   _fetchTO(url, 12000)
     .then(function(r) {
       if (!r.ok) throw new Error('HTTP ' + r.status); return r.json();
@@ -22372,7 +22385,7 @@ function _bcFetchAll(broadcastId, cb) {
         // Endpoint /api/ (NO el web /broadcast/.../*.pgn): este devuelve Access-Control-Allow-Origin
         // para CUALQUIER origen; el web route NO manda CORS desde dominios como Netlify, así que las
         // partidas no se descargaban en la web publicada (sí desde localhost). Solo necesita el roundId.
-        var pgnUrl = 'https://lichess.org/api/broadcast/round/' + round.id + '.pgn';
+        var pgnUrl = _liApi('round/' + round.id + '.pgn');
         _fetchTO(pgnUrl, 15000)
           .then(function(r) { return r.text(); })
           .then(function(pgn) { byRound[round.id] = pgn.trim().split(/\n\n(?=\[Event )/).filter(function(g) { return g.trim() && !_bcIsPlaceholderGame(g); }); pending--; done(); })
@@ -22424,7 +22437,7 @@ function _bcMergeResults(results) {
 // las abre (tdShowRound) y quedan cacheadas. El refresco en vivo solo re-pide la ronda en curso.
 // El buscador y "Solo argentinos" operan por ronda (sobre la visible), así que no hace falta cargar todo.
 function _bcFetchMeta(tourId, cb){
-  _fetchTO('https://lichess.org/api/broadcast/' + tourId, 12000)
+  _fetchTO(_liApi(tourId), 12000)
     .then(function(r){ if(!r.ok) throw 0; return r.json(); })
     .then(function(data){ cb({ tourSlug: data.tour && data.tour.slug, rounds: (data.tour && data.tour.rounds) || data.rounds || [] }); })
     .catch(function(){ cb(null); });
@@ -22458,7 +22471,7 @@ function _bcFetchRoundPgns(roundIds, cb){
   if(!roundIds || !roundIds.length){ cb([]); return; }
   var parts = new Array(roundIds.length), pending = roundIds.length;
   roundIds.forEach(function(id, i){
-    _fetchTO('https://lichess.org/api/broadcast/round/' + id + '.pgn', 15000)
+    _fetchTO(_liApi('round/' + id + '.pgn'), 15000)
       .then(function(r){ return r.text(); })
       .then(function(pgn){ parts[i] = pgn.trim().split(/\n\n(?=\[Event )/).filter(function(g){ return g.trim() && !_bcIsPlaceholderGame(g); }); if(--pending === 0) cb([].concat.apply([], parts)); })
       .catch(function(){ parts[i] = []; if(--pending === 0) cb([].concat.apply([], parts)); });

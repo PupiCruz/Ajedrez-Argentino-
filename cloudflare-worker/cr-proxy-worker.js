@@ -67,9 +67,14 @@
 const ALLOWED_HOST = /(^|\.)chess-results\.com$/i;
 const ALLOWED_HOST_I64 = /(^|\.)info64\.org$/i;
 const ALLOWED_HOST_SI = /(^|\.)sichess\.com$/i;
+const ALLOWED_HOST_LI = /(^|\.)lichess\.org$/i;
 const CACHE_SECONDS = 120;
 const STATS_CACHE_SECONDS = 30;
 const SI_CACHE_SECONDS = 15;   // vivo: caché corta para que las jugadas nuevas lleguen rápido
+const LI_LIVE_CACHE = 20;      // broadcast Lichess EN VIVO (PGN de ronda + metadata): jugadas nuevas al toque
+const LI_RESOLVE_CACHE = 3600; // resolución id-de-ronda→id-de-torneo: es FIJA, cachear fuerte (1 h)
+// UA identificable (Lichess pide identificarse; así, si algo raro pasa, saben quiénes somos).
+const LI_UA = 'AjedrezArgentinoBot/1.0 (+https://chessargentino.pages.dev)';
 
 export default {
   async fetch(request, env, ctx) {
@@ -131,6 +136,9 @@ export default {
 
     // ── Tablas de vesus.org (clasificación + emparejamientos en JSON) ──
     if (reqUrl.pathname === '/vspgn') return vsPgn(reqUrl, ctx);
+
+    // ── Proxy con caché para el broadcast de Lichess (mata el 429 del vivo) ──
+    if (reqUrl.pathname === '/libc') return liBc(reqUrl, ctx);
 
     // ── Redacción de noticias con IA (Workers AI) ──
     if (reqUrl.pathname === '/noticia') return noticiaAI(request, env);
@@ -411,6 +419,61 @@ async function siPgn(reqUrl, ctx) {
     : 'application/x-chess-pgn; charset=utf-8');
   headers.set('Cache-Control', 'public, max-age=' + SI_CACHE_SECONDS);
   const resp = new Response(upstream.body, { status: upstream.status, headers });
+  if (upstream.ok) ctx.waitUntil(cache.put(cacheKey, resp.clone()));
+  return resp;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /libc?url=<URL del API de broadcast de Lichess, url-encodeada>
+//   → proxy con caché para lichess.org/api/broadcast/*. Por qué: en la web publicada
+//     el navegador de CADA visitante pegaba directo a Lichess (resolver el id del torneo
+//     + bajar el PGN de la ronda cada 30 s). Con varios visitantes sobre el mismo torneo
+//     en vivo, Lichess devolvía 429 ("demasiadas peticiones") y se rompía el vivo.
+//   Con este proxy, muchos visitantes comparten UNA sola bajada: Lichess recibe ~1 pedido
+//   cada LI_LIVE_CACHE s EN TOTAL (no uno por visita), así el 429 desaparece.
+//   Sólo deja pasar lichess.org/api/broadcast/ (no es un proxy abierto).
+// ─────────────────────────────────────────────────────────────────────────────
+async function liBc(reqUrl, ctx) {
+  const target = reqUrl.searchParams.get('url');
+  if (!target) return errJson('Falta el parámetro ?url=', 400);
+  let t;
+  try { t = new URL(target); }
+  catch (e) { return errJson('URL inválida', 400); }
+  if (t.protocol !== 'https:' || !ALLOWED_HOST_LI.test(t.hostname) || !t.pathname.startsWith('/api/broadcast/')) {
+    return errJson('Host/ruta no permitida (sólo lichess.org/api/broadcast)', 403);
+  }
+
+  // El PGN de ronda y la metadata cambian jugada a jugada → caché corta. La resolución
+  // del id de torneo (/api/broadcast/<slug>/<roundSlug>/<roundId>, 5 segmentos, sin /round/
+  // ni .pgn) es FIJA → caché larga.
+  const isPgn = /\.pgn$/i.test(t.pathname);
+  const segs = t.pathname.split('/').filter(Boolean);   // ['api','broadcast',...]
+  const isResolve = !isPgn && segs.length >= 5 && segs[2] !== 'round';
+  const ttl = isResolve ? LI_RESOLVE_CACHE : LI_LIVE_CACHE;
+
+  const cache = caches.default;
+  const cacheKey = new Request(reqUrl.toString());
+  const hit = await cache.match(cacheKey);
+  if (hit) return hit;
+
+  let upstream;
+  try {
+    upstream = await fetch(t.toString(), {
+      headers: { 'User-Agent': LI_UA, 'Accept': isPgn ? 'application/x-chess-pgn' : 'application/json' },
+      redirect: 'follow',
+    });
+  } catch (e) {
+    return errJson('No se pudo bajar de Lichess: ' + e.message, 502);
+  }
+
+  const headers = corsHeaders();
+  headers.set('Content-Type', isPgn
+    ? 'application/x-chess-pgn; charset=utf-8'
+    : 'application/json; charset=utf-8');
+  headers.set('Cache-Control', 'public, max-age=' + ttl);
+  const resp = new Response(upstream.body, { status: upstream.status, headers });
+  // Sólo cacheamos respuestas buenas: si Lichess tira 429/5xx, NO lo cacheamos (para no
+  // servir el error a todos), y el navegador reintenta/afloja el ritmo.
   if (upstream.ok) ctx.waitUntil(cache.put(cacheKey, resp.clone()));
   return resp;
 }
