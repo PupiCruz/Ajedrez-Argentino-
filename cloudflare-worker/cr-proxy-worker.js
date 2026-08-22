@@ -111,6 +111,7 @@ export default {
     if (reqUrl.pathname === '/mod/sanctions') return modSanctions(request, env);    // GET  → lista de baneados/silenciados
     if (reqUrl.pathname === '/report')        return submitReport(request, env);    // POST Bearer → un usuario reporta a otro
     if (reqUrl.pathname === '/mod/reports')   return modReports(request, env);      // GET  → reportes pendientes (para el panel)
+    if (reqUrl.pathname === '/mod/report/done') return modReportDone(request, env); // POST → marcar reporte(s) como visto
 
     // ── Progreso de EJERCICIOS atado a la cuenta (viaja entre dispositivos) ──
     if (reqUrl.pathname === '/puz/progress')  return puzProgress(request, env);   // GET (leer) / POST (guardar), Bearer
@@ -1214,15 +1215,34 @@ async function modReports(request, env) {
   await ensureReportsTable(env);
   let reports = [];
   try {
+    // Sólo los PENDIENTES (handled=0): los marcados como visto no se muestran (no se acumulan).
     const r = await env.DB.prepare(
-      'SELECT id, target_id, target_username, reason, created_at, handled FROM reports ORDER BY created_at DESC LIMIT 200'
+      'SELECT id, target_id, target_username, reason, created_at FROM reports WHERE handled=0 ORDER BY created_at DESC LIMIT 200'
     ).all();
     reports = ((r && r.results) || []).map((x) => ({
-      id: x.id, userId: x.target_id, username: x.target_username, reason: x.reason || null,
-      at: x.created_at || null, handled: !!x.handled,
+      id: x.id, userId: x.target_id, username: x.target_username, reason: x.reason || null, at: x.created_at || null,
     }));
   } catch (e) { return errJson('D1 error: ' + e.message, 500); }
   return jsonResp({ reports });
+}
+
+// POST /mod/report/done  { id }  o  { userId } — marca como VISTO un reporte (por id) o todos los de un
+// usuario (por userId). Sólo mods. Así los reportes atendidos dejan de aparecer en el panel.
+async function modReportDone(request, env) {
+  if (request.method !== 'POST') return errJson('Usá POST', 405);
+  if (!env.DB) return errJson('Falta el binding D1 (DB)', 500);
+  const who = await modAuth(request, env);
+  if (!who) return errJson('No autorizado', 403);
+  let body; try { body = await request.json(); } catch (e) { return errJson('JSON inválido', 400); }
+  await ensureReportsTable(env);
+  const id = String(body.id || '').trim();
+  const userId = String(body.userId || '').trim();
+  try {
+    if (id) await env.DB.prepare('UPDATE reports SET handled=1 WHERE id=?1').bind(id).run();
+    else if (userId) await env.DB.prepare('UPDATE reports SET handled=1 WHERE target_id=?1').bind(userId).run();
+    else return errJson('Falta id o userId', 400);
+  } catch (e) { return errJson('D1 error: ' + e.message, 500); }
+  return jsonResp({ ok: true });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
