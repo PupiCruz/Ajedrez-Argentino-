@@ -71,7 +71,10 @@ const ALLOWED_HOST_LI = /(^|\.)lichess\.org$/i;
 const CACHE_SECONDS = 120;
 const STATS_CACHE_SECONDS = 30;
 const SI_CACHE_SECONDS = 15;   // vivo: caché corta para que las jugadas nuevas lleguen rápido
-const LI_LIVE_CACHE = 20;      // broadcast Lichess EN VIVO (PGN de ronda + metadata): jugadas nuevas al toque
+const LI_LIVE_CACHE = 10;      // broadcast Lichess EN VIVO (PGN de ronda + metadata): jugadas nuevas al toque.
+                               // 10s: un pelín abajo del poll más rápido (blitz=12s) para que ni el visitante
+                               // de blitz quede "capado" por una hoja vieja. No hay riesgo de 429: Lichess ve
+                               // UN solo cliente (el Worker) → ~6 pedidos/min por torneo, den igual 1 o 100 mirando.
 const LI_RESOLVE_CACHE = 3600; // resolución id-de-ronda→id-de-torneo: es FIJA, cachear fuerte (1 h)
 // UA identificable (Lichess pide identificarse; así, si algo raro pasa, saben quiénes somos).
 const LI_UA = 'AjedrezArgentinoBot/1.0 (+https://chessargentino.pages.dev)';

@@ -2518,6 +2518,11 @@
       .cv-book-col.chat-mode .cv-chat-toggle { display:none !important; }
       .cv-book-col:not(.chat-mode) #cv-tourchat { display:none !important; }
       .cv-book-col.chat-mode #cv-tourchat { display:flex !important; }
+      /* En el teléfono el chat sale como una "pestaña" del visor (cvToggleTourChat lo mueve al flujo
+         móvil); acotamos la lista de mensajes para que tenga scroll propio y no empuje toda la página. */
+      @media (max-width:600px) {
+        #cv-tourchat .tchat-msgs { max-height:52vh; }
+      }
 
       /* Panel de desafíos abiertos (columna derecha) */
       .lv-chal-panel { background:var(--card90); border:1px solid var(--border); border-radius:var(--r-lg); padding:20px; box-shadow:var(--shadow-card); }
@@ -13541,6 +13546,25 @@ function _cvBuildPageExtras() {
 // Globito del visor: alterna entre el árbol de aperturas / datos y el chat del torneo. El globito
 // flotante abre; la cruz ✕ del propio panel cierra (ambos llaman acá).
 function cvToggleTourChat() {
+  // MÓVIL: en el teléfono el visor se reacomoda en pestañas y la columna del libro (donde vive el panel
+  // del chat) queda oculta. Acá el chat funciona como una 3ª "pestaña": al abrirlo ocultamos las pestañas
+  // Movimientos/Estadísticas + copiar/datos y mostramos el panel; la ✕ del panel vuelve a llamar acá.
+  if (_cvMobileOn) {
+    var panel = document.getElementById('cv-tourchat'); if (!panel) return;
+    if (!_cvMChatOpen) {
+      _cvMChatSaved = [];
+      var e = _cvMEls();
+      _cvMChatHide(_cvMTabs); _cvMChatHide(_cvMPanelMoves); _cvMChatHide(_cvMPanelAnalysis);
+      _cvMChatHide(e.copy); _cvMChatHide(e.lichess); _cvMChatHide(e.dato);
+      panel.style.display = 'flex'; _cvMChatOpen = true;
+      if (window.aaTourChat) window.aaTourChat.scrollBottom('viewer');
+    } else {
+      panel.style.display = 'none';
+      _cvMChatSaved.forEach(function (p) { p[0].style.display = p[1]; }); _cvMChatSaved = [];
+      _cvMChatOpen = false;
+    }
+    return;
+  }
   var bookCol = document.querySelector('.cv-book-col'); if (!bookCol) return;
   var on = bookCol.classList.toggle('chat-mode');
   try { _cvSyncSoon(); } catch (_) {}   // re-fija la altura de la columna → el chat flexiona justo (sin scroll de columna)
@@ -19917,13 +19941,17 @@ function _cvMEls() {
     movesLabel: q('.chess-mlabel'), moves: q('.chess-mwrap'),
     book: document.getElementById('ob-wrap'), bookGames: document.getElementById('cv-book-games'),
     graph: document.getElementById('eval-graph-wrap'), reopen: document.getElementById('fa-reopen'),
-    copy: q('.cv-copy-bar'), lichess: document.getElementById('cv-lichess'), dato: document.getElementById('cv-dato')
+    copy: q('.cv-copy-bar'), lichess: document.getElementById('cv-lichess'), dato: document.getElementById('cv-dato'),
+    tourchat: document.getElementById('cv-tourchat')   // panel del chat "La hinchada" (globito)
   };
 }
+// Estado del chat en el layout MÓVIL (el globito lo abre como una 3ª "pestaña").
+var _cvMChatOpen = false, _cvMChatSaved = [];
+function _cvMChatHide(el) { if (el) { _cvMChatSaved.push([el, el.style.display]); el.style.display = 'none'; } }
 function _cvToMobile() {
   var e = _cvMEls();
   if (!e.cols || !e.boardCol) return;
-  ['back','nav','engine','sfPanel','fixNote','liveBack','movesLabel','moves','book','bookGames','graph','reopen','copy','lichess','dato']
+  ['back','nav','engine','sfPanel','fixNote','liveBack','movesLabel','moves','book','bookGames','graph','reopen','copy','lichess','dato','tourchat']
     .forEach(function (k) { _cvSaveOrig(e[k]); });
   if (!_cvMTabs) {
     _cvMTabs = document.createElement('div'); _cvMTabs.className = 'cv-mtabs'; _cvMTabs.id = 'cv-mtabs';
@@ -19940,6 +19968,9 @@ function _cvToMobile() {
   put(e.engine); put(e.sfPanel); put(e.fixNote); put(e.liveBack);   // motor, siempre debajo del tablero
   put(_cvMTabs); put(_cvMPanelMoves); put(_cvMPanelAnalysis);
   put(e.copy); put(e.lichess); put(e.dato);                  // copiar/compartir + datos, al fondo
+  put(e.tourchat);                                           // panel del chat: al fondo, oculto hasta tocar el globito
+  if (e.tourchat) { e.tourchat.style.display = 'none'; }     // arranca cerrado; el globito lo abre
+  _cvMChatOpen = false; _cvMChatSaved = [];
   if (e.moves) _cvMPanelMoves.appendChild(e.moves);          // pestaña Movimientos: jugadas + libro
   if (e.book) _cvMPanelMoves.appendChild(e.book);
   if (e.bookGames) _cvMPanelMoves.appendChild(e.bookGames);
@@ -19953,7 +19984,11 @@ function _cvToMobile() {
 function _cvToDesktop() {
   if (!_cvMobileOn) return;
   var e = _cvMEls();
-  ['back','nav','engine','sfPanel','fixNote','liveBack','movesLabel','moves','book','bookGames','graph','reopen','copy','lichess','dato']
+  // Si el chat quedó abierto en móvil, restaurar los elementos que había ocultado antes de volver a PC.
+  if (_cvMChatOpen) { _cvMChatSaved.forEach(function (p) { p[0].style.display = p[1]; }); }
+  _cvMChatOpen = false; _cvMChatSaved = [];
+  if (e.tourchat) e.tourchat.style.display = 'none';   // en PC lo muestra la clase chat-mode (CSS), no el inline
+  ['back','nav','engine','sfPanel','fixNote','liveBack','movesLabel','moves','book','bookGames','graph','reopen','copy','lichess','dato','tourchat']
     .forEach(function (k) { var n = e[k]; if (n && n._cvOrig) n._cvOrig.parent.insertBefore(n, n._cvOrig.next); });
   if (e.movesLabel) e.movesLabel.style.display = '';
   var mc = document.querySelector('#chess-overlay .cv-moves-col'), bc = document.querySelector('#chess-overlay .cv-book-col');
@@ -22022,10 +22057,14 @@ function bcGridClose() {
 
 // Contexto del broadcast abierto, para el auto-refresco en vivo.
 var _liveCtx = null;
-var _BC_REFRESH_MS = 30000;   // cada 30s mientras haya una ronda en vivo. Ahora va por el Worker (proxy con
+var _BC_REFRESH_MS = 30000;   // CLÁSICO: cada 30s mientras haya una ronda en vivo. Va por el Worker (proxy con
                               // caché): cada sondeo cuenta como 1 request del plan gratis de Cloudflare, así
                               // que 30s (en vez de 15s) evita inflar el presupuesto diario con varios torneos
                               // en vivo a la vez. La caché del Worker igual protege a Lichess del 429.
+var _BC_REFRESH_RAPID_MS = 15000;   // RÁPIDO: las jugadas llegan más seguido → refresco a 15s.
+var _BC_REFRESH_BLITZ_MS = 12000;   // BLITZ: aún más seguido → 12s. (La caché del Worker está en 10s, un
+                                    // pelín abajo, para que el visitante no quede "capado" por la hoja vieja.)
+var _tdLivePace = '';   // ritmo del torneo en vivo abierto ('rapid'/'blitz'/otro=clásico); lo setea openTournamentDetail
 
 // Profundidad (Nº de jugadas desde el inicio) de un nodo del árbol del visor.
 function _cvNodeDepth(n) { var d = 0; while (n && n.parent) { d++; n = n.parent; } return d; }
@@ -22057,8 +22096,16 @@ var _LCC_RESULT = { '1-0':'1-0', '0-1':'0-1', '1/2-1/2':'1/2-1/2', 'WHITEWIN':'1
 
 function _isLccId(s) { return _LCC_UUID_RE.test(String(s || '').trim()); }
 function _lccExtUrl(id) { return 'https://view.livechesscloud.com/#' + id; }
-// Intervalo de auto-refresco: livechesscloud (fuente directa) más ágil que Lichess.
-function _liveRefreshMs(id) { return _isSiId(id) ? _SI_REFRESH_MS : (_isLccId(id) ? _LCC_REFRESH_MS : _BC_REFRESH_MS); }
+// Intervalo de auto-refresco. Lichess: depende del RITMO del torneo (blitz/rápido cambian más seguido
+// que clásico → refrescamos más seguido). El ritmo lo guarda _tdLivePace al abrir el torneo. sichess y
+// livechesscloud (fuente directa) mantienen su intervalo propio.
+function _liveRefreshMs(id) {
+  if (_isSiId(id)) return _SI_REFRESH_MS;
+  if (_isLccId(id)) return _LCC_REFRESH_MS;
+  if (_tdLivePace === 'blitz') return _BC_REFRESH_BLITZ_MS;
+  if (_tdLivePace === 'rapid') return _BC_REFRESH_RAPID_MS;
+  return _BC_REFRESH_MS;
+}
 
 function _lccFullName(p) {
   if (!p) return '?';
@@ -24238,6 +24285,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   // hay partidas subidas mostrándose, para NO pisarlas con un error si el fetch falla (respaldo).
   _tdLiveCrKey = crk;   // que el vivo conozca la clave de cruces aunque no haya partidas subidas (solo-broadcast)
   _tdLiveIsTeam = !!isTeam;   // y si es por equipos, para no pisar la sección de equipos con el cuadro individual
+  _tdLivePace = pace || '';   // ritmo efectivo (la categoría ya pisó al torneo arriba) → define el refresco del vivo
   // La URL pasa a ?torneo=<id> (compartible / favoritos / pestaña nueva). Atrás la revierte. VA ANTES de
   // cargar el vivo: con la apertura instantánea entre pestañas la partida se abre SINCRÓNICAMENTE dentro de
   // _tdLoadLiveGames y pone su propio ?torneo=&partida=; si el push del torneo quedara después, lo pisaría.
@@ -25354,7 +25402,7 @@ function _tdKeepPolling(res) {
   return (++_tdIdlePolls <= _TD_MAX_IDLE);               // el hueco se hizo muy largo → el visitante recarga
 }
 
-function _tdLiveStop() { if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; } _tdLivePolling = false; _tdLiveNoPoll = false; _tdStopWatchdog(); _tdPollGen++; _tdLiveCtx = null; _tdIdlePolls = 0; _tdFetchFails = 0; _tdLastGood = 0; _tdStopClocks(); mevAbort(); }
+function _tdLiveStop() { if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; } _tdLivePolling = false; _tdLiveNoPoll = false; _tdLivePace = ''; _tdStopWatchdog(); _tdPollGen++; _tdLiveCtx = null; _tdIdlePolls = 0; _tdFetchFails = 0; _tdLastGood = 0; _tdStopClocks(); mevAbort(); }
 
 function _tdLoadLiveGames(broadcastId, broadcastUrl, name, location, pgnKey, typ, status, hasFallback) {
   // OJO: NO prender acá _tdLivePolling. Al abrir en PESTAÑA NUEVA todavía no sabemos si el torneo está
@@ -25914,9 +25962,17 @@ function _tdLiveRefreshOnDemand(gen, key, tourIds) {
 function _tdOnDemandApplyRefresh(merged, currentGames, sec) {
   if (!_tdCtx) return;
   var curNum = merged.currentNum;
+  var tabsOk = merged.roundsMeta.every(function(r){ return document.getElementById('td-rtab-' + r.num); });
+  // ESTABILIDAD (tableros "pegajosos"): si el refresco viene SIN partidas de la ronda actual pero YA
+  // teníamos tableros de esa ronda (y las pestañas están armadas), es casi seguro un tropiezo transitorio
+  // —timeout al DESPERTAR la pestaña que estuvo en 2º plano, o respuesta vacía momentánea—. NO pisamos
+  // los tableros con "Sin tableros que coincidan": los dejamos como están hasta que un refresco traiga
+  // datos. Un broadcast en vivo no pasa de N tableros a 0; ese 0 siempre es un bache pasajero.
+  if (tabsOk && (!currentGames || !currentGames.length) && _tdCtx.byRound[curNum] && _tdCtx.byRound[curNum].length) {
+    return;
+  }
   if (_tdLiveCtx) { if (!_tdLiveCtx._fetched) _tdLiveCtx._fetched = {}; _tdLiveCtx._fetched[curNum] = true; }
   _crFetchRoundOnDemand(curNum, true);   // la ronda en vivo sigue sumando partidas en Chess-Results
-  var tabsOk = merged.roundsMeta.every(function(r){ return document.getElementById('td-rtab-' + r.num); });
   if (!tabsOk) { _tdLiveBuild(_bcOnDemandRes(merged, currentGames), sec, _tdCurrentRound); return; }
   _tdCtx.byRound[curNum] = (currentGames || []).map(function(pgn){ return { pgn: pgn, h: parsePgnHeaders(pgn) }; });
   _tdMergeOneRound(curNum);
