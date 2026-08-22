@@ -2861,6 +2861,7 @@
             <div class="lv-lobbychat-head">
               <h3>💬 Chat de la sala</h3>
               <span class="lv-lobbychat-sub">para todos los que están en Jugar</span>
+              <button type="button" class="lv-lc-rules" onclick="window.aaChatRules&&window.aaChatRules.open()" title="Reglas del chat">📜 Reglas</button>
             </div>
             <div id="lv-lobbychat-msgs" class="lv-lobbychat-msgs"><div class="lv-lobbychat-empty">Todavía no hay mensajes. ¡Rompé el hielo! 👋</div></div>
             <div class="lv-lobbychat-inrow" id="lv-lobbychat-inrow" style="display:none">
@@ -31668,7 +31669,7 @@ function cvUpdateNagBadge() {
     else if(m.type==='accepted'){ if(m.id===lvAccepting){ lvAccepting=null; join(m.id); } }
     else if(m.type==='taken'){ if(m.id===lvAccepting){ lvAccepting=null; setLobbyMsg('Ese desafío ya no está disponible 😕'); } lvChallenges=lvChallenges.filter(function(c){return c.id!==m.id;}); renderChallenges(); }
     // ── Desafíos DIRIGIDOS ──
-    else if(m.type==='challenge-incoming'){ lvOnIncoming(m); }                   // me desafían: cartel + píldora
+    else if(m.type==='challenge-incoming'){ if(m.fromId && window.aaBlock && window.aaBlock.isBlocked(m.fromId)) return; lvOnIncoming(m); }   // me desafían (descarto si lo tengo bloqueado)
     else if(m.type==='challenge-sent'){ setStatus('Desafío enviado — esperando respuesta…'); }
     else if(m.type==='challenge-expired'){ lvChallengeWaiting=null; lvToast('El desafío venció (nadie respondió).'); exit(); }
     else if(m.type==='challenge-unavailable'){                                   // el rival no está conectado
@@ -31714,6 +31715,7 @@ function cvUpdateNagBadge() {
     var div=document.createElement('div');
     div.className='lv-lc-msg'+(lvLobbyChatMine(m)?' lv-lc-mine':'');
     if(m.id) div.setAttribute('data-mid', m.id);
+    if(m.userId){ div.setAttribute('data-uid', m.userId); if(window.aaBlock && window.aaBlock.shouldHide(m.userId)) div.classList.add('aa-msg-hidden'); }
     var badge=(window.aaMod?window.aaMod.modBadge(m.name):'');
     div.innerHTML=badge+nmHtml+lvEsc(text)+t;
     if(window.aaMod){ var c=window.aaMod.controls({userId:m.userId, name:m.name||'Jugador'}, m.id, lobbySend); if(c) div.appendChild(c); }
@@ -31823,6 +31825,7 @@ function cvUpdateNagBadge() {
   function lvFollowedOnline(){
     var out=[], me=lvAuthUser(), myId=me?me.id:null;
     for(var id in lvOnlineSet){ if(!lvOnlineSet[id] || id===myId) continue;
+      if(window.aaBlock && window.aaBlock.isBlocked(id)) continue;   // bloqueado: no lo veo en línea
       if(lvFollowingIds.hasOwnProperty(id)) out.push({ id:id, username:lvFollowingIds[id]||lvOnlineNames[id]||id }); }
     out.sort(function(a,b){ return (a.username||'').localeCompare(b.username||''); });
     return out;
@@ -31861,7 +31864,9 @@ function cvUpdateNagBadge() {
   function renderAvailPlayers(){
     var list=$('lv-players-list'), panel=$('lv-players-panel'), cnt=$('lv-players-count'); if(!list) return;
     var me=lvAuthUser(), myId=me?me.id:null, arr=[];
-    for(var id in lvAvailSet){ if(!lvAvailSet[id] || id===myId) continue; arr.push({ id:id, username:lvOnlineNames[id]||id }); }
+    for(var id in lvAvailSet){ if(!lvAvailSet[id] || id===myId) continue;
+      if(window.aaBlock && window.aaBlock.isBlocked(id)) continue;   // bloqueado: no aparece para desafiar
+      arr.push({ id:id, username:lvOnlineNames[id]||id }); }
     arr.sort(function(a,b){ return (a.username||'').localeCompare(b.username||''); });
     if(cnt) cnt.textContent=arr.length?('· '+arr.length):'';
     if(!arr.length){ if(panel) panel.style.display='none'; list.innerHTML=''; return; }
@@ -31913,6 +31918,7 @@ function cvUpdateNagBadge() {
   function renderChallenges(){
     var list=$('lv-chal-list'), cnt=$('lv-chal-count'); if(!list) return;
     var arr=lvChallenges.slice().sort(function(a,b){ return (b.createdAt||0)-(a.createdAt||0); });
+    arr=arr.filter(function(c){ return !(c.by && window.aaBlock && window.aaBlock.isBlocked(c.by)); });   // oculta desafíos de bloqueados
     if(cnt) cnt.textContent=arr.length?('· '+arr.length):'';
     if(!arr.length){ list.innerHTML='<div class="lv-chal-empty">No hay desafíos abiertos.<br>¡Creá uno! 👈</div>'; return; }
     var html='';
@@ -32041,6 +32047,9 @@ function cvUpdateNagBadge() {
   function init(){
     wireButtons();
     ensurePendingPill();
+    // Al bloquear/desbloquear a alguien, refrescar las listas del lobby (presencia + desafíos) para que
+    // aparezca/desaparezca al instante. Los mensajes del chat los reaplica el propio aaBlock.
+    document.addEventListener('aa-block-changed', function(){ try{ renderOnlinePill(); renderAvailPlayers(); renderChallenges(); }catch(e){} });
     // Deep-link: ?sala=<id> → ir a "Jugar en vivo" y unirse a la sala.
     var sala=null; try { sala=new URLSearchParams(location.search||'').get('sala'); } catch(e){}
     if(sala){
@@ -32097,6 +32106,7 @@ function cvUpdateNagBadge() {
     var div=document.createElement('div');
     div.className='tchat-msg'+(tcMine(m)?' tchat-mine':'');
     if(m.id) div.setAttribute('data-mid', m.id);
+    if(m.userId){ div.setAttribute('data-uid', m.userId); if(window.aaBlock && window.aaBlock.shouldHide(m.userId)) div.classList.add('aa-msg-hidden'); }
     var badge=(window.aaMod?window.aaMod.modBadge(m.name):'');
     div.innerHTML=badge+'<span class="tchat-nm aa-nick-clk" data-uprofile="'+nm+'">'+nm+'</span>'+lvEsc(text)+t;
     if(window.aaMod){ var c=window.aaMod.controls({userId:m.userId, name:m.name||'Jugador'}, m.id, tcSend); if(c) div.appendChild(c); }
@@ -32147,7 +32157,7 @@ function cvUpdateNagBadge() {
     var sub = (which==='viewer') ? '' : '<span class="tchat-sub">Alentá y comentá con todos los que están mirando</span>';
     return ''
      + reopen
-     + '<div class="tchat-head"><h3>💬 La hinchada</h3>'+sub+'</div>'
+     + '<div class="tchat-head"><h3>💬 La hinchada</h3>'+sub+'<button type="button" class="tchat-rules" onclick="window.aaChatRules&&window.aaChatRules.open()" title="Reglas del chat">📜 Reglas</button></div>'
      + closeBtn
      + '<div class="tchat-msgs" id="tchat-msgs-'+which+'">'+TC_EMPTY+'</div>'
      + '<div class="tchat-inrow" id="tchat-inrow-'+which+'" style="display:none"><input id="tchat-input-'+which+'" maxlength="200" autocomplete="off" placeholder="Escribí un mensaje…" aria-label="Mensaje del chat"><button id="tchat-send-'+which+'" title="Enviar" aria-label="Enviar">➤</button></div>'
@@ -32267,11 +32277,31 @@ function cvUpdateNagBadge() {
   .aa-prof-modbtn.is-ban:hover{background:rgba(220,60,60,.24)}
   .aa-prof-modbtn.is-unban{background:rgba(87,184,148,.14);color:#57b894;border-color:rgba(87,184,148,.45)}
   .aa-prof-modbtn.is-unban:hover{background:rgba(87,184,148,.26)}
+  /* Reportar / Bloquear (cualquier usuario, en la ficha) */
+  .aa-prof-useracts{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+  .aa-prof-ua{cursor:pointer;font:inherit;font-size:.8rem;font-weight:600;padding:6px 12px;border-radius:999px;
+    border:1px solid rgba(127,127,127,.35);background:rgba(127,127,127,.1);color:inherit}
+  .aa-prof-ua:hover{background:rgba(127,127,127,.2)}
+  .aa-prof-ua.is-on{background:rgba(220,60,60,.16);color:#e06666;border-color:rgba(220,60,60,.4)}
+  /* Confirmación de borrar mensaje: popover chico que sale DEL tachito (no del navegador) */
+  .aa-mod-confirm{position:fixed;z-index:100000;background:rgba(24,26,38,.98);color:#e9e9f2;
+    border:1px solid rgba(255,255,255,.14);border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,.5);
+    padding:10px;font-size:.86rem;max-width:230px;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+  .aa-mod-cf-msg{margin-bottom:8px;line-height:1.3}
+  .aa-mod-cf-row{display:flex;gap:6px;justify-content:flex-end}
+  .aa-mod-cf-row button{cursor:pointer;font:inherit;font-size:.82rem;font-weight:700;padding:5px 12px;border-radius:8px;border:none}
+  .aa-mod-cf-no{background:rgba(255,255,255,.12);color:inherit}
+  .aa-mod-cf-no:hover{background:rgba(255,255,255,.2)}
+  .aa-mod-cf-yes{background:rgba(220,60,60,.9);color:#fff}
+  .aa-mod-cf-yes:hover{background:rgba(220,60,60,1)}
 </style>
 <script>
 (function(){
   // Las dos cuentas del dueño (mismo Set que en los workers). Comparación en minúsculas.
   var MODS={ elpupicruz:1, chess_argentino:1 };
+  // Ícono de moderador: aparece como insignia a la izquierda del nick del mod Y como botón de
+  // "silenciar" al pasar el mouse por un mensaje. Cambiar acá para probar otro (un solo lugar).
+  var MOD_ICON='🛡️';
   // Duraciones del silencio (deben coincidir con MUTE_MINUTES del servidor).
   var MUTE_OPTS=[[15,'15 min'],[30,'30 min'],[60,'1 h'],[480,'8 h'],[1440,'1 día']];
   function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
@@ -32281,6 +32311,27 @@ function cvUpdateNagBadge() {
   function closeMenu(){ var m=document.getElementById('aa-mod-menu'); if(m) m.remove(); document.removeEventListener('mousedown', onDoc, true); document.removeEventListener('keydown', onKey, true); }
   function onDoc(ev){ var m=document.getElementById('aa-mod-menu'); if(m && !m.contains(ev.target)) closeMenu(); }
   function onKey(ev){ if(ev.key==='Escape') closeMenu(); }
+
+  // Confirmación flotante que sale DESDE el botón que tocaste (no el cuadro del navegador arriba).
+  function closeConfirm(){ var p=document.getElementById('aa-mod-confirm'); if(p) p.remove(); document.removeEventListener('mousedown', onDocC, true); document.removeEventListener('keydown', onKeyC, true); }
+  function onDocC(ev){ var p=document.getElementById('aa-mod-confirm'); if(p && !p.contains(ev.target)) closeConfirm(); }
+  function onKeyC(ev){ if(ev.key==='Escape') closeConfirm(); }
+  function confirmPopover(anchorEl, message, yesLabel, onYes){
+    closeConfirm();
+    var p=document.createElement('div'); p.id='aa-mod-confirm'; p.className='aa-mod-confirm';
+    p.innerHTML='<div class="aa-mod-cf-msg">'+esc(message)+'</div><div class="aa-mod-cf-row">'+
+      '<button type="button" class="aa-mod-cf-no">No</button>'+
+      '<button type="button" class="aa-mod-cf-yes">'+esc(yesLabel||'Sí')+'</button></div>';
+    p.addEventListener('click', function(ev){ ev.stopPropagation(); });
+    p.querySelector('.aa-mod-cf-no').addEventListener('click', closeConfirm);
+    p.querySelector('.aa-mod-cf-yes').addEventListener('click', function(){ closeConfirm(); try{ onYes(); }catch(e){} });
+    document.body.appendChild(p);
+    var r=anchorEl.getBoundingClientRect(), pw=p.offsetWidth, ph=p.offsetHeight;
+    var left=Math.max(6, Math.min(window.innerWidth-pw-6, r.right-pw));
+    var top=r.bottom+4; if(top+ph>window.innerHeight-6) top=Math.max(6, r.top-ph-4);
+    p.style.left=left+'px'; p.style.top=top+'px';
+    setTimeout(function(){ document.addEventListener('mousedown', onDocC, true); document.addEventListener('keydown', onKeyC, true); },0);
+  }
 
   // Abre el menú de moderación cerca de `anchorEl`, para el usuario `target` {userId,name}.
   // Envía las órdenes con `sendFn` (el WebSocket del chat correspondiente).
@@ -32319,9 +32370,11 @@ function cvUpdateNagBadge() {
     if(!isMod()) return null;
     var wrap=document.createElement('span'); wrap.className='aa-mod-ctrls';
     var self=!!(target && target.userId && target.userId===meId());
-    if(target && target.userId && !self){
+    var targetIsMod=!!(target && target.name && isModName(target.name));
+    // Silenciar: no sobre uno mismo NI sobre otro moderador.
+    if(target && target.userId && !self && !targetIsMod){
       var mb=document.createElement('button'); mb.type='button'; mb.className='aa-mod-ic';
-      mb.title='Silenciar a '+(target.name||''); mb.textContent='⚔️';
+      mb.title='Silenciar a '+(target.name||''); mb.textContent=MOD_ICON;
       mb.addEventListener('click', function(ev){ ev.preventDefault(); ev.stopPropagation(); openMenu(mb, target, sendFn); });
       wrap.appendChild(mb);
     }
@@ -32329,7 +32382,7 @@ function cvUpdateNagBadge() {
       var db=document.createElement('button'); db.type='button'; db.className='aa-mod-ic';
       db.title='Borrar este mensaje'; db.textContent='🗑';
       db.addEventListener('click', function(ev){ ev.preventDefault(); ev.stopPropagation();
-        if(confirm('¿Borrar este mensaje para todos?')) sendFn({type:'delete', id:msgId}); });
+        confirmPopover(db, '¿Borrar este mensaje para todos?', '🗑 Borrar', function(){ sendFn({type:'delete', id:msgId}); }); });
       wrap.appendChild(db);
     }
     return wrap.childNodes.length ? wrap : null;
@@ -32338,9 +32391,117 @@ function cvUpdateNagBadge() {
   // ¿el usuario de nombre `name` es moderador? (para la espadita al lado de su nick)
   function isModName(name){ return !!(name && MODS[String(name).toLowerCase()]); }
   // Insignia de moderador (espadita) para poner a la IZQUIERDA del nick en el chat.
-  function modBadge(name){ return isModName(name) ? '<span class="aa-mod-tag" title="Moderador">⚔️</span>' : ''; }
+  function modBadge(name){ return isModName(name) ? '<span class="aa-mod-tag" title="Moderador">'+MOD_ICON+'</span>' : ''; }
 
   window.aaMod={ isMod:isMod, openMenu:openMenu, controls:controls, closeMenu:closeMenu, isModName:isModName, modBadge:modBadge };
+})();
+</script>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     BLOQUEAR usuarios (personal, del navegador) + REGLAS del chat.
+     Bloquear = cada usuario decide NO ver los mensajes de otro (se guarda en su navegador;
+     no viaja entre dispositivos ni afecta a los demás). Reportar sí va al servidor (aaProfile).
+     ══════════════════════════════════════════════════════════════════════════ -->
+<style>
+  .aa-rules-back{position:fixed;inset:0;z-index:100001;background:rgba(0,0,0,.55);display:flex;
+    align-items:center;justify-content:center;padding:16px;-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
+  .aa-rules-card{background:rgba(24,26,38,.99);color:#e9e9f2;border:1px solid rgba(255,255,255,.14);
+    border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.55);max-width:440px;width:100%;
+    max-height:85vh;overflow:auto;padding:20px 22px}
+  .aa-rules-card h3{margin:0 0 4px;font-size:1.15rem}
+  .aa-rules-card .aa-rules-sub{opacity:.7;font-size:.85rem;margin:0 0 14px}
+  .aa-rules-list{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:9px}
+  .aa-rules-list li{display:flex;gap:9px;font-size:.92rem;line-height:1.4}
+  .aa-rules-list li b{color:#fff}
+  .aa-rules-ico{flex:0 0 auto}
+  .aa-rules-foot{margin-top:16px;display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .aa-rules-foot .aa-rules-close{border:none;cursor:pointer;background:linear-gradient(135deg,#7c5cff,#4f46e5);
+    color:#fff;font-weight:700;font-size:.9rem;padding:9px 18px;border-radius:999px}
+  .tchat-rules,.lv-lc-rules{border:none;background:transparent;color:inherit;cursor:pointer;
+    font:inherit;font-size:.78rem;opacity:.7;text-decoration:underline;padding:0}
+  .tchat-rules:hover,.lv-lc-rules:hover{opacity:1}
+  .aa-msg-hidden{display:none !important}
+</style>
+<script>
+(function(){
+  // ── Bloqueo EN LA CUENTA (server-side, simétrico) ──
+  // La lista de "a quiénes bloqueé" vive en el servidor (viaja entre dispositivos). Acá se cachea en
+  // memoria (+ localStorage por cuenta, para pintar rápido). Efecto simétrico (seguir/desafiar) lo
+  // enforcea el servidor; presencia y desafíos abiertos los filtra el cliente. EXCEPCIÓN: un MODERADOR
+  // igual LEE todos los mensajes del chat (shouldHide es false para mods), para poder moderar.
+  var PROXY=(typeof CR_PROXY!=='undefined'&&CR_PROXY)?CR_PROXY:'https://cr-proxy.mmatiasscruz.workers.dev';
+  var _ids={};   // userId -> username (a quiénes bloqueé)
+  function myTok(){ try{ return (window.aaAuth&&window.aaAuth.getToken)?window.aaAuth.getToken():''; }catch(e){ return ''; } }
+  function myId(){ try{ var u=window.aaAuth&&window.aaAuth.getUser(); return u?u.id:''; }catch(e){ return ''; } }
+  function ckey(){ var id=myId(); return id?('aa_blk_'+id):''; }
+  function loadCache(){ try{ var k=ckey(); if(!k) return {}; return JSON.parse(localStorage.getItem(k)||'{}')||{}; }catch(e){ return {}; } }
+  function saveCache(){ try{ var k=ckey(); if(k) localStorage.setItem(k, JSON.stringify(_ids)); }catch(e){} }
+  function isMod(){ return !!(window.aaMod && window.aaMod.isMod()); }
+  function isBlocked(userId){ return !!(userId && _ids[userId]); }
+  function shouldHide(userId){ return isBlocked(userId) && !isMod(); }   // los mods leen a todos
+  function list(){ var o={}; for(var k in _ids) o[k]=_ids[k]; return o; }
+  // Aplica el ocultado a TODOS los mensajes ya pintados (según shouldHide).
+  function applyAll(){ try{ document.querySelectorAll('[data-uid]').forEach(function(n){
+    n.classList.toggle('aa-msg-hidden', shouldHide(n.getAttribute('data-uid'))); }); }catch(e){} }
+  function changed(){ saveCache(); applyAll(); try{ document.dispatchEvent(new CustomEvent('aa-block-changed')); }catch(e){} }
+  // Trae la lista del servidor (o la vacía si no hay login). Pinta rápido con la cache antes de confirmar.
+  function refresh(){
+    var tok=myTok();
+    if(!tok){ _ids={}; changed(); return; }
+    _ids=loadCache(); applyAll();
+    fetch(PROXY+'/blocks',{ headers:{'Authorization':'Bearer '+tok} })
+      .then(function(r){ return r.ok?r.json():null; })
+      .then(function(d){ if(!d||!Array.isArray(d.blocked)) return; var m={}; d.blocked.forEach(function(x){ if(x&&x.userId) m[x.userId]=x.username||1; }); _ids=m; changed(); })
+      .catch(function(){});
+  }
+  // Optimista: cambia ya, confirma con el server; si falla, revierte. Devuelve el nuevo estado (bool).
+  function toggle(userId, username){
+    if(!userId) return false;
+    var tok=myTok(); if(!tok) return isBlocked(userId);   // sin login no se puede (el llamador manda a login)
+    var was=isBlocked(userId), nowB=!was;
+    if(was) delete _ids[userId]; else _ids[userId]=username||1;
+    changed();
+    fetch(PROXY+(nowB?'/block':'/unblock'),{ method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},
+      body:JSON.stringify({userId:userId}) })
+      .then(function(r){ if(!r.ok) throw 0; return r.json(); })
+      .catch(function(){ if(was) _ids[userId]=username||1; else delete _ids[userId]; changed();
+        try{ document.dispatchEvent(new CustomEvent('aa-block-error',{detail:{userId:userId}})); }catch(e){} });
+    return nowB;
+  }
+  window.aaBlock={ isBlocked:isBlocked, shouldHide:shouldHide, toggle:toggle, list:list, refresh:refresh };
+  document.addEventListener('aa-auth-changed', refresh);
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', refresh); else refresh();
+
+  // ── Reglas del chat (mismas para los tres chats) ──
+  var RULES=[
+    ['🤝','Respeto ante todo.',' Nada de insultos graves, discriminación, odio ni acoso.'],
+    ['♟️','Buena onda con las partidas.',' Se puede alentar y bromear; no cruzar a la persona.'],
+    ['🚫','Sin spam ni flood.',' No repitas mensajes, ni MAYÚSCULAS o emojis de más.'],
+    ['🔗','Sin links ni publicidad.',''],
+    ['🔒','Cuidá los datos personales',' (los tuyos y los de otros): no los publiques.'],
+    ['✅','Juego limpio.',' Nada de trampa/motores ni promoverla.'],
+    ['⛔','Nada de contenido sexual, violento o ilegal.',''],
+    ['🛡️','El autor y los moderadores',' pueden borrar mensajes, silenciar o banear si hace falta.']
+  ];
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function close(){ var b=document.getElementById('aa-rules-back'); if(b) b.remove(); document.removeEventListener('keydown', onKey, true); }
+  function onKey(ev){ if(ev.key==='Escape') close(); }
+  function open(){
+    close();
+    var items=RULES.map(function(r){ return '<li><span class="aa-rules-ico">'+r[0]+'</span><span><b>'+esc(r[1])+'</b>'+esc(r[2])+'</span></li>'; }).join('');
+    var back=document.createElement('div'); back.id='aa-rules-back'; back.className='aa-rules-back';
+    back.innerHTML='<div class="aa-rules-card" role="dialog" aria-modal="true" aria-label="Reglas del chat">'+
+      '<h3>📜 Reglas del chat</h3><p class="aa-rules-sub">Para que la charla sea buena onda para todos.</p>'+
+      '<ul class="aa-rules-list">'+items+'</ul>'+
+      '<div class="aa-rules-foot"><span style="opacity:.7;font-size:.85rem">Ante la duda, no lo mandes. 🙂</span>'+
+      '<button type="button" class="aa-rules-close">Entendido</button></div></div>';
+    back.addEventListener('click', function(ev){ if(ev.target===back) close(); });
+    back.querySelector('.aa-rules-close').addEventListener('click', close);
+    document.body.appendChild(back);
+    document.addEventListener('keydown', onKey, true);
+  }
+  window.aaChatRules={ open:open };
 })();
 </script>
 
@@ -33074,6 +33235,44 @@ function cvUpdateNagBadge() {
       .catch(function(){ toast('No se pudo (¿internet?)'); });
   }
 
+  // ── Acciones de CUALQUIER usuario sobre otro: reportar (va al mod) + bloquear (personal, local) ──
+  // Se muestran en la ficha (vistazo y perfil completo), para todos los usuarios (menos sobre uno mismo).
+  function userActionsHtml(P){
+    if(!P || P.isSelf || !P.id) return '';
+    var blocked=(window.aaBlock && window.aaBlock.isBlocked(P.id));
+    return '<div class="aa-prof-useracts">'+
+      '<button type="button" class="aa-prof-ua" data-act="report">🚩 Reportar</button>'+
+      '<button type="button" class="aa-prof-ua'+(blocked?' is-on':'')+'" data-act="block">'+(blocked?'✓ Bloqueado':'🚫 Bloquear')+'</button>'+
+    '</div>';
+  }
+  // Reportar requiere estar logueado (para que el reporte tenga autor y se pueda frenar el spam).
+  function doReport(P){
+    if(!P || !P.id) return;
+    var tok=myToken();
+    if(!tok){ if(window.aaAuth&&window.aaAuth.login) window.aaAuth.login(); return; }
+    var who=P.username||'este usuario';
+    var reason=prompt('¿Por qué reportás a '+who+'? (opcional)\nLo va a revisar un moderador.','');
+    if(reason===null) return;
+    fetch(PROXY+'/report',{ method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},
+      body:JSON.stringify({userId:P.id, reason:String(reason||'').slice(0,300)}) })
+      .then(function(r){ return r.json().then(function(d){ return {ok:r.ok, d:d}; }); })
+      .then(function(x){ if(!x.ok || !x.d || x.d.error){ toast('No se pudo reportar: '+((x.d&&x.d.error)||'error')); return; }
+        toast('🚩 Gracias. Lo reportaste y un moderador lo va a revisar.'); })
+      .catch(function(){ toast('No se pudo (¿internet?)'); });
+  }
+  // Bloquear = personal y del navegador (no viaja entre dispositivos, no afecta a los demás).
+  function doBlockToggle(P){
+    if(!P || !P.id || !window.aaBlock) return;
+    var tok=myToken();
+    if(!tok){ if(window.aaAuth&&window.aaAuth.login) window.aaAuth.login(); return; }   // bloquear va en la cuenta → login
+    var who=P.username||'ese usuario';
+    var nowBlocked=window.aaBlock.toggle(P.id, P.username);
+    toast(nowBlocked?('🚫 Bloqueaste a '+who+'. No vas a ver sus mensajes, ni desafíos, ni cuándo está en línea.'):('Desbloqueaste a '+who+'.'));
+    if(nowBlocked && P.youFollow) P.youFollow=false;   // bloquear corta el seguir (lo hace el server)
+    if(curProfile===P) paintProfile(P);
+  }
+
   // ── Normalización a un objeto de perfil común (mío = local; ajeno = respuesta del Worker) ──
   function selfProfile(){
     var u=myUser(); if(!u) return null;
@@ -33137,7 +33336,8 @@ function cvUpdateNagBadge() {
     // Botón editar (sólo mío, en la página) o acciones (ajeno, en la página).
     var editBtn=(P.isSelf && mode==='page')?'<button class="aa-idedit" data-act="editficha" type="button">✏️ Editar ficha</button>':'';
     var acts='';
-    if(!P.isSelf && mode==='page'){
+    var isBlk=!!(window.aaBlock && window.aaBlock.isBlocked(P.id));
+    if(!P.isSelf && mode==='page' && !isBlk){   // a un bloqueado no se lo desafía ni se lo sigue
       var followBtn='<button class="aa-prof-btn" data-act="follow">'+(P.youFollow?'✓ Siguiendo':'➕ Seguir')+'</button>';
       acts='<div class="aa-prof-actions">'+
         '<button class="aa-prof-btn primary" data-act="challenge">⚔️ Desafiar</button>'+followBtn+'</div>';
@@ -33147,7 +33347,7 @@ function cvUpdateNagBadge() {
           '<div class="aa-idname">'+dot+ttl+esc(P.username)+flag+'</div>'+
           name+meta+counts+
         '</div>'+editBtn+'</div>'+
-        bio+acts+modRowHtml(P)+
+        bio+acts+userActionsHtml(P)+modRowHtml(P)+
       '</div>';
   }
   function tacticHtml(P){
@@ -33207,6 +33407,8 @@ function cvUpdateNagBadge() {
     var ef=node.querySelector('[data-act="editficha"]'); if(ef) ef.addEventListener('click', function(){ openEditFicha(curProfile); });
     var bb=node.querySelector('[data-act="ban"]'); if(bb) bb.addEventListener('click', function(){ doBan(curProfile, true); });
     var ub=node.querySelector('[data-act="unban"]'); if(ub) ub.addEventListener('click', function(){ doBan(curProfile, false); });
+    var rp=node.querySelector('[data-act="report"]'); if(rp) rp.addEventListener('click', function(){ doReport(curProfile); });
+    var bk=node.querySelector('[data-act="block"]'); if(bk) bk.addEventListener('click', function(){ doBlockToggle(curProfile); });
     // Restaurar el historial tras cualquier repintado (ratings-changed, follow, etc.) sin re-fetch.
     var hn=node.querySelector('[data-hist]');
     if(hn){ var gs=gamesCache[lower(curNick)]; paintHist(hn, (gs!==undefined)?gs:null); }

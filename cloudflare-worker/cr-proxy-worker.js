@@ -93,6 +93,9 @@ export default {
     if (reqUrl.pathname === '/unfollow')     return followToggle(request, env, false);     // POST Bearer {userId}
     if (reqUrl.pathname === '/following')     return followingList(request, env);           // GET Bearer → a quién sigo
     if (reqUrl.pathname === '/profile')       return saveProfile(request, env);             // POST Bearer {name,country,bio} → fichita
+    if (reqUrl.pathname === '/block')         return blockToggle(request, env, true);       // POST Bearer {userId} → bloquear
+    if (reqUrl.pathname === '/unblock')       return blockToggle(request, env, false);      // POST Bearer {userId} → desbloquear
+    if (reqUrl.pathname === '/blocks')        return blocksList(request, env);              // GET  Bearer → a quiénes bloqueé
 
     // ── Rating de partidas en vivo (PvP) — propio del sitio, server-authoritative ──
     if (reqUrl.pathname === '/rating/me')     return ratingMe(request, env);      // GET  Bearer → mis 3 ratings
@@ -106,6 +109,8 @@ export default {
     if (reqUrl.pathname === '/mod/mute')      return modMute(request, env, true);   // POST → silenciar (con duración)
     if (reqUrl.pathname === '/mod/unmute')    return modMute(request, env, false);  // POST → quitar el silencio
     if (reqUrl.pathname === '/mod/sanctions') return modSanctions(request, env);    // GET  → lista de baneados/silenciados
+    if (reqUrl.pathname === '/report')        return submitReport(request, env);    // POST Bearer → un usuario reporta a otro
+    if (reqUrl.pathname === '/mod/reports')   return modReports(request, env);      // GET  → reportes pendientes (para el panel)
 
     // ── Progreso de EJERCICIOS atado a la cuenta (viaja entre dispositivos) ──
     if (reqUrl.pathname === '/puz/progress')  return puzProgress(request, env);   // GET (leer) / POST (guardar), Bearer
@@ -1165,6 +1170,61 @@ async function modSanctions(request, env) {
   return jsonResp({ banned, muted });
 }
 
+// Tabla de reportes (usuarios reportando a otros usuarios). Se crea sola (patrón perezoso).
+async function ensureReportsTable(env) {
+  await env.DB.prepare(
+    'CREATE TABLE IF NOT EXISTS reports (' +
+    'id TEXT PRIMARY KEY, reporter_id TEXT, target_id TEXT, target_username TEXT, ' +
+    'reason TEXT, created_at INTEGER, handled INTEGER DEFAULT 0)'
+  ).run();
+}
+
+// POST /report  (Bearer)  { userId, reason? } — un usuario LOGUEADO reporta a otro. Lo revisa un mod.
+async function submitReport(request, env) {
+  if (request.method !== 'POST') return errJson('Usá POST', 405);
+  if (!env.DB) return errJson('Falta el binding D1 (DB)', 500);
+  const me = await sessionUser(request, env);
+  if (!me) return errJson('No autenticado', 401);
+  let body; try { body = await request.json(); } catch (e) { return errJson('JSON inválido', 400); }
+  const targetId = String(body.userId || '').trim();
+  if (!targetId) return errJson('Falta el usuario', 400);
+  if (targetId === me.id) return errJson('No podés reportarte a vos mismo', 400);
+  await ensureUserTables(env); await ensureReportsTable(env);
+  const target = await env.DB.prepare('SELECT id, username FROM usuarios WHERE id=?1').bind(targetId).first();
+  if (!target) return errJson('Usuario no encontrado', 404);
+  const reason = String(body.reason || '').replace(/\s+/g, ' ').trim().slice(0, 300) || null;
+  const now = Math.floor(Date.now() / 1000);
+  // Anti-spam: si este reporter ya reportó a este target en la última hora, no duplicamos.
+  const recent = await env.DB.prepare('SELECT id FROM reports WHERE reporter_id=?1 AND target_id=?2 AND created_at > ?3')
+    .bind(me.id, targetId, now - 3600).first();
+  if (recent) return jsonResp({ ok: true, already: true });
+  const id = 'r_' + crypto.randomUUID().replace(/-/g, '').slice(0, 20);
+  try {
+    await env.DB.prepare('INSERT INTO reports (id, reporter_id, target_id, target_username, reason, created_at) VALUES (?1,?2,?3,?4,?5,?6)')
+      .bind(id, me.id, targetId, target.username || null, reason, now).run();
+  } catch (e) { return errJson('D1 error: ' + e.message, 500); }
+  return jsonResp({ ok: true });
+}
+
+// GET /mod/reports — reportes recientes (para el panel del autor). Sólo mods.
+async function modReports(request, env) {
+  if (!env.DB) return errJson('Falta el binding D1 (DB)', 500);
+  const who = await modAuth(request, env);
+  if (!who) return errJson('No autorizado', 403);
+  await ensureReportsTable(env);
+  let reports = [];
+  try {
+    const r = await env.DB.prepare(
+      'SELECT id, target_id, target_username, reason, created_at, handled FROM reports ORDER BY created_at DESC LIMIT 200'
+    ).all();
+    reports = ((r && r.results) || []).map((x) => ({
+      id: x.id, userId: x.target_id, username: x.target_username, reason: x.reason || null,
+      at: x.created_at || null, handled: !!x.handled,
+    }));
+  } catch (e) { return errJson('D1 error: ' + e.message, 500); }
+  return jsonResp({ reports });
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // RATING DE PARTIDAS EN VIVO (PvP) — propio del sitio, calculado en el SERVIDOR
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1248,8 +1308,19 @@ async function ratingMe(request, env) {
   // Para la moderación: el DO cachea el mute (no puede escribir hasta que pase) y sabe si es
   // moderador (por el nombre de usuario). muted_until = timestamp UNIX en segundos (0 = sin mute).
   const mutedUntil = Number(u.chat_muted_until || 0) || 0;
+  // Para el bloqueo: a quiénes bloqueé (blocked) y quiénes me bloquearon (blocked_by). El lobby los usa
+  // para no cruzar desafíos entre bloqueados; el cliente además filtra presencia y desafíos abiertos.
+  let blocked = [], blockedBy = [];
+  try {
+    await ensureBlocksTable(env);
+    const b1 = await env.DB.prepare('SELECT blocked_id FROM blocks WHERE blocker_id=?1').bind(u.id).all();
+    blocked = ((b1 && b1.results) || []).map((r) => r.blocked_id);
+    const b2 = await env.DB.prepare('SELECT blocker_id FROM blocks WHERE blocked_id=?1').bind(u.id).all();
+    blockedBy = ((b2 && b2.results) || []).map((r) => r.blocker_id);
+  } catch (e) { /* si falla, sigue sin bloqueos */ }
   return jsonResp({ id: u.id, username: u.username, ratings, games, prov,
-    muted_until: mutedUntil, is_mod: MOD_USERNAMES.has(String(u.username || '').toLowerCase()) });
+    muted_until: mutedUntil, is_mod: MOD_USERNAMES.has(String(u.username || '').toLowerCase()),
+    blocked, blocked_by: blockedBy });
 }
 
 // GET /u/<usuario> — PERFIL PÚBLICO de cualquier jugador (SIN auth). Sólo datos públicos:
@@ -1353,6 +1424,11 @@ async function followToggle(request, env, follow) {
   await ensureFollowTable(env);
   const exists = await env.DB.prepare('SELECT id FROM usuarios WHERE id=?1').bind(target).first();
   if (!exists) return errJson('Usuario no encontrado', 404);
+  // No se puede seguir a alguien bloqueado (en cualquier dirección).
+  if (follow) {
+    await ensureBlocksTable(env);
+    if (await pairBlocked(env, me.id, target)) return errJson('No podés seguir a un usuario bloqueado', 403);
+  }
   const now = Math.floor(Date.now() / 1000);
   try {
     if (follow) {
@@ -1382,6 +1458,74 @@ async function followingList(request, env) {
   } catch (e) { return errJson('D1 error: ' + e.message, 500); }
   const list = (rows && rows.results) ? rows.results.map((r) => ({ id: r.id, username: r.username })) : [];
   return jsonResp({ following: list });
+}
+
+// ── BLOQUEO entre usuarios (server-side, SIMÉTRICO) ──────────────────────────
+// "X bloqueó a Y" = fila (blocker_id=X, blocked_id=Y). El efecto es simétrico: si cualquiera de los dos
+// bloqueó al otro, no pueden seguirse ni desafiarse (lo enforcea el servidor) y no se ven en línea (lo
+// filtra el cliente con la lista que baja de /blocks). EXCEPCIÓN: en el chat, un MODERADOR siempre lee a
+// todos — el ocultar mensajes por bloqueo lo hace el cliente y NO aplica a los mods, así nadie se
+// esconde de la moderación bloqueando al mod.
+async function ensureBlocksTable(env) {
+  await env.DB.prepare(
+    'CREATE TABLE IF NOT EXISTS blocks (blocker_id TEXT NOT NULL, blocked_id TEXT NOT NULL, ' +
+    'created_at INTEGER, PRIMARY KEY (blocker_id, blocked_id))'
+  ).run();
+}
+
+// ¿a y b están bloqueados entre sí (en cualquier dirección)?
+async function pairBlocked(env, a, b) {
+  const r = await env.DB.prepare(
+    'SELECT 1 AS x FROM blocks WHERE (blocker_id=?1 AND blocked_id=?2) OR (blocker_id=?2 AND blocked_id=?1) LIMIT 1'
+  ).bind(a, b).first();
+  return !!r;
+}
+
+// POST /block · /unblock  (Bearer) { userId } — bloquear/desbloquear a otro usuario.
+async function blockToggle(request, env, block) {
+  if (request.method !== 'POST') return errJson('Usá POST', 405);
+  if (!env.DB) return errJson('Falta el binding D1 (DB)', 500);
+  const me = await sessionUser(request, env);
+  if (!me) return errJson('No autenticado', 401);
+  let body; try { body = await request.json(); } catch (e) { return errJson('JSON inválido', 400); }
+  const target = String(body.userId || '').trim();
+  if (!target) return errJson('Falta userId', 400);
+  if (target === me.id) return errJson('No podés bloquearte a vos mismo', 400);
+  await ensureUserTables(env); await ensureBlocksTable(env);
+  const exists = await env.DB.prepare('SELECT id FROM usuarios WHERE id=?1').bind(target).first();
+  if (!exists) return errJson('Usuario no encontrado', 404);
+  const now = Math.floor(Date.now() / 1000);
+  try {
+    if (block) {
+      await env.DB.prepare('INSERT OR IGNORE INTO blocks (blocker_id, blocked_id, created_at) VALUES (?1,?2,?3)')
+        .bind(me.id, target, now).run();
+      // Bloquear corta el seguir en AMBAS direcciones (ya no tiene sentido).
+      try {
+        await ensureFollowTable(env);
+        await env.DB.prepare('DELETE FROM follows WHERE (follower_id=?1 AND followee_id=?2) OR (follower_id=?2 AND followee_id=?1)')
+          .bind(me.id, target).run();
+      } catch (e) {}
+    } else {
+      await env.DB.prepare('DELETE FROM blocks WHERE blocker_id=?1 AND blocked_id=?2').bind(me.id, target).run();
+    }
+  } catch (e) { return errJson('D1 error: ' + e.message, 500); }
+  return jsonResp({ ok: true, userId: target, blocked: block });
+}
+
+// GET /blocks (Bearer) → { blocked:[{userId,username}] } — a quiénes bloqueé (para filtrar en el cliente).
+async function blocksList(request, env) {
+  if (!env.DB) return errJson('Falta el binding D1 (DB)', 500);
+  const me = await sessionUser(request, env);
+  if (!me) return errJson('No autenticado', 401);
+  await ensureUserTables(env); await ensureBlocksTable(env);
+  let rows;
+  try {
+    rows = await env.DB.prepare(
+      'SELECT u.id, u.username FROM blocks b JOIN usuarios u ON u.id = b.blocked_id WHERE b.blocker_id=?1'
+    ).bind(me.id).all();
+  } catch (e) { return errJson('D1 error: ' + e.message, 500); }
+  const list = (rows && rows.results) ? rows.results.map((r) => ({ userId: r.id, username: r.username })) : [];
+  return jsonResp({ blocked: list });
 }
 
 // POST /rating/report  (header X-Vivo-Secret) — SÓLO lo llama el worker de vivo cuando
