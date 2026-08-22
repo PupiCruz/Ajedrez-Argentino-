@@ -32421,6 +32421,23 @@ function cvUpdateNagBadge() {
     font:inherit;font-size:.78rem;opacity:.7;text-decoration:underline;padding:0}
   .tchat-rules:hover,.lv-lc-rules:hover{opacity:1}
   .aa-msg-hidden{display:none !important}
+  /* Diálogo in-app (confirmar ban, etc.) — reemplaza los cuadros del navegador */
+  .aa-dlg-back{position:fixed;inset:0;z-index:100002;background:rgba(0,0,0,.55);display:flex;
+    align-items:center;justify-content:center;padding:16px;-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
+  .aa-dlg-card{background:rgba(24,26,38,.99);color:#e9e9f2;border:1px solid rgba(255,255,255,.14);
+    border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.55);max-width:400px;width:100%;padding:20px 22px}
+  .aa-dlg-title{margin:0 0 8px;font-size:1.1rem}
+  .aa-dlg-msg{margin:0 0 12px;font-size:.92rem;opacity:.85;line-height:1.4}
+  .aa-dlg-reason{width:100%;box-sizing:border-box;background:rgba(255,255,255,.06);color:inherit;
+    border:1px solid rgba(255,255,255,.16);border-radius:10px;padding:8px 10px;font:inherit;font-size:.9rem;
+    resize:vertical;margin-bottom:14px}
+  .aa-dlg-row{display:flex;gap:8px;justify-content:flex-end}
+  .aa-dlg-row button{cursor:pointer;font:inherit;font-size:.88rem;font-weight:700;padding:8px 16px;border-radius:999px;border:none}
+  .aa-dlg-no{background:rgba(255,255,255,.12);color:inherit}
+  .aa-dlg-no:hover{background:rgba(255,255,255,.2)}
+  .aa-dlg-yes{background:linear-gradient(135deg,#7c5cff,#4f46e5);color:#fff}
+  .aa-dlg-yes.danger{background:rgba(220,60,60,.92)}
+  .aa-dlg-yes.danger:hover{background:rgba(220,60,60,1)}
 </style>
 <script>
 (function(){
@@ -32502,6 +32519,106 @@ function cvUpdateNagBadge() {
     document.addEventListener('keydown', onKey, true);
   }
   window.aaChatRules={ open:open };
+})();
+</script>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     PANEL DE MODERACIÓN (el autor / mods) — reportes + silenciados + baneados,
+     con acciones para revertir. Se abre desde el menú de la cuenta ("🛡️ Moderación").
+     Sólo para mods; todo pega a cr-proxy con el Bearer del mod.
+     ══════════════════════════════════════════════════════════════════════════ -->
+<style>
+  .aa-mp-back{position:fixed;inset:0;z-index:100003;background:rgba(0,0,0,.55);display:flex;
+    align-items:center;justify-content:center;padding:16px;-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
+  .aa-mp-card{background:rgba(24,26,38,.99);color:#e9e9f2;border:1px solid rgba(255,255,255,.14);
+    border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.55);max-width:480px;width:100%;
+    max-height:86vh;display:flex;flex-direction:column;overflow:hidden}
+  .aa-mp-top{display:flex;align-items:center;justify-content:space-between;padding:16px 18px 12px;
+    border-bottom:1px solid rgba(255,255,255,.1)}
+  .aa-mp-top h3{margin:0;font-size:1.12rem}
+  .aa-mp-x{border:none;background:transparent;color:inherit;cursor:pointer;font-size:1.4rem;line-height:1;opacity:.7}
+  .aa-mp-x:hover{opacity:1}
+  .aa-mp-body{overflow:auto;padding:8px 18px 18px}
+  .aa-mp-sec{font-size:.78rem;text-transform:uppercase;letter-spacing:.03em;opacity:.65;
+    margin:14px 0 6px;font-weight:700}
+  .aa-mp-empty{opacity:.55;font-size:.86rem;padding:2px 0 4px}
+  .aa-mp-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.07)}
+  .aa-mp-info{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+  .aa-mp-info b{font-size:.92rem}
+  .aa-mp-rsn{font-size:.82rem;opacity:.85;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .aa-mp-when{font-size:.74rem;opacity:.55}
+  .aa-mp-btn{flex:0 0 auto;cursor:pointer;font:inherit;font-size:.8rem;font-weight:700;padding:6px 12px;
+    border-radius:999px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);color:inherit}
+  .aa-mp-btn:hover{background:rgba(124,92,255,.28)}
+  .aa-mp-btn.ok{border-color:rgba(87,184,148,.45);color:#57b894;background:rgba(87,184,148,.12)}
+  .aa-mp-btn.ok:hover{background:rgba(87,184,148,.26)}
+  .aa-mp-btn:disabled{opacity:.5;cursor:default}
+</style>
+<script>
+(function(){
+  var PROXY=(typeof CR_PROXY!=='undefined'&&CR_PROXY)?CR_PROXY:'https://cr-proxy.mmatiasscruz.workers.dev';
+  var MES=['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+  function tok(){ try{ return (window.aaAuth&&window.aaAuth.getToken)?window.aaAuth.getToken():''; }catch(e){ return ''; } }
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function fmtWhen(ts){ if(!ts) return ''; try{ var d=new Date(ts*1000); return d.getDate()+' '+MES[d.getMonth()]+' '+('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2); }catch(e){ return ''; } }
+  function fmtLeft(ts){ var mins=Math.max(0, Math.round(((+ts||0)*1000-Date.now())/60000)); return mins>=60?(Math.round(mins/60)+' h'):(mins+' min'); }
+  function api(path, method, body){
+    return fetch(PROXY+path, { method:method||'GET',
+      headers: body?{'Content-Type':'application/json','Authorization':'Bearer '+tok()}:{'Authorization':'Bearer '+tok()},
+      body: body?JSON.stringify(body):undefined }).then(function(r){ return r.ok?r.json():null; });
+  }
+  function close(){ var b=document.getElementById('aa-mp-back'); if(b) b.remove(); document.removeEventListener('keydown', onKey, true); }
+  function onKey(ev){ if(ev.key==='Escape') close(); }
+  function open(){
+    if(!(window.aaMod && window.aaMod.isMod())) return;
+    close();
+    var back=document.createElement('div'); back.id='aa-mp-back'; back.className='aa-mp-back';
+    back.innerHTML='<div class="aa-mp-card"><div class="aa-mp-top"><h3>🛡️ Moderación</h3>'+
+      '<button type="button" class="aa-mp-x" aria-label="Cerrar">×</button></div>'+
+      '<div class="aa-mp-body">Cargando…</div></div>';
+    back.addEventListener('click', function(ev){ if(ev.target===back) close(); });
+    back.querySelector('.aa-mp-x').addEventListener('click', close);
+    document.body.appendChild(back);
+    document.addEventListener('keydown', onKey, true);
+    load();
+  }
+  function load(){
+    var body=document.querySelector('#aa-mp-back .aa-mp-body'); if(!body) return;
+    Promise.all([ api('/mod/sanctions'), api('/mod/reports') ])
+      .then(function(res){ render(res[0]||{}, res[1]||{}); })
+      .catch(function(){ if(body) body.innerHTML='<div class="aa-mp-empty">No se pudo cargar. ¿Hay internet?</div>'; });
+  }
+  function rowHtml(name, meta, btn){
+    return '<div class="aa-mp-row"><div class="aa-mp-info"><b>'+esc(name||'—')+'</b>'+meta+'</div>'+btn+'</div>';
+  }
+  function render(sanc, rep){
+    var body=document.querySelector('#aa-mp-back .aa-mp-body'); if(!body) return;
+    var reports=(rep && rep.reports)||[], muted=(sanc && sanc.muted)||[], banned=(sanc && sanc.banned)||[];
+    var h='';
+    h+='<div class="aa-mp-sec">🚩 Reportes ('+reports.length+')</div>';
+    h+= reports.length ? reports.map(function(r){
+      var meta=(r.reason?'<span class="aa-mp-rsn">'+esc(r.reason)+'</span>':'')+'<span class="aa-mp-when">'+fmtWhen(r.at)+'</span>';
+      return rowHtml(r.username, meta, '<button type="button" class="aa-mp-btn" data-prof="'+esc(r.username||'')+'">Ver perfil →</button>');
+    }).join('') : '<div class="aa-mp-empty">Sin reportes.</div>';
+    h+='<div class="aa-mp-sec">🔇 Silenciados ('+muted.length+')</div>';
+    h+= muted.length ? muted.map(function(m){
+      return rowHtml(m.username, '<span class="aa-mp-when">queda '+fmtLeft(m.until)+'</span>',
+        '<button type="button" class="aa-mp-btn ok" data-unmute="'+esc(m.userId)+'">🔈 Quitar</button>');
+    }).join('') : '<div class="aa-mp-empty">Nadie silenciado.</div>';
+    h+='<div class="aa-mp-sec">⛔ Baneados ('+banned.length+')</div>';
+    h+= banned.length ? banned.map(function(b){
+      var meta=(b.reason?'<span class="aa-mp-rsn">'+esc(b.reason)+'</span>':'')+'<span class="aa-mp-when">'+fmtWhen(b.at)+'</span>';
+      return rowHtml(b.username, meta, '<button type="button" class="aa-mp-btn ok" data-unban="'+esc(b.userId)+'">✓ Quitar ban</button>');
+    }).join('') : '<div class="aa-mp-empty">Nadie baneado.</div>';
+    body.innerHTML=h;
+    body.querySelectorAll('[data-prof]').forEach(function(bn){ bn.addEventListener('click', function(){
+      var u=bn.getAttribute('data-prof'); close(); if(window.aaProfile&&window.aaProfile.open) window.aaProfile.open({username:u, peek:true}); }); });
+    body.querySelectorAll('[data-unmute]').forEach(function(bn){ bn.addEventListener('click', function(){
+      bn.disabled=true; api('/mod/unmute','POST',{userId:bn.getAttribute('data-unmute')}).then(function(){ load(); }).catch(function(){ bn.disabled=false; }); }); });
+    body.querySelectorAll('[data-unban]').forEach(function(bn){ bn.addEventListener('click', function(){
+      bn.disabled=true; api('/mod/unban','POST',{userId:bn.getAttribute('data-unban')}).then(function(){ load(); }).catch(function(){ bn.disabled=false; }); }); });
+  }
+  window.aaModPanel={ open:open };
 })();
 </script>
 
@@ -32885,6 +33002,7 @@ function cvUpdateNagBadge() {
       '<button class="aa-item" data-a="perfil">👤 Mi perfil</button>'+
       '<button class="aa-item" data-a="partidas">♟️ Mis partidas '+soon+'</button>'+
       '<button class="aa-item" data-a="prefs">⚙️ Preferencias</button>'+
+      ((window.aaMod && window.aaMod.isMod()) ? '<button class="aa-item" data-a="modpanel">🛡️ Moderación</button>' : '')+
       '<button class="aa-item" data-a="tema"><span class="aa-tema-ic">'+(light?'☀️':'🌙')+'</span>'+
         '<span class="aa-tema-lbl">'+(light?'Tema claro':'Tema oscuro')+'</span></button>'+
       '<button class="aa-item aa-danger" data-a="salir">🚪 Salir</button>';
@@ -32896,6 +33014,7 @@ function cvUpdateNagBadge() {
       if(a==='salir'){ logout(); return; }
       if(a==='perfil'){ closeMenu(); if(window.aaProfile&&window.aaProfile.open) window.aaProfile.open(); return; }
       if(a==='prefs'){ closeMenu(); openPrefs(); return; }
+      if(a==='modpanel'){ closeMenu(); if(window.aaModPanel&&window.aaModPanel.open) window.aaModPanel.open(); return; }
       if(a==='tema'){
         if(typeof toggleTheme==='function') toggleTheme();
         var nowLight=document.body.classList.contains('light');
@@ -33213,15 +33332,48 @@ function cvUpdateNagBadge() {
       '<button type="button" class="aa-prof-modbtn '+(banned?'is-unban':'is-ban')+'" data-act="'+(banned?'unban':'ban')+'">'+
         (banned?'✓ Quitar ban':'⚔️ Banear')+'</button></div>';
   }
-  // Ejecuta el ban / quitar-ban contra cr-proxy con el Bearer del mod. SIEMPRE pide confirmación.
+  // Diálogo de confirmación DENTRO de la app (no el cuadro del navegador). Opcional: campo de motivo.
+  // opts = { title, message, danger, withReason, reasonPlaceholder, yesLabel, onYes(reason) }.
+  function aaProfConfirm(opts){
+    opts=opts||{};
+    var back=document.createElement('div'); back.className='aa-dlg-back';
+    var reasonHtml=opts.withReason ? '<textarea class="aa-dlg-reason" rows="2" maxlength="200" placeholder="'+esc(opts.reasonPlaceholder||'Motivo (opcional)')+'"></textarea>' : '';
+    back.innerHTML='<div class="aa-dlg-card" role="dialog" aria-modal="true">'+
+      (opts.title?'<h3 class="aa-dlg-title">'+esc(opts.title)+'</h3>':'')+
+      (opts.message?'<p class="aa-dlg-msg">'+esc(opts.message)+'</p>':'')+reasonHtml+
+      '<div class="aa-dlg-row"><button type="button" class="aa-dlg-no">Cancelar</button>'+
+      '<button type="button" class="aa-dlg-yes'+(opts.danger?' danger':'')+'">'+esc(opts.yesLabel||'Aceptar')+'</button></div></div>';
+    function close(){ try{ back.remove(); }catch(e){} document.removeEventListener('keydown', onKey, true); }
+    function onKey(ev){ if(ev.key==='Escape') close(); }
+    back.addEventListener('click', function(ev){ if(ev.target===back) close(); });
+    back.querySelector('.aa-dlg-no').addEventListener('click', close);
+    back.querySelector('.aa-dlg-yes').addEventListener('click', function(){
+      var reason=opts.withReason ? (back.querySelector('.aa-dlg-reason').value||'') : '';
+      close(); try{ if(opts.onYes) opts.onYes(reason); }catch(e){}
+    });
+    document.body.appendChild(back);
+    document.addEventListener('keydown', onKey, true);
+    var ta=back.querySelector('.aa-dlg-reason'); if(ta) setTimeout(function(){ try{ ta.focus(); }catch(e){} }, 30);
+  }
+  // Abre la confirmación in-app de ban / quitar-ban. El fetch real lo hace sendBan.
   function doBan(P, ban){
     if(!P || !P.id) return;
-    var tok=myToken(); if(!tok){ toast('Necesitás estar logueado como moderador'); return; }
+    if(!myToken()){ toast('Necesitás estar logueado como moderador'); return; }
     var who=P.username||'este usuario';
-    if(ban){ if(!confirm('¿Banear a '+who+'?\n\nNo va a poder ingresar con esa cuenta a partir de ahora.\nEs reversible: podés quitar el ban desde su perfil.')) return; }
-    else { if(!confirm('¿Quitar el ban a '+who+'?\nVa a poder volver a entrar.')) return; }
-    var reason='';
-    if(ban){ var r=prompt('Motivo (opcional, queda anotado):',''); if(r===null) return; reason=String(r||'').slice(0,200); }
+    if(ban){
+      aaProfConfirm({ title:'Banear a '+who,
+        message:'No va a poder ingresar con esa cuenta a partir de ahora. Es reversible: podés quitar el ban desde su perfil.',
+        withReason:true, reasonPlaceholder:'Motivo (opcional)', danger:true, yesLabel:'⛔ Banear',
+        onYes:function(reason){ sendBan(P, true, String(reason||'').slice(0,200)); } });
+    } else {
+      aaProfConfirm({ title:'Quitar el ban a '+who, message:'Va a poder volver a entrar.',
+        yesLabel:'✓ Quitar ban', onYes:function(){ sendBan(P, false, ''); } });
+    }
+  }
+  // Ejecuta el ban / quitar-ban contra cr-proxy con el Bearer del mod.
+  function sendBan(P, ban, reason){
+    var tok=myToken(); if(!tok) return;
+    var who=P.username||'este usuario';
     fetch(PROXY+(ban?'/mod/ban':'/mod/unban'),{ method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},
       body:JSON.stringify(ban?{userId:P.id, reason:reason}:{userId:P.id}) })
@@ -33242,7 +33394,7 @@ function cvUpdateNagBadge() {
     var blocked=(window.aaBlock && window.aaBlock.isBlocked(P.id));
     return '<div class="aa-prof-useracts">'+
       '<button type="button" class="aa-prof-ua" data-act="report">🚩 Reportar</button>'+
-      '<button type="button" class="aa-prof-ua'+(blocked?' is-on':'')+'" data-act="block">'+(blocked?'✓ Bloqueado':'🚫 Bloquear')+'</button>'+
+      '<button type="button" class="aa-prof-ua'+(blocked?' is-on':'')+'" data-act="block">'+(blocked?'🔓 Desbloquear':'🚫 Bloquear')+'</button>'+
     '</div>';
   }
   // Reportar requiere estar logueado (para que el reporte tenga autor y se pueda frenar el spam).
@@ -33810,6 +33962,10 @@ function cvUpdateNagBadge() {
   }
   window.addEventListener('hashchange', onHash);
   if(parseHash()) setTimeout(onHash, 0);   // deep-link al abrir con #u=nick
+
+  // Si el estado de bloqueo cambia (o se revierte por un fallo del server), repintar el perfil abierto
+  // para que el botón Bloquear/Desbloquear refleje siempre lo real.
+  document.addEventListener('aa-block-changed', function(){ if(curProfile) paintProfile(curProfile); });
 
   window.aaProfile = { open:open, close:requestClose,
     reopen:function(nick){ openView(nick, 'page'); },   // reabrir el perfil (page) al volver Atrás desde una partida
