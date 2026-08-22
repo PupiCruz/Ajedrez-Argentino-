@@ -100,6 +100,13 @@ export default {
     if (reqUrl.pathname === '/rating/games')  return ratingGames(request, reqUrl, env); // GET público ?user= → historial de partidas
     if (reqUrl.pathname === '/rating/game')   return ratingGame(request, reqUrl, env);  // GET público ?id= → una partida (link compartible)
 
+    // ── Moderación de los chats (banear/silenciar) — sólo mods (sesión) o el vivo-worker (X-Vivo-Secret) ──
+    if (reqUrl.pathname === '/mod/ban')       return modBan(request, env, true);    // POST → banear (bloquea login)
+    if (reqUrl.pathname === '/mod/unban')     return modBan(request, env, false);   // POST → desbanear
+    if (reqUrl.pathname === '/mod/mute')      return modMute(request, env, true);   // POST → silenciar (con duración)
+    if (reqUrl.pathname === '/mod/unmute')    return modMute(request, env, false);  // POST → quitar el silencio
+    if (reqUrl.pathname === '/mod/sanctions') return modSanctions(request, env);    // GET  → lista de baneados/silenciados
+
     // ── Progreso de EJERCICIOS atado a la cuenta (viaja entre dispositivos) ──
     if (reqUrl.pathname === '/puz/progress')  return puzProgress(request, env);   // GET (leer) / POST (guardar), Bearer
 
@@ -880,6 +887,15 @@ async function puzStats(env) {
 const LICHESS_HOST = 'https://lichess.org';
 const SESSION_TTL_DAYS = 180;   // cuánto dura la sesión sin volver a loguear (~6 meses)
 
+// Moderadores del sitio: las dos cuentas de Lichess del dueño. Se compara en MINÚSCULAS porque el
+// username de Lichess es case-insensitive (y la app ya busca con LOWER(username)). Más adelante, si
+// hay usuarios de confianza, se verá cómo sumar mods (fase posterior). El mismo Set vive en el
+// vivo-worker (para marcar isMod en el chat); si se cambia acá, cambiarlo allá también.
+const MOD_USERNAMES = new Set(['elpupicruz', 'chess_argentino']);
+
+// Duraciones de mute permitidas (minutos): 15 min · 30 min · 1 h · 8 h · 1 día.
+const MUTE_MINUTES = new Set([15, 30, 60, 480, 1440]);
+
 // Crea las tablas si no existen. `usuarios` = personas; `sessions` = tokens de login.
 let _usuariosMigrated = false;   // fichita editable: se agregan las columnas una vez por isolate
 async function ensureUserTables(env) {
@@ -902,7 +918,11 @@ async function ensureUserTables(env) {
   try {
     const info = await env.DB.prepare('PRAGMA table_info(usuarios)').all();
     const cols = new Set(((info && info.results) || []).map((r) => r.name));
-    const want = { display_name: 'TEXT', country: 'TEXT', bio: 'TEXT' };
+    // display_name/country/bio = fichita editable. banned* = moderación (ban de login,
+    // reversible). chat_muted_until = mute temporal (timestamp UNIX en segundos; 0/null = sin mute).
+    const want = { display_name: 'TEXT', country: 'TEXT', bio: 'TEXT',
+      banned: 'INTEGER DEFAULT 0', banned_at: 'INTEGER', banned_reason: 'TEXT',
+      chat_muted_until: 'INTEGER DEFAULT 0' };
     for (const name in want) {
       if (cols.has(name)) continue;
       try { await env.DB.prepare('ALTER TABLE usuarios ADD COLUMN ' + name + ' ' + want[name]).run(); } catch (e) {}
@@ -986,8 +1006,10 @@ async function authLichess(request, env) {
 
   let userId;
   try {
-    const existing = await env.DB.prepare('SELECT id FROM usuarios WHERE provider=?1 AND prov_id=?2')
+    const existing = await env.DB.prepare('SELECT id, banned FROM usuarios WHERE provider=?1 AND prov_id=?2')
       .bind('lichess', provId).first();
+    // Cuenta suspendida: no se crea sesión (ban = bloqueo total de login, reversible desde el panel).
+    if (existing && existing.banned) return errJson('Tu cuenta está suspendida. Escribinos si creés que es un error.', 403);
     if (existing) {
       userId = existing.id;
       await env.DB.prepare('UPDATE usuarios SET username=?2, rating=?3, title=?4, last_login=?5 WHERE id=?1')
@@ -1017,12 +1039,15 @@ async function sessionUser(request, env) {
   let row;
   try {
     row = await env.DB.prepare(
-      'SELECT u.id, u.provider, u.username, u.rating, u.title, s.expires ' +
+      'SELECT u.id, u.provider, u.username, u.rating, u.title, u.banned, u.chat_muted_until, s.expires ' +
       'FROM sessions s JOIN usuarios u ON u.id = s.user_id WHERE s.token = ?1'
     ).bind(token).first();
   } catch (e) { return null; }
   if (!row) return null;
   if (row.expires && row.expires < Math.floor(Date.now() / 1000)) return null;
+  // Cuenta baneada: la sesión NO vale (bloquea /me y /rating/me → el sitio la trata como deslogueada).
+  // Al banear ya borramos sus sesiones; esto es una segunda barrera por si quedó alguna colgada.
+  if (row.banned) return null;
   return row;
 }
 
@@ -1041,6 +1066,103 @@ async function authLogout(request, env) {
     try { await env.DB.prepare('DELETE FROM sessions WHERE token=?1').bind(m[1].trim()).run(); } catch (e) {}
   }
   return jsonResp({ ok: true });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MODERACIÓN DE LOS CHATS — banear (bloquea login, reversible) y silenciar (temporal).
+// Todo server-side. Dos formas de autorizar una acción de moderación:
+//   • El propio MOD desde su sesión (Authorization: Bearer) → para el panel del autor.
+//   • El vivo-worker (header X-Vivo-Secret) cuando el mod actúa DESDE el chat (por WebSocket):
+//     el DO ya verificó que quien actúa es mod y nos pasa la acción.
+// En ambos casos el objetivo se identifica por su id de usuario (userId) o por username.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Devuelve el modo de autorización o null. { via:'worker' } | { via:'session', mod }.
+async function modAuth(request, env) {
+  const secret = request.headers.get('X-Vivo-Secret') || '';
+  if (env.VIVO_SECRET && secret === env.VIVO_SECRET) return { via: 'worker' };
+  const u = await sessionUser(request, env);
+  if (u && MOD_USERNAMES.has(String(u.username || '').toLowerCase())) return { via: 'session', mod: u };
+  return null;
+}
+
+// Resuelve el usuario objetivo desde el body: prioriza userId; si no, busca por username (LOWER).
+async function modResolveTarget(env, body) {
+  const id = String(body.userId || '').trim();
+  if (id) return env.DB.prepare('SELECT id, username, banned, chat_muted_until FROM usuarios WHERE id=?1').bind(id).first();
+  const name = String(body.user || body.username || '').replace(/\/+$/, '').trim().slice(0, 40);
+  if (name) return env.DB.prepare('SELECT id, username, banned, chat_muted_until FROM usuarios WHERE LOWER(username)=LOWER(?1)').bind(name).first();
+  return null;
+}
+
+// POST /mod/ban  /  /mod/unban  { userId | user }  → banea o desbanea (bloqueo de login, reversible).
+async function modBan(request, env, ban) {
+  if (request.method !== 'POST') return errJson('Usá POST', 405);
+  if (!env.DB) return errJson('Falta el binding D1 (DB)', 500);
+  const who = await modAuth(request, env);
+  if (!who) return errJson('No autorizado', 403);
+  let body; try { body = await request.json(); } catch (e) { return errJson('JSON inválido', 400); }
+  await ensureUserTables(env);
+  const target = await modResolveTarget(env, body);
+  if (!target) return errJson('Usuario no encontrado', 404);
+  // No se puede sancionar a un moderador (evita auto-baneo por error / cruce entre mods).
+  if (MOD_USERNAMES.has(String(target.username || '').toLowerCase())) return errJson('No se puede sancionar a un moderador', 400);
+  const now = Math.floor(Date.now() / 1000);
+  try {
+    if (ban) {
+      const reason = String(body.reason || '').replace(/\s+/g, ' ').trim().slice(0, 200) || null;
+      await env.DB.prepare('UPDATE usuarios SET banned=1, banned_at=?2, banned_reason=?3 WHERE id=?1')
+        .bind(target.id, now, reason).run();
+      // Lo patea aunque esté logueado: borrar sus sesiones activas (no puede volver a entrar).
+      try { await env.DB.prepare('DELETE FROM sessions WHERE user_id=?1').bind(target.id).run(); } catch (e) {}
+    } else {
+      await env.DB.prepare('UPDATE usuarios SET banned=0, banned_at=NULL, banned_reason=NULL WHERE id=?1')
+        .bind(target.id).run();
+    }
+  } catch (e) { return errJson('D1 error: ' + e.message, 500); }
+  return jsonResp({ ok: true, userId: target.id, username: target.username, banned: ban });
+}
+
+// POST /mod/mute  { userId | user, minutes }  /  /mod/unmute  { userId | user }
+// mute = silencio temporal (no puede escribir en NINGÚN chat mientras dure; sí puede loguearse y jugar).
+async function modMute(request, env, mute) {
+  if (request.method !== 'POST') return errJson('Usá POST', 405);
+  if (!env.DB) return errJson('Falta el binding D1 (DB)', 500);
+  const who = await modAuth(request, env);
+  if (!who) return errJson('No autorizado', 403);
+  let body; try { body = await request.json(); } catch (e) { return errJson('JSON inválido', 400); }
+  await ensureUserTables(env);
+  const target = await modResolveTarget(env, body);
+  if (!target) return errJson('Usuario no encontrado', 404);
+  if (MOD_USERNAMES.has(String(target.username || '').toLowerCase())) return errJson('No se puede sancionar a un moderador', 400);
+  const now = Math.floor(Date.now() / 1000);
+  let until = 0, minutes = 0;
+  if (mute) {
+    minutes = Math.floor(+body.minutes || 0);
+    if (!MUTE_MINUTES.has(minutes)) return errJson('Duración inválida (15, 30, 60, 480 o 1440 min)', 400);
+    until = now + minutes * 60;
+  }
+  try {
+    await env.DB.prepare('UPDATE usuarios SET chat_muted_until=?2 WHERE id=?1').bind(target.id, until).run();
+  } catch (e) { return errJson('D1 error: ' + e.message, 500); }
+  return jsonResp({ ok: true, userId: target.id, username: target.username, muted_until: until, minutes });
+}
+
+// GET /mod/sanctions → { banned:[...], muted:[...] } para el panel del autor (revertir sanciones).
+async function modSanctions(request, env) {
+  if (!env.DB) return errJson('Falta el binding D1 (DB)', 500);
+  const who = await modAuth(request, env);
+  if (!who) return errJson('No autorizado', 403);
+  await ensureUserTables(env);
+  const now = Math.floor(Date.now() / 1000);
+  let banned = [], muted = [];
+  try {
+    const b = await env.DB.prepare('SELECT id, username, banned_at, banned_reason FROM usuarios WHERE banned=1 ORDER BY banned_at DESC').all();
+    banned = ((b && b.results) || []).map((r) => ({ userId: r.id, username: r.username, at: r.banned_at || null, reason: r.banned_reason || null }));
+    const mu = await env.DB.prepare('SELECT id, username, chat_muted_until FROM usuarios WHERE chat_muted_until > ?1 ORDER BY chat_muted_until DESC').bind(now).all();
+    muted = ((mu && mu.results) || []).map((r) => ({ userId: r.id, username: r.username, until: r.chat_muted_until || 0 }));
+  } catch (e) { return errJson('D1 error: ' + e.message, 500); }
+  return jsonResp({ banned, muted });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1123,7 +1245,11 @@ async function ratingMe(request, env) {
     const r = await getRating(env, u.id, c);
     ratings[c] = r.rating; games[c] = r.games; prov[c] = ratingIsProv(r.games);
   }
-  return jsonResp({ id: u.id, username: u.username, ratings, games, prov });
+  // Para la moderación: el DO cachea el mute (no puede escribir hasta que pase) y sabe si es
+  // moderador (por el nombre de usuario). muted_until = timestamp UNIX en segundos (0 = sin mute).
+  const mutedUntil = Number(u.chat_muted_until || 0) || 0;
+  return jsonResp({ id: u.id, username: u.username, ratings, games, prov,
+    muted_until: mutedUntil, is_mod: MOD_USERNAMES.has(String(u.username || '').toLowerCase()) });
 }
 
 // GET /u/<usuario> — PERFIL PÚBLICO de cualquier jugador (SIN auth). Sólo datos públicos:

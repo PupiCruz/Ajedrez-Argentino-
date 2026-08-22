@@ -2864,7 +2864,7 @@
             </div>
             <div id="lv-lobbychat-msgs" class="lv-lobbychat-msgs"><div class="lv-lobbychat-empty">Todavía no hay mensajes. ¡Rompé el hielo! 👋</div></div>
             <div class="lv-lobbychat-inrow" id="lv-lobbychat-inrow" style="display:none">
-              <input id="lv-lobbychat-input" maxlength="300" autocomplete="off" placeholder="Escribí un mensaje…" aria-label="Mensaje del chat">
+              <input id="lv-lobbychat-input" maxlength="200" autocomplete="off" placeholder="Escribí un mensaje…" aria-label="Mensaje del chat">
               <button id="lv-lobbychat-send" class="lv-btn-sec" title="Enviar" aria-label="Enviar">➤</button>
             </div>
             <div id="lv-lobbychat-guest" class="lv-lobbychat-guest" style="display:none">💡 <b>Entrá con Lichess</b> (arriba a la derecha) para escribir en el chat.</div>
@@ -30985,6 +30985,16 @@ function cvUpdateNagBadge() {
   });
 
   // ── Interacción: clic-clic + arrastre (pointer events) + premove ─────────────
+  // ── Preferencias que tocan la partida (se leen en vivo desde localStorage) ──────────────────
+  function lvAutoQueenOn(){ try { return localStorage.getItem('aa_pref_autoqueen')==='1'; } catch(e){ return false; } }
+  function lvPvpChatOff(){ try { return localStorage.getItem('aa_pref_pvpchat_off')==='1'; } catch(e){ return false; } }
+  // Override estilo Lichess: si tenés autodama, mantené Ctrl (o ⌘) al coronar para elegir la pieza.
+  var lvCtrlDown=false;
+  document.addEventListener('keydown', function(e){ if(e.ctrlKey||e.metaKey||e.key==='Control'||e.key==='Meta') lvCtrlDown=true; });
+  document.addEventListener('keyup', function(e){ if(e.key==='Control'||e.key==='Meta'||(!e.ctrlKey&&!e.metaKey)) lvCtrlDown=false; });
+  window.addEventListener('blur', function(){ lvCtrlDown=false; });
+  document.addEventListener('aa-prefs-changed', function(){ try{ updateChat(); }catch(e){} });
+
   function needsPromo(from,to){ var pc=pieceAt(from); return !!(pc && pc.type==='p' && (to[1]==='8'||to[1]==='1')); }
 
   function onTap(name){
@@ -31011,7 +31021,11 @@ function cvUpdateNagBadge() {
     }
     var legal=[]; try { legal=lvChess.moves({square:from,verbose:true}).filter(function(m){return m.to===to;}); } catch(e){}
     if(!legal.length){ lvSelected=null; renderBoard(); return; }
-    if(needsPromo(from,to)){ showPromo(from,to); return; }
+    if(needsPromo(from,to)){
+      // Autodama: si está activada y NO tenés Ctrl apretado, coronás en dama sin preguntar.
+      if(lvAutoQueenOn() && !lvCtrlDown){ doMove(from,to,'q',viaDrag); return; }
+      showPromo(from,to); return;
+    }
     doMove(from,to,undefined,viaDrag);
   }
 
@@ -31412,6 +31426,7 @@ function cvUpdateNagBadge() {
   // Muestra el chat cuando hay con quién hablar (rival sentado o partida terminada).
   function updateChat(){
     var el=$('lv-chat'); if(!el) return;
+    if(lvPvpChatOff()){ el.style.display='none'; return; }   // preferencia: chat oculto en las partidas
     var amHere=(lvMyColor==='w'||lvMyColor==='b'||lvMyColor==='spec');
     var bothSeated=!!(lvPlayers && lvPlayers.w && lvPlayers.b);
     el.style.display=(amHere && (bothSeated || lvStatus==='finished'))?'flex':'none';
@@ -31678,6 +31693,8 @@ function cvUpdateNagBadge() {
     // ── Chat general de la sala ──
     else if(m.type==='chat-history'){ lvLobbyChatHistory(m.msgs||[]); }
     else if(m.type==='lobby-chat'){ lvLobbyChatAddNode(m); }
+    else if(m.type==='msg-deleted'){ lvLobbyChatRemove(m.id); }
+    else if(m.type==='muted'){ try{ lvToast(lvChatMutedMsg(m.until)); }catch(e){} }
   }
 
   // ── Chat general de la sala de Jugar ────────────────────────────────────────
@@ -31685,18 +31702,27 @@ function cvUpdateNagBadge() {
   function lvLobbyChatAddNode(m){
     var box=$('lv-lobbychat-msgs'); if(!box) return;
     var em=box.querySelector('.lv-lobbychat-empty'); if(em) em.remove();
-    var text=String(m.text==null?'':m.text).slice(0,300); if(!text.trim()) return;
+    var atBottom=(box.scrollHeight - box.scrollTop - box.clientHeight < 50);
+    if(m && m.system){ var st=String(m.text==null?'':m.text).slice(0,200); if(!st.trim()) return;
+      var s=document.createElement('div'); s.className='lv-lc-sys'; s.textContent=st; box.appendChild(s);
+      if(atBottom) box.scrollTop=box.scrollHeight; return; }
+    var text=String(m.text==null?'':m.text).slice(0,200); if(!text.trim()) return;
     var nm=lvEsc(m.name||'Jugador');
     // El nombre es un usuario del sitio (solo escriben logueados) → clickeable a su perfil.
     var nmHtml='<span class="lv-lc-nm aa-nick-clk" data-uprofile="'+nm+'">'+nm+'</span>';
     var t=''; try{ if(m.ts){ var d=new Date(m.ts); t=' <span class="lv-lc-time">'+('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2)+'</span>'; } }catch(e){}
     var div=document.createElement('div');
     div.className='lv-lc-msg'+(lvLobbyChatMine(m)?' lv-lc-mine':'');
-    div.innerHTML=nmHtml+lvEsc(text)+t;
-    var atBottom=(box.scrollHeight - box.scrollTop - box.clientHeight < 50);
+    if(m.id) div.setAttribute('data-mid', m.id);
+    var badge=(window.aaMod?window.aaMod.modBadge(m.name):'');
+    div.innerHTML=badge+nmHtml+lvEsc(text)+t;
+    if(window.aaMod){ var c=window.aaMod.controls({userId:m.userId, name:m.name||'Jugador'}, m.id, lobbySend); if(c) div.appendChild(c); }
     box.appendChild(div);
     if(atBottom) box.scrollTop=box.scrollHeight;
   }
+  // Saca el nodo de un mensaje borrado por un mod en el chat del lobby.
+  function lvLobbyChatRemove(id){ if(!id) return; var box=$('lv-lobbychat-msgs'); if(!box) return;
+    var n=box.querySelector('[data-mid="'+(''+id).replace(/"/g,'')+'"]'); if(n) n.remove(); }
   function lvLobbyChatHistory(list){
     var box=$('lv-lobbychat-msgs'); if(!box) return;
     box.innerHTML='';
@@ -31708,7 +31734,7 @@ function cvUpdateNagBadge() {
     var inp=$('lv-lobbychat-input'); if(!inp) return;
     if(!lvAuthUser()) return;                 // solo logueados
     var text=inp.value.replace(/\s+/g,' ').trim(); if(!text) return;
-    lobbySend({type:'chat', text:text.slice(0,300)});
+    lobbySend({type:'chat', text:text.slice(0,200)});
     inp.value=''; inp.focus();
   }
   // Muestra el cajón de escribir (logueado) o el cartelito de "entrá para chatear" (invitado).
@@ -32050,7 +32076,12 @@ function cvUpdateNagBadge() {
     tcWs.onopen=function(){ tcTries=0; };
     tcWs.onmessage=function(e){ var m; try{ m=JSON.parse(e.data); }catch(_){ return; }
       if(m.type==='chat-history'){ tcMsgs=Array.isArray(m.msgs)?m.msgs.slice(-40):[]; tcRenderAll(); }
-      else if(m.type==='tour-chat'){ tcMsgs.push({name:m.name,userId:m.userId,text:m.text,ts:m.ts}); if(tcMsgs.length>40) tcMsgs=tcMsgs.slice(-40); tcAppendAll(m); }
+      else if(m.type==='tour-chat'){
+        if(m.system){ tcAppendAll(m); }   // mensaje de sistema (no se guarda en el buffer)
+        else { tcMsgs.push({id:m.id,name:m.name,userId:m.userId,text:m.text,ts:m.ts}); if(tcMsgs.length>40) tcMsgs=tcMsgs.slice(-40); tcAppendAll(m); }
+      }
+      else if(m.type==='msg-deleted'){ tcMsgs=tcMsgs.filter(function(x){ return x.id!==m.id; }); tcRemoveNode(m.id); }
+      else if(m.type==='muted'){ tcMutedNotice(m.until); }
     };
     tcWs.onclose=function(){ tcWs=null; if(tcIntentional || !tcRoom) return;
       if(tcTries<10){ tcTries++; tcTimer=setTimeout(tcConnect, Math.min(1200*tcTries,6000)); } };
@@ -32058,14 +32089,28 @@ function cvUpdateNagBadge() {
   }
   function tcMine(m){ var u=lvAuthUser(); return !!(u && m.userId && u.id===m.userId); }
   function tcMsgNode(m){
-    var text=String(m.text==null?'':m.text).slice(0,300); if(!text.trim()) return null;
+    if(m && m.system){ var st=String(m.text==null?'':m.text).slice(0,200); if(!st.trim()) return null;
+      var s=document.createElement('div'); s.className='tchat-sys'; s.textContent=st; return s; }
+    var text=String(m.text==null?'':m.text).slice(0,200); if(!text.trim()) return null;
     var nm=lvEsc(m.name||'Jugador');
     var t=''; try{ if(m.ts){ var d=new Date(m.ts); t=' <span class="tchat-time">'+('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2)+'</span>'; } }catch(e){}
     var div=document.createElement('div');
     div.className='tchat-msg'+(tcMine(m)?' tchat-mine':'');
-    div.innerHTML='<span class="tchat-nm aa-nick-clk" data-uprofile="'+nm+'">'+nm+'</span>'+lvEsc(text)+t;
+    if(m.id) div.setAttribute('data-mid', m.id);
+    var badge=(window.aaMod?window.aaMod.modBadge(m.name):'');
+    div.innerHTML=badge+'<span class="tchat-nm aa-nick-clk" data-uprofile="'+nm+'">'+nm+'</span>'+lvEsc(text)+t;
+    if(window.aaMod){ var c=window.aaMod.controls({userId:m.userId, name:m.name||'Jugador'}, m.id, tcSend); if(c) div.appendChild(c); }
     return div;
   }
+  // Saca de todas las vistas el nodo del mensaje borrado por un mod.
+  function tcRemoveNode(id){ if(!id) return; for(var k in tcViews){ var v=tcViews[k]; if(!v||!v.msgs) continue;
+    var n=v.msgs.querySelector('[data-mid="'+(''+id).replace(/"/g,'')+'"]'); if(n) n.remove(); } }
+  // Aviso al usuario silenciado cuando intenta escribir (el servidor rechazó su mensaje).
+  function lvChatMutedMsg(until){
+    var mins=Math.max(0, Math.round(((+until||0)*1000 - Date.now())/60000));
+    return mins>0 ? ('🔇 Estás silenciado por unos '+(mins>=60?(Math.round(mins/60)+' h'):(mins+' min'))+'.') : '🔇 Estás silenciado en el chat.';
+  }
+  function tcMutedNotice(until){ try{ lvToast(lvChatMutedMsg(until)); }catch(e){} }
   var TC_EMPTY='<div class="tchat-empty">Todavía no hay mensajes.<br>¡Rompé el hielo y compartí lo que ves con la comunidad! 👋</div>';
   function tcRenderView(v){
     if(!v || !v.msgs) return;
@@ -32105,7 +32150,7 @@ function cvUpdateNagBadge() {
      + '<div class="tchat-head"><h3>💬 La hinchada</h3>'+sub+'</div>'
      + closeBtn
      + '<div class="tchat-msgs" id="tchat-msgs-'+which+'">'+TC_EMPTY+'</div>'
-     + '<div class="tchat-inrow" id="tchat-inrow-'+which+'" style="display:none"><input id="tchat-input-'+which+'" maxlength="300" autocomplete="off" placeholder="Escribí un mensaje…" aria-label="Mensaje del chat"><button id="tchat-send-'+which+'" title="Enviar" aria-label="Enviar">➤</button></div>'
+     + '<div class="tchat-inrow" id="tchat-inrow-'+which+'" style="display:none"><input id="tchat-input-'+which+'" maxlength="200" autocomplete="off" placeholder="Escribí un mensaje…" aria-label="Mensaje del chat"><button id="tchat-send-'+which+'" title="Enviar" aria-label="Enviar">➤</button></div>'
      + '<div class="tchat-guest" id="tchat-guest-'+which+'" style="display:none">💡 <b>Entrá con Lichess</b> (arriba a la derecha) para escribir en el chat.</div>';
   }
   window.aaTourChat={
@@ -32129,7 +32174,7 @@ function cvUpdateNagBadge() {
       if(!host._tcMounted){
         host.classList.add('tchat-panel'); host.innerHTML=tcPanelHtml(which); host._tcMounted=true;
         var input=host.querySelector('#tchat-input-'+which), sendBtn=host.querySelector('#tchat-send-'+which);
-        var doSend=function(){ if(!input || !lvAuthUser()) return; var text=input.value.replace(/\s+/g,' ').trim(); if(!text) return; tcSend({type:'chat', text:text.slice(0,300)}); input.value=''; input.focus(); };
+        var doSend=function(){ if(!input || !lvAuthUser()) return; var text=input.value.replace(/\s+/g,' ').trim(); if(!text) return; tcSend({type:'chat', text:text.slice(0,200)}); input.value=''; input.focus(); };
         if(sendBtn) sendBtn.onclick=doSend;
         if(input) input.onkeydown=function(e){ if(e.key==='Enter'){ e.preventDefault(); doSend(); } };
         // Clic en un nick → abre la fichita del usuario. Va acá (en el panel) y NO en el listener
@@ -32178,6 +32223,124 @@ function cvUpdateNagBadge() {
     },
     onChange: function(fn){ if(typeof fn==='function') lvOnlineChangeCbs.push(fn); }
   };
+})();
+</script>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     MODERACIÓN DE LOS CHATS (v1) — herramientas del moderador en el cliente.
+     Sólo se muestran a los mods (las cuentas del dueño); TODA la barrera real corre
+     en el servidor (cr-proxy + vivo-worker). Acá sólo se envían las órdenes por el
+     mismo WebSocket del chat: {type:'delete'|'mute'|'unmute'|'ban'|'unban', ...}.
+     ══════════════════════════════════════════════════════════════════════════ -->
+<style>
+  .aa-mod-ctrls{display:none;gap:2px;margin-left:6px;vertical-align:middle}
+  .lv-lc-msg:hover .aa-mod-ctrls,.tchat-msg:hover .aa-mod-ctrls{display:inline-flex}
+  .aa-mod-ic{border:none;background:rgba(127,127,127,.16);cursor:pointer;border-radius:6px;
+    font-size:.82rem;line-height:1;padding:2px 4px;opacity:.75}
+  .aa-mod-ic:hover{opacity:1;background:rgba(127,127,127,.3)}
+  .aa-mod-menu{position:fixed;z-index:99999;min-width:210px;max-width:min(88vw,270px);
+    background:rgba(24,26,38,.98);color:#e9e9f2;border:1px solid rgba(255,255,255,.14);
+    border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,.5);padding:8px;font-size:.9rem;
+    -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+  .aa-mod-menu .aa-mod-h{font-size:.82rem;opacity:.8;padding:2px 6px 6px}
+  .aa-mod-menu .aa-mod-h b{color:#fff}
+  .aa-mod-menu .aa-mod-sec{font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;
+    opacity:.6;padding:6px 6px 3px}
+  .aa-mod-menu .aa-mod-row{display:flex;flex-wrap:wrap;gap:4px;padding:0 4px 4px}
+  .aa-mod-menu .aa-mod-b{display:block;width:100%;text-align:left;border:none;cursor:pointer;
+    background:transparent;color:inherit;font:inherit;padding:7px 8px;border-radius:8px}
+  .aa-mod-menu .aa-mod-row .aa-mod-b{width:auto;flex:1 1 46%;text-align:center;
+    background:rgba(255,255,255,.06)}
+  .aa-mod-menu .aa-mod-b:hover{background:rgba(124,92,255,.28)}
+  .aa-mod-menu .aa-mod-danger:hover{background:rgba(220,60,60,.32)}
+  .aa-mod-menu .aa-mod-sep{height:1px;background:rgba(255,255,255,.12);margin:6px 2px}
+  .aa-mod-menu .aa-mod-tip{font-size:.72rem;opacity:.55;padding:6px 6px 2px;line-height:1.3}
+  .aa-mod-tag{font-size:.82em;margin-right:3px;vertical-align:baseline;
+    filter:drop-shadow(0 0 1px rgba(0,0,0,.3))}
+  .lv-lc-sys,.tchat-sys{text-align:center;font-size:.8rem;opacity:.72;font-style:italic;
+    margin:4px 0;padding:0 8px}
+  /* Botón de banear / quitar-ban dentro de la ficha del perfil (abajo a la derecha) */
+  .aa-prof-modrow{display:flex;justify-content:flex-end;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap}
+  .aa-prof-modrsn{font-size:.75rem;opacity:.65;margin-right:auto}
+  .aa-prof-modbtn{cursor:pointer;font:inherit;font-size:.82rem;font-weight:700;padding:7px 14px;border-radius:999px;border:1px solid}
+  .aa-prof-modbtn.is-ban{background:rgba(220,60,60,.12);color:#e06666;border-color:rgba(220,60,60,.45)}
+  .aa-prof-modbtn.is-ban:hover{background:rgba(220,60,60,.24)}
+  .aa-prof-modbtn.is-unban{background:rgba(87,184,148,.14);color:#57b894;border-color:rgba(87,184,148,.45)}
+  .aa-prof-modbtn.is-unban:hover{background:rgba(87,184,148,.26)}
+</style>
+<script>
+(function(){
+  // Las dos cuentas del dueño (mismo Set que en los workers). Comparación en minúsculas.
+  var MODS={ elpupicruz:1, chess_argentino:1 };
+  // Duraciones del silencio (deben coincidir con MUTE_MINUTES del servidor).
+  var MUTE_OPTS=[[15,'15 min'],[30,'30 min'],[60,'1 h'],[480,'8 h'],[1440,'1 día']];
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function isMod(){ try{ var u=window.aaAuth&&window.aaAuth.getUser(); return !!(u&&u.username&&MODS[String(u.username).toLowerCase()]); }catch(e){ return false; } }
+  function meId(){ try{ var u=window.aaAuth&&window.aaAuth.getUser(); return u?u.id:''; }catch(e){ return ''; } }
+
+  function closeMenu(){ var m=document.getElementById('aa-mod-menu'); if(m) m.remove(); document.removeEventListener('mousedown', onDoc, true); document.removeEventListener('keydown', onKey, true); }
+  function onDoc(ev){ var m=document.getElementById('aa-mod-menu'); if(m && !m.contains(ev.target)) closeMenu(); }
+  function onKey(ev){ if(ev.key==='Escape') closeMenu(); }
+
+  // Abre el menú de moderación cerca de `anchorEl`, para el usuario `target` {userId,name}.
+  // Envía las órdenes con `sendFn` (el WebSocket del chat correspondiente).
+  function openMenu(anchorEl, target, sendFn){
+    closeMenu();
+    if(!isMod() || !target || !target.userId || typeof sendFn!=='function') return;
+    var name=target.name||'este usuario';
+    var m=document.createElement('div'); m.id='aa-mod-menu'; m.className='aa-mod-menu';
+    var h='<div class="aa-mod-h">Moderar a <b>'+esc(name)+'</b></div>';
+    h+='<div class="aa-mod-sec">🔇 Silenciar</div><div class="aa-mod-row">';
+    MUTE_OPTS.forEach(function(o){ h+='<button class="aa-mod-b" data-act="mute" data-min="'+o[0]+'">'+o[1]+'</button>'; });
+    h+='</div>';
+    h+='<button class="aa-mod-b" data-act="unmute">🔈 Quitar silencio</button>';
+    h+='<div class="aa-mod-tip">Para banear, abrí su perfil (clic en el nick).</div>';
+    m.innerHTML=h;
+    m.addEventListener('click', function(ev){
+      var b=ev.target.closest && ev.target.closest('button.aa-mod-b'); if(!b) return;
+      var act=b.getAttribute('data-act');
+      if(act==='mute'){ sendFn({type:'mute', userId:target.userId, minutes:+b.getAttribute('data-min'), name:name}); }
+      else if(act==='unmute'){ sendFn({type:'unmute', userId:target.userId, name:name}); }
+      closeMenu();
+    });
+    document.body.appendChild(m);
+    var r=anchorEl.getBoundingClientRect();
+    var mw=m.offsetWidth, mh=m.offsetHeight;
+    var left=Math.max(6, Math.min(window.innerWidth-mw-6, r.left));
+    var top=r.bottom+4; if(top+mh>window.innerHeight-6) top=Math.max(6, r.top-mh-4);
+    m.style.left=left+'px'; m.style.top=top+'px';
+    setTimeout(function(){ document.addEventListener('mousedown', onDoc, true); document.addEventListener('keydown', onKey, true); },0);
+  }
+
+  // Devuelve los controles de moderación (⚔️ silenciar al usuario, 🗑 borrar el mensaje) para
+  // pegarlos a un nodo de mensaje. null si el que mira no es mod (o es un mensaje de sistema).
+  // Banear NO está acá: es una decisión grave → vive en la ficha del usuario (clic en el nick).
+  function controls(target, msgId, sendFn){
+    if(!isMod()) return null;
+    var wrap=document.createElement('span'); wrap.className='aa-mod-ctrls';
+    var self=!!(target && target.userId && target.userId===meId());
+    if(target && target.userId && !self){
+      var mb=document.createElement('button'); mb.type='button'; mb.className='aa-mod-ic';
+      mb.title='Silenciar a '+(target.name||''); mb.textContent='⚔️';
+      mb.addEventListener('click', function(ev){ ev.preventDefault(); ev.stopPropagation(); openMenu(mb, target, sendFn); });
+      wrap.appendChild(mb);
+    }
+    if(msgId){
+      var db=document.createElement('button'); db.type='button'; db.className='aa-mod-ic';
+      db.title='Borrar este mensaje'; db.textContent='🗑';
+      db.addEventListener('click', function(ev){ ev.preventDefault(); ev.stopPropagation();
+        if(confirm('¿Borrar este mensaje para todos?')) sendFn({type:'delete', id:msgId}); });
+      wrap.appendChild(db);
+    }
+    return wrap.childNodes.length ? wrap : null;
+  }
+
+  // ¿el usuario de nombre `name` es moderador? (para la espadita al lado de su nick)
+  function isModName(name){ return !!(name && MODS[String(name).toLowerCase()]); }
+  // Insignia de moderador (espadita) para poner a la IZQUIERDA del nick en el chat.
+  function modBadge(name){ return isModName(name) ? '<span class="aa-mod-tag" title="Moderador">⚔️</span>' : ''; }
+
+  window.aaMod={ isMod:isMod, openMenu:openMenu, controls:controls, closeMenu:closeMenu, isModName:isModName, modBadge:modBadge };
 })();
 </script>
 
@@ -32251,6 +32414,17 @@ function cvUpdateNagBadge() {
     cursor:pointer;font-family:inherit;background:linear-gradient(135deg,#7c5cff,#4f46e5);
     box-shadow:0 4px 14px rgba(79,70,229,.4);white-space:nowrap;transition:filter .15s}
   .aa-modal-go:hover{filter:brightness(1.08)}
+  /* Preferencias: filas con interruptor */
+  .aa-prefs{display:grid;gap:8px;margin:2px 0 16px;text-align:left}
+  .aa-pref-sec{font-size:.72rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--text3);margin:8px 2px 0}
+  .aa-pref-row{display:flex;align-items:center;gap:12px;justify-content:space-between;background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:11px 13px;cursor:pointer}
+  .aa-pref-txt{display:flex;flex-direction:column;gap:2px;min-width:0}
+  .aa-pref-t{font-size:.9rem;font-weight:700;color:var(--text)}
+  .aa-pref-d{font-size:.76rem;color:var(--text2);line-height:1.4}
+  .aa-switch{appearance:none;-webkit-appearance:none;flex:0 0 auto;width:42px;height:24px;border-radius:999px;background:var(--border);position:relative;cursor:pointer;transition:background .15s;outline:none;margin:0}
+  .aa-switch:checked{background:var(--gold-dim,#c9a227)}
+  .aa-switch::after{content:"";position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:#fff;transition:transform .15s;box-shadow:0 1px 3px rgba(0,0,0,.3)}
+  .aa-switch:checked::after{transform:translateX(18px)}
   .aa-toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:#161b22;color:#fff;
     border:1px solid rgba(255,255,255,.16);padding:11px 18px;border-radius:12px;font-size:.9rem;z-index:100000;
     box-shadow:0 10px 30px rgba(0,0,0,.5);opacity:0;transition:opacity .2s,transform .2s;pointer-events:none}
@@ -32549,7 +32723,7 @@ function cvUpdateNagBadge() {
         '<div class="s">Conectado con Lichess'+(u.rating?(' · '+u.rating):'')+'</div></div>'+
       '<button class="aa-item" data-a="perfil">👤 Mi perfil</button>'+
       '<button class="aa-item" data-a="partidas">♟️ Mis partidas '+soon+'</button>'+
-      '<button class="aa-item" data-a="prefs">⚙️ Preferencias '+soon+'</button>'+
+      '<button class="aa-item" data-a="prefs">⚙️ Preferencias</button>'+
       '<button class="aa-item" data-a="tema"><span class="aa-tema-ic">'+(light?'☀️':'🌙')+'</span>'+
         '<span class="aa-tema-lbl">'+(light?'Tema claro':'Tema oscuro')+'</span></button>'+
       '<button class="aa-item aa-danger" data-a="salir">🚪 Salir</button>';
@@ -32560,6 +32734,7 @@ function cvUpdateNagBadge() {
       var a=b.getAttribute('data-a');
       if(a==='salir'){ logout(); return; }
       if(a==='perfil'){ closeMenu(); if(window.aaProfile&&window.aaProfile.open) window.aaProfile.open(); return; }
+      if(a==='prefs'){ closeMenu(); openPrefs(); return; }
       if(a==='tema'){
         if(typeof toggleTheme==='function') toggleTheme();
         var nowLight=document.body.classList.contains('light');
@@ -32577,6 +32752,45 @@ function cvUpdateNagBadge() {
     document.removeEventListener('click', onDocClick);
   }
   function onDocClick(ev){ if(!ev.target.closest('.aa-account')) closeMenu(); }
+
+  // ── Panel de Preferencias (⚙️) ─────────────────────────────────────────────
+  function prefRead(k){ try{ return localStorage.getItem(k)==='1'; }catch(e){ return false; } }
+  function prefRow(key, title, desc, on){
+    return '<label class="aa-pref-row">'+
+        '<span class="aa-pref-txt"><span class="aa-pref-t">'+title+'</span>'+
+          (desc?'<span class="aa-pref-d">'+desc+'</span>':'')+'</span>'+
+        '<input type="checkbox" class="aa-switch" data-pref="'+key+'"'+(on?' checked':'')+'>'+
+      '</label>';
+  }
+  function openPrefs(){
+    var light=document.body.classList.contains('light');
+    var back=document.createElement('div'); back.className='aa-modal-back';
+    back.innerHTML='<div class="aa-modal" role="dialog" aria-modal="true" aria-label="Preferencias">'+
+      '<div class="aa-modal-ic">⚙️</div>'+
+      '<h3 class="aa-modal-h">Preferencias</h3>'+
+      '<div class="aa-prefs">'+
+        '<div class="aa-pref-sec">Partida</div>'+
+        prefRow('autoqueen','Coronar siempre en dama','Al coronar no te pregunta la pieza. Mantené <b>Ctrl</b> (o ⌘) apretado al coronar para elegir otra esta vez.', prefRead('aa_pref_autoqueen'))+
+        prefRow('pvpchatoff','Ocultar el chat en mis partidas','No se muestra el chat dentro de las partidas en vivo.', prefRead('aa_pref_pvpchat_off'))+
+        '<div class="aa-pref-sec">Apariencia</div>'+
+        prefRow('theme','Tema claro','', light)+
+      '</div>'+
+      '<div class="aa-modal-btns"><button class="aa-modal-go" type="button">Listo</button></div>'+
+    '</div>';
+    document.body.appendChild(back);
+    requestAnimationFrame(function(){ back.classList.add('open'); });
+    function close(){ back.classList.remove('open'); setTimeout(function(){ if(back.parentNode) back.remove(); }, 200); }
+    function setPref(k,v){ try{ localStorage.setItem(k, v?'1':''); }catch(e){} document.dispatchEvent(new CustomEvent('aa-prefs-changed')); }
+    back.addEventListener('change', function(ev){
+      var el=ev.target.closest('.aa-switch'); if(!el) return;
+      var p=el.getAttribute('data-pref');
+      if(p==='autoqueen') setPref('aa_pref_autoqueen', el.checked);
+      else if(p==='pvpchatoff') setPref('aa_pref_pvpchat_off', el.checked);
+      else if(p==='theme'){ if(typeof toggleTheme==='function') toggleTheme(); }
+    });
+    back.querySelector('.aa-modal-go').addEventListener('click', close);
+    back.addEventListener('click', function(ev){ if(ev.target===back) close(); });
+  }
 
   function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){
     return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
@@ -32811,6 +33025,55 @@ function cvUpdateNagBadge() {
   function lower(s){ return String(s||'').toLowerCase(); }
   function isSelfShowing(){ var u=myUser(); return !!(u && curNick && lower(u.username)===lower(curNick)); }
 
+  // ── Moderación (banear / quitar ban) desde la ficha — sólo para los mods ──
+  function myToken(){ try{ return (window.aaAuth&&window.aaAuth.getToken)?window.aaAuth.getToken():''; }catch(e){ return ''; } }
+  function amMod(){ try{ return !!(window.aaMod && window.aaMod.isMod()); }catch(e){ return false; } }
+  var _sanc={ banned:{}, at:0, loading:false };   // cache de sanciones (para saber si ya está baneado)
+  // Trae la lista de baneados (cache 20s). Cuando llega, re-pinta el perfil abierto con el estado real.
+  function ensureSanctions(){
+    if(!amMod() || _sanc.loading || Date.now()-_sanc.at < 20000) return;
+    var tok=myToken(); if(!tok) return;
+    _sanc.loading=true;
+    fetch(PROXY+'/mod/sanctions',{ headers:{'Authorization':'Bearer '+tok} })
+      .then(function(r){ return r.ok?r.json():null; })
+      .then(function(d){ _sanc.loading=false; if(!d) return; _sanc.at=Date.now();
+        var b={}; (d.banned||[]).forEach(function(x){ if(x&&x.userId) b[x.userId]=x; }); _sanc.banned=b;
+        if(curProfile) paintProfile(curProfile); })
+      .catch(function(){ _sanc.loading=false; });
+  }
+  // Botón de banear / quitar-ban para la ficha (abajo a la derecha). Sólo mod y nunca sobre uno mismo.
+  function modRowHtml(P){
+    if(!P || P.isSelf || !P.id || !amMod()) return '';
+    if(window.aaMod && window.aaMod.isModName && window.aaMod.isModName(P.username)) return '';   // no se banea a otro mod
+    var banned=!!_sanc.banned[P.id];
+    var rsn=(banned && _sanc.banned[P.id] && _sanc.banned[P.id].reason)
+      ? '<span class="aa-prof-modrsn">Baneado: '+esc(_sanc.banned[P.id].reason)+'</span>' : (banned?'<span class="aa-prof-modrsn">Está baneado</span>':'');
+    return '<div class="aa-prof-modrow">'+rsn+
+      '<button type="button" class="aa-prof-modbtn '+(banned?'is-unban':'is-ban')+'" data-act="'+(banned?'unban':'ban')+'">'+
+        (banned?'✓ Quitar ban':'⚔️ Banear')+'</button></div>';
+  }
+  // Ejecuta el ban / quitar-ban contra cr-proxy con el Bearer del mod. SIEMPRE pide confirmación.
+  function doBan(P, ban){
+    if(!P || !P.id) return;
+    var tok=myToken(); if(!tok){ toast('Necesitás estar logueado como moderador'); return; }
+    var who=P.username||'este usuario';
+    if(ban){ if(!confirm('¿Banear a '+who+'?\n\nNo va a poder ingresar con esa cuenta a partir de ahora.\nEs reversible: podés quitar el ban desde su perfil.')) return; }
+    else { if(!confirm('¿Quitar el ban a '+who+'?\nVa a poder volver a entrar.')) return; }
+    var reason='';
+    if(ban){ var r=prompt('Motivo (opcional, queda anotado):',''); if(r===null) return; reason=String(r||'').slice(0,200); }
+    fetch(PROXY+(ban?'/mod/ban':'/mod/unban'),{ method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},
+      body:JSON.stringify(ban?{userId:P.id, reason:reason}:{userId:P.id}) })
+      .then(function(r){ return r.json().then(function(d){ return {ok:r.ok, d:d}; }); })
+      .then(function(x){
+        if(!x.ok || !x.d || x.d.error){ toast('No se pudo: '+((x.d&&x.d.error)||'error')); return; }
+        if(ban) _sanc.banned[P.id]={ userId:P.id, username:P.username, reason:reason }; else delete _sanc.banned[P.id];
+        toast(ban?('⛔ '+who+' fue baneado'):('✅ Ban quitado a '+who));
+        if(curProfile===P) paintProfile(P);
+      })
+      .catch(function(){ toast('No se pudo (¿internet?)'); });
+  }
+
   // ── Normalización a un objeto de perfil común (mío = local; ajeno = respuesta del Worker) ──
   function selfProfile(){
     var u=myUser(); if(!u) return null;
@@ -32884,7 +33147,7 @@ function cvUpdateNagBadge() {
           '<div class="aa-idname">'+dot+ttl+esc(P.username)+flag+'</div>'+
           name+meta+counts+
         '</div>'+editBtn+'</div>'+
-        bio+acts+
+        bio+acts+modRowHtml(P)+
       '</div>';
   }
   function tacticHtml(P){
@@ -32942,11 +33205,13 @@ function cvUpdateNagBadge() {
     var fo=node.querySelector('[data-act="follow"]'); if(fo) fo.addEventListener('click', function(){ doFollowToggle(fo); });
     var fl=node.querySelector('[data-act="full"]'); if(fl) fl.addEventListener('click', function(){ openView(curNick, 'page'); });   // overlay → página
     var ef=node.querySelector('[data-act="editficha"]'); if(ef) ef.addEventListener('click', function(){ openEditFicha(curProfile); });
+    var bb=node.querySelector('[data-act="ban"]'); if(bb) bb.addEventListener('click', function(){ doBan(curProfile, true); });
+    var ub=node.querySelector('[data-act="unban"]'); if(ub) ub.addEventListener('click', function(){ doBan(curProfile, false); });
     // Restaurar el historial tras cualquier repintado (ratings-changed, follow, etc.) sin re-fetch.
     var hn=node.querySelector('[data-hist]');
     if(hn){ var gs=gamesCache[lower(curNick)]; paintHist(hn, (gs!==undefined)?gs:null); }
   }
-  function paintProfile(P){ curProfile=P; curNick=P.username||curNick; setContent(profileHtml(P, curMode)); }
+  function paintProfile(P){ curProfile=P; curNick=P.username||curNick; setContent(profileHtml(P, curMode)); ensureSanctions(); }
 
   // Seguir / dejar de seguir al perfil que se está mostrando (requiere sesión).
   function doFollowToggle(btn){
