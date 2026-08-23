@@ -1364,7 +1364,7 @@ async function ensureRatingTables(env) {
   try {
     const info = await env.DB.prepare('PRAGMA table_info(rated_games)').all();
     const cols = new Set(((info && info.results) || []).map((r) => r.name));
-    const want = { moves: 'TEXT', white_name: 'TEXT', black_name: 'TEXT' };
+    const want = { moves: 'TEXT', white_name: 'TEXT', black_name: 'TEXT', reason: 'TEXT' };
     for (const name in want) {
       if (cols.has(name)) continue;
       try { await env.DB.prepare('ALTER TABLE rated_games ADD COLUMN ' + name + ' ' + want[name]).run(); } catch (e) {}
@@ -1685,6 +1685,7 @@ async function ratingReport(request, env) {
   const moves = String(body.moves || '').slice(0, 20000);         // jugadas SAN (para revivir en el visor)
   const wname = String(body.wname || '').slice(0, 60);
   const bname = String(body.bname || '').slice(0, 60);
+  const reason = String(body.reason || '').slice(0, 20);          // motivo del final (checkmate/flag/resign/…)
   if (!gameId || !white || !black) return errJson('Faltan datos (gameId, white, black)', 400);
   if (white === black) return errJson('Una cuenta no puede jugar contra sí misma', 400);
   if (result !== 'w' && result !== 'b' && result !== 'draw') return errJson('result inválido', 400);
@@ -1720,9 +1721,9 @@ async function ratingReport(request, env) {
         'ON CONFLICT(user_id, category) DO UPDATE SET rating=?3, games=games+1, updated=?4')
         .bind(black, category, newB, now),
       env.DB.prepare('INSERT INTO rated_games (game_id, category, white_id, black_id, result, ' +
-        'white_before, white_after, black_before, black_after, ts, moves, white_name, black_name) ' +
-        'VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)')
-        .bind(gameId, category, white, black, result, rw.rating, newW, rb.rating, newB, now, moves, wname, bname),
+        'white_before, white_after, black_before, black_after, ts, moves, white_name, black_name, reason) ' +
+        'VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)')
+        .bind(gameId, category, white, black, result, rw.rating, newW, rb.rating, newB, now, moves, wname, bname, reason),
     ]);
   } catch (e) { return errJson('D1 error: ' + e.message, 500); }
 
@@ -1752,7 +1753,7 @@ async function ratingGames(request, reqUrl, env) {
   try {
     rows = await env.DB.prepare(
       'SELECT game_id, category, white_id, black_id, result, white_before, white_after, ' +
-      'black_before, black_after, ts, white_name, black_name FROM rated_games ' +   // sin moves (livianas)
+      'black_before, black_after, ts, white_name, black_name, reason FROM rated_games ' +   // sin moves (livianas)
       'WHERE white_id=?1 OR black_id=?1 ORDER BY ts DESC LIMIT ?2'
     ).bind(u.id, limit).all();
   } catch (e) { return errJson('D1 error: ' + e.message, 500); }
@@ -1769,6 +1770,7 @@ async function ratingGames(request, reqUrl, env) {
       gameId: r.game_id, category: r.category, ts: r.ts,
       color, opponent: (iAmWhite ? r.black_name : r.white_name) || 'Invitado',
       outcome, before, after, delta: (after != null && before != null) ? (after - before) : null,
+      reason: r.reason || '',
     };
   });
   return jsonResp({ id: u.id, username: u.username, games: list });

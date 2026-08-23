@@ -33632,6 +33632,9 @@ function cvUpdateNagBadge() {
   body.light .aa-prof-rat,
   body.light .aa-prof-tact,
   body.light .aa-hist-graph{background:var(--card90);border-color:var(--bd22);box-shadow:var(--shadow-sm)}
+  /* Las filas del historial también en blanco (sin sombra, para no recargar la lista) */
+  body.light .aa-hist-row{background:var(--card90);border-color:var(--bd22)}
+  body.light .aa-hist-row:hover{background:var(--bg2)}
   .aa-graph-head{display:flex;align-items:baseline;gap:9px;margin-bottom:6px}
   .aa-graph-now{font-size:1.5rem;font-weight:800;color:var(--text);line-height:1}
   .aa-graph-net{font-size:.8rem;font-weight:700}
@@ -33653,6 +33656,7 @@ function cvUpdateNagBadge() {
   .aa-hist-r.win{background:#2ecc71} .aa-hist-r.loss{background:#e05a5a} .aa-hist-r.draw{background:#8a8f98}
   .aa-hist-vs{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text2)}
   .aa-hist-vs b{color:var(--text);font-weight:700}
+  .aa-hist-why{color:var(--text3,#9a9a9a);font-weight:600}
   .aa-hist-cat{flex:0 0 auto;font-size:.95rem}
   .aa-hist-delta{flex:0 0 auto;font-weight:800;font-size:.82rem;min-width:36px;text-align:right;color:var(--text3,#9a9a9a)}
   .aa-hist-delta.up{color:#2ecc71} .aa-hist-delta.down{color:#e05a5a}
@@ -33994,8 +33998,9 @@ function cvUpdateNagBadge() {
     return '<div class="aa-prof-foot"><button class="aa-prof-btn primary" data-act="full" style="flex:1">👤 Ver perfil completo</button></div>';
   }
   function histBlockHtml(P){
-    return '<div class="aa-prof-lbl">'+(P.isSelf?'Tu historial de partidas':'Historial de partidas')+'</div>'+
-      '<div class="aa-prof-hist" data-hist></div>';
+    // El rótulo "…historial de partidas" ya NO va acá arriba: lo pinta paintHist DEBAJO del gráfico,
+    // justo arriba de la lista de partidas (que es "el historial de verdad"). data-self lleva el "Tu".
+    return '<div class="aa-prof-hist" data-hist'+(P.isSelf?' data-self="1"':'')+'></div>';
   }
   function profileHtml(P, mode){
     if(mode==='page'){
@@ -34193,14 +34198,24 @@ function cvUpdateNagBadge() {
     hardRemove(); curNick=''; curMode=null; reqId++;
     _openVivoGameDeepLink(id, nick);
   }
+  // Motivo del final (guardado por partida a partir de 2026-08; las viejas no lo tienen → sin texto).
+  // Se combina con el resultado desde el punto de vista del jugador: "Ganó por tiempo", "Tablas por repetición".
+  var REASON_TXT={ checkmate:'jaque mate', resign:'abandono', abandon:'abandono', flag:'tiempo', 'flag-draw':'tiempo',
+    'draw-agree':'mutuo acuerdo', threefold:'repetición', fifty:'regla de 50 jugadas', material:'material insuficiente', stalemate:'ahogado' };
+  function reasonPhrase(g){
+    var m=REASON_TXT[g.reason]; if(!m) return '';
+    var verb=g.outcome==='win'?'Ganó':g.outcome==='loss'?'Perdió':'Tablas';
+    return verb+' por '+m;
+  }
   function rowHtml(g, i){
     var oc=g.outcome, badge=oc==='win'?'<span class="aa-hist-r win">G</span>':
       oc==='loss'?'<span class="aa-hist-r loss">P</span>':'<span class="aa-hist-r draw">T</span>';
     var ci=catInfo(g.category), col=g.color==='w'?'⚪':'⚫';
     var dTxt=(g.delta==null)?'':((g.delta>0?'+':'')+g.delta);
     var dCls=(g.delta>0)?'up':(g.delta<0)?'down':'';
+    var why=reasonPhrase(g);
     return '<button type="button" class="aa-hist-row" data-gi="'+i+'">'+badge+
-      '<span class="aa-hist-vs">'+col+' <b>'+esc(g.opponent)+'</b></span>'+
+      '<span class="aa-hist-vs">'+col+' <b>'+esc(g.opponent)+'</b>'+(why?' <span class="aa-hist-why">· '+esc(why)+'</span>':'')+'</span>'+
       '<span class="aa-hist-cat" title="'+esc(ci.n)+'">'+ci.ic+'</span>'+
       '<span class="aa-hist-delta '+dCls+'">'+dTxt+'</span>'+
       '<span class="aa-hist-date">'+fmtDate(g.ts)+'</span></button>';
@@ -34249,7 +34264,9 @@ function cvUpdateNagBadge() {
     var tabs=(cats.length>1)?('<div class="aa-hist-tabs">'+cats.map(function(c){
       return '<button type="button" class="aa-hist-tab'+(c.k===def?' on':'')+'" data-cat="'+c.k+'">'+c.ic+' '+esc(c.n)+'</button>';
     }).join('')+'</div>'):'';
-    node.innerHTML=tabs+'<div class="aa-hist-graph"></div>'+
+    var self=(node.getAttribute('data-self')==='1');
+    var histLbl='<div class="aa-prof-lbl">'+(self?'Tu historial de partidas':'Historial de partidas')+'</div>';
+    node.innerHTML=tabs+'<div class="aa-hist-graph"></div>'+histLbl+
       '<div class="aa-hist-list" data-list></div><div class="aa-hist-morewrap"></div>';
     drawGraph(node.querySelector('.aa-hist-graph'), byCat[def], def);
     node.querySelectorAll('.aa-hist-tab').forEach(function(t){ t.addEventListener('click', function(){
