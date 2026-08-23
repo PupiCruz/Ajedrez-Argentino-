@@ -110,6 +110,7 @@ export default {
     if (reqUrl.pathname === '/rating/report') return ratingReport(request, env);  // POST secreto (sólo el worker de vivo)
     if (reqUrl.pathname === '/rating/games')  return ratingGames(request, reqUrl, env); // GET público ?user= → historial de partidas
     if (reqUrl.pathname === '/rating/game')   return ratingGame(request, reqUrl, env);  // GET público ?id= → una partida (link compartible)
+    if (reqUrl.pathname === '/rating/top')    return ratingTop(request, reqUrl, env);   // GET público → top del sitio por ritmo
 
     // ── Moderación de los chats (banear/silenciar) — sólo mods (sesión) o el vivo-worker (X-Vivo-Secret) ──
     if (reqUrl.pathname === '/mod/ban')       return modBan(request, env, true);    // POST → banear (bloquea login)
@@ -1377,6 +1378,36 @@ async function getRating(env, userId, category) {
     .bind(userId, category).first();
   if (row) return { rating: row.rating, games: row.games };
   return { rating: SITE_START_RATING, games: 0 };
+}
+
+// GET /rating/top → TOP del sitio por ritmo (público, sin auth). Devuelve los mejores de cada
+// categoría (bullet/blitz/rapid) en una sola llamada: { bullet:[…], blitz:[…], rapid:[…] }.
+// Cada jugador: { username, userId, rating, games, prov, title }. Excluye baneados. El pool del
+// sitio es chico y muchos son provisionales (games<15) → se marca prov y el cliente muestra "?".
+async function ratingTop(request, reqUrl, env) {
+  if (!env.DB) return errJson('Falta el binding D1 (DB)', 500);
+  await ensureRatingTables(env);
+  let limit = parseInt(reqUrl.searchParams.get('limit') || '20', 10);
+  if (!(limit > 0)) limit = 20; if (limit > 50) limit = 50;
+  const cats = ['bullet', 'blitz', 'rapid'];
+  const out = {};
+  for (const c of cats) {
+    let rows = [];
+    try {
+      const q = await env.DB.prepare(
+        'SELECT r.user_id AS userId, r.rating AS rating, r.games AS games, u.username AS username, u.title AS title ' +
+        'FROM ratings r JOIN usuarios u ON u.id = r.user_id ' +
+        'WHERE r.category = ?1 AND r.games > 0 AND (u.banned IS NULL OR u.banned = 0) ' +
+        'ORDER BY r.rating DESC, r.games DESC LIMIT ?2'
+      ).bind(c, limit).all();
+      rows = (q && q.results) || [];
+    } catch (e) { rows = []; }
+    out[c] = rows.map((r) => ({
+      username: r.username || 'Jugador', userId: r.userId,
+      rating: r.rating, games: r.games, prov: ratingIsProv(r.games), title: r.title || null,
+    }));
+  }
+  return jsonResp(out, 200, 20);   // cache 20s: es un ranking, no hace falta al segundo
 }
 
 // GET /rating/me  (Authorization: Bearer <sesión>) → mis 3 ratings del sitio.
