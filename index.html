@@ -2436,7 +2436,7 @@
       .lv-lc-mine .lv-lc-nm { color:var(--gold); }
       .lv-lc-time { color:var(--text3); font-size:10.5px; margin-left:6px; white-space:nowrap; }
       /* Reacciones + citar en el chat del Lobby: reusa las clases .tchat-* (definidas más abajo) */
-      .lv-lc-msg:hover .tchat-acts { opacity:1; }
+      .lv-lc-msg:hover .tchat-acts { opacity:1; pointer-events:auto; }
       .lv-lc-msg.tchat-flash { animation:tchatFlash 1.4s ease-out; }
       .lv-lobbychat-inrow { display:flex; gap:8px; align-items:center; }
       .lv-lobbychat-inrow input { flex:1; min-width:0; font-family:inherit; font-size:14px; padding:9px 13px; border-radius:999px; border:1px solid var(--border); background:var(--bg2); color:var(--text); outline:none; }
@@ -2481,9 +2481,15 @@
       .tchat-rx-chip:hover { border-color:var(--gold-dim); }
       .tchat-rx-chip.is-mine { background:var(--gold-bg); border-color:var(--gold-dim); color:var(--gold); font-weight:700; }
       /* Acciones al pasar el mouse (reaccionar / responder), fijadas arriba a la derecha del mensaje */
-      .tchat-acts { position:absolute; top:-3px; right:0; display:inline-flex; gap:2px; opacity:0; transition:opacity .12s; background:var(--card90); border-radius:8px; padding:1px; box-shadow:0 1px 4px rgba(0,0,0,.18); }
-      .tchat-msg:hover .tchat-acts { opacity:1; }
-      @media (hover:none) { .tchat-acts { opacity:.5; } }
+      .tchat-acts { position:absolute; top:-3px; right:0; display:inline-flex; gap:2px; opacity:0; pointer-events:none; transition:opacity .12s; background:var(--card90); border-radius:8px; padding:1px; box-shadow:0 1px 4px rgba(0,0,0,.18); }
+      .tchat-msg:hover .tchat-acts { opacity:1; pointer-events:auto; }
+      /* En el teléfono (sin mouse) las acciones NO se muestran fijas encima del texto: aparecen al
+         TOCAR el mensaje (clase .tchat-open, la pone el JS) y se ocultan al tocar otro o afuera. */
+      @media (hover:none){
+        .tchat-msg:hover .tchat-acts, .lv-lc-msg:hover .tchat-acts { opacity:0; pointer-events:none; }
+        .tchat-msg.tchat-open .tchat-acts, .lv-lc-msg.tchat-open .tchat-acts { opacity:1; pointer-events:auto; }
+        .tchat-msg.tchat-open, .lv-lc-msg.tchat-open { background:rgba(127,127,127,.08); border-radius:6px; }
+      }
       .tchat-act { border:none; background:rgba(127,127,127,.14); cursor:pointer; border-radius:6px; font-size:12px; line-height:1; padding:3px 5px; }
       .tchat-act:hover { background:rgba(127,127,127,.28); }
       /* Barra "Respondiendo a…" arriba del cuadro de texto */
@@ -31974,6 +31980,8 @@ function cvUpdateNagBadge() {
         var ra=t.closest('.lv-lc-act-react'); if(ra){ ev.preventDefault(); ev.stopPropagation(); var b=lvLcMidOf(ra); if(b) lvLcOpenRxPicker(ra, b); return; }
         var rp=t.closest('.lv-lc-act-reply'); if(rp){ ev.preventDefault(); ev.stopPropagation(); var c=lvLcMidOf(rp); if(c) lvLcStartReply(c); return; }
         var q=t.closest('.tchat-reply-q'); if(q){ ev.preventDefault(); ev.stopPropagation(); lvLcFlash(q.getAttribute('data-goto')); return; }
+        // Teléfono: tocar el cuerpo del mensaje muestra/oculta sus acciones (el nick lo maneja el handler global).
+        if(_tcTapMode()){ if(t.closest('[data-uprofile]')) return; tcSetOpenMsg(t.closest('.lv-lc-msg')); }
       });
     }
     var bar=$('lv-lobbychat-replybar');
@@ -32537,6 +32545,15 @@ function cvUpdateNagBadge() {
     return false;
   }
   function _tcMidOf(el){ var n=el.closest&&el.closest('.tchat-msg'); return n?n.getAttribute('data-mid'):''; }
+  // ── Teléfono (sin mouse): las acciones (reaccionar/responder) aparecen al TOCAR el mensaje. ──
+  function _tcTapMode(){ try{ return !!(window.matchMedia && window.matchMedia('(hover:none)').matches); }catch(e){ return false; } }
+  // Alterna la clase .tchat-open del mensaje tocado y cierra cualquier otro mensaje abierto (en los dos chats).
+  function tcSetOpenMsg(msg){
+    var was = msg && msg.classList.contains('tchat-open');
+    var opened=document.querySelectorAll('.tchat-open');
+    for(var i=0;i<opened.length;i++){ if(opened[i]!==msg) opened[i].classList.remove('tchat-open'); }
+    if(msg) msg.classList.toggle('tchat-open', !was);
+  }
   // Saca de todas las vistas el nodo del mensaje borrado por un mod.
   function tcRemoveNode(id){ if(!id) return; for(var k in tcViews){ var v=tcViews[k]; if(!v||!v.msgs) continue;
     var n=v.msgs.querySelector('[data-mid="'+(''+id).replace(/"/g,'')+'"]'); if(n) n.remove(); } }
@@ -32625,10 +32642,12 @@ function cvUpdateNagBadge() {
           var t=ev.target; if(t && t.nodeType!==1) t=t.parentElement;
           // Reaccionar / responder / citar / cancelar respuesta (consume el clic si aplica).
           if(tcHandlePanelClick(which, t)){ ev.preventDefault(); ev.stopPropagation(); return; }
-          var el=(t && t.closest) ? t.closest('[data-uprofile]') : null; if(!el) return;
-          var nick=el.getAttribute('data-uprofile'); if(!nick) return;
-          ev.preventDefault(); ev.stopPropagation();
-          if(window.aaProfile && window.aaProfile.open) window.aaProfile.open({username:nick, peek:true});
+          var el=(t && t.closest) ? t.closest('[data-uprofile]') : null;
+          if(el){ var nick=el.getAttribute('data-uprofile');
+            if(nick){ ev.preventDefault(); ev.stopPropagation();
+              if(window.aaProfile && window.aaProfile.open) window.aaProfile.open({username:nick, peek:true}); return; } }
+          // Teléfono: tocar el cuerpo del mensaje (ni nick ni acción) muestra/oculta sus acciones.
+          if(_tcTapMode()){ tcSetOpenMsg((t && t.closest) ? t.closest('.tchat-msg') : null); }
         });
       }
       tcViews[which]={ host:host, msgs:host.querySelector('#tchat-msgs-'+which), inrow:host.querySelector('#tchat-inrow-'+which), guest:host.querySelector('#tchat-guest-'+which), replybar:host.querySelector('#tchat-replybar-'+which), replyTo:null };
@@ -32678,6 +32697,8 @@ function cvUpdateNagBadge() {
 <style>
   .aa-mod-ctrls{display:none;gap:2px;margin-left:6px;vertical-align:middle}
   .lv-lc-msg:hover .aa-mod-ctrls,.tchat-msg:hover .aa-mod-ctrls{display:inline-flex}
+  /* Teléfono: al tocar el mensaje (.tchat-open) también aparecen los controles de moderación */
+  .lv-lc-msg.tchat-open .aa-mod-ctrls,.tchat-msg.tchat-open .aa-mod-ctrls{display:inline-flex}
   .aa-mod-ic{border:none;background:rgba(127,127,127,.16);cursor:pointer;border-radius:6px;
     font-size:.82rem;line-height:1;padding:2px 4px;opacity:.75}
   .aa-mod-ic:hover{opacity:1;background:rgba(127,127,127,.3)}
