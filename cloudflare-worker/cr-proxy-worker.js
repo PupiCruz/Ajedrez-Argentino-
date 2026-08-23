@@ -101,6 +101,7 @@ export default {
     if (reqUrl.pathname === '/unfollow')     return followToggle(request, env, false);     // POST Bearer {userId}
     if (reqUrl.pathname === '/following')     return followingList(request, env);           // GET Bearer → a quién sigo
     if (reqUrl.pathname === '/profile')       return saveProfile(request, env);             // POST Bearer {name,country,bio} → fichita
+    if (reqUrl.pathname === '/prefs')          return savePrefs(request, env);               // POST Bearer {dnd} → preferencias en la cuenta
     if (reqUrl.pathname === '/block')         return blockToggle(request, env, true);       // POST Bearer {userId} → bloquear
     if (reqUrl.pathname === '/unblock')       return blockToggle(request, env, false);      // POST Bearer {userId} → desbloquear
     if (reqUrl.pathname === '/blocks')        return blocksList(request, env);              // GET  Bearer → a quiénes bloqueé
@@ -995,7 +996,8 @@ async function ensureUserTables(env) {
     // reversible). chat_muted_until = mute temporal (timestamp UNIX en segundos; 0/null = sin mute).
     const want = { display_name: 'TEXT', country: 'TEXT', bio: 'TEXT',
       banned: 'INTEGER DEFAULT 0', banned_at: 'INTEGER', banned_reason: 'TEXT',
-      chat_muted_until: 'INTEGER DEFAULT 0' };
+      chat_muted_until: 'INTEGER DEFAULT 0',
+      dnd: 'INTEGER DEFAULT 0' };   // "No molestar": 1 = otros NO te pueden desafiar
     for (const name in want) {
       if (cols.has(name)) continue;
       try { await env.DB.prepare('ALTER TABLE usuarios ADD COLUMN ' + name + ' ' + want[name]).run(); } catch (e) {}
@@ -1425,6 +1427,10 @@ async function ratingMe(request, env) {
   // Para la moderación: el DO cachea el mute (no puede escribir hasta que pase) y sabe si es
   // moderador (por el nombre de usuario). muted_until = timestamp UNIX en segundos (0 = sin mute).
   const mutedUntil = Number(u.chat_muted_until || 0) || 0;
+  // "No molestar": el Lobby DO lo cachea (session.dnd) para rechazar desafíos dirigidos. Se lee
+  // acá (no en sessionUser) porque la columna es nueva y hay que asegurar la tabla antes del SELECT.
+  let dnd = 0;
+  try { await ensureUserTables(env); const dr = await env.DB.prepare('SELECT dnd FROM usuarios WHERE id=?1').bind(u.id).first(); dnd = (dr && dr.dnd) ? 1 : 0; } catch (e) { /* si falla, dnd=0 */ }
   // Para el bloqueo: a quiénes bloqueé (blocked) y quiénes me bloquearon (blocked_by). El lobby los usa
   // para no cruzar desafíos entre bloqueados; el cliente además filtra presencia y desafíos abiertos.
   let blocked = [], blockedBy = [];
@@ -1437,7 +1443,7 @@ async function ratingMe(request, env) {
   } catch (e) { /* si falla, sigue sin bloqueos */ }
   return jsonResp({ id: u.id, username: u.username, ratings, games, prov,
     muted_until: mutedUntil, is_mod: MOD_USERNAMES.has(String(u.username || '').toLowerCase()),
-    blocked, blocked_by: blockedBy });
+    dnd, blocked, blocked_by: blockedBy });
 }
 
 // GET /u/<usuario> — PERFIL PÚBLICO de cualquier jugador (SIN auth). Sólo datos públicos:
@@ -1452,7 +1458,7 @@ async function publicProfile(request, reqUrl, env) {
   if (!handle) return errJson('Falta el usuario', 400);
   await ensureUserTables(env);
   const u = await env.DB.prepare(
-    'SELECT id, username, rating, title, display_name, country, bio, created_at FROM usuarios WHERE LOWER(username)=LOWER(?1)'
+    'SELECT id, username, rating, title, display_name, country, bio, created_at, dnd FROM usuarios WHERE LOWER(username)=LOWER(?1)'
   ).bind(handle).first();
   if (!u) return errJson('Este jugador no tiene perfil en el sitio', 404);
 
@@ -1494,8 +1500,24 @@ async function publicProfile(request, reqUrl, env) {
   return jsonResp({
     id: u.id, username: u.username, title: u.title || null, ratingLichess: u.rating || null,
     name: u.display_name || null, country: u.country || null, bio: u.bio || null, createdAt: u.created_at || null,
-    ratings, games, prov, tactic, followers, following, youFollow,
+    ratings, games, prov, tactic, followers, following, youFollow, dnd: u.dnd ? 1 : 0,
   });
+}
+
+// POST /prefs  (Authorization: Bearer)  body { dnd } → preferencias guardadas EN LA CUENTA (viajan
+// entre dispositivos). Hoy sólo "No molestar" (dnd: 1 = otros no te pueden desafiar). El Lobby DO lo
+// lee de /rating/me al conectar y lo actualiza en vivo con el mensaje set-dnd.
+async function savePrefs(request, env) {
+  if (!env.DB) return errJson('Falta el binding D1 (DB)', 500);
+  const u = await sessionUser(request, env);
+  if (!u) return errJson('No autenticado', 401);
+  await ensureUserTables(env);
+  let body = {};
+  try { body = await request.json(); } catch (e) { body = {}; }
+  const dnd = body.dnd ? 1 : 0;
+  try { await env.DB.prepare('UPDATE usuarios SET dnd=?2 WHERE id=?1').bind(u.id, dnd).run(); }
+  catch (e) { return errJson('No se pudo guardar la preferencia', 500); }
+  return jsonResp({ dnd });
 }
 
 // POST /profile  (Authorization: Bearer)  body { name, country, bio } → guarda la fichita editable

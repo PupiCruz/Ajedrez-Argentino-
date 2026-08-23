@@ -2887,6 +2887,8 @@
       .lv-rank-onnm { cursor:pointer; font-weight:600; } .lv-rank-onnm:hover { text-decoration:underline; }
       .lv-rank-onch { border:1px solid var(--gold-dim); background:var(--gold-bg); color:var(--gold); border-radius:999px; font:inherit; font-size:.76rem; font-weight:700; padding:3px 9px; cursor:pointer; }
       .lv-rank-onch:hover { filter:brightness(1.08); }
+      /* Cartelito "No molestar" (reemplaza a Desafiar cuando el jugador lo tiene activo) */
+      .lv-dnd-tag { flex:0 0 auto; font-size:.76rem; font-weight:700; color:var(--text3); opacity:.9; padding:3px 9px; border-radius:999px; border:1px dashed var(--border); white-space:nowrap; }
     </style>
     <section class="section" id="s-vivo">
       <div class="pg-head" id="lv-pghead">
@@ -30746,6 +30748,7 @@ function cvUpdateNagBadge() {
   var lvFollowingList=[], lvFollowingIds={};   // a quién sigo (id->username), para cruzar con online
   var lvOnlineSet={}, lvOnlineNames={};        // userIds CONECTADOS (app abierta) → botón verde de seguidos
   var lvAvailSet={};                            // userIds DISPONIBLES (en Jugar) → lista de "jugadores para desafiar"
+  var lvDndSet={};                              // userIds con "No molestar" activo → no se ofrece desafiarlos
   var lvOnlineExpanded=false;      // ¿lista de en-línea desplegada (true) o píldora (false)?
   var lvOnlineChangeCbs=[];        // suscriptores (el menú hamburguesa) a cambios de "en línea"
   // Conectar al lobby al loguearse (aunque no estés en Jugar): así recibís desafíos dirigidos y
@@ -30757,6 +30760,9 @@ function cvUpdateNagBadge() {
     }catch(_){}
   });
   document.addEventListener('aa-follows-changed', function(){ try{ lvFetchFollowing(); }catch(_){} });   // seguí/dejé de seguir
+  // "No molestar" cambió (switch de Preferencias) → avisar al lobby en vivo para que enforce y los demás
+  // oculten el botón Desafiar al instante. Si el lobby no está conectado, al conectar lo toma de /rating/me.
+  document.addEventListener('aa-dnd-changed', function(e){ try{ lobbySend({type:'set-dnd', on:!!(e.detail&&e.detail.dnd)}); }catch(_){} });
   setTimeout(function(){ try{ if(lvAuthUser()){ lobbyConnect(); lvFetchFollowing(); } }catch(_){} }, 1400);   // ya logueado al abrir
   var lvRatingMsg='';   // texto del cambio de MI rating al terminar (ej. "⚡ Blitz: +12 → 1212")
   var lvManualFlip=false, lvResultCode='*', lvResult=null, lvBannerDismissed=false;
@@ -31814,21 +31820,26 @@ function cvUpdateNagBadge() {
       var nm=(lvChallengeWaiting&&lvChallengeWaiting.name)||'Ese jugador';
       lvChallengeWaiting=null; lvToast(nm+' no está disponible ahora mismo 😕'); exit();
     }
+    else if(m.type==='challenge-dnd'){                                           // el rival está en "No molestar"
+      var nmd=(lvChallengeWaiting&&lvChallengeWaiting.name)||'Ese jugador';
+      lvChallengeWaiting=null; lvToast('🔕 '+nmd+' está en No molestar (no recibe desafíos ahora).'); exit();
+    }
     else if(m.type==='challenge-declined'){                                      // el rival rechazó
       lvChallengeWaiting=null; lvToast((m.by||'Tu rival')+' rechazó el desafío.'); exit();
     }
     else if(m.type==='challenge-error'){ lvChallengeWaiting=null; lvToast('No se pudo enviar el desafío.'); exit(); }
     // ── Presencia: CONECTADO (botón verde de seguidos) + DISPONIBLE (lista de jugadores en Jugar) ──
     else if(m.type==='presence-init'){
-      lvOnlineSet={}; lvOnlineNames={}; lvAvailSet={};
-      (m.online||[]).forEach(function(u){ lvOnlineSet[u.userId]=true; if(u.username) lvOnlineNames[u.userId]=u.username; });
-      (m.available||[]).forEach(function(u){ lvAvailSet[u.userId]=true; if(u.username) lvOnlineNames[u.userId]=u.username; });
+      lvOnlineSet={}; lvOnlineNames={}; lvAvailSet={}; lvDndSet={};
+      (m.online||[]).forEach(function(u){ lvOnlineSet[u.userId]=true; if(u.username) lvOnlineNames[u.userId]=u.username; if(u.dnd) lvDndSet[u.userId]=true; });
+      (m.available||[]).forEach(function(u){ lvAvailSet[u.userId]=true; if(u.username) lvOnlineNames[u.userId]=u.username; if(u.dnd) lvDndSet[u.userId]=true; });
       renderOnlinePill(); renderAvailPlayers();
     }
-    else if(m.type==='presence-online'){ lvOnlineSet[m.userId]=true; if(m.username) lvOnlineNames[m.userId]=m.username; renderOnlinePill(); }
-    else if(m.type==='presence-offline'){ delete lvOnlineSet[m.userId]; renderOnlinePill(); }
-    else if(m.type==='avail-on'){ lvAvailSet[m.userId]=true; if(m.username) lvOnlineNames[m.userId]=m.username; renderAvailPlayers(); }
+    else if(m.type==='presence-online'){ lvOnlineSet[m.userId]=true; if(m.username) lvOnlineNames[m.userId]=m.username; if(m.dnd) lvDndSet[m.userId]=true; else delete lvDndSet[m.userId]; renderOnlinePill(); }
+    else if(m.type==='presence-offline'){ delete lvOnlineSet[m.userId]; delete lvDndSet[m.userId]; renderOnlinePill(); }
+    else if(m.type==='avail-on'){ lvAvailSet[m.userId]=true; if(m.username) lvOnlineNames[m.userId]=m.username; if(m.dnd) lvDndSet[m.userId]=true; renderAvailPlayers(); }
     else if(m.type==='avail-off'){ delete lvAvailSet[m.userId]; renderAvailPlayers(); }
+    else if(m.type==='dnd-changed'){ if(m.dnd) lvDndSet[m.userId]=true; else delete lvDndSet[m.userId]; renderAvailPlayers(); lvRankRefreshOnline(); }
     // ── Chat general de la sala ──
     else if(m.type==='chat-history'){ lvLobbyChatHistory(m.msgs||[]); }
     else if(m.type==='lobby-chat'){ lvLobbyChatAddNode(m); }
@@ -31976,9 +31987,12 @@ function cvUpdateNagBadge() {
     if(!list.length){ lvOnlineExpanded=false; lvOnlineChangeCbs.forEach(function(fn){ try{ fn(); }catch(e){} }); return; }
     if(lvOnlineExpanded){
       var rows=list.map(function(u){
+        var actBtn = lvDndSet[u.id]
+          ? '<span class="lv-dnd-tag" title="En No molestar">🔕</span>'
+          : '<button type="button" class="lv-online-ch" data-uid="'+lvEsc(u.id)+'" data-nm="'+lvEsc(u.username)+'" title="Desafiar">⚔️</button>';
         return '<div class="lv-online-row"><span class="lv-online-dot"></span>'+
           '<span class="lv-online-nm aa-nick-clk" data-uprofile="'+lvEsc(u.username)+'">'+lvEsc(u.username)+'</span>'+
-          '<button type="button" class="lv-online-ch" data-uid="'+lvEsc(u.id)+'" data-nm="'+lvEsc(u.username)+'" title="Desafiar">⚔️</button></div>';
+          actBtn+'</div>';
       }).join('');
       var d=document.createElement('div'); d.id='lv-online'; d.className='lv-online-card';
       d.innerHTML='<div class="lv-online-head"><b>🟢 En línea ('+list.length+')</b><button type="button" class="lv-online-x" aria-label="Cerrar">×</button></div>'+rows;
@@ -32012,9 +32026,12 @@ function cvUpdateNagBadge() {
     var html='';
     for(var i=0;i<arr.length;i++){
       var u=arr[i], foll=lvFollowingIds.hasOwnProperty(u.id);
+      var actBtn = lvDndSet[u.id]
+        ? '<span class="lv-dnd-tag" title="Este jugador está en No molestar">🔕 No molestar</span>'
+        : '<button type="button" class="lv-player-ch" data-uid="'+lvEsc(u.id)+'" data-nm="'+lvEsc(u.username)+'">⚔️ Desafiar</button>';
       html+='<div class="lv-player-item"><span class="lv-online-dot"></span>'+
         '<span class="lv-player-nm aa-nick-clk" data-uprofile="'+lvEsc(u.username)+'">'+lvEsc(u.username)+(foll?' <span class="lv-player-foll" title="Lo seguís">★</span>':'')+'</span>'+
-        '<button type="button" class="lv-player-ch" data-uid="'+lvEsc(u.id)+'" data-nm="'+lvEsc(u.username)+'">⚔️ Desafiar</button></div>';
+        actBtn+'</div>';
     }
     list.innerHTML=html;
     list.querySelectorAll('.lv-player-ch').forEach(function(b){ b.onclick=function(){
@@ -32055,12 +32072,17 @@ function cvUpdateNagBadge() {
     if(!arr.length) return '<div class="lv-rank-empty">No hay nadie más en línea ahora mismo. Dejá un desafío abierto y esperá rival. 👋</div>';
     var out='';
     for(var i=0;i<arr.length;i++){ var u=arr[i];
+      var actBtn = lvDndSet[u.id]
+        ? '<span class="lv-dnd-tag" title="Este jugador está en No molestar">🔕 No molestar</span>'
+        : '<button type="button" class="lv-rank-onch" data-uid="'+lvEsc(u.id)+'" data-nm="'+lvEsc(u.username)+'">⚔️ Desafiar</button>';
       out+='<div class="lv-rank-onitem"><span class="lv-rank-ondot"></span>'
         +'<span class="lv-rank-onnm aa-nick-clk" data-uprofile="'+lvEsc(u.username)+'">'+lvEsc(u.username)+'</span>'
-        +'<button type="button" class="lv-rank-onch" data-uid="'+lvEsc(u.id)+'" data-nm="'+lvEsc(u.username)+'">⚔️ Desafiar</button></div>';
+        +actBtn+'</div>';
     }
     return out;
   }
+  // Repinta solo la lista "En línea ahora" del modal de ranking (si está abierto). Lo usa dnd-changed.
+  function lvRankRefreshOnline(){ var on=document.getElementById('lv-rank-onlist'); if(on) on.innerHTML=lvRankOnlineHtml(); }
   function lvRankRender(data){
     var cols=document.getElementById('lv-rank-cols');
     if(cols){ var h=''; RANK_CATS.forEach(function(c){ h+='<div class="lv-rank-col"><h4>'+c[1]+'</h4>'+lvRankRowsHtml((data&&data[c[0]])||[])+'</div>'; }); cols.innerHTML=h; }
@@ -33144,7 +33166,7 @@ function cvUpdateNagBadge() {
     render();
     try{ document.dispatchEvent(new CustomEvent('aa-auth-changed',{detail:{user:user||null}})); }catch(e){}
     // Los ratings del sitio (bullet/blitz/rápido) se traen/limpian según el login.
-    if(token) fetchRatings(); else setRatings(null);
+    if(token) fetchRatings(); else { setRatings(null); _dndStore(false); }
   }
 
   // ── Ratings PROPIOS del sitio (bullet/blitz/rápido). Distintos del rating de Lichess:
@@ -33165,9 +33187,22 @@ function cvUpdateNagBadge() {
     try{
       var r=await fetch(PROXY+'/rating/me',{headers:{'Authorization':'Bearer '+tok}});
       if(r.status===401){ return getRatings(); }   // sesión vencida: la maneja verify()
-      if(r.ok){ var d=await r.json(); if(d && d.ratings){ setRatings({ ratings:d.ratings, games:d.games||{}, prov:d.prov||{} }); return _aaRatings; } }
+      if(r.ok){ var d=await r.json(); if(d && d.ratings){ setRatings({ ratings:d.ratings, games:d.games||{}, prov:d.prov||{} }); _dndStore(!!d.dnd); return _aaRatings; } }
     }catch(e){ /* sin conexión: dejamos lo cacheado */ }
     return getRatings();
+  }
+
+  // ── "No molestar" (guardado EN LA CUENTA). Se lee de /rating/me; se cambia con setDnd (POST /prefs).
+  //    Con dnd=true, otros NO te pueden desafiar (lo enforça el Lobby DO). Es de una sola vía: vos sí
+  //    podés desafiar. El evento 'aa-dnd-changed' lo escucha el vivo para avisarle al lobby en vivo. ──
+  var _aaDnd=null;
+  function getDnd(){ if(_aaDnd!==null) return _aaDnd; try{ _aaDnd=(localStorage.getItem('aa_dnd')==='1'); }catch(e){ _aaDnd=false; } return _aaDnd; }
+  function _dndStore(on){ _aaDnd=!!on; try{ localStorage.setItem('aa_dnd', on?'1':''); }catch(e){} }
+  function setDnd(on){ on=!!on; _dndStore(on);
+    try{ document.dispatchEvent(new CustomEvent('aa-dnd-changed',{detail:{dnd:on}})); }catch(e){}
+    var tok=getSession(); if(!tok) return Promise.resolve(false);
+    return fetch(PROXY+'/prefs',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},body:JSON.stringify({dnd:on?1:0})})
+      .then(function(r){ return r.ok; }).catch(function(){ return false; });
   }
 
   function toast(msg){
@@ -33386,6 +33421,8 @@ function cvUpdateNagBadge() {
         prefRow('pvpchatoff','Ocultar el chat en mis partidas','No se muestra el chat dentro de las partidas en vivo.', prefRead('aa_pref_pvpchat_off'))+
         '<div class="aa-pref-sec">Apariencia</div>'+
         prefRow('theme','Tema claro','', light)+
+        '<div class="aa-pref-sec">Privacidad</div>'+
+        prefRow('dnd','🔕 No molestar','Otros jugadores <b>no te pueden desafiar</b>. Seguís navegando normal y podés desafiar vos cuando quieras. Se guarda en tu cuenta.', !!(window.aaAuth&&window.aaAuth.getDnd&&window.aaAuth.getDnd()))+
       '</div>'+
       '<div class="aa-modal-btns"><button class="aa-modal-go" type="button">Listo</button></div>'+
     '</div>';
@@ -33399,6 +33436,11 @@ function cvUpdateNagBadge() {
       if(p==='autoqueen') setPref('aa_pref_autoqueen', el.checked);
       else if(p==='pvpchatoff') setPref('aa_pref_pvpchat_off', el.checked);
       else if(p==='theme'){ if(typeof toggleTheme==='function') toggleTheme(); }
+      else if(p==='dnd'){
+        // "No molestar" se guarda en la cuenta (no en el navegador) → requiere login.
+        if(!(window.aaAuth && window.aaAuth.getToken && window.aaAuth.getToken())){ el.checked=false; if(window.aaAuth && window.aaAuth.login) window.aaAuth.login(); return; }
+        if(window.aaAuth && window.aaAuth.setDnd) window.aaAuth.setDnd(el.checked);
+      }
     });
     back.querySelector('.aa-modal-go').addEventListener('click', close);
     back.addEventListener('click', function(ev){ if(ev.target===back) close(); });
@@ -33410,7 +33452,7 @@ function cvUpdateNagBadge() {
   // Expuesto por si otras partes de la app lo necesitan.
   window.aaAuth = { login:login, logout:logout, getUser:function(){return window.aaCurrentUser||getUser();},
     getToken:getSession, onChange:function(cb){ document.addEventListener('aa-auth-changed',function(e){cb(e.detail.user);}); },
-    getRatings:getRatings, refreshRatings:fetchRatings,
+    getRatings:getRatings, refreshRatings:fetchRatings, getDnd:getDnd, setDnd:setDnd,
     onRatingsChange:function(cb){ document.addEventListener('aa-ratings-changed',function(e){cb(e.detail.ratings);}); } };
 
   async function boot(){
@@ -33550,6 +33592,8 @@ function cvUpdateNagBadge() {
     border:1px solid var(--border);background:var(--bg2);color:var(--text);font-weight:700;font-size:.9rem;cursor:pointer;font-family:inherit}
   .aa-prof-btn:hover{background:var(--border)}
   .aa-prof-btn.primary{border:none;color:#fff;background:linear-gradient(135deg,#7c5cff,#4f46e5);box-shadow:0 4px 14px rgba(79,70,229,.35)}
+  .aa-prof-btn.is-dnd{cursor:default;color:var(--text3,#9a9a9a);border-style:dashed;background:transparent}
+  .aa-prof-btn.is-dnd:hover{background:transparent}
   .aa-prof-mini{font-size:.6rem;font-weight:800;letter-spacing:.03em;text-transform:uppercase;
     padding:1px 5px;border-radius:5px;background:rgba(255,255,255,.2)}
   .aa-prof-btn:not(.primary) .aa-prof-mini{background:var(--border);color:var(--text3,#9a9a9a)}
@@ -33771,7 +33815,7 @@ function cvUpdateNagBadge() {
     return { id:d.id||null, username:d.username, title:d.title||null, ratingLichess:d.ratingLichess||null,
       name:d.name||null, country:d.country||null, bio:d.bio||null, createdAt:d.createdAt||null,
       ratings:d.ratings||{}, games:d.games||{}, prov:d.prov||{},
-      tactic:d.tactic||null, isSelf:false, online:false,
+      tactic:d.tactic||null, isSelf:false, online:false, dnd:!!d.dnd,
       followers:d.followers, following:d.following, youFollow:!!d.youFollow };
   }
   // Bandera del país (código FIDE 3 letras) reusando el helper global de la app.
@@ -33823,8 +33867,11 @@ function cvUpdateNagBadge() {
     var isBlk=!!(window.aaBlock && window.aaBlock.isBlocked(P.id));
     if(!P.isSelf && mode==='page' && !isBlk){   // a un bloqueado no se lo desafía ni se lo sigue
       var followBtn='<button class="aa-prof-btn" data-act="follow">'+(P.youFollow?'✓ Siguiendo':'➕ Seguir')+'</button>';
-      acts='<div class="aa-prof-actions">'+
-        '<button class="aa-prof-btn primary" data-act="challenge">⚔️ Desafiar</button>'+followBtn+'</div>';
+      // Si el jugador tiene "No molestar", no se ofrece desafiarlo (igual el server lo rechazaría).
+      var chBtn = P.dnd
+        ? '<span class="aa-prof-btn is-dnd" title="Este jugador no recibe desafíos ahora">🔕 No molestar</span>'
+        : '<button class="aa-prof-btn primary" data-act="challenge">⚔️ Desafiar</button>';
+      acts='<div class="aa-prof-actions">'+chBtn+followBtn+'</div>';
     }
     return '<div class="aa-idcard">'+
         '<div class="aa-idhead"><div class="aa-idmain">'+
