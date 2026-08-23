@@ -76,8 +76,15 @@ const LI_LIVE_CACHE = 10;      // broadcast Lichess EN VIVO (PGN de ronda + meta
                                // de blitz quede "capado" por una hoja vieja. No hay riesgo de 429: Lichess ve
                                // UN solo cliente (el Worker) → ~6 pedidos/min por torneo, den igual 1 o 100 mirando.
 const LI_RESOLVE_CACHE = 3600; // resolución id-de-ronda→id-de-torneo: es FIJA, cachear fuerte (1 h)
+// Ventana de gracia: cuánto tiempo MÁS (después de que la copia deja de ser "fresca") seguimos
+// sirviendo la última posición buena mientras Lichess se recupera de un 429/caída. Así el tablero
+// NUNCA queda vacío por un pico: mostramos lo último bueno hasta que el refresco vuelva a andar.
+const LI_STALE_WINDOW = 600;   // 10 min de gracia
 // UA identificable (Lichess pide identificarse; así, si algo raro pasa, saben quiénes somos).
 const LI_UA = 'AjedrezArgentinoBot/1.0 (+https://chessargentino.pages.dev)';
+// Dedup de bajadas concurrentes DENTRO de un mismo isolate (single-flight): si llegan muchos
+// pedidos del mismo torneo a la vez, UNA sola va a Lichess y las demás esperan esa respuesta.
+const _liInflight = new Map();
 
 export default {
   async fetch(request, env, ctx) {
@@ -448,39 +455,101 @@ async function liBc(reqUrl, ctx) {
     return errJson('Host/ruta no permitida (sólo lichess.org/api/broadcast)', 403);
   }
 
-  // El PGN de ronda y la metadata cambian jugada a jugada → caché corta. La resolución
+  // El PGN de ronda y la metadata cambian jugada a jugada → "frescura" corta. La resolución
   // del id de torneo (/api/broadcast/<slug>/<roundSlug>/<roundId>, 5 segmentos, sin /round/
-  // ni .pgn) es FIJA → caché larga.
+  // ni .pgn) es FIJA → frescura larga.
   const isPgn = /\.pgn$/i.test(t.pathname);
   const segs = t.pathname.split('/').filter(Boolean);   // ['api','broadcast',...]
   const isResolve = !isPgn && segs.length >= 5 && segs[2] !== 'round';
-  const ttl = isResolve ? LI_RESOLVE_CACHE : LI_LIVE_CACHE;
+  const freshTtl = isResolve ? LI_RESOLVE_CACHE : LI_LIVE_CACHE;
+  const storeTtl = freshTtl + LI_STALE_WINDOW;  // cuánto vive en la caché (fresca + ventana de gracia)
+  const contentType = isPgn ? 'application/x-chess-pgn; charset=utf-8' : 'application/json; charset=utf-8';
 
   const cache = caches.default;
   const cacheKey = new Request(reqUrl.toString());
-  const hit = await cache.match(cacheKey);
-  if (hit) return hit;
+  const cacheKeyStr = reqUrl.toString();
 
-  let upstream;
+  const hit = await cache.match(cacheKey);
+  if (hit) {
+    const fetchedAt = Number(hit.headers.get('x-fa-fetched') || 0);
+    const ageMs = Date.now() - fetchedAt;
+    if (ageMs < freshTtl * 1000) {
+      // Fresca: servir tal cual.
+      return await liClientResp(hit, contentType, freshTtl);
+    }
+    // "Vieja pero buena": la servimos YA (tablero al instante) y refrescamos EN SEGUNDO PLANO.
+    // Esto mata la "estampida": ya no fallan la caché 20 visitantes a la vez cada 10s; sirven
+    // lo último bueno y Lichess recibe UNA sola bajada de refresco (con dedup por single-flight).
+    ctx.waitUntil(liRevalidate(cache, cacheKey, cacheKeyStr, t.toString(), isPgn, contentType, storeTtl));
+    return await liClientResp(hit, contentType, freshTtl);
+  }
+
+  // No hay NADA cacheado (primer visitante del torneo, o expiró toda la ventana de gracia):
+  // hay que bajar ahora, con dedup para que muchos misses simultáneos compartan una sola bajada.
+  let r;
   try {
-    upstream = await fetch(t.toString(), {
-      headers: { 'User-Agent': LI_UA, 'Accept': isPgn ? 'application/x-chess-pgn' : 'application/json' },
-      redirect: 'follow',
-    });
+    r = await liFetchBuffered(cacheKeyStr, t.toString(), isPgn);
   } catch (e) {
     return errJson('No se pudo bajar de Lichess: ' + e.message, 502);
   }
+  if (!r.ok) {
+    // Sin copia previa que servir (caso rarísimo: sólo el primerísimo pedido y Lichess frenando).
+    const h = corsHeaders();
+    h.set('Content-Type', contentType);
+    h.set('Cache-Control', 'no-store');
+    return new Response(r.buf, { status: r.status, headers: h });
+  }
+  ctx.waitUntil(cache.put(cacheKey, liStoredResp(r.buf, contentType, storeTtl)));
+  const h = corsHeaders();
+  h.set('Content-Type', contentType);
+  h.set('Cache-Control', 'public, max-age=' + freshTtl);
+  return new Response(r.buf, { status: 200, headers: h });
+}
 
-  const headers = corsHeaders();
-  headers.set('Content-Type', isPgn
-    ? 'application/x-chess-pgn; charset=utf-8'
-    : 'application/json; charset=utf-8');
-  headers.set('Cache-Control', 'public, max-age=' + ttl);
-  const resp = new Response(upstream.body, { status: upstream.status, headers });
-  // Sólo cacheamos respuestas buenas: si Lichess tira 429/5xx, NO lo cacheamos (para no
-  // servir el error a todos), y el navegador reintenta/afloja el ritmo.
-  if (upstream.ok) ctx.waitUntil(cache.put(cacheKey, resp.clone()));
-  return resp;
+// Baja de Lichess a memoria (ArrayBuffer) con dedup por isolate: si ya hay una bajada en curso
+// para la misma URL, todos esperan esa. Devuelve { ok, status, buf }.
+function liFetchBuffered(cacheKeyStr, targetUrl, isPgn) {
+  const existing = _liInflight.get(cacheKeyStr);
+  if (existing) return existing;
+  const p = (async () => {
+    const up = await fetch(targetUrl, {
+      headers: { 'User-Agent': LI_UA, 'Accept': isPgn ? 'application/x-chess-pgn' : 'application/json' },
+      redirect: 'follow',
+    });
+    const buf = await up.arrayBuffer();
+    return { ok: up.ok, status: up.status, buf };
+  })();
+  const wrapped = p.finally(() => { _liInflight.delete(cacheKeyStr); });
+  _liInflight.set(cacheKeyStr, wrapped);
+  return wrapped;
+}
+
+// Refresco en segundo plano. CLAVE: si Lichess devuelve 429/5xx o se cae, NO tocamos la caché
+// → seguimos sirviendo la última copia buena. El tablero nunca queda vacío por un pico.
+async function liRevalidate(cache, cacheKey, cacheKeyStr, targetUrl, isPgn, contentType, storeTtl) {
+  let r;
+  try { r = await liFetchBuffered(cacheKeyStr, targetUrl, isPgn); }
+  catch (e) { return; }        // Lichess caído → conservamos lo viejo-pero-bueno
+  if (!r.ok) return;           // 429/5xx → idem: NO pisamos la copia buena
+  await cache.put(cacheKey, liStoredResp(r.buf, contentType, storeTtl));
+}
+
+// Copia para GUARDAR en la caché: TTL largo (fresca + gracia) + sello de tiempo para medir frescura.
+function liStoredResp(buf, contentType, storeTtl) {
+  const h = corsHeaders();
+  h.set('Content-Type', contentType);
+  h.set('Cache-Control', 'public, max-age=' + storeTtl);
+  h.set('x-fa-fetched', String(Date.now()));
+  return new Response(buf, { status: 200, headers: h });
+}
+
+// Copia para EL VISITANTE: mismo cuerpo, pero Cache-Control corto (que su navegador siga sondeando).
+async function liClientResp(cachedResp, contentType, freshTtl) {
+  const buf = await cachedResp.arrayBuffer();
+  const h = corsHeaders();
+  h.set('Content-Type', contentType);
+  h.set('Cache-Control', 'public, max-age=' + freshTtl);
+  return new Response(buf, { status: 200, headers: h });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
