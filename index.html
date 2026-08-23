@@ -2431,10 +2431,13 @@
       .lv-lobbychat-sub { font-size:11.5px; color:var(--text3); }
       .lv-lobbychat-msgs { flex:1 1 auto; min-height:120px; max-height:320px; overflow-y:auto; display:flex; flex-direction:column; gap:6px; margin:0 -4px 10px; padding:0 4px; }
       .lv-lobbychat-empty { color:var(--text3); font-size:12.5px; text-align:center; margin:auto 0; padding:14px 8px; }
-      .lv-lc-msg { font-size:13.5px; line-height:1.4; word-wrap:break-word; overflow-wrap:anywhere; }
+      .lv-lc-msg { position:relative; font-size:13.5px; line-height:1.4; word-wrap:break-word; overflow-wrap:anywhere; padding-right:2px; }
       .lv-lc-nm { font-weight:800; margin-right:6px; }
       .lv-lc-mine .lv-lc-nm { color:var(--gold); }
       .lv-lc-time { color:var(--text3); font-size:10.5px; margin-left:6px; white-space:nowrap; }
+      /* Reacciones + citar en el chat del Lobby: reusa las clases .tchat-* (definidas más abajo) */
+      .lv-lc-msg:hover .tchat-acts { opacity:1; }
+      .lv-lc-msg.tchat-flash { animation:tchatFlash 1.4s ease-out; }
       .lv-lobbychat-inrow { display:flex; gap:8px; align-items:center; }
       .lv-lobbychat-inrow input { flex:1; min-width:0; font-family:inherit; font-size:14px; padding:9px 13px; border-radius:999px; border:1px solid var(--border); background:var(--bg2); color:var(--text); outline:none; }
       .lv-lobbychat-inrow input:focus { border-color:var(--gold-dim); }
@@ -2940,6 +2943,7 @@
               <button type="button" class="lv-lc-rules" onclick="window.aaChatRules&&window.aaChatRules.open()" title="Reglas del chat">📜 Reglas</button>
             </div>
             <div id="lv-lobbychat-msgs" class="lv-lobbychat-msgs"><div class="lv-lobbychat-empty">Todavía no hay mensajes. ¡Rompé el hielo! 👋</div></div>
+            <div id="lv-lobbychat-replybar" class="tchat-replybar" style="display:none"></div>
             <div class="lv-lobbychat-inrow" id="lv-lobbychat-inrow" style="display:none">
               <input id="lv-lobbychat-input" maxlength="200" autocomplete="off" placeholder="Escribí un mensaje…" aria-label="Mensaje del chat">
               <button id="lv-lobbychat-send" class="lv-btn-sec" title="Enviar" aria-label="Enviar">➤</button>
@@ -31843,6 +31847,7 @@ function cvUpdateNagBadge() {
     // ── Chat general de la sala ──
     else if(m.type==='chat-history'){ lvLobbyChatHistory(m.msgs||[]); }
     else if(m.type==='lobby-chat'){ lvLobbyChatAddNode(m); }
+    else if(m.type==='reaction'){ lvLcApplyReaction(m.id, m.emoji, m.userId, !!m.on); }
     else if(m.type==='msg-deleted'){ lvLobbyChatRemove(m.id); }
     else if(m.type==='muted'){ try{ lvToast(lvChatMutedMsg(m.until)); }catch(e){} }
   }
@@ -31865,8 +31870,16 @@ function cvUpdateNagBadge() {
     div.className='lv-lc-msg'+(lvLobbyChatMine(m)?' lv-lc-mine':'');
     if(m.id) div.setAttribute('data-mid', m.id);
     if(m.userId){ div.setAttribute('data-uid', m.userId); if(window.aaBlock && window.aaBlock.shouldHide(m.userId)) div.classList.add('aa-msg-hidden'); }
+    div._name=m.name||'Jugador'; div._text=text; div._reactions=m.reactions||null;   // para citar/reaccionar
     var badge=(window.aaMod?window.aaMod.modBadge(m.name):'');
-    div.innerHTML=badge+nmHtml+lvEsc(text)+t;
+    var quote=(m.reply?tcQuoteHtml(m.reply):'');
+    div.innerHTML=quote+badge+nmHtml+lvEsc(text)+t+'<div class="tchat-rx">'+tcReactionsHtml(m)+'</div>';
+    if(lvAuthUser()){
+      var acts=document.createElement('span'); acts.className='tchat-acts';
+      acts.innerHTML='<button type="button" class="tchat-act lv-lc-act-react" title="Reaccionar" aria-label="Reaccionar">😊</button>'
+        +'<button type="button" class="tchat-act lv-lc-act-reply" title="Responder" aria-label="Responder">↩️</button>';
+      div.appendChild(acts);
+    }
     if(window.aaMod){ var c=window.aaMod.controls({userId:m.userId, name:m.name||'Jugador'}, m.id, lobbySend); if(c) div.appendChild(c); }
     box.appendChild(div);
     if(atBottom) box.scrollTop=box.scrollHeight;
@@ -31885,8 +31898,10 @@ function cvUpdateNagBadge() {
     var inp=$('lv-lobbychat-input'); if(!inp) return;
     if(!lvAuthUser()) return;                 // solo logueados
     var text=inp.value.replace(/\s+/g,' ').trim(); if(!text) return;
-    lobbySend({type:'chat', text:text.slice(0,200)});
-    inp.value=''; inp.focus();
+    var payload={type:'chat', text:text.slice(0,200)};
+    if(lvLcReplyTo){ payload.replyTo=lvLcReplyTo.id; }
+    lobbySend(payload);
+    inp.value=''; if(lvLcReplyTo){ lvLcReplyTo=null; lvLcRenderReplyBar(); } inp.focus();
   }
   // Muestra el cajón de escribir (logueado) o el cartelito de "entrá para chatear" (invitado).
   function lvUpdateLobbyChatAuth(){
@@ -31896,6 +31911,74 @@ function cvUpdateNagBadge() {
     if(guest) guest.style.display=logged?'none':'';
   }
   function lvLobbyChatScrollBottom(){ var box=$('lv-lobbychat-msgs'); if(box) box.scrollTop=box.scrollHeight; }
+
+  // ── Reacciones + citar en el chat del Lobby ──────────────────────────────────
+  // Reusa las clases .tchat-* y los helpers tcQuoteHtml/tcReactionsHtml/tcCloseRxPicker (mismo IIFE).
+  // Las reacciones de cada mensaje viven en el nodo (node._reactions), porque el lobby no guarda un array.
+  var lvLcReplyTo=null;
+  function lvLcMidOf(el){ var n=el.closest&&el.closest('.lv-lc-msg'); return n?n.getAttribute('data-mid'):''; }
+  function lvLcNode(id){ var box=$('lv-lobbychat-msgs'); return box?box.querySelector('.lv-lc-msg[data-mid="'+String(id==null?'':id).replace(/["\\]/g,'')+'"]'):null; }
+  function lvLcUpdateReactionBar(id){ var node=lvLcNode(id); if(!node) return; var bar=node.querySelector('.tchat-rx'); if(bar) bar.innerHTML=tcReactionsHtml({reactions:node._reactions}); }
+  function lvLcApplyReaction(id, emoji, userId, on){
+    if(!CHAT_RX_SET[emoji]) return; var node=lvLcNode(id); if(!node||!userId) return;
+    var R=node._reactions||(node._reactions={});
+    var arr=R[emoji]||[]; var i=arr.indexOf(userId);
+    if(on && i===-1) arr.push(userId); else if(!on && i!==-1) arr.splice(i,1); else return;
+    if(arr.length) R[emoji]=arr; else delete R[emoji];
+    if(!Object.keys(R).length) node._reactions=null;
+    lvLcUpdateReactionBar(id);
+  }
+  function lvLcToggleReaction(id, emoji){
+    if(!CHAT_RX_SET[emoji]) return;
+    var u=lvAuthUser(); if(!u||!u.id){ try{ lvToast('Entrá con Lichess (arriba a la derecha) para reaccionar.'); }catch(e){} return; }
+    var node=lvLcNode(id); if(!node) return;
+    var arr=(node._reactions&&node._reactions[emoji])||[]; var want=(arr.indexOf(u.id)===-1);
+    lvLcApplyReaction(id, emoji, u.id, want);
+    lobbySend({type:'react', id:id, emoji:emoji, on:want});
+  }
+  function lvLcStartReply(id){
+    if(!lvAuthUser()){ try{ lvToast('Entrá con Lichess (arriba a la derecha) para responder.'); }catch(e){} return; }
+    var node=lvLcNode(id); if(!node) return;
+    lvLcReplyTo={ id:id, name:node._name||'Jugador', text:String(node._text==null?'':node._text).slice(0,140) };
+    lvLcRenderReplyBar(); var inp=$('lv-lobbychat-input'); if(inp) inp.focus();
+  }
+  function lvLcRenderReplyBar(){
+    var bar=$('lv-lobbychat-replybar'); if(!bar) return; var r=lvLcReplyTo;
+    if(!r){ bar.style.display='none'; bar.innerHTML=''; return; }
+    bar.style.display='flex';
+    bar.innerHTML='<span class="tchat-rb-ic">↩️</span><span class="tchat-rb-tx">Respondiendo a <b>'+lvEsc(r.name)+'</b>: '+lvEsc(r.text)+'</span><button type="button" class="tchat-rb-x" title="Cancelar" aria-label="Cancelar respuesta">✕</button>';
+  }
+  function lvLcFlash(id){
+    if(!id) return; var node=lvLcNode(id); if(!node){ try{ lvToast('Ese mensaje ya no está en pantalla.'); }catch(e){} return; }
+    try{ node.scrollIntoView({block:'nearest'}); }catch(e){}
+    node.classList.remove('tchat-flash'); void node.offsetWidth; node.classList.add('tchat-flash'); setTimeout(function(){ node.classList.remove('tchat-flash'); },1400);
+  }
+  function lvLcOpenRxPicker(anchor, id){
+    tcCloseRxPicker();
+    var p=document.createElement('div'); p.id='tc-rxpick'; p.className='tc-rxpick';
+    CHAT_RX_ORDER.forEach(function(e){ var b=document.createElement('button'); b.type='button'; b.className='tc-rxpick-b'; b.textContent=e; b.setAttribute('data-e',e); p.appendChild(b); });
+    p.addEventListener('click', function(ev){ var b=ev.target.closest&&ev.target.closest('.tc-rxpick-b'); if(!b) return; ev.stopPropagation(); lvLcToggleReaction(id, b.getAttribute('data-e')); tcCloseRxPicker(); });
+    document.body.appendChild(p);
+    var r=anchor.getBoundingClientRect(), pw=p.offsetWidth, ph=p.offsetHeight;
+    var left=Math.max(6, Math.min(window.innerWidth-pw-6, r.right-pw)); var top=r.top-ph-6; if(top<6) top=r.bottom+6;
+    p.style.left=left+'px'; p.style.top=top+'px';
+    setTimeout(function(){ document.addEventListener('mousedown', _tcRxDoc, true); },0);
+  }
+  // Delegación de clics dentro del chat del Lobby (reaccionar / responder / citar / cancelar respuesta).
+  function lvLcWireActs(){
+    var box=$('lv-lobbychat-msgs');
+    if(box && !box._lcActsWired){ box._lcActsWired=true;
+      box.addEventListener('click', function(ev){
+        var t=ev.target; if(t&&t.nodeType!==1) t=t.parentElement; if(!t||!t.closest) return;
+        var chip=t.closest('.tchat-rx-chip'); if(chip){ ev.preventDefault(); ev.stopPropagation(); var a=lvLcMidOf(chip); if(a) lvLcToggleReaction(a, chip.getAttribute('data-rx')); return; }
+        var ra=t.closest('.lv-lc-act-react'); if(ra){ ev.preventDefault(); ev.stopPropagation(); var b=lvLcMidOf(ra); if(b) lvLcOpenRxPicker(ra, b); return; }
+        var rp=t.closest('.lv-lc-act-reply'); if(rp){ ev.preventDefault(); ev.stopPropagation(); var c=lvLcMidOf(rp); if(c) lvLcStartReply(c); return; }
+        var q=t.closest('.tchat-reply-q'); if(q){ ev.preventDefault(); ev.stopPropagation(); lvLcFlash(q.getAttribute('data-goto')); return; }
+      });
+    }
+    var bar=$('lv-lobbychat-replybar');
+    if(bar && !bar._lcWired){ bar._lcWired=true; bar.addEventListener('click', function(ev){ if(ev.target.closest && ev.target.closest('.tchat-rb-x')){ lvLcReplyTo=null; lvLcRenderReplyBar(); } }); }
+  }
 
   // ── Desafíos ENTRANTES (alguien me reta). El cartel grande se muestra un rato y se COLAPSA a una
   //    píldora "⚔️ N desafíos" (para no perderlo); cada desafío vence solo a los 10 min. ──
@@ -32215,6 +32298,7 @@ function cvUpdateNagBadge() {
     // Chat de la sala: enviar con el botón ➤ o Enter.
     if((b=$('lv-lobbychat-send'))) b.onclick=lvSendLobbyChat;
     if((b=$('lv-lobbychat-input'))) b.onkeydown=function(e){ if(e.key==='Enter'){ e.preventDefault(); lvSendLobbyChat(); } };
+    lvLcWireActs();   // delegación de reaccionar/responder/citar en el chat del Lobby
     // Aceptar un desafío del lobby (delegación en la lista)
     var chalEl=$('lv-chal-list'); if(chalEl && !chalEl._lvWired){ chalEl._lvWired=true; chalEl.addEventListener('click', function(e){
       var it=e.target.closest?e.target.closest('.lv-chal-item'):null; if(!it || it.classList.contains('lv-chal-mine')) return;
