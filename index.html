@@ -3162,7 +3162,7 @@
         </div>
         <div class="gc-row">
           <div class="gc-f"><label>Fecha</label><input id="gc-date" type="date"></div>
-          <div class="gc-f"><label>Ronda</label><input id="gc-round" placeholder="1" oninput="gcRefreshPairings()"></div>
+          <div class="gc-f"><label>Ronda</label><input id="gc-round" placeholder="1" oninput="gcRoundChanged()"></div>
         </div>
         <div class="gc-f" style="margin-bottom:9px;display:none" id="gc-pair-wrap">
           <label style="color:#7fd487">♟ Cruces de la ronda (elegí uno y se completan los jugadores)</label>
@@ -14810,7 +14810,7 @@ function dbPoolImport() {
 // jugadas se están mostrando (0 = posición inicial, sans.length = final). Navegar solo cambia
 // viewIdx: no toca la partida. Si se juega una jugada estando retrocedido, ESA sí reemplaza lo que
 // venía después (es la forma natural de corregir una jugada mal reproducida).
-var gc = { chess: null, sans: [], moves: [], fens: [], viewIdx: 0, sel: null, legalDests: [], flipped: false, saved: 0 };
+var gc = { chess: null, sans: [], moves: [], fens: [], viewIdx: 0, sel: null, legalDests: [], flipped: false, saved: 0, mesa: '' };
 var _gcBoardBound = false, _gcBoardOrient = null;
 var _GC_TITLES = ['', 'GM', 'IM', 'FM', 'CM', 'WGM', 'WIM', 'WFM', 'WCM'];
 
@@ -14821,6 +14821,7 @@ function gcResetGame() {
 function gcOpen() {
   if (_ondemand) return;                       // herramienta de autor: no existe en la web publicada
   gcResetGame();
+  gc.mesa = '';
   _gcBoardBound = false; _gcBoardOrient = null;
   // Selects que se llenan una sola vez por apertura (los torneos pueden haber cambiado).
   var tSel = document.getElementById('gc-tour');
@@ -15108,6 +15109,7 @@ function gcCatChanged() {
   if (!tSel || !ev) return;
   if (tSel.value) ev.value = (cSel && cSel.value) ? _catEventName(tSel.value, cSel.value) : tSel.value;   // "sin torneo": respetar lo escrito a mano
   gcRefreshPairings();
+  _gcAutofillDate();   // cambió el torneo → tomar la fecha real de la ronda si la sabe
   gcRefreshSave();
 }
 
@@ -15137,6 +15139,38 @@ function _gcCrData() {
   }
   return crDataLoad(crKey(ref.type, ref.id) + sfx);
 }
+// roundDT ({ronda: "aaaa-mm-dd hh:mm"}) del torneo elegido en el select. Los torneos tz lo tienen en
+// su config; los del pool (ls/hc) lo tienen si se cargó. null si no hay.
+function _gcRoundDTMap() {
+  var tSel = document.getElementById('gc-tour');
+  var ref = tSel && tSel.value ? _gcTourRef(tSel.value) : null;
+  if (!ref) return null;
+  try {
+    if (ref.type === 'tz') { var d = getTzConfig()[ref.id]; return (d && d.roundDT) || null; }
+    if (ref.type === 'ls') { var ls = JSON.parse(localStorage.getItem('pgn_tournaments') || '[]'); for (var j = 0; j < ls.length; j++) { if (ls[j].id === ref.id) return ls[j].roundDT || null; } }
+    if (ref.type === 'hc') { for (var i = 0; i < (TORNEOS || []).length; i++) { if (TORNEOS[i].id === ref.id) return TORNEOS[i].roundDT || null; } }
+  } catch (e) {}
+  return null;
+}
+// Fecha ISO (aaaa-mm-dd) de una ronda según el torneo. '' si no la sabe.
+function _gcRoundDateISO(round) {
+  round = String(round || '').trim();
+  var dt = _gcRoundDTMap();
+  if (!round || !dt || !dt[round]) return '';
+  var m = String(dt[round]).match(/(\d{4})-(\d{2})-(\d{2})/);
+  return m ? (m[1] + '-' + m[2] + '-' + m[3]) : '';
+}
+// Autocompleta la fecha real de la ronda (si el torneo la sabe). No pisa si no hay dato.
+function _gcAutofillDate() {
+  var iso = _gcRoundDateISO(_gcVal('gc-round'));
+  if (iso) { var d = document.getElementById('gc-date'); if (d) d.value = iso; }
+}
+// Al cambiar de ronda: refrescar cruces, resetear la mesa elegida y autocompletar la fecha real.
+function gcRoundChanged() {
+  gc.mesa = '';
+  gcRefreshPairings();
+  _gcAutofillDate();
+}
 function gcRefreshPairings() {
   var wrap = document.getElementById('gc-pair-wrap'), sel = document.getElementById('gc-pair');
   if (!wrap || !sel) return;
@@ -15163,6 +15197,7 @@ function gcPairChosen() {
   var rd = _gcVal('gc-round'), data = _gcCrData();
   var p = (data && data.rounds && data.rounds[rd]) ? data.rounds[rd][parseInt(sel.value, 10)] : null;
   if (!p) return;
+  gc.mesa = (p.m != null && String(p.m).trim() !== '') ? String(p.m).trim() : '';   // nº de mesa → [Round "ronda.mesa"]
   function set(id, v) { var e = document.getElementById(id); if (e) e.value = v; }
   set('gc-wname', p.w || ''); set('gc-bname', p.b || '');
   set('gc-welo', p.ew || ''); set('gc-belo', p.eb || '');
@@ -15191,7 +15226,9 @@ function gcBuildPgn() {
   s += _gcTag('Event', ev);
   s += _gcTag('Site', _gcVal('gc-site') || '?');
   s += _gcTag('Date', date);
-  s += _gcTag('Round', _gcVal('gc-round') || '?');
+  var rnd = _gcVal('gc-round');
+  if (rnd && gc.mesa) rnd = rnd + '.' + gc.mesa;   // ronda.mesa (ej. 7.14) si se eligió el cruce
+  s += _gcTag('Round', rnd || '?');
   s += _gcTag('White', _gcVal('gc-wname'));
   s += _gcTag('Black', _gcVal('gc-bname'));
   s += _gcTag('Result', res);
@@ -15238,6 +15275,7 @@ function gcSave() {
   // siempre se cargan varias del mismo torneo seguidas) y se limpia lo que cambia en cada partida.
   ['gc-wname', 'gc-bname', 'gc-welo', 'gc-belo', 'gc-wfide', 'gc-bfide'].forEach(function(id) { var e = document.getElementById(id); if (e) e.value = ''; });
   ['gc-wtitle', 'gc-btitle', 'gc-result'].forEach(function(id) { var e = document.getElementById(id); if (e) e.value = ''; });
+  gc.mesa = '';          // la próxima es otra mesa: se vuelve a elegir el cruce
   gcRefreshPairings();   // re-arma el selector de cruces (vuelve al placeholder, listo para el próximo)
   gcResetGame();
   gcRenderBoard(); gcRenderMoves(); gcRefreshSave();
