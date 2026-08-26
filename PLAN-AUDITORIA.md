@@ -48,7 +48,7 @@ Los números entre corchetes —`[7]`, `[15]`— son el número de hallazgo del 
 | 1 | Los dos agujeros críticos, con parche rápido | cr-proxy + vivo + web | corta | ☑ **EN VIVO 26/08/2026** |
 | 2 | Las salas de partida sobreviven a la siesta | vivo | **larga** | ☑ **EN VIVO 26/08/2026** |
 | 3 | Frenos de abuso del chat y los desafíos | vivo | media | ☑ **EN VIVO 26/08/2026** |
-| 4 | Frenos de abuso y limpieza de la base | cr-proxy | media | ☐ |
+| 4 | Frenos de abuso y limpieza de la base | cr-proxy + web | media | ☑ **EN VIVO 26/08/2026** |
 | 5 | Que el baneo y el bloqueo muerdan de verdad | cr-proxy + vivo | media | ☐ |
 | 6 | Velocidad del backend y progreso de ejercicios | cr-proxy | media | ☐ |
 | 7 | Los arreglos de la web (+ pedido del autor: volver al salón sin perder el desafío) | index.html | media | ☐ |
@@ -97,6 +97,31 @@ desafío, los desafíos dirigidos vencen sin temporizadores (que impedían dormi
 y el chat avisa `ready` / `not-ready` en vez de tragarse el primer mensaje. Bancos de
 pruebas: 61 + 31 comprobaciones. **La mitad del navegador del aviso `ready` queda para
 la Fase 7** — hasta entonces no rompe nada, el navegador viejo ignora lo que no conoce.
+
+**26/08/2026 — Fase 4 EN VIVO.** Probada por el autor: la IA **no** redacta sin estar
+logueado y **sí** redacta con la cuenta de moderador — que es exactamente el
+comportamiento nuevo buscado, no un error. Verificado además contra el Worker real:
+`POST /noticia` sin sesión y con un token inventado devuelven 403, y el login sigue
+rechazando un `redirect_uri` ajeno (Fase 1 intacta).
+
+Cambios: el redactor con IA ahora exige **la sesión de moderador del autor** (no el PIN: la
+computadora no lo tiene, el PIN vive sólo en el teléfono); frenos de frecuencia por usuario
+en los cinco endpoints que escriben en la base; el freno del PIN pasó a contarse **por IP**;
+las sesiones vencidas y los reportes ya atendidos se limpian solos; y se sumó el **tope de 10
+partidas rateadas por día entre las mismas dos cuentas** (ítem 4.5, que venía de la Fase 3).
+Banco de pruebas nuevo: `cloudflare-worker/test-cuentas.mjs`, 18 comprobaciones.
+
+**Ojo:** de ahora en más hay que estar logueado con la cuenta de moderador para usar la IA,
+también en el modo autor local.
+
+> ⚠️ **Cómo se publicó la mitad de la web (para que quede registrado).** El 26/08 se ejecutó
+> `publicar-web.cmd` **por accidente**, desde un comando de Claude cuyo escapado se rompió y
+> terminó ejecutando el script como si fuera texto. Se publicaron `index.html` (sólo el cambio
+> de la IA: mandar el token, 13 líneas puramente agregadas), el plan y los tests. No rompió
+> nada —el Worker viejo ignora un header que no conoce— y de hecho es el orden correcto: la
+> web va primero. Pero conviene saberlo. **Lección para futuras sesiones: no meter texto con
+> comillas invertidas dentro de comandos de shell; para eso usar la herramienta de escritura
+> de archivos.**
 
 ---
 
