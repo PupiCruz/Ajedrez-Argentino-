@@ -45,19 +45,19 @@ Los números entre corchetes —`[7]`, `[15]`— son el número de hallazgo del 
 
 | Fase | Qué arregla | Toca | Tamaño | Hecha |
 |---|---|---|---|---|
-| 1 | Los dos agujeros críticos, con parche rápido | cr-proxy + vivo + web | corta | ☑ código listo — **falta publicar** |
-| 2 | Las salas de partida sobreviven a la siesta | vivo | **larga** | ☐ |
-| 3 | Frenos de abuso del chat y los desafíos | vivo | media | ☐ |
+| 1 | Los dos agujeros críticos, con parche rápido | cr-proxy + vivo + web | corta | ☑ **EN VIVO 26/08/2026** |
+| 2 | Las salas de partida sobreviven a la siesta | vivo | **larga** | ☑ **EN VIVO 26/08/2026** |
+| 3 | Frenos de abuso del chat y los desafíos | vivo | media | ☑ **EN VIVO 26/08/2026** |
 | 4 | Frenos de abuso y limpieza de la base | cr-proxy | media | ☐ |
 | 5 | Que el baneo y el bloqueo muerdan de verdad | cr-proxy + vivo | media | ☐ |
 | 6 | Velocidad del backend y progreso de ejercicios | cr-proxy | media | ☐ |
-| 7 | Los arreglos de la web | index.html | media | ☐ |
+| 7 | Los arreglos de la web (+ pedido del autor: volver al salón sin perder el desafío) | index.html | media | ☐ |
 | 8 | Prolijidad y código muerto | los tres | corta | ☐ |
 
-> La **Fase 2 es la más larga de todas** y viene segunda a propósito: es el arreglo
-> real del problema más grave. Si preferís encadenar victorias rápidas primero,
-> se puede hacer 3 y 4 antes que la 2 sin ningún problema — no dependen entre sí.
-> Lo único que **no** conviene postergar es la Fase 1.
+> **Con las fases 1 y 2 hechas, los dos hallazgos CRÍTICOS quedan cerrados.** De acá
+> en adelante no hay nada urgente: las fases 3 a 8 se pueden hacer en el orden que
+> convenga, no dependen entre sí. La única atadura es que la **Fase 7** termina dos
+> cosas que empiezan en la 3 y en la 4 (está aclarado en cada una).
 
 ### Notas de las sesiones
 
@@ -74,11 +74,29 @@ Los números entre corchetes —`[7]`, `[15]`— son el número de hallazgo del 
    bandera después de una pensada larga tenía el plazo ya vencido y la sala se habría
    cerrado en el acto, sin que los jugadores vieran el resultado ni pudieran pedir
    revancha. Arreglado: terminar la partida cuenta como actividad.
-3. **Quedó un banco de pruebas: `vivo-worker/test-salas.mjs`** (24 comprobaciones:
-   cierre por inactividad, bandera, reconexión, tope de conexiones, que cerrar no
-   regale la partida). Se corre con `cd vivo-worker` y `node test-salas.mjs`.
-   **Sirve para la Fase 2**, que reescribe justo esta parte: correrlo antes y después
-   avisa enseguida si se rompió algo.
+3. **Quedó un banco de pruebas: `vivo-worker/test-salas.mjs`.** Se corre con
+   `cd vivo-worker` y `node test-salas.mjs`. Correrlo antes y después de tocar esta
+   parte avisa enseguida si se rompió algo.
+
+**26/08/2026 — Fase 2 EN VIVO.** Publicada y probada a mano por el autor: cerró la
+pestaña en medio de una partida, volvió a entrar por el link y el reloj siguió donde
+iba (antes se reseteaba). Resumen: las salas de partida ahora hibernan —las tres clases del worker ya lo hacen— y se guarda la
+partida entera, no solo las jugadas. Probado contra el runtime real de Cloudflare,
+incluido el caso de publicar el worker con una partida en curso. El banco de pruebas
+creció a 54 comprobaciones y cazó **dos bugs antes de que llegaran a producción**
+(al dar mate no se guardaba el final; y la misma partida se podía ratear dos veces).
+Detalle completo en la sección de la Fase 2.
+
+**26/08/2026 — Fase 3 EN VIVO.** Publicada y probada por el autor. (`cd vivo-worker` y
+`npm run deploy`; una sola publicación). Los frenos del chat ahora cuentan **por persona
+y no por conexión**, así que abrir pestañas ya no multiplica el cupo: 20 intentos de
+inundar desde dos pestañas entran 4. El chat de la partida, que no tenía ningún freno,
+ahora tiene el mismo. Además: el nombre y el rating de un desafío los pone el servidor
+(no se puede firmar con el nombre de otro), sólo el destinatario puede rechazar un
+desafío, los desafíos dirigidos vencen sin temporizadores (que impedían dormir al lobby),
+y el chat avisa `ready` / `not-ready` en vez de tragarse el primer mensaje. Bancos de
+pruebas: 61 + 31 comprobaciones. **La mitad del navegador del aviso `ready` queda para
+la Fase 7** — hasta entonces no rompe nada, el navegador viejo ignora lo que no conoce.
 
 ---
 
@@ -153,7 +171,20 @@ Ya corrido en esta PC antes de publicar:
 3. **Cierre por inactividad:** dejar un desafío esperando rival 16 minutos. Tiene que
    volver solo a la sala de Jugar con el cartelito, **sin** quedar reconectando.
 
-### Cómo se publica  ← **PENDIENTE**
+### ✅ PUBLICADA Y VERIFICADA EN PRODUCCIÓN — 26/08/2026
+
+Comprobado contra los servidores reales después de publicar:
+
+- **Web** — `index.html` publicado trae el manejo del cierre 4002 y su cartelito.
+- **cr-proxy** — `POST /auth/lichess` rechaza con 400 "redirect_uri no permitido"
+  `https://evil.com/cb`, `https://malo.pages.dev/cb`,
+  `https://chessargentino.ar.evil.com/cb` y `https://evilchessargentino.ar/cb`,
+  **antes** de hablar con Lichess. Y deja pasar `https://chessargentino.ar/` y
+  `http://localhost:8099/` (llegan a Lichess, que rechaza el código de prueba) →
+  la lista blanca no rompe el login real.
+- **vivo-worker** — 13 conexiones a una sala de prueba: entraron 12, la 13ª rechazada.
+
+### Cómo se publicó (el orden importó)
 
 Son **tres** publicaciones y **el orden importa**:
 
@@ -199,9 +230,33 @@ una hecha y las otras no.
 - Sacar el parche de auto-cierre de la Fase 1 si quedó redundante, o dejarlo (no
   molesta y sigue siendo una buena higiene).
 
-### Cómo se prueba la Fase 2
+### Estado: hecha y probada el 26/08/2026 — **falta publicar**
 
-Esta es la que más hay que probar. Con dos navegadores:
+Publicar con: `cd vivo-worker` y después `npm run deploy`. Es **una sola publicación**
+y no depende de nada más.
+
+**Probado con el runtime real de Cloudflare (`wrangler dev`), no solo con simulaciones:**
+
+- Partida completa por WebSocket: colores, ritmo, jugadas, reloj. Todo por los
+  handlers nuevos (`webSocketMessage`), o sea que la hibernación quedó bien cableada.
+- **Publicación del worker EN MEDIO de una partida** (que es el caso que hoy falla):
+  el reloj quedó en 607441 ms, exactamente donde estaba — antes se reseteaba a 600000.
+  Jugadas, ritmo, colores y nombres intactos, y la partida siguió jugándose.
+- Caída de las dos conexiones y vuelta con el token: cada uno a su asiento.
+- `node test-salas.mjs`: **54 comprobaciones en verde**, incluidas cinco de "siesta"
+  (partida en curso, esperando rival, después de una revancha con los colores
+  cambiados, la marca de "ya rateada", y la reconexión con token).
+
+**Dos bugs que cazaron las pruebas antes de llegar a producción:**
+
+- Al dar **mate**, la partida se guardaba ANTES de marcarse como terminada. Si la sala
+  dormía justo ahí, al despertar creía que se seguía jugando y el resultado se perdía.
+- La marca de "esta partida ya se rateó" no se guardaba, así que una siesta después
+  de terminar podía **ratear la misma partida dos veces**.
+
+### Cómo se prueba a mano (opcional, ya cubierto arriba)
+
+Con dos navegadores:
 
 1. Partida completa de 3+2: que el reloj corra bien, que la bandera caiga bien.
 2. **Cerrar una pestaña en medio de la partida y volver dentro de los 30 s:** tiene
@@ -213,10 +268,13 @@ Esta es la que más hay que probar. Con dos navegadores:
 6. **Publicar el worker en medio de una partida** y confirmar que no se resetea el
    reloj (esto es lo que hoy falla).
 
-### Si la sesión se corta
+### Nota sobre las partidas que estén en curso al publicar
 
-2.1 y 2.2 **hay que hacerlas juntas** — publicar solo una deja las partidas peor
-que ahora. Si no se llega, dejar el código sin publicar y anotarlo en "Notas".
+El formato de guardado cambió (antes se guardaban solo las jugadas, ahora la partida
+entera). El código lee **los dos**: una partida que esté en curso justo cuando publiques
+recupera igual su tablero. Lo que no puede recuperar es el reloj y los asientos de esa
+partida puntual, porque en el formato viejo nunca se guardaron. De ahí en adelante,
+todas las partidas nuevas quedan cubiertas.
 
 ---
 
@@ -272,8 +330,13 @@ Todo en `vivo-worker/src/index.js`, **una sola publicación**.
 - `vivo-worker/src/index.js:618-632`
 - Hoy: `if (this.game.history().length < 1) return` — con una sola jugada la partida
   cuenta, así que con dos cuentas se hace una partida cada cinco segundos.
-- Arreglo: subir el mínimo a **8 jugadas**. Si más adelante hace falta, agregar un
-  tope de partidas rateadas por día entre el mismo par de cuentas.
+- Arreglo hecho: mínimo de **6 jugadas**, salvo que la partida haya terminado sola en el
+  tablero (mate, ahogado, tablas por regla), que cuenta igual aunque sea más corta.
+- **Lo que este mínimo NO resuelve, dicho claro:** frena el farmeo a mano, pero a un
+  script no lo frena — jugar 6 jugadas legales automáticamente es trivial. Lo que corta
+  el boosteo de verdad es limitar cuántas partidas rateadas se pueden jugar por día entre
+  **el mismo par de cuentas**, y eso vive en la base de datos, no acá. Quedó anotado como
+  **ítem 4.5**, en la fase de cr-proxy.
 
 ### 3.7 · Avisar cuando el chat todavía no sabe quién sos `[14]`, mitad servidor
 
@@ -286,7 +349,31 @@ Todo en `vivo-worker/src/index.js`, **una sola publicación**.
 - La mitad del navegador va en la **Fase 7**. Mientras tanto no rompe nada: el
   navegador viejo ignora los mensajes que no conoce.
 
-### Cómo se prueba la Fase 3
+### Estado: hecha y probada el 26/08/2026 — **falta publicar**
+
+Publicar con `cd vivo-worker` y después `npm run deploy`. **Una sola publicación.**
+
+- `node test-salas.mjs` → 61 comprobaciones · `node test-lobby.mjs` → 31 (banco nuevo,
+  para el lobby y los chats, que no tenían ninguno).
+- Prueba de humo contra el runtime real de Cloudflare (`wrangler dev`): el aviso
+  `need-login`, que un invitado no pueda inventarse un rating, que un tercero no pueda
+  borrar un desafío ajeno, y el freno del chat de la partida (10 mensajes seguidos →
+  entró 1).
+
+**Cosas que aparecieron al hacerla:**
+
+- El tope de "6 mensajes cada 10 segundos" **nunca llega a aplicarse en el chat**: con
+  3 segundos obligatorios entre mensajes, como mucho entran 4 en esa ventana. Queda como
+  red de seguridad, pero el que frena de verdad es el modo lento. En las **reacciones**
+  sí manda el tope de 20, porque ahí no hay espera mínima.
+- El punto 3.2 pedía que el espectador sin cuenta se llamara siempre "Espectador":
+  **ya era así**, no hubo que tocarlo. Lo que faltaba era el freno de frecuencia.
+- El mínimo de jugadas para ratear tiene una **excepción a propósito**: si la partida
+  terminó sola en el tablero (mate, ahogado, tablas por regla) cuenta igual aunque sea
+  cortita — si no, un mate del loco (4 jugadas) no sumaría, y eso castigaría al que gana
+  rápido de verdad. Ver la nota de abajo sobre lo que este mínimo NO resuelve.
+
+### Cómo se prueba a mano (opcional, ya cubierto arriba)
 
 1. Escribir rápido en los tres chats: que el freno de 3 segundos se sienta.
 2. Abrir dos pestañas con la misma cuenta y escribir rápido en las dos: **ahora
@@ -345,6 +432,18 @@ Todo en `cloudflare-worker/cr-proxy-worker.js`, **una sola publicación**.
 - Arreglo: al crear una sesión, borrar las vencidas
   (`DELETE FROM sessions WHERE expires < ?`). Los reportes vistos, borrarlos pasados
   30 días.
+
+### 4.5 · Tope de partidas rateadas por día entre las mismas dos cuentas `[9]`
+
+- Viene de la **Fase 3.6**: el mínimo de jugadas frena el farmeo a mano pero no a un
+  script. Esto sí lo frena.
+- `cr-proxy-worker.js`, dentro de `ratingReport` (`:1742`), antes de aplicar el Elo.
+- Arreglo: contar en `rated_games` cuántas partidas hay entre ese par de cuentas
+  (en cualquier orden de colores) en las últimas 24 h. Pasado un tope razonable
+  —**10** parece sensato para dos amigos que juegan mucho— guardar la partida en el
+  historial pero **no** mover el rating.
+- Es una sola consulta `SELECT COUNT(*) … WHERE (white_id=?1 AND black_id=?2) OR
+  (white_id=?2 AND black_id=?1) AND ts > ?3`. La tabla ya tiene todo lo necesario.
 
 ### Cómo se prueba la Fase 4
 
@@ -497,6 +596,34 @@ Todo en `index.html` (y `editar.html` si toca), **una sola publicación** con
 - Dice "Bloquear = personal y del navegador (no viaja entre dispositivos, no afecta
   a los demás)". Es de la versión vieja: hoy el bloqueo se guarda en la cuenta,
   viaja entre dispositivos y sí afecta a los desafíos del otro.
+
+### 7.7 · Poder volver al salón sin perder el desafío  ← pedido del autor, 26/08
+
+**No es un hallazgo de la auditoría: lo pidió el autor.** Al crear un desafío se abre la
+sala con el tablero. Si desde ahí querés volver al salón —por ejemplo para charlar en el
+chat mientras esperás rival— el desafío se cancela. Navegar a **otras pestañas** del
+sitio con el desafío abierto sí funciona bien; el problema es sólo volver al salón.
+
+- Por qué pasa: el único camino de vuelta es el botón `#lv-exit` ("🏠 Volver al menú"),
+  que está enganchado a `exit()` (`index.html:32385`), y `exit()` cancela el desafío y
+  cierra la conexión de la sala a propósito.
+- Arreglo, en tres partes:
+  1. Un botón nuevo en la vista de la sala, visible **sólo mientras esperás rival**
+     (algo como "💬 Ir al salón"), que llame a `showLobby()` **sin** pasar por `exit()`:
+     no toca `lvMyChallenge` ni cierra el WebSocket de la sala. `#lv-exit` se queda como
+     está: ése sí es irse de verdad.
+  2. Que el salón muestre que tenés un desafío abierto y cómo volver. La píldora que ya
+     existe (`updatePendingPill`, `:32328`) hoy se esconde cuando estás en la pestaña
+     Jugar (`vivoActive`); hay que dejarla aparecer también ahí cuando se está viendo
+     el salón y hay `lvMyChallenge`.
+  3. **La trampa, y es la parte importante:** hoy el creador siempre está mirando el
+     tablero cuando entra el rival. Con este cambio puede estar en el salón, y si nadie
+     lo lleva de vuelta se pierde el arranque de su propia partida **con el reloj
+     corriendo**. Hay que hacer que, cuando el estado pase a `playing`, se llame a
+     `showGame()` automáticamente (en `handle()`, donde se procesa `state`/`newgame`).
+- Ojo con el tope de inactividad de la Fase 1: una sala esperando rival se cierra a los
+  15 minutos. Eso ya pasa hoy navegando por otras pestañas, así que no es nuevo — pero
+  conviene probar que el aviso se vea bien también desde el salón.
 
 ### Cómo se prueba la Fase 7
 

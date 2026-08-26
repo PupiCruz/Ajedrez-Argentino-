@@ -7558,6 +7558,13 @@ function _noticiaAIClose(){ var ov=document.getElementById('noticia-ai-overlay')
 
 // Endpoint del Worker que llama a la IA (misma base que el proxy de Chess-Results).
 var NOTICIA_AI_URL = CR_PROXY + '/noticia';
+// El Worker ahora exige una sesión de MODERADOR para usar la IA (antes cualquiera podía
+// llamarla y vaciar la cuota diaria de Cloudflare). El token de sesión ya lo tiene el navegador.
+function _noticiaAIHeaders(){
+  var h = { 'Content-Type': 'application/json' };
+  try { var t = (window.aaAuth && window.aaAuth.getToken) ? window.aaAuth.getToken() : ''; if (t) h['Authorization'] = 'Bearer ' + t; } catch(e){}
+  return h;
+}
 
 async function _noticiaAIGenerate(){
   var m = _tdNewsMeta; if (!m || !m.crk) return;
@@ -7585,7 +7592,7 @@ async function _noticiaAIGenerate(){
   };
 
   try {
-    var res = await fetch(NOTICIA_AI_URL, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+    var res = await fetch(NOTICIA_AI_URL, { method:'POST', headers:_noticiaAIHeaders(), body:JSON.stringify(payload) });
     if (!res.ok){ var t=''; try{ t=await res.text(); }catch(e){} throw new Error('HTTP ' + res.status + (t?(' — '+t.slice(0,120)):'')); }
     var j = await res.json();
     if (!j || (!j.body && !j.title)) throw new Error('la IA devolvió una respuesta vacía');
@@ -17655,7 +17662,7 @@ async function _newsImproveBody(btn){
   _newsImproveUndoHtml = ed.innerHTML;
   btn.disabled = true; btn.style.opacity = '.6'; if (st) st.textContent = '✍️ Mejorando…';
   try {
-    var res = await fetch(NOTICIA_AI_URL, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ modo:'mejorar', texto:texto }) });
+    var res = await fetch(NOTICIA_AI_URL, { method:'POST', headers:_noticiaAIHeaders(), body:JSON.stringify({ modo:'mejorar', texto:texto }) });
     if (!res.ok){ var t=''; try{ t=await res.text(); }catch(e){} throw new Error('HTTP ' + res.status + (t?(' — '+t.slice(0,120)):'')); }
     var j = await res.json();
     if (!j || !j.body) throw new Error('la IA devolvió una respuesta vacía');
@@ -17942,7 +17949,7 @@ async function _socAIGenerate(btn){
   var st = document.getElementById('soc-ai-status');
   btn.disabled = true; btn.style.opacity = '.6'; if (st) st.textContent = '✍️ Escribiendo…';
   try {
-    var res = await fetch(NOTICIA_AI_URL, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+    var res = await fetch(NOTICIA_AI_URL, { method:'POST', headers:_noticiaAIHeaders(), body:JSON.stringify(payload) });
     if (!res.ok){ var t=''; try{ t=await res.text(); }catch(e){} throw new Error('HTTP ' + res.status + (t?(' — '+t.slice(0,120)):'')); }
     var j = await res.json();
     var r = j && j.redes;

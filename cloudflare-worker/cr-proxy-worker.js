@@ -761,6 +761,11 @@ async function noticiaAI(request, env) {
   // Freno suave por Origin (si viene). Sin Origin (fetch server-to-server) se deja pasar.
   const origin = request.headers.get('Origin');
   if (origin && !NOTICIA_ALLOW_ORIGIN.test(origin)) return errJson('Origen no permitido', 403);
+  // Esta herramienta la usa SÓLO el autor, y cada llamada consume la cuota diaria gratis de IA
+  // de Cloudflare. Antes la única defensa era mirar de qué sitio decía venir el pedido, dato que
+  // cualquier programa fuera de un navegador escribe como quiere: estaba abierta de par en par.
+  // Ahora hace falta una sesión de MODERADOR (la del autor), que el navegador ya tiene.
+  if (!(await modAuth(request, env))) return errJson('Necesitás entrar con tu cuenta de moderador para usar la IA.', 403);
   if (!env.AI) return errJson('Falta el binding de Workers AI (AI) en el Worker. Agregalo en Settings → Bindings.', 503);
 
   let d;
@@ -931,6 +936,29 @@ function corsHeaders() {
     'Access-Control-Allow-Headers': '*',
   });
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FRENO DE FRECUENCIA (rate limit) por usuario
+// ─────────────────────────────────────────────────────────────────────────────
+// Vive en la memoria del Worker, no en la base: así frenar a alguien no cuesta consultas
+// (justamente lo que se quiere proteger). Alcanza para el caso real —alguien con un script
+// machacando desde un lugar cae siempre en la misma instancia—, pero NO es a prueba de balas:
+// Cloudflare puede repartir los pedidos entre varias instancias, y cada una cuenta por su lado.
+// A cambio es gratis y sube muchísimo el costo de abusar. Si algún día hace falta un freno
+// duro, va con reglas de Rate Limiting delante del Worker (necesita dominio propio).
+const _rl = new Map();   // clave -> [momentos de los últimos pedidos]
+function rlAllow(key, maxPorMinuto) {
+  const now = Date.now();
+  const arr = (_rl.get(key) || []).filter((t) => now - t < 60000);
+  if (arr.length >= maxPorMinuto) { _rl.set(key, arr); return false; }
+  arr.push(now);
+  _rl.set(key, arr);
+  if (_rl.size > 5000) {   // poda: sacar a los que hace más de un minuto que no piden nada
+    for (const [k, v] of _rl) if (!v.some((t) => now - t < 60000)) _rl.delete(k);
+  }
+  return true;
+}
+function tooMany() { return errJson('Estás yendo demasiado rápido. Esperá un momento.', 429); }
 
 function errJson(msg, status) {
   const h = corsHeaders();
@@ -1185,6 +1213,12 @@ async function authLichess(request, env) {
     const expires = now + SESSION_TTL_DAYS * 86400;
     await env.DB.prepare('INSERT INTO sessions (token, user_id, created_at, expires) VALUES (?1,?2,?3,?4)')
       .bind(sToken, userId, now, expires).run();
+    // Barrido: las sesiones vencen a los 6 meses pero la fila nunca se borraba, así que la tabla
+    // crecía para siempre — y TODO el sitio la consulta en cada pedido. Se limpia acá, que es el
+    // único momento en que se crea una sesión (o sea, muy de vez en cuando).
+    try { await env.DB.prepare('DELETE FROM sessions WHERE expires < ?1').bind(now).run(); } catch (e) {}
+    // Lo mismo con los reportes ya atendidos de más de 30 días.
+    try { await env.DB.prepare('DELETE FROM reports WHERE handled=1 AND created_at < ?1').bind(now - 30 * 86400).run(); } catch (e) {}
     return jsonResp({ token: sToken, user: publicUser({ id: userId, provider: 'lichess', username, rating, title }) });
   } catch (e) { return errJson('D1 error: ' + e.message, 500); }
 }
@@ -1344,6 +1378,7 @@ async function submitReport(request, env) {
   const targetId = String(body.userId || '').trim();
   if (!targetId) return errJson('Falta el usuario', 400);
   if (targetId === me.id) return errJson('No podés reportarte a vos mismo', 400);
+  if (!rlAllow('report:' + me.id, 10)) return tooMany();
   await ensureUserTables(env); await ensureReportsTable(env);
   const target = await env.DB.prepare('SELECT id, username FROM usuarios WHERE id=?1').bind(targetId).first();
   if (!target) return errJson('Usuario no encontrado', 404);
@@ -1412,6 +1447,9 @@ async function modReportDone(request, env) {
 //   • Sólo el worker de vivo puede reportar resultados (header X-Vivo-Secret), así
 //     nadie se infla el rating desde la consola. Idempotente por gameId.
 const SITE_START_RATING = 1500;
+// Cuántas partidas por día cuentan para el rating entre LAS MISMAS dos cuentas. De ahí en más
+// se siguen jugando y guardando, pero el rating no se mueve. Diez es holgado para dos amigos.
+const PAIR_MAX_RATED_PER_DAY = 10;
 
 // Categoría del ritmo. base/inc en SEGUNDOS. estimado = base + 40·inc (criterio Lichess).
 function ratingCategory(base, inc) {
@@ -1596,6 +1634,7 @@ async function savePrefs(request, env) {
   if (!env.DB) return errJson('Falta el binding D1 (DB)', 500);
   const u = await sessionUser(request, env);
   if (!u) return errJson('No autenticado', 401);
+  if (!rlAllow('prefs:' + u.id, 20)) return tooMany();
   await ensureUserTables(env);
   let body = {};
   try { body = await request.json(); } catch (e) { body = {}; }
@@ -1612,6 +1651,7 @@ async function saveProfile(request, env) {
   if (!env.DB) return errJson('Falta el binding D1 (DB)', 500);
   const me = await sessionUser(request, env);
   if (!me) return errJson('No autenticado', 401);
+  if (!rlAllow('profile:' + me.id, 10)) return tooMany();
   let body; try { body = await request.json(); } catch (e) { return errJson('JSON inválido', 400); }
   // Recortes y saneo: nombre y país cortos; nota con tope. \r\n de la nota se normalizan a \n.
   const name = String(body.name || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 40);
@@ -1644,6 +1684,7 @@ async function followToggle(request, env, follow) {
   const target = String(body.userId || '');
   if (!target) return errJson('Falta userId', 400);
   if (target === me.id) return errJson('No podés seguirte a vos mismo', 400);
+  if (!rlAllow('follow:' + me.id, 40)) return tooMany();
   await ensureUserTables(env);
   await ensureFollowTable(env);
   const exists = await env.DB.prepare('SELECT id FROM usuarios WHERE id=?1').bind(target).first();
@@ -1715,6 +1756,7 @@ async function blockToggle(request, env, block) {
   const target = String(body.userId || '').trim();
   if (!target) return errJson('Falta userId', 400);
   if (target === me.id) return errJson('No podés bloquearte a vos mismo', 400);
+  if (!rlAllow('block:' + me.id, 30)) return tooMany();
   await ensureUserTables(env); await ensureBlocksTable(env);
   const exists = await env.DB.prepare('SELECT id FROM usuarios WHERE id=?1').bind(target).first();
   if (!exists) return errJson('Usuario no encontrado', 404);
@@ -1776,6 +1818,20 @@ async function ratingReport(request, env) {
   if (result !== 'w' && result !== 'b' && result !== 'draw') return errJson('result inválido', 400);
   await ensureRatingTables(env);
 
+  // Tope anti-boosteo: dos cuentas que juegan entre sí todo el día. Pasado el tope, la partida
+  // se guarda igual en el historial (para poder revivirla) pero NO mueve el rating. Sin esto, el
+  // mínimo de jugadas del vivo-worker frena el farmeo a mano pero no a un script: jugar seis
+  // jugadas legales automáticamente es trivial.
+  let sinRating = false;
+  try {
+    const desde = Math.floor(Date.now() / 1000) - 86400;
+    const par = await env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM rated_games WHERE ts > ?3 AND ' +
+      '((white_id=?1 AND black_id=?2) OR (white_id=?2 AND black_id=?1))'
+    ).bind(white, black, desde).first();
+    if (par && par.n >= PAIR_MAX_RATED_PER_DAY) sinRating = true;
+  } catch (e) { /* si falla la cuenta, no bloqueamos: se ratea normal */ }
+
   // Idempotencia: si esta partida ya se rateó, devolvemos lo guardado sin re-aplicar.
   const prev = await env.DB.prepare('SELECT * FROM rated_games WHERE game_id=?1').bind(gameId).first();
   if (prev) {
@@ -1792,30 +1848,39 @@ async function ratingReport(request, env) {
   const Sb = 1 - Sw;
   const Ew = 1 / (1 + Math.pow(10, (rb.rating - rw.rating) / 400));   // prob. esperada de que gane blancas
   const Eb = 1 - Ew;
-  const newW = clampPlayerRating(rw.rating + playerK(rw.games) * (Sw - Ew));
-  const newB = clampPlayerRating(rb.rating + playerK(rb.games) * (Sb - Eb));
+  // Pasado el tope diario entre estas dos cuentas, el rating NO se mueve: se guardan los mismos
+  // números de antes, así la partida queda en el historial pero no sirve para inflarse.
+  const newW = sinRating ? rw.rating : clampPlayerRating(rw.rating + playerK(rw.games) * (Sw - Ew));
+  const newB = sinRating ? rb.rating : clampPlayerRating(rb.rating + playerK(rb.games) * (Sb - Eb));
   const now = Math.floor(Date.now() / 1000);
 
   // Persistir ambos ratings (+1 partida) y dejar el log de la partida, en una sola tanda.
-  try {
-    await env.DB.batch([
+  // Si la partida no ratea, se guarda igual en el log pero no se toca la tabla de ratings.
+  const guardar = [];
+  if (!sinRating) {
+    guardar.push(
       env.DB.prepare('INSERT INTO ratings (user_id, category, rating, games, updated) VALUES (?1,?2,?3,1,?4) ' +
         'ON CONFLICT(user_id, category) DO UPDATE SET rating=?3, games=games+1, updated=?4')
         .bind(white, category, newW, now),
       env.DB.prepare('INSERT INTO ratings (user_id, category, rating, games, updated) VALUES (?1,?2,?3,1,?4) ' +
         'ON CONFLICT(user_id, category) DO UPDATE SET rating=?3, games=games+1, updated=?4')
         .bind(black, category, newB, now),
-      env.DB.prepare('INSERT INTO rated_games (game_id, category, white_id, black_id, result, ' +
-        'white_before, white_after, black_before, black_after, ts, moves, white_name, black_name, reason) ' +
-        'VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)')
-        .bind(gameId, category, white, black, result, rw.rating, newW, rb.rating, newB, now, moves, wname, bname, reason),
-    ]);
+    );
+  }
+  guardar.push(
+    env.DB.prepare('INSERT INTO rated_games (game_id, category, white_id, black_id, result, ' +
+      'white_before, white_after, black_before, black_after, ts, moves, white_name, black_name, reason) ' +
+      'VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)')
+      .bind(gameId, category, white, black, result, rw.rating, newW, rb.rating, newB, now, moves, wname, bname, reason),
+  );
+  try {
+    await env.DB.batch(guardar);
   } catch (e) { return errJson('D1 error: ' + e.message, 500); }
 
   return jsonResp({
-    category,
-    white: { rating: newW, delta: newW - rw.rating, games: rw.games + 1, prov: ratingIsProv(rw.games + 1) },
-    black: { rating: newB, delta: newB - rb.rating, games: rb.games + 1, prov: ratingIsProv(rb.games + 1) },
+    category, capped: sinRating || undefined,
+    white: { rating: newW, delta: newW - rw.rating, games: rw.games + (sinRating ? 0 : 1), prov: ratingIsProv(rw.games + 1) },
+    black: { rating: newB, delta: newB - rb.rating, games: rb.games + (sinRating ? 0 : 1), prov: ratingIsProv(rb.games + 1) },
   });
 }
 
@@ -1908,6 +1973,7 @@ async function puzProgress(request, env) {
   if (!env.DB) return errJson('Falta el binding D1 (DB)', 500);
   const u = await sessionUser(request, env);
   if (!u) return errJson('No autenticado', 401);
+  if (request.method === 'POST' && !rlAllow('puz:' + u.id, 20)) return tooMany();
   await ensurePuzProgressTable(env);
 
   if (request.method === 'GET') {
@@ -2000,14 +2066,19 @@ function adminCleanFields(raw) {
 
 // Valida el PIN contra el secreto EDIT_PIN, con rate-limit en D1 (si hay binding).
 // Devuelve null si está todo bien, o una Response de error para devolver tal cual.
-async function adminCheckPin(pin, env) {
+// El contador de fallos va POR DIRECCIÓN IP. Antes era uno solo para todo el mundo (la fila
+// 'pinfail'), así que cualquiera podía mandar doce PIN inventados por hora y dejar al AUTOR sin
+// poder cargar partidas desde el teléfono, indefinidamente y sin ningún esfuerzo.
+async function adminCheckPin(pin, env, request) {
   if (!env.EDIT_PIN) return errJson('La edición remota no está configurada (falta el secreto EDIT_PIN)', 503);
-  // Rate-limit: contamos PIN errados en la última hora. Sin D1, seguimos sin contar.
+  const ip = (request && request.headers.get('CF-Connecting-IP')) || 'sin-ip';
+  const rlKey = 'pinfail:' + ip;
+  // Rate-limit: contamos PIN errados de ESTA IP en la última hora. Sin D1, seguimos sin contar.
   let rlRow = null;
   if (env.DB) {
     try {
       await env.DB.prepare('CREATE TABLE IF NOT EXISTS admin_rl (k TEXT PRIMARY KEY, n INTEGER, ts INTEGER)').run();
-      rlRow = await env.DB.prepare('SELECT n, ts FROM admin_rl WHERE k = ?1').bind('pinfail').first();
+      rlRow = await env.DB.prepare('SELECT n, ts FROM admin_rl WHERE k = ?1').bind(rlKey).first();
       const now = Math.floor(Date.now() / 1000);
       if (rlRow && (now - (rlRow.ts || 0)) > RL_WINDOW_S) rlRow = null;   // ventana vencida: de cero
       if (rlRow && rlRow.n >= RL_MAX_FAILS) return errJson('Demasiados intentos fallidos. Probá de nuevo en una hora.', 429);
@@ -2022,7 +2093,7 @@ async function adminCheckPin(pin, env) {
         await env.DB.prepare(
           'INSERT INTO admin_rl (k, n, ts) VALUES (?1, ?2, ?3) ' +
           'ON CONFLICT(k) DO UPDATE SET n = ?2, ts = ?3'
-        ).bind('pinfail', n, ts).run();
+        ).bind(rlKey, n, ts).run();
       } catch (e) {}
     }
     return errJson('PIN incorrecto', 403);
@@ -2188,7 +2259,7 @@ async function adminSavePgn(body, env) {
 async function adminLive(request, env) {
   if (request.method !== 'POST') return errJson('Usar POST', 405);
   let body; try { body = await request.json(); } catch (e) { return errJson('Body inválido', 400); }
-  const bad = await adminCheckPin(body && body.pin, env);
+  const bad = await adminCheckPin(body && body.pin, env, request);
   if (bad) return bad;
   if (!env.GH_TOKEN) return errJson('Falta el secreto GH_TOKEN en el Worker', 503);
   try {
@@ -2205,7 +2276,7 @@ async function adminLive(request, env) {
 async function adminSave(request, env) {
   if (request.method !== 'POST') return errJson('Usar POST', 405);
   let body; try { body = await request.json(); } catch (e) { return errJson('Body inválido', 400); }
-  const bad = await adminCheckPin(body && body.pin, env);
+  const bad = await adminCheckPin(body && body.pin, env, request);
   if (bad) return bad;
   if (!env.GH_TOKEN) return errJson('Falta el secreto GH_TOKEN en el Worker', 503);
 
