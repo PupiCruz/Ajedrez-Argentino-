@@ -1030,6 +1030,13 @@ async function puzStats(env) {
 const LICHESS_HOST = 'https://lichess.org';
 const SESSION_TTL_DAYS = 180;   // cuánto dura la sesión sin volver a loguear (~6 meses)
 
+// Orígenes desde los que se acepta un login (el redirect_uri que manda la web).
+// Cubre: el dominio propio, el de Cloudflare Pages (con sus previews <hash>.…pages.dev)
+// y el servidor local del modo autor. OJO: acá NO vale el comodín "cualquier *.pages.dev"
+// que usa NOTICIA_ALLOW_ORIGIN — sería el agujero justo, porque cualquiera puede publicar
+// un sitio en pages.dev. Si algún día cambia el dominio, hay que agregarlo ACÁ.
+const AUTH_ALLOW_ORIGIN = /^(https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?|https:\/\/([a-z0-9-]+\.)*chessargentino\.ar|https:\/\/([a-z0-9-]+\.)*chessargentino\.pages\.dev)$/i;
+
 // Moderadores del sitio: las dos cuentas de Lichess del dueño. Se compara en MINÚSCULAS porque el
 // username de Lichess es case-insensitive (y la app ya busca con LOWER(username)). Más adelante, si
 // hay usuarios de confianza, se verá cómo sumar mods (fase posterior). El mismo Set vive en el
@@ -1100,6 +1107,15 @@ async function authLichess(request, env) {
   const verifier = String(body.code_verifier || '');
   const redirectUri = String(body.redirect_uri || '');
   if (!code || !verifier || !redirectUri) return errJson('Faltan parámetros (code, code_verifier, redirect_uri)', 400);
+  // La dirección de vuelta tiene que ser NUESTRA. Sin esta validación, cualquiera podía armar
+  // su propia app en Lichess (no hace falta registrarla), conseguir que alguien apretara
+  // "Autorizar" ahí, y después canjear ese permiso acá para llevarse una sesión abierta con la
+  // cuenta de esa persona — incluida la de un moderador. Se compara el ORIGEN, no la dirección
+  // entera: la web manda location.origin + location.pathname, así que la ruta varía.
+  let redirOrigin;
+  try { redirOrigin = new URL(redirectUri).origin; }
+  catch (e) { return errJson('redirect_uri inválido', 400); }
+  if (!AUTH_ALLOW_ORIGIN.test(redirOrigin)) return errJson('redirect_uri no permitido', 400);
   // En PKCE el client_id puede ser cualquier URL nuestra; usamos el propio redirect_uri.
   const clientId = redirectUri;
 

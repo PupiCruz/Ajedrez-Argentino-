@@ -31548,9 +31548,18 @@ function cvUpdateNagBadge() {
       var m; try { m=JSON.parse(e.data); } catch(_){ return; }
       handle(m);
     };
-    ws.onclose=function(){
+    ws.onclose=function(ev){
       if(lvIntentionalClose) return;
       if(lvStatus==='finished') return;
+      // 4002 = el servidor cerró la sala por inactividad (nadie llegó de rival en un buen rato).
+      // Acá NO hay que reconectar: reconectar la revive, y una pestaña olvidada la mantendría
+      // viva para siempre consumiendo cuota de Cloudflare — que es justo lo que se quiere evitar.
+      // Se retira el desafío del lobby (exit) y se avisa, para que nadie entre a una sala muerta.
+      if(ev && ev.code===4002){
+        try { exit(); } catch(e){}
+        try { lvToast('La sala se cerró porque no llegó nadie a jugar. Creá el desafío de nuevo cuando quieras.'); } catch(e){}
+        return;
+      }
       // Reintento con backoff: el token nos devuelve al mismo asiento.
       if(lvReconnectTries<8){
         lvReconnectTries++;

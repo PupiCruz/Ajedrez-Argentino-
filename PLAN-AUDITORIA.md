@@ -1,0 +1,568 @@
+# Plan de arreglos — Auditoría del 26/08/2026
+
+> **Si sos Claude y estás retomando esto en una sesión nueva: leé la sección
+> "Cómo retomar" de abajo ANTES de tocar nada.**
+
+Informe completo de la auditoría (los 27 hallazgos, con el detalle de cada uno):
+https://claude.ai/code/artifact/437e8ecc-2c6b-4ac8-917b-839a7dee9055
+
+Los números entre corchetes —`[7]`, `[15]`— son el número de hallazgo del informe.
+
+---
+
+## Cómo retomar
+
+1. Mirar la tabla **Estado** de acá abajo: la primera fase sin tildar es la que sigue.
+2. Abrir esa fase y hacer **solo esa**. Cada fase es una sesión de trabajo y una
+   sola publicación.
+3. Al terminar: tildar la fase, anotar la fecha en la tabla, y dejar en "Notas"
+   cualquier cosa rara que haya pasado.
+4. Si una fase queda a medio hacer, tildar los ítems que sí quedaron y anotar en
+   "Notas" en qué punto se cortó. **No publicar una fase a medias** salvo que los
+   ítems hechos funcionen solos (está aclarado fase por fase cuándo se puede).
+
+### Reglas de trabajo
+
+- **Una fase = una publicación.** No mezclar fases: si algo sale mal, así se sabe
+  qué lo rompió.
+- **Probar antes de publicar.** Cada fase dice cómo probarla.
+- **No tocar lo que anda.** El informe marcó cinco áreas limpias (escapado de HTML,
+  secretos, proxys, dependencias, compatibilidad). No hay que tocarlas.
+- Si un arreglo obliga a cambiar los dos workers, se publica **primero cr-proxy y
+  después vivo-worker** (está aclarado en la fase que corresponde).
+
+### Los tres caminos de publicación
+
+| Qué | Cómo se publica | Cuánto tarda |
+|---|---|---|
+| `vivo-worker/src/index.js` | `cd vivo-worker` y `npm run deploy` | ~30 s |
+| `cloudflare-worker/cr-proxy-worker.js` | Panel de Cloudflare → el Worker `cr-proxy` → **Edit code** → pegar el archivo entero → **Deploy** | ~2 min, a mano |
+| `index.html` / `editar.html` | `publicar-web.cmd` (hace el pull del teléfono y el push) | ~1-2 min de redeploy |
+
+---
+
+## Estado
+
+| Fase | Qué arregla | Toca | Tamaño | Hecha |
+|---|---|---|---|---|
+| 1 | Los dos agujeros críticos, con parche rápido | cr-proxy + vivo + web | corta | ☑ código listo — **falta publicar** |
+| 2 | Las salas de partida sobreviven a la siesta | vivo | **larga** | ☐ |
+| 3 | Frenos de abuso del chat y los desafíos | vivo | media | ☐ |
+| 4 | Frenos de abuso y limpieza de la base | cr-proxy | media | ☐ |
+| 5 | Que el baneo y el bloqueo muerdan de verdad | cr-proxy + vivo | media | ☐ |
+| 6 | Velocidad del backend y progreso de ejercicios | cr-proxy | media | ☐ |
+| 7 | Los arreglos de la web | index.html | media | ☐ |
+| 8 | Prolijidad y código muerto | los tres | corta | ☐ |
+
+> La **Fase 2 es la más larga de todas** y viene segunda a propósito: es el arreglo
+> real del problema más grave. Si preferís encadenar victorias rápidas primero,
+> se puede hacer 3 y 4 antes que la 2 sin ningún problema — no dependen entre sí.
+> Lo único que **no** conviene postergar es la Fase 1.
+
+### Notas de las sesiones
+
+**26/08/2026 — Fase 1 escrita, sin publicar todavía.** Tres cosas para tener en cuenta:
+
+1. **La Fase 1 terminó tocando también `index.html`**, cosa que el plan original no
+   preveía. Motivo: el navegador reconecta solo cuando se le cae la sala, así que el
+   cierre por inactividad se revertía en un bucle y el parche no servía para nada —
+   justo el caso de la pestaña olvidada que tumbó el sitio el 23/08. Ahora el navegador
+   reconoce el código de cierre 4002 y no reconecta. **Son tres publicaciones, y el
+   orden importa** (ver abajo).
+2. **Apareció un bug al probar**, que el banco de pruebas cazó: el plazo de
+   inactividad se cuenta desde la última actividad, así que una partida que caía por
+   bandera después de una pensada larga tenía el plazo ya vencido y la sala se habría
+   cerrado en el acto, sin que los jugadores vieran el resultado ni pudieran pedir
+   revancha. Arreglado: terminar la partida cuenta como actividad.
+3. **Quedó un banco de pruebas: `vivo-worker/test-salas.mjs`** (24 comprobaciones:
+   cierre por inactividad, bandera, reconexión, tope de conexiones, que cerrar no
+   regale la partida). Se corre con `cd vivo-worker` y `node test-salas.mjs`.
+   **Sirve para la Fase 2**, que reescribe justo esta parte: correrlo antes y después
+   avisa enseguida si se rompió algo.
+
+---
+
+## FASE 1 — Tapar los dos críticos (parche rápido)
+
+**Objetivo:** cortar hoy el riesgo real, sin meterse todavía en el trabajo grande.
+
+### 1.1 · Validar la dirección de vuelta del login `[2]` — CRÍTICO
+
+- Archivo: `cloudflare-worker/cr-proxy-worker.js:1102-1104`
+- Hoy: `const clientId = redirectUri;` — el `redirect_uri` llega del navegador y
+  se usa tal cual, sin comprobar que sea una dirección tuya.
+- Arreglo: antes de canjear el código con Lichess, comprobar que `redirect_uri`
+  empiece con `https://chessargentino.ar`, `https://chessargentino.pages.dev`,
+  `https://<algo>.chessargentino.pages.dev` o `http://localhost`. Si no, cortar
+  con error 400.
+- Cuidado: la dirección real que manda la web es `location.origin + location.pathname`
+  (`index.html:33308`), o sea que incluye la ruta. La comprobación tiene que ser
+  por **inicio de la dirección**, no igualdad exacta, o se rompe el login.
+
+### 1.2 · Que una sala de partida no quede despierta para siempre `[1]` — CRÍTICO (parche)
+
+- Archivo: `vivo-worker/src/index.js` (clase `GameRoom`)
+- Hoy: la sala queda viva mientras haya alguien conectado, sin tope de tiempo, y
+  cualquiera puede abrir salas nuevas inventando el nombre (`:1377`).
+- Arreglo hecho (parche, no la solución final):
+  - `waiting` (nadie llegó de rival) pasados **15 min** → se cierra.
+  - `finished` y nadie pidió revancha pasados **10 min** → se cierra.
+  - `playing` **sin reloj** pasados **45 min** sin una sola señal → se aborta y se
+    cierra. Hacía falta: con reloj la bandera corta la partida sola, pero sin reloj
+    no hay nada que la corte — y "sin reloj" es justamente lo que le queda a una sala
+    abierta a la fuerza, porque el ritmo lo elige el creador. Se aborta (no se
+    abandona) a propósito: `abort` no ratea, así cerrar no le regala la partida a nadie.
+  - Tope de **12 conexiones simultáneas** por sala; la 13ª recibe un 429.
+  - Todo con la alarma que la clase ya tiene (`scheduleAlarm` / `alarm`), no con un
+    `setTimeout` (un `setTimeout` pendiente impide dormir — ver hallazgo 13).
+
+### 1.3 · Que el navegador no reviva la sala cerrada `[1]`
+
+- Archivo: `index.html`, dentro de `connect(id)` → `ws.onclose`
+- Sin esto el parche 1.2 no sirve: al cerrarse la sala, el navegador reconecta solo
+  (hasta 8 veces) y la revive. Una pestaña olvidada la mantendría viva igual.
+- Arreglo: si el cierre viene con el código **4002** ("sala inactiva"), no reconectar;
+  llamar a `exit()` —que además retira el desafío del lobby, para que nadie entre a
+  una sala muerta— y avisar con un cartelito.
+- **Honestidad sobre este parche:** acota el daño (cada sala abusiva vive 15 min
+  en vez de para siempre) pero **no lo elimina**: quien insista puede reconectarse.
+  El arreglo de verdad es la Fase 2. Este parche compra tiempo.
+- Lo que **no** sirve acá: las reglas de Rate Limiting del panel de Cloudflare no
+  se aplican a las direcciones `workers.dev`, solo a dominios propios. Para poder
+  usarlas habría que poner el worker en `vivo.chessargentino.ar` primero.
+
+### Cómo se prueba la Fase 1
+
+Ya corrido en esta PC antes de publicar:
+
+- ✅ `node vivo-worker/test-salas.mjs` — 24 comprobaciones en verde (cierre por
+  inactividad en los tres estados, bandera, reconexión con token, tope de conexiones,
+  y que cerrar no le regale la partida a nadie).
+- ✅ La lista de direcciones de vuelta del login probada con 15 casos, incluidos los
+  tramposos (`chessargentino.ar.evil.com`, `evilchessargentino.ar`, `malo.pages.dev`).
+- ✅ `index.html` abre sin un solo error de consola en el servidor local.
+
+**Falta probar a mano, después de publicar:**
+
+1. **Login:** salir de la cuenta y volver a entrar con Lichess desde
+   `chessargentino.ar`. Tiene que entrar igual que siempre. Probar también desde el
+   servidor local (`iniciar-servidor.cmd`), que usa `http://localhost:8099` y también
+   está en la lista.
+2. **Partida:** crear un desafío, entrar con otro navegador, jugar dos jugadas y
+   terminarla. Que la revancha siga andando.
+3. **Cierre por inactividad:** dejar un desafío esperando rival 16 minutos. Tiene que
+   volver solo a la sala de Jugar con el cartelito, **sin** quedar reconectando.
+
+### Cómo se publica  ← **PENDIENTE**
+
+Son **tres** publicaciones y **el orden importa**:
+
+1. **La web** (`publicar-web.cmd`). Va primero porque le enseña al navegador a no
+   reconectar cuando el servidor cierra una sala por inactividad. Si se publicara al
+   final, los navegadores que ya están abiertos revivirían las salas en bucle y el
+   parche no serviría de nada durante ese rato.
+2. **`cr-proxy`** (panel de Cloudflare → Worker `cr-proxy` → Edit code → pegar el
+   archivo entero → Deploy). Es independiente: se puede hacer en cualquier momento.
+3. **`vivo-worker`** (`cd vivo-worker` y después `npm run deploy`). Va último.
+
+Si la sesión se corta, cada publicación queda bien sola: no se rompe nada por tener
+una hecha y las otras no.
+
+---
+
+## FASE 2 — Las salas de partida sobreviven a la siesta
+
+**Objetivo:** el arreglo real del hallazgo `[1]`, que arrastra el `[15]`.
+**Es la fase más larga y la más delicada. Reservar una sesión entera.**
+
+### 2.1 · Guardar el estado de la partida `[15]`
+
+- Archivo: `vivo-worker/src/index.js:222-228` (constructor) y `:781` (`persist`)
+- Hoy: de una partida en curso solo se guarda la **lista de jugadas**. Los asientos,
+  la identidad de cada jugador, el reloj, el estado y las marcas `gameId` /
+  `ratedGameId` viven solo en memoria.
+- Arreglo: guardar también todo eso, y recuperarlo al despertar. Consecuencia visible
+  hoy: si Cloudflare recicla la sala o vos publicás el worker con gente jugando, el
+  reloj vuelve al tiempo inicial y la partida se puede ratear dos veces.
+- Ojo: el asiento guarda el objeto `ws` (la conexión), que **no se puede guardar**.
+  Hay que separar "datos del asiento" (se guardan) de "conexión viva" (no).
+
+### 2.2 · Pasar la sala al esquema dormilón `[1]`
+
+- Archivo: `vivo-worker/src/index.js:248`
+- Hoy: `server.accept()` + `addEventListener`, que mantiene la sala despierta.
+- Arreglo: `this.state.acceptWebSocket(server)` + los métodos `webSocketMessage`,
+  `webSocketClose` y `webSocketError`, igual que ya hacen `Lobby` (`:898`) y
+  `TourChat` (`:1222`). **Copiar el patrón de esos dos**, que ya funcionan bien.
+- La identidad de cada conexión va en el `serializeAttachment` del WebSocket, como
+  en los otros dos.
+- Sacar el parche de auto-cierre de la Fase 1 si quedó redundante, o dejarlo (no
+  molesta y sigue siendo una buena higiene).
+
+### Cómo se prueba la Fase 2
+
+Esta es la que más hay que probar. Con dos navegadores:
+
+1. Partida completa de 3+2: que el reloj corra bien, que la bandera caiga bien.
+2. **Cerrar una pestaña en medio de la partida y volver dentro de los 30 s:** tiene
+   que retomar el mismo asiento, con el reloj donde estaba.
+3. Dejar la partida quieta 2-3 minutos (para que la sala se duerma) y después hacer
+   una jugada: tiene que andar sin perder nada.
+4. Revancha, tablas, abandono, abortar.
+5. Con los dos jugadores logueados: que el rating se actualice **una sola vez**.
+6. **Publicar el worker en medio de una partida** y confirmar que no se resetea el
+   reloj (esto es lo que hoy falla).
+
+### Si la sesión se corta
+
+2.1 y 2.2 **hay que hacerlas juntas** — publicar solo una deja las partidas peor
+que ahora. Si no se llega, dejar el código sin publicar y anotarlo en "Notas".
+
+---
+
+## FASE 3 — Frenos de abuso del chat y los desafíos
+
+**Objetivo:** que el sitio aguante a una persona con mala intención.
+Todo en `vivo-worker/src/index.js`, **una sola publicación**.
+
+### 3.1 · Contar los mensajes por persona, no por conexión `[5]`
+
+- `vivo-worker/src/index.js:1098` (chat del lobby), `:1279` (La hinchada),
+  `:1120` y `:1302` (reacciones)
+- Hoy: el contador vive en la conexión (`session._chatTimes`), así que con dos
+  pestañas se tienen dos contadores. En La hinchada, además, se pierde cada vez que
+  la sala se duerme.
+- Arreglo: un `Map` de `userId → últimos envíos` guardado en la sala. Sirve para los
+  dos chats y para las reacciones de una.
+
+### 3.2 · Frenar también el chat de la partida `[6]`
+
+- `vivo-worker/src/index.js:410-424`
+- Hoy: sin ningún contador. Y el espectador sin cuenta escribe, y el jugador
+  invitado elige el nombre que quiera (`:239`), incluso el tuyo.
+- Arreglo: mismo contador de 3.1. Y decidir: si el espectador sin cuenta puede
+  escribir, que su nombre sea siempre "Espectador".
+
+### 3.3 · Que solo el destinatario pueda rechazar un desafío `[7]`
+
+- `vivo-worker/src/index.js:1047-1055`
+- Hoy: `challenge-decline` borra el desafío sin mirar quién lo pidió, y los ids de
+  los desafíos abiertos se anuncian a toda la sala.
+- Arreglo: un `if` — rechazar solo si `ch.target === session.userId`, o si el que
+  manda es el dueño del desafío. **Dos líneas.**
+
+### 3.4 · Que el nombre y el rating del desafío los ponga el servidor `[8]`
+
+- `vivo-worker/src/index.js:967-985` (`create`) y `:1004-1010` (`challenge-direct`)
+- Hoy: llegan del navegador. Se puede publicar un desafío firmado con el nombre de
+  otro y rating 2400.
+- Arreglo: si la conexión está identificada, usar `session.username` y el rating
+  real. Dejar que el cliente ponga el nombre **solo** cuando no hay cuenta.
+
+### 3.5 · Que un desafío dirigido no mantenga el lobby despierto `[13]`
+
+- `vivo-worker/src/index.js:1023-1029`
+- Hoy: un `setTimeout` de 10 minutos, que impide que el lobby duerma (justo lo que
+  se arregló el 23/08) y que se pierde si igual duerme, dejando el desafío colgado.
+- Arreglo: sacar el `setTimeout`. Ya se guarda `createdAt`: descartar los vencidos
+  cuando alguien pasa por ahí, igual que hace `pruneChat()`.
+
+### 3.6 · Pedir un mínimo de jugadas para ratear `[9]`
+
+- `vivo-worker/src/index.js:618-632`
+- Hoy: `if (this.game.history().length < 1) return` — con una sola jugada la partida
+  cuenta, así que con dos cuentas se hace una partida cada cinco segundos.
+- Arreglo: subir el mínimo a **8 jugadas**. Si más adelante hace falta, agregar un
+  tope de partidas rateadas por día entre el mismo par de cuentas.
+
+### 3.7 · Avisar cuando el chat todavía no sabe quién sos `[14]`, mitad servidor
+
+- `vivo-worker/src/index.js:1091` y `:1272`
+- Hoy: si el mensaje llega antes de que se resuelva la identidad, se descarta **sin
+  avisar** — por eso el primer saludo al entrar a un torneo a veces desaparece.
+- Arreglo (mitad servidor): cuando `attachIdentity` termina, mandar
+  `{type:'ready'}`. Y si llega un `chat` sin identidad, responder
+  `{type:'not-ready'}` en vez de callarse.
+- La mitad del navegador va en la **Fase 7**. Mientras tanto no rompe nada: el
+  navegador viejo ignora los mensajes que no conoce.
+
+### Cómo se prueba la Fase 3
+
+1. Escribir rápido en los tres chats: que el freno de 3 segundos se sienta.
+2. Abrir dos pestañas con la misma cuenta y escribir rápido en las dos: **ahora
+   tiene que frenar igual** (antes no frenaba).
+3. Desafío abierto: publicarlo, verlo desde otro navegador, aceptarlo.
+4. Desafío dirigido desde un perfil: que llegue, que se pueda rechazar, y que el
+   que rechaza sea el único que puede.
+5. Que el nombre del desafío sea el de la cuenta y no uno inventado.
+6. Partida de 4 jugadas → **no** tiene que ratear. De 10 jugadas → sí.
+
+---
+
+## FASE 4 — Frenos de abuso y limpieza de la base
+
+**Objetivo:** que nadie pueda vaciarte la cuota gratis de Cloudflare.
+Todo en `cloudflare-worker/cr-proxy-worker.js`, **una sola publicación**.
+
+### 4.1 · Cerrar el redactor de noticias con IA `[10]`
+
+- `cr-proxy-worker.js:759-763`
+- Hoy: la única protección es mirar de qué sitio dice venir el pedido, dato que
+  cualquier programa escribe como quiere (el propio comentario del código lo dice).
+  Confirmado contra el servidor real: responde sin pedir nada.
+- Arreglo: es una herramienta que usás solo vos → pedirle el mismo PIN del teléfono
+  (`EDIT_PIN`), con `adminCheckPin`, que ya existe. **Cinco minutos.**
+- Después hay que pasarle el PIN desde `index.html` en la llamada a `/noticia`
+  (buscar `_noticiaAIGenerate`) — ese cambio del navegador va en la **Fase 7**, así
+  que **entre la Fase 4 y la 7 el botón de IA no va a andar**. Si molesta, hacer las
+  dos mitades el mismo día.
+
+### 4.2 · Límite de frecuencia en los endpoints con cuenta `[11]`
+
+- `cr-proxy-worker.js:1891` (`/puz/progress`), `:1594` (`/profile`), `:1622`
+  (`/follow`), `:1693` (`/block`), `:1322` (`/report`)
+- Hoy: sin freno. Cada llamada escribe en la base, y el plan gratis trae unas
+  100.000 escrituras por día: un script las agota en media hora. Cuando se agotan,
+  deja de andar entrar al sitio, guardar el rating de una partida y moderar.
+- Arreglo: un contador por usuario y por minuto. La tabla `admin_rl` que ya existe
+  para el PIN sirve de modelo.
+
+### 4.3 · Que el freno del PIN no te deje afuera a vos `[18]`
+
+- `cr-proxy-worker.js:1987-2013`
+- Hoy: el contador de PIN errados se guarda en **una sola fila** llamada `pinfail`.
+  Doce fallos en una hora bloquean la edición para todo el mundo, vos incluido.
+- Arreglo: contar por dirección IP (`request.headers.get('CF-Connecting-IP')`), así
+  el que falla se bloquea a sí mismo.
+- Lo bueno que hay que **no** romper: doce intentos por hora hace que adivinar el PIN
+  sea imposible en la práctica. Mantener ese número.
+
+### 4.4 · Limpiar sesiones y reportes viejos `[19]`
+
+- `cr-proxy-worker.js:1170` (`INSERT INTO sessions`) y `:1322-1348`
+- Hoy: las sesiones vencen a los 6 meses pero la fila nunca se borra, y los reportes
+  marcados como vistos quedan para siempre.
+- Arreglo: al crear una sesión, borrar las vencidas
+  (`DELETE FROM sessions WHERE expires < ?`). Los reportes vistos, borrarlos pasados
+  30 días.
+
+### Cómo se prueba la Fase 4
+
+1. Entrar y salir de la cuenta un par de veces.
+2. Editar la ficha del perfil, seguir a alguien, bloquear y desbloquear.
+3. Resolver un ejercicio y confirmar que el progreso se guarda.
+4. Entrar desde el teléfono con el PIN correcto.
+5. Probar el PIN mal tres veces desde el teléfono y después el bueno: tiene que
+   entrar (el freno es por IP, no global).
+
+---
+
+## FASE 5 — Que el baneo y el bloqueo muerdan de verdad
+
+**Objetivo:** que la moderación funcione en el momento en que hace falta.
+Toca **los dos workers**: publicar primero cr-proxy, después vivo-worker.
+
+### 5.1 · Revalidar las sanciones en vivo `[3]` y `[25]`
+
+- `vivo-worker/src/index.js:127` (`applyLiveSanction`), `cr-proxy-worker.js:1243`
+  (`/mod/ban`)
+- Hoy: cada chat se guarda una foto de "quién sos y si estás sancionado" al
+  conectarte y no la vuelve a mirar. Al banear desde el perfil se borra la sesión,
+  pero **las pestañas ya abiertas siguen escribiendo** en los tres chats. Silenciar
+  desde un chat solo llega a ese chat. Y "quitar silencio" desde el panel 🛡️ no se
+  nota hasta que la persona reconecta.
+- Arreglo (elegir uno):
+  - **A, más simple:** que el chat revalide la sanción cada 60 segundos o cada N
+    mensajes, en vez de confiar en la foto del momento.
+  - **B, más prolijo:** que cr-proxy le avise a vivo-worker cuando hay un baneo, y
+    que vivo cierre todas las conexiones de esa persona en todas las salas.
+- El `[25]` se arregla solo con cualquiera de los dos.
+
+### 5.2 · Aplicar el bloqueo en el servidor del chat `[4]`
+
+- `index.html:32958` (`shouldHide`), `vivo-worker/src/index.js:1090` y `:1271`
+- Hoy: bloquear sí funciona de verdad para desafíos y para seguir, pero en el chat
+  es cosmético: el mensaje llega igual y solo se tapa con una regla de estilo.
+- Arreglo: que el servidor no le mande el mensaje a quien tiene bloqueado al que
+  escribe. Las listas ya están cargadas en `session.blocked` y `session.blockedBy`:
+  es un `if` antes de enviar.
+- **No romper la excepción que ya está pensada:** un moderador sigue leyendo a todos,
+  así nadie se esconde de la moderación bloqueando al mod.
+
+### Cómo se prueba la Fase 5
+
+Hacen falta dos cuentas (la de mod y otra).
+
+1. Con las dos conectadas al chat de un torneo, banear a la segunda desde su perfil:
+   la segunda **no** tiene que poder escribir más, sin cerrar la pestaña.
+2. Silenciar desde el chat del lobby y comprobar que tampoco puede escribir en
+   La hinchada.
+3. Quitar el silencio desde el panel 🛡️ y comprobar que puede escribir enseguida.
+4. Bloquear a alguien y confirmar que sus mensajes **ya no llegan** (mirar con las
+   herramientas del navegador que el mensaje no esté escondido, sino ausente).
+5. Con la cuenta de mod, confirmar que sí se siguen viendo los mensajes de un
+   bloqueado.
+
+---
+
+## FASE 6 — Velocidad del backend y progreso de ejercicios
+
+Todo en `cloudflare-worker/cr-proxy-worker.js`, **una sola publicación**.
+
+### 6.1 · Que "quién soy" no dispare doce consultas `[12]`
+
+- `cr-proxy-worker.js:1485-1520` (`ratingMe`), `:1044`, `:1613`, `:1677`
+  (las funciones `ensure*Table`)
+- Hoy: `/rating/me` busca la sesión, crea-si-no-existe cinco tablas, lee tres
+  ratings, lee "no molestar" y lee las dos listas de bloqueos. Unas doce idas y
+  vueltas, una detrás de la otra. Y se llama en **cada** conexión de cada chat, en
+  cada partida y en cada carga de página.
+- Arreglo, en dos pasos:
+  - Crear las tablas una sola vez por instancia. Ya lo hacés con `_usuariosMigrated`;
+    falta hacerlo igual con las demás.
+  - Juntar las lecturas en una consulta con `JOIN`, o mandarlas con `batch()`.
+- Es la causa más probable de que "tarde en aparecer el chat".
+
+### 6.2 · Que el progreso de ejercicios no se pise entre dispositivos `[16]`
+
+- `cr-proxy-worker.js:1913-1930`
+- Hoy: el progreso se guarda como un bloque entero que reemplaza al anterior. Si
+  resolvés en el teléfono y después abrís la computadora que tenía una copia vieja,
+  al guardar **borrás lo del teléfono**: rating, racha y calendario vuelven atrás.
+- Arreglo mínimo: guardar la marca de tiempo de la última modificación y rechazar el
+  guardado si el que llega es más viejo que el que ya está.
+- Arreglo bueno: fusionar por ejercicio (quedarse con el mejor resultado de cada
+  uno) en vez de reemplazar el bloque.
+
+### Cómo se prueba la Fase 6
+
+1. Cronometrar cuánto tarda en aparecer el chat de un torneo, antes y después.
+2. Resolver un ejercicio en el teléfono, después abrir la computadora y resolver
+   otro: al recargar los dos, **los dos** tienen que estar contados.
+
+---
+
+## FASE 7 — Los arreglos de la web
+
+Todo en `index.html` (y `editar.html` si toca), **una sola publicación** con
+`publicar-web.cmd`.
+
+### 7.1 · Que al visitante no le salten carteles del modo autor `[17]`
+
+- `index.html:21249` (`liberarEspacioLS`) y `:5100-5107` (`crDataSave`)
+- Hoy: la web guarda en el navegador los cruces de cada torneo que abrís (en una
+  visita nueva ya son 109 KB). Cuando eso llena el navegador, el sitio ofrece
+  "liberar espacio", el visitante dice que sí, y la función contesta *"Esto es del
+  modo autor (tu carpeta), no de la web publicada"* y no borra nada. Después salta
+  un segundo cartel que le pide usar un botón que en la web no existe. Queda
+  atrapado en un bucle.
+- Arreglo: en modo publicado, cuando no entra, borrar en silencio los cruces más
+  viejos (la mitad, por ejemplo) y reintentar. Sin ningún cartel: los datos se
+  vuelven a bajar solos cuando hagan falta.
+- Se llega ahí con unos 150-400 torneos abiertos, o sea que le pasa a los que más
+  usan el sitio.
+
+### 7.2 · Que no se pierda el primer mensaje del chat `[14]`, mitad navegador
+
+- Depende de la **Fase 3.7** (que el servidor mande `ready` / `not-ready`).
+- Arreglo: tener el cuadro de escribir deshabilitado hasta que llegue el `ready`, y
+  reintentar una vez si llega un `not-ready`.
+
+### 7.3 · Pasarle el PIN al redactor de noticias
+
+- Depende de la **Fase 4.1**. Buscar `_noticiaAIGenerate` en `index.html` y sumar el
+  PIN al cuerpo del pedido.
+- **Si la Fase 4 ya se hizo, este ítem es urgente**: hasta que se haga, el botón de
+  IA no anda.
+
+### 7.4 · Sacar los tres archivos que dan 404 `[24]`
+
+- `index.html:2015`, `:2022`, `:2024`
+- Hoy: la web publicada pide `embedded-data.js`, `embedded-photos.js` y
+  `embedded-flyers.js`, que solo existen en tu carpeta. Los tres fallan (verificado
+  en vivo). Es a propósito, pero ensucia la consola y son tres viajes al pedo.
+- Arreglo: el generador de publicación ya saca la etiqueta de `embedded-data.js`
+  (`index.html:10525`); que saque también las otras dos.
+
+### 7.5 · Achicar el caché de posiciones `[26]`
+
+- `index.html:25062-25071` (`tdFinalFenCached`)
+- Hoy: usa el PGN entero como clave, con tope de 500. Son fácilmente 2 MB de memoria
+  en una sesión larga en un teléfono viejo.
+- Arreglo: usar un resumen corto del PGN como clave, o bajar el tope a 200.
+
+### 7.6 · Arreglar el comentario que miente `[23]`
+
+- `index.html:33955`
+- Dice "Bloquear = personal y del navegador (no viaja entre dispositivos, no afecta
+  a los demás)". Es de la versión vieja: hoy el bloqueo se guarda en la cuenta,
+  viaja entre dispositivos y sí afecta a los desafíos del otro.
+
+### Cómo se prueba la Fase 7
+
+1. Abrir la web publicada y mirar la consola: **no** tiene que haber errores rojos.
+2. Entrar a un torneo con cruces y confirmar que la tabla aparece.
+3. Entrar a "La hinchada" y escribir enseguida: el primer mensaje tiene que salir.
+4. Probar el botón de la noticia con IA (si ya se hizo la Fase 4).
+
+---
+
+## FASE 8 — Prolijidad y código muerto
+
+La fase de "dejar limpio". Nada de esto cambia cómo funciona el sitio.
+
+### 8.1 · Moderadores por identificador, no por nombre `[22]`
+
+- `cr-proxy-worker.js:1037`, `vivo-worker/src/index.js:76`, `index.html:32801`
+- Hoy: los dos nombres de moderador están copiados a mano en tres lugares que hay que
+  mantener sincronizados, y la comparación es por nombre de usuario, que puede
+  cambiar, en vez de por identificador de cuenta, que no.
+- Arreglo: una columna `is_mod` en la tabla de usuarios, y leerla.
+- **Dato útil:** `vivo-worker` no hay que tocarlo — ya lee `is_mod` de `/rating/me`,
+  así que el cambio le llega solo. El de `index.html` puede quedar como está (solo
+  decide quién ve los botones; el que manda es el servidor).
+- Se cruza con el hallazgo `[2]` de la Fase 1: es defensa en profundidad.
+
+### 8.2 · Borrar las quince funciones muertas `[20]`
+
+Están escritas y no las llama nadie. Antes de borrar cada una, buscar el nombre en
+el archivo para confirmar que sigue sin aparecer.
+
+`index.html` — `_vsBase`:8197 · `pgnDetectTourName`:9353 · `pgnShowResult`:9359 ·
+`_fsClearHandle`:10575 · `crShowStatus`:10944 · `crParseHtml`:10984 ·
+`crShowPreview`:11000 · `_lookupOpeningByEpds`:16084 · `openMasterGame`:17110 ·
+`_card3Heading`:21219 · `_openWithArgFilter`:21859 · `flyerImgHtml`:22791 ·
+`lvRatTxt`:30875 · `whoWins`:31336 · `copyLink`:34381
+
+> Los números de línea van a moverse a medida que se hagan las otras fases. Buscar
+> por nombre, no por línea.
+
+### 8.3 · Avisar del código duplicado `[21]`
+
+- `editar.html:753-1200` vs `index.html:14821-15260` (el bloque `gc*` / `_bd*`)
+- Hay **23 funciones idénticas letra por letra** y **24 que comparten el nombre pero
+  ya tienen el cuerpo distinto**. Las divergentes son en buena parte legítimas (cada
+  página saca los datos de otro lado), pero es el terreno donde nacen los bugs de
+  "lo arreglé en el teléfono y en la compu sigue mal".
+- No vale la pena reestructurarlo. Lo práctico: un comentario grande arriba del
+  bloque en los dos archivos, avisando que está duplicado.
+
+### 8.4 · Sin acción: el identificador de sala de 8 caracteres `[27]`
+
+Son 4.000 millones de combinaciones: adivinar una sala concreta es inviable. Queda
+anotado nada más para que sepas que una partida "privada" es en realidad "no
+listada": si alguien comparte el link, entra quien sea. **No hay que hacer nada.**
+
+---
+
+## Lo que NO hay que tocar
+
+El informe encontró cinco áreas limpias. Si en alguna fase aparece la tentación de
+"aprovechar y mejorar" alguna de estas, la respuesta es no:
+
+- **El escapado de HTML de los chats y los perfiles.** No hay un solo agujero.
+- **Cómo se guardan los secretos.** Están todos donde tienen que estar.
+- **Las listas blancas de los cinco proxys.** Probadas contra el servidor real.
+- **Que no haya dependencias de CDN.** Es una ventaja grande, no un descuido.
+- **El JavaScript "viejo" con comprobaciones previas.** Es lo que hace que ande en
+  cualquier teléfono.

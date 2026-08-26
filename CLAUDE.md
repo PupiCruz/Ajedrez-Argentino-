@@ -3,6 +3,13 @@
 > Esta nota la lee Claude automáticamente al abrir esta carpeta, en cualquier PC.
 > Sirve para retomar el trabajo aunque sea en otra computadora o sesión nueva.
 
+## 🛠️ Trabajo en curso: arreglos de la auditoría
+Hay una auditoría de seguridad y código del **26/08/2026** con 27 hallazgos, y un plan
+por fases para irlos arreglando: **`PLAN-AUDITORIA.md`** (en esta misma carpeta).
+Si el usuario dice "seguimos con los arreglos" / "la fase que sigue", **abrir ese archivo
+primero**: tiene la tabla de estado (qué fase va), las reglas de trabajo y cómo se prueba
+y publica cada fase. Al terminar una fase, tildarla ahí.
+
 ## Qué es
 App web de **ajedrez argentino**: torneos, perfiles de jugadores, rankings FIDE,
 visor de partidas con análisis (motor Stockfish) y noticias. Es una **app de un solo
