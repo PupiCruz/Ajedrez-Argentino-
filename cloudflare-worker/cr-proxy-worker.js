@@ -1070,7 +1070,18 @@ const AUTH_ALLOW_ORIGIN = /^(https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?|https:\/
 // username de Lichess es case-insensitive (y la app ya busca con LOWER(username)). Más adelante, si
 // hay usuarios de confianza, se verá cómo sumar mods (fase posterior). El mismo Set vive en el
 // vivo-worker (para marcar isMod en el chat); si se cambia acá, cambiarlo allá también.
+// Los dos nombres del dueño. De acá en más son sólo la SEMILLA y la red de seguridad: quién es
+// moderador lo dice la columna `is_mod` de la tabla de usuarios (ver esMod). Así sumar un moderador
+// es un UPDATE en la base, sin tocar el código, y la comparación deja de ser por NOMBRE DE USUARIO
+// —que se puede cambiar en Lichess— para pasar a ser por la cuenta.
 const MOD_USERNAMES = new Set(['elpupicruz', 'chess_argentino']);
+// ¿esta fila de usuario es moderadora? Manda la columna; si por lo que sea todavía no está puesta
+// (base recién migrada), se cae en la lista de nombres de siempre, así nunca queda el sitio sin mod.
+function esMod(u) {
+  if (!u) return false;
+  if (u.is_mod) return true;
+  return MOD_USERNAMES.has(String(u.username || '').toLowerCase());
+}
 
 // Duraciones de mute permitidas (minutos): 15 min · 30 min · 1 h · 8 h · 1 día.
 const MUTE_MINUTES = new Set([15, 30, 60, 480, 1440]);
@@ -1115,11 +1126,19 @@ async function _migrarUsuarios(env) {
     const want = { display_name: 'TEXT', country: 'TEXT', bio: 'TEXT',
       banned: 'INTEGER DEFAULT 0', banned_at: 'INTEGER', banned_reason: 'TEXT',
       chat_muted_until: 'INTEGER DEFAULT 0',
-      dnd: 'INTEGER DEFAULT 0' };   // "No molestar": 1 = otros NO te pueden desafiar
+      dnd: 'INTEGER DEFAULT 0',      // "No molestar": 1 = otros NO te pueden desafiar
+      is_mod: 'INTEGER DEFAULT 0' };  // moderador (antes se decidía por el nombre de usuario)
     for (const name in want) {
       if (cols.has(name)) continue;
       try { await env.DB.prepare('ALTER TABLE usuarios ADD COLUMN ' + name + ' ' + want[name]).run(); } catch (e) {}
     }
+    // Semilla: marcar como moderadores a las cuentas del dueño. Es idempotente y corre una sola vez
+    // por isolate. A partir de acá manda la columna, y sumar un moderador es un UPDATE en la base.
+    try {
+      const nombres = [...MOD_USERNAMES];
+      await env.DB.prepare('UPDATE usuarios SET is_mod=1 WHERE is_mod IS NOT 1 AND LOWER(username) IN ('
+        + nombres.map((_, i) => '?' + (i + 1)).join(',') + ')').bind(...nombres).run();
+    } catch (e) { /* si falla, esMod() igual reconoce a los de la lista */ }
     _usuariosMigrated = true;
   } catch (e) { /* reintenta en la próxima */ }
 }
@@ -1290,16 +1309,25 @@ async function modAuth(request, env) {
   const secret = request.headers.get('X-Vivo-Secret') || '';
   if (env.VIVO_SECRET && secret === env.VIVO_SECRET) return { via: 'worker' };
   const u = await sessionUser(request, env);
-  if (u && MOD_USERNAMES.has(String(u.username || '').toLowerCase())) return { via: 'session', mod: u };
+  if (!u) return null;
+  if (MOD_USERNAMES.has(String(u.username || '').toLowerCase())) return { via: 'session', mod: u };
+  // No está en la lista de nombres: puede ser un moderador agregado por la columna is_mod. Se mira
+  // con una consulta aparte (sessionUser no la trae a propósito: se llama en todos lados y la columna
+  // es nueva; si alguna base vieja todavía no la tuviera, el SELECT tiraría y dejaría a TODOS afuera).
+  try {
+    await ensureUserTables(env);
+    const r = await env.DB.prepare('SELECT is_mod FROM usuarios WHERE id=?1').bind(u.id).first();
+    if (r && r.is_mod) return { via: 'session', mod: u };
+  } catch (e) { /* sin columna todavía: manda la lista de nombres, que ya se miró arriba */ }
   return null;
 }
 
 // Resuelve el usuario objetivo desde el body: prioriza userId; si no, busca por username (LOWER).
 async function modResolveTarget(env, body) {
   const id = String(body.userId || '').trim();
-  if (id) return env.DB.prepare('SELECT id, username, banned, chat_muted_until FROM usuarios WHERE id=?1').bind(id).first();
+  if (id) return env.DB.prepare('SELECT id, username, banned, chat_muted_until, is_mod FROM usuarios WHERE id=?1').bind(id).first();
   const name = String(body.user || body.username || '').replace(/\/+$/, '').trim().slice(0, 40);
-  if (name) return env.DB.prepare('SELECT id, username, banned, chat_muted_until FROM usuarios WHERE LOWER(username)=LOWER(?1)').bind(name).first();
+  if (name) return env.DB.prepare('SELECT id, username, banned, chat_muted_until, is_mod FROM usuarios WHERE LOWER(username)=LOWER(?1)').bind(name).first();
   return null;
 }
 
@@ -1314,7 +1342,7 @@ async function modBan(request, env, ban) {
   const target = await modResolveTarget(env, body);
   if (!target) return errJson('Usuario no encontrado', 404);
   // No se puede sancionar a un moderador (evita auto-baneo por error / cruce entre mods).
-  if (MOD_USERNAMES.has(String(target.username || '').toLowerCase())) return errJson('No se puede sancionar a un moderador', 400);
+  if (esMod(target)) return errJson('No se puede sancionar a un moderador', 400);
   const now = Math.floor(Date.now() / 1000);
   try {
     if (ban) {
@@ -1342,7 +1370,7 @@ async function modMute(request, env, mute) {
   await ensureUserTables(env);
   const target = await modResolveTarget(env, body);
   if (!target) return errJson('Usuario no encontrado', 404);
-  if (MOD_USERNAMES.has(String(target.username || '').toLowerCase())) return errJson('No se puede sancionar a un moderador', 400);
+  if (esMod(target)) return errJson('No se puede sancionar a un moderador', 400);
   const now = Math.floor(Date.now() / 1000);
   let until = 0, minutes = 0;
   if (mute) {
@@ -1394,7 +1422,7 @@ async function modStatus(request, env) {
   await ensureUserTables(env);
   let u;
   try {
-    u = await env.DB.prepare('SELECT id, username, banned, chat_muted_until FROM usuarios WHERE id=?1').bind(id).first();
+    u = await env.DB.prepare('SELECT id, username, banned, chat_muted_until, is_mod FROM usuarios WHERE id=?1').bind(id).first();
   } catch (e) { return errJson('D1 error: ' + e.message, 500); }
   if (!u) return errJson('Usuario no encontrado', 404);
   // Bloqueos en las dos direcciones (a quiénes bloqueé / quiénes me bloquearon): el chat los usa para
@@ -1411,7 +1439,7 @@ async function modStatus(request, env) {
     ok: true, id: u.id, username: u.username,
     banned: u.banned ? 1 : 0,
     muted_until: Number(u.chat_muted_until || 0) || 0,
-    is_mod: MOD_USERNAMES.has(String(u.username || '').toLowerCase()),
+    is_mod: esMod(u),
     blocked, blocked_by: blockedBy,
   });
 }
@@ -1625,7 +1653,7 @@ async function ratingMe(request, env) {
       q.bind(u.id, 'bullet'),
       q.bind(u.id, 'blitz'),
       q.bind(u.id, 'rapid'),
-      env.DB.prepare('SELECT dnd FROM usuarios WHERE id=?1').bind(u.id),
+      env.DB.prepare('SELECT dnd, is_mod FROM usuarios WHERE id=?1').bind(u.id),
       env.DB.prepare('SELECT blocked_id FROM blocks WHERE blocker_id=?1').bind(u.id),
       env.DB.prepare('SELECT blocker_id FROM blocks WHERE blocked_id=?1').bind(u.id),
     ]);
@@ -1651,7 +1679,7 @@ async function ratingMe(request, env) {
   const blocked = filas(4).map((r) => r.blocked_id);
   const blockedBy = filas(5).map((r) => r.blocker_id);
   return jsonResp({ id: u.id, username: u.username, ratings, games, prov,
-    muted_until: mutedUntil, is_mod: MOD_USERNAMES.has(String(u.username || '').toLowerCase()),
+    muted_until: mutedUntil, is_mod: esMod({ is_mod: dr && dr.is_mod, username: u.username }),
     dnd, blocked, blocked_by: blockedBy });
 }
 

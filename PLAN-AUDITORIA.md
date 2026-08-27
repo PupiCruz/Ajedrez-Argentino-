@@ -51,8 +51,8 @@ Los números entre corchetes —`[7]`, `[15]`— son el número de hallazgo del 
 | 4 | Frenos de abuso y limpieza de la base | cr-proxy + web | media | ☑ **EN VIVO 26/08/2026** |
 | 5 | Que el baneo y el bloqueo muerdan de verdad | cr-proxy + vivo + web | media | ☑ **EN VIVO 27/08/2026** |
 | 6 | Velocidad del backend y progreso de ejercicios | cr-proxy | media | ☑ **EN VIVO 27/08/2026** |
-| 7 | Los arreglos de la web (+ pedido del autor: volver al salón sin perder el desafío) | index.html | media | ⏳ **hecha y probada 27/08 — FALTA PUBLICAR** |
-| 8 | Prolijidad y código muerto | los tres | corta | ☐ |
+| 7 | Los arreglos de la web (+ pedido del autor: volver al salón sin perder el desafío) | index.html | media | ☑ **EN VIVO 27/08/2026** |
+| 8 | Prolijidad y código muerto | cr-proxy + web | corta | ⏳ **hecha y probada 27/08 — FALTA PUBLICAR** |
 
 > **Con las fases 1 y 2 hechas, los dos hallazgos CRÍTICOS quedan cerrados.** De acá
 > en adelante no hay nada urgente: las fases 3 a 8 se pueden hacer en el orden que
@@ -795,7 +795,9 @@ sitio con el desafío abierto sí funciona bien; el problema es sólo volver al 
   un push nuevo (`_puzSetLocal` ya usa `_puzSyncApplying` para eso).
 - Chico: unas cinco líneas. Sin esto igual no se pierde nada, sólo se ve viejo hasta recargar.
 
-### Estado: hecha y probada el 27/08/2026 — **falta publicar**
+### ✅ PUBLICADA Y VERIFICADA — 27/08/2026
+
+Probado por el autor sobre el sitio: **volver al salón al crear un desafío funciona**, y el **modo autor abre bien** (que era el riesgo del 7.4). Lo único sin comprobar a mano es el 7.1 (los carteles que ya no le salen al visitante): hace falta llenarle el navegador a alguien, así que queda cubierto sólo por el banco de pruebas.
 
 **Una sola publicación:** `publicar-web.cmd`. No toca ningún worker.
 
@@ -894,6 +896,47 @@ el archivo para confirmar que sigue sin aparecer.
   "lo arreglé en el teléfono y en la compu sigue mal".
 - No vale la pena reestructurarlo. Lo práctico: un comentario grande arriba del
   bloque en los dos archivos, avisando que está duplicado.
+
+### Estado: hecha y probada el 27/08/2026 — **falta publicar**
+
+**Dos publicaciones, sin orden obligatorio** (los cambios no dependen entre sí; por costumbre,
+cr-proxy primero):
+
+1. cr-proxy (panel de Cloudflare → **Edit code** → pegar el archivo → **Deploy**) — es el 8.1.
+2. `publicar-web.cmd` — es el 8.2 y la mitad del 8.3. **Ojo: esta vez también cambia `editar.html`.**
+
+**8.1 · Moderadores por cuenta, no por nombre.** Se sumó la columna `is_mod` a la tabla de usuarios y
+un ayudante `esMod()` que la lee. Los dos nombres del dueño quedan como **semilla** (la migración los
+marca `is_mod=1` sola) y como **red de seguridad** (si la columna faltara, se sigue reconociendo por
+nombre, así el sitio nunca se queda sin moderador). A partir de ahora, **sumar un moderador es un
+UPDATE en la base, sin tocar el código ni publicar nada**.
+
+- `vivo-worker` **no se tocó**: ya lee `is_mod` de `/rating/me`, así que el cambio le llega solo.
+- `index.html` **tampoco**: ahí `is_mod` sólo decide quién VE los botones; el que manda es el
+  servidor, y eso ya estaba bien.
+- Cuidado que valió la pena: `sessionUser()` **no** pide la columna nueva. Se llama en todos lados, y
+  si alguna base todavía no la tuviera, ese `SELECT` tiraría y dejaría a **todo el mundo deslogueado**.
+  Donde hace falta se pide aparte, y siempre después de asegurar la tabla.
+
+**8.2 · Las quince funciones muertas: borradas.** Antes de tocar nada se comprobó una por una que el
+nombre no aparezca en NINGÚN otro lado del proyecto (no sólo en `index.html`: también en
+`editar.html`, los workers y los scripts). Las quince tenían exactamente una aparición: su propia
+definición. Al borrarlas, cada trozo se comprobó además con el parser de JavaScript, para que un
+conteo de llaves confundido no se llevara puesto código bueno. Se fueron ~8 KB.
+
+**8.3 · El aviso del código duplicado.** Comentario grande arriba del bloque en **los dos** archivos.
+Los números se midieron acá, no se copiaron del informe: de las funciones `gc…` y `_bd…`, **14 son
+idénticas letra por letra** y **17 comparten el nombre con el cuerpo ya distinto** (el informe contaba
+un bloque más amplio, por eso da otro número). Y en vez de dejarlo sólo en un comentario, el banco de
+pruebas ahora **vigila que esas 14 sigan iguales**: si alguien arregla una sola de las dos —el bug
+clásico de "en el teléfono anda y en la compu no"—, la prueba avisa.
+
+**Un tropiezo que quedó registrado.** El primer intento del aviso rompió toda la app: el texto decía
+`gc*` seguido de `/_bd*`, y esa barra con asterisco **cierra el comentario `/* */` antes de tiempo`.
+Lo cazó el chequeo de parseo antes de que llegara a ningún lado. Es primo del cuidado que ya está
+anotado en `CLAUDE.md` sobre `</script>` dentro de textos.
+
+Bancos de pruebas: `test-cuentas.mjs` pasó a **59** comprobaciones y `test-web.mjs` a **60**.
 
 ### 8.4 · Sin acción: el identificador de sala de 8 caracteres `[27]`
 

@@ -186,5 +186,44 @@ console.log('\n=== 9. Los comentarios que mentían sobre el bloqueo (7.6) ===');
   chk(/Bloquear = EN LA CUENTA/.test(SRC), 'y ahora dice lo que realmente hace');
 }
 
+console.log('\n=== 10. Las quince funciones muertas ya no están (8.2) ===');
+{
+  const MUERTAS = ['_vsBase', 'pgnDetectTourName', 'pgnShowResult', '_fsClearHandle', 'crShowStatus',
+    'crParseHtml', 'crShowPreview', '_lookupOpeningByEpds', 'openMasterGame', '_card3Heading',
+    '_openWithArgFilter', 'flyerImgHtml', 'lvRatTxt', 'whoWins', 'copyLink'];
+  const EDITAR = fs.readFileSync(new URL('./editar.html', import.meta.url), 'utf8');
+  var vivas = MUERTAS.filter(function (n) {
+    var re = new RegExp('\\b' + n + '\\b');
+    return re.test(SRC) || re.test(EDITAR);
+  });
+  chk(vivas.length === 0, 'ninguna de las quince quedó, ni suelta ni llamada', vivas.join(', ') || 'ninguna');
+}
+
+console.log('\n=== 11. El bloque duplicado entre index.html y editar.html (8.3) ===');
+{
+  const EDITAR = fs.readFileSync(new URL('./editar.html', import.meta.url), 'utf8');
+  chk(SRC.includes('ESTE BLOQUE ESTÁ DUPLICADO'), 'index.html avisa que el bloque está duplicado');
+  chk(EDITAR.includes('ESTE BLOQUE ESTÁ DUPLICADO'), 'editar.html también');
+
+  // Guardia de verdad: las que HOY son iguales letra por letra tienen que seguir iguales. Si alguien
+  // arregla una sola de las dos —el bug clásico de "en el teléfono anda y en la compu no"—, esto avisa.
+  // Si en algún momento se decide que una DEBE ser distinta, se la saca de esta lista a propósito.
+  const GEMELAS = ['_bdIsPromo', '_bdPaint', '_gcTag', '_gcVal', 'gcBindBoard', 'gcFlip',
+    'gcHandleClick', 'gcNavFirst', 'gcNavLast', 'gcNavNext', 'gcNavPrev', 'gcRefreshSave',
+    'gcResetGame', 'gcUndo'];
+  function cuerpo(src, nombre) {
+    const i = src.indexOf('function ' + nombre + '(');
+    if (i < 0) return null;
+    let d = 0, empezo = false;
+    for (let k = src.indexOf('{', i); k < src.length; k++) {
+      if (src[k] === '{') { d++; empezo = true; }
+      else if (src[k] === '}') { d--; if (empezo && d === 0) return src.slice(i, k + 1).replace(/\r/g, '').replace(/[ \t]+/g, ' ').trim(); }
+    }
+    return null;
+  }
+  const rotas = GEMELAS.filter(function (n) { return cuerpo(SRC, n) !== cuerpo(EDITAR, n); });
+  chk(rotas.length === 0, 'las catorce gemelas siguen idénticas en los dos archivos', rotas.join(', ') || 'ninguna cambió');
+}
+
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.') + '\n');
 process.exitCode = fallos ? 1 : 0;

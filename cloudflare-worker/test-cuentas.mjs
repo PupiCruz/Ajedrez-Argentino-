@@ -3,8 +3,9 @@
 //
 // Cubre la Fase 4 de la auditoría (frenos de frecuencia, cierre del redactor con IA, freno del PIN
 // por IP y tope de partidas rateadas entre las mismas dos cuentas), la parte de la Fase 5 que vive
-// acá (el endpoint /mod/status con el que los chats revalidan las sanciones) y la Fase 6 (velocidad
-// de /rating/me y progreso de ejercicios que no se pisa entre dispositivos).
+// acá (el endpoint /mod/status con el que los chats revalidan las sanciones), la Fase 6 (velocidad
+// de /rating/me y progreso de ejercicios que no se pisa entre dispositivos) y la Fase 8 (moderadores
+// por cuenta y no por nombre de usuario).
 // Se ataca por la puerta real del Worker (su fetch), con una base de datos de mentira.
 
 // ── Base de datos de mentira: entiende sólo las consultas que usa el Worker ──
@@ -14,11 +15,14 @@ function mkDB() {
       { id: 'u_ana', provider: 'lichess', prov_id: '1', username: 'Ana', rating: 1800, title: null, banned: 0, chat_muted_until: 0, dnd: 0 },
       { id: 'u_beto', provider: 'lichess', prov_id: '2', username: 'Beto', rating: 1500, title: null, banned: 0, chat_muted_until: 0, dnd: 0 },
       { id: 'u_mod', provider: 'lichess', prov_id: '3', username: 'ElPupiCruz', rating: 2000, title: null, banned: 0, chat_muted_until: 0, dnd: 0 },
+      // Moderador por la COLUMNA is_mod, con un nombre que NO está escrito en el código (Fase 8).
+      { id: 'u_ayud', provider: 'lichess', prov_id: '4', username: 'Ayudante', rating: 1700, title: null, banned: 0, chat_muted_until: 0, dnd: 0, is_mod: 1 },
     ],
     sessions: [
       { token: 'sess-ana', user_id: 'u_ana', created_at: 1, expires: 9e9 },
       { token: 'sess-beto', user_id: 'u_beto', created_at: 1, expires: 9e9 },
       { token: 'sess-mod', user_id: 'u_mod', created_at: 1, expires: 9e9 },
+      { token: 'sess-ayud', user_id: 'u_ayud', created_at: 1, expires: 9e9 },
       { token: 'sess-vieja', user_id: 'u_ana', created_at: 1, expires: 100 },
     ],
     ratings: [], rated_games: [], reports: [], admin_rl: [], follows: [], blocks: [], user_puzzle: [],
@@ -45,12 +49,15 @@ function mkDB() {
     }
     if (S.startsWith('DELETE FROM sessions WHERE expires <')) { t.sessions = t.sessions.filter((x) => x.expires >= a[0]); return {}; }
     if (S.startsWith('DELETE FROM reports WHERE handled=1')) { t.reports = t.reports.filter((x) => !(x.handled === 1 && x.created_at < a[0])); return {}; }
-    if (S.includes('SELECT dnd FROM usuarios')) { const r = t.usuarios.find((x) => x.id === a[0]) || null; return modo === 'all' ? (r ? [r] : []) : r; }
+    if (S.includes('SELECT dnd, is_mod FROM usuarios')) { const r = t.usuarios.find((x) => x.id === a[0]) || null; return modo === 'all' ? (r ? [r] : []) : r; }
     if (S.includes('SELECT id, username FROM usuarios WHERE id=')) return t.usuarios.find((x) => x.id === a[0]) || null;
     if (S.includes('SELECT id FROM usuarios WHERE id=')) return t.usuarios.find((x) => x.id === a[0]) || null;
     if (S.startsWith('UPDATE usuarios SET display_name')) { return {}; }
     if (S.startsWith('UPDATE usuarios SET dnd')) { return {}; }
-    if (S.includes('SELECT id, username, banned, chat_muted_until FROM usuarios WHERE id=')) return t.usuarios.find((x) => x.id === a[0]) || null;
+    if (S.includes('banned, chat_muted_until, is_mod FROM usuarios WHERE id=')) return t.usuarios.find((x) => x.id === a[0]) || null;
+    if (S.includes('banned, chat_muted_until, is_mod FROM usuarios WHERE LOWER(username)')) return t.usuarios.find((x) => String(x.username).toLowerCase() === String(a[0]).toLowerCase()) || null;
+    if (S.includes('SELECT is_mod FROM usuarios WHERE id=')) return t.usuarios.find((x) => x.id === a[0]) || null;
+    if (S.startsWith('UPDATE usuarios SET is_mod=1')) { for (const u of t.usuarios) if (a.some((n) => String(n).toLowerCase() === String(u.username).toLowerCase())) u.is_mod = 1; return {}; }
     if (S.startsWith('UPDATE usuarios SET banned=1')) { const u = t.usuarios.find((x) => x.id === a[0]); if (u) { u.banned = 1; u.banned_at = a[1]; u.banned_reason = a[2]; } return {}; }
     if (S.startsWith('UPDATE usuarios SET banned=0')) { const u = t.usuarios.find((x) => x.id === a[0]); if (u) { u.banned = 0; u.banned_at = null; u.banned_reason = null; } return {}; }
     if (S.startsWith('UPDATE usuarios SET chat_muted_until')) { const u = t.usuarios.find((x) => x.id === a[0]); if (u) u.chat_muted_until = a[1]; return {}; }
@@ -289,6 +296,40 @@ console.log('\n=== 8. El progreso de ejercicios ya no se pisa entre dispositivos
   const resp = await json(await guardar(compu));
   chk(resp.ok === true && resp.progress && resp.progress.solved === 51,
       'al guardar se devuelve el progreso ya fusionado', resp.progress && resp.progress.solved);
+}
+
+console.log('\n=== 9. Moderadores por cuenta, no por nombre de usuario (Fase 8) ===');
+{
+  const H = { 'X-Vivo-Secret': 'secreto-vivo', 'Content-Type': 'application/json' };
+  // "Ayudante" no está escrito en ningún lado del código: es moderador sólo por la columna is_mod.
+  const ay = await json(await pedir('/mod/status', { method: 'POST', headers: H, body: '{"userId":"u_ayud"}' }));
+  chk(ay.is_mod === true, 'una cuenta marcada en la BASE figura como moderadora', ay.is_mod);
+  const ana = await json(await pedir('/mod/status', { method: 'POST', headers: H, body: '{"userId":"u_ana"}' }));
+  chk(ana.is_mod === false, 'y una cuenta normal sigue sin serlo', ana.is_mod);
+
+  // Y puede moderar de verdad, con su propia sesión (antes esto era imposible sin tocar el código).
+  const r = await pedir('/mod/mute', { method: 'POST', headers: { Authorization: 'Bearer sess-ayud', 'Content-Type': 'application/json' }, body: '{"userId":"u_ana","minutes":15}' });
+  chk(r.status === 200, 'puede silenciar con su sesión, sin estar escrito en el código', r.status);
+  const noMod = await pedir('/mod/mute', { method: 'POST', headers: { Authorization: 'Bearer sess-ana', 'Content-Type': 'application/json' }, body: '{"userId":"u_beto","minutes":15}' });
+  chk(noMod.status === 403, 'y una cuenta normal sigue sin poder', noMod.status);
+  await pedir('/mod/unmute', { method: 'POST', headers: H, body: '{"userId":"u_ana"}' });
+
+  // Tampoco se lo puede sancionar, igual que a los del dueño.
+  const contra = await pedir('/mod/ban', { method: 'POST', headers: H, body: '{"userId":"u_ayud"}' });
+  chk(contra.status === 400, 'no se puede banear a un moderador de la columna', contra.status);
+  const dueño = await pedir('/mod/ban', { method: 'POST', headers: H, body: '{"userId":"u_mod"}' });
+  chk(dueño.status === 400, 'ni a las cuentas del dueño', dueño.status);
+
+  // La semilla: al migrar, las cuentas del dueño quedan marcadas en la base.
+  chk(DB.tablas.usuarios.find((u) => u.id === 'u_mod').is_mod === 1,
+      'la migración marcó is_mod=1 en las cuentas del dueño', DB.tablas.usuarios.find((u) => u.id === 'u_mod').is_mod);
+  chk(!DB.tablas.usuarios.find((u) => u.id === 'u_ana').is_mod, 'y no tocó a las demás');
+
+  // Red de seguridad: aunque la columna se borrara, el dueño sigue entrando por la lista de nombres.
+  DB.tablas.usuarios.find((u) => u.id === 'u_mod').is_mod = 0;
+  const igual = await pedir('/mod/mute', { method: 'POST', headers: { Authorization: 'Bearer sess-mod', 'Content-Type': 'application/json' }, body: '{"userId":"u_ana","minutes":15}' });
+  chk(igual.status === 200, 'sin la columna, el dueño sigue moderando por su nombre (red de seguridad)', igual.status);
+  await pedir('/mod/unmute', { method: 'POST', headers: H, body: '{"userId":"u_ana"}' });
 }
 
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.') + '\n');
