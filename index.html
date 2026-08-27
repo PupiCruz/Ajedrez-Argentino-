@@ -6389,7 +6389,7 @@ function crRefreshSection(key,afterTab){
    para que viajen solos al publicar (vía _collectCrData). Render aparte de los cruces individuales.
 ═══════════════════════════════════════════════════════ */
 var _TEAM_TITLES=/^(GM|IM|FM|WGM|WIM|WFM|CM|NM|WCM|WNM|AFM|AGM|AIM|AGF|HM)$/;
-var _TEAM_RES=/^(1\s*-\s*0|0\s*-\s*1|½\s*-\s*½|1\/2\s*-\s*1\/2|\+\s*-\s*-|-\s*-\s*\+|0\s*-\s*0|0\.5\s*-\s*0\.5)$/;
+var _TEAM_RES=/^(1\s*-\s*0|0\s*-\s*1|½\s*-\s*½|1\/2\s*-\s*1\/2|\+\s*-\s*-|-\s*-\s*\+|0\s*-\s*0|0\.5\s*-\s*0\.5|-\s*-\s*-)$/;
 function _teamNormRes(r){ return (r||'').replace(/\s*-\s*/g,'-').replace('1/2-1/2','½-½').replace(/0\.5-0\.5/,'½-½'); }
 function _teamStripColor(n){ return (n||'').replace(/\s*\((?:b|n|w|s)\)\s*$/i,'').replace(/[■□▪▫]/g,'').trim(); }
 
@@ -8563,7 +8563,7 @@ async function _crParseRoundAsync(key,bytes){
 
     var TITLES=/^(GM|IM|FM|WGM|WIM|WFM|CM|NM|WCM|AFM|AGM|WNM|AIM)$/;
     // Acepta con o sin espacios: "1 - 0", "1-0", "½ - ½", "½-½", etc.
-    var RESULTS=/^(1\s*-\s*0|0\s*-\s*1|½\s*-\s*½|1\/2\s*-\s*1\/2|\+\s*-\s*-|-\s*-\s*\+|0\.5\s*-\s*0\.5)$/;
+    var RESULTS=/^(1\s*-\s*0|0\s*-\s*1|½\s*-\s*½|1\/2\s*-\s*1\/2|\+\s*-\s*-|-\s*-\s*\+|0\.5\s*-\s*0\.5|-\s*-\s*-)$/;
     function normRes(r){ return r.replace(/\s*-\s*/g,'-').replace('1/2-1/2','½-½').replace(/0\.5-0\.5/,'½-½'); }
     // Layout Chess-Results: [No.] [M.] Tít Nombre Elo Pts RES Pts Tít Nombre Elo [No.]
     // Detectamos el offset del M. comparando con header row si existe
@@ -8625,7 +8625,7 @@ function _crSplitTitle(name){
 // y con Pts (suizo por ronda, sin Elo). Admite resultado vacío. No guarda nada (puro).
 function _crParseSections(rows,roundHdrIdx){
   var TITLES=/^(GM|IM|FM|WGM|WIM|WFM|CM|NM|WCM|AFM|AGM|WNM|AIM)$/;
-  var RESULTS=/^(1\s*-\s*0|0\s*-\s*1|½\s*-\s*½|1\/2\s*-\s*1\/2|\+\s*-\s*-|-\s*-\s*\+|0\.5\s*-\s*0\.5)$/;
+  var RESULTS=/^(1\s*-\s*0|0\s*-\s*1|½\s*-\s*½|1\/2\s*-\s*1\/2|\+\s*-\s*-|-\s*-\s*\+|0\.5\s*-\s*0\.5|-\s*-\s*-)$/;
   function normRes(r){ return (r||'').replace(/\s*-\s*/g,'-').replace('1/2-1/2','½-½').replace(/0\.5-0\.5/,'½-½'); }
   function detectCols(hdr){
     function find(re,from,to){ for(var i=(from||0);i<(to==null?hdr.length:to);i++){ if(re.test((hdr[i]||'').trim())) return i; } return -1; }
@@ -8867,6 +8867,14 @@ function _teamResolveFed(who, data){
 // Puntos de un tablero "1-0"/"0-1"/"½-½" como [ptsIzquierda, ptsDerecha] (izq = equipo A / columna nW).
 function _teamResPts(res){
   var s=String(res||'').replace(/\s/g,'');
+  // Incomparecencias, tal como las escribe Chess-Results una vez normalizadas por _teamNormRes:
+  // "+--" gana el de la izquierda, "--+" gana el de la derecha, "---" no se presento nadie.
+  // Sin estos tres casos la mesa no sumaba NADA, y el panel de rendimiento del equipo mostraba
+  // el marcador de menos (ej. Tunez-Ucrania 0:4 salia 0:3) y hasta el veredicto cambiado
+  // ("empato" donde en realidad gano). El historial individual (myResult) ya los entendia.
+  if(s==='+--') return [1,0];
+  if(s==='--+') return [0,1];
+  if(s==='---') return [0,0];
   if(s==='1-0'||s==='+-'||s==='1-0F') return [1,0];
   if(s==='0-1'||s==='-+'||s==='0-1F') return [0,1];
   if(/^(½-½|0\.5-0\.5|1\/2-1\/2|=-=)$/.test(s)) return [0.5,0.5];
@@ -10270,6 +10278,12 @@ function buildSplitData() {
   Object.keys(crAll).forEach(function(k) {
     var d = crAll[k];
     if (!d) return;
+    // Cuadros HUERFANOS: claves cr2_* de torneos que ya no existen (se borraron del sitio pero el
+    // cuadro quedo en los datos). Se publicaban igual —archivo + entrada en el indice del manifest—
+    // sin que nada pudiera abrirlos. metaSeen tiene TODOS los torneos, incluidos los playerOnly que
+    // no entran en "tournaments", asi que sirve para decidir sin dejar afuera ninguno de verdad.
+    var _idCr = k.replace(/^cr2_/, "").replace(/^(tz|ls|hc)_/, "").replace(/_c\d+$/, "");
+    if (!metaSeen[_idCr] && !metaSeen[String(_idCr).replace(/^(tz|ls|hc)_/, "")]) return;
     crFiles[k] = d;
     crIndex.push(k);
     var nm = [];
