@@ -126,6 +126,7 @@ export default {
     if (reqUrl.pathname === '/mod/mute')      return modMute(request, env, true);   // POST → silenciar (con duración)
     if (reqUrl.pathname === '/mod/unmute')    return modMute(request, env, false);  // POST → quitar el silencio
     if (reqUrl.pathname === '/mod/sanctions') return modSanctions(request, env);    // GET  → lista de baneados/silenciados
+    if (reqUrl.pathname === '/mod/status')    return modStatus(request, env);     // POST secreto (vivo-worker) → sanciones al día
     if (reqUrl.pathname === '/report')        return submitReport(request, env);    // POST Bearer → un usuario reporta a otro
     if (reqUrl.pathname === '/mod/reports')   return modReports(request, env);      // GET  → reportes pendientes (para el panel)
     if (reqUrl.pathname === '/mod/report/done') return modReportDone(request, env); // POST → marcar reporte(s) como visto
@@ -1357,6 +1358,49 @@ async function modSanctions(request, env) {
     muted = ((mu && mu.results) || []).map((r) => ({ userId: r.id, username: r.username, until: r.chat_muted_until || 0 }));
   } catch (e) { return errJson('D1 error: ' + e.message, 500); }
   return jsonResp({ banned, muted });
+}
+
+// POST /mod/status  { userId }  — SÓLO para el vivo-worker (header X-Vivo-Secret), no para el navegador.
+// Devuelve el estado de moderación AL DÍA de un usuario: si está baneado, hasta cuándo está silenciado,
+// si es moderador, y sus dos listas de bloqueo. Es la versión BARATA de /rating/me (3 consultas en vez de
+// una docena: sin ratings, sin táctica, sin perfil), justamente porque los chats la llaman seguido.
+//
+// Para qué: antes cada chat se sacaba una "foto" de quién sos y si estabas sancionado al conectarte y no
+// la volvía a mirar nunca. Resultado: al banear a alguien, sus pestañas ya abiertas seguían escribiendo
+// hasta que recargara. Ahora los chats revalidan con esto cada tanto y el baneo muerde en el acto.
+async function modStatus(request, env) {
+  if (request.method !== 'POST') return errJson('Usá POST', 405);
+  if (!env.DB) return errJson('Falta el binding D1 (DB)', 500);
+  // Sólo el worker de vivo. No se acepta la sesión de un mod acá: este endpoint devuelve datos de
+  // CUALQUIER usuario y no tiene por qué estar al alcance del navegador.
+  const secret = request.headers.get('X-Vivo-Secret') || '';
+  if (!env.VIVO_SECRET || secret !== env.VIVO_SECRET) return errJson('No autorizado', 403);
+  let body; try { body = await request.json(); } catch (e) { return errJson('JSON inválido', 400); }
+  const id = String(body.userId || '').trim().slice(0, 64);
+  if (!id) return errJson('Falta userId', 400);
+  await ensureUserTables(env);
+  let u;
+  try {
+    u = await env.DB.prepare('SELECT id, username, banned, chat_muted_until FROM usuarios WHERE id=?1').bind(id).first();
+  } catch (e) { return errJson('D1 error: ' + e.message, 500); }
+  if (!u) return errJson('Usuario no encontrado', 404);
+  // Bloqueos en las dos direcciones (a quiénes bloqueé / quiénes me bloquearon): el chat los usa para
+  // no entregarle el mensaje al que bloqueó a quien escribe.
+  let blocked = [], blockedBy = [];
+  try {
+    await ensureBlocksTable(env);
+    const b1 = await env.DB.prepare('SELECT blocked_id FROM blocks WHERE blocker_id=?1').bind(id).all();
+    blocked = ((b1 && b1.results) || []).map((r) => r.blocked_id);
+    const b2 = await env.DB.prepare('SELECT blocker_id FROM blocks WHERE blocked_id=?1').bind(id).all();
+    blockedBy = ((b2 && b2.results) || []).map((r) => r.blocker_id);
+  } catch (e) { /* si falla, sigue sin bloqueos */ }
+  return jsonResp({
+    ok: true, id: u.id, username: u.username,
+    banned: u.banned ? 1 : 0,
+    muted_until: Number(u.chat_muted_until || 0) || 0,
+    is_mod: MOD_USERNAMES.has(String(u.username || '').toLowerCase()),
+    blocked, blocked_by: blockedBy,
+  });
 }
 
 // Tabla de reportes (usuarios reportando a otros usuarios). Se crea sola (patrón perezoso).

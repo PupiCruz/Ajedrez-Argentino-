@@ -49,7 +49,7 @@ Los números entre corchetes —`[7]`, `[15]`— son el número de hallazgo del 
 | 2 | Las salas de partida sobreviven a la siesta | vivo | **larga** | ☑ **EN VIVO 26/08/2026** |
 | 3 | Frenos de abuso del chat y los desafíos | vivo | media | ☑ **EN VIVO 26/08/2026** |
 | 4 | Frenos de abuso y limpieza de la base | cr-proxy + web | media | ☑ **EN VIVO 26/08/2026** |
-| 5 | Que el baneo y el bloqueo muerdan de verdad | cr-proxy + vivo | media | ☐ |
+| 5 | Que el baneo y el bloqueo muerdan de verdad | cr-proxy + vivo (+ 12 líneas de web) | media | ⏳ **hecha y probada 26/08 — FALTA PUBLICAR** |
 | 6 | Velocidad del backend y progreso de ejercicios | cr-proxy | media | ☐ |
 | 7 | Los arreglos de la web (+ pedido del autor: volver al salón sin perder el desafío) | index.html | media | ☐ |
 | 8 | Prolijidad y código muerto | los tres | corta | ☐ |
@@ -113,6 +113,33 @@ Banco de pruebas nuevo: `cloudflare-worker/test-cuentas.mjs`, 18 comprobaciones.
 
 **Ojo:** de ahora en más hay que estar logueado con la cuenta de moderador para usar la IA,
 también en el modo autor local.
+
+**26/08/2026 — Fase 5 hecha y probada, falta publicar.** Los dos ítems (5.1 y 5.2) están hechos,
+con el camino **A** del 5.1 (revalidar cada tanto), que es el más simple y el que no obliga a que un
+worker le hable al otro. Resumen en criollo: **antes cada chat se sacaba una foto de "quién sos y si
+estás sancionado" al conectarte y no la volvía a mirar nunca**; ahora la vuelve a mirar, como mucho una
+vez por minuto, justo antes de procesar lo que mandás. Y el bloqueo en el chat **dejó de ser
+maquillaje**: el mensaje del bloqueado ya no le llega al que lo bloqueó (antes llegaba igual y el
+navegador lo tapaba con una regla de estilo; con el inspector abierto se leía lo mismo).
+
+Tres cosas para tener en cuenta:
+
+1. **Terminó tocando también `index.html`**, doce líneas. Motivo: el que bloquea es el navegador, así
+   que si no le avisa al servidor, el corte recién se nota cuando vence el minuto de la revalidación o
+   al recargar. Ahora, al bloquear/desbloquear, los chats abiertos mandan un `refresh-me` y el corte es
+   instantáneo. Si ese aviso se pierde, en un minuto se acomoda solo. **Son tres publicaciones** (ver el
+   orden abajo).
+2. **Nada de temporizadores.** La revalidación se dispara cuando la persona manda algo, nunca por reloj:
+   un temporizador impediría que el Durable Object se duerma, que es lo que costó caro el 23/08.
+   Si el servidor de cuentas no contesta (sin red), **no se toca nada**: nadie se queda sin escribir por
+   un problema de red.
+3. **El chat de la partida (PvP) es el único que no patea la conexión.** Ahí la revalidación corre en
+   segundo plano y sólo le corta el chat: cortarle la conexión a alguien en medio de una partida sería
+   peor que el spam que se quiere frenar.
+
+Los bancos de pruebas crecieron: **test-lobby.mjs de 31 a 52 comprobaciones** (siete escenarios nuevos)
+y **test-cuentas.mjs de 18 a 30**. Se corren con `cd vivo-worker && node test-lobby.mjs`,
+`node test-salas.mjs`, y `cd ajedrez-argentino/cloudflare-worker && node test-cuentas.mjs`.
 
 > ⚠️ **Cómo se publicó la mitad de la web (para que quede registrado).** El 26/08 se ejecutó
 > `publicar-web.cmd` **por accidente**, desde un comando de Claude cuyo escapado se rompió y
@@ -512,6 +539,48 @@ Toca **los dos workers**: publicar primero cr-proxy, después vivo-worker.
   es un `if` antes de enviar.
 - **No romper la excepción que ya está pensada:** un moderador sigue leyendo a todos,
   así nadie se esconde de la moderación bloqueando al mod.
+
+### Estado: hecha y probada el 26/08/2026 — **falta publicar**
+
+**Qué se cambió, archivo por archivo.**
+
+`cloudflare-worker/cr-proxy-worker.js` — un endpoint nuevo, `POST /mod/status`:
+
+- Devuelve el estado de moderación **al día** de un usuario: baneado sí/no, hasta cuándo dura el
+  silencio, si es moderador, y sus dos listas de bloqueo (a quiénes bloqueó y quiénes lo bloquearon).
+- Es la versión **barata** de `/rating/me`: 3 consultas en vez de una docena (sin ratings, sin
+  táctica, sin perfil). Justamente porque los chats la van a llamar seguido.
+- **Sólo worker a worker** (header `X-Vivo-Secret`). No lo puede llamar el navegador, ni siquiera con
+  la sesión del moderador: devuelve datos de cualquier usuario y no tiene por qué estar a mano.
+
+`vivo-worker/src/index.js` — la revalidación y el reparto del chat:
+
+- `fetchSanctionStatus()` + `sanctionStale()` + `recheckSanctions()`: la foto de sanciones ahora
+  tiene fecha (`sanctionAt`) y se renueva **como mucho una vez por minuto**, disparada por el mensaje
+  que manda la persona. Si sale baneada, se le cierra la conexión con el código 4003 y no se procesa
+  nada más. Si le sacaron el silencio, escribe enseguida.
+- `broadcastChat()`: el reparto del chat saltea a quien tiene bloqueo cruzado con el que escribe. La
+  **excepción pensada sigue en pie**: un moderador lee a todos, así nadie se esconde bloqueando al mod.
+  Y el autor siempre se ve su propio mensaje.
+- El mensaje nuevo `refresh-me`: el navegador avisa que acaba de bloquear a alguien y el servidor le
+  refresca las listas en el acto (con un freno de 5 segundos para que no se pueda abusar).
+- Los bloqueos ahora también viajan en el "attachment" del chat del torneo (antes sólo los tenía el
+  lobby), así sobreviven a que el Durable Object se duerma.
+
+`index.html` — doce líneas: al bloquear o desbloquear, avisarles a los chats abiertos.
+
+**Lo que NO cambió a propósito:** el historial que se manda al entrar a un chat sigue filtrándose en el
+navegador (el servidor lo manda antes de saber quién sos). No es un agujero nuevo: es exactamente lo que
+había, y lo que se arregló es el mensaje que llega **en vivo**, que es el que molesta.
+
+### Cómo se publica (el orden importa)
+
+1. **cr-proxy primero** (panel de Cloudflare → Worker `cr-proxy` → **Edit code** → pegar
+   `cr-proxy-worker.js` entero → **Deploy**). Sin esto, el paso 2 preguntaría por un endpoint que no
+   existe: no rompería nada (la revalidación falla y se queda con lo que había), pero no serviría.
+2. **vivo-worker después**: `cd vivo-worker` y `npm run deploy`.
+3. **La web al final**: `publicar-web.cmd`. Es la parte menos importante (sin ella el bloqueo igual
+   muerde, sólo que tarda hasta un minuto en notarse).
 
 ### Cómo se prueba la Fase 5
 

@@ -1,8 +1,9 @@
 // Banco de pruebas del Worker de cuentas (cr-proxy-worker.js).
 //   cd ajedrez-argentino/cloudflare-worker && node test-cuentas.mjs
 //
-// Cubre la Fase 4 de la auditoría: frenos de frecuencia, cierre del redactor con IA,
-// freno del PIN por IP y tope de partidas rateadas entre las mismas dos cuentas.
+// Cubre la Fase 4 de la auditoría (frenos de frecuencia, cierre del redactor con IA, freno del PIN
+// por IP y tope de partidas rateadas entre las mismas dos cuentas) y la parte de la Fase 5 que vive
+// acá: el endpoint /mod/status con el que los chats revalidan las sanciones.
 // Se ataca por la puerta real del Worker (su fetch), con una base de datos de mentira.
 
 // ── Base de datos de mentira: entiende sólo las consultas que usa el Worker ──
@@ -43,6 +44,13 @@ function mkDB() {
     if (S.includes('SELECT id FROM usuarios WHERE id=')) return t.usuarios.find((x) => x.id === a[0]) || null;
     if (S.startsWith('UPDATE usuarios SET display_name')) { return {}; }
     if (S.startsWith('UPDATE usuarios SET dnd')) { return {}; }
+    if (S.includes('SELECT id, username, banned, chat_muted_until FROM usuarios WHERE id=')) return t.usuarios.find((x) => x.id === a[0]) || null;
+    if (S.startsWith('UPDATE usuarios SET banned=1')) { const u = t.usuarios.find((x) => x.id === a[0]); if (u) { u.banned = 1; u.banned_at = a[1]; u.banned_reason = a[2]; } return {}; }
+    if (S.startsWith('UPDATE usuarios SET banned=0')) { const u = t.usuarios.find((x) => x.id === a[0]); if (u) { u.banned = 0; u.banned_at = null; u.banned_reason = null; } return {}; }
+    if (S.startsWith('UPDATE usuarios SET chat_muted_until')) { const u = t.usuarios.find((x) => x.id === a[0]); if (u) u.chat_muted_until = a[1]; return {}; }
+    if (S.startsWith('DELETE FROM sessions WHERE user_id=')) { t.sessions = t.sessions.filter((x) => x.user_id !== a[0]); return {}; }
+    if (S.includes('SELECT blocked_id FROM blocks WHERE blocker_id=')) return t.blocks.filter((b) => b.blocker_id === a[0]).map((b) => ({ blocked_id: b.blocked_id }));
+    if (S.includes('SELECT blocker_id FROM blocks WHERE blocked_id=')) return t.blocks.filter((b) => b.blocked_id === a[0]).map((b) => ({ blocker_id: b.blocker_id }));
     if (S.includes('FROM blocks WHERE')) return modo === 'all' ? [] : null;
     if (S.includes('FROM follows WHERE')) return modo === 'all' ? [] : null;
     if (S.includes('COUNT(*) AS n FROM rated_games')) {
@@ -163,6 +171,42 @@ console.log('\n=== 5. Las sesiones vencidas se limpian solas ===');
   await env.DB.prepare('DELETE FROM sessions WHERE expires < ?1').bind(Math.floor(Date.now() / 1000)).run();
   chk(!DB.tablas.sessions.some((s) => s.token === 'sess-vieja'), 'la vencida se borró');
   chk(DB.tablas.sessions.length === antes - 1, 'y las buenas siguen', DB.tablas.sessions.length);
+}
+
+console.log('\n=== 6. /mod/status: la consulta con la que los chats revalidan (Fase 5) ===');
+{
+  const H = { 'X-Vivo-Secret': 'secreto-vivo', 'Content-Type': 'application/json' };
+  const sin = await pedir('/mod/status', { method: 'POST', body: '{"userId":"u_ana"}' });
+  chk(sin.status === 403, 'sin el secreto → 403 (no está al alcance del navegador)', sin.status);
+  const conMod = await pedir('/mod/status', { method: 'POST', headers: { Authorization: 'Bearer sess-mod' }, body: '{"userId":"u_ana"}' });
+  chk(conMod.status === 403, 'ni siquiera con la sesión del moderador: es sólo worker a worker', conMod.status);
+  const nadie = await pedir('/mod/status', { method: 'POST', headers: H, body: '{"userId":"u_fantasma"}' });
+  chk(nadie.status === 404, 'un usuario que no existe → 404', nadie.status);
+
+  const ana = await json(await pedir('/mod/status', { method: 'POST', headers: H, body: '{"userId":"u_ana"}' }));
+  chk(ana.ok === true && ana.banned === 0 && ana.muted_until === 0, 'una cuenta sana: sin baneo ni silencio');
+  chk(ana.is_mod === false, 'y no figura como moderadora');
+  const mod = await json(await pedir('/mod/status', { method: 'POST', headers: H, body: '{"userId":"u_mod"}' }));
+  chk(mod.is_mod === true, 'la cuenta del autor sí figura como moderadora');
+
+  // Un mod sanciona por los endpoints de siempre: /mod/status lo tiene que reflejar en el acto.
+  await pedir('/mod/ban', { method: 'POST', headers: H, body: '{"userId":"u_beto","reason":"spam"}' });
+  const beto = await json(await pedir('/mod/status', { method: 'POST', headers: H, body: '{"userId":"u_beto"}' }));
+  chk(beto.banned === 1, 'después del baneo avisa que está baneado', beto.banned);
+  chk(!DB.tablas.sessions.some((s) => s.user_id === 'u_beto'), 'y el baneo le borró la sesión');
+  await pedir('/mod/mute', { method: 'POST', headers: H, body: '{"userId":"u_ana","minutes":30}' });
+  const ana2 = await json(await pedir('/mod/status', { method: 'POST', headers: H, body: '{"userId":"u_ana"}' }));
+  chk(ana2.muted_until > Math.floor(Date.now() / 1000), 'y del silencio devuelve hasta cuándo dura', ana2.muted_until);
+  await pedir('/mod/unmute', { method: 'POST', headers: H, body: '{"userId":"u_ana"}' });
+  const ana3 = await json(await pedir('/mod/status', { method: 'POST', headers: H, body: '{"userId":"u_ana"}' }));
+  chk(ana3.muted_until === 0, 'quitado el silencio, vuelve a cero (esto es lo que lo hace inmediato)', ana3.muted_until);
+
+  // Los bloqueos viajan en las DOS direcciones: son los que usa el reparto del chat.
+  DB.tablas.blocks.push({ blocker_id: 'u_ana', blocked_id: 'u_beto', created_at: 1 });
+  const ana4 = await json(await pedir('/mod/status', { method: 'POST', headers: H, body: '{"userId":"u_ana"}' }));
+  chk(JSON.stringify(ana4.blocked) === '["u_beto"]', 'devuelve a quiénes bloqueó', JSON.stringify(ana4.blocked));
+  const beto2 = await json(await pedir('/mod/status', { method: 'POST', headers: H, body: '{"userId":"u_beto"}' }));
+  chk(JSON.stringify(beto2.blocked_by) === '["u_ana"]', 'y quiénes lo bloquearon a él', JSON.stringify(beto2.blocked_by));
 }
 
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.') + '\n');
