@@ -5121,13 +5121,43 @@ function crDataSave(key, data) {
 // Junta TODOS los cuadros de cruces/tabla (cr2_*) para embeberlos en el archivo, así viajan con
 // los datos (doble clic ⇄ servidor ⇄ web publicada) y no quedan atrapados en un solo navegador.
 // Merge: base = los del archivo (__EMBEDDED_CR__), encima los de localStorage (ediciones locales mandan).
+// Saca las mesas REPETIDAS de un cuadro por equipos. Algunos .xlsx de Chess-Results traen la misma
+// mesa 2 o 4 veces dentro de un cruce (ver el salteo de duplicados en _teamParseRounds). El parser ya
+// no las deja pasar, pero los datos guardados de ANTES del arreglo las siguen teniendo y al publicar
+// se copiarían tal cual a data/cr/<key>.json. Devuelve el MISMO objeto si no había repetidos (el caso
+// normal: no copia nada) y una copia limpia si los había — nunca toca los datos del modo autor.
+function _crDedupBoards(d) {
+  if (!d || !d.teamRounds) return d;
+  var rounds = null;
+  Object.keys(d.teamRounds).forEach(function(r) {
+    var ms = d.teamRounds[r] || [], limpio = null;
+    ms.forEach(function(m, i) {
+      var b = (m && m.boards) || [];
+      if (b.length < 2) return;
+      var vistas = {}, out = [];
+      b.forEach(function(x) {
+        var k = [x.tW, x.nW, x.eW, x.tB, x.nB, x.eB, x.res].join("|");
+        if (vistas[k] === 1) return;   // ===1 y no truthy: así una mesa llamada "constructor" no engaña
+        vistas[k] = 1; out.push(x);
+      });
+      if (out.length === b.length) return;
+      if (!limpio) limpio = ms.slice();
+      limpio[i] = Object.assign({}, m, { boards: out });
+    });
+    if (limpio) {
+      if (!rounds) { rounds = {}; Object.keys(d.teamRounds).forEach(function(x) { rounds[x] = d.teamRounds[x]; }); }
+      rounds[r] = limpio;
+    }
+  });
+  return rounds ? Object.assign({}, d, { teamRounds: rounds }) : d;
+}
 function _collectCrData() {
   var out = {};
-  try { if (window.__EMBEDDED_CR__) for (var k in window.__EMBEDDED_CR__) if (Object.prototype.hasOwnProperty.call(window.__EMBEDDED_CR__, k)) out[k] = window.__EMBEDDED_CR__[k]; } catch(e) {}
+  try { if (window.__EMBEDDED_CR__) for (var k in window.__EMBEDDED_CR__) if (Object.prototype.hasOwnProperty.call(window.__EMBEDDED_CR__, k)) out[k] = _crDedupBoards(window.__EMBEDDED_CR__[k]); } catch(e) {}
   try {
     for (var i = 0; i < localStorage.length; i++) {
       var lk = localStorage.key(i);
-      if (lk && lk.indexOf('cr2_') === 0) { try { out[lk] = JSON.parse(localStorage.getItem(lk)); } catch(e) {} }
+      if (lk && lk.indexOf('cr2_') === 0) { try { out[lk] = _crDedupBoards(JSON.parse(localStorage.getItem(lk))); } catch(e) {} }
     }
   } catch(e) {}
   return out;
@@ -6397,22 +6427,52 @@ function _teamParseStandings(rows){
   return { kind:isFinal?'final':'initial', teams:teams };
 }
 
+// ¿Esta ronda trae DE VERDAD la formación, o sea al menos una mesa con jugadores? Chess-Results
+// publica los cruces equipo-vs-equipo apenas termina la ronda anterior, pero la composición de cada
+// equipo recién sale un par de horas antes de jugar. En esa ventana el art=3 puede venir con las
+// cabeceras de los cruces y ninguna mesa: eso NO es una formación. Si la dejáramos pasar, la web
+// aterrizaría en una pestaña ♟ Formaciones vacía (en vez de en los cruces, que ya muestran lo mismo
+// y mejor) y, en el panel de rendimiento de un país, esa ronda taparía como “pendiente” el resultado
+// del match que los cruces sí traen.
+function _teamRoundHasBoards(ms){ return (ms||[]).some(function(m){ return (m.boards||[]).length>0; }); }
+
 // Parser de EMPAREJAMIENTOS POR MESAS por equipos (1 o varias rondas). Devuelve {num:[matches]}.
 function _teamParseRounds(rows){
   var hdrs=[];
   for(var i=0;i<rows.length;i++){ var line=rows[i].join(' '); var m=line.match(/(\d+)\.\s*Ronda/i)||line.match(/Ronda\s+(\d+)/i)||line.match(/Round\s+(\d+)/i); if(m) hdrs.push({row:i,num:parseInt(m[1])}); }
   function parseRange(start,end){
-    var matches=[], cur=null;
+    var matches=[], cur=null, vistas=null;
     for(var i=start;i<end;i++){
       var r=rows[i]; if(!r.length) continue;
       var c0=(r[0]||'').trim();
       if(/^M\.?$/i.test(c0)){
         var score=''; for(var c=r.length-1;c>=0;c--){ if((r[c]||'').indexOf(':')>=0){ score=(r[c]||'').trim(); break; } }
         cur={ aNo:(r[1]||'').trim(), aName:(r[2]||'').trim(), bNo:(r[5]||'').trim(), bName:(r[6]||'').trim(), score:score, boards:[] };
+        vistas={};   // mesas ya vistas en ESTE cruce (ver el salteo de duplicados de abajo)
         if(cur.aName||cur.bName) matches.push(cur); else cur=null;
       } else if(/^\d+\/\d+$/.test(c0)){
         if(!cur) continue;
+        // El .xlsx de Chess-Results repite la misma mesa 2 o 4 veces en algunos cruces (visto en la
+        // Olimpiada de Budapest 2024: R9 Argentina-Estonia traía 16 filas para 4 mesas). Eso hacía
+        // que la formación mostrara a cada jugador varias veces y que el panel de rendimiento del
+        // país sumara de más ("12 : 4" donde el marcador real era "3 : 1"). El nº de mesa ("21/1")
+        // es único dentro de un cruce: si ya lo vimos acá, la fila es un duplicado del propio archivo.
+        if(vistas && vistas[c0]) continue;
+        if(vistas) vistas[c0]=1;
         var rIdx=-1; for(var c3=r.length-1;c3>=1;c3--){ if(_TEAM_RES.test((r[c3]||'').trim())){ rIdx=c3; break; } }
+        // Ronda TODAVÍA SIN JUGAR: Chess-Results publica la formación (el plantel de cada equipo)
+        // la noche anterior, con la columna de resultado VACÍA. Al no haber resultado no había dónde
+        // anclar las columnas y la mesa se descartaba entera → la pestaña "Formaciones" salía con
+        // los cruces pero SIN jugadores. Anclamos entonces en el separador "-" que va siempre entre
+        // los dos lados de la mesa (…|títuloW|nombreW|eloW|-|títuloB|nombreB|eloB|resultado): el
+        // resultado cae 4 columnas a su derecha, así que los desplazamientos de abajo siguen valiendo.
+        if(rIdx<4){
+          for(var c4=4;c4<r.length;c4++){
+            // Solo si el casillero del resultado (c4+4) está VACÍO: así el fallback entra únicamente
+            // en la ronda sin jugar y NO cambia nada de lo que ya venía andando en las rondas jugadas.
+            if((r[c4]||'').trim()==='-' && (r[c4+2]||'').trim() && !(r[c4+4]||'').trim()){ rIdx=c4+4; break; }
+          }
+        }
         if(rIdx<4) continue;
         var eB=parseInt(r[rIdx-1])||'', nB=(r[rIdx-2]||'').trim(), tB=(r[rIdx-3]||'').trim();
         var eW=parseInt(r[rIdx-5])||'', nW=(r[rIdx-6]||'').trim(), tW=(r[rIdx-7]||'').trim();
@@ -6425,9 +6485,9 @@ function _teamParseRounds(rows){
   }
   var out={};
   if(hdrs.length){
-    for(var k=0;k<hdrs.length;k++){ var s=hdrs[k].row+1, e=(k+1<hdrs.length)?hdrs[k+1].row:rows.length; var ms=parseRange(s,e); if(ms.length) out[hdrs[k].num]=ms; }
+    for(var k=0;k<hdrs.length;k++){ var s=hdrs[k].row+1, e=(k+1<hdrs.length)?hdrs[k+1].row:rows.length; var ms=parseRange(s,e); if(_teamRoundHasBoards(ms)) out[hdrs[k].num]=ms; }
   } else {
-    var ms2=parseRange(0,rows.length); if(ms2.length){ var n=prompt('No se detectó el número de ronda.\n¿Qué ronda es este archivo?'); var rn=parseInt(n); if(rn>0) out[rn]=ms2; }
+    var ms2=parseRange(0,rows.length); if(_teamRoundHasBoards(ms2)){ var n=prompt('No se detectó el número de ronda.\n¿Qué ronda es este archivo?'); var rn=parseInt(n); if(rn>0) out[rn]=ms2; }
   }
   return out;
 }
@@ -6727,7 +6787,9 @@ function _teamRenderSection(crk,data){
   data=data||{};
   var rounds=data.teamRounds||{};
   var crosses=data.teamCrosses||{};
-  var roundNums=Object.keys(rounds).map(Number).sort(function(a,b){return a-b;});
+  // Solo las rondas con formación de verdad. El filtro va acá además de en el parser porque puede
+  // haber rondas huecas ya guardadas de antes (o subidas a mano) que si no seguirían apareciendo.
+  var roundNums=Object.keys(rounds).filter(function(r){ return _teamRoundHasBoards(rounds[r]); }).map(Number).sort(function(a,b){return a-b;});
   var crossNums=Object.keys(crosses).map(Number).sort(function(a,b){return a-b;});
   var hasStand=!!(data.teamStandings&&data.teamStandings.teams&&data.teamStandings.teams.length);
   // ¿Los equipos son PAÍSES (tienen código FIDE) o CLUBES? Para rotular "por países" vs "por equipos".
@@ -8835,6 +8897,7 @@ function crOpenCountry(key, who){
   // Olimpiadas, donde el cruce sale antes que la formación). Así no se pierde ninguna ronda.
   var tr=data.teamRounds||{};
   Object.keys(tr).forEach(function(r){
+    if(!_teamRoundHasBoards(tr[r])) return;   // ronda sin formación todavía → que la rellenen los cruces
     (tr[r]||[]).forEach(function(m){
       var pa=_teamCountryParts(m.aName), pb=_teamCountryParts(m.bName), meA=isMe(m.aName,''), meB=isMe(m.bName,''); if(!meA&&!meB) return;
       var mine=meA?pa:pb; cname=mine.clean||cname; if(!cfed&&mine.fed) cfed=mine.fed;
