@@ -136,8 +136,23 @@ Tres cosas para tener en cuenta:
 3. **El chat de la partida (PvP) es el único que no patea la conexión.** Ahí la revalidación corre en
    segundo plano y sólo le corta el chat: cortarle la conexión a alguien en medio de una partida sería
    peor que el spam que se quiere frenar.
+4. **El baneado volvía "de invitado" — encontrado probando en producción.** Al patear a un baneado,
+   su navegador **se reconecta solo**; como el baneo le borró la sesión, volvía sin identidad, o sea
+   como un invitado. Un invitado no puede escribir en el chat (bien), pero **sí podía publicar
+   desafíos** —eso es así desde siempre, para la gente que juega sin cuenta— y como el nombre del
+   invitado lo elige el navegador, el desafío seguía saliendo con su mismo nombre. Arreglado por los
+   dos lados: el servidor no le acepta desafíos a una conexión que trajo un token que ya no vale
+   (`hadAuth` sin `userId`), y el navegador, ante el cierre 4003, **deja de reconectar** y avisa
+   "Tu cuenta está suspendida". El invitado de verdad (el que nunca tuvo cuenta) sigue jugando igual.
+   Se cazó mirando el registro en vivo de cr-proxy (`npx wrangler tail cr-proxy --method POST`), que
+   mostró que la revalidación **sí** se estaba haciendo y que el agujero estaba después.
+5. **Cuánto tarda en notarse el baneo, por si vuelve la pregunta.** La cuenta se cierra en la base al
+   instante (por eso al recargar la persona sale del sitio), pero una **pestaña ya abierta** tiene
+   inercia: publicar/aceptar un desafío se corta **en el acto**, y el chat, **hasta un minuto**. Ojo
+   además con esto al probar: una conexión abierta desde ANTES de publicar el worker sigue con el
+   código viejo hasta que se reconecta, así que conviene recargar la pestaña después del deploy.
 
-Los bancos de pruebas crecieron: **test-lobby.mjs de 31 a 52 comprobaciones** (siete escenarios nuevos)
+Los bancos de pruebas crecieron: **test-lobby.mjs de 31 a 62 comprobaciones** (nueve escenarios nuevos)
 y **test-cuentas.mjs de 18 a 30**. Se corren con `cd vivo-worker && node test-lobby.mjs`,
 `node test-salas.mjs`, y `cd ajedrez-argentino/cloudflare-worker && node test-cuentas.mjs`.
 
@@ -559,6 +574,11 @@ Toca **los dos workers**: publicar primero cr-proxy, después vivo-worker.
   tiene fecha (`sanctionAt`) y se renueva **como mucho una vez por minuto**, disparada por el mensaje
   que manda la persona. Si sale baneada, se le cierra la conexión con el código 4003 y no se procesa
   nada más. Si le sacaron el silencio, escribe enseguida.
+- `ACCIONES_SIN_ESPERA` = `create`, `challenge-direct`, `accept`: **esas tres no esperan al minuto**,
+  se pregunta siempre. Son cosas que pasan una vez cada tanto, así que preguntar siempre no cuesta
+  nada, y es donde peor queda que un baneado siga pudiendo (el autor lo probó y publicó un desafío con
+  la cuenta que acababa de banear). El **chat** queda con el minuto a propósito: ahí son muchos
+  mensajes seguidos y preguntar en cada uno le duplicaría la latencia y le sumaría consultas a la base.
 - `broadcastChat()`: el reparto del chat saltea a quien tiene bloqueo cruzado con el que escribe. La
   **excepción pensada sigue en pie**: un moderador lee a todos, así nadie se esconde bloqueando al mod.
   Y el autor siempre se ve su propio mensaje.
@@ -567,7 +587,9 @@ Toca **los dos workers**: publicar primero cr-proxy, después vivo-worker.
 - Los bloqueos ahora también viajan en el "attachment" del chat del torneo (antes sólo los tenía el
   lobby), así sobreviven a que el Durable Object se duerma.
 
-`index.html` — doce líneas: al bloquear o desbloquear, avisarles a los chats abiertos.
+`index.html` — al bloquear o desbloquear, avisarles a los chats abiertos; y ante el cierre 4003
+(cuenta suspendida) **dejar de reconectar** en la sala de Jugar y en el chat del torneo, en vez de
+volver como invitado.
 
 **Lo que NO cambió a propósito:** el historial que se manda al entrar a un chat sigue filtrándose en el
 navegador (el servidor lo manda antes de saber quién sos). No es un agujero nuevo: es exactamente lo que

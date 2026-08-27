@@ -31865,8 +31865,15 @@ function cvUpdateNagBadge() {
       lvSetAvailable();   // al (re)conectar, informar mi disponibilidad
     };
     lobbyWs.onmessage=function(e){ var m; try{ m=JSON.parse(e.data); }catch(_){ return; } handleLobby(m); };
-    lobbyWs.onclose=function(){
+    lobbyWs.onclose=function(ev){
       lobbyWs=null;
+      // 4003 = el servidor cortó porque la cuenta está suspendida. NO reconectar: si no, el navegador
+      // vuelve solo como invitado y el botón de desafiar sigue andando con el mismo nombre.
+      if(ev && ev.code===4003){
+        lvMyChallenge=null; lvChallenges=[]; renderChallenges();
+        setChalConn('Tu cuenta está suspendida. Si creés que es un error, escribinos.');
+        return;
+      }
       if(lvLobbyIntentional || !lvKeepLobby()) return;   // ya no hace falta → no reconectar
       if(lvLobbyTries<10){ lvLobbyTries++; setChalConn('Reconectando al lobby…'); lvLobbyTimer=setTimeout(lobbyConnect, Math.min(1200*lvLobbyTries,6000)); }
       else setChalConn('Sin conexión al lobby.');
@@ -32478,7 +32485,9 @@ function cvUpdateNagBadge() {
       else if(m.type==='msg-deleted'){ tcMsgs=tcMsgs.filter(function(x){ return x.id!==m.id; }); tcRemoveNode(m.id); }
       else if(m.type==='muted'){ tcMutedNotice(m.until); }
     };
-    tcWs.onclose=function(){ tcWs=null; if(tcIntentional || !tcRoom) return;
+    tcWs.onclose=function(ev){ tcWs=null;
+      if(ev && ev.code===4003) return;   // cuenta suspendida: no reconectar (ver el lobby)
+      if(tcIntentional || !tcRoom) return;
       if(tcTries<10){ tcTries++; tcTimer=setTimeout(tcConnect, Math.min(1200*tcTries,6000)); } };
     tcWs.onerror=function(){};
   }
