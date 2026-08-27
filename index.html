@@ -6395,6 +6395,14 @@ function crRefreshSection(key,afterTab){
    para que viajen solos al publicar (vía _collectCrData). Render aparte de los cruces individuales.
 ═══════════════════════════════════════════════════════ */
 var _TEAM_TITLES=/^(GM|IM|FM|WGM|WIM|WFM|CM|NM|WCM|WNM|AFM|AGM|AIM|AGF|HM)$/;
+// Jugador FANTASMA. Cuando la ronda ya está emparejada pero los equipos todavía no dieron el plantel,
+// Chess-Results igual publica los "emparejamientos por mesas" con una fila por mesa y un jugador de
+// relleno, con Elo 0 y sin resultado. Le antepone la letra del color EN ESE IDIOMA, por eso el prefijo
+// opcional de una letra:  lan=2 "b Sin jugador asignado" / "n …"   ·   lan=1 "w no player" / "b …"
+// ·  lan=0 "w Brett nicht besetzt" / "s …". (La app siempre pide lan=2, pero el autor puede subir a
+// mano un .xlsx bajado en cualquier idioma.)
+var _TEAM_SIN_JUGADOR=/^(?:[a-z]\s+)?(sin\s+jugador\s+asignado|no\s+player|brett\s+nicht\s+besetzt)$/i;
+function _teamIsPlaceholder(n){ return _TEAM_SIN_JUGADOR.test(String(n||'').trim()); }
 var _TEAM_RES=/^(1\s*-\s*0|0\s*-\s*1|½\s*-\s*½|1\/2\s*-\s*1\/2|\+\s*-\s*-|-\s*-\s*\+|0\s*-\s*0|0\.5\s*-\s*0\.5|-\s*-\s*-)$/;
 function _teamNormRes(r){ return (r||'').replace(/\s*-\s*/g,'-').replace('1/2-1/2','½-½').replace(/0\.5-0\.5/,'½-½'); }
 function _teamStripColor(n){ return (n||'').replace(/\s*\((?:b|n|w|s)\)\s*$/i,'').replace(/[■□▪▫]/g,'').trim(); }
@@ -6440,7 +6448,17 @@ function _teamParseStandings(rows){
 // aterrizaría en una pestaña ♟ Formaciones vacía (en vez de en los cruces, que ya muestran lo mismo
 // y mejor) y, en el panel de rendimiento de un país, esa ronda taparía como “pendiente” el resultado
 // del match que los cruces sí traen.
-function _teamRoundHasBoards(ms){ return (ms||[]).some(function(m){ return (m.boards||[]).length>0; }); }
+// Las mesas de PURO RELLENO tampoco cuentan (los dos lados son el jugador fantasma y no hay
+// resultado). El parser ya no las guarda, pero una ronda bajada ANTES de este arreglo sí las tiene
+// guardadas, y sin esto seguiría mostrándose con "Sin jugador asignado" en todas las mesas hasta
+// que salgan los planteles. Con resultado la mesa vale: es una incomparecencia de verdad.
+function _teamRoundHasBoards(ms){
+  return (ms||[]).some(function(m){
+    return (m.boards||[]).some(function(b){
+      return !(!b.res && _teamIsPlaceholder(b.nW) && _teamIsPlaceholder(b.nB));
+    });
+  });
+}
 
 // Parser de EMPAREJAMIENTOS POR MESAS por equipos (1 o varias rondas). Devuelve {num:[matches]}.
 function _teamParseRounds(rows){
@@ -6484,7 +6502,16 @@ function _teamParseRounds(rows){
         var eW=parseInt(r[rIdx-5])||'', nW=(r[rIdx-6]||'').trim(), tW=(r[rIdx-7]||'').trim();
         tB=_normTitle(tB); tW=_normTitle(tW);
         if(!_TEAM_TITLES.test(tB)) tB=''; if(!_TEAM_TITLES.test(tW)) tW='';
-        cur.boards.push({ tW:tW, nW:_teamStripColor(nW), eW:eW, tB:tB, nB:_teamStripColor(nB), eB:eB, res:_teamNormRes(r[rIdx]) });
+        var _res=_teamNormRes(r[rIdx]);
+        // Mesa de RELLENO: los dos lados son el jugador fantasma y no hay resultado → esta ronda tiene
+        // los cruces armados pero todavía no los planteles. No es una formación: si la dejáramos pasar,
+        // la pestaña saldría con "Sin jugador asignado" en todas las mesas (y _teamRoundHasBoards la
+        // daría por buena, porque mesas HAY). Salteándola, la ronda queda sin mesas y no se muestra
+        // hasta que salgan los jugadores de verdad.
+        // CON resultado sí se guarda: ahí es una incomparecencia real (doble forfait "- - -"). Y si
+        // solo UN lado es fantasma, también, porque es un equipo que no presentó a ese tablero.
+        if(!_res && _teamIsPlaceholder(nW) && _teamIsPlaceholder(nB)) continue;
+        cur.boards.push({ tW:tW, nW:_teamStripColor(nW), eW:eW, tB:tB, nB:_teamStripColor(nB), eB:eB, res:_res });
       }
     }
     return matches;
