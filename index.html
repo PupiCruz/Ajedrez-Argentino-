@@ -5380,11 +5380,29 @@ function _crFlushFideFlags() {
 // ── Rellenar + GUARDAR las federaciones faltantes desde Lichess (modo autor, una sola vez) ────
 var _crFedBakeTried = {};   // crk -> true : ya lo intentamos en esta sesión (no re-disparar en cada render)
 var _crFedBaking = {};      // crk -> true : hay un rellenado en curso para ese torneo
+// Federación REAL según FIDE, tal como la devuelve Lichess. Va APARTE de _fideCountryCache porque
+// ese viene pre-cargado con ARG para todos los jugadores de PLAYERS —lo que queremos para marcar
+// argentinos, pero no acá—: Pichot está en PLAYERS como adicional y su federación FIDE es ESP, así
+// que con la caché vieja nunca se le preguntaba a Lichess y salía argentino.
+var _fideRealFedCache = {};
+// ¿A este jugador le falta el PAÍS? Dos casos:
+//   · no trae fed (el export no tenía la columna) → se resuelve y se guarda en `fed`;
+//   · el torneo es español-REGIONAL, así que su fed es la comunidad autónoma (AND, VAL, MAD…) y no
+//     un país → se resuelve el país aparte, en `cfed`, sin pisar la comunidad (que se sigue
+//     mostrando como texto al lado de la bandera).
+// Ojo: lo segundo SOLO si el torneo es regional, porque varios códigos de comunidad son también
+// códigos de país reales (AND=Andorra, CAN=Canadá): fuera de un torneo regional son legítimos.
+function _crFedNeedsCountry(s, esRegional) {
+  if (!s || !s.fideId || !/^\d+$/.test(String(s.fideId))) return false;
+  if (!s.fed) return true;
+  return !!(esRegional && _ES_REGION_FEDS[String(s.fed).toUpperCase()] && !s.cfed);
+}
 function crFedMissingCount(key) {
   var d = crDataLoad(key);
   if (!d || !d.standings) return 0;
+  var esReg = _tourIsESRegional(key);
   var seen = {}, n = 0;
-  d.standings.forEach(function(s) { if (s && s.fideId && !s.fed && /^\d+$/.test(String(s.fideId)) && !seen[s.fideId]) { seen[s.fideId] = 1; n++; } });
+  d.standings.forEach(function(s) { if (_crFedNeedsCountry(s, esReg) && !seen[s.fideId]) { seen[s.fideId] = 1; n++; } });
   return n;
 }
 function crBakeFedsFromLichess(key, opts) {
@@ -5393,8 +5411,9 @@ function crBakeFedsFromLichess(key, opts) {
   if (_crFedBaking[key]) return;         // ya hay uno corriendo
   var data = crDataLoad(key);
   if (!data || !data.standings || !data.standings.length) return;
+  var esReg = _tourIsESRegional(key);    // torneo español-regional: la fed es la comunidad, no el país
   var pend = {};                         // dedup por fide_id
-  data.standings.forEach(function(s) { if (s && s.fideId && !s.fed && /^\d+$/.test(String(s.fideId))) pend[String(s.fideId)] = 1; });
+  data.standings.forEach(function(s) { if (_crFedNeedsCountry(s, esReg)) pend[String(s.fideId)] = 1; });
   var ids = Object.keys(pend);
   if (!ids.length) { if (opts.onDone) try { opts.onDone(0, 0); } catch (e) {} return; }
   _crFedBaking[key] = true; _crFedBakeTried[key] = true;
@@ -5402,13 +5421,24 @@ function crBakeFedsFromLichess(key, opts) {
   if (typeof LICHESS_TOKEN !== 'undefined' && LICHESS_TOKEN) headers['Authorization'] = 'Bearer ' + LICHESS_TOKEN;
   var idx = 0, done = 0, resolved = 0, total = ids.length, dirty = false, ended = false;
   function apply(fideId, fed) {
-    _fideCountryCache[fideId] = fed || '';
-    if (fed) { data.standings.forEach(function(s) { if (s && String(s.fideId) === fideId && !s.fed) { s.fed = fed; dirty = true; } }); resolved++; }
+    if (esReg) _fideRealFedCache[fideId] = fed || '';
+    else _fideCountryCache[fideId] = fed || '';
+    if (!fed) return;
+    data.standings.forEach(function(s) {
+      if (!s || String(s.fideId) !== fideId) return;
+      // Sin fed → el país va a `fed`, como siempre. Con fed regional (comunidad autónoma) el país
+      // va aparte, a `cfed`: así la tabla sigue mostrando "AND"/"VAL" como texto y la bandera pasa
+      // a ser la del país. No se pisa nunca una fed que ya venía de la fuente.
+      if (!s.fed) { s.fed = fed; dirty = true; }
+      else if (esReg && _ES_REGION_FEDS[String(s.fed).toUpperCase()] && s.cfed !== fed) { s.cfed = fed; dirty = true; }
+    });
+    resolved++;
   }
   function step() { done++; if (opts.progress) try { opts.progress(done, total, resolved); } catch (e) {} if (done >= total) finish(); else setTimeout(worker, 80); }
   function finish() {
     if (ended) return; ended = true;
     _crFedBaking[key] = false;
+    delete _crCfedCache[key];           // el mapa de países quedó viejo: que se rearme con lo recién guardado
     if (dirty) crDataSave(key, data);   // ← acá quedan GUARDADAS: viajan al publicar, no se re-consultan
     if (opts.onDone) try { opts.onDone(resolved, total); } catch (e) {}
     if (dirty && !opts.noRefresh) { try { crRefreshSection(key, _crActiveTab[key]); } catch (e) {} }
@@ -5416,7 +5446,10 @@ function crBakeFedsFromLichess(key, opts) {
   function worker() {
     if (idx >= ids.length) return;
     var fideId = ids[idx++];
-    if (_fideCountryCache.hasOwnProperty(fideId)) { apply(fideId, _fideCountryCache[fideId]); return step(); }
+    // En un torneo regional buscamos la federación FIDE de verdad → la caché que vale es la de
+    // Lichess, no la pre-cargada con ARG (ver _fideRealFedCache).
+    var _cc = esReg ? _fideRealFedCache : _fideCountryCache;
+    if (_cc.hasOwnProperty(fideId)) { apply(fideId, _cc[fideId]); return step(); }
     fetch('https://lichess.org/api/fide/player/' + fideId, { headers: headers })
       .then(function(r) { if (r.status === 429) { var e = new Error('429'); e.rl = 1; throw e; } if (!r.ok) throw new Error(r.status); return r.json(); })
       .then(function(d) { apply(fideId, (d.federation || d.fed || '').toUpperCase()); step(); })
@@ -5451,6 +5484,25 @@ function _crMaybeBakeFeds(key) {
 // Traspasa las feds conocidas de la tabla VIEJA a la NUEVA (match por fide_id y, si no, por nombre
 // normalizado) y de paso desde la caché de Lichess. Solo rellena las que faltan (no pisa las que traiga
 // la fuente nueva, p.ej. vesus). Así el autor no tiene que re-traer banderas en cada actualización.
+// Igual que _crCarryOverFeds pero para los FIDE id. info64 los publica SOLO en el ranking inicial;
+// la clasificación no trae esa columna, así que cada vez que se re-baja la tabla se perderían (y con
+// ellos la posibilidad de resolver el país por Lichess). Cruza por nombre normalizado y solo rellena
+// los que faltan. Devuelve cuántos pegó, para poder informarlo.
+function _crCarryOverFideIds(fuente, destino) {
+  if (!destino || !destino.length || !fuente || !fuente.length) return 0;
+  var byName = {};
+  fuente.forEach(function(s) {
+    if (!s || !s.fideId) return;
+    var k = crNormTokens(s.name); if (k && !byName[k]) byName[k] = String(s.fideId);
+  });
+  var n = 0;
+  destino.forEach(function(s) {
+    if (!s || s.fideId) return;
+    var f = byName[crNormTokens(s.name)];
+    if (f) { s.fideId = f; n++; }
+  });
+  return n;
+}
 function _crCarryOverFeds(oldStd, newStd) {
   if (!newStd || !newStd.length) return newStd;
   var byFide = {}, byName = {};
@@ -5505,8 +5557,37 @@ function _isKnownArgPlayer(name, fideId) {
   } catch (e) {}
   return false;
 }
-// Bandera para tabla/tarjetas en un torneo español-regional: 🇦🇷 a argentinos conocidos, nada al resto.
-function _esRegFlag(name, fideId) { return _isKnownArgPlayer(name, fideId) ? _flagImg('ARG') : ''; }
+// Mapa por torneo de la federación REAL (el país) de cada jugador. En los torneos español-regionales
+// la columna FED trae la comunidad autónoma (AND, VAL, MAD…), no el país; el país se resuelve desde
+// Lichess por FIDE id y queda guardado en la tabla como `cfed` (ver crBakeFedsFromLichess). Acá solo
+// se indexa lo ya guardado, por fide_id y por nombre, para poder pintar la bandera.
+var _crCfedCache = {};
+function _crCfedMap(crKey) {
+  if (!crKey) return { byId: {}, byName: {} };
+  if (_crCfedCache.hasOwnProperty(crKey)) return _crCfedCache[crKey];
+  var m = { byId: {}, byName: {} }, st = [];
+  try { var d = crDataLoad(crKey); st = (d && d.standings) || []; } catch (e) {}
+  st.forEach(function(s) {
+    if (!s || !s.cfed) return;
+    if (s.fideId) m.byId[String(s.fideId)] = s.cfed;
+    var k = crNormTokens(s.name); if (k && !m.byName[k]) m.byName[k] = s.cfed;
+  });
+  if (st.length) _crCfedCache[crKey] = m;   // si la tabla todavía no cargó (on-demand), no cachear
+  return m;
+}
+// Bandera para tabla/tarjetas en un torneo español-regional. La bandera representa la FEDERACIÓN
+// FIDE, así que manda el país resuelto por FIDE id (`cfed`) — aunque el jugador esté tildado como
+// argentino en el sitio. Pichot es el ejemplo: juega para ESP, y la 🇦🇷 que le sale hoy viene del
+// tilde manual del autor, no de FIDE. Ese tilde sigue valiendo para el filtro "Solo argentinos";
+// acá solo decide la bandera.
+// Sin `cfed` (todavía no se resolvió) se cae al criterio viejo: 🇦🇷 a los argentinos conocidos y
+// nada al resto, que es mejor que quedarse sin ninguna bandera.
+function _esRegFlag(name, fideId, crKey) {
+  var m = _crCfedMap(crKey);
+  var f = (fideId && m.byId[String(fideId)]) || m.byName[crNormTokens(name)] || '';
+  if (f) return _flagImg(f);
+  return _isKnownArgPlayer(name, fideId) ? _flagImg('ARG') : '';
+}
 
 // Bandera de un "equipo" del PGN (header WhiteTeam/BlackTeam). En las Olimpiadas y torneos por
 // equipos eso trae el país — a veces como código FIDE ("ARG") y a veces como nombre ("Argentina").
@@ -5574,7 +5655,7 @@ function _tourEntryByName(name, crKey) {
   return m[crNormTokens(name)] || null;
 }
 function _flagByName(name, crKey, fideId) {
-  if (_tourIsESRegional(crKey)) return _esRegFlag(name, fideId);   // fed regional (no es país) → 🇦🇷 solo argentinos
+  if (_tourIsESRegional(crKey)) return _esRegFlag(name, fideId, crKey);   // fed regional (no es país) → 🇦🇷 solo argentinos
   var e = _tourEntryByName(name, crKey);
   return (e && e.fed) ? _teamFlag(e.fed) : '';
 }
@@ -6035,7 +6116,7 @@ function crBuildCrosstable(key,data){
     h+='<td class="cr-xt-nametd" style="'+nameTd+';cursor:pointer" onclick="crOpenPlayer('+crArg(key)+','+crArg(pl.name)+')">'
       +'<span class="cr-xt-name" style="display:flex;align-items:center;gap:6px;min-width:430px;max-width:560px">'
       +'<span class="cr-tslot" style="'+slotTitle+'">'+crTitleBadge(pl.title)+'</span>'
-      +'<span class="cr-xt-fslot" style="'+slotFlag+'">'+(pl.fed?(_tourIsESRegional(key)?_esRegFlag(pl.name,pl.fide):crFlagEmoji(pl.fed)):(_tourIsESRegional(key)?'':_crFideFlagSlot(pl.fide)))+'</span>'
+      +'<span class="cr-xt-fslot" style="'+slotFlag+'">'+(pl.fed?(_tourIsESRegional(key)?_esRegFlag(pl.name,pl.fide,key):crFlagEmoji(pl.fed)):(_tourIsESRegional(key)?'':_crFideFlagSlot(pl.fide)))+'</span>'
       +'<span style="'+slotName+'">'+escHtml(pl.name)+'</span>'
       +'<span class="cr-xt-elo" style="'+slotElo+'">'+(pl.elo||'')+'</span>'
       +'</span></td>';
@@ -6078,7 +6159,7 @@ function crBuildRoundPanel(key,pairings,data,roundNum){
   var fedMap={};
   if(data&&data.standings){ data.standings.forEach(function(s){ if(s.name&&s.fed) fedMap[s.name]=s.fed; }); }
   function fedOf(name){ return fedMap[name]||''; }
-  function flagCell(name){ if(_tourIsESRegional(key)){ var af=_esRegFlag(name,''); return af?'<span>'+af+'</span>':''; } var f=fedOf(name); return f?'<span title="'+f+'">'+crFlagEmoji(f)+'</span>':''; }
+  function flagCell(name){ if(_tourIsESRegional(key)){ var af=_esRegFlag(name,'',key); return af?'<span>'+af+'</span>':''; } var f=fedOf(name); return f?'<span title="'+f+'">'+crFlagEmoji(f)+'</span>':''; }
 
   // Detección de argentinos: criterio ÚNICO (_argPersonInTour) — resuelve fed y fide_id por nombre desde
   // la tabla del torneo, así los argentinos con federación REGIONAL española (Oro=ARA) salen por su
@@ -6276,7 +6357,7 @@ function crBuildStandingsPanel(key,standings){
       +'<td style="'+td+';text-align:center;width:34px;font-size:13px">'+medal+'</td>'
       +'<td style="'+td+';text-align:center">'+crTitleBadge(p.title)+'</td>'
       +'<td style="'+td+';text-align:left;color:var(--text);font-size:14.5px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-shadow:var(--txt-out)">'+escHtml(p.name)+argMark+'</td>'
-      +'<td style="'+td+';text-align:center;color:var(--text2);font-size:12px;white-space:nowrap">'+(p.fed?(_tourIsESRegional(key)?_esRegFlag(p.name,p.fideId):crFlagEmoji(p.fed))+'<span class="fed-txt"> '+escHtml(p.fed)+'</span>':(_tourIsESRegional(key)?'':_crFideFlagSlot(p.fideId)))+'</td>'
+      +'<td style="'+td+';text-align:center;color:var(--text2);font-size:12px;white-space:nowrap">'+(p.fed?(_tourIsESRegional(key)?_esRegFlag(p.name,p.fideId,key):crFlagEmoji(p.fed))+'<span class="fed-txt"> '+escHtml(p.fed)+'</span>':(_tourIsESRegional(key)?'':_crFideFlagSlot(p.fideId)))+'</td>'
       +'<td style="'+td+';text-align:center;color:var(--fg-e8);font-size:15px;font-weight:600;text-shadow:var(--txt-out)">'+(p.elo||'')+'</td>'
       +'<td style="'+td+';text-align:right;font-weight:700;color:var(--fg-e8);font-size:15px;white-space:nowrap;text-shadow:var(--txt-out)">'+(isInitial?'':crPtsStr(p.pts))+'</td>'
       +'<td class="col-var" style="'+td+';text-align:center;color:var(--text3);font-size:12px;white-space:nowrap">'+eloVarHtml+'</td>'
@@ -8297,10 +8378,24 @@ async function _i64AutoFetchIndiv(crk, i64url, opts) {
       var ps = _crParseStandingsRows(await crExtractXlsx(await _i64ProxyFetch(_i64ExportUrl(i64url, standKind))));
       if (ps.standings.length) {
         _crCarryOverFeds(data.standings, ps.standings);   // conservar banderas ya resueltas al re-bajar la tabla
+        _crCarryOverFideIds(data.standings, ps.standings);// ídem los fide_id (la clasificación no los trae)
         data.standings = ps.standings; data.standingsKind = ps.kind;
         delete data.standingsRound; delete data.standingsFinal;
         if (ps.round != null) data.standingsRound = ps.round;
         if (ps.final) data.standingsFinal = true;
+      }
+      // Los FIDE id de info64 vienen SOLO en el ranking inicial; la clasificación trae "FIDE" (que es
+      // el elo) pero no la columna "FIDE ID". Sin ellos no se puede resolver el país por Lichess, que
+      // es lo único que salva a los torneos español-regionales (su columna FED trae la comunidad
+      // autónoma). Así que, si la tabla quedó sin ids, bajamos también el ranking inicial y los
+      // cruzamos por nombre. Es UN pedido extra y solo cuando hacen falta.
+      if (standKind !== 'initial' && data.standings && data.standings.length
+          && !data.standings.some(function(s){ return s && s.fideId; })) {
+        setS('⏳ Bajando el ranking inicial (por los FIDE id)…');
+        try {
+          var pi = _crParseStandingsRows(await crExtractXlsx(await _i64ProxyFetch(_i64ExportUrl(i64url, 'initial'))));
+          if (pi.standings && pi.standings.length) _crCarryOverFideIds(pi.standings, data.standings);
+        } catch(e) {}
       }
     } catch(e) {}
     var hasStand = !!(data.standings && data.standings.length);
