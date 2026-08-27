@@ -6697,6 +6697,8 @@ function _teamRenderRound(matches, roundNum, crk){
   }
   try { var _tNxt=_crNextRoundNote(crk?crDataLoad(crk):null, crk, roundNum); if(_tNxt) inner+='<div>'+_tNxt+'</div>'; } catch(e) {}
   var _rdata=crk?crDataLoad(crk):null;
+  // ¿Las partidas de esta ronda ya están cargadas? Lo miramos UNA vez por panel (no por mesa).
+  var _rondaEnMemoria = !!(typeof _tdCtx!=='undefined' && _tdCtx && _tdCtx.byRound && _tdCtx.byRound[roundNum] && _tdCtx.byRound[roundNum].length);
   matches.forEach(function(m,mi){
     var _ca=_teamCountryParts(m.aName), _cb=_teamCountryParts(m.bName);
     var _pk=_teamPairKey(m.aName,m.bName);  // id por NOMBRE para vincular cruce↔formación (países y clubes)
@@ -6726,9 +6728,18 @@ function _teamRenderRound(matches, roundNum, crk){
       inner+=side(b.tW,b.nW,b.eW,true);
       inner+=_teamColorDot(leftIsWhite);    // color del jugador de la izquierda en esta mesa
       // Resultado clickeable: abre la partida del broadcast que coincide con ese tablero (por ronda
-      // + nombres). Si todavía no cargó el vivo o no hay partida para ese cruce, el clic no hace nada.
-      if(b.res){
-        inner+='<span onclick="_teamOpenBoardGame('+(roundNum!=null?roundNum:'null')+','+crArg(b.nW)+','+crArg(b.nB)+')" title="Ver la partida" style="flex-shrink:0;width:66px;text-align:center;font-weight:700;color:var(--text);cursor:pointer;border-radius:5px" onmouseover="this.style.background=\'var(--bg3)\';this.style.color=\'var(--gold)\'" onmouseout="this.style.background=\'\';this.style.color=\'var(--text)\'"><span style="border-bottom:1px dashed currentColor">'+escHtml(b.res)+'</span> <span style="font-size:12px;color:var(--blue)">👁</span></span>';
+      // + nombres). El ojito NO depende de que haya resultado: una mesa EN JUEGO es justo la que más
+      // ganas dan de abrir, y antes quedaba muerta (sin resultado no se dibujaba el ojito y no había
+      // forma de llegar a la partida desde la formación). Alcanza con que la ronda tenga partidas
+      // alcanzables (_hasGm, el mismo dato con el que se decide el ojito del cruce de arriba).
+      // Si las partidas de la ronda YA están en memoria, el ojito nuevo sale solo en las mesas que
+      // de verdad se transmiten (hay torneos que mandan una parte: en el Senior 2026 son 16 de 36, y
+      // un ojito que no lleva a ningún lado confunde). Si la ronda todavía no se bajó (on-demand), lo
+      // dibujamos igual y que el clic la baje. El ojito de las mesas YA TERMINADAS no cambia.
+      var _verMesa = !!b.res || (_hasGm && (b.nW||b.nB) && (!_rondaEnMemoria || crFindGameIdx(roundNum,b.nW,b.nB)>=0));
+      if(_verMesa){
+        var _resTxt = b.res ? '<span style="border-bottom:1px dashed currentColor">'+escHtml(b.res)+'</span> ' : '';
+        inner+='<span onclick="_teamOpenBoardGame('+(roundNum!=null?roundNum:'null')+','+crArg(b.nW)+','+crArg(b.nB)+')" title="'+(b.res?'Ver la partida':'Ver la partida en vivo')+'" style="flex-shrink:0;width:66px;text-align:center;font-weight:700;color:var(--text);cursor:pointer;border-radius:5px" onmouseover="this.style.background=\'var(--bg3)\';this.style.color=\'var(--gold)\'" onmouseout="this.style.background=\'\';this.style.color=\'var(--text)\'">'+_resTxt+'<span style="font-size:12px;color:var(--blue)">👁</span></span>';
       } else {
         inner+='<span style="flex-shrink:0;width:66px;text-align:center;font-weight:700;color:var(--text)">'+escHtml(b.res||'')+'</span>';
       }
@@ -6777,10 +6788,24 @@ function _teamRenderCrosses(crosses, roundNum, crk, hasFormation){
 // (por ronda + nombres, igual que el cuadro individual) y la abre en el visor.
 function _teamOpenBoardGame(round, wName, bName){
   if(typeof _tdCtx==='undefined' || !_tdCtx || !_tdCtx.pgnKey) return;
-  var idx = crFindGameIdx(round, wName, bName);
-  if(idx<0) idx = crFindGameIdx(round, bName, wName);
-  if(idx<0) return;
-  tdOpenGame(idx, _tdCtx.pgnKey, _tdCtx.name||'', _tdCtx.location||'');
+  // Los dos órdenes: en equipos la columna de la izquierda NO es siempre la de blancas.
+  function buscar(){ var i=crFindGameIdx(round, wName, bName); return i<0 ? crFindGameIdx(round, bName, wName) : i; }
+  var idx = buscar();
+  if(idx>=0){ tdOpenGame(idx, _tdCtx.pgnKey, _tdCtx.name||'', _tdCtx.location||''); return; }
+  // Ahora que el ojito también sale en las mesas EN JUEGO, es normal que la ronda todavía no esté
+  // bajada (on-demand). La traemos y reintentamos, igual que crOpenGame; y si de verdad no se
+  // transmite lo decimos, en vez de quedarnos mudos como antes (el clic no hacía nada y parecía
+  // que la web se había colgado).
+  if(round!=null && typeof _tdLiveCtx!=='undefined' && _tdLiveCtx && _tdLiveCtx.onDemand && _tdRoundReachable(round)){
+    _showLoadingCover('Cargando partida…');
+    _tdEnsureRoundLoaded(parseInt(round)||round, function(){
+      var i2 = _tdCtx ? buscar() : -1;
+      if(i2>=0 && _tdCtx){ tdOpenGame(i2, _tdCtx.pgnKey, _tdCtx.name||'', _tdCtx.location||''); }   // cvOpenOverlay saca el cover
+      else { _removeDeepLinkCover(); _tdToast('Esta partida no se transmitió.'); }
+    });
+    return;
+  }
+  _tdToast('Esta partida no se transmitió.');
 }
 function _teamRenderSection(crk,data){
   var ks=crk.replace(/'/g,"\\'");
