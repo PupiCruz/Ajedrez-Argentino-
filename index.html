@@ -2012,16 +2012,23 @@
     .p-title-wcm { background: #c98a4f; }                    /* naranja */
     select option { background: var(--bg2); color: var(--text); }
   </style>
-  <script src="data/embedded-data.js"></script>
+  <!-- data/embedded-data.js, embedded-photos.js y embedded-flyers.js son del MODO AUTOR: están en
+       .gitignore, así que en la web publicada no existen y daban 404 — tres viajes al pedo y tres
+       errores rojos en la consola de cada visitante. Ahora se piden con document.write (que mantiene
+       el orden: embedded-data ANTES que el manifest) y sólo cuando NO estamos en el sitio publicado.
+       La prueba va al revés a propósito: cualquier host que no sea el sitio real (carpeta, servidor
+       local, IP de la red para probar en el teléfono) se comporta EXACTAMENTE como hasta ahora. -->
+  <script>window.__AA_WEB__=/(^|\.)chessargentino\.ar$/i.test(location.hostname)||/\.pages\.dev$/i.test(location.hostname);
+    if(!window.__AA_WEB__) document.write('<scr'+'ipt data-aa-author src="data/embedded-data.js"><\/scr'+'ipt>');</script>
   <script src="data/manifest.js"></script>
   <!-- En la web publicada (on-demand: hay manifest pero NO embedded-data), ocultar la UI de autor
        ANTES de que se pinte el contenido → mata el "flash" de la pantalla de Exportar/Mantenimiento
        y de los botones de editar que después el init oculta igual. En modo autor no hace nada. -->
   <script>(function(){if(!window.__EMBEDDED_DATA__&&window.__MANIFEST__){var s=document.createElement('style');s.textContent='#pgn-upload-panel,#pgn-maint-panel,#chip-export,#chip-maint,#btn-add-tour,#ranking-update-wrap,button[onclick^="openTzModal"],button[onclick^="pgnDeleteTorneo"],button[onclick^="torneoDel"]{display:none!important}';(document.head||document.documentElement).appendChild(s);}})();</script>
   <script type="application/json" id="embedded-token">""</script>
-  <script src="data/embedded-photos.js"></script>
-  <!-- Flyers self-hosteados (solo modo autor; en la web 404 inofensivo, como embedded-photos.js). -->
-  <script src="data/embedded-flyers.js"></script>
+  <!-- Fotos y flyers self-hosteados: solo modo autor (ver la nota de embedded-data.js más arriba). -->
+  <script>if(!window.__AA_WEB__){document.write('<scr'+'ipt data-aa-author src="data/embedded-photos.js"><\/scr'+'ipt>');
+    document.write('<scr'+'ipt data-aa-author src="data/embedded-flyers.js"><\/scr'+'ipt>');}</script>
 
 
 <div class="app">
@@ -3014,6 +3021,9 @@
             <!-- Revancha + Volver al menú en un solo renglón (dos columnas), para dejarle aire al chat -->
             <div class="lv-controls-row">
               <button id="lv-rematch" class="lv-btn-main" style="display:none">Revancha 🔁</button>
+              <!-- Mientras esperás rival: ir al salón a charlar SIN cancelar el desafío. Distinto de
+                   "Volver al menú" (#lv-exit), que sí retira el desafío y cierra la sala. -->
+              <button id="lv-tolobby" class="lv-btn-sec" style="display:none">💬 Ir al salón</button>
               <button id="lv-exit" class="lv-btn-sec">🏠 Volver al menú</button>
             </div>
           </div>
@@ -5103,7 +5113,10 @@ function crDataSave(key, data) {
     // Sin espacio: ofrecer liberar el navegador y reintentar ESTE guardado.
     if (typeof _quotaOffer === 'function' && _quotaOffer()) {
       try { localStorage.setItem(key, JSON.stringify(data)); _crArgCache = {}; _tourSearchIndex = {}; _stdFedCache = {}; _manualArgCache = {}; }
-      catch(e2) { alert('Sigue sin haber espacio. Usá 💾 "Guardar datos en mi carpeta" y recargá la página.'); }
+      // En la web publicada NO hay "Guardar datos en mi carpeta": no se molesta al visitante con un
+      // cartel que lo manda a un botón que no existe. El cuadro simplemente no queda guardado y se
+      // vuelve a bajar la próxima vez que haga falta.
+      catch(e2) { if (!_ondemand) alert('Sigue sin haber espacio. Usá 💾 "Guardar datos en mi carpeta" y recargá la página.'); }
     }
   }
 }
@@ -10320,6 +10333,11 @@ function _exportBaseHtml() {
   if (i > 0) outerHtml = outerHtml.slice(i);
   outerHtml = outerHtml.replace(/(<body[^>]*>)\s*!DOCTYPE html&gt;/i, '$1').replace(/(<body[^>]*>)\s*<!DOCTYPE html>/i, '$1');
   var html = '<!DOCTYPE html>\n' + outerHtml;
+  // Los <script data-aa-author> no están escritos en el archivo: los inyecta document.write al abrir
+  // en modo autor (ver la nota de embedded-data.js arriba de todo). Como acá copiamos el DOM VIVO, hay
+  // que sacarlos: si quedaran escritos, el archivo exportado los cargaría por duplicado — y cada
+  // exportación siguiente agregaría otra copia más.
+  html = html.replace(/\s*<script[^>]*\sdata-aa-author[^>]*>\s*<\/script>/gi, '');
   return html.replace(/(<script[^>]*id="embedded-token"[^>]*>)[\s\S]*?(<\/script>)/, function(m, open, close) { return open + '""' + close; });
 }
 
@@ -21281,14 +21299,35 @@ function liberarEspacioLS() {
       + 'Si hiciste cambios, acordate de 💾 "Guardar datos en mi carpeta" como siempre.');
   return true;
 }
-// Cartel accionable cuando el navegador se queda sin espacio. Devuelve true si el usuario liberó.
+// WEB PUBLICADA: hace lugar SOLO, sin molestar al visitante. Devuelve true si borró algo.
+//
+// Antes, cuando al visitante se le llenaba el navegador (pasa con unos 150-400 torneos abiertos, o sea
+// justo a los que más usan el sitio), salía el cartel del MODO AUTOR — "esto es de tu carpeta" — que
+// no borraba nada, y detrás un segundo cartel que lo mandaba a un botón que en la web no existe.
+// Quedaba atrapado en un bucle sin salida.
+//
+// Acá no hay nada que perder: los cuadros de cruces se vuelven a bajar solos cuando hagan falta.
+function _liberarEspacioWeb() {
+  var borradas = 0;
+  // 1) El caché del motor es 100% descartable: se regenera solo.
+  try { if (localStorage.getItem('fa_eval_cache3') != null) { localStorage.removeItem('fa_eval_cache3'); borradas++; } } catch (e) {}
+  // 2) La MITAD MÁS VIEJA de los cuadros guardados. localStorage devuelve las claves en el orden en
+  //    que se crearon, así que las primeras son las que hace más tiempo que están.
+  var claves = [];
+  try { for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); if (k && k.indexOf('cr2_') === 0) claves.push(k); } } catch (e) {}
+  var hasta = Math.ceil(claves.length / 2);
+  for (var j = 0; j < hasta; j++) { try { localStorage.removeItem(claves[j]); borradas++; } catch (e) {} }
+  if (borradas) { try { _crArgCache = {}; _tourSearchIndex = {}; } catch (e) {} }
+  return borradas > 0;
+}
+// Cartel accionable cuando el navegador se queda sin espacio. Devuelve true si se liberó lugar.
 function _quotaOffer() {
+  if (_ondemand) return _liberarEspacioWeb();   // web publicada: en silencio, sin carteles
   if (confirm('⚠️ El navegador se quedó sin espacio (localStorage lleno).\n\n'
             + 'Se puede solucionar al instante: se borra del navegador solo lo que ya está en la app '
             + '(tablas, fotos, ranking). No se pierde nada.\n\n'
             + '¿Liberar espacio ahora?')) {
-    liberarEspacioLS();
-    return true;
+    return liberarEspacioLS() === true;
   }
   return false;
 }
@@ -25066,14 +25105,24 @@ function _pgnHasMoves(pgn) {
   var mv = sep >= 0 ? pgn.slice(sep + 2) : String(pgn||'').replace(/\[[^\]]*\]/g, '');
   return /[a-hKQRBNO]/.test(mv);   // un movimiento SAN siempre tiene una letra de columna/pieza/enroque
 }
+// Clave corta para el caché. Antes la clave era el PGN ENTERO, así que el caché terminaba guardando
+// una copia de cada partida vista: 500 partidas son fácilmente un par de MB de memoria en un teléfono
+// viejo, y todo para no recalcular una posición. Ahora la clave es un resumen: largo + huella FNV-1a.
+// Que dos PGN distintos tengan el MISMO largo Y la misma huella es prácticamente imposible.
+function _pgnKey(pgn) {
+  var s = String(pgn || ''), h = 2166136261;
+  for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = (h * 16777619) >>> 0; }
+  return s.length + ':' + h.toString(36);
+}
 function tdFinalFenCached(pgn) {
-  if (_tdFenCache[pgn] !== undefined) return _tdFenCache[pgn];
+  var k = _pgnKey(pgn);
+  if (_tdFenCache[k] !== undefined) return _tdFenCache[k];
   var f = tdFinalFen(pgn);
   // NO cachear un parseo fallido: posición inicial cuando el PGN sí tiene jugadas (p.ej. chess.js
   // no estaba listo). Así se reintenta en el próximo render en vez de quedar pegado en la inicial.
   if (f.fen.split(' ')[0] === 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR' && _pgnHasMoves(pgn)) return f;
-  _tdFenCache[pgn] = f;
-  _capCache(_tdFenCache, 500);   // la clave es el PGN entero: conviene no acumular sin tope
+  _tdFenCache[k] = f;
+  _capCache(_tdFenCache, 200);   // con la clave corta el caché pesa poco, pero igual va con tope
   return f;
 }
 
@@ -26355,7 +26404,17 @@ function puzSyncPush() {
       fetch(CR_PROXY + '/puz/progress', {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok },
         body: JSON.stringify(puzPlayer())
-      }).catch(function(){});
+      })
+        .then(function(r){ return r.ok ? r.json() : null; })
+        .then(function(d){
+          // El servidor FUSIONA lo que le mandamos con lo que ya tenía y devuelve el resultado. Si este
+          // aparato venía atrasado (resolviste en el teléfono y después abriste la computadora), acá se
+          // pone al día solo, sin esperar a recargar la página. _puzSetLocal no dispara otro envío.
+          if (!d || !d.progress) return;
+          var mio = puzPlayer(), srv = d.progress;
+          if ((srv.solved || srv.n || 0) > (mio.solved || mio.n || 0)) _puzSetLocal(srv);
+        })
+        .catch(function(){});
     } catch(e) {}
   }, 2500);
 }
@@ -31447,6 +31506,8 @@ function cvUpdateNagBadge() {
     show('lv-resign', playing && amPlayer);
     show('lv-analyze', finished && lvMoves.length>0);   // analizar la partida en el visor completo
     show('lv-rematch', finished && amPlayer);
+    // "Ir al salón" sólo mientras esperás rival en TU sala (ver goToLobbyKeepingChallenge).
+    show('lv-tolobby', (lvStatus==='waiting') && amPlayer && !!lvMyChallenge);
     var rm=$('lv-rematch'); if(rm && finished){ rm.disabled=false; rm.textContent='Revancha 🔁'; }
     var ex=$('lv-exit'); if(ex) ex.classList.toggle('lv-exit-hot', finished);
     var rc=$('lv-resign-confirm'); if(rc && !playing) rc.style.display='none';   // cerrar el "¿seguro?" al terminar
@@ -31478,7 +31539,13 @@ function cvUpdateNagBadge() {
     if(prev!=='playing' && lvStatus==='playing'){
       if(lvMyChallenge){ lobbySend({type:'cancel'}); lvMyChallenge=null; }
       var _vivoActive=false; try{ _vivoActive=document.getElementById('s-vivo').classList.contains('active'); }catch(e){}
-      if(!_vivoActive && lvSala && (lvMyColor==='w'||lvMyColor==='b')) goToVivoGame();
+      // Traerme al tablero SIEMPRE que sea mi partida. Antes sólo pasaba si estaba en otra pestaña
+      // del sitio; desde que se puede esperar rival DESDE EL SALÓN, si no se agrega la segunda rama
+      // el anfitrión se pierde el arranque de su propia partida con el reloj corriendo.
+      if(lvSala && (lvMyColor==='w'||lvMyColor==='b')){
+        if(!_vivoActive) goToVivoGame();   // estaba en otra pestaña del sitio
+        else showGame();                    // estaba en la pestaña Jugar (quizá mirando el salón)
+      }
       updatePendingPill();
     }
     // Si la partida ya no está en juego (mate/tablas/bandera/etc.), cortar la cuenta
@@ -31730,12 +31797,19 @@ function cvUpdateNagBadge() {
   // ── Navegación entre lobby y juego ──────────────────────────────────────────
   // En la sala ocultamos el encabezado "Jugar en vivo" para que el tablero quede arriba
   // de todo sin scrollear; al volver al lobby lo mostramos de nuevo.
-  function showGame(){ $('lv-lobby').style.display='none'; $('lv-game').style.display='';
+  // ¿Estoy mirando el tablero de mi sala, o el salón? Lo necesita la píldora de "desafío abierto",
+  // que ahora tiene que aparecer también dentro de la pestaña Jugar si estás en el salón.
+  var lvViewingGame=false;
+  function showGame(){ lvViewingGame=true; $('lv-lobby').style.display='none'; $('lv-game').style.display='';
     var h=$('lv-pghead'); if(h) h.style.display='none';
     try{ var m=document.querySelector('.main'); if(m) m.scrollTop=0; }catch(e){}
     lvSyncColsSoon(); }
-  function showLobby(){ $('lv-game').style.display='none'; $('lv-lobby').style.display='';
+  function showLobby(){ lvViewingGame=false; $('lv-game').style.display='none'; $('lv-lobby').style.display='';
     var h=$('lv-pghead'); if(h) h.style.display=''; }
+  // Ir al salón SIN irse del desafío: no toca lvMyChallenge ni cierra el WebSocket de la sala, así
+  // podés charlar en el chat mientras esperás rival. Cuando entre alguien, applyState te trae de
+  // vuelta al tablero solo. Para irse de verdad está "🏠 Volver al menú" (#lv-exit → exit()).
+  function goToLobbyKeepingChallenge(){ showLobby(); updatePendingPill(); lvSyncColsSoon(); }
   // Mantenemos ?sala=<id> en la URL DURANTE la partida: así un F5 / corte de wifi
   // vuelve al mismo asiento (init la relee y reingresa con el token guardado).
   function setSalaUrl(id){ try { history.replaceState({}, '', location.pathname+'?sala='+id+(isDev()?'&vivolocal=1':'')); } catch(e){} }
@@ -31841,7 +31915,13 @@ function cvUpdateNagBadge() {
     return mins+'+'+inc+' · '+cat;
   }
   function setChalConn(t){ var e=$('lv-chal-conn'); if(e) e.textContent=t||''; }
-  function lobbySend(o){ try{ if(lobbyWs && lobbyWs.readyState===1) lobbyWs.send(JSON.stringify(o)); }catch(e){} }
+  function lobbyRawSend(o){ try{ if(lobbyWs && lobbyWs.readyState===1) lobbyWs.send(JSON.stringify(o)); }catch(e){} }
+  // El servidor tarda un instante en resolver QUIÉN sos (le pregunta al servidor de cuentas). Si
+  // escribías en ese hueco, el mensaje se descartaba y nadie se enteraba: pasaba justo con el primer
+  // saludo al entrar. Ahora el servidor avisa 'not-ready' y acá se guarda el mensaje para mandarlo de
+  // nuevo apenas llega el 'ready'. Un solo reintento por mensaje (nada de bucles).
+  var lvChatLast=null, lvChatPend=null, lvChatRetried=false;
+  function lobbySend(o){ if(o && o.type==='chat'){ lvChatLast=o; lvChatRetried=false; } lobbyRawSend(o); }
   // ¿Mantener el lobby conectado? Sí si estás en la pestaña Jugar, o tenés un desafío/partida,
   // o estás LOGUEADO (para recibir desafíos dirigidos y figurar "en línea" desde cualquier pestaña).
   function lvKeepLobby(){ return lvOnTab || !!lvMyChallenge || !!lvAuthUser(); }
@@ -31922,6 +32002,10 @@ function cvUpdateNagBadge() {
     // ── Chat general de la sala ──
     else if(m.type==='chat-history'){ lvLobbyChatHistory(m.msgs||[]); }
     else if(m.type==='lobby-chat'){ lvLobbyChatAddNode(m); }
+    // Ya sabe quién soy: si tenía un mensaje esperando (ver lobbySend), lo mando ahora.
+    else if(m.type==='ready'){ if(lvChatPend){ var _p=lvChatPend; lvChatPend=null; lvChatRetried=true; lobbyRawSend(_p); } }
+    else if(m.type==='not-ready'){ if(lvChatLast && !lvChatRetried) lvChatPend=lvChatLast; }
+    else if(m.type==='need-login'){ try{ lvToast('Entrá con tu cuenta de Lichess para escribir en el chat.'); }catch(e){} }
     else if(m.type==='reaction'){ lvLcApplyReaction(m.id, m.emoji, m.userId, !!m.on); }
     else if(m.type==='msg-deleted'){ lvLobbyChatRemove(m.id); }
     else if(m.type==='muted'){ try{ lvToast(lvChatMutedMsg(m.until)); }catch(e){} }
@@ -32343,7 +32427,10 @@ function cvUpdateNagBadge() {
     ensurePendingPill();
     var el=$('lv-pending'); if(!el) return;
     var vivoActive=false; try{ vivoActive=document.getElementById('s-vivo').classList.contains('active'); }catch(e){}
-    el.style.display=(!!lvMyChallenge && !vivoActive) ? 'flex' : 'none';
+    // Antes la píldora se escondía en TODA la pestaña Jugar. Ahora se esconde sólo cuando estás
+    // mirando el tablero de tu sala: si te fuiste al salón a charlar mientras esperás, te recuerda
+    // que tenés un desafío abierto y te lleva de vuelta con "Ver sala".
+    el.style.display=(!!lvMyChallenge && !(vivoActive && lvViewingGame)) ? 'flex' : 'none';
   }
   // Volver a la sala de espera desde donde estés navegando.
   function goToVivoGame(){ try{ if(typeof goTo==='function') goTo('vivo'); }catch(e){} showGame(); updatePendingPill(); }
@@ -32396,6 +32483,7 @@ function cvUpdateNagBadge() {
     if((b=$('lv-draw-yes'))) b.onclick=function(){ send({type:'draw-accept'}); lvDrawOffer=null; updateDrawPrompt(); updateControls(); };
     if((b=$('lv-draw-no'))) b.onclick=function(){ send({type:'draw-decline'}); lvDrawOffer=null; updateDrawPrompt(); updateControls(); };
     if((b=$('lv-rematch'))) b.onclick=function(){ send({type:'rematch'}); this.textContent='Esperando…'; this.disabled=true; };
+    if((b=$('lv-tolobby'))) b.onclick=goToLobbyKeepingChallenge;
     if((b=$('lv-exit'))) b.onclick=exit;
     if((b=$('lv-banner'))) b.onclick=function(){ lvBannerDismissed=true; renderResult(); };
     if((b=$('lv-chat-send'))) b.onclick=lvSendChat;
@@ -32466,7 +32554,12 @@ function cvUpdateNagBadge() {
     return String(name==null?'':name).normalize('NFD').replace(/[̀-ͯ]/g,'')
       .toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'').slice(0,64) || 'torneo';
   }
-  function tcSend(o){ try{ if(tcWs && tcWs.readyState===1) tcWs.send(JSON.stringify(o)); }catch(e){} }
+  function tcRawSend(o){ try{ if(tcWs && tcWs.readyState===1) tcWs.send(JSON.stringify(o)); }catch(e){} }
+  // Mismo esquema que el chat de la sala de Jugar: si el servidor todavía no sabe quién sos contesta
+  // 'not-ready' y el mensaje se reintenta una sola vez, apenas llega el 'ready'. Antes se perdía en
+  // silencio — era justo el caso del primer saludo al entrar a un torneo.
+  var tcChatLast=null, tcChatPend=null, tcChatRetried=false;
+  function tcSend(o){ if(o && o.type==='chat'){ tcChatLast=o; tcChatRetried=false; } tcRawSend(o); }
   function tcConnect(){
     if(!tcRoom) return;
     if(tcWs && (tcWs.readyState===0 || tcWs.readyState===1)) return;
@@ -32474,7 +32567,7 @@ function cvUpdateNagBadge() {
     var tok=lvAuthToken(); tcConnTok=tok;
     var url=serverBase().replace(/^http/,'ws')+'/tour/'+encodeURIComponent(tcRoom)+'/ws'+(tok?('?auth='+encodeURIComponent(tok)):'');
     try{ tcWs=new WebSocket(url); }catch(e){ return; }
-    tcWs.onopen=function(){ tcTries=0; };
+    tcWs.onopen=function(){ tcTries=0; tcChatPend=null; tcChatRetried=false; };
     tcWs.onmessage=function(e){ var m; try{ m=JSON.parse(e.data); }catch(_){ return; }
       if(m.type==='chat-history'){ tcMsgs=Array.isArray(m.msgs)?m.msgs.slice(-40):[]; tcRenderAll(); }
       else if(m.type==='tour-chat'){
@@ -32484,6 +32577,9 @@ function cvUpdateNagBadge() {
       else if(m.type==='reaction'){ tcApplyReaction(m.id, m.emoji, m.userId, !!m.on); }
       else if(m.type==='msg-deleted'){ tcMsgs=tcMsgs.filter(function(x){ return x.id!==m.id; }); tcRemoveNode(m.id); }
       else if(m.type==='muted'){ tcMutedNotice(m.until); }
+      else if(m.type==='ready'){ if(tcChatPend){ var _tp=tcChatPend; tcChatPend=null; tcChatRetried=true; tcRawSend(_tp); } }
+      else if(m.type==='not-ready'){ if(tcChatLast && !tcChatRetried) tcChatPend=tcChatLast; }
+      else if(m.type==='need-login'){ try{ lvToast('Entrá con tu cuenta de Lichess para escribir en el chat.'); }catch(e){} }
     };
     tcWs.onclose=function(ev){ tcWs=null;
       if(ev && ev.code===4003) return;   // cuenta suspendida: no reconectar (ver el lobby)
@@ -32935,7 +33031,8 @@ function cvUpdateNagBadge() {
 <!-- ══════════════════════════════════════════════════════════════════════════
      BLOQUEAR usuarios (personal, del navegador) + REGLAS del chat.
      Bloquear = cada usuario decide NO ver los mensajes de otro (se guarda en su navegador;
-     no viaja entre dispositivos ni afecta a los demás). Reportar sí va al servidor (aaProfile).
+     el bloqueo se guarda EN LA CUENTA: viaja entre dispositivos, es simétrico y lo enforcea el
+     servidor —desafíos, seguir y, desde la Fase 5, también el chat—. Reportar también va al servidor.
      ══════════════════════════════════════════════════════════════════════════ -->
 <style>
   .aa-rules-back{position:fixed;inset:0;z-index:100001;background:rgba(0,0,0,.55);display:flex;
@@ -33987,7 +34084,9 @@ function cvUpdateNagBadge() {
         toast('🚩 Gracias. Lo reportaste y un moderador lo va a revisar.'); })
       .catch(function(){ toast('No se pudo (¿internet?)'); });
   }
-  // Bloquear = personal y del navegador (no viaja entre dispositivos, no afecta a los demás).
+  // Bloquear = EN LA CUENTA (server-side, simétrico): viaja entre dispositivos y sí le corta al otro
+  // los desafíos, el seguir y —desde la Fase 5— los mensajes del chat. (El comentario viejo decía lo
+  // contrario: era de la primera versión, cuando el bloqueo vivía sólo en el navegador.)
   function doBlockToggle(P){
     if(!P || !P.id || !window.aaBlock) return;
     var tok=myToken();

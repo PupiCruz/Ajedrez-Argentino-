@@ -1076,8 +1076,16 @@ const MOD_USERNAMES = new Set(['elpupicruz', 'chess_argentino']);
 const MUTE_MINUTES = new Set([15, 30, 60, 480, 1440]);
 
 // Crea las tablas si no existen. `usuarios` = personas; `sessions` = tokens de login.
+// Las tablas se crean UNA SOLA VEZ por isolate. Antes cada `ensure*` mandaba sus CREATE TABLE IF NOT
+// EXISTS en TODOS los pedidos: no rompía nada, pero eran idas y vueltas a la base al pedo en cada
+// carga de página, en cada conexión de chat y en cada partida. Con estas banderas, a partir del
+// segundo pedido de cada isolate no cuestan ninguna consulta. Si una CREATE falla, .run() tira y la
+// bandera NO se marca: se reintenta en el pedido siguiente.
+let _usuariosTablesReady = false;
 let _usuariosMigrated = false;   // fichita editable: se agregan las columnas una vez por isolate
 async function ensureUserTables(env) {
+  if (_usuariosTablesReady && _usuariosMigrated) return;
+  if (_usuariosTablesReady) { await _migrarUsuarios(env); return; }
   await env.DB.prepare(
     'CREATE TABLE IF NOT EXISTS usuarios (' +
     'id TEXT PRIMARY KEY, provider TEXT, prov_id TEXT, username TEXT, ' +
@@ -1092,7 +1100,12 @@ async function ensureUserTables(env) {
     'CREATE TABLE IF NOT EXISTS sessions (' +
     'token TEXT PRIMARY KEY, user_id TEXT, created_at INTEGER, expires INTEGER)'
   ).run();
-  // Migración perezosa: la tabla usuarios ya existía SIN la fichita (display_name/country/bio).
+  _usuariosTablesReady = true;
+  await _migrarUsuarios(env);
+}
+
+// Migración perezosa: la tabla usuarios ya existía SIN la fichita (display_name/country/bio).
+async function _migrarUsuarios(env) {
   if (_usuariosMigrated) return;
   try {
     const info = await env.DB.prepare('PRAGMA table_info(usuarios)').all();
@@ -1404,12 +1417,15 @@ async function modStatus(request, env) {
 }
 
 // Tabla de reportes (usuarios reportando a otros usuarios). Se crea sola (patrón perezoso).
+let _reportsTableReady = false;
 async function ensureReportsTable(env) {
+  if (_reportsTableReady) return;
   await env.DB.prepare(
     'CREATE TABLE IF NOT EXISTS reports (' +
     'id TEXT PRIMARY KEY, reporter_id TEXT, target_id TEXT, target_username TEXT, ' +
     'reason TEXT, created_at INTEGER, handled INTEGER DEFAULT 0)'
   ).run();
+  _reportsTableReady = true;
 }
 
 // POST /report  (Bearer)  { userId, reason? } — un usuario LOGUEADO reporta a otro. Lo revisa un mod.
@@ -1508,8 +1524,11 @@ function ratingIsProv(games) { return games < 15; }
 function clampPlayerRating(r) { return Math.max(100, Math.min(3200, Math.round(r))); }
 
 // Crea (si faltan) las tablas de rating. Mismo patrón perezoso que ensureUserTables.
+let _ratingTablesReady = false;    // las CREATE TABLE, una sola vez por isolate (ver ensureUserTables)
 let _ratedGamesMigrated = false;   // se hace una sola vez por isolate (evita PRAGMA en cada request)
 async function ensureRatingTables(env) {
+  if (_ratingTablesReady && _ratedGamesMigrated) return;
+  if (_ratingTablesReady) { await _migrarRatedGames(env); return; }
   await env.DB.prepare(
     'CREATE TABLE IF NOT EXISTS ratings (' +
     'user_id TEXT NOT NULL, category TEXT NOT NULL, ' +
@@ -1525,8 +1544,13 @@ async function ensureRatingTables(env) {
     'white_before INTEGER, white_after INTEGER, black_before INTEGER, black_after INTEGER, ts INTEGER, ' +
     'moves TEXT, white_name TEXT, black_name TEXT)'
   ).run();
-  // Migración perezosa: la tabla ya existía en producción SIN las 3 columnas nuevas. Las agrego
-  // si faltan (ALTER TABLE ADD COLUMN es barato y no re-escribe filas). Una sola vez por isolate.
+  _ratingTablesReady = true;
+  await _migrarRatedGames(env);
+}
+
+// Migración perezosa: la tabla ya existía en producción SIN las 3 columnas nuevas. Las agrego
+// si faltan (ALTER TABLE ADD COLUMN es barato y no re-escribe filas). Una sola vez por isolate.
+async function _migrarRatedGames(env) {
   if (_ratedGamesMigrated) return;
   try {
     const info = await env.DB.prepare('PRAGMA table_info(rated_games)').all();
@@ -1584,30 +1608,48 @@ async function ratingMe(request, env) {
   if (!env.DB) return errJson('Falta el binding D1 (DB)', 500);
   const u = await sessionUser(request, env);
   if (!u) return errJson('No autenticado', 401);
+  // Las tablas se crean una sola vez por isolate: del segundo pedido en adelante, estas tres líneas
+  // no cuestan ninguna consulta.
   await ensureRatingTables(env);
+  await ensureUserTables(env);
+  await ensureBlocksTable(env);
+  // Las SEIS lecturas se mandan JUNTAS, en un solo viaje a la base, en vez de una detrás de otra.
+  // Esto es lo que hacía lento a /rating/me, que es el endpoint más llamado del sitio: lo pide cada
+  // conexión de cada chat, cada partida y cada carga de página. Si el batch falla, se sigue con los
+  // valores por defecto (rating inicial, sin bloqueos) en vez de romper el login.
   const cats = ['bullet', 'blitz', 'rapid'];
+  const q = env.DB.prepare('SELECT rating, games FROM ratings WHERE user_id=?1 AND category=?2');
+  let res = [];
+  try {
+    res = await env.DB.batch([
+      q.bind(u.id, 'bullet'),
+      q.bind(u.id, 'blitz'),
+      q.bind(u.id, 'rapid'),
+      env.DB.prepare('SELECT dnd FROM usuarios WHERE id=?1').bind(u.id),
+      env.DB.prepare('SELECT blocked_id FROM blocks WHERE blocker_id=?1').bind(u.id),
+      env.DB.prepare('SELECT blocker_id FROM blocks WHERE blocked_id=?1').bind(u.id),
+    ]);
+  } catch (e) { res = []; }
+  const filas = (i) => ((res && res[i] && res[i].results) || []);
   const ratings = {}, games = {}, prov = {};
-  for (const c of cats) {
-    const r = await getRating(env, u.id, c);
-    ratings[c] = r.rating; games[c] = r.games; prov[c] = ratingIsProv(r.games);
-  }
+  cats.forEach((c, i) => {
+    const r = filas(i)[0];
+    // Sin fila = nunca jugó en ese ritmo: rating inicial y cero partidas (la fila se crea al terminar
+    // su primera partida). Es lo mismo que hacía getRating().
+    const rating = r ? r.rating : SITE_START_RATING;
+    const n = r ? r.games : 0;
+    ratings[c] = rating; games[c] = n; prov[c] = ratingIsProv(n);
+  });
   // Para la moderación: el DO cachea el mute (no puede escribir hasta que pase) y sabe si es
   // moderador (por el nombre de usuario). muted_until = timestamp UNIX en segundos (0 = sin mute).
   const mutedUntil = Number(u.chat_muted_until || 0) || 0;
-  // "No molestar": el Lobby DO lo cachea (session.dnd) para rechazar desafíos dirigidos. Se lee
-  // acá (no en sessionUser) porque la columna es nueva y hay que asegurar la tabla antes del SELECT.
-  let dnd = 0;
-  try { await ensureUserTables(env); const dr = await env.DB.prepare('SELECT dnd FROM usuarios WHERE id=?1').bind(u.id).first(); dnd = (dr && dr.dnd) ? 1 : 0; } catch (e) { /* si falla, dnd=0 */ }
+  // "No molestar": el Lobby DO lo cachea (session.dnd) para rechazar desafíos dirigidos.
+  const dr = filas(3)[0];
+  const dnd = (dr && dr.dnd) ? 1 : 0;
   // Para el bloqueo: a quiénes bloqueé (blocked) y quiénes me bloquearon (blocked_by). El lobby los usa
   // para no cruzar desafíos entre bloqueados; el cliente además filtra presencia y desafíos abiertos.
-  let blocked = [], blockedBy = [];
-  try {
-    await ensureBlocksTable(env);
-    const b1 = await env.DB.prepare('SELECT blocked_id FROM blocks WHERE blocker_id=?1').bind(u.id).all();
-    blocked = ((b1 && b1.results) || []).map((r) => r.blocked_id);
-    const b2 = await env.DB.prepare('SELECT blocker_id FROM blocks WHERE blocked_id=?1').bind(u.id).all();
-    blockedBy = ((b2 && b2.results) || []).map((r) => r.blocker_id);
-  } catch (e) { /* si falla, sigue sin bloqueos */ }
+  const blocked = filas(4).map((r) => r.blocked_id);
+  const blockedBy = filas(5).map((r) => r.blocker_id);
   return jsonResp({ id: u.id, username: u.username, ratings, games, prov,
     muted_until: mutedUntil, is_mod: MOD_USERNAMES.has(String(u.username || '').toLowerCase()),
     dnd, blocked, blocked_by: blockedBy });
@@ -1710,11 +1752,14 @@ async function saveProfile(request, env) {
 }
 
 // Crea (si falta) la tabla de "seguir". Mismo patrón perezoso que las demás.
+let _followTableReady = false;
 async function ensureFollowTable(env) {
+  if (_followTableReady) return;
   await env.DB.prepare(
     'CREATE TABLE IF NOT EXISTS follows (follower_id TEXT NOT NULL, followee_id TEXT NOT NULL, ' +
     'created_at INTEGER, PRIMARY KEY (follower_id, followee_id))'
   ).run();
+  _followTableReady = true;
 }
 
 // POST /follow  ·  POST /unfollow   (Authorization: Bearer <sesión>, body { userId })
@@ -1775,11 +1820,14 @@ async function followingList(request, env) {
 // filtra el cliente con la lista que baja de /blocks). EXCEPCIÓN: en el chat, un MODERADOR siempre lee a
 // todos — el ocultar mensajes por bloqueo lo hace el cliente y NO aplica a los mods, así nadie se
 // esconde de la moderación bloqueando al mod.
+let _blocksTableReady = false;
 async function ensureBlocksTable(env) {
+  if (_blocksTableReady) return;
   await env.DB.prepare(
     'CREATE TABLE IF NOT EXISTS blocks (blocker_id TEXT NOT NULL, blocked_id TEXT NOT NULL, ' +
     'created_at INTEGER, PRIMARY KEY (blocker_id, blocked_id))'
   ).run();
+  _blocksTableReady = true;
 }
 
 // ¿a y b están bloqueados entre sí (en cualquier dirección)?
@@ -2006,11 +2054,58 @@ async function ratingGame(request, reqUrl, env) {
 //   POST /puz/progress  (Bearer, body = blob JSON) → { ok:true }
 const PUZ_PROGRESS_MAX = 200000;   // tope de tamaño del blob (~200 KB, de sobra)
 
+let _puzTableReady = false;
 async function ensurePuzProgressTable(env) {
+  if (_puzTableReady) return;
   await env.DB.prepare(
     'CREATE TABLE IF NOT EXISTS user_puzzle (' +
     'user_id TEXT PRIMARY KEY, data TEXT, solved INTEGER, updated INTEGER)'
   ).run();
+  _puzTableReady = true;
+}
+
+// Fusiona el progreso de ejercicios que llega (`nuevo`) con el que ya está guardado (`viejo`).
+//
+// Por qué hace falta: el progreso viaja como UN bloque entero que reemplazaba al anterior. Si
+// resolvías en el teléfono y después abrías la computadora, que tenía una copia vieja, al guardar
+// desde la computadora se PISABA lo del teléfono: rating, racha y calendario volvían atrás.
+//
+// Los contadores de ejercicios sólo crecen, así que la regla es simple y no pierde nada:
+//   · manda el bloque que tenga MÁS ejercicios resueltos (ése es el que está más al día);
+//   · pero los máximos históricos (mejor rating, mejor racha) y el calendario de días se quedan
+//     con lo mejor de los dos, porque son cosas que no se pueden "deshacer".
+// Si el que llega va adelante, se guarda tal cual (con el calendario unido).
+function puzMerge(viejo, nuevo) {
+  if (!viejo || typeof viejo !== 'object') return nuevo;
+  if (!nuevo || typeof nuevo !== 'object') return viejo;
+  const cuantos = (o) => Math.max(0, Math.floor(+o.solved || +o.n || 0));
+  const base = (cuantos(nuevo) >= cuantos(viejo)) ? nuevo : viejo;
+  const otro = (base === nuevo) ? viejo : nuevo;
+  const out = Object.assign({}, base);
+  // Máximos históricos: lo mejor de los dos.
+  for (const k of ['best', 'bestStreak', 'solved', 'n', 'ok', 'fail']) {
+    const a = +base[k], b = +otro[k];
+    if (Number.isFinite(b) && (!Number.isFinite(a) || b > a)) out[k] = b;
+  }
+  // Calendario de actividad: unión de los días, con el mayor conteo de cada uno.
+  if (base.days || otro.days) {
+    const days = Object.assign({}, otro.days || {});
+    for (const d in (base.days || {})) {
+      const a = +base.days[d] || 0, b = +days[d] || 0;
+      days[d] = Math.max(a, b);
+    }
+    out.days = days;
+  }
+  // Resueltos por nivel: mismo criterio (el mayor de cada nivel).
+  if (base.byLevel || otro.byLevel) {
+    const lv = Object.assign({}, otro.byLevel || {});
+    for (const k in (base.byLevel || {})) {
+      const a = +base.byLevel[k] || 0, b = +lv[k] || 0;
+      lv[k] = Math.max(a, b);
+    }
+    out.byLevel = lv;
+  }
+  return out;
 }
 
 async function puzProgress(request, env) {
@@ -2034,15 +2129,30 @@ async function puzProgress(request, env) {
     let obj;
     try { obj = JSON.parse(text); } catch (e) { return errJson('JSON inválido', 400); }
     if (!obj || typeof obj !== 'object') return errJson('Blob inválido', 400);
-    const solved = Math.max(0, Math.floor(+obj.solved || +obj.n || 0));
+    // Fusionar con lo que ya está guardado, en vez de pisarlo (ver puzMerge). Antes un dispositivo
+    // con una copia vieja borraba el progreso hecho en otro.
+    let final = obj;
+    try {
+      const prev = await env.DB.prepare('SELECT data FROM user_puzzle WHERE user_id=?1').bind(u.id).first();
+      if (prev && prev.data) {
+        let viejo = null;
+        try { viejo = JSON.parse(prev.data); } catch (e) { viejo = null; }
+        if (viejo) final = puzMerge(viejo, obj);
+      }
+    } catch (e) { /* si no se pudo leer lo anterior, se guarda lo que llegó */ }
+    const cuerpo = JSON.stringify(final);
+    if (cuerpo.length > PUZ_PROGRESS_MAX) return errJson('Blob inválido o demasiado grande', 400);
+    const solved = Math.max(0, Math.floor(+final.solved || +final.n || 0));
     const now = Math.floor(Date.now() / 1000);
     try {
       await env.DB.prepare(
         'INSERT INTO user_puzzle (user_id, data, solved, updated) VALUES (?1,?2,?3,?4) ' +
         'ON CONFLICT(user_id) DO UPDATE SET data=?2, solved=?3, updated=?4'
-      ).bind(u.id, text, solved, now).run();
+      ).bind(u.id, cuerpo, solved, now).run();
     } catch (e) { return errJson('D1 error: ' + e.message, 500); }
-    return jsonResp({ ok: true });
+    // Se devuelve lo que quedó guardado: si el dispositivo mandó algo atrasado, así puede ponerse
+    // al día sin esperar a volver a entrar. (Que el navegador lo adopte queda para la Fase 7.)
+    return jsonResp({ ok: true, progress: final });
   }
 
   return errJson('Método no soportado', 405);

@@ -49,9 +49,9 @@ Los números entre corchetes —`[7]`, `[15]`— son el número de hallazgo del 
 | 2 | Las salas de partida sobreviven a la siesta | vivo | **larga** | ☑ **EN VIVO 26/08/2026** |
 | 3 | Frenos de abuso del chat y los desafíos | vivo | media | ☑ **EN VIVO 26/08/2026** |
 | 4 | Frenos de abuso y limpieza de la base | cr-proxy + web | media | ☑ **EN VIVO 26/08/2026** |
-| 5 | Que el baneo y el bloqueo muerdan de verdad | cr-proxy + vivo (+ 12 líneas de web) | media | ⏳ **hecha y probada 26/08 — FALTA PUBLICAR** |
-| 6 | Velocidad del backend y progreso de ejercicios | cr-proxy | media | ☐ |
-| 7 | Los arreglos de la web (+ pedido del autor: volver al salón sin perder el desafío) | index.html | media | ☐ |
+| 5 | Que el baneo y el bloqueo muerdan de verdad | cr-proxy + vivo + web | media | ☑ **EN VIVO 27/08/2026** |
+| 6 | Velocidad del backend y progreso de ejercicios | cr-proxy | media | ☑ **EN VIVO 27/08/2026** |
+| 7 | Los arreglos de la web (+ pedido del autor: volver al salón sin perder el desafío) | index.html | media | ⏳ **hecha y probada 27/08 — FALTA PUBLICAR** |
 | 8 | Prolijidad y código muerto | los tres | corta | ☐ |
 
 > **Con las fases 1 y 2 hechas, los dos hallazgos CRÍTICOS quedan cerrados.** De acá
@@ -555,7 +555,17 @@ Toca **los dos workers**: publicar primero cr-proxy, después vivo-worker.
 - **No romper la excepción que ya está pensada:** un moderador sigue leyendo a todos,
   así nadie se esconde de la moderación bloqueando al mod.
 
-### Estado: hecha y probada el 26/08/2026 — **falta publicar**
+### ✅ PUBLICADA Y VERIFICADA EN PRODUCCIÓN — 27/08/2026
+
+Probada por el autor con dos cuentas, sobre el sitio real. Lo que se comprobó: al banear, la persona
+**deja de poder escribir** (el cartel de suspensión le aparece dentro del minuto, que es el plazo de
+revalidación del chat, y así queda) y **su desafío ya no le llega al otro**. Hizo falta una segunda
+vuelta: en la primera prueba el baneado seguía pudiendo desafiar, porque volvía "de invitado" (ver el
+punto 4 de las notas de la sesión).
+
+**Decisión del autor:** los invitados **siguen pudiendo desafiar**. En vez de cerrar eso, queda
+anotado un pedido para más adelante: una opción en Preferencias del estilo **"No aceptar desafíos de
+invitados"**, para el que no quiera jugar con gente sin cuenta.
 
 **Qué se cambió, archivo por archivo.**
 
@@ -595,7 +605,7 @@ volver como invitado.
 navegador (el servidor lo manda antes de saber quién sos). No es un agujero nuevo: es exactamente lo que
 había, y lo que se arregló es el mensaje que llega **en vivo**, que es el que molesta.
 
-### Cómo se publica (el orden importa)
+### Cómo se publicó (el orden importó)
 
 1. **cr-proxy primero** (panel de Cloudflare → Worker `cr-proxy` → **Edit code** → pegar
    `cr-proxy-worker.js` entero → **Deploy**). Sin esto, el paso 2 preguntaría por un endpoint que no
@@ -648,6 +658,39 @@ Todo en `cloudflare-worker/cr-proxy-worker.js`, **una sola publicación**.
   guardado si el que llega es más viejo que el que ya está.
 - Arreglo bueno: fusionar por ejercicio (quedarse con el mejor resultado de cada
   uno) en vez de reemplazar el bloque.
+
+### ✅ PUBLICADA — 27/08/2026 (el autor probó el deploy; verifica a mano mañana)
+
+**Una sola publicación**, la de siempre para cr-proxy: panel de Cloudflare → Worker `cr-proxy` →
+**Edit code** → pegar `cr-proxy-worker.js` entero → **Deploy**. No toca ni el worker de vivo ni la web.
+
+**6.1 · Las tablas se crean una sola vez, y las lecturas van juntas.**
+
+- Cada `ensure*Table` mandaba sus `CREATE TABLE IF NOT EXISTS` en **todos** los pedidos. No rompía
+  nada, pero eran idas y vueltas a la base al pedo, en cada carga de página y en cada conexión de
+  chat. Ahora hay una bandera por isolate: del segundo pedido en adelante no cuestan ninguna
+  consulta. Si una `CREATE` falla, la bandera no se marca y se reintenta al pedido siguiente.
+- `/rating/me` —el endpoint más pedido del sitio— hacía **seis lecturas una detrás de la otra**
+  (tres ratings, "no molestar" y las dos listas de bloqueo). Ahora van **en un solo lote**
+  (`batch`), o sea un solo viaje. Queda una única consulta suelta: la de "quién soy", que es la
+  que da el id y por eso tiene que ir primero.
+- Medido en el banco de pruebas: segunda llamada = **0 CREATE, 1 lote de 6 lecturas, 1 consulta
+  suelta**. Antes eran del orden de una docena de idas y vueltas.
+
+**6.2 · El progreso de ejercicios se FUSIONA en vez de reemplazarse.**
+
+- El progreso ya viajaba en la cuenta (eso está en vivo desde el 20/08); lo que estaba mal era
+  **cómo se guardaba**: como un bloque entero que pisaba al anterior. Resolvías 50 en el teléfono,
+  abrías la computadora que tenía una copia vieja de 20, y al resolver uno ahí subía su bloque de 21
+  y **borraba los 50**: rating, racha y calendario para atrás.
+- Ahora `puzMerge()` junta los dos: manda el bloque con **más ejercicios resueltos** (los contadores
+  sólo crecen, así que ése es el que está al día), pero los **máximos históricos** (mejor rating,
+  mejor racha) y el **calendario de días** se quedan con lo mejor de los dos, porque son cosas que
+  no se pueden deshacer. Los resueltos por nivel, igual.
+- Además el guardado **devuelve** el progreso ya fusionado, para que el aparato atrasado pueda
+  ponerse al día sin esperar a volver a entrar. Que el navegador lo adopte es el ítem **7.8**.
+
+El banco de pruebas `test-cuentas.mjs` pasó de 30 a **50 comprobaciones**.
 
 ### Cómo se prueba la Fase 6
 
@@ -741,12 +784,74 @@ sitio con el desafío abierto sí funciona bien; el problema es sólo volver al 
   15 minutos. Eso ya pasa hoy navegando por otras pestañas, así que no es nuevo — pero
   conviene probar que el aviso se vea bien también desde el salón.
 
+### 7.8 · Que el navegador adopte el progreso de ejercicios fusionado  ← viene de la Fase 6
+
+- `index.html`, `puzSyncPush()` (~línea 26346)
+- Hoy, después de la Fase 6, el servidor ya no pierde progreso: si un aparato manda una copia
+  atrasada, la fusiona y **devuelve el resultado**. Pero el navegador ignora esa respuesta, así que
+  ese aparato sigue mostrando sus números viejos hasta que se recargue la página.
+- Arreglo: en el `.then()` del `fetch` de `puzSyncPush`, si la respuesta trae `progress` y tiene
+  **más resueltos** que el local, aplicarlo con `_puzSetLocal(d.progress)`. Cuidado con no disparar
+  un push nuevo (`_puzSetLocal` ya usa `_puzSyncApplying` para eso).
+- Chico: unas cinco líneas. Sin esto igual no se pierde nada, sólo se ve viejo hasta recargar.
+
+### Estado: hecha y probada el 27/08/2026 — **falta publicar**
+
+**Una sola publicación:** `publicar-web.cmd`. No toca ningún worker.
+
+**Los ocho ítems, y con qué se comprobó cada uno.**
+
+| Ítem | Qué se hizo | Cómo se comprobó |
+|---|---|---|
+| 7.1 | En la web publicada se hace lugar **solo y en silencio**: se tira el caché del motor y la mitad más vieja de los cuadros guardados. Se acabaron los dos carteles del modo autor que dejaban al visitante en un bucle. | Banco de pruebas (con un localStorage de mentira): borra lo viejo, deja lo nuevo, **no toca** los torneos ni las preferencias. |
+| 7.2 | Los dos chats reintentan **una vez** el mensaje que el servidor descartó con `not-ready`, y al invitado le dicen que entre con su cuenta. | Banco de pruebas sobre el cableado de los dos chats. El resto, a mano. |
+| 7.3 | **Ya estaba hecho**: `_noticiaAIHeaders()` manda la sesión del moderador. Se publicó por accidente el 26/08 junto con la Fase 4, y por eso la IA funciona. | El autor ya lo probó el 26/08. |
+| 7.4 | Los tres archivos de autor (`embedded-data/photos/flyers`) ya **no se piden** en la web. Se inyectan con `document.write` sólo cuando el host NO es el sitio publicado. | Probado en un navegador de verdad, aislado: en localhost cargan **en el mismo orden que hoy**; con el sitio publicado no se piden ninguna de las tres y la consola queda limpia. |
+| 7.5 | La clave del caché de posiciones pasó de ser **el PGN entero** a un resumen corto (largo + huella), y el tope de 500 a 200. | Banco de pruebas: 5.000 partidas parecidas, **ninguna clave repetida**. |
+| 7.6 | Los **dos** comentarios que mentían sobre el bloqueo, corregidos. | Banco de pruebas. |
+| 7.7 | Botón **"💬 Ir al salón"** (sólo mientras esperás rival), la píldora "Desafío abierto" ahora también se ve desde el salón, y si entra el rival mientras estás ahí **te lleva al tablero solo**. | Banco de pruebas sobre el cableado. El comportamiento, a mano. |
+| 7.8 | El navegador **adopta** el progreso de ejercicios que le devuelve el servidor ya fusionado (viene de la Fase 6). | Banco de pruebas. |
+
+**La trampa de la 7.7, resuelta.** Antes el anfitrión SIEMPRE estaba mirando el tablero cuando entraba
+el rival, así que el "traeme a la sala" sólo corría si estabas en otra pestaña del sitio. Ahora se
+puede esperar desde el salón, y si no se agregaba la segunda rama el anfitrión **se perdía el arranque
+de su propia partida con el reloj corriendo**. Queda cubierto: entre el rival donde entre, si sos
+jugador de esa sala te lleva al tablero.
+
+**Dos decisiones que conviene saber:**
+
+1. **La mitad de la 7.2 que dice "deshabilitar el cuadro de escribir hasta que llegue `ready`" NO se
+   hizo, a propósito.** Con el reintento el mensaje llega igual, así que deshabilitar el cuadro sólo
+   sumaría un parpadeo molesto al entrar. Si en la práctica se nota el retardo, se agrega.
+2. **La 7.4 se resolvió al revés de como decía el plan.** El plan suponía que un generador arma el
+   `index.html` publicado; no es así: el archivo viaja por git tal cual. Por eso la detección va por
+   el nombre del dominio, y **al revés a propósito**: cualquier host que no sea el sitio real (la
+   carpeta, el servidor local, la IP de la red para probar en el teléfono) se comporta exactamente
+   como hasta ahora. Además el exportador del modo autor limpia los `<script data-aa-author>`
+   inyectados, para que el archivo exportado no los cargue por duplicado.
+
+Banco de pruebas nuevo: **`ajedrez-argentino/test-web.mjs`, 56 comprobaciones**. Se corre con
+`cd ajedrez-argentino` y `node test-web.mjs`. Saca las funciones del `index.html` de verdad (no de
+una copia), así que si mañana alguien las cambia, se entera.
+
 ### Cómo se prueba la Fase 7
 
-1. Abrir la web publicada y mirar la consola: **no** tiene que haber errores rojos.
+1. Abrir la web publicada y mirar la consola: **no** tiene que haber errores rojos (antes había
+   tres 404 fijos).
 2. Entrar a un torneo con cruces y confirmar que la tabla aparece.
-3. Entrar a "La hinchada" y escribir enseguida: el primer mensaje tiene que salir.
-4. Probar el botón de la noticia con IA (si ya se hizo la Fase 4).
+3. Entrar a "La hinchada" y escribir **enseguida**, sin esperar: el primer mensaje tiene que salir.
+4. Probar el botón de la noticia con IA.
+5. **Volver al salón sin perder el desafío** (7.7), que es lo que pidió el autor:
+   a. Crear un desafío → se abre la sala con el tablero.
+   b. Tocar **"💬 Ir al salón"**: tenés que caer en el salón, con la píldora "🎯 Desafío abierto"
+      arriba a la derecha, y el desafío **sigue en la lista** para que lo tome alguien.
+   c. Escribir en el chat de la sala mientras esperás.
+   d. Desde otro navegador (o el teléfono), aceptar el desafío: al que esperaba tiene que
+      **llevarlo al tablero solo**, sin tocar nada.
+   e. Comprobar también que **"🏠 Volver al menú"** sigue haciendo lo de siempre: retira el desafío.
+6. **Modo autor** (esto es lo que hay que mirar con más cuidado de la Fase 7): abrir el index.html
+   de la carpeta como siempre y confirmar que los datos, las fotos y los flyers cargan igual. Si algo
+   fallara, sería acá.
 
 ---
 

@@ -2,8 +2,9 @@
 //   cd ajedrez-argentino/cloudflare-worker && node test-cuentas.mjs
 //
 // Cubre la Fase 4 de la auditoría (frenos de frecuencia, cierre del redactor con IA, freno del PIN
-// por IP y tope de partidas rateadas entre las mismas dos cuentas) y la parte de la Fase 5 que vive
-// acá: el endpoint /mod/status con el que los chats revalidan las sanciones.
+// por IP y tope de partidas rateadas entre las mismas dos cuentas), la parte de la Fase 5 que vive
+// acá (el endpoint /mod/status con el que los chats revalidan las sanciones) y la Fase 6 (velocidad
+// de /rating/me y progreso de ejercicios que no se pisa entre dispositivos).
 // Se ataca por la puerta real del Worker (su fetch), con una base de datos de mentira.
 
 // ── Base de datos de mentira: entiende sólo las consultas que usa el Worker ──
@@ -22,6 +23,10 @@ function mkDB() {
     ],
     ratings: [], rated_games: [], reports: [], admin_rl: [], follows: [], blocks: [], user_puzzle: [],
   };
+  // Contadores para poder comprobar la Fase 6: cuántas CREATE/ALTER se mandaron, cuántas consultas
+  // sueltas (una ida y vuelta cada una) y cuántos lotes.
+  const st = { creates: 0, sueltas: 0, enLote: 0, lotes: 0 };
+  let _enLote = false;
   const stmt = (sql) => ({
     sql, args: [],
     bind(...a) { this.args = a; return this; },
@@ -31,7 +36,8 @@ function mkDB() {
   });
   function run(sql, a, modo) {
     const S = sql.replace(/\s+/g, ' ');
-    if (/^CREATE|^ALTER|^PRAGMA/i.test(S)) return modo === 'all' ? [] : (modo === 'first' ? null : {});
+    if (/^CREATE|^ALTER|^PRAGMA/i.test(S)) { st.creates++; return modo === 'all' ? [] : (modo === 'first' ? null : {}); }
+    if (_enLote) st.enLote++; else st.sueltas++;
     if (S.includes('FROM sessions s JOIN usuarios')) {
       const se = t.sessions.find((x) => x.token === a[0]); if (!se) return null;
       const u = t.usuarios.find((x) => x.id === se.user_id); if (!u) return null;
@@ -39,7 +45,7 @@ function mkDB() {
     }
     if (S.startsWith('DELETE FROM sessions WHERE expires <')) { t.sessions = t.sessions.filter((x) => x.expires >= a[0]); return {}; }
     if (S.startsWith('DELETE FROM reports WHERE handled=1')) { t.reports = t.reports.filter((x) => !(x.handled === 1 && x.created_at < a[0])); return {}; }
-    if (S.includes('SELECT dnd FROM usuarios')) return t.usuarios.find((x) => x.id === a[0]) || null;
+    if (S.includes('SELECT dnd FROM usuarios')) { const r = t.usuarios.find((x) => x.id === a[0]) || null; return modo === 'all' ? (r ? [r] : []) : r; }
     if (S.includes('SELECT id, username FROM usuarios WHERE id=')) return t.usuarios.find((x) => x.id === a[0]) || null;
     if (S.includes('SELECT id FROM usuarios WHERE id=')) return t.usuarios.find((x) => x.id === a[0]) || null;
     if (S.startsWith('UPDATE usuarios SET display_name')) { return {}; }
@@ -60,7 +66,7 @@ function mkDB() {
       return { n };
     }
     if (S.startsWith('SELECT * FROM rated_games WHERE game_id=')) return t.rated_games.find((g) => g.game_id === a[0]) || null;
-    if (S.includes('SELECT rating, games FROM ratings')) return t.ratings.find((r) => r.user_id === a[0] && r.category === a[1]) || null;
+    if (S.includes('SELECT rating, games FROM ratings')) { const r = t.ratings.find((x) => x.user_id === a[0] && x.category === a[1]) || null; return modo === 'all' ? (r ? [r] : []) : r; }
     if (S.startsWith('INSERT INTO ratings')) {
       const [uid, cat, rat, upd] = a;
       const ex = t.ratings.find((r) => r.user_id === uid && r.category === cat);
@@ -78,13 +84,28 @@ function mkDB() {
       if (ex) { ex.n = a[1]; ex.ts = a[2]; } else t.admin_rl.push({ k: a[0], n: a[1], ts: a[2] });
       return {};
     }
-    if (S.includes('FROM user_puzzle')) return null;
-    if (S.startsWith('INSERT INTO user_puzzle')) return {};
+    if (S.includes('FROM user_puzzle')) { const r = t.user_puzzle.find((x) => x.user_id === a[0]) || null; return modo === 'all' ? (r ? [r] : []) : r; }
+    if (S.startsWith('INSERT INTO user_puzzle')) {
+      const ex = t.user_puzzle.find((x) => x.user_id === a[0]);
+      if (ex) { ex.data = a[1]; ex.solved = a[2]; ex.updated = a[3]; }
+      else t.user_puzzle.push({ user_id: a[0], data: a[1], solved: a[2], updated: a[3] });
+      return {};
+    }
     if (S.includes('FROM reports WHERE reporter_id')) return null;
     if (S.startsWith('INSERT INTO reports')) { t.reports.push({ id: a[0], reporter_id: a[1], target_id: a[2], created_at: a[5], handled: 0 }); return {}; }
     return modo === 'all' ? [] : null;
   }
-  return { tablas: t, prepare: (sql) => stmt(sql), batch: async (arr) => { for (const s of arr) await s.run(); return []; } };
+  return {
+    tablas: t, stats: st, prepare: (sql) => stmt(sql),
+    // batch() = UNA sola ida y vuelta con varias consultas adentro. Devuelve un resultado por consulta,
+    // igual que D1 de verdad.
+    batch: async (arr) => {
+      st.lotes++; _enLote = true;
+      const out = [];
+      try { for (const s of arr) out.push(await s.all()); } finally { _enLote = false; }
+      return out;
+    },
+  };
 }
 
 const worker = (await import('./cr-proxy-worker.js')).default;
@@ -207,6 +228,67 @@ console.log('\n=== 6. /mod/status: la consulta con la que los chats revalidan (F
   chk(JSON.stringify(ana4.blocked) === '["u_beto"]', 'devuelve a quiénes bloqueó', JSON.stringify(ana4.blocked));
   const beto2 = await json(await pedir('/mod/status', { method: 'POST', headers: H, body: '{"userId":"u_beto"}' }));
   chk(JSON.stringify(beto2.blocked_by) === '["u_ana"]', 'y quiénes lo bloquearon a él', JSON.stringify(beto2.blocked_by));
+}
+
+console.log('\n=== 7. /rating/me: una sola ida a la base, y las tablas una sola vez (Fase 6) ===');
+{
+  const H = { Authorization: 'Bearer sess-ana' };
+  DB.tablas.usuarios.find((u) => u.id === 'u_ana').dnd = 1;   // "No molestar" prendido
+  const r1 = await json(await pedir('/rating/me', { headers: H }));
+  chk(r1.id === 'u_ana', 'contesta quién soy', r1.id);
+  chk(typeof r1.ratings.blitz === 'number' && typeof r1.ratings.bullet === 'number' && typeof r1.ratings.rapid === 'number',
+      'devuelve los tres ratings del sitio');
+  chk(r1.prov.rapid === true, 'marca como provisional el ritmo sin partidas');
+  chk(r1.dnd === 1, 'trae el "No molestar" de la cuenta', r1.dnd);
+  chk(JSON.stringify(r1.blocked) === '["u_beto"]', 'y las dos listas de bloqueo', JSON.stringify(r1.blocked));
+
+  // Segunda llamada: acá se mide. Las tablas ya están creadas y las lecturas van en un solo lote.
+  const antes = { creates: DB.stats.creates, sueltas: DB.stats.sueltas, lotes: DB.stats.lotes, enLote: DB.stats.enLote };
+  const r2 = await json(await pedir('/rating/me', { headers: H }));
+  chk(r2.id === 'u_ana', 'la segunda llamada contesta igual');
+  chk(DB.stats.creates === antes.creates, 'NO vuelve a crear tablas (antes las creaba en cada pedido)', DB.stats.creates - antes.creates);
+  chk(DB.stats.lotes === antes.lotes + 1, 'las lecturas van en UN solo lote', DB.stats.lotes - antes.lotes);
+  chk(DB.stats.sueltas === antes.sueltas + 1, 'y queda UNA sola consulta suelta: la de "quién soy"', DB.stats.sueltas - antes.sueltas);
+  chk(DB.stats.enLote - antes.enLote === 6, 'con las seis lecturas adentro del lote', DB.stats.enLote - antes.enLote);
+  DB.tablas.usuarios.find((u) => u.id === 'u_ana').dnd = 0;
+}
+
+console.log('\n=== 8. El progreso de ejercicios ya no se pisa entre dispositivos (Fase 6) ===');
+{
+  const H = { Authorization: 'Bearer sess-ana', 'Content-Type': 'application/json' };
+  const guardar = (o) => pedir('/puz/progress', { method: 'POST', headers: H, body: JSON.stringify(o) });
+  const leer = async () => (await json(await pedir('/puz/progress', { headers: H }))).progress;
+
+  // El teléfono va adelante: 50 resueltos.
+  const tel = { solved: 50, n: 50, ok: 45, fail: 5, rating: 1420, best: 1450, streak: 3, bestStreak: 9,
+                byLevel: { facil: 30, medio: 20 }, days: { '2026-08-25': 20, '2026-08-26': 30 } };
+  await guardar(tel);
+  chk((await leer()).solved === 50, 'queda guardado lo del teléfono');
+
+  // La computadora tenía una copia vieja de 20, resuelve uno y manda 21. ANTES esto borraba los 50.
+  const compu = { solved: 21, n: 21, ok: 18, fail: 3, rating: 1260, best: 1300, streak: 1, bestStreak: 4,
+                  byLevel: { facil: 21 }, days: { '2026-08-20': 12, '2026-08-27': 1 } };
+  await guardar(compu);
+  const m = await leer();
+  chk(m.solved === 50, 'la copia vieja NO pisa el progreso (antes lo dejaba en 21)', m.solved);
+  chk(m.rating === 1420, 'el rating de táctica se mantiene', m.rating);
+  chk(m.bestStreak === 9, 'y la mejor racha también', m.bestStreak);
+  chk(m.days['2026-08-26'] === 30 && m.days['2026-08-20'] === 12 && m.days['2026-08-27'] === 1,
+      'el calendario junta los días de los dos aparatos', JSON.stringify(m.days));
+  chk(m.byLevel.medio === 20 && m.byLevel.facil === 30, 'y los resueltos por nivel se quedan con el mayor');
+
+  // El que va adelante sí avanza normalmente.
+  const tel2 = Object.assign({}, tel, { solved: 51, n: 51, ok: 46, rating: 1435, best: 1455 });
+  await guardar(tel2);
+  const m2 = await leer();
+  chk(m2.solved === 51, 'el aparato que va adelante sigue sumando', m2.solved);
+  chk(m2.rating === 1435, 'con su rating al día', m2.rating);
+  chk(m2.best === 1455, 'y su mejor marca', m2.best);
+
+  // Y la respuesta del guardado ya trae lo que quedó, para que el atrasado se ponga al día.
+  const resp = await json(await guardar(compu));
+  chk(resp.ok === true && resp.progress && resp.progress.solved === 51,
+      'al guardar se devuelve el progreso ya fusionado', resp.progress && resp.progress.solved);
 }
 
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.') + '\n');
