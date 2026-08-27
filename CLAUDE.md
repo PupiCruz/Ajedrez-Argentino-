@@ -3,12 +3,23 @@
 > Esta nota la lee Claude automáticamente al abrir esta carpeta, en cualquier PC.
 > Sirve para retomar el trabajo aunque sea en otra computadora o sesión nueva.
 
-## 🛠️ Trabajo en curso: arreglos de la auditoría
-Hay una auditoría de seguridad y código del **26/08/2026** con 27 hallazgos, y un plan
-por fases para irlos arreglando: **`PLAN-AUDITORIA.md`** (en esta misma carpeta).
-Si el usuario dice "seguimos con los arreglos" / "la fase que sigue", **abrir ese archivo
-primero**: tiene la tabla de estado (qué fase va), las reglas de trabajo y cómo se prueba
-y publica cada fase. Al terminar una fase, tildarla ahí.
+## ✅ Auditoría 2026: TERMINADA
+La auditoría de seguridad y código del **26/08/2026** (27 hallazgos) se arregló entera en
+**8 fases**, todas publicadas y andando al **27/08/2026**. El registro completo de qué se
+cambió y por qué está en **`PLAN-AUDITORIA.md`** (en esta misma carpeta): conviene leerlo
+antes de tocar cuentas, moderación, chats o el arranque de la página.
+
+## 🧪 Bancos de pruebas — correrlos antes y después de tocar esas partes
+Quedaron cuatro, **242 comprobaciones** en total. No necesitan instalar nada (Node y listo):
+
+| Banco | Qué cubre | Cómo se corre |
+|---|---|---|
+| `ajedrez-argentino/test-web.mjs` (60) | index.html y editar.html | `cd ajedrez-argentino` y `node test-web.mjs` |
+| `cloudflare-worker/test-cuentas.mjs` (59) | cuentas, frenos, rating, moderación | `cd ajedrez-argentino/cloudflare-worker` y `node test-cuentas.mjs` |
+| `vivo-worker/test-lobby.mjs` (62) | lobby, los tres chats, desafíos, sanciones, bloqueo | `cd vivo-worker` y `node test-lobby.mjs` |
+| `vivo-worker/test-salas.mjs` (61) | salas de partida, hibernación, reloj | `cd vivo-worker` y `node test-salas.mjs` |
+
+Ya cazaron varios bugs antes de que llegaran al sitio. Si uno falla, **no publicar**.
 
 ## Qué es
 App web de **ajedrez argentino**: torneos, perfiles de jugadores, rankings FIDE,

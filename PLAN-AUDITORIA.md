@@ -1,5 +1,28 @@
 # Plan de arreglos — Auditoría del 26/08/2026
 
+> # ✅ TERMINADO — 27/08/2026
+>
+> **Las ocho fases están hechas, publicadas y andando.** Los 27 hallazgos quedaron cerrados: los 2
+> críticos, los 17 importantes y los 8 menores (uno de ellos, el 8.4, era "no hacer nada" a
+> propósito). Este archivo queda como registro de qué se cambió y por qué.
+>
+> **Lo que sí conviene seguir haciendo:** correr los cuatro bancos de pruebas antes y después de
+> tocar esas partes. Son **242 comprobaciones**, y ya cazaron varios bugs antes de que llegaran al
+> sitio.
+>
+> | Banco | Qué cubre | Cómo se corre |
+> |---|---|---|
+> | `vivo-worker/test-salas.mjs` (61) | salas de partida, hibernación, reloj | `cd vivo-worker` y `node test-salas.mjs` |
+> | `vivo-worker/test-lobby.mjs` (62) | lobby, los tres chats, desafíos, sanciones, bloqueo | `cd vivo-worker` y `node test-lobby.mjs` |
+> | `ajedrez-argentino/test-web.mjs` (60) | index.html y editar.html | `cd ajedrez-argentino` y `node test-web.mjs` |
+> | `cloudflare-worker/test-cuentas.mjs` (59) | cuentas, frenos, rating, moderación | `cd ajedrez-argentino/cloudflare-worker` y `node test-cuentas.mjs` |
+>
+> **Lo único que quedó anotado para más adelante** no es un hallazgo, es un pedido del autor: una
+> opción en Preferencias tipo **"No aceptar desafíos de invitados"** (ver la nota de la Fase 5).
+>
+> ⚠️ **Este archivo se actualizó DESPUÉS de la última publicación**, así que estas últimas líneas
+> suben la próxima vez que se corra `publicar-web.cmd`.
+
 > **Si sos Claude y estás retomando esto en una sesión nueva: leé la sección
 > "Cómo retomar" de abajo ANTES de tocar nada.**
 
@@ -52,7 +75,7 @@ Los números entre corchetes —`[7]`, `[15]`— son el número de hallazgo del 
 | 5 | Que el baneo y el bloqueo muerdan de verdad | cr-proxy + vivo + web | media | ☑ **EN VIVO 27/08/2026** |
 | 6 | Velocidad del backend y progreso de ejercicios | cr-proxy | media | ☑ **EN VIVO 27/08/2026** |
 | 7 | Los arreglos de la web (+ pedido del autor: volver al salón sin perder el desafío) | index.html | media | ☑ **EN VIVO 27/08/2026** |
-| 8 | Prolijidad y código muerto | cr-proxy + web | corta | ⏳ **hecha y probada 27/08 — FALTA PUBLICAR** |
+| 8 | Prolijidad y código muerto | cr-proxy + web | corta | ☑ **EN VIVO 27/08/2026** |
 
 > **Con las fases 1 y 2 hechas, los dos hallazgos CRÍTICOS quedan cerrados.** De acá
 > en adelante no hay nada urgente: las fases 3 a 8 se pueden hacer en el orden que
@@ -897,7 +920,7 @@ el archivo para confirmar que sigue sin aparecer.
 - No vale la pena reestructurarlo. Lo práctico: un comentario grande arriba del
   bloque en los dos archivos, avisando que está duplicado.
 
-### Estado: hecha y probada el 27/08/2026 — **falta publicar**
+### ✅ PUBLICADA — 27/08/2026
 
 **Dos publicaciones, sin orden obligatorio** (los cambios no dependen entre sí; por costumbre,
 cr-proxy primero):
