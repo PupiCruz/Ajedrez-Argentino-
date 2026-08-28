@@ -24504,7 +24504,9 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   var hasBroadcast = !!broadcastId;
   // Chat "La hinchada" (sólo torneos EN CURSO): host estable a la derecha, FUERA de #td-games-section
   // (que el refresco de 30s del vivo reemplaza por completo) para que no se corte la charla al refrescar.
-  if (status === 'live') h += '<div id="td-tourchat-host"></div>';
+  // data-tour: el nombre del torneo queda en el propio hueco. Lo usa el bloque del chat para
+  // engancharse solo cuando el detalle se dibujó ANTES de que ese bloque existiera (link directo).
+  if (status === 'live') h += '<div id="td-tourchat-host" data-tour="' + escHtml(String(name || '')) + '"></div>';
   h += '<div id="td-games-section">';
   if (roundOrder.length) {
     h += _tdLocalGamesHtml(byRound, roundOrder, games, pgnKey2, typ);
@@ -32942,6 +32944,21 @@ function cvUpdateNagBadge() {
       tcUpdateAuthAll(); tcRenderAll();
     }
   };
+
+  // Enganche tardío del chat: si el detalle del torneo se dibujó ANTES de que existiera este bloque,
+  // la llamada que abre "La hinchada" ('if (window.aaTourChat)', allá por tdRenderDetail) se salteó en
+  // silencio y el visitante se quedaba SIN chat y sin el "👁 X mirando". Pasa al entrar por un LINK
+  // DIRECTO (?torneo=<id>, el que se comparte por WhatsApp): ese código corre mucho más arriba en la
+  // página. Acá miramos si quedó un hueco sin llenar y lo llenamos con el nombre que guarda data-tour.
+  function tcEngancharPendiente(){
+    var host=document.getElementById('td-tourchat-host');
+    if(!host || host._tcMounted) return;
+    var name=host.getAttribute('data-tour'); if(!name) return;
+    window.aaTourChat.open(name);
+    window.aaTourChat.mount('detail', host);
+  }
+  tcEngancharPendiente();
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', tcEngancharPendiente);
 
   // API para el menú hamburguesa del teléfono: leer los seguidos en línea, suscribirse a los
   // cambios (para refrescar el contador) y desafiar a uno. Así el globito flotante puede pasar a
