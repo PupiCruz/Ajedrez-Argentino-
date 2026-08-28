@@ -31076,8 +31076,29 @@ function cvUpdateNagBadge() {
     } catch(e){ return { fen:lvFen, last:lvLastMove, live:true }; }
   }
 
+  // ── Pieza SOSTENIDA (arrastre sin soltar) ───────────────────────────────────
+  // Mientras sostenés una pieza, la de verdad se ve flotando siguiendo el dedo y la de la casilla de
+  // origen queda apenas marcada (clase .dragging). Como renderBoard() rehace TODO el tablero, ese
+  // "apenas marcada" se perdía y la pieza se veía DUPLICADA: es lo que pasa cuando uno espera con la
+  // pieza en la mano y llega la jugada del rival. Estas dos funciones mantienen el arrastre vivo a
+  // través de los redibujados.
+  function lvCancelDrag(){
+    if(!lvDrag) return;
+    if(lvDrag.ghost) lvDrag.ghost.remove();
+    if(lvSelected===lvDrag.from) lvSelected=null;
+    lvDrag=null;
+  }
+  // Si el rival te comió justo la pieza que estás sosteniendo, el arrastre ya no tiene sentido:
+  // se saca la pieza que sigue al puntero (si no, quedaría flotando una pieza que ya no existe).
+  function lvCheckDragAlive(){
+    var d=lvDrag; if(!d || !d.moved) return;
+    var ahora=null; try{ ahora=pieceAt(d.from); }catch(e){}
+    if(!ahora || !d.pc || ahora.color!==d.pc.color || ahora.type!==d.pc.type) lvCancelDrag();
+  }
+
   function renderBoard(){
     var el=$('lv-board'); if(!el) return;
+    lvCheckDragAlive();
     var view=computeView();
     var board=fenBoard(view.fen);
     var flip=isFlipped();
@@ -31111,6 +31132,13 @@ function cvUpdateNagBadge() {
       html+='<div class="'+cls+'" data-sq="'+name+'">'+inner+'</div>';
     }}
     el.innerHTML=html;
+    // Seguís sosteniendo la pieza: su casilla de origen vuelve a quedar atenuada, así se ve UNA sola
+    // (la de la mano). Al soltar —o al cancelar en una casilla ilegal— el tablero se redibuja sin
+    // esta marca y la pieza reaparece en su casilla.
+    if(view.live && lvDrag && lvDrag.moved){
+      var srcCell=el.querySelector('[data-sq="'+lvDrag.from+'"]');
+      if(srcCell) srcCell.classList.add('dragging');
+    }
     lvRenderedFen=view.fen;
     renderArrows();
   }
