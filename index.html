@@ -15120,6 +15120,14 @@ function _bdPaint(el, bd, o) {
 // Solo puede haber UN arrastre a la vez en toda la app → un único par de listeners
 // de documento (mousemove/mouseup) atiende a los tres tableros vía _bdDrag.
 var _bdDrag = null, _bdDocBound = false;
+// Corta el arrastre y deja el tablero como estaba (sin mover nada). Se usa cuando el arrastre se
+// pierde: soltaste el botón FUERA de la ventana (ahí el mouseup no llega nunca) o te fuiste a otra
+// aplicación. Sin esto, la pieza quedaba pegada al cursor hasta el próximo clic en el tablero.
+function _bdCancelDrag() {
+  var d = _bdDrag; if (!d) return; _bdDrag = null;
+  var lp = d.el.querySelector('[data-sq="' + d.sq + '"] img.cpc'); if (lp) lp.style.opacity = '';
+  if (d.clone && d.clone.parentNode) d.clone.parentNode.removeChild(d.clone);
+}
 function _bdBindInput(boardEl, st, cfg) {
   // ts.t: momento del último arrastre. El clic que el navegador dispara al soltar se ignora
   // por cercanía en el tiempo. Es MARCA DE TIEMPO y no flag booleano a propósito: si el
@@ -15166,10 +15174,14 @@ function _bdBindInput(boardEl, st, cfg) {
   if (_bdDocBound) return; _bdDocBound = true;
   document.addEventListener('mousemove', function(e) {
     if (!_bdDrag) return;
+    // El botón ya no está apretado: se soltó fuera de la ventana y el mouseup nunca llegó.
+    if (e.buttons === 0) { _bdCancelDrag(); return; }
     var sz = parseFloat(_bdDrag.clone.style.width);
     _bdDrag.clone.style.transform = 'translate3d(' + (e.clientX-sz/2) + 'px,' + (e.clientY-sz/2) + 'px,0)';
     if (!_bdDrag.moved && (Math.abs(e.clientX-_bdDrag.sx) > 4 || Math.abs(e.clientY-_bdDrag.sy) > 4)) _bdDrag.moved = true;
   });
+  // Cambiar de aplicación (alt-tab) con la pieza agarrada también dejaba el clon pegado.
+  window.addEventListener('blur', function() { _bdCancelDrag(); });
   document.addEventListener('mouseup', function(e) {
     if (!_bdDrag) return;
     var d = _bdDrag; _bdDrag = null;
@@ -31426,6 +31438,15 @@ function cvUpdateNagBadge() {
 
   // viaDrag=true → NO animar (el arrastre ya movió la pieza). Clic-clic y premoves animan.
   function doMove(from,to,promo,viaDrag){
+    // Con la conexión caída, send() descarta la jugada EN SILENCIO: el tablero te la mostraba hecha
+    // (y el cartel de "reconectando" lo pisaba un "Turno del rival"), mientras el rival no veía nada
+    // y tu reloj seguía corriendo. Mejor no aceptarla y avisar; el premove sí se puede seguir
+    // dejando, porque recién se dispara cuando vuelve el estado del servidor.
+    if(!(ws && ws.readyState===1)){
+      lvSelected=null; renderBoard();
+      try{ lvToast('Se cortó la conexión con el árbitro: esperá a que vuelva para mover.'); }catch(e){}
+      return;
+    }
     var mv=null; try { mv=lvChess.move({from:from,to:to,promotion:promo}); } catch(e){ mv=null; }
     if(!mv){ lvSelected=null; renderBoard(); return; }
     lvFen=lvChess.fen(); lvTurn=lvChess.turn();
@@ -31481,13 +31502,21 @@ function cvUpdateNagBadge() {
       // Flecha con clic derecho: seguí el puntero y redibujá el preview al cambiar de casilla.
       if(lvRmDown){ var rto=sqUnder(e); if(rto!==lvRmDown.to){ lvRmDown.to=rto; renderArrows(); } e.preventDefault(); return; }
       if(!lvDrag) return;
+      // Volviste al tablero con el botón ya suelto: lo soltaste FUERA de la ventana y el pointerup
+      // nunca llegó. Se cancela el arrastre en vez de dejar la pieza pegada al cursor.
+      if(e.buttons===0){ lvCancelDrag(); lvSuppressClick=true; renderBoard(); return; }
       if(!lvDrag.moved){
         if(Math.abs(e.clientX-lvDrag.x)+Math.abs(e.clientY-lvDrag.y)<7) return;
         lvDrag.moved=true; lvSelected=lvDrag.from; renderBoard();
         var g=document.createElement('div'); g.className='lv-drag-ghost';
         g.innerHTML='<img src="'+pieceImg(lvDrag.pc)+'" style="width:100%;height:100%">';
+        var src=board.querySelector('[data-sq="'+lvDrag.from+'"]');
+        // La pieza en la mano tiene que medir lo MISMO que la casilla. El tamaño del CSS es fijo
+        // (tope 64px) y el tablero se puede agrandar, así que en un tablero grande se veía chiquita.
+        if(src){ var _r=src.getBoundingClientRect();
+          if(_r.width){ g.style.width=_r.width+'px'; g.style.height=_r.height+'px'; g.style.maxWidth='none'; g.style.maxHeight='none'; } }
         document.body.appendChild(g); lvDrag.ghost=g;
-        var src=board.querySelector('[data-sq="'+lvDrag.from+'"]'); if(src) src.classList.add('dragging');
+        if(src) src.classList.add('dragging');
       }
       if(lvDrag.ghost){ lvDrag.ghost.style.left=e.clientX+'px'; lvDrag.ghost.style.top=e.clientY+'px'; }
       e.preventDefault();
@@ -31501,9 +31530,20 @@ function cvUpdateNagBadge() {
       if(d.ghost) d.ghost.remove();
       if(!d.moved) return;   // fue un toque, lo maneja el 'click'
       lvSuppressClick=true;
+      // Si la partida TERMINÓ mientras sostenías la pieza (el rival abandonó, se le acabó el tiempo…),
+      // soltarla no puede jugar nada: antes la jugada se sumaba a la lista y al PGN de una partida ya
+      // terminada. Se deja la pieza donde estaba.
+      if(lvStatus!=='playing' || lvMyColor==='spec'){ lvSelected=null; renderBoard(); return; }
       var to=sqUnder(e);
       if(to && to!==d.from){ lvSelected=null; tryUserMove(d.from,to,true); }   // arrastre: sin animación
       else { lvSelected=null; renderBoard(); }
+    });
+    // El navegador CANCELA el gesto (un aviso del teléfono, un segundo dedo, un gesto del sistema):
+    // el pointerup no llega nunca. Sin esto, la pieza quedaba flotando pegada a la pantalla.
+    window.addEventListener('pointercancel', function(){
+      if(lvRmDown){ lvRmDown=null; renderArrows(); }
+      if(!lvDrag) return;
+      lvCancelDrag(); lvSuppressClick=true; renderBoard();
     });
     board.addEventListener('click', function(e){
       if(lvSuppressClick){ lvSuppressClick=false; return; }
@@ -31704,7 +31744,14 @@ function cvUpdateNagBadge() {
     // Sonido de inicio: si hay cuenta regresiva, suena al "¡Ya!" (no ahora).
     if(prev!=='playing' && lvStatus==='playing'){ lvEndSoundDone=false; if(!cdActive) sndStart(); }
     if(lvStatus==='playing') acquireWake(); else releaseWake();
-    lvSelected=null;
+    // Antes se deseleccionaba SIEMPRE con cualquier mensaje del servidor: si tenías una pieza elegida
+    // con clic y llegaba la jugada del rival, se te apagaba la selección y había que volver a tocarla.
+    // Se conserva mientras la partida siga y esa casilla siga teniendo una pieza tuya.
+    if(lvStatus!=='playing') lvSelected=null;
+    else if(lvSelected){
+      var _selPc=null; try{ _selPc=pieceAt(lvSelected); }catch(e){}
+      if(!(_selPc && _selPc.color===lvMyColor)) lvSelected=null;
+    }
     var _bEl=$('lv-board'), hadBoard=!!(_bEl && _bEl.children.length===64);
     // Eco de MI propia jugada (misma posición que ya dibujé): no redibujar, así no se
     // corta la animación de deslizamiento en curso. Conservador: ante la duda, redibuja.
