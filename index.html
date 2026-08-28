@@ -2441,6 +2441,10 @@
       .lv-lobbychat-head { display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
       .lv-lobbychat-head h3 { font-size:19px; font-weight:800; margin:0; letter-spacing:-.3px; }
       .lv-lobbychat-sub { font-size:11.5px; color:var(--text3); }
+      /* "👥 X en el salón": cuánta gente está en Jugar ahora. Vacío (sin ocupar lugar) si son 0 ó 1. */
+      .lv-lobbychat-eyes { font-size:11.5px; font-weight:700; color:var(--gold); white-space:nowrap; }
+      .lv-lobbychat-eyes:empty { display:none; }
+      @media (max-width:600px){ .lv-lobbychat-head.has-salon .lv-lobbychat-sub { display:none; } }
       .lv-lobbychat-msgs { flex:1 1 auto; min-height:120px; max-height:320px; overflow-y:auto; display:flex; flex-direction:column; gap:6px; margin:0 -4px 10px; padding:0 4px; }
       .lv-lobbychat-empty { color:var(--text3); font-size:12.5px; text-align:center; margin:auto 0; padding:14px 8px; }
       .lv-lc-msg { position:relative; font-size:13.5px; line-height:1.4; word-wrap:break-word; overflow-wrap:anywhere; padding-right:2px; }
@@ -2965,6 +2969,7 @@
             <div class="lv-lobbychat-head">
               <h3>💬 Chat de la sala</h3>
               <span class="lv-lobbychat-sub">para todos los que están en Jugar</span>
+              <span class="lv-lobbychat-eyes" id="lv-salon-n"></span>
               <button type="button" class="lv-lc-rules" onclick="window.aaChatRules&&window.aaChatRules.open()" title="Reglas del chat">📜 Reglas</button>
             </div>
             <div id="lv-lobbychat-msgs" class="lv-lobbychat-msgs"><div class="lv-lobbychat-empty">Todavía no hay mensajes. ¡Rompé el hielo! 👋</div></div>
@@ -30958,6 +30963,14 @@ function cvUpdateNagBadge() {
   var lvFollowingList=[], lvFollowingIds={};   // a quién sigo (id->username), para cruzar con online
   var lvOnlineSet={}, lvOnlineNames={};        // userIds CONECTADOS (app abierta) → botón verde de seguidos
   var lvAvailSet={};                            // userIds DISPONIBLES (en Jugar) → lista de "jugadores para desafiar"
+  // "👥 X en el salón": cuánta gente hay AHORA en la pestaña Jugar (lo cuenta el salón, invitados
+  // incluidos). Se muestra de 2 para arriba, igual que el "👁 X mirando" de los torneos.
+  var lvSalon=0;
+  function lvRenderSalon(){
+    var el=document.getElementById('lv-salon-n'); if(!el) return;
+    el.textContent=(lvSalon>=2)?('👥 '+lvSalon+' en el salón'):'';
+    var head=el.parentNode; if(head) head.classList.toggle('has-salon', lvSalon>=2);
+  }
   var lvDndSet={};                              // userIds con "No molestar" activo → no se ofrece desafiarlos
   var lvOnlineExpanded=false;      // ¿lista de en-línea desplegada (true) o píldora (false)?
   var lvOnlineChangeCbs=[];        // suscriptores (el menú hamburguesa) a cambios de "en línea"
@@ -32049,6 +32062,7 @@ function cvUpdateNagBadge() {
     lvLobbyIntentional=true; if(lvLobbyTimer){ clearTimeout(lvLobbyTimer); lvLobbyTimer=null; }
     try{ if(lobbyWs) lobbyWs.close(); }catch(e){} lobbyWs=null;
     lvChallenges=[]; renderChallenges(); setChalConn('');
+    lvSalon=0; lvRenderSalon();   // sin conexión al salón, el número que quedó ya no vale
   }
   function handleLobby(m){
     if(m.type==='lobby-init'){ lvChallenges=Array.isArray(m.challenges)?m.challenges:[]; renderChallenges(); }
@@ -32077,12 +32091,14 @@ function cvUpdateNagBadge() {
       lvOnlineSet={}; lvOnlineNames={}; lvAvailSet={}; lvDndSet={};
       (m.online||[]).forEach(function(u){ lvOnlineSet[u.userId]=true; if(u.username) lvOnlineNames[u.userId]=u.username; if(u.dnd) lvDndSet[u.userId]=true; });
       (m.available||[]).forEach(function(u){ lvAvailSet[u.userId]=true; if(u.username) lvOnlineNames[u.userId]=u.username; if(u.dnd) lvDndSet[u.userId]=true; });
+      lvSalon=Number(m.salon)||0; lvRenderSalon();
       renderOnlinePill(); renderAvailPlayers();
     }
     else if(m.type==='presence-online'){ lvOnlineSet[m.userId]=true; if(m.username) lvOnlineNames[m.userId]=m.username; if(m.dnd) lvDndSet[m.userId]=true; else delete lvDndSet[m.userId]; renderOnlinePill(); }
     else if(m.type==='presence-offline'){ delete lvOnlineSet[m.userId]; delete lvDndSet[m.userId]; renderOnlinePill(); }
     else if(m.type==='avail-on'){ lvAvailSet[m.userId]=true; if(m.username) lvOnlineNames[m.userId]=m.username; if(m.dnd) lvDndSet[m.userId]=true; renderAvailPlayers(); }
     else if(m.type==='avail-off'){ delete lvAvailSet[m.userId]; renderAvailPlayers(); }
+    else if(m.type==='salon'){ lvSalon=Number(m.n)||0; lvRenderSalon(); }
     else if(m.type==='dnd-changed'){ if(m.dnd) lvDndSet[m.userId]=true; else delete lvDndSet[m.userId]; renderAvailPlayers(); lvRankRefreshOnline(); }
     // ── Chat general de la sala ──
     else if(m.type==='chat-history'){ lvLobbyChatHistory(m.msgs||[]); }
@@ -32645,6 +32661,7 @@ function cvUpdateNagBadge() {
     for(var k in tcViews){ var v=tcViews[k]; if(!v||!v.host) continue;
       var eyes=v.host.querySelector('.tchat-eyes'); if(eyes) eyes.textContent=txt;
       var rn=v.host.querySelector('.tchat-reopen-n'); if(rn) rn.textContent=(tcSeeing>=2)?(' · '+tcSeeing):'';
+      if(!tcMsgs.length && v.msgs) v.msgs.innerHTML=tcEmptyHtml();   // sin mensajes, el cartel nombra a los que miran
     }
     // Visor: chapita con el número en el globito 💬 (se ve con el chat cerrado, que es cuando importa).
     var g=document.getElementById('cv-chat-toggle');
@@ -32836,10 +32853,15 @@ function cvUpdateNagBadge() {
   }
   function tcMutedNotice(until){ try{ lvToast(lvChatMutedMsg(until)); }catch(e){} }
   var TC_EMPTY='<div class="tchat-empty">Todavía no hay mensajes.<br>¡Rompé el hielo y compartí lo que ves con la comunidad! 👋</div>';
+  // Con gente mirando, el cartel de vacío cambia: saber que hay público es lo que empuja a escribir.
+  function tcEmptyHtml(){
+    if(tcSeeing<2) return TC_EMPTY;
+    return '<div class="tchat-empty">Hay <b>'+tcSeeing+'</b> mirando este torneo y todavía nadie dijo nada.<br>¿Rompés el hielo? 👋</div>';
+  }
   function tcRenderView(v){
     if(!v || !v.msgs) return;
     v.msgs.innerHTML='';
-    if(!tcMsgs.length){ v.msgs.innerHTML=TC_EMPTY; return; }
+    if(!tcMsgs.length){ v.msgs.innerHTML=tcEmptyHtml(); return; }
     tcMsgs.forEach(function(m){ var n=tcMsgNode(m); if(n) v.msgs.appendChild(n); });
     v.msgs.scrollTop=v.msgs.scrollHeight;
   }
@@ -32873,7 +32895,7 @@ function cvUpdateNagBadge() {
      + reopen
      + '<div class="tchat-head"><h3>💬 La hinchada</h3><span class="tchat-eyes"></span><button type="button" class="tchat-rules" onclick="window.aaChatRules&&window.aaChatRules.open()" title="Reglas del chat">📜 Reglas</button></div>'
      + closeBtn
-     + '<div class="tchat-msgs" id="tchat-msgs-'+which+'">'+TC_EMPTY+'</div>'
+     + '<div class="tchat-msgs" id="tchat-msgs-'+which+'">'+tcEmptyHtml()+'</div>'
      + '<div class="tchat-replybar" id="tchat-replybar-'+which+'" style="display:none"></div>'
      + '<div class="tchat-inrow" id="tchat-inrow-'+which+'" style="display:none"><input id="tchat-input-'+which+'" maxlength="200" autocomplete="off" placeholder="Escribí un mensaje…" aria-label="Mensaje del chat"><button id="tchat-send-'+which+'" title="Enviar" aria-label="Enviar">➤</button></div>'
      + '<div class="tchat-guest" id="tchat-guest-'+which+'" style="display:none">💡 <b>Entrá con Lichess</b> (arriba a la derecha) para escribir en el chat.</div>';
@@ -34232,9 +34254,29 @@ function cvUpdateNagBadge() {
     return { id:d.id||null, username:d.username, title:d.title||null, ratingLichess:d.ratingLichess||null,
       name:d.name||null, country:d.country||null, bio:d.bio||null, createdAt:d.createdAt||null,
       ratings:d.ratings||{}, games:d.games||{}, prov:d.prov||{},
-      tactic:d.tactic||null, isSelf:false, online:false, dnd:!!d.dnd,
+      // "En línea" NO viene del servidor de perfiles: sale de la presencia que el salón ya le manda
+      // al navegador (window.__lvIsOnline). Si el visitante no está conectado al salón, no sabe
+      // quién está en línea y simplemente no se muestra el puntito.
+      tactic:d.tactic||null, isSelf:false, online:_isOnline(d.id), dnd:!!d.dnd,
       followers:d.followers, following:d.following, youFollow:!!d.youFollow };
   }
+  function _isOnline(id){ try{ return !!(id && window.__lvIsOnline && window.__lvIsOnline(id)); }catch(e){ return false; } }
+  // Si alguien se conecta o se va mientras estás mirando su perfil, prender/apagar el puntito sin
+  // volver a pedir nada (la presencia llega sola por el salón).
+  function refreshOnlineDot(){
+    if(!curProfile || curProfile.isSelf || !curProfile.id) return;
+    var on=_isOnline(curProfile.id);
+    if(on===!!curProfile.online) return;
+    curProfile.online=on;
+    var nombres=document.querySelectorAll(".aa-idname");
+    for(var i=0;i<nombres.length;i++){
+      var nm=nombres[i], dot=nm.querySelector(".aa-iddot");
+      if(on && !dot){ var d=document.createElement("span"); d.className="aa-iddot"; d.title="En línea"; nm.insertBefore(d, nm.firstChild); }
+      else if(!on && dot){ dot.remove(); }
+    }
+  }
+  try{ if(window.aaOnline && window.aaOnline.onChange) window.aaOnline.onChange(refreshOnlineDot); }catch(e){}
+
   // Bandera del país (código FIDE 3 letras) reusando el helper global de la app.
   function flagHtml(code){ try{ return (code && typeof _flagImg==='function') ? _flagImg(code) : ''; }catch(e){ return ''; } }
   function memberSince(ts){
