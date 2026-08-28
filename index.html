@@ -2465,6 +2465,7 @@
       /* Botón para REABRIR el chat del detalle cuando el visitante lo cerró (colapsado) */
       .tchat-reopen { display:none; align-items:center; gap:8px; padding:9px 16px; border-radius:999px; border:1px solid var(--gold-dim); background:var(--gold-bg); color:var(--gold); font-family:inherit; font-size:14px; font-weight:800; cursor:pointer; transition:filter .12s; }
       .tchat-reopen:hover { filter:brightness(1.08); }
+      .tchat-reopen .tchat-reopen-n:empty { display:none; }
       /* Colapsado (solo el detalle): se oculta todo el panel y queda el botón "💬 La hinchada" */
       #td-tourchat-host.tchat-collapsed { padding:0 !important; border:0 !important; background:none !important; box-shadow:none !important; }
       #td-tourchat-host.tchat-collapsed .tchat-head,
@@ -2474,6 +2475,9 @@
       #td-tourchat-host.tchat-collapsed .tchat-guest { display:none; }
       #td-tourchat-host.tchat-collapsed .tchat-reopen { display:inline-flex; }
       .tchat-head h3 { font-size:17px; font-weight:800; margin:0; letter-spacing:-.3px; color:var(--fg-e0,var(--text)); }
+      /* "👁 X mirando": cuánta gente tiene el torneo abierto. Vacío (sin lugar ocupado) si son 0 ó 1. */
+      .tchat-eyes { font-size:11.5px; font-weight:700; color:var(--gold); white-space:nowrap; }
+      .tchat-eyes:empty { display:none; }
       .tchat-sub { font-size:11.5px; color:var(--text3); }
       .tchat-msgs { flex:1 1 auto; min-height:110px; max-height:250px; overflow-y:auto; display:flex; flex-direction:column; gap:6px; margin:0 -4px 10px; padding:0 4px; }
       .tchat-empty { color:var(--text3); font-size:12.5px; text-align:center; margin:auto 0; padding:14px 8px; line-height:1.5; }
@@ -2548,7 +2552,10 @@
       /* Visor: el globito 💬 abre el chat como 4º botón (compacto) de la barra de copiar; el panel del
          chat sale desde ABAJO de la columna, con un respiro respecto de la card de Análisis de arriba. */
       .cv-chat-toggle { flex:0 0 auto; width:40px; padding:6px 0; display:flex; align-items:center; justify-content:center; font-size:16px; line-height:1; border-radius:7px; border:1px solid var(--gold-dim); background:var(--gold-bg); color:var(--gold); cursor:pointer; font-family:inherit; transition:filter .12s, background-color .15s; }
+      .cv-chat-toggle { position:relative; }
       .cv-chat-toggle:hover { filter:brightness(1.08); }
+      /* Chapita con la cantidad de gente mirando, en la esquina del globito 💬 */
+      .cv-chat-n { position:absolute; top:-5px; right:-4px; min-width:15px; padding:0 3px; border-radius:999px; background:var(--gold); color:#1a1400; font-size:9.5px; font-weight:800; line-height:15px; text-align:center; }
       /* Con el globito presente (torneo en vivo) los 3 botones de copiar se aprietan un toque para que
          entre el 4º en una sola fila. Solo afecta a esas partidas; el resto queda igual que siempre. */
       .cv-book-col.has-chatbtn .cv-copy-bar { gap:5px; }
@@ -32626,6 +32633,25 @@ function cvUpdateNagBadge() {
   // ¿El visitante cerró (colapsó) el chat del detalle? Se recuerda en el navegador, así le queda
   // cerrado al que no lo quiere leer (aparece solo el botón "💬 La hinchada" para reabrirlo).
   var tcDetailCollapsed=false; try{ tcDetailCollapsed=(localStorage.getItem('tourchat_detail_hidden')==='1'); }catch(e){}
+  // ── "👁 X mirando" ───────────────────────────────────────────────────────────
+  // Cuánta gente tiene ESTE torneo abierto (el servidor lo manda al entrar/salir alguien). Vale para
+  // cualquier torneo EN CURSO, esté jugándose una ronda o no: el que entra de noche a ver qué pasó
+  // también cuenta. Se muestra de 2 para arriba: un "1 mirando" es uno mismo y desanima.
+  var tcSeeing=0;
+  function tcRenderPresence(){
+    var txt=(tcSeeing>=2)?('👁 '+tcSeeing+' mirando'):'';
+    for(var k in tcViews){ var v=tcViews[k]; if(!v||!v.host) continue;
+      var eyes=v.host.querySelector('.tchat-eyes'); if(eyes) eyes.textContent=txt;
+      var rn=v.host.querySelector('.tchat-reopen-n'); if(rn) rn.textContent=(tcSeeing>=2)?(' · '+tcSeeing):'';
+    }
+    // Visor: chapita con el número en el globito 💬 (se ve con el chat cerrado, que es cuando importa).
+    var g=document.getElementById('cv-chat-toggle');
+    if(g){ var b=g.querySelector('.cv-chat-n');
+      if(tcSeeing>=2){ if(!b){ b=document.createElement('span'); b.className='cv-chat-n'; g.appendChild(b); }
+        b.textContent=(tcSeeing>99)?'99+':String(tcSeeing);
+        g.title='💬 La hinchada — '+tcSeeing+' mirando este torneo'; }
+      else { if(b) b.remove(); g.title='💬 La hinchada — comentá el torneo en vivo con la comunidad'; } }
+  }
   function tcSlug(name){
     return String(name==null?'':name).normalize('NFD').replace(/[̀-ͯ]/g,'')
       .toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'').slice(0,64) || 'torneo';
@@ -32650,6 +32676,7 @@ function cvUpdateNagBadge() {
         if(m.system){ tcAppendAll(m); }   // mensaje de sistema (no se guarda en el buffer)
         else { tcMsgs.push({id:m.id,name:m.name,userId:m.userId,text:m.text,ts:m.ts,reply:m.reply}); if(tcMsgs.length>40) tcMsgs=tcMsgs.slice(-40); tcAppendAll(m); }
       }
+      else if(m.type==='presence'){ tcSeeing=Number(m.n)||0; tcRenderPresence(); }
       else if(m.type==='reaction'){ tcApplyReaction(m.id, m.emoji, m.userId, !!m.on); }
       else if(m.type==='msg-deleted'){ tcMsgs=tcMsgs.filter(function(x){ return x.id!==m.id; }); tcRemoveNode(m.id); }
       else if(m.type==='muted'){ tcMutedNotice(m.until); }
@@ -32836,13 +32863,13 @@ function cvUpdateNagBadge() {
         : '';
     // Botón para REABRIR el chat del detalle cuando está colapsado (oculto mientras el chat está abierto).
     var reopen = (which==='detail')
-      ? '<button class="tchat-reopen" onclick="window.aaTourChat.setDetailCollapsed(false)" title="Abrir el chat del torneo" aria-label="Abrir el chat del torneo">💬 La hinchada</button>'
+      ? '<button class="tchat-reopen" onclick="window.aaTourChat.setDetailCollapsed(false)" title="Abrir el chat del torneo" aria-label="Abrir el chat del torneo">💬 La hinchada<span class="tchat-reopen-n"></span></button>'
       : '';
     // Sin subtítulo: el chat es bajito y "Alentá y comentá…" robaba un renglón. El título alcanza, y el
     // cartel de vacío (TC_EMPTY, "¡Rompé el hielo…!") ya invita a participar.
     return ''
      + reopen
-     + '<div class="tchat-head"><h3>💬 La hinchada</h3><button type="button" class="tchat-rules" onclick="window.aaChatRules&&window.aaChatRules.open()" title="Reglas del chat">📜 Reglas</button></div>'
+     + '<div class="tchat-head"><h3>💬 La hinchada</h3><span class="tchat-eyes"></span><button type="button" class="tchat-rules" onclick="window.aaChatRules&&window.aaChatRules.open()" title="Reglas del chat">📜 Reglas</button></div>'
      + closeBtn
      + '<div class="tchat-msgs" id="tchat-msgs-'+which+'">'+TC_EMPTY+'</div>'
      + '<div class="tchat-replybar" id="tchat-replybar-'+which+'" style="display:none"></div>'
@@ -32856,12 +32883,12 @@ function cvUpdateNagBadge() {
       if(tcRoom===slug){ tcConnect(); return; }
       tcIntentional=true; if(tcTimer){ clearTimeout(tcTimer); tcTimer=null; }
       try{ if(tcWs) tcWs.close(); }catch(e){} tcWs=null;
-      tcRoom=slug; tcMsgs=[]; tcTries=0; tcRenderAll(); tcConnect();
+      tcRoom=slug; tcMsgs=[]; tcTries=0; tcSeeing=0; tcRenderAll(); tcRenderPresence(); tcConnect();
     },
     close:function(){
       tcIntentional=true; if(tcTimer){ clearTimeout(tcTimer); tcTimer=null; }
       try{ if(tcWs) tcWs.close(); }catch(e){} tcWs=null;
-      tcRoom=null; tcMsgs=[]; tcViews={};
+      tcRoom=null; tcMsgs=[]; tcSeeing=0; tcRenderPresence(); tcViews={};
     },
     hasRoom:function(){ return !!tcRoom; },
     // Monta el panel en `host` y registra esa vista. Idempotente por host (no reconstruye el DOM).
@@ -32894,7 +32921,7 @@ function cvUpdateNagBadge() {
         });
       }
       tcViews[which]={ host:host, msgs:host.querySelector('#tchat-msgs-'+which), inrow:host.querySelector('#tchat-inrow-'+which), guest:host.querySelector('#tchat-guest-'+which), replybar:host.querySelector('#tchat-replybar-'+which), replyTo:null };
-      tcRenderView(tcViews[which]); tcUpdateAuth(tcViews[which]); tcRenderReplyBar(tcViews[which]);
+      tcRenderView(tcViews[which]); tcUpdateAuth(tcViews[which]); tcRenderReplyBar(tcViews[which]); tcRenderPresence();
       if(which==='detail') host.classList.toggle('tchat-collapsed', tcDetailCollapsed);   // respeta la preferencia guardada
     },
     unmount:function(which){ delete tcViews[which]; },
