@@ -1127,6 +1127,7 @@ async function _migrarUsuarios(env) {
       banned: 'INTEGER DEFAULT 0', banned_at: 'INTEGER', banned_reason: 'TEXT',
       chat_muted_until: 'INTEGER DEFAULT 0',
       dnd: 'INTEGER DEFAULT 0',      // "No molestar": 1 = otros NO te pueden desafiar
+      no_guests: 'INTEGER DEFAULT 0',  // 1 = no acepto desafíos de jugadores SIN cuenta
       is_mod: 'INTEGER DEFAULT 0' };  // moderador (antes se decidía por el nombre de usuario)
     for (const name in want) {
       if (cols.has(name)) continue;
@@ -1653,7 +1654,7 @@ async function ratingMe(request, env) {
       q.bind(u.id, 'bullet'),
       q.bind(u.id, 'blitz'),
       q.bind(u.id, 'rapid'),
-      env.DB.prepare('SELECT dnd, is_mod FROM usuarios WHERE id=?1').bind(u.id),
+      env.DB.prepare('SELECT dnd, no_guests, is_mod FROM usuarios WHERE id=?1').bind(u.id),
       env.DB.prepare('SELECT blocked_id FROM blocks WHERE blocker_id=?1').bind(u.id),
       env.DB.prepare('SELECT blocker_id FROM blocks WHERE blocked_id=?1').bind(u.id),
     ]);
@@ -1674,13 +1675,15 @@ async function ratingMe(request, env) {
   // "No molestar": el Lobby DO lo cachea (session.dnd) para rechazar desafíos dirigidos.
   const dr = filas(3)[0];
   const dnd = (dr && dr.dnd) ? 1 : 0;
+  // "No acepto desafíos de invitados": el Lobby DO lo cachea (session.noGuests) igual que el dnd.
+  const noGuests = (dr && dr.no_guests) ? 1 : 0;
   // Para el bloqueo: a quiénes bloqueé (blocked) y quiénes me bloquearon (blocked_by). El lobby los usa
   // para no cruzar desafíos entre bloqueados; el cliente además filtra presencia y desafíos abiertos.
   const blocked = filas(4).map((r) => r.blocked_id);
   const blockedBy = filas(5).map((r) => r.blocker_id);
   return jsonResp({ id: u.id, username: u.username, ratings, games, prov,
     muted_until: mutedUntil, is_mod: esMod({ is_mod: dr && dr.is_mod, username: u.username }),
-    dnd, blocked, blocked_by: blockedBy });
+    dnd, no_guests: noGuests, blocked, blocked_by: blockedBy });
 }
 
 // GET /u/<usuario> — PERFIL PÚBLICO de cualquier jugador (SIN auth). Sólo datos públicos:
@@ -1741,9 +1744,13 @@ async function publicProfile(request, reqUrl, env) {
   });
 }
 
-// POST /prefs  (Authorization: Bearer)  body { dnd } → preferencias guardadas EN LA CUENTA (viajan
-// entre dispositivos). Hoy sólo "No molestar" (dnd: 1 = otros no te pueden desafiar). El Lobby DO lo
-// lee de /rating/me al conectar y lo actualiza en vivo con el mensaje set-dnd.
+// POST /prefs  (Authorization: Bearer)  body { dnd?, no_guests? } → preferencias guardadas EN LA
+// CUENTA (viajan entre dispositivos):
+//   · dnd       = "No molestar": nadie te puede desafiar.
+//   · no_guests = no acepto desafíos de jugadores SIN cuenta (los invitados).
+// El Lobby DO las lee de /rating/me al conectar y las actualiza en vivo (set-dnd / set-noguests).
+// Guarda SÓLO las que vengan en el pedido: mandar una NO tiene que pisar la otra (el cliente manda
+// de a una, así que un UPDATE de las dos siempre apagaría la que no viajó).
 async function savePrefs(request, env) {
   if (!env.DB) return errJson('Falta el binding D1 (DB)', 500);
   const u = await sessionUser(request, env);
@@ -1752,10 +1759,13 @@ async function savePrefs(request, env) {
   await ensureUserTables(env);
   let body = {};
   try { body = await request.json(); } catch (e) { body = {}; }
-  const dnd = body.dnd ? 1 : 0;
-  try { await env.DB.prepare('UPDATE usuarios SET dnd=?2 WHERE id=?1').bind(u.id, dnd).run(); }
+  const out = {}, sets = [], vals = [];
+  if (Object.prototype.hasOwnProperty.call(body, 'dnd')) { out.dnd = body.dnd ? 1 : 0; sets.push('dnd=?'); vals.push(out.dnd); }
+  if (Object.prototype.hasOwnProperty.call(body, 'no_guests')) { out.no_guests = body.no_guests ? 1 : 0; sets.push('no_guests=?'); vals.push(out.no_guests); }
+  if (!sets.length) return errJson('Nada para guardar', 400);
+  try { await env.DB.prepare('UPDATE usuarios SET ' + sets.join(', ') + ' WHERE id=?').bind(...vals, u.id).run(); }
   catch (e) { return errJson('No se pudo guardar la preferencia', 500); }
-  return jsonResp({ dnd });
+  return jsonResp(out);
 }
 
 // POST /profile  (Authorization: Bearer)  body { name, country, bio } → guarda la fichita editable

@@ -49,7 +49,7 @@ function mkDB() {
     }
     if (S.startsWith('DELETE FROM sessions WHERE expires <')) { t.sessions = t.sessions.filter((x) => x.expires >= a[0]); return {}; }
     if (S.startsWith('DELETE FROM reports WHERE handled=1')) { t.reports = t.reports.filter((x) => !(x.handled === 1 && x.created_at < a[0])); return {}; }
-    if (S.includes('SELECT dnd, is_mod FROM usuarios')) { const r = t.usuarios.find((x) => x.id === a[0]) || null; return modo === 'all' ? (r ? [r] : []) : r; }
+    if (S.includes('SELECT dnd, no_guests, is_mod FROM usuarios')) { const r = t.usuarios.find((x) => x.id === a[0]) || null; return modo === 'all' ? (r ? [r] : []) : r; }
     if (S.includes('SELECT id, username FROM usuarios WHERE id=')) return t.usuarios.find((x) => x.id === a[0]) || null;
     if (S.includes('SELECT id FROM usuarios WHERE id=')) return t.usuarios.find((x) => x.id === a[0]) || null;
     if (S.startsWith('UPDATE usuarios SET display_name')) { return {}; }

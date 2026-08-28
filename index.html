@@ -30986,6 +30986,7 @@ function cvUpdateNagBadge() {
   // "No molestar" cambió (switch de Preferencias) → avisar al lobby en vivo para que enforce y los demás
   // oculten el botón Desafiar al instante. Si el lobby no está conectado, al conectar lo toma de /rating/me.
   document.addEventListener('aa-dnd-changed', function(e){ try{ lobbySend({type:'set-dnd', on:!!(e.detail&&e.detail.dnd)}); }catch(_){} });
+  document.addEventListener('aa-noguests-changed', function(e){ try{ lobbySend({type:'set-noguests', on:!!(e.detail&&e.detail.noGuests)}); }catch(_){} });
   setTimeout(function(){ try{ if(lvAuthUser()){ lobbyConnect(); lvFetchFollowing(); } }catch(_){} }, 1400);   // ya logueado al abrir
   var lvRatingMsg='';   // texto del cambio de MI rating al terminar (ej. "⚡ Blitz: +12 → 1212")
   var lvManualFlip=false, lvResultCode='*', lvResult=null, lvBannerDismissed=false;
@@ -32077,6 +32078,10 @@ function cvUpdateNagBadge() {
     else if(m.type==='challenge-unavailable'){                                   // el rival no está conectado
       var nm=(lvChallengeWaiting&&lvChallengeWaiting.name)||'Ese jugador';
       lvChallengeWaiting=null; lvToast(nm+' no está disponible ahora mismo 😕'); exit();
+    }
+    else if(m.type==='challenge-noguests'){                                      // sólo acepta desafíos de gente con cuenta
+      var nmg=(lvChallengeWaiting&&lvChallengeWaiting.name)||'Ese jugador';
+      lvChallengeWaiting=null; lvToast('🪪 '+nmg+' sólo juega con gente que entró con su cuenta. Entrá con Lichess (arriba a la derecha) y desafialo.'); exit();
     }
     else if(m.type==='challenge-dnd'){                                           // el rival está en "No molestar"
       var nmd=(lvChallengeWaiting&&lvChallengeWaiting.name)||'Ese jugador';
@@ -33593,7 +33598,7 @@ function cvUpdateNagBadge() {
     render();
     try{ document.dispatchEvent(new CustomEvent('aa-auth-changed',{detail:{user:user||null}})); }catch(e){}
     // Los ratings del sitio (bullet/blitz/rápido) se traen/limpian según el login.
-    if(token) fetchRatings(); else { setRatings(null); _dndStore(false); }
+    if(token) fetchRatings(); else { setRatings(null); _dndStore(false); _ngStore(false); }
   }
 
   // ── Ratings PROPIOS del sitio (bullet/blitz/rápido). Distintos del rating de Lichess:
@@ -33614,7 +33619,7 @@ function cvUpdateNagBadge() {
     try{
       var r=await fetch(PROXY+'/rating/me',{headers:{'Authorization':'Bearer '+tok}});
       if(r.status===401){ return getRatings(); }   // sesión vencida: la maneja verify()
-      if(r.ok){ var d=await r.json(); if(d && d.ratings){ setRatings({ ratings:d.ratings, games:d.games||{}, prov:d.prov||{} }); _dndStore(!!d.dnd); return _aaRatings; } }
+      if(r.ok){ var d=await r.json(); if(d && d.ratings){ setRatings({ ratings:d.ratings, games:d.games||{}, prov:d.prov||{} }); _dndStore(!!d.dnd); _ngStore(!!d.no_guests); return _aaRatings; } }
     }catch(e){ /* sin conexión: dejamos lo cacheado */ }
     return getRatings();
   }
@@ -33622,13 +33627,25 @@ function cvUpdateNagBadge() {
   // ── "No molestar" (guardado EN LA CUENTA). Se lee de /rating/me; se cambia con setDnd (POST /prefs).
   //    Con dnd=true, otros NO te pueden desafiar (lo enforça el Lobby DO). Es de una sola vía: vos sí
   //    podés desafiar. El evento 'aa-dnd-changed' lo escucha el vivo para avisarle al lobby en vivo. ──
-  var _aaDnd=null;
+  var _aaDnd=null, _aaNoGuests=null;
   function getDnd(){ if(_aaDnd!==null) return _aaDnd; try{ _aaDnd=(localStorage.getItem('aa_dnd')==='1'); }catch(e){ _aaDnd=false; } return _aaDnd; }
   function _dndStore(on){ _aaDnd=!!on; try{ localStorage.setItem('aa_dnd', on?'1':''); }catch(e){} }
   function setDnd(on){ on=!!on; _dndStore(on);
     try{ document.dispatchEvent(new CustomEvent('aa-dnd-changed',{detail:{dnd:on}})); }catch(e){}
     var tok=getSession(); if(!tok) return Promise.resolve(false);
     return fetch(PROXY+'/prefs',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},body:JSON.stringify({dnd:on?1:0})})
+      .then(function(r){ return r.ok; }).catch(function(){ return false; });
+  }
+
+  // ── "No acepto desafíos de invitados" (también guardado EN LA CUENTA). Hermana del "No molestar":
+  //    con esto prendido, los que juegan SIN cuenta no te pueden desafiar; los registrados sí. Lo
+  //    enforça el Lobby DO; el evento avisa al salón para que valga en el acto, sin recargar. ──
+  function getNoGuests(){ if(_aaNoGuests!==null) return _aaNoGuests; try{ _aaNoGuests=(localStorage.getItem('aa_noguests')==='1'); }catch(e){ _aaNoGuests=false; } return _aaNoGuests; }
+  function _ngStore(on){ _aaNoGuests=!!on; try{ localStorage.setItem('aa_noguests', on?'1':''); }catch(e){} }
+  function setNoGuests(on){ on=!!on; _ngStore(on);
+    try{ document.dispatchEvent(new CustomEvent('aa-noguests-changed',{detail:{noGuests:on}})); }catch(e){}
+    var tok=getSession(); if(!tok) return Promise.resolve(false);
+    return fetch(PROXY+'/prefs',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},body:JSON.stringify({no_guests:on?1:0})})
       .then(function(r){ return r.ok; }).catch(function(){ return false; });
   }
 
@@ -33850,6 +33867,7 @@ function cvUpdateNagBadge() {
         prefRow('theme','Tema claro','', light)+
         '<div class="aa-pref-sec">Privacidad</div>'+
         prefRow('dnd','🔕 No molestar','Otros jugadores <b>no te pueden desafiar</b>. Seguís navegando normal y podés desafiar vos cuando quieras. Se guarda en tu cuenta.', !!(window.aaAuth&&window.aaAuth.getDnd&&window.aaAuth.getDnd()))+
+        prefRow('noguests','🪪 No aceptar desafíos de invitados','Sólo te pueden desafiar los que <b>entraron con su cuenta</b>. En el sitio se puede jugar sin cuenta; con esto prendido, esos desafíos no te llegan. Se guarda en tu cuenta.', !!(window.aaAuth&&window.aaAuth.getNoGuests&&window.aaAuth.getNoGuests()))+
       '</div>'+
       '<div class="aa-modal-btns"><button class="aa-modal-go" type="button">Listo</button></div>'+
     '</div>';
@@ -33868,6 +33886,11 @@ function cvUpdateNagBadge() {
         if(!(window.aaAuth && window.aaAuth.getToken && window.aaAuth.getToken())){ el.checked=false; if(window.aaAuth && window.aaAuth.login) window.aaAuth.login(); return; }
         if(window.aaAuth && window.aaAuth.setDnd) window.aaAuth.setDnd(el.checked);
       }
+      else if(p==='noguests'){
+        // Igual que la de arriba: vive en la cuenta y la hace valer el servidor, así que pide login.
+        if(!(window.aaAuth && window.aaAuth.getToken && window.aaAuth.getToken())){ el.checked=false; if(window.aaAuth && window.aaAuth.login) window.aaAuth.login(); return; }
+        if(window.aaAuth && window.aaAuth.setNoGuests) window.aaAuth.setNoGuests(el.checked);
+      }
     });
     back.querySelector('.aa-modal-go').addEventListener('click', close);
     back.addEventListener('click', function(ev){ if(ev.target===back) close(); });
@@ -33880,6 +33903,7 @@ function cvUpdateNagBadge() {
   window.aaAuth = { login:login, logout:logout, getUser:function(){return window.aaCurrentUser||getUser();},
     getToken:getSession, onChange:function(cb){ document.addEventListener('aa-auth-changed',function(e){cb(e.detail.user);}); },
     getRatings:getRatings, refreshRatings:fetchRatings, getDnd:getDnd, setDnd:setDnd,
+    getNoGuests:getNoGuests, setNoGuests:setNoGuests,
     onRatingsChange:function(cb){ document.addEventListener('aa-ratings-changed',function(e){cb(e.detail.ratings);}); } };
 
   async function boot(){
