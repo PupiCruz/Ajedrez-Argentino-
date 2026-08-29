@@ -225,5 +225,241 @@ console.log('\n=== 11. El bloque duplicado entre index.html y editar.html (8.3) 
   chk(rotas.length === 0, 'las catorce gemelas siguen idénticas en los dos archivos', rotas.join(', ') || 'ninguna cambió');
 }
 
+
+console.log('\n=== 12. Radiografía del torneo — el motor ===');
+{
+  // El motor son funciones PURAS: entra el cuadro guardado del torneo, sale un número. Se sacan
+  // del index.html de verdad y se corren acá mismo, sin navegador.
+  const nombres = ['_stJugada','_stPts','_stRounds','_stDp','_stRpFromRounds','_stColors',
+                   '_stRace','_stStreak','_stBoard1','_stElo','_stDays','_stSig'];
+  const dpArr = SRC.match(/var _ST_DP = \[[\s\S]*?\];/)[0];
+  const stV   = SRC.match(/var _ST_V = (\d+);/)[1];
+  const M = new Function('var _ST_V = ' + stV + ';' + dpArr + nombres.map(extraerFuncion).join('\n')
+                         + ' return {' + nombres.join(',') + '};')();
+
+  // ── piezas sueltas ──
+  chk(M._stPts('3½') === 3.5 && M._stPts('4') === 4 && M._stPts('0') === 0, 'lee los puntos de Chess-Results ("3½" = 3,5)');
+  chk(M._stPts('') === null && M._stPts(null) === null && M._stPts('x') === null, 'y no se cuelga con basura');
+  chk(M._stJugada('1-0') && M._stJugada('0-1') && M._stJugada('½-½'), 'las tres formas de terminar una partida cuentan');
+  chk(!M._stJugada('+--') && !M._stJugada('--+') && !M._stJugada(''), 'las incomparecencias NO cuentan como partida jugada');
+  chk(M._stDp(1) === 800 && M._stDp(0) === -800 && M._stDp(0.5) === 0, 'la tabla dp de la FIDE en sus tres puntos clave');
+  chk(M._stDp(0.75) > 0 && M._stDp(0.25) < 0 && M._stDp(0.9) > M._stDp(0.8), 'y siempre sube: más porcentaje, más dp');
+
+  // ── un torneito de mentira, con la respuesta sabida a mano ──
+  const mini = {
+    standings: [{ rank:1, name:'Ana', elo:2000, pts:2 }, { rank:2, name:'Beto', elo:1900, pts:1 }, { rank:3, name:'Cata', elo:1800, pts:0 }],
+    rounds: {
+      1: [{ m:'1', w:'Ana',  ew:2000, pw:'0', res:'1-0', b:'Beto', eb:1900, pb:'0' }],
+      2: [{ m:'1', w:'Cata', ew:1800, pw:'0', res:'0-1', b:'Ana',  eb:2000, pb:'1' }],
+      3: [{ m:'1', w:'Beto', ew:1900, pw:'0', res:'1-0', b:'Cata', eb:1800, pb:'0' }]
+    },
+    roundDates: { 1:'2026-03-01', 2:'2026-03-01', 3:'2026-03-02' }
+  };
+  const col = M._stColors(mini);
+  chk(col.w === 2 && col.b === 1 && col.d === 0 && col.jugadas === 3, 'cuenta bien quién ganó con cada color', col.w + '/' + col.d + '/' + col.b);
+  chk(col.porRonda.length === 3, 'y lo abre por ronda');
+  const rac = M._stRace(mini, ['Ana']);
+  chk(JSON.stringify(rac.series[0].pts) === '[1,2,2]', 'la carrera por la punta sigue los puntos ronda a ronda', JSON.stringify(rac.series[0].pts));
+  chk(rac.lideres[2].raw === 'Ana' && rac.lideres[2].pts === 2, 'y sabe quién lidera al final');
+  chk(M._stStreak(mini).raw === 'Ana' && M._stStreak(mini).n === 2, 'la racha más larga: Ana, dos seguidas');
+  chk(M._stBoard1(mini).n >= 2, 'cuenta las veces que se jugó en la mesa 1');
+  chk(M._stElo(mini).prom === 1900, 'el Elo promedio', M._stElo(mini).prom);
+  const dias = M._stDays(mini);
+  chk(dias.dias === 2 && dias.dobles.length === 1, 'dos días de juego, uno con jornada doble');
+  chk(M._stColors({}) === null && M._stRace({}, []) === null && M._stStreak({}) === null, 'sin cruces no inventan nada: devuelven null');
+  chk(M._stSig(mini) !== M._stSig({ standings:mini.standings, rounds:{ 1:mini.rounds[1] } }), 'la firma cambia si cambian los datos');
+
+  // ── contra un torneo DE VERDAD (la Semifinal Argentina 2026) ──
+  const real = 'data/cr/cr2_tz_tz_1780078240681.json';
+  if (fs.existsSync(real)) {
+    const d = JSON.parse(fs.readFileSync(real, 'utf8'));
+    const c = M._stColors(d);
+    chk(c.jugadas === 433 && c.w === 195 && c.d === 100 && c.b === 138,
+        'Semifinal Argentina: 433 partidas, 195 blancas / 100 tablas / 138 negras', c.w + '/' + c.d + '/' + c.b);
+    chk(c.wo === 15, 'y 15 incomparecencias, aparte de las jugadas', c.wo);
+    chk(M._stElo(d).prom === 1999, 'Elo promedio 1999', M._stElo(d).prom);
+    chk(M._stStreak(d).raw === 'Villegas, Franco' && M._stStreak(d).n === 4, 'la racha más larga fue de Villegas: 4 seguidas');
+    const race = M._stRace(d, ['Ocampos, Ian']);
+    const fin = race.series[0].pts[race.series[0].pts.length - 1];
+    chk(fin === 7.5, 'la trayectoria del campeón termina en los 7½ de la tabla', fin);
+    chk(race.lideres.length === 9 && race.lideres[8].pts === 7.5, 'y hay un líder por cada una de las 9 rondas');
+
+    // El Rp calculado tiene que dar IGUAL que el de Chess-Results para los que jugaron todo.
+    const rp = M._stRpFromRounds(d);
+    let comparados = 0, iguales = 0, peor = 0;
+    d.standings.forEach(p => {
+      const mio = rp[p.name];
+      if (!mio || !p.rp || mio.partidas !== 9) return;
+      comparados++;
+      if (mio.rp === p.rp) iguales++;
+      peor = Math.max(peor, Math.abs(mio.rp - p.rp));
+    });
+    chk(comparados >= 20, 'hay con quién comparar el Rp calculado', comparados + ' jugadores');
+    chk(iguales === comparados, 'el Rp que calculamos = el de Chess-Results, jugador por jugador',
+        iguales + '/' + comparados + ' (peor diferencia ' + peor + ')');
+  } else {
+    console.log('  --   | (el cuadro de la Semifinal no esta: me salteo las pruebas con datos reales)');
+  }
+}
+
+
+console.log('\n=== 13. Emparejar nombres: la memoria no cambió las reglas ===');
+{
+  // pgnNameMatchesPlayer ahora prepara cada lado UNA vez y lo guarda (antes renormalizaba todo en
+  // cada una de las ~800.000 comparaciones de un open grande). Estas pruebas son el candado: las
+  // reglas de siempre —hermanos, iniciales, apellido compuesto— tienen que seguir dando igual.
+  const piezas = ['normStr','nameTokens','pgnNameToNatural','_tok1Edit','_tokExplained','_namesConflict',
+                  '_nmPlayerPrep','_nmNamePrep','_nmMatch','pgnNameMatchesPlayer'];
+  const N = new Function('var _nmPlayerCache = new Map(), _nmNameCache = new Map();'
+                         + piezas.map(extraerFuncion).join('\n')
+                         + ' return { m: pgnNameMatchesPlayer, cachePlayers: _nmPlayerCache, cacheNames: _nmNameCache };')();
+  const m = N.m;
+
+  chk(m('Krysa, Leandro', { name:'Leandro Krysa' }) === true, '"Apellido, Nombre" y "Nombre Apellido" son la misma persona');
+  chk(m('Pérez, José', { name:'Jose Perez' }) === true, 'los acentos no separan a nadie');
+  chk(m('Ocampos, Ian', { name:'Ian Ocampos' }) === true, 'el campeón de la Semifinal se reconoce');
+  chk(m('Ocampos, Ian', { name:'Ian Villegas' }) === false, 'y no se confunde con otro apellido');
+
+  // Candado anti-hermanos (bug real: las partidas del hermano caían en el perfil).
+  chk(m('Duarte Fernandez, Perseo', { name:'Agustin Duarte Fernandez' }) === false,
+      'dos hermanos con los mismos apellidos NO son la misma persona');
+  chk(m('Duarte Fernandez, Agustin', { name:'Agustin Duarte Fernandez' }) === true,
+      'pero el jugador de verdad sí matchea');
+
+  // Veto por iniciales (bug real: "Rodriguez, F.J" se pegaba a cualquier homónimo).
+  chk(m('Rodriguez, F.J', { name:'Fernando Jose Rodriguez' }) === true, 'las iniciales que coinciden matchean');
+  chk(m('Rodriguez, F.J', { name:'Santiago Rodriguez' }) === false, 'las que no coinciden, no');
+
+  // Apellido compuesto delante de la coma: tienen que estar TODOS.
+  chk(m('Flores Quillas, Diego', { name:'Diego Flores' }) === false,
+      '"Flores Quillas" no es "Flores" aunque compartan nombre');
+
+  chk(m('', { name:'Ian Ocampos' }) === false && m('Ocampos, Ian', null) === false, 'nombre vacío o jugador nulo: false, sin romper');
+
+  // La memoria del jugador se revalida por nombre: si el autor lo renombra, el match cambia.
+  const jug = { name:'Leandro Krysa' };
+  chk(m('Krysa, Leandro', jug) === true, 'match antes de renombrar');
+  jug.name = 'Leandro Paveto';
+  chk(m('Krysa, Leandro', jug) === false, 'y si el autor le cambia el nombre, la memoria se entera');
+
+  chk(N.cachePlayers.size > 0 && N.cacheNames.size > 0, 'los dos lados se guardan de verdad (por eso es rápido)');
+  chk(/_nmPlayerCache/.test(SRC) && /_nmNameCache/.test(SRC) && /function _nmMatch/.test(SRC),
+      'la preparación memoizada sigue en index.html (si alguien la saca, vuelven los 3 segundos)');
+}
+
+
+console.log('\n=== 14. Cuándo aparece la pestaña Radiografía ===');
+{
+  // La regla: torneo INDIVIDUAL, terminado (o con la clasificación final ya subida), con tabla jugada
+  // y con cruces. Mientras se juega no aparece: la radiografía es la foto del final.
+  const fuente = extraerFuncion('_stStatsMeta') + '\n' + extraerFuncion('_stStatsAvailable');
+  const hacer = (ctx) => new Function('_tdPodiumCtx', '_crCategory', fuente + '; return _stStatsAvailable;')(ctx, {});
+  const dispo = hacer(null);
+
+  const completo = { standings:[{name:'A',pts:5},{name:'B',pts:3}], rounds:{ 1:[{w:'A',b:'B',res:'1-0'}] }, standingsFinal:true };
+  chk(dispo('k', completo) === true, 'torneo terminado con tabla y cruces: aparece');
+  chk(dispo('k', Object.assign({}, completo, { standingsFinal:false })) === false, 'todavía en juego (sin clasificación final): no aparece');
+  chk(dispo('k', { standings:completo.standings, standingsFinal:true }) === false, 'con tabla pero sin cruces: no aparece');
+  chk(dispo('k', Object.assign({}, completo, { standings:[{name:'A',pts:0},{name:'B',pts:0}] })) === false, 'tabla cargada pero sin jugar: no aparece');
+  chk(dispo('k', Object.assign({}, completo, { standingsKind:'initial' })) === false, 'la lista inicial de inscriptos no es una tabla: no aparece');
+  chk(dispo('k', Object.assign({}, completo, { teamRounds:{ 1:[{}] } })) === false, 'torneo por equipos: no aparece (la v1 no los cubre)');
+  chk(dispo('k', null) === false && dispo('k', {}) === false, 'sin datos no se rompe');
+
+  // Con el detalle abierto: manda el estado del torneo.
+  const enVivoPeroDone = hacer({ crk:'k', status:'done', name:'X' });
+  chk(enVivoPeroDone('k', Object.assign({}, completo, { standingsFinal:false })) === true,
+      'si el torneo figura FINALIZADO, aparece aunque falte el sello de tabla final');
+  const equipos = hacer({ crk:'k', status:'done', isTeam:true });
+  chk(equipos('k', completo) === false, 'y un torneo por equipos sigue sin mostrarla');
+
+  chk(/id="cr-rtab-'\+key\+'-stats"/.test(SRC) && /crShowTab\([^)]*stats/.test(SRC),
+      'el botón de la pestaña quedó cableado a crShowTab');
+  chk(/if\(tab==='stats'\)\s+return crBuildStatsPanel\(key,data\);/.test(SRC),
+      'y el panel perezoso sabe armarse con crBuildStatsPanel');
+}
+
+
+console.log('\n=== 15. Los dos gráficos de la Radiografía ===');
+{
+  const nombres = ['_stJugada','_stPts','_stRounds','_stRace'];
+  const M = new Function(nombres.map(extraerFuncion).join('\n') + ' return {' + nombres.join(',') + '};')();
+  const story = new Function('crPtsStr', 'escHtml',
+    extraerFuncion('_stRaceStory') + '; return _stRaceStory;')(
+      (n)=> (n%1===0.5 ? (Math.floor(n)>0?Math.floor(n):'')+'½' : String(n)), (s)=>String(s));
+
+  // Torneito donde el líder cambia y al final se empata la punta.
+  const d = {
+    rounds: {
+      1: [{ w:'Ana', pw:'0', res:'1-0', b:'Beto', pb:'0' }, { w:'Cata', pw:'0', res:'1-0', b:'Dani', pb:'0' }],
+      2: [{ w:'Ana', pw:'1', res:'0-1', b:'Cata', pb:'1' }, { w:'Beto', pw:'0', res:'1-0', b:'Dani', pb:'0' }],
+      3: [{ w:'Cata', pw:'2', res:'0-1', b:'Ana',  pb:'1' }, { w:'Beto', pw:'1', res:'1-0', b:'Dani', pb:'0' }]
+    }
+  };
+  const r = M._stRace(d, ['Ana','Cata']);
+  chk(JSON.stringify(r.series[0].pts) === '[1,1,2]', 'la trayectoria de Ana: gana, pierde, gana', JSON.stringify(r.series[0].pts));
+  chk(r.lideres[0].raw === 'Ana' || r.lideres[0].raw === 'Cata', 'en la 1ª hay dos punteros empatados');
+  chk(r.lideres[0].empatados === 2, 'y quedan contados los dos', r.lideres[0].empatados);
+  chk(r.lideres[1].raw === 'Cata' && r.lideres[1].empatados === 1, 'en la 2ª Cata queda sola arriba');
+  chk(r.lideres[2].empatados === 3, 'y en la 3ª la alcanzan: quedan tres en la cima con 2 puntos', r.lideres[2].empatados);
+
+  // Continuidad: si el líder de la ronda anterior sigue arriba, NO cuenta como cambio de punta.
+  const seguido = {
+    rounds: {
+      1: [{ w:'Ana', pw:'0', res:'1-0', b:'Beto', pb:'0' }],
+      2: [{ w:'Ana', pw:'1', res:'½-½', b:'Beto', pb:'0' }],
+      3: [{ w:'Ana', pw:'1.5', res:'½-½', b:'Beto', pb:'0.5' }]
+    }
+  };
+  const r2 = M._stRace(seguido, ['Ana']);
+  chk(r2.lideres.every(l => l.raw === 'Ana'), 'Ana lidera las tres rondas seguidas');
+  chk(r2.cambios === 0, 'y la punta no cambió de manos ni una vez', r2.cambios);
+
+  // El relato en castellano.
+  const conNombres = { lideres: r.lideres.map(l => Object.assign({}, l, { nombre:l.raw, nombres:(l.raws||[]).slice() })), cambios:r.cambios };
+  const txt = story(conNombres);
+  chk(/Qui[eé]n iba adelante/.test(txt), 'el relato arranca contando quién iba adelante', txt.slice(0, 60));
+  chk(/empatados/.test(txt), 'y avisa que llegaron empatados a la última');
+  chk(story({ lideres:[{r:1,raw:'A',nombre:'Ana',empatados:1},{r:2,raw:'A',nombre:'Ana',empatados:1},{r:3,raw:'A',nombre:'Ana',empatados:1}], cambios:0 })
+      .indexOf('de punta a punta') > 0, 'si nadie lo pasó nunca, lo dice en una línea');
+  chk(story(null) === '' && story({ lideres:[] }) === '', 'sin datos no inventa relato');
+
+  chk(/function _stPulseHtml/.test(SRC) && /function _stRaceHtml/.test(SRC), 'los dos gráficos siguen en index.html');
+  chk(/viewBox="0 0 ' \+ W \+ ' ' \+ H \+ '"/.test(SRC), 'la carrera se dibuja en SVG con viewBox (se estira sin pixelarse)');
+}
+
+
+console.log('\n=== 16. La radiografía horneada viaja con el torneo ===');
+{
+  // Sin ejecutar el armado del paquete (que es pesado y toca los datos): se comprueba que el
+  // cableado esté puesto y que la pieza que hornea no ensucie el cuadro original.
+  chk(/var _dCr = _stBakeForPublish\(k, d, _metaCr\);/.test(SRC),
+      'al armar data/cr/<clave>.json se pasa por el horneado');
+  chk(/crFiles\[k\] = _dCr;/.test(SRC), 'y lo que se guarda es el resultado del horneado, no el original');
+  chk(/metaCr\[entry\.id\] = \{/.test(SRC), 'cada torneo aporta sus datos (nombre, sede, fechas, tipo) para hornear');
+  chk(/crBaked\+\+/.test(SRC) && /Radiograf[ií]as horneadas para la web/.test(SRC),
+      'y queda contado, para verlo en la consola al guardar');
+
+  // _stBakeForPublish devuelve una COPIA: el cuadro del autor no se toca nunca.
+  const bake = new Function('_stStatsAvailable', '_statsBuild',
+    extraerFuncion('_stBakeForPublish') + '; return _stBakeForPublish;');
+  const cuadro = { rounds:{ 1:[{ w:'A', b:'B', res:'1-0' }] }, standings:[{ name:'A', pts:1 }], standingsFinal:true };
+  const meta   = { name:'T', isTeam:false, status:'done' };
+
+  const conStats = bake(() => true, () => ({ v:1, sig:'x', campeon:{} }))('k', cuadro, meta);
+  chk(conStats !== cuadro, 'devuelve una copia, no el mismo objeto');
+  chk(!!conStats.stats, 'la copia lleva la radiografía adentro');
+  chk(cuadro.stats === undefined, 'y el cuadro original queda intacto (sin stats)');
+  chk(conStats.rounds === cuadro.rounds && conStats.standings === cuadro.standings,
+      'la copia comparte cruces y tabla: no duplica el peso en memoria');
+
+  const noCalifica = bake(() => false, () => ({ v:1 }))('k', cuadro, meta);
+  chk(noCalifica === cuadro, 'si el torneo no califica (en curso, equipos), pasa de largo sin tocar nada');
+  chk(bake(() => true, () => null)('k', cuadro, meta) === cuadro, 'y si el motor no puede armarla, tampoco');
+  chk(bake(() => true, () => { throw new Error('boom'); })('k', cuadro, meta) === cuadro,
+      'si algo explota, se guarda el cuadro como siempre: publicar NUNCA se rompe por esto');
+  chk(bake(() => true, () => ({ v:1 }))('k', cuadro, { name:'T', isTeam:true, status:'done' }) === cuadro,
+      'los torneos por equipos no se hornean');
+}
+
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.') + '\n');
 process.exitCode = fallos ? 1 : 0;
