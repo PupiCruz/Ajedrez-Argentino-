@@ -2126,6 +2126,31 @@
     body.light .st-chart .d3 { fill: #1a7a4c; }
     .st-cap { font-size: 12.5px; color: var(--text3); line-height: 1.6; margin-top: 11px; }
     .st-cap b { color: var(--text2); }
+    /* Medallas por mesa (Olimpiadas): una tarjeta por tablero con su oro, plata y bronce. */
+    .st-mesas { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 9px; }
+    .st-mesa { background: rgba(255,255,255,.035); border: 1px solid var(--border); border-radius: 11px; padding: 11px 12px; }
+    body.light .st-mesa { background: rgba(0,0,0,.025); }
+    .st-mesa > b { display: block; font-size: 10.5px; letter-spacing: .9px; text-transform: uppercase;
+      color: var(--text3); margin-bottom: 7px; }
+    .st-medal { display: grid; grid-template-columns: 18px 1fr auto; gap: 8px; align-items: baseline;
+      font-size: 13px; padding: 3px 0; }
+    .st-medal + .st-medal { border-top: 1px solid var(--bd14); padding-top: 5px; margin-top: 3px; }
+    .st-medal em { font-style: normal; font-size: 13px; }
+    /* El nombre puede ocupar dos renglones antes que salir cortado: "Thai Dai Van Ng…" no se entiende. */
+    .st-medal > div { min-width: 0; color: var(--text); line-height: 1.3; overflow-wrap: anywhere; }
+    .st-medal .p-title-badge { font-size: 8.5px; padding: 1px 4px; margin-right: 4px; vertical-align: 1px; }
+    .st-medal i { font-style: normal; font-size: 11.5px; color: var(--text3); display: block;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 1px; }
+    .st-medal span { font-weight: 800; color: var(--text); font-variant-numeric: tabular-nums; font-size: 12.5px; }
+    /* Formación argentina: mesa · jugador · puntaje · Rp */
+    /* En la compu el bloque no se estira de punta a punta: queda centrado y compacto, si no el
+       nombre y el puntaje terminaban a medio metro uno del otro. */
+    .st-arg { display: flex; flex-direction: column; gap: 6px; max-width: 460px; margin: 12px auto 0; }
+    .st-argrow { display: grid; grid-template-columns: 26px 1fr auto 62px; gap: 10px; align-items: baseline;
+      font-size: 13.5px; }
+    .st-argrow > b { font-size: 11px; color: var(--text3); font-weight: 700; }
+    .st-argrow .pts { font-weight: 800; color: var(--text); font-variant-numeric: tabular-nums; }
+    .st-argrow .rp { font-size: 12px; color: var(--gold); font-variant-numeric: tabular-nums; text-align: right; }
     .st-empty { background: var(--bg3); border: 1px solid var(--border); border-radius: 10px;
       padding: 14px; text-align: center; color: var(--text3); font-size: 12.5px; }
     @media (max-width: 480px) {
@@ -6570,12 +6595,26 @@ function _stStatsMeta(key){
 // `meta` opcional: al hornear para publicar se pasa la del torneo que se está guardando (el detalle
 // abierto puede ser otro, o ninguno).
 function _stStatsAvailable(key, data, meta){
-  if (!data || !data.standings || !data.standings.length) return false;
-  if (!data.rounds || !Object.keys(data.rounds).length) return false;
-  if (data.teamRounds && Object.keys(data.teamRounds).length) return false;
-  if (data.standingsKind === 'initial') return false;
+  if (!data) return false;
   meta = meta || _stStatsMeta(key);
-  if (meta.isTeam) return false;
+  // ── Por equipos ──
+  if ((data.teamRounds && Object.keys(data.teamRounds).length) || meta.isTeam){
+    var ts = data.teamStandings;
+    if (!ts || ts.kind === 'initial' || !ts.teams || !ts.teams.length) return false;
+    if (!data.teamRounds || !Object.keys(data.teamRounds).length) return false;
+    // Hace falta al menos una ronda CON formación (los cruces por países solos no traen tableros).
+    var conTableros = Object.keys(data.teamRounds).some(function(r){
+      return (data.teamRounds[r] || []).some(function(m){ return m && m.boards && m.boards.length; });
+    });
+    if (!conTableros) return false;
+    // Igual que en los individuales: la radiografía es la foto del final. Si el torneo no trae estado
+    // (ligas viejas cargadas a mano), alcanza con que la tabla sea la de resultados.
+    return meta.status === 'done' || !meta.status;
+  }
+  // ── Individuales ──
+  if (!data.standings || !data.standings.length) return false;
+  if (!data.rounds || !Object.keys(data.rounds).length) return false;
+  if (data.standingsKind === 'initial') return false;
   var terminado = !!data.standingsFinal || meta.status === 'done';
   return terminado && data.standings.some(function(p){ return p && p.pts; });
 }
@@ -6589,7 +6628,7 @@ function _stStatsAvailable(key, data, meta){
 // devuelve una COPIA con el campo agregado.
 function _stBakeForPublish(key, d, meta){
   try {
-    if (!d || !meta || meta.isTeam) return d;
+    if (!d || !meta) return d;
     if (!_stStatsAvailable(key, d, meta)) return d;
     var st = _statsBuild(key, d, meta);
     if (!st) return d;
@@ -6714,7 +6753,9 @@ function _stRaceStory(r){
   }
   return txt;
 }
-function _stRaceHtml(key, s){
+// opts.sub = qué dice el subtítulo · opts.sinClic = la leyenda son EQUIPOS, no jugadores (no abren ficha)
+function _stRaceHtml(key, s, opts){
+  opts = opts || {};
   var r = s.carrera;
   if (!r || !r.series) return '';
   var series = r.series.filter(function(x){ return x.pts && x.pts.some(function(v){ return v != null; }); });
@@ -6754,12 +6795,13 @@ function _stRaceHtml(key, s){
 
   var lgd = '';
   series.slice(0, 3).forEach(function(x, si){
-    lgd += '<div><i class="s' + (si + 1) + '"></i>' + _stNm(key, x.raw, x.nombre, '') + '</div>';
+    lgd += '<div><i class="s' + (si + 1) + '"></i>'
+        + (opts.sinClic ? escHtml(x.nombre || x.raw || '') : _stNm(key, x.raw, x.nombre, '')) + '</div>';
   });
 
   var cuento = _stRaceStory(r);
   return '<div class="st-sec"><div class="st-h"><b>🏁 La carrera por la punta</b>'
-       + '<span>puntos del podio, ronda a ronda</span></div>'
+       + '<span>' + escHtml(opts.sub || 'puntos del podio, ronda a ronda') + '</span></div>'
        + '<div class="st-scroll"><svg class="st-chart" viewBox="0 0 ' + W + ' ' + H + '" role="img" '
        + 'aria-label="Puntos de los tres del podio en cada ronda">'
        + g + lineas + puntos + '</svg></div>'
@@ -6768,10 +6810,173 @@ function _stRaceHtml(key, s){
        + '</div>';
 }
 
+// ── La pestaña de un torneo POR EQUIPOS ─────────────────────────────────────────────────────
+// Mismo lenguaje visual que la individual, con lo propio de los equipos: podio, la actuación
+// argentina jugador por jugador y las medallas por tablero (oro, plata y bronce en cada mesa).
+// No hay reparto por colores: en equipos no se sabe quién llevaba las blancas (ver _stTeamBuild).
+function _stTeamPanelHtml(key, s){
+  var t = s.torneo || {}, h = '<div class="st-wrap">';
+  var nm = function(x){ return escHtml(x == null ? '' : String(x)); };
+  // Nombre de jugador clickeable (abre su performance en el torneo). Los equipos NO son clickeables.
+  var jug = function(p){ return p ? _stNm(key, p.raw, p.nombre, p.titulo) : ''; };
+  var puntaje = function(p){ return crPtsStr(p.pts) + '/' + p.partidas; };
+
+  // ── El torneo en números ──
+  var tiles = [];
+  if (t.equipos)   tiles.push({ n:t.equipos,   l:'EQUIPOS' });
+  if (t.rondas)    tiles.push({ n:t.rondas,    l:'RONDAS' });
+  if (t.matches)   tiles.push({ n:t.matches,   l:'MATCHES' });
+  if (t.partidas)  tiles.push({ n:t.partidas,  l:'PARTIDAS' });
+  if (t.jugadores) tiles.push({ n:t.jugadores, l:'JUGADORES' });
+  if (t.elo && t.elo.prom) tiles.push({ n:t.elo.prom, l:'ELO PROMEDIO' });
+  if (tiles.length){
+    h += '<div class="st-sec"><div class="st-h"><b>🔢 El torneo en números</b>'
+       + '<span>' + (s.reglaMatch === '2-1-0' ? 'puntos de match: 2 por ganar, 1 por empatar' : '') + '</span></div><div class="st-tiles">';
+    tiles.forEach(function(x){ h += '<div class="st-tile"><b>' + x.n + '</b><span>' + x.l + '</span></div>'; });
+    h += '</div></div>';
+  }
+
+  // ── Los equipos ──
+  var aw = '';
+  if (s.campeon){
+    var det = [s.campeon.g + 'G ' + s.campeon.e + 'E ' + s.campeon.p + 'P'];
+    if (s.campeon.match != null) det.push(s.campeon.match + ' pts de match');
+    if (s.campeon.tablero != null) det.push(crPtsStr(s.campeon.tablero) + ' de tablero');
+    aw += _stAward('🏆', 'Campeón', nm(s.campeon.nombre), escHtml(det.join(' · ')), true);
+  }
+  if (s.podio && s.podio[1])
+    aw += _stAward('🥈', 'Escolta', nm(s.podio[1].nombre),
+      s.podio[1].g + 'G ' + s.podio[1].e + 'E ' + s.podio[1].p + 'P' + (s.podio[1].match != null ? (' · ' + s.podio[1].match + ' pts') : ''));
+  if (s.podio && s.podio[2])
+    aw += _stAward('🥉', 'Tercero', nm(s.podio[2].nombre),
+      s.podio[2].g + 'G ' + s.podio[2].e + 'E ' + s.podio[2].p + 'P' + (s.podio[2].match != null ? (' · ' + s.podio[2].match + ' pts') : ''));
+  var gol = s.equipos && s.equipos.goleador;
+  if (gol && (!s.campeon || gol.nombre !== s.campeon.nombre || gol.tablero !== s.campeon.tablero))
+    aw += _stAward('🎯', 'El más goleador', nm(gol.nombre), crPtsStr(gol.tablero) + ' puntos de tablero');
+  if (aw) h += '<div class="st-sec"><div class="st-h"><b>🏅 Los equipos</b></div><div class="st-awards">' + aw + '</div></div>';
+
+  // ── La carrera por la punta (en puntos de match) ──
+  h += _stRaceHtml(key, s, { sub:'puntos de match, ronda a ronda', sinClic:true });
+
+  // ── La actuación argentina ──
+  var a = s.argentina;
+  if (a){
+    h += '<div class="st-sec"><div class="st-h"><b>🇦🇷 La actuación argentina</b>'
+       + '<span>' + a.puesto + 'º de ' + a.de + ' equipos</span></div>'
+       + '<div class="st-chips">'
+       + '<span class="st-chip gold">' + a.puesto + 'º puesto</span>'
+       + '<span class="st-chip">' + a.g + ' ganados · ' + a.e + ' empatados · ' + a.p + ' perdidos</span>'
+       + (a.tablero != null ? ('<span class="st-chip">' + crPtsStr(a.tablero) + ' puntos de tablero</span>') : '')
+       + '</div>';
+    if (a.jugadores && a.jugadores.length){
+      h += '<div class="st-arg">';
+      a.jugadores.forEach(function(p){
+        h += '<div class="st-argrow"><b>' + (p.mesa ? ('M' + p.mesa) : '') + '</b>'
+          + '<div>' + jug(p) + '</div>'
+          + '<div class="pts">' + puntaje(p) + '</div>'
+          + '<div class="rp">' + (p.rp ? ('Rp ' + p.rp) : '') + '</div></div>';
+      });
+      h += '</div>';
+    }
+    h += '</div>';
+  }
+
+  // ── Medallas por mesa ──
+  if (s.premios && s.premios.porMesa && s.premios.porMesa.length){
+    var MED = ['🥇','🥈','🥉'];
+    h += '<div class="st-sec"><div class="st-h"><b>🥇 Las medallas por tablero</b>'
+       + '<span>por performance, en el tablero que cada uno ocupa en su equipo</span></div><div class="st-mesas">';
+    s.premios.porMesa.forEach(function(x){
+      h += '<div class="st-mesa"><b>Tablero ' + x.mesa + '</b>';
+      (x.podio || []).forEach(function(p, i){
+        h += '<div class="st-medal"><em>' + MED[i] + '</em>'
+          + '<div>' + jug(p) + '<i>' + escHtml(p.equipo || '') + ' · ' + puntaje(p) + '</i></div>'
+          + '<span>' + p.rp + '</span></div>';
+      });
+      h += '</div>';
+    });
+    h += '</div></div>';
+  }
+
+  // ── Los jugadores ──
+  var pj = s.premios || {}, aw2 = '';
+  if (pj.mejorRp)
+    aw2 += _stAward('🎯', 'Mejor performance', jug(pj.mejorRp),
+      'Rp ' + pj.mejorRp.rp + ' · ' + puntaje(pj.mejorRp) + ' · ' + escHtml(pj.mejorRp.equipo || ''), true);
+  if (pj.masPuntos)
+    aw2 += _stAward('♟️', 'El que más puntos hizo', jug(pj.masPuntos),
+      puntaje(pj.masPuntos) + ' · ' + escHtml(pj.masPuntos.equipo || ''));
+  if (pj.racha)
+    aw2 += _stAward('🔥', 'La racha más larga', _stNm(key, pj.racha.raw, pj.racha.nombre, ''), pj.racha.n + ' victorias seguidas');
+  if (aw2) h += '<div class="st-sec"><div class="st-h"><b>🏅 Los jugadores</b>'
+    + '<span>tocá un nombre para ver su performance</span></div><div class="st-awards">' + aw2 + '</div></div>';
+
+  // ── Batacazos ──
+  var be = (s.equipos && s.equipos.batacazos) || [];
+  if (be.length){
+    h += '<div class="st-sec"><div class="st-h"><b>💥 Los batacazos por equipos</b>'
+       + '<span>le ganó a un equipo de mucho mejor ranking</span></div><div class="st-ups">';
+    be.forEach(function(b){
+      h += '<div class="st-up"><div class="st-rnd">R' + b.ronda + '</div>'
+        + '<div class="st-who"><b>' + nm(b.gana) + '</b> <span class="st-elo">(#' + b.no + ')</span>'
+        + ' le ganó <b>' + escHtml(b.score) + '</b> a <b>' + nm(b.pierde) + '</b> <span class="st-elo">(#' + b.noPierde + ')</span></div>'
+        + '<div class="st-gap">' + b.dif + '<i>PUESTOS</i></div></div>';
+    });
+    h += '</div></div>';
+  }
+  if (s.batacazos && s.batacazos.length){
+    h += '<div class="st-sec"><div class="st-h"><b>💥 Los batacazos en los tableros</b>'
+       + '<span>le ganó a alguien muy por encima de su Elo</span></div><div class="st-ups">';
+    s.batacazos.forEach(function(b){
+      var ojo = '';
+      try {
+        if (crFindGameIdx(b.ronda, b.ganadorRaw, b.perdedorRaw) >= 0 || crFindGameIdx(b.ronda, b.perdedorRaw, b.ganadorRaw) >= 0)
+          ojo = '<span class="st-eye" title="Ver la partida" onclick="_teamOpenBoardGame(' + b.ronda + ',' + crArg(b.ganadorRaw) + ',' + crArg(b.perdedorRaw) + ')">👁</span>';
+      } catch(e){}
+      h += '<div class="st-up"><div class="st-rnd">R' + b.ronda + '</div>'
+        + '<div class="st-who"><b>' + _stNm(key, b.ganadorRaw, b.ganador, '') + '</b> <span class="st-elo">(' + b.ganadorElo + ')</span>'
+        + ' le ganó a <b>' + _stNm(key, b.perdedorRaw, b.perdedor, b.perdedorTitulo) + '</b> <span class="st-elo">(' + b.perdedorElo + ')</span>' + ojo + '</div>'
+        + '<div class="st-gap">+' + b.diff + '<i>DE DIFERENCIA</i></div></div>';
+    });
+    h += '</div></div>';
+  }
+
+  // ── Top performances ──
+  if (s.topRp && s.topRp.length){
+    h += '<div class="st-sec"><div class="st-h"><b>🎯 Top performances</b><span>Rp calculado de los tableros</span></div>'
+       + _stRankList(key, s.topRp.map(function(p){ return { raw:p.raw, nombre:p.nombre, titulo:p.titulo, valor:p.rp }; }),
+                     function(f){ return String(f.valor); })
+       + '</div>';
+  }
+
+  // ── El pulso ──
+  if (s.pulso && s.pulso.length >= 3){
+    var max = 0;
+    s.pulso.forEach(function(r){ var tt = r.dec + r.tablas; if (tt > max) max = tt; });
+    h += '<div class="st-sec"><div class="st-h"><b>📉 El pulso, ronda por ronda</b>'
+       + '<span>decisivas y tablas · en equipos no se sabe quién llevaba las blancas</span></div>'
+       + '<div class="st-scroll"><div class="st-pulse">';
+    s.pulso.forEach(function(r){
+      var tt = r.dec + r.tablas;
+      h += '<div class="st-pcol"><div class="st-pstack" style="height:' + Math.round(tt / max * 100) + '%" title="'
+        + escHtml('Ronda ' + r.r + ': ' + r.dec + ' decisivas · ' + r.tablas + ' tablas') + '">'
+        + '<i class="st-sd" style="flex:' + r.tablas + '"></i>'
+        + '<i class="st-sb" style="flex:' + r.dec + '"></i>'
+        + '</div><div class="st-plabel">R' + r.r + '</div></div>';
+    });
+    h += '</div></div><div class="st-leg">'
+       + '<div><i style="background:var(--st-b)"></i>Decisivas</div>'
+       + '<div><i style="background:var(--st-d)"></i>Tablas</div></div></div>';
+  }
+
+  return h + '</div>';
+}
+
 function crBuildStatsPanel(key, data){
   var s = null;
   try { s = _statsGet(key, data, _stStatsMeta(key)); } catch(e){}
   if (!s) return '<div class="st-empty">Todavía no hay datos suficientes para la radiografía de este torneo.</div>';
+  if (s.esEquipos) return _stTeamPanelHtml(key, s);
   var t = s.torneo || {}, h = '<div class="st-wrap">';
 
   // ── El torneo en números ──
@@ -7478,14 +7683,17 @@ function _teamRenderSection(crk,data){
     h+='<span style="'+rowLbl+'" title="La composición de cada equipo, tablero por tablero.">♟ Formaciones</span>';
     roundNums.forEach(function(r){ h+=tabBtn(''+r,'R'+r,false); });
     if(hasStand) h+=tabBtn('tabla','📊 Tabla',false);
+    if(_stStatsAvailable(crk,data)) h+=tabBtn('stats','📈 Radiografía',false);
     h+='</div>';
   } else if(hasStand){
-    h+='<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">'+tabBtn('tabla','📊 Tabla',false)+'</div>';
+    h+='<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">'+tabBtn('tabla','📊 Tabla',false)
+      +(_stStatsAvailable(crk,data)?tabBtn('stats','📈 Radiografía',false):'')+'</div>';
   }
   h+='</div>';   // /cr-tabs
   crossNums.forEach(function(r){ h+='<div id="cr-panel-'+crk+'-x'+r+'" style="display:'+(String(defaultTab)===('x'+r)?'block':'none')+'">'+delBtn('Borrar cruces R'+r,"_teamDeleteCross('"+ks+"',"+r+")")+_teamRenderCrosses(crosses[r], r, crk, !!rounds[r])+'</div>'; });
   roundNums.forEach(function(r){ h+='<div id="cr-panel-'+crk+'-'+r+'" style="display:'+(String(defaultTab)===String(r)?'block':'none')+'">'+delBtn('Borrar formación R'+r,"_teamDeleteRound('"+ks+"',"+r+")")+_teamRenderRound(rounds[r], r, crk)+'</div>'; });
   if(hasStand){ h+='<div id="cr-panel-'+crk+'-tabla" style="display:'+(defaultTab==='tabla'?'block':'none')+'">'+delBtn('Borrar tabla',"_teamDeleteStandings('"+ks+"')")+_teamRenderStandings(data.teamStandings, crk)+'</div>'; }
+  if(_stStatsAvailable(crk,data)) h+='<div id="cr-panel-'+crk+'-stats" data-lazy="1" style="display:none"></div>';
   h+='</div>';
   return h;
 }
@@ -7502,7 +7710,14 @@ function _teamShowTab(crk,tab){
   // Prender el botón activo con su acento (azul = cruces por países; dorado = formación/tabla).
   var ab=document.getElementById('cr-rtab-'+crk+'-'+tab);
   if(ab){ var blue=tab.charAt(0)==='x'; ab.style.background=blue?'rgba(70,140,210,.20)':'var(--gold-bg)'; ab.style.color=blue?'#7ab8e6':'var(--gold)'; ab.style.borderColor=blue?'rgba(80,155,225,.6)':'var(--gold-dim)'; }
-  var ap=document.getElementById('cr-panel-'+crk+'-'+tab); if(ap) ap.style.display='block';
+  var ap=document.getElementById('cr-panel-'+crk+'-'+tab);
+  if(ap){
+    if(ap.getAttribute('data-lazy')){   // la radiografía se arma recién al abrirla
+      ap.removeAttribute('data-lazy');
+      try { ap.innerHTML=crBuildStatsPanel(crk, crDataLoad(crk)); } catch(e){}
+    }
+    ap.style.display='block';
+  }
   // Sentido inverso: al cambiar de ronda (CRUCES "x<r>" o FORMACIÓN "<r>"), mover también la ronda de
   // la sección de PARTIDAS si está cargada. La tabla no sincroniza. Guard _crSyncing evita el rebote.
   var rnum = /^x?(\d+)$/.test(tab) ? tab.replace(/^x/,'') : null;
@@ -8268,8 +8483,14 @@ function _stSig(data){
   if (!data) return '';
   var rs = _stRounds(data), n = 0;
   rs.forEach(function(r){ n += (data.rounds[r] || []).length; });
+  // Por equipos hay que contar lo suyo: un cuadro por equipos no tiene `rounds` ni `standings`, así
+  // que sin esto TODOS daban la misma firma y una radiografía vieja pasaba por buena para siempre.
+  var tr = (data.teamRounds || {}), tk = Object.keys(tr), tn = 0;
+  tk.forEach(function(r){ (tr[r] || []).forEach(function(m){ tn += 1 + ((m && m.boards) ? m.boards.length : 0); }); });
+  var eq = (data.teamStandings && data.teamStandings.teams) ? data.teamStandings.teams.length : 0;
   return _ST_V + '|' + rs.length + '|' + n + '|' + ((data.standings || []).length)
-       + '|' + (data.standingsRound || '') + '|' + (data.standingsFinal ? 'f' : '') ;
+       + '|' + (data.standingsRound || '') + '|' + (data.standingsFinal ? 'f' : '')
+       + '|' + tk.length + '|' + tn + '|' + eq + '|' + ((data.teamStandings && data.teamStandings.kind) || '');
 }
 
 // ── Rp (performance) calculado desde los cruces ─────────────────────────────────────────────
@@ -8457,7 +8678,9 @@ function _stMas50(st, year){
 // edades) y la pestaña simplemente no muestra esa parte.
 // `meta` = { name, location, dates, typ, isTeam } del torneo (lo mismo que usa la noticia).
 function _statsBuild(crk, data, meta){
-  if (!data || !meta || meta.isTeam) return null;
+  if (!data || !meta) return null;
+  // Por equipos: otro motor (los datos son matches con sus tableros, no una tabla de jugadores).
+  if ((data.teamRounds && Object.keys(data.teamRounds).length) || meta.isTeam) return _stTeamBuild(crk, data, meta);
   var g = null;
   try { g = _noticiaGatherData(data, meta, { raw:true }); } catch(e){}
   if (!g) return null;
@@ -8550,6 +8773,358 @@ function _statsBuild(crk, data, meta){
     topRp: topRp,
     topGain: topGain,
     rpCalculado: hayRpCalculado
+  };
+}
+
+/* ═══════════════════════════════════════════════════════
+   RADIOGRAFÍA POR EQUIPOS (Olimpiadas, ligas, FASGBA…)
+   Los cuadros por equipos guardan cada match con TODOS sus tableros (nombre, título y Elo de los dos
+   jugadores + resultado), así que se puede contar lo mismo que en un torneo individual y, encima, lo
+   de los equipos. Dos avisos importantes:
+     · Los puntos de MATCH y de TABLERO no se leen de la tabla (Chess-Results cambia el orden de las
+       columnas según el torneo): se CALCULAN de los matches. Comprobado contra la Olimpiada 2024 y la
+       FASGBA: dan exactamente los mismos números que publica la tabla.
+     · NO se puede saber quién llevaba las blancas. En la formación por mesas, las columnas son
+       "equipo A / equipo B", no blancas/negras, y la marca de color viene sin guardar. Por eso en los
+       torneos por equipos NO se muestra el reparto por colores (sería una moneda al aire).
+═══════════════════════════════════════════════════════ */
+
+// "Argentina (ARG)" → "Argentina". Los matches traen el país entre paréntesis y la tabla no.
+function _stTeamName(n){ return String(n || '').replace(/\s*\([A-Za-z]{2,3}\)\s*$/, '').trim(); }
+
+// Los tableros de todos los matches, con la forma de los cruces individuales, para poder reusar el
+// motor (Rp, racha, batacazos). `m` = número de mesa; `eqA`/`eqB`, el equipo de cada uno.
+function _stTeamBoardsAsRounds(data){
+  var out = {}, tr = (data && data.teamRounds) || {};
+  Object.keys(tr).forEach(function(r){
+    var arr = [];
+    (tr[r] || []).forEach(function(mt){
+      (mt.boards || []).forEach(function(b, i){
+        if (!b || !b.nW || !b.nB) return;
+        arr.push({ m: String(i + 1), w: b.nW, b: b.nB, ew: b.eW || 0, eb: b.eB || 0,
+                   tw: b.tW || '', tb: b.tB || '', res: b.res,
+                   eqA: _stTeamName(mt.aName), eqB: _stTeamName(mt.bName) });
+      });
+    });
+    if (arr.length) out[r] = arr;
+  });
+  return out;
+}
+
+// Puntos de match y de tablero de cada equipo, ronda por ronda, sacados de los resultados.
+// Devuelve { mp:{equipo:puntos}, bp:{equipo:puntosDeTablero}, gpe:{equipo:{g,e,p}}, serie:{equipo:[…]},
+//            rondas:[…], matches, partidas }
+function _stTeamPoints(data){
+  var tr = (data && data.teamRounds) || {};
+  var rondas = Object.keys(tr).map(Number).filter(function(n){ return !isNaN(n); }).sort(function(a,b){ return a-b; });
+  var mp = {}, bp = {}, gpe = {}, serie = {}, matches = 0, partidas = 0;
+  rondas.forEach(function(r){
+    (tr[r] || []).forEach(function(mt){
+      var A = _stTeamName(mt.aName), B = _stTeamName(mt.bName);
+      if (!A || !B) return;
+      var sa = 0, sb = 0, jugados = 0;
+      (mt.boards || []).forEach(function(b){
+        if (!b || !b.res) return;
+        var s = b.res === '1-0' ? 1 : (b.res === '0-1' ? 0 : (b.res === '½-½' ? 0.5 :
+                (b.res === '+--' ? 1 : (b.res === '--+' ? 0 : null))));
+        if (s === null) return;
+        sa += s; sb += 1 - s; jugados++;
+        if (_stJugada(b.res)) partidas++;
+      });
+      if (!jugados) return;   // match sin jugar (ronda emparejada pero no disputada)
+      matches++;
+      bp[A] = (bp[A] || 0) + sa;  bp[B] = (bp[B] || 0) + sb;
+      mp[A] = (mp[A] || 0) + (sa > sb ? 2 : (sa === sb ? 1 : 0));
+      mp[B] = (mp[B] || 0) + (sb > sa ? 2 : (sa === sb ? 1 : 0));
+      var ga = gpe[A] || (gpe[A] = { g:0, e:0, p:0 }), gb = gpe[B] || (gpe[B] = { g:0, e:0, p:0 });
+      if (sa > sb){ ga.g++; gb.p++; } else if (sa < sb){ ga.p++; gb.g++; } else { ga.e++; gb.e++; }
+    });
+    Object.keys(mp).forEach(function(eq){ (serie[eq] || (serie[eq] = [])).push(mp[eq]); });
+  });
+  return { mp:mp, bp:bp, gpe:gpe, serie:serie, rondas:rondas, matches:matches, partidas:partidas };
+}
+
+// ¿Cuál de las columnas "des" de la tabla son los puntos de match? Chess-Results las ordena distinto
+// en cada torneo (en la Olimpiada es la 1ª; en la FASGBA, la 2ª). Se detecta comparando con los
+// partidos ganados/empatados que la misma tabla informa. Si no se reconoce, se usa lo calculado.
+function _stTeamMatchRule(teams){
+  for (var i = 0; i < teams.length && i < 4; i++){
+    var t = teams[i];
+    var w = parseFloat(t.w), d = parseFloat(t.d);
+    if (isNaN(w) || isNaN(d) || !t.des) continue;
+    for (var c = 0; c < t.des.length; c++){
+      var v = parseFloat(String(t.des[c]).replace(',', '.'));
+      if (v === 2 * w + d) return { col:c, regla:'2-1-0' };
+      if (v === w + 0.5 * d) return { col:c, regla:'1-½-0' };
+    }
+  }
+  return null;
+}
+
+// Batacazos POR EQUIPOS: un equipo de número de arranque muy alto le gana a uno de los de arriba.
+// Los umbrales se escalan al tamaño del torneo, así sirve igual para una liga de 16 que para una
+// Olimpiada de 189 (si no, con un número fijo, en la liga no salía ninguno y en la Olimpiada salían
+// cruces sin gracia entre equipos del montón).
+function _stTeamUpsets(data, nEquipos){
+  var tr = (data && data.teamRounds) || {};
+  var rondas = Object.keys(tr).map(Number).filter(function(n){ return !isNaN(n); }).sort(function(a,b){ return a-b; });
+  var minDif = Math.max(3, Math.ceil(nEquipos / 10));
+  var topPerdedor = Math.max(8, Math.ceil(nEquipos / 6));
+  var out = [];
+  rondas.forEach(function(r){
+    (tr[r] || []).forEach(function(mt){
+      var na = parseInt(mt.aNo, 10), nb = parseInt(mt.bNo, 10);
+      if (!na || !nb) return;
+      var sa = 0, sb = 0, jugados = 0;
+      (mt.boards || []).forEach(function(b){
+        if (!b || !b.res) return;
+        var s = b.res === '1-0' ? 1 : (b.res === '0-1' ? 0 : (b.res === '½-½' ? 0.5 : null));
+        if (s === null) return;
+        sa += s; sb += 1 - s; jugados++;
+      });
+      if (!jugados || sa === sb) return;
+      var gana = sa > sb ? { n:_stTeamName(mt.aName), no:na, pts:sa } : { n:_stTeamName(mt.bName), no:nb, pts:sb };
+      var pier = sa > sb ? { n:_stTeamName(mt.bName), no:nb, pts:sb } : { n:_stTeamName(mt.aName), no:na, pts:sa };
+      var dif = gana.no - pier.no;
+      if (dif < minDif || pier.no > topPerdedor) return;
+      out.push({ ronda:r, gana:gana.n, no:gana.no, pierde:pier.n, noPierde:pier.no, dif:dif,
+                 score: crPtsStr(gana.pts) + '-' + crPtsStr(pier.pts) });
+    });
+  });
+  out.sort(function(a,b){ return (a.noPierde - b.noPierde) || (b.dif - a.dif); });
+  return out.slice(0, 5);
+}
+
+// El TABLERO DE INSCRIPCIÓN de cada jugador dentro de su equipo.
+// Las medallas por tablero de las Olimpiadas NO van por la mesa donde el jugador se sentó, sino por
+// el puesto que ocupa en la lista de su equipo. Se nota: Alan Pichot es el 4 de España pero jugó 8
+// de sus 9 partidas en la mesa 3 (porque alguien de arriba descansaba), y su medalla de bronce es
+// del TABLERO 4. La lista de inscripción no viene en los Excel, pero se deduce: en cada ronda los
+// presentes se sientan respetando ese orden, así que "el de la mesa 1 va antes que el de la mesa 2"
+// y así. Juntando esas comparaciones de todas las rondas y ordenándolas (orden topológico), sale la
+// lista del equipo. Comprobado contra la tabla oficial de la Olimpiada 2024: da los mismos cinco
+// primeros en los cinco tableros.
+function _stTeamRegisteredBoards(porEquipo){
+  var orden = {};
+  Object.keys(porEquipo).forEach(function(eq){
+    var E = porEquipo[eq];
+    var nodos = Object.keys(E.ply);
+    var grado = {}, sig = {}, vistas = {};
+    nodos.forEach(function(n){ grado[n] = 0; sig[n] = {}; });
+    E.pares.forEach(function(par){
+      var a = par[0], b = par[1];
+      if (!(a in grado) || !(b in grado) || a === b) return;
+      var k = a + '::' + b;
+      if (vistas[k]) return;
+      vistas[k] = 1;
+      if (!sig[a][b]){ sig[a][b] = 1; grado[b]++; }
+    });
+    // Desempate: el que en promedio se sentó más arriba va primero.
+    var prom = function(n){
+      var M = E.ply[n].mesas, s = 0, c = 0;
+      for (var k in M){ s += parseInt(k, 10) * M[k]; c += M[k]; }
+      return c ? s / c : 99;
+    };
+    var out = [], libres = nodos.filter(function(n){ return !grado[n]; });
+    while (libres.length){
+      libres.sort(function(a, b){ return prom(a) - prom(b); });
+      var n = libres.shift();
+      out.push(n);
+      Object.keys(sig[n]).forEach(function(m){ if (--grado[m] === 0) libres.push(m); });
+    }
+    // Si los datos traen alguna contradicción (un ciclo), el resto va por la mesa promedio: nunca
+    // se pierde un jugador.
+    var sobran = nodos.filter(function(n){ return out.indexOf(n) < 0; });
+    sobran.sort(function(a, b){ return prom(a) - prom(b); });
+    sobran.forEach(function(n){ out.push(n); });
+    out.forEach(function(n, i){ orden[eq + '::' + n] = i + 1; });
+  });
+  return orden;
+}
+
+// Los jugadores del torneo, sacados de los tableros: equipo, tablero de inscripción, puntos y Rp.
+function _stTeamPlayers(data, rondas){
+  var tr = (data && data.teamRounds) || {}, ag = {}, porEquipo = {};
+  function ver(nombre, titulo, elo, equipo, mesa, punt, eloRival){
+    var a = ag[nombre] || (ag[nombre] = { nombre:nombre, titulo:titulo || '', elo:elo || 0, equipo:equipo,
+                                          n:0, pts:0, o:0, mesas:{} });
+    if (!a.elo && elo) a.elo = elo;
+    if (!a.titulo && titulo) a.titulo = titulo;
+    a.n++; a.pts += punt; a.o += eloRival;
+    a.mesas[mesa] = (a.mesas[mesa] || 0) + 1;
+    var E = porEquipo[equipo] || (porEquipo[equipo] = { ply:{}, pares:[] });
+    (E.ply[nombre] || (E.ply[nombre] = { mesas:{} })).mesas[mesa] = (E.ply[nombre].mesas[mesa] || 0) + 1;
+  }
+  Object.keys(tr).forEach(function(r){
+    (tr[r] || []).forEach(function(mt){
+      var A = _stTeamName(mt.aName), B = _stTeamName(mt.bName);
+      var filaA = [], filaB = [];
+      (mt.boards || []).forEach(function(b, i){
+        if (!b) return;
+        if (b.nW) filaA.push(b.nW);
+        if (b.nB) filaB.push(b.nB);
+        if (!_stJugada(b.res) || !b.eW || !b.eB) return;
+        var s = b.res === '1-0' ? 1 : (b.res === '0-1' ? 0 : 0.5);
+        ver(b.nW, b.tW, b.eW, A, i + 1, s, b.eB);
+        ver(b.nB, b.tB, b.eB, B, i + 1, 1 - s, b.eW);
+      });
+      // "El de la mesa de arriba va antes en la lista del equipo" — una comparación por cada par.
+      [[A, filaA], [B, filaB]].forEach(function(par){
+        var E = porEquipo[par[0]]; if (!E) return;
+        for (var k = 0; k + 1 < par[1].length; k++) E.pares.push([par[1][k], par[1][k + 1]]);
+      });
+    });
+  });
+  var orden = _stTeamRegisteredBoards(porEquipo);
+  // Mínimo de partidas para entrar en las medallas: la FIDE pide 8 en una Olimpiada de 11 rondas.
+  // En torneos cortos (una liga de 6 rondas) se pide algo proporcional.
+  var minP = (rondas >= 10) ? 8 : Math.max(3, Math.ceil((rondas || 9) * 0.6));
+  return Object.keys(ag).map(function(n){
+    var a = ag[n];
+    var rivalProm = Math.round(a.o / a.n);
+    return { raw:a.nombre, nombre:pgnNameToNatural(a.nombre), titulo:_normTitle(a.titulo), elo:a.elo,
+             equipo:a.equipo, mesa:(orden[a.equipo + '::' + a.nombre] || 0), partidas:a.n, pts:a.pts,
+             rp: a.n >= minP ? Math.round(rivalProm + _stDp(a.pts / a.n)) : null };
+  });
+}
+
+// La radiografía de un torneo POR EQUIPOS.
+function _stTeamBuild(crk, data, meta){
+  var ts = data && data.teamStandings;
+  if (!ts || !ts.teams || !ts.teams.length || ts.kind === 'initial') return null;
+  var teams = ts.teams.slice();
+  if (!data.teamRounds || !Object.keys(data.teamRounds).length) return null;
+
+  var P = _stTeamPoints(data);
+  if (!P.matches) return null;
+  var rondas = P.rondas.length;
+  var boards = _stTeamBoardsAsRounds(data);
+  var falso = { rounds: boards };   // para reusar el motor individual
+
+  var regla = _stTeamMatchRule(teams);
+  var equipoInfo = function(t){
+    var n = _stTeamName(t.name);
+    return { nombre:n, fed:t.fed || '', puesto:t.rk || null,
+             g:parseInt(t.w, 10) || 0, e:parseInt(t.d, 10) || 0, p:parseInt(t.l, 10) || 0,
+             match: (P.mp[n] != null ? P.mp[n] : null), tablero: (P.bp[n] != null ? P.bp[n] : null) };
+  };
+  var podio = teams.slice(0, 3).map(equipoInfo);
+
+  // La carrera por la punta, en puntos de match.
+  var lideres = [], prev = null, top3 = teams.slice(0, 3).map(function(t){ return _stTeamName(t.name); });
+  for (var i = 0; i < rondas; i++){
+    var max = -1, quien = [];
+    Object.keys(P.serie).forEach(function(eq){
+      var v = P.serie[eq][i];
+      if (v == null) return;
+      if (v > max){ max = v; quien = [eq]; } else if (v === max) quien.push(eq);
+    });
+    if (max < 0) continue;
+    var lider = (prev && quien.indexOf(prev) >= 0) ? prev : quien[0];
+    lideres.push({ r:P.rondas[i], raw:lider, nombre:lider, pts:max, empatados:quien.length,
+                   raws:quien.slice(0, 4), nombres:quien.slice(0, 4) });
+    prev = lider;
+  }
+  var cambios = 0;
+  for (var j = 1; j < lideres.length; j++) if (lideres[j].raw !== lideres[j-1].raw) cambios++;
+  var carrera = lideres.length ? {
+    lideres: lideres, cambios: cambios,
+    series: top3.map(function(eq){ return { raw:eq, nombre:eq, pts:(P.serie[eq] || []).slice(0, rondas) }; })
+  } : null;
+
+  // Equipo más goleador (puntos de tablero) y la racha más larga de matches ganados.
+  var goleador = null;
+  Object.keys(P.bp).forEach(function(eq){ if (!goleador || P.bp[eq] > goleador.tablero) goleador = { nombre:eq, tablero:P.bp[eq] }; });
+
+  // Jugadores: mejor performance, más puntos y las medallas por mesa.
+  var jug = _stTeamPlayers(data, rondas);
+  var conRp = jug.filter(function(p){ return p.rp; }).sort(function(a,b){ return b.rp - a.rp; });
+  var porPuntos = jug.slice().sort(function(a,b){ return (b.pts - a.pts) || (b.partidas - a.partidas); });
+  // Medallas por mesa, como en las Olimpiadas: oro, plata y bronce en el tablero 1, ídem en el 2, etc.
+  // Se ordenan por performance (Rp), que es el criterio de la FIDE, entre los que jugaron el mínimo.
+  var mesas = [];
+  [1,2,3,4,5,6,7,8].forEach(function(m){
+    var enMesa = conRp.filter(function(p){ return p.mesa === m; });
+    if (enMesa.length >= 3) mesas.push({ mesa:m, podio:enMesa.slice(0, 3) });
+  });
+
+  // Batacazos individuales: le ganó a alguien de mucho más Elo (mismo criterio que los individuales).
+  var TIT = /^(GM|IM|FM|WGM|WIM|WFM|CM|WCM)$/;
+  var bata = [];
+  Object.keys(boards).forEach(function(r){
+    boards[r].forEach(function(p){
+      if (!_stJugada(p.res) || p.res === '½-½' || !p.ew || !p.eb) return;
+      var gW = (p.res === '1-0');
+      var ganador = gW ? p.w : p.b, perdedor = gW ? p.b : p.w;
+      var ge = gW ? p.ew : p.eb, pe = gW ? p.eb : p.ew;
+      var pt = _normTitle(gW ? p.tb : p.tw);
+      var dif = pe - ge;
+      if (dif >= 250 || (TIT.test(pt) && dif >= 150)){
+        bata.push({ ronda:parseInt(r, 10) || r, ganador:pgnNameToNatural(ganador), ganadorRaw:ganador, ganadorElo:ge,
+                    perdedor:pgnNameToNatural(perdedor), perdedorRaw:perdedor, perdedorTitulo:pt, perdedorElo:pe, diff:dif });
+      }
+    });
+  });
+  bata.sort(function(a,b){ return b.diff - a.diff; });
+
+  // El pulso: sin colores (no se sabe quién llevaba las blancas) → decisivas contra tablas.
+  var pulso = [];
+  P.rondas.forEach(function(r){
+    var dec = 0, tab = 0;
+    (boards[r] || []).forEach(function(p){
+      if (p.res === '½-½') tab++;
+      else if (p.res === '1-0' || p.res === '0-1') dec++;
+    });
+    if (dec + tab > 0) pulso.push({ r:r, dec:dec, tablas:tab });
+  });
+
+  // La actuación argentina: solo si los equipos son PAÍSES y Argentina jugó.
+  var argentina = null;
+  var esPaises = teams.some(function(t){ return t.fed && String(t.fed).length === 3; });
+  if (esPaises){
+    var tArg = null;
+    teams.forEach(function(t){ if (!tArg && String(t.fed).toUpperCase() === 'ARG') tArg = t; });
+    if (tArg){
+      var nArg = _stTeamName(tArg.name);
+      argentina = equipoInfo(tArg);
+      argentina.de = teams.length;
+      argentina.jugadores = jug.filter(function(p){ return p.equipo === nArg; })
+                               .sort(function(a,b){ return (a.mesa || 9) - (b.mesa || 9); });
+    }
+  }
+
+  var elos = [];
+  jug.forEach(function(p){ if (p.elo > 0) elos.push(p.elo); });
+  var elo = null;
+  if (elos.length >= 3){
+    var suma = 0, mx = 0, mn = 9999;
+    elos.forEach(function(e){ suma += e; if (e > mx) mx = e; if (e < mn) mn = e; });
+    elo = { prom: Math.round(suma / elos.length), max:mx, min:mn, conElo: elos.length };
+  }
+
+  return {
+    v: _ST_V, sig: _stSig(data), crk: crk || '', esEquipos: true,
+    torneo: {
+      nombre: meta.name || '', sede: meta.location || '', fechas: meta.dates || '',
+      equipos: teams.length, rondas: rondas, matches: P.matches, partidas: P.partidas,
+      jugadores: jug.length, elo: elo, dias: _stDays(data),
+      paises: esPaises ? teams.length : null
+    },
+    reglaMatch: regla ? regla.regla : null,
+    campeon: podio[0] || null,
+    podio: podio,
+    argentina: argentina,
+    carrera: carrera,
+    equipos: { goleador: goleador, batacazos: _stTeamUpsets(data, teams.length) },
+    premios: {
+      mejorRp: conRp[0] || null,
+      masPuntos: porPuntos[0] || null,
+      porMesa: mesas,
+      racha: (function(){ var s = _stStreak(falso); if (s) s.nombre = pgnNameToNatural(s.raw); return s; })()
+    },
+    batacazos: bata.slice(0, 5),
+    topRp: conRp.slice(0, 5),
+    pulso: pulso
   };
 }
 

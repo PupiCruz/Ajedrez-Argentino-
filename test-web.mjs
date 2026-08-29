@@ -457,8 +457,179 @@ console.log('\n=== 16. La radiografía horneada viaja con el torneo ===');
   chk(bake(() => true, () => null)('k', cuadro, meta) === cuadro, 'y si el motor no puede armarla, tampoco');
   chk(bake(() => true, () => { throw new Error('boom'); })('k', cuadro, meta) === cuadro,
       'si algo explota, se guarda el cuadro como siempre: publicar NUNCA se rompe por esto');
-  chk(bake(() => true, () => ({ v:1 }))('k', cuadro, { name:'T', isTeam:true, status:'done' }) === cuadro,
-      'los torneos por equipos no se hornean');
+  chk(!!bake(() => true, () => ({ v:1 }))('k', cuadro, { name:'T', isTeam:true, status:'done' }).stats,
+      'los torneos por equipos también se hornean (Olimpiadas, ligas)');
+}
+
+
+console.log('\n=== 17. Radiografía POR EQUIPOS (Olimpiadas, ligas) ===');
+{
+  const piezas = ['_stJugada','_stRounds','_stSig','_stTeamName','_stTeamBoardsAsRounds','_stTeamPoints',
+                  '_stTeamMatchRule','_stTeamUpsets'];
+  const stV = SRC.match(/var _ST_V = (\d+);/)[1];
+  const M = new Function('crPtsStr', 'var _ST_V = ' + stV + ';' + piezas.map(extraerFuncion).join('\n')
+                         + ' return {' + piezas.join(',') + '};')(
+    (n) => (n % 1 === 0.5 ? (Math.floor(n) > 0 ? Math.floor(n) : '') + '½' : String(n)));
+
+  chk(M._stTeamName('Argentina (ARG)') === 'Argentina', 'le saca el país entre paréntesis al nombre del equipo');
+  chk(M._stTeamName('Club Atlético Banfield') === 'Club Atlético Banfield', 'y a un club no le toca nada');
+
+  // Liguita de mentira: 2 rondas, 2 matches, con la cuenta hecha a mano.
+  const liga = { teamRounds: {
+    1: [{ aNo:'1', aName:'Rojo', bNo:'4', bName:'Azul', boards:[
+           { nW:'A', eW:2000, nB:'B', eB:1900, res:'1-0' }, { nW:'C', eW:1950, nB:'D', eB:1980, res:'½-½' }] },
+        { aNo:'2', aName:'Verde', bNo:'3', bName:'Gris', boards:[
+           { nW:'E', eW:1800, nB:'F', eB:1850, res:'0-1' }, { nW:'G', eW:1700, nB:'H', eB:1750, res:'0-1' }] }],
+    2: [{ aNo:'1', aName:'Rojo', bNo:'3', bName:'Gris', boards:[
+           { nW:'A', eW:2000, nB:'F', eB:1850, res:'½-½' }, { nW:'C', eW:1950, nB:'H', eB:1750, res:'½-½' }] }]
+  }};
+  const P = M._stTeamPoints(liga);
+  chk(P.matches === 3 && P.partidas === 6, 'cuenta los matches y las partidas de adentro', P.matches + ' matches / ' + P.partidas + ' partidas');
+  chk(P.bp['Rojo'] === 2.5, 'puntos de TABLERO de Rojo: 1½ + 1 = 2½', P.bp['Rojo']);
+  chk(P.mp['Rojo'] === 3, 'puntos de MATCH de Rojo: ganó uno (2) y empató otro (1)', P.mp['Rojo']);
+  chk(P.mp['Gris'] === 3 && P.bp['Gris'] === 3, 'y los de Gris: 2 de ganar + 1 de empatar, con 3 de tablero');
+  chk(P.gpe['Rojo'].g === 1 && P.gpe['Rojo'].e === 1 && P.gpe['Rojo'].p === 0, 'ganados/empatados/perdidos de Rojo');
+  chk(JSON.stringify(P.serie['Rojo']) === '[2,3]', 'la carrera guarda los puntos ronda a ronda', JSON.stringify(P.serie['Rojo']));
+
+  const boards = M._stTeamBoardsAsRounds(liga);
+  chk(Object.keys(boards).length === 2 && boards['1'].length === 4,
+      'los tableros se convierten al formato de los cruces (para reusar Rp, rachas y batacazos)');
+  chk(boards['1'][0].m === '1' && boards['1'][1].m === '2', 'y cada uno sabe en qué mesa se jugó');
+
+  // La columna de puntos de match cambia de torneo en torneo: se detecta sola.
+  chk(M._stTeamMatchRule([{ w:'10', d:'1', des:['21','476.5','35'] }]).col === 0,
+      'Olimpiada: los puntos de match son la 1ª columna (2-1-0)');
+  chk(M._stTeamMatchRule([{ w:'4', d:'2', des:['12.5','10','0'] }]).col === 1,
+      'FASGBA: son la 2ª columna — por eso no se leen a ciegas');
+  chk(M._stTeamMatchRule([{ w:'4', d:'2', des:['99','98'] }]) === null, 'si ninguna cierra, no inventa');
+
+  // Batacazos por equipos: los umbrales se escalan al tamaño del torneo.
+  const golpe = { teamRounds: { 1: [{ aNo:'12', aName:'Naranja', bNo:'1', bName:'Rojo', boards:[
+    { nW:'X', eW:1700, nB:'A', eB:2000, res:'1-0' }, { nW:'Y', eW:1650, nB:'C', eB:1950, res:'1-0' }] }] }};
+  const enLiga = M._stTeamUpsets(golpe, 16);
+  chk(enLiga.length === 1 && enLiga[0].gana === 'Naranja' && enLiga[0].noPierde === 1 && enLiga[0].score === '2-0',
+      'en una liga de 16, el #12 ganándole al #1 es batacazo', JSON.stringify(enLiga.map(x => x.gana + ' ' + x.score)));
+  chk(M._stTeamUpsets(golpe, 189).length === 0,
+      'y en una Olimpiada de 189 ese mismo cruce no llega: el perdedor tiene que ser de los de arriba');
+  chk(M._stTeamUpsets(liga, 4).length === 0,
+      'entre vecinos de tabla (#3 al #2) no hay batacazo que contar');
+
+  // La firma tiene que mirar los datos POR EQUIPOS (antes daba lo mismo para todos).
+  const sig = M._stSig(liga);
+  const menos = JSON.parse(JSON.stringify(liga)); delete menos.teamRounds['2'];
+  const menosTablero = JSON.parse(JSON.stringify(liga)); menosTablero.teamRounds['1'][0].boards.pop();
+  chk(sig !== M._stSig(menos), 'la firma cambia si se borra una ronda');
+  chk(sig !== M._stSig(menosTablero), 'y si cambia un solo tablero');
+  chk(M._stSig(liga) === M._stSig(liga), 'pero es estable con los mismos datos');
+
+  // ── Contra la FASGBA de verdad ──
+  const real = 'data/cr/cr2_tz_tz_1783952758542.json';
+  if (fs.existsSync(real)) {
+    const d = JSON.parse(fs.readFileSync(real, 'utf8'));
+    const R = M._stTeamPoints(d);
+    const campeon = M._stTeamName(d.teamStandings.teams[0].name);
+    const t = d.teamStandings.teams[0];
+    chk(R.mp[campeon] === 2 * (+t.w) + (+t.d),
+        'FASGBA: los puntos de match calculados = los que informa la tabla', R.mp[campeon]);
+    const col = M._stTeamMatchRule(d.teamStandings.teams);
+    chk(col && parseFloat(t.des[col.col]) === R.mp[campeon],
+        'y coinciden con la columna que detectamos en la tabla', JSON.stringify(t.des));
+    chk(R.bp[campeon] === parseFloat(t.des[0]),
+        'los puntos de TABLERO calculados también coinciden', R.bp[campeon] + ' vs ' + t.des[0]);
+  } else {
+    console.log('  --   | (el cuadro de la FASGBA no está: me salteo esa parte)');
+  }
+
+  chk(/NO se puede saber quién llevaba las blancas/.test(SRC),
+      'queda escrito por qué los torneos por equipos no muestran el reparto por colores');
+}
+
+
+console.log('\n=== 18. La pestaña de los torneos por equipos ===');
+{
+  chk(/if\(_stStatsAvailable\(crk,data\)\) h\+=tabBtn\('stats','📈 Radiografía',false\);/.test(SRC),
+      'el botón está en el renglón de formaciones y tabla');
+  chk(/id="cr-panel-'\+crk\+'-stats" data-lazy="1"/.test(SRC),
+      'y su panel nace perezoso (una Olimpiada son 4.000 partidas: no se arma si no la abrís)');
+  chk(/ap\.removeAttribute\('data-lazy'\);[\s\S]{0,120}crBuildStatsPanel\(crk, crDataLoad\(crk\)\)/.test(SRC),
+      '_teamShowTab lo arma la primera vez que se toca');
+  chk(/if \(s\.esEquipos\) return _stTeamPanelHtml\(key, s\);/.test(SRC),
+      'y el panel sabe cuándo dibujar la versión por equipos');
+
+  // Medallas: oro, plata y bronce en CADA tablero (no sólo el mejor de cada mesa).
+  chk(/podio:\s*enMesa\.slice\(0, 3\)/.test(SRC), 'cada tablero se lleva su oro, su plata y su bronce');
+  chk(/var MED = \['🥇','🥈','🥉'\]/.test(SRC), 'y se dibujan con las tres medallas');
+
+  // La leyenda del gráfico son EQUIPOS: no tienen ficha de jugador que abrir.
+  chk(/_stRaceHtml\(key, s, \{ sub:'puntos de match, ronda a ronda', sinClic:true \}\)/.test(SRC),
+      'en la carrera por la punta de equipos, los nombres no son clickeables');
+
+  // La actuación argentina sólo cuando los equipos son PAÍSES (en una liga de clubes no va).
+  chk(/var esPaises = teams\.some\(function\(t\)\{ return t\.fed && String\(t\.fed\)\.length === 3; \}\);/.test(SRC),
+      'la actuación argentina se muestra sólo si los equipos son países');
+}
+
+
+console.log('\n=== 19. El tablero de INSCRIPCIÓN (medallas de la Olimpiada) ===');
+{
+  // Las medallas por tablero no van por la mesa donde el jugador se sentó, sino por su puesto en la
+  // lista del equipo. Caso real: Alan Pichot es el 4 de España, jugó 8 de 9 partidas en la mesa 3, y
+  // su bronce es del tablero 4. El orden del equipo se deduce de quién juega arriba de quién.
+  const piezas = ['_stJugada','_stDp','_stTeamName','_stTeamRegisteredBoards','_stTeamPlayers'];
+  const dpArr = SRC.match(/var _ST_DP = \[[\s\S]*?\];/)[0];
+  const M = new Function('pgnNameToNatural', '_normTitle', dpArr + piezas.map(extraerFuncion).join('\n')
+                         + ' return {' + piezas.join(',') + '};')((n) => n, (t) => t || '');
+
+  // Un equipo de 4 donde el CUARTO sube a la mesa 3 cuando el segundo descansa (el caso Pichot).
+  const mk = (nombres) => ({ boards: nombres.map((n, i) => ({ nW:n, eW:2000, nB:'riv' + i, eB:2000, res:'½-½' })) });
+  const d = { teamRounds: {
+    1: [Object.assign({ aName:'España', bName:'Otro' }, mk(['Uno','Dos','Tres','Pichot']))],
+    2: [Object.assign({ aName:'España', bName:'Otro' }, mk(['Uno','Tres','Pichot']))],
+    3: [Object.assign({ aName:'España', bName:'Otro' }, mk(['Uno','Dos','Tres','Pichot']))]
+  }};
+  const jug = M._stTeamPlayers(d, 3);
+  const de = (n) => jug.filter(p => p.equipo === 'España').find(p => p.raw === n);
+  chk(de('Uno').mesa === 1 && de('Dos').mesa === 2 && de('Tres').mesa === 3 && de('Pichot').mesa === 4,
+      'el 4º del equipo sigue siendo el 4 aunque haya jugado en la mesa 3',
+      'Uno=' + de('Uno').mesa + ' Dos=' + de('Dos').mesa + ' Tres=' + de('Tres').mesa + ' Pichot=' + de('Pichot').mesa);
+
+  // Con datos contradictorios (un ciclo) no se pierde ningún jugador ni se cuelga.
+  const raro = { teamRounds: {
+    1: [Object.assign({ aName:'X', bName:'Y' }, mk(['A','B']))],
+    2: [Object.assign({ aName:'X', bName:'Y' }, mk(['B','A']))]
+  }};
+  const jr = M._stTeamPlayers(raro, 2).filter(p => p.equipo === 'X');
+  chk(jr.length === 2 && jr.every(p => p.mesa >= 1 && p.mesa <= 2), 'si los datos se contradicen, igual quedan todos ordenados');
+
+  // El mínimo de partidas para las medallas: la FIDE pide 8 en una Olimpiada de 11 rondas.
+  chk(/var minP = \(rondas >= 10\) \? 8 :/.test(SRC), 'en torneos de 10 rondas o más se piden 8 partidas, como la FIDE');
+
+  // ── Contra la tabla OFICIAL de la Olimpiada 2024 (art=21 de Chess-Results) ──
+  const olimp = 'data/cr/cr2_tz_tz_1785939130392_c0.json';
+  if (fs.existsSync(olimp)) {
+    const d2 = JSON.parse(fs.readFileSync(olimp, 'utf8'));
+    const todos = M._stTeamPlayers(d2, 11);
+    const porTablero = (t) => todos.filter(p => p.mesa === t && p.rp).sort((a, b) => b.rp - a.rp).slice(0, 3)
+                                   .map(p => p.raw.split(',')[0] + ' ' + p.rp);
+    const OFICIAL = {
+      1: ['Gukesh 3056', 'Abdusattorov 2884', 'Carlsen 2810'],
+      2: ['Nguyen 2783', 'Lazov 2763', 'Gurel 2755'],
+      3: ['Erigaisi 2968', 'Yu 2802', 'Le 2795'],
+      4: ['Vokhidov 2779', 'Aronian 2773', 'Pichot 2756'],
+      5: ['Svane 2791', 'Gledura 2692', 'Ivic 2648']
+    };
+    for (const t of [1, 2, 3, 4, 5]) {
+      const mio = porTablero(+t);
+      chk(JSON.stringify(mio) === JSON.stringify(OFICIAL[t]),
+          'Olimpiada 2024, tablero ' + t + ': mismo podio que la tabla oficial', mio.join(' | '));
+    }
+    const pichot = todos.find(p => /^Pichot/.test(p.raw));
+    chk(pichot && pichot.mesa === 4 && pichot.rp === 2756 && pichot.partidas === 9,
+        'y Pichot queda donde va: tablero 4, Rp 2756, 9 partidas',
+        pichot ? ('tablero ' + pichot.mesa + ' Rp ' + pichot.rp + ' ' + pichot.partidas + ' partidas') : 'no está');
+  } else {
+    console.log('  --   | (el cuadro de la Olimpiada no está: me salteo la comparación con la oficial)');
+  }
 }
 
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.') + '\n');
