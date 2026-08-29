@@ -19054,7 +19054,10 @@ function _cvSettleNode() {
   cvUpdateLiveBackBtn();
   cvUpdateNagBadge();
   if (sf.on && typeof thrUpdateBtn === 'function') thrUpdateBtn();   // habilita/deshabilita "¿Qué amenaza?" según jaque/pase
-  if (cv.node.move) cvPlayMoveSound(cv.node.move.san);   // sonido de la posición FINAL (no ametralla al navegar rápido)
+  // Sonido de la posición FINAL (no ametralla al navegar rápido). _cvNoSoundNode silencia una jugada
+  // puntual: la del reposicionamiento de la reproducción en vivo, que el visitante YA vio y oyó.
+  if (cv.node.move && cv.node !== _cvNoSoundNode) cvPlayMoveSound(cv.node.move.san);
+  _cvNoSoundNode = null;
   obSchedule();
   // No tocar el motor mientras corre el análisis completo: si no, la navegación le roba el turno y el análisis
   // se frena. Tampoco analizar las posiciones INTERMEDIAS de la reproducción en vivo (solo la final).
@@ -19607,6 +19610,10 @@ function _cvBindHold(btnId, step) {
 // en vez de saltar al final se muestran una por una (cada _CV_ANIM_MS). Cualquier navegación manual
 // la corta (guard en cvSetNode). _cvAnimStepping evita que la propia reproducción se autocancele.
 var _cvAnimTimer = null, _cvAnimStepping = false, _CV_ANIM_MS = 550;
+// Nodo cuyo sonido NO hay que reproducir en el próximo settle. Al empezar la reproducción se hace un
+// cvSetNode a la jugada donde ya estaba el visitante, y ese settle repetía el sonido de esa jugada
+// vieja: se oía "la última ya vista + las nuevas". El settle lo consume (y lo limpia) una sola vez.
+var _cvNoSoundNode = null;
 // true mientras corre una reproducción automática de "ponerse al día" con la jugada en directo
 // (llegaron varias jugadas de una). Mientras dura, el visitante SIGUE en vivo: el cartel verde
 // "Volver a la jugada en directo" NO debe aparecer aunque el nodo actual todavía no sea el final.
@@ -19639,7 +19646,9 @@ function _cvAnimateToEnd(fromDepth){
   if (_cvAnimTimer) { clearTimeout(_cvAnimTimer); _cvAnimTimer = null; }
   _cvLiveCatchup = true;   // el visitante sigue en vivo mientras dura la reproducción (oculta el cartel verde)
   var n = cv.root; for (var k = 0; k < fromDepth && n.children.length > 0 && !n.children[0].own; k++) n = n.children[0];
-  _cvAnimStepping = true; cvSetNode(n); _cvAnimStepping = false;   // posicionar donde estaba el usuario
+  // Posicionar donde estaba el visitante, sin repetir el sonido de esa jugada (ya la vio y la oyó).
+  _cvNoSoundNode = n;
+  _cvAnimStepping = true; cvSetNode(n); _cvAnimStepping = false;
   function finish(){ _cvAnimTimer = null; _cvLiveCatchup = false; cvUpdateLiveBackBtn(); }
   function go(){
     if (!document.getElementById('chess-overlay').classList.contains('open')) { finish(); return; }
