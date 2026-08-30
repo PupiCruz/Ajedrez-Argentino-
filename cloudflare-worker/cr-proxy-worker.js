@@ -131,6 +131,14 @@ export default {
     if (reqUrl.pathname === '/mod/reports')   return modReports(request, env);      // GET  → reportes pendientes (para el panel)
     if (reqUrl.pathname === '/mod/report/done') return modReportDone(request, env); // POST → marcar reporte(s) como visto
 
+    // ── Colaboradores (el caballito ♞ de quien dona) ──
+    if (reqUrl.pathname === '/patron/claim')  return patronClaim(request, env);        // POST Bearer → "ya doné"
+    if (reqUrl.pathname === '/patron/list')   return patronList(request, env);         // GET público → quiénes tienen el ♞
+    if (reqUrl.pathname === '/mod/patron/claims') return modPatronClaims(request, env); // GET  → avisos sin revisar
+    if (reqUrl.pathname === '/mod/patron/grant')  return modPatronGrant(request, env);  // POST → dar / renovar / quitar
+    if (reqUrl.pathname === '/mod/patron/claim/done') return modPatronClaimDone(request, env); // POST → descartar aviso
+    if (reqUrl.pathname === '/mod/users')     return modUserSearch(request, reqUrl, env);  // GET ?q= → buscar cuentas
+
     // ── Progreso de EJERCICIOS atado a la cuenta (viaja entre dispositivos) ──
     if (reqUrl.pathname === '/puz/progress')  return puzProgress(request, env);   // GET (leer) / POST (guardar), Bearer
 
@@ -1157,7 +1165,9 @@ async function _migrarUsuarios(env) {
       chat_muted_until: 'INTEGER DEFAULT 0',
       dnd: 'INTEGER DEFAULT 0',      // "No molestar": 1 = otros NO te pueden desafiar
       no_guests: 'INTEGER DEFAULT 0',  // 1 = no acepto desafíos de jugadores SIN cuenta
-      is_mod: 'INTEGER DEFAULT 0' };  // moderador (antes se decidía por el nombre de usuario)
+      is_mod: 'INTEGER DEFAULT 0',  // moderador (antes se decidía por el nombre de usuario)
+      patron_until: 'INTEGER DEFAULT 0',  // colaborador: hasta cuándo le dura el caballito ♞ (0 = no)
+      patron_since: 'INTEGER' };   // la PRIMERA vez que colaboró (no se pisa al renovar)
     for (const name in want) {
       if (cols.has(name)) continue;
       try { await env.DB.prepare('ALTER TABLE usuarios ADD COLUMN ' + name + ' ' + want[name]).run(); } catch (e) {}
@@ -1312,7 +1322,16 @@ async function sessionUser(request, env) {
 async function authMe(request, env) {
   const u = await sessionUser(request, env);
   if (!u) return errJson('No autenticado', 401);
-  return jsonResp({ user: publicUser(u) });
+  // Colaborador: se pregunta APARTE y no dentro de sessionUser. sessionUser corre en TODOS los
+  // pedidos con sesión y su SELECT no pasa por la migración perezosa: si le sumáramos una columna
+  // que todavía no existe, la consulta explotaría y el sitio entero quedaría "deslogueado".
+  let patron = 0, patronSince = null;
+  try {
+    await ensureUserTables(env);
+    const p = await env.DB.prepare('SELECT patron_until, patron_since FROM usuarios WHERE id=?1').bind(u.id).first();
+    if (p) { patron = patronVigente(p.patron_until) ? 1 : 0; patronSince = p.patron_since || null; }
+  } catch (e) { /* si falla, sale como no-colaborador y el resto del sitio anda igual */ }
+  return jsonResp({ user: Object.assign(publicUser(u), { patron, patronSince }) });
 }
 
 // POST /logout → borra la sesión del token que manda.
@@ -1553,6 +1572,198 @@ async function modReportDone(request, env) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// COLABORADORES — el "caballito" ♞ de quien dona (equivale al Patron de Lichess)
+// ─────────────────────────────────────────────────────────────────────────────
+// Cómo funciona, y por qué así:
+//   • PayPal.me y el alias de Mercado Pago NO le avisan al sitio cuando alguien dona:
+//     al autor le llega un mail y nada más. Así que el circuito es MANUAL a propósito:
+//       1. La persona dona por afuera (PayPal / Mercado Pago).
+//       2. Toca "Ya doné" en la pestaña Apoyar → queda un aviso acá (patron_claims).
+//       3. El autor lo ve en el panel 🛡️, chequea que la donación entró, y lo aprueba.
+//     Es un clic por donación. Con pocos donantes rinde muchísimo más que montar
+//     webhooks de PayPal (que además piden cuenta Business y NO atan el mail de PayPal
+//     con la cuenta del sitio: el paso manual habría que hacerlo igual).
+//   • El distintivo VENCE (columna patron_until, timestamp UNIX en segundos). Lichess da
+//     un mes por donación suelta, igual que acá. El panel suma DE A UN MES por clic: un
+//     clic un mes, tres clics tres meses. Así el autor puede acompañar el tamaño de la
+//     donación sin tener que escribir números en ningún lado.
+//   • patron_since guarda la PRIMERA vez y no se pisa nunca más: es lo que permite decir
+//     "colabora desde agosto de 2026" aunque después renueve.
+const PATRON_MESES_DEFAULT = 1;
+
+let _patronTableReady = false;
+async function ensurePatronTable(env) {
+  if (_patronTableReady) return;
+  await env.DB.prepare(
+    'CREATE TABLE IF NOT EXISTS patron_claims (' +
+    'id TEXT PRIMARY KEY, user_id TEXT, username TEXT, medio TEXT, nota TEXT, ' +
+    'created_at INTEGER, handled INTEGER DEFAULT 0)'
+  ).run();
+  _patronTableReady = true;
+}
+
+// ¿El distintivo sigue vigente? (null / 0 / vencido = no)
+function patronVigente(until) {
+  return !!(until && Number(until) > Math.floor(Date.now() / 1000));
+}
+
+// POST /patron/claim  (Bearer)  { medio?, nota? } — "ya doné, revisalo".
+// No otorga nada: sólo deja el aviso para que el autor lo apruebe a mano.
+async function patronClaim(request, env) {
+  if (request.method !== 'POST') return errJson('Usá POST', 405);
+  if (!env.DB) return errJson('Falta el binding D1 (DB)', 500);
+  const me = await sessionUser(request, env);
+  if (!me) return errJson('No autenticado', 401);
+  if (!rlAllow('patron:' + me.id, 5)) return tooMany();
+  let body; try { body = await request.json(); } catch (e) { body = {}; }
+  await ensureUserTables(env); await ensurePatronTable(env);
+  const medio = String(body.medio || '').trim().slice(0, 20) || 'no dice';
+  const nota = String(body.nota || '').replace(/\s+/g, ' ').trim().slice(0, 300) || null;
+  const now = Math.floor(Date.now() / 1000);
+  // Anti-duplicado: si ya mandó un aviso SIN revisar, actualizamos ese en vez de apilar otro.
+  // (Es gente avisando algo bueno, no spam: mejor no retarla con un error.)
+  const prev = await env.DB.prepare(
+    'SELECT id FROM patron_claims WHERE user_id=?1 AND handled=0'
+  ).bind(me.id).first();
+  try {
+    if (prev) {
+      await env.DB.prepare('UPDATE patron_claims SET medio=?1, nota=?2, created_at=?3 WHERE id=?4')
+        .bind(medio, nota, now, prev.id).run();
+      return jsonResp({ ok: true, already: true });
+    }
+    const id = 'pc_' + crypto.randomUUID().replace(/-/g, '').slice(0, 20);
+    await env.DB.prepare(
+      'INSERT INTO patron_claims (id, user_id, username, medio, nota, created_at) VALUES (?1,?2,?3,?4,?5,?6)'
+    ).bind(id, me.id, me.username || null, medio, nota, now).run();
+  } catch (e) { return errJson('D1 error: ' + e.message, 500); }
+  return jsonResp({ ok: true });
+}
+
+// GET /patron/list — PÚBLICO: quiénes tienen el caballito vigente.
+// El cliente lo baja una vez y con eso pinta el ♞ al lado del nick en los chats, el
+// ranking y el lobby (igual que el escudo del moderador, que sale de una lista fija).
+// Va con caché de 5 minutos: cambia poquísimo y lo pide todo el que abre el sitio.
+async function patronList(request, env) {
+  if (!env.DB) return errJson('Falta el binding D1 (DB)', 500);
+  await ensureUserTables(env);
+  let nombres = [];
+  try {
+    const now = Math.floor(Date.now() / 1000);
+    const r = await env.DB.prepare(
+      'SELECT username, patron_since FROM usuarios WHERE patron_until > ?1 ORDER BY patron_since ASC LIMIT 500'
+    ).bind(now).all();
+    nombres = ((r && r.results) || [])
+      .map((x) => ({ u: x.username, since: x.patron_since || null }))
+      .filter((x) => x.u);
+  } catch (e) { /* si falla, el sitio anda igual: simplemente nadie muestra distintivo */ }
+  return jsonResp({ patrons: nombres }, 200, 300);
+}
+
+// GET /mod/patron/claims — avisos de "ya doné" sin revisar. Sólo mods.
+async function modPatronClaims(request, env) {
+  if (!env.DB) return errJson('Falta el binding D1 (DB)', 500);
+  const who = await modAuth(request, env);
+  if (!who) return errJson('No autorizado', 403);
+  await ensureUserTables(env); await ensurePatronTable(env);
+  let claims = [];
+  try {
+    const r = await env.DB.prepare(
+      'SELECT c.id, c.user_id, c.username, c.medio, c.nota, c.created_at, u.patron_until ' +
+      'FROM patron_claims c LEFT JOIN usuarios u ON u.id = c.user_id ' +
+      'WHERE c.handled=0 ORDER BY c.created_at DESC LIMIT 100'
+    ).all();
+    claims = ((r && r.results) || []).map((x) => ({
+      id: x.id, userId: x.user_id, username: x.username, medio: x.medio || null,
+      nota: x.nota || null, at: x.created_at || null, patron: patronVigente(x.patron_until),
+      until: x.patron_until || 0,   // el panel lo usa para el cartelito de cuánto le queda
+    }));
+  } catch (e) { /* tabla nueva y todavía vacía */ }
+  return jsonResp({ claims });
+}
+
+// POST /mod/patron/grant  { userId | username, meses?, quitar? } — dar o sacar el caballito.
+// Renovar SUMA sobre lo que queda (no lo pisa), así donar dos veces seguidas no regala meses.
+async function modPatronGrant(request, env) {
+  if (request.method !== 'POST') return errJson('Usá POST', 405);
+  if (!env.DB) return errJson('Falta el binding D1 (DB)', 500);
+  const who = await modAuth(request, env);
+  if (!who) return errJson('No autorizado', 403);
+  let body; try { body = await request.json(); } catch (e) { return errJson('JSON inválido', 400); }
+  await ensureUserTables(env); await ensurePatronTable(env);
+  const userId = String(body.userId || '').trim();
+  const username = String(body.username || '').trim();
+  if (!userId && !username) return errJson('Falta el usuario', 400);
+  const u = userId
+    ? await env.DB.prepare('SELECT id, username, patron_until, patron_since FROM usuarios WHERE id=?1').bind(userId).first()
+    : await env.DB.prepare('SELECT id, username, patron_until, patron_since FROM usuarios WHERE LOWER(username)=LOWER(?1)').bind(username).first();
+  if (!u) return errJson('Usuario no encontrado', 404);
+  const now = Math.floor(Date.now() / 1000);
+  try {
+    if (body.quitar) {
+      await env.DB.prepare('UPDATE usuarios SET patron_until=0 WHERE id=?1').bind(u.id).run();
+      await env.DB.prepare('UPDATE patron_claims SET handled=1 WHERE user_id=?1 AND handled=0').bind(u.id).run();
+      return jsonResp({ ok: true, patron: false, username: u.username });
+    }
+    let meses = parseInt(body.meses, 10);
+    if (!(meses > 0 && meses <= 120)) meses = PATRON_MESES_DEFAULT;
+    // Base = lo que le queda si todavía está vigente; si venció, arranca de hoy.
+    const base = patronVigente(u.patron_until) ? Number(u.patron_until) : now;
+    const until = base + meses * 30 * 24 * 3600;
+    const since = u.patron_since || now;   // la primera vez no se pisa nunca más
+    await env.DB.prepare('UPDATE usuarios SET patron_until=?1, patron_since=?2 WHERE id=?3')
+      .bind(until, since, u.id).run();
+    // El aviso de esta persona queda resuelto solo: si no, el autor haría 2 clics por donación.
+    await env.DB.prepare('UPDATE patron_claims SET handled=1 WHERE user_id=?1 AND handled=0').bind(u.id).run();
+    return jsonResp({ ok: true, patron: true, until, since, username: u.username });
+  } catch (e) { return errJson('D1 error: ' + e.message, 500); }
+}
+
+// GET /mod/users?q=<texto> — buscar cuentas por nombre de usuario. Sólo mods.
+// Hace falta para el caso más común de todos: alguien dona y avisa POR AFUERA (WhatsApp,
+// mail, un mensaje) en vez de usar el botón "Ya colaboré". Ahí no hay aviso en la lista y
+// el autor necesita poder buscarlo por el nick que le pasaron.
+async function modUserSearch(request, reqUrl, env) {
+  if (!env.DB) return errJson('Falta el binding D1 (DB)', 500);
+  const who = await modAuth(request, env);
+  if (!who) return errJson('No autorizado', 403);
+  const q = String(reqUrl.searchParams.get('q') || '').trim().slice(0, 40);
+  if (q.length < 2) return jsonResp({ users: [] });   // con una letra sola devolvería media base
+  await ensureUserTables(env);
+  // LIKE con comodín de los dos lados: alcanza y sobra para una base de este tamaño. Los % y _
+  // que escriba el autor se escapan, para que no funcionen como comodines sin querer.
+  const patron = '%' + q.replace(/[\\%_]/g, (c) => '\\' + c) + '%';
+  let users = [];
+  try {
+    // Primero el que coincide EXACTO, después los más cortos (los más parecidos a lo buscado).
+    const r = await env.DB.prepare(
+      "SELECT id, username, patron_until, banned FROM usuarios WHERE username LIKE ?1 ESCAPE '\\' " +
+      'ORDER BY (LOWER(username)=LOWER(?2)) DESC, LENGTH(username) ASC LIMIT 20'
+    ).bind(patron, q).all();
+    users = ((r && r.results) || []).map((x) => ({
+      id: x.id, username: x.username, until: x.patron_until || 0,
+      patron: patronVigente(x.patron_until), banned: !!x.banned,
+    }));
+  } catch (e) { return errJson('D1 error: ' + e.message, 500); }
+  return jsonResp({ users });
+}
+
+// POST /mod/patron/claim/done  { id } — descartar un aviso SIN dar el distintivo
+// (por ejemplo, si la donación nunca llegó).
+async function modPatronClaimDone(request, env) {
+  if (request.method !== 'POST') return errJson('Usá POST', 405);
+  if (!env.DB) return errJson('Falta el binding D1 (DB)', 500);
+  const who = await modAuth(request, env);
+  if (!who) return errJson('No autorizado', 403);
+  let body; try { body = await request.json(); } catch (e) { return errJson('JSON inválido', 400); }
+  const id = String(body.id || '').trim();
+  if (!id) return errJson('Falta el id', 400);
+  await ensurePatronTable(env);
+  try { await env.DB.prepare('UPDATE patron_claims SET handled=1 WHERE id=?1').bind(id).run(); }
+  catch (e) { return errJson('D1 error: ' + e.message, 500); }
+  return jsonResp({ ok: true });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // RATING DE PARTIDAS EN VIVO (PvP) — propio del sitio, calculado en el SERVIDOR
 // ─────────────────────────────────────────────────────────────────────────────
 // Reglas (idénticas en espíritu al rating de los ejercicios de la web):
@@ -1727,7 +1938,7 @@ async function publicProfile(request, reqUrl, env) {
   if (!handle) return errJson('Falta el usuario', 400);
   await ensureUserTables(env);
   const u = await env.DB.prepare(
-    'SELECT id, username, rating, title, display_name, country, bio, created_at, dnd FROM usuarios WHERE LOWER(username)=LOWER(?1)'
+    'SELECT id, username, rating, title, display_name, country, bio, created_at, dnd, patron_until, patron_since FROM usuarios WHERE LOWER(username)=LOWER(?1)'
   ).bind(handle).first();
   if (!u) return errJson('Este jugador no tiene perfil en el sitio', 404);
 
@@ -1770,6 +1981,9 @@ async function publicProfile(request, reqUrl, env) {
     id: u.id, username: u.username, title: u.title || null, ratingLichess: u.rating || null,
     name: u.display_name || null, country: u.country || null, bio: u.bio || null, createdAt: u.created_at || null,
     ratings, games, prov, tactic, followers, following, youFollow, dnd: u.dnd ? 1 : 0,
+    // Colaborador: `patron` es lo único que mira el cliente para pintar el ♞; `patronSince`
+    // es para el "colabora desde…" de la ficha. La fecha de vencimiento NO se publica.
+    patron: patronVigente(u.patron_until) ? 1 : 0, patronSince: u.patron_since || null,
   });
 }
 

@@ -2502,6 +2502,31 @@
       .ap-list li { font-size: 13.5px; color: var(--fg-c8); line-height: 1.6; padding: 7px 0 7px 24px; position: relative; border-bottom: 1px solid var(--border); }
       .ap-list li:last-child { border-bottom: none; }
       .ap-list li:before { content: '♟'; position: absolute; left: 0; color: var(--gold-dim); }
+      /* Los DOS medios de pago van apilados en la columna derecha: primero el de acá
+         (Mercado Pago) y abajo el del exterior (PayPal). En el teléfono se apila todo. */
+      .ap-pays { display: flex; flex-direction: column; gap: 16px; }
+      /* PayPal comparte la caja de .ap-alias y sólo cambia el acento dorado por su azul.
+         El azul va en una variable propia (--pp) porque el celeste que se lee bien sobre el
+         fondo oscuro queda lavado sobre el claro, y al revés. El degradé se apoya sobre
+         --card90 en vez de terminar en negro: si no, en modo claro la tarjeta salía gris. */
+      .ap-alias.ap-pp { --pp: #4aa3e0;
+        background: linear-gradient(155deg, rgba(0,112,186,.20), rgba(0,112,186,.04)), var(--card90);
+        border-color: rgba(0,112,186,.55); }
+      body.light .ap-alias.ap-pp { --pp: #0a5c94; }
+      .ap-alias.ap-pp .ap-mp { color: var(--pp); }
+      .ap-alias.ap-pp .ap-av { background: rgba(0,112,186,.16); border-color: rgba(0,112,186,.5); }
+      .ap-alias.ap-pp .ap-alias-txt { color: var(--pp); font-size: clamp(12.5px, 3.4vw, 20px);
+        word-break: normal; }
+      .ap-pp-go { display: block; width: 100%; box-sizing: border-box; padding: 12px; border-radius: 10px;
+        cursor: pointer; font-family: inherit; font-size: 14px; font-weight: 700; text-align: center;
+        text-decoration: none; margin-bottom: 8px; color: #fff; background: #0070ba;
+        border: 1px solid #0070ba; transition: filter .15s; }
+      .ap-pp-go:hover { filter: brightness(1.12); }
+      /* Dentro de PayPal, "copiar el enlace" es la acción SECUNDARIA: va en contorno, para que
+         el azul de "Donar" sea lo único que grita. Dos botones llenos se pelean entre sí. */
+      .ap-alias.ap-pp .ap-copy { background: transparent; color: var(--pp); border-color: rgba(0,112,186,.55); }
+      .ap-alias.ap-pp .ap-copy:hover { background: rgba(0,112,186,.14); filter: none; }
+      .ap-alias.ap-pp .ap-copy.copied { background: var(--green); color: var(--bg3); border-color: var(--green); }
     </style>
     <section class="section" id="s-apoyar">
       <div class="pg-head">
@@ -2526,8 +2551,10 @@
             <p style="margin-bottom:0">Y que quede claro: <b style="color:var(--text)">nada del sitio se paga ni se bloquea.</b> Todo lo que hay acá va a seguir siendo gratis, dones o no dones.</p>
           </div>
 
+          <div class="ap-pays">
+
           <div class="ap-card ap-alias">
-            <div class="ap-mp">Mi alias de Mercado Pago</div>
+            <div class="ap-mp">Argentina · Mercado Pago</div>
             <div class="ap-alias-pill">
               <div class="ap-av">♟</div>
               <div class="ap-alias-txt" id="ap-alias-val">elpupicruz</div>
@@ -2536,6 +2563,28 @@
             <div class="ap-thanks">El monto lo elegís vos. ¡Gracias por la confianza! 🙌</div>
           </div>
 
+          <div class="ap-card ap-alias ap-pp">
+            <div class="ap-mp">Desde afuera · PayPal</div>
+            <div class="ap-alias-pill">
+              <div class="ap-av">🌎</div>
+              <div class="ap-alias-txt" id="ap-pp-val">paypal.me/chessargentino</div>
+            </div>
+            <a class="ap-pp-go" href="https://paypal.me/chessargentino" target="_blank" rel="noopener">Donar con PayPal ↗</a>
+            <button class="ap-copy" id="ap-pp-copy" onclick="apCopyPaypal(this)">Copiar el enlace</button>
+            <div class="ap-thanks">Paga en dólares, euros, libras y 22 monedas más. 🌍</div>
+          </div>
+
+          </div>
+
+        </div>
+
+        <div class="ap-card ap-claim">
+          <div class="ap-claim-ico">♞</div>
+          <div class="ap-claim-txt">
+            <h4>¿Ya colaboraste? Avisame y te pongo el caballito</h4>
+            <p style="margin-bottom:0">Ni PayPal ni Mercado Pago me avisan quién donó, así que el sitio no se entera solo. Tocá el botón, lo chequeo, y te queda un <b style="color:var(--gold)">caballito ♞ al lado de tu nombre</b> en los chats, en tus partidas y en tu perfil. No desbloquea nada: es sólo para que se vea que pusiste el hombro.</p>
+          </div>
+          <div class="ap-claim-act" id="ap-claim-act"></div>
         </div>
 
         <div class="ap-card" style="margin-top:18px">
@@ -20781,6 +20830,22 @@ function apCopyAlias(btn) {
     navigator.clipboard.writeText(txt).then(done).catch(function() { _apCopyFallback(txt); done(); });
   } else { _apCopyFallback(txt); done(); }
 }
+// Copia el enlace de PayPal. Igual que apCopyAlias pero con su propio cartel: el que dona desde
+// afuera copia una URL, no un alias, y decirle "alias copiado" sería confuso.
+function apCopyPaypal(btn) {
+  var el = document.getElementById('ap-pp-val');
+  var txt = el ? 'https://' + (el.textContent || '').trim().replace(/^https?:\/\//, '') : '';
+  if (!txt) return;
+  var done = function() {
+    if (!btn) return;
+    var prev = btn.textContent;
+    btn.classList.add('copied'); btn.textContent = '✓ ¡Enlace copiado!';
+    setTimeout(function() { btn.classList.remove('copied'); btn.textContent = prev; }, 1800);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(txt).then(done).catch(function() { _apCopyFallback(txt); done(); });
+  } else { _apCopyFallback(txt); done(); }
+}
 function _apCopyFallback(txt) {
   try {
     var ta = document.createElement('textarea');
@@ -33807,7 +33872,7 @@ function cvUpdateNagBadge() {
       var rat=ri ? ' <span class="lv-plate-rat">'+ri.r+(ri.prov?'?':'')+'</span>' : '';
       // Si el asiento es un usuario del sitio (logueado), el nick abre su perfil al tocarlo.
       var nmHtml=lvEsc(nm), acct=lvUsers && lvUsers[color];
-      if(acct) nmHtml='<span class="aa-nick-clk" data-uprofile="'+lvEsc(acct)+'" title="Ver el perfil de '+lvEsc(acct)+'">'+nmHtml+'</span>';
+      if(acct) nmHtml=(window.aaPatron?window.aaPatron.badge(acct):'')+'<span class="aa-nick-clk" data-uprofile="'+lvEsc(acct)+'" title="Ver el perfil de '+lvEsc(acct)+'">'+nmHtml+'</span>';
       return (color==='w'?'⚪ ':'⚫ ')+nmHtml+rat+(mine?' <span style="color:var(--text3)">(vos)</span>':'')+dis;
     }
     var nb=$('lv-name-bot'), nt=$('lv-name-top');
@@ -33829,6 +33894,14 @@ function cvUpdateNagBadge() {
       try{ if(window.aaAuth && window.aaAuth.refreshRatings) window.aaAuth.refreshRatings(); }catch(e){}   // refresca mi cache para el lobby
     }
   }
+  // Si la lista de colaboradores llega DESPUÉS de haber dibujado (pasa al entrar directo al
+  // link de una partida), repintamos los nombres para que el ♞ no aparezca recién al refrescar.
+  document.addEventListener('aa-patrons-changed', function(){
+    try{ updateNames(); }catch(e){}
+    try{ renderAvailPlayers(); }catch(e){}
+    try{ renderOnlinePill(); }catch(e){}
+  });
+
   function updateControls(){
     var playing=(lvStatus==='playing'), finished=(lvStatus==='finished');
     var amPlayer=(lvMyColor==='w'||lvMyColor==='b');
@@ -34377,7 +34450,7 @@ function cvUpdateNagBadge() {
     if(m.id) div.setAttribute('data-mid', m.id);
     if(m.userId){ div.setAttribute('data-uid', m.userId); if(window.aaBlock && window.aaBlock.shouldHide(m.userId)) div.classList.add('aa-msg-hidden'); }
     div._name=m.name||'Jugador'; div._text=text; div._reactions=m.reactions||null;   // para citar/reaccionar
-    var badge=(window.aaMod?window.aaMod.modBadge(m.name):'');
+    var badge=(window.aaMod?window.aaMod.modBadge(m.name):'')+(window.aaPatron?window.aaPatron.badge(m.name):'');
     var quote=(m.reply?tcQuoteHtml(m.reply):'');
     div.innerHTML=quote+badge+nmHtml+lvEsc(text)+t+'<div class="tchat-rx">'+tcReactionsHtml(m)+'</div>';
     if(lvAuthUser()){
@@ -34582,7 +34655,7 @@ function cvUpdateNagBadge() {
           ? '<span class="lv-dnd-tag" title="En No molestar">🔕</span>'
           : '<button type="button" class="lv-online-ch" data-uid="'+lvEsc(u.id)+'" data-nm="'+lvEsc(u.username)+'" title="Desafiar">⚔️</button>';
         return '<div class="lv-online-row"><span class="lv-online-dot"></span>'+
-          '<span class="lv-online-nm aa-nick-clk" data-uprofile="'+lvEsc(u.username)+'">'+lvEsc(u.username)+'</span>'+
+          (window.aaPatron?window.aaPatron.badge(u.username):'')+'<span class="lv-online-nm aa-nick-clk" data-uprofile="'+lvEsc(u.username)+'">'+lvEsc(u.username)+'</span>'+
           actBtn+'</div>';
       }).join('');
       var d=document.createElement('div'); d.id='lv-online'; d.className='lv-online-card';
@@ -34621,7 +34694,7 @@ function cvUpdateNagBadge() {
         ? '<span class="lv-dnd-tag" title="Este jugador está en No molestar">🔕 No molestar</span>'
         : '<button type="button" class="lv-player-ch" data-uid="'+lvEsc(u.id)+'" data-nm="'+lvEsc(u.username)+'">⚔️ Desafiar</button>';
       html+='<div class="lv-player-item"><span class="lv-online-dot"></span>'+
-        '<span class="lv-player-nm aa-nick-clk" data-uprofile="'+lvEsc(u.username)+'">'+lvEsc(u.username)+(foll?' <span class="lv-player-foll" title="Lo seguís">★</span>':'')+'</span>'+
+        (window.aaPatron?window.aaPatron.badge(u.username):'')+'<span class="lv-player-nm aa-nick-clk" data-uprofile="'+lvEsc(u.username)+'">'+lvEsc(u.username)+(foll?' <span class="lv-player-foll" title="Lo seguís">★</span>':'')+'</span>'+
         actBtn+'</div>';
     }
     list.innerHTML=html;
@@ -34649,7 +34722,7 @@ function cvUpdateNagBadge() {
       var medal=(i===0?'🥇':i===1?'🥈':i===2?'🥉':(i+1)+'');
       var ttl=p.title?('<span class="lv-rank-ttl">'+lvEsc(p.title)+'</span>'):'';
       out+='<div class="lv-rank-row"><span class="lv-rank-pos">'+medal+'</span>'+ttl
-        +'<span class="lv-rank-nm aa-nick-clk" data-uprofile="'+lvEsc(p.username)+'">'+lvEsc(p.username)+'</span>'
+        +(window.aaPatron?window.aaPatron.badge(p.username):'')+'<span class="lv-rank-nm aa-nick-clk" data-uprofile="'+lvEsc(p.username)+'">'+lvEsc(p.username)+'</span>'
         +'<span class="lv-rank-el">'+(p.rating!=null?p.rating:'—')+(p.prov?'<span class="lv-rank-prov">?</span>':'')+'</span></div>';
     }
     return out;
@@ -34667,7 +34740,7 @@ function cvUpdateNagBadge() {
         ? '<span class="lv-dnd-tag" title="Este jugador está en No molestar">🔕 No molestar</span>'
         : '<button type="button" class="lv-rank-onch" data-uid="'+lvEsc(u.id)+'" data-nm="'+lvEsc(u.username)+'">⚔️ Desafiar</button>';
       out+='<div class="lv-rank-onitem"><span class="lv-rank-ondot"></span>'
-        +'<span class="lv-rank-onnm aa-nick-clk" data-uprofile="'+lvEsc(u.username)+'">'+lvEsc(u.username)+'</span>'
+        +(window.aaPatron?window.aaPatron.badge(u.username):'')+'<span class="lv-rank-onnm aa-nick-clk" data-uprofile="'+lvEsc(u.username)+'">'+lvEsc(u.username)+'</span>'
         +actBtn+'</div>';
     }
     return out;
@@ -34966,7 +35039,7 @@ function cvUpdateNagBadge() {
     div.className='tchat-msg'+(tcMine(m)?' tchat-mine':'');
     if(m.id) div.setAttribute('data-mid', m.id);
     if(m.userId){ div.setAttribute('data-uid', m.userId); if(window.aaBlock && window.aaBlock.shouldHide(m.userId)) div.classList.add('aa-msg-hidden'); }
-    var badge=(window.aaMod?window.aaMod.modBadge(m.name):'');
+    var badge=(window.aaMod?window.aaMod.modBadge(m.name):'')+(window.aaPatron?window.aaPatron.badge(m.name):'');
     var quote=(m.reply?tcQuoteHtml(m.reply):'');
     div.innerHTML=quote+badge+'<span class="tchat-nm aa-nick-clk" data-uprofile="'+nm+'">'+nm+'</span>'+lvEsc(text)+t
       +'<div class="tchat-rx">'+tcReactionsHtml(m)+'</div>';
@@ -35543,6 +35616,224 @@ function cvUpdateNagBadge() {
 </script>
 
 <!-- ══════════════════════════════════════════════════════════════════════════
+     COLABORADORES — el caballito ♞ al lado del nombre (equivale a las alitas
+     del Patron de Lichess). Quien dona por PayPal o Mercado Pago avisa desde la
+     pestaña Apoyar, el autor lo aprueba en el panel 🛡️, y a partir de ahí le
+     aparece el ♞ en los chats y en su perfil.
+
+     Por qué un CARÁCTER (♞) y no un emoji: ♞ es texto común, así que toma el
+     color del CSS y queda dorado, igual que el logo. Un emoji viene con su color
+     de fábrica y no se puede teñir.
+
+     La lista de quiénes son colaboradores se baja UNA vez (GET /patron/list,
+     público y cacheado 5 min) y se pinta desde ahí, igual que el escudo del
+     moderador. Si el Worker todavía no está actualizado, `badge()` devuelve
+     vacío y no se rompe nada.
+     ══════════════════════════════════════════════════════════════════════════ -->
+<style>
+  .aa-patron-tag{font-size:.9em;margin-right:3px;vertical-align:baseline;color:var(--gold);
+    text-shadow:0 0 3px rgba(255,201,64,.45)}
+  /* Ficha del perfil: el caballito va más grande y con el "colabora desde…" al lado. */
+  .aa-prof-patron{display:inline-flex;align-items:center;gap:6px;margin-top:8px;padding:4px 11px;
+    border-radius:999px;font-size:.78rem;font-weight:700;
+    background:rgba(255,201,64,.14);border:1px solid var(--gold-dim);color:var(--gold)}
+</style>
+<script>
+(function(){
+  var PROXY=(typeof CR_PROXY!=='undefined'&&CR_PROXY)?CR_PROXY:'https://cr-proxy.mmatiasscruz.workers.dev';
+  var ICON='♞';
+  var SET=null;            // { nombreEnMinúscula: desdeCuándo }  · null = todavía no cargó
+  var pidiendo=null;
+
+  // Baja la lista de colaboradores. Se llama sola al arrancar y después de aprobar a alguien.
+  function load(force){
+    if(pidiendo && !force) return pidiendo;
+    pidiendo=fetch(PROXY+'/patron/list'+(force?('?t='+Date.now()):''))
+      .then(function(r){ return r.ok?r.json():null; })
+      .then(function(d){
+        var m={};
+        ((d&&d.patrons)||[]).forEach(function(p){ if(p&&p.u) m[String(p.u).toLowerCase()]=p.since||null; });
+        SET=m;
+        document.dispatchEvent(new CustomEvent('aa-patrons-changed'));
+        return m;
+      })
+      .catch(function(){ if(SET===null) SET={}; return {}; });   // sin conexión: nadie con distintivo
+    return pidiendo;
+  }
+
+  function isPatron(name){
+    if(!SET || !name) return false;
+    return Object.prototype.hasOwnProperty.call(SET, String(name).toLowerCase());
+  }
+  function since(name){
+    if(!SET || !name) return null;
+    return SET[String(name).toLowerCase()] || null;
+  }
+  // El HTML del caballito para poner ANTES del nombre (mismo lugar que el escudo del mod).
+  function badge(name){
+    return isPatron(name) ? '<span class="aa-patron-tag" title="Colabora con ChessArgentino">'+ICON+'</span>' : '';
+  }
+  // ¿El que está logueado tiene el caballito? Sale de /me (lo guarda aaAuth).
+  function iAmPatron(){
+    try{ var u=window.aaAuth&&window.aaAuth.getUser(); return !!(u&&u.patron); }catch(e){ return false; }
+  }
+
+  window.aaPatron={ badge:badge, isPatron:isPatron, since:since, iAmPatron:iAmPatron,
+    reload:function(){ return load(true); }, ICON:ICON };
+
+  // Arranque: no corre en el modo autor local (ahí no hay cuentas ni chats).
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', function(){ load(); });
+  else load();
+})();
+</script>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     "YA COLABORÉ" — el aviso que manda quien donó, para que le den el caballito.
+     Ni PayPal ni Mercado Pago le avisan al sitio quién donó, así que este botón
+     es el único puente entre la donación y la cuenta. El autor lo aprueba a mano
+     desde el panel 🛡️.
+     ══════════════════════════════════════════════════════════════════════════ -->
+<style>
+  /* Franja de "ya colaboré". Usa las variables del tema (--card90 / --border) para que
+     en modo claro no quede un panel blanco flotando sobre el fondo claro. */
+  .ap-claim{display:flex;align-items:center;gap:18px;margin-top:18px;flex-wrap:wrap}
+  .ap-claim-ico{font-size:40px;color:var(--gold);line-height:1;flex-shrink:0;
+    text-shadow:0 0 10px rgba(255,201,64,.35)}
+  .ap-claim-txt{flex:1 1 260px;min-width:0}
+  .ap-claim-act{flex:0 0 auto}
+  .ap-claim-btn{cursor:pointer;font-family:inherit;font-size:14px;font-weight:700;
+    padding:12px 20px;border-radius:10px;color:var(--bg3);background:var(--gold);
+    border:1px solid var(--gold-dim);transition:filter .15s}
+  .ap-claim-btn:hover{filter:brightness(1.08)}
+  .ap-claim-btn:disabled{opacity:.6;cursor:default}
+  .ap-claim-have{display:inline-flex;align-items:center;gap:7px;font-size:13.5px;font-weight:700;
+    color:var(--gold);background:rgba(255,201,64,.13);border:1px solid var(--gold-dim);
+    padding:11px 17px;border-radius:10px}
+  /* Diálogo. Mismo esqueleto que el panel de moderación pero con los colores del TEMA,
+     porque a este lo ve cualquier visitante (el de moderación lo ve sólo el autor). */
+  .ap-dlg-back{position:fixed;inset:0;z-index:100003;background:rgba(0,0,0,.55);display:flex;
+    align-items:center;justify-content:center;padding:16px;-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
+  .ap-dlg{background:var(--card90);color:var(--text);border:1px solid var(--bd22);
+    border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.5);max-width:430px;width:100%;
+    max-height:86vh;overflow:auto;padding:20px 22px}
+  .ap-dlg h3{margin:0 0 6px;font-size:1.1rem;color:var(--gold)}
+  .ap-dlg p{font-size:13px;color:var(--fg-c8);line-height:1.6;margin:0 0 14px}
+  .ap-dlg label{display:block;font-size:12px;font-weight:700;letter-spacing:.4px;
+    text-transform:uppercase;color:var(--fg-b0);margin:0 0 7px}
+  .ap-dlg-medios{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}
+  .ap-dlg-medio{flex:1 1 120px;cursor:pointer;font-family:inherit;font-size:13.5px;font-weight:600;
+    padding:11px 10px;border-radius:10px;background:var(--panel1);color:var(--text);
+    border:1px solid var(--border);transition:border-color .15s,background .15s}
+  .ap-dlg-medio.on{border-color:var(--gold);background:rgba(255,201,64,.14);color:var(--gold)}
+  .ap-dlg textarea{width:100%;box-sizing:border-box;font-family:inherit;font-size:13.5px;
+    padding:10px 12px;border-radius:10px;background:var(--panel1);color:var(--text);
+    border:1px solid var(--border);resize:vertical;min-height:66px;margin-bottom:16px}
+  .ap-dlg-btns{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+  .ap-dlg-x{cursor:pointer;font-family:inherit;font-size:13.5px;font-weight:600;padding:11px 16px;
+    border-radius:10px;background:transparent;color:var(--fg-b0);border:1px solid var(--border)}
+  .ap-dlg-ok{cursor:pointer;font-family:inherit;font-size:13.5px;font-weight:700;padding:11px 18px;
+    border-radius:10px;color:var(--bg3);background:var(--gold);border:1px solid var(--gold-dim)}
+  .ap-dlg-ok:disabled{opacity:.6;cursor:default}
+</style>
+<script>
+(function(){
+  var PROXY=(typeof CR_PROXY!=='undefined'&&CR_PROXY)?CR_PROXY:'https://cr-proxy.mmatiasscruz.workers.dev';
+  var medio='paypal';
+
+  function tok(){ try{ return (window.aaAuth&&window.aaAuth.getToken)?window.aaAuth.getToken():''; }catch(e){ return ''; } }
+  function logueado(){ try{ return !!(window.aaAuth&&window.aaAuth.getUser()); }catch(e){ return false; } }
+  // Cartelito de abajo. Reusa la clase .aa-toast del módulo de cuentas (el estilo es global);
+  // la función de aquel módulo es privada, así que se rehace acá en tres líneas.
+  function aviso(msg){
+    var t=document.createElement('div'); t.className='aa-toast'; t.textContent=msg;
+    document.body.appendChild(t);
+    setTimeout(function(){ t.classList.add('show'); }, 10);
+    setTimeout(function(){ t.classList.remove('show'); setTimeout(function(){ t.remove(); },250); }, 3200);
+  }
+  function cerrar(){ var b=document.getElementById('ap-dlg-back'); if(b) b.remove(); document.removeEventListener('keydown', onKey, true); }
+  function onKey(ev){ if(ev.key==='Escape') cerrar(); }
+
+  function abrir(){
+    cerrar(); medio='paypal';
+    var back=document.createElement('div'); back.id='ap-dlg-back'; back.className='ap-dlg-back';
+    back.innerHTML='<div class="ap-dlg">'+
+      '<h3>♞ Contame que colaboraste</h3>'+
+      '<p>PayPal y Mercado Pago no me avisan quién donó, así que necesito que me lo digas vos. '+
+      'Lo chequeo contra los pagos que me entraron y te dejo el caballito al lado del nombre.</p>'+
+      '<label>¿Por dónde donaste?</label>'+
+      '<div class="ap-dlg-medios">'+
+        '<button type="button" class="ap-dlg-medio on" data-medio="paypal">🌎 PayPal</button>'+
+        '<button type="button" class="ap-dlg-medio" data-medio="mercadopago">🏠 Mercado Pago</button>'+
+      '</div>'+
+      '<label>Algo que me ayude a encontrarlo (opcional)</label>'+
+      '<textarea id="ap-dlg-nota" maxlength="300" placeholder="El nombre con el que aparece el pago, el monto, la fecha…"></textarea>'+
+      '<div class="ap-dlg-btns">'+
+        '<button type="button" class="ap-dlg-x">Cancelar</button>'+
+        '<button type="button" class="ap-dlg-ok">Mandar aviso</button>'+
+      '</div></div>';
+    back.addEventListener('click', function(ev){ if(ev.target===back) cerrar(); });
+    back.querySelector('.ap-dlg-x').addEventListener('click', cerrar);
+    back.querySelectorAll('.ap-dlg-medio').forEach(function(b){
+      b.addEventListener('click', function(){
+        medio=b.getAttribute('data-medio');
+        back.querySelectorAll('.ap-dlg-medio').forEach(function(o){ o.classList.toggle('on', o===b); });
+      });
+    });
+    back.querySelector('.ap-dlg-ok').addEventListener('click', function(){ enviar(this); });
+    document.body.appendChild(back);
+    document.addEventListener('keydown', onKey, true);
+    var ta=document.getElementById('ap-dlg-nota'); if(ta) ta.focus();
+  }
+
+  function enviar(btn){
+    btn.disabled=true; btn.textContent='Mandando…';
+    var ta=document.getElementById('ap-dlg-nota');
+    fetch(PROXY+'/patron/claim', { method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok()},
+      body:JSON.stringify({ medio:medio, nota:(ta?ta.value:'').slice(0,300) }) })
+      .then(function(r){ return r.json().then(function(d){ return {ok:r.ok, d:d}; }); })
+      .then(function(x){
+        if(!x.ok){ btn.disabled=false; btn.textContent='Mandar aviso';
+          aviso('No se pudo mandar: '+((x.d&&x.d.error)||'error')); return; }
+        cerrar();
+        aviso('♞ ¡Gracias de verdad! Lo reviso y te dejo el caballito en cuanto lo confirme.');
+        pintar('enviado');
+      })
+      .catch(function(){ btn.disabled=false; btn.textContent='Mandar aviso'; aviso('No se pudo (¿internet?)'); });
+  }
+
+  // Pinta la franja según el estado: sin cuenta / con caballito / puede avisar / ya avisó.
+  function pintar(estado){
+    var box=document.getElementById('ap-claim-act'); if(!box) return;
+    if(estado==='enviado'){
+      box.innerHTML='<span class="ap-claim-have">✓ Aviso mandado, gracias</span>'; return;
+    }
+    if(window.aaPatron && window.aaPatron.iAmPatron()){
+      box.innerHTML='<span class="ap-claim-have">♞ Ya tenés tu caballito</span>'; return;
+    }
+    if(!logueado()){
+      box.innerHTML='<button type="button" class="ap-claim-btn" id="ap-claim-login">Entrar para avisar</button>';
+      var bl=document.getElementById('ap-claim-login');
+      if(bl) bl.addEventListener('click', function(){ if(window.aaAuth&&window.aaAuth.login) window.aaAuth.login(); });
+      return;
+    }
+    box.innerHTML='<button type="button" class="ap-claim-btn" id="ap-claim-go">♞ Ya colaboré</button>';
+    var b=document.getElementById('ap-claim-go');
+    if(b) b.addEventListener('click', abrir);
+  }
+
+  window.apClaim={ open:abrir, paint:pintar };
+
+  function init(){
+    pintar();
+    // Repintar cuando entra o sale de la cuenta (el botón cambia de "Entrar" a "Ya colaboré").
+    try{ if(window.aaAuth&&window.aaAuth.onChange) window.aaAuth.onChange(function(){ pintar(); }); }catch(e){}
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', init); else init();
+})();
+</script>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
      PANEL DE MODERACIÓN (el autor / mods) — reportes + silenciados + baneados,
      con acciones para revertir. Se abre desde el menú de la cuenta ("🛡️ Moderación").
      Sólo para mods; todo pega a cr-proxy con el Bearer del mod.
@@ -35574,6 +35865,11 @@ function cvUpdateNagBadge() {
   .aa-mp-btn.ok:hover{background:rgba(87,184,148,.26)}
   .aa-mp-btn:disabled{opacity:.5;cursor:default}
   .aa-mp-btns{display:flex;gap:6px;flex:0 0 auto;flex-wrap:wrap;justify-content:flex-end}
+  .aa-mp-find{display:flex;gap:6px;margin:2px 0 4px}
+  .aa-mp-find input{flex:1;min-width:0;font:inherit;font-size:.88rem;padding:8px 12px;border-radius:999px;
+    background:rgba(255,255,255,.07);color:inherit;border:1px solid rgba(255,255,255,.18)}
+  .aa-mp-find input::placeholder{color:rgba(233,233,242,.45)}
+  .aa-mp-pat{color:#ffc940}
 </style>
 <script>
 (function(){
@@ -35605,17 +35901,75 @@ function cvUpdateNagBadge() {
   }
   function load(){
     var body=document.querySelector('#aa-mp-back .aa-mp-body'); if(!body) return;
-    Promise.all([ api('/mod/sanctions'), api('/mod/reports') ])
-      .then(function(res){ render(res[0]||{}, res[1]||{}); })
+    Promise.all([ api('/mod/sanctions'), api('/mod/reports'), api('/mod/patron/claims') ])
+      .then(function(res){ render(res[0]||{}, res[1]||{}, res[2]||{}); })
       .catch(function(){ if(body) body.innerHTML='<div class="aa-mp-empty">No se pudo cargar. ¿Hay internet?</div>'; });
   }
   function rowHtml(name, meta, btn){
     return '<div class="aa-mp-row"><div class="aa-mp-info"><b>'+esc(name||'—')+'</b>'+meta+'</div>'+btn+'</div>';
   }
-  function render(sanc, rep){
+  // ── Caballito ♞ ────────────────────────────────────────────────────────────────────
+  // Cuánto le queda de distintivo, en criollo. Debajo de mes y medio se cuenta en días,
+  // que es lo que importa cuando está por vencer.
+  function patTxt(until){
+    var ms=(Number(until)||0)*1000-Date.now();
+    if(ms<=0) return 'sin caballito';
+    var d=Math.round(ms/86400000);
+    if(d<45) return 'le queda'+(d===1?'':'n')+' '+d+' día'+(d===1?'':'s');
+    var m=Math.round(d/30);
+    return 'le queda'+(m===1?'':'n')+' '+m+' mes'+(m===1?'':'es');
+  }
+  // El cartelito se marca con data-patfor para poder reescribirlo a cada clic SIN recargar.
+  function patLbl(userId, until){
+    return '<span class="aa-mp-when aa-mp-pat" data-patfor="'+esc(userId||'')+'">♞ '+patTxt(until)+'</span>';
+  }
+  // Botones comunes a la lista de avisos y a los resultados del buscador.
+  function patBtns(userId, username, extra){
+    return '<span class="aa-mp-btns"><button type="button" class="aa-mp-btn" data-prof="'+esc(username||'')+'">Ver perfil →</button>'+
+      '<button type="button" class="aa-mp-btn ok" data-grant="'+esc(userId||'')+'" title="Sumar un mes de caballito (tocá de nuevo para sumar otro)">♞ +1 mes</button>'+
+      (extra||'')+'</span>';
+  }
+  // Deja el buscador andando. Busca al tipear (con un respiro de 350 ms) y con Enter.
+  function bindBuscador(){
+    var inp=document.getElementById('aa-mp-q'), res=document.getElementById('aa-mp-qres');
+    if(!inp || !res) return;
+    var t=null;
+    function buscar(){
+      var q=inp.value.trim();
+      if(q.length<2){ res.innerHTML=''; return; }
+      res.innerHTML='<div class="aa-mp-empty">Buscando…</div>';
+      api('/mod/users?q='+encodeURIComponent(q)).then(function(d){
+        var us=(d && d.users)||[];
+        res.innerHTML= us.length ? us.map(function(u){
+          return rowHtml(u.username, patLbl(u.id, u.until)+(u.banned?'<span class="aa-mp-rsn">⛔ baneado</span>':''),
+            patBtns(u.id, u.username, u.patron?('<button type="button" class="aa-mp-btn" data-unpatron="'+esc(u.id)+'" title="Sacarle el caballito">✕</button>'):''));
+        }).join('') : '<div class="aa-mp-empty">Nadie con ese nombre.</div>';
+        bindFilas(res);
+      }).catch(function(){ res.innerHTML='<div class="aa-mp-empty">No se pudo buscar.</div>'; });
+    }
+    inp.addEventListener('input', function(){ clearTimeout(t); t=setTimeout(buscar, 350); });
+    inp.addEventListener('keydown', function(ev){ if(ev.key==='Enter'){ clearTimeout(t); buscar(); } });
+  }
+
+  function render(sanc, rep, pat){
     var body=document.querySelector('#aa-mp-back .aa-mp-body'); if(!body) return;
     var reports=(rep && rep.reports)||[], muted=(sanc && sanc.muted)||[], banned=(sanc && sanc.banned)||[];
+    var claims=(pat && pat.claims)||[];
     var h='';
+    // Los avisos de donación van PRIMERO: son lo único del panel que da gusto atender y lo que
+    // más conviene no dejar esperando (del otro lado hay alguien que ya puso la plata).
+    h+='<div class="aa-mp-sec">🔎 Buscar a alguien</div>';
+    // Para cuando la donación se avisa por afuera (WhatsApp, mail) y no hay aviso en la lista.
+    h+='<div class="aa-mp-find"><input type="search" id="aa-mp-q" placeholder="Nombre de usuario…" autocomplete="off" spellcheck="false"></div>';
+    h+='<div id="aa-mp-qres"></div>';
+    h+='<div class="aa-mp-sec">♞ Dicen que colaboraron ('+claims.length+')</div>';
+    h+= claims.length ? claims.map(function(c){
+      var medio=c.medio==='paypal'?'PayPal':(c.medio==='mercadopago'?'Mercado Pago':(c.medio||'—'));
+      var meta='<span class="aa-mp-rsn">'+esc(medio)+(c.nota?(' · '+esc(c.nota)):'')+'</span>'+
+        '<span class="aa-mp-when">'+fmtWhen(c.at)+(c.patron?' · ya tiene el ♞':'')+'</span>';
+      return rowHtml(c.username, meta + patLbl(c.userId, c.until),
+        patBtns(c.userId, c.username, '<button type="button" class="aa-mp-btn" data-nogrant="'+esc(c.id||'')+'" title="Descartar sin dar el distintivo">✕</button>'));
+    }).join('') : '<div class="aa-mp-empty">Ningún aviso pendiente.</div>';
     h+='<div class="aa-mp-sec">🚩 Reportes ('+reports.length+')</div>';
     h+= reports.length ? reports.map(function(r){
       var meta=(r.reason?'<span class="aa-mp-rsn">'+esc(r.reason)+'</span>':'')+'<span class="aa-mp-when">'+fmtWhen(r.at)+'</span>';
@@ -35634,7 +35988,7 @@ function cvUpdateNagBadge() {
       return rowHtml(b.username, meta, '<button type="button" class="aa-mp-btn ok" data-unban="'+esc(b.userId)+'">✓ Quitar ban</button>');
     }).join('') : '<div class="aa-mp-empty">Nadie baneado.</div>';
     body.innerHTML=h;
-    body.querySelectorAll('[data-prof]').forEach(function(bn){ bn.addEventListener('click', function(){
+    body.querySelectorAll('[data-prof]').forEach(function(bn){ bn.setAttribute('data-bound','1'); bn.addEventListener('click', function(){
       var u=bn.getAttribute('data-prof'); close(); if(window.aaProfile&&window.aaProfile.open) window.aaProfile.open({username:u, peek:true}); }); });
     body.querySelectorAll('[data-done]').forEach(function(bn){ bn.addEventListener('click', function(){
       bn.disabled=true; api('/mod/report/done','POST',{id:bn.getAttribute('data-done')}).then(function(){ load(); }).catch(function(){ bn.disabled=false; }); }); });
@@ -35642,7 +35996,44 @@ function cvUpdateNagBadge() {
       bn.disabled=true; api('/mod/unmute','POST',{userId:bn.getAttribute('data-unmute')}).then(function(){ load(); }).catch(function(){ bn.disabled=false; }); }); });
     body.querySelectorAll('[data-unban]').forEach(function(bn){ bn.addEventListener('click', function(){
       bn.disabled=true; api('/mod/unban','POST',{userId:bn.getAttribute('data-unban')}).then(function(){ load(); }).catch(function(){ bn.disabled=false; }); }); });
+    bindFilas(body);
+    bindBuscador();
+    body.querySelectorAll('[data-nogrant]').forEach(function(bn){ bn.addEventListener('click', function(){
+      bn.disabled=true; api('/mod/patron/claim/done','POST',{id:bn.getAttribute('data-nogrant')}).then(function(){ load(); }).catch(function(){ bn.disabled=false; }); }); });
   }
+  // Engancha los botones del caballito. Se llama con TODO el panel y también, aparte, con los
+  // resultados del buscador (que se dibujan después y si no quedarían muertos).
+  function bindFilas(scope){
+    scope.querySelectorAll('[data-grant]').forEach(function(bn){ bn.addEventListener('click', function(){
+      var uid=bn.getAttribute('data-grant');
+      bn.disabled=true;
+      api('/mod/patron/grant','POST',{userId:uid, meses:1}).then(function(d){
+        bn.disabled=false;
+        // OJO: acá NO se recarga el panel. Al primer clic el aviso queda resuelto en el
+        // servidor, así que recargar haría desaparecer la fila y no se podría seguir
+        // sumando meses. En vez de eso se reescribe el cartelito de esa fila.
+        var lbl=scope.querySelector('[data-patfor="'+uid+'"]');
+        if(lbl && d && d.until) lbl.textContent='♞ '+patTxt(d.until);
+        if(window.aaPatron) window.aaPatron.reload();
+      }).catch(function(){ bn.disabled=false; }); }); });
+    scope.querySelectorAll('[data-unpatron]').forEach(function(bn){ bn.addEventListener('click', function(){
+      var uid=bn.getAttribute('data-unpatron');
+      bn.disabled=true;
+      api('/mod/patron/grant','POST',{userId:uid, quitar:true}).then(function(){
+        bn.disabled=false;
+        var lbl=scope.querySelector('[data-patfor="'+uid+'"]');
+        if(lbl) lbl.textContent='♞ sin caballito';
+        bn.remove();
+        if(window.aaPatron) window.aaPatron.reload();
+      }).catch(function(){ bn.disabled=false; }); }); });
+    scope.querySelectorAll('[data-prof]').forEach(function(bn){
+      if(bn.getAttribute('data-bound')) return;   // en el panel ya los engancha render()
+      bn.setAttribute('data-bound','1');
+      bn.addEventListener('click', function(){
+        var u=bn.getAttribute('data-prof'); close();
+        if(window.aaProfile&&window.aaProfile.open) window.aaProfile.open({username:u, peek:true}); }); });
+  }
+
   window.aaModPanel={ open:open };
 })();
 </script>
