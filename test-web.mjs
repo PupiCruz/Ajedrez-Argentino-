@@ -901,7 +901,8 @@ console.log('\n=== 26. El árbol de aperturas del torneo ===');
   // El conteo, con detector y dedup de mentira para poder probar SOLO las reglas propias.
   const armar = (nombrePorPgn) => new Function(
     'dedupGamesByMoves', 'detectOpeningByMoves', 'parsePgnHeaders', '_noticiaFechaHoy',
-    'var _AP_V=1, _AP_MIN_N=3, _AP_MIN_REL=25;' + extraerFuncion('_apUnificar') + extraerFuncion('_stAperturasCalc')
+    'var _AP_V=2, _AP_MIN_N=3, _AP_MIN_REL=25, _AP_MIN_FILAS=4, _AP_MIN_PCT=6;'
+    + extraerFuncion('_apUnificar') + extraerFuncion('_stAperturasCalc')
     + '; return _stAperturasCalc;')(
       (items, get) => { const vistos = new Set(), out = []; items.forEach(it => { const p = get(it); if (!vistos.has(p)) { vistos.add(p); out.push(it); } }); return out; },
       (pgn) => ({ name: nombrePorPgn(pgn) }), () => ({}), () => '1 Ene 2026');
@@ -941,6 +942,25 @@ console.log('\n=== 26. El árbol de aperturas del torneo ===');
       'el cajón "Apertura 1.d4 Nf6" no se lista como más jugada', rr.top.map(o => o.nombre).join(', '));
 
   chk(calc([]) === null && calc(['']) === null, 'sin partidas no devuelve nada');
+
+  // Una apertura que ARRASA dejaba la sección con una sola barra: con 109 Sicilianas el 25% pone el
+  // corte en 28 partidas y todo lo demás queda afuera (pasó de verdad, en un torneo de 346 partidas).
+  // Ahora, si el 25% deja menos de 4 filas, se completa con las que siguen pesando (3+ partidas y 6%+).
+  const meterEn = (arr, n, nombre) => { for (let k = 0; k < n; k++) arr.push(nombre + '#' + k); };
+  const arrasa = [];
+  meterEn(arrasa, 109, 'Siciliana'); meterEn(arrasa, 27, 'Francesa');
+  meterEn(arrasa, 24, 'Caro-Kann');  meterEn(arrasa, 22, 'Inglesa'); meterEn(arrasa, 8, 'Holandesa');
+  const ra = calc(arrasa);
+  chk(ra.top.length === 4, 'la apertura que arrasa ya no queda sola: se completa hasta 4 filas', ra.top.length);
+  chk(ra.top.map(o => o.nombre).join(', ') === 'Siciliana, Francesa, Caro-Kann, Inglesa',
+      'y entran las que siguen, en orden', ra.top.map(o => o.nombre + ' ' + o.cantidad).join(' · '));
+  chk(!ra.top.some(o => o.nombre === 'Holandesa'),
+      'pero la Holandesa (8 de 190 = 4,2%) sigue afuera: no se completa con cualquier cosa');
+
+  // Y el torneo con reparto parejo NO cambia: ahí el 25% ya deja 3 filas y la Holandesa de 5
+  // partidas sobre 95 (5,3%) tampoco entra por la puerta de atrás.
+  chk(r.top.length === 3 && !r.top.some(o => o.nombre === 'Holandesa'),
+      'el torneo parejo queda igual que antes (la regla nueva no lo toca)', r.top.length + ' filas');
 
   // El árbol se GUARDA: el visitante no lo calcula (con la carga por ronda le saldría mal).
   const boton = extraerFuncion('_stCalcularAperturas');

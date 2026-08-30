@@ -9721,12 +9721,19 @@ function _stTeamBuild(crk, data, meta){
    No se puede calcular cuando entra el visitante: las partidas se bajan por ronda a medida que las
    abre, así que con una ronda cargada diría "Siciliana 14" cuando en realidad fueron 300.
 ═══════════════════════════════════════════════════════ */
-var _AP_V = 1;
+var _AP_V = 2;
 // Piso para entrar en la lista: al menos 3 partidas Y al menos el 25% de la MÁS jugada.
 // El piso relativo se adapta a la forma del torneo, que es lo que un porcentaje fijo no hace: con un
 // 3% fijo, 5 Holandesas en 100 partidas entraban igual (5,3%) aunque la primera tuviera 40. Con el
 // 25% de la líder, entran las que de verdad pesan al lado de la más jugada.
 var _AP_MIN_N = 3, _AP_MIN_REL = 25;
+// …pero el piso relativo castiga justo a los torneos donde UNA apertura arrasa: con 109 Sicilianas el
+// corte se va a 28 partidas y la sección queda con una sola barra, que no cuenta nada. Si el 25% deja
+// menos de 4 filas, se completa con las que siguen mientras pesen de verdad.
+// El 6% es lo que separa los dos casos reales: las 5 Holandesas de 100 partidas (5,3%) que NO queremos
+// listar al lado de 40 Sicilianas, y las 22 Inglesas de 346 (6,4%) que sí son parte del torneo. Es un
+// porcentaje y no un número de partidas para que se adapte al tamaño: 6 de 100 y 21 de 346.
+var _AP_MIN_FILAS = 4, _AP_MIN_PCT = 6;
 
 // "Defensa Siciliana" y "Siciliana" son la misma apertura contada dos veces (la tabla las nombra de
 // las dos formas). Se unen SOLO si las dos están: si sólo aparece "Defensa Holandesa", se respeta.
@@ -9766,14 +9773,22 @@ function _stAperturasCalc(pgns){
   var esCajon = function(n){ return /^(Apertura|Defensa)[ ]+[0-9]/.test(n); };
   var mayor = 0;
   Object.keys(conteo).forEach(function(n){ if (!esCajon(n) && conteo[n] > mayor) mayor = conteo[n]; });
-  var lista = [];
+  var candidatas = [];
   Object.keys(conteo).forEach(function(n){
     if (esCajon(n)) return;
     if (conteo[n] < _AP_MIN_N) return;
-    if (mayor && (conteo[n] / mayor * 100) < _AP_MIN_REL) return;
-    lista.push({ nombre:n, cantidad:conteo[n], pct:Math.round(conteo[n] / conNombre * 1000) / 10 });
+    candidatas.push({ nombre:n, cantidad:conteo[n], pct:Math.round(conteo[n] / conNombre * 1000) / 10 });
   });
-  lista.sort(function(a,b){ return b.cantidad - a.cantidad; });
+  candidatas.sort(function(a,b){ return b.cantidad - a.cantidad; });
+  var lista = candidatas.filter(function(o){ return !mayor || (o.cantidad / mayor * 100) >= _AP_MIN_REL; });
+  // Sección casi vacía (una apertura que arrasa): completar hasta 4 con las que siguen pesando.
+  if (lista.length < _AP_MIN_FILAS) {
+    candidatas.forEach(function(o){
+      if (lista.length >= _AP_MIN_FILAS || lista.indexOf(o) >= 0 || o.pct < _AP_MIN_PCT) return;
+      lista.push(o);
+    });
+    lista.sort(function(a,b){ return b.cantidad - a.cantidad; });
+  }
   return { v:_AP_V, partidas:unicas.length, conNombre:conNombre, repetidasQueSeSacaron:(items.length - unicas.length),
            top:lista.slice(0, 8), cuando:_noticiaFechaHoy() };
 }
