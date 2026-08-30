@@ -467,7 +467,7 @@ console.log('\n=== 17. Radiografía POR EQUIPOS (Olimpiadas, ligas) ===');
   const piezas = ['_stJugada','_stRounds','_stSig','_stTeamName','_stTeamBoardsAsRounds','_stTeamPoints',
                   '_stTeamMatchRule','_stTeamUpsets'];
   const stV = SRC.match(/var _ST_V = (\d+);/)[1];
-  const M = new Function('crPtsStr', 'var _ST_V = ' + stV + ';' + piezas.map(extraerFuncion).join('\n')
+  const M = new Function('crPtsStr', 'var ' + SRC.match(new RegExp('_TEAM_SIN_JUGADOR=[^;]+;'))[0] + extraerFuncion('_teamIsPlaceholder') + 'var _ST_V = ' + stV + ';' + piezas.map(extraerFuncion).join('\n')
                          + ' return {' + piezas.join(',') + '};')(
     (n) => (n % 1 === 0.5 ? (Math.floor(n) > 0 ? Math.floor(n) : '') + '½' : String(n)));
 
@@ -551,8 +551,18 @@ console.log('\n=== 18. La pestaña de los torneos por equipos ===');
       'el botón está en el renglón de formaciones y tabla');
   chk(/id="cr-panel-'\+crk\+'-stats" data-lazy="1"/.test(SRC),
       'y su panel nace perezoso (una Olimpiada son 4.000 partidas: no se arma si no la abrís)');
-  chk(/ap\.removeAttribute\('data-lazy'\);[\s\S]{0,120}crBuildStatsPanel\(crk, crDataLoad\(crk\)\)/.test(SRC),
-      '_teamShowTab lo arma la primera vez que se toca');
+  chk(/ap\.removeAttribute\('data-lazy'\);[\s\S]{0,140}_teamPanelContent\(crk, crDataLoad\(crk\), tab\)/.test(SRC),
+      '_teamShowTab arma el panel la primera vez que se toca');
+  // Los paneles por equipos también son perezosos: una Olimpiada armaba 12 MB de HTML y 76.000
+  // nodos de una sola vez (11 formaciones), y tardaba 700 ms en abrir.
+  chk(/var panel=function\(tab, contenido\)\{/.test(SRC) && /data-lazy="1"/.test(SRC),
+      'las formaciones, los cruces y la tabla nacen perezosos');
+  chk(/function _teamPanelContent\(crk,data,tab\)\{/.test(SRC),
+      'y hay un solo lugar que sabe armar cada panel');
+  for (const pieza of ['_teamRenderCrosses', '_teamRenderRound', '_teamRenderStandings', 'crBuildStatsPanel']) {
+    chk(new RegExp(pieza).test(extraerFuncion('_teamPanelContent')),
+        '_teamPanelContent sabe armar: ' + pieza);
+  }
   chk(/if \(s\.esEquipos\) return _stTeamPanelHtml\(key, s\);/.test(SRC),
       'y el panel sabe cuándo dibujar la versión por equipos');
 
@@ -577,7 +587,7 @@ console.log('\n=== 19. El tablero de INSCRIPCIÓN (medallas de la Olimpiada) ===
   // su bronce es del tablero 4. El orden del equipo se deduce de quién juega arriba de quién.
   const piezas = ['_stJugada','_stDp','_stTeamName','_stTeamRegisteredBoards','_stTeamPlayers'];
   const dpArr = SRC.match(/var _ST_DP = \[[\s\S]*?\];/)[0];
-  const M = new Function('pgnNameToNatural', '_normTitle', dpArr + piezas.map(extraerFuncion).join('\n')
+  const M = new Function('pgnNameToNatural', '_normTitle', 'var ' + SRC.match(new RegExp('_TEAM_SIN_JUGADOR=[^;]+;'))[0] + extraerFuncion('_teamIsPlaceholder') + dpArr + piezas.map(extraerFuncion).join('\n')
                          + ' return {' + piezas.join(',') + '};')((n) => n, (t) => t || '');
 
   // Un equipo de 4 donde el CUARTO sube a la mesa 3 cuando el segundo descansa (el caso Pichot).
@@ -630,6 +640,339 @@ console.log('\n=== 19. El tablero de INSCRIPCIÓN (medallas de la Olimpiada) ===
   } else {
     console.log('  --   | (el cuadro de la Olimpiada no está: me salteo la comparación con la oficial)');
   }
+}
+
+
+console.log('\n=== 20. La noticia de los torneos por equipos ===');
+{
+  const _ncLista = new Function('return (' + extraerFuncion('_ncLista') + ')')();
+  chk(_ncLista(['a']) === 'a', 'una sola cosa se dice sola');
+  chk(_ncLista(['a', 'b']) === 'a y b', 'dos, con "y"');
+  chk(_ncLista(['a', 'b', 'c']) === 'a, b y c', 'tres, con comas y una "y" al final');
+  chk(_ncLista([]) === '' && _ncLista(null) === '', 'y con nada, nada');
+  chk(_ncLista(['a', '', 'c']) === 'a y c', 'los huecos no dejan comas sueltas');
+
+  chk(/if \(m && \(\(data && data\.teamRounds && Object\.keys\(data\.teamRounds\)\.length\) \|\| m\.isTeam\)\) return _noticiaGatherDataTeam\(data, m\);/.test(SRC),
+      'el paquete para la IA se bifurca cuando el torneo es por equipos');
+  chk(/function _noticiaGatherDataTeam/.test(SRC), 'y existe el paquete propio de los equipos');
+  for (const campo of ['medallasPorTablero', 'batacazosEquipos', 'tramosDePunta', 'argentina']) {
+    chk(new RegExp(campo).test(extraerFuncion('_noticiaGatherDataTeam')),
+        'el paquete le manda a la IA: ' + campo);
+  }
+
+  const draft = extraerFuncion('_noticiaTeamDraft');
+  chk(/_stTeamBuild/.test(draft), 'el borrador local se arma con la misma radiografía que la pestaña');
+  chk(/La actuación argentina/.test(draft), 'y cuenta la actuación argentina');
+  chk(/medallas|oro por tablero/i.test(draft), 'y las medallas por tablero');
+  chk(/if \(!s \|\| !s\.campeon\)/.test(draft),
+      'si el torneo todavía no tiene cruces, igual anuncia al campeón con la tabla sola');
+
+  chk(/La IA arma la nota con los datos del torneo por equipos/.test(SRC),
+      'el cartel del botón de IA explica qué va a usar en un torneo por equipos');
+}
+
+
+console.log('\n=== 21. Los países, en castellano ===');
+{
+  // Chess-Results publica los países en inglés. Se traducen SOLO al mostrarlos: los datos guardados
+  // y las claves con las que se busca cada equipo siguen siendo los originales.
+  const tablaES = SRC.match(/var _FED_ES = (\{.*?\});/)[1];
+  const tablaISO = SRC.match(/var _FED_ISO = (\{.*?\});/)[1];
+  const ES = JSON.parse(tablaES), ISO = JSON.parse(tablaISO);
+  const sinNombre = Object.keys(ISO).filter(k => !ES[k]);
+  chk(sinNombre.length === 0, 'todas las federaciones que tienen bandera tienen nombre en castellano',
+      sinNombre.join(',') || (Object.keys(ES).length + ' federaciones'));
+  const deMas = Object.keys(ES).filter(k => !ISO[k]);
+  chk(deMas.length === 0, 'y no sobra ninguna', deMas.join(',') || 'ninguna');
+
+  const EN = JSON.parse(SRC.match(new RegExp('var _FED_EN = ([{].*?[}]);'))[1]);
+  const sinIngles = Object.keys(ES).filter(k => !EN[k]);
+  chk(sinIngles.length === 0, 'y todas tienen también su nombre en inglés (así se las reconoce)',
+      sinIngles.join(',') || (Object.keys(EN).length + ' federaciones'));
+
+  const parts = (n) => {
+    const s0 = String(n || '');
+    const m = s0.match(new RegExp('[(]([A-Za-z]{3})[)][ ]*$'));
+    return { clean: s0.replace(new RegExp('[ ]*[(][A-Za-z]{3}[)][ ]*$'), '').trim() || s0,
+             fed: m ? m[1].toUpperCase() : '' };
+  };
+  const _paisES = new Function('_FED_ES', '_FED_EN', 'normStr', '_teamCountryParts',
+    'var _NOMBRE_FED = null;' + extraerFuncion('_nombreFedIx') + extraerFuncion('_paisES') + '; return _paisES;')(
+      ES, EN, new Function('return (' + extraerFuncion('normStr') + ')')(), parts);
+
+  // Un Europeo por equipos tiene England 1, 2 y 3: el número NO se puede perder.
+  chk(_paisES('England 1', 'ENG') === 'Inglaterra 1' && _paisES('England 3', 'ENG') === 'Inglaterra 3',
+      'conserva el número del equipo (había tres "Inglaterra" iguales)', _paisES('England 1', 'ENG'));
+  chk(_paisES('Hungary B', 'HUN') === 'Hungría B' && _paisES('Sweden 1', 'SWE') === 'Suecia 1',
+      'lo mismo con la letra del equipo');
+  // Lo delicado: un CLUB inscripto con la federación de su país NO es ese país.
+  chk(_paisES('SG Riehen Switzerland', 'SUI') === 'SG Riehen Switzerland',
+      'un club suizo no se convierte en "Suiza": se traduce por el nombre, nunca por la federación');
+  chk(_paisES('Ageless of Crete', 'GRE') === 'Ageless of Crete' && _paisES('Polish Amateurs', 'POL') === 'Polish Amateurs',
+      'ni un club griego en "Grecia", ni uno polaco en "Polonia"');
+  chk(_paisES('USA', 'USA') === 'Estados Unidos' && _paisES('Turkey', 'TUR') === 'Turquía',
+      'las variantes que usa Chess-Results también entran ("USA", "Turkey")');
+  chk(_paisES('Racing Club B') === 'Racing Club B' && _paisES('Deportivo 9 de Julio') === 'Deportivo 9 de Julio',
+      'y a un club con número o letra tampoco le pasa nada');
+
+  chk(_paisES('United States of America', 'USA') === 'Estados Unidos', 'traduce por el código de federación');
+  chk(_paisES('Netherlands (NED)') === 'Países Bajos', 'y también cuando el código viene pegado al nombre');
+  chk(_paisES('Hungary', 'HUN') === 'Hungría' && _paisES('Czech Republic', 'CZE') === 'Chequia',
+      'Hungría y Chequia, que en inglés se escriben muy distinto');
+  chk(_paisES('Türkiye', 'TUR') === 'Turquía', 'Turquía, aunque el nombre venga en turco');
+  chk(_paisES('Club Atlético Independiente') === 'Club Atlético Independiente',
+      'a un CLUB no le toca nada (una liga no es un torneo de países)');
+  chk(_paisES('Chess Team XYZ', 'ZZZ') === 'Chess Team XYZ', 'y un código desconocido tampoco rompe nada');
+  chk(_paisES('') === '' && _paisES(null) === '', 'sin nombre, no devuelve basura');
+
+  // Los lugares donde se muestran: tabla de equipos, formaciones, cruces y ficha de país.
+  chk(/escHtml\(_paisES\(t\.name,_fed\)\)/.test(SRC), 'la tabla de equipos lo usa');
+  chk(/escHtml\(_paisES\(parts\.clean,parts\.fed\)\)/.test(SRC), 'las formaciones también');
+  chk(/escHtml\(_paisES\(m\.aName,m\.aFed\)\)/.test(SRC), 'los cruces por países, también');
+  chk(/escHtml\(_paisES\(cname,cfed\)\)/.test(SRC), 'y la ficha de cada país');
+  // Lo importante: el CLIC sigue llevando el nombre original, si no se rompe la búsqueda.
+  chk(/crOpenCountry\('\+crArg\(crk\)\+','\+crArg\(t\.name\)\+'\)/.test(SRC),
+      'pero el clic sigue mandando el nombre ORIGINAL (traducir sólo lo que se ve)');
+  chk(/var esNom = function\(n\)\{ return _paisES\(n, fedDe\[n\] \|\| ''\); \};/.test(SRC),
+      'la radiografía traduce con el código que saca de la tabla');
+}
+
+
+console.log('\n=== 22. Auditoría de la Olimpiada: el jugador fantasma y el color ===');
+{
+  // Chess-Results rellena con "Sin jugador asignado" cuando un equipo no completa la formación.
+  // No es una persona: no juega, no puntúa y NO ocupa un puesto en la lista del equipo.
+  const boards = extraerFuncion('_stTeamBoardsAsRounds');
+  chk(/_teamIsPlaceholder\(b\.nW\) \|\| _teamIsPlaceholder\(b\.nB\)/.test(boards),
+      'los tableros con jugador fantasma no entran como partidas');
+  const players = extraerFuncion('_stTeamPlayers');
+  chk(/if \(b\.nW && !_teamIsPlaceholder\(b\.nW\)\) filaA\.push/.test(players),
+      'y el fantasma no ocupa un lugar en la lista del equipo (si no, corre un puesto a los de abajo)');
+
+  // En un torneo POR EQUIPOS el color no se sabe: no hay que inventarlo.
+  const jugador = extraerFuncion('crOpenPlayer');
+  chk(/sinColor:true/.test(jugador),
+      'el historial de un torneo por equipos se marca como "sin color"');
+  chk(/hh\.sinColor \?/.test(SRC) && /el color no viene en los datos/.test(SRC),
+      'y en pantalla sale un guioncito, no un ⬜ o un ⬛ inventado');
+  chk(/if\(p\.w===name\)\{ history\.push\(\{round:r,color:'Blancas',opp/.test(jugador),
+      'en los torneos individuales el color se sigue mostrando igual que siempre');
+}
+
+
+console.log('\n=== 23. El ojito nunca se queda mudo ===');
+{
+  // Los ojitos salen en TODAS las mesas a propósito: en la web publicada, mostrarlos sólo donde ya
+  // hay partida cargada dejaba media ficha sin ojito (sólo las rondas que el visitante había
+  // recorrido). El trato es: si la partida no está, se AVISA. Antes había salidas mudas y el clic
+  // parecía que colgaba la web.
+  const teamOpen = extraerFuncion('_teamOpenBoardGame');
+  chk(!/^function _teamOpenBoardGame\(round, wName, bName\)\{\s*if\(typeof _tdCtx==='undefined' \|\| !_tdCtx \|\| !_tdCtx\.pgnKey\) return;/m.test(teamOpen),
+      'por equipos: ya no se va en silencio cuando el torneo no tiene ninguna partida cargada');
+  chk(/var hayPool = /.test(teamOpen) && /var idx = hayPool \? buscar\(\) : -1;/.test(teamOpen),
+      'en su lugar sigue de largo y termina avisando');
+  chk((teamOpen.match(/_tdToast\('Esta partida no se transmitió\.'\)/g) || []).length >= 2,
+      'por equipos avisa en las dos salidas posibles');
+
+  const crOpen = extraerFuncion('crOpenGame');
+  chk((crOpen.match(/_tdToast\('Esta partida no se transmitió\.'\)/g) || []).length >= 2,
+      'y en los torneos individuales también (antes no avisaba en ninguna)');
+  chk(/return;\s*\}\s*\/\/ Cualquier otra salida/.test(crOpen.replace(/\r/g, '')),
+      'el aviso queda al final, como red que atrapa cualquier camino');
+
+  // Y el ojito se sigue mostrando SIEMPRE (no volver a esconderlo: fue una decisión, no un descuido).
+  chk(/var _verMesa = !_fantasma && \(!!b\.res \|\|/.test(SRC),
+      'las mesas con resultado siguen mostrando el ojito aunque la partida todavía no esté cargada');
+}
+
+
+console.log('\n=== 24. Enganchar la partida cuando el nombre viene escrito distinto ===');
+{
+  // Chess-Results y Lichess no siempre escriben igual a la misma persona:
+  //   "Ah Kye, Benitot"  (cuadro)  vs  "Ah-Kye, Benitot Emmanuel"  (Lichess)
+  // El ojito decía "no se transmitió" teniendo la partida ahí. El segundo intento la encuentra.
+  const contiene = new Function('return (' + extraerFuncion('_crNombreContenido') + ')')();
+  chk(contiene('ah benitot kye', 'ah benitot emmanuel kye') === true,
+      'el nombre corto contenido en el largo es la misma persona');
+  chk(contiene('ah benitot kye', 'ah benitot kye') === true, 'y el mismo nombre, obviamente');
+  chk(contiene('garcia juan', 'lopez pedro') === false, 'dos personas distintas, no');
+  chk(contiene('garcia', 'garcia juan carlos') === false,
+      'un apellido suelto NO alcanza: se piden al menos dos palabras en común');
+  chk(contiene('', 'garcia juan') === false && contiene('garcia juan', '') === false, 'sin nombre, no');
+
+  // Lo importante: el segundo intento corre SÓLO si la búsqueda exacta no encontró nada, así que
+  // no puede cambiar ningún resultado que ya funcionaba.
+  const buscar = extraerFuncion('crFindGameIdx');
+  chk(/if\(hit!==undefined\) return hit;/.test(buscar),
+      'la búsqueda exacta de siempre sigue primero y devuelve al toque');
+  chk(buscar.indexOf('_crNombreContenido') > buscar.indexOf('if(hit!==undefined) return hit;'),
+      'y el segundo intento va DESPUÉS (por eso no toca lo que ya andaba)');
+  chk(/_crNombreContenido\(wt,e\.w\) && _crNombreContenido\(bt,e\.b\)/.test(buscar),
+      'para aceptar una partida tienen que coincidir LOS DOS jugadores');
+  chk(/porRonda\[rkey\]/.test(buscar), 'y sólo se miran las partidas de ESA ronda');
+
+  // La mesa con jugador fantasma no lleva ojito: ahí no se jugó nada.
+  chk(/var _fantasma = _teamIsPlaceholder\(b\.nW\) \|\| _teamIsPlaceholder\(b\.nB\);/.test(SRC),
+      'la mesa con "Sin jugador asignado" no muestra ojito');
+  chk(/var _verMesa = !_fantasma && \(!!b\.res \|\|/.test(SRC),
+      'y el resto de las mesas lo siguen mostrando igual que antes');
+}
+
+
+console.log('\n=== 25. El arranque en frío de una ronda con varias transmisiones ===');
+{
+  // Una ronda de Olimpiada son 4 o 5 transmisiones de Lichess (Open I, II, III…). Se pedían todas
+  // juntas estando FRÍAS y Lichess devolvía 429 a casi todas: de 4 entraba UNA (100 partidas de
+  // 370) y el fallo se tragaba en silencio. Acá se simula ese escenario con un fetch de mentira.
+  const fuente = extraerFuncion('_bcFetchRoundPgns');
+
+  function armar(respuestas) {
+    const pedidos = [];
+    const _fetchTO = (url) => {
+      const id = url.split('round/')[1].split('.pgn')[0];
+      pedidos.push(id);
+      const r = respuestas[id].shift();
+      if (r === 429) return Promise.resolve({ ok: false, status: 429, text: () => Promise.resolve('{"error":"Too many requests"}') });
+      return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(r) });
+    };
+    const fn = new Function('_fetchTO', '_liApi', '_bcIsPlaceholderGame', 'setTimeout',
+      fuente + '; return _bcFetchRoundPgns;')(
+        _fetchTO, (p) => 'https://w/' + p, () => false, (cb) => cb());   // sin esperas reales
+    return { fn, pedidos };
+  }
+  const partida = (n) => '[Event "Olimpiada"]\n[White "A' + n + '"]\n\n1. e4 e5 1-0';
+  const ronda = (n) => [partida(n), partida(n + 100)].join('\n\n');   // 2 partidas por transmisión
+  const correr = (fn, ids, opts) => new Promise((res) => fn(ids, (g, i) => res({ g, i }), opts));
+
+  // Caso 1: las 4 responden bien a la primera.
+  {
+    const { fn, pedidos } = armar({ a: [ronda(1)], b: [ronda(2)], c: [ronda(3)], d: [ronda(4)] });
+    const { g, i } = await correr(fn, ['a', 'b', 'c', 'd']);
+    chk(g.length === 8, 'con todo caliente llegan las 8 partidas de las 4 transmisiones', g.length);
+    chk(pedidos.length === 4, 'y se pide una sola vez cada una', pedidos.length);
+    chk(i.faltan === 0, 'sin faltantes');
+  }
+
+  // Caso 2: el escenario real — 3 de 4 dan 429 y entran al reintentar.
+  {
+    const { fn, pedidos } = armar({
+      a: [ronda(1)], b: [429, ronda(2)], c: [429, ronda(3)], d: [429, 429, ronda(4)],
+    });
+    const { g, i } = await correr(fn, ['a', 'b', 'c', 'd']);
+    chk(g.length === 8, 'con 429 en 3 de 4, el reintento las recupera TODAS', g.length);
+    chk(i.faltan === 0, 'y la ronda queda completa', i.faltan);
+    chk(pedidos.length === 8, 'se reintentó sólo lo que falló, no todo de nuevo', pedidos.length + ' pedidos');
+  }
+
+  // Caso 3: una transmisión que no entra ni con reintentos → se AVISA (antes se callaba).
+  {
+    const { fn } = armar({ a: [ronda(1)], b: [429, 429, 429, 429] });
+    let aviso = null;
+    const { g, i } = await correr(fn, ['a', 'b'], { onIncompleta: (faltan, total) => { aviso = faltan + '/' + total; } });
+    chk(g.length === 2, 'se entrega lo que sí llegó (la ronda no queda vacía)', g.length);
+    chk(i.faltan === 1, 'y se informa cuántas transmisiones faltaron', i.faltan);
+    chk(aviso === '1/2', 'con aviso al que llamó: antes la ronda se daba por completa', aviso);
+  }
+
+  // Caso 4: el cuerpo del 429 no puede colarse como si fuera una partida.
+  {
+    const { fn } = armar({ a: [429, 429, 429, 429] });
+    const { g } = await correr(fn, ['a']);
+    chk(g.length === 0, 'el texto de error de Lichess NO entra como partida', g.length);
+  }
+
+  chk(/if\(!r\.ok\) throw new Error\('HTTP ' \+ r\.status\);/.test(fuente),
+      'se mira el estado de la respuesta antes de leerla');
+}
+
+
+console.log('\n=== 26. El árbol de aperturas del torneo ===');
+{
+  const unificar = new Function('return (' + extraerFuncion('_apUnificar') + ')')();
+  // La tabla nombra la misma apertura de dos formas y quedaban contadas por separado (en el perfil
+  // de Faustino se veía 'Siciliana 36' y 'Defensa Siciliana 28', cuando son 64).
+  const u = unificar({ 'Siciliana': 36, 'Defensa Siciliana': 28, 'Inglesa': 6, 'Apertura Inglesa': 5 });
+  chk(u['Siciliana'] === 64, 'junta "Defensa Siciliana" con "Siciliana"', u['Siciliana']);
+  chk(u['Inglesa'] === 11 && u['Apertura Inglesa'] === undefined, 'y "Apertura Inglesa" con "Inglesa"');
+  const v = unificar({ 'Defensa Holandesa': 4, 'Gambito de Dama': 9 });
+  chk(v['Defensa Holandesa'] === 4 && v['Gambito de Dama'] === 9,
+      'si la forma corta no existe, no se inventa: quedan como están');
+
+  // El conteo, con detector y dedup de mentira para poder probar SOLO las reglas propias.
+  const armar = (nombrePorPgn) => new Function(
+    'dedupGamesByMoves', 'detectOpeningByMoves', 'parsePgnHeaders', '_noticiaFechaHoy',
+    'var _AP_V=1, _AP_MIN_N=3, _AP_MIN_REL=25;' + extraerFuncion('_apUnificar') + extraerFuncion('_stAperturasCalc')
+    + '; return _stAperturasCalc;')(
+      (items, get) => { const vistos = new Set(), out = []; items.forEach(it => { const p = get(it); if (!vistos.has(p)) { vistos.add(p); out.push(it); } }); return out; },
+      (pgn) => ({ name: nombrePorPgn(pgn) }), () => ({}), () => '1 Ene 2026');
+
+  // 100 partidas: 40 Siciliana, 30 Española, 20 Francesa, 5 Holandesa, 5 sin nombre.
+  const lista = [];
+  const meter = (n, nombre) => { for (let k = 0; k < n; k++) lista.push(nombre + '#' + k); };
+  meter(40, 'Siciliana'); meter(30, 'Española'); meter(20, 'Francesa'); meter(5, 'Holandesa'); meter(5, '');
+  const calc = armar((p) => p.split('#')[0]);
+  const r = calc(lista);
+  chk(r.partidas === 100 && r.conNombre === 95, 'cuenta las partidas y las que pudo clasificar', r.partidas + '/' + r.conNombre);
+  chk(r.top.length === 3, 'la Holandesa (5, contra 40 de la más jugada) queda AFUERA', r.top.map(o => o.nombre).join(', '));
+  chk(r.top[0].nombre === 'Siciliana' && r.top[0].cantidad === 40 && r.top[0].pct === 42.1,
+      'y el porcentaje se calcula sobre las clasificadas', r.top[0].pct + '%');
+
+  // El piso tiene DOS condiciones: 3% y 3 partidas. En un torneo chico manda el mínimo de 3.
+  const chico = [];
+  for (let k = 0; k < 20; k++) chico.push('Siciliana#' + k);
+  chico.push('Holandesa#1'); chico.push('Holandesa#2');   // 2 de 22 = 9% pero sólo 2 partidas
+  const rc = calc(chico);
+  chk(rc.top.length === 1 && rc.top[0].nombre === 'Siciliana',
+      'con 2 partidas no entra, aunque sean el 9% del torneo chico', rc.top.map(o => o.nombre).join(', '));
+
+  // La MISMA partida por Lichess, por Chess-Results y por el pool no puede contarse tres veces.
+  const triple = lista.concat(lista).concat(lista);
+  const rt = calc(triple);
+  chk(rt.partidas === 100, 'la misma lista tres veces sigue siendo 100 partidas', rt.partidas);
+  chk(rt.repetidasQueSeSacaron === 200, 'y avisa cuántas repetidas sacó', rt.repetidasQueSeSacaron);
+  chk(JSON.stringify(rt.top) === JSON.stringify(r.top), 'el ranking no cambia por los duplicados');
+
+  // 'Apertura 1.d4 Nf6' es el cajón de las que no entraron en ninguna con nombre, no una apertura.
+  const conCajon = [];
+  for (let k = 0; k < 30; k++) conCajon.push('Siciliana#' + k);
+  for (let k = 0; k < 17; k++) conCajon.push('Apertura 1.d4 Nf6#' + k);
+  const rr = calc(conCajon);
+  chk(rr.top.length === 1 && rr.top[0].nombre === 'Siciliana',
+      'el cajón "Apertura 1.d4 Nf6" no se lista como más jugada', rr.top.map(o => o.nombre).join(', '));
+
+  chk(calc([]) === null && calc(['']) === null, 'sin partidas no devuelve nada');
+
+  // El árbol se GUARDA: el visitante no lo calcula (con la carga por ronda le saldría mal).
+  const boton = extraerFuncion('_stCalcularAperturas');
+  chk(/if \(_ondemand\) return;/.test(boton), 'el botón es sólo del modo autor');
+  chk(/_tdEnsureAllLoaded/.test(boton), 'y antes de contar baja TODAS las rondas que falten');
+  chk(/data\.aperturas = ap;[\s\S]{0,40}crDataSave\(key, data\)/.test(boton),
+      'el resultado se guarda con los datos del torneo (así viaja a la web publicada)');
+  const seccion = extraerFuncion('_stAperturasHtml');
+  chk(/if \(!ap && !esAutor\) return '';/.test(seccion),
+      'y al visitante no se le muestra la sección si todavía no se calculó');
+  chk(/dedupGamesByMoves/.test(extraerFuncion('_stAperturasCalc')),
+      'el conteo usa el dedup por JUGADAS, que reconoce la misma partida venida de dos fuentes');
+}
+
+
+console.log('\n=== 27. Las aperturas del PERFIL, sin partirse en dos ===');
+{
+  // En el perfil pasaba lo mismo que en el torneo: 'Siciliana' y 'Defensa Siciliana' eran dos filas
+  // (36 y 28, cuando son 64). Ahora se unen — y el FILTRO tiene que usar el mismo criterio, si no
+  // tocás la fila unida y te muestra la mitad de las partidas.
+  chk(/_pgOpMap = \{\};[\s\S]{0,220}topOpenings\(_apUnificar\(cs\.white, _pgOpMap\), 4\)/.test(SRC),
+      'las columnas del perfil unen las aperturas repetidas');
+  chk(/topOpenings\(_apUnificar\(cs\.black, _pgOpMap\), 4\)/.test(SRC), 'con blancas y con negras');
+  chk(/if \(_pgOpMap && _pgOpMap\[shortOpG\]\) shortOpG = _pgOpMap\[shortOpG\];/.test(SRC),
+      'y el filtro por apertura aplica la MISMA unión (si no, mostraría la mitad)');
+
+  // El mapa sale de la misma función que usa el torneo: un solo criterio para los dos lados.
+  const unificar = new Function('return (' + extraerFuncion('_apUnificar') + ')')();
+  const mapa = {};
+  unificar({ 'Siciliana': 36, 'Defensa Siciliana': 28, 'Holandesa': 3 }, mapa);
+  chk(mapa['Defensa Siciliana'] === 'Siciliana', 'el mapa dice a dónde fue cada nombre unido');
+  chk(mapa['Holandesa'] === undefined, 'y no anota las que no se tocaron');
 }
 
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.') + '\n');

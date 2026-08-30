@@ -732,6 +732,9 @@ function crPgnSet(fields, re, value) {
 // POST /noticia — Redacción de una noticia de torneo con IA (Workers AI)
 //   Body (JSON): el paquete que arma la app (_noticiaGatherData): { torneo, campeon,
 //   podio, destacados, argentinos, sorpresas, notasAutor }.
+//   Si el torneo es POR EQUIPOS (Olimpiadas, ligas) el paquete viene con esEquipos:true y otros
+//   campos (equipos en vez de jugadores, medallasPorTablero, argentina, batacazosEquipos): ahí va
+//   un prompt propio, porque el de los individuales le pediría cosas que en equipos no existen.
 //   Devuelve: { ok, title, summary, body(HTML), raw }.
 //
 //   Requiere un binding de Workers AI llamado AI:
@@ -838,6 +841,32 @@ async function noticiaAI(request, env) {
       + 'TITULO: <un título atractivo de previa, una sola línea>\n'
       + 'RESUMEN: <una o dos frases para la tarjeta>\n'
       + 'CUERPO:\n<2 a 4 párrafos, separados por una línea en blanco>';
+  } else if (d.esEquipos) {
+    // ── TORNEO POR EQUIPOS (Olimpiada, Mundial por equipos, ligas de clubes) ──
+    // Acá el campeón es un EQUIPO. Lo que más le importa al lector argentino es dónde terminó
+    // Argentina y cómo le fue a cada uno de sus jugadores, así que va primero cuando existe.
+    const foco = d.argentina
+      ? 'IMPORTANTE: contá quién ganó y el podio, pero dale un lugar central a LA ACTUACIÓN ARGENTINA '
+        + '(objeto "argentina"): en qué puesto terminó, con cuántos matches ganados, y cómo le fue a cada '
+        + 'jugador (lista "argentina.jugadores", con su tablero, su puntaje y su performance).'
+      : 'Contá el torneo desde los equipos: el campeón, el podio y cómo se peleó la punta.';
+    user = 'Redactá una noticia sobre este torneo de ajedrez POR EQUIPOS.\n'
+      + 'Ojo: los "puntos de match" son 2 por match ganado y 1 por empatado; los "puntos de tablero" '
+      + 'son las partidas que ganaron entre todos los jugadores del equipo. No los mezcles.\n'
+      + foco + '\n'
+      + 'Aprovechá, cuando corresponda: cómo se fue definiendo la punta ("definicion.tramosDePunta" '
+      + 'dice qué equipo lideró en qué rondas), el equipo más goleador, las MEDALLAS POR TABLERO '
+      + '("medallasPorTablero": el oro, la plata y el bronce de cada tablero con su performance), la '
+      + 'mejor performance individual del torneo, el que más puntos hizo, y las sorpresas: equipos de '
+      + 'ranking bajo que ganaron ("batacazosEquipos") y jugadores que le ganaron a otros de mucho '
+      + 'más Elo ("sorpresas").\n'
+      + 'NO hables de quién ganó con blancas o con negras: en los torneos por equipos ese dato no está.\n'
+      + (notas ? ('Datos EXTRA del autor para incorporar naturalmente en la nota (son ciertos, usalos):\n' + notas + '\n') : '')
+      + '\nDATOS DEL TORNEO (JSON):\n' + JSON.stringify(d) + '\n'
+      + '\nRespondé EXACTAMENTE en este formato, sin nada antes ni después:\n'
+      + 'TITULO: <un título atractivo, una sola línea>\n'
+      + 'RESUMEN: <una o dos frases para la tarjeta>\n'
+      + 'CUERPO:\n<3 a 5 párrafos, separados por una línea en blanco>';
   } else {
     // Nacional vs internacional: mismo criterio que la app.
     const foco = (d.torneo.internacional && d.campeon && d.campeon.arg === false)

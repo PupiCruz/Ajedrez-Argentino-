@@ -5953,22 +5953,35 @@ function _crGameIndex(pgnKey){
   if(!data || !data.games) return null;
   var c=_crGameIdxCache[pgnKey];
   if(c && c._ref===data.games) return c;
-  var byKey={};
+  var byKey={}, porRonda={};
   for(var i=0;i<data.games.length;i++){
     var hh=parsePgnHeaders(data.games[i]);
     var gw=crNormTokens(hh.White), gb=crNormTokens(hh.Black);
     if(!gw||!gb) continue;
     var gr=String(parseInt(hh.Round)||hh.Round);
+    (porRonda[gr]||(porRonda[gr]=[])).push({ i:i, w:gw, b:gb });
     // Clave por ronda (ambas orientaciones) y comodín de ronda. Primera partida gana.
     [gr+'|'+gw+'|'+gb, gr+'|'+gb+'|'+gw, '*|'+gw+'|'+gb, '*|'+gb+'|'+gw].forEach(function(k){
       if(byKey[k]===undefined) byKey[k]=i;
     });
   }
-  c={ byKey:byKey, _ref:data.games };
+  c={ byKey:byKey, porRonda:porRonda, _ref:data.games };
   _crGameIdxCache[pgnKey]=c;
   _capCache(_crGameIdxCache, 40);
   return c;
 }
+// ¿Todas las palabras del nombre más corto están en el más largo? Chess-Results y Lichess no siempre
+// escriben igual a la misma persona: "Ah Kye, Benitot" contra "Ah-Kye, Benitot Emmanuel" (un guion y
+// un segundo nombre). Se piden al menos 2 palabras en común para no emparejar por un apellido suelto.
+function _crNombreContenido(a, b){
+  if(!a || !b) return false;
+  var A=a.split(' ').filter(Boolean), B=b.split(' ').filter(Boolean);
+  var corto = A.length<=B.length ? A : B, largo = A.length<=B.length ? B : A;
+  if(corto.length<2) return false;
+  for(var i=0;i<corto.length;i++) if(largo.indexOf(corto[i])<0) return false;
+  return true;
+}
+
 // Busca el índice de la partida subida que coincide con la ronda y los dos jugadores.
 // Devuelve -1 si no hay partida subida para ese cruce.
 function crFindGameIdx(round, wName, bName){
@@ -5979,7 +5992,20 @@ function crFindGameIdx(round, wName, bName){
   if(!wt||!bt) return -1;
   var rkey=round!=null ? String(parseInt(round)||round) : '*';
   var hit=idx.byKey[rkey+'|'+wt+'|'+bt];
-  return hit===undefined ? -1 : hit;
+  if(hit!==undefined) return hit;
+  // SEGUNDO INTENTO, sólo si la búsqueda exacta no encontró nada (así nada de lo que ya andaba
+  // cambia): recorrer las partidas de ESA ronda y aceptar que un nombre esté contenido en el otro,
+  // pidiendo que coincidan LOS DOS jugadores. En la Olimpiada 2024 recupera entre 1 y 4 mesas por
+  // ronda de 372 que decían "no se transmitió" teniendo la partida ahí.
+  var lista=idx.porRonda ? idx.porRonda[rkey] : null;
+  if(lista){
+    for(var j=0;j<lista.length;j++){
+      var e=lista[j];
+      if((_crNombreContenido(wt,e.w) && _crNombreContenido(bt,e.b)) ||
+         (_crNombreContenido(wt,e.b) && _crNombreContenido(bt,e.w))) return e.i;
+    }
+  }
+  return -1;
 }
 // Abre el visor de la partida correspondiente a un cruce, si existe. En on-demand, si esa ronda todavía
 // no se cargó, la baja primero y reintenta (así el "Ver partida" del panel de jugador anda en TODAS las
@@ -5995,7 +6021,12 @@ function crOpenGame(round, wName, bName){
       if(i2>=0 && _tdCtx){ tdOpenGame(i2, _tdCtx.pgnKey, _tdCtx.name, _tdCtx.location); }   // cvOpenOverlay saca el cover
       else { _removeDeepLinkCover(); _tdToast('Esta partida no se transmitió.'); }           // no está en Lichess/CR/pool
     });
+    return;
   }
+  // Cualquier otra salida: el visitante tocó el ojito y hay que contestarle algo. Antes el clic
+  // moría en silencio (torneo sin partidas cargadas, o ronda que no se puede bajar) y parecía que
+  // la web se había colgado. Mismo aviso que usa la versión por equipos.
+  _tdToast('Esta partida no se transmitió.');
 }
 
 // Sincroniza los resultados del Cuadro de cruces con las partidas PGN subidas.
@@ -6578,6 +6609,52 @@ function crBuildStandingsPanel(key,standings){
    Cada bloque se dibuja SOLO si tiene datos: un torneo sin cruces muestra menos, y no pasa nada.
 ═══════════════════════════════════════════════════════ */
 
+// Todas las partidas del torneo abierto: las de cada ronda (bajadas de Lichess) más las que están
+// en el pool o vinieron de Chess-Results. Se juntan crudas; el dedup por jugadas lo hace después
+// _stAperturasCalc, que es el que sabe reconocer la misma partida venida de dos fuentes.
+function _stTodasLasPartidas(){
+  var out = [];
+  if (typeof _tdCtx === 'undefined' || !_tdCtx) return out;
+  var vistas = Object.create(null);
+  Object.keys(_tdCtx.byRound || {}).forEach(function(r){
+    (_tdCtx.byRound[r] || []).forEach(function(g){
+      var pgn = g && g.pgn ? g.pgn : g;
+      if (pgn && !vistas[pgn]){ vistas[pgn] = 1; out.push(pgn); }
+    });
+  });
+  (_tdCtx.games || []).forEach(function(pgn){ if (pgn && !vistas[pgn]){ vistas[pgn] = 1; out.push(pgn); } });
+  return out;
+}
+
+// Botón del modo autor: baja las rondas que falten, cuenta y GUARDA con los datos del torneo.
+function _stCalcularAperturas(key, btn){
+  if (_ondemand) return;
+  var poner = function(txt, apagado){ if (btn){ btn.textContent = txt; btn.disabled = !!apagado; btn.style.opacity = apagado ? '.6' : ''; } };
+  poner('⏳ Cargando partidas…', true);
+  var seguir = function(){
+    _ensureAperturas(function(){
+      var pgns = _stTodasLasPartidas();
+      if (!pgns.length){ poner('📖 Calcular aperturas', false); _tdToast('Este torneo no tiene partidas cargadas.'); return; }
+      poner('⏳ Contando ' + pgns.length + ' partidas…', true);
+      setTimeout(function(){
+        var ap = null;
+        try { ap = _stAperturasCalc(pgns); } catch(e){}
+        if (!ap){ poner('📖 Calcular aperturas', false); _tdToast('No se pudo reconocer ninguna apertura.'); return; }
+        var data = crDataLoad(key) || {};
+        data.aperturas = ap;
+        crDataSave(key, data);
+        _tdToast('Aperturas guardadas: ' + ap.top.length + ' sobre ' + ap.partidas + ' partidas.');
+        var pan = document.getElementById('cr-panel-' + key + '-stats');
+        if (pan){ try { pan.innerHTML = crBuildStatsPanel(key, crDataLoad(key)); } catch(e){} }
+      }, 30);
+    });
+  };
+  // On-demand: traer las rondas que el autor todavía no abrió (con el progreso que ya existe).
+  if (typeof _tdEnsureAllLoaded === 'function' && typeof _tdLiveCtx !== 'undefined' && _tdLiveCtx && _tdLiveCtx.onDemand){
+    _tdEnsureAllLoaded(seguir, function(hechas, todas){ poner('⏳ Bajando rondas… ' + hechas + '/' + todas, true); });
+  } else seguir();
+}
+
 // Datos del torneo abierto (nombre, sede, fechas, tipo) para el motor. Si la pestaña se arma sin el
 // detalle abierto, alcanza con el tipo guardado: lo demás solo afecta títulos y el cálculo de edades.
 function _stStatsMeta(key){
@@ -6664,6 +6741,40 @@ function _stAward(emoji, rotulo, quienHtml, detalle, top){
        + (detalle ? '<div class="st-d2">' + detalle + '</div>' : '')
        + '</div></div>';
 }
+// El árbol de aperturas: se muestra si está GUARDADO (lo calculó el autor). El visitante nunca lo
+// calcula — con la carga por ronda le saldría el dato de una ronda sola.
+function _stAperturasHtml(key, data){
+  var ap = data && data.aperturas;
+  var esAutor = !_ondemand;
+  if (!ap && !esAutor) return '';
+  var h = '<div class="st-sec"><div class="st-h"><b>📖 Las aperturas más jugadas</b>'
+        + '<span>' + (ap ? ('sobre ' + ap.partidas + ' partidas del torneo') : '') + '</span></div>';
+  if (ap && ap.top && ap.top.length){
+    var max = ap.top[0].cantidad;
+    h += '<div class="st-rank">';
+    ap.top.forEach(function(o){
+      h += '<div class="st-row"><div>' + escHtml(o.nombre) + '</div>'
+        + '<div class="st-val">' + o.cantidad + ' <span style="font-weight:600;color:var(--text3);font-size:11.5px">' + o.pct + '%</span></div>'
+        + '<div class="st-track"><i style="width:' + Math.round(o.cantidad / max * 100) + '%"></i></div></div>';
+    });
+    h += '</div>';
+    if (ap.repetidasQueSeSacaron)
+      h += '<div class="st-cap">Se descartaron ' + ap.repetidasQueSeSacaron + ' partidas repetidas (la misma partida puede venir de Lichess, de Chess-Results y del pool).</div>';
+  } else if (ap){
+    h += '<div class="st-empty">Ninguna apertura se jugó lo suficiente como para destacarla.</div>';
+  }
+  if (esAutor){
+    h += '<div style="text-align:center;margin-top:' + (ap ? '12' : '4') + 'px">'
+      + '<button onclick="_stCalcularAperturas(' + crArg(key) + ',this)" style="display:inline-flex;align-items:center;gap:7px;padding:9px 16px;background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-size:13px;font-weight:700;border-radius:9px;cursor:pointer;font-family:inherit">'
+      + (ap ? '🔄 Recalcular aperturas' : '📖 Calcular aperturas') + '</button>'
+      + '<div style="font-size:11px;color:var(--text3);margin-top:6px;line-height:1.45">'
+      + (ap ? ('Calculado el ' + escHtml(ap.cuando) + '. Se guarda con el torneo y viaja a la web.')
+            : 'Baja todas las rondas, cuenta las aperturas y las guarda con el torneo. El visitante las ve sin calcular nada.')
+      + '</div></div>';
+  }
+  return h + '</div>';
+}
+
 // Una lista top-5 con barritas proporcionales.
 function _stRankList(key, filas, fmt){
   if (!filas || !filas.length) return '';
@@ -6911,6 +7022,9 @@ function _stTeamPanelHtml(key, s){
   if (aw2) h += '<div class="st-sec"><div class="st-h"><b>🏅 Los jugadores</b>'
     + '<span>tocá un nombre para ver su performance</span></div><div class="st-awards">' + aw2 + '</div></div>';
 
+  // ── El árbol de aperturas ──
+  h += _stAperturasHtml(key, crDataLoad(key) || {});
+
   // ── Batacazos ──
   var be = (s.equipos && s.equipos.batacazos) || [];
   if (be.length){
@@ -7070,6 +7184,9 @@ function crBuildStatsPanel(key, data){
       + '<div class="st-awards">' + aw + '</div>'
       + (chips ? ('<div class="st-chips">' + chips + '</div>') : '') + '</div>';
   }
+
+  // ── El árbol de aperturas ──
+  h += _stAperturasHtml(key, data);
 
   // ── Los batacazos ──
   if (s.batacazos && s.batacazos.length){
@@ -7364,7 +7481,7 @@ function _teamRenderStandings(standings, crk){
     h+='<td style="'+td+';color:var(--text3)">'+escHtml(String(t.rk||i+1))+'</td>';
     var _flag=_fed?crFlagEmoji(_fed):'';   // bandera solo si es país; los clubes van sin bandera
     var _nm=(crk&&t.name)
-      ? '<span onclick="crOpenCountry('+crArg(crk)+','+crArg(t.name)+')" title="Ver la performance de '+escHtml(t.name||'')+'" style="cursor:pointer;display:inline-flex;align-items:center;gap:7px" onmouseover="this.style.color=\'var(--gold)\'" onmouseout="this.style.color=\'\'">'+(_flag?_flag+' ':'')+'<span>'+escHtml(t.name||'')+'</span></span>'
+      ? '<span onclick="crOpenCountry('+crArg(crk)+','+crArg(t.name)+')" title="Ver la performance de '+escHtml(_paisES(t.name,_fed))+'" style="cursor:pointer;display:inline-flex;align-items:center;gap:7px" onmouseover="this.style.color=\'var(--gold)\'" onmouseout="this.style.color=\'\'">'+(_flag?_flag+' ':'')+'<span>'+escHtml(_paisES(t.name,_fed))+'</span></span>'
       : ((_flag?_flag+' ':'')+escHtml(t.name||''));
     h+='<td style="'+td+';text-align:left;font-weight:'+(_isArg?'800':'600')+';color:'+((_teamArgOnly&&_isArg)?'var(--gold)':'var(--text)')+'">'+_nm+'</td>';
     if(initial){ h+='<td style="'+td+';color:var(--text2)">'+escHtml(String(t.eloAvg||''))+'</td>'; }
@@ -7387,6 +7504,45 @@ function _teamColorDot(isWhite){
 }
 // "India (IND)" → { clean:"India", flag:<img bandera> }. Si no trae "(FED)", intenta la bandera por el
 // nombre del país. Se usa en el encabezado del cruce para mostrar la banderita en vez de la abreviatura.
+// Nombre de cada federación EN CASTELLANO. Chess-Results los publica en inglés ("Hungary",
+// "Netherlands") y el sitio se lee en castellano, así que se traducen SOLO al dibujarlos: los datos
+// guardados y las claves con las que se buscan los equipos siguen siendo los originales, y por eso
+// los clics (ver la performance de un país) no se rompen.
+var _FED_ES = {"AFG":"Afganistán","ALB":"Albania","ALG":"Argelia","AND":"Andorra","ANG":"Angola","ANT":"Antigua y Barbuda","ARG":"Argentina","ARM":"Armenia","ARU":"Aruba","AUS":"Australia","AUT":"Austria","AZE":"Azerbaiyán","BAH":"Bahamas","BRN":"Baréin","BAN":"Bangladés","BAR":"Barbados","BLR":"Bielorrusia","BEL":"Bélgica","BIZ":"Belice","BEN":"Benín","BER":"Bermudas","BHU":"Bután","BOL":"Bolivia","BIH":"Bosnia y Herzegovina","BOT":"Botsuana","BRA":"Brasil","IVB":"Islas Vírgenes Británicas","BRU":"Brunéi","BUL":"Bulgaria","BUR":"Burkina Faso","BDI":"Burundi","CAM":"Camboya","CMR":"Camerún","CAN":"Canadá","CPV":"Cabo Verde","CAY":"Islas Caimán","CAF":"República Centroafricana","CHA":"Chad","CHI":"Chile","CHN":"China","TPE":"Taipéi Chino","COL":"Colombia","COM":"Comoras","CGO":"Congo","COD":"RD del Congo","CRC":"Costa Rica","CIV":"Costa de Marfil","CRO":"Croacia","CUB":"Cuba","CYP":"Chipre","CZE":"Chequia","DEN":"Dinamarca","DJI":"Yibuti","DMA":"Dominica","DOM":"República Dominicana","ECU":"Ecuador","EGY":"Egipto","ESA":"El Salvador","SLV":"El Salvador","ENG":"Inglaterra","GEQ":"Guinea Ecuatorial","ERI":"Eritrea","EST":"Estonia","ETH":"Etiopía","SWZ":"Esuatini","FAI":"Islas Feroe","FIJ":"Fiyi","FIN":"Finlandia","FRA":"Francia","GAB":"Gabón","GAM":"Gambia","GEO":"Georgia","GER":"Alemania","GHA":"Ghana","GRE":"Grecia","GRN":"Granada","GUM":"Guam","GUA":"Guatemala","GCI":"Guernsey","GUI":"Guinea","GBS":"Guinea-Bisáu","GUY":"Guyana","HAI":"Haití","HON":"Honduras","HKG":"Hong Kong","HUN":"Hungría","ISL":"Islandia","IND":"India","INA":"Indonesia","IRI":"Irán","IRQ":"Irak","IRL":"Irlanda","IOM":"Isla de Man","ISR":"Israel","ITA":"Italia","JAM":"Jamaica","JPN":"Japón","JCI":"Jersey","JOR":"Jordania","KAZ":"Kazajistán","KEN":"Kenia","KOS":"Kosovo","KUW":"Kuwait","KGZ":"Kirguistán","LAO":"Laos","LAT":"Letonia","LBN":"Líbano","LES":"Lesoto","LBR":"Liberia","LBA":"Libia","LIE":"Liechtenstein","LTU":"Lituania","LUX":"Luxemburgo","MAC":"Macao","MKD":"Macedonia del Norte","MAD":"Madagascar","MAW":"Malaui","MAS":"Malasia","MDV":"Maldivas","MLI":"Malí","MLT":"Malta","MTN":"Mauritania","MRI":"Mauricio","MEX":"México","MDA":"Moldavia","MNC":"Mónaco","MGL":"Mongolia","MNE":"Montenegro","MAR":"Marruecos","MOZ":"Mozambique","MYA":"Birmania","NAM":"Namibia","NEP":"Nepal","NED":"Países Bajos","NZL":"Nueva Zelanda","NCA":"Nicaragua","NIG":"Níger","NGR":"Nigeria","NOR":"Noruega","OMA":"Omán","PAK":"Pakistán","PLW":"Palaos","PLE":"Palestina","PAN":"Panamá","PNG":"Papúa Nueva Guinea","PAR":"Paraguay","PER":"Perú","PHI":"Filipinas","POL":"Polonia","POR":"Portugal","PUR":"Puerto Rico","QAT":"Catar","ROU":"Rumania","ROM":"Rumania","RUS":"Rusia","RWA":"Ruanda","SKN":"San Cristóbal y Nieves","LCA":"Santa Lucía","VIN":"San Vicente y las Granadinas","SAM":"Samoa","SMR":"San Marino","STP":"Santo Tomé y Príncipe","KSA":"Arabia Saudita","SCO":"Escocia","SEN":"Senegal","SRB":"Serbia","SEY":"Seychelles","SLE":"Sierra Leona","SGP":"Singapur","SVK":"Eslovaquia","SLO":"Eslovenia","SOL":"Islas Salomón","SOM":"Somalia","RSA":"Sudáfrica","KOR":"Corea del Sur","PRK":"Corea del Norte","SSD":"Sudán del Sur","ESP":"España","SRI":"Sri Lanka","SUD":"Sudán","SUR":"Surinam","SWE":"Suecia","SUI":"Suiza","SYR":"Siria","TJK":"Tayikistán","TAN":"Tanzania","THA":"Tailandia","TLS":"Timor Oriental","TOG":"Togo","TGA":"Tonga","TTO":"Trinidad y Tobago","TRI":"Trinidad y Tobago","TUN":"Túnez","TUR":"Turquía","TKM":"Turkmenistán","UGA":"Uganda","UKR":"Ucrania","UAE":"Emiratos Árabes Unidos","USA":"Estados Unidos","URU":"Uruguay","ISV":"Islas Vírgenes de EE.UU.","UZB":"Uzbekistán","VAN":"Vanuatu","VEN":"Venezuela","VIE":"Vietnam","WLS":"Gales","WAL":"Gales","YEM":"Yemen","ZAM":"Zambia","ZIM":"Zimbabue"};
+// Cómo escribe Chess-Results el nombre de cada federación EN INGLÉS, con sus variantes reales (los
+// nombres salieron de los propios cuadros ya cargados): "USA" y "United States of America",
+// "Turkey" y "Turkiye", "Eswatini" y el "Eswaitini" mal escrito de origen.
+var _FED_EN = {"USA":["USA","United States of America"],"IND":["India"],"UZB":["Uzbekistan"],"CHN":["China"],"GER":["Germany"],"NED":["Netherlands"],"AZE":["Azerbaijan"],"HUN":["Hungary"],"ARM":["Armenia"],"FRA":["France"],"UKR":["Ukraine"],"ESP":["Spain"],"ENG":["England"],"POL":["Poland"],"TUR":["Turkey","Turkiye"],"SRB":["Serbia"],"CRO":["Croatia"],"CZE":["Czech Republic"],"GRE":["Greece"],"IRI":["Iran"],"NOR":["Norway"],"SLO":["Slovenia"],"ROU":["Romania"],"ISR":["Israel"],"DEN":["Denmark"],"ARG":["Argentina"],"ITA":["Italy"],"AUT":["Austria"],"BUL":["Bulgaria"],"GEO":["Georgia"],"BRA":["Brazil"],"AUS":["Australia"],"KAZ":["Kazakhstan"],"SWE":["Sweden"],"SUI":["Switzerland"],"LTU":["Lithuania"],"SVK":["Slovakia"],"MNE":["Montenegro"],"BLR":["Belarus"],"CAN":["Canada"],"FIN":["Finland"],"CUB":["Cuba"],"LAT":["Latvia"],"BEL":["Belgium"],"SGP":["Singapore"],"VIE":["Vietnam"],"PER":["Peru"],"ISL":["Iceland"],"POR":["Portugal"],"MDA":["Moldova"],"MGL":["Mongolia"],"INA":["Indonesia"],"CHI":["Chile"],"BIH":["Bosnia & Herzegovina","Bosnia and Herzegovina"],"COL":["Colombia"],"PHI":["Philippines"],"MKD":["North Macedonia"],"EST":["Estonia"],"TJK":["Tajikistan"],"URU":["Uruguay"],"SCO":["Scotland"],"TKM":["Turkmenistan"],"BAN":["Bangladesh"],"EGY":["Egypt"],"IRL":["Ireland"],"BOL":["Bolivia"],"MAS":["Malaysia"],"PAR":["Paraguay"],"UAE":["United Arab Emirates"],"ALB":["Albania"],"NZL":["New Zealand"],"CRC":["Costa Rica"],"JPN":["Japan"],"CYP":["Cyprus"],"VEN":["Venezuela"],"RSA":["South Africa"],"KGZ":["Kyrgyzstan"],"KOS":["Kosovo *"],"ALG":["Algeria"],"MEX":["Mexico"],"KOR":["South Korea"],"TPE":["Chinese Taipei"],"DOM":["Dominican Republic"],"NGR":["Nigeria"],"AND":["Andorra"],"ECU":["Ecuador"],"ZAM":["Zambia"],"PAN":["Panama"],"LBN":["Lebanon"],"ANG":["Angola"],"SRI":["Sri Lanka"],"ESA":["El Salvador"],"GUA":["Guatemala"],"YEM":["Yemen"],"LUX":["Luxembourg"],"WLS":["Wales"],"TTO":["Trinidad & Tobago"],"SUD":["Sudan"],"IRQ":["Iraq"],"MAD":["Madagascar"],"SYR":["Syria"],"JAM":["Jamaica"],"THA":["Thailand"],"FAI":["Faroe Islands"],"MAR":["Morocco"],"HKG":["Hong Kong, China"],"UGA":["Uganda"],"TUN":["Tunisia"],"MLT":["Malta"],"BAR":["Barbados"],"LBA":["Libya"],"MNC":["Monaco"],"SSD":["South Sudan"],"ZIM":["Zimbabwe"],"PUR":["Puerto Rico"],"MAW":["Malawi"],"JOR":["Jordan"],"CPV":["Cape Verde"],"MOZ":["Mozambique"],"HON":["Honduras"],"NCA":["Nicaragua"],"KEN":["Kenya"],"PAK":["Pakistan"],"ETH":["Ethiopia"],"PLE":["Palestine"],"NEP":["Nepal"],"LIE":["Liechtenstein"],"AFG":["Afghanistan"],"NAM":["Namibia"],"MYA":["Myanmar"],"BOT":["Botswana"],"CIV":["Cote d’Ivoire"],"SEN":["Senegal"],"GUY":["Guyana"],"HAI":["Haiti"],"MTN":["Mauritania"],"KSA":["Saudi Arabia"],"CMR":["Cameroon"],"PLW":["Palau"],"BDI":["Burundi"],"GUM":["Guam"],"BRN":["Bahrain"],"IOM":["Isle of Man"],"SUR":["Suriname"],"SOM":["Somalia"],"STP":["Sao Tome and Principe"],"LES":["Lesotho"],"BRU":["Brunei Darussalam"],"ARU":["Aruba"],"KUW":["Kuwait"],"MDV":["Maldives"],"GHA":["Ghana"],"MRI":["Mauritius"],"LBR":["Liberia"],"MLI":["Mali"],"CAY":["Cayman Islands"],"OMA":["Oman"],"TOG":["Togo"],"JCI":["Jersey"],"SMR":["San Marino"],"GAM":["Gambia"],"BAH":["Bahamas"],"LCA":["Saint Lucia"],"GEQ":["Equatorial Guinea"],"TLS":["Timor-Leste"],"FIJ":["Fiji"],"GCI":["Guernsey"],"SLE":["Sierra Leone"],"GAB":["Gabon"],"BER":["Bermuda"],"QAT":["Qatar"],"TAN":["Tanzania"],"SEY":["Seychelles"],"MAC":["Macau, China"],"COD":["Democratic Republic of the Congo"],"COM":["Comoros Islands"],"SWZ":["Eswatini","Eswaitini"],"DJI":["Djibouti"],"ISV":["US Virgin Islands"],"SOL":["Solomon Islands"],"ANT":["Antigua and Barbuda"],"BHU":["Bhutan"],"CAF":["Central African Republic"],"DMA":["Dominica"],"CHA":["Chad"],"VAN":["Vanuatu"],"BUR":["Burkina Faso"],"CAM":["Cambodia"],"PNG":["Papua New Guinea"],"BIZ":["Belize"],"GRN":["Grenada"],"IVB":["British Virgin Islands"],"NIG":["Niger"],"ERI":["Eritrea"],"VIN":["Saint Vincent and the Grenadines"],"GUI":["Guinea"],"LAO":["Laos"],"SKN":["Saint Kitts and Nevis"],"TGA":["Tonga"],"BEN":["Benin"],"CGO":["Congo"],"SLV":["El Salvador"],"GBS":["Guinea-Bissau","Guinea Bissau"],"ROM":["Romania"],"RUS":["Russia","Russian Federation"],"RWA":["Rwanda"],"SAM":["Samoa"],"PRK":["North Korea","Korea DPR","DPR Korea"],"TRI":["Trinidad & Tobago","Trinidad and Tobago"],"WAL":["Wales"]};
+// Índice nombre (normalizado) → federación. Se arma una sola vez, con los nombres en castellano y
+// en inglés.
+var _NOMBRE_FED = null;
+function _nombreFedIx(){
+  if (_NOMBRE_FED) return _NOMBRE_FED;
+  var ix = {}, k;
+  for (k in _FED_ES) if (Object.prototype.hasOwnProperty.call(_FED_ES, k)) ix[normStr(_FED_ES[k])] = k;
+  for (k in _FED_EN) if (Object.prototype.hasOwnProperty.call(_FED_EN, k)) {
+    (function(code){ _FED_EN[code].forEach(function(n){ var key = normStr(n); if (!ix[key]) ix[key] = code; }); })(k);
+  }
+  return (_NOMBRE_FED = ix);
+}
+// Nombre de un equipo para MOSTRAR. Si es un país conocido lo devuelve en castellano; si es un club
+// (una liga, la FASGBA) lo deja tal cual. `fed` es opcional: si no viene, se saca del "(ARG)" final.
+function _paisES(nombre, fed){
+  var partes = _teamCountryParts(nombre);
+  var limpio = partes.clean || String(nombre == null ? "" : nombre);
+  if (!limpio) return "";
+  // "England 1", "Hungary B", "Sweden 2": el número (o la letra) del equipo se conserva, si no en un
+  // Europeo por equipos quedaban tres "Inglaterra" iguales.
+  var base = limpio, suf = "";
+  var m = limpio.match(/^(.+?)[ ]+([0-9]{1,2}|[A-DIVX]{1,3})$/);
+  if (m){ base = m[1]; suf = " " + m[2]; }
+  var code = _nombreFedIx()[normStr(base)];
+  // Se traduce por el NOMBRE, nunca por la federación sola: un CLUB puede estar inscripto con la
+  // federación de su país ("SG Riehen Switzerland" es SUI, "Ageless of Crete" es GRE) y convertirlo
+  // en "Suiza" o "Grecia" sería inventar. Si el nombre no es el de un país, queda como está.
+  if (!code && fed && /^[A-Za-z]{3}$/.test(base) && _FED_ES[String(fed).toUpperCase()]) code = String(fed).toUpperCase();
+  return (code && _FED_ES[code]) ? (_FED_ES[code] + suf) : limpio;
+}
 function _teamCountryParts(name){
   var s=String(name||'');
   var m=s.match(/\(([A-Za-z]{3})\)\s*$/);
@@ -7424,11 +7580,11 @@ function _teamMatchKey(nameA, nameB, data){
 // TODOS los equipos (países Y clubes): se pasa el NOMBRE (crOpenCountry lo resuelve). La bandera solo
 // aparece si el nombre trae código de país.
 function _teamCountrySide(crk, parts, right){
-  var nameSpan='<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(parts.clean)+'</span>';
+  var nameSpan='<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(_paisES(parts.clean,parts.fed))+'</span>';
   var content= right ? (nameSpan+parts.flag) : (parts.flag+nameSpan);
   var base='flex:1;min-width:0;display:flex;align-items:center;'+(right?'justify-content:flex-end;':'')+'gap:8px;overflow:hidden;color:var(--text)';
   if(!parts.clean) return '<span style="'+base+'">'+content+'</span>';
-  return '<span onclick="crOpenCountry('+crArg(crk)+','+crArg(parts.clean)+')" title="Ver la performance de '+escHtml(parts.clean)+'" style="'+base+';cursor:pointer" onmouseover="this.style.color=\'var(--gold)\'" onmouseout="this.style.color=\'var(--text)\'">'+content+'</span>';
+  return '<span onclick="crOpenCountry('+crArg(crk)+','+crArg(parts.clean)+')" title="Ver la performance de '+escHtml(_paisES(parts.clean,parts.fed))+'" style="'+base+';cursor:pointer" onmouseover="this.style.color=\'var(--gold)\'" onmouseout="this.style.color=\'var(--text)\'">'+content+'</span>';
 }
 // Salto desde un cruce por países (art=2) a SU formación (art=3): cambia a la pestaña de formación de
 // esa ronda y hace scroll al match exacto (por la clave de federaciones), resaltándolo un instante.
@@ -7547,7 +7703,10 @@ function _teamRenderRound(matches, roundNum, crk){
       // de verdad se transmiten (hay torneos que mandan una parte: en el Senior 2026 son 16 de 36, y
       // un ojito que no lleva a ningún lado confunde). Si la ronda todavía no se bajó (on-demand), lo
       // dibujamos igual y que el clic la baje. El ojito de las mesas YA TERMINADAS no cambia.
-      var _verMesa = !!b.res || (_hasGm && (b.nW||b.nB) && (!_rondaEnMemoria || crFindGameIdx(roundNum,b.nW,b.nB)>=0));
+      // La mesa con jugador FANTASMA ("Sin jugador asignado") no tiene partida que abrir: nadie la
+      // jugó. Antes le ponía el ojito igual y el clic sólo servía para avisar que no estaba.
+      var _fantasma = _teamIsPlaceholder(b.nW) || _teamIsPlaceholder(b.nB);
+      var _verMesa = !_fantasma && (!!b.res || (_hasGm && (b.nW||b.nB) && (!_rondaEnMemoria || crFindGameIdx(roundNum,b.nW,b.nB)>=0)));
       if(_verMesa){
         var _resTxt = b.res ? '<span style="border-bottom:1px dashed currentColor">'+escHtml(b.res)+'</span> ' : '';
         inner+='<span onclick="_teamOpenBoardGame('+(roundNum!=null?roundNum:'null')+','+crArg(b.nW)+','+crArg(b.nB)+')" title="'+(b.res?'Ver la partida':'Ver la partida en vivo')+'" style="flex-shrink:0;width:66px;text-align:center;font-weight:700;color:var(--text);cursor:pointer;border-radius:5px" onmouseover="this.style.background=\'var(--bg3)\';this.style.color=\'var(--gold)\'" onmouseout="this.style.background=\'\';this.style.color=\'var(--text)\'">'+_resTxt+'<span style="font-size:12px;color:var(--blue)">👁</span></span>';
@@ -7585,11 +7744,11 @@ function _teamRenderCrosses(crosses, roundNum, crk, hasFormation){
     var _cbg=arg?'var(--gl30)':(ci%2===1?'var(--zebra)':'var(--bg2)');   // intercalado por match (ARG resaltado)
     inner+='<div'+clk+'display:flex;align-items:center;gap:8px;padding:11px 14px;border:1px solid '+(arg?'var(--gold-dim)':'var(--bd14)')+';border-radius:10px;margin-top:8px;background:'+_cbg+'">';
     inner+='<span style="flex:1;min-width:0;display:flex;align-items:center;justify-content:flex-end;gap:7px;overflow:hidden">';
-    inner+='<span style="color:var(--text);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(m.aName)+'</span>'+crFlagEmoji(m.aFed);
+    inner+='<span style="color:var(--text);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(_paisES(m.aName,m.aFed))+'</span>'+crFlagEmoji(m.aFed);
     inner+='</span>';
     inner+='<span style="flex-shrink:0;color:var(--gold);background:var(--bg3);border-radius:6px;padding:4px 13px;font-weight:700;font-size:15px;white-space:nowrap">'+escHtml(m.aRes||'')+' : '+escHtml(m.bRes||'')+'</span>';
     inner+='<span style="flex:1;min-width:0;display:flex;align-items:center;gap:7px;overflow:hidden">';
-    inner+=crFlagEmoji(m.bFed)+'<span style="color:var(--text);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(m.bName||'(libre)')+'</span>';
+    inner+=crFlagEmoji(m.bFed)+'<span style="color:var(--text);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(m.bName ? _paisES(m.bName,m.bFed) : '(libre)')+'</span>';
     inner+='</span>';
     inner+='</div>';
   });
@@ -7598,10 +7757,13 @@ function _teamRenderCrosses(crosses, roundNum, crk, hasFormation){
 // Clic en el resultado de un tablero del cuadro de cruces por equipos: busca la partida del broadcast
 // (por ronda + nombres, igual que el cuadro individual) y la abre en el visor.
 function _teamOpenBoardGame(round, wName, bName){
-  if(typeof _tdCtx==='undefined' || !_tdCtx || !_tdCtx.pgnKey) return;
+  // Los ojitos salen en TODAS las mesas a propósito (si no, en la web publicada sólo aparecían en
+  // las rondas que el visitante ya había abierto). El trato es: si la partida no está, se avisa.
+  // Antes, un torneo SIN ninguna partida cargada se iba por acá en silencio y el clic no hacía nada.
+  var hayPool = !(typeof _tdCtx==='undefined' || !_tdCtx || !_tdCtx.pgnKey);
   // Los dos órdenes: en equipos la columna de la izquierda NO es siempre la de blancas.
   function buscar(){ var i=crFindGameIdx(round, wName, bName); return i<0 ? crFindGameIdx(round, bName, wName) : i; }
-  var idx = buscar();
+  var idx = hayPool ? buscar() : -1;
   if(idx>=0){ tdOpenGame(idx, _tdCtx.pgnKey, _tdCtx.name||'', _tdCtx.location||''); return; }
   // Ahora que el ojito también sale en las mesas EN JUEGO, es normal que la ronda todavía no esté
   // bajada (on-demand). La traemos y reintentamos, igual que crOpenGame; y si de verdad no se
@@ -7690,13 +7852,40 @@ function _teamRenderSection(crk,data){
       +(_stStatsAvailable(crk,data)?tabBtn('stats','📈 Radiografía',false):'')+'</div>';
   }
   h+='</div>';   // /cr-tabs
-  crossNums.forEach(function(r){ h+='<div id="cr-panel-'+crk+'-x'+r+'" style="display:'+(String(defaultTab)===('x'+r)?'block':'none')+'">'+delBtn('Borrar cruces R'+r,"_teamDeleteCross('"+ks+"',"+r+")")+_teamRenderCrosses(crosses[r], r, crk, !!rounds[r])+'</div>'; });
-  roundNums.forEach(function(r){ h+='<div id="cr-panel-'+crk+'-'+r+'" style="display:'+(String(defaultTab)===String(r)?'block':'none')+'">'+delBtn('Borrar formación R'+r,"_teamDeleteRound('"+ks+"',"+r+")")+_teamRenderRound(rounds[r], r, crk)+'</div>'; });
-  if(hasStand){ h+='<div id="cr-panel-'+crk+'-tabla" style="display:'+(defaultTab==='tabla'?'block':'none')+'">'+delBtn('Borrar tabla',"_teamDeleteStandings('"+ks+"')")+_teamRenderStandings(data.teamStandings, crk)+'</div>'; }
+  // Paneles PEREZOSOS: se arma SOLO el de la pestaña que se ve; los demás quedan vacíos con
+  // data-lazy y se construyen al tocar su pestaña (_teamShowTab). Antes se armaban todos juntos: una
+  // Olimpiada son 11 formaciones de ~950 KB de HTML cada una — 12 MB y 76.000 nodos de una sentada,
+  // 700 ms de freeze al abrir el torneo y un teléfono con la memoria llena para mostrar UNA ronda.
+  // (Los torneos individuales ya se habían arreglado así; la sección por equipos había quedado.)
+  var panel=function(tab, contenido){
+    var abierto=(String(defaultTab)===String(tab));
+    return '<div id="cr-panel-'+crk+'-'+tab+'"'+(abierto?'':' data-lazy="1"')+' style="display:'+(abierto?'block':'none')+'">'
+         + (abierto?contenido():'') + '</div>';
+  };
+  crossNums.forEach(function(r){ h+=panel('x'+r, function(){ return _teamPanelContent(crk,data,'x'+r); }); });
+  roundNums.forEach(function(r){ h+=panel(''+r, function(){ return _teamPanelContent(crk,data,''+r); }); });
+  if(hasStand){ h+=panel('tabla', function(){ return _teamPanelContent(crk,data,'tabla'); }); }
   if(_stStatsAvailable(crk,data)) h+='<div id="cr-panel-'+crk+'-stats" data-lazy="1" style="display:none"></div>';
   h+='</div>';
   return h;
 }
+// Arma el contenido de UN panel de la sección por equipos. Está separado para poder construirlo
+// tarde, cuando el visitante toca la pestaña (ver los paneles perezosos de _teamRenderSection).
+function _teamPanelContent(crk,data,tab){
+  tab=String(tab);
+  var ks=crk.replace(/'/g,"\\'");
+  var delBtn=function(label,onclick){ return _ondemand?'':'<div style="display:flex;justify-content:flex-end;margin-bottom:8px"><button onclick="'+onclick+'" style="padding:5px 11px;border-radius:8px;border:1px solid rgba(200,70,70,.35);background:rgba(200,60,60,.1);color:#e07070;font-size:11.5px;font-weight:600;cursor:pointer;font-family:inherit">✕ '+label+'</button></div>'; };
+  if(tab==='stats') return crBuildStatsPanel(crk,data);
+  if(tab==='tabla') return delBtn('Borrar tabla',"_teamDeleteStandings('"+ks+"')")+_teamRenderStandings(data.teamStandings, crk);
+  if(tab.charAt(0)==='x'){
+    var rx=tab.slice(1);
+    return delBtn('Borrar cruces R'+rx,"_teamDeleteCross('"+ks+"',"+rx+")")
+         + _teamRenderCrosses((data.teamCrosses||{})[rx], rx, crk, !!((data.teamRounds||{})[rx]));
+  }
+  return delBtn('Borrar formación R'+tab,"_teamDeleteRound('"+ks+"',"+tab+")")
+       + _teamRenderRound((data.teamRounds||{})[tab], tab, crk);
+}
+
 function _teamShowTab(crk,tab){
   tab=String(tab);
   _teamCurTab[crk]=tab;   // recordar la pestaña activa (para re-aplicarla al togglear "Solo argentinos")
@@ -7712,9 +7901,9 @@ function _teamShowTab(crk,tab){
   if(ab){ var blue=tab.charAt(0)==='x'; ab.style.background=blue?'rgba(70,140,210,.20)':'var(--gold-bg)'; ab.style.color=blue?'#7ab8e6':'var(--gold)'; ab.style.borderColor=blue?'rgba(80,155,225,.6)':'var(--gold-dim)'; }
   var ap=document.getElementById('cr-panel-'+crk+'-'+tab);
   if(ap){
-    if(ap.getAttribute('data-lazy')){   // la radiografía se arma recién al abrirla
+    if(ap.getAttribute('data-lazy')){   // se arma recién cuando lo abrís (ver _teamRenderSection)
       ap.removeAttribute('data-lazy');
-      try { ap.innerHTML=crBuildStatsPanel(crk, crDataLoad(crk)); } catch(e){}
+      try { ap.innerHTML=_teamPanelContent(crk, crDataLoad(crk), tab); } catch(e){}
     }
     ap.style.display='block';
   }
@@ -8031,6 +8220,12 @@ function _tdRefreshPodium(crk){
 }
 
 function _ncCap(s){ return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+// "a", "a y b", "a, b y c" — para que las enumeraciones se lean como las escribiría una persona.
+function _ncLista(arr){
+  arr = (arr || []).filter(function(x){ return x; });
+  if (arr.length <= 1) return arr[0] || '';
+  return arr.slice(0, -1).join(', ') + ' y ' + arr[arr.length - 1];
+}
 function _noticiaFechaHoy(){
   var M = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
   var d = new Date();
@@ -8315,22 +8510,112 @@ function _noticiaIndivDraft(data, m){
   return { emoji:'🏆', date:_noticiaFechaHoy(), title:title, summary:summary, body:P.join('\n'), coverImg:'', url:'', pgn:'' };
 }
 
+// Borrador de un torneo POR EQUIPOS. Antes eran tres líneas sueltas (campeón, podio y cuántos
+// equipos) porque no había de dónde sacar más; ahora usa la misma radiografía que la pestaña: cómo
+// se definió, la actuación argentina jugador por jugador, las medallas por tablero y los batacazos.
 function _noticiaTeamDraft(data, m){
-  var ts = data.teamStandings;
-  if (!ts || ts.kind === 'initial' || !ts.teams || !ts.teams.length) return null;
-  var t = ts.teams.slice(0, 3), champ = t[0];
-  var score = function(x){ return (x.des && x.des[0] != null) ? String(x.des[0]) : ''; };
-  var P = [];
-  P.push('<p>El <strong>' + escHtml(m.name) + '</strong>' + (m.location ? (' disputado en ' + escHtml(m.location)) : '')
-    + (m.dates ? (' (' + escHtml(m.dates) + ')') : '') + ' tuvo como campeón a <strong>' + escHtml(champ.name) + '</strong>'
-    + (score(champ) ? (' con ' + escHtml(score(champ)) + ' puntos') : '') + '.</p>');
+  var s = null;
+  try { s = _stTeamBuild(m.crk || '', data, m); } catch(e){}
+  if (!s || !s.campeon){
+    // Sin cruces cargados no hay radiografía, pero con la tabla sola igual se puede anunciar al campeón.
+    var ts = data.teamStandings;
+    if (!ts || ts.kind === 'initial' || !ts.teams || !ts.teams.length) return null;
+    var c0 = ts.teams[0];
+    return { emoji:'🏆', date:_noticiaFechaHoy(), title:_stTeamName(c0.name) + ' se quedó con el ' + m.name,
+             summary:_stTeamName(c0.name) + ' se consagró campeón por equipos.',
+             body:'<p>El <strong>' + escHtml(m.name) + '</strong> tuvo como campeón a <strong>'
+                + escHtml(_stTeamName(c0.name)) + '</strong>, entre ' + ts.teams.length + ' equipos.</p>',
+             coverImg:'', url:'', pgn:'' };
+  }
+
+  var t = s.torneo, camp = s.campeon, P = [];
+  var neg = function(x){ return '<strong>' + escHtml(x) + '</strong>'; };
+  var ctx = (t.sede ? (' disputado en ' + escHtml(t.sede)) : '') + (t.fechas ? (' (' + escHtml(t.fechas) + ')') : '');
+
+  // 1) El campeón, con cómo lo ganó.
+  var comoGano = '';
+  if (camp.g != null){
+    var partes = [camp.g + (camp.g === 1 ? ' match ganado' : ' matches ganados')];
+    if (camp.e) partes.push(camp.e + (camp.e === 1 ? ' empatado' : ' empatados'));
+    if (camp.p) partes.push(camp.p + (camp.p === 1 ? ' perdido' : ' perdidos'));
+    comoGano = 'Cerró con ' + _ncLista(partes) + (camp.p === 0 ? ', sin perder ninguno' : '') + '.';
+    if (camp.tablero != null) comoGano += ' Entre todos sus jugadores sumaron ' + escHtml(crPtsStr(camp.tablero)) + ' puntos de tablero.';
+  }
+  P.push('<p>' + neg(camp.nombre) + ' se consagró campeón del ' + neg(t.nombre) + ctx
+    + (t.equipos ? (', entre ' + t.equipos + ' equipos') : '') + (t.rondas ? (' y a lo largo de ' + t.rondas + ' rondas') : '') + '. '
+    + comoGano + '</p>');
+
+  // 2) El podio.
   var pod = [];
-  if (t[1]) pod.push('<strong>' + escHtml(t[1].name) + '</strong>' + (score(t[1]) ? (' (' + escHtml(score(t[1])) + ')') : ''));
-  if (t[2]) pod.push('<strong>' + escHtml(t[2].name) + '</strong>' + (score(t[2]) ? (' (' + escHtml(score(t[2])) + ')') : ''));
+  if (s.podio[1]) pod.push(neg(s.podio[1].nombre) + (s.podio[1].match != null ? (' (' + s.podio[1].match + ' puntos)') : ''));
+  if (s.podio[2]) pod.push(neg(s.podio[2].nombre) + (s.podio[2].match != null ? (' (' + s.podio[2].match + ' puntos)') : ''));
   if (pod.length) P.push('<p>El podio lo completaron ' + pod.join(' y ') + '.</p>');
-  P.push('<p>Participaron ' + ts.teams.length + ' equipos.</p>');
-  return { emoji:'🏆', date:_noticiaFechaHoy(), title:champ.name + ' se quedó con el ' + m.name,
-           summary:champ.name + ' se consagró campeón por equipos.', body:P.join('\n'), coverImg:'', url:'', pgn:'' };
+
+  // 3) Cómo fue la lucha por la punta.
+  if (s.carrera && s.carrera.lideres && s.carrera.lideres.length >= 3){
+    var cuento = _stRaceStory(s.carrera);
+    if (cuento) P.push('<p>' + cuento.replace(/^Quién iba adelante: /, 'Así se peleó la punta: ')
+                                     .replace(/ La punta cambió de manos [^.]+./, '') + '</p>');
+  }
+
+  // 4) La actuación argentina (torneos de países).
+  var a = s.argentina;
+  if (a){
+    var reg = [a.g + ' matches ganados'];
+    if (a.e) reg.push(a.e + ' empatados');
+    if (a.p) reg.push(a.p + ' perdidos');
+    var linea = '<p><strong>La actuación argentina.</strong> Argentina terminó en el '
+      + neg(a.puesto + 'º puesto') + ' entre ' + a.de + ' equipos, con ' + _ncLista(reg) + '.'
+      + (a.tablero != null ? (' Sumó ' + escHtml(crPtsStr(a.tablero)) + ' puntos de tablero.') : '');
+    if (a.jugadores && a.jugadores.length){
+      var mejor = a.jugadores.slice().sort(function(x, y){ return (y.rp || 0) - (x.rp || 0); })[0];
+      var dets = a.jugadores.map(function(p){
+        return escHtml(_nnName({ name:p.raw })) + ' (' + escHtml(crPtsStr(p.pts)) + ' de ' + p.partidas + ')';
+      });
+      linea += ' Jugaron ' + dets.join(', ') + '.';
+      if (mejor && mejor.rp) linea += ' La mejor performance del equipo fue la de ' + neg(_nnName({ name:mejor.raw })) + ', con ' + mejor.rp + '.';
+    }
+    P.push(linea + '</p>');
+  }
+
+  // 5) Los destacados individuales y las medallas por tablero.
+  var pr = s.premios || {}, dz = [];
+  if (pr.mejorRp) dz.push('la mejor performance del torneo fue la de ' + neg(pr.mejorRp.nombre)
+    + ' (' + pr.mejorRp.rp + (pr.mejorRp.equipo ? (', ' + escHtml(pr.mejorRp.equipo)) : '') + ')');
+  if (pr.masPuntos && (!pr.mejorRp || pr.masPuntos.raw !== pr.mejorRp.raw))
+    dz.push(neg(pr.masPuntos.nombre) + ' fue el que más puntos sumó (' + escHtml(crPtsStr(pr.masPuntos.pts)) + ' de ' + pr.masPuntos.partidas + ')');
+  if (pr.racha) dz.push(neg(pr.racha.nombre) + ' hilvanó ' + pr.racha.n + ' victorias seguidas');
+  if (dz.length) P.push('<p>' + _ncCap(dz.join('; ')) + '.</p>');
+
+  if (pr.porMesa && pr.porMesa.length){
+    var oros = pr.porMesa.map(function(x){
+      var o = x.podio[0];
+      return neg(o.nombre) + ' (' + escHtml(o.equipo || '') + ', ' + o.rp + ') en el ' + x.mesa;
+    });
+    P.push('<p><strong>El oro por tablero</strong> fue para ' + _ncLista(oros) + '.</p>');
+  }
+
+  // 6) Los batacazos.
+  var be = (s.equipos && s.equipos.batacazos) || [];
+  var sorpresas = [];
+  if (be.length){
+    var b = be[0];
+    sorpresas.push('la sorpresa por equipos la dio ' + neg(b.gana) + ', que venía ' + b.no + 'º en el ranking inicial y le ganó '
+      + escHtml(b.score) + ' a ' + neg(b.pierde) + ' (' + b.noPierde + 'º) en la ronda ' + b.ronda);
+  }
+  if (s.batacazos && s.batacazos.length){
+    var bi = s.batacazos[0];
+    sorpresas.push('en los tableros, ' + neg(bi.ganador) + ' (' + bi.ganadorElo + ') le ganó a '
+      + neg((bi.perdedorTitulo ? (bi.perdedorTitulo + ' ') : '') + bi.perdedor) + ' (' + bi.perdedorElo + ')'
+      + ', ' + bi.diff + ' puntos de Elo por encima, en la ronda ' + bi.ronda);
+  }
+  if (sorpresas.length) P.push('<p>' + _ncCap(sorpresas.join('; ')) + '.</p>');
+
+  var titulo = camp.nombre + ' se quedó con el ' + t.nombre;
+  var resumen = camp.nombre + ' se consagró campeón entre ' + t.equipos + ' equipos'
+              + (a ? ('. Argentina terminó en el ' + a.puesto + 'º puesto') : '') + '.';
+  return { emoji:'🏆', date:_noticiaFechaHoy(), title:titulo, summary:resumen,
+           body:P.join('\n'), coverImg:'', url:'', pgn:'' };
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -8345,7 +8630,60 @@ function _noticiaTeamDraft(data, m){
 // `opts.raw`: además del nombre "natural" (Nombre Apellido) agrega el nombre TAL CUAL figura en la
 // tabla. Lo necesita la Radiografía para que los nombres sean clickeables — crOpenPlayer busca por
 // el nombre crudo del cuadro. Lo que se le manda a la IA NO lo pide, así que su payload no cambia.
+// El paquete que se le manda a la IA para un torneo POR EQUIPOS. Mismos datos que la radiografía,
+// resumidos y con los nombres ya naturales. El Worker tiene un prompt propio para este caso (mira
+// `esEquipos`): sin él, la IA recibiría campos que no entiende.
+function _noticiaGatherDataTeam(data, m){
+  var s = null;
+  try { s = _stTeamBuild(m.crk || '', data, m); } catch(e){}
+  if (!s || !s.campeon) return null;
+  var t = s.torneo;
+  var eq = function(x){ return x ? { nombre:x.nombre, ganados:x.g, empatados:x.e, perdidos:x.p,
+                                     puntosMatch:x.match, puntosTablero:(x.tablero != null ? crPtsStr(x.tablero) : null) } : null; };
+  var pl = function(p){ return p ? { nombre:p.nombre, titulo:p.titulo || '', equipo:p.equipo || '',
+                                     puntos:crPtsStr(p.pts), partidas:p.partidas, rp:p.rp || null } : null; };
+  // La lucha por la punta, en tramos ("India de la 6ª a la 11ª") en vez de once líneas.
+  var tramos = [];
+  ((s.carrera && s.carrera.lideres) || []).forEach(function(l){
+    var u = tramos[tramos.length - 1];
+    if (u && u.equipo === l.nombre) u.hasta = l.r;
+    else tramos.push({ equipo:l.nombre, desde:l.r, hasta:l.r });
+  });
+  return {
+    esEquipos: true,
+    torneo: { nombre:t.nombre, sede:t.sede, fechas:t.fechas, tipo:m.typ || '',
+              internacional: !!(typeof crShowArgLine === 'function' && crShowArgLine(m.typ)),
+              equipos:t.equipos, rondas:t.rondas, matches:t.matches, partidas:t.partidas, jugadores:t.jugadores },
+    campeon: eq(s.campeon),
+    podio: (s.podio || []).map(eq),
+    argentina: s.argentina ? {
+      puesto:s.argentina.puesto, de:s.argentina.de, ganados:s.argentina.g, empatados:s.argentina.e,
+      perdidos:s.argentina.p, puntosTablero:(s.argentina.tablero != null ? crPtsStr(s.argentina.tablero) : null),
+      jugadores:(s.argentina.jugadores || []).map(function(p){
+        var o = pl(p); if (o) o.tablero = p.mesa; return o;
+      })
+    } : null,
+    definicion: { tramosDePunta:tramos, cambiosDePunta:(s.carrera ? s.carrera.cambios : null),
+                  masGoleador: s.equipos && s.equipos.goleador ? { nombre:s.equipos.goleador.nombre,
+                    puntosTablero:crPtsStr(s.equipos.goleador.tablero) } : null },
+    destacados: { mejorPerformance:pl(s.premios.mejorRp), masPuntos:pl(s.premios.masPuntos),
+                  racha: s.premios.racha ? { nombre:s.premios.racha.nombre, victorias:s.premios.racha.n } : null },
+    medallasPorTablero: (s.premios.porMesa || []).map(function(x){
+      return { tablero:x.mesa, oro:pl(x.podio[0]), plata:pl(x.podio[1]), bronce:pl(x.podio[2]) };
+    }),
+    batacazosEquipos: (s.equipos.batacazos || []).slice(0, 3).map(function(b){
+      return { ronda:b.ronda, gano:b.gana, puestoInicial:b.no, perdio:b.pierde, puestoInicialRival:b.noPierde, marcador:b.score };
+    }),
+    sorpresas: (s.batacazos || []).slice(0, 3).map(function(b){
+      return { ronda:b.ronda, ganador:b.ganador, ganadorElo:b.ganadorElo, perdedor:b.perdedor,
+               perdedorTitulo:b.perdedorTitulo, perdedorElo:b.perdedorElo, diff:b.diff };
+    })
+  };
+}
+
 function _noticiaGatherData(data, m, opts){
+  // Por equipos, otro paquete (no hay tabla de jugadores: hay equipos, matches y tableros).
+  if (m && ((data && data.teamRounds && Object.keys(data.teamRounds).length) || m.isTeam)) return _noticiaGatherDataTeam(data, m);
   var _raw = (opts && opts.raw) ? function(o, n){ o.raw = n; return o; } : function(o){ return o; };
   var st = (data.standings || []).filter(function(p){ return p && p.name; });
   if (!st.length || data.standingsKind === 'initial') return null;
@@ -8801,6 +9139,9 @@ function _stTeamBoardsAsRounds(data){
     (tr[r] || []).forEach(function(mt){
       (mt.boards || []).forEach(function(b, i){
         if (!b || !b.nW || !b.nB) return;
+        // "Sin jugador asignado": el relleno que pone Chess-Results cuando un equipo no completó la
+        // formación. No es una persona (el resultado es una incomparecencia), así que no cuenta.
+        if (_teamIsPlaceholder(b.nW) || _teamIsPlaceholder(b.nB)) return;
         arr.push({ m: String(i + 1), w: b.nW, b: b.nB, ew: b.eW || 0, eb: b.eB || 0,
                    tw: b.tW || '', tb: b.tB || '', res: b.res,
                    eqA: _stTeamName(mt.aName), eqB: _stTeamName(mt.bName) });
@@ -8961,9 +9302,13 @@ function _stTeamPlayers(data, rondas){
       var filaA = [], filaB = [];
       (mt.boards || []).forEach(function(b, i){
         if (!b) return;
-        if (b.nW) filaA.push(b.nW);
-        if (b.nB) filaB.push(b.nB);
+        // El jugador FANTASMA ("Sin jugador asignado") no ocupa un puesto en la lista del equipo: si
+        // contara, correría un lugar a todos los que juegan debajo y las medallas por tablero
+        // saldrían mal. (Caso real: Laos, en la Olimpiada 2024, con 5 jugadores y un fantasma.)
+        if (b.nW && !_teamIsPlaceholder(b.nW)) filaA.push(b.nW);
+        if (b.nB && !_teamIsPlaceholder(b.nB)) filaB.push(b.nB);
         if (!_stJugada(b.res) || !b.eW || !b.eB) return;
+        if (_teamIsPlaceholder(b.nW) || _teamIsPlaceholder(b.nB)) return;
         var s = b.res === '1-0' ? 1 : (b.res === '0-1' ? 0 : 0.5);
         ver(b.nW, b.tW, b.eW, A, i + 1, s, b.eB);
         ver(b.nB, b.tB, b.eB, B, i + 1, 1 - s, b.eW);
@@ -9002,9 +9347,13 @@ function _stTeamBuild(crk, data, meta){
   var falso = { rounds: boards };   // para reusar el motor individual
 
   var regla = _stTeamMatchRule(teams);
+  // nombre del cuadro → federación, para poder mostrar los países en castellano (los clubes, tal cual)
+  var fedDe = {};
+  teams.forEach(function(t){ var n = _stTeamName(t.name); if (n && t.fed) fedDe[n] = t.fed; });
+  var esNom = function(n){ return _paisES(n, fedDe[n] || ''); };
   var equipoInfo = function(t){
     var n = _stTeamName(t.name);
-    return { nombre:n, fed:t.fed || '', puesto:t.rk || null,
+    return { nombre:esNom(n), fed:t.fed || '', puesto:t.rk || null,
              g:parseInt(t.w, 10) || 0, e:parseInt(t.d, 10) || 0, p:parseInt(t.l, 10) || 0,
              match: (P.mp[n] != null ? P.mp[n] : null), tablero: (P.bp[n] != null ? P.bp[n] : null) };
   };
@@ -9021,20 +9370,20 @@ function _stTeamBuild(crk, data, meta){
     });
     if (max < 0) continue;
     var lider = (prev && quien.indexOf(prev) >= 0) ? prev : quien[0];
-    lideres.push({ r:P.rondas[i], raw:lider, nombre:lider, pts:max, empatados:quien.length,
-                   raws:quien.slice(0, 4), nombres:quien.slice(0, 4) });
+    lideres.push({ r:P.rondas[i], raw:lider, nombre:esNom(lider), pts:max, empatados:quien.length,
+                   raws:quien.slice(0, 4), nombres:quien.slice(0, 4).map(esNom) });
     prev = lider;
   }
   var cambios = 0;
   for (var j = 1; j < lideres.length; j++) if (lideres[j].raw !== lideres[j-1].raw) cambios++;
   var carrera = lideres.length ? {
     lideres: lideres, cambios: cambios,
-    series: top3.map(function(eq){ return { raw:eq, nombre:eq, pts:(P.serie[eq] || []).slice(0, rondas) }; })
+    series: top3.map(function(eq){ return { raw:eq, nombre:esNom(eq), pts:(P.serie[eq] || []).slice(0, rondas) }; })
   } : null;
 
   // Equipo más goleador (puntos de tablero) y la racha más larga de matches ganados.
   var goleador = null;
-  Object.keys(P.bp).forEach(function(eq){ if (!goleador || P.bp[eq] > goleador.tablero) goleador = { nombre:eq, tablero:P.bp[eq] }; });
+  Object.keys(P.bp).forEach(function(eq){ if (!goleador || P.bp[eq] > goleador.tablero) goleador = { nombre:esNom(eq), tablero:P.bp[eq] }; });
 
   // Jugadores: mejor performance, más puntos y las medallas por mesa.
   var jug = _stTeamPlayers(data, rondas);
@@ -9093,6 +9442,7 @@ function _stTeamBuild(crk, data, meta){
     }
   }
 
+  jug.forEach(function(p){ p.equipo = esNom(p.equipo); });   // ya se usó el nombre original más arriba
   var elos = [];
   jug.forEach(function(p){ if (p.elo > 0) elos.push(p.elo); });
   var elo = null;
@@ -9115,7 +9465,9 @@ function _stTeamBuild(crk, data, meta){
     podio: podio,
     argentina: argentina,
     carrera: carrera,
-    equipos: { goleador: goleador, batacazos: _stTeamUpsets(data, teams.length) },
+    equipos: { goleador: goleador, batacazos: _stTeamUpsets(data, teams.length).map(function(b){
+      b.gana = esNom(b.gana); b.pierde = esNom(b.pierde); return b;
+    }) },
     premios: {
       mejorRp: conRp[0] || null,
       masPuntos: porPuntos[0] || null,
@@ -9126,6 +9478,69 @@ function _stTeamBuild(crk, data, meta){
     topRp: conRp.slice(0, 5),
     pulso: pulso
   };
+}
+
+/* ═══════════════════════════════════════════════════════
+   EL ÁRBOL DE APERTURAS DEL TORNEO
+   Se calcula UNA vez, en modo autor, con TODAS las partidas del torneo, y se guarda con los datos.
+   No se puede calcular cuando entra el visitante: las partidas se bajan por ronda a medida que las
+   abre, así que con una ronda cargada diría "Siciliana 14" cuando en realidad fueron 300.
+═══════════════════════════════════════════════════════ */
+var _AP_V = 1;
+// Piso para entrar en la lista: al menos 3 partidas Y al menos el 25% de la MÁS jugada.
+// El piso relativo se adapta a la forma del torneo, que es lo que un porcentaje fijo no hace: con un
+// 3% fijo, 5 Holandesas en 100 partidas entraban igual (5,3%) aunque la primera tuviera 40. Con el
+// 25% de la líder, entran las que de verdad pesan al lado de la más jugada.
+var _AP_MIN_N = 3, _AP_MIN_REL = 25;
+
+// "Defensa Siciliana" y "Siciliana" son la misma apertura contada dos veces (la tabla las nombra de
+// las dos formas). Se unen SOLO si las dos están: si sólo aparece "Defensa Holandesa", se respeta.
+function _apUnificar(conteo, mapaOut){
+  var out = {};
+  Object.keys(conteo).forEach(function(n){
+    var base = n.replace(/^(Defensa|Apertura)\s+/i, '');
+    var destino = (base !== n && conteo[base] != null) ? base : n;
+    out[destino] = (out[destino] || 0) + conteo[n];
+    if (mapaOut && destino !== n) mapaOut[n] = destino;
+  });
+  return out;
+}
+
+// Cuenta las aperturas de una lista de PGN. Deduplica por JUGADAS: la misma partida puede venir de
+// Lichess, de Chess-Results y del pool, y contarla tres veces inventaría un torneo que no existió.
+function _stAperturasCalc(pgns){
+  var items = (pgns || []).filter(Boolean).map(function(p){ return { pgn: p }; });
+  if (!items.length) return null;
+  var unicas = items;
+  try { unicas = dedupGamesByMoves(items, function(it){ return it.pgn; }); } catch(e){}
+  var conteo = {}, conNombre = 0;
+  unicas.forEach(function(it){
+    var op = '';
+    try { var det = detectOpeningByMoves(it.pgn, true); op = det ? det.name : ''; } catch(e){}
+    if (!op){ try { op = parsePgnHeaders(it.pgn).Opening || ''; } catch(e){} }
+    if (!op) return;
+    var corto = op.split(':')[0].trim();
+    if (!corto) return;
+    conteo[corto] = (conteo[corto] || 0) + 1;
+    conNombre++;
+  });
+  if (!conNombre) return null;
+  conteo = _apUnificar(conteo);
+  // "Apertura 1.d4 Nf6" no es el nombre de una apertura: es el cajón de las que no entraron en
+  // ninguna con nombre. Cuentan para el total, pero no se listan como "más jugada".
+  var esCajon = function(n){ return /^(Apertura|Defensa)[ ]+[0-9]/.test(n); };
+  var mayor = 0;
+  Object.keys(conteo).forEach(function(n){ if (!esCajon(n) && conteo[n] > mayor) mayor = conteo[n]; });
+  var lista = [];
+  Object.keys(conteo).forEach(function(n){
+    if (esCajon(n)) return;
+    if (conteo[n] < _AP_MIN_N) return;
+    if (mayor && (conteo[n] / mayor * 100) < _AP_MIN_REL) return;
+    lista.push({ nombre:n, cantidad:conteo[n], pct:Math.round(conteo[n] / conNombre * 1000) / 10 });
+  });
+  lista.sort(function(a,b){ return b.cantidad - a.cantidad; });
+  return { v:_AP_V, partidas:unicas.length, conNombre:conNombre, repetidasQueSeSacaron:(items.length - unicas.length),
+           top:lista.slice(0, 8), cuando:_noticiaFechaHoy() };
 }
 
 // Devuelve la radiografía del torneo: la HORNEADA (guardada con los datos, ya lista) si sigue
@@ -9152,7 +9567,9 @@ function _noticiaAIOpen(){
   var titulo = esAnticipo ? '✨ Escribir el anticipo con IA' : '✨ Redactar la noticia con IA';
   var ayuda = esAnticipo
     ? 'La IA arma la previa con los datos del torneo (favoritos por rating, argentinos anotados, sede, fechas y sistema). Sumale abajo lo que ella no sabe (premios, invitados, qué está en juego).'
-    : 'La IA arma la nota con los datos del torneo (campeón, podio, performances, revelación y las sorpresas de las rondas). Sumale abajo datos que ella no puede saber y los va a incluir.';
+    : (m.isTeam
+        ? 'La IA arma la nota con los datos del torneo por equipos (campeón, podio, cómo se peleó la punta, la actuación argentina, las medallas por tablero y los batacazos). Sumale abajo datos que ella no puede saber y los va a incluir.'
+        : 'La IA arma la nota con los datos del torneo (campeón, podio, performances, revelación y las sorpresas de las rondas). Sumale abajo datos que ella no puede saber y los va a incluir.');
   var ph = esAnticipo
     ? 'Ej.:&#10;Reparte 2 millones de pesos en premios.&#10;Es válido para el ranking nacional.&#10;Se transmite en vivo por el canal de la federación.'
     : 'Ej.:&#10;Mareco venía de jugar el Continental y el Panamericano.&#10;Con este 3° puesto clasifica al Mundial por equipos.&#10;Sus próximos torneos serán el Argentino Absoluto y el Sudamericano.';
@@ -10508,7 +10925,7 @@ function crOpenCountry(key, who){
   var _fl=cfed?crFlagEmoji(cfed):'';
   if(_fl) h+='<div style="flex-shrink:0;font-size:0;line-height:0;border-radius:6px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.4)">'+_fl+'</div>';
   h+='<div style="flex:1;min-width:0">';
-  h+='<div style="font-size:18px;font-weight:700;color:var(--white-ink);line-height:1.15;text-shadow:var(--txt-out)">'+escHtml(cname)+(cfed?' <span style="font-size:12.5px;color:var(--fg-c8);font-weight:600">'+escHtml(cfed)+'</span>':'')+'</div>';
+  h+='<div style="font-size:18px;font-weight:700;color:var(--white-ink);line-height:1.15;text-shadow:var(--txt-out)">'+escHtml(_paisES(cname,cfed))+(cfed?' <span style="font-size:12.5px;color:var(--fg-c8);font-weight:600">'+escHtml(cfed)+'</span>':'')+'</div>';
   h+='<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:3px;font-size:13px;color:var(--text2)">';
   h+='<span style="color:#4caf50;font-weight:600">'+W+' ganó</span> · <span style="color:var(--gold);font-weight:600">'+D+' empató</span> · <span style="color:#e05555;font-weight:600">'+L+' perdió</span>';
   h+='</div></div>';
@@ -10541,8 +10958,8 @@ function crOpenCountry(key, who){
       h+='<td style="padding:8px 6px;color:var(--text3);text-align:center;width:34px">R'+hh.round+'</td>';
       // Rival clickeable → abre SU panel de performance (país/club), navegando de panel en panel (como
       // los rivales del panel de jugador). Se pasa el nombre; crOpenCountry lo resuelve.
-      var _oppClk = hh.oppName ? ' onclick="crOpenCountry('+crArg(key)+','+crArg(hh.oppName)+')" title="Ver la performance de '+escHtml(hh.oppName)+'" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;color:var(--text)" onmouseover="this.style.color=\'var(--gold)\'" onmouseout="this.style.color=\'var(--text)\'"' : ' style="display:inline-flex;align-items:center;gap:6px;color:var(--text)"';
-      h+='<td style="padding:8px 6px"><span'+_oppClk+'>'+(crFlagEmoji(hh.oppFed)||'')+'<span>'+escHtml(hh.oppName||'')+'</span></span></td>';
+      var _oppClk = hh.oppName ? ' onclick="crOpenCountry('+crArg(key)+','+crArg(hh.oppName)+')" title="Ver la performance de '+escHtml(_paisES(hh.oppName,hh.oppFed))+'" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;color:var(--text)" onmouseover="this.style.color=\'var(--gold)\'" onmouseout="this.style.color=\'var(--text)\'"' : ' style="display:inline-flex;align-items:center;gap:6px;color:var(--text)"';
+      h+='<td style="padding:8px 6px"><span'+_oppClk+'>'+(crFlagEmoji(hh.oppFed)||'')+'<span>'+escHtml(hh.oppName?_paisES(hh.oppName,hh.oppFed):'')+'</span></span></td>';
       h+='<td style="padding:8px 6px;text-align:center;font-weight:700;color:var(--text);white-space:nowrap">'+marc+'</td>';
       h+='<td style="padding:8px 6px;text-align:right;font-weight:700;white-space:nowrap">'+resHtml+'</td>';
       h+='</tr>';
@@ -10602,8 +11019,11 @@ function crOpenPlayer(key,name){
     trNums.forEach(function(r){
       (data.teamRounds[r]||[]).forEach(function(mt){
         (mt.boards||[]).forEach(function(bd){
-          if(bd.nW===name){ history.push({round:r,color:'Blancas',opp:bd.nB,oppTitle:bd.tB,oppElo:bd.eB,res:bd.res,myRes:myResult(bd.res,true)}); }
-          else if(bd.nB===name){ history.push({round:r,color:'Negras',opp:bd.nW,oppTitle:bd.tW,oppElo:bd.eW,res:bd.res,myRes:myResult(bd.res,false)}); }
+          // OJO: en los cuadros por equipos, nW/nB son "equipo A / equipo B", NO blancas y negras
+          // (el color real no viene en los Excel). Por eso va sinColor:true y la columna del color
+          // muestra un guioncito en vez de inventar un ⬜ o un ⬛ que acierta la mitad de las veces.
+          if(bd.nW===name){ history.push({round:r,color:'Blancas',sinColor:true,opp:bd.nB,oppTitle:bd.tB,oppElo:bd.eB,res:bd.res,myRes:myResult(bd.res,true)}); }
+          else if(bd.nB===name){ history.push({round:r,color:'Negras',sinColor:true,opp:bd.nW,oppTitle:bd.tW,oppElo:bd.eW,res:bd.res,myRes:myResult(bd.res,false)}); }
         });
       });
     });
@@ -10742,7 +11162,9 @@ function crOpenPlayer(key,name){
         +'<span class="crp-nm">'+crTitleBadge(hh.oppTitle)+'<span style="color:var(--white-ink);cursor:pointer;text-shadow:'+_ts+'" title="Ver a este jugador" onclick="crOpenPlayer('+crArg(key)+','+crArg(hh.opp)+')">'+escHtml(hh.opp)+'</span></span>'
         +(hh.oppElo?'<span class="crp-elo">('+hh.oppElo+')</span>':'')
         +'</td>';
-      h+='<td class="cph-color" style="padding:8px 3px;text-align:center;font-size:15px">'+(hh.color==='Blancas'?'⬜':'⬛')+'</td>';
+      h+='<td class="cph-color" style="padding:8px 3px;text-align:center;font-size:15px"'
+       + (hh.sinColor?' title="En los torneos por equipos el color no viene en los datos"':'') + '>'
+       + (hh.sinColor ? '<span style="color:var(--text3);font-size:13px">–</span>' : (hh.color==='Blancas'?'⬜':'⬛')) + '</td>';
       if(_canOpen){
         h+='<td style="padding:5px 6px;text-align:center;cursor:pointer;white-space:nowrap" title="Ver partida" onclick="crOpenGame('+(hh.round==null?'null':hh.round)+','+crArg(hw)+','+crArg(hb)+')">'
           +'<span class="cph-resbtn" style="display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:7px;background:'+resBg+';border:1px solid '+resColor+';font-weight:700;font-size:13px;color:'+resColor+';text-shadow:'+_ts+'">'+resShort+' <span style="font-size:12px;opacity:.85">👁</span></span>'
@@ -14251,8 +14673,12 @@ async function openPlayer(id) {
   }
 
   // Tres columnas: Mejores victorias | Aperturas con blancas | Aperturas con negras
-  var topW = topOpenings(cs.white, 4);
-  var topB = topOpenings(cs.black, 4);
+  // Unir las que son la misma apertura con dos nombres ("Siciliana" y "Defensa Siciliana" salían
+  // como dos filas distintas: 36 y 28, cuando son 64). El mapa queda guardado para que el filtro de
+  // abajo cuente las mismas partidas que la fila que tocaste.
+  _pgOpMap = {};
+  var topW = topOpenings(_apUnificar(cs.white, _pgOpMap), 4);
+  var topB = topOpenings(_apUnificar(cs.black, _pgOpMap), 4);
   if (bestWins.length > 0 || topW.length > 0 || topB.length > 0) {
     h += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:16px;margin-bottom:4px">';
 
@@ -17089,6 +17515,7 @@ function filterPgByColor(color) {
   }
 }
 
+var _pgOpMap = {};   // nombre de apertura → nombre unificado (ver _apUnificar en el perfil)
 function filterPgByOpening(name) {
   _pgOpeningFilter = (_pgOpeningFilter === name) ? null : name;
   _pgPage = 1;
@@ -17183,6 +17610,9 @@ function renderLocalGames(data, player, resultFilter, colorFilter, openingFilter
       var detG = detectOpeningByMoves(pgn, true);
       var opRawG = detG ? detG.name : (hdrs.Opening || '');
       var shortOpG = opRawG ? opRawG.split(':')[0].trim() : '';
+      // Mismo criterio que las columnas: si "Defensa Siciliana" se unió a "Siciliana", tocar
+      // "Siciliana" tiene que traer también esas partidas.
+      if (_pgOpMap && _pgOpMap[shortOpG]) shortOpG = _pgOpMap[shortOpG];
       if (shortOpG !== openingFilter) return null;
     }
     var res = hdrs.Result || '*';
@@ -24271,15 +24701,62 @@ function _bcMergeMeta(metas){
   return { roundsMeta: roundsMeta, currentNum: currentNum };
 }
 // Baja los PGN de UNA ronda (varios roundIds = esa ronda en cada sub-transmisión) → array de PGNs.
-function _bcFetchRoundPgns(roundIds, cb){
+// Baja el PGN de una ronda. Ojo: una ronda de Olimpiada NO es una transmisión sola — Lichess la
+// parte en 4 o 5 (Open I, II, III…), y acá vienen todos sus ids juntos.
+//
+// El problema que esto arregla: se pedían las 4-5 de un saque, todas FRÍAS (nadie las había pedido
+// todavía, así que la caché del Worker no tenía nada que servir), y Lichess devolvía 429 a casi
+// todas. Medido en la Olimpiada 2024: de 4 transmisiones entraba UNA, o sea 100 partidas de 370 —
+// y el error se tragaba en silencio, con la ronda dándose por completa.
+//
+// Ahora: primer intento TODAS JUNTAS (cuando están calientes tardan ~50 ms, no hay razón para ir
+// despacio), y las que fallan se reintentan DE A UNA con una espera corta. Para entonces las que sí
+// entraron ya calentaron la caché del Worker y Lichess viene menos apretado.
+function _bcFetchRoundPgns(roundIds, cb, opts){
   if(!roundIds || !roundIds.length){ cb([]); return; }
-  var parts = new Array(roundIds.length), pending = roundIds.length;
-  roundIds.forEach(function(id, i){
+  opts = opts || {};
+  var reintentosMax = (opts.reintentos != null) ? opts.reintentos : 2;
+  var esperaMs = (opts.esperaMs != null) ? opts.esperaMs : 1200;
+  var parts = new Array(roundIds.length);
+
+  function bajar(id, listo, falló){
     _fetchTO(_liApi('round/' + id + '.pgn'), 15000)
-      .then(function(r){ return r.text(); })
-      .then(function(pgn){ parts[i] = pgn.trim().split(/\n\n(?=\[Event )/).filter(function(g){ return g.trim() && !_bcIsPlaceholderGame(g); }); if(--pending === 0) cb([].concat.apply([], parts)); })
-      .catch(function(){ parts[i] = []; if(--pending === 0) cb([].concat.apply([], parts)); });
+      // El 429 traía un cuerpo de error que se colaba como si fuera una partida: ahora se mira el
+      // estado antes de leerlo.
+      .then(function(r){ if(!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+      .then(function(pgn){ listo(pgn.trim().split(/\n\n(?=\[Event )/).filter(function(g){ return g.trim() && !_bcIsPlaceholderGame(g); })); })
+      .catch(function(){ falló(); });
+  }
+
+  var pendientes = roundIds.length, fallaron = [];
+  roundIds.forEach(function(id, i){
+    bajar(id, function(gs){ parts[i] = gs; if(--pendientes === 0) segundaVuelta(); },
+              function(){ fallaron.push(i); if(--pendientes === 0) segundaVuelta(); });
   });
+
+  // Los que no entraron, de a uno y con pausa. Si al final igual falta alguno, se avisa por
+  // "opts.onIncompleta" (el que llama decide si lo dice o lo reintenta después): antes se daba la
+  // ronda por completa y nadie se enteraba de que faltaba el 73% de los tableros.
+  function segundaVuelta(){
+    if(!fallaron.length) return terminar();
+    var vuelta = 0;
+    (function siguiente(){
+      if(!fallaron.length || vuelta >= reintentosMax) return terminar();
+      var quedan = fallaron.slice(); fallaron = []; vuelta++;
+      (function uno(k){
+        if(k >= quedan.length){ setTimeout(siguiente, esperaMs); return; }
+        var i = quedan[k];
+        bajar(roundIds[i], function(gs){ parts[i] = gs; uno(k + 1); },
+                           function(){ fallaron.push(i); uno(k + 1); });
+      })(0);
+    })();
+  }
+  function terminar(){
+    var faltan = 0;
+    for(var i = 0; i < roundIds.length; i++) if(!parts[i]){ parts[i] = []; faltan++; }
+    if(faltan && typeof opts.onIncompleta === 'function'){ try { opts.onIncompleta(faltan, roundIds.length); } catch(e){} }
+    cb([].concat.apply([], parts), { faltan: faltan, total: roundIds.length });
+  }
 }
 // Init on-demand: metadata de todas las transmisiones + PGN solo de la ronda actual. cb(merged, games)
 // o cb(null) si la metadata falla (→ el caller cae al camino EAGER de respaldo).

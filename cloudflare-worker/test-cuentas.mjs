@@ -332,5 +332,49 @@ console.log('\n=== 9. Moderadores por cuenta, no por nombre de usuario (Fase 8) 
   await pedir('/mod/unmute', { method: 'POST', headers: H, body: '{"userId":"u_ana"}' });
 }
 
+
+console.log('\n=== 10. La IA sabe redactar torneos POR EQUIPOS (Olimpiadas, ligas) ===');
+{
+  // IA de mentira: no redacta nada, sólo guarda el prompt que le mandaron para poder mirarlo.
+  let ultimoPrompt = '';
+  const envIA = Object.assign({}, env, { AI: { async run(model, opts) {
+    ultimoPrompt = opts.messages.map(m => m.content).join('\n');
+    return { response: 'TITULO: t\nRESUMEN: r\nCUERPO:\ncuerpo' };
+  } } });
+  const pedirIA = (body) => worker.fetch(
+    new Request('https://cr-proxy.test/noticia', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Origin': 'https://chessargentino.ar', 'Authorization': 'Bearer sess-mod' }, body
+    }), envIA, ctx);
+
+  const equipos = JSON.stringify({
+    esEquipos: true,
+    torneo: { nombre: 'Olimpiada', sede: 'Budapest', equipos: 189, rondas: 11 },
+    campeon: { nombre: 'India', ganados: 10, empatados: 1, perdidos: 0, puntosMatch: 21 },
+    podio: [{ nombre: 'India' }, { nombre: 'USA' }],
+    argentina: { puesto: 37, de: 189, jugadores: [{ nombre: 'Diego Flores', tablero: 4, rp: 2587 }] },
+    medallasPorTablero: [{ tablero: 1, oro: { nombre: 'Gukesh', rp: 3056 } }],
+  });
+  const r1 = await pedirIA(equipos);
+  chk(r1.status === 200, 'el Worker acepta un torneo por equipos', r1.status);
+  chk(/POR EQUIPOS/.test(ultimoPrompt), 'y le pide a la IA una nota de torneo por equipos');
+  chk(/LA ACTUACIÓN ARGENTINA/.test(ultimoPrompt), 'con la actuación argentina en el centro cuando Argentina jugó');
+  chk(/medallasPorTablero/.test(ultimoPrompt), 'le cuenta de las medallas por tablero');
+  chk(/NO hables de quién ganó con blancas/.test(ultimoPrompt),
+      'y le prohíbe hablar de colores, que en equipos no se saben');
+  chk(!/revelación|femeninas/i.test(ultimoPrompt), 'no le pide cosas que en un torneo por equipos no existen');
+
+  // Sin Argentina, el foco cambia (una liga de clubes, un torneo sin argentinos).
+  await pedirIA(JSON.stringify({ esEquipos: true, torneo: { nombre: 'Liga' }, campeon: { nombre: 'Club' } }));
+  chk(/Contá el torneo desde los equipos/.test(ultimoPrompt), 'sin Argentina en juego, la nota se centra en los equipos');
+
+  // Y el camino de siempre (torneo individual) quedó intacto.
+  await pedirIA(JSON.stringify({
+    torneo: { nombre: 'Semifinal', internacional: false }, campeon: { nombre: 'Ocampos', arg: true },
+    podio: [], destacados: {}, femeninas: [], juveniles: [], sorpresas: []
+  }));
+  chk(/mejor actuación FEMENINA/.test(ultimoPrompt) && !/POR EQUIPOS/.test(ultimoPrompt),
+      'un torneo individual sigue yendo por su prompt de siempre');
+}
+
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.') + '\n');
 process.exitCode = fallos ? 1 : 0;
