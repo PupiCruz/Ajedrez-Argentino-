@@ -1021,5 +1021,41 @@ console.log('\n=== 28. Cuándo va la Radiografía y cuándo se hornea ===');
       'y si el torneo avanzó después, la firma no coincide y se recalcula igual (no se publica nada viejo)');
 }
 
+
+console.log('\n=== 29. La formación inventada de la próxima ronda ===');
+{
+  // Chess-Results publica el CRUCE por equipos (qué equipo juega con qué equipo) días antes que la
+  // FORMACIÓN mesa por mesa, que la carga el árbitro cuando los capitanes entregan la alineación.
+  // Si le pedís una formación que no publicó, hay torneos que devuelven vacío (Europeo Senior 65+)
+  // y torneos que te la FABRICAN con el orden de fuerza registrado de cada equipo (Liga Nacional
+  // 2026: Obras aparecía con Flores, Felgaer y Perez Ponsa —sus tableros 1, 2 y 3 de planilla— en
+  // una ronda que se juega el 6 de septiembre, y sacaba a jugadores que ese día juegan en Brasil).
+  const bajar = extraerFuncion('_crAutoFetchTeam');
+  chk(/var maxFormacion = maxR;/.test(bajar),
+      'se recuerda hasta qué ronda hay formación PUBLICADA (los links art=3&rd=N del menú)');
+  chk(/\(maxFormacion && r > maxFormacion\)[\s\S]{0,40}Promise\.resolve\(null\)/.test(bajar),
+      'y más allá de eso NO se pide la formación (no se confía en que venga vacía)');
+  chk(/_crExportUrl\(crUrl, 2, r\)/.test(bajar),
+      'el cruce por equipos SÍ se sigue pidiendo: ese sale antes y es de verdad');
+  chk(/if \(maxFormacion\) Object\.keys\(data\.teamRounds\)[\s\S]{0,120}delete data\.teamRounds\[n\]/.test(bajar),
+      'y si de una vuelta anterior quedó una formación inventada guardada, se tira');
+
+  // El menú del torneo es la fuente: 'Emparejamientos por mesas: Rd.1' = hasta la 1.
+  const descubrir = extraerFuncion('_crDiscoverRounds');
+  chk(/art=' \+ pairArt \+ '&\(\?:amp;\)\?rd=/.test(descubrir), 'la busca en los links del menú');
+  const maxDe = (html, art) => {
+    const re = new RegExp('art=' + art + '&(?:amp;)?rd=([0-9]+)', 'gi');
+    let m, x = 0; while ((m = re.exec(html))) x = Math.max(x, +m[1]); return x || null;
+  };
+  const menuLiga = 'a href="x?lan=2&amp;art=2&amp;rd=1&amp;t=1" a href="x?lan=2&amp;art=2&amp;rd=2&amp;t=1" a href="x?lan=2&amp;art=3&amp;rd=1&amp;t=1"';
+  const menuEuro = 'art=2&amp;rd=4 art=3&amp;rd=1 art=3&amp;rd=2 art=3&amp;rd=3 art=3&amp;rd=4';
+  chk(maxDe(menuLiga, 3) === 1 && maxDe(menuLiga, 2) === 2,
+      'Liga Nacional: cruces hasta la 2, formación sólo hasta la 1', maxDe(menuLiga, 3) + '/' + maxDe(menuLiga, 2));
+  chk(maxDe(menuEuro, 3) === 4,
+      'Europeo Senior: formación hasta la 4 → no se le saca ninguna', maxDe(menuEuro, 3));
+  chk(maxDe('sin links', 3) === null,
+      'y si el torneo no expone los links (Olimpiadas), no se toca nada: sigue como antes');
+}
+
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.') + '\n');
 process.exitCode = fallos ? 1 : 0;

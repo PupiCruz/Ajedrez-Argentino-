@@ -9756,6 +9756,11 @@ async function _crAutoFetchTeam(crk, crUrl, opts) {
     //    (Olimpiadas), así que _crDiscoverRounds devuelve null aunque el export por ronda SÍ funcione:
     //    el nº de rondas lo sacamos del encabezado de la clasificación (o, si tampoco, sondeando).
     var maxR = await _crDiscoverRounds(crUrl);   // camino rápido viejo (si el torneo aún trae los links)
+    // Hasta qué ronda hay FORMACIÓN publicada (los links "art=3&rd=N" del menú). No es lo mismo que
+    // hasta dónde hay cruces: Chess-Results publica el cruce de la próxima ronda (qué equipo juega
+    // con qué equipo) días antes que la formación mesa por mesa, que la carga el árbitro cuando los
+    // capitanes entregan la alineación.
+    var maxFormacion = maxR;
     try {
       var srows = await crExtractXlsx(await _crProxyFetch(_crExportUrl(crUrl, 0, null)));
       var stand = _teamParseStandings(srows);
@@ -9770,7 +9775,14 @@ async function _crAutoFetchTeam(crk, crUrl, opts) {
     for (var r = 1; r <= cap; r++) {
       setS('⏳ Bajando ronda ' + r + (maxR ? '/' + maxR : '') + '…');
       var crossP = _crProxyFetch(_crExportUrl(crUrl, 2, r)).then(crExtractXlsx).then(_teamParseCrosses).catch(function(){ return null; });
-      var compP  = _crProxyFetch(_crExportUrl(crUrl, 3, r)).then(crExtractXlsx).then(_teamParseRounds).catch(function(){ return null; });
+      // OJO: si le pedís la formación de una ronda que NO publicó, Chess-Results NO devuelve vacío:
+      // te la FABRICA con el orden de fuerza registrado de cada equipo (art=8). En la Liga Nacional
+      // 2026 eso ponía a Obras con Flores, Felgaer y Perez Ponsa —sus tableros 1, 2 y 3 de planilla—
+      // en una ronda que se juega recién el 6 de septiembre, y sacaba a jugadores que ese día están
+      // en otro torneo. Por eso la formación se pide SÓLO hasta donde el menú la ofrece.
+      var compP  = (maxFormacion && r > maxFormacion)
+        ? Promise.resolve(null)
+        : _crProxyFetch(_crExportUrl(crUrl, 3, r)).then(crExtractXlsx).then(_teamParseRounds).catch(function(){ return null; });
       var pair = await Promise.all([crossP, compP]);
       var cross = pair[0], comp = pair[1];
       var gotCross = cross && Object.keys(cross).length;
@@ -9780,6 +9792,11 @@ async function _crAutoFetchTeam(crk, crUrl, opts) {
       if (gotCross || gotComp) okR++;
       else if (probe && cross !== null && comp !== null) break;   // ambos bajaron ok y vacíos = no hay más
     }
+    // Y si de una vuelta anterior quedó guardada una formación inventada (se bajó antes de que
+    // Chess-Results la publicara), se tira: el cruce por equipos de esa ronda sí se queda.
+    if (maxFormacion) Object.keys(data.teamRounds).forEach(function(n){
+      if (Number(n) > maxFormacion) delete data.teamRounds[n];
+    });
     crDataSave(crk, data);
     var rn = Object.keys(data.teamRounds).map(Number).sort(function(a,b){return a-b;});
     var xn = Object.keys(data.teamCrosses).map(Number).sort(function(a,b){return a-b;});
