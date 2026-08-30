@@ -6667,6 +6667,22 @@ function _stStatsMeta(key){
            status: c ? (c.status || '') : '' };
 }
 
+// ¿Hay una ronda YA EMPAREJADA pero todavía sin jugar? Chess-Results publica la formación de la
+// próxima ronda con días de anticipación (mesas con nombres y todos los resultados vacíos). Eso es
+// prueba de que el torneo sigue: la radiografía es la foto del final, no de la mitad.
+function _stTeamRondaSinJugar(data){
+  var rs = (data && data.teamRounds) || {};
+  return Object.keys(rs).some(function(r){
+    var ms = rs[r] || [], conTableros = false;
+    var jugada = ms.some(function(m){
+      if (!m || !m.boards || !m.boards.length) return false;
+      conTableros = true;
+      return m.boards.some(function(b){ return b && b.res && b.res !== '*' && b.res !== '-'; });
+    });
+    return conTableros && !jugada;
+  });
+}
+
 // ¿Va la pestaña? Torneo INDIVIDUAL, TERMINADO (o con la clasificación final ya subida), con tabla
 // y con cruces. Mientras se juega no aparece: la radiografía es la foto del final.
 // `meta` opcional: al hornear para publicar se pasa la del torneo que se está guardando (el detalle
@@ -6686,6 +6702,7 @@ function _stStatsAvailable(key, data, meta){
     if (!conTableros) return false;
     // Igual que en los individuales: la radiografía es la foto del final. Si el torneo no trae estado
     // (ligas viejas cargadas a mano), alcanza con que la tabla sea la de resultados.
+    if (_stTeamRondaSinJugar(data)) return false;
     return meta.status === 'done' || !meta.status;
   }
   // ── Individuales ──
@@ -6706,7 +6723,15 @@ function _stStatsAvailable(key, data, meta){
 function _stBakeForPublish(key, d, meta){
   try {
     if (!d || !meta) return d;
-    if (!_stStatsAvailable(key, d, meta)) return d;
+    // OJO: "terminado" depende del DÍA en que se mira, y el horneado pasa el día que guardás. Un
+    // torneo guardado mientras se jugaba no se horneaba nunca; después terminaba solo (por la fecha),
+    // la pestaña se encendía y el cálculo le caía al teléfono del visitante. Pasó con el Memorial
+    // Emilio Sánchez Jerez. Así que acá horneamos si los DATOS dan, sin mirar el calendario: si el
+    // torneo después avanza, la firma (_stSig) deja de coincidir y se recalcula igual.
+    var metaFin = {};
+    for (var mk in meta) if (Object.prototype.hasOwnProperty.call(meta, mk)) metaFin[mk] = meta[mk];
+    metaFin.status = 'done';
+    if (!_stStatsAvailable(key, d, metaFin)) return d;
     var st = _statsBuild(key, d, meta);
     if (!st) return d;
     var copia = {};

@@ -975,5 +975,51 @@ console.log('\n=== 27. Las aperturas del PERFIL, sin partirse en dos ===');
   chk(mapa['Holandesa'] === undefined, 'y no anota las que no se tocaron');
 }
 
+
+console.log('\n=== 28. Cuándo va la Radiografía y cuándo se hornea ===');
+{
+  const pendiente = new Function('return (' + extraerFuncion('_stTeamRondaSinJugar') + ')')();
+  const disponible = new Function(
+    extraerFuncion('_stTeamRondaSinJugar') + extraerFuncion('_stStatsAvailable') + '; return _stStatsAvailable;')();
+
+  // Chess-Results publica la formación de la ronda que viene DÍAS ANTES de jugarse: mesas con
+  // nombres, Elos y todos los resultados vacíos (pasó con la Liga Nacional, ronda 2 publicada el
+  // 30/08 para jugarse el 06/09). Eso prueba que el torneo sigue.
+  const jugada = { boards: [{ nW: 'A', nB: 'B', res: '1-0' }, { nW: 'C', nB: 'D', res: '0-1' }] };
+  const emparejada = { boards: [{ nW: 'E', nB: 'F', res: '' }, { nW: 'G', nB: 'H', res: '' }] };
+  chk(pendiente({ teamRounds: { 1: [jugada], 2: [emparejada] } }) === true,
+      'una ronda emparejada y sin jugar dice que el torneo sigue en curso');
+  chk(pendiente({ teamRounds: { 1: [jugada], 2: [jugada] } }) === false,
+      'con todas las rondas jugadas, no');
+  chk(pendiente({ teamRounds: { 1: [jugada], 2: [{ aName: 'X', bName: 'Y', score: '2:2' }] } }) === false,
+      'un cruce por países SIN formación no cuenta (no trae mesas, no prueba nada)');
+
+  // El agujero que tapa: un torneo por equipos SIN estado entraba igual. Era la puerta para las
+  // ligas viejas cargadas a mano —que no tienen estado pero sí terminaron— y se colaba cualquiera.
+  const cuadro = (rondas) => ({
+    teamStandings: { kind: 'result', teams: [{ name: 'A' }, { name: 'B' }] },
+    teamRounds: rondas
+  });
+  const sinEstado = { name: '', location: '', dates: '', typ: '', isTeam: true, status: '' };
+  chk(disponible('k', cuadro({ 1: [jugada], 2: [jugada] }), sinEstado) === true,
+      'la liga vieja sin estado sigue teniendo su radiografía');
+  chk(disponible('k', cuadro({ 1: [jugada], 2: [emparejada] }), sinEstado) === false,
+      'pero el torneo en curso sin estado ya NO (era la Liga Nacional en la ronda 1)');
+  chk(disponible('k', cuadro({ 1: [jugada], 2: [emparejada] }), { isTeam: true, status: 'done' }) === false,
+      'ni siquiera si el calendario dice que terminó: mandan los datos');
+
+  // Hornear no puede depender del DÍA en que guardás. El Memorial Emilio Sánchez Jerez se guardó
+  // mientras se jugaba (no se horneó), después terminó solo por la fecha, se encendió la pestaña y
+  // el cálculo le caía al teléfono del visitante.
+  const hornear = extraerFuncion('_stBakeForPublish');
+  chk(/metaFin.status = 'done';/.test(hornear),
+      'al hornear se ignora el calendario: si los datos dan, se hornea');
+  chk(/_stStatsAvailable\(key, d, metaFin\)/.test(hornear), 'y la comprobación usa esa meta, no la original');
+  chk(/_statsBuild\(key, d, meta\)/.test(hornear),
+      'pero las estadísticas se arman con la meta DE VERDAD (el nombre y las fechas del torneo)');
+  chk(/_stSig/.test(extraerFuncion('_statsGet')),
+      'y si el torneo avanzó después, la firma no coincide y se recalcula igual (no se publica nada viejo)');
+}
+
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.') + '\n');
 process.exitCode = fallos ? 1 : 0;
