@@ -138,6 +138,7 @@ export default {
     if (reqUrl.pathname === '/mod/patron/grant')  return modPatronGrant(request, env);  // POST → dar / renovar / quitar
     if (reqUrl.pathname === '/mod/patron/claim/done') return modPatronClaimDone(request, env); // POST → descartar aviso
     if (reqUrl.pathname === '/mod/users')     return modUserSearch(request, reqUrl, env);  // GET ?q= → buscar cuentas
+    if (reqUrl.pathname === '/mod/patron/manual') return modPatronManual(request, env);    // POST → colaborador sin cuenta
 
     // ── Progreso de EJERCICIOS atado a la cuenta (viaja entre dispositivos) ──
     if (reqUrl.pathname === '/puz/progress')  return puzProgress(request, env);   // GET (leer) / POST (guardar), Bearer
@@ -1602,6 +1603,21 @@ async function ensurePatronTable(env) {
   _patronTableReady = true;
 }
 
+// Colaboradores SIN cuenta en el sitio: donaron por PayPal o Mercado Pago y nunca se loguearon.
+// No pueden tener el ♞ al lado del nick (no hay nick), así que sólo figuran en la pared de
+// agradecimiento de la pestaña Apoyar. `clave` es el nombre en minúsculas y sirve para que
+// cargar dos veces al mismo SUME meses en vez de duplicar la fila.
+let _patronManualReady = false;
+async function ensurePatronManual(env) {
+  if (_patronManualReady) return;
+  await env.DB.prepare(
+    'CREATE TABLE IF NOT EXISTS patrons_manual (' +
+    'id TEXT PRIMARY KEY, clave TEXT UNIQUE, nombre TEXT, nota TEXT, ' +
+    'since INTEGER, until INTEGER, created_at INTEGER)'
+  ).run();
+  _patronManualReady = true;
+}
+
 // ¿El distintivo sigue vigente? (null / 0 / vencido = no)
 function patronVigente(until) {
   return !!(until && Number(until) > Math.floor(Date.now() / 1000));
@@ -1656,7 +1672,19 @@ async function patronList(request, env) {
       .map((x) => ({ u: x.username, since: x.patron_since || null }))
       .filter((x) => x.u);
   } catch (e) { /* si falla, el sitio anda igual: simplemente nadie muestra distintivo */ }
-  return jsonResp({ patrons: nombres }, 200, 300);
+  // Los cargados a mano viajan APARTE (campo `manual`): el cliente pinta el ♞ al lado del nick
+  // sólo con `patrons` —que son cuentas— y usa los dos para la pared de agradecimiento.
+  // Van en la misma respuesta para no hacer dos pedidos por cada visita.
+  let manual = [];
+  try {
+    await ensurePatronManual(env);
+    const now = Math.floor(Date.now() / 1000);
+    const r = await env.DB.prepare(
+      'SELECT nombre, since FROM patrons_manual WHERE until > ?1 ORDER BY since ASC LIMIT 500'
+    ).bind(now).all();
+    manual = ((r && r.results) || []).map((x) => ({ n: x.nombre, since: x.since || null })).filter((x) => x.n);
+  } catch (e) { /* tabla nueva y todavía vacía */ }
+  return jsonResp({ patrons: nombres, manual }, 200, 300);
 }
 
 // GET /mod/patron/claims — avisos de "ya doné" sin revisar. Sólo mods.
@@ -1678,7 +1706,20 @@ async function modPatronClaims(request, env) {
       until: x.patron_until || 0,   // el panel lo usa para el cartelito de cuánto le queda
     }));
   } catch (e) { /* tabla nueva y todavía vacía */ }
-  return jsonResp({ claims });
+  // Los cargados a mano viajan con los avisos: el panel los muestra juntos y así es UN pedido.
+  // Acá van TODOS, incluso los vencidos, porque el autor tiene que poder renovarlos.
+  let manual = [];
+  try {
+    await ensurePatronManual(env);
+    const r = await env.DB.prepare(
+      'SELECT id, nombre, nota, since, until FROM patrons_manual ORDER BY until DESC LIMIT 200'
+    ).all();
+    manual = ((r && r.results) || []).map((x) => ({
+      id: x.id, nombre: x.nombre, nota: x.nota || null, since: x.since || null,
+      until: x.until || 0, patron: patronVigente(x.until),
+    }));
+  } catch (e) { /* tabla nueva y todavía vacía */ }
+  return jsonResp({ claims, manual });
 }
 
 // POST /mod/patron/grant  { userId | username, meses?, quitar? } — dar o sacar el caballito.
@@ -1715,6 +1756,63 @@ async function modPatronGrant(request, env) {
     // El aviso de esta persona queda resuelto solo: si no, el autor haría 2 clics por donación.
     await env.DB.prepare('UPDATE patron_claims SET handled=1 WHERE user_id=?1 AND handled=0').bind(u.id).run();
     return jsonResp({ ok: true, patron: true, until, since, username: u.username });
+  } catch (e) { return errJson('D1 error: ' + e.message, 500); }
+}
+
+// POST /mod/patron/manual  { nombre, meses?, nota? } | { id, meses? } | { id, quitar:true }
+// Colaborador SIN cuenta. Cargar dos veces al mismo nombre no duplica: SUMA meses, igual que
+// el botón de las cuentas. Sólo mods.
+async function modPatronManual(request, env) {
+  if (request.method !== 'POST') return errJson('Usá POST', 405);
+  if (!env.DB) return errJson('Falta el binding D1 (DB)', 500);
+  const who = await modAuth(request, env);
+  if (!who) return errJson('No autorizado', 403);
+  let body; try { body = await request.json(); } catch (e) { return errJson('JSON inválido', 400); }
+  await ensurePatronManual(env);
+  const now = Math.floor(Date.now() / 1000);
+  const id = String(body.id || '').trim();
+
+  if (id && body.quitar) {
+    try { await env.DB.prepare('DELETE FROM patrons_manual WHERE id=?1').bind(id).run(); }
+    catch (e) { return errJson('D1 error: ' + e.message, 500); }
+    return jsonResp({ ok: true, borrado: true });
+  }
+
+  let meses = parseInt(body.meses, 10);
+  if (!(meses > 0 && meses <= 120)) meses = PATRON_MESES_DEFAULT;
+
+  // Renovar uno que ya existe (por id, desde el panel).
+  if (id) {
+    const fila = await env.DB.prepare('SELECT id, until FROM patrons_manual WHERE id=?1').bind(id).first();
+    if (!fila) return errJson('No existe', 404);
+    const base = patronVigente(fila.until) ? Number(fila.until) : now;
+    const until = base + meses * 30 * 24 * 3600;
+    try { await env.DB.prepare('UPDATE patrons_manual SET until=?1 WHERE id=?2').bind(until, id).run(); }
+    catch (e) { return errJson('D1 error: ' + e.message, 500); }
+    return jsonResp({ ok: true, until });
+  }
+
+  // Alta por nombre.
+  const nombre = String(body.nombre || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+  if (nombre.length < 2) return errJson('Poné un nombre', 400);
+  const clave = nombre.toLowerCase();
+  const nota = String(body.nota || '').replace(/\s+/g, ' ').trim().slice(0, 200) || null;
+  try {
+    const previo = await env.DB.prepare('SELECT id, until, since FROM patrons_manual WHERE clave=?1').bind(clave).first();
+    if (previo) {
+      // Ya estaba: se le SUMAN los meses y no se toca `since` (la primera vez no se pisa nunca).
+      const base = patronVigente(previo.until) ? Number(previo.until) : now;
+      const until = base + meses * 30 * 24 * 3600;
+      await env.DB.prepare('UPDATE patrons_manual SET until=?1, nombre=?2' + (nota ? ', nota=?4' : '') + ' WHERE id=?3')
+        .bind(...(nota ? [until, nombre, previo.id, nota] : [until, nombre, previo.id])).run();
+      return jsonResp({ ok: true, id: previo.id, until, yaEstaba: true });
+    }
+    const nuevo = 'pm_' + crypto.randomUUID().replace(/-/g, '').slice(0, 20);
+    const until = now + meses * 30 * 24 * 3600;
+    await env.DB.prepare(
+      'INSERT INTO patrons_manual (id, clave, nombre, nota, since, until, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7)'
+    ).bind(nuevo, clave, nombre, nota, now, until, now).run();
+    return jsonResp({ ok: true, id: nuevo, until });
   } catch (e) { return errJson('D1 error: ' + e.message, 500); }
 }
 

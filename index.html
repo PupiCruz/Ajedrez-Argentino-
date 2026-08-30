@@ -2587,6 +2587,14 @@
           <div class="ap-claim-act" id="ap-claim-act"></div>
         </div>
 
+        <!-- Arranca ESCONDIDA: si todavía no colaboró nadie, un cartel de "no hay nadie"
+             sería el peor argumento posible. La llena aaPatron cuando llega la lista. -->
+        <div class="ap-card" style="margin-top:18px;display:none" id="ap-wall">
+          <h4>♞ Los que ponen el hombro</h4>
+          <p id="ap-wall-sub">Gracias a ellos esto sigue funcionando.</p>
+          <div class="ap-wall-names" id="ap-wall-names"></div>
+        </div>
+
         <div class="ap-card" style="margin-top:18px">
           <h4>¿A dónde va lo que aportes?</h4>
           <ul class="ap-list">
@@ -35643,6 +35651,7 @@ function cvUpdateNagBadge() {
   var PROXY=(typeof CR_PROXY!=='undefined'&&CR_PROXY)?CR_PROXY:'https://cr-proxy.mmatiasscruz.workers.dev';
   var ICON='♞';
   var SET=null;            // { nombreEnMinúscula: desdeCuándo }  · null = todavía no cargó
+  var PARED=[];            // los dos tipos juntos, para la pared de agradecimiento
   var pidiendo=null;
 
   // Baja la lista de colaboradores. Se llama sola al arrancar y después de aprobar a alguien.
@@ -35654,6 +35663,14 @@ function cvUpdateNagBadge() {
         var m={};
         ((d&&d.patrons)||[]).forEach(function(p){ if(p&&p.u) m[String(p.u).toLowerCase()]=p.since||null; });
         SET=m;
+        // La pared junta las cuentas con los cargados a mano. El ♞ al lado del nick sale SOLO
+        // de las cuentas (los de a mano no tienen nick), pero acá agradecemos a todos igual.
+        PARED=[]
+          .concat(((d&&d.patrons)||[]).map(function(p){ return { n:p.u, since:p.since||null }; }))
+          .concat(((d&&d.manual)||[]).map(function(p){ return { n:p.n, since:p.since||null }; }))
+          .filter(function(x){ return x.n; })
+          .sort(function(a,b){ return (a.since||0)-(b.since||0); });   // los más antiguos primero
+        pintarPared();
         document.dispatchEvent(new CustomEvent('aa-patrons-changed'));
         return m;
       })
@@ -35678,8 +35695,35 @@ function cvUpdateNagBadge() {
     try{ var u=window.aaAuth&&window.aaAuth.getUser(); return !!(u&&u.patron); }catch(e){ return false; }
   }
 
+  // Mes y año en criollo, para el "desde" de cada fichita.
+  function desde(ts){
+    if(!ts) return '';
+    try{ var d=new Date(ts*1000);
+      var M=['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+      return 'desde '+M[d.getMonth()]+'. '+d.getFullYear();
+    }catch(e){ return ''; }
+  }
+  function esc(t){ return String(t==null?'':t).replace(/[&<>"']/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  // Pinta la pared de la pestaña Apoyar. Si no hay nadie, la deja escondida.
+  function pintarPared(){
+    var caja=document.getElementById('ap-wall'), lista=document.getElementById('ap-wall-names');
+    if(!caja || !lista) return;
+    if(!PARED.length){ caja.style.display='none'; return; }
+    lista.innerHTML=PARED.map(function(p){
+      var d=desde(p.since);
+      return '<span class="ap-wall-chip">♞ '+esc(p.n)+(d?(' <i>'+d+'</i>'):'')+'</span>';
+    }).join('');
+    var sub=document.getElementById('ap-wall-sub');
+    if(sub) sub.textContent = PARED.length===1
+      ? 'La primera persona que puso el hombro. Gracias.'
+      : 'Son '+PARED.length+'. Gracias a ellos esto sigue funcionando.';
+    caja.style.display='';
+  }
+
   window.aaPatron={ badge:badge, isPatron:isPatron, since:since, iAmPatron:iAmPatron,
-    reload:function(){ return load(true); }, ICON:ICON };
+    reload:function(){ return load(true); }, wall:function(){ return PARED.slice(); },
+    repaintWall:pintarPared, ICON:ICON };
 
   // Arranque: no corre en el modo autor local (ahí no hay cuentas ni chats).
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', function(){ load(); });
@@ -35706,6 +35750,12 @@ function cvUpdateNagBadge() {
     border:1px solid var(--gold-dim);transition:filter .15s}
   .ap-claim-btn:hover{filter:brightness(1.08)}
   .ap-claim-btn:disabled{opacity:.6;cursor:default}
+  /* Pared de agradecimiento: fichitas con el nombre de cada colaborador. */
+  .ap-wall-names{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+  .ap-wall-chip{display:inline-flex;align-items:baseline;gap:6px;padding:7px 13px;border-radius:999px;
+    background:rgba(255,201,64,.12);border:1px solid var(--gold-dim);
+    font-size:13.5px;font-weight:700;color:var(--gold)}
+  .ap-wall-chip i{font-style:normal;font-size:11.5px;font-weight:500;opacity:.72}
   .ap-claim-have{display:inline-flex;align-items:center;gap:7px;font-size:13.5px;font-weight:700;
     color:var(--gold);background:rgba(255,201,64,.13);border:1px solid var(--gold-dim);
     padding:11px 17px;border-radius:10px}
@@ -35954,7 +36004,7 @@ function cvUpdateNagBadge() {
   function render(sanc, rep, pat){
     var body=document.querySelector('#aa-mp-back .aa-mp-body'); if(!body) return;
     var reports=(rep && rep.reports)||[], muted=(sanc && sanc.muted)||[], banned=(sanc && sanc.banned)||[];
-    var claims=(pat && pat.claims)||[];
+    var claims=(pat && pat.claims)||[], manual=(pat && pat.manual)||[];
     var h='';
     // Los avisos de donación van PRIMERO: son lo único del panel que da gusto atender y lo que
     // más conviene no dejar esperando (del otro lado hay alguien que ya puso la plata).
@@ -35970,6 +36020,18 @@ function cvUpdateNagBadge() {
       return rowHtml(c.username, meta + patLbl(c.userId, c.until),
         patBtns(c.userId, c.username, '<button type="button" class="aa-mp-btn" data-nogrant="'+esc(c.id||'')+'" title="Descartar sin dar el distintivo">✕</button>'));
     }).join('') : '<div class="aa-mp-empty">Ningún aviso pendiente.</div>';
+    // Colaboradores SIN cuenta: los que donaron y nunca se loguearon. Van con el nombre que el
+    // autor les ponga y sólo salen en la pared de la pestaña Apoyar (no tienen nick que marcar).
+    h+='<div class="aa-mp-sec">✍️ Colaboradores sin cuenta ('+manual.length+')</div>';
+    h+='<div class="aa-mp-find"><input type="text" id="aa-mp-mannom" placeholder="Nombre de quien donó…" autocomplete="off" maxlength="60">'+
+      '<button type="button" class="aa-mp-btn ok" id="aa-mp-manadd">➕ Agregar</button></div>';
+    h+= manual.length ? manual.map(function(m){
+      var meta=(m.nota?'<span class="aa-mp-rsn">'+esc(m.nota)+'</span>':'')+
+        '<span class="aa-mp-when aa-mp-pat" data-manfor="'+esc(m.id)+'">♞ '+patTxt(m.until)+'</span>';
+      return rowHtml(m.nombre, meta,
+        '<span class="aa-mp-btns"><button type="button" class="aa-mp-btn ok" data-manren="'+esc(m.id)+'" title="Sumarle un mes">♞ +1 mes</button>'+
+        '<button type="button" class="aa-mp-btn" data-mandel="'+esc(m.id)+'" title="Borrarlo de la lista">✕</button></span>');
+    }).join('') : '<div class="aa-mp-empty">Ninguno cargado a mano.</div>';
     h+='<div class="aa-mp-sec">🚩 Reportes ('+reports.length+')</div>';
     h+= reports.length ? reports.map(function(r){
       var meta=(r.reason?'<span class="aa-mp-rsn">'+esc(r.reason)+'</span>':'')+'<span class="aa-mp-when">'+fmtWhen(r.at)+'</span>';
@@ -35998,9 +36060,43 @@ function cvUpdateNagBadge() {
       bn.disabled=true; api('/mod/unban','POST',{userId:bn.getAttribute('data-unban')}).then(function(){ load(); }).catch(function(){ bn.disabled=false; }); }); });
     bindFilas(body);
     bindBuscador();
+    bindManual(body);
     body.querySelectorAll('[data-nogrant]').forEach(function(bn){ bn.addEventListener('click', function(){
       bn.disabled=true; api('/mod/patron/claim/done','POST',{id:bn.getAttribute('data-nogrant')}).then(function(){ load(); }).catch(function(){ bn.disabled=false; }); }); });
   }
+  // Alta / renovación / baja de los colaboradores sin cuenta.
+  function bindManual(scope){
+    var inp=scope.querySelector('#aa-mp-mannom'), add=scope.querySelector('#aa-mp-manadd');
+    function agregar(){
+      var nom=(inp&&inp.value||'').trim();
+      if(nom.length<2){ if(inp) inp.focus(); return; }
+      add.disabled=true;
+      // Acá SÍ se recarga: es un alta, la fila todavía no existe en pantalla.
+      api('/mod/patron/manual','POST',{nombre:nom, meses:1}).then(function(){
+        if(window.aaPatron) window.aaPatron.reload();
+        load();
+      }).catch(function(){ add.disabled=false; });
+    }
+    if(add) add.addEventListener('click', agregar);
+    if(inp) inp.addEventListener('keydown', function(ev){ if(ev.key==='Enter') agregar(); });
+    scope.querySelectorAll('[data-manren]').forEach(function(bn){ bn.addEventListener('click', function(){
+      var id=bn.getAttribute('data-manren'); bn.disabled=true;
+      api('/mod/patron/manual','POST',{id:id, meses:1}).then(function(d){
+        bn.disabled=false;
+        // Igual que con las cuentas: se reescribe el cartelito, no se recarga el panel, así se
+        // pueden seguir sumando meses de a uno.
+        var lbl=scope.querySelector('[data-manfor="'+id+'"]');
+        if(lbl && d && d.until) lbl.textContent='♞ '+patTxt(d.until);
+        if(window.aaPatron) window.aaPatron.reload();
+      }).catch(function(){ bn.disabled=false; }); }); });
+    scope.querySelectorAll('[data-mandel]').forEach(function(bn){ bn.addEventListener('click', function(){
+      bn.disabled=true;
+      api('/mod/patron/manual','POST',{id:bn.getAttribute('data-mandel'), quitar:true}).then(function(){
+        if(window.aaPatron) window.aaPatron.reload();
+        load();
+      }).catch(function(){ bn.disabled=false; }); }); });
+  }
+
   // Engancha los botones del caballito. Se llama con TODO el panel y también, aparte, con los
   // resultados del buscador (que se dibujan después y si no quedarían muertos).
   function bindFilas(scope){
