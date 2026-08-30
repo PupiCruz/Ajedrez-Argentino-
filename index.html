@@ -5334,22 +5334,60 @@ var _crSyncing = false;
 function crKey(type, id) {
   return 'cr2_' + type + '_' + String(id).replace(/[^a-z0-9]/gi,'_');
 }
-function crDataLoad(key) {
-  try { var v = localStorage.getItem(key); if (v != null) return JSON.parse(v); } catch(e) {}
-  // Fallback al archivo: cruces/tabla embebidos (__EMBEDDED_CR__). Necesario cuando se abre por
-  // servidor o en la web publicada, donde el localStorage no tiene los cruces (otro almacenamiento).
-  try { if (window.__EMBEDDED_CR__ && window.__EMBEDDED_CR__[key]) return window.__EMBEDDED_CR__[key]; } catch(e) {}
-  // Los cruces se guardaron con el TIPO del modo autor (un torneo de +Agregar es 'tz'), pero en la
-  // web el MISMO torneo se abre como 'ls' → la clave no coincide (cr2_ls_… vs cr2_tz_…) y la tabla
-  // no aparecía. El id (sufijo) es único: buscar el mismo sufijo con cualquier prefijo de tipo.
+// El cuadro que viaja en el ARCHIVO publicado (data/cr/<clave>.json → __EMBEDDED_CR__).
+// Los cruces se guardaron con el TIPO del modo autor (un torneo de +Agregar es 'tz'), pero en la
+// web el MISMO torneo se abre como 'ls' → la clave no coincide (cr2_ls_… vs cr2_tz_…) y la tabla
+// no aparecía. El id (sufijo) es único: buscar el mismo sufijo con cualquier prefijo de tipo.
+function _crEmbeddedAlts(key) {
+  var out = [key], m = String(key).match(/^cr2_[a-z]+_(.+)$/);
+  if (m) ['cr2_tz_', 'cr2_ls_', 'cr2_hc_'].forEach(function(p) { var k = p + m[1]; if (out.indexOf(k) < 0) out.push(k); });
+  return out;
+}
+function _crEmbeddedFor(key) {
   try {
-    var m = String(key).match(/^cr2_[a-z]+_(.+)$/);
-    if (m && window.__EMBEDDED_CR__) {
-      var suf = m[1], alts = ['cr2_tz_' + suf, 'cr2_ls_' + suf, 'cr2_hc_' + suf];
-      for (var i = 0; i < alts.length; i++) { if (window.__EMBEDDED_CR__[alts[i]]) return window.__EMBEDDED_CR__[alts[i]]; }
-    }
+    if (!window.__EMBEDDED_CR__) return null;
+    var alts = _crEmbeddedAlts(key);
+    for (var i = 0; i < alts.length; i++) { if (window.__EMBEDDED_CR__[alts[i]]) return window.__EMBEDDED_CR__[alts[i]]; }
   } catch(e) {}
   return null;
+}
+// Lo HORNEADO (la radiografía `stats`, el árbol `aperturas`) lo calcula el AUTOR una sola vez y viaja
+// en el archivo. Puede haber quedado bajo OTRA clave del mismo torneo (el autor guarda 'tz', la web
+// abre 'ls', y a veces conviven las dos), así que se miran todas y gana la que lo tenga.
+function _crBakedFor(key, campo) {
+  try {
+    if (!window.__EMBEDDED_CR__) return null;
+    var alts = _crEmbeddedAlts(key);
+    for (var i = 0; i < alts.length; i++) { var e = window.__EMBEDDED_CR__[alts[i]]; if (e && e[campo]) return e[campo]; }
+  } catch(e) {}
+  return null;
+}
+function crDataLoad(key) {
+  try {
+    var v = localStorage.getItem(key);
+    if (v != null) {
+      var d = JSON.parse(v);
+      // Web publicada: lo HORNEADO (radiografía + aperturas) vive SOLO en el archivo; el localStorage
+      // del visitante lo escriben las bajadas en vivo (_liveStandingsFetch, _crAutoFetchIndiv…), que
+      // arman su objeto con rondas y tabla y nada más. Si esa copia llegó primero, tapaba el archivo y
+      // la radiografía/las aperturas desaparecían. Injertamos los dos campos horneados: son datos del
+      // AUTOR, no del vivo, así que el archivo siempre manda sobre ellos.
+      if (_ondemand && d && typeof d === 'object') _crGraftBaked(key, d);
+      return d;
+    }
+  } catch(e) {}
+  // Fallback al archivo: cruces/tabla embebidos (__EMBEDDED_CR__). Necesario cuando se abre por
+  // servidor o en la web publicada, donde el localStorage no tiene los cruces (otro almacenamiento).
+  var f = _crEmbeddedFor(key);
+  if (_ondemand && f) _crGraftBaked(key, f);
+  return f;
+}
+// Le pone al cuadro lo horneado que le falte (viene del archivo, no del vivo).
+function _crGraftBaked(key, d) {
+  try {
+    if (!d.aperturas) { var _ap = _crBakedFor(key, 'aperturas'); if (_ap) d.aperturas = _ap; }
+    if (!d.stats)     { var _st = _crBakedFor(key, 'stats');     if (_st) d.stats = _st; }
+  } catch(e) {}
 }
 function crDataSave(key, data) {
   try { localStorage.setItem(key, JSON.stringify(data)); _crArgCache = {}; _tourSearchIndex = {}; _stdFedCache = {}; _manualArgCache = {}; }
@@ -11857,6 +11895,12 @@ function pgnGetTorneosForList() {
         broadcastId: entry.broadcastId || null, broadcastUrl: entry.broadcastUrl || null,
         categories: entry.categories || null,   // para el badge "EN VIVO" de torneos con grupos (broadcast por categoría)
         rounds: entry.rounds || null,
+        // "Finalizado" puesto a mano por el autor. SIN esto, renderTorneos caía en la regla de la FECHA
+        // (computeTourStatus) y el último día el torneo seguía figurando EN CURSO en la web publicada:
+        // se le pedía la tabla a Chess-Results al entrar (_refreshLiveLeaders → _liveStandingsFetch) y
+        // esa tabla se guardaba en el localStorage del visitante ANTES de que llegara data/cr/<clave>.json,
+        // tapando la radiografía y las aperturas horneadas. Pasó con el Open de Sants (30/08/2026).
+        finished: !!entry.finished,
         status: status, _dateKey: dk
       };
     }).sort(function(a, b) { return b._dateKey - a._dateKey; });
@@ -11894,6 +11938,7 @@ function pgnGetTorneosForList() {
       broadcastUrl: entry.broadcastUrl || null,
       categories: entry.categories || null,   // para el badge "EN VIVO" de torneos con grupos (broadcast por categoría)
       rounds: entry.rounds || null,
+      finished: !!entry.finished,             // "Finalizado" a mano: manda sobre la regla de la fecha
       status: status,
       _dateKey: dk
     };

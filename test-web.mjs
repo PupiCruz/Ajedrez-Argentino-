@@ -1057,5 +1057,52 @@ console.log('\n=== 29. La formación inventada de la próxima ronda ===');
       'y si el torneo no expone los links (Olimpiadas), no se toca nada: sigue como antes');
 }
 
+console.log('\n=== 30. "Finalizado" a mano y lo horneado que no se tapa ===');
+{
+  // XXVII Open de Sants (30/08/2026): el autor lo marcó Finalizado, recalculó las aperturas, guardó y
+  // publicó, y en la web no salían. Dos fallas encadenadas:
+  //   1) pgnGetTorneosForList NO copiaba `finished` del manifest → renderTorneos caía en la regla de la
+  //      FECHA y el último día el torneo seguía figurando EN CURSO → _refreshLiveLeaders le pedía la
+  //      tabla a Chess-Results al entrar…
+  //   2) …y _liveStandingsFetch la guardaba en el localStorage del visitante ANTES de que llegara
+  //      data/cr/<clave>.json. Como crDataLoad lee localStorage primero, esa copia (rondas + tabla y
+  //      nada más) tapaba para siempre la radiografía y las aperturas horneadas. En incógnito pasaba
+  //      igual, porque el envenenamiento se rehacía en cada carga.
+  const lista = extraerFuncion('pgnGetTorneosForList');
+  chk((lista.match(/finished: !!entry\.finished/g) || []).length === 2,
+      'la lista de torneos se lleva el "Finalizado" del autor (web publicada Y modo autor)',
+      (lista.match(/finished: !!entry\.finished/g) || []).length + '/2');
+
+  // Y renderTorneos lo mira ANTES que al calendario.
+  const i = SRC.indexOf('pgnGetTorneosForList().forEach');
+  chk(i > 0 && /st\.finished \? 'done'/.test(SRC.slice(i, i + 400)),
+      'y "Finalizado" manda sobre computeTourStatus (la regla de la fecha)');
+
+  // El injerto: lo horneado es del AUTOR, así que el archivo gana sobre lo que escribe el vivo.
+  const load = extraerFuncion('crDataLoad');
+  chk(/_ondemand && d && typeof d === 'object'\) _crGraftBaked\(key, d\)/.test(load),
+      'crDataLoad injerta lo horneado cuando el localStorage no lo trae');
+  chk(/_ondemand && f\) _crGraftBaked\(key, f\)/.test(load),
+      'y también cuando el cuadro sale del archivo por clave alias');
+  chk(load.split('\n').filter(l => /_crGraftBaked\(key/.test(l)).every(l => /_ondemand/.test(l)),
+      'sólo en la web publicada: en modo autor el localStorage es la fuente de edición');
+
+  const graft = extraerFuncion('_crGraftBaked');
+  chk(/!d\.aperturas/.test(graft) && /_crBakedFor\(key, 'aperturas'\)/.test(graft)
+      && /!d\.stats/.test(graft) && /_crBakedFor\(key, 'stats'\)/.test(graft),
+      'injerta los DOS campos horneados, y sólo si faltan (nunca pisa lo que ya está)');
+
+  // El alias sigue funcionando: el autor guarda 'tz', la web abre 'ls'.
+  const alts = extraerFuncion('_crEmbeddedAlts');
+  chk(/'cr2_tz_', 'cr2_ls_', 'cr2_hc_'/.test(alts) && /out\.indexOf\(k\) < 0/.test(alts),
+      'las claves candidatas son el mismo sufijo con cualquier prefijo, sin repetir');
+
+  // Y si el MISMO torneo quedó guardado con dos claves (una vieja sin hornear y otra con las
+  // aperturas), gana la que las tiene: no alcanza con devolver la primera que exista.
+  const baked = extraerFuncion('_crBakedFor');
+  chk(/for \(var i = 0; i < alts\.length; i\+\+\) \{ var e = window\.__EMBEDDED_CR__\[alts\[i\]\]; if \(e && e\[campo\]\) return e\[campo\]; \}/.test(baked),
+      'y para lo horneado gana la clave que LO TENGA, no la primera que exista');
+}
+
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.') + '\n');
 process.exitCode = fallos ? 1 : 0;
