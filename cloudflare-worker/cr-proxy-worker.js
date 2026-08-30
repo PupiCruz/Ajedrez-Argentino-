@@ -1967,6 +1967,25 @@ async function ratingTop(request, reqUrl, env) {
       rating: r.rating, games: r.games, prov: ratingIsProv(r.games), title: r.title || null,
     }));
   }
+  // Cuarta columna: TÁCTICA, por CANTIDAD DE EJERCICIOS RESUELTOS (no por rating).
+  // Es a propósito. El rating de táctica se mueve mucho con pocos intentos: hoy el que más alto
+  // tiene resolvió DOS ejercicios difíciles de casualidad, y encabezaría por encima de los que
+  // practican todos los días. Contar resueltos es puro esfuerzo, no hay suerte que valga, y
+  // premia justo lo que se quiere fomentar.
+  try {
+    await ensurePuzProgressTable(env);
+    const q = await env.DB.prepare(
+      'SELECT up.user_id AS userId, up.solved AS solved, u.username AS username, u.title AS title ' +
+      'FROM user_puzzle up JOIN usuarios u ON u.id = up.user_id ' +
+      'WHERE up.solved > 0 AND (u.banned IS NULL OR u.banned = 0) ' +
+      // Empate: primero el que llegó antes a ese número.
+      'ORDER BY up.solved DESC, up.updated ASC LIMIT ?1'
+    ).bind(limit).all();
+    out.tactica = (((q && q.results) || [])).map((r) => ({
+      username: r.username || 'Jugador', userId: r.userId,
+      solved: r.solved || 0, title: r.title || null,
+    }));
+  } catch (e) { out.tactica = []; }
   return jsonResp(out, 200, 20);   // cache 20s: es un ranking, no hace falta al segundo
 }
 
@@ -2028,6 +2047,161 @@ async function ratingMe(request, env) {
 // identidad + rating de Lichess + los 3 ratings del sitio + táctica (rating/resueltos).
 // Nunca el token de Lichess ni e-mail. Si el usuario no existe (ej. un invitado de una
 // partida) → 404 "sin perfil". Búsqueda por nombre sin distinguir mayúsculas.
+// ─────────────────────────────────────────────────────────────────────────────
+// LOGROS DEL PERFIL (Fase 4)
+// ─────────────────────────────────────────────────────────────────────────────
+// Se calculan AL VUELO con lo que ya está guardado: rated_games (partidas PvP),
+// user_puzzle (ejercicios) y usuarios (antigüedad y caballito). A propósito NO hay tabla
+// de logros: así, cambiar una regla o agregar un logro nuevo lo aplica solo y para todos,
+// sin migrar nada ni recalcular lo viejo. Son 2 consultas por perfil.
+//
+// Tres cosas del diseño que conviene no perder:
+//   • Los que tienen NIVELES son UNA medalla que sube (10 → 50 → 250 partidas), no tres
+//     medallas distintas. Si no, el perfil de alguien con 250 partidas mostraría tres.
+//   • Sólo viajan los CONSEGUIDOS, más una lista aparte de los que faltan. La ficha nunca
+//     muestra casilleros grises: van apareciendo a medida que se logran.
+//   • Los SECRETOS no figuran en "te faltan". Son carambolas (rey ahogado, regla de las 50)
+//     que tienen gracia porque aparecen solas; anunciarlas las convertiría en tarea.
+//     'pionero' está ahí por otro motivo: ya no se puede conseguir, y listarlo sería burlarse.
+const LOGROS_SECRETOS = new Set(['ahogado', 'cincuenta', 'pionero']);
+
+// Hasta cuándo cuenta como "de los primeros". Las cuentas del sitio arrancaron en agosto de
+// 2026, así que es todo el que se haya sumado durante ese primer año.
+const PIONERO_HASTA = Math.floor(Date.UTC(2027, 0, 1) / 1000);
+
+// Jugadas de una partida guardada. `moves` es SAN separado por espacios ("e4 e5 Nf3"), tal
+// como lo arma el vivo-worker con history().join(' ').
+function _jugadasDe(moves) {
+  const s = String(moves || '').trim();
+  if (!s) return 0;
+  return Math.ceil(s.split(/\s+/).filter(Boolean).length / 2);
+}
+
+// Nivel alcanzado según los escalones. 0 = todavía no llegó al primero.
+function _nivelLogro(valor, escalones) {
+  let n = 0;
+  for (let i = 0; i < escalones.length; i++) if (valor >= escalones[i]) n = i + 1;
+  return n;
+}
+
+// Devuelve { logros: [conseguidos], faltan: [los que se pueden mostrar como objetivo] }.
+// `usuario` = fila de usuarios (created_at, patron_until). `puzData` = blob de user_puzzle.
+async function calcularLogros(env, userId, puzData, usuario) {
+  const P = {
+    n: 0, rachaMax: 0, ritmos: new Set(), mate: false, tiempo: false,
+    ahogado: false, cincuenta: false, dragon: false, miniatura: false,
+  };
+  try {
+    const r = await env.DB.prepare(
+      'SELECT category, result, white_id, black_id, white_before, black_before, reason ' +
+      'FROM rated_games WHERE white_id=?1 OR black_id=?1 ORDER BY ts ASC LIMIT 1000'
+    ).bind(userId).all();
+    let racha = 0;
+    for (const g of ((r && r.results) || [])) {
+      P.n++;
+      if (g.category) P.ritmos.add(g.category);
+      const blancas = (g.white_id === userId);
+      const gane = (g.result === (blancas ? 'w' : 'b'));
+      // "Victorias seguidas": las tablas TAMBIÉN cortan la racha. Ganar, empatar y ganar no
+      // son tres seguidas, y explicarlo de otra forma sería confuso.
+      if (gane) { racha++; if (racha > P.rachaMax) P.rachaMax = racha; } else { racha = 0; }
+      if (gane && g.reason === 'checkmate') P.mate = true;
+      if (gane && g.reason === 'flag') P.tiempo = true;
+      if (g.result === 'draw' && g.reason === 'stalemate') P.ahogado = true;
+      if (g.result === 'draw' && g.reason === 'fifty') P.cincuenta = true;
+      if (gane) {
+        const mio = blancas ? g.white_before : g.black_before;
+        const suyo = blancas ? g.black_before : g.white_before;
+        if (mio != null && suyo != null && (suyo - mio) >= 200) P.dragon = true;
+      }
+    }
+  } catch (e) { /* sin partidas o tabla nueva: sale con los de táctica y casa */ }
+
+  // Las jugadas se piden APARTE y sólo si alguna vez ganó por mate: `moves` puede pesar 20 KB
+  // por partida y traerlo para todas encarecería el perfil de cualquiera al pedo.
+  if (P.mate) {
+    try {
+      const r2 = await env.DB.prepare(
+        "SELECT moves FROM rated_games WHERE reason='checkmate' AND " +
+        "((white_id=?1 AND result='w') OR (black_id=?1 AND result='b')) LIMIT 50"
+      ).bind(userId).all();
+      for (const g of ((r2 && r2.results) || [])) {
+        const j = _jugadasDe(g.moves);
+        if (j > 0 && j < 25) { P.miniatura = true; break; }
+      }
+    } catch (e) { /* si falla, simplemente no se otorga la miniatura */ }
+  }
+
+  // Ejercicios: el progreso viaja como un blob JSON. `days` es un mapa fecha→cuántos.
+  let resueltos = 0, mejorRacha = 0, dias = 0;
+  try {
+    const b = JSON.parse(puzData || 'null') || {};
+    resueltos = b.solved || 0;
+    mejorRacha = b.bestStreak || 0;
+    dias = b.days ? Object.keys(b.days).length : 0;
+  } catch (e) { /* sin progreso guardado */ }
+
+  const ahora = Math.floor(Date.now() / 1000);
+  const alta = (usuario && usuario.created_at) || 0;
+  const esPatron = patronVigente(usuario && usuario.patron_until);
+
+  const L = [], F = [];
+  function dar(id, ico, nom, txt) { L.push({ id, ico, nom, txt }); }
+  function falta(id, ico, nom, txt) { if (!LOGROS_SECRETOS.has(id)) F.push({ id, ico, nom, txt }); }
+  function sea(cond, id, ico, nom, hecho, comoSeSaca) {
+    if (cond) dar(id, ico, nom, hecho); else falta(id, ico, nom, comoSeSaca);
+  }
+  function porNivel(valor, escalones, id, ico, nom, textos, comoSeSaca) {
+    const n = _nivelLogro(valor, escalones);
+    if (n > 0) L.push({ id, ico, nom, txt: textos[n - 1], niv: n, de: escalones.length });
+    else falta(id, ico, nom, comoSeSaca);
+  }
+
+  // ── Partidas ──
+  sea(P.n > 0, 'debut', '🎬', 'Debut',
+    'Jugaste tu primera partida rateada', 'Jugá tu primera partida en «Jugar en vivo»');
+  porNivel(P.n, [10, 50, 250], 'km', '♟️', 'Kilometraje',
+    ['10 partidas jugadas', '50 partidas jugadas', '250 partidas jugadas'],
+    'Jugá 10 partidas rateadas');
+  sea(P.mate, 'mate', '👑', 'Jaque mate',
+    'Ganaste dando mate', 'Ganá una partida dando jaque mate');
+  sea(P.miniatura, 'miniatura', '⚡', 'Miniatura',
+    'Diste mate antes de la jugada 25', 'Ganá por mate antes de la jugada 25');
+  sea(P.dragon, 'dragon', '🐉', 'Mataste al dragón',
+    'Le ganaste a alguien 200 puntos más fuerte', 'Ganale a alguien con 200 puntos más que vos');
+  porNivel(P.rachaMax, [3, 5, 10], 'racha', '🔥', 'Racha',
+    ['3 victorias seguidas', '5 victorias seguidas', '10 victorias seguidas'],
+    'Ganá 3 partidas seguidas');
+  sea(P.tiempo, 'tiempo', '⏱️', 'Sobre la hora',
+    'Ganaste por tiempo', 'Ganá una partida por tiempo');
+  sea(P.ahogado, 'ahogado', '🫥', 'Ahogado', 'Empataste por rey ahogado', '');
+  sea(P.cincuenta, 'cincuenta', '🧮', 'La regla de las 50',
+    'Tablas por la regla de las 50 jugadas', '');
+  sea(P.ritmos.size >= 3, 'ritmos', '🎲', 'Los tres ritmos',
+    'Jugaste bullet, blitz y rápida', 'Jugá al menos una de bullet, blitz y rápida');
+
+  // ── Táctica ──
+  porNivel(resueltos, [25, 100, 500], 'puz', '🧩', 'Resolvedor',
+    ['25 ejercicios resueltos', '100 ejercicios resueltos', '500 ejercicios resueltos'],
+    'Resolvé 25 ejercicios');
+  porNivel(mejorRacha, [5, 15, 30], 'punteria', '🎯', 'Puntería',
+    ['5 ejercicios seguidos sin fallar', '15 seguidos sin fallar', '30 seguidos sin fallar'],
+    'Resolvé 5 ejercicios seguidos sin fallar');
+  porNivel(dias, [7, 30, 100], 'dias', '📅', 'Constancia',
+    ['Practicaste 7 días distintos', 'Practicaste 30 días distintos', 'Practicaste 100 días distintos'],
+    'Practicá ejercicios 7 días distintos');
+
+  // ── La casa ──
+  sea(esPatron, 'colab', '♞', 'Colaborador',
+    'Le das una mano al sitio', 'Colaborá desde la pestaña Apoyar');
+  sea(alta > 0 && alta < PIONERO_HASTA, 'pionero', '🌱', 'De los primeros',
+    'Tu cuenta es del primer año del sitio', '');
+  sea(alta > 0 && (ahora - alta) >= 365 * 24 * 3600, 'aniversario', '🎂', 'Un año acá',
+    'Hace un año que tenés cuenta', 'Cumplí un año con tu cuenta');
+
+  return { logros: L, faltan: F };
+}
+
 async function publicProfile(request, reqUrl, env) {
   if (!env.DB) return errJson('Falta el binding D1 (DB)', 500);
   let handle = '';
@@ -2050,11 +2224,12 @@ async function publicProfile(request, reqUrl, env) {
   }
 
   // Táctica (pública, como el puzzle rating de Lichess): rating del blob + resueltos de la columna.
-  let tactic = null;
+  let tactic = null, puzBlob = null;
   try {
     await ensurePuzProgressTable(env);
     const row = await env.DB.prepare('SELECT data, solved FROM user_puzzle WHERE user_id=?1').bind(u.id).first();
     if (row) {
+      puzBlob = row.data || null;   // lo reusan los logros: pedirlo de nuevo sería una consulta al pedo
       let rt = null;
       try { const b = JSON.parse(row.data || 'null'); if (b && b.rating != null) rt = Math.round(b.rating); } catch (e) {}
       tactic = { rating: rt, solved: row.solved || 0 };
@@ -2075,6 +2250,12 @@ async function publicProfile(request, reqUrl, env) {
     }
   } catch (e) { /* si falla, el perfil sale igual sin seguidores */ }
 
+  // Logros. Van con el perfil (y no en un pedido aparte) para que la ficha salga completa de
+  // una: son 1 ó 2 consultas más y el perfil ya venía haciendo varias.
+  let logros = [], faltan = [];
+  try { const g = await calcularLogros(env, u.id, puzBlob, u); logros = g.logros; faltan = g.faltan; }
+  catch (e) { /* si falla, el perfil sale igual y sin medallas */ }
+
   return jsonResp({
     id: u.id, username: u.username, title: u.title || null, ratingLichess: u.rating || null,
     name: u.display_name || null, country: u.country || null, bio: u.bio || null, createdAt: u.created_at || null,
@@ -2082,6 +2263,7 @@ async function publicProfile(request, reqUrl, env) {
     // Colaborador: `patron` es lo único que mira el cliente para pintar el ♞; `patronSince`
     // es para el "colabora desde…" de la ficha. La fecha de vencimiento NO se publica.
     patron: patronVigente(u.patron_until) ? 1 : 0, patronSince: u.patron_since || null,
+    logros, faltan,
   });
 }
 

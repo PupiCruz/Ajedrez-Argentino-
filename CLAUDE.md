@@ -10,12 +10,13 @@ cambió y por qué está en **`PLAN-AUDITORIA.md`** (en esta misma carpeta): con
 antes de tocar cuentas, moderación, chats o el arranque de la página.
 
 ## 🧪 Bancos de pruebas — correrlos antes y después de tocar esas partes
-Quedaron cuatro, **242 comprobaciones** en total. No necesitan instalar nada (Node y listo):
+Quedaron cinco, **287 comprobaciones** en total. No necesitan instalar nada (Node y listo):
 
 | Banco | Qué cubre | Cómo se corre |
 |---|---|---|
 | `ajedrez-argentino/test-web.mjs` (60) | index.html y editar.html | `cd ajedrez-argentino` y `node test-web.mjs` |
 | `cloudflare-worker/test-cuentas.mjs` (59) | cuentas, frenos, rating, moderación | `cd ajedrez-argentino/cloudflare-worker` y `node test-cuentas.mjs` |
+| `cloudflare-worker/test-logros.mjs` (45) | reglas de los logros del perfil | `cd ajedrez-argentino/cloudflare-worker` y `node test-logros.mjs` |
 | `vivo-worker/test-lobby.mjs` (62) | lobby, los tres chats, desafíos, sanciones, bloqueo | `cd vivo-worker` y `node test-lobby.mjs` |
 | `vivo-worker/test-salas.mjs` (61) | salas de partida, hibernación, reloj | `cd vivo-worker` y `node test-salas.mjs` |
 

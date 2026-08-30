@@ -2393,6 +2393,10 @@
         <button class="chip" onclick="puzSetLevel('maestro',this)">Nivel maestro</button>
       </div>
       <div id="puz-stats-panel"></div>
+      <div style="display:flex;justify-content:flex-end;margin:-4px 0 14px">
+        <button type="button" class="lv-ranking-btn" title="Quiénes resolvieron más ejercicios"
+          onclick="window.lvOpenRanking&&window.lvOpenRanking('tactica')">🏆 Ranking de táctica</button>
+      </div>
       <div id="puz-author-tools" style="display:none;background:var(--bg2);border:1px dashed var(--gold-dim);border-radius:11px;padding:11px 13px;margin-bottom:14px">
         <div style="font-size:12px;color:var(--text2);line-height:1.5;margin-bottom:9px">🔗 <b style="color:var(--text2)">Enlazar ejercicios con sus partidas.</b> Busca en el pool la partida original de cada ejercicio y guarda el puntero, así la web publicada baja solo esa partida (KB) y no el índice entero (~34&nbsp;MB). Repetilo cada vez que agregás ejercicios nuevos.</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
@@ -3097,8 +3101,11 @@
       .lv-rank-sub { opacity:.72; font-size:.85rem; margin:0 0 16px; line-height:1.4; }
       .lv-rank-x { position:absolute; top:12px; right:12px; width:32px; height:32px; border-radius:50%; border:1px solid var(--border); background:var(--bg2); color:var(--text2); font-size:15px; cursor:pointer; display:flex; align-items:center; justify-content:center; }
       .lv-rank-x:hover { color:var(--text); border-color:var(--gold-dim); }
-      .lv-rank-cols { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; }
+      .lv-rank-cols { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; }
+      @media (max-width:900px) { .lv-rank-cols { grid-template-columns:repeat(2,1fr); } }
       @media (max-width:680px) { .lv-rank-cols { grid-template-columns:1fr; } }
+      /* Los resueltos de táctica no son un Elo: van sin el ancho fijo de los ratings. */
+      .lv-rank-el .lv-rank-un { font-size:.72em; opacity:.6; margin-left:2px; font-weight:600; }
       .lv-rank-col { background:var(--bg2); border:1px solid var(--bd22,rgba(255,255,255,.08)); border-radius:12px; padding:10px 10px 8px; }
       .lv-rank-col h4 { margin:0 0 8px; font-size:.95rem; display:flex; align-items:center; gap:6px; }
       .lv-rank-row { display:flex; align-items:center; gap:7px; padding:4px 3px; font-size:.86rem; border-radius:7px; }
@@ -34718,20 +34725,27 @@ function cvUpdateNagBadge() {
   // Botón "🏆 Ranking" en el encabezado de Jugar → modal con el top del sitio (Elo PROPIO por
   // partidas en vivo, NO el FIDE) en 3 columnas (bullet/blitz/rápida) + los que están en línea
   // (presencia que ya tiene el cliente) con botón Desafiar. El top baja de cr-proxy /rating/top.
-  var RANK_CATS=[['bullet','🎯 Bullet'],['blitz','⚡ Blitz'],['rapid','⏱️ Rápida']];
+  // El 3er dato de cada categoría es qué se muestra: 'elo' o 'resueltos'. La táctica NO va por
+  // rating (con pocos intentos se dispara y encabeza el que tuvo suerte), va por cantidad.
+  var RANK_CATS=[['bullet','🎯 Bullet','elo'],['blitz','⚡ Blitz','elo'],['rapid','⏱️ Rápida','elo'],
+    ['tactica','🧩 Táctica','resueltos']];
   var _rankCache=null;   // última respuesta del server (para reabrir al instante)
   function lvRankProxy(){ return (typeof CR_PROXY!=='undefined'&&CR_PROXY)?CR_PROXY:'https://cr-proxy.mmatiasscruz.workers.dev'; }
   function _lvRankKey(ev){ if(ev.key==='Escape') lvCloseRanking(); }
   function lvCloseRanking(){ var b=document.getElementById('lv-rank-back'); if(b) b.remove(); document.removeEventListener('keydown', _lvRankKey, true); }
-  function lvRankRowsHtml(list){
-    if(!list || !list.length) return '<div class="lv-rank-empty">Todavía nadie jugó acá.<br>¡Jugá una partida para aparecer! 🙂</div>';
+  function lvRankRowsHtml(list, modo){
+    if(!list || !list.length) return '<div class="lv-rank-empty">'+(modo==='resueltos'
+      ? 'Todavía nadie resolvió ejercicios.<br>¡Resolvé uno para aparecer! 🙂'
+      : 'Todavía nadie jugó acá.<br>¡Jugá una partida para aparecer! 🙂')+'</div>';
     var out='';
     for(var i=0;i<list.length;i++){ var p=list[i];
       var medal=(i===0?'🥇':i===1?'🥈':i===2?'🥉':(i+1)+'');
       var ttl=p.title?('<span class="lv-rank-ttl">'+lvEsc(p.title)+'</span>'):'';
       out+='<div class="lv-rank-row"><span class="lv-rank-pos">'+medal+'</span>'+ttl
         +(window.aaPatron?window.aaPatron.badge(p.username):'')+'<span class="lv-rank-nm aa-nick-clk" data-uprofile="'+lvEsc(p.username)+'">'+lvEsc(p.username)+'</span>'
-        +'<span class="lv-rank-el">'+(p.rating!=null?p.rating:'—')+(p.prov?'<span class="lv-rank-prov">?</span>':'')+'</span></div>';
+        +'<span class="lv-rank-el">'+(modo==='resueltos'
+          ? ((p.solved!=null?p.solved:'—')+'<span class="lv-rank-un">ej.</span>')
+          : ((p.rating!=null?p.rating:'—')+(p.prov?'<span class="lv-rank-prov">?</span>':'')))+'</span></div>';
     }
     return out;
   }
@@ -34755,18 +34769,29 @@ function cvUpdateNagBadge() {
   }
   // Repinta solo la lista "En línea ahora" del modal de ranking (si está abierto). Lo usa dnd-changed.
   function lvRankRefreshOnline(){ var on=document.getElementById('lv-rank-onlist'); if(on) on.innerHTML=lvRankOnlineHtml(); }
+  var _rankFoco=null;   // a qué columna saltar cuando terminen de dibujarse
   function lvRankRender(data){
     var cols=document.getElementById('lv-rank-cols');
-    if(cols){ var h=''; RANK_CATS.forEach(function(c){ h+='<div class="lv-rank-col"><h4>'+c[1]+'</h4>'+lvRankRowsHtml((data&&data[c[0]])||[])+'</div>'; }); cols.innerHTML=h; }
+    if(cols){ var h=''; RANK_CATS.forEach(function(c){ h+='<div class="lv-rank-col"><h4>'+c[1]+'</h4>'+lvRankRowsHtml((data&&data[c[0]])||[], c[2])+'</div>'; }); cols.innerHTML=h; }
     var on=document.getElementById('lv-rank-onlist'); if(on) on.innerHTML=lvRankOnlineHtml();
+    if(_rankFoco && cols){
+      var i=-1; for(var k=0;k<RANK_CATS.length;k++) if(RANK_CATS[k][0]===_rankFoco) i=k;
+      var col=(i>=0)?cols.children[i]:null;
+      if(col){ try{ col.scrollIntoView({block:'nearest'}); }catch(e){ col.scrollIntoView(); } }
+      _rankFoco=null;
+    }
   }
-  window.lvOpenRanking=function(){
+  // `foco` (opcional) = clave de la columna a la que hay que ir (ej. 'tactica' desde Entrenar).
+  // Sin esto, en el teléfono el que viene por los ejercicios cae arriba de todo y tiene que
+  // bajar por tres tablas de partidas antes de encontrar la suya.
+  window.lvOpenRanking=function(foco){
     lvCloseRanking();
+    _rankFoco=foco||null;
     var back=document.createElement('div'); back.id='lv-rank-back'; back.className='lv-rank-back';
     back.innerHTML='<div class="lv-rank-card" role="dialog" aria-modal="true" aria-label="Ranking del sitio">'
       +'<button type="button" class="lv-rank-x" title="Cerrar" aria-label="Cerrar">✕</button>'
       +'<h3>🏆 Ranking del sitio</h3>'
-      +'<p class="lv-rank-sub">Elo propio del sitio por partidas en vivo (no es el ranking FIDE). El “?” marca rating provisional.</p>'
+      +'<p class="lv-rank-sub">Los tres primeros son el Elo propio del sitio por partidas en vivo (no es el ranking FIDE); el “?” marca rating provisional. Táctica va por <b>ejercicios resueltos</b>.</p>'
       +'<div id="lv-rank-cols" class="lv-rank-cols"><div class="lv-rank-loading">Cargando…</div></div>'
       +'<div class="lv-rank-online"><h4>🟢 En línea ahora</h4><div id="lv-rank-onlist" class="lv-rank-onlist"></div></div>'
       +'</div>';
@@ -36835,6 +36860,34 @@ function cvUpdateNagBadge() {
     padding:calc(18px + var(--hdr-real)) 16px calc(var(--nav-h) + 28px)}
   /* A todo ancho (como el perfil de jugador), centrado y legible. */
   .aa-profpage-body{width:100%;max-width:940px}
+  /* ── Logros ──────────────────────────────────────────────────────────────────────
+     Sólo se dibujan las CONSEGUIDAS: nada de casilleros grises. Los pendientes viven
+     detrás de un <details> que arranca cerrado, así el perfil celebra en vez de recordar
+     todo lo que falta. */
+  .aa-lg-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:9px}
+  /* El dorado va COMO CAPA sobre --card90, no solo: el fondo del sitio tiene piezas y una
+     bandera dibujadas, y con la medalla translúcida se colaban por debajo del texto. */
+  .aa-lg{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;
+    background:linear-gradient(0deg,rgba(255,201,64,.10),rgba(255,201,64,.10)),var(--card90);
+    border:1px solid var(--gold-dim)}
+  .aa-lg-ico{font-size:1.55rem;line-height:1;flex-shrink:0}
+  .aa-lg-txt{min-width:0}
+  .aa-lg-nom{font-size:.86rem;font-weight:800;color:var(--gold);display:flex;align-items:center;gap:5px}
+  .aa-lg-det{font-size:.74rem;opacity:.78;line-height:1.35;margin-top:1px}
+  /* Los puntitos del nivel: una medalla que subió a 2 de 3 muestra ●●○. */
+  .aa-lg-niv{font-size:.62rem;letter-spacing:1px;opacity:.85}
+  /* Los pendientes van apagados, pero NO transparentes: el fondo del sitio tiene piezas
+     dibujadas y se colaba por debajo hasta hacerlos ilegibles. */
+  .aa-lg-falta .aa-lg{background:var(--card90);border-color:var(--border);opacity:.72}
+  .aa-lg-falta .aa-lg-nom{color:var(--text2)}
+  .aa-lg-falta .aa-lg-ico{filter:grayscale(.7)}
+  .aa-lg-mas{cursor:pointer;font-size:.8rem;opacity:.7;margin-top:10px;list-style:none}
+  .aa-lg-mas:before{content:'▸ '}
+  details[open] .aa-lg-mas:before{content:'▾ '}
+  .aa-lg-mas::-webkit-details-marker{display:none}
+  .aa-lg-mas:hover{opacity:1}
+  details[open] .aa-lg-mas{margin-bottom:8px}
+  .aa-lg-vacio{font-size:.84rem;opacity:.7;line-height:1.5}
   /* En la página, la ficha y las tarjetas respiran un poco más. */
   .aa-profpage-body .aa-idname{font-size:2rem}
   .aa-profpage-body .aa-prof-rat-val{font-size:2.15rem}
@@ -37022,7 +37075,10 @@ function cvUpdateNagBadge() {
       tactic:d.tactic||null, isSelf:false, online:_isOnline(d.id), dnd:!!d.dnd,
       followers:d.followers, following:d.following, youFollow:!!d.youFollow,
       // Colaborador: viene de /u/<nick>. Si no se copian acá, la ficha nunca ve el caballito.
-      patron:!!d.patron, patronSince:d.patronSince||null };
+      patron:!!d.patron, patronSince:d.patronSince||null,
+      // Los logros los calcula el Worker; acá sólo se copian. OJO: si no se agregan a esta
+      // lista, el servidor los manda y la ficha igual no los ve (ya pasó con `patron`).
+      logros:d.logros||[], faltan:d.faltan||[] };
   }
   function _isOnline(id){ try{ return !!(id && window.__lvIsOnline && window.__lvIsOnline(id)); }catch(e){ return false; } }
   // Si alguien se conecta o se va mientras estás mirando su perfil, prender/apagar el puntito sin
@@ -37115,6 +37171,31 @@ function cvUpdateNagBadge() {
         bio+acts+userActionsHtml(P)+modRowHtml(P)+
       '</div>';
   }
+  // Las medallas. `P.logros` son las conseguidas y `P.faltan` las que se pueden mostrar como
+  // objetivo (las secretas no vienen). Si no hay ninguna de las dos, no se dibuja la sección.
+  function logrosHtml(P){
+    var L=(P.logros)||[], F=(P.faltan)||[];
+    if(!L.length && !F.length) return '';
+    function medalla(l, gris){
+      var niv='';
+      if(l.niv && l.de) niv=' <span class="aa-lg-niv">'+_repetir('●',l.niv)+_repetir('○',l.de-l.niv)+'</span>';
+      return '<div class="aa-lg"><span class="aa-lg-ico">'+esc(l.ico||'🏅')+'</span>'+
+        '<span class="aa-lg-txt"><span class="aa-lg-nom">'+esc(l.nom||'')+niv+'</span>'+
+        '<span class="aa-lg-det">'+esc(l.txt||'')+'</span></span></div>';
+    }
+    var h='<div class="aa-prof-lbl">'+(P.isSelf?'Tus logros':'Logros')+(L.length?(' ('+L.length+')'):'')+'</div>';
+    if(L.length) h+='<div class="aa-lg-grid">'+L.map(function(l){ return medalla(l); }).join('')+'</div>';
+    else h+='<div class="aa-lg-vacio">'+(P.isSelf
+      ? 'Todavía ninguno. Jugá una partida en «Jugar en vivo» o resolvé unos ejercicios y empiezan a aparecer solos.'
+      : 'Todavía no consiguió ninguno.')+'</div>';
+    if(F.length){
+      h+='<details><summary class="aa-lg-mas">'+(P.isSelf?'Te faltan ':'Le faltan ')+F.length+'</summary>'+
+        '<div class="aa-lg-grid aa-lg-falta">'+F.map(function(l){ return medalla(l, true); }).join('')+'</div></details>';
+    }
+    return h;
+  }
+  function _repetir(c,n){ var o=''; for(var i=0;i<(n||0);i++) o+=c; return o; }
+
   function tacticHtml(P){
     var T=P.tactic, has=!!(T && (T.rating!=null || (T.solved||0)>0)) || P.isSelf;
     if(!has) return '';
@@ -37148,13 +37229,13 @@ function cvUpdateNagBadge() {
       return '<div class="aa-prof-top">'+idCardHtml(P,mode)+
           '<div class="aa-prof-rats">'+ratCardsHtml(P)+'</div>'+
         '</div>'+
-        tacticHtml(P)+histBlockHtml(P);
+        tacticHtml(P)+logrosHtml(P)+histBlockHtml(P);
     }
     // Vistazo (overlay): rápido y apilado — identidad + ratings + táctica + "Ver perfil completo".
     return idCardHtml(P,mode)+
       '<div class="aa-prof-lbl">'+(P.isSelf?'Tus ratings del sitio':'Ratings del sitio')+'</div>'+
       '<div class="aa-prof-rats">'+ratCardsHtml(P)+'</div>'+
-      tacticHtml(P)+footHtml(P);
+      tacticHtml(P)+logrosHtml(P)+footHtml(P);
   }
 
   // ── Pintado dentro del contenedor (overlay = tarjeta; page = cuerpo con barra propia) ──
@@ -37208,6 +37289,9 @@ function cvUpdateNagBadge() {
       if(!d || myReq!==reqId) return;   // el usuario cambió de perfil / cerró
       P.followers=d.followers; P.following=d.following;
       P.name=d.name||null; P.country=d.country||null; P.bio=d.bio||null; P.createdAt=d.createdAt||null;   // la fichita
+      // Los logros MÍOS también salen de acá: selfProfile() se arma con lo que hay en el
+      // navegador y no tiene forma de calcularlos. Sin esta línea, mi perfil sería el único sin medallas.
+      P.logros=d.logros||[]; P.faltan=d.faltan||[];
       if(curProfile===P) paintProfile(P);
     }).catch(function(){});
   }
