@@ -7348,7 +7348,18 @@ function _teamParseStandings(rows){
     var row=rows[i2];
     if(!row.length || row.join('').trim()===''){ if(teams.length) break; else continue; }
     var rk=parseInt(row[rkCol]); var name=(row[cTeam]||'').trim();
-    if(isNaN(rk)||!name) continue;
+    if(!name) continue;
+    // Chess-Results escribe el puesto SÓLO en el primero de cada grupo de empatados y deja la celda
+    // "Rk." vacía en los demás. Descartar esas filas se comía media tabla: en la ronda 1 de la Liga
+    // Nacional se veían 8 de 18 equipos, y en la Olimpiada de Budapest 2024, 189 de 197 (en las
+    // primeras rondas de una Olimpiada está empatado casi todo el mundo). Se arrastra el puesto del
+    // equipo de arriba, que es lo que la celda vacía quiere decir. El nº de siembra ("No.Ini.") sí
+    // viene siempre, y se usa de comprobación para no tragarse una fila de pie de página.
+    if(isNaN(rk)){
+      var _seed=(cRk>=0&&cNo>=0)?parseInt(row[cNo]):NaN;   // en el RANKING INICIAL rkCol ya es "No.": ahí nunca falta
+      if(!teams.length||isNaN(_seed)) continue;
+      rk=teams[teams.length-1].rk;
+    }
     var t={ rk:rk, name:name, fed:(cFed>=0?(row[cFed]||'').trim().toUpperCase():'') };
     if(isFinal){
       t.played=((cPart>=0?row[cPart]:'')||'')+''; t.w=((cPlus>=0?row[cPlus]:'')||'')+'';
@@ -7480,6 +7491,68 @@ function _teamParseCrosses(rows){
   var res={}; res[num||1]=out; return res;
 }
 
+// Parser de la COMPOSICIÓN OFICIAL DE LOS EQUIPOS (Chess-Results art=8, "Composición de los equipos"):
+// la LISTA DE INSCRIPCIÓN de cada equipo — todos los jugadores anotados, en el orden de tablero con el
+// que el equipo se registró, hayan jugado o no. Es otra cosa que la formación (art=3), que sólo dice
+// quién se sentó en cada mesa ESA ronda (el tablero 4 sube a la mesa 3 cuando descansa alguien de
+// arriba). Y existe desde ANTES de la primera ronda, así que el plantel se puede mostrar en un torneo
+// que todavía no empezó. Formato del archivo:
+//     "   12. Argentina (Elo medio:2557 / Des 1: 0 / Des 2: 0) Capitán: Tomas Sosa"
+//     "M." | "" | "Nombre" | "Elo" | "FED" | "FIDE-ID" | ["Pts."] | "Partidas" | ["Rp"]
+//     "1" | "GM" | "Flores, Diego" | "2582" | "ARG" | "108049" | ...
+// Las columnas cambian según el torneo (sin jugar no hay Pts. ni Rp), por eso se leen del encabezado.
+// Devuelve [{no,name,capt,eloAvg,players:[{bo,ti,nm,elo,fed,fid,pts,gm,rp}]}] o null.
+function _teamParseRoster(rows){
+  var teams=[], cur=null, cols=null;
+  for(var i=0;i<(rows||[]).length;i++){
+    var r=rows[i]||[];
+    var c0=String(r[0]==null?'':r[0]).trim();
+    if(!c0) continue;
+    // Encabezado de equipo. Una fila de jugador arranca con el nº de tablero SIN punto ("1"), así que
+    // pedir el punto ("1.") alcanza para no confundirlos.
+    var mh=c0.match(/^(\d+)\.\s+(\S.*)$/);
+    if(mh){
+      var resto=mh[2], capt='';
+      var mc=resto.match(/\s*(?:Capit[aá]n|Captain|Kapit[äa]n)\s*:\s*(.+)$/i);
+      if(mc){ capt=mc[1].trim(); resto=resto.slice(0,mc.index); }
+      // El paréntesis final trae el Elo medio y los desempates. Se saca SÓLO si contiene alguno de
+      // esos datos, para no comerse un club que se llame "... (algo)".
+      var eloAvg='';
+      var me=resto.match(/\(([^()]*(?:Elo medio|Elo average|Average Elo|Des\s*1)[^()]*)\)\s*$/i);
+      if(me){ var mv=me[1].match(/Elo\s*(?:medio|average)\s*:?\s*(\d+)/i)||me[1].match(/Average Elo\s*:?\s*(\d+)/i); if(mv) eloAvg=mv[1]; resto=resto.slice(0,me.index); }
+      cur={ no:parseInt(mh[1]), name:resto.trim(), capt:capt, eloAvg:eloAvg, players:[] };
+      cols=null;
+      if(cur.name) teams.push(cur); else cur=null;
+      continue;
+    }
+    if(/^M\.?$/i.test(c0)){
+      cols={};
+      for(var c=0;c<r.length;c++){
+        var v=String(r[c]==null?'':r[c]).trim();
+        if(/^(nombre|name)$/i.test(v)) cols.nm=c;
+        else if(/^elo/i.test(v)&&cols.elo==null) cols.elo=c;
+        else if(/^fed$/i.test(v)) cols.fed=c;
+        else if(/^fide[\s-]*id$/i.test(v)) cols.fid=c;
+        else if(/^pts/i.test(v)) cols.pts=c;
+        else if(/^(partidas|games)$/i.test(v)) cols.gm=c;
+        else if(/^rp$/i.test(v)) cols.rp=c;
+      }
+      if(cols.nm==null) cols=null; else cols.ti=cols.nm-1;   // el título va en la columna sin nombre, antes de "Nombre"
+      continue;
+    }
+    if(cur&&cols&&/^\d+$/.test(c0)){
+      var nm=String(r[cols.nm]==null?'':r[cols.nm]).trim();
+      if(!nm||_teamIsPlaceholder(nm)) continue;   // el jugador fantasma de relleno no es del plantel
+      var g=function(k){ return cols[k]==null?'':String(r[cols[k]]==null?'':r[cols[k]]).trim(); };
+      var ti=_normTitle(g('ti')); if(!_TEAM_TITLES.test(ti)) ti='';
+      cur.players.push({ bo:parseInt(c0), ti:ti, nm:_teamStripColor(nm), elo:parseInt(g('elo'))||0,
+        fed:g('fed').toUpperCase(), fid:g('fid'), pts:g('pts'), gm:g('gm'), rp:g('rp') });
+    }
+  }
+  teams=teams.filter(function(t){ return t.players.length; });
+  return teams.length?teams:null;
+}
+
 // ── Render por equipos ──
 function _teamRenderStandings(standings, crk){
   var teams=standings&&standings.teams;
@@ -7503,7 +7576,9 @@ function _teamRenderStandings(standings, crk){
     // activo, resaltar la fila de Argentina (la tabla NO se filtra: se conserva la posición en el ranking).
     var rowBg=(_teamArgOnly&&_isArg)?'background:var(--gold-bg)':(i%2===1?'background:var(--zebra)':'');
     h+='<tr style="'+rowBg+'">';
-    h+='<td style="'+td+';color:var(--text3)">'+escHtml(String(t.rk||i+1))+'</td>';
+    // Igual que Chess-Results: en un grupo de empatados el puesto se escribe una sola vez, arriba.
+    var _mismoRk=(i>0&&teams[i-1]&&teams[i-1].rk===t.rk);
+    h+='<td style="'+td+';color:var(--text3)">'+(_mismoRk?'':escHtml(String(t.rk||i+1)))+'</td>';
     var _flag=_fed?crFlagEmoji(_fed):'';   // bandera solo si es país; los clubes van sin bandera
     var _nm=(crk&&t.name)
       ? '<span onclick="crOpenCountry('+crArg(crk)+','+crArg(t.name)+')" title="Ver la performance de '+escHtml(_paisES(t.name,_fed))+'" style="cursor:pointer;display:inline-flex;align-items:center;gap:7px" onmouseover="this.style.color=\'var(--gold)\'" onmouseout="this.style.color=\'\'">'+(_flag?_flag+' ':'')+'<span>'+escHtml(_paisES(t.name,_fed))+'</span></span>'
@@ -7832,7 +7907,7 @@ function _teamRenderSection(crk,data){
   h+='<span style="font-size:11px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:var(--text2)">🏆 Resultados por equipos</span>';
   if(!_ondemand){
     h+='<div style="display:flex;gap:6px;align-items:center">';
-    h+='<label style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:var(--bg3);border:1px solid var(--border);color:var(--text2);font-size:11px;font-weight:600;border-radius:8px;cursor:pointer;font-family:inherit" title="Subí el Excel de una ronda: cruces por países (art=2) o formación por mesas (art=3). Se detecta solo."><input type="file" accept=".xlsx" style="display:none" onchange="_teamImportRound(\''+ks+'\',this)">♟ Subir ronda</label>';
+    h+='<label style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:var(--bg3);border:1px solid var(--border);color:var(--text2);font-size:11px;font-weight:600;border-radius:8px;cursor:pointer;font-family:inherit" title="Subí el Excel de una ronda: cruces por países (art=2), formación por mesas (art=3) o composición de los equipos (art=8, el plantel inscripto). Se detecta solo."><input type="file" accept=".xlsx" style="display:none" onchange="_teamImportRound(\''+ks+'\',this)">♟ Subir ronda</label>';
     h+='<label style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-size:11px;font-weight:600;border-radius:8px;cursor:pointer;font-family:inherit" title="Excel de la clasificación final por equipos"><input type="file" accept=".xlsx" style="display:none" onchange="_teamImportStandings(\''+ks+'\',this)">📊 Tabla equipos</label>';
     if(_crUrlByKey[crk] && /tnr\d+/i.test(_crUrlByKey[crk])){
       h+='<button onclick="_crAutoUpdateTeamBtn(\''+ks+'\')" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:rgba(60,130,200,.15);border:1px solid rgba(70,150,220,.4);color:#7ab8e6;font-size:11px;font-weight:600;border-radius:8px;cursor:pointer;font-family:inherit" title="Baja solo todas las rondas + la clasificación desde Chess-Results">🔄 Actualizar desde Chess-Results</button>';
@@ -7985,6 +8060,18 @@ async function _teamDoRound(crk,bytes){
     // Un mismo botón acepta los dos Excel: "Emparejamientos de los equipos" (art=2 = cruces por países)
     // o "Emparejamientos por mesas" (art=3 = formación). Detectamos cuál es por el título del encabezado.
     var titulo=rows.slice(0,8).map(function(r){return r.join(' ');}).join(' | ');
+    // "Composición de los equipos" (art=8) = la LISTA DE INSCRIPCIÓN de cada equipo. El título puede
+    // caer bastante abajo (en varios torneos arriba va todo el bloque de datos: árbitro, sede, fechas),
+    // por eso se mira más lejos que para los otros dos.
+    var tituloLargo=rows.slice(0,26).map(function(r){return r.join(' ');}).join(' | ');
+    if(/Composici[oó]n\s+de\s+los\s+equipos|team[\s-]*composition|Mannschaftsaufstellung/i.test(tituloLargo)){
+      var ros=_teamParseRoster(rows);
+      if(!ros){ setS('❌ No se reconoció la composición de los equipos.'); return; }
+      var dRos=crDataLoad(crk)||{}; dRos.teamRoster=ros; crDataSave(crk,dRos);
+      setS('✓ Plantel oficial — '+ros.length+' equipos, '+ros.reduce(function(a,t){return a+t.players.length;},0)+' jugadores. Se ve al tocar un equipo en la tabla.');
+      _teamRefresh(crk, _teamCurTab[crk]||null);
+      return;
+    }
     var esCruces=/Emparejamientos?\s+de\s+los?\s+equipos|team[\s-]*pairings/i.test(titulo) && !/por\s+mesas|by\s+board/i.test(titulo);
     var data=crDataLoad(crk)||{};
     if(esCruces){
@@ -9761,12 +9848,17 @@ async function _crAutoFetchTeam(crk, crUrl, opts) {
     // con qué equipo) días antes que la formación mesa por mesa, que la carga el árbitro cuando los
     // capitanes entregan la alineación.
     var maxFormacion = maxR;
+    // COMPOSICIÓN OFICIAL DE LOS EQUIPOS (art=8): el plantel inscripto de cada equipo. Se pide en
+    // paralelo con la clasificación para no sumar espera, y no depende de que haya rondas jugadas
+    // (en un torneo que todavía no empezó es lo ÚNICO que hay para mostrar de cada equipo).
+    var rosterP = _crProxyFetch(_crExportUrl(crUrl, 8, null)).then(crExtractXlsx).then(_teamParseRoster).catch(function(){ return null; });
     try {
       var srows = await crExtractXlsx(await _crProxyFetch(_crExportUrl(crUrl, 0, null)));
       var stand = _teamParseStandings(srows);
       if (stand && stand.teams && stand.teams.length) data.teamStandings = stand;
       if (!maxR) maxR = _teamRoundsFromStandings(srows);
     } catch(e) {}
+    try { var _ros = await rosterP; if (_ros && _ros.length) data.teamRoster = _ros; } catch(e) {}
     // 2) Por ronda bajamos DOS vistas en paralelo: CRUCES POR PAÍSES (art=2, salen antes, país vs país)
     //    y FORMACIÓN por mesas (art=3, la composición tablero por tablero). Con maxR conocido vamos
     //    1..maxR+1 (la +1 agarra la ronda en curso, cuyos cruces ya salieron aunque la formación no).
@@ -10954,12 +11046,31 @@ function crOpenCountry(key, who){
   Object.keys(tr).map(Number).sort(function(a,b){return a-b;}).forEach(function(r){
     (tr[r]||[]).forEach(function(m){
       var meA=isMe(m.aName,''), meB=isMe(m.bName,''); if(!meA&&!meB) return;
-      (m.boards||[]).forEach(function(b){ var nm=meA?b.nW:b.nB; if(!nm) return; var rp=_teamResPts(b.res);
+      (m.boards||[]).forEach(function(b){ var nm=meA?b.nW:b.nB;
+        if(!nm||_teamIsPlaceholder(nm)) return;   // "Sin jugador asignado" es relleno, no un jugador
+        var rp=_teamResPts(b.res);
         if(!roster[nm]){ roster[nm]={score:0,games:0,title:meA?b.tW:b.tB,elo:meA?b.eW:b.eB}; rorder.push(nm); }
         if(rp){ roster[nm].score+=meA?rp[0]:rp[1]; roster[nm].games++; } });
     });
   });
   if(!cfed) cfed=_teamResolveFed(cname, data);   // países sin "(FED)" en el nombre: resolver para la bandera
+  // PLANTEL OFICIAL: la lista de inscripción del equipo bajada de Chess-Results (art=8, ver
+  // _teamParseRoster). Es el listado oficial —todos los anotados, en su orden de tablero— y no
+  // depende de que hayan jugado, así que aparece también en un torneo que todavía no empezó.
+  // Se busca por nombre normalizado y, si no, por federación (el clic puede venir con el código
+  // "ESP" desde las partidas, o con el nombre largo "United States of America" desde la tabla).
+  var ofi=null;
+  try {
+    var _rosN=_teamNorm(cname);
+    (data.teamRoster||[]).forEach(function(t){
+      if(ofi||!t||!t.name) return;
+      if(_teamNorm(t.name)===_rosN || isMe(t.name,'')){ ofi=t; return; }
+      if(cfed){
+        var f=_teamCountryParts(t.name).fed || _nombreFedIx()[normStr(t.name)] || _NAME_FED[String(t.name).toLowerCase()] || '';
+        if(f===cfed) ofi=t;
+      }
+    });
+  } catch(e){}
 
   var h='<div style="padding:8px 2px 16px;max-width:660px;margin:0 auto">';
   h+='<div style="background:var(--card90);border:1px solid var(--bd22);border-radius:var(--r-lg);box-shadow:var(--shadow-card);padding:14px 16px;margin-bottom:12px">';
@@ -10968,15 +11079,29 @@ function crOpenCountry(key, who){
   if(_fl) h+='<div style="flex-shrink:0;font-size:0;line-height:0;border-radius:6px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.4)">'+_fl+'</div>';
   h+='<div style="flex:1;min-width:0">';
   h+='<div style="font-size:18px;font-weight:700;color:var(--white-ink);line-height:1.15;text-shadow:var(--txt-out)">'+escHtml(_paisES(cname,cfed))+(cfed?' <span style="font-size:12.5px;color:var(--fg-c8);font-weight:600">'+escHtml(cfed)+'</span>':'')+'</div>';
-  h+='<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:3px;font-size:13px;color:var(--text2)">';
-  h+='<span style="color:#4caf50;font-weight:600">'+W+' ganó</span> · <span style="color:var(--gold);font-weight:600">'+D+' empató</span> · <span style="color:#e05555;font-weight:600">'+L+' perdió</span>';
-  h+='</div></div>';
-  h+='<div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;margin-left:4px">';
-  h+='<span style="font-size:22px;font-weight:700;color:var(--gold);line-height:1">'+crPtsStr(boardPts)+'</span>';
-  h+='<span style="font-size:11.5px;color:var(--text3)">pts tablero</span>';
+  // Sin ninguna ronda jugada (torneo que todavía no empezó) el "0 ganó · 0 empató · 0 perdió" y el
+  // "0 pts tablero" no dicen nada: en su lugar va el Elo medio y el capitán del plantel oficial.
+  if(hist.length){
+    h+='<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:3px;font-size:13px;color:var(--text2)">';
+    h+='<span style="color:#4caf50;font-weight:600">'+W+' ganó</span> · <span style="color:var(--gold);font-weight:600">'+D+' empató</span> · <span style="color:#e05555;font-weight:600">'+L+' perdió</span>';
+    h+='</div>';
+  } else if(ofi&&(ofi.eloAvg||ofi.capt)){
+    var _subH=[]; if(ofi.eloAvg) _subH.push('Elo medio '+escHtml(String(ofi.eloAvg))); if(ofi.capt) _subH.push('Capitán: '+escHtml(ofi.capt));
+    h+='<div style="margin-top:3px;font-size:13px;color:var(--text2)">'+_subH.join(' · ')+'</div>';
+  }
   h+='</div>';
-  if(tinfo&&tinfo.rk){ var medal=tinfo.rk===1?'🥇':tinfo.rk===2?'🥈':tinfo.rk===3?'🥉':'#'+tinfo.rk;
-    h+='<div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;margin-left:10px"><span style="font-size:18px;font-weight:700;color:var(--text);line-height:1">'+medal+'</span><span style="font-size:11.5px;color:var(--text3)">pos</span></div>'; }
+  if(hist.length){
+    h+='<div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;margin-left:4px">';
+    h+='<span style="font-size:22px;font-weight:700;color:var(--gold);line-height:1">'+crPtsStr(boardPts)+'</span>';
+    h+='<span style="font-size:11.5px;color:var(--text3)">pts tablero</span>';
+    h+='</div>';
+  }
+  if(tinfo&&tinfo.rk){
+    // OJO: si la tabla cargada es el RANKING INICIAL (torneo por jugarse), el "1" es la SIEMBRA por
+    // Elo, no una posición ganada — un 🥇 ahí haría creer que el equipo ya salió campeón.
+    var _iniRk=((data.teamStandings&&data.teamStandings.kind)==='initial');
+    var medal=_iniRk?('#'+tinfo.rk):(tinfo.rk===1?'🥇':tinfo.rk===2?'🥈':tinfo.rk===3?'🥉':'#'+tinfo.rk);
+    h+='<div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;margin-left:10px"><span style="font-size:18px;font-weight:700;color:var(--text);line-height:1">'+medal+'</span><span style="font-size:11.5px;color:var(--text3)">'+(_iniRk?'siembra':'pos')+'</span></div>'; }
   h+='</div>';   // /header
 
   if(hist.length){
@@ -11008,16 +11133,73 @@ function crOpenCountry(key, who){
     });
     h+='</table></div>';
   }
-  if(rorder.length){
+  // ── Plantel ──
+  // Con la COMPOSICIÓN OFICIAL bajada se lista ÉSA, entera y en el orden de tablero de inscripción:
+  // el tablero 1, 2, 3… de verdad del equipo (que NO es la mesa donde se sienta cada uno — el 4 sube
+  // a la mesa 3 cuando descansa alguien de arriba), y con los que todavía no jugaron incluidos.
+  // Puntos / partidas / Rp salen de la misma planilla oficial; si el torneo aún no los trae, se cae a
+  // lo calculado con las formaciones. Un jugador que está en la formación pero no en la lista (nombre
+  // escrito distinto entre una planilla y otra) se muestra igual, al final, para no perderlo.
+  var _ofPl=(ofi&&ofi.players)?ofi.players:[];
+  var _yaEsta={}; _ofPl.forEach(function(p){ _yaEsta[_teamNorm(p.nm)]=1; });
+  var _extraPl=rorder.filter(function(nm){ return !_yaEsta[_teamNorm(nm)]; });
+  // Federación dominante del plantel: sirve para marcar SÓLO a los que juegan con otra bandera (los
+  // extranjeros de un club). En un país todos comparten federación y no se muestra ninguna.
+  var _ofFed=''; (function(){ var cnt={},best=0; _ofPl.forEach(function(p){ if(!p.fed) return; cnt[p.fed]=(cnt[p.fed]||0)+1; if(cnt[p.fed]>best){ best=cnt[p.fed]; _ofFed=p.fed; } }); })();
+  if(!_ofFed) _ofFed=cfed;
+  // ¿El torneo tiene FORMACIONES de verdad cargadas? Con eso decidimos de dónde salen los puntos.
+  var _hayForm=Object.keys(tr).some(function(r){ return _teamRoundHasBoards(tr[r]); });
+  if(_ofPl.length||_extraPl.length){
+    var _numPl=function(x){ var v=parseFloat(String(x==null?'':x).replace(',','.')); return isNaN(v)?null:v; };
+    var _plRow=function(bo,ti,nm,elo,fed,pts,gm,rp){
+      var c=roster[nm]||null;
+      var _g=_numPl(gm), _s=_numPl(pts);
+      // De dónde salen puntos y partidas:
+      //  · CON formaciones cargadas mandan LAS FORMACIONES. La columna "Partidas" de la planilla
+      //    oficial cuenta también la formación que Chess-Results FABRICA para la ronda que todavía no
+      //    se jugó (la arma con el orden de fuerza registrado), y por eso en la Liga Nacional los tres
+      //    primeros de Obras figuraban con "0 de 1" sin haber jugado nada. Las formaciones que guarda
+      //    el sitio ya vienen filtradas a las rondas PUBLICADAS de verdad, así que son las buenas.
+      //  · SIN ninguna formación (torneo que no empezó, o que sólo tiene los cruces por equipos) se usa
+      //    la planilla oficial, que ahí es lo único que hay.
+      var games, score, rpTxt='';
+      if(_hayForm){
+        games=c?c.games:0; score=c?c.score:0;
+        // El Rp oficial se muestra sólo si la planilla coincide con lo contado acá: si no coincide es
+        // porque la fila oficial arrastra esa ronda inventada, y entonces el Rp tampoco sirve.
+        if(rp&&_g!=null&&c&&_g===c.games&&_numPl(rp)>0) rpTxt=rp;
+      } else {
+        games=(_g!=null&&_g>0)?_g:0; score=(_s!=null)?_s:0; rpTxt=(games&&_numPl(rp)>0)?rp:'';
+      }
+      var jugo=games>0;
+      var _elo=elo||(c?c.elo:0);
+      var nameHtml=crTitleBadge(ti||(c?c.title:''))+escHtml(nm)
+        +(_elo?' <span style="color:var(--text3);font-size:12.5px">'+escHtml(String(_elo))+'</span>':'')
+        +((fed&&fed!==_ofFed)?' <span style="color:var(--text3);font-size:11.5px">'+escHtml(fed)+'</span>':'');
+      // Clickeable sólo si jugó: el panel del jugador se arma con sus partidas y sin ellas sale vacío.
+      var cell=jugo
+        ? '<span onclick="crOpenPlayer('+crArg(key)+','+crArg(nm)+')" title="Ver la performance del jugador" style="cursor:pointer;color:var(--text)" onmouseover="this.style.color=\'var(--gold)\'" onmouseout="this.style.color=\'var(--text)\'">'+nameHtml+'</span>'
+        : '<span style="color:var(--text2)" title="Todavía no jugó en este torneo">'+nameHtml+'</span>';
+      var der=jugo
+        ? crPtsStr(score)+'<span style="color:var(--text3);font-weight:400;font-size:12.5px"> de '+games+'</span>'+(rpTxt?'<span style="color:var(--text3);font-weight:400;font-size:12px"> · Rp '+escHtml(String(rpTxt))+'</span>':'')
+        : '<span style="color:var(--text3);font-weight:400">—</span>';
+      return '<tr style="border-top:1px solid var(--bd14)">'
+        +'<td style="padding:8px 2px 8px 6px;color:var(--text3);font-size:12px;width:24px;text-align:right">'+(bo?escHtml(String(bo)):'')+'</td>'
+        +'<td style="padding:8px 6px">'+cell+'</td>'
+        +'<td style="padding:8px 6px;text-align:right;font-weight:700;color:var(--gold);white-space:nowrap">'+der+'</td></tr>';
+    };
     h+='<div style="background:var(--card90);border:1px solid var(--bd22);border-radius:var(--r-lg);box-shadow:var(--shadow-card);padding:6px 14px 10px">';
-    h+='<div style="font-size:11px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--text2);padding:8px 0 6px">Plantel</div>';
+    h+='<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;flex-wrap:wrap;padding:8px 0 6px">';
+    h+='<span'+(_ofPl.length?' title="Listado oficial de Chess-Results: los jugadores que el equipo inscribió, en su orden de tablero."':'')+' style="font-size:11px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--text2)">'+(_ofPl.length?'Plantel oficial':'Plantel')+'</span>';
+    if(ofi&&hist.length){
+      var _subP=[]; if(ofi.eloAvg) _subP.push('Elo medio '+escHtml(String(ofi.eloAvg))); if(ofi.capt) _subP.push('Capitán: '+escHtml(ofi.capt));
+      if(_subP.length) h+='<span style="font-size:12px;color:var(--text3)">'+_subP.join(' · ')+'</span>';
+    }
+    h+='</div>';
     h+='<table style="width:100%;border-collapse:collapse;font-size:14.5px">';
-    rorder.forEach(function(nm){ var p=roster[nm];
-      h+='<tr style="border-top:1px solid var(--bd14)">';
-      h+='<td style="padding:8px 6px"><span onclick="crOpenPlayer('+crArg(key)+','+crArg(nm)+')" title="Ver la performance del jugador" style="cursor:pointer;color:var(--text)" onmouseover="this.style.color=\'var(--gold)\'" onmouseout="this.style.color=\'var(--text)\'">'+crTitleBadge(p.title)+escHtml(nm)+(p.elo?' <span style="color:var(--text3);font-size:12.5px">'+escHtml(String(p.elo))+'</span>':'')+'</span></td>';
-      h+='<td style="padding:8px 6px;text-align:right;font-weight:700;color:var(--gold);white-space:nowrap">'+crPtsStr(p.score)+'<span style="color:var(--text3);font-weight:400;font-size:12.5px"> de '+p.games+'</span></td>';
-      h+='</tr>';
-    });
+    _ofPl.forEach(function(p){ h+=_plRow(p.bo,p.ti,p.nm,p.elo,p.fed,p.pts,p.gm,p.rp); });
+    if(_ofPl.length&&_extraPl.length) h+='<tr><td colspan="3" style="padding:10px 6px 2px;font-size:11px;color:var(--text3);border-top:1px solid var(--bd14)">También jugaron</td></tr>';
+    _extraPl.forEach(function(nm){ var p=roster[nm]; h+=_plRow('',p.title,nm,p.elo,'','','',''); });
     h+='</table></div>';
   }
   h+='</div>';
