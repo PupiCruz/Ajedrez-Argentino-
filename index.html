@@ -36357,6 +36357,9 @@ function cvUpdateNagBadge() {
     cursor:pointer;font-family:inherit;background:linear-gradient(135deg,#7c5cff,#4f46e5);
     box-shadow:0 4px 14px rgba(79,70,229,.4);white-space:nowrap;transition:filter .15s}
   .aa-modal-go:hover{filter:brightness(1.08)}
+  .aa-modal-in{width:100%;box-sizing:border-box;margin:0 0 16px;padding:11px 13px;border-radius:11px;
+    border:1px solid var(--border);background:var(--bg2);color:var(--text);font-family:inherit;font-size:.92rem}
+  .aa-modal-in:focus{outline:none;border-color:var(--gold,#c9a227)}
   /* Preferencias: filas con interruptor */
   .aa-prefs{display:grid;gap:8px;margin:2px 0 16px;text-align:left}
   .aa-pref-sec{font-size:.72rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--text3);margin:8px 2px 0}
@@ -36606,6 +36609,51 @@ function cvUpdateNagBadge() {
     toast('Saliste de tu cuenta.');
     if(tok){ try{ await fetch(PROXY+'/logout',{method:'POST',headers:{'Authorization':'Bearer '+tok}}); }catch(e){} }
   }
+
+  // ── window.aaAsk — el cartel de la app ────────────────────────────────────────
+  // Reemplaza a confirm()/prompt() del navegador, que son feos, no se pueden pintar y en el
+  // teléfono aparecen con el nombre del sitio arriba. Devuelve una promesa:
+  //   · sin `campo`  → true (aceptó) o false (canceló)
+  //   · con `campo`  → el texto escrito, o null si canceló
+  // Se cierra con Escape, tocando afuera o con Cancelar, igual que los otros de la web.
+  window.aaAsk = function(o){
+    o = o || {};
+    return new Promise(function(resolve){
+      var esc = function(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
+        return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); };
+      var back = document.createElement('div'); back.className = 'aa-modal-back';
+      back.innerHTML =
+        '<div class="aa-modal" role="dialog" aria-modal="true" aria-label="' + esc(o.titulo || 'Confirmar') + '">' +
+          (o.icono ? '<div class="aa-modal-ic">' + esc(o.icono) + '</div>' : '') +
+          '<h3 class="aa-modal-h">' + esc(o.titulo || '') + '</h3>' +
+          (o.texto ? '<p class="aa-modal-p">' + esc(o.texto) + '</p>' : '') +
+          (o.campo ? '<input class="aa-modal-in" maxlength="' + (o.max || 300) + '" placeholder="' +
+                     esc(o.campo === true ? '' : o.campo) + '">' : '') +
+          '<div class="aa-modal-btns">' +
+            '<button class="aa-modal-cancel" type="button">' + esc(o.cancelar || 'Cancelar') + '</button>' +
+            '<button class="aa-modal-go" type="button">' + esc(o.ok || 'Aceptar') + '</button>' +
+          '</div>' +
+        '</div>';
+      document.body.appendChild(back);
+      var input = back.querySelector('.aa-modal-in');
+      var listo = false;
+      function cerrar(v){
+        if (listo) return; listo = true;
+        back.remove(); document.removeEventListener('keydown', onKey);
+        resolve(v);
+      }
+      function onKey(e){
+        if (e.key === 'Escape') cerrar(o.campo ? null : false);
+        else if (e.key === 'Enter' && input) aceptar();
+      }
+      function aceptar(){ cerrar(o.campo ? (input ? input.value : '') : true); }
+      back.addEventListener('click', function(e){ if (e.target === back) cerrar(o.campo ? null : false); });
+      back.querySelector('.aa-modal-cancel').addEventListener('click', function(){ cerrar(o.campo ? null : false); });
+      back.querySelector('.aa-modal-go').addEventListener('click', aceptar);
+      document.addEventListener('keydown', onKey);
+      setTimeout(function(){ back.classList.add('open'); if (input) input.focus(); }, 10);
+    });
+  };
 
   // Cartel aclaratorio antes de mandar a Lichess: deja claro que la web NO ve la
   // contraseña ni el e-mail y que no puede tocar la cuenta de Lichess.
@@ -37151,7 +37199,14 @@ function cvUpdateNagBadge() {
     var tok=myToken();
     if(!tok){ if(window.aaAuth&&window.aaAuth.login) window.aaAuth.login(); return; }
     var who=P.username||'este usuario';
-    var reason=prompt('¿Por qué reportás a '+who+'? (opcional)\nLo va a revisar un moderador.','');
+    // Cartel de la app, no el prompt() del navegador (que además en el teléfono sale con el
+    // nombre del sitio arriba y no se puede pintar).
+    window.aaAsk({
+      icono:'🚩', titulo:'Reportar a '+who,
+      texto:'Contanos qué pasó (opcional). Lo va a revisar un moderador.',
+      campo:'Ej.: insultos en el chat de la sala', max:300,
+      ok:'Reportar 🚩', cancelar:'Mejor no',
+    }).then(function(reason){
     if(reason===null) return;
     fetch(PROXY+'/report',{ method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},
@@ -37160,6 +37215,7 @@ function cvUpdateNagBadge() {
       .then(function(x){ if(!x.ok || !x.d || x.d.error){ toast('No se pudo reportar: '+((x.d&&x.d.error)||'error')); return; }
         toast('🚩 Gracias. Lo reportaste y un moderador lo va a revisar.'); })
       .catch(function(){ toast('No se pudo (¿internet?)'); });
+    });
   }
   // Bloquear = EN LA CUENTA (server-side, simétrico): viaja entre dispositivos y sí le corta al otro
   // los desafíos, el seguir y —desde la Fase 5— los mensajes del chat. (El comentario viejo decía lo
