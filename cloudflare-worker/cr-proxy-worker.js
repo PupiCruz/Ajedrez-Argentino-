@@ -1909,7 +1909,7 @@ async function ensureRatingTables(env) {
     'CREATE TABLE IF NOT EXISTS rated_games (' +
     'game_id TEXT PRIMARY KEY, category TEXT, white_id TEXT, black_id TEXT, result TEXT, ' +
     'white_before INTEGER, white_after INTEGER, black_before INTEGER, black_after INTEGER, ts INTEGER, ' +
-    'moves TEXT, white_name TEXT, black_name TEXT)'
+    'moves TEXT, white_name TEXT, black_name TEXT, rated INTEGER DEFAULT 1)'
   ).run();
   _ratingTablesReady = true;
   await _migrarRatedGames(env);
@@ -1922,7 +1922,9 @@ async function _migrarRatedGames(env) {
   try {
     const info = await env.DB.prepare('PRAGMA table_info(rated_games)').all();
     const cols = new Set(((info && info.results) || []).map((r) => r.name));
-    const want = { moves: 'TEXT', white_name: 'TEXT', black_name: 'TEXT', reason: 'TEXT' };
+    // rated: 0 = amistosa (queda en el historial pero no mueve el Elo). Las filas viejas quedan
+    // en NULL y se leen como rateadas (COALESCE(rated,1)), que es lo que eran.
+    const want = { moves: 'TEXT', white_name: 'TEXT', black_name: 'TEXT', reason: 'TEXT', rated: 'INTEGER DEFAULT 1' };
     for (const name in want) {
       if (cols.has(name)) continue;
       try { await env.DB.prepare('ALTER TABLE rated_games ADD COLUMN ' + name + ' ' + want[name]).run(); } catch (e) {}
@@ -2466,6 +2468,9 @@ async function ratingReport(request, env) {
   const wname = String(body.wname || '').slice(0, 60);
   const bname = String(body.bname || '').slice(0, 60);
   const reason = String(body.reason || '').slice(0, 20);          // motivo del final (checkmate/flag/resign/…)
+  // Amistosa: el creador del desafío pidió jugar sin rating. La partida se guarda igual en el
+  // historial (es de lo mejor del perfil poder revivirla) pero NO se toca el Elo de nadie.
+  const rated = !(body.rated === 0 || body.rated === false || body.rated === '0');
   if (!gameId || !white || !black) return errJson('Faltan datos (gameId, white, black)', 400);
   if (white === black) return errJson('Una cuenta no puede jugar contra sí misma', 400);
   if (result !== 'w' && result !== 'b' && result !== 'draw') return errJson('result inválido', 400);
@@ -2475,11 +2480,12 @@ async function ratingReport(request, env) {
   // se guarda igual en el historial (para poder revivirla) pero NO mueve el rating. Sin esto, el
   // mínimo de jugadas del vivo-worker frena el farmeo a mano pero no a un script: jugar seis
   // jugadas legales automáticamente es trivial.
-  let sinRating = false;
+  let sinRating = !rated;
   try {
     const desde = Math.floor(Date.now() / 1000) - 86400;
+    // Las amistosas NO gastan el cupo diario del par (no mueven el Elo, no sirven para inflarse).
     const par = await env.DB.prepare(
-      'SELECT COUNT(*) AS n FROM rated_games WHERE ts > ?3 AND ' +
+      'SELECT COUNT(*) AS n FROM rated_games WHERE ts > ?3 AND COALESCE(rated,1)=1 AND ' +
       '((white_id=?1 AND black_id=?2) OR (white_id=?2 AND black_id=?1))'
     ).bind(white, black, desde).first();
     if (par && par.n >= PAIR_MAX_RATED_PER_DAY) sinRating = true;
@@ -2522,16 +2528,16 @@ async function ratingReport(request, env) {
   }
   guardar.push(
     env.DB.prepare('INSERT INTO rated_games (game_id, category, white_id, black_id, result, ' +
-      'white_before, white_after, black_before, black_after, ts, moves, white_name, black_name, reason) ' +
-      'VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)')
-      .bind(gameId, category, white, black, result, rw.rating, newW, rb.rating, newB, now, moves, wname, bname, reason),
+      'white_before, white_after, black_before, black_after, ts, moves, white_name, black_name, reason, rated) ' +
+      'VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)')
+      .bind(gameId, category, white, black, result, rw.rating, newW, rb.rating, newB, now, moves, wname, bname, reason, rated ? 1 : 0),
   );
   try {
     await env.DB.batch(guardar);
   } catch (e) { return errJson('D1 error: ' + e.message, 500); }
 
   return jsonResp({
-    category, capped: sinRating || undefined,
+    category, rated: rated ? 1 : 0, capped: (sinRating && rated) || undefined,
     white: { rating: newW, delta: newW - rw.rating, games: rw.games + (sinRating ? 0 : 1), prov: ratingIsProv(rw.games + 1) },
     black: { rating: newB, delta: newB - rb.rating, games: rb.games + (sinRating ? 0 : 1), prov: ratingIsProv(rb.games + 1) },
   });
@@ -2556,7 +2562,7 @@ async function ratingGames(request, reqUrl, env) {
   try {
     rows = await env.DB.prepare(
       'SELECT game_id, category, white_id, black_id, result, white_before, white_after, ' +
-      'black_before, black_after, ts, white_name, black_name, reason FROM rated_games ' +   // sin moves (livianas)
+      'black_before, black_after, ts, white_name, black_name, reason, COALESCE(rated,1) AS rated FROM rated_games ' +   // sin moves (livianas)
       'WHERE white_id=?1 OR black_id=?1 ORDER BY ts DESC LIMIT ?2'
     ).bind(u.id, limit).all();
   } catch (e) { return errJson('D1 error: ' + e.message, 500); }
@@ -2573,7 +2579,7 @@ async function ratingGames(request, reqUrl, env) {
       gameId: r.game_id, category: r.category, ts: r.ts,
       color, opponent: (iAmWhite ? r.black_name : r.white_name) || 'Invitado',
       outcome, before, after, delta: (after != null && before != null) ? (after - before) : null,
-      reason: r.reason || '',
+      reason: r.reason || '', rated: (r.rated === 0) ? 0 : 1,   // 0 = amistosa (chapita en el historial, fuera del gráfico)
     };
   });
   return jsonResp({ id: u.id, username: u.username, games: list });

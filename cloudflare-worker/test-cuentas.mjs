@@ -68,7 +68,10 @@ function mkDB() {
     if (S.includes('FROM follows WHERE')) return modo === 'all' ? [] : null;
     if (S.includes('COUNT(*) AS n FROM rated_games')) {
       const [w, b, desde] = a;
+      // Igual que el SQL de verdad: las amistosas (rated=0) NO gastan el cupo diario del par.
+      const soloRateadas = S.includes('COALESCE(rated,1)=1');
       const n = t.rated_games.filter((g) => g.ts > desde &&
+        (!soloRateadas || (g.rated == null || g.rated === 1)) &&
         ((g.white_id === w && g.black_id === b) || (g.white_id === b && g.black_id === w))).length;
       return { n };
     }
@@ -82,7 +85,8 @@ function mkDB() {
     }
     if (S.startsWith('INSERT INTO rated_games')) {
       t.rated_games.push({ game_id: a[0], category: a[1], white_id: a[2], black_id: a[3], result: a[4],
-        white_before: a[5], white_after: a[6], black_before: a[7], black_after: a[8], ts: a[9] });
+        white_before: a[5], white_after: a[6], black_before: a[7], black_after: a[8], ts: a[9],
+        moves: a[10], white_name: a[11], black_name: a[12], reason: a[13], rated: a[14] });
       return {};
     }
     if (S.includes('FROM admin_rl WHERE')) return t.admin_rl.find((x) => x.k === a[0]) || null;
@@ -178,6 +182,29 @@ console.log('\n=== 3. Tope de partidas rateadas entre las mismas dos cuentas ===
   const d = await json(await pedir('/rating/report', { method: 'POST', headers: { 'X-Vivo-Secret': 'secreto-vivo', 'Content-Type': 'application/json' },
     body: JSON.stringify({ gameId: 'otro1', white: 'u_ana', black: 'u_mod', result: 'w', base: 300, inc: 0 }) }));
   chk(!d.capped && d.white.delta > 0, 'otro par de cuentas tiene su propio cupo');
+}
+
+console.log('\n=== 3b. Partidas AMISTOSAS: van al historial, no al Elo ===');
+{
+  const reportar = (extra) => pedir('/rating/report', { method: 'POST', headers: { 'X-Vivo-Secret': 'secreto-vivo', 'Content-Type': 'application/json' },
+    body: JSON.stringify(Object.assign({ white: 'u_caro', black: 'u_dani', result: 'w', base: 300, inc: 0, moves: 'e4 e5' }, extra)) });
+
+  const am = await json(await reportar({ gameId: 'am1', rated: 0 }));
+  chk(am.rated === 0, 'la respuesta avisa que fue amistosa', am.rated);
+  chk(am.white.delta === 0 && am.black.delta === 0, 'nadie sube ni baja', am.white.delta + '/' + am.black.delta);
+  chk(!DB.tablas.ratings.some((r) => r.user_id === 'u_caro'), 'ni siquiera se le crea la fila de rating');
+  const fila = DB.tablas.rated_games.find((g) => g.game_id === 'am1');
+  chk(!!fila, 'pero la partida SÍ queda guardada (se puede revivir en el visor)');
+  chk(fila.rated === 0, 'y queda marcada como amistosa', fila.rated);
+  chk(!am.capped, 'no se confunde con el tope anti-boosteo');
+
+  const con = await json(await reportar({ gameId: 'con1' }));
+  chk(con.rated === 1 && con.white.delta > 0, 'sin la bandera sigue siendo con rating (default)', con.white.delta);
+
+  // 20 amistosas seguidas no le comen el cupo diario a las de verdad.
+  for (let i = 0; i < 20; i++) await reportar({ gameId: 'amx' + i, rated: 0 });
+  const sigue = await json(await reportar({ gameId: 'con2' }));
+  chk(!sigue.capped && sigue.white.delta > 0, 'y 20 amistosas no gastan el cupo del par', sigue.white.delta);
 }
 
 console.log('\n=== 4. El freno del PIN es por IP, no uno solo para todos ===');
