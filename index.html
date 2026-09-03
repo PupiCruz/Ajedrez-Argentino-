@@ -9366,6 +9366,7 @@ function _stDp(p){
 // al menos 5 partidas jugadas contra rivales con Elo, y no menos de la mitad de las rondas.
 function _stRpFromRounds(data){
   var rs = _stRounds(data); if (!rs.length) return {};
+  var eloMap = _crStandingsEloMap(data);   // las rondas suizas no traen Elo: lo pone la tabla
   var ag = {};
   function sumar(nombre, punt, eloRival){
     var a = ag[nombre] || (ag[nombre] = { n:0, s:0, o:0 });
@@ -9373,10 +9374,12 @@ function _stRpFromRounds(data){
   }
   rs.forEach(function(r){
     (data.rounds[r] || []).forEach(function(p){
-      if (!p || !_stJugada(p.res) || !p.ew || !p.eb) return;
+      if (!p || !_stJugada(p.res)) return;
+      var eW = _crOppElo(eloMap, p.w, p.ew), eB = _crOppElo(eloMap, p.b, p.eb);
+      if (!eW || !eB) return;
       var sw = p.res === '1-0' ? 1 : (p.res === '0-1' ? 0 : 0.5);
-      sumar(p.w, sw, p.eb);
-      sumar(p.b, 1 - sw, p.ew);
+      sumar(p.w, sw, eB);
+      sumar(p.b, 1 - sw, eW);
     });
   });
   var min = Math.max(5, Math.ceil(rs.length / 2)), out = {};
@@ -11678,6 +11681,11 @@ function crOpenPlayer(key,name){
       });
     });
   }
+  // Elo del rival: lo completamos desde la TABLA cuando la ronda no lo trae (ver _crOppElo).
+  // Sin esto la performance salía de una o dos partidas sueltas —o no salía— en los suizos.
+  var _crEloMap=_crStandingsEloMap(data);
+  history.forEach(function(hh){ hh.oppElo=_crOppElo(_crEloMap,hh.opp,hh.oppElo); });
+
   var wins=history.filter(function(h){return h.myRes.startsWith('✓');}).length;
   var draws=history.filter(function(h){return h.myRes.startsWith('½');}).length;
   var losses=history.filter(function(h){return h.myRes.startsWith('✗');}).length;
@@ -19647,22 +19655,47 @@ function _crResScore(res, isWhite){
   return null;   // +--/--+ (incomparecencias) y otros no cuentan para el rating
 }
 // [{oppElo, score}] del jugador (por su nombre EXACTO en la tabla) desde rondas/cruces.
+// Elo de cada jugador según la TABLA de posiciones del cuadro. Las rondas de Chess-Results
+// muchas veces NO traen columna de Elo (el layout suizo pone "Pts." en su lugar) y el rival
+// quedaba en 0: la performance y la variación de elo se calculaban SOLO con las rondas que sí
+// lo traían —con una sola partida ganada daba un Rp de 3000 y pico, y mientras esa ronda estaba
+// en juego no quedaba ninguna y la performance desaparecía—. La tabla sí lo trae para todos.
+function _crStandingsEloMap(data){
+  var map = {};
+  var st = (data && data.standings) || [];
+  for(var i = 0; i < st.length; i++){
+    var e = parseInt(st[i].elo, 10);
+    if(!e || isNaN(e) || e < 100) continue;
+    map[st[i].name] = e;
+    try { map['~' + normStr(st[i].name)] = e; } catch(err){}   // respaldo por nombre normalizado
+  }
+  return map;
+}
+// Elo del rival: manda el de la tabla; si no está ahí, el que traiga la ronda. 0 = no se sabe.
+function _crOppElo(map, name, roundElo){
+  var e = 0;
+  if(map && name){ e = map[name] || 0; if(!e){ try { e = map['~' + normStr(name)] || 0; } catch(err){} } }
+  if(e) return e;
+  e = parseInt(roundElo, 10);
+  return (!e || isNaN(e) || e < 100) ? 0 : e;
+}
 function _crEloGamesForName(data, name){
   var out = [];
-  function add(res, isWhite, oppElo){
+  var eloMap = _crStandingsEloMap(data);
+  function add(res, isWhite, oppName, oppElo){
     var sc = _crResScore(res, isWhite); if(sc === null) return;
-    var e = parseInt(oppElo, 10); if(!e || isNaN(e) || e < 100) return;
+    var e = _crOppElo(eloMap, oppName, oppElo); if(!e) return;
     out.push({ oppElo:e, score:sc });
   }
   if(data.teamRounds && Object.keys(data.teamRounds).length){
     Object.keys(data.teamRounds).forEach(function(r){ (data.teamRounds[r]||[]).forEach(function(mt){ (mt.boards||[]).forEach(function(bd){
-      if(bd.nW === name) add(bd.res, true, bd.eB);
-      else if(bd.nB === name) add(bd.res, false, bd.eW);
+      if(bd.nW === name) add(bd.res, true, bd.nB, bd.eB);
+      else if(bd.nB === name) add(bd.res, false, bd.nW, bd.eW);
     }); }); });
   } else if(data.rounds){
     Object.keys(data.rounds).forEach(function(r){ (data.rounds[r]||[]).forEach(function(p){
-      if(p.w === name) add(p.res, true, p.eb);
-      else if(p.b === name) add(p.res, false, p.ew);
+      if(p.w === name) add(p.res, true, p.b, p.eb);
+      else if(p.b === name) add(p.res, false, p.w, p.ew);
     }); });
   }
   return out;
