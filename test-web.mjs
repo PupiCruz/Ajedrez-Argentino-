@@ -1521,10 +1521,13 @@ console.log('\n=== 34. La vitrina de trofeos del perfil ===');
                                           campeon: podio[0], podio: podio, premios: premios });
 
   // ── SUIZO / abierto: entra todo lo elegido ──
-  chk(tipos(armar(232, 9)) === 'c,2,3,rp,fem,s20,m50,rev',
-      'en un abierto entran el podio y las cinco medallas', tipos(armar(232, 9)));
+  chk(tipos(armar(232, 9)) === 'c,2,3,fem,s20,m50,rev',
+      'en un abierto entran el podio y las cuatro medallas', tipos(armar(232, 9)));
   chk(!/mesa1|racha|masRatingSumo/.test(JSON.stringify(AW(armar(232, 9)))),
       'y NO entran la mesa 1, la racha ni el rating sumado (devalúan la copa)');
+  // La mejor performance suele ser del campeón: era una medalla que repetía lo que ya decía la copa.
+  chk(tipos(armar(232, 9)).indexOf('rp') < 0,
+      'ni la mejor performance, que casi siempre es la del campeón');
 
   // ── CERRADO / round robin: sólo el podio ──
   // Bug real que cazó el autor: en el Magistral Szmetan-Giardelli (10 jugadores, 9 rondas) a
@@ -1550,7 +1553,6 @@ console.log('\n=== 34. La vitrina de trofeos del perfil ===');
   chk(det('c') === '8 pts · Rp 2663', 'el campeón muestra sus puntos y su performance', det('c'));
   chk(det('s20') === '18 años · 14º del torneo', 'el sub-20, su edad y en qué puesto salió', det('s20'));
   chk(det('rev') === 'entró 107º y terminó 37º', 'la revelación, de dónde salió y a dónde llegó', det('rev'));
-  chk(det('rp') === 'Rp 2600 · +180 sobre su Elo', 'la performance, cuánto rindió de más', det('rp'));
 
   // ── Nada raro con datos incompletos ──
   chk(AW(null).length === 0 && AW({}).length === 0, 'sin radiografía no devuelve trofeos');
@@ -1584,8 +1586,8 @@ console.log('\n=== 34. La vitrina de trofeos del perfil ===');
 
   chk(kOf([{ raw:'Ana', k:'s20' }, { raw:'Ana', k:'c' }]) === '1:c',
       'si es campeón, no se le cuenta además el sub-20');
-  chk(kOf([{ raw:'Ana', k:'c' }, { raw:'Ana', k:'rp' }, { raw:'Ana', k:'s20' }]) === '1:c',
-      'la copa le gana a la performance y a la medalla, vengan en el orden que vengan');
+  chk(kOf([{ raw:'Ana', k:'fem' }, { raw:'Ana', k:'c' }, { raw:'Ana', k:'s20' }]) === '1:c',
+      'la copa le gana a todas las medallas, vengan en el orden que vengan');
   // El ejemplo del autor: en un campeonato FEMENINO la campeona salía dos veces.
   chk(kOf([{ raw:'Ana', k:'fem' }, { raw:'Ana', k:'c' }]) === '1:c',
       'en un campeonato femenino la campeona va como CAMPEONA, no como "mejor femenina"');
