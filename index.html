@@ -16113,8 +16113,54 @@ function groupByTournament(games) {
 // (incluida la data curada PLAYER_GAMES[id]) y deduplica BARATO (cuerpo exacto + prefijo, sin motor
 // → instantáneo). Acá solo agrupa por torneo y ordena por fecha. El filtro CARO (posición final) NO
 // corre al abrir un perfil: queda para la migración y el botón de mantenimiento.
+/* Mapa nombre-de-torneo → fecha real (YYYYMMDD), de TODAS las fuentes. Mismo cableado que
+   _tourNamePaceMap: en la web publicada los torneos viven en el manifest (_embeddedTournaments),
+   en modo autor en tzConfig/TORNEOS/localStorage. Incluye el nombre de evento de cada CATEGORÍA
+   ("<Torneo> · <Categoría>"), porque así es como quedan estampadas las partidas de un torneo con
+   pestañas. Se usa para rescatar a los torneos cuyo PGN trae la fecha incompleta. */
+function _tourNameDateMap() {
+  var map = {};
+  function _dk(t) { return _isoToKey(t.endDate) || _isoToKey(t.startDate) || (t.dateKey || 0); }
+  function add(name, dk, cats) {
+    if (!name || !dk) return;
+    map[_normTourName(name)] = dk;
+    if (cats && cats.forEach) cats.forEach(function(c) {
+      if (!c || !c.name) return;
+      var ev = (typeof _catEventName === 'function') ? _catEventName(name, c.name) : (name + ' · ' + c.name);
+      map[_normTourName(ev)] = dk;
+    });
+  }
+  try {
+    (typeof _embeddedTournaments !== 'undefined' ? _embeddedTournaments : []).forEach(function(t) { if (t && t.name) add(t.name, _dk(t), t.categories); });
+    var tzCfg = (typeof getTzConfig === 'function') ? getTzConfig() : {};
+    Object.keys(tzCfg).forEach(function(k) { var d = tzCfg[k]; if (d && d.name) add(d.name, _dk(d), d.categories); });
+    (typeof TORNEOS !== 'undefined' ? TORNEOS : []).forEach(function(t) { var ov = tzCfg['hc_' + t.id] || {}; add(t.name, _dk(ov.startDate || ov.endDate ? ov : t) || parseDateFromText(ov.dates || t.dates || ''), ov.categories || t.categories); });
+    JSON.parse(localStorage.getItem('pgn_tournaments') || '[]').forEach(function(e) { if (e && e.name) add(e.name, _dk(e), e.categories); });
+  } catch (e) {}
+  return map;
+}
+
+/* Fecha de un GRUPO de partidas del perfil (lo que devuelve groupByTournament: nombre + partidas,
+   sin los campos del torneo). Normalmente sale del [Date] del PGN.
+
+   Pero el PGN puede traer la fecha INCOMPLETA: las simultáneas de Diego Flores en Catamarca vienen
+   con "2026.??.??", que se lee como 2026-00-00 y tira el torneo a principio de año en el listado
+   del perfil (aunque el torneo registrado diga 8 de agosto). Cuando la fecha del PGN no tiene día,
+   se busca el torneo por nombre y manda SU fecha. Si no está registrado (PGN históricos viejos que
+   no son torneos del sitio), se deja como estaba: el año solo es lo mejor que se sabe. */
+function _tourGroupDateKey(t, mapa) {
+  var dk = tourDateKey(t);
+  if (dk % 100 === 0 && mapa) {          // sin día (y a veces sin mes): fecha incompleta
+    var real = mapa[_normTourName(t.name)];
+    if (real) return real;
+  }
+  return dk;
+}
+
 function gatherPlayerTours(player) {
-  return groupByTournament(gatherGamesForPlayer(player)).sort(function(a, b) { return tourDateKey(b) - tourDateKey(a); });
+  var mapa = _tourNameDateMap();
+  return groupByTournament(gatherGamesForPlayer(player))
+    .sort(function(a, b) { return _tourGroupDateKey(b, mapa) - _tourGroupDateKey(a, mapa); });
 }
 
 /* ═══════════════════════════════════════════════════════

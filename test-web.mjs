@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 371;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 375;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -1250,6 +1250,31 @@ console.log('\n=== 32. Candados de bugs viejos que no tenían red ===');
       'sin ese campo, la fecha sale del PGN de la primera partida', TDK({ games:[{ __h:{ Date:'2026.07.15' } }] }));
   chk(TDK({ games:[{ __h:{ Date:'2026.??.??' } }] }) === 20260000,
       'un PGN con la fecha incompleta (2026.??.??) no rompe: queda el año', TDK({ games:[{ __h:{ Date:'2026.??.??' } }] }));
+
+  // ── El PGN con la fecha incompleta no tira el torneo a principio de año en el PERFIL ─────────
+  // El listado de torneos del perfil agrupa las PARTIDAS del jugador, así que sólo tiene el nombre
+  // y los PGN: la fecha sale del [Date]. Las simultáneas de Diego Flores en Catamarca vienen con
+  // "2026.??.??" y quedaban en enero, aunque el torneo registrado diga 8 de agosto.
+  const GDK = new Function(extraerFuncion('parseDateFromText') + extraerFuncion('tourDateKey')
+                           + extraerFuncion('_isoToKey') + extraerFuncion('_normTourName')
+                           + extraerFuncion('_tourGroupDateKey')
+                           + 'function parsePgnHeaders(g){ var m = /\\[Date "([^"]*)"\\]/.exec(g); return { Date: m ? m[1] : \'\' }; }'
+                           + ' return _tourGroupDateKey;')();
+  const pgnCon = d => '[Date "' + d + '"]\n\n1. e4 *';
+  const CATA = 'Simultáneas del GM Diego Flores en Catamarca 2026';
+  const mapa = {}; mapa[new Function(extraerFuncion('_normTourName') + ' return _normTourName;')()(CATA)] = 20260808;
+
+  chk(GDK({ name:CATA, games:[pgnCon('2026.??.??')] }, mapa) === 20260808,
+      'con el [Date] incompleto, manda la fecha del torneo registrado',
+      GDK({ name:CATA, games:[pgnCon('2026.??.??')] }, mapa));
+  chk(GDK({ name:CATA, games:[pgnCon('2026.??.??')] }, {}) === 20260000,
+      'y si el torneo NO está registrado se deja el año solo (no se inventa nada)',
+      GDK({ name:CATA, games:[pgnCon('2026.??.??')] }, {}));
+  chk(GDK({ name:CATA, games:[pgnCon('2026.01.09')] }, mapa) === 20260109,
+      'pero un [Date] COMPLETO manda: el mapa no lo pisa',
+      GDK({ name:CATA, games:[pgnCon('2026.01.09')] }, mapa));
+  chk(GDK({ name:'Torneo Viejo de 2004', games:[pgnCon('2004.06.??')] }, mapa) === 20040600,
+      'los PGN históricos sin día quedan como estaban', GDK({ name:'Torneo Viejo de 2004', games:[pgnCon('2004.06.??')] }, mapa));
 
   // ── Abreviaturas EN CASTELLANO (bug: 46 de 126 torneos fechados a principio de año) ──────────
   // La tabla de meses tenía los nombres largos en castellano y las abreviaturas en INGLÉS. Las
