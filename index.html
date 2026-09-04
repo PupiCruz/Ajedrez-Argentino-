@@ -12902,6 +12902,39 @@ function _awardsFromStats(st) {
   return out;
 }
 
+/* ¿El torneo TERMINÓ? La radiografía se hornea aunque el torneo esté en juego (a propósito: así el
+   visitante nunca la calcula en su teléfono), pero un TROFEO no se puede dar antes de tiempo. Lo
+   cazó el autor: el Scherer Masters 2026 termina el 6 de septiembre y ya repartía copas.
+   Vale como terminado si la tabla cargada es la definitiva, si el autor lo marcó "Finalizado" a
+   mano, o si su última fecha ya pasó. Un torneo que termina HOY todavía no cuenta: puede estar
+   jugándose la última ronda. */
+function _awTourFinished(t, d) {
+  if (d && d.standingsFinal) return true;
+  if (t && t.finished) return true;
+  var fin = t ? (_isoToKey(t.endDate) || _isoToKey(t.startDate) || t.dateKey || 0) : 0;
+  return !!fin && fin < todayKey();
+}
+
+/* De todos los premios de UN cuadro, deja UNO por jugador: el más alto. El podio le gana a todas
+   las medallas (si salió tercero no hace falta contarle además "mejor sub-20") y entre medallas
+   manda el orden de _AW_KINDS. Lo pidió el autor con un ejemplo que lo dice todo: en un campeonato
+   FEMENINO, la campeona figuraba dos veces —como campeona y como "mejor femenina"—, que es lo
+   mismo dicho dos veces.
+   `buscar` recibe el nombre crudo y devuelve el jugador (o null si no tiene perfil acá).
+   Devuelve { idDelJugador: { ord, k, d } }. */
+function _awBestPerPlayer(premios, buscar) {
+  var mejor = {}, orden = {};
+  _AW_KINDS.forEach(function(k, i) { orden[k] = i; });
+  (premios || []).forEach(function(a) {
+    var pl = buscar(a.raw);
+    if (!pl) return;
+    var ord = (orden[a.k] == null) ? 99 : orden[a.k];
+    if (mejor[pl.id] && mejor[pl.id].ord <= ord) return;
+    mejor[pl.id] = { ord: ord, k: a.k, d: a.d || '' };
+  });
+  return mejor;
+}
+
 /* Índice apellido → jugadores, para no comparar cada premio contra los 1600 del ranking. */
 function _awPlayerIndex(players) {
   var byTok = Object.create(null);
@@ -13099,24 +13132,37 @@ function buildSplitData() {
     if (nm.length) crNames[k] = nm.join('|');
   });
   // ── Vitrina: dar vuelta las radiografías (por torneo → por jugador) ──
-  var playerAwards = {}, _awByTok = _awPlayerIndex(PLAYERS), _awTotal = 0, _awSueltos = 0;
+  var playerAwards = {}, _awByTok = _awPlayerIndex(PLAYERS), _awTotal = 0, _awSueltos = 0, _awEnCurso = 0, _awTapados = 0;
+  var _awTourById = {}; tournaments.forEach(function(t) { _awTourById[String(t.id)] = t; });
   Object.keys(crFiles).forEach(function(k) {
     var st = crFiles[k] && crFiles[k].stats; if (!st) return;
     var tid = k.replace(/^cr2_/, '').replace(/^(tz|ls|hc)_/, '').replace(/_c\d+$/, '');
     var meta = metaSeen[tid] ? tid : String(tid).replace(/^(tz|ls|hc)_/, '');
+    // Torneo en juego: la radiografía ya está horneada, pero los trofeos se entregan al final.
+    if (!_awTourFinished(_awTourById[String(meta)], crFiles[k])) { _awEnCurso++; return; }
     var mc = k.match(/_c(\d+)$/), cat = mc ? parseInt(mc[1], 10) : -1;
-    _awardsFromStats(st).forEach(function(a) {
-      _awTotal++;
-      var pl = _awFindPlayer(a.raw, _awByTok);
-      if (!pl) { _awSueltos++; return; }   // extranjeros y jugadores fuera del ranking: no tienen perfil
-      var e = { t: meta, k: a.k };
-      if (a.d) e.d = a.d;
-      if (cat >= 0) e.c = cat;
-      (playerAwards[pl.id] = playerAwards[pl.id] || []).push(e);
+    // UN trofeo por jugador y por cuadro (ver _awBestPerPlayer). Cada CATEGORÍA es un cuadro aparte
+    // (…_c0, …_c1), así que ganar el Rápido y el Blitz del mismo torneo sigue contando como dos.
+    var _prem = _awardsFromStats(st);
+    _awTotal += _prem.length;
+    var _conDuenio = 0;
+    var mejor = _awBestPerPlayer(_prem, function(raw) {
+      var pl = _awFindPlayer(raw, _awByTok);
+      if (pl) _conDuenio++; else _awSueltos++;
+      return pl;
     });
+    Object.keys(mejor).forEach(function(pid) {
+      var e = { t: meta, k: mejor[pid].k };
+      if (mejor[pid].d) e.d = mejor[pid].d;
+      if (cat >= 0) e.c = cat;
+      (playerAwards[pid] = playerAwards[pid] || []).push(e);
+    });
+    _awTapados += _conDuenio - Object.keys(mejor).length;
   });
   try { console.log('Radiografías horneadas para la web: ' + crBaked + ' de ' + crIndex.length + ' cuadros'); } catch (e) {}
-  try { console.log('Vitrina: ' + (_awTotal - _awSueltos) + ' trofeos de ' + _awTotal + ' en ' + Object.keys(playerAwards).length + ' jugadores'); } catch (e) {}
+  try { console.log('Vitrina: ' + (_awTotal - _awSueltos - _awTapados) + ' trofeos en ' + Object.keys(playerAwards).length + ' jugadores'
+    + '  (de ' + _awTotal + ' premios: ' + _awSueltos + ' de gente sin perfil, ' + _awTapados + ' tapados por uno mejor del mismo torneo, '
+    + _awEnCurso + ' cuadros de torneos en juego)'); } catch (e) {}
   return { manifest: { tournaments: tournaments, playerIndex: playerIndex, playerStats: playerStats, playerAwards: playerAwards }, tFiles: tFiles, pFiles: pFiles, gameEntries: gameEntries, crFiles: crFiles, crIndex: crIndex, crNames: crNames, crBaked: crBaked };
 }
 

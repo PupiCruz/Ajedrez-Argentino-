@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 427;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 448;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -1557,6 +1557,81 @@ console.log('\n=== 34. La vitrina de trofeos del perfil ===');
   chk(AW({ torneo:{ jugadores:50, rondas:9 } }).length === 0, 'sin podio ni premios tampoco');
   chk(AW({ campeon: podio[0] }).length === 1,
       'sin el bloque `torneo` no se cuelga: cae en "abierto" y da lo que haya', AW({ campeon: podio[0] }).length);
+
+  // ── El torneo tiene que haber TERMINADO ─────────────────────────────────────────────────────
+  // Lo cazó el autor: el Scherer Masters 2026 termina el 6 de septiembre y ya repartía copas. La
+  // radiografía se hornea igual estando en juego (a propósito), pero el trofeo se da al final.
+  const FIN = new Function('todayKey', extraerFuncion('_isoToKey') + extraerFuncion('_awTourFinished')
+                           + ' return _awTourFinished;')(() => 20260904);
+  chk(FIN({ endDate:'2026-08-30' }, {}) === true, 'un torneo que ya terminó reparte trofeos');
+  chk(FIN({ endDate:'2026-09-06' }, {}) === false, 'uno que termina el 6 y hoy es 4, todavía no');
+  chk(FIN({ endDate:'2026-09-04' }, {}) === false,
+      'y uno que termina HOY tampoco: puede estar jugándose la última ronda');
+  chk(FIN({ endDate:'2026-09-06', finished:true }, {}) === true,
+      'salvo que el autor lo haya marcado "Finalizado" a mano');
+  chk(FIN({ endDate:'2026-09-06' }, { standingsFinal:true }) === true,
+      'o que la tabla cargada sea la definitiva');
+  chk(FIN({ startDate:'2026-08-01' }, {}) === true, 'con startDate solo, alcanza');
+  chk(FIN({ dateKey:20260801 }, {}) === true, 'y con el dateKey horneado, también');
+  chk(FIN(null, {}) === false && FIN({}, {}) === false, 'sin fecha ninguna, no se arriesga');
+
+  // ── UN trofeo por jugador y por cuadro, y gana el más alto ──────────────────────────────────
+  const BEST = new Function("var _AW_KINDS = ['c','2','3','rp','fem','s20','m50','rev'];"
+                            + extraerFuncion('_awBestPerPlayer') + ' return _awBestPerPlayer;')();
+  const jug = { 'Ana': { id:1 }, 'Beto': { id:2 }, 'Cata': { id:3 } };
+  const buscar = raw => jug[raw] || null;
+  const kOf = (prem) => { const m = BEST(prem, buscar); return Object.keys(m).map(k => k + ':' + m[k].k).join(','); };
+
+  chk(kOf([{ raw:'Ana', k:'s20' }, { raw:'Ana', k:'c' }]) === '1:c',
+      'si es campeón, no se le cuenta además el sub-20');
+  chk(kOf([{ raw:'Ana', k:'c' }, { raw:'Ana', k:'rp' }, { raw:'Ana', k:'s20' }]) === '1:c',
+      'la copa le gana a la performance y a la medalla, vengan en el orden que vengan');
+  // El ejemplo del autor: en un campeonato FEMENINO la campeona salía dos veces.
+  chk(kOf([{ raw:'Ana', k:'fem' }, { raw:'Ana', k:'c' }]) === '1:c',
+      'en un campeonato femenino la campeona va como CAMPEONA, no como "mejor femenina"');
+  chk(kOf([{ raw:'Ana', k:'fem' }, { raw:'Ana', k:'3' }]) === '1:3',
+      'y si la mejor femenina hizo podio, manda el puesto del podio');
+  chk(kOf([{ raw:'Ana', k:'c' }, { raw:'Beto', k:'2' }, { raw:'Cata', k:'s20' }]) === '1:c,2:2,3:s20',
+      'a cada uno el suyo: no se pisan entre jugadores distintos');
+  chk(kOf([{ raw:'Ana', k:'s20' }, { raw:'Ana', k:'m50' }]) === '1:s20',
+      'entre dos medallas queda la de más arriba en la lista');
+  chk(kOf([{ raw:'Nadie', k:'c' }, { raw:'Ana', k:'2' }]) === '1:2',
+      'los premios de gente sin perfil acá no ocupan lugar');
+  chk(Object.keys(BEST([], buscar)).length === 0 && Object.keys(BEST(null, buscar)).length === 0,
+      'sin premios no devuelve nada');
+  chk(BEST([{ raw:'Ana', k:'c', d:'8 pts' }], buscar)[1].d === '8 pts', 'y se queda con el detalle del que gana');
+
+  // ── Contra los cuadros REALES: las dos reglas juntas ────────────────────────────────────────
+  if (fs.existsSync('data/cr') && fs.existsSync('data/manifest.js')) {
+    const W = {}; new Function('window', fs.readFileSync('data/manifest.js', 'utf8'))(W);
+    const TT = {}; ((W.__MANIFEST__ && W.__MANIFEST__.tournaments) || []).forEach(x => TT[String(x.id)] = x);
+    let enCurso = 0, conTrofeo = 0, dobles = 0, femDuplicada = 0;
+    fs.readdirSync('data/cr').filter(x => x.endsWith('.json')).forEach(x => {
+      let d; try { d = JSON.parse(fs.readFileSync('data/cr/' + x, 'utf8')); } catch (e) { return; }
+      if (!d || !d.stats) return;
+      const tid = x.replace(/\.json$/, '').replace(/^cr2_/, '').replace(/^(tz|ls|hc)_/, '').replace(/_c\d+$/, '');
+      const tt = TT[tid] || TT[tid.replace(/^(tz|ls|hc)_/, '')];
+      if (!FIN(tt, d)) { enCurso++; return; }
+      // un "jugador" por cada nombre distinto, para mirar la regla sin depender del match de nombres
+      const ids = {}; let n = 0;
+      const m = BEST(AW(d.stats), raw => { if (!ids[raw]) ids[raw] = { id: ++n }; return ids[raw]; });
+      const ks = Object.keys(m).map(k => m[k].k);
+      conTrofeo += ks.length;
+      // nadie puede llevarse dos del mismo cuadro (por construcción), ni fem + podio
+      const porNombre = {};
+      AW(d.stats).forEach(a => { (porNombre[a.raw] = porNombre[a.raw] || []).push(a.k); });
+      Object.keys(porNombre).forEach(nm => {
+        const kk = porNombre[nm];
+        if (kk.length > 1 && m[ids[nm].id] === undefined) dobles++;
+        if (kk.indexOf('fem') >= 0 && ['c','2','3'].some(z => kk.indexOf(z) >= 0)
+            && m[ids[nm].id] && m[ids[nm].id].k === 'fem') femDuplicada++;
+      });
+    });
+    chk(enCurso >= 1, 'hay torneos en juego que se dejan afuera de la vitrina', enCurso + ' cuadros');
+    chk(conTrofeo > 100, 'y los terminados sí reparten', conTrofeo + ' trofeos');
+    chk(dobles === 0, 'ningún jugador se lleva dos trofeos del mismo cuadro');
+    chk(femDuplicada === 0, 'y ninguna que hizo podio queda como "mejor femenina"');
+  }
 
   // ── La pantalla de la vitrina ──────────────────────────────────────────────────────────────
   const HTML = new Function('_manifest', 'PLAYERS',
