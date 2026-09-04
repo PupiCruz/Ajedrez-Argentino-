@@ -966,7 +966,7 @@
     .pg-date { font-size: 11px; color: var(--fg-b0); text-shadow: var(--txt-out); }
 
     .pg-tour-header {
-      display: flex; align-items: center; justify-content: space-between;
+      display: flex; align-items: center; justify-content: space-between; gap: 9px;
       padding: 11px 13px; margin-bottom: 4px;
       background: var(--panel1); border: 2px solid var(--bd22);
       border-radius: 10px; cursor: pointer;
@@ -974,7 +974,20 @@
     }
     .pg-tour-header:active { border-color: var(--gold-dim); }
     .pg-tour-header.open { border-color: var(--gold-dim); border-radius: 10px 10px 0 0; border-bottom: none; }
-    .pg-tour-info { display: flex; flex-direction: column; gap: 2px; }
+    /* flex:1 para que el botón 🏆 quede pegado a la IZQUIERDA del nombre y el score/perf siga a la
+       derecha (el header es space-between: sin esto los tres se repartirían el ancho). */
+    .pg-tour-info { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+    /* Botón "ver el torneo completo": sólo aparece en los torneos que están cargados en la web.
+       Va a la IZQUIERDA del nombre a propósito — en el teléfono la derecha ya la ocupan el score y
+       la flechita, y ahí no entraba. El texto se muestra sólo en pantalla ancha; en el teléfono
+       queda el 🏆 solo, que ocupa 22px y se ve igual. */
+    .pg-tour-link { display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0;
+      text-decoration: none; font-size: 13px; line-height: 1; padding: 5px 7px; border-radius: 8px;
+      background: var(--gold-bg); border: 1px solid var(--gold-dim); color: var(--gold);
+      transition: filter .15s; }
+    .pg-tour-link:hover { filter: brightness(1.25); }
+    .pg-tour-link .pg-tl-txt { font-size: 11px; font-weight: 700; white-space: nowrap; display: none; }
+    @media (min-width: 700px) { .pg-tour-link .pg-tl-txt { display: inline; } }
     .pg-tour-name { font-size: 15px; font-weight: 700; color: var(--fg0); text-shadow: var(--txt-out); }
     .pg-tour-loc  { font-size: 11px; color: #b8b8b8; text-shadow: var(--txt-out); }
     .pg-tour-meta { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
@@ -16157,6 +16170,33 @@ function _tourGroupDateKey(t, mapa) {
   return dk;
 }
 
+/* Torneos del jugador que ADEMÁS están cargados en la web, para poder linkearlos desde el listado
+   de partidas del perfil. Devuelve { nombre normalizado → id del torneo }.
+
+   El enganche es por NOMBRE, y es seguro por tres motivos:
+   1) Al subir partidas eligiendo el torneo, `_stampEvent` pisa el [Event] del PGN con el nombre
+      del torneo tal cual está en la web (sólo cambia " por '), y `_normTourName` saca las comillas.
+   2) Los torneos del sitio tienen nombres normalizados ÚNICOS: ninguno se confunde con otro.
+   3) Lo más importante: los candidatos son SÓLO los torneos de este jugador, que el manifest ya
+      sabe por número (playerIndex). No se compara contra el catálogo entero.
+   Sin manifest (modo autor sin índice) se cae al catálogo completo, que igual no tiene colisiones. */
+function _tourLinkMap(player) {
+  var map = {};
+  try {
+    var man = (typeof _manifest !== 'undefined' && _manifest) ? _manifest : null;
+    if (!man || !man.tournaments) return map;
+    var idx = man.playerIndex && player && man.playerIndex[player.id];
+    var permitido = null;
+    if (idx && idx.length) { permitido = {}; idx.forEach(function(id) { permitido[String(id)] = 1; }); }
+    man.tournaments.forEach(function(t) {
+      if (!t || !t.name || t.playerOnly) return;
+      if (permitido && !permitido[String(t.id)]) return;
+      map[_normTourName(t.name)] = t.id;
+    });
+  } catch (e) {}
+  return map;
+}
+
 function gatherPlayerTours(player) {
   var mapa = _tourNameDateMap();
   return groupByTournament(gatherGamesForPlayer(player))
@@ -18334,6 +18374,8 @@ function renderLocalGames(data, player, resultFilter, colorFilter, openingFilter
   }
 
   var hasFilter = resultFilter || colorFilter || openingFilter;
+  // Torneos de este jugador que están cargados en la web (para el botón 🏆 de cada fila).
+  var _pgLinkMap = _tourLinkMap(player);
 
   // El caché guarda TODAS las partidas de TODOS los torneos (la navegación y "Mejores
   // victorias" usan el índice original ti, así que debe existir aunque el torneo no esté
@@ -18436,6 +18478,14 @@ function renderLocalGames(data, player, resultFilter, colorFilter, openingFilter
     });
 
     h += '<div class="pg-tour-header' + openCls + '" id="' + tid + '-hdr" onclick="pgToggle(\'' + tid + '\')">';
+    // 🏆 Ver el torneo completo — sólo si ese torneo está cargado en la web. stopPropagation: la fila
+    // entera abre y cierra las partidas, y sin eso el clic haría las dos cosas a la vez.
+    var _tlId = _pgLinkMap[_normTourName(tour.name)];
+    if (_tlId != null) {
+      h += '<a class="pg-tour-link" href="' + _tourHref(_tlId) + '"'
+         + ' onclick="event.stopPropagation();return tourFromProfileClick(event,\'' + escJs(_resolveTourType(_tlId)) + '\',\'' + escJs(String(_tlId)) + '\')"'
+         + ' title="Ver el torneo completo en la web">🏆<span class="pg-tl-txt">Ver torneo</span></a>';
+    }
     h += '<div class="pg-tour-info">';
     h += '<div class="pg-tour-name">' + escHtml(tour.name) + '</div>';
     h += '<div class="pg-tour-loc">' + escHtml(tour.location || '') + '</div>';

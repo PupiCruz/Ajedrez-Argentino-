@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 375;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 384;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -1392,6 +1392,67 @@ console.log('\n=== 32. Candados de bugs viejos que no tenían red ===');
       'con coma no se mete: de eso se ocupa pgnNameMatchesPlayer');
   chk(SC('', { name:'Agustin Duarte Fernandez' }) === false && SC('Algo', { name:'Ana' }) === false,
       'vacío o jugador de un solo nombre: no opina, no rompe');
+}
+
+console.log('\n=== 33. El botón 🏆 "Ver torneo" en el listado del perfil ===');
+{
+  // El enganche entre una fila del perfil y el torneo de la web es POR NOMBRE. Es seguro porque los
+  // candidatos son sólo los torneos de ESE jugador (el manifest los sabe por número, playerIndex) y
+  // porque al subir partidas eligiendo el torneo, _stampEvent pisa el [Event] con el nombre del
+  // torneo — cambiando sólo las comillas dobles por simples, que _normTourName saca.
+  const armar = (manifest) => new Function('_manifest',
+    extraerFuncion('_normTourName') + extraerFuncion('_tourLinkMap')
+    + ' return _tourLinkMap;')(manifest);
+
+  const MAN = {
+    tournaments: [
+      { id:'tz_111', name:'VIII Abierto Internacional de Villa Constitucion "Copa ArcelorMittal"' },
+      { id:'tz_222', name:'Simultáneas del GM Diego Flores en Catamarca 2026' },
+      { id:'tz_333', name:'Torneo en el que NO jugó' },
+      { id:'tz_444', name:'Pool de un perfil', playerOnly:true }
+    ],
+    playerIndex: { 7: ['tz_111', 'tz_222', 'tz_444'] }
+  };
+  const mapa = armar(MAN)({ id:7 });
+  const norm = new Function(extraerFuncion('_normTourName') + ' return _normTourName;')();
+
+  chk(mapa[norm('VIII Abierto Internacional de Villa Constitucion "Copa ArcelorMittal"')] === 'tz_111',
+      'el torneo del jugador engancha con su id', mapa[norm('VIII Abierto Internacional de Villa Constitucion "Copa ArcelorMittal"')]);
+
+  // EL CASO CLAVE: en el perfil el nombre llega con comillas SIMPLES (_stampEvent cambia " por ')
+  // y en el manifest está con DOBLES. Tienen que ser el mismo torneo igual.
+  chk(mapa[norm("VIII Abierto Internacional de Villa Constitucion 'Copa ArcelorMittal'")] === 'tz_111',
+      'y engancha aunque el perfil lo tenga con comillas SIMPLES y el sitio con DOBLES');
+
+  chk(mapa[norm('Torneo en el que NO jugó')] === undefined,
+      'un torneo en el que el jugador no jugó NO entra (aunque exista en la web)');
+  chk(mapa[norm('Pool de un perfil')] === undefined,
+      'los pools de perfil (playerOnly) tampoco: no son torneos de la web');
+  chk(Object.keys(mapa).length === 2, 'sólo esos dos, nada más', Object.keys(mapa).length);
+
+  // Sin ficha en el playerIndex (jugador nuevo, o modo autor sin índice) se cae al catálogo
+  // completo — que igual no tiene nombres repetidos, así que no puede llevar al torneo equivocado.
+  const mapaSinIndice = armar(MAN)({ id:999 });
+  chk(Object.keys(mapaSinIndice).length === 3,
+      'sin ficha en el índice usa el catálogo entero (menos los playerOnly)', Object.keys(mapaSinIndice).length);
+
+  chk(Object.keys(armar(null)({ id:7 })).length === 0, 'sin manifest devuelve vacío, no rompe');
+  chk(Object.keys(armar({})({ id:7 })).length === 0, 'y con un manifest sin torneos, tampoco');
+
+  // Candado del catálogo REAL: si dos torneos del sitio tuvieran el mismo nombre normalizado, un
+  // botón podría llevar al equivocado. Hoy son 126 nombres únicos; esto avisa si eso cambia.
+  if (fs.existsSync('data/manifest.js')) {
+    const M = new Function('var window = {};' + fs.readFileSync('data/manifest.js', 'utf8')
+                           + '; return window.__MANIFEST__;')();
+    const vistos = {}, repes = [];
+    (M.tournaments || []).forEach(x => {
+      const k = norm(x.name || '');
+      if (vistos[k]) repes.push(x.name); else vistos[k] = 1;
+    });
+    chk(repes.length === 0,
+        'ningún torneo del catálogo comparte nombre con otro (si no, el 🏆 podría errarle)',
+        (M.tournaments || []).length + ' torneos' + (repes.length ? '  ← repetidos: ' + repes.slice(0, 3).join(' · ') : ''));
+  }
 }
 
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
