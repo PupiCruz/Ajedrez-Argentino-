@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 394;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 413;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -1495,6 +1495,95 @@ console.log('\n=== 33. El botón 🏆 "Ver torneo" en el listado del perfil ==='
     chk(repes.length === 0,
         'ningún torneo del catálogo comparte nombre con otro (si no, el 🏆 podría errarle)',
         (M.tournaments || []).length + ' torneos' + (repes.length ? '  ← repetidos: ' + repes.slice(0, 3).join(' · ') : ''));
+  }
+}
+
+console.log('\n=== 34. La vitrina de trofeos del perfil ===');
+{
+  // De cada radiografía horneada salen el podio y las medallas, y se dan vuelta por jugador. Lo que
+  // entra depende del FORMATO del torneo: hay medallas que en un cerrado o en un match no valen.
+  const AW = new Function(extraerFuncion('_awardsFromStats') + ' return _awardsFromStats;')();
+  const tipos = st => AW(st).map(a => a.k).join(',');
+
+  const P = (nombre, pos, puntos, rp) => ({ pos: pos, nombre: nombre, raw: nombre, puntos: puntos, rp: rp });
+  const premios = {
+    mejorRp: { raw:'Gomez, Ana', nombre:'Ana Gomez', rp:2600, sobreElo:180 },
+    femenina: { raw:'Diaz, Rosa', nombre:'Rosa Diaz', pos:27, puntos:'6½' },
+    sub20:   { raw:'Perez, Juan', nombre:'Juan Perez', pos:14, puntos:'6½', edad:18 },
+    mas50:   { raw:'Lopez, Luis', nombre:'Luis Lopez', pos:5, edad:55 },
+    revelacion: { raw:'Sosa, Ivo', nombre:'Ivo Sosa', desde:107, hasta:37 },
+    mesa1:   { raw:'Otro, Uno', nombre:'Uno Otro', n:9 },
+    racha:   { raw:'Otro, Dos', nombre:'Dos Otro', n:5 },
+    masRatingSumo: { raw:'Otro, Tres', nombre:'Tres Otro', delta:44 }
+  };
+  const podio = [P('Uno',1,'8',2663), P('Dos',2,'7½',2563), P('Tres',3,'7½',2436)];
+  const armar = (jugadores, rondas) => ({ torneo:{ jugadores:jugadores, rondas:rondas },
+                                          campeon: podio[0], podio: podio, premios: premios });
+
+  // ── SUIZO / abierto: entra todo lo elegido ──
+  chk(tipos(armar(232, 9)) === 'c,2,3,rp,fem,s20,m50,rev',
+      'en un abierto entran el podio y las cinco medallas', tipos(armar(232, 9)));
+  chk(!/mesa1|racha|masRatingSumo/.test(JSON.stringify(AW(armar(232, 9)))),
+      'y NO entran la mesa 1, la racha ni el rating sumado (devalúan la copa)');
+
+  // ── CERRADO / round robin: sólo el podio ──
+  // Bug real que cazó el autor: en el Magistral Szmetan-Giardelli (10 jugadores, 9 rondas) a
+  // Faustino Oro le contaba "mejor sub-20", y era el único sub-20 invitado.
+  chk(tipos(armar(10, 9)) === 'c,2,3',
+      'en un cerrado de 10 sólo el podio: las medallas ahí no significan nada', tipos(armar(10, 9)));
+  chk(tipos(armar(6, 5)) === 'c,2,3', 'un hexagonal (6 jugadores, 5 rondas) también es cerrado', tipos(armar(6, 5)));
+  chk(tipos(armar(6, 10)) === 'c,2,3', 'y a dos vueltas (6 jugadores, 10 rondas) sigue siendo cerrado', tipos(armar(6, 10)));
+
+  // ── MANO A MANO: sólo quién ganó ──
+  // El otro caso del autor: en Oro vs Martínez Alcántara le contaba la performance y el sub-20.
+  chk(tipos(armar(2, 6)) === 'c', 'en un match sólo cuenta quién ganó', tipos(armar(2, 6)));
+
+  // ── El límite entre cerrado y suizo ──
+  chk(tipos(armar(40, 9)).indexOf('s20') >= 0,
+      'un suizo de 40 con 9 rondas NO es cerrado: las medallas valen', tipos(armar(40, 9)));
+  chk(tipos(armar(10, 8)).indexOf('s20') >= 0,
+      'y 10 jugadores con 8 rondas tampoco llega a todos-contra-todos', tipos(armar(10, 8)));
+
+  // ── El detalle que se muestra al tocar el trofeo ──
+  const uno = AW(armar(232, 9));
+  const det = k => (uno.filter(a => a.k === k)[0] || {}).d;
+  chk(det('c') === '8 pts · Rp 2663', 'el campeón muestra sus puntos y su performance', det('c'));
+  chk(det('s20') === '18 años · 14º del torneo', 'el sub-20, su edad y en qué puesto salió', det('s20'));
+  chk(det('rev') === 'entró 107º y terminó 37º', 'la revelación, de dónde salió y a dónde llegó', det('rev'));
+  chk(det('rp') === 'Rp 2600 · +180 sobre su Elo', 'la performance, cuánto rindió de más', det('rp'));
+
+  // ── Nada raro con datos incompletos ──
+  chk(AW(null).length === 0 && AW({}).length === 0, 'sin radiografía no devuelve trofeos');
+  chk(AW({ torneo:{ jugadores:50, rondas:9 } }).length === 0, 'sin podio ni premios tampoco');
+  chk(AW({ campeon: podio[0] }).length === 1,
+      'sin el bloque `torneo` no se cuelga: cae en "abierto" y da lo que haya', AW({ campeon: podio[0] }).length);
+
+  // ── El horneado NO pisa el árbol de aperturas ──
+  // El autor lo pidió expresamente. _stBakeForPublish copia TODOS los campos del cuadro y sólo
+  // agrega `stats`; el árbol vive en `aperturas` y no se toca.
+  const bake = extraerFuncion('_stBakeForPublish');
+  chk(/for \(var kk in d\)[\s\S]*copia\[kk\] = d\[kk\]/.test(bake) && /copia\.stats = st/.test(bake),
+      'el horneado copia todo el cuadro y sólo agrega stats (el árbol de aperturas queda intacto)');
+
+  // ── Contra los cuadros REALES del sitio ──
+  if (fs.existsSync('data/cr')) {
+    const files = fs.readdirSync('data/cr').filter(x => x.endsWith('.json'));
+    let conStats = 0, trofeos = 0, cerrados = 0, matches = 0, medallasEnCerrados = 0;
+    files.forEach(x => {
+      let d; try { d = JSON.parse(fs.readFileSync('data/cr/' + x, 'utf8')); } catch (e) { return; }
+      const st = d && d.stats; if (!st) return;
+      conStats++;
+      const inf = st.torneo || {}, j = inf.jugadores || 0, r = inf.rondas || 0;
+      const esMatch = j === 2, esCerrado = j > 2 && r >= j - 1;
+      if (esMatch) matches++; if (esCerrado) cerrados++;
+      const ks = AW(st).map(a => a.k);
+      trofeos += ks.length;
+      if ((esMatch || esCerrado) && ks.some(k => ['rp','fem','s20','m50','rev'].indexOf(k) >= 0)) medallasEnCerrados++;
+    });
+    chk(conStats > 100, 'hay radiografías reales con qué probar', conStats + ' torneos');
+    chk(medallasEnCerrados === 0,
+        'en ningún cerrado ni match del sitio se cuela una medalla', cerrados + ' cerrados y ' + matches + ' matches revisados');
+    chk(trofeos > 500, 'y la vitrina reparte trofeos de verdad', trofeos + ' trofeos');
   }
 }
 

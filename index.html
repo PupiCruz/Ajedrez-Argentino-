@@ -12825,10 +12825,24 @@ var _AW_KINDS = ['c','2','3','rp','fem','s20','m50','rev'];   // orden de exhibi
 
 /* Saca de una radiografía horneada la lista de premios, cada uno con el nombre CRUDO del jugador
    (el "APELLIDO, Nombre" de Chess-Results, que es con el que matchea pgnNameMatchesPlayer) y un
-   detalle corto ya escrito, para que el perfil no tenga que rearmar el texto. */
+   detalle corto ya escrito, para que el perfil no tenga que rearmar el texto.
+
+   Según el FORMATO del torneo entran distintos premios, porque hay medallas que en algunos torneos
+   no significan nada (lo cazó el autor mirando la vitrina de Faustino Oro):
+   · MANO A MANO (2 jugadores): sólo quién ganó. En un match la performance del ganador y su
+     "mejor sub-20" son obvias — no hay contra quién destacarse.
+   · CERRADO / round robin (todos contra todos): sólo el podio. En un cerrado de 10 el único
+     sub-20 invitado es el mejor sub-20 por descarte, y lo mismo el resto de las medallas.
+   · SUIZO / abierto: todo. Ahí sí ser el mejor sub-20 entre 200 jugadores es un logro.
+   El formato se deduce de la propia radiografía (`torneo.jugadores` y `torneo.rondas`): en un
+   round robin cada uno juega contra todos, así que las rondas llegan a jugadores-1 (el doble si es
+   a dos vueltas). En un suizo son muchos menos. */
 function _awardsFromStats(st) {
   var out = [];
   if (!st) return out;
+  var _inf = st.torneo || {}, _jug = _inf.jugadores || 0, _ron = _inf.rondas || 0;
+  var _manoAMano = (_jug === 2);
+  var _cerrado = (_jug > 2 && _ron >= _jug - 1);
   function add(k, x, det) { if (x && (x.raw || x.nombre)) out.push({ k: k, raw: x.raw || x.nombre, d: det || '' }); }
   function pts(x) { return x && x.puntos ? (x.puntos + ' pts') : ''; }
   function rp(x) { return x && x.rp ? ('Rp ' + x.rp) : ''; }
@@ -12837,8 +12851,10 @@ function _awardsFromStats(st) {
   // El campeón puede venir por `campeon` o como el 1º del podio: se toma uno solo.
   var ch = st.campeon || po[0];
   add('c', ch, junta(pts(ch), rp(ch)));
+  if (_manoAMano) return out;   // en un match, sólo el que ganó
   if (po[1]) add('2', po[1], junta(pts(po[1]), rp(po[1])));
   if (po[2]) add('3', po[2], junta(pts(po[2]), rp(po[2])));
+  if (_cerrado) return out;     // en un cerrado, sólo el podio
   var p = st.premios || {};
   if (p.mejorRp) add('rp', p.mejorRp, junta(rp(p.mejorRp), (p.mejorRp.sobreElo > 0 ? ('+' + p.mejorRp.sobreElo + ' sobre su Elo') : '')));
   if (p.femenina) add('fem', p.femenina, junta(p.femenina.pos ? (p.femenina.pos + 'ª del torneo') : '', pts(p.femenina)));
