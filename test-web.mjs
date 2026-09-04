@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 413;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 427;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -1557,6 +1557,67 @@ console.log('\n=== 34. La vitrina de trofeos del perfil ===');
   chk(AW({ torneo:{ jugadores:50, rondas:9 } }).length === 0, 'sin podio ni premios tampoco');
   chk(AW({ campeon: podio[0] }).length === 1,
       'sin el bloque `torneo` no se cuelga: cae en "abierto" y da lo que haya', AW({ campeon: podio[0] }).length);
+
+  // ── La pantalla de la vitrina ──────────────────────────────────────────────────────────────
+  const HTML = new Function('_manifest', 'PLAYERS',
+    "var _AW_KINDS = ['c','2','3','rp','fem','s20','m50','rev'];"
+    + SRC.match(/var _TRO_INFO = \{[\s\S]*?\n\};/)[0]
+    + extraerFuncion('_troCopa') + extraerFuncion('_troMedalla') + extraerFuncion('_troHtml')
+    + "function escHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;'); }"
+    + "function escJs(s){ return String(s==null?'':s).replace(/\\\\/g,'\\\\\\\\').replace(/'/g,\"\\\\'\"); }"
+    + "function _tourHref(k){ return '?torneo=' + encodeURIComponent(k); }"
+    + "function _tourHrefCat(k,c){ return _tourHref(k) + ((c!=null&&c>=0)?('&cat='+c):''); }"
+    + "function _resolveTourType(){ return 'ls'; }"
+    + 'var _troDet=[], _troPin=-1;'
+    + ' return function(p){ var h = _troHtml(p); return { h: h, det: _troDet.map(function(x){ return x.html; }).join(" | ") }; };');
+
+  const MAN = {
+    tournaments: [ { id:'tz_1', name:'Abierto de Villa Elisa' }, { id:'tz_2', name:'Panamericano U-20' } ],
+    playerAwards: { 7: [
+      { t:'tz_1', k:'s20', d:'13 años · 5º del torneo' },
+      { t:'tz_1', k:'c',   d:'8 pts · Rp 2700' },
+      { t:'tz_2', k:'3',   d:'6½ pts' },
+      { t:'tz_2', k:'fem', d:'2ª del torneo', c:1 }
+    ] }
+  };
+  const R = HTML(MAN, [])({ id:7 }), h = R.h, detTro = R.det;
+
+  chk(/tro-card/.test(h) && /🏅 Vitrina/.test(h), 'la vitrina se dibuja');
+  chk(/<b>1 campeonato · 1 podio · 2 medallas<\/b>/.test(h),
+      'el encabezado resume campeonatos, podios y medallas',
+      (h.match(/<b>([^<]*)<\/b>/) || [])[1]);
+
+  // El orden manda: primero las copas del podio, después las medallas (aunque vengan mezcladas).
+  const orden = [...h.matchAll(/class="tro-nm">([^<]+)</g)].map(m => m[1]);
+  chk(orden.join(' | ') === 'Campeón | Tercer puesto | Mejor femenina | Mejor sub-20',
+      'las copas van antes que las medallas, sin importar cómo vengan mezcladas', orden.join(' | '));
+
+  // Los tres tamaños del podio son clases distintas (el CSS les da 58/44/36 px).
+  chk(/class="tro tro-c"/.test(h) && /class="tro tro-3"/.test(h) && /class="tro tro-med"/.test(h),
+      'la copa del campeón, la del tercero y las medallas usan clases distintas (tamaños distintos)');
+  chk(/\.tro-c svg \{ width: 58px/.test(SRC) && /\.tro-2 svg \{ width: 44px/.test(SRC) && /\.tro-3 svg \{ width: 36px/.test(SRC),
+      'y el CSS los hace grande, mediana y chica, en ese orden');
+
+  // El detalle de cada trofeo, con su torneo y su link.
+  chk(detTro.indexOf('Abierto de Villa Elisa') >= 0 && detTro.indexOf('8 pts · Rp 2700') >= 0,
+      'cada trofeo guarda de qué torneo salió y con qué números');
+  chk(h.indexOf('title="Campeón — Abierto de Villa Elisa"') > 0,
+      'y el torneo también va en el title, para el globito del navegador');
+  chk(detTro.indexOf('?torneo=tz_2&cat=1') >= 0,
+      'si el premio es de una categoría, el link abre esa pestaña');
+  chk(detTro.indexOf('?torneo=tz_1"') >= 0,
+      'y si el torneo no tiene categorías, el link va pelado');
+  chk(/onmouseenter="troShow\(/.test(h) && /onclick="troPick\(/.test(h),
+      'se muestra al pasar el mouse y se clava al tocar (para el teléfono)');
+
+  // La aclaración que pidió el autor.
+  chk(/cuenta desde que ChessArgentino empezó a funcionar/.test(h),
+      'la vitrina aclara que cuenta desde que arrancó el sitio');
+
+  // Sin datos no dibuja nada (no una tarjeta vacía).
+  chk(HTML(MAN, [])({ id: 999 }).h === '', 'un jugador sin trofeos no muestra vitrina vacía');
+  chk(HTML({ tournaments: [] }, [])({ id: 7 }).h === '', 'y sin índice en el manifest tampoco (datos viejos)');
+  chk(HTML(null, [])({ id: 7 }).h === '', 'ni sin manifest');
 
   // ── El horneado NO pisa el árbol de aperturas ──
   // El autor lo pidió expresamente. _stBakeForPublish copia TODOS los campos del cuadro y sólo
