@@ -12808,6 +12808,66 @@ function _collectAllTournaments() {
 }
 
 // Metadata de un torneo para el manifest (todo lo que necesitan listas/tarjetas, SIN games).
+/* ── VITRINA DE TROFEOS ────────────────────────────────────────────────────────────────────────
+   La Radiografía de cada torneo ya trae, horneados, el podio y los premios. Pero están POR TORNEO
+   y el perfil de un jugador no puede bajar 126 cuadros para ver si ganó algo. Así que al publicar
+   se dan vuelta: se recorre cada radiografía y se arma un índice POR JUGADOR, que viaja en el
+   manifest (mismo criterio que `playerStats`, que ya precomputa las ganadas/empatadas/perdidas).
+
+   Qué entra (decidido con el autor): el PODIO (1º, 2º y 3º) y cinco medallas. Quedan afuera "más
+   veces en la mesa 1", "la racha más larga" y "el que más rating sumó": son datos lindos, pero una
+   copa por estar en la mesa 1 devalúa la copa del campeón.
+
+   OJO: la vitrina arranca con la web. Sale de los torneos CARGADOS acá, así que los históricos
+   (Najdorf, Panno, los campeonatos viejos en PGN suelto) no tienen trofeos: sus torneos no traen
+   tabla ni cruces. Eso se aclara en el perfil, para que no parezca un error. */
+var _AW_KINDS = ['c','2','3','rp','fem','s20','m50','rev'];   // orden de exhibición: copas y después medallas
+
+/* Saca de una radiografía horneada la lista de premios, cada uno con el nombre CRUDO del jugador
+   (el "APELLIDO, Nombre" de Chess-Results, que es con el que matchea pgnNameMatchesPlayer) y un
+   detalle corto ya escrito, para que el perfil no tenga que rearmar el texto. */
+function _awardsFromStats(st) {
+  var out = [];
+  if (!st) return out;
+  function add(k, x, det) { if (x && (x.raw || x.nombre)) out.push({ k: k, raw: x.raw || x.nombre, d: det || '' }); }
+  function pts(x) { return x && x.puntos ? (x.puntos + ' pts') : ''; }
+  function rp(x) { return x && x.rp ? ('Rp ' + x.rp) : ''; }
+  function junta() { var a = []; for (var i = 0; i < arguments.length; i++) if (arguments[i]) a.push(arguments[i]); return a.join(' · '); }
+  var po = st.podio || [];
+  // El campeón puede venir por `campeon` o como el 1º del podio: se toma uno solo.
+  var ch = st.campeon || po[0];
+  add('c', ch, junta(pts(ch), rp(ch)));
+  if (po[1]) add('2', po[1], junta(pts(po[1]), rp(po[1])));
+  if (po[2]) add('3', po[2], junta(pts(po[2]), rp(po[2])));
+  var p = st.premios || {};
+  if (p.mejorRp) add('rp', p.mejorRp, junta(rp(p.mejorRp), (p.mejorRp.sobreElo > 0 ? ('+' + p.mejorRp.sobreElo + ' sobre su Elo') : '')));
+  if (p.femenina) add('fem', p.femenina, junta(p.femenina.pos ? (p.femenina.pos + 'ª del torneo') : '', pts(p.femenina)));
+  if (p.sub20) add('s20', p.sub20, junta(p.sub20.edad ? (p.sub20.edad + ' años') : '', p.sub20.pos ? (p.sub20.pos + 'º del torneo') : ''));
+  if (p.mas50) add('m50', p.mas50, junta(p.mas50.edad ? (p.mas50.edad + ' años') : '', p.mas50.pos ? (p.mas50.pos + 'º del torneo') : ''));
+  if (p.revelacion) add('rev', p.revelacion, (p.revelacion.desde && p.revelacion.hasta) ? ('entró ' + p.revelacion.desde + 'º y terminó ' + p.revelacion.hasta + 'º') : '');
+  return out;
+}
+
+/* Índice apellido → jugadores, para no comparar cada premio contra los 1600 del ranking. */
+function _awPlayerIndex(players) {
+  var byTok = Object.create(null);
+  (players || []).forEach(function(p) {
+    var t = nameTokens(normStr(p.name || ''));
+    if (t.length) (byTok[t[t.length - 1]] = byTok[t[t.length - 1]] || []).push(p);
+  });
+  return byTok;
+}
+function _awFindPlayer(nombre, byTok) {
+  if (!nombre) return null;
+  var toks = nameTokens(normStr(pgnNameToNatural(nombre)));
+  var vistos = {}, cands = [];
+  toks.forEach(function(t) {
+    (byTok[t] || []).forEach(function(p) { if (!vistos[p.id]) { vistos[p.id] = 1; cands.push(p); } });
+  });
+  for (var i = 0; i < cands.length; i++) if (pgnNameMatchesPlayer(nombre, cands[i])) return cands[i];
+  return null;
+}
+
 // Precomputa leaders y dateKey (que en eager se calculan desde las partidas).
 function _tourManifestMeta(entry) {
   var leaders = entry.source === 'chess-results' ? (entry.leaders || []) : pgnComputeLeaders(entry.games || []);
@@ -12984,8 +13044,26 @@ function buildSplitData() {
     if (d.argManual) String(d.argManual).split(/[\n;]+/).forEach(function(s) { s = s.trim(); if (s) nm.push(s); });
     if (nm.length) crNames[k] = nm.join('|');
   });
+  // ── Vitrina: dar vuelta las radiografías (por torneo → por jugador) ──
+  var playerAwards = {}, _awByTok = _awPlayerIndex(PLAYERS), _awTotal = 0, _awSueltos = 0;
+  Object.keys(crFiles).forEach(function(k) {
+    var st = crFiles[k] && crFiles[k].stats; if (!st) return;
+    var tid = k.replace(/^cr2_/, '').replace(/^(tz|ls|hc)_/, '').replace(/_c\d+$/, '');
+    var meta = metaSeen[tid] ? tid : String(tid).replace(/^(tz|ls|hc)_/, '');
+    var mc = k.match(/_c(\d+)$/), cat = mc ? parseInt(mc[1], 10) : -1;
+    _awardsFromStats(st).forEach(function(a) {
+      _awTotal++;
+      var pl = _awFindPlayer(a.raw, _awByTok);
+      if (!pl) { _awSueltos++; return; }   // extranjeros y jugadores fuera del ranking: no tienen perfil
+      var e = { t: meta, k: a.k };
+      if (a.d) e.d = a.d;
+      if (cat >= 0) e.c = cat;
+      (playerAwards[pl.id] = playerAwards[pl.id] || []).push(e);
+    });
+  });
   try { console.log('Radiografías horneadas para la web: ' + crBaked + ' de ' + crIndex.length + ' cuadros'); } catch (e) {}
-  return { manifest: { tournaments: tournaments, playerIndex: playerIndex, playerStats: playerStats }, tFiles: tFiles, pFiles: pFiles, gameEntries: gameEntries, crFiles: crFiles, crIndex: crIndex, crNames: crNames, crBaked: crBaked };
+  try { console.log('Vitrina: ' + (_awTotal - _awSueltos) + ' trofeos de ' + _awTotal + ' en ' + Object.keys(playerAwards).length + ' jugadores'); } catch (e) {}
+  return { manifest: { tournaments: tournaments, playerIndex: playerIndex, playerStats: playerStats, playerAwards: playerAwards }, tFiles: tFiles, pFiles: pFiles, gameEntries: gameEntries, crFiles: crFiles, crIndex: crIndex, crNames: crNames, crBaked: crBaked };
 }
 
 function pgnDeleteTorneo(id) {
