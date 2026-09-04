@@ -16191,7 +16191,15 @@ function _tourLinkMap(player) {
     man.tournaments.forEach(function(t) {
       if (!t || !t.name || t.playerOnly) return;
       if (permitido && !permitido[String(t.id)]) return;
-      map[_normTourName(t.name)] = t.id;
+      map[_normTourName(t.name)] = { id: t.id, cat: -1 };
+      // Torneos por CATEGORÍAS (Panamericano U-20 Absoluto/Femenino, el Rápido y Blitz de España…):
+      // las partidas quedan estampadas "<Torneo> · <Categoría>", que NO es el nombre del torneo.
+      // Sin esto, esas filas del perfil se quedaban sin botón. Se guarda además el número de la
+      // categoría para abrir el torneo directamente en SU pestaña (&cat=N).
+      if (t.categories && t.categories.forEach) t.categories.forEach(function(c, ci) {
+        if (!c || !c.name) return;
+        map[_normTourName(_catEventName(t.name, c.name))] = { id: t.id, cat: ci };
+      });
     });
   } catch (e) {}
   return map;
@@ -18480,10 +18488,11 @@ function renderLocalGames(data, player, resultFilter, colorFilter, openingFilter
     h += '<div class="pg-tour-header' + openCls + '" id="' + tid + '-hdr" onclick="pgToggle(\'' + tid + '\')">';
     // 🏆 Ver el torneo completo — sólo si ese torneo está cargado en la web. stopPropagation: la fila
     // entera abre y cierra las partidas, y sin eso el clic haría las dos cosas a la vez.
-    var _tlId = _pgLinkMap[_normTourName(tour.name)];
-    if (_tlId != null) {
-      h += '<a class="pg-tour-link" href="' + _tourHref(_tlId) + '"'
-         + ' onclick="event.stopPropagation();return tourFromProfileClick(event,\'' + escJs(_resolveTourType(_tlId)) + '\',\'' + escJs(String(_tlId)) + '\')"'
+    var _tl = _pgLinkMap[_normTourName(tour.name)];
+    if (_tl) {
+      var _tlCat = (_tl.cat != null && _tl.cat >= 0) ? _tl.cat : -1;
+      h += '<a class="pg-tour-link" href="' + _tourHref(_tl.id) + (_tlCat >= 0 ? '&cat=' + _tlCat : '') + '"'
+         + ' onclick="event.stopPropagation();return tourFromProfileClick(event,\'' + escJs(_resolveTourType(_tl.id)) + '\',\'' + escJs(String(_tl.id)) + '\',' + _tlCat + ')"'
          + ' title="Ver el torneo completo en la web">🏆<span class="pg-tl-txt">Ver torneo</span></a>';
     }
     h += '<div class="pg-tour-info">';
@@ -26105,14 +26114,16 @@ function tdScrollToGames() {
 // entrada de historial quedan vivos) y abrimos el torneo con su PROPIA entrada nueva.
 // Al cerrar el torneo (Atrás), el popstate reabre el perfil. Stack: [perfil, torneo].
 var _tourReturnToProfile = false;
-function openTourFromProfile(type, id) {
+function openTourFromProfile(type, id, cat) {
   var ov = document.getElementById('overlay');
   if (ov) ov.classList.remove('open');   // ocultar el perfil (se reabre al volver)
   _crViewStack = [];                     // descartar estado del visor de stats/país si quedó
   _tourReturnToProfile = true;           // recordar que hay que volver al perfil
   // El perfil conserva su entrada (_playerHistoryPushed sigue true); el torneo apila la suya.
   _tourHistoryPushed = false;
-  openTournamentDetail(type, id);
+  // Con categoría: abre directamente en la pestaña del jugador (su rama, su género, su ritmo).
+  if (cat != null && cat >= 0) openTournamentDetail(type, id, false, cat);
+  else openTournamentDetail(type, id);
 }
 
 // ── Fase 3b: el torneo toma sus PARTIDAS de la base de datos única (pool) por EVENTO ──────────────
@@ -26424,10 +26435,12 @@ function dbResultClick(e, idx) {
 }
 // Click en un torneo dentro del perfil de un jugador. Modificador / botón del medio → pestaña nueva;
 // click normal → abre el torneo recordando que hay que volver al perfil al cerrarlo.
-function tourFromProfileClick(e, type, id) {
+// `cat` es opcional: número de categoría del torneo (Absoluto/Femenino, Rápido/Blitz…) para abrirlo
+// directamente en esa pestaña. -1 o sin dato = torneo sin categorías.
+function tourFromProfileClick(e, type, id, cat) {
   if (e && (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1)) return true;
   if (e) e.preventDefault();
-  openTourFromProfile(type, id);
+  openTourFromProfile(type, id, cat);
   return false;
 }
 // Partida pendiente de abrir por deep-link (?torneo=&partida=), mientras el torneo carga sus partidas.

@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 384;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 390;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -1401,7 +1401,7 @@ console.log('\n=== 33. El botón 🏆 "Ver torneo" en el listado del perfil ==='
   // porque al subir partidas eligiendo el torneo, _stampEvent pisa el [Event] con el nombre del
   // torneo — cambiando sólo las comillas dobles por simples, que _normTourName saca.
   const armar = (manifest) => new Function('_manifest',
-    extraerFuncion('_normTourName') + extraerFuncion('_tourLinkMap')
+    extraerFuncion('_normTourName') + extraerFuncion('_catEventName') + extraerFuncion('_tourLinkMap')
     + ' return _tourLinkMap;')(manifest);
 
   const MAN = {
@@ -1409,31 +1409,58 @@ console.log('\n=== 33. El botón 🏆 "Ver torneo" en el listado del perfil ==='
       { id:'tz_111', name:'VIII Abierto Internacional de Villa Constitucion "Copa ArcelorMittal"' },
       { id:'tz_222', name:'Simultáneas del GM Diego Flores en Catamarca 2026' },
       { id:'tz_333', name:'Torneo en el que NO jugó' },
+      { id:'tz_555', name:'Campeonato Panamericano U-20 2026',
+        categories:[{ name:'Absoluto' }, { name:'Femenino' }] },
       { id:'tz_444', name:'Pool de un perfil', playerOnly:true }
     ],
-    playerIndex: { 7: ['tz_111', 'tz_222', 'tz_444'] }
+    playerIndex: { 7: ['tz_111', 'tz_222', 'tz_444', 'tz_555'] }
   };
   const mapa = armar(MAN)({ id:7 });
   const norm = new Function(extraerFuncion('_normTourName') + ' return _normTourName;')();
 
-  chk(mapa[norm('VIII Abierto Internacional de Villa Constitucion "Copa ArcelorMittal"')] === 'tz_111',
-      'el torneo del jugador engancha con su id', mapa[norm('VIII Abierto Internacional de Villa Constitucion "Copa ArcelorMittal"')]);
+  const idDe = k => (mapa[norm(k)] || {}).id;
+  const catDe = k => (mapa[norm(k)] || {}).cat;
+  chk(idDe('VIII Abierto Internacional de Villa Constitucion "Copa ArcelorMittal"') === 'tz_111',
+      'el torneo del jugador engancha con su id', idDe('VIII Abierto Internacional de Villa Constitucion "Copa ArcelorMittal"'));
 
   // EL CASO CLAVE: en el perfil el nombre llega con comillas SIMPLES (_stampEvent cambia " por ')
   // y en el manifest está con DOBLES. Tienen que ser el mismo torneo igual.
-  chk(mapa[norm("VIII Abierto Internacional de Villa Constitucion 'Copa ArcelorMittal'")] === 'tz_111',
+  chk(idDe("VIII Abierto Internacional de Villa Constitucion 'Copa ArcelorMittal'") === 'tz_111',
       'y engancha aunque el perfil lo tenga con comillas SIMPLES y el sitio con DOBLES');
 
   chk(mapa[norm('Torneo en el que NO jugó')] === undefined,
       'un torneo en el que el jugador no jugó NO entra (aunque exista en la web)');
   chk(mapa[norm('Pool de un perfil')] === undefined,
       'los pools de perfil (playerOnly) tampoco: no son torneos de la web');
-  chk(Object.keys(mapa).length === 2, 'sólo esos dos, nada más', Object.keys(mapa).length);
+  chk(Object.keys(mapa).length === 5,
+      'el mapa tiene los 2 sueltos + el de categorías con sus 2 pestañas', Object.keys(mapa).length);
+
+  // ── Torneos por CATEGORÍAS (lo que faltaba: el Panamericano U-20, el Rápido y Blitz de España) ──
+  // Las partidas quedan estampadas "<Torneo> · <Categoría>", que NO es el nombre del torneo, así
+  // que esas filas del perfil se quedaban sin botón.
+  chk(idDe('Campeonato Panamericano U-20 2026 · Absoluto') === 'tz_555',
+      'una fila con categoría engancha con el torneo', idDe('Campeonato Panamericano U-20 2026 · Absoluto'));
+  chk(catDe('Campeonato Panamericano U-20 2026 · Absoluto') === 0 &&
+      catDe('Campeonato Panamericano U-20 2026 · Femenino') === 1,
+      'y trae el número de SU categoría, para abrir el torneo en esa pestaña (&cat=N)',
+      catDe('Campeonato Panamericano U-20 2026 · Absoluto') + ' / ' + catDe('Campeonato Panamericano U-20 2026 · Femenino'));
+  chk(catDe('Campeonato Panamericano U-20 2026') === -1,
+      'el torneo pelado sigue enganchando, sin categoría (-1)', catDe('Campeonato Panamericano U-20 2026'));
+  chk(idDe('Campeonato Panamericano U-20 2026 · Sub 8') === undefined,
+      'una categoría que no existe no engancha con nada');
+
+  // La coreografía: el clic tiene que llevar la categoría hasta el detalle del torneo.
+  chk(/function tourFromProfileClick\(e, type, id, cat\)/.test(SRC) &&
+      /openTourFromProfile\(type, id, cat\)/.test(SRC),
+      'el clic del botón pasa la categoría');
+  chk(/function openTourFromProfile\(type, id, cat\)/.test(SRC) &&
+      /openTournamentDetail\(type, id, false, cat\)/.test(SRC),
+      'y el detalle del torneo la recibe y abre esa pestaña');
 
   // Sin ficha en el playerIndex (jugador nuevo, o modo autor sin índice) se cae al catálogo
   // completo — que igual no tiene nombres repetidos, así que no puede llevar al torneo equivocado.
   const mapaSinIndice = armar(MAN)({ id:999 });
-  chk(Object.keys(mapaSinIndice).length === 3,
+  chk(Object.keys(mapaSinIndice).length === 6,
       'sin ficha en el índice usa el catálogo entero (menos los playerOnly)', Object.keys(mapaSinIndice).length);
 
   chk(Object.keys(armar(null)({ id:7 })).length === 0, 'sin manifest devuelve vacío, no rompe');
