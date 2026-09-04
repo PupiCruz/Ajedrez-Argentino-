@@ -13,10 +13,34 @@ import fs from 'node:fs';
 const SRC = fs.readFileSync(new URL('./index.html', import.meta.url), 'utf8');
 
 let fallos = 0;
+let corridas = 0;
 function chk(ok, txt, extra) {
+  corridas++;
   console.log((ok ? '  ok  ' : ' FALLA') + ' | ' + txt + (extra !== undefined ? ('  → ' + extra) : ''));
   if (!ok) fallos++;
 }
+
+// ── Red de seguridad ────────────────────────────────────────────────
+// Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
+// que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
+// correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
+const ESPERADAS = 316;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+process.on('uncaughtException', (e) => {
+  const falta = /(\w+) is not defined/.exec(e.message || '');
+  console.log('\n' + '='.repeat(78));
+  console.log('🚨 EL BANCO SE CORTÓ. No terminó: dejó de correr a la mitad.');
+  console.log('   Alcanzó a correr ' + corridas + ' de ' + ESPERADAS + ' comprobaciones.');
+  if (falta) {
+    console.log('');
+    console.log('   FALTA EL AYUDANTE:  ' + falta[1]);
+    console.log('   Arreglo: agregarlo a la lista de nombres del bloque que se cayó, en');
+    console.log('   test-web.mjs (buscá  extraerFuncion  para encontrar las listas).');
+  } else {
+    console.log('   Motivo: ' + (e.message || e));
+  }
+  console.log('='.repeat(78) + '\n');
+  process.exit(1);
+});
 
 // Saca el texto de una función de index.html, contando llaves.
 function extraerFuncion(nombre) {
@@ -230,8 +254,12 @@ console.log('\n=== 12. Radiografía del torneo — el motor ===');
 {
   // El motor son funciones PURAS: entra el cuadro guardado del torneo, sale un número. Se sacan
   // del index.html de verdad y se corren acá mismo, sin navegador.
+  // OJO: hay que listar TAMBIÉN los ayudantes que las funciones se llaman entre sí. _stRpFromRounds
+  // usa _crStandingsEloMap y _crOppElo (el arreglo de la performance 3000, publicado el 04/09/2026):
+  // si faltan, el banco se corta a la mitad y no llega a correr el resto de las pruebas.
   const nombres = ['_stJugada','_stPts','_stRounds','_stDp','_stRpFromRounds','_stColors',
-                   '_stRace','_stStreak','_stBoard1','_stElo','_stDays','_stSig'];
+                   '_stRace','_stStreak','_stBoard1','_stElo','_stDays','_stSig',
+                   '_crStandingsEloMap','_crOppElo'];
   const dpArr = SRC.match(/var _ST_DP = \[[\s\S]*?\];/)[0];
   const stV   = SRC.match(/var _ST_V = (\d+);/)[1];
   const M = new Function('var _ST_V = ' + stV + ';' + dpArr + nombres.map(extraerFuncion).join('\n')
@@ -1124,5 +1152,81 @@ console.log('\n=== 30. "Finalizado" a mano y lo horneado que no se tapa ===');
       'y para lo horneado gana la clave que LO TENGA, no la primera que exista');
 }
 
-console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.') + '\n');
-process.exitCode = fallos ? 1 : 0;
+console.log('\n=== 31. Las fichitas de material (piezas capturadas de ventaja) ===');
+{
+  // La cuenta es la de Lichess (cada pieza cancela una del rival del mismo tipo) y el dibujo es el
+  // de chess.com (al lado de cada uno van las piezas del RIVAL, las que él comió).
+  const varVal   = SRC.match(/var _AA_MAT_VAL = \{[^}]*\};/)[0];
+  const varOrder = SRC.match(/var _AA_MAT_ORDER = \[[^\]]*\];/)[0];
+  const M = new Function(varVal + varOrder
+                         + extraerFuncion('aaMaterialDiff') + '\n' + extraerFuncion('aaMaterialHtml')
+                         + ' return { aaMaterialDiff, aaMaterialHtml };')();
+
+  // "wQ wP wP +8" — así se leen las fichitas de un bando de un vistazo.
+  const fichas = (color, fen) => {
+    const html = M.aaMaterialHtml(color, M.aaMaterialDiff(fen));
+    const pcs = [...html.matchAll(/piezas\/(\w\w)\.svg/g)].map(m => m[1]);
+    const pts = /\+(\d+)/.exec(html);
+    return (pcs.join(' ') + (pts ? ' +' + pts[1] : '')).trim();
+  };
+
+  const INICIAL = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+  chk(fichas('w', INICIAL) === '' && fichas('b', INICIAL) === '',
+      'posición inicial: no se muestra nada de ningún lado');
+
+  // ── LA TRAMPA DEL FEN: después de la posición vienen el turno y los enroques ─────────────
+  // "... w KQkq" tiene una K, una Q, una k y una q; y con turno de negras hay una "b" suelta.
+  // Si el recorrido no frenara en el primer espacio, contaría esas letras como piezas: un rey,
+  // una dama y hasta un alfil que no existen. Por eso `aaMaterialDiff` corta en el espacio.
+  chk(fichas('w', '4k3/8/8/8/8/8/8/4K3 b - - 0 1') === '' &&
+      fichas('b', '4k3/8/8/8/8/8/8/4K3 b - - 0 1') === '',
+      'rey contra rey con turno de NEGRAS: la "b" del turno no se cuenta como alfil');
+  chk(fichas('w', '4k3/8/8/8/8/8/8/4K3 w KQkq - 0 1') === '' &&
+      fichas('b', '4k3/8/8/8/8/8/8/4K3 w KQkq - 0 1') === '',
+      'y las letras de los enroques (KQkq) tampoco');
+
+  // ── El color va AL REVÉS, como chess.com ──────────────────────────────────────────────────
+  const SIN_H2 = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPP1/RNBQKBNR w - - 0 1';   // blancas sin el peón h2
+  chk(fichas('b', SIN_H2) === 'wP +1',
+      'blancas sin un peón: al lado de las NEGRAS va un peón BLANCO (el que se comieron) y +1',
+      fichas('b', SIN_H2));
+  chk(fichas('w', SIN_H2) === '', 'y al lado de las blancas, nada');
+
+  // ── Lo que se cancela no se muestra; lo que sobra, sí, de los DOS lados ───────────────────
+  // Blancas con 2 alfiles y 1 caballo, negras con 1 alfil y 2 caballos: cada uno tiene una pieza
+  // de más, valen lo mismo (3 y 3), así que no hay "+N" para nadie.
+  const CAMBIO = 'rnbqk1nr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKB1R w - - 0 1';
+  chk(fichas('w', CAMBIO) === 'bB' && fichas('b', CAMBIO) === 'wN',
+      'alfil de más contra caballo de más: una fichita de cada lado y ningún número',
+      fichas('w', CAMBIO) + '  /  ' + fichas('b', CAMBIO));
+
+  // ── El "+N" lo lleva SOLO el que va ganando en puntos ─────────────────────────────────────
+  const DAMA_x_TORRE_ALFIL = '1b1rk3/8/8/8/8/8/8/3QK3 w - - 0 1';   // dama (9) contra torre+alfil (8)
+  chk(fichas('w', DAMA_x_TORRE_ALFIL) === 'bQ +1',
+      'dama contra torre+alfil: las blancas muestran la dama y el +1',
+      fichas('w', DAMA_x_TORRE_ALFIL));
+  chk(fichas('b', DAMA_x_TORRE_ALFIL) === 'wR wB',
+      'y las negras muestran torre y alfil, pero SIN número (van perdiendo)',
+      fichas('b', DAMA_x_TORRE_ALFIL));
+
+  // ── Orden de las fichitas: de la más valiosa a la menos ──────────────────────────────────
+  const VENTAJA_GRANDE = '3qk3/pppppppp/8/8/8/8/PPPPPP2/1N2K3 w - - 0 1';
+  chk(fichas('b', VENTAJA_GRANDE) === 'wQ wP wP +8',
+      'primero la dama y después los peones (dama, torre, alfil, caballo, peón)',
+      fichas('b', VENTAJA_GRANDE));
+  chk(fichas('w', VENTAJA_GRANDE) === 'bN', 'y del otro lado el caballo suelto, sin número');
+
+  // ── Los reyes nunca cuentan ──────────────────────────────────────────────────────────────
+  const d = M.aaMaterialDiff('4k3/8/8/8/8/8/8/4K3 w - - 0 1');
+  chk(d.score === 0 && JSON.stringify(d.w) === JSON.stringify(d.b), 'los reyes no suman ni restan');
+
+  // ── Basura: no se cuelga ni inventa ──────────────────────────────────────────────────────
+  chk(M.aaMaterialDiff('').score === 0 && M.aaMaterialDiff(null).score === 0 &&
+      M.aaMaterialDiff(undefined).score === 0, 'sin FEN devuelve cero, no explota');
+  chk(M.aaMaterialHtml('w', null) === '', 'y sin cuenta hecha no dibuja nada');
+}
+
+console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
+console.log('   Corrieron ' + corridas + ' de ' + ESPERADAS + ' comprobaciones.'
+          + (corridas < ESPERADAS ? '   ⚠️  FALTAN ' + (ESPERADAS - corridas) + ': algo se está salteando.' : '') + '\n');
+process.exitCode = (fallos || corridas < ESPERADAS) ? 1 : 0;
