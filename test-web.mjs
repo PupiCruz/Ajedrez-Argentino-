@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 465;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 469;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -1733,6 +1733,18 @@ console.log('\n=== 34. La vitrina de trofeos del perfil ===');
   const OLI = new Function(extraerFuncion('_troOlimpica') + ' return _troOlimpica;')();
   chk(OLI().indexOf('viewBox="0 0 44 54"') > 0, 'la medalla olímpica tiene su propio dibujo, más grande');
   chk(/\.tro-oro svg \{ width: 50px/.test(SRC), 'y el CSS la hace la medalla más grande de todas');
+
+  // ── En la interfaz, la bandera va como IMAGEN, nunca como emoji ─────────────────────────────
+  // En Windows los emoji de bandera no existen: el chip decia "AR Nacionales" en vez de mostrar
+  // la bandera. Lo vio el autor. La app ya tenia _flagImg("ARG"), que devuelve el SVG local.
+  chk(!/🇦🇷s*(Solo argentinos|Nacionales|La actuación|Argentinos en el torneo|¿argentino|Argentina no juega)/.test(SRC),
+      'ningún botón ni rótulo visible usa el emoji de bandera');
+  chk(SRC.split("_flagImg('ARG')").length - 1 >= 12,
+      'los botones y rótulos la arman con _flagImg(ARG)', (SRC.split("_flagImg('ARG')").length - 1) + ' usos');
+  chk(SRC.indexOf('assets/flags/ar.svg') > 0, 'y el HTML fijo del archivo también lleva la imagen');
+  // En las redes sociales el emoji SÍ se ve bien, así que ese se deja.
+  chk(/#AjedrezArgentino #Ajedrez ♟️🇦🇷/.test(SRC),
+      'salvo el texto para compartir en redes, donde el emoji se ve bien');
 
   // ── El mueble ──────────────────────────────────────────────────────────────────────────────
   chk(/tro-mueble/.test(R9.h) && /tro-vidrio/.test(R9.h), 'los trofeos van adentro de un mueble con vidrio');
