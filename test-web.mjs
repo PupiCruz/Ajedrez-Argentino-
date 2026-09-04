@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 390;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 394;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -1448,6 +1448,22 @@ console.log('\n=== 33. El botón 🏆 "Ver torneo" en el listado del perfil ==='
       'el torneo pelado sigue enganchando, sin categoría (-1)', catDe('Campeonato Panamericano U-20 2026'));
   chk(idDe('Campeonato Panamericano U-20 2026 · Sub 8') === undefined,
       'una categoría que no existe no engancha con nada');
+
+  // El link COMPARTIBLE de una categoría: ?torneo=<id>&cat=<C>.
+  const HREF = new Function(extraerFuncion('_tourHref') + extraerFuncion('_tourHrefCat')
+                            + ' return _tourHrefCat;')();
+  chk(HREF('tz_1786718869665', 1) === '?torneo=tz_1786718869665&cat=1',
+      'el link de una categoría lleva &cat=<C> (antes la barra lo borraba)', HREF('tz_1786718869665', 1));
+  chk(HREF('tz_1786198204110', -1) === '?torneo=tz_1786198204110' &&
+      HREF('tz_1786198204110') === '?torneo=tz_1786198204110',
+      'y un torneo sin categorías queda con el link pelado, como siempre');
+  chk(HREF('tz_x', 0) === '?torneo=tz_x&cat=0', 'la categoría 0 también viaja (no se cae por ser 0)');
+
+  // La barra tiene que SEGUIR a la pestaña: cada pestaña reentra con el historial ya apilado, así que
+  // sin el replaceState el link copiado sería siempre el de la categoría con la que se entró.
+  chk(SRC.includes("var _tdUrl = _tourHrefCat(id, _tdActiveCat);") &&
+      SRC.includes("history.replaceState({ tourDetail: true }, '', _tdUrl)"),
+      'y al cambiar de pestaña la URL se reemplaza (si no, se comparte siempre la primera)');
 
   // La coreografía: el clic tiene que llevar la categoría hasta el detalle del torneo.
   chk(/function tourFromProfileClick\(e, type, id, cat\)/.test(SRC) &&

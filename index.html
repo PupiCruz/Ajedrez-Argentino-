@@ -26336,6 +26336,9 @@ function _resolveTourType(key) {
   return 'ls';
 }
 function _tourHref(key) { return '?torneo=' + encodeURIComponent(key); }
+/* Igual, pero con la pestaña de CATEGORÍA (Absoluto/Femenino, Rápido/Blitz…). Sin categoría, o con
+   -1 (torneo sin pestañas), devuelve el link pelado. */
+function _tourHrefCat(key, cat) { return _tourHref(key) + ((cat != null && cat >= 0) ? '&cat=' + cat : ''); }
 // Quita la pantalla "Cargando…" del deep-link (cover inicial), una vez que el contenido real abrió.
 function _removeDeepLinkCover() {
   var c = document.getElementById('deeplink-cover');
@@ -27425,7 +27428,15 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   // La URL pasa a ?torneo=<id> (compartible / favoritos / pestaña nueva). Atrás la revierte. VA ANTES de
   // cargar el vivo: con la apertura instantánea entre pestañas la partida se abre SINCRÓNICAMENTE dentro de
   // _tdLoadLiveGames y pone su propio ?torneo=&partida=; si el push del torneo quedara después, lo pisaría.
-  if (!_tourHistoryPushed) { _tourHistoryPushed = true; history.pushState({ tourDetail: true }, '', _tourHref(id)); }
+  //
+  // En un torneo por CATEGORÍAS la URL lleva además &cat=<C>, así se puede COMPARTIR una categoría
+  // puntual (antes el link copiado de la barra abría siempre la primera). Y como cada pestaña reentra
+  // acá con el historial ya apilado, el `else` REEMPLAZA la URL para que la barra siga a la pestaña que
+  // se está mirando. Acotado a los torneos con categorías: en los demás no hay pestañas, no reentran, y
+  // así no se toca el camino de siempre.
+  var _tdUrl = _tourHrefCat(id, _tdActiveCat);
+  if (!_tourHistoryPushed) { _tourHistoryPushed = true; history.pushState({ tourDetail: true }, '', _tdUrl); }
+  else if (_tdActiveCat >= 0) { try { history.replaceState({ tourDetail: true }, '', _tdUrl); } catch (e) {} }
   _tdLiveNoPoll = manuallyFinished;   // finalizado a mano → baja las partidas UNA vez pero NO sondea (cero fuga al worker)
   if (hasBroadcast) _tdLoadLiveGames(broadcastId, broadcastUrl, name, location, pgnKey2, typ, status, roundOrder.length > 0);
   // "Se actualizan solos": en la web publicada, si el torneo está EN VIVO o es PRÓXIMO y tiene URL de
