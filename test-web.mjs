@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 448;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 451;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -1688,6 +1688,13 @@ console.log('\n=== 34. La vitrina de trofeos del perfil ===');
       'se muestra al pasar el mouse y se clava al tocar (para el teléfono)');
 
   // La aclaración que pidió el autor.
+  // Las mujeres van como Campeona/Subcampeona: el listado FIDE ya trae el sexo (campo female).
+  const Rf = HTML(MAN, [])({ id:7, female:true });
+  chk(Rf.h.indexOf('>Campeona<') > 0 && Rf.h.indexOf('>Campeón<') < 0,
+      'una jugadora sale como CAMPEONA, no como campeón');
+  chk(h.indexOf('>Campeón<') > 0, 'y un jugador sigue saliendo como campeón');
+  chk(Rf.det.indexOf('Campeona') >= 0, 'el renglón del detalle también va en femenino');
+
   chk(/cuenta desde que ChessArgentino empezó a funcionar/.test(h),
       'la vitrina aclara que cuenta desde que arrancó el sitio');
 
