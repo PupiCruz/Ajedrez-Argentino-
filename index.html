@@ -1391,6 +1391,30 @@
     /* Reloj del que le toca mover: resaltado SUAVE (verde tenue). Legible en oscuro y claro. */
     .cv-clock-active { background:rgba(70,180,110,0.16); border-color:rgba(95,195,135,0.55); color:#a3ddb9; }
     body.light .cv-clock-active { background:rgba(40,155,90,0.13); border-color:rgba(40,150,85,0.5); color:#1f7a44; }
+    /* ── Piezas capturadas de ventaja (fichitas + "+N"), estilo chess.com ────────
+       Al lado de cada jugador van las piezas que ÉL comió, o sea las del color del RIVAL:
+       arriba de las negras, piezas blancas. Sólo la diferencia neta (lo que se cancela no se
+       muestra). Aparece SOLO en pantalla de computadora (>=1100px, que es cuando el tablero
+       del visor pasa a 560px de ancho): en el teléfono le robaría el lugar al nombre. */
+    .aa-mat { display:none; align-items:center; gap:1px; white-space:nowrap; }
+    .aa-mat-pc { width:15px; height:15px; flex-shrink:0; opacity:.95; }
+    /* Las piezas NEGRAS son una silueta negra maciza: sobre el panel oscuro del renglón del
+       jugador casi no se ven. Se les pone un halo BLANCO bien marcado (los drop-shadow se
+       encadenan: cada uno se aplica sobre el resultado del anterior, y así el contorno cierra). */
+    .aa-mat-pc.aa-mat-b { filter: drop-shadow(0 0 .9px #fff) drop-shadow(0 0 .9px #fff) drop-shadow(0 0 1.8px rgba(255,255,255,.6)); }
+    body.light .aa-mat-pc.aa-mat-b { filter: none; }
+    /* Al revés en modo claro: las blancas son casi blancas sobre panel blanco y su contorno es finito. */
+    body.light .aa-mat-pc.aa-mat-w { filter: drop-shadow(0 0 .7px rgba(0,0,0,.45)); }
+    .aa-mat-pts { margin-left:5px; font-size:11.5px; font-weight:700; color:var(--text2); font-variant-numeric:tabular-nums; }
+    @media (min-width: 1100px) {
+      /* Pegadas al recuadro del RESULTADO (a su izquierda), creciendo de derecha a izquierda:
+         `margin-left:auto` se come todo el espacio libre del renglón, y `flex:0 0 auto` hace que
+         las fichitas nunca se achiquen. El nombre se queda con todo el lugar que sobra. */
+      .cv-player-row .aa-mat, .lv-player .aa-mat { display:flex; flex:0 0 auto; margin-left:auto; }
+      /* Sin ventaja de material el hueco no existe: si quedara como caja vacía sumaría DOS veces
+         el gap del renglón entre el nombre y el resultado. */
+      .cv-player-row .aa-mat:empty, .lv-player .aa-mat:empty { display:none; }
+    }
     /* Botón "Volver a la jugada en directo" (columna de notación, sobre los botones de navegación).
        Mismos verdes que el reloj corriendo, en oscuro y claro. */
     #cv-live-back { margin:10px 0 0; padding:9px 12px; text-align:center; font-weight:700; font-size:12.5px;
@@ -3552,6 +3576,7 @@
         <div class="lv-center">
           <div class="lv-player lv-top">
             <span class="lv-pname" id="lv-name-top">Rival</span>
+            <span class="aa-mat" id="lv-mat-top"></span>
             <span class="lv-clock lv-idle" id="lv-clk-top">--:--</span>
           </div>
           <div class="lv-board-wrap">
@@ -3565,6 +3590,7 @@
           </div>
           <div class="lv-player lv-bottom">
             <span class="lv-pname" id="lv-name-bot">Vos</span>
+            <span class="aa-mat" id="lv-mat-bot"></span>
             <span class="lv-clock lv-idle" id="lv-clk-bot">--:--</span>
           </div>
         </div>
@@ -3905,6 +3931,7 @@
     <!-- Jugador arriba del tablero (negras por defecto) -->
     <div class="cv-player-row" id="cv-top-player">
       <div class="cv-pinfo" id="cv-bname"></div>
+      <span class="aa-mat" id="cv-bmat"></span>
       <span class="chess-pres" id="cv-result"></span>
       <span class="cv-clock" id="cv-bclock" style="flex-shrink:0"></span>
     </div>
@@ -3926,6 +3953,7 @@
     <!-- Jugador abajo del tablero (blancas por defecto) -->
     <div class="cv-player-row" id="cv-bot-player">
       <div class="cv-pinfo" id="cv-wname"></div>
+      <span class="aa-mat" id="cv-wmat"></span>
       <span class="chess-pres" id="cv-wresult"></span>
       <span class="cv-clock" id="cv-wclock" style="flex-shrink:0"></span>
     </div>
@@ -21511,6 +21539,62 @@ function cvLoadFlag(spanId, fideId) {
     .catch(function() { _fideCountryCache[fideId] = null; _capCache(_fideCountryCache, 500); });
 }
 
+/* ── Diferencia de material (estilo Lichess) ─────────────────────────────────────
+   Lichess NO presta esto por su API: lo calcula en el navegador a partir de la POSICIÓN
+   (ui/lib/src/game/material.ts, AGPL). Acá se hace igual: se recorre el FEN y cada pieza
+   CANCELA una del rival del mismo tipo; lo que sobra es la ventaja de ese bando. Por eso
+   "2 alfiles contra 1" muestra 1 alfil (no los 3), y si uno tiene caballo de más y el otro
+   alfil de más, se muestra uno de cada lado. El rey no cuenta (siempre se cancela).
+   Devuelve { w:{q,r,b,n,p}, b:{...}, score } con score = puntos blancas − negras. */
+var _AA_MAT_VAL = { q:9, r:5, b:3, n:3, p:1 };
+function aaMaterialDiff(fen) {
+  var d = { w:{q:0,r:0,b:0,n:0,p:0}, b:{q:0,r:0,b:0,n:0,p:0}, score:0 };
+  if (!fen) return d;
+  var board = String(fen);
+  for (var i = 0; i < board.length; i++) {
+    var ch = board.charAt(i);
+    if (ch === ' ') break;                 // se terminó la parte de la posición del FEN
+    var low = ch.toLowerCase();
+    if (!_AA_MAT_VAL[low]) continue;        // "/", números y el rey: no cuentan
+    var mine = (ch === low) ? 'b' : 'w', them = (mine === 'w') ? 'b' : 'w';
+    if (d[them][low] > 0) d[them][low]--;
+    else d[mine][low]++;
+  }
+  d.score = (d.w.q - d.b.q) * 9 + (d.w.r - d.b.r) * 5 + (d.w.b - d.b.b) * 3
+          + (d.w.n - d.b.n) * 3 + (d.w.p - d.b.p);
+  return d;
+}
+/* Fichitas de la ventaja del bando `color` + el "+N" de puntos (el "+N" sólo del que va ganando).
+   Se DIBUJAN DEL COLOR CONTRARIO, como en chess.com: al lado de las negras van piezas BLANCAS,
+   porque son las que las negras le comieron a las blancas. La cuenta es la misma; sólo cambia el
+   dibujo. Devuelve '' si ese bando no tiene nada de más. */
+var _AA_MAT_ORDER = ['q','r','b','n','p'];
+function aaMaterialHtml(color, d) {
+  if (!d) return '';
+  var side = d[color], pintar = (color === 'w') ? 'b' : 'w', html = '';
+  for (var i = 0; i < _AA_MAT_ORDER.length; i++) {
+    var t = _AA_MAT_ORDER[i];
+    for (var k = 0; k < side[t]; k++)
+      html += '<img class="aa-mat-pc aa-mat-' + pintar + '" src="assets/piezas/' + pintar + t.toUpperCase() + '.svg" alt="" draggable="false">';
+  }
+  var pts = (color === 'w') ? d.score : -d.score;
+  if (pts > 0) html += '<span class="aa-mat-pts">+' + pts + '</span>';
+  return html;
+}
+/* Pinta las dos fichitas del VISOR con la posición que se está viendo. Barata (recorre el FEN),
+   pero se guarda la firma para no reescribir el DOM en cada tecla al navegar rápido. */
+var _cvMatSig = '';
+function cvUpdateMaterial() {
+  var wEl = document.getElementById('cv-wmat'), bEl = document.getElementById('cv-bmat');
+  if (!wEl && !bEl) return;
+  var d = aaMaterialDiff((cv.node && cv.node.fen) || '');
+  var hw = aaMaterialHtml('w', d), hb = aaMaterialHtml('b', d);
+  if (hw + '|' + hb === _cvMatSig) return;
+  _cvMatSig = hw + '|' + hb;
+  if (wEl) { wEl.innerHTML = hw; wEl.title = hw ? 'Piezas capturadas de ventaja' : ''; }
+  if (bEl) { bEl.innerHTML = hb; bEl.title = hb ? 'Piezas capturadas de ventaja' : ''; }
+}
+
 // Genera el HTML completo de un jugador en el visor: bandera + título + nombre (clickeable) + ELO
 // isBlack: true para alinear a la derecha
 function cvPlayerHtml(title, name, fideId, elo, team, isBlack) {
@@ -21600,6 +21684,7 @@ function cvSetNode(node) {
     if (sf.on && sf.ready && !_fa.running && !_animMid0) { sfAnalyze(true); _cvSfNode = node; }
   }
   cvHighlight();
+  cvUpdateMaterial();   // fichitas de material (barato: sólo recorre el FEN)
 
   // Contador de jugadas (liviano, va en el acto).
   var depth = nodeDepth(node);
@@ -22772,6 +22857,7 @@ function cvOpenOverlay() {
   // el gráfico dibuja, los elementos de las líneas seguían con el contenido viejo (sfTurnOff solo los
   // oculta, no los limpia) → al prenderlo se veían las líneas de la partida anterior.
   sfClearLiveDisplay();
+  _cvMatSig = '';   // partida nueva: obligar a repintar las fichitas de material
   _fa._freshGame = true;   // marca "partida recién abierta" → faLiveBuild hace el prelude (analiza la actual)
   cvRenderBoard();
   if (!_cvHistoryPushed) {
@@ -33754,6 +33840,19 @@ function cvUpdateNagBadge() {
     if(!ahora || !d.pc || ahora.color!==d.pc.color || ahora.type!==d.pc.type) lvCancelDrag();
   }
 
+  // Fichitas de material del PvP/salas. `bottom` es el color de abajo (cambia al girar y al
+  // rotar las sillas de una sala), por eso va en la firma: si no, al girar quedaban al revés.
+  var lvMatSig='';
+  function lvUpdateMaterial(fen){
+    var botEl=$('lv-mat-bot'), topEl=$('lv-mat-top'); if(!botEl && !topEl) return;
+    var bc=isFlipped()?'b':'w', tc=(bc==='w')?'b':'w';
+    var d=aaMaterialDiff(fen||'');
+    var hb=aaMaterialHtml(bc,d), ht=aaMaterialHtml(tc,d);
+    var sig=bc+'|'+hb+'|'+ht; if(sig===lvMatSig) return; lvMatSig=sig;
+    if(botEl){ botEl.innerHTML=hb; botEl.title=hb?'Piezas capturadas de ventaja':''; }
+    if(topEl){ topEl.innerHTML=ht; topEl.title=ht?'Piezas capturadas de ventaja':''; }
+  }
+
   function renderBoard(){
     var el=$('lv-board'); if(!el) return;
     lvCheckDragAlive();
@@ -33798,6 +33897,7 @@ function cvUpdateNagBadge() {
       if(srcCell) srcCell.classList.add('dragging');
     }
     lvRenderedFen=view.fen;
+    lvUpdateMaterial(view.fen);
     renderArrows();
   }
 
