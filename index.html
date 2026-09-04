@@ -12212,7 +12212,10 @@ function pgnComputeLeaders(games) {
 function pgnGetTorneosForList() {
   if (_ondemand && _manifest) {
     return (_manifest.tournaments || []).filter(function(e) { return !e.playerOnly; }).map(function(entry) {
-      var dk = entry.dateKey || tourDateKey(entry);
+      // Las fechas ISO van PRIMERO: el `dateKey` horneado en el manifest puede ser de antes del
+      // arreglo de parseDateFromText (46 torneos quedaron con "2026-00-00"). Así se corrige solo,
+      // sin tener que volver a hornear el manifest. Y `_isoToKey` es instantáneo: no cuesta nada.
+      var dk = _isoToKey(entry.endDate) || _isoToKey(entry.startDate) || entry.dateKey || tourDateKey(entry);
       var status = (dk > 0 && dk >= todayKey()) ? 'upcoming' : 'done';
       return {
         _id: entry.id, name: entry.name, type: entry.type || '', games: [],
@@ -16123,34 +16126,49 @@ function todayKey() {
   return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
 }
 
+/* Saca YYYYMMDD de un texto libre de fechas ("18 – 25 May 2026", "13 AL 21 DE JUNIO 2026",
+   "27 Jul – 2 Ago 2026"). De un RANGO devuelve el final.
+
+   Dos cosas que antes salían mal y fechaban 46 de los 126 torneos del catálogo:
+   1) La tabla de meses sólo tenía los nombres completos en castellano y las abreviaturas en
+      INGLÉS. "Ago", "Dic", "Ene", "Abr" y "Set" no las reconocía nadie: el torneo quedaba en
+      "2026-00-00" y en el perfil aparecía como jugado a principio de año.
+   2) Se devolvía el primer mes de la LISTA, no el que aparece último en el TEXTO. Con
+      "28 Jun – 5 Jul 2026" ganaba junio (porque junio va antes en la lista) y daba el 28 de
+      junio: el comienzo del torneo, no el final.
+
+   Las abreviaturas de 3 letras sólo cuentan si tienen un número de DÍA pegado adelante. Sin eso,
+   "Mar del Plata" se leería como marzo — y es una de las sedes más usadas del país. El número
+   tiene que ser de 1 o 2 cifras, para que un año ("Copa 2026 Mar del Plata") tampoco la habilite. */
 function parseDateFromText(text) {
-  // Returns YYYYMMDD from strings like "18 – 25 May 2026" or "13 AL 21 DE JUNIO"
-  // Uses the last day number before the month name (= end date of a range)
-  var monthGroups = [
-    ['enero','jan'],['febrero','feb'],['marzo','mar'],['abril','apr'],
-    ['mayo','may'],['junio','jun'],['julio','jul'],['agosto','aug'],
-    ['septiembre','sep'],['octubre','oct'],['noviembre','nov'],['diciembre','dec']
+  var meses = [
+    ['enero','ene','jan'], ['febrero','feb'], ['marzo','mar'], ['abril','abr','apr'],
+    ['mayo','may'], ['junio','jun'], ['julio','jul'], ['agosto','ago','aug'],
+    ['septiembre','setiembre','sep','set'], ['octubre','oct'], ['noviembre','nov'], ['diciembre','dic','dec']
   ];
   var s = (text || '').toLowerCase();
   var year = new Date().getFullYear();
   var ym = s.match(/\b(20\d\d|19\d\d)\b/);
   if (ym) year = parseInt(ym[1]);
-  for (var i = 0; i < monthGroups.length; i++) {
-    var variants = monthGroups[i];
-    for (var j = 0; j < variants.length; j++) {
-      var re = new RegExp('\\b' + variants[j] + '\\b');
-      var m = re.exec(s);
-      if (m) {
-        var before = s.substring(0, m.index);
-        var nums = before.match(/\d+/g);
-        var day = (nums && nums.length > 0) ? parseInt(nums[nums.length - 1]) : 0;
-        return year * 10000 + (i + 1) * 100 + day;
+  var DIA_ANTES = /(?:^|\D)\d{1,2}\s*(?:de\s+)?$/;
+  var mejor = null;   // el mes que aparece MÁS A LA DERECHA del texto = el final del rango
+  for (var i = 0; i < meses.length; i++) {
+    for (var j = 0; j < meses[i].length; j++) {
+      var pal = meses[i][j];
+      var re = new RegExp('\\b' + pal + '\\b', 'g'), m;
+      while ((m = re.exec(s))) {
+        if (pal.length <= 3 && !DIA_ANTES.test(s.slice(0, m.index))) continue;
+        if (!mejor || m.index > mejor.idx) mejor = { idx: m.index, mes: i + 1 };
       }
     }
   }
-  // fallback: year only
-  var ym2 = s.match(/\b(20\d\d|19\d\d)\b/);
-  return ym2 ? parseInt(ym2[1]) * 10000 : 0;
+  if (mejor) {
+    var nums = s.substring(0, mejor.idx).match(/\d+/g);
+    var day = 0;
+    if (nums) { var n = parseInt(nums[nums.length - 1], 10); if (n >= 1 && n <= 31) day = n; }
+    return year * 10000 + mejor.mes * 100 + day;
+  }
+  return ym ? parseInt(ym[1], 10) * 10000 : 0;   // sin mes reconocible: el año solo
 }
 
 // Número de mes (1-12) a partir de un texto con nombre de mes (es/en). 0 si no hay.
@@ -16276,6 +16294,11 @@ function tourRange(obj) {
 }
 
 function tourDateKey(tour) {
+  // 0. Fechas ISO del torneo (startDate/endDate). Es el dato ESTRUCTURADO: si está, manda.
+  //    Antes se arrancaba por el texto libre y bastaba que dijera "22 – 29 Ago 2026" para que el
+  //    mes no se reconociera y el torneo quedara fechado "2026-00-00" (a principio de año).
+  var _iso = _isoToKey(tour.endDate) || _isoToKey(tour.startDate);
+  if (_iso) return _iso;
   // 1. Explicit tournament dates field (most reliable)
   if (tour.tournamentDates) {
     var dk = parseDateFromText(tour.tournamentDates);

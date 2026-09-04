@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 347;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 371;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -1241,6 +1241,7 @@ console.log('\n=== 32. Candados de bugs viejos que no tenían red ===');
   chk(P('Buenos Aires') === 0 && P('') === 0 && P(null) === 0, 'sin nada devuelve 0, no una fecha inventada');
 
   const TDK = new Function(extraerFuncion('parseDateFromText') + extraerFuncion('tourDateKey')
+                           + extraerFuncion('_isoToKey')
                            + 'function parsePgnHeaders(g){ return g.__h || {}; }'
                            + ' return tourDateKey;')();
   chk(TDK({ tournamentDates:'13 al 21 de junio de 2026', location:'Mar del Plata' }) === 20260621,
@@ -1249,6 +1250,58 @@ console.log('\n=== 32. Candados de bugs viejos que no tenían red ===');
       'sin ese campo, la fecha sale del PGN de la primera partida', TDK({ games:[{ __h:{ Date:'2026.07.15' } }] }));
   chk(TDK({ games:[{ __h:{ Date:'2026.??.??' } }] }) === 20260000,
       'un PGN con la fecha incompleta (2026.??.??) no rompe: queda el año', TDK({ games:[{ __h:{ Date:'2026.??.??' } }] }));
+
+  // ── Abreviaturas EN CASTELLANO (bug: 46 de 126 torneos fechados a principio de año) ──────────
+  // La tabla de meses tenía los nombres largos en castellano y las abreviaturas en INGLÉS. Las
+  // que no coinciden entre los dos idiomas —ago, dic, ene, abr, set— no las reconocía nadie.
+  [['ene',1],['feb',2],['mar',3],['abr',4],['may',5],['jun',6],
+   ['jul',7],['ago',8],['sep',9],['set',9],['oct',10],['nov',11],['dic',12]].forEach(function(par){
+    chk(P('15 ' + par[0] + ' 2026') === 20260000 + par[1] * 100 + 15,
+        'reconoce "' + par[0] + '" como mes ' + par[1], P('15 ' + par[0] + ' 2026'));
+  });
+
+  // ── De un rango gana el mes de MÁS A LA DERECHA (el final), no el primero de la lista ────────
+  chk(P('28 Jun – 5 Jul 2026') === 20260705,
+      'un rango que cruza de mes devuelve el FINAL (5 de julio, no 28 de junio)', P('28 Jun – 5 Jul 2026'));
+  chk(P('27 Jul – 2 Ago 2026') === 20260802, 'y de julio a agosto también', P('27 Jul – 2 Ago 2026'));
+  chk(P('28 Nov – 5 Dic 2026') === 20261205, 'y de noviembre a diciembre', P('28 Nov – 5 Dic 2026'));
+
+  // ── "Mar del Plata" NO es marzo (es una de las sedes más usadas del país) ────────────────────
+  chk(P('Mar del Plata') === 0, 'un nombre de lugar sin fecha no inventa un mes', P('Mar del Plata'));
+  chk(P('Copa 2026 Mar del Plata') === 20260000,
+      'y con un año al lado tampoco: el año no habilita la abreviatura', P('Copa 2026 Mar del Plata'));
+  chk(P('6 – 6 Ago 2026 Mar del Plata') === 20260806,
+      'pero una fecha de verdad en el mismo texto se sigue leyendo', P('6 – 6 Ago 2026 Mar del Plata'));
+
+  // ── Las fechas ISO del torneo mandan sobre el texto libre ────────────────────────────────────
+  chk(TDK({ startDate:'2026-08-08', endDate:'2026-08-08', tournamentDates:'texto cualquiera' }) === 20260808,
+      'startDate/endDate le ganan al texto: es el dato estructurado',
+      TDK({ startDate:'2026-08-08', endDate:'2026-08-08', tournamentDates:'texto cualquiera' }));
+  chk(TDK({ startDate:'2026-08-22', endDate:'2026-08-29' }) === 20260829,
+      'y de un rango ISO se toma el final', TDK({ startDate:'2026-08-22', endDate:'2026-08-29' }));
+  chk(TDK({ startDate:'2026-08-22', endDate:null }) === 20260822,
+      'con startDate solo, alcanza', TDK({ startDate:'2026-08-22', endDate:null }));
+
+  // ── Contra los torneos DE VERDAD del catálogo ────────────────────────────────────────────────
+  // El manifest guarda, de cada torneo, el texto de las fechas Y las fechas ISO. Las ISO son la
+  // respuesta correcta: sirven de respuestas sabidas para el texto. Es la prueba más honesta que
+  // hay de este arreglo, porque son los datos reales del sitio.
+  if (fs.existsSync('data/manifest.js')) {
+    const MAN = new Function('var window = {};' + fs.readFileSync('data/manifest.js', 'utf8')
+                             + '; return window.__MANIFEST__;')();
+    const conAmbos = (MAN.tournaments || []).filter(x => x.tournamentDates && (x.endDate || x.startDate));
+    let clavados = 0;
+    const fallados = [];
+    conAmbos.forEach(x => {
+      const esp = parseInt(String(x.endDate || x.startDate).replace(/-/g, ''), 10);
+      if (P(x.tournamentDates) === esp) clavados++;
+      else fallados.push('"' + x.tournamentDates + '" dio ' + P(x.tournamentDates) + ' y va ' + esp);
+    });
+    chk(conAmbos.length > 100, 'hay catálogo de verdad con qué comparar', conAmbos.length + ' torneos');
+    chk(clavados === conAmbos.length,
+        'el texto de las fechas da IGUAL que las fechas ISO, torneo por torneo',
+        clavados + '/' + conAmbos.length + (fallados.length ? '  ← ' + fallados.slice(0, 3).join(' · ') : ''));
+  }
 
   // ── Rating en vivo (dos bugs reales: el mismo torneo contado 2× y el blitz colándose) ────────
   const NTN = new Function(extraerFuncion('_normTourName') + ' return _normTourName;')();
