@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 469;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 481;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -1636,7 +1636,7 @@ console.log('\n=== 34. La vitrina de trofeos del perfil ===');
   }
 
   // ── La pantalla de la vitrina ──────────────────────────────────────────────────────────────
-  const HTML = new Function('_manifest', 'PLAYERS',
+  const HTML = new Function('_manifest', 'PLAYERS', '_ondemand', '_troMan',
     "var _AW_KINDS = ['c','2','3','rp','fem','s20','m50','rev'];"
     + SRC.match(/var _TRO_INFO = \{[\s\S]*?\n\};/)[0]
     + extraerFuncion('_troSello') + extraerFuncion('_troOlimpica')
@@ -1658,7 +1658,7 @@ console.log('\n=== 34. La vitrina de trofeos del perfil ===');
       { t:'tz_2', k:'fem', d:'2ª del torneo', c:1 }
     ] }
   };
-  const R = HTML(MAN, [])({ id:7 }), h = R.h, detTro = R.det;
+  const R = HTML(MAN, [], true, () => ({}))({ id:7 }), h = R.h, detTro = R.det;
 
   chk(/tro-card/.test(h) && /🏅 Vitrina/.test(h), 'la vitrina se dibuja');
   chk(/<b>1 campeonato · 1 podio · 2 medallas<\/b>/.test(h),
@@ -1700,7 +1700,7 @@ console.log('\n=== 34. La vitrina de trofeos del perfil ===');
       { k:'sub', y:2019, d:'Zonal Sudamericano' }
     ] }
   };
-  const R9 = HTML(MAN2, [])({ id:9 });
+  const R9 = HTML(MAN2, [], true, () => ({}))({ id:9 });
   const orden9 = [...R9.h.matchAll(/class="tro-nm">([^<]*?)(?:<span|<\/span>)/g)].map(m => m[1]);
   chk(orden9.join(' | ') === 'Campeón mundial | Medalla de oro olímpica | Campeón argentino | Campeón | Subcampeón | Mejor sub-20',
       'primero los títulos mayores (por año), después los campeonatos, y al final los logros',
@@ -1748,14 +1748,16 @@ console.log('\n=== 34. La vitrina de trofeos del perfil ===');
 
   // ── El mueble ──────────────────────────────────────────────────────────────────────────────
   chk(/tro-mueble/.test(R9.h) && /tro-vidrio/.test(R9.h), 'los trofeos van adentro de un mueble con vidrio');
-  chk(/\.tro-row \{ display: grid/.test(SRC),
-      'las fichas van en GRILLA: así las filas se alinean y los estantes quedan corridos');
+  chk(SRC.indexOf('.tro { width: 90px; flex: 0 0 90px; }') > 0,
+      'las fichas tienen ancho FIJO: así las filas quedan parejas y los estantes corridos');
+  chk(SRC.indexOf('width: fit-content; max-width: 100%;') > 0,
+      'y el mueble mide lo que miden los trofeos, no todo el ancho de la tarjeta');
   chk(/\.tro-ico \{[^}]*border-bottom: 3px solid/.test(SRC),
       'el estante es el borde de abajo de cada ficha (sumados forman el vidrio corrido)');
 
   // La aclaración que pidió el autor.
   // Las mujeres van como Campeona/Subcampeona: el listado FIDE ya trae el sexo (campo female).
-  const Rf = HTML(MAN, [])({ id:7, female:true });
+  const Rf = HTML(MAN, [], true, () => ({}))({ id:7, female:true });
   chk(Rf.h.indexOf('>Campeona<') > 0 && Rf.h.indexOf('>Campeón<') < 0,
       'una jugadora sale como CAMPEONA, no como campeón');
   chk(h.indexOf('>Campeón<') > 0, 'y un jugador sigue saliendo como campeón');
@@ -1765,9 +1767,47 @@ console.log('\n=== 34. La vitrina de trofeos del perfil ===');
       'la vitrina aclara que cuenta desde que arrancó el sitio');
 
   // Sin datos no dibuja nada (no una tarjeta vacía).
-  chk(HTML(MAN, [])({ id: 999 }).h === '', 'un jugador sin trofeos no muestra vitrina vacía');
-  chk(HTML({ tournaments: [] }, [])({ id: 7 }).h === '', 'y sin índice en el manifest tampoco (datos viejos)');
-  chk(HTML(null, [])({ id: 7 }).h === '', 'ni sin manifest');
+  chk(HTML(MAN, [], true, () => ({}))({ id: 999 }).h === '', 'un jugador sin trofeos no muestra vitrina vacía');
+  chk(HTML({ tournaments: [] }, [], true, () => ({}))({ id: 7 }).h === '', 'y sin índice en el manifest tampoco (datos viejos)');
+  chk(HTML(null, [], true, () => ({}))({ id: 7 }).h === '', 'ni sin manifest');
+
+  // ── Los trofeos cargados A MANO ────────────────────────────────────────────────────────────
+  // La historia grande (los campeones argentinos, el mundial de Candela, el sub-16 de Pichot) no
+  // está en los torneos del sitio: la carga el autor desde el perfil.
+  const manDe = () => ({ 7: [ { k:'arg', y:2009, d:'Campeonato Argentino Absoluto' },
+                              { k:'oro', y:1950, d:'Olimpiada de Dubrovnik' } ] });
+  const Rm = HTML(MAN, [], true, manDe)({ id:7 });
+  const nombresM = [...Rm.h.matchAll(/class="tro-nm">([^<]*?)(?:<span|<\/span>)/g)].map(m => m[1]);
+  chk(nombresM[0] === 'Campeón argentino' && nombresM[1] === 'Medalla de oro olímpica',
+      'los cargados a mano se mezclan con los del sitio y van primeros (nivel 0, por año)',
+      nombresM.join(' | '));
+  chk(Rm.det.indexOf('Campeonato Argentino Absoluto') >= 0,
+      'y muestran la descripción que escribió el autor');
+  chk(Rm.h.indexOf('?torneo=') < 0 || !/Campeonato Argentino Absoluto[^|]*Ver torneo/.test(Rm.det),
+      'sin torneo del sitio detrás, no inventan un link');
+
+  // El ✕ y el botón de agregar SÓLO en modo autor.
+  const Rautor = HTML(MAN, [], false, manDe)({ id:7 });
+  chk(Rautor.h.indexOf('tro-add') > 0 && Rautor.h.indexOf('Agregar trofeo a mano') > 0,
+      'en modo autor aparece el botón de agregar');
+  chk((Rautor.h.match(/tro-del/g) || []).length === 2,
+      'y el ✕ sólo en los dos cargados a mano, no en los del sitio',
+      (Rautor.h.match(/tro-del/g) || []).length + ' de ' + (Rautor.h.match(/class="tro /g) || []).length + ' trofeos');
+  chk(Rm.h.indexOf('tro-add') < 0 && Rm.h.indexOf('tro-del') < 0,
+      'y en la web publicada no se ve ni el botón ni el ✕');
+  chk(HTML(MAN, [], false, () => ({}))({ id: 999 }).h.indexOf('tro-add') > 0,
+      'un jugador sin nada muestra igual el botón, para poder cargarle el primero');
+
+  // Viajan al publicar por el mismo camino que el resto de lo que edita el autor.
+  chk(SRC.split('__EMBEDDED_TROPHIES__=').length - 1 >= 3,
+      'los trofeos a mano se incrustan en los tres exports',
+      (SRC.split("'window.__EMBEDDED_TROPHIES__=' + JSON.stringify(_troMan())").length - 1) + ' exports');
+  chk(/function _troMan\(\)[\s\S]{0,220}player_trophies/.test(SRC),
+      'y se guardan en el navegador del autor (player_trophies)');
+  chk(/function troAgregar\(pid\)/.test(SRC) && /function troBorrar\(pid, i\)/.test(SRC),
+      'están el cartel para cargarlos y el borrado');
+  chk(/window\.aaAsk\(\{ icono:'🗑'/.test(SRC),
+      'y el borrado pregunta con el cartel de la app, no con el del navegador');
 
   // ── El horneado NO pisa el árbol de aperturas ──
   // El autor lo pidió expresamente. _stBakeForPublish copia TODOS los campos del cuadro y sólo
