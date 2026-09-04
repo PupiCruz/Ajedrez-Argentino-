@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 451;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 465;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -1639,6 +1639,7 @@ console.log('\n=== 34. La vitrina de trofeos del perfil ===');
   const HTML = new Function('_manifest', 'PLAYERS',
     "var _AW_KINDS = ['c','2','3','rp','fem','s20','m50','rev'];"
     + SRC.match(/var _TRO_INFO = \{[\s\S]*?\n\};/)[0]
+    + extraerFuncion('_troSello') + extraerFuncion('_troOlimpica')
     + extraerFuncion('_troCopa') + extraerFuncion('_troMedalla') + extraerFuncion('_troHtml')
     + "function escHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;'); }"
     + "function escJs(s){ return String(s==null?'':s).replace(/\\\\/g,'\\\\\\\\').replace(/'/g,\"\\\\'\"); }"
@@ -1686,6 +1687,59 @@ console.log('\n=== 34. La vitrina de trofeos del perfil ===');
       'y si el torneo no tiene categorías, el link va pelado');
   chk(/onmouseenter="troShow\(/.test(h) && /onclick="troPick\(/.test(h),
       'se muestra al pasar el mouse y se clava al tocar (para el teléfono)');
+
+  // ── Los tipos que se cargan a mano y el orden por NIVELES ───────────────────────────────────
+  const MAN2 = {
+    tournaments: [ { id:'tz_1', name:'Abierto de Villa Elisa' } ],
+    playerAwards: { 9: [
+      { k:'s20', y:2021, d:'16 años' },
+      { k:'c',   t:'tz_1', y:2020, d:'8 pts' },
+      { k:'oro', y:2018, d:'Olimpiada, tablero 3' },
+      { k:'arg', y:2015, d:'Campeonato Argentino Absoluto' },
+      { k:'mun', y:2022, d:'Mundial Sub-16' },
+      { k:'sub', y:2019, d:'Zonal Sudamericano' }
+    ] }
+  };
+  const R9 = HTML(MAN2, [])({ id:9 });
+  const orden9 = [...R9.h.matchAll(/class="tro-nm">([^<]*?)(?:<span|<\/span>)/g)].map(m => m[1]);
+  chk(orden9.join(' | ') === 'Campeón mundial | Medalla de oro olímpica | Campeón argentino | Campeón | Subcampeón | Mejor sub-20',
+      'primero los títulos mayores (por año), después los campeonatos, y al final los logros',
+      orden9.join(' | '));
+
+  // El año se muestra debajo del nombre y es el que ordena.
+  chk(/class="tro-anio">2022</.test(R9.h) && /class="tro-anio">2015</.test(R9.h),
+      'cada trofeo muestra su año');
+
+  // El resumen agrupa por lo que significa, no por el tipo.
+  chk(/<b>3 campeonatos · 1 podio · 2 medallas<\/b>/.test(R9.h),
+      'el resumen cuenta ganar como campeonato (sea el argentino, un mundial o un abierto)',
+      (R9.h.match(/<b>([^<]*)<\/b>/) || [])[1]);
+
+  // ── La bandera va DIBUJADA, no con el emoji ────────────────────────────────────────────────
+  // En Windows los emoji de bandera no existen y se ven como las letras "AR": lo vio el autor.
+  const SELLO = new Function(extraerFuncion('_troSello') + ' return _troSello;')();
+  const ar = SELLO('ar');
+  chk(ar.indexOf('#74acdf') > 0 && ar.indexOf('#f6b40e') > 0,
+      'la bandera argentina se dibuja con sus colores (celeste y el sol), no con un emoji');
+  chk(ar.indexOf('🇦🇷') < 0 && extraerFuncion('_troHtml').indexOf('🇦🇷') < 0,
+      'y la vitrina no usa el emoji de bandera en ningún lado (en Windows se ve "AR")');
+  chk(SELLO('mundo').indexOf('circle') > 0, 'el campeón mundial lleva un globo dibujado en la copa');
+  chk(SELLO('') === '' && SELLO(null) === '', 'sin sello, la copa va lisa');
+
+  // La copa con sello y la medalla olímpica son dibujos distintos.
+  const COPA = new Function(extraerFuncion('_troSello') + extraerFuncion('_troCopa') + ' return _troCopa;')();
+  chk(COPA(['#ffd24a','#c8921a','#7a5a08'], 'ar').indexOf('#74acdf') > 0, 'la copa acepta el sello de la bandera');
+  chk(COPA(['#ffd24a','#c8921a','#7a5a08']).indexOf('#74acdf') < 0, 'y sin sello no lo lleva');
+  const OLI = new Function(extraerFuncion('_troOlimpica') + ' return _troOlimpica;')();
+  chk(OLI().indexOf('viewBox="0 0 44 54"') > 0, 'la medalla olímpica tiene su propio dibujo, más grande');
+  chk(/\.tro-oro svg \{ width: 50px/.test(SRC), 'y el CSS la hace la medalla más grande de todas');
+
+  // ── El mueble ──────────────────────────────────────────────────────────────────────────────
+  chk(/tro-mueble/.test(R9.h) && /tro-vidrio/.test(R9.h), 'los trofeos van adentro de un mueble con vidrio');
+  chk(/\.tro-row \{ display: grid/.test(SRC),
+      'las fichas van en GRILLA: así las filas se alinean y los estantes quedan corridos');
+  chk(/\.tro-ico \{[^}]*border-bottom: 3px solid/.test(SRC),
+      'el estante es el borde de abajo de cada ficha (sumados forman el vidrio corrido)');
 
   // La aclaración que pidió el autor.
   // Las mujeres van como Campeona/Subcampeona: el listado FIDE ya trae el sexo (campo female).
