@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 316;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 347;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -1224,6 +1224,96 @@ console.log('\n=== 31. Las fichitas de material (piezas capturadas de ventaja) =
   chk(M.aaMaterialDiff('').score === 0 && M.aaMaterialDiff(null).score === 0 &&
       M.aaMaterialDiff(undefined).score === 0, 'sin FEN devuelve cero, no explota');
   chk(M.aaMaterialHtml('w', null) === '', 'y sin cuenta hecha no dibuja nada');
+}
+
+console.log('\n=== 32. Candados de bugs viejos que no tenían red ===');
+{
+  // Seis bugs que YA pasaron en producción y que hasta ahora nada vigilaba. Cada bloque de acá
+  // es el candado de uno: si alguien toca esa función y vuelve el bug, esto se pone rojo.
+
+  // ── Fechas del torneo (bug: la ronda 7 no aparecía porque el torneo quedaba fuera de rango) ──
+  const P = new Function(extraerFuncion('parseDateFromText') + ' return parseDateFromText;')();
+  chk(P('13 AL 21 DE JUNIO 2026') === 20260621,
+      'un rango en castellano toma el ÚLTIMO día (el final del torneo)', P('13 AL 21 DE JUNIO 2026'));
+  chk(P('18 – 25 May 2026') === 20260525, 'y en inglés también', P('18 – 25 May 2026'));
+  chk(P('1 al 3 de agosto de 2025') === 20250803, 'respeta el año escrito, no el de hoy', P('1 al 3 de agosto de 2025'));
+  chk(P('San Juan 2026') === 20260000, 'sin mes reconocible se queda con el año solo', P('San Juan 2026'));
+  chk(P('Buenos Aires') === 0 && P('') === 0 && P(null) === 0, 'sin nada devuelve 0, no una fecha inventada');
+
+  const TDK = new Function(extraerFuncion('parseDateFromText') + extraerFuncion('tourDateKey')
+                           + 'function parsePgnHeaders(g){ return g.__h || {}; }'
+                           + ' return tourDateKey;')();
+  chk(TDK({ tournamentDates:'13 al 21 de junio de 2026', location:'Mar del Plata' }) === 20260621,
+      'el campo "Fechas del torneo" manda sobre todo lo demás', TDK({ tournamentDates:'13 al 21 de junio de 2026', location:'Mar del Plata' }));
+  chk(TDK({ games:[{ __h:{ Date:'2026.07.15' } }] }) === 20260715,
+      'sin ese campo, la fecha sale del PGN de la primera partida', TDK({ games:[{ __h:{ Date:'2026.07.15' } }] }));
+  chk(TDK({ games:[{ __h:{ Date:'2026.??.??' } }] }) === 20260000,
+      'un PGN con la fecha incompleta (2026.??.??) no rompe: queda el año', TDK({ games:[{ __h:{ Date:'2026.??.??' } }] }));
+
+  // ── Rating en vivo (dos bugs reales: el mismo torneo contado 2× y el blitz colándose) ────────
+  const NTN = new Function(extraerFuncion('_normTourName') + ' return _normTourName;')();
+  chk(NTN('Torneo "La Plata"') === NTN('Torneo La Plata'),
+      'las comillas rectas no hacen que un torneo se cuente dos veces', NTN('Torneo "La Plata"'));
+  chk(NTN('Torneo \u201cLa Plata\u201d') === NTN('Torneo La Plata') &&
+      NTN('Torneo \u2018La Plata\u2019') === NTN('Torneo La Plata'),
+      'ni las comillas tipográficas “ ” ‘ ’');
+  chk(NTN('  IRT   de   la    Primavera ') === 'irt de la primavera',
+      'los espacios de más y las mayúsculas tampoco', NTN('  IRT   de   la    Primavera '));
+
+  const ISP = new Function(extraerFuncion('_isStandardPace') + ' return _isStandardPace;')();
+  chk(ISP('rapid') === false && ISP('blitz') === false,
+      'el rápido y el blitz NO entran en el rating clásico en vivo');
+  chk(ISP('standard') === true && ISP('') === true && ISP(undefined) === true,
+      'y lo clásico —o sin ritmo anotado— sí');
+
+  // El ritmo vive en el manifest cuando la web está publicada; en el localStorage está vacío.
+  chk(/_embeddedTournaments/.test(extraerFuncion('_tourNamePaceMap')),
+      'el mapa de ritmos sigue leyendo el manifest (si no, en la web publicada el blitz se cuela)');
+  chk(/_embeddedTournaments/.test(extraerFuncion('_liveRatingStd')),
+      'y el rating en vivo también (si no, en la web publicada sale vacío)');
+
+  // ── Jaque mate calificado como ?? (el {mate:0} del motor no trae el signo) ───────────────────
+  const FM = new Function(extraerFuncion('_faFixMate0') + ' return _faFixMate0;')();
+  chk(FM({ mate:0 }, '8/8/8/8/8/8/8/8 b - - 0 1').mate === 1,
+      'mate con las NEGRAS por mover = ganaron las blancas (+1), no un error');
+  chk(FM({ mate:0 }, '8/8/8/8/8/8/8/8 w - - 0 1').mate === -1,
+      'y con las blancas por mover, ganaron las negras (-1)');
+  chk(FM({ mate:3 }, '8/8/8/8/8/8/8/8 w - - 0 1').mate === 3, 'un mate normal no se toca');
+  chk(FM(null, 'x') === null, 'sin evaluación no inventa nada');
+  chk(FM({ mate:0, d:22, bm:'Qh7#' }, '8/8/8/8/8/8/8/8 b - - 0 1').d === 22 &&
+      FM({ mate:0, d:22, bm:'Qh7#' }, '8/8/8/8/8/8/8/8 b - - 0 1').bm === 'Qh7#',
+      'y no pierde la profundidad ni la jugada del motor');
+
+  // ── Mesas duplicadas del .xlsx (torneos por equipos) ─────────────────────────────────────────
+  const DB = new Function(extraerFuncion('_crDedupBoards') + ' return _crDedupBoards;')();
+  const mesa = (nW, nB, res) => ({ tW:'A', nW:nW, eW:2000, tB:'B', nB:nB, eB:2100, res:res });
+  const conRepe = { teamRounds: { 1: [{ boards:[ mesa('Ana','Beto','1-0'), mesa('Cata','Dani','0-1'), mesa('Ana','Beto','1-0') ] }] } };
+  const limpio = DB(conRepe);
+  chk(limpio.teamRounds[1][0].boards.length === 2,
+      'una mesa repetida tal cual se saca (3 → 2)', limpio.teamRounds[1][0].boards.length);
+  chk(conRepe.teamRounds[1][0].boards.length === 3, 'y el original no se toca (devuelve una copia)');
+  const distintoRes = { teamRounds: { 1: [{ boards:[ mesa('Ana','Beto','1-0'), mesa('Ana','Beto','0-1') ] }] } };
+  chk(DB(distintoRes).teamRounds[1][0].boards.length === 2,
+      'pero dos mesas iguales con RESULTADO distinto NO se tocan: son datos, no basura');
+  const sinRepe = { teamRounds: { 1: [{ boards:[ mesa('Ana','Beto','1-0'), mesa('Cata','Dani','0-1') ] }] } };
+  chk(DB(sinRepe) === sinRepe, 'si no hay nada que limpiar devuelve el MISMO objeto (no copia al pedo)');
+  chk(DB(null) === null && DB({}).teamRounds === undefined, 'sin cruces por equipos no rompe');
+
+  // ── Hermanos y apellidos ajenos (apellido-primero sin coma) ──────────────────────────────────
+  const SC = new Function(extraerFuncion('normStr') + extraerFuncion('nameTokens')
+                          + extraerFuncion('_crSurnameConflict') + ' return _crSurnameConflict;')();
+  chk(SC('Duarte Fernandez Perseo', { name:'Agustin Duarte Fernandez' }) === false,
+      'sin nombre de pila conocido en el medio, no opina (lo veta pgnNameMatchesPlayer)');
+  chk(SC('Gomez Fernandez Agustin', { name:'Agustin Duarte Fernandez' }) === true,
+      'un apellido AJENO pegado al suyo, delante del nombre de pila = otra persona');
+  chk(SC('Fernandez Agustin', { name:'Agustin Duarte Fernandez' }) === false,
+      'pero su propio apellido solo, delante del nombre, es él');
+  chk(SC('Duarte Fernandez Agustin', { name:'Agustin Duarte Fernandez' }) === false,
+      'y sus DOS apellidos delante del nombre, también');
+  chk(SC('Duarte Fernandez, Agustin', { name:'Agustin Duarte Fernandez' }) === false,
+      'con coma no se mete: de eso se ocupa pgnNameMatchesPlayer');
+  chk(SC('', { name:'Agustin Duarte Fernandez' }) === false && SC('Algo', { name:'Ana' }) === false,
+      'vacío o jugador de un solo nombre: no opina, no rompe');
 }
 
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
