@@ -6918,10 +6918,15 @@ function crBuildRoundPanel(key,pairings,data,roundNum){
   // Día/hora de la ronda (arriba de los cruces, como Chess-Results): de la carga a mano o, si no,
   // lo que trajo Chess-Results/info64 en el encabezado de la ronda.
   var _sched=_crRoundSchedule(data,key,roundNum);
-  if(_sched){
+  // En modo autor la cajita se TOCA para cargarle el día y la hora a esta ronda (y sale aunque no
+  // haya horario, para poder ponerlo). En la web publicada es un cartel y nada más.
+  var _schedEd = (typeof _tdRoundDTEditable === 'function') && _tdRoundDTEditable(key);
+  if(_sched || _schedEd){
     // inline-flex: la cajita mide lo que dice, no todo el ancho de la columna.
-    h+='<div style="display:inline-flex;align-items:center;gap:8px;margin-bottom:10px;font-size:15px;background:var(--gl30);border:1px solid var(--bd14);border-radius:9px;padding:9px 14px;max-width:100%;flex-wrap:wrap">'
-      +'<span style="font-size:17px">🕒</span><span style="color:var(--fg-c0)">Se juega:</span> <span style="font-weight:700;color:var(--fg-e0);text-shadow:var(--txt-out);font-size:15.5px">'+escHtml(_sched)+'</span></div>';
+    var _schedClick = _schedEd ? ' onclick="tdEditRoundDT(\''+key+'\','+roundNum+')" title="Tocá para cambiar el día y la hora de esta ronda"' : '';
+    h+='<div'+_schedClick+' style="display:inline-flex;align-items:center;gap:8px;margin-bottom:10px;font-size:15px;background:var(--gl30);border:1px solid var(--bd14);border-radius:9px;padding:9px 14px;max-width:100%;flex-wrap:wrap'+(_schedEd?';cursor:pointer':'')+'">'
+      +'<span style="font-size:17px">🕒</span><span style="color:var(--fg-c0)">Se juega:</span> <span style="font-weight:700;color:var(--fg-e0);text-shadow:var(--txt-out);font-size:15.5px">'+escHtml(_sched||'sin día ni hora')+'</span>'
+      +(_schedEd?'<span style="font-size:12px;color:var(--text3)">✏️</span>':'')+'</div>';
   }
   // Y cuándo se juega la SIGUIENTE (sólo si esta ya arrancó y aquella todavía no).
   var _nxt=_crNextRoundNote(data,key,roundNum);
@@ -27430,6 +27435,102 @@ function _tdSaveCatField(field, value) {
   st.save();
 }
 function _tdCloseChipEdit() { var ov = document.getElementById('td-chip-edit-ov'); if (ov) ov.remove(); }
+
+// ── Día y hora de UNA ronda, tocando el renglón "Se juega" (solo modo autor) ────────────────────
+// Los horarios se cargan en la ficha del torneo y valen para TODAS sus categorías. Cuando dos
+// grupos juegan distinto eso no alcanza: el que tiene menos rondas muestra el calendario del otro
+// y la ficha no tiene dónde separarlos. Acá cada ronda se corrige donde se ve, y lo que se guarda
+// es un override de la CATEGORÍA abierta (cat.roundDT) que se mezcla sobre el del torneo.
+var _tdRoundDTBase = null;   // horarios del torneo para la categoría abierta (lo que hereda)
+var _tdRoundDTCrk  = null;   // clave del cuadro del detalle abierto (para no editar otro)
+function _tdRoundDTEditable(crk) {
+  return !_ondemand && !!_tdChipType && _tdChipId != null && crk === _tdRoundDTCrk;
+}
+// { propio, heredado, set(mapa), donde } o null. `propio` es el mapa que se está editando;
+// `heredado` es lo que quedaría visible si se borrara (para no "perder" el horario al borrar).
+function _tdRoundDTStore(type, id, catIdx) {
+  if (catIdx >= 0) {
+    var st = _tdCatStore(type, id);
+    if (!st || !st.cats[catIdx]) return null;
+    var cat = st.cats[catIdx];
+    return { propio: cat.roundDT || null, heredado: _tdRoundDTBase || null, donde: cat.name || 'esta categoría',
+             set: function (dt) { if (dt && Object.keys(dt).length) cat.roundDT = dt; else delete cat.roundDT; st.save(); } };
+  }
+  if (type === 'hc') {
+    var cfg = getTzConfig(), kk = 'hc_' + id, d = cfg[kk] || {};
+    var t = null; for (var i = 0; i < TORNEOS.length; i++) { if (TORNEOS[i].id == id) { t = TORNEOS[i]; break; } }
+    return { propio: d.roundDT || null, heredado: (t && t.roundDT) || null, donde: 'todo el torneo',
+             set: function (dt) { var c2 = getTzConfig(), dd = c2[kk] || (c2[kk] = {});
+                                  if (dt && Object.keys(dt).length) dd.roundDT = dt; else delete dd.roundDT; saveTzConfig(c2); } };
+  }
+  if (type === 'tz') {
+    var cfg2 = getTzConfig(), d2 = cfg2[id]; if (!d2) return null;
+    return { propio: d2.roundDT || null, heredado: null, donde: 'todo el torneo',
+             set: function (dt) { if (dt && Object.keys(dt).length) d2.roundDT = dt; else delete d2.roundDT; saveTzConfig(cfg2); } };
+  }
+  if (type === 'ls') {
+    var tours = JSON.parse(localStorage.getItem('pgn_tournaments') || '[]'), e = null;
+    for (var j = 0; j < tours.length; j++) { if (tours[j].id == id) { e = tours[j]; break; } }
+    if (!e) return null;
+    return { propio: e.roundDT || null, heredado: null, donde: 'todo el torneo',
+             set: function (dt) { if (dt && Object.keys(dt).length) e.roundDT = dt; else delete e.roundDT; lsSaveTours(tours); } };
+  }
+  return null;
+}
+function tdEditRoundDT(crk, n) {
+  if (!_tdRoundDTEditable(crk)) return;
+  var store = _tdRoundDTStore(_tdChipType, _tdChipId, _tdChipCat);
+  if (!store) { if (typeof aaAsk === 'function') aaAsk({ title: 'No se puede editar', message: 'No encontré dónde guardar los horarios de este torneo.', ok: 'Entendido' }); return; }
+  var actual = (_crRoundDTByKey[crk] && _crRoundDTByKey[crk][n]) || '';
+  var m = String(actual).match(/^(\d{4}-\d{2}-\d{2})[ T](\d{1,2}):(\d{2})/);
+  var dia = m ? m[1] : '', hora = m ? ((m[2].length < 2 ? '0' : '') + m[2] + ':' + m[3]) : '';
+  var propio = !!(store.propio && store.propio[n]);
+  var esCat = _tdChipCat >= 0;
+  var ov = document.createElement('div');
+  ov.id = 'td-chip-edit-ov';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:100002;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:20px';
+  ov.innerHTML = '<div style="background:var(--card90);border:1px solid var(--bd22);border-radius:14px;padding:20px;max-width:420px;width:100%;box-shadow:var(--shadow-card)">'
+    + '<div style="font-weight:700;color:var(--text);font-size:16px;margin-bottom:4px">🕒 Ronda ' + escHtml(String(n)) + ' — día y hora</div>'
+    + '<div style="color:var(--text3);font-size:12.5px;margin-bottom:14px;line-height:1.4">Vale sólo para <b style="color:var(--text2)">' + escHtml(store.donde) + '</b>'
+    + (esCat ? '. Las rondas que no toques siguen usando el horario general del torneo.' : '.') + '</div>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap">'
+    + '<input id="td-rdt-dia" class="tz-input" type="date" style="flex:1 1 150px" value="' + escHtml(dia) + '">'
+    + '<input id="td-rdt-hora" class="tz-input" type="time" style="flex:0 1 120px" value="' + escHtml(hora) + '">'
+    + '</div>'
+    + (propio && esCat ? '<div style="font-size:11.5px;color:var(--text3);margin-top:10px">Esta ronda ya tiene un horario propio de la categoría.</div>' : '')
+    + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px;flex-wrap:wrap">'
+    + (propio ? '<button onclick="_tdRoundDTCommit(\'' + crk + '\',' + n + ',true)" style="padding:8px 14px;background:var(--gl35);border:1px solid var(--bd22);color:var(--text3);border-radius:9px;cursor:pointer;font-family:inherit;font-size:13px">🗑 Quitar</button>' : '')
+    + '<button onclick="_tdCloseChipEdit()" style="padding:8px 14px;background:var(--gl35);border:1px solid var(--bd22);color:var(--text2);border-radius:9px;cursor:pointer;font-family:inherit;font-size:13px">Cancelar</button>'
+    + '<button onclick="_tdRoundDTCommit(\'' + crk + '\',' + n + ',false)" style="padding:8px 16px;background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-weight:700;border-radius:9px;cursor:pointer;font-family:inherit;font-size:13px">✓ Guardar</button>'
+    + '</div></div>';
+  document.body.appendChild(ov);
+  ov.addEventListener('click', function (e) { if (e.target === ov) _tdCloseChipEdit(); });
+  var di = document.getElementById('td-rdt-dia'); if (di) di.focus();
+}
+function _tdRoundDTCommit(crk, n, borrar) {
+  var store = _tdRoundDTStore(_tdChipType, _tdChipId, _tdChipCat);
+  if (!store) { _tdCloseChipEdit(); return; }
+  var dt = Object.assign({}, store.propio || {});
+  if (borrar) delete dt[n];
+  else {
+    var dia = (document.getElementById('td-rdt-dia') || {}).value || '';
+    var hora = (document.getElementById('td-rdt-hora') || {}).value || '';
+    if (!dia) delete dt[n];                       // sin día no hay horario que guardar
+    else dt[n] = dia + ' ' + (hora || '00:00');
+  }
+  store.set(dt);
+  _tdCloseChipEdit();
+  // Repintar sin recargar el detalle, así la ronda abierta sigue abierta.
+  var eff = Object.assign({}, store.heredado || {}, dt);
+  _crRoundDTByKey[crk] = Object.keys(eff).length ? eff : null;
+  try {
+    var data = crDataLoad(crk);
+    if (data && data.rounds) Object.keys(data.rounds).map(Number).forEach(function (r) {
+      var p = document.getElementById('cr-panel-' + crk + '-' + r);
+      if (p && !p.getAttribute('data-lazy')) p.innerHTML = crBuildRoundPanel(crk, data.rounds[r], data, r);
+    });
+  } catch (e) {}
+}
 function _tdCommitChipEdit(field) {
   var inp = document.getElementById('td-chip-input'); if (!inp) return;
   _tdSaveCatField(field, inp.value);
@@ -27532,6 +27633,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   var tourRng = null;    // rango de fechas del torneo: filtra las partidas del pool por edición
   var roundTimes = '';   // horarios de ronda cargados a mano, texto libre del sistema viejo
   var roundDT = null;    // horarios de ronda cargados con día+hora (pisan a los de Chess-Results)
+  var _rdtBase = null;   // los del TORNEO, antes de mezclarles los de la categoría (para el editor)
   var format = '';   // sistema del torneo elegido a mano: '' | 'swiss' | 'rr'
   var pace = '';     // categoría de ritmo: 'standard' | 'rapid' | 'blitz' (vacío = standard)
   var rama = '';     // rama declarada a mano: '' (deducir del nombre) | 'abs' | 'fem'
@@ -27677,6 +27779,12 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     // hereda el valor del torneo. Estos se editan clickeando los panelcitos (chips) del encabezado.
     if (_cat.pace != null && _cat.pace !== '')        pace = _cat.pace;
     if (_cat.rounds != null && _cat.rounds !== '')    rounds = _cat.rounds;
+    // Horarios de ronda propios de la categoría. Se MEZCLAN sobre los del torneo (no lo reemplazan):
+    // así alcanza con corregir las rondas que difieren y las demás siguen heredando. Los carga el
+    // autor tocando el renglón "Se juega" de cada ronda (tdEditRoundDT).
+    _rdtBase = roundDT;
+    if (_cat.roundDT) roundDT = Object.assign({}, roundDT || {}, _cat.roundDT);
+    if (_cat.roundTimes) roundTimes = _cat.roundTimes;
     if (_cat.timeControl)                             timeControl = _cat.timeControl;
     if (_cat.dates)                                   dates = _cat.dates;
     else if (_cat.startDate || _cat.endDate)          dates = formatDateRangeText(_cat.startDate, _cat.endDate) || dates;   // fecha propia de la categoría
@@ -27742,6 +27850,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   // cruces) porque el encabezado los necesita antes, para el aviso de "próxima ronda".
   _crRoundTimesByKey[crk] = roundTimes || '';
   _crRoundDTByKey[crk] = roundDT || null;
+  _tdRoundDTBase = (activeCat >= 0) ? (_rdtBase || null) : null;   // lo que quedaría si la categoría no tuviera horarios propios
 
   // Agrupar partidas por ronda
   var byRound = {};
@@ -27831,7 +27940,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   // Panelcitos (chips) del encabezado. Con una CATEGORÍA activa y en modo autor, los datos que
   // pueden variar entre categorías (fechas, lugar, tipo, rondas, tiempo, ritmo) se vuelven
   // clickeables (✏️) para editarlos SOLO en esa categoría. _tdEditCatChip usa estas 3 variables.
-  _tdChipType = type; _tdChipId = id; _tdChipCat = activeCat;
+  _tdChipType = type; _tdChipId = id; _tdChipCat = activeCat; _tdRoundDTCrk = crk;
   var _chipEdit = (!_ondemand && activeCat >= 0);
   var _chipBase = 'background:var(--gl35);border:1px solid var(--bd22);border-radius:20px;padding:4px 13px';
   function _chip(inner, field) {

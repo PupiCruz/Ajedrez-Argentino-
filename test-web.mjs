@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 505;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 520;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -1653,7 +1653,10 @@ console.log('\n=== 34. La vitrina de trofeos del perfil ===');
       if (p.mas50)    { hay++; if (VETS(nom))         sacadas++; }
     });
     chk(hay > 100, 'hay medallas de categoría reales con qué probar', hay);
-    chk(sacadas >= 20, 'y el catálogo tiene torneos donde esas medallas sobran', sacadas + ' de ' + hay);
+    // Antes del arreglo sobraban 25 (el "mejor sub-20" del Panamericano SUB 18 y compañía). El autor
+    // volvió a publicar y se cayeron solas. Ahora el candado es al revés: NINGUNA puede sobrar. Si
+    // esto vuelve a fallar es que se publicó con datos horneados antes del arreglo.
+    chk(sacadas === 0, 'y en el catálogo publicado ya no sobra ninguna', sacadas + ' de ' + hay);
   }
 
   // ── El torneo tiene que haber TERMINADO ─────────────────────────────────────────────────────
@@ -1931,6 +1934,68 @@ console.log('\n=== 34. La vitrina de trofeos del perfil ===');
     chk(medallasEnCerrados === 0,
         'en ningún cerrado ni match del sitio se cuela una medalla', cerrados + ' cerrados y ' + matches + ' matches revisados');
     chk(trofeos > 500, 'y la vitrina reparte trofeos de verdad', trofeos + ' trofeos');
+  }
+}
+
+console.log('\n=== 35. Horarios de ronda POR CATEGORÍA ===');
+{
+  // Lo trajo el autor con "Leyendas y Prodigios II": dos grupos, A a 10 rondas y B a 9. Los horarios
+  // se cargaban en la ficha del torneo y valían para las dos categorías, asi que el GRUPO B mostraba
+  // el calendario del A y no habia donde corregirlo. Ahora cada categoria puede tener los suyos y se
+  // cargan tocando el renglon "Se juega" de la ronda, en modo autor.
+
+  const detalle = extraerFuncion('openTournamentDetail');
+  chk(/_rdtBase = roundDT;/.test(detalle) &&
+      /if \(_cat\.roundDT\) roundDT = Object\.assign\(\{\}, roundDT \|\| \{\}, _cat\.roundDT\);/.test(detalle),
+      'la categoría MEZCLA sus horarios sobre los del torneo (no los reemplaza)');
+  chk(/_tdRoundDTBase = \(activeCat >= 0\)/.test(detalle),
+      'y se recuerda lo heredado, para saber a qué volver si se quita el propio');
+  chk(/_tdRoundDTCrk = crk/.test(detalle),
+      'se guarda de qué cuadro es el detalle abierto (no editar otro de la página)');
+
+  // El renglón clickeable.
+  const panel = extraerFuncion('crBuildRoundPanel');
+  chk(/_tdRoundDTEditable\(key\)/.test(panel) && /tdEditRoundDT\(/.test(panel),
+      'el renglón "Se juega" se toca para editarlo');
+  chk(/if\(_sched \|\| _schedEd\)/.test(panel) && /sin día ni hora/.test(panel),
+      'y en modo autor sale aunque la ronda no tenga horario, para poder ponérselo');
+  const edit = extraerFuncion('_tdRoundDTEditable');
+  chk(/!_ondemand/.test(edit) && /crk === _tdRoundDTCrk/.test(edit),
+      'en la web publicada NO se puede editar, y sólo vale para el cuadro abierto');
+
+  // Dónde se guarda cada cosa.
+  const store = extraerFuncion('_tdRoundDTStore');
+  chk(/if \(catIdx >= 0\)/.test(store) && /cat\.roundDT = dt/.test(store) && /delete cat\.roundDT/.test(store),
+      'con una categoría abierta se guarda en la categoría, y vacío la borra entera');
+  chk(/heredado: _tdRoundDTBase/.test(store),
+      'la categoría sabe qué heredaba, para volver a eso al quitar el propio');
+  chk(["'hc'", "'tz'", "'ls'"].every(x => store.includes(x)),
+      'y sin categorías se guarda en el torneo, en los tres tipos (hc/tz/ls)');
+
+  const commit = extraerFuncion('_tdRoundDTCommit');
+  chk(/if \(borrar\) delete dt\[n\];/.test(commit) && /if \(!dia\) delete dt\[n\];/.test(commit),
+      'quitar borra sólo esa ronda; sin día tampoco se guarda nada');
+  chk(/Object\.assign\(\{\}, store\.heredado \|\| \{\}, dt\)/.test(commit),
+      'al repintar, lo quitado vuelve a mostrar el horario heredado');
+  chk(/crBuildRoundPanel\(crk, data\.rounds\[r\], data, r\)/.test(commit) && !/openTournamentDetail/.test(commit),
+      'se repinta la ronda sin recargar el detalle (la ronda abierta sigue abierta)');
+
+  // Y que lo guardado VIAJE al publicar: va dentro de categories, que se copia entero.
+  chk(/categories: entry\.categories \|\| null/.test(SRC),
+      'los horarios por categoría viajan al publicar dentro de categories');
+
+  // Contra el torneo REAL que trajo el autor.
+  if (fs.existsSync('data/manifest.js')) {
+    const W3 = {}; new Function('window', fs.readFileSync('data/manifest.js', 'utf8'))(W3);
+    const lp = ((W3.__MANIFEST__ && W3.__MANIFEST__.tournaments) || [])
+                 .find(x => String(x.id) === 'tz_1784773631535');
+    if (lp) {
+      chk((lp.categories || []).length === 2 && Object.keys(lp.roundDT || {}).length === 10,
+          'el torneo del caso tiene 2 categorías y 10 horarios cargados en el torneo',
+          (lp.categories || []).length + ' cats / ' + Object.keys(lp.roundDT || {}).length + ' horarios');
+      chk((lp.categories || [])[1] && lp.categories[1].rounds === 9,
+          'y el GRUPO B ya usaba un override por categoría (rondas 9), el mismo camino que los horarios');
+    }
   }
 }
 
