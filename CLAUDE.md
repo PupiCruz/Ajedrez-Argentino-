@@ -8,7 +8,14 @@
 La Radiografía reparte tres medallas de categoría —**mejor sub-20**, **mejor femenina** y
 **mejor +50**— y con ellas se arma la vitrina de trofeos de los perfiles. Para saber cuándo esas
 medallas **no** corresponden (en un Sub-18 todos son sub-20; en un femenino la mejor femenina es la
-campeona), la app **lee el NOMBRE**: no hay otro dato que se lo diga.
+campeona), la app **lee el NOMBRE**.
+
+> **Atajo para lo femenino: el campo _Rama_ de la ficha del torneo.**
+> En **Editar torneo** hay un desplegable **Rama** con tres opciones: *Detectar por el nombre*
+> (lo de siempre), *Absoluto / mixto* y *Femenino*. Si lo marcás, **manda sobre el nombre**.
+> Es la salida para los torneos de mujeres que no lo dicen en ningún lado (`She Plays 2026`):
+> por el nombre es imposible saberlo. Marcalo y la Radiografía deja de adivinar.
+> Para las otras dos medallas (sub-20 y +50) sigue mandando el nombre; ahí valen las reglas de abajo.
 
 Se mira el **nombre del torneo + el nombre de la categoría**, juntos. Así que alcanza con que la
 palabra esté en uno de los dos.
@@ -17,7 +24,7 @@ palabra esté en uno de los dos.
 |---|---|---|
 | **Juvenil por edad** | `Sub 14`, `Sub14`, `U16`, `SUB 18A`, `SUB 18F` | no reparte "mejor sub-20" |
 | **Juvenil sin número** | `juvenil`, `juventud`, `cadete`, `infantil`, `junior`, `youth`, `menores` | se toma como tope 20 |
-| **Sólo de mujeres** | `Femenino`, `Femenina`, `Damas`, `Women`, `Girls`, o la categoría `SUB 14F` | no reparte "mejor femenina" |
+| **Sólo de mujeres** | `Femenino`, `Femenina`, `Damas`, `Women`, `Girls`, o la categoría `SUB 14F` — **o el campo Rama = Femenino** | no reparte "mejor femenina" |
 | **De veteranos** | `Senior`, `Veteranos`, `+50`, `mayores de 50` | no reparte "mejor +50" |
 | **Mixto con las dos ramas en UNA tabla** | `Absoluto y Femenino` (las dos palabras juntas) | **SÍ** reparte "mejor femenina" |
 
@@ -34,7 +41,10 @@ palabra esté en uno de los dos.
 - Para las categorías, poné **`Absoluto` / `Femenino`** (o el par corto `A` / `F` pegado al número,
   tipo `SUB 18A`). **`Varones` y `Mujeres` NO se reconocen** hoy.
 - Si el torneo es juvenil pero el nombre no lo dice, poné la edad en la **categoría**: alcanza.
-- Si un torneo mixto se llama sólo "Femenino" por error, se le borra una medalla legítima.
+- Si un torneo mixto se llama sólo "Femenino" por error, se le borra una medalla legítima. Se
+  desarma poniendo **Rama = Absoluto / mixto**, sin tocar el nombre.
+- El campo Rama se guarda en el torneo (`rama: 'abs' | 'fem'`), viaja al publicar y llega a la
+  Radiografía por `metaCr`. Sin marcar (`''`) todo funciona como antes.
 
 **Cómo comprobarlo:** abrí la Radiografía del torneo. Si ves un premio que es obvio por el formato
 ("mejor sub-20" en un Sub-16), el nombre necesita la palabra. **Corregí el nombre y volvé a

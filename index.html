@@ -4255,6 +4255,15 @@
       <div style="font-size:11px;color:var(--text3);margin-top:6px;line-height:1.4">Se muestra en la ficha del torneo. El <b>rating en vivo</b> solo suma las variaciones de elo de los torneos <b>Clásicos</b>, así que marcá bien los de Rápido/Blitz para no ensuciar el elo standard.</div>
     </div>
     <div style="margin-bottom:12px">
+      <label class="tz-flabel">Rama <span style="font-weight:400;color:var(--text3)">(para los premios de la Radiografía)</span></label>
+      <select id="tze-rama" class="tz-input">
+        <option value="">Detectar por el nombre</option>
+        <option value="abs">Absoluto / mixto (juegan todos)</option>
+        <option value="fem">Femenino (solo mujeres)</option>
+      </select>
+      <div style="font-size:11px;color:var(--text3);margin-top:6px;line-height:1.4">En un torneo <b>femenino</b> el premio a la "mejor femenina" no dice nada: es la campeona. Normalmente se deduce del nombre, pero hay torneos que no lo dicen (ej. <i>She Plays</i>): marcalo acá y la Radiografía no se equivoca.</div>
+    </div>
+    <div style="margin-bottom:12px">
       <label class="tz-flabel">Sistema <span style="font-weight:400;color:var(--text3)">(opcional — cómo se muestran los cruces)</span></label>
       <select id="tze-format" class="tz-input">
         <option value="">Detectar solo</option>
@@ -7226,6 +7235,15 @@ function _stSoloVeteranos(nombre) {
 function _stNombreConCat(meta) {
   return (((meta && meta.name) || '') + ' ' + ((meta && meta.cat) || '')).trim();
 }
+/* ¿Es un torneo de mujeres? El campo RAMA del formulario manda; si está vacío, se deduce del
+   nombre. Hace falta porque hay torneos femeninos que no lo dicen en ningún lado —"She Plays"— y
+   por el nombre no hay manera de saberlo. Lo pensó el autor. */
+function _stEsFemenino(meta, nombre) {
+  var r = meta && meta.rama;
+  if (r === 'fem') return true;
+  if (r === 'abs') return false;
+  return _stSoloFemenino(nombre);
+}
 
 function _stStatsMeta(key){
   var c = (typeof _tdPodiumCtx !== 'undefined' && _tdPodiumCtx && _tdPodiumCtx.crk === key) ? _tdPodiumCtx : null;
@@ -7235,6 +7253,7 @@ function _stStatsMeta(key){
            typ:   c ? (c.typ || '') : (_crCategory[key] || ''),
            isTeam: !!(c && c.isTeam),
            cat:   c ? (c.cat || '') : '',   // nombre de la categoría abierta (para _stNombreConCat)
+           rama:  c ? (c.rama || '') : '',  // '' | 'abs' | 'fem' — lo declara el autor en la ficha
            status: c ? (c.status || '') : '' };
 }
 
@@ -9799,7 +9818,7 @@ function _statsBuild(crk, data, meta){
       // Sub-18 todos son sub-20, en un femenino la mejor femenina es la campeona, y en un Senior 50+
       // el mejor +50 es el campeón. Se corta acá, al calcular, para que no salgan NI en la
       // Radiografía NI en la vitrina de los perfiles (que se arma de lo mismo).
-      femenina: _stSoloFemenino(_nomCat) ? null : ((g.femeninas && g.femeninas[0]) || null),
+      femenina: _stEsFemenino(meta, _nomCat) ? null : ((g.femeninas && g.femeninas[0]) || null),
       sub20: (_topeEdad && _topeEdad <= 20) ? null : ((g.juveniles && g.juveniles[0]) || null),
       mas50: _stSoloVeteranos(_nomCat) ? null : mas50,
       racha: racha,
@@ -13072,7 +13091,7 @@ function _tourManifestMeta(entry) {
     source: entry.source || 'pgn', crUrl: entry.crUrl || '', weburl: entry.weburl || '', info64url: entry.info64url || '', vesusurl: entry.vesusurl || '', regurl: entry.regurl || '', format: entry.format || '', pace: entry.pace || '',
     broadcastId: entry.broadcastId || null,
     broadcastUrl: entry.broadcastUrl || null, categories: entry.categories || null, isTeam: entry.isTeam || null,
-    rounds: entry.rounds || null, roundTimes: entry.roundTimes || null, roundDT: entry.roundDT || null,
+    rounds: entry.rounds || null, roundTimes: entry.roundTimes || null, roundDT: entry.roundDT || null, rama: entry.rama || null,
     playerOnly: !!entry.playerOnly, playerId: entry.playerId || null,
     finished: entry.finished || null,
     dateKey: tourDateKey(entry)
@@ -13130,7 +13149,7 @@ function buildSplitData() {
     if (!metaCr[entry.id]) {
       var _rngSt = null, _st = entry.status || '';
       try { _rngSt = tourRange(entry); _st = computeTourStatus(_rngSt, entry.status); } catch (e) {}
-      metaCr[entry.id] = { name: entry.name || '', location: entry.location || '', cats: entry.categories || null,
+      metaCr[entry.id] = { name: entry.name || '', location: entry.location || '', cats: entry.categories || null, rama: entry.rama || '',
                            dates: entry.dates || entry.tournamentDates || entry.startDate || '',
                            typ: entry.type || '', isTeam: !!entry.isTeam, status: _st };
     }
@@ -24896,6 +24915,7 @@ function openTzModal(key) {
     _tzeLoadRoundTimes(null, '');
     document.getElementById('tze-format').value = '';
     document.getElementById('tze-pace').value = 'standard';
+    document.getElementById('tze-rama').value = '';
     _tzeSetCats([]);
     document.getElementById('tze-isteam').checked = false;
   } else {
@@ -24933,6 +24953,7 @@ function openTzModal(key) {
       _tzeLoadRoundTimes(data.roundDT, data.roundTimes);
       document.getElementById('tze-format').value = data.format || t.format || '';
       document.getElementById('tze-pace').value = data.pace || t.pace || 'standard';
+      document.getElementById('tze-rama').value = data.rama || t.rama || '';
       if (data.pgnGames && data.pgnGames.length) _tzeWorkingGames = data.pgnGames.slice();
       _tzeSetCats(data.categories);
       document.getElementById('tze-isteam').checked = !!data.isTeam;
@@ -24963,6 +24984,7 @@ function openTzModal(key) {
       _tzeLoadRoundTimes(data.roundDT, data.roundTimes);
       document.getElementById('tze-format').value = data.format || '';
       document.getElementById('tze-pace').value = data.pace || 'standard';
+      document.getElementById('tze-rama').value = data.rama || '';
       if (data.pgnGames && data.pgnGames.length) _tzeWorkingGames = data.pgnGames.slice();
       _tzeSetCats(data.categories);
       document.getElementById('tze-isteam').checked = !!data.isTeam;
@@ -24998,6 +25020,7 @@ function openTzModal(key) {
       _tzeLoadRoundTimes(entry.roundDT, entry.roundTimes);
       document.getElementById('tze-format').value = entry.format || '';
       document.getElementById('tze-pace').value = entry.pace || 'standard';
+      document.getElementById('tze-rama').value = entry.rama || '';
       if ((entry.games || []).length) _tzeWorkingGames = entry.games.slice();
       _tzeSetCats(entry.categories);
       document.getElementById('tze-isteam').checked = !!entry.isTeam;
@@ -25151,6 +25174,7 @@ function saveTzModal() {
   var roundTimes  = _tzeLegacyRoundTimes;      // el texto libre viejo ya no se edita acá: se conserva
   var format      = document.getElementById('tze-format').value;
   var pace        = document.getElementById('tze-pace').value;
+  var rama        = document.getElementById('tze-rama').value;   // '' | 'abs' | 'fem'
   var type        = document.getElementById('tze-type').value;
   var cfg = getTzConfig();
   var _savedKey = _tzeKey;
@@ -25162,7 +25186,7 @@ function saveTzModal() {
                   startDate:startDate, endDate:endDate, rounds:rounds,
                   status:status, crurl:crurl||null, weburl:weburl||null, info64url:info64url||null, vesusurl:vesusurl||null, regurl:regurl||null, broadcastId:broadcastId||null,
                   broadcastUrl:broadcastUrl||null, timeControl:timeControl||null, chesscomUrl:chesscomUrl||null,
-                  flyerUrl:flyerUrl||null, flyerPos:flyerPos, roundTimes:roundTimes||null, roundDT:roundDT||null, format:format||null, pace:pace||null, categories:categories.length?categories:null, isTeam:isTeam||null,
+                  flyerUrl:flyerUrl||null, flyerPos:flyerPos, roundTimes:roundTimes||null, roundDT:roundDT||null, format:format||null, pace:pace||null, rama:rama||null, categories:categories.length?categories:null, isTeam:isTeam||null,
                   pgnCount:_tzeWorkingGames ? _tzeWorkingGames.length : 0, pgnGames:_tzeWorkingGames||null };
     saveTzConfig(cfg);
   } else if (_tzeKey.indexOf('hc_') === 0) {
@@ -25191,6 +25215,7 @@ function saveTzModal() {
     if (roundDT) cfg[_tzeKey].roundDT = roundDT; else delete cfg[_tzeKey].roundDT;
     if (format) cfg[_tzeKey].format = format; else delete cfg[_tzeKey].format;
     if (pace) cfg[_tzeKey].pace = pace; else delete cfg[_tzeKey].pace;
+    if (rama) cfg[_tzeKey].rama = rama; else delete cfg[_tzeKey].rama;
     if (categories.length) cfg[_tzeKey].categories = categories; else delete cfg[_tzeKey].categories;
     if (isTeam) cfg[_tzeKey].isTeam = true; else delete cfg[_tzeKey].isTeam;
     cfg[_tzeKey].status = status;
@@ -25201,7 +25226,7 @@ function saveTzModal() {
                      startDate:startDate, endDate:endDate, rounds:rounds,
                      status:status, crurl:crurl||null, weburl:weburl||null, info64url:info64url||null, vesusurl:vesusurl||null, regurl:regurl||null, broadcastId:broadcastId||null,
                      broadcastUrl:broadcastUrl||null, timeControl:timeControl||null, chesscomUrl:chesscomUrl||null,
-                     flyerUrl:flyerUrl||null, flyerPos:flyerPos, roundTimes:roundTimes||null, roundDT:roundDT||null, format:format||null, pace:pace||null, categories:categories.length?categories:null, isTeam:isTeam||null,
+                     flyerUrl:flyerUrl||null, flyerPos:flyerPos, roundTimes:roundTimes||null, roundDT:roundDT||null, format:format||null, pace:pace||null, rama:rama||null, categories:categories.length?categories:null, isTeam:isTeam||null,
                      pgnCount:_tzeWorkingGames ? _tzeWorkingGames.length : 0,
                      pgnGames:_tzeWorkingGames || null };
     saveTzConfig(cfg);
@@ -27509,6 +27534,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   var roundDT = null;    // horarios de ronda cargados con día+hora (pisan a los de Chess-Results)
   var format = '';   // sistema del torneo elegido a mano: '' | 'swiss' | 'rr'
   var pace = '';     // categoría de ritmo: 'standard' | 'rapid' | 'blitz' (vacío = standard)
+  var rama = '';     // rama declarada a mano: '' (deducir del nombre) | 'abs' | 'fem'
   var loadFailed = false;
   var tzCfg2 = getTzConfig();
 
@@ -27527,6 +27553,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     roundDT = hcCfg.roundDT || t.roundDT || null;
     format = hcCfg.format || t.format || '';
     pace = hcCfg.pace || t.pace || '';
+    rama = hcCfg.rama || t.rama || '';
     timeControl = hcCfg.timeControl || t.timeControl || ''; chesscomUrl = hcCfg.chesscomUrl || '';
     flyerUrl = hcCfg.flyerUrl || t.flyerUrl || '';
     flyerPos = hcCfg.flyerPos || t.flyerPos || '';
@@ -27588,6 +27615,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     roundDT = entry.roundDT || null;
     format = entry.format || '';
     pace = entry.pace || '';
+    rama = entry.rama || '';
     timeControl = entry.timeControl || ''; chesscomUrl = entry.chesscomUrl || '';
     flyerUrl = entry.flyerUrl || '';
     flyerPos = entry.flyerPos || '';
@@ -27611,6 +27639,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     roundDT = d.roundDT || null;
     format = d.format || '';
     pace = d.pace || '';
+    rama = d.rama || '';
     timeControl = d.timeControl || ''; chesscomUrl = d.chesscomUrl || '';
     flyerUrl = d.flyerUrl || '';
     flyerPos = d.flyerPos || '';
@@ -27890,7 +27919,8 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   // SIEMPRE (aunque esté vacío) para poder rellenarlo cuando la tabla final llegue por el auto-fetch,
   // sin recargar ni esperar al otro día (lo refresca _tdRefreshPodium desde los _crAutoFetch*).
   _tdPodiumCtx = { crk: crk, isTeam: isTeam, name: name, location: location, dates: dates, typ: typ, rounds: rounds, format: format, pace: pace, status: status,
-                   cat: (typeof _cat !== 'undefined' && _cat) ? (_cat.name || '') : '' };
+                   cat: (typeof _cat !== 'undefined' && _cat) ? (_cat.name || '') : '',
+                   rama: rama || '' };
   h += '<div id="td-podium-box">' + _tdPodiumInnerHtml() + '</div>';
   if (status === 'upcoming' && !_ondemand) {
     // Torneo que se va a jugar → botón de ANTICIPO (previa) en modo autor.

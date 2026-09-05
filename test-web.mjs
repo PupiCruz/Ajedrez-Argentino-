@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 498;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 505;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -1594,6 +1594,29 @@ console.log('\n=== 34. La vitrina de trofeos del perfil ===');
       'pero "Absoluto y Femenino" es una tabla MIXTA: ahí la mejor femenina sí vale');
   chk(FEMS('IRT Ciudad de Vera 2026') === false, 'y un torneo común no se marca');
 
+  // El campo RAMA de la ficha del torneo: manda sobre el nombre. Lo pidió el autor con "She Plays
+  // 2026", un torneo de mujeres que no dice "femenino" en ningún lado: por el nombre es imposible
+  // saberlo, así que se declara a mano y la Radiografía deja de adivinar.
+  const ESFEM = new Function(extraerFuncion('_stSoloFemenino') + extraerFuncion('_stEsFemenino') +
+                             ' return _stEsFemenino;')();
+  chk(ESFEM({ rama: 'fem' }, 'She Plays 2026') === true,
+      'marcado a mano como femenino, se respeta aunque el nombre no lo diga');
+  chk(ESFEM({ rama: 'abs' }, '77° Campeonato Argentino Superior Femenino') === false,
+      'y marcado como absoluto manda sobre el nombre (por si el nombre engaña al revés)');
+  chk(ESFEM({ rama: '' }, 'Torneo Femenino de Rosario') === true &&
+      ESFEM({}, 'IRT Ciudad de Vera 2026') === false && ESFEM(null, 'IRT de Vera') === false,
+      'sin marcar, se sigue deduciendo del nombre como hasta ahora');
+
+  // Y que el campo VIAJE: del formulario al torneo guardado, de ahí al publicar y a la Radiografía.
+  chk(/tze-rama/.test(SRC) && /rama:rama\|\|null/.test(SRC.replace(/ /g, '')),
+      'el formulario tiene el campo Rama y lo guarda en el torneo');
+  chk(/metaCr\[entry\.id\] = \{[^}]*rama: entry\.rama/.test(SRC),
+      'al publicar, la rama viaja con el torneo hasta la Radiografía');
+  chk(/rama:\s+c \? \(c\.rama \|\| ''\) : ''/.test(SRC),
+      'y en modo autor la toma del torneo abierto');
+  chk(/femenina: _stEsFemenino\(meta, _nomCat\) \? null :/.test(extraerFuncion('_statsBuild')),
+      'la medalla de mejor femenina se decide con la rama, no sólo con el nombre');
+
   chk(VETS('FIDE World Senior Chess Championships 2026 - Open 50+') === true &&
       VETS('Campeonato de Veteranos') === true && VETS('IRT de la primavera') === false,
       'los torneos de veteranos también');
@@ -1606,7 +1629,7 @@ console.log('\n=== 34. La vitrina de trofeos del perfil ===');
 
   // Que el corte esté donde se CALCULA (así vale para la Radiografía y para la vitrina).
   const build = extraerFuncion('_statsBuild');
-  chk(/femenina: _stSoloFemenino\(_nomCat\) \? null :/.test(build) &&
+  chk(/femenina: _stEsFemenino\(meta, _nomCat\) \? null :/.test(build) &&
       /sub20: \(_topeEdad && _topeEdad <= 20\) \? null :/.test(build) &&
       /mas50: _stSoloVeteranos\(_nomCat\) \? null :/.test(build),
       'las tres medallas se omiten al calcular, no al mostrar');
