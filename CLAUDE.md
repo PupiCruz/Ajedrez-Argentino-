@@ -3,6 +3,48 @@
 > Esta nota la lee Claude automáticamente al abrir esta carpeta, en cualquier PC.
 > Sirve para retomar el trabajo aunque sea en otra computadora o sesión nueva.
 
+## 🏷️ Cómo NOMBRAR los torneos (juveniles, femeninos, veteranos)
+
+La Radiografía reparte tres medallas de categoría —**mejor sub-20**, **mejor femenina** y
+**mejor +50**— y con ellas se arma la vitrina de trofeos de los perfiles. Para saber cuándo esas
+medallas **no** corresponden (en un Sub-18 todos son sub-20; en un femenino la mejor femenina es la
+campeona), la app **lee el NOMBRE**: no hay otro dato que se lo diga.
+
+Se mira el **nombre del torneo + el nombre de la categoría**, juntos. Así que alcanza con que la
+palabra esté en uno de los dos.
+
+| Si el torneo es… | Escribí en el nombre | Qué pasa |
+|---|---|---|
+| **Juvenil por edad** | `Sub 14`, `Sub14`, `U16`, `SUB 18A`, `SUB 18F` | no reparte "mejor sub-20" |
+| **Juvenil sin número** | `juvenil`, `juventud`, `cadete`, `infantil`, `junior`, `youth`, `menores` | se toma como tope 20 |
+| **Sólo de mujeres** | `Femenino`, `Femenina`, `Damas`, `Women`, `Girls`, o la categoría `SUB 14F` | no reparte "mejor femenina" |
+| **De veteranos** | `Senior`, `Veteranos`, `+50`, `mayores de 50` | no reparte "mejor +50" |
+| **Mixto con las dos ramas en UNA tabla** | `Absoluto y Femenino` (las dos palabras juntas) | **SÍ** reparte "mejor femenina" |
+
+**Ejemplos que funcionan bien:**
+- `XXXVI Festival Panamericano de la Juventud 2026` con categorías `SUB 10A`, `SUB 12F`, `SUB 18A`…
+- `Campeonato Panamericano U-20 2026` con categorías `Absoluto` y `Femenino`
+- `77° Campeonato Argentino Superior Femenino`
+- `Campeonato de España Individual Absoluto y Femenino` (una sola tabla mixta de 142 → conserva la
+  medalla femenina, y está bien: la mejor femenina ahí es un logro de verdad)
+
+**Cuidados:**
+- **`Sub 2400` / `Sub2000` / `U1700` son topes de RATING y la app los distingue** (exige 1 o 2
+  dígitos). No hay nada que hacer: se comportan como un torneo común.
+- Para las categorías, poné **`Absoluto` / `Femenino`** (o el par corto `A` / `F` pegado al número,
+  tipo `SUB 18A`). **`Varones` y `Mujeres` NO se reconocen** hoy.
+- Si el torneo es juvenil pero el nombre no lo dice, poné la edad en la **categoría**: alcanza.
+- Si un torneo mixto se llama sólo "Femenino" por error, se le borra una medalla legítima.
+
+**Cómo comprobarlo:** abrí la Radiografía del torneo. Si ves un premio que es obvio por el formato
+("mejor sub-20" en un Sub-16), el nombre necesita la palabra. **Corregí el nombre y volvé a
+publicar**: la Radiografía se recalcula entera en cada publicación, así que se arregla sola —
+también en las vitrinas de los perfiles, que salen de lo mismo.
+
+(Estas mismas reglas ya dejan afuera las medallas obvias en 25 de las 185 del catálogo. Detalle en
+`_stTopeEdad` / `_stSoloFemenino` / `_stSoloVeteranos` del `index.html`, con pruebas en la sección
+34 del banco.)
+
 ## ✅ Auditoría 2026: TERMINADA
 La auditoría de seguridad y código del **26/08/2026** (27 hallazgos) se arregló entera en
 **8 fases**, todas publicadas y andando al **27/08/2026**. El registro completo de qué se
