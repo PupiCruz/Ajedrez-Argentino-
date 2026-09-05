@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 481;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 498;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -1063,8 +1063,12 @@ console.log('\n=== 28. Cuándo va la Radiografía y cuándo se hornea ===');
   chk(/metaFin.status = 'done';/.test(hornear),
       'al hornear se ignora el calendario: si los datos dan, se hornea');
   chk(/_stStatsAvailable\(key, d, metaFin\)/.test(hornear), 'y la comprobación usa esa meta, no la original');
-  chk(/_statsBuild\(key, d, meta\)/.test(hornear),
-      'pero las estadísticas se arman con la meta DE VERDAD (el nombre y las fechas del torneo)');
+  // Las estadísticas se arman con la meta DE VERDAD (el nombre y las fechas del torneo), NO con la
+  // forzada a "done". Se le agrega el nombre de la categoría, que sale del sufijo de la clave.
+  chk(/_statsBuild\(key, d, _metaCat\)/.test(hornear) && !/_statsBuild\(key, d, metaFin\)/.test(hornear),
+      'pero las estadísticas se arman con la meta DE VERDAD, no con la forzada');
+  chk(/_metaCat\.cat = meta\.cats\[/.test(hornear),
+      'y esa meta lleva el nombre de la categoría (para saber si sus medallas valen)');
   chk(/_stSig/.test(extraerFuncion('_statsGet')),
       'y si el torneo avanzó después, la firma no coincide y se recalcula igual (no se publica nada viejo)');
 }
@@ -1559,6 +1563,75 @@ console.log('\n=== 34. La vitrina de trofeos del perfil ===');
   chk(AW({ torneo:{ jugadores:50, rondas:9 } }).length === 0, 'sin podio ni premios tampoco');
   chk(AW({ campeon: podio[0] }).length === 1,
       'sin el bloque `torneo` no se cuelga: cae en "abierto" y da lo que haya', AW({ campeon: podio[0] }).length);
+
+  // ── Medallas que en ese torneo no dicen nada ────────────────────────────────────────────────
+  // Lo cazó el autor: en el Panamericano SUB 18 le contaba "mejor sub-20" a una jugadora. Claro:
+  // ahí TODOS son sub-20. Lo mismo la mejor femenina en un campeonato femenino, o el mejor +50 en
+  // un Senior. Se corta al CALCULAR, así no sale ni en la Radiografía ni en la vitrina del perfil.
+  const EDAD = new Function(extraerFuncion('_stTopeEdad') + ' return _stTopeEdad;')();
+  const FEMS = new Function(extraerFuncion('_stSoloFemenino') + ' return _stSoloFemenino;')();
+  const VETS = new Function(extraerFuncion('_stSoloVeteranos') + ' return _stSoloVeteranos;')();
+  const NCAT = new Function(extraerFuncion('_stNombreConCat') + ' return _stNombreConCat;')();
+
+  chk(EDAD('Campeonato Panamericano Sub 18') === 18 && EDAD('World Youth U16') === 16,
+      'del nombre sale el tope de edad', EDAD('Campeonato Panamericano Sub 18') + ' / ' + EDAD('World Youth U16'));
+  chk(EDAD('Festival de la Juventud 2026 SUB 18F') === 18,
+      'y también en las categorías tipo "SUB 18F" (la letra no tapa el número)');
+  chk(EDAD('Torneo Juvenil de Verano') === 20 && EDAD('Olimpiada Escolar Infantil') === 20,
+      'sin número, palabras como juvenil o infantil valen como tope 20');
+
+  // EL CANDADO MÁS IMPORTANTE: hay 7 torneos con tope de RATING, no de edad.
+  ['IRT CIUDAD DE BOLIVAR SUB 2400', 'Torneo IRT Sub2000 FASGBA 2026', 'IRT Sub 2400 Santa Rosa',
+   'Panamerican Amateur U1700'].forEach(function(n) {
+    chk(EDAD(n) === 0, 'un tope de RATING no es un tope de edad: ' + n.slice(0, 34), EDAD(n));
+  });
+
+  chk(FEMS('77° Campeonato Argentino Superior Femenino') === true &&
+      FEMS("WR Women's Chess Tour") === true && FEMS('Festival 2026 SUB 14F') === true,
+      'los torneos de mujeres se reconocen');
+  // Y el que NO hay que sacar: las dos ramas en una sola tabla.
+  chk(FEMS('Campeonato de España Individual Absoluto y Femenino 2026') === false,
+      'pero "Absoluto y Femenino" es una tabla MIXTA: ahí la mejor femenina sí vale');
+  chk(FEMS('IRT Ciudad de Vera 2026') === false, 'y un torneo común no se marca');
+
+  chk(VETS('FIDE World Senior Chess Championships 2026 - Open 50+') === true &&
+      VETS('Campeonato de Veteranos') === true && VETS('IRT de la primavera') === false,
+      'los torneos de veteranos también');
+
+  chk(NCAT({ name:'Festival Panamericano', cat:'SUB 18F' }) === 'Festival Panamericano SUB 18F',
+      'para decidir se mira el nombre del torneo MÁS el de la categoría',
+      NCAT({ name:'Festival Panamericano', cat:'SUB 18F' }));
+  chk(NCAT({ name:'IRT de Vera' }) === 'IRT de Vera' && NCAT(null) === '',
+      'sin categoría, alcanza con el nombre del torneo');
+
+  // Que el corte esté donde se CALCULA (así vale para la Radiografía y para la vitrina).
+  const build = extraerFuncion('_statsBuild');
+  chk(/femenina: _stSoloFemenino\(_nomCat\) \? null :/.test(build) &&
+      /sub20: \(_topeEdad && _topeEdad <= 20\) \? null :/.test(build) &&
+      /mas50: _stSoloVeteranos\(_nomCat\) \? null :/.test(build),
+      'las tres medallas se omiten al calcular, no al mostrar');
+
+  // Contra el catálogo real.
+  if (fs.existsSync('data/cr') && fs.existsSync('data/manifest.js')) {
+    const W2 = {}; new Function('window', fs.readFileSync('data/manifest.js', 'utf8'))(W2);
+    const TT2 = {}; ((W2.__MANIFEST__ && W2.__MANIFEST__.tournaments) || []).forEach(x => TT2[String(x.id)] = x);
+    let hay = 0, sacadas = 0;
+    fs.readdirSync('data/cr').filter(x => x.endsWith('.json')).forEach(x => {
+      let d; try { d = JSON.parse(fs.readFileSync('data/cr/' + x, 'utf8')); } catch (e) { return; }
+      const st = d && d.stats; if (!st || !st.premios) return;
+      const tid = x.replace(/\.json$/, '').replace(/^cr2_/, '').replace(/^(tz|ls|hc)_/, '').replace(/_c\d+$/, '');
+      const tt = TT2[tid] || TT2[tid.replace(/^(tz|ls|hc)_/, '')];
+      const mc = x.match(/_c(\d+)\.json$/), ci = mc ? parseInt(mc[1], 10) : -1;
+      const cn = (tt && tt.categories && ci >= 0 && tt.categories[ci]) ? tt.categories[ci].name : '';
+      const nom = NCAT({ name: tt ? tt.name : '', cat: cn });
+      const e = EDAD(nom), p = st.premios;
+      if (p.sub20)    { hay++; if (e && e <= 20)      sacadas++; }
+      if (p.femenina) { hay++; if (FEMS(nom))         sacadas++; }
+      if (p.mas50)    { hay++; if (VETS(nom))         sacadas++; }
+    });
+    chk(hay > 100, 'hay medallas de categoría reales con qué probar', hay);
+    chk(sacadas >= 20, 'y el catálogo tiene torneos donde esas medallas sobran', sacadas + ' de ' + hay);
+  }
 
   // ── El torneo tiene que haber TERMINADO ─────────────────────────────────────────────────────
   // Lo cazó el autor: el Scherer Masters 2026 termina el 6 de septiembre y ya repartía copas. La

@@ -7193,6 +7193,40 @@ function _stCalcularAperturas(key, btn){
 
 // Datos del torneo abierto (nombre, sede, fechas, tipo) para el motor. Si la pestaña se arma sin el
 // detalle abierto, alcanza con el tipo guardado: lo demás solo afecta títulos y el cálculo de edades.
+/* ¿El torneo (o la categoría) ya viene acotado por EDAD, SEXO o VETERANOS? Si es así, la medalla
+   de esa categoría no dice nada: en un Panamericano Sub-18 TODOS son sub-20, y en un campeonato
+   femenino la mejor femenina es la campeona. Lo cazó el autor mirando un perfil.
+   Se mira el nombre del torneo MÁS el de la categoría ("… SUB 18F"), porque el tope suele vivir en
+   la categoría y no en el torneo. */
+
+/* Tope de EDAD del nombre: 'Sub 18', 'U16', 'Juvenil'… Devuelve el número, o 0 si no hay tope.
+   OJO: 'Sub 2400' y 'Sub2000' son topes de RATING, no de edad — por eso se exigen 1 o 2 dígitos
+   seguidos de fin de palabra, que los deja afuera (hay 7 torneos así en el catálogo). */
+function _stTopeEdad(nombre) {
+  var s = String(nombre || '').toLowerCase();
+  // El [af]? del final es por las categorías tipo "SUB 18A" / "SUB 18F" (absoluto / femenino): sin
+  // eso el 18 queda pegado a la letra y el tope no se detecta. Sigue dejando afuera "Sub 2400".
+  var m = s.match(/\bsub[\s.-]?(\d{1,2})[af]?\b/) || s.match(/\bu[\s.-]?(\d{1,2})\b/);
+  if (m) return parseInt(m[1], 10);
+  if (/\bjuvenil|\bjuventud|\bcadete|\binfantil|\bjunior\b|\byouth\b|\bmenores\b/.test(s)) return 20;
+  return 0;
+}
+/* ¿Es sólo de mujeres? "Absoluto y Femenino" NO cuenta: ahí las dos ramas juegan en una sola tabla
+   y la mejor femenina sí vale (el Campeonato de España son 142 en una tabla, campeón Pichot). */
+function _stSoloFemenino(nombre) {
+  var s = String(nombre || '').toLowerCase();
+  if (/\babsoluto\b|\bmixto\b|\bopen\b/.test(s) && /\bfemenin/.test(s)) return false;
+  return /\bfemenin[oa]s?\b|\bwomen\b|\bgirls\b|\bdamas\b|\bsub[\s.-]?\d{1,2}\s?f\b/.test(s);
+}
+function _stSoloVeteranos(nombre) {
+  var s = String(nombre || '').toLowerCase();
+  return /\bsenior\b|\bveteran|\+\s?50\b|\bmayores de 50\b/.test(s);
+}
+/* El nombre COMPLETO con el que se decide: torneo + categoría. */
+function _stNombreConCat(meta) {
+  return (((meta && meta.name) || '') + ' ' + ((meta && meta.cat) || '')).trim();
+}
+
 function _stStatsMeta(key){
   var c = (typeof _tdPodiumCtx !== 'undefined' && _tdPodiumCtx && _tdPodiumCtx.crk === key) ? _tdPodiumCtx : null;
   return { name:  c ? (c.name || '') : '',
@@ -7200,6 +7234,7 @@ function _stStatsMeta(key){
            dates: c ? (c.dates || '') : '',
            typ:   c ? (c.typ || '') : (_crCategory[key] || ''),
            isTeam: !!(c && c.isTeam),
+           cat:   c ? (c.cat || '') : '',   // nombre de la categoría abierta (para _stNombreConCat)
            status: c ? (c.status || '') : '' };
 }
 
@@ -7268,7 +7303,13 @@ function _stBakeForPublish(key, d, meta){
     for (var mk in meta) if (Object.prototype.hasOwnProperty.call(meta, mk)) metaFin[mk] = meta[mk];
     metaFin.status = 'done';
     if (!_stStatsAvailable(key, d, metaFin)) return d;
-    var st = _statsBuild(key, d, meta);
+    // La categoría no está en la meta del torneo: se saca del sufijo de la clave (…_c3) y de la
+    // lista de categorías, para que _stNombreConCat pueda decidir si sus medallas valen.
+    var _metaCat = {};
+    for (var mk2 in meta) if (Object.prototype.hasOwnProperty.call(meta, mk2)) _metaCat[mk2] = meta[mk2];
+    var _mc2 = String(key).match(/_c(\d+)$/);
+    if (_mc2 && meta.cats && meta.cats[+_mc2[1]]) _metaCat.cat = meta.cats[+_mc2[1]].name || '';
+    var st = _statsBuild(key, d, _metaCat);
     if (!st) return d;
     var copia = {};
     for (var kk in d) if (Object.prototype.hasOwnProperty.call(d, kk)) copia[kk] = d[kk];
@@ -9726,6 +9767,8 @@ function _statsBuild(crk, data, meta){
   var racha = _stStreak(data);  if (racha) racha.nombre = nat(racha.raw);
   var mesa1 = _stBoard1(data);  if (mesa1) mesa1.nombre = nat(mesa1.raw);
   var mas50 = _stMas50(st, year); if (mas50) mas50.nombre = nat(mas50.raw);
+  // Nombre con el que se decide si las medallas de categoría valen (torneo + categoría).
+  var _nomCat = _stNombreConCat(meta), _topeEdad = _stTopeEdad(_nomCat);
 
   return {
     v: _ST_V,
@@ -9752,9 +9795,13 @@ function _statsBuild(crk, data, meta){
       masRatingSumo: topGain[0] || null,
       sobreElo: sobreElo,
       revelacion: g.destacados ? g.destacados.revelacion : null,
-      femenina: (g.femeninas && g.femeninas[0]) || null,
-      sub20: (g.juveniles && g.juveniles[0]) || null,
-      mas50: mas50,
+      // Las tres medallas de categoría se OMITEN si el torneo ya está acotado a esa categoría: en un
+      // Sub-18 todos son sub-20, en un femenino la mejor femenina es la campeona, y en un Senior 50+
+      // el mejor +50 es el campeón. Se corta acá, al calcular, para que no salgan NI en la
+      // Radiografía NI en la vitrina de los perfiles (que se arma de lo mismo).
+      femenina: _stSoloFemenino(_nomCat) ? null : ((g.femeninas && g.femeninas[0]) || null),
+      sub20: (_topeEdad && _topeEdad <= 20) ? null : ((g.juveniles && g.juveniles[0]) || null),
+      mas50: _stSoloVeteranos(_nomCat) ? null : mas50,
       racha: racha,
       mesa1: mesa1
     },
@@ -13083,7 +13130,7 @@ function buildSplitData() {
     if (!metaCr[entry.id]) {
       var _rngSt = null, _st = entry.status || '';
       try { _rngSt = tourRange(entry); _st = computeTourStatus(_rngSt, entry.status); } catch (e) {}
-      metaCr[entry.id] = { name: entry.name || '', location: entry.location || '',
+      metaCr[entry.id] = { name: entry.name || '', location: entry.location || '', cats: entry.categories || null,
                            dates: entry.dates || entry.tournamentDates || entry.startDate || '',
                            typ: entry.type || '', isTeam: !!entry.isTeam, status: _st };
     }
@@ -27842,7 +27889,8 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   // figure "en vivo" el último día— quién ganó tiene que verse sin abrir la tabla. El contenedor va
   // SIEMPRE (aunque esté vacío) para poder rellenarlo cuando la tabla final llegue por el auto-fetch,
   // sin recargar ni esperar al otro día (lo refresca _tdRefreshPodium desde los _crAutoFetch*).
-  _tdPodiumCtx = { crk: crk, isTeam: isTeam, name: name, location: location, dates: dates, typ: typ, rounds: rounds, format: format, pace: pace, status: status };
+  _tdPodiumCtx = { crk: crk, isTeam: isTeam, name: name, location: location, dates: dates, typ: typ, rounds: rounds, format: format, pace: pace, status: status,
+                   cat: (typeof _cat !== 'undefined' && _cat) ? (_cat.name || '') : '' };
   h += '<div id="td-podium-box">' + _tdPodiumInnerHtml() + '</div>';
   if (status === 'upcoming' && !_ondemand) {
     // Torneo que se va a jugar → botón de ANTICIPO (previa) en modo autor.
