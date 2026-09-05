@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 520;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 542;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -1995,6 +1995,145 @@ console.log('\n=== 35. Horarios de ronda POR CATEGORÍA ===');
           (lp.categories || []).length + ' cats / ' + Object.keys(lp.roundDT || {}).length + ' horarios');
       chk((lp.categories || [])[1] && lp.categories[1].rounds === 9,
           'y el GRUPO B ya usaba un override por categoría (rondas 9), el mismo camino que los horarios');
+    }
+  }
+}
+
+console.log('\n=== 36. Un solo cuadro por torneo (los 404 de data/cr) ===');
+{
+  // El manifest listaba 170 claves de cuadro y en data/cr había 162 archivos: 8 eran el MISMO torneo
+  // guardado dos veces, con dos prefijos de tipo (cr2_tz_<id> y cr2_ls_<id>). Las 8 que sobraban se
+  // pedían en CADA carga del torneo y volvían 404. Ahora el split emite UNO por torneo+categoría.
+  const build = extraerFuncion('buildSplitData');
+  const ini = build.indexOf('var _crBySuf');
+  const fin = build.lastIndexOf('Object.keys(crAll).forEach(function(k) {');
+  chk(ini > 0 && fin > ini, 'el split elige un cuadro por torneo ANTES de emitirlos');
+  const PICK = new Function('crAll', build.slice(ini, fin) + ' return _crGrupo;');
+
+  const gordo = { standings: [{ name: 'A' }, { name: 'B' }], rounds: { 1: [1, 2, 3] } };
+  const flaco = { standings: [{ name: 'A' }] };
+  const copia = () => JSON.parse(JSON.stringify(gordo));
+
+  let g = PICK({ 'cr2_ls_tz_9': copia(), 'cr2_tz_tz_9': copia() });
+  chk(Object.keys(g).length === 1 && !!g['cr2_tz_tz_9'],
+      'gemelos iguales: queda uno solo, el del autor (tz)', Object.keys(g).join(' '));
+  chk(g['cr2_tz_tz_9'] && g['cr2_tz_tz_9'].length === 2,
+      'y el elegido se queda con las DOS claves, para juntar los nombres de las dos');
+
+  g = PICK({ 'cr2_tz_tz_9': flaco, 'cr2_ls_tz_9': copia() });
+  chk(Object.keys(g).length === 1 && !!g['cr2_ls_tz_9'],
+      'si el gemelo trae MÁS datos gana ése (no "el primero que aparece")');
+
+  g = PICK({ 'cr2_tz_tz_9_c0': copia(), 'cr2_tz_tz_9_c1': copia(), 'cr2_tz_tz_8': copia() });
+  chk(Object.keys(g).length === 3, 'cada CATEGORÍA es un cuadro aparte: no se pisan entre sí', Object.keys(g).length);
+
+  chk(build.includes('if (!_crGrupo[k]) return;'),
+      'el gemelo no llega ni al archivo ni al índice del manifest');
+  chk(build.includes('_crGrupo[k].forEach(') && build.includes('_vistoNm'),
+      'los nombres del buscador salen de los dos gemelos, sin repetir');
+
+  // Contra el catálogo PUBLICADO: el índice y los archivos tienen que coincidir. Si esto falla,
+  // cada visita al torneo se lleva un 404 (y le ensucia el panel a Cloudflare).
+  if (fs.existsSync('data/cr') && fs.existsSync('data/manifest.js')) {
+    const W4 = {}; new Function('window', fs.readFileSync('data/manifest.js', 'utf8'))(W4);
+    const idx = W4.__CR_INDEX__ || [];
+    const files = new Set(fs.readdirSync('data/cr').filter(x => x.endsWith('.json')).map(x => x.slice(0, -5)));
+    const sinArchivo = idx.filter(k => !files.has(k));
+    chk(idx.length > 100, 'hay catálogo publicado con qué probar', idx.length + ' claves / ' + files.size + ' archivos');
+    chk(sinArchivo.length === 0, 'ninguna clave del índice se pide al pepe (404)', sinArchivo.slice(0, 3).join(' ') || 'ninguna');
+    const vistos = {}; let repes = 0;
+    idx.forEach(k => {
+      const m = String(k).match(/^cr2_[a-z]+_(.+)$/), s = m ? m[1] : k;
+      if (vistos[s]) repes++; vistos[s] = 1;
+    });
+    chk(repes === 0, 'y ningún torneo+categoría está publicado dos veces', repes);
+  }
+}
+
+console.log('\n=== 37. El id del torneo viaja con las partidas del perfil ===');
+{
+  // Hasta ahora la fila del perfil sólo guardaba el NOMBRE del torneo, y todo lo demás (el botón
+  // 🏆, la fecha de rescate, el ritmo del rating en vivo) se deducía comparando textos. De ahí
+  // salieron tres bugs: el perfil partido en dos por las comillas, el torneo contado dos veces en
+  // el rating, y las categorías sin botón. Ahora el id viaja con la partida.
+  //
+  // EL LÍMITE, que es lo importante: el id se sella SÓLO para los torneos del catálogo. En los
+  // perfiles hay 8.718 torneos distintos y sólo 68 son del sitio; los demás vienen de .pgn
+  // importados y su "id" es la hora en que se importaron, no una identidad.
+
+  chk(/tournaments: \[\{ id: entry\.playerOnly \? '' : entry.id,/.test(SRC),
+      'un torneo del pool de perfil (playerOnly) NO recibe id');
+  chk(SRC.includes('if (!entry.playerOnly) _pEnt.tourId = entry.id;'),
+      'y al publicar tampoco: el id sólo viaja para los torneos del catálogo');
+
+  // ── El candado contra "descajetar": el id NO cambia cómo se agrupan las partidas ──
+  const GBT = new Function(extraerFuncion('_normEvName') + extraerFuncion('groupByTournament')
+                           + ' return groupByTournament;')();
+  let g = GBT([
+    { tourName:'Copa "X"', tourLocation:'Vera', tourId:'', pgn:'a' },
+    { tourName:"Copa 'X'", tourLocation:'', tourId:'tz_9', pgn:'b' },
+    { tourName:'Copa "X"', tourLocation:'', tourId:'tz_9', pgn:'c' }
+  ]);
+  chk(g.length === 1 && g[0].games.length === 3,
+      'se sigue agrupando por NOMBRE (comillas incluidas): el id no parte un torneo en dos',
+      g.length + ' grupo(s) / ' + (g[0] ? g[0].games.length : 0) + ' partidas');
+  chk(g[0].id === 'tz_9', 'y el grupo se queda con el id de la primera entrada que lo traiga', g[0].id);
+
+  g = GBT([{ tourName:'Sin id', tourLocation:'', pgn:'a' }]);
+  chk(g.length === 1 && g[0].id === '',
+      'una fila vieja (sin id) no rompe nada: queda con el id vacío');
+
+  // ── La fecha de rescate: por id primero, por nombre si no hay id ──
+  const GDK2 = new Function(extraerFuncion('parseDateFromText') + extraerFuncion('tourDateKey')
+                           + extraerFuncion('_isoToKey') + extraerFuncion('_normTourName')
+                           + extraerFuncion('_tourGroupDateKey')
+                           + 'function parsePgnHeaders(g){ var m = /\\[Date "([^"]*)"\\]/.exec(g); return { Date: m ? m[1] : \'\' }; }'
+                           + ' return _tourGroupDateKey;')();
+  const inc = ['[Date "2026.??.??"]\n\n1. e4 *'];
+  const mapa2 = { '#tz_9': 20260808 };
+  chk(GDK2({ id:'tz_9', name:'como se llame', games:inc }, mapa2) === 20260808,
+      'con el id, la fecha del torneo se encuentra aunque el nombre no coincida en nada',
+      GDK2({ id:'tz_9', name:'como se llame', games:inc }, mapa2));
+  chk(GDK2({ id:'', name:'como se llame', games:inc }, mapa2) === 20260000,
+      'y sin id se sigue buscando por nombre (acá no está, queda el año)');
+
+  // ── Rating en vivo: el doble conteo se cierra por id, y el ritmo sigue mirando el NOMBRE ──
+  const LIVE = extraerFuncion('_liveRatingStd');
+  chk(LIVE.includes("seen['#' + gr.id]"),
+      'el torneo ya contado por su tabla no se vuelve a contar desde el pool, ahora por id');
+  chk(LIVE.includes('paceMap[_normTourName(gr.name)] || (gr.id && paceMap['),
+      'el ritmo se busca por NOMBRE primero: una categoría (… · Blitz) usa el suyo, no el del torneo');
+
+  // ── El botón 🏆: manda el nombre mientras coincida con el id ──
+  chk(SRC.includes('var _tl = (_tlNom && (!_tlId || _tlNom.id === _tlId.id)) ? _tlNom : (_tlId || _tlNom);'),
+      'el botón usa el nombre (sabe la categoría) y el id manda sólo si discrepan o si el nombre falla');
+
+  // ── Contra el catálogo publicado: ningún id inventado ──
+  // Duerme hasta que se publiquen perfiles con id; a partir de ahí vigila que cada id exista en el
+  // manifest y que ese jugador realmente haya jugado ese torneo (playerIndex).
+  if (fs.existsSync('data/p') && fs.existsSync('data/manifest.js')) {
+    const W5 = {}; new Function('window', fs.readFileSync('data/manifest.js', 'utf8'))(W5);
+    const man = W5.__MANIFEST__ || {};
+    const ids = new Set((man.tournaments || []).map(t => String(t.id)));
+    const pIdx = man.playerIndex || {};
+    let con = 0, inventados = 0, ajenos = 0;
+    fs.readdirSync('data/p').forEach(x => {
+      let d; try { d = JSON.parse(fs.readFileSync('data/p/' + x, 'utf8')); } catch (e) { return; }
+      const pid = x.replace('.json', '');
+      const suyos = new Set((pIdx[pid] || []).map(String));
+      (Array.isArray(d) ? d : (d.games || [])).forEach(e => {
+        if (!e || !e.tourId) return;
+        con++;
+        if (!ids.has(String(e.tourId))) inventados++;
+        else if (suyos.size && !suyos.has(String(e.tourId))) ajenos++;
+      });
+    });
+    if (con) {
+      chk(inventados === 0, 'todo id publicado en un perfil existe en el catálogo', inventados + ' de ' + con);
+      chk(ajenos === 0, 'y apunta a un torneo que ESE jugador jugó', ajenos + ' de ' + con);
+    } else {
+      chk(true, 'todavía no hay perfiles publicados con id (se activa al guardar y publicar)');
+      chk(true, '— el candado de "ningún id ajeno" queda armado para entonces');
     }
   }
 }

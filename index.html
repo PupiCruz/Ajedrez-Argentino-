@@ -12282,7 +12282,10 @@ function pgnMergeToPlayerGames() {
     var lsKey = 'ls_' + entry.id;
     PLAYER_GAMES[lsKey] = {
       _fromStorage: true,
-      tournaments: [{ name: entry.name, location: entry.location, games: entry.games || [] }]
+      // El id del torneo VIAJA con las partidas: así el perfil no tiene que adivinar de qué torneo
+      // son comparando nombres. Sólo para los del catálogo: un pool de perfil (playerOnly) tiene un
+      // id que es la hora en que se importó, no una identidad — dárselo partiría torneos en dos.
+      tournaments: [{ id: entry.playerOnly ? '' : entry.id, name: entry.name, location: entry.location, games: entry.games || [] }]
     };
   });
   // Torneos de perfiles de jugadores (en memoria, no en localStorage)
@@ -12308,7 +12311,7 @@ function pgnMergeToPlayerGames() {
     }
     PLAYER_GAMES['tzcfg_' + tzk] = {
       _fromStorage: true,
-      tournaments: [{ name: tName, location: tLoc, games: d.pgnGames }]
+      tournaments: [{ id: tzk, name: tName, location: tLoc, games: d.pgnGames }]
     };
   }
   if (typeof _invalidateDbSearch === 'function') _invalidateDbSearch();   // el buscador se reconstruye
@@ -12935,7 +12938,8 @@ async function ensurePlayerLoaded(id) {
   var byTour = {};
   arr.forEach(function(g) {
     var k = g.tourName || '';
-    if (!byTour[k]) byTour[k] = { name: g.tourName || '', location: g.tourLocation || '', games: [] };
+    if (!byTour[k]) byTour[k] = { id: g.tourId || '', name: g.tourName || '', location: g.tourLocation || '', games: [] };
+    if (!byTour[k].id && g.tourId) byTour[k].id = g.tourId;
     byTour[k].games.push(g.pgn);
   });
   PLAYER_GAMES['emb_' + id] = { _fromStorage: true, tournaments: Object.keys(byTour).map(function(k) { return byTour[k]; }) };
@@ -13179,7 +13183,14 @@ function buildSplitData() {
       for (var pid in matched) {
         if (!idxSeen[pid]) { idxSeen[pid] = true; (playerIndex[pid] = playerIndex[pid] || []).push(entry.id); }
         var sk = pid + '@' + dkey;
-        if (!pSeen[sk]) { pSeen[sk] = true; (pFiles[pid] = pFiles[pid] || []).push({ tourName: entry.name, tourLocation: entry.location || '', pgn: pgn }); }
+        // tourId SÓLO para los torneos del catálogo (ver pgnMergeToPlayerGames): los del pool de
+        // perfil (playerOnly) no tienen identidad estable, y sin id la fila se comporta como hasta hoy.
+        if (!pSeen[sk]) {
+          pSeen[sk] = true;
+          var _pEnt = { tourName: entry.name, tourLocation: entry.location || '', pgn: pgn };
+          if (!entry.playerOnly) _pEnt.tourId = entry.id;
+          (pFiles[pid] = pFiles[pid] || []).push(_pEnt);
+        }
       }
     });
   });
@@ -13239,9 +13250,39 @@ function buildSplitData() {
   // El cruce completo (posiciones + grilla de rondas) se baja recién al abrir el torneo (_crEnsureLoaded).
   var crAll = _collectCrData();
   var crFiles = {}, crIndex = [], crNames = {}, crBaked = 0;
+  // UN cuadro por torneo+CATEGORIA. El mismo torneo puede estar guardado dos veces con dos prefijos
+  // de tipo (cr2_tz_<id> y cr2_ls_<id>: el autor lo abrio como "tz" y la web lo abre como "ls" — es
+  // el caso que explica _crEmbeddedAlts). Se emitian los DOS archivos y el indice listaba los dos,
+  // pero a la carpeta llegaba uno solo: el otro daba 404 en CADA carga del torneo (8 claves de 170).
+  // Ahora se elige UNO por sufijo (el sufijo ya incluye la categoria: …_c0, …_c1) y el resto se
+  // saltea. Al LEER no se pierde nada: _crEmbeddedAlts y _crKeysForTour buscan por sufijo con
+  // cualquier prefijo, asi que el elegido contesta igual cuando le piden la clave del gemelo.
+  var _crBySuf = {}, _crW = {}, _CR_TIPO_PREF = ["tz", "ls", "hc"];
+  Object.keys(crAll).forEach(function(k) {
+    if (!crAll[k]) return;
+    var mk = String(k).match(/^cr2_([a-z]+)_(.+)$/), suf = mk ? mk[2] : k;
+    (_crBySuf[suf] = _crBySuf[suf] || []).push(k);
+    try { _crW[k] = JSON.stringify(crAll[k]).length; } catch (e) { _crW[k] = 0; }
+  });
+  // Gana el que trae MAS datos (nunca "el primero que aparece": podriamos perder la tabla o las
+  // rondas). Si empatan —los 8 casos medidos son identicos— gana el prefijo de autor: tz, ls, hc.
+  var _crGrupo = {};   // clave elegida → todas las claves de ese torneo+categoria
+  Object.keys(_crBySuf).forEach(function(suf) {
+    var ks = _crBySuf[suf], best = ks[0];
+    for (var i = 1; i < ks.length; i++) {
+      var k = ks[i];
+      if (_crW[k] > _crW[best]) { best = k; continue; }
+      if (_crW[k] !== _crW[best]) continue;
+      var pk = _CR_TIPO_PREF.indexOf((String(k).match(/^cr2_([a-z]+)_/) || [])[1]);
+      var pb = _CR_TIPO_PREF.indexOf((String(best).match(/^cr2_([a-z]+)_/) || [])[1]);
+      if (pk >= 0 && (pb < 0 || pk < pb)) best = k;
+    }
+    _crGrupo[best] = ks;
+  });
   Object.keys(crAll).forEach(function(k) {
     var d = crAll[k];
     if (!d) return;
+    if (!_crGrupo[k]) return;   // gemelo del mismo torneo+categoria: lo emite el elegido
     // Cuadros HUERFANOS: claves cr2_* de torneos que ya no existen (se borraron del sitio pero el
     // cuadro quedo en los datos). Se publicaban igual —archivo + entrada en el indice del manifest—
     // sin que nada pudiera abrirlos. metaSeen tiene TODOS los torneos, incluidos los playerOnly que
@@ -13254,9 +13295,15 @@ function buildSplitData() {
     if (_dCr !== d) crBaked++;
     crFiles[k] = _dCr;
     crIndex.push(k);
-    var nm = [];
-    if (d.standings) d.standings.forEach(function(p) { if (p && p.name) nm.push(p.name); });
-    if (d.argManual) String(d.argManual).split(/[\n;]+/).forEach(function(s) { s = s.trim(); if (s) nm.push(s); });
+    // Los nombres del buscador salen de TODOS los gemelos (union, sin repetir): es lo unico que le
+    // podria faltar al elegido si el otro tuviera la tabla mas completa.
+    var nm = [], _vistoNm = {};
+    _crGrupo[k].forEach(function(kk) {
+      var d = crAll[kk] || {};
+      if (d.standings) d.standings.forEach(function(p) { if (p && p.name) nm.push(p.name); });
+      if (d.argManual) String(d.argManual).split(/[\n;]+/).forEach(function(s) { s = s.trim(); if (s) nm.push(s); });
+    });
+    nm = nm.filter(function(x) { if (_vistoNm[x]) return false; _vistoNm[x] = 1; return true; });
     if (nm.length) crNames[k] = nm.join('|');
   });
   // ── Vitrina: dar vuelta las radiografías (por torneo → por jugador) ──
@@ -16650,7 +16697,7 @@ function _buildPgIndex() {
       var tour = data.tournaments[ti], games = tour.games || [];
       for (var gi = 0; gi < games.length; gi++) {
         var pgn = games[gi], hdrs = parsePgnHeaders(pgn);
-        var entry = { tourName: tour.name, tourLocation: tour.location || '', pgn: pgn };
+        var entry = { tourName: tour.name, tourLocation: tour.location || '', tourId: tour.id || '', pgn: pgn };
         var toks = nameTokens(normStr(pgnNameToNatural(hdrs.White || '')))
              .concat(nameTokens(normStr(pgnNameToNatural(hdrs.Black || ''))));
         for (var k = 0; k < toks.length; k++) if (toks[k].length >= 2) bucket(byTok, toks[k], entry);
@@ -16679,7 +16726,7 @@ function gatherGamesForPlayer(player) {
     var e = cand[c];
     if (seen) { if (seen.has(e)) continue; seen.add(e); }   // una entrada puede estar en fide y en tok
     if (pgnGameMatchesPlayer(parsePgnHeaders(e.pgn), player)) {
-      results.push({ tourName: e.tourName, tourLocation: e.tourLocation, pgn: e.pgn });
+      results.push({ tourName: e.tourName, tourLocation: e.tourLocation, tourId: e.tourId || '', pgn: e.pgn });
     }
   }
 
@@ -16700,12 +16747,15 @@ function groupByTournament(games) {
     // "Copa ArcelorMittal" (comilla doble). Antes agrupaba por el nombre EXACTO → dos torneos.
     var key = _normEvName(g.tourName);
     if (!map[key]) {
-      map[key] = { name: g.tourName, location: g.tourLocation, games: [] };
+      map[key] = { id: g.tourId || '', name: g.tourName, location: g.tourLocation, games: [] };
       order.push(key);
     } else {
       // Nombre a mostrar: preferir la variante con comillas dobles (la "oficial") sobre la del pool.
       if (map[key].name.indexOf("'") !== -1 && g.tourName.indexOf("'") === -1) map[key].name = g.tourName;
       if (!map[key].location && g.tourLocation) map[key].location = g.tourLocation;
+      // El id lo pone la primera entrada que lo traiga (las del pool de perfil vienen sin id). Se
+      // AGRUPA por nombre igual que siempre: el id acompaña al grupo, no decide quién va con quién.
+      if (!map[key].id && g.tourId) map[key].id = g.tourId;
     }
     map[key].games.push(g.pgn);
   });
@@ -16724,9 +16774,10 @@ function groupByTournament(games) {
 function _tourNameDateMap() {
   var map = {};
   function _dk(t) { return _isoToKey(t.endDate) || _isoToKey(t.startDate) || (t.dateKey || 0); }
-  function add(name, dk, cats) {
+  function add(name, dk, cats, id) {
     if (!name || !dk) return;
     map[_normTourName(name)] = dk;
+    if (id) map['#' + id] = dk;   // por ID: exacto, no depende de cómo esté escrito el nombre
     if (cats && cats.forEach) cats.forEach(function(c) {
       if (!c || !c.name) return;
       var ev = (typeof _catEventName === 'function') ? _catEventName(name, c.name) : (name + ' · ' + c.name);
@@ -16734,11 +16785,11 @@ function _tourNameDateMap() {
     });
   }
   try {
-    (typeof _embeddedTournaments !== 'undefined' ? _embeddedTournaments : []).forEach(function(t) { if (t && t.name) add(t.name, _dk(t), t.categories); });
+    (typeof _embeddedTournaments !== 'undefined' ? _embeddedTournaments : []).forEach(function(t) { if (t && t.name) add(t.name, _dk(t), t.categories, t.playerOnly ? '' : t.id); });
     var tzCfg = (typeof getTzConfig === 'function') ? getTzConfig() : {};
-    Object.keys(tzCfg).forEach(function(k) { var d = tzCfg[k]; if (d && d.name) add(d.name, _dk(d), d.categories); });
-    (typeof TORNEOS !== 'undefined' ? TORNEOS : []).forEach(function(t) { var ov = tzCfg['hc_' + t.id] || {}; add(t.name, _dk(ov.startDate || ov.endDate ? ov : t) || parseDateFromText(ov.dates || t.dates || ''), ov.categories || t.categories); });
-    JSON.parse(localStorage.getItem('pgn_tournaments') || '[]').forEach(function(e) { if (e && e.name) add(e.name, _dk(e), e.categories); });
+    Object.keys(tzCfg).forEach(function(k) { var d = tzCfg[k]; if (d && d.name) add(d.name, _dk(d), d.categories, k); });
+    (typeof TORNEOS !== 'undefined' ? TORNEOS : []).forEach(function(t) { var ov = tzCfg['hc_' + t.id] || {}; add(t.name, _dk(ov.startDate || ov.endDate ? ov : t) || parseDateFromText(ov.dates || t.dates || ''), ov.categories || t.categories, 'hc_' + t.id); });
+    JSON.parse(localStorage.getItem('pgn_tournaments') || '[]').forEach(function(e) { if (e && e.name) add(e.name, _dk(e), e.categories, e.playerOnly ? '' : e.id); });
   } catch (e) {}
   return map;
 }
@@ -16754,7 +16805,9 @@ function _tourNameDateMap() {
 function _tourGroupDateKey(t, mapa) {
   var dk = tourDateKey(t);
   if (dk % 100 === 0 && mapa) {          // sin día (y a veces sin mes): fecha incompleta
-    var real = mapa[_normTourName(t.name)];
+    // Por ID primero (exacto). Si la fila no lo trae —pool de perfil, o datos publicados antes de
+    // que el id viajara— se busca por nombre, exactamente como hasta ahora.
+    var real = (t.id && mapa['#' + t.id]) || mapa[_normTourName(t.name)];
     if (real) return real;
   }
   return dk;
@@ -18974,6 +19027,13 @@ function renderLocalGames(data, player, resultFilter, colorFilter, openingFilter
   var hasFilter = resultFilter || colorFilter || openingFilter;
   // Torneos de este jugador que están cargados en la web (para el botón 🏆 de cada fila).
   var _pgLinkMap = _tourLinkMap(player);
+  // El mismo mapa, indexado por id, para las filas que traen el id del torneo. Gana la entrada del
+  // torneo pelado (cat < 0) sobre la de una categoría, que es la que abre la pestaña por defecto.
+  var _pgLinkById = {};
+  Object.keys(_pgLinkMap).forEach(function(k) {
+    var v = _pgLinkMap[k];
+    if (v && v.id && (!_pgLinkById[v.id] || v.cat < 0)) _pgLinkById[v.id] = v;
+  });
 
   // El caché guarda TODAS las partidas de TODOS los torneos (la navegación y "Mejores
   // victorias" usan el índice original ti, así que debe existir aunque el torneo no esté
@@ -19078,7 +19138,12 @@ function renderLocalGames(data, player, resultFilter, colorFilter, openingFilter
     h += '<div class="pg-tour-header' + openCls + '" id="' + tid + '-hdr" onclick="pgToggle(\'' + tid + '\')">';
     // 🏆 Ver el torneo completo — sólo si ese torneo está cargado en la web. stopPropagation: la fila
     // entera abre y cierra las partidas, y sin eso el clic haría las dos cosas a la vez.
-    var _tl = _pgLinkMap[_normTourName(tour.name)];
+    // Dos caminos: por NOMBRE (es el que sabe la categoría, "<Torneo> · <Cat>") y por ID (exacto).
+    // Manda el nombre mientras los dos apunten al MISMO torneo; si no coinciden —o si el nombre no
+    // engancha— manda el id. Sin id (pool de perfil) queda el nombre, igual que siempre.
+    var _tlNom = _pgLinkMap[_normTourName(tour.name)];
+    var _tlId = tour.id ? _pgLinkById[tour.id] : null;
+    var _tl = (_tlNom && (!_tlId || _tlNom.id === _tlId.id)) ? _tlNom : (_tlId || _tlNom);
     if (_tl) {
       var _tlCat = (_tl.cat != null && _tl.cat >= 0) ? _tl.cat : -1;
       h += '<a class="pg-tour-link" href="' + _tourHref(_tl.id) + (_tlCat >= 0 ? '&cat=' + _tlCat : '') + '"'
@@ -20488,9 +20553,10 @@ function _tourNamePaceMap(){
   // ("<Torneo> · <Categoría>") → el ritmo de ESA categoría. Sin esto, las partidas de un torneo por
   // pestañas se estampan "… · Blitz"/"… · Rápido", que NO están en el mapa (solo estaba el nombre pelado)
   // → se tomaban como clásico → el blitz/rápido se colaba en el rating en vivo (Standard) de Oro/Pichot.
-  function add(name, pace, cats){
+  function add(name, pace, cats, id){
     if(!name) return;
     if(pace) map[_normTourName(name)] = pace;
+    if(id && pace) map['#' + id] = pace;   // por ID: de rescate, si el nombre del torneo cambió
     if(cats && cats.forEach) cats.forEach(function(c){
       if(!c || !c.name) return;
       var ev = (typeof _catEventName === 'function') ? _catEventName(name, c.name) : (name + ' · ' + c.name);
@@ -20501,11 +20567,11 @@ function _tourNamePaceMap(){
     // Web PUBLICADA: el ritmo de cada torneo vive en el manifest (_embeddedTournaments), NO en
     // tzConfig/localStorage (que ahí están vacíos). Sin esto, un torneo del pool marcado rápido/blitz
     // (ej. simultáneas) se veía "sin ritmo" → se asumía clásico → se colaba en el rating en vivo.
-    (typeof _embeddedTournaments !== 'undefined' ? _embeddedTournaments : []).forEach(function(t){ if(t && t.name) add(t.name, t.pace, t.categories); });
+    (typeof _embeddedTournaments !== 'undefined' ? _embeddedTournaments : []).forEach(function(t){ if(t && t.name) add(t.name, t.pace, t.categories, t.playerOnly ? '' : t.id); });
     var tzCfg = (typeof getTzConfig === 'function') ? getTzConfig() : {};
-    Object.keys(tzCfg).forEach(function(k){ var d = tzCfg[k]; if(d && d.name) add(d.name, d.pace, d.categories); });
-    (typeof TORNEOS !== 'undefined' ? TORNEOS : []).forEach(function(t){ var ov = tzCfg['hc_' + t.id] || {}; add(t.name, ov.pace || t.pace, ov.categories || t.categories); });
-    JSON.parse(localStorage.getItem('pgn_tournaments') || '[]').forEach(function(e){ if(e && e.name) add(e.name, e.pace, e.categories); });
+    Object.keys(tzCfg).forEach(function(k){ var d = tzCfg[k]; if(d && d.name) add(d.name, d.pace, d.categories, k); });
+    (typeof TORNEOS !== 'undefined' ? TORNEOS : []).forEach(function(t){ var ov = tzCfg['hc_' + t.id] || {}; add(t.name, ov.pace || t.pace, ov.categories || t.categories, 'hc_' + t.id); });
+    JSON.parse(localStorage.getItem('pgn_tournaments') || '[]').forEach(function(e){ if(e && e.name) add(e.name, e.pace, e.categories, e.playerOnly ? '' : e.id); });
   } catch(e){}
   return map;
 }
@@ -20528,12 +20594,13 @@ function _liveRatingStd(player){
   // = el del listado FIDE que le corresponde: un torneo que empieza en junio usa el elo de junio,
   // aunque termine en julio). Cada torneo se calcula por separado y se suman las variaciones —
   // igual que hace la tarjeta del jugador, así ambos coinciden.
-  function addTour(name, tourBase, games){
+  function addTour(name, tourBase, games, id){
     if(!games || !games.length) return;
     var b = parseInt(tourBase, 10); if(!b || isNaN(b) || b <= 0) b = base;
     var d = _fideEloDelta(b, games, born);
     if(d == null) return;
     totalDelta += d; nTours++; names.push(name); seen[_normTourName(name)] = true;
+    if(id) seen['#' + id] = true;   // marcado también por id: el nombre solo ya contó doble una vez
   }
 
   // Lista unificada de configs (nombre, pace, rango de fechas, clave para su cruce).
@@ -20562,18 +20629,19 @@ function _liveRatingStd(player){
     var crName = _crFindPlayerName(crData, player);
     if(!crName) return;
     var info = crData.standings ? crData.standings.find(function(s){ return s.name === crName; }) : null;
-    addTour(c.name, info && info.elo, _crEloGamesForName(crData, crName));
+    addTour(c.name, info && info.elo, _crEloGamesForName(crData, crName), c.key);
   });
 
   // 2) RESPALDO: torneos SIN tabla cargada → pool. Base = elo propio del jugador en los PGN.
   try {
     var paceMap = _tourNamePaceMap();
     groupByTournament(gatherGamesForPlayer(player)).forEach(function(gr){
-      if(seen[_normTourName(gr.name)]) return;                                   // ya contado por su tabla
-      if(!_isStandardPace(paceMap[_normTourName(gr.name)] || '')) return;
+      if(seen[_normTourName(gr.name)] || (gr.id && seen['#' + gr.id])) return;   // ya contado por su tabla
+      // El ritmo, por NOMBRE primero (así una categoría usa el suyo: "… · Blitz") y por id de rescate.
+      if(!_isStandardPace(paceMap[_normTourName(gr.name)] || (gr.id && paceMap['#' + gr.id]) || '')) return;
       var end = _maxPgnDateKey(gr.games);
       if(!end || end < cutoff) return;
-      addTour(gr.name, _playerOwnEloFromPgns(player, gr.games), _playerEloGamesInPgns(player, gr.games));
+      addTour(gr.name, _playerOwnEloFromPgns(player, gr.games), _playerEloGamesInPgns(player, gr.games), gr.id);
     });
   } catch(e){}
 
