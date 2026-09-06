@@ -62,18 +62,20 @@ cambió y por qué está en **`PLAN-AUDITORIA.md`** (en esta misma carpeta): con
 antes de tocar cuentas, moderación, chats o el arranque de la página.
 
 ## 🧪 Bancos de pruebas — correrlos antes y después de tocar esas partes
-Son ocho, **1059 comprobaciones** al 04/09/2026. No necesitan instalar nada (Node y listo):
+Son ocho y no necesitan instalar nada (Node y listo). **Cuántas comprobaciones tiene cada uno lo
+dice el propio banco al terminar**, y por eso no está copiado acá: un número escrito a mano en dos
+lugares se pudre solo. (Pasó: este archivo decía 394 cuando el banco de la web ya iba por 542.)
 
 | Banco | Qué cubre | Cómo se corre |
 |---|---|---|
-| `ajedrez-argentino/test-web.mjs` (394) | index.html y editar.html | `cd ajedrez-argentino` y `node test-web.mjs` |
-| `cloudflare-worker/test-cuentas.mjs` (75) | cuentas, frenos, rating, moderación | `cd ajedrez-argentino/cloudflare-worker` y `node test-cuentas.mjs` |
-| `cloudflare-worker/test-logros.mjs` (45) | reglas de los logros del perfil | `cd ajedrez-argentino/cloudflare-worker` y `node test-logros.mjs` |
-| `vivo-worker/test-sala.mjs` (368) | el motor de las salas (asientos, cola, rotación) | `cd vivo-worker` y `node test-sala.mjs` |
-| `vivo-worker/test-salas.mjs` (82) | salas de partida, hibernación, reloj | `cd vivo-worker` y `node test-salas.mjs` |
-| `vivo-worker/test-lobby.mjs` (68) | lobby, los tres chats, desafíos, sanciones, bloqueo | `cd vivo-worker` y `node test-lobby.mjs` |
-| `vivo-worker/test-presencia.mjs` (17) | presencia: salón, punto verde, contador del chat | `cd vivo-worker` y `node test-presencia.mjs` |
-| `vivo-worker/test-desafio-invitados.mjs` (10) | no aceptar desafíos de invitados | `cd vivo-worker` y `node test-desafio-invitados.mjs` |
+| `ajedrez-argentino/test-web.mjs` | index.html y editar.html | `cd ajedrez-argentino` y `node test-web.mjs` |
+| `cloudflare-worker/test-cuentas.mjs` | cuentas, frenos, rating, moderación | `cd ajedrez-argentino/cloudflare-worker` y `node test-cuentas.mjs` |
+| `cloudflare-worker/test-logros.mjs` | reglas de los logros del perfil | `cd ajedrez-argentino/cloudflare-worker` y `node test-logros.mjs` |
+| `vivo-worker/test-sala.mjs` | el motor de las salas (asientos, cola, rotación) | `cd vivo-worker` y `node test-sala.mjs` |
+| `vivo-worker/test-salas.mjs` | salas de partida, hibernación, reloj | `cd vivo-worker` y `node test-salas.mjs` |
+| `vivo-worker/test-lobby.mjs` | lobby, los tres chats, desafíos, sanciones, bloqueo | `cd vivo-worker` y `node test-lobby.mjs` |
+| `vivo-worker/test-presencia.mjs` | presencia: salón, punto verde, contador del chat | `cd vivo-worker` y `node test-presencia.mjs` |
+| `vivo-worker/test-desafio-invitados.mjs` | no aceptar desafíos de invitados | `cd vivo-worker` y `node test-desafio-invitados.mjs` |
 
 Ya cazaron varios bugs antes de que llegaran al sitio. Si uno falla, **no publicar**.
 
@@ -83,10 +85,11 @@ empieza a llamar a un ayudante que no está en la lista de su bloque, la copia r
 **Node mata el archivo entero**: dejan de correr cientos de pruebas y el resumen igual dice que
 pasaron. Pasó de verdad (corrían 82 de 303 durante días, en silencio).
 
-Por eso el banco cuenta las comprobaciones y termina con `Corrieron N de 394`. **Si ese número no
-coincide, no publicar.** Si se corta, avisa solo y dice **qué ayudante falta**; el arreglo es
-agregarlo a la lista de nombres de ese bloque (buscá `extraerFuncion`). Al agregar pruebas hay que
-subir la constante `ESPERADAS`; nunca baja sola.
+Por eso el banco cuenta las comprobaciones y termina con `Corrieron N de M`. **Si esos dos números
+no son iguales, no publicar.** La regla se comprueba sola: los dos números los imprime el banco, así
+que no hay que saber de memoria cuánto tiene que dar. Si se corta, avisa solo y dice **qué ayudante
+falta**; el arreglo es agregarlo a la lista de nombres de ese bloque (buscá `extraerFuncion`). Al
+agregar pruebas hay que subir la constante `ESPERADAS`, que vive en el propio banco; nunca baja sola.
 
 ## Qué es
 App web de **ajedrez argentino**: torneos, perfiles de jugadores, rankings FIDE,
