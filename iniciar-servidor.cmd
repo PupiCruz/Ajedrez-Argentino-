@@ -13,6 +13,12 @@ git --version >nul 2>&1 && (
     git fetch origin >nul 2>&1 && git merge --ff-only origin/main >nul 2>&1
 )
 
+:: Chequeo silencioso del motor: avisa el dia que salga el Stockfish nuevo
+:: para navegador (el 19). Ver chequear-motor.ps1. Igual que el fetch de
+:: arriba: si no hay internet o GitHub no contesta, no dice nada y sigue.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0chequear-motor.ps1" 2>nul
+if errorlevel 9 pause
+
 echo ===============================================
 echo    Ajedrez Argentino - servidor local
 echo ===============================================
