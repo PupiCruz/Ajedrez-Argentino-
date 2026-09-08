@@ -14017,6 +14017,8 @@ async function exportDataFile() {
     // es la única carpeta sobre la que el navegador tiene permiso; publicar-web.cmd lo copia a la
     // raíz del sitio, que es donde lo busca Google (robots.txt ya lo declara ahí).
     try { await _fsWriteFile(dir, 'sitemap.xml', _sitemapXml()); } catch (e) {}
+    // Datos para la vista previa al compartir (los lee el servidor, ver functions/_middleware.js).
+    try { await _fsWriteFile(dir, 'og.json', _ogJson()); } catch (e) {}
     try { await _fsSaveFps(dir, fps); } catch (e) {}
     _saveProgressHide();
 
@@ -22550,6 +22552,77 @@ window.addEventListener('popstate', function () { setTimeout(_navReconciliar, 0)
    del ranking público de la FIDE, que ya publica esos mismos datos, y sacar a los prodigios
    (Faustino Oro, Ilan Schnaider…) de un sitio de ajedrez argentino no tenía sentido. Lo que sí
    se cuida son las FOTOS: `_headers` les pone X-Robots-Tag: noindex a todas. */
+/* ═══ DATOS PARA LA VISTA PREVIA AL COMPARTIR (data/og.json) ═══════════════════════════════
+   WhatsApp, Facebook e Instagram NO ejecutan JavaScript: piden el HTML crudo, leen las etiquetas
+   og: y se van. Por eso los títulos que pone la app no les llegan y toda la web se compartía con
+   el mismo cartel genérico. La solución es que el SERVIDOR ya mande las etiquetas correctas, y de
+   eso se encarga `functions/_middleware.js` (Cloudflare Pages) leyendo este archivo.
+
+   Tiene que ser CHICO: el servidor lo lee en cada link compartido. Por eso van sólo el nombre, la
+   bajada y la imagen — nada de partidas ni tablas — y en forma de lista, sin nombres de campo.
+
+   Las fotos de MENORES no se ponen como imagen de la vista previa (queda el logo del sitio).
+   Es la misma línea que trazó el autor con Google Imágenes: el dato público es una cosa y la cara
+   de un chico en la previsualización de un WhatsApp es otra. Se decide por el año de nacimiento,
+   así no hay ninguna lista que mantener. */
+function _ogJson() {
+  var out = { v: 1, t: {}, j: {}, n: {} };
+  var anio = new Date().getFullYear();
+  function limpiar(s, max) {
+    return String(s == null ? '' : s).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max || 200);
+  }
+  /* La imagen tiene que ser la RUTA PUBLICADA, nunca lo que devuelve _flyerSrc: en modo autor esa
+     entrega el flyer incrustado en base64 (FLYER_STORE) y el archivo se iba a varios MB. Acá se
+     usa el mapa de redirección (imgur → data/fl/…) y se descarta cualquier "data:" que se cuele. */
+  function imagenPublicada(u) {
+    if (!u) return '';
+    var s = String(u);
+    try {
+      var mapa = window.FLYER_REDIRECT || window.__FLYER_REDIRECT__ || {};
+      if (mapa[s]) s = mapa[s];
+    } catch (e) {}
+    if (/^data:/i.test(s)) return '';
+    return s.slice(0, 300);
+  }
+  // ── Torneos: nombre, lugar, fechas y flyer ──
+  try {
+    var tzCfg = getTzConfig();
+    function ponerTorneo(key, d) {
+      if (key === null || key === undefined || key === '' || out.t[key]) return;
+      var nom = limpiar(d && d.name, 140);
+      if (!nom) return;
+      out.t[key] = [nom, limpiar(d && d.location, 90), limpiar(d && d.dates, 60),
+                    imagenPublicada(d && d.flyerUrl)];
+    }
+    TORNEOS.forEach(function (t, i) {
+      if (_hiddenTorneos.indexOf(i) >= 0) return;
+      var ov = tzCfg['hc_' + t.id] || {};
+      ponerTorneo(t.id, { name: t.name, location: t.location, dates: ov.dates || t.dates, flyerUrl: ov.flyerUrl || t.flyerUrl });
+    });
+    pgnGetTorneosForList().forEach(function (st) { ponerTorneo(st._id, st); });
+    Object.keys(tzCfg).forEach(function (k) { if (k.indexOf('tz_') === 0) ponerTorneo(k, tzCfg[k]); });
+  } catch (e) {}
+  // ── Jugadores: nombre, título, elo y foto (sólo si es mayor de edad) ──
+  try {
+    var fotos = window.__PHOTO_INDEX__ || {};
+    (window.PLAYERS || []).forEach(function (p) {
+      if (!p || p.id === null || p.id === undefined || !p.name) return;
+      var ext = fotos[p.id] || fotos[String(p.id)];
+      var esMenor = p.born && (anio - Number(p.born)) < 18;
+      out.j[p.id] = [limpiar(p.name, 80), p.title || '', p.elo || 0,
+                     (ext && !esMenor) ? ('data/ph/' + p.id + '.' + ext) : ''];
+    });
+  } catch (e) {}
+  // ── Noticias: título, resumen y portada ──
+  try {
+    (typeof getNewsItems === 'function' ? getNewsItems() : []).forEach(function (n) {
+      if (!n || !n.id || !n.title) return;
+      out.n[n.id] = [limpiar(n.title, 140), limpiar(n.summary || n.text, 200), imagenPublicada(n.coverImg)];
+    });
+  } catch (e) {}
+  return JSON.stringify(out);
+}
+
 function _sitemapXml() {
   var base = 'https://chessargentino.ar';
   var urls = [{ loc: base + '/', prio: '1.0' }];
