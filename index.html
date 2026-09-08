@@ -59,6 +59,29 @@
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+    /* ═══ ACCESIBILIDAD (Fase 0) ═══════════════════════════════════════════
+       .sr-only = "sólo para el lector de pantalla": el texto ESTÁ en la página y los ciegos lo
+       escuchan, pero no ocupa lugar ni se ve. No se usa display:none ni visibility:hidden porque
+       con eso el lector TAMPOCO lo lee: hay que dejarlo visible pero recortado a 1 píxel. */
+    .sr-only {
+      position: absolute !important; width: 1px; height: 1px;
+      padding: 0; margin: -1px; overflow: hidden;
+      clip: rect(0, 0, 0, 0); clip-path: inset(50%);
+      white-space: nowrap; border: 0;
+    }
+    /* "Saltar al contenido": invisible hasta que el TECLADO llega a él (primer Tab de la página).
+       Con el mouse o el dedo no aparece nunca. */
+    .skip-link {
+      position: absolute; left: -9999px; top: 0; z-index: 100000;
+      background: var(--gold, #c9a227); color: #0a0a0a;
+      padding: 10px 16px; border-radius: 0 0 10px 0;
+      font-weight: 700; font-size: 14px; text-decoration: none;
+    }
+    .skip-link:focus { left: 0; }
+    /* El título de la sección recibe el foco al navegar (para que el lector lea dónde estás),
+       pero no queremos dibujarle un marco a un texto que no es clickeable. */
+    [tabindex="-1"]:focus { outline: none; }
+
     :root {
       --bg:        #0a0a0a;
       --bg2:       #111111;
@@ -2360,6 +2383,46 @@
   <script>if(!window.__AA_WEB__){document.write('<scr'+'ipt data-aa-author src="data/embedded-photos.js"><\/scr'+'ipt>');
     document.write('<scr'+'ipt data-aa-author src="data/embedded-flyers.js"><\/scr'+'ipt>');}</script>
 
+<!-- ═══ ACCESIBILIDAD (Fase 0) ═══════════════════════════════════════════════════════════
+     Nada de esto se VE. Son los cimientos para que la app pueda hablarle a un lector de pantalla.
+     · El link de saltar aparece sólo si alguien navega con el teclado (primer Tab).
+     · Las dos zonas de abajo son "el parlante": lo que se escribe ahí, el lector lo lee en voz alta.
+       Tienen que existir desde el arranque (el lector las registra al cargar la página) y NUNCA
+       deben quedar dentro de algo que se redibuje con innerHTML, por eso viven acá arriba de todo. -->
+<a class="skip-link" href="#contenido">Saltar al contenido</a>
+<div id="a11y-say"     class="sr-only" aria-live="polite"    aria-atomic="true"></div>
+<div id="a11y-say-urg" class="sr-only" aria-live="assertive" aria-atomic="true"></div>
+<script>
+(function(){
+  var ultimo = { p: '', a: '' };
+  /* aaDecir('texto')        → lo dice cuando el lector termine lo que está leyendo (lo normal)
+     aaDecir('texto', true)  → lo interrumpe y lo dice ya (jaque mate, error, fin de partida)
+     Truco copiado de Lichess: si el texto es IDÉNTICO al anterior el lector NO lo repite, así que
+     se le pega un espacio invisible para que sea "distinto" sin que cambie lo que se escucha. */
+  window.aaDecir = function(texto, urgente){
+    try {
+      if (texto == null || texto === '') return;
+      var id = urgente ? 'a11y-say-urg' : 'a11y-say';
+      var k  = urgente ? 'a' : 'p';
+      var el = document.getElementById(id); if (!el) return;
+      var t = String(texto).replace(/\s+/g, ' ').trim();
+      if (!t) return;
+      if (t === ultimo[k]) t += ' ';
+      ultimo[k] = t;
+      el.textContent = t;
+    } catch(e){}
+  };
+  /* Vaciar el parlante: para que al volver a una pantalla no se relea algo viejo. */
+  window.aaCallar = function(){
+    try {
+      var a = document.getElementById('a11y-say'), b = document.getElementById('a11y-say-urg');
+      if (a) a.textContent = ''; if (b) b.textContent = '';
+      ultimo.p = ''; ultimo.a = '';
+    } catch(e){}
+  };
+})();
+</script>
+
 <div class="app">
 
   <!-- HEADER -->
@@ -2418,7 +2481,7 @@
   </header>
 
   <!-- CONTENIDO -->
-  <main class="main">
+  <main class="main" id="contenido" tabindex="-1">
 
     <!-- ── TORNEOS ── -->
     <section class="section active" id="s-torneos">
@@ -3463,7 +3526,7 @@
       <div class="pg-head" id="lv-pghead">
         <div class="lv-pghead-tx">
           <h2>♟️ Jugar en vivo</h2>
-          <p>Desafiá a un amigo a una partida en tiempo real</p>
+          <p>Jugá al ajedrez online. Desafiá a un amigo o unite a una sala para conocer gente que comparte tu misma pasión.</p>
         </div>
         <button type="button" id="lv-ranking-btn" class="lv-ranking-btn" onclick="window.lvOpenRanking&&window.lvOpenRanking()" title="Top del sitio por ritmo y quién está en línea">🏆 Ranking</button>
       </div>
@@ -4189,7 +4252,7 @@
   <div class="tz-modal-box">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">
       <div id="tz-modal-title" style="font-size:15px;font-weight:700;color:var(--text)">Editar torneo</div>
-      <button onclick="closeTzModal()" style="background:none;border:none;color:var(--text3);font-size:22px;cursor:pointer;line-height:1;padding:2px">×</button>
+      <button onclick="closeTzModal()" aria-label="Cerrar" style="background:none;border:none;color:var(--text3);font-size:22px;cursor:pointer;line-height:1;padding:2px">×</button>
     </div>
     <div style="margin-bottom:12px">
       <label class="tz-flabel">Nombre *</label>
@@ -13949,6 +14012,11 @@ async function exportDataFile() {
       if (done % 25 === 0 || done === total) { _saveProgressSet(done, total, 'Escribiendo archivos…'); await _paint(); }
     }
     _fsSubdirCache = null;
+    // Sitemap: la lista de direcciones para Google (torneos + perfiles). Se escribe SIEMPRE, aunque
+    // no haya cambiado nada más, porque es chico y así nunca queda viejo. Va dentro de data\ porque
+    // es la única carpeta sobre la que el navegador tiene permiso; publicar-web.cmd lo copia a la
+    // raíz del sitio, que es donde lo busca Google (robots.txt ya lo declara ahí).
+    try { await _fsWriteFile(dir, 'sitemap.xml', _sitemapXml()); } catch (e) {}
     try { await _fsSaveFps(dir, fps); } catch (e) {}
     _saveProgressHide();
 
@@ -16124,7 +16192,10 @@ async function openPlayer(id) {
   h += '<div class="lbl">' + (isFav ? 'SIGUIENDO' : 'SEGUIR JUGADOR') + '</div>';
   h += '<div class="sub">' + (isFav ? 'Estás siguiendo a este jugador' : 'Añadí a tus favoritos') + '</div>';
   h += '</div>';
-  h += '<button class="fav-btn ' + (isFav ? 'on' : '') + '" onclick="toggleFavModal(' + p.id + ')">';
+  // La estrellita es un dibujo sin texto: sin aria-label el lector la anuncia como "botón" a secas.
+  h += '<button class="fav-btn ' + (isFav ? 'on' : '') + '" onclick="toggleFavModal(' + p.id + ')"'
+    + ' aria-pressed="' + (isFav ? 'true' : 'false') + '"'
+    + ' aria-label="' + (isFav ? 'Quitar de favoritos' : 'Agregar a favoritos') + '">';
   h += '<svg viewBox="0 0 24 24" fill="' + (isFav ? 'currentColor' : 'none') + '" stroke="currentColor" stroke-width="2">';
   h += '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>';
   h += '</svg></button></div>';
@@ -20750,7 +20821,7 @@ function _newsEditBtns(id) {
     + '<button title="Preparar para redes" onclick="event.preventDefault();event.stopPropagation();openSocialAssistant(\'' + _nEscAttr(id) + '\')" style="background:rgba(0,0,0,.55);border:none;color:var(--white-ink);font-size:11px;cursor:pointer;padding:4px 8px;border-radius:6px;font-family:inherit">📣</button>'
     + '<button title="Video para TikTok" onclick="event.preventDefault();event.stopPropagation();openTikTokMaker(\'' + _nEscAttr(id) + '\')" style="background:rgba(0,0,0,.55);border:none;color:var(--white-ink);font-size:11px;cursor:pointer;padding:4px 8px;border-radius:6px;font-family:inherit">🎬</button>'
     + '<button onclick="event.preventDefault();event.stopPropagation();openNewsEditor(\'' + _nEscAttr(id) + '\')" style="background:rgba(0,0,0,.55);border:none;color:var(--white-ink);font-size:11px;cursor:pointer;padding:4px 8px;border-radius:6px;font-family:inherit">✏️ Editar</button>'
-    + '<button onclick="event.preventDefault();event.stopPropagation();deleteNewsItem(\'' + _nEscAttr(id) + '\')" style="background:rgba(0,0,0,.55);border:none;color:#f99;font-size:13px;cursor:pointer;padding:4px 7px;border-radius:6px">✕</button>'
+    + '<button onclick="event.preventDefault();event.stopPropagation();deleteNewsItem(\'' + _nEscAttr(id) + '\')" aria-label="Borrar la noticia" title="Borrar la noticia" style="background:rgba(0,0,0,.55);border:none;color:#f99;font-size:13px;cursor:pointer;padding:4px 7px;border-radius:6px">✕</button>'
     + '</div>';
 }
 
@@ -20895,6 +20966,11 @@ function openNewsReader(id) {
   _removeDeepLinkCover();   // ya abrió la noticia: sacar la pantalla "Cargando…" del deep-link
   ov.classList.add('open');
   ov.scrollTop = 0;
+  // Accesibilidad + título propio: la noticia también es una "página" con su dirección (?noticia=…).
+  // Apunta al TÍTULO, no al cuerpo: si no, el lector arranca leyendo el primer párrafo de la nota
+  // y el ciego no se entera de cuál abrió.
+  try { _a11yAbrioPagina('n-reader-overlay', 'Noticia', '#n-reader-title'); } catch (e) {}
+  try { _seoNoticia(); } catch (e) {}
 }
 
 var _newsHistoryPushed = false;
@@ -21990,6 +22066,11 @@ function deleteNewsItem(id){
    NAVEGACIÓN
 ═══════════════════════════════════════════════════════ */
 function goTo(sec, btn) {
+  // ¿Venías con un panel abierto (torneo, perfil, partida, ejercicio, noticia)? Se mira ANTES de
+  // cerrarlos, porque decide si la pestaña nueva APILA una marca en el historial o REEMPLAZA la del
+  // panel: si apilara, el botón Atrás volvería a una dirección de un panel que ya cerramos.
+  var _habiaPanel = !!document.querySelector('#tour-overlay.open, #overlay.open, #chess-overlay.open,'
+    + ' #puz-overlay.open, #prac-overlay.open, #n-reader-overlay.open');
   // El visor de partidas ahora es una PÁGINA y la nav queda clickeable por encima → si hay una partida
   // abierta, cerrarla también (antes la tapaba el overlay y bastaba el popstate).
   _cvFromPuzzle = false; _cvFromPractice = false; _cvFromProfile = null;
@@ -22013,19 +22094,34 @@ function goTo(sec, btn) {
   }
   // Si hay un PERFIL DE USUARIO abierto como página, cerrarlo también (la nav navega a la sección elegida).
   if (document.body.classList.contains('prof-page') && window.aaProfile && window.aaProfile.close) { try { window.aaProfile.close(); } catch (_) {} }
-  // La partida puede haberse abierto SIN torneo de fondo (desde la pestaña Partidas) → limpiar la URL
-  // ?torneo=&partida= que pudo quedar, para que la nav deje una URL coherente con la sección.
-  if (location.search) { try { history.replaceState({}, '', location.pathname); } catch (_) {} }
   var secEl = document.getElementById('s-' + sec);
   if (!secEl) return;   // sección inexistente: no romper (goTo puede llamarse por código)
   // Si no vino el botón (llamada por código, sin "this"), buscarlo por la sección que abre.
+  // Guardar ANTES si vino de un clic de verdad: es lo que decide si se mueve el foco (accesibilidad).
+  var _a11yClic = !!btn;
   if (!btn) btn = document.querySelector('.nav-btn[onclick*="\'' + sec + '\'"]');
+
+  /* La dirección pasa a ser la de la pestaña (?ir=jugar). Esto también limpia el ?torneo=&partida=
+     que pudiera haber quedado, que es lo que hacía la línea que había acá antes.
+       · APILA (pushState) cuando el visitante tocó la pestaña con la app "limpia" → el botón Atrás
+         lo devuelve a la pestaña anterior en vez de echarlo del sitio.
+       · REEMPLAZA (replaceState) si venía de cerrar un panel (la marca del panel ya no sirve) o si
+         quien navega es el propio botón Atrás (si apilara, Atrás no avanzaría nunca). */
+  try {
+    var _u = _secUrl(sec);
+    if (_a11yClic && !_habiaPanel && !_navDesdePop) history.pushState({ seccion: sec }, '', _u);
+    else history.replaceState({ seccion: sec }, '', _u);
+  } catch (_) {}
   var sections = document.querySelectorAll('.section');
   var navBtns  = document.querySelectorAll('.nav-btn');
   for (var i = 0; i < sections.length; i++) sections[i].classList.remove('active');
   for (var i = 0; i < navBtns.length; i++)  navBtns[i].classList.remove('active');
   secEl.classList.add('active');
   if (btn) btn.classList.add('active');
+  // Accesibilidad: el lector de pantalla no ve el resaltado dorado del botón. aria-current es la
+  // manera de decirle "acá estás parado": lo canta como "actual" al recorrer la barra de arriba.
+  for (var _ac = 0; _ac < navBtns.length; _ac++) navBtns[_ac].removeAttribute('aria-current');
+  if (btn) btn.setAttribute('aria-current', 'page');
   document.querySelector('.main').scrollTop = 0;
   _resetHdrForNav();   // mostrar el header y resetear el auto-ocultado al cambiar de sección
   if (sec === 'favoritos') renderPartidas();
@@ -22034,6 +22130,361 @@ function goTo(sec, btn) {
   if (sec === 'vivo') { if (window.__lvVivoShow) window.__lvVivoShow(); }
   else { if (window.__lvVivoHide) window.__lvVivoHide(); }
   try { localStorage.setItem('last_section', sec); } catch(e) {}
+  try { _a11ySeccion(secEl, btn, _a11yClic); } catch(e) {}
+  try { _seoSeccion(secEl); } catch(e) {}
+}
+
+/* ═══ ACCESIBILIDAD (Fase 0) ═══════════════════════════════════════════════════════════════
+   La app cambia de pantalla sin recargar la página. Para el que VE eso es obvio; para un lector
+   de pantalla no pasó nada: se queda leyendo donde estaba y el ciego cree que el clic no funcionó.
+   Estas dos funciones son el arreglo: cantar a dónde llegaste y llevar el foco al título nuevo.
+═════════════════════════════════════════════════════════════════════════════════════════════ */
+
+// Llevar el foco a un elemento que normalmente no lo recibe (un título, un panel).
+// preventScroll: sin esto el navegador salta al elemento y la pantalla se mueve sola.
+function _a11yFoco(el) {
+  if (!el) return;
+  try {
+    if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '-1');
+    el.focus({ preventScroll: true });
+  } catch (e) { try { el.focus(); } catch (_) {} }
+}
+
+/* Los títulos de la app llevan emoji ("🏆 Torneos", "👥 Jugadores"). Al ojo le suman; al oído le
+   restan: el lector de pantalla los canta ("trofeo Torneos", "bustos en silueta Jugadores").
+   Esto los saca para lo que se DICE, sin tocar lo que se ve. */
+function _a11yTexto(s) {
+  if (!s) return '';
+  var t = String(s);
+  // Los rangos cubren los emoji y símbolos decorativos que aparecen en los nombres. OJO con
+  // ampliarlos hacia  -⃿: ahí viven los guiones largos y las comillas tipográficas,
+  // que SÍ se quieren conservar. (El ⏰ de "⏰ IV BA CHESS MASTERS…" es ⏰ y se escapaba.)
+  try { t = t.replace(/[\u{1F000}-\u{1FAFF}\u{2300}-\u{23FF}\u{2460}-\u{24FF}\u{25A0}-\u{27BF}\u{2900}-\u{297F}\u{2B00}-\u{2BFF}\u{FE00}-\u{FE0F}\u{2190}-\u{21FF}\u{2022}]/gu, ' '); }
+  catch (e) { t = t.replace(/[^\x00-\x7FÀ-ɏ]/g, ' '); }   // navegador viejo sin flag /u
+  return t.replace(/\s+/g, ' ').trim();
+}
+
+// Cambió de sección: decir cuál y parar el foco en su título.
+// vinoDeUnClic: goTo() también se llama POR CÓDIGO (al abrir la página, al cerrar un visor).
+// En esos casos se canta el destino pero NO se roba el foco, que sería molesto.
+function _a11ySeccion(secEl, btn, vinoDeUnClic) {
+  var titulo = secEl.querySelector('h2');
+  var nombre = _a11yTexto(titulo ? titulo.textContent : '');
+  if (nombre && window.aaDecir) window.aaDecir(nombre);
+  if (titulo && vinoDeUnClic) _a11yFoco(titulo);
+}
+
+/* Las barras de filtros (Todos / En curso / Próximos…) son botones que se "hunden" cuando están
+   elegidos, pero eso hoy es sólo un color: el lector no tiene cómo saber cuál está activo.
+   aria-pressed se lo dice ("botón Todos, presionado"). En vez de tocar las ~20 funciones que
+   manejan chips, se sincroniza sola mirando la clase .active que esas funciones ya ponen. */
+function _a11ySyncChips() {
+  try {
+    var chips = document.querySelectorAll('.tabs .chip');
+    for (var i = 0; i < chips.length; i++) {
+      chips[i].setAttribute('aria-pressed', chips[i].classList.contains('active') ? 'true' : 'false');
+    }
+  } catch (e) {}
+}
+document.addEventListener('click', function (e) {
+  var t = e.target;
+  if (!t || !t.closest) return;
+  if (t.closest('.tabs')) setTimeout(_a11ySyncChips, 0);   // después de que el onclick mueva las clases
+}, false);
+// Al abrir la página, la primera sección ya viene marcada como activa en el HTML: goTo() no corre,
+// así que la marca "acá estás" hay que ponerla a mano esta primera vez.
+function _a11ySyncNav() {
+  try {
+    var btns = document.querySelectorAll('.nav-btn');
+    for (var i = 0; i < btns.length; i++) {
+      if (btns[i].classList.contains('active')) btns[i].setAttribute('aria-current', 'page');
+      else btns[i].removeAttribute('aria-current');
+    }
+  } catch (e) {}
+}
+document.addEventListener('DOMContentLoaded', function () {
+  setTimeout(function () { _a11ySyncChips(); _a11ySyncNav(); }, 0);
+  // Título y canonical de la dirección con la que se ENTRÓ (?ir=jugar, y de paso cualquier otra).
+  setTimeout(function () { try { _seoDesdeUrl(); } catch (e) {} }, 400);
+});
+
+/* ═══ TÍTULO DE CADA PÁGINA (accesibilidad + Google) ═══════════════════════════════════════
+   La app cambia de pantalla sin recargar, así que hasta ahora TODAS las direcciones —los 126
+   torneos, los 1.292 perfiles, cada partida— compartían el mismo título y, peor, el mismo
+   <link rel="canonical"> apuntando a la portada. Ese canonical es un cartel que le dice a Google
+   "esta dirección en realidad es la portada": por eso no indexaba ninguna.
+
+   Para un ciego es el mismo problema con otra cara: el título de la pestaña es LO PRIMERO que
+   canta un lector de pantalla al llegar, y cantaba lo mismo en las 126 pantallas.
+
+   Ojo con las etiquetas og: (la vista previa de WhatsApp/Facebook): se actualizan acá por
+   prolijidad, pero esos robots NO ejecutan JavaScript, así que la previsualización al compartir
+   NO cambia. Para eso haría falta armarla en el servidor (el Worker de Cloudflare).
+═══════════════════════════════════════════════════════════════════════════════════════════ */
+var _SEO_MARCA = 'ChessArgentino';
+var _seoTituloBase = '', _seoDescBase = '';
+try {
+  _seoTituloBase = document.title;
+  var _mdesc = document.querySelector('meta[name="description"]');
+  _seoDescBase = _mdesc ? _mdesc.getAttribute('content') : '';
+} catch (e) {}
+
+// El dominio de verdad. En localhost se usa el local (nadie indexa localhost); desde
+// chessargentino.pages.dev el canonical apunta igual al dominio bueno, que es lo que se quiere.
+function _seoOrigen() {
+  var h = location.hostname;
+  return (h === 'localhost' || h === '127.0.0.1' || h === '') ? location.origin : 'https://chessargentino.ar';
+}
+
+function _seoMeta(selector, attr, valor) {
+  var el = document.querySelector(selector);
+  if (el) el.setAttribute(attr, valor);
+}
+
+function _seoAplicar(titulo, desc) {
+  try {
+    var t = _a11yTexto(titulo || '') || _seoTituloBase;
+    if (t !== _seoTituloBase && t.indexOf(_SEO_MARCA) < 0) t = t + ' | ' + _SEO_MARCA;
+    var url = _seoOrigen() + location.pathname + (location.search || '');
+    document.title = t;
+    _seoMeta('link[rel="canonical"]', 'href', url);
+    _seoMeta('meta[property="og:url"]', 'content', url);
+    _seoMeta('meta[property="og:title"]', 'content', t);
+    var d = _a11yTexto(desc || '') || _seoDescBase;
+    _seoMeta('meta[name="description"]', 'content', d);
+    _seoMeta('meta[property="og:description"]', 'content', d);
+  } catch (e) {}
+}
+
+/* Por qué esto reintenta en vez de esperar un rato fijo (costó encontrarlo):
+   al abrir un perfil desde ADENTRO de un torneo, la app cambia la URL a ?jugador=N bastante
+   después de dibujar el panel. Con una pausa fija de 260 ms la dirección todavía decía
+   ?torneo=… , no se encontraba al jugador y el título se quedaba con el del torneo. Cuánto
+   tarda depende de por dónde entraste, así que no hay número mágico: se prueba hasta que los
+   datos estén (o hasta 2,5 s, y ahí se deja como está).
+
+   `fn` devuelve true cuando pudo; false para que se vuelva a intentar.
+   El token evita que un reintento viejo pise un título más nuevo: si mientras el torneo seguía
+   reintentando el visitante abrió un perfil, el intento del torneo se cancela solo. */
+var _seoToken = 0;
+function _seoDiferido(fn) {
+  var mio = ++_seoToken, intentos = 0;
+  function probar() {
+    if (mio !== _seoToken) return;   // ya hubo otra navegación: esto quedó viejo
+    intentos++;
+    var ok = false;
+    try { ok = fn(); } catch (e) {}
+    if (!ok && intentos < 10) setTimeout(probar, 250);
+  }
+  setTimeout(probar, 200);
+}
+
+// Decidir qué título corresponde mirando la dirección. Lo usa el botón Atrás del navegador,
+// que cierra paneles sin pasar por ninguna de las funciones de arriba.
+function _seoDesdeUrl() {
+  try {
+    var q = new URLSearchParams(location.search || '');
+    if (q.get('partida') || q.get('g') || q.get('vg')) return _seoPartida();
+    if (q.get('noticia')) return _seoNoticia();
+    if (q.get('jugador')) return _seoJugador();
+    if (q.get('torneo')) return _seoTorneo();
+    // Pestaña por link (?ir=jugar). Hace falta acá porque al ENTRAR directo la app restaura la
+    // sección tocando clases, sin pasar por goTo(): sin esto, quien cae en ?ir=jugar (una persona
+    // o Google) ve el título y el canonical de la portada, y la dirección cuenta como repetida.
+    var ir = q.get('ir');
+    var secIr = ir && _SLUG_SEC[ir] ? document.getElementById('s-' + _SLUG_SEC[ir]) : null;
+    if (secIr) return _seoSeccion(secIr);
+    _seoHome();
+  } catch (e) {}
+}
+
+/* Volver a la portada (cerrar un torneo, el botón Atrás del navegador…).
+   No pasa por _seoAplicar a propósito: ese saca los emoji y agrega " | ChessArgentino", y sobre el
+   título original quedaba "Ajedrez Argentino — … | ChessArgentino", con la marca repetida y sin el
+   ♟. El título de la portada lo escribió el autor: se restaura tal cual, sin tocarlo. */
+function _seoHome() {
+  _seoDiferido(function () {
+    var url = _seoOrigen() + location.pathname;
+    document.title = _seoTituloBase;
+    _seoMeta('link[rel="canonical"]', 'href', url);
+    _seoMeta('meta[property="og:url"]', 'content', url);
+    _seoMeta('meta[property="og:title"]', 'content', _seoTituloBase);
+    _seoMeta('meta[name="description"]', 'content', _seoDescBase);
+    _seoMeta('meta[property="og:description"]', 'content', _seoDescBase);
+    return true;
+  });
+}
+
+/* ═══ CADA PESTAÑA CON SU DIRECCIÓN (?ir=jugar) ════════════════════════════════════════════
+   Dos motivos, y el segundo pesa más que el primero:
+
+   1. Se puede compartir el link directo a una pestaña. Antes, para mandar a alguien a jugar
+      había que decirle "entrá y tocá Jugar"; ahora se le pasa chessargentino.ar/?ir=jugar.
+   2. **ARREGLA EL BOTÓN ATRÁS.** `goTo()` venía haciendo replaceState, o sea que moverse entre
+      pestañas no dejaba NINGUNA marca en el historial: en el teléfono, Atrás te echaba de la web
+      aunque hubieras recorrido cinco pestañas. Ahora cada pestaña apila una marca.
+
+   La portada (Torneos) se queda en "/" a secas a propósito: con ?ir=torneos serían dos direcciones
+   distintas para la misma pantalla y Google las contaría como repetidas. */
+var _SEC_SLUG = { torneos:'torneos', vivo:'jugar', jugadores:'jugadores', favoritos:'partidas',
+                  entrenar:'entrenar', noticias:'noticias', apoyar:'apoyar' };
+var _SLUG_SEC = {};
+(function () { for (var k in _SEC_SLUG) _SLUG_SEC[_SEC_SLUG[k]] = k; })();
+var _SEC_INICIAL = 'torneos';        // la que se ve al entrar a "/"
+var _navDesdePop = false;            // el que navega es el botón Atrás: NO volver a apilar historial
+
+function _secUrl(sec) {
+  var slug = _SEC_SLUG[sec];
+  return location.pathname + ((!slug || sec === _SEC_INICIAL) ? '' : '?ir=' + slug);
+}
+
+function _seoSeccion(secEl) {
+  // La pestaña inicial vive en "/" (la portada), así que le corresponde el título de la portada:
+  // si no, la misma dirección tendría dos títulos según cómo llegaste.
+  if (secEl && secEl.id === 's-' + _SEC_INICIAL) return _seoHome();
+  _seoDiferido(function () {
+    var h2 = secEl.querySelector('h2');
+    var n = _a11yTexto(h2 ? h2.textContent : '');
+    if (!n) return false;
+    // Cada sección tiene su bajada bajo el título ("Jugá al ajedrez online. Desafiá a un amigo…").
+    // Esa frase describe la pantalla muchísimo mejor que la descripción genérica del sitio, y es la
+    // que Google muestra debajo del link en los resultados.
+    var p = secEl.querySelector('.pg-head p');
+    var d = _a11yTexto(p ? p.textContent : '');
+    _seoAplicar(n, d || _seoDescBase);
+    return true;
+  });
+}
+
+function _seoTorneo() {
+  _seoDiferido(function () {
+    var c = window._tdPodiumCtx || window._tdCtx || null;
+    if (!c || !c.name) return false;
+    var partes = [];
+    if (c.location) partes.push(c.location);
+    if (c.dates) partes.push(c.dates);
+    _seoAplicar(
+      c.name + ' — resultados y partidas',
+      'Tabla de posiciones, cruces, rondas y partidas de ' + c.name +
+        (partes.length ? '. ' + partes.join('. ') : '') + '. Ajedrez argentino.'
+    );
+    return true;
+  });
+}
+
+function _seoJugador() {
+  _seoDiferido(function () {
+    var id = new URLSearchParams(location.search || '').get('jugador');
+    var p = (id && typeof _playerById === 'function') ? _playerById(Number(id)) : null;
+    if (!p || !p.name) return false;
+    var elo = p.elo ? ('Elo FIDE ' + p.elo + '. ') : '';
+    _seoAplicar(
+      p.name + (p.title ? ' (' + p.title + ')' : '') + ' — Elo FIDE, partidas y torneos',
+      p.name + ': ' + elo + 'Partidas, torneos, aperturas y evolución del rating. Ajedrez argentino.'
+    );
+    return true;
+  });
+}
+
+function _seoNoticia() {
+  _seoDiferido(function () {
+    var id = new URLSearchParams(location.search || '').get('noticia');
+    if (!id || typeof getNewsItems !== 'function') return false;
+    var n = getNewsItems().filter(function (x) { return x.id === id; })[0];
+    if (!n || !n.title) return false;
+    // El resumen es lo que mejor funciona como descripción; si no hay, se usa el arranque del cuerpo.
+    var d = n.summary || n.text || '';
+    d = String(d).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 180);
+    _seoAplicar(n.title, d || ('Noticia de ajedrez argentino' + (n.date ? ' — ' + n.date : '') + '.'));
+    return true;
+  });
+}
+
+function _seoPartida() {
+  _seoDiferido(function () {
+    var pgn = (window.cv && cv.rawPgn) ? String(cv.rawPgn) : '';
+    var dato = function (k) { var m = pgn.match(new RegExp('\\[' + k + '\\s+"([^"]*)"')); return m ? m[1] : ''; };
+    var b = dato('White'), n = dato('Black');
+    if (!b || !n) return false;
+    var ev = dato('Event'), an = (dato('Date') || '').slice(0, 4);
+    _seoAplicar(
+      b + ' vs ' + n + (ev ? ' — ' + ev : ''),
+      'Partida de ajedrez ' + b + ' contra ' + n + (ev ? ' en ' + ev : '') + (an && an !== '????' ? ' (' + an + ')' : '') +
+        '. Se puede ver jugada por jugada con análisis del motor.'
+    );
+    return true;
+  });
+}
+
+// El botón Atrás del navegador cierra torneos/perfiles/partidas sin pasar por ninguna de las
+// funciones de arriba. Sin esto, al salir de una partida al perfil el título se quedaba con el
+// de la partida. Se vuelve a decidir mirando la dirección, que para entonces ya es la correcta.
+window.addEventListener('popstate', function () { setTimeout(_seoDesdeUrl, 320); });
+
+/* ═══ SITEMAP ══════════════════════════════════════════════════════════════════════════════
+   La lista de direcciones que se le entrega a Google. Hasta ahora tenía UNA sola (la portada),
+   así que el buscador no tenía por dónde enterarse de los torneos ni de los perfiles.
+
+   Se arma acá adentro, y no con un script aparte, porque la dirección de cada torneo la sabe
+   la app: las claves vienen de tres lados distintos (los del código, los cargados, y los de la
+   ficha "tz_") y `_tourHref` es la única que sabe armarlas bien. Se escribe en el 💾 de siempre,
+   y `publicar-web.cmd` la copia a la raíz del sitio antes de subir.
+
+   Ojo: NO filtra menores. Es una decisión tomada a conciencia el 07/09/2026 — el listado sale
+   del ranking público de la FIDE, que ya publica esos mismos datos, y sacar a los prodigios
+   (Faustino Oro, Ilan Schnaider…) de un sitio de ajedrez argentino no tenía sentido. Lo que sí
+   se cuida son las FOTOS: `_headers` les pone X-Robots-Tag: noindex a todas. */
+function _sitemapXml() {
+  var base = 'https://chessargentino.ar';
+  var urls = [{ loc: base + '/', prio: '1.0' }];
+  var vistos = {};
+  // Las pestañas. Torneos NO va: es la portada, ya está arriba con "/" a secas.
+  try {
+    for (var _s in _SEC_SLUG) {
+      if (_s === _SEC_INICIAL) continue;
+      urls.push({ loc: base + '/?ir=' + _SEC_SLUG[_s], prio: '0.9' });
+    }
+  } catch (e) {}
+  function agregarTorneo(key) {
+    if (key === null || key === undefined || key === '') return;
+    var u = base + '/' + _tourHref(key);
+    if (vistos[u]) return;
+    vistos[u] = 1;
+    urls.push({ loc: u, prio: '0.8' });
+  }
+  try {
+    var tzCfg = getTzConfig();
+    TORNEOS.forEach(function (t, i) { if (_hiddenTorneos.indexOf(i) >= 0) return; agregarTorneo(t.id); });
+    pgnGetTorneosForList().forEach(function (st) { agregarTorneo(st._id); });
+    Object.keys(tzCfg).forEach(function (k) { if (k.indexOf('tz_') === 0) agregarTorneo(k); });
+  } catch (e) {}
+  // Noticias: son pocas pero es lo más "fresco" que tiene el sitio, así que van con prioridad alta.
+  try {
+    (typeof getNewsItems === 'function' ? getNewsItems() : []).forEach(function (n) {
+      if (!n || !n.id) return;
+      var u = base + '/' + _noticiaHref(n.id);
+      if (vistos[u]) return;
+      vistos[u] = 1;
+      urls.push({ loc: u, prio: '0.9' });
+    });
+  } catch (e) {}
+  try {
+    (window.PLAYERS || []).forEach(function (p) {
+      if (!p || p.id === null || p.id === undefined) return;
+      var u = base + '/?jugador=' + encodeURIComponent(p.id);
+      if (vistos[u]) return;
+      vistos[u] = 1;
+      urls.push({ loc: u, prio: '0.6' });
+    });
+  } catch (e) {}
+  var hoy = new Date().toISOString().slice(0, 10);
+  var x = '<?xml version="1.0" encoding="UTF-8"?>\n'
+        + '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n';
+  urls.forEach(function (u) {
+    x += '  <url><loc>' + u.loc.replace(/&/g, '&amp;') + '</loc>'
+       + '<lastmod>' + hoy + '</lastmod><priority>' + u.prio + '</priority></url>\n';
+  });
+  return x + '</urlset>\n';
 }
 
 // Copia el alias de Mercado Pago de la pestaña "Apoyar" al portapapeles (con fallback para
@@ -23888,6 +24339,20 @@ window.addEventListener('popstate', function() {
     }
     return;
   }
+
+  /* Acá abajo ya no hay ningún panel abierto: el Atrás está moviéndose entre PESTAÑAS.
+     Antes esto no existía y el manejador terminaba sin hacer nada, así que el navegador se llevaba
+     al visitante fuera del sitio (en el teléfono era lo más molesto: dabas Atrás y te echaba).
+     `_navDesdePop` evita que goTo vuelva a apilar historial: si no, Atrás nunca avanzaría. */
+  try {
+    var _slug = new URLSearchParams(location.search || '').get('ir');
+    var _dest = (_slug && _SLUG_SEC[_slug]) ? _SLUG_SEC[_slug] : _SEC_INICIAL;
+    var _actual = document.querySelector('.section.active');
+    if (!_actual || _actual.id !== 's-' + _dest) {
+      _navDesdePop = true;
+      try { goTo(_dest); } finally { _navDesdePop = false; }
+    }
+  } catch (e) {}
 });
 
 document.addEventListener('keydown',function(e){
@@ -27286,9 +27751,35 @@ function goHome(e) {
 }
 // Activa/desactiva el modo "página" del detalle de torneo (header + nav visibles). El top del
 // overlay lo maneja la variable CSS --hdr-h (ver _setHdrVar), así el auto-ocultar del header lo sigue.
+/* ═══ ACCESIBILIDAD (Fase 0) ═══════════════════════════════════════════════════════════════
+   El torneo, el perfil y el visor no son secciones: son "páginas" que se abren encima. Para el
+   que ve, la pantalla cambia entera y es obvio. Para un lector de pantalla no pasó nada: sigue
+   parado donde estaba (en la tarjeta que tocaste) y el ciego cree que el clic no hizo nada.
+   Esto canta qué se abrió y lleva el foco adentro, así el lector arranca a leer lo nuevo.
+   El título de estas páginas no es un <h2>, así que se toma el principio del panel: el nombre
+   del torneo / del jugador / de los rivales es siempre lo primero que aparece ahí.
+═════════════════════════════════════════════════════════════════════════════════════════════ */
+function _a11yAbrioPagina(overlayId, prefijo, selectorCuerpo) {
+  // 120 ms: el contenido se dibuja con innerHTML justo antes; sin esta pausa se leería vacío.
+  setTimeout(function () {
+    try {
+      var ov = document.getElementById(overlayId); if (!ov) return;
+      var cuerpo = (selectorCuerpo && ov.querySelector(selectorCuerpo)) || ov;
+      // innerText (no textContent): respeta cómo se ve y separa los bloques, si no las palabras
+      // quedan pegadas y el lector dice "dos mil veintiséis en curso" de un tirón.
+      var crudo = cuerpo.innerText || cuerpo.textContent || '';
+      var t = _a11yTexto(crudo.slice(0, 220)).slice(0, 100);
+      if (window.aaDecir) window.aaDecir(prefijo + (t ? ': ' + t : ''));
+      _a11yFoco(ov.querySelector('.modal, .chess-modal') || ov);
+    } catch (e) {}
+  }, 120);
+}
+
 function _tourPageOn() {
   document.body.classList.add('tour-page');
   _resetHdrForNav();
+  try { _a11yAbrioPagina('tour-overlay', 'Torneo', '#tour-modal-body'); } catch (e) {}
+  try { _seoTorneo(); } catch (e) {}
 }
 function _tourPageOff() {
   document.body.classList.remove('tour-page');
@@ -27298,6 +27789,8 @@ function _tourPageOff() {
 function _playerPageOn() {
   document.body.classList.add('player-page');
   _resetHdrForNav();
+  try { _a11yAbrioPagina('overlay', 'Jugador', '#modal-body'); } catch (e) {}
+  try { _seoJugador(); } catch (e) {}
 }
 function _playerPageOff() {
   document.body.classList.remove('player-page');
@@ -27309,6 +27802,8 @@ function _playerPageOff() {
 function _gamePageOn() {
   document.body.classList.add('game-page');
   _resetHdrForNav();
+  try { _a11yAbrioPagina('chess-overlay', 'Partida', '.chess-modal'); } catch (e) {}
+  try { _seoPartida(); } catch (e) {}
 }
 function _gamePageOff() {
   document.body.classList.remove('game-page');
@@ -30010,9 +30505,21 @@ if (_ondemand) {
 
 // Restaurar la sección donde estaba el usuario antes de actualizar
 (function() {
-  var last = localStorage.getItem('last_section');
-  // Migración: antes "Ejercicios" y "Practicar" eran secciones sueltas; ahora son sub-pestañas de "Entrenar".
-  if (last === 'ejercicios' || last === 'practicar') { try { localStorage.setItem('train_tab', last); } catch(e) {} last = 'entrenar'; }
+  // Migración vieja: "Ejercicios" y "Practicar" fueron secciones sueltas y hoy son sub-pestañas de
+  // "Entrenar". Se conserva sólo por el traspaso a train_tab, no para elegir la sección.
+  var _viejo = null;
+  try { _viejo = localStorage.getItem('last_section'); } catch (e) {}
+  if (_viejo === 'ejercicios' || _viejo === 'practicar') { try { localStorage.setItem('train_tab', _viejo); } catch(e) {} }
+
+  /* Entrar a chessargentino.ar abre SIEMPRE Torneos (decisión del autor, 07/09/2026).
+     Antes se restauraba la última pestaña visitada, y quedaba raro: la dirección decía "/" pero
+     estabas viendo otra pantalla. Ahora la pestaña la decide ÚNICAMENTE el link (?ir=jugar,
+     ?ir=entrenar, …), así lo que ves y la dirección siempre coinciden. */
+  var last = null;
+  try {
+    var _ir = new URLSearchParams(location.search || '').get('ir');
+    if (_ir && _SLUG_SEC[_ir]) last = _SLUG_SEC[_ir];
+  } catch (e) {}
   if (last && last !== 'torneos') {
     var sec = document.getElementById('s-' + last);
     var btn = document.querySelector('.nav-btn[onclick*="\'' + last + '\'"]');

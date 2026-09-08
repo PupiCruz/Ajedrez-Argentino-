@@ -24,6 +24,20 @@ if errorlevel 1 (
 )
 
 :: ------------------------------------------------------------------
+:: 0) Sitemap: la lista de direcciones para Google (torneos + perfiles).
+::    La arma la app al apretar "Guardar datos en mi carpeta" y la deja en
+::    data\sitemap.xml, porque el navegador solo tiene permiso sobre esa
+::    carpeta. Google lo busca en la RAIZ del sitio, asi que se copia aca.
+::    Si todavia no existe (nunca guardaste desde que se agrego), no pasa
+::    nada: se sigue de largo sin tocar el sitemap que ya este publicado.
+:: ------------------------------------------------------------------
+if exist "data\sitemap.xml" (
+    copy /Y "data\sitemap.xml" "sitemap.xml" >nul
+    echo Sitemap actualizado.
+    echo.
+)
+
+:: ------------------------------------------------------------------
 :: 1) Si hay archivos sin guardar (datos nuevos, etc.), commitearlos.
 :: ------------------------------------------------------------------
 git status --short > "%TEMP%\gitstatus.txt" 2>&1
