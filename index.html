@@ -22068,13 +22068,30 @@ function deleteNewsItem(id){
 // Qué panel había abierto en cada pestaña al salir de ella. Ver el comentario dentro de goTo().
 var _panelPrevio = {};
 
+/* Cambiar de pestaña POR DEBAJO, sin tocar el historial ni la dirección.
+   Lo usa el botón Atrás cuando reabre un panel: la dirección tiene que seguir siendo la del panel
+   (?jugador=1), pero la pestaña de abajo tiene que ser la que le corresponde, si no al cerrar el
+   perfil aparecías en una pestaña que no tenía nada que ver. goTo() no sirve acá porque escribiría
+   la dirección de la pestaña y pisaría la del panel. */
+function _secMostrar(sec) {
+  var el = document.getElementById('s-' + sec);
+  if (!el || el.classList.contains('active')) return;
+  var salgoDeVivo = !!document.querySelector('#s-vivo.active');
+  document.querySelectorAll('.section').forEach(function (s) { s.classList.remove('active'); });
+  document.querySelectorAll('.nav-btn').forEach(function (b) { b.classList.remove('active'); b.removeAttribute('aria-current'); });
+  el.classList.add('active');
+  var btn = document.querySelector('.nav-btn[onclick*="\'' + sec + '\'"]');
+  if (btn) { btn.classList.add('active'); btn.setAttribute('aria-current', 'page'); }
+  // Soltar el lobby si veníamos de "Jugar" (goTo lo hace; acá hay que hacerlo a mano).
+  if (salgoDeVivo && sec !== 'vivo' && window.__lvVivoHide) { try { window.__lvVivoHide(); } catch (e) {} }
+  if (sec === 'favoritos' && typeof renderPartidas === 'function') { try { renderPartidas(); } catch (e) {} }
+  if (sec === 'entrenar' && typeof _trainEnsureData === 'function') { try { _trainEnsureData(); } catch (e) {} }
+}
+
 function goTo(sec, btn) {
   // ¿Venías con un panel abierto (torneo, perfil, partida, ejercicio, noticia)? Se mira ANTES de
   // cerrarlos, porque decide si la pestaña nueva APILA una marca en el historial o REEMPLAZA la del
   // panel: si apilara, el botón Atrás volvería a una dirección de un panel que ya cerramos.
-  var _habiaPanel = !!document.querySelector('#tour-overlay.open, #overlay.open, #chess-overlay.open,'
-    + ' #puz-overlay.open, #prac-overlay.open, #n-reader-overlay.open');
-
   /* Memoria de "dónde estabas" en cada pestaña. Si te vas de Jugadores con el perfil de alguien
      abierto y después volvés a Jugadores, se reabre ese perfil en vez de la lista pelada.
      Se anota AL SALIR, no al abrir: así, si el perfil lo cerraste vos antes de irte, no queda nada
@@ -22090,6 +22107,14 @@ function goTo(sec, btn) {
   // El visor de partidas ahora es una PÁGINA y la nav queda clickeable por encima → si hay una partida
   // abierta, cerrarla también (antes la tapaba el overlay y bastaba el popstate).
   _cvFromPuzzle = false; _cvFromPractice = false; _cvFromProfile = null;
+  // El lector de noticias es el overlay de más arriba y goTo no lo cerraba: quedaba tapando la
+  // pantalla con otra sección ya activa por debajo. Hoy no se llega (el lector tapa el menú), pero
+  // la trampa estaba puesta. Se apaga la marca de historial ANTES de cerrar: closeNewsReader()
+  // delega en el botón Atrás y acá eso dispararía una navegación de más.
+  var _nr0 = document.getElementById('n-reader-overlay');
+  if (_nr0 && _nr0.classList.contains('open')) {
+    _newsHistoryPushed = false; _nr0.classList.remove('open'); _newsReaderCurrentId = null;
+  }
   var _pz = document.getElementById('puz-overlay');
   if (_pz && _pz.classList.contains('open')) { if (typeof puzSfOff === 'function') puzSfOff(); _puzHistoryPushed = false; _pz.classList.remove('open'); _puzPageOff(); puz.cur = null; puz.editing = false; }
   var _prc = document.getElementById('prac-overlay');
@@ -22102,7 +22127,11 @@ function goTo(sec, btn) {
   if (_to && _to.classList.contains('open')) {
     try { if (window.aaTourChat) window.aaTourChat.close(); } catch (_) {}   // cerrar la sala de "La hinchada"
     _tdLiveStop(); _to.classList.remove('open'); _tourPageOff();
-    if (_tourHistoryPushed) { _tourHistoryPushed = false; try { history.replaceState({}, '', location.pathname); } catch (_) {} }
+    // Antes acá se hacía un replaceState a la raíz para "limpiar" la URL. Ya no: eso PISABA la
+    // marca del torneo en el historial justo antes de que se apilara la de la pestaña, y el botón
+    // Atrás se salteaba el torneo (volvía a la portada en vez de al torneo que estabas mirando).
+    // La dirección la escribe igual el bloque de más abajo, con la de la pestaña.
+    if (_tourHistoryPushed) { _tourHistoryPushed = false; }
   }
   var _pl = document.getElementById('overlay');
   if (_pl && _pl.classList.contains('open')) {
@@ -22119,13 +22148,17 @@ function goTo(sec, btn) {
 
   /* La dirección pasa a ser la de la pestaña (?ir=jugar). Esto también limpia el ?torneo=&partida=
      que pudiera haber quedado, que es lo que hacía la línea que había acá antes.
-       · APILA (pushState) cuando el visitante tocó la pestaña con la app "limpia" → el botón Atrás
-         lo devuelve a la pestaña anterior en vez de echarlo del sitio.
-       · REEMPLAZA (replaceState) si venía de cerrar un panel (la marca del panel ya no sirve) o si
-         quien navega es el propio botón Atrás (si apilara, Atrás no avanzaría nunca). */
+       · APILA (pushState) cuando el visitante tocó la pestaña → el botón Atrás deshace ese paso.
+       · REEMPLAZA sólo si quien navega es el propio Atrás (si apilara, Atrás no avanzaría nunca).
+
+     Se apila TAMBIÉN cuando venías de un panel abierto (un perfil, un torneo). Al principio esto
+     reemplazaba en ese caso, y el resultado era el que reportó el autor: estabas en el perfil de
+     Diego Flores, tocabas "Entrenar", dabas Atrás y aparecía la lista de jugadores en vez del
+     perfil — porque la marca del perfil se había pisado. Lo último que hiciste fue IRTE del perfil,
+     así que Atrás tiene que devolverte a él. De reabrirlo se encarga el popstate. */
   try {
     var _u = _secUrl(sec);
-    if (_a11yClic && !_habiaPanel && !_navDesdePop) history.pushState({ seccion: sec }, '', _u);
+    if (_a11yClic && !_navDesdePop) history.pushState({ seccion: sec }, '', _u);
     else history.replaceState({ seccion: sec }, '', _u);
   } catch (_) {}
   var sections = document.querySelectorAll('.section');
@@ -24368,6 +24401,28 @@ window.addEventListener('popstate', function() {
     }
     return;
   }
+
+  /* No hay ningún panel abierto, pero la dirección nombra uno: el Atrás está VOLVIENDO a él.
+     Es el caso de irse de un perfil (o de un torneo, o de una noticia) tocando otra pestaña y
+     después deshacer: lo último que hiciste fue irte, así que Atrás tiene que traerlo de vuelta.
+     Se marca *HistoryPushed en true ANTES de abrir para que el que abre NO apile otra entrada:
+     ya estamos parados justo en la del panel. Las direcciones de PARTIDA se saltean: esas las
+     manejan las ramas de arriba, con su propia coreografía de volver al perfil o al ejercicio. */
+  try {
+    var _qb = new URLSearchParams(location.search || '');
+    if (!(_qb.get('partida') || _qb.get('g') || _qb.get('vg'))) {
+      var _jb = _qb.get('jugador'), _nb = _qb.get('noticia'), _tb = _qb.get('torneo');
+      if (_jb && typeof openPlayer === 'function') {
+        _secMostrar('jugadores'); _playerHistoryPushed = true; openPlayer(Number(_jb)); return;
+      }
+      if (_nb && typeof openNewsReader === 'function') {
+        _secMostrar('noticias'); _newsHistoryPushed = true; openNewsReader(_nb); return;
+      }
+      if (_tb && typeof openTournamentByKey === 'function') {
+        _secMostrar('torneos'); _tourHistoryPushed = true; openTournamentByKey(_tb); return;
+      }
+    }
+  } catch (e) {}
 
   /* Acá abajo ya no hay ningún panel abierto: el Atrás está moviéndose entre PESTAÑAS.
      Antes esto no existía y el manejador terminaba sin hacer nada, así que el navegador se llevaba
