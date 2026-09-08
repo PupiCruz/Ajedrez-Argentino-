@@ -22472,20 +22472,43 @@ window.addEventListener('popstate', function () { setTimeout(_seoDesdeUrl, 320);
    abierto; si nombra una pestaña, que esa pestaña sea la que se ve. No le importa la dirección
    del viaje, así que sirve para Atrás y para Adelante por igual.
 
-   Las direcciones de PARTIDA se saltean a propósito: esas tienen su propia coreografía arriba
-   (volver al ejercicio, al perfil o al torneo del que salió la partida) y no hay que pisarla.
-
-   LÍMITE CONOCIDO, medido el 08/09/2026: por eso mismo, dar ADELANTE hacia una partida no la
-   reabre — quedás en la pestaña, con la dirección apuntando a la partida. Atrás sí funciona
-   (cierra la partida y devuelve el perfil o el torneo), y desde ahí la navegación sigue bien.
-   Arreglarlo de verdad es meterse con el deep-link de partidas (?jugador=&t=&g=), que resuelve
-   índices contra la lista de torneos del perfil y hace su propio replaceState: es un trabajo
-   aparte, con sus propias pruebas. No parchearlo desde acá. */
+   Las PARTIDAS también se reconstruyen, reusando las mismas funciones que abren una partida
+   cuando alguien entra por un link compartido (`_openPlayerGameDeepLink` / `_openTourGameDeepLink`).
+   Se les marcan las banderas de historial ANTES de llamarlas, igual que a los otros paneles, para
+   que no apilen entradas nuevas ni reescriban la dirección: ya estamos parados en la correcta.
+   La única que NO se reconstruye es la partida PvP en vivo (?vg=): es efímera, la mesa ya no está. */
 function _navReconciliar() {
   try {
     var q = new URLSearchParams(location.search || '');
-    if (q.get('partida') || q.get('g') || q.get('vg')) return;
+    if (q.get('vg')) return;   // partida en vivo: no tiene sentido resucitarla
     var j = q.get('jugador'), t = q.get('torneo'), n = q.get('noticia');
+    var g = q.get('g'), ti = q.get('t'), partida = q.get('partida');
+    var yaHayPartida = !!document.querySelector('#chess-overlay.open');
+
+    // Partida abierta desde un PERFIL: ?jugador=&t=&g=
+    if (j && ti && g && /^\d+$/.test(g)) {
+      if (!yaHayPartida && typeof _openPlayerGameDeepLink === 'function') {
+        _secMostrar('jugadores');
+        _playerHistoryPushed = true; _cvHistoryPushed = true;
+        _openPlayerGameDeepLink(/^-?\d+$/.test(j) ? parseInt(j, 10) : j, ti, parseInt(g, 10));
+      }
+      return;
+    }
+    // Partida abierta desde un TORNEO: ?torneo=&partida= (con su categoría/ronda si las trae)
+    if (t && partida && /^\d+$/.test(partida)) {
+      if (!yaHayPartida && typeof _openTourGameDeepLink === 'function') {
+        var cat = q.get('cat'), ron = q.get('r');
+        _secMostrar('torneos');
+        _tourHistoryPushed = true; _cvHistoryPushed = true;
+        _openTourGameDeepLink(t, parseInt(partida, 10),
+          (cat && /^\d+$/.test(cat)) ? parseInt(cat, 10) : undefined,
+          (ron && /^\d+$/.test(ron)) ? parseInt(ron, 10) : null,
+          (g && /^\d+$/.test(g)) ? parseInt(g, 10) : null);
+      }
+      return;
+    }
+    // Cualquier otra forma de partida que no sepamos rearmar: mejor no tocar nada.
+    if (partida || g) return;
     if (j) {
       if (!document.querySelector('#overlay.open') && typeof openPlayer === 'function') {
         _secMostrar('jugadores'); _playerHistoryPushed = true; openPlayer(Number(j));
