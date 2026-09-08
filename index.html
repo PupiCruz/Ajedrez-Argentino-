@@ -22460,6 +22460,60 @@ function _seoPartida() {
 // de la partida. Se vuelve a decidir mirando la dirección, que para entonces ya es la correcta.
 window.addEventListener('popstate', function () { setTimeout(_seoDesdeUrl, 320); });
 
+/* ═══ PONER LA PANTALLA DE ACUERDO CON LA DIRECCIÓN ════════════════════════════════════════
+   El manejador grande del historial está escrito para el botón ATRÁS: "cerrá el panel de más
+   arriba y listo". Con el botón ADELANTE esa cuenta no cierra. Ejemplo real: estás en el perfil
+   de un jugador, tocás "Entrenar", das Atrás (vuelve el perfil) y después Adelante — el perfil se
+   cerraba bien, pero la pestaña se quedaba en Jugadores mientras la dirección y el título ya
+   decían Entrenar.
+
+   Esto corre DESPUÉS de aquel (los manejadores se ejecutan en el orden en que se registran) y
+   arregla lo que haya quedado descolocado: si la dirección nombra un panel, que ese panel esté
+   abierto; si nombra una pestaña, que esa pestaña sea la que se ve. No le importa la dirección
+   del viaje, así que sirve para Atrás y para Adelante por igual.
+
+   Las direcciones de PARTIDA se saltean a propósito: esas tienen su propia coreografía arriba
+   (volver al ejercicio, al perfil o al torneo del que salió la partida) y no hay que pisarla.
+
+   LÍMITE CONOCIDO, medido el 08/09/2026: por eso mismo, dar ADELANTE hacia una partida no la
+   reabre — quedás en la pestaña, con la dirección apuntando a la partida. Atrás sí funciona
+   (cierra la partida y devuelve el perfil o el torneo), y desde ahí la navegación sigue bien.
+   Arreglarlo de verdad es meterse con el deep-link de partidas (?jugador=&t=&g=), que resuelve
+   índices contra la lista de torneos del perfil y hace su propio replaceState: es un trabajo
+   aparte, con sus propias pruebas. No parchearlo desde acá. */
+function _navReconciliar() {
+  try {
+    var q = new URLSearchParams(location.search || '');
+    if (q.get('partida') || q.get('g') || q.get('vg')) return;
+    var j = q.get('jugador'), t = q.get('torneo'), n = q.get('noticia');
+    if (j) {
+      if (!document.querySelector('#overlay.open') && typeof openPlayer === 'function') {
+        _secMostrar('jugadores'); _playerHistoryPushed = true; openPlayer(Number(j));
+      }
+      return;
+    }
+    if (n) {
+      if (!document.querySelector('#n-reader-overlay.open') && typeof openNewsReader === 'function') {
+        _secMostrar('noticias'); _newsHistoryPushed = true; openNewsReader(n);
+      }
+      return;
+    }
+    if (t) {
+      if (!document.querySelector('#tour-overlay.open') && typeof openTournamentByKey === 'function') {
+        _secMostrar('torneos'); _tourHistoryPushed = true; openTournamentByKey(t);
+      }
+      return;
+    }
+    // La dirección es la de una pestaña. Si quedó algún panel abierto se respeta (no se cierra nada
+    // por las dudas: cerrar de prepo es más peligroso que dejar algo abierto).
+    if (document.querySelector('#tour-overlay.open, #overlay.open, #chess-overlay.open,'
+      + ' #puz-overlay.open, #prac-overlay.open, #n-reader-overlay.open')) return;
+    var slug = q.get('ir');
+    _secMostrar((slug && _SLUG_SEC[slug]) ? _SLUG_SEC[slug] : _SEC_INICIAL);
+  } catch (e) {}
+}
+window.addEventListener('popstate', function () { setTimeout(_navReconciliar, 0); });
+
 /* ═══ SITEMAP ══════════════════════════════════════════════════════════════════════════════
    La lista de direcciones que se le entrega a Google. Hasta ahora tenía UNA sola (la portada),
    así que el buscador no tenía por dónde enterarse de los torneos ni de los perfiles.
