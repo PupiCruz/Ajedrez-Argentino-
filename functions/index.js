@@ -13,14 +13,25 @@
  * De dónde saca los datos: data/og.json, que lo genera la app al apretar
  * "💾 Guardar datos en mi carpeta" (ver _ogJson() en index.html). Es chico a propósito.
  *
+ * POR QUÉ SE LLAMA index.js Y NO _middleware.js
+ * Un `_middleware.js` corre en TODAS las peticiones del sitio: también en cada imagen, cada
+ * .json de datos y cada archivo del motor. Son decenas por visita, y todas contarían contra el
+ * cupo de Cloudflare sin necesidad. Como `functions/index.js`, sólo corre en la dirección "/",
+ * que es justamente la única que devuelve HTML. Los datos y las imágenes se siguen sirviendo
+ * como siempre, sin pasar por acá.
+ *
  * REGLAS QUE NO HAY QUE ROMPER
- * 1. Ante CUALQUIER problema, devolver la página tal cual. Esto corre en todas las visitas: si
- *    revienta, se cae el sitio entero. Por eso todo está envuelto y el catch devuelve `res`.
- * 2. Las visitas sin ?torneo=/?jugador=/?noticia= salen por la primera línea, sin leer nada:
- *    la enorme mayoría del tráfico no paga ningún costo.
+ * 1. Ante CUALQUIER problema, devolver la página tal cual. Por eso todo está envuelto y el catch
+ *    devuelve `res`: si esto falla, la peor consecuencia tiene que ser "la vista previa sale
+ *    genérica", nunca "no abre el sitio".
+ * 2. Las visitas sin ?torneo=/?jugador=/?noticia= salen por la primera línea, sin leer nada.
  * 3. Se le manda a TODO EL MUNDO lo mismo, no sólo a los robots. Servirle a Google/WhatsApp algo
  *    distinto que a las personas se llama cloaking y se castiga. Además, para el navegador esto
  *    es inofensivo: la app pisa el título apenas arranca.
+ * 4. La clave viene de la URL, o sea de un desconocido. NUNCA usarla directo contra el objeto
+ *    (`datos[tipo][clave]`): pidiendo ?jugador=__proto__ o =constructor se llega a las tripas de
+ *    JavaScript y salen títulos absurdos. Se busca con hasOwnProperty y se exige que sea una
+ *    lista, así lo único que puede pasar es que no la encuentre.
  */
 
 const SITIO = 'https://chessargentino.ar';
@@ -41,11 +52,17 @@ async function cargarDatos(origen) {
   return CACHE;
 }
 
-// Las imágenes tienen que ir con dirección completa: los robots no resuelven rutas relativas.
+/* Las imágenes tienen que ir con dirección completa: los robots no resuelven rutas relativas.
+   Sólo se aceptan dos formas: una dirección http(s) o una ruta del propio sitio. Cualquier otra
+   cosa se descarta y queda la imagen genérica. Sin este filtro, un valor raro guardado en los
+   datos (por ejemplo "javascript:…") salía publicado como https://chessargentino.ar/javascript:…
+   No era peligroso —nadie ejecuta una og:image— pero publicar basura tampoco sirve. */
 function absoluta(p) {
   if (!p) return '';
-  if (/^https?:\/\//i.test(p)) return p;
-  return SITIO + '/' + String(p).replace(/^\/+/, '');
+  const s = String(p).trim();
+  if (/^https?:\/\//i.test(s)) return s;
+  if (/^\/?(data|assets)\/[\w\-./]+$/i.test(s)) return SITIO + '/' + s.replace(/^\/+/, '');
+  return '';
 }
 
 /* Los mismos rangos que usa _a11yTexto() en index.html. Si el servidor no los sacara, el título
@@ -120,8 +137,10 @@ export async function onRequest(context) {
     if (!ct.includes('text/html')) return res;
 
     const datos = await cargarDatos(url.origin);
-    const fila = datos && datos[tipo] && datos[tipo][clave];
-    if (!fila) return res;   // clave desconocida (dato viejo o borrado): la página de siempre
+    const grupo = datos && Object.prototype.hasOwnProperty.call(datos, tipo) ? datos[tipo] : null;
+    const fila = grupo && Object.prototype.hasOwnProperty.call(grupo, clave) ? grupo[clave] : null;
+    // Regla 4: además de buscarla como corresponde, tiene que ser una lista con contenido.
+    if (!Array.isArray(fila) || !fila.length) return res;   // clave desconocida: la página de siempre
 
     const m = tipo === 't' ? armarTorneo(fila) : tipo === 'j' ? armarJugador(fila) : armarNoticia(fila);
     const dir = SITIO + url.pathname + url.search;
