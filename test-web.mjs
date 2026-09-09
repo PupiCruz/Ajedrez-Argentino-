@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 542;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 561;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -2136,6 +2136,124 @@ console.log('\n=== 37. El id del torneo viaja con las partidas del perfil ===');
       chk(true, '— el candado de "ningún id ajeno" queda armado para entonces');
     }
   }
+}
+
+// ── 38. Torneos con GRUPOS y torneos POR EQUIPOS en el perfil ──────────────────────────────────
+// En un torneo con grupos, la tabla y los cruces viven en las claves de CATEGORÍA (_c0, _c1…) y la
+// clave del torneo entero queda vacía; en uno por equipos los jugadores no están en `standings`
+// (ahí van los EQUIPOS) sino en el plantel de inscripción y en las mesas de cada cruce. Mirando
+// sólo la clave base, la sección "🏆 Torneos del jugador" no veía a nadie y el rating en vivo daba
+// 0. Caso real: Leyendas y Prodigios II, Fiorito en el Grupo B (09/09/2026).
+{
+  console.log('\n=== 38. Torneos con grupos y por equipos en el perfil ===');
+  const CRDATA = {};
+  const PIT = new Function('CRDATA',
+      extraerFuncion('crKey') + extraerFuncion('_crKeysFromBase') + extraerFuncion('_crKeysForTourAll')
+    + extraerFuncion('_crKeyCat') + extraerFuncion('_playerInTournament')
+    + 'function _crKeysForTour(){ return []; }'
+    + 'function crDataLoad(k){ return CRDATA[k] || null; }'
+    + 'function parsePgnHeaders(g){ var w=/\\[White "([^"]*)"\\]/.exec(g), b=/\\[Black "([^"]*)"\\]/.exec(g);'
+    + '  return { White: w ? w[1] : "", Black: b ? b[1] : "" }; }'
+    + 'function pgnNameMatchesPlayer(n, p){ return !!n && String(n).toLowerCase().indexOf(p.apellido) >= 0; }'
+    + ' return { pit:_playerInTournament, keys:_crKeysFromBase, cat:_crKeyCat };')(CRDATA);
+
+  const cats = [{ name: 'GRUPO A' }, { name: 'GRUPO B' }];
+  const oro     = { fide_id: '20000197', apellido: 'oro' };
+  const fiorito = { fide_id: '180165',   apellido: 'fiorito' };
+  const flores  = { fide_id: '108049',   apellido: 'flores' };
+  const nadie   = { fide_id: '999999',   apellido: 'zzzz' };
+
+  // Un torneo con dos grupos: la clave base sólo tiene los argentinos escritos a mano.
+  CRDATA['cr2_ls_t1']    = { rounds: {}, standings: [], argManual: 'Flores, Diego\nOro, Faustino' };
+  CRDATA['cr2_ls_t1_c0'] = { standings: [{ name: 'Oro, Faustino', fideId: '20000197' }],
+                             rounds: { 1: [{ w: 'Oro, Faustino', b: 'Anton, David' }] } };
+  CRDATA['cr2_ls_t1_c1'] = { standings: [{ name: 'Fiorito, Francisco', fideId: '180165' }], rounds: {} };
+
+  chk(PIT.pit(fiorito, 'ls', 't1', [], cats) === 1,
+      'al que juega en el GRUPO B lo encuentra, y dice que su grupo es el 1',
+      PIT.pit(fiorito, 'ls', 't1', [], cats));
+  chk(PIT.pit(oro, 'ls', 't1', [], cats) === 0,
+      'y el grupo gana sobre los argentinos escritos a mano (si no, el link no abría en su pestaña)',
+      PIT.pit(oro, 'ls', 't1', [], cats));
+  chk(PIT.pit(flores, 'ls', 't1', [], cats) === -1,
+      'el que sólo está escrito a mano sigue apareciendo, sin grupo (-1)',
+      PIT.pit(flores, 'ls', 't1', [], cats));
+  chk(PIT.pit(nadie, 'ls', 't1', [], cats) === null,
+      'y el que no está sigue dando null (nada de "todos juegan todo")');
+
+  // Torneo por EQUIPOS: la tabla son los equipos; los jugadores están en el plantel y en las mesas.
+  CRDATA['cr2_ls_t2'] = {
+    standings: [{ name: 'Obras' }, { name: 'Ventajedrez' }],
+    teamRoster: [{ no: 1, name: 'Obras', players: [{ bo: 1, nm: 'Flores, Diego', fid: '108049' }] }],
+    teamRounds: { 1: [{ aName: 'Obras', bName: 'Ventajedrez',
+                        boards: [{ nW: 'Krysa, Leandro', nB: 'Ayala, Gustavo' }] }] }
+  };
+  chk(PIT.pit(flores, 'ls', 't2', []) === -1,
+      'por equipos: al del PLANTEL de inscripción lo encuentra', PIT.pit(flores, 'ls', 't2', []));
+  chk(PIT.pit({ fide_id: '', apellido: 'krysa' }, 'ls', 't2', []) === -1,
+      'por equipos: y al que sólo figura en una MESA del cruce también');
+  chk(PIT.pit(nadie, 'ls', 't2', []) === null,
+      'por equipos: el que no jugó sigue dando null');
+
+  // Las claves que se miran y el índice de categoría que devuelven.
+  chk(PIT.keys('cr2_ls_t1', cats).join(',') === 'cr2_ls_t1,cr2_ls_t1_c0,cr2_ls_t1_c1',
+      'se arma una clave por categoría además de la del torneo entero', PIT.keys('cr2_ls_t1', cats).join(','));
+  chk(PIT.cat('cr2_ls_t1_c3') === 3 && PIT.cat('cr2_ls_t1') === -1,
+      'el sufijo _cN dice qué categoría es, y sin sufijo es el torneo entero');
+
+  // Los otros dos lugares que tenían el mismo agujero.
+  chk(extraerFuncion('_liveRatingStd').includes('_crKeysFromBase(base, c.cats)'),
+      'el rating en vivo también recorre las categorías, no sólo la clave del torneo');
+  chk(SRC.includes('if (d.teamRoster) d.teamRoster.forEach(function(t) {'),
+      'el índice de nombres del manifest suma los planteles por equipos (si no, el perfil ni baja el cuadro)');
+  chk(SRC.includes('_tourHrefCat(tt.id, _cat)') && SRC.includes("tourFromProfileClick(event,\\'' + escJs(tt.type)"),
+      'y la tarjeta del perfil abre el torneo directo en el grupo del jugador (&cat=N)');
+}
+
+// ── 39. Los argentinos escritos a mano SUMAN, no tapan a la tabla ──────────────────────────────
+// El autor carga los nombres a mano cuando el torneo todavía no tiene Chess-Results, y después se
+// olvida de borrarlos. Cuando esa lista MANDABA, apagaba la autodetección de todo el torneo: en las
+// Simultáneas de Faustino Oro (26 en la tabla, todos argentinos) un solo nombre marcado escondía a
+// los otros 25, y en el X Open RGCC "Pichot, Alan" escondía a "Panelo, Marcelo". Ahora la TABLA
+// manda y lo escrito a mano sólo agrega (para los que la tabla no puede reconocer sola).
+{
+  console.log('\n=== 39. Argentinos a mano: suman, no reemplazan ===');
+  const CR2 = {};
+  const ARG = new Function('CR2',
+      extraerFuncion('crNormTokens') + extraerFuncion('_tourManualArgSet') + extraerFuncion('_hasManualArg')
+    + extraerFuncion('_isArgManual') + extraerFuncion('_argPersonIsArg') + extraerFuncion('_argPersonInTour')
+    + 'var _manualArgCache = {};'
+    + 'function normStr(s){ return String(s||"").toLowerCase().normalize("NFD").replace(/[\\u0300-\\u036f]/g,"").replace(/[^a-z0-9 ]/g," ").replace(/\\s+/g," ").trim(); }'
+    + 'function crDataLoad(k){ return CR2[k] || null; }'
+    + 'function _getArgFideSet(){ return { "108049":1 }; }'          // Flores, argentino por fide_id
+    + 'function _isArgPlayer(n){ return /flores|panelo/i.test(n); }'
+    + 'function _tourEntryByName(){ return null; }'
+    + 'function _tourFedMap(){ return null; }'
+    + ' return _argPersonInTour;')(CR2);
+
+  // Torneo con tabla Y con un nombre viejo escrito a mano (Pichot juega con bandera de España).
+  CR2['cr2_ls_t3'] = { argManual: 'Pichot, Alan', standings: [] };
+
+  chk(ARG('Panelo, Marcelo', 'ARG', null, 'cr2_ls_t3') === true,
+      'el que la TABLA marca argentino (FED=ARG) ya no lo tapa la lista a mano');
+  chk(ARG('Diego Flores', '', '108049', 'cr2_ls_t3') === true,
+      'ni el que se reconoce por fide_id argentino');
+  chk(ARG('Pichot, Alan', 'ESP', '3506176', 'cr2_ls_t3') === true,
+      'y el escrito a mano sigue contando aunque juegue con otra bandera (para eso está)');
+  chk(ARG('Anton Guijarro, David', 'ESP', '2222222', 'cr2_ls_t3') === false,
+      'el extranjero que no está en la lista sigue quedando afuera');
+  // Sin lista a mano nada cambia respecto de siempre.
+  CR2['cr2_ls_t4'] = { standings: [] };
+  chk(ARG('Panelo, Marcelo', 'ARG', null, 'cr2_ls_t4') === true
+   && ARG('Anton Guijarro, David', 'ESP', '2222222', 'cr2_ls_t4') === false,
+      'sin lista a mano, la autodetección funciona igual que antes');
+
+  // Los otros dos filtros que tenían la misma regla.
+  chk(extraerFuncion('crArgPlayers').includes('Object.keys(argSet).forEach(function(k) { add(argSet[k]); });')
+   && !extraerFuncion('crArgPlayers').includes('if (!manual.length) Object.keys(argSet)'),
+      'los chips "Argentinos que compiten" suman las dos fuentes');
+  chk(SRC.includes('return !!p && (_isArgManual(p.name, key) || _argPersonIsArg(p.name, p.fed, p.fideId));'),
+      'y el filtro "Solo argentinos" de la tabla también');
 }
 
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));

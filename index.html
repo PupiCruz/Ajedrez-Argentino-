@@ -5954,7 +5954,7 @@ function _crKeyForModal(mkey) {
 // que se llama seguido y por cada tarjeta.
 var _crArgCache = {};
 
-// Lista de argentinos del torneo. Fuentes (deduplicadas): escritos a mano
+// Lista de argentinos del torneo. Fuentes, todas SUMADAS y deduplicadas: escritos a mano
 // (data.argManual), la tabla importada (FED=ARG o nombre en PLAYERS), las
 // rondas/cruces (si no hay tabla) y las PARTIDAS SUBIDAS (games: por FED/FideId
 // del header o nombre en PLAYERS). Devuelve [] cuando no corresponde mostrarla.
@@ -6020,9 +6020,10 @@ function crArgPlayers(type, id, games, crkOverride) {
     // El criterio de "mostrar o no" lo decide el llamador según la categoría del
     // torneo (solo Internacional). Acá devolvemos todos los argentinos detectados;
     // si no hay ninguno (ni manual), [].
-    // Si el autor marcó jugadores A MANO, ESA lista manda: no sumar la autodetección (que en
-    // torneos raros mete falsos positivos). La autodetección queda solo como respaldo sin selección.
-    if (!manual.length) Object.keys(argSet).forEach(function(k) { add(argSet[k]); });
+    // Lo escrito a mano SUMA a lo que dice la tabla, no lo reemplaza (ver _argPersonInTour): los
+    // nombres se cargan antes de que haya tabla y después quedan ahí, así que si mandaran taparían
+    // a los argentinos que la tabla sí reconoce.
+    Object.keys(argSet).forEach(function(k) { add(argSet[k]); });
     result = names;
   } catch (e) { console.error('crArgPlayers', e); result = []; }
   _crArgCache[cacheKey] = result;
@@ -7080,9 +7081,10 @@ function crToggleStandingsArg(key){
   var panel=document.getElementById('cr-panel-'+key+'-tabla');
   if(panel && data) panel.innerHTML=crBuildStandingsPanel(key,data.standings);
 }
-// Modo autor: marca/desmarca a un jugador como argentino A MANO (data.argManual). Esa selección MANDA
-// en los tres filtros (chips "Argentinos que compiten", partidas/tarjetas y tabla); la autodetección
-// queda de respaldo solo mientras no marques a nadie. Se guarda en los datos del torneo y se publica.
+// Modo autor: marca/desmarca a un jugador como argentino A MANO (data.argManual). Lo marcado se SUMA
+// a la autodetección en los tres filtros (chips "Argentinos que compiten", partidas/tarjetas y
+// tabla). Se guarda en los datos del torneo y se publica. OJO: desmarcar sólo saca el nombre de la
+// lista a mano; si la TABLA lo reconoce como argentino (por FED o fide_id), sigue apareciendo.
 function crToggleArgManual(key,name){
   var d=crDataLoad(key)||{rounds:{},standings:[]};
   var list=String(d.argManual||'').split(/[\n;]+/).map(function(s){return s.trim();}).filter(Boolean);
@@ -7107,7 +7109,9 @@ function crBuildStandingsPanel(key,standings){
 
   // Detección de argentinos: criterio ÚNICO compartido con el filtro de partidas (_argPersonIsArg).
   // FED/fide_id mandan; el nombre solo decide cuando no hay ninguno de los dos (evita falsos positivos).
-  function standIsArg(p){ return !!p && (_hasManualArg(key) ? _isArgManual(p.name, key) : _argPersonIsArg(p.name, p.fed, p.fideId)); }
+  // Lo marcado a mano SUMA a lo que dice la tabla (mismo criterio que _argPersonInTour): antes, con
+  // un solo nombre marcado, el resto de los argentinos de la tabla desaparecía del filtro.
+  function standIsArg(p){ return !!p && (_isArgManual(p.name, key) || _argPersonIsArg(p.name, p.fed, p.fideId)); }
   // Torneo que TODAVÍA NO EMPEZÓ: la "Clasificación" de Chess-Results tiene a todos en 0
   // puntos y por lo tanto queda ordenada por número de inicio, que no le dice nada a nadie
   // (y encima le pone medallas a los 3 primeros sin haberse jugado una jugada). El propio
@@ -7147,7 +7151,7 @@ function crBuildStandingsPanel(key,standings){
   // Pista para el autor: en torneos internacionales puede marcar a mano quiénes son argentinos.
   if(_author && isIntl){
     labelHtml+='<div style="max-width:600px;margin:-4px auto 8px;font-size:11px;color:var(--text3);line-height:1.4">Tocá la ' + _flagImg('ARG') + ' junto a cada nombre para marcar/desmarcar argentinos a mano. '
-      +(_hasManual?'<b style="color:var(--text2)">Tu selección manda</b> en los filtros (la autodetección queda de respaldo).':'Si no marcás a nadie, se usa la autodetección de siempre.')+'</div>';
+      +(_hasManual?'Los que marques se <b style="color:var(--text2)">suman</b> a los que reconoce la tabla (no la reemplazan).':'Si no marcás a nadie, se usa la autodetección de siempre.')+'</div>';
   }
 
   var td='padding:7px 6px;border-bottom:1px solid var(--bd10)';
@@ -12616,19 +12620,25 @@ async function _crEnsureLoaded(id) {
 // terminados después del último padrón FIDE EN LOS QUE ESTE JUGADOR aparece. El "aparece" se decide
 // con __CR_NAMES__ (el índice de nombres que ya viene en el manifest) → no baja ningún cruce de más:
 // típicamente 0-5 archivos por perfil, no las decenas de torneos recientes que hay en total.
+// Además baja los de los torneos EN JUEGO aunque sean rápido/blitz (no suman al rating, pero son los
+// que necesita la sección "🏆 Torneos del jugador" para saber que está jugando ahí).
 async function _crEnsureLiveRating(player) {
   if (!_ondemand || !player) return;
   var cutoff = 0;
   try { cutoff = (typeof _fideListCutoff === 'function') ? _fideListCutoff() : 0; } catch (e) {}
   if (!cutoff) return;
+  var hoy = 0; try { hoy = (typeof todayKey === 'function') ? todayKey() : 0; } catch (e) {}
   var ids = [];
   try {
     (typeof _embeddedTournaments !== 'undefined' ? _embeddedTournaments : []).forEach(function(t) {
       if (!t || t.playerOnly) return;
-      if (typeof _isStandardPace === 'function' && !_isStandardPace(t.pace || '')) return;
       var rng = tourRange(t), end = rng && rng.end ? rng.end : 0;
-      if (!end || end < cutoff) return;
-      var here = _crKeysForTour(t.id).some(function(k) {
+      if (!end) return;
+      var paraRating = end >= cutoff && (typeof _isStandardPace !== 'function' || _isStandardPace(t.pace || ''));
+      var enJuego = !t.finished && hoy > 0 && end >= hoy;
+      if (!paraRating && !enJuego) return;
+      var keys = _crKeysForTour(t.id);
+      var here = keys.some(function(k) {
         var s = window.__CR_NAMES__ && window.__CR_NAMES__[k];
         if (!s) return false;
         return s.split('|').some(function(nm) { try { return pgnNameMatchesPlayer(nm, player) && !_crSurnameConflict(nm, player); } catch (e) { return false; } });
@@ -13365,6 +13375,21 @@ function buildSplitData() {
       var d = crAll[kk] || {};
       if (d.standings) d.standings.forEach(function(p) { if (p && p.name) nm.push(p.name); });
       if (d.argManual) String(d.argManual).split(/[\n;]+/).forEach(function(s) { s = s.trim(); if (s) nm.push(s); });
+      // Torneos POR EQUIPOS: la tabla son los EQUIPOS, asi que sin esto el torneo quedaba SIN NINGUN
+      // nombre en el indice -> no aparecia al buscar por jugador y, peor, el perfil no se bajaba su
+      // cuadro (_crEnsureLiveRating decide con este indice) y el rating en vivo lo ignoraba entero.
+      // Los jugadores estan en el plantel de inscripcion y en las mesas de cada cruce.
+      if (d.teamRoster) d.teamRoster.forEach(function(t) {
+        ((t && t.players) || []).forEach(function(p) { if (p && p.nm) nm.push(p.nm); });
+      });
+      if (d.teamRounds) Object.keys(d.teamRounds).forEach(function(r) {
+        (d.teamRounds[r] || []).forEach(function(mt) {
+          ((mt && mt.boards) || []).forEach(function(b) {
+            if (b && b.nW) nm.push(b.nW);
+            if (b && b.nB) nm.push(b.nB);
+          });
+        });
+      });
     });
     nm = nm.filter(function(x) { if (_vistoNm[x]) return false; _vistoNm[x] = 1; return true; });
     if (nm.length) crNames[k] = nm.join('|');
@@ -15539,48 +15564,107 @@ function toggleFav(e, id) {
   renderFavs();
 }
 
-// ¿El jugador figura en este torneo? (tabla por FideId/nombre, rondas y partidas subidas)
-function _playerInTournament(player, type, id, games) {
+/* TODAS las claves de cuadro de un torneo: la del torneo entero MÁS una por categoría (_c0, _c1…).
+   En los torneos con GRUPOS la tabla y los cruces viven en las claves de categoría y la del torneo
+   queda VACÍA, así que mirar solo la base era no ver a nadie (los del Grupo A "aparecían" únicamente
+   porque el autor los había escrito a mano en "Argentinos en el torneo"). Ver `catSuffix` en
+   openTournamentDetail: el sufijo es el ÍNDICE de la categoría en el array. */
+function _crKeysFromBase(base, cats) {
+  var out = [base], n = (cats && cats.length) || 0;
+  for (var i = 0; i < n; i++) out.push(base + '_c' + i);
+  // Web publicada: el índice del manifest dice exactamente qué claves existen (y de qué tipo), así
+  // que sirve de red por si el torneo tiene cuadros de categorías que su ficha ya no lista.
+  try {
+    var m = String(base).match(/^cr2_[a-z]+_(.+)$/);
+    if (m) (_crKeysForTour(m[1]) || []).forEach(function(k) { if (out.indexOf(k) < 0) out.push(k); });
+  } catch (e) {}
+  return out;
+}
+function _crKeysForTourAll(type, id, cats) { return _crKeysFromBase(crKey(type, id), cats); }
+// Índice de categoría de una clave de cuadro ('…_c3' → 3; la del torneo entero → -1).
+function _crKeyCat(k) { var m = String(k || '').match(/_c(\d+)$/); return m ? parseInt(m[1], 10) : -1; }
+
+/* ¿El jugador figura en este torneo? (tabla por FideId/nombre, rondas, cruces por equipos y partidas
+   subidas). Devuelve `null` si no está; si está, el ÍNDICE DE CATEGORÍA donde lo encontró (-1 = el
+   torneo entero), para poder abrirlo directo en su grupo. */
+function _playerInTournament(player, type, id, games, cats) {
   try {
     var fid = player.fide_id ? String(player.fide_id) : '';
     function nameMatch(n) { return n && typeof pgnNameMatchesPlayer === 'function' && pgnNameMatchesPlayer(n, player); }
-    var data = crDataLoad(crKey(type, id)) || {};
-    // Jugadores agregados A MANO (campo "Argentinos en el torneo" → data.argManual).
-    if (data.argManual) {
-      var manual = data.argManual.split(/[\n;]+/);
-      for (var mi = 0; mi < manual.length; mi++) { if (nameMatch(manual[mi].trim())) return true; }
-    }
-    var st = data.standings || [];
-    for (var i = 0; i < st.length; i++) {
-      var p = st[i]; if (!p) continue;
-      if (fid && p.fideId && String(p.fideId) === fid) return true;
-      if (nameMatch(p.name)) return true;
-    }
-    if (data.rounds) {
-      var rks = Object.keys(data.rounds);
-      for (var r = 0; r < rks.length; r++) {
-        var arr = data.rounds[rks[r]]; if (!arr || !arr.forEach) continue;
-        for (var j = 0; j < arr.length; j++) {
-          var pr = arr[j]; if (!pr) continue;
-          if (nameMatch(pr.w) || nameMatch(pr.b)) return true;
+    // Un cuadro (el del torneo o el de una categoría): ¿está el jugador?
+    function inData(data) {
+      // Jugadores agregados A MANO (campo "Argentinos en el torneo" → data.argManual).
+      if (data.argManual) {
+        var manual = data.argManual.split(/[\n;]+/);
+        for (var mi = 0; mi < manual.length; mi++) { if (nameMatch(manual[mi].trim())) return true; }
+      }
+      var st = data.standings || [];
+      for (var i = 0; i < st.length; i++) {
+        var p = st[i]; if (!p) continue;
+        if (fid && p.fideId && String(p.fideId) === fid) return true;
+        if (nameMatch(p.name)) return true;
+      }
+      if (data.rounds) {
+        var rks = Object.keys(data.rounds);
+        for (var r = 0; r < rks.length; r++) {
+          var arr = data.rounds[rks[r]]; if (!arr || !arr.forEach) continue;
+          for (var j = 0; j < arr.length; j++) {
+            var pr = arr[j]; if (!pr) continue;
+            if (nameMatch(pr.w) || nameMatch(pr.b)) return true;
+          }
         }
       }
+      // Torneos POR EQUIPOS: la tabla (`standings`) son los EQUIPOS, no los jugadores. Los jugadores
+      // están en el plantel de inscripción (teamRoster) y en las mesas de cada cruce (teamRounds).
+      var ros = data.teamRoster || [];
+      for (var t = 0; t < ros.length; t++) {
+        var pl = (ros[t] && ros[t].players) || [];
+        for (var q = 0; q < pl.length; q++) {
+          var pj = pl[q]; if (!pj) continue;
+          if (fid && pj.fid && String(pj.fid) === fid) return true;
+          if (nameMatch(pj.nm)) return true;
+        }
+      }
+      if (data.teamRounds) {
+        var tks = Object.keys(data.teamRounds);
+        for (var tr = 0; tr < tks.length; tr++) {
+          var mts = data.teamRounds[tks[tr]]; if (!mts || !mts.length) continue;
+          for (var m = 0; m < mts.length; m++) {
+            var bds = (mts[m] && mts[m].boards) || [];
+            for (var b2 = 0; b2 < bds.length; b2++) {
+              var bd = bds[b2]; if (!bd) continue;
+              if (nameMatch(bd.nW) || nameMatch(bd.nB)) return true;
+            }
+          }
+        }
+      }
+      return false;
+    }
+    // Las claves de CATEGORÍA se miran PRIMERO: en un torneo con grupos, el grupo es la respuesta
+    // precisa (y así el link abre en su pestaña). La clave del torneo entero va última porque suele
+    // tener sólo los argentinos escritos a mano, que no dicen en qué grupo juegan.
+    var keys = _crKeysForTourAll(type, id, cats);
+    keys = keys.filter(function(k) { return _crKeyCat(k) >= 0; })
+               .concat(keys.filter(function(k) { return _crKeyCat(k) < 0; }));
+    for (var k = 0; k < keys.length; k++) {
+      var data = null; try { data = crDataLoad(keys[k]); } catch (e) {}
+      if (data && inData(data)) return _crKeyCat(keys[k]);
     }
     if (games && games.length && typeof parsePgnHeaders === 'function') {
       var lim = Math.min(games.length, 600);
       for (var g = 0; g < lim; g++) {
         var h = parsePgnHeaders(String(games[g] || '').slice(0, 600));
-        if (fid && ((h.WhiteFideId && String(h.WhiteFideId) === fid) || (h.BlackFideId && String(h.BlackFideId) === fid))) return true;
+        if (fid && ((h.WhiteFideId && String(h.WhiteFideId) === fid) || (h.BlackFideId && String(h.BlackFideId) === fid))) return -1;
         var w = (h.White || '').trim(), b = (h.Black || '').trim();
         if ((!w || !b) && h.Event && h.Event.indexOf(' - ') >= 0) {
           var ci = h.Event.indexOf(':'); var mu = (ci >= 0 ? h.Event.slice(ci + 1) : h.Event).split(' - ');
           if (mu.length === 2) { if (!w) w = mu[0].trim(); if (!b) b = mu[1].trim(); }
         }
-        if (nameMatch(w) || nameMatch(b)) return true;
+        if (nameMatch(w) || nameMatch(b)) return -1;
       }
     }
   } catch (e) {}
-  return false;
+  return null;
 }
 
 // Torneos En Curso / Próximos donde figura el jugador (hc + ls + tz).
@@ -15595,12 +15679,14 @@ function playerTournamentsData(player) {
       var status = computeTourStatus(rng, t.status);
       if (status !== 'live' && status !== 'upcoming') return;
       var g = (ov.pgnGames && ov.pgnGames.length) ? ov.pgnGames : (t.hasPgn && PGN_DB[t.pgnId] ? (PGN_DB[t.pgnId].games || []) : []);
-      if (_playerInTournament(player, 'hc', t.id, g)) push(status, { name: t.name, dates: ov.dates || t.dates, location: t.location, start: rng ? rng.start : 0, type: 'hc', id: t.id });
+      var _cHc = _playerInTournament(player, 'hc', t.id, g, ov.categories || t.categories);
+      if (_cHc != null) push(status, { name: t.name, dates: ov.dates || t.dates, location: t.location, start: rng ? rng.start : 0, type: 'hc', id: t.id, cat: _cHc });
     });
     pgnGetTorneosForList().forEach(function(st) {
       var rng = tourRange(st); var status = rng ? computeTourStatus(rng, st.status) : st.status;
       if (status !== 'live' && status !== 'upcoming') return;
-      if (_playerInTournament(player, 'ls', st._id, st.games)) push(status, { name: st.name, dates: st.dates, location: st.location, start: rng ? rng.start : 0, type: 'ls', id: st._id });
+      var _cLs = _playerInTournament(player, 'ls', st._id, st.games, st.categories);
+      if (_cLs != null) push(status, { name: st.name, dates: st.dates, location: st.location, start: rng ? rng.start : 0, type: 'ls', id: st._id, cat: _cLs });
     });
     Object.keys(tzCfg).forEach(function(key) {
       if (key.indexOf('tz_') !== 0) return;
@@ -15608,7 +15694,8 @@ function playerTournamentsData(player) {
       var rng = tourRange(d);
       var status = computeTourStatus(rng, d.status);
       if (status !== 'live' && status !== 'upcoming') return;
-      if (_playerInTournament(player, 'tz', key, d.pgnGames || [])) push(status, { name: d.name, dates: d.dates, location: d.location, start: rng ? rng.start : 0, type: 'tz', id: key });
+      var _cTz = _playerInTournament(player, 'tz', key, d.pgnGames || [], d.categories);
+      if (_cTz != null) push(status, { name: d.name, dates: d.dates, location: d.location, start: rng ? rng.start : 0, type: 'tz', id: key, cat: _cTz });
     });
     // Ordenar de más próximo a menos próximo (por fecha de inicio ascendente).
     var byStart = function(a, b) { return (a.start || 0) - (b.start || 0); };
@@ -15631,9 +15718,12 @@ function playerTournamentsHtml(player) {
     var clickable = tt.type && (tt.id || tt.id === 0);
     // Torneo como link (?torneo=<id>): con Ctrl/Cmd/medio-click se abre en una pestaña nueva; click
     // normal lo abre en la misma página recordando volver al perfil. Right-click → "Abrir en pestaña".
+    // Si el torneo tiene GRUPOS, `tt.cat` es el del jugador y el link abre directo en su pestaña
+    // (?torneo=<id>&cat=N), igual que el 🏆 del listado de partidas.
+    var _cat = (tt.cat != null && tt.cat >= 0) ? tt.cat : -1;
     var tag = clickable ? 'a' : 'div';
     var attrs = clickable
-      ? ' href="' + _tourHref(tt.id) + '" onclick="return tourFromProfileClick(event,\'' + escJs(tt.type) + '\',\'' + escJs(String(tt.id)) + '\')" title="Ver el torneo" onmouseover="this.style.borderColor=\'var(--gold)\'" onmouseout="this.style.borderColor=\'var(--bd22)\'"'
+      ? ' href="' + _tourHrefCat(tt.id, _cat) + '" onclick="return tourFromProfileClick(event,\'' + escJs(tt.type) + '\',\'' + escJs(String(tt.id)) + '\',' + _cat + ')" title="Ver el torneo" onmouseover="this.style.borderColor=\'var(--gold)\'" onmouseout="this.style.borderColor=\'var(--bd22)\'"'
       : '';
     return '<' + tag + ' style="display:block;text-decoration:none;color:inherit;background:var(--panel1);border:2px solid var(--bd22);border-radius:9px;padding:9px 11px;margin-bottom:7px;transition:border-color .15s' + (clickable ? ';cursor:pointer' : '') + '"' + attrs + '>'
       + '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">'
@@ -20679,16 +20769,16 @@ function _liveRatingStd(player){
   // Lista unificada de configs (nombre, pace, rango de fechas, clave para su cruce).
   var cfgs = [], _seenCfg = {};
   function _pushCfg(c){ if(c.key && !_seenCfg[c.key]){ _seenCfg[c.key] = true; cfgs.push(c); } }
-  try { (typeof TORNEOS !== 'undefined' ? TORNEOS : []).forEach(function(t){ var ov = tzCfg['hc_' + t.id] || {}; _pushCfg({ key:'hc_'+t.id, name:t.name, pace:ov.pace||t.pace||'', rng:tourRange({ startDate:ov.startDate, endDate:ov.endDate, dates:ov.dates||t.dates }) }); }); } catch(e){}
-  try { pgnGetTorneosForList().forEach(function(st){ _pushCfg({ key:'ls_'+st._id, name:st.name, pace:st.pace||'', rng:tourRange(st) }); }); } catch(e){}
-  try { Object.keys(tzCfg).forEach(function(k){ if(k.indexOf('tz_') !== 0) return; var d = tzCfg[k]; _pushCfg({ key:k, name:d.name, pace:d.pace||'', rng:tourRange(d) }); }); } catch(e){}
+  try { (typeof TORNEOS !== 'undefined' ? TORNEOS : []).forEach(function(t){ var ov = tzCfg['hc_' + t.id] || {}; _pushCfg({ key:'hc_'+t.id, id:t.id, cats:ov.categories||t.categories, name:t.name, pace:ov.pace||t.pace||'', rng:tourRange({ startDate:ov.startDate, endDate:ov.endDate, dates:ov.dates||t.dates }) }); }); } catch(e){}
+  try { pgnGetTorneosForList().forEach(function(st){ _pushCfg({ key:'ls_'+st._id, id:st._id, cats:st.categories, name:st.name, pace:st.pace||'', rng:tourRange(st) }); }); } catch(e){}
+  try { Object.keys(tzCfg).forEach(function(k){ if(k.indexOf('tz_') !== 0) return; var d = tzCfg[k]; _pushCfg({ key:k, id:k, cats:d.categories, name:d.name, pace:d.pace||'', rng:tourRange(d) }); }); } catch(e){}
   // Web PUBLICADA (carga por demanda): los torneos NO viven en los configs sino en _embeddedTournaments;
   // sus cruces están en __EMBEDDED_CR__. Sin esto, el rating en vivo salía vacío en la web. (En modo autor
   // los configs mandan y el dedup por `key` evita duplicar.)
   try { (typeof _embeddedTournaments !== 'undefined' ? _embeddedTournaments : []).forEach(function(t){
     if(t.playerOnly) return;                                            // playerOnly = pool de perfil, no torneo con cruce
     var key = t.id; if(!key || !/^(tz_|hc_|ls_)/.test(String(key))) return;
-    _pushCfg({ key:key, name:t.name, pace:t.pace||'', rng:tourRange(t) });
+    _pushCfg({ key:key, id:t.id, cats:t.categories, name:t.name, pace:t.pace||'', rng:tourRange(t) });
   }); } catch(e){}
 
   // 1) FUENTE PRINCIPAL: las tablas/cruces. Base = elo del jugador EN ESE CRUCE (info.elo).
@@ -20696,13 +20786,35 @@ function _liveRatingStd(player){
     if(!_isStandardPace(c.pace)) return;                          // solo clásico
     var end = c.rng && c.rng.end ? c.rng.end : 0;
     if(!end || end < cutoff) return;                             // ya está en el elo publicado (o sin fecha)
-    var crData = null;
-    try { crData = crDataLoad(_crKeyForModal(c.key)); } catch(e){}
-    if(!crData || (!crData.rounds && !crData.teamRounds)) return;
-    var crName = _crFindPlayerName(crData, player);
-    if(!crName) return;
-    var info = crData.standings ? crData.standings.find(function(s){ return s.name === crName; }) : null;
-    addTour(c.name, info && info.elo, _crEloGamesForName(crData, crName), c.key);
+    var base = _crKeyForModal(c.key); if(!base) return;
+    // Torneos con GRUPOS: la tabla y los cruces viven en las claves de CATEGORÍA (_c0, _c1…) y la del
+    // torneo entero queda vacía. Mirando solo la base el rating en vivo daba 0 para todos los que
+    // juegan por grupos (caso Leyendas y Prodigios II: Oro y Flores en el A, Fiorito en el B).
+    var contadoCat = false;
+    _crKeysFromBase(base, c.cats).forEach(function(k){
+      var crData = null;
+      try { crData = crDataLoad(k); } catch(e){}
+      if(!crData || (!crData.rounds && !crData.teamRounds)) return;
+      var crName = _crFindPlayerName(crData, player);
+      if(!crName) return;
+      var info = crData.standings ? crData.standings.find(function(s){ return s.name === crName; }) : null;
+      var ci = _crKeyCat(k);
+      var catName = (ci >= 0 && c.cats && c.cats[ci]) ? (c.cats[ci].name || '') : '';
+      // El renglón se llama "<Torneo> · <Categoría>", igual que el Event con el que quedan estampadas
+      // esas partidas (_catEventName), así el dedup contra el pool de la sección 2 sigue enganchando.
+      var antes = nTours;
+      addTour(catName ? _catEventName(c.name, catName) : c.name,
+              info && info.elo, _crEloGamesForName(crData, crName),
+              catName ? (c.key + '_c' + ci) : c.key);
+      if(nTours > antes && catName) contadoCat = true;
+    });
+    // Si contó por categoría, el torneo queda marcado también con su nombre PELADO y su id: si en el
+    // pool quedaron partidas viejas estampadas sin la categoría, no se suman de nuevo.
+    if(contadoCat){
+      seen[_normTourName(c.name)] = true;
+      seen['#' + c.key] = true;
+      if(c.id != null) seen['#' + c.id] = true;
+    }
   });
 
   // 2) RESPALDO: torneos SIN tabla cargada → pool. Base = elo propio del jugador en los PGN.
@@ -26148,10 +26260,13 @@ function _isArgGame(hdrs) {
 // detección no cae al match por nombre (que da falsos positivos con apellidos españoles parecidos, ej.
 // Uzcategui/Lopez Gomez) cuando el torneo tiene tabla con fide_id. Sin tabla, es igual que antes.
 // ── Selección MANUAL de argentinos por torneo (data.argManual) ───────────────────────────────
-// El autor marca a mano quiénes son argentinos (clic en la tabla). Si un torneo tiene selección
-// manual, ESA MANDA en los tres filtros (chips, partidas/tarjetas, tabla) y la autodetección queda
-// solo de respaldo para los torneos SIN selección. Es lo más confiable en torneos raros (federaciones
-// regionales españolas, PGN sin fide_id, etc.). El set se cachea por CONTENIDO (se rearma al cambiar).
+// El autor escribe a mano quiénes son argentinos (o los marca con un clic en la tabla), sobre todo
+// cuando el torneo todavía no tiene Chess-Results ni info64. Esos nombres se SUMAN a la
+// autodetección en los tres filtros (chips, partidas/tarjetas, tabla): sirven para los que la tabla
+// no puede reconocer sola (Pichot juega con bandera de España, federaciones regionales españolas,
+// PGN sin fide_id) sin tapar a nadie. ANTES reemplazaban a la autodetección y eso hacía daño: como
+// la lista se escribe antes de que llegue la tabla y después queda ahí, los argentinos que la tabla
+// sí reconoce desaparecían. El set se cachea por CONTENIDO (se rearma al cambiar).
 var _manualArgCache = {};
 function _tourManualArgSet(crKey) {
   if (!crKey) return null;
@@ -26172,7 +26287,13 @@ function _hasManualArg(crKey) { return !!_tourManualArgSet(crKey); }
 function _isArgManual(name, crKey) { var s = _tourManualArgSet(crKey); return s ? !!s[crNormTokens(name || '')] : false; }
 
 function _argPersonInTour(name, fed, fideId, crKey) {
-  if (crKey && _hasManualArg(crKey)) return _isArgManual(name, crKey);   // selección MANUAL del autor manda
+  // Los nombres escritos a mano SUMAN, no reemplazan. Antes, con una lista a mano cargada, la
+  // autodetección quedaba APAGADA para todo el torneo: los argentinos que la tabla sí reconoce
+  // desaparecían de los chips, del filtro de partidas y de la tabla. Como los nombres se escriben
+  // ANTES de que existan las tablas (y después uno se olvida de borrarlos), la lista vieja tapaba
+  // a los que llegaban con la tabla — en las Simultáneas de Oro escondía a 25 de 26. Ahora la
+  // TABLA manda y lo escrito a mano sólo agrega. Ver `crArgPlayers` y `standIsArg`.
+  if (crKey && _isArgManual(name, crKey)) return true;
   if (!fed && !fideId && crKey) {
     var e = _tourEntryByName(name, crKey);
     if (e) { fed = e.fed; fideId = e.fide; }
