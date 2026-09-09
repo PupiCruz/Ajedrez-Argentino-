@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 573;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 590;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -2322,6 +2322,126 @@ console.log('\n=== 37. El id del torneo viaja con las partidas del perfil ===');
   const pais = { teamRoster: [{ name: 'Uruguay (URU)', players: [{ ti: 'IM', nm: 'Fulano, Mengano', elo: 2400 }] }] };
   chk((BIO(pais, 'Fulano, Mengano') || {}).fed === 'URU',
       'y si el equipo lleva su federación entre paréntesis, el jugador la hereda');
+}
+
+// ── 41. Cuadro cruzado por equipos (todos contra todos) ────────────────────────────────────────
+// Chess-Results publica los torneos por equipos RR como "Cuadro cruzado por clasificación": Rk |
+// Equipo | 1 2 3 4 | Des 1 | Des 2 | Des 3. No trae "Partidas" ni +/=/−, así que el lector lo tomaba
+// por un RANKING INICIAL y tiraba las columnas Des —donde están los puntos— y la grilla. La tabla
+// salía sin un punto y el panel del equipo decía "siembra" en vez de la posición. Caso real: los dos
+// FASGBA, 09/09/2026.
+{
+  console.log('\n=== 41. Cuadro cruzado por equipos (todos contra todos) ===');
+  const PS = new Function(extraerFuncion('_teamParseStandings') + ' return _teamParseStandings;')();
+
+  // Filas TAL CUAL las devuelve el .xlsx de Chess-Results (tnr1489072, grupo Julio Bolbochán).
+  const rrRows = [
+    ['FASGBA José Luis Ramos 2026 - Zona Julio Bolbochán'],
+    ['Número de rondas : 3'],
+    ['Cuadro cruzado por clasificación (Pts.)'],
+    ['Rk.', 'Equipo', '1', '2', '3', '4', 'Des 1', 'Des 2', 'Des 3'],
+    ['1', 'Escalada Koppel',        '*',  '',   '',   '3½', '2', '0', '3.5'],
+    ['2', 'Banfield',               '',   '*',  '2½', '',   '2', '0', '2.5'],
+    ['3', 'Defensores de Banfield', '',   '1½', '*',  '',   '0', '0', '1.5'],
+    ['4', 'Universidad de Lanús',   '½',  '',   '',   '*',  '0', '0', '0.5']
+  ];
+  const rr = PS(rrRows);
+  chk(!!rr && rr.kind === 'rr', 'el cuadro cruzado se reconoce como tal (antes pasaba por "ranking inicial")', rr && rr.kind);
+  chk(!!rr && rr.teams.length === 4 && rr.teams[0].name === 'Escalada Koppel',
+      'y salen los 4 equipos en el orden de Chess-Results');
+  chk(!!rr && JSON.stringify(rr.teams[0].grid) === JSON.stringify(['*', '', '', '3½']),
+      'se guarda la grilla: contra quién jugó y cuántos puntos le hizo', rr && JSON.stringify(rr.teams[0].grid));
+  chk(!!rr && JSON.stringify(rr.teams[0].des) === JSON.stringify(['2', '0', '3.5']),
+      'y NO se tiran las columnas Des, que es donde están los puntos');
+
+  // ── EMPATADOS: Chess-Results escribe el puesto una sola vez y deja el casillero vacío ──
+  // Sin esto se comía la fila entera: en el grupo Oscar Panno faltaba Escalada Vulcan (empataba el
+  // 2º), y en Héctor Rossetto faltaba Adrogué Jaque Club. El cuadro cruzado no tiene columna "No.",
+  // así que el ancla para distinguir un equipo de un pie de página son las celdas de la grilla.
+  const rrEmpate = PS([
+    ['Cuadro cruzado por clasificación (Pts.)'],
+    ['Rk.', 'Equipo', '1', '2', '3', '4', 'Des 1', 'Des 2', 'Des 3'],
+    ['1',  'Independiente',        '*', '',  '',  '4', '2', '0', '4'],
+    ['2',  'Biblioteca 1M Alfil',  '',  '*', '2', '',  '1', '1', '2'],
+    ['',   'Escalada Vulcan',      '',  '2', '*', '',  '1', '1', '2'],
+    ['4',  'Argentino de Lanús',   '0', '',  '',  '*', '0', '0', '0'],
+    ['Encontrará todos los detalles del torneo en  https://chess-results.com/tnr1489071.aspx?lan=2']
+  ]);
+  chk(!!rrEmpate && rrEmpate.teams.length === 4,
+      'no se saltea al equipo EMPATADO, al que Chess-Results le deja el puesto en blanco',
+      rrEmpate && (rrEmpate.teams.length + ' de 4'));
+  chk(!!rrEmpate && rrEmpate.teams[2].name === 'Escalada Vulcan' && rrEmpate.teams[2].rk === 2,
+      'y hereda el puesto del de arriba (empatan en el 2º)');
+  chk(!!rrEmpate && !rrEmpate.teams.some(t => /Encontrará|chess-results\.com/.test(t.name)),
+      'el pie de página sigue quedando afuera (no tiene celdas de grilla)');
+  // La grilla es POSICIONAL: la diagonal "*" de cada equipo tiene que caer en SU columna. Si esto se
+  // rompe, la tabla entera queda cruzada y no se nota a simple vista.
+  chk(!!rrEmpate && rrEmpate.teams.every((t, i) => (t.grid || [])[i] === '*'),
+      'la diagonal de cada fila cae en su propia columna (la grilla no queda corrida)');
+
+  // Sin columnas Des, el título de la hoja alcanza para reconocerlo.
+  const soloTitulo = PS([['Crosstable'], ['Rk.', 'Equipo', '1', '2'], ['1', 'A', '*', '1'], ['2', 'B', '1', '*']]);
+  chk(!!soloTitulo && soloTitulo.kind === 'rr',
+      'aunque no haya columnas Des, el título "Crosstable" alcanza para reconocerlo');
+
+  // Las otras dos formas siguen igual que siempre.
+  const fin = PS([['Rk.', 'Equipo', 'Partidas', '+', '=', '-', 'Des 1'], ['1', 'Obras', '2', '2', '0', '0', '4']]);
+  chk(!!fin && fin.kind === 'final' && fin.teams[0].w === '2',
+      'la clasificación de siempre sigue leyéndose como "final"', fin && fin.kind);
+  const ini = PS([['No.', 'Equipo', 'Elo medio'], ['1', 'India', '2735']]);
+  chk(!!ini && ini.kind === 'initial' && ini.teams[0].eloAvg === '2735',
+      'y el ranking inicial sigue leyéndose como "initial"', ini && ini.kind);
+
+  // ── Los totales que se calculan con los cruces propios ──
+  const TOT = new Function(
+      extraerFuncion('_teamNorm') + extraerFuncion('_teamCountryParts') + extraerFuncion('_teamResPts')
+    + extraerFuncion('_teamIsPlaceholder') + extraerFuncion('_teamRoundHasBoards') + extraerFuncion('_teamAllTotals')
+    + 'function crFlagEmoji(){ return ""; } function _teamFlag(){ return ""; }'
+    + 'function normStr(s){ return String(s||"").toLowerCase().replace(/[^a-z0-9 ]/g," ").replace(/\\s+/g," ").trim(); }'
+    + ' return _teamAllTotals;')();
+  const datosRR = { teamRounds: { 1: [
+    { aName: 'Escalada Koppel', bName: 'Universidad de Lanús', boards: [
+      { res: '1-0' }, { res: '1-0' }, { res: '1-0' }, { res: '½-½' }] }
+  ] } };
+  const tt = TOT(datosRR);
+  const koppel = tt[Object.keys(tt).find(k => /koppel/.test(k))];
+  chk(!!koppel && koppel.mp === 2 && koppel.gp === 3.5,
+      'de los cruces propios salen los puntos de match (2 por ganar) y los de partida',
+      koppel && ('match ' + koppel.mp + ' / partida ' + koppel.gp));
+  const lanus = tt[Object.keys(tt).find(k => /lanus|lanús/.test(k))];
+  chk(!!lanus && lanus.mp === 0 && lanus.gp === 0.5, 'y los del que perdió el cruce');
+
+  // ── El rotulado de las columnas Des se VERIFICA, no se adivina ──
+  const REN = new Function(
+      extraerFuncion('_teamNorm') + extraerFuncion('_teamCountryParts') + extraerFuncion('_teamResPts')
+    + extraerFuncion('_teamIsPlaceholder') + extraerFuncion('_teamRoundHasBoards') + extraerFuncion('_teamAllTotals')
+    + extraerFuncion('crPtsStr') + extraerFuncion('_teamPtsTxt') + extraerFuncion('_teamRenderRR')
+    + 'function crFlagEmoji(){ return ""; } function _teamFlag(){ return ""; }'
+    + 'function normStr(s){ return String(s||"").toLowerCase().replace(/[^a-z0-9 ]/g," ").replace(/\\s+/g," ").trim(); }'
+    + 'function escHtml(s){ return String(s==null?"":s); } function crArg(s){ return JSON.stringify(String(s)); }'
+    + 'function _paisES(n){ return n; } function _teamResolveFed(){ return ""; }'
+    + 'var __D = null; function crDataLoad(){ return __D; } function setD(d){ __D = d; }'
+    + ' return { render:_teamRenderRR, setD:setD };')();
+  REN.setD(datosRR);
+  const stRR = { kind: 'rr', teams: [
+    { rk: 1, name: 'Escalada Koppel',      grid: ['*', '3½'], des: ['2', '0', '3.5'] },
+    { rk: 2, name: 'Universidad de Lanús', grid: ['½', '*'],  des: ['0', '0', '0.5'] }
+  ] };
+  const htmlRR = REN.render(stRR, 'cr2_x');
+  chk(/tstd-pc/.test(htmlRR) && /tstd-tel/.test(htmlRR),
+      'se dibujan las dos versiones: la grilla para la PC y la lista para el teléfono');
+  chk(htmlRR.includes('>Match<') && htmlRR.includes('>Partida<'),
+      'las columnas Des que COINCIDEN con lo calculado se rotulan Match y Partida');
+  chk(htmlRR.includes('>Des 2<'),
+      'y la que no coincide con nada se deja como "Des 2": no se adivina');
+  // Si los números NO coinciden, no se rotula ninguna (otro sistema de puntuación).
+  const stRaro = { kind: 'rr', teams: [
+    { rk: 1, name: 'Escalada Koppel',      grid: ['*', '3½'], des: ['7'] },
+    { rk: 2, name: 'Universidad de Lanús', grid: ['½', '*'],  des: ['3'] }
+  ] };
+  const htmlRaro = REN.render(stRaro, 'cr2_x');
+  chk(!/>Match</.test(htmlRaro) && /Des 1/.test(htmlRaro),
+      'con una puntuación distinta a 2/1/0 no se rotula nada (queda Des 1)');
 }
 
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));

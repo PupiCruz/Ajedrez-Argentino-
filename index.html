@@ -467,6 +467,15 @@
          teléfono; solo se nota en un cruce de UNA mesa, que es justo cuando conviene topearlo. */
       .td-team-boards { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
     }
+    /* CUADRO CRUZADO por equipos (todos contra todos): la grilla completa —una columna por rival—
+       sólo entra en pantalla grande. Con 4 equipos va justa y con 8 no entra. Por eso se dibujan las
+       DOS versiones y acá se conmuta: en el teléfono queda una fila por equipo con los puntos, y el
+       detalle (con quién jugó) sale al tocar el equipo, que abre su "Recorrido por ronda". */
+    .tstd-tel { display: none; }
+    @media (max-width: 700px) {
+      .tstd-pc  { display: none !important; }
+      .tstd-tel { display: block !important; }
+    }
     /* En el teléfono, el panel inferior del detalle (tablas de Chess-Results + grilla de partidas de
        Lichess) aprovecha los costados: se reduce a la mitad su padding lateral (18px→9px) para que los
        tableros y las tablas ganen ancho. Y se achican las pastillas de título y las banderas, que se
@@ -7995,8 +8004,15 @@ var _TEAM_RES=/^(1\s*-\s*0|0\s*-\s*1|½\s*-\s*½|1\/2\s*-\s*1\/2|\+\s*-\s*-|-\s*
 function _teamNormRes(r){ return (r||'').replace(/\s*-\s*/g,'-').replace('1/2-1/2','½-½').replace(/0\.5-0\.5/,'½-½'); }
 function _teamStripColor(n){ return (n||'').replace(/\s*\((?:b|n|w|s)\)\s*$/i,'').replace(/[■□▪▫]/g,'').trim(); }
 
-// Parser de tabla por equipos: acepta la CLASIFICACIÓN FINAL (Rk|No|Equipo|Partidas|+|=|-|Des…)
-// y el RANKING INICIAL (No|Equipo|Elo medio). Devuelve {kind:'final'|'initial', teams:[…]} o null.
+// Parser de tabla por equipos. Acepta TRES formas:
+//   · CLASIFICACIÓN FINAL   (Rk|No|Equipo|Partidas|+|=|-|Des…)          → kind:'final'
+//   · CUADRO CRUZADO        (Rk|Equipo|1|2|3|4|Des 1|Des 2|Des 3)       → kind:'rr'
+//   · RANKING INICIAL       (No|Equipo|Elo medio)                        → kind:'initial'
+// El CUADRO CRUZADO es lo que Chess-Results publica en los torneos por equipos todos-contra-todos
+// (FASGBA, 09/09/2026): no trae ni "Partidas" ni las columnas +/=/−, así que antes caía en la rama
+// del ranking inicial y se le tiraban las columnas Des —que es DONDE ESTÁN LOS PUNTOS— y la grilla.
+// La tabla salía con los equipos en orden pero sin un solo punto, y el panel de cada equipo decía
+// "siembra" en vez de la posición.
 function _teamParseStandings(rows){
   var hi=-1;
   for(var i=0;i<rows.length;i++){ if(rows[i].some(function(x){return /^(equipo|team)$/i.test((x||'').trim());})){ hi=i; break; } }
@@ -8010,6 +8026,14 @@ function _teamParseStandings(rows){
   for(var c=0;c<hdr.length;c++){ var v=(hdr[c]||'').trim(); if(v==='+'&&cPlus<0)cPlus=c; else if(v==='='&&cEq<0)cEq=c; else if(v==='-'&&cMin<0)cMin=c; }
   var desCols=[]; for(var c2=0;c2<hdr.length;c2++){ if(/^Des/i.test((hdr[c2]||'').trim())) desCols.push(c2); }
   var isFinal=(cPlus>=0&&cMin>=0)||cPart>=0;
+  // ── ¿Es el CUADRO CRUZADO? ──
+  // Dos señales, y con una alcanza. La fuerte: alguna fila de arriba dice "Cuadro cruzado" /
+  // "Crosstable" (Chess-Results titula así la hoja). La estructural, por si cambia el rótulo:
+  // columnas cuyo encabezado es un NÚMERO (una por rival) y al menos una columna Des.
+  var _titulo=''; for(var ti=0;ti<hi;ti++){ _titulo+=' '+rows[ti].join(' '); }
+  var oppCols=[]; for(var c3=0;c3<hdr.length;c3++){ if(/^\d{1,2}$/.test((hdr[c3]||'').trim())) oppCols.push(c3); }
+  var isRR = !isFinal && oppCols.length>=2 &&
+             (/cuadro\s+cruzado|crosstable|kreuztabelle/i.test(_titulo) || desCols.length>0);
   var rkCol=cRk>=0?cRk:(cNo>=0?cNo:0);
   var teams=[];
   for(var i2=hi+1;i2<rows.length;i2++){
@@ -8025,11 +8049,21 @@ function _teamParseStandings(rows){
     // viene siempre, y se usa de comprobación para no tragarse una fila de pie de página.
     if(isNaN(rk)){
       var _seed=(cRk>=0&&cNo>=0)?parseInt(row[cNo]):NaN;   // en el RANKING INICIAL rkCol ya es "No.": ahí nunca falta
-      if(!teams.length||isNaN(_seed)) continue;
+      // En el CUADRO CRUZADO no existe la columna "No.", así que ese chequeo dejaba afuera a TODO
+      // equipo empatado: en el grupo Oscar Panno de FASGBA (09/09/2026) se comía a Escalada Vulcan,
+      // que empataba el 2º puesto. Acá el ancla es la GRILLA: una fila de equipo siempre trae celdas
+      // (aunque sea sólo el "*" de la diagonal) y un pie de página no trae ninguna.
+      var _rrOk = isRR && oppCols.some(function(oc){ return ((row[oc]||'')+'').trim()!==''; });
+      if(!teams.length||(isNaN(_seed)&&!_rrOk)) continue;
       rk=teams[teams.length-1].rk;
     }
     var t={ rk:rk, name:name, fed:(cFed>=0?(row[cFed]||'').trim().toUpperCase():'') };
-    if(isFinal){
+    if(isRR){
+      // Una celda por rival, en el orden de las columnas (que es el orden del ranking). La diagonal
+      // viene como "*"; se guarda tal cual y la decide el dibujo.
+      t.grid=oppCols.map(function(oc){ return ((row[oc]||'')+'').trim(); });
+      t.des=desCols.map(function(dc){return ((row[dc]||'')+'').trim();});
+    } else if(isFinal){
       t.played=((cPart>=0?row[cPart]:'')||'')+''; t.w=((cPlus>=0?row[cPlus]:'')||'')+'';
       t.d=((cEq>=0?row[cEq]:'')||'')+''; t.l=((cMin>=0?row[cMin]:'')||'')+'';
       t.des=desCols.map(function(dc){return ((row[dc]||'')+'').trim();});
@@ -8037,7 +8071,46 @@ function _teamParseStandings(rows){
     teams.push(t);
   }
   if(!teams.length) return null;
-  return { kind:isFinal?'final':'initial', teams:teams };
+  return { kind:(isRR?'rr':(isFinal?'final':'initial')), teams:teams };
+}
+
+/* Totales por equipo calculados con los CRUCES que ya tiene el sitio (formaciones art=3 y, si esa
+   ronda no está, los cruces art=2). Devuelve { nombreNormalizado: {w,d,l,mp,gp,jug} }, con
+   mp = puntos de match (2 por ganar, 1 por empatar) y gp = puntos de partida (los de los tableros).
+   Misma cuenta que ya hace el panel de cada equipo (crOpenCountry), sacada afuera para que la tabla
+   del cuadro cruzado pueda ROTULAR las columnas "Des" comparándolas con esto: si una coincide con
+   los puntos de match de TODOS los equipos, se llama "Match"; si coincide con los de partida, se
+   llama "Partida"; y si no coincide con ninguna, se deja "Des N" y no se inventa nada. */
+function _teamAllTotals(data){
+  var out={};
+  if(!data) return out;
+  function ps(x){ x=String(x==null?'':x).trim().replace(',','.'); if(x===''||x==='-') return null; if(/½/.test(x)) return (parseFloat(x)||0)+0.5; var v=parseFloat(x); return isNaN(v)?null:v; }
+  function slot(n){ var k=_teamNorm(_teamCountryParts(n).clean||n); if(!k) return null; if(!out[k]) out[k]={w:0,d:0,l:0,mp:0,gp:0,jug:0}; return out[k]; }
+  function anota(nombreA,nombreB,ptsA,ptsB){
+    if(ptsA==null||ptsB==null) return;
+    [[nombreA,ptsA,ptsB],[nombreB,ptsB,ptsA]].forEach(function(x){
+      var s=slot(x[0]); if(!s) return;
+      s.jug++; s.gp+=x[1];
+      if(x[1]>x[2]){ s.w++; s.mp+=2; } else if(x[1]<x[2]){ s.l++; } else { s.d++; s.mp+=1; }
+    });
+  }
+  var vistas={};
+  var tr=data.teamRounds||{};
+  Object.keys(tr).forEach(function(r){
+    if(!_teamRoundHasBoards(tr[r])) return;         // ronda sin formación → que la rellenen los cruces
+    vistas[r]=1;
+    (tr[r]||[]).forEach(function(m){
+      var a=0,b=0,any=false;
+      ((m&&m.boards)||[]).forEach(function(bd){ var rp=_teamResPts(bd.res); if(!rp) return; any=true; a+=rp[0]; b+=rp[1]; });
+      if(any) anota(m.aName,m.bName,a,b);
+    });
+  });
+  var xr=data.teamCrosses||{};
+  Object.keys(xr).forEach(function(r){
+    if(vistas[r]) return;                            // esa ronda ya la contó la formación
+    (xr[r]||[]).forEach(function(m){ if(m) anota(m.aName,m.bName,ps(m.aRes),ps(m.bRes)); });
+  });
+  return out;
 }
 
 // ¿Esta ronda trae DE VERDAD la formación, o sea al menos una mesa con jugadores? Chess-Results
@@ -8222,9 +8295,117 @@ function _teamParseRoster(rows){
 }
 
 // ── Render por equipos ──
+/* Número de puntos como lo escribe el sitio ("3.5"/"3,5" → "3½"). '' si la celda viene vacía. */
+function _teamPtsTxt(v){
+  var s=String(v==null?'':v).trim(); if(!s) return '';
+  if(/½/.test(s)) return s;
+  var n=parseFloat(s.replace(',','.')); return isNaN(n)?s:crPtsStr(n);
+}
+
+/* CUADRO CRUZADO (todos contra todos por equipos). En la COMPUTADORA se dibuja la grilla completa,
+   como Chess-Results: una columna por rival y en cada casilla los puntos que el equipo de la FILA le
+   hizo al de la COLUMNA. En el TELÉFONO esa grilla no entra, así que va una fila por equipo con los
+   puntos de match grandes y los de partida abajo; tocando el equipo se abre su panel, que ya trae el
+   "Recorrido por ronda" con los rivales. Las dos versiones se dibujan siempre y las conmuta el CSS
+   (.tstd-pc / .tstd-tel), igual que hacen las formaciones por equipos. */
+function _teamRenderRR(standings, crk){
+  var teams=standings.teams, n=teams.length;
+  var data=crk?crDataLoad(crk):null;
+  var tot=_teamAllTotals(data);
+  function totDe(t){ return tot[_teamNorm(_teamCountryParts(t.name).clean||t.name)]||null; }
+  // ¿Alguna columna "Des" es exactamente los puntos de match, o los de partida? Si coincide para
+  // TODOS los equipos, se rotula en castellano; si no, se deja "Des N" (no se adivina).
+  var nDes=teams.reduce(function(m,t){return Math.max(m,(t.des||[]).length);},0);
+  var lbl=[], usada={};
+  function coincide(di, campo){
+    var algo=false;
+    for(var i=0;i<n;i++){
+      var s=totDe(teams[i]); if(!s) return false;
+      var v=parseFloat(String((teams[i].des||[])[di]||'').replace(',','.'));
+      if(isNaN(v)) return false;
+      if(Math.abs(v-s[campo])>0.001) return false;
+      if(v!==0) algo=true;
+    }
+    return algo;   // si TODO da 0 no prueba nada (torneo sin empezar): mejor no rotular
+  }
+  for(var d=0;d<nDes;d++){
+    if(!usada.mp&&coincide(d,'mp')){ lbl[d]='Match'; usada.mp=1; }
+    else if(!usada.gp&&coincide(d,'gp')){ lbl[d]='Partida'; usada.gp=1; }
+    else lbl[d]='Des '+(d+1);
+  }
+  var th='padding:9px 10px;color:var(--text2);font-weight:600;font-size:12.5px;text-align:center;background:var(--bg2);border-bottom:2px solid var(--border);white-space:nowrap;position:sticky;top:0';
+  var td='padding:9px 10px;border-bottom:1px solid var(--bd14);text-align:center;font-size:15px';
+  function nombreHtml(t){
+    var fed=t.fed||_teamResolveFed(t.name,data), fl=fed?crFlagEmoji(fed):'';
+    var txt=(fl?fl+' ':'')+escHtml(_paisES(t.name,fed));
+    return (crk&&t.name)
+      ? '<span onclick="crOpenCountry('+crArg(crk)+','+crArg(t.name)+')" title="Ver la performance de '+escHtml(_paisES(t.name,fed))+'" style="cursor:pointer;display:inline-flex;align-items:center;gap:7px" onmouseover="this.style.color=\'var(--gold)\'" onmouseout="this.style.color=\'\'">'+txt+'</span>'
+      : txt;
+  }
+  // ── La grilla (computadora) ──
+  var h='<div class="tstd-pc" style="max-height:560px;overflow:auto;border:1px solid var(--border);border-radius:12px;max-width:860px;margin-left:auto;margin-right:auto">';
+  h+='<table style="border-collapse:collapse;white-space:nowrap;margin:0;width:100%"><thead><tr>';
+  h+='<th style="'+th+'">#</th><th style="'+th+';text-align:left">Equipo</th>';
+  for(var c=0;c<n;c++) h+='<th style="'+th+'" title="'+escHtml(teams[c].name||'')+'">'+(c+1)+'</th>';
+  for(var d2=0;d2<nDes;d2++) h+='<th style="'+th+'">'+escHtml(lbl[d2])+'</th>';
+  h+='</tr></thead><tbody>';
+  teams.forEach(function(t,i){
+    // Empatados: igual que Chess-Results, el puesto se escribe una sola vez, arriba del grupo.
+    var _rep=(i>0&&teams[i-1]&&teams[i-1].rk===t.rk);
+    h+='<tr style="'+(i%2===1?'background:var(--zebra)':'')+'">';
+    h+='<td style="'+td+';color:var(--text3)">'+(_rep?'':escHtml(String(t.rk||i+1)))+'</td>';
+    h+='<td style="'+td+';text-align:left;font-weight:600;color:var(--text)">'+nombreHtml(t)+'</td>';
+    for(var c2=0;c2<n;c2++){
+      var raw=((t.grid||[])[c2]||'').trim();
+      if(c2===i||raw==='*'){ h+='<td style="'+td+';color:#555">—</td>'; continue; }
+      if(!raw){ h+='<td style="'+td+'"></td>'; continue; }
+      // Color por resultado: se compara con la celda espejada (lo que el rival le hizo a este).
+      var mio=parseFloat(raw.replace(',','.').replace('½','.5'));
+      var suyoRaw=(((teams[c2]||{}).grid||[])[i]||'').trim();
+      var suyo=parseFloat(suyoRaw.replace(',','.').replace('½','.5'));
+      var col=(!isNaN(mio)&&!isNaN(suyo))?(mio>suyo?'#4caf50':(mio<suyo?'#e05555':'var(--gold)')):'var(--text)';
+      h+='<td style="'+td+';color:'+col+';font-weight:600">'+escHtml(_teamPtsTxt(raw))+'</td>';
+    }
+    for(var d3=0;d3<nDes;d3++){
+      var dv=(t.des||[])[d3];
+      var esPts=(lbl[d3]==='Match'||lbl[d3]==='Partida');
+      h+='<td style="'+td+';'+(lbl[d3]==='Match'?'color:var(--gold);font-weight:700':'color:var(--text2);font-size:12.5px')+'">'+escHtml(esPts?_teamPtsTxt(dv):String(dv==null?'':dv))+'</td>';
+    }
+    h+='</tr>';
+  });
+  h+='</tbody></table></div>';
+  // Leyenda: qué es cada casilla. Sólo cuando la grilla ya tiene algo que mostrar.
+  h+='<div class="tstd-pc" style="max-width:860px;margin:8px auto 0;font-size:11.5px;color:var(--text3);line-height:1.5">'
+   + 'Cada casilla son los puntos que el equipo de la fila le hizo al de la columna; los números de arriba son las posiciones.'
+   + (usada.mp?' <b>Match</b>: 2 por ganar el cruce, 1 por empatarlo.':'')
+   + (usada.gp?' <b>Partida</b>: los puntos sumados en los tableros.':'')
+   + '</div>';
+  // ── La lista (teléfono) ──
+  h+='<div class="tstd-tel" style="max-width:520px;margin:0 auto;border:1px solid var(--border);border-radius:12px;overflow:hidden">';
+  teams.forEach(function(t,i){
+    var s=totDe(t);
+    var mp=null, gp=null;
+    for(var d4=0;d4<nDes;d4++){ if(lbl[d4]==='Match') mp=(t.des||[])[d4]; else if(lbl[d4]==='Partida') gp=(t.des||[])[d4]; }
+    if(mp==null&&s) mp=s.mp;
+    if(gp==null&&s) gp=s.gp;
+    var _rep2=(i>0&&teams[i-1]&&teams[i-1].rk===t.rk);
+    h+='<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--bd14);'+(i%2===1?'background:var(--zebra)':'')+'">';
+    h+='<div style="width:18px;color:var(--text3);font-size:14px;flex-shrink:0">'+(_rep2?'':escHtml(String(t.rk||i+1)))+'</div>';
+    h+='<div style="flex:1;min-width:0;font-weight:600;font-size:14.5px;color:var(--text);overflow:hidden;text-overflow:ellipsis">'+nombreHtml(t)+'</div>';
+    h+='<div style="text-align:right;flex-shrink:0">'
+     + '<div style="color:var(--gold);font-weight:700;font-size:16px;line-height:1.1">'+escHtml(_teamPtsTxt(mp))+'</div>'
+     + (gp!=null&&gp!==''?'<div style="color:var(--text3);font-size:11px">'+escHtml(_teamPtsTxt(gp))+' de partida</div>':'')
+     + '</div>';
+    h+='</div>';
+  });
+  h+='</div>';
+  return h;
+}
+
 function _teamRenderStandings(standings, crk){
   var teams=standings&&standings.teams;
   if(!teams||!teams.length) return '<div style="color:var(--text3);font-size:12px;padding:10px">Sin tabla cargada.</div>';
+  if(standings.kind==='rr') return _teamRenderRR(standings, crk);
   var _sdata=crk?crDataLoad(crk):null;   // para resolver país→fed en datos viejos sin la sigla
   var initial=standings.kind==='initial';
   var th='padding:9px 10px;color:var(--text2);font-weight:600;font-size:12.5px;text-align:center;background:var(--bg2);border-bottom:2px solid var(--border);white-space:nowrap;position:sticky;top:0';
