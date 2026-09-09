@@ -11768,7 +11768,11 @@ function crOpenCountry(key, who){
   h+='<div style="background:var(--card90);border:1px solid var(--bd22);border-radius:var(--r-lg);box-shadow:var(--shadow-card);padding:14px 16px;margin-bottom:12px">';
   h+='<div style="display:flex;align-items:center;gap:12px">';
   var _fl=cfed?crFlagEmoji(cfed):'';
-  if(_fl) h+='<div style="flex-shrink:0;font-size:0;line-height:0;border-radius:6px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.4)">'+_fl+'</div>';
+  // OJO con el tamaño: `.flag-ic` mide `height:0.9em`, así que el `font-size:0` que se usaba acá para
+  // matar el espacio en blanco de la imagen la dejaba en **0 píxeles de alto**. La bandera estaba en
+  // el HTML pero no se veía: el encabezado del país mostraba "Argentina ARG" pelado. Con line-height:0
+  // alcanza para el espaciado, y el font-size es el que le da la altura (0.9 × 26 ≈ 23px).
+  if(_fl) h+='<div style="flex-shrink:0;font-size:26px;line-height:0;border-radius:6px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.4)">'+_fl+'</div>';
   h+='<div style="flex:1;min-width:0">';
   h+='<div style="font-size:18px;font-weight:700;color:var(--white-ink);line-height:1.15;text-shadow:var(--txt-out)">'+escHtml(_paisES(cname,cfed))+(cfed?' <span style="font-size:12.5px;color:var(--fg-c8);font-weight:600">'+escHtml(cfed)+'</span>':'')+'</div>';
   // Sin ninguna ronda jugada (torneo que todavía no empezó) el "0 ganó · 0 empató · 0 perdió" y el
@@ -11908,11 +11912,57 @@ function crOpenCountry(key, who){
   }
 }
 
+/* Identidad de un jugador en un torneo POR EQUIPOS: título, federación, elo, Rp oficial y fide_id.
+   En los torneos individuales todo eso sale de la tabla de posiciones (`data.standings`), pero en los
+   por equipos la tabla son los EQUIPOS: `info` queda null y al panel de performance le faltaba un
+   renglón entero — el que muestra 🇦🇷 ARG · ELO · Rp — además de la pastilla del título. Lo vio el
+   autor comparando Leyendas y Prodigios con la Olimpiada (09/09/2026).
+   Dos fuentes, en orden: el PLANTEL OFICIAL de inscripción (art=8, que trae todo, Rp incluido) y,
+   si no está cargado, los propios tableros de los cruces (que traen título y elo del rótulo).
+   Devuelve null si no encuentra nada, para no cambiar en nada el comportamiento de antes. */
+function _crTeamBio(data, name){
+  if(!data || !name) return null;
+  var out={ title:'', fed:'', elo:0, rp:0, fideId:'' };
+  var mismo=function(a,b){ return a===b || (typeof crNormTokens==='function' && crNormTokens(a)===crNormTokens(b)); };
+  try {
+    (data.teamRoster||[]).forEach(function(t){
+      if(!t || !t.players) return;
+      t.players.forEach(function(p){
+        if(!p || !p.nm || !mismo(p.nm, name)) return;
+        if(!out.title && p.ti)  out.title  = p.ti;
+        if(!out.elo   && p.elo) out.elo    = p.elo;
+        if(!out.fed   && p.fed) out.fed    = p.fed;
+        if(!out.rp    && p.rp)  out.rp     = p.rp;
+        if(!out.fideId&& p.fid) out.fideId = String(p.fid);
+        // Sin federación propia (planteles de club), la del EQUIPO: en una Olimpiada es su país.
+        if(!out.fed && typeof _teamCountryParts==='function') out.fed=_teamCountryParts(t.name).fed||'';
+      });
+    });
+    if(!out.title || !out.elo){
+      var tr=data.teamRounds||{};
+      Object.keys(tr).forEach(function(r){
+        (tr[r]||[]).forEach(function(mt){
+          ((mt&&mt.boards)||[]).forEach(function(b){
+            if(!b) return;
+            if(b.nW && mismo(b.nW,name)){ if(!out.title&&b.tW) out.title=b.tW; if(!out.elo&&b.eW) out.elo=b.eW; }
+            else if(b.nB && mismo(b.nB,name)){ if(!out.title&&b.tB) out.title=b.tB; if(!out.elo&&b.eB) out.elo=b.eB; }
+          });
+        });
+      });
+    }
+  } catch(e){}
+  return (out.title||out.fed||out.elo||out.rp||out.fideId) ? out : null;
+}
+
 function crOpenPlayer(key,name){
   var data=crDataLoad(key); if(!data) return;
   // Buscar info del jugador en standings
   var info=null;
   if(data.standings) info=data.standings.find(function(p){return p.name===name;})||null;
+  // Ficha para el ENCABEZADO (título · bandera · elo · Rp). En los individuales es la misma fila de
+  // la tabla; en los por equipos se arma del plantel/los tableros. `info` sigue mandando en los
+  // puntos y la posición, que sólo existen cuando hay tabla individual.
+  var _bio = info || _crTeamBio(data, name);
   // Construir historial desde rondas
   // Resultado del jugador en una partida. Si NO hay resultado cargado (vacío/*),
   // queda "por jugar" — NO cuenta como derrota.
@@ -11977,7 +12027,10 @@ function crOpenPlayer(key,name){
     _perfSum+=e; _perfN++; _perfScore += (c==='✓')?1:(c==='½')?0.5:0;
   });
   var tourPerf=_fidePerformance(_perfSum,_perfScore,_perfN);
-  var _myElo=(info&&info.elo)||(_hdrP&&_hdrP.elo)||0;
+  // Base del cálculo de elo: el que tenía EN ESE TORNEO. En los individuales lo da la tabla; en los
+  // por equipos lo da el plantel/los tableros (`_bio`). Sin eso se caía al elo de HOY del perfil, que
+  // en un torneo viejo puede estar a cientos de puntos y falseaba la variación.
+  var _myElo=(_bio&&_bio.elo)||(_hdrP&&_hdrP.elo)||0;
   // La MISMA función que suma el rating en vivo del perfil: variación desde el cruce.
   var tourEloDelta=_fideEloDelta(_myElo, _crEloGamesForName(data, name), _hdrP&&_hdrP.born);
 
@@ -11994,12 +12047,12 @@ function crOpenPlayer(key,name){
     +(_hdrPhoto ? '<img src="'+_hdrPhoto+'" alt="" loading="lazy" onerror="_avImgErr(this)" style="width:100%;height:100%;object-fit:cover;border-radius:50%">' : escHtml(_hdrIni))
     +'</div>';
   h+='<div style="flex:1;min-width:0">';
-  h+='<div style="font-size:16.5px;font-weight:700;color:var(--white-ink);line-height:1.2;text-shadow:var(--txt-out)">'+crTitleBadge(info&&info.title)+escHtml(name)+'</div>';
-  if(info){
+  h+='<div style="font-size:16.5px;font-weight:700;color:var(--white-ink);line-height:1.2;text-shadow:var(--txt-out)">'+crTitleBadge(_bio&&_bio.title)+escHtml(name)+'</div>';
+  if(_bio){
     h+='<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:3px;font-size:12px">';
-    if(info.fed) h+='<span style="color:var(--fg-c8)">'+crFlagEmoji(info.fed)+' '+info.fed+'</span>';
-    if(info.elo) h+='<span style="color:var(--fg-c8)">· ELO '+info.elo+'</span>';
-    var _rpShow = (parseInt(info.rp,10) > 0) ? info.rp : tourPerf;   // Rp oficial de CR si viene (>0); si no (CR manda 0), la calculada
+    if(_bio.fed) h+='<span style="color:var(--fg-c8)">'+crFlagEmoji(_bio.fed)+' '+_bio.fed+'</span>';
+    if(_bio.elo) h+='<span style="color:var(--fg-c8)">· ELO '+_bio.elo+'</span>';
+    var _rpShow = (parseInt(_bio.rp,10) > 0) ? _bio.rp : tourPerf;   // Rp oficial de CR si viene (>0); si no (CR manda 0), la calculada
     if(_rpShow) h+='<span style="color:var(--gold)" title="Performance del torneo: promedio de rivales + ajuste FIDE por puntaje">· Rp '+_rpShow+'</span>';
     h+='</div>';
   }
@@ -12030,7 +12083,9 @@ function crOpenPlayer(key,name){
     h+='<span style="color:var(--gold);font-weight:600">'+draws+'T</span> · ';
     h+='<span style="color:#e05555;font-weight:600">'+losses+'D</span>';
     if(pending){ h+=' · <span style="color:var(--text3);font-weight:600">'+pending+' por jugar</span>'; }
-    if(!info && tourPerf){ h+=' · <span style="color:var(--gold);font-weight:700" title="Performance del torneo: promedio de rivales + ajuste FIDE por puntaje">Rp '+tourPerf+'</span>'; }
+    // La Rp acá abajo es sólo el paracaídas de cuando NO hay renglón de identidad arriba (ni tabla
+    // ni plantel): si el de arriba salió, repetirla sería decir dos veces lo mismo.
+    if(!_bio && tourPerf){ h+=' · <span style="color:var(--gold);font-weight:700" title="Performance del torneo: promedio de rivales + ajuste FIDE por puntaje">Rp '+tourPerf+'</span>'; }
     // Cambio de elo: el de Chess-Results si viene; si no, el calculado (K·Σ(res−esperado)).
     var _evShow = (info && info.eloVar) ? info.eloVar : tourEloDelta;
     if(_evShow != null){
@@ -12045,7 +12100,7 @@ function crOpenPlayer(key,name){
 
   // Botones de acción: perfil argentino completo (si está en PLAYERS) y/o página FIDE
   var argP = _hdrP;   // ya lo buscamos arriba para el avatar
-  var fideId = (info&&info.fideId) ? info.fideId : (argP&&argP.fide_id ? argP.fide_id : '');
+  var fideId = (_bio&&_bio.fideId) ? _bio.fideId : (argP&&argP.fide_id ? argP.fide_id : '');
   if(argP || fideId){
     h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">';
     if(argP){
@@ -16083,13 +16138,19 @@ async function openPlayer(id) {
   h += '</div>';
   h += '<div><div class="m-name">' + escHtml(p.name) + '</div>';
   var _fed = p.fed || 'ARG';
+  // El título va en la MISMA pastilla que usa toda la app (titleBadge), no como texto suelto; y la
+  // federación con su BANDERA por imagen (los emoji de bandera no se dibujan en Windows, ver
+  // _flagImg). La pastilla no entra en `_subParts`: ya trae su propio margen a la derecha, y un
+  // " · " detrás la dejaría separada de lo que acompaña.
+  var _titleHtml = p.title ? titleBadge(p.title) : '';
+  var _fedHtml = (typeof _flagImg === 'function' ? _flagImg(_fed) : '');
+  if (_fedHtml) _fedHtml += ' ';
   var _subParts = [];
-  if (p.title) _subParts.push(p.title);
   if (p.province) _subParts.push(p.province);
   if (p.born) _subParts.push('Nac. ' + p.born);
-  if (p.ranked === false) { _subParts.push('<span style="color:var(--gold)">' + _fed + '</span>'); if (p.inactive) _subParts.push('<span style="color:var(--text3)">inactivo</span>'); }
-  else if (ranking) _subParts.push('<span style="color:var(--gold)">#' + ranking + ' ' + _fed + '</span>');
-  h += '<div class="m-sub">' + _subParts.join(' · ') + '</div>';
+  if (p.ranked === false) { _subParts.push('<span style="color:var(--gold)">' + _fedHtml + _fed + '</span>'); if (p.inactive) _subParts.push('<span style="color:var(--text3)">inactivo</span>'); }
+  else if (ranking) _subParts.push('<span style="color:var(--gold)">#' + ranking + ' ' + _fedHtml + _fed + '</span>');
+  h += '<div class="m-sub">' + _titleHtml + _subParts.join(' · ') + '</div>';
   if (p.fide_id) h += '<div class="m-sub" style="margin-top:3px"><a href="https://ratings.fide.com/profile/' + p.fide_id + '" target="_blank" style="color:var(--gold);text-decoration:none">FIDE ID: ' + p.fide_id + ' ↗</a></div>';
   // Controles de autor para ADICIONALES — SIEMPRE (con o sin FIDE id; los frecuentes sin perfil
   // se crean sin FIDE id y antes quedaban sin el ✕ para borrarlos).

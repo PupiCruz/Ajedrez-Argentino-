@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 561;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 573;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -1845,6 +1845,25 @@ console.log('\n=== 34. La vitrina de trofeos del perfil ===');
   chk(/#AjedrezArgentino #Ajedrez ♟️🇦🇷/.test(SRC),
       'salvo el texto para compartir en redes, donde el emoji se ve bien');
 
+  // ── Y que la bandera NO mida cero ──────────────────────────────────────────────────────────
+  // `.flag-ic` mide `height:0.9em`, así que dentro de un contenedor con `font-size:0` (el truco
+  // para matar el espacio en blanco de una imagen) queda en 0 px de alto: está en el HTML y no se
+  // ve. Pasó en el encabezado del país de los torneos por equipos ("Argentina ARG" sin bandera,
+  // 09/09/2026, lo vio el autor). Para el espaciado alcanza con `line-height:0`.
+  const _fs0 = SRC.split('\n').filter(l => /font-size:0[;"']/.test(l)
+                                        && /(_flagImg|crFlagEmoji|flag-ic|\b_fl\b)/.test(l));
+  chk(_fs0.length === 0,
+      'ninguna bandera queda dentro de un contenedor con font-size:0 (mediría 0 px de alto)',
+      _fs0.length ? _fs0[0].trim().slice(0, 70) : 'ninguna');
+  chk(SRC.includes('font-size:26px;line-height:0'),
+      'el encabezado del país (torneos por equipos) le da tamaño propio a su bandera');
+
+  // ── Encabezado del perfil: pastilla de título + banderita ──────────────────────────────────
+  chk(SRC.includes("var _titleHtml = p.title ? titleBadge(p.title) : '';"),
+      'el título del perfil usa la pastilla de toda la app (titleBadge), no texto suelto');
+  chk(SRC.includes("var _fedHtml = (typeof _flagImg === 'function' ? _flagImg(_fed) : '');"),
+      'y la federación del perfil (#74 ARG) va con su banderita');
+
   // ── El mueble ──────────────────────────────────────────────────────────────────────────────
   chk(/tro-mueble/.test(R9.h) && /tro-vidrio/.test(R9.h), 'los trofeos van adentro de un mueble con vidrio');
   chk(SRC.indexOf('.tro { width: 90px; flex: 0 0 90px; }') > 0,
@@ -2254,6 +2273,55 @@ console.log('\n=== 37. El id del torneo viaja con las partidas del perfil ===');
       'los chips "Argentinos que compiten" suman las dos fuentes');
   chk(SRC.includes('return !!p && (_isArgManual(p.name, key) || _argPersonIsArg(p.name, p.fed, p.fideId));'),
       'y el filtro "Solo argentinos" de la tabla también');
+}
+
+// ── 40. Panel de performance: la ficha del jugador en torneos POR EQUIPOS ──────────────────────
+// En los individuales el renglón "🇦🇷 ARG · ELO · Rp" y la pastilla del título salen de la tabla de
+// posiciones. En los por equipos la tabla son los EQUIPOS: `info` queda null y ese renglón entero
+// no se dibujaba (lo vio el autor comparando Leyendas y Prodigios con la Olimpiada, 09/09/2026).
+// `_crTeamBio` lo arma del plantel oficial (art=8) o, si no está, de los tableros del cruce.
+{
+  console.log('\n=== 40. Ficha del jugador en torneos por equipos ===');
+  const BIO = new Function(
+      extraerFuncion('crNormTokens') + extraerFuncion('_teamCountryParts') + extraerFuncion('_crTeamBio')
+    + 'function normStr(s){ return String(s||"").toLowerCase().normalize("NFD").replace(/[\\u0300-\\u036f]/g,"").replace(/[^a-z0-9 ]/g," ").replace(/\\s+/g," ").trim(); }'
+    + 'function crFlagEmoji(){ return ""; } function _teamFlag(){ return ""; }'
+    + ' return _crTeamBio;')();
+
+  const conPlantel = {
+    teamRoster: [{ name: 'Argentina', players: [
+      { bo: 4, ti: 'GM', nm: 'Flores, Diego', elo: 2546, fed: 'ARG', fid: '108049', rp: '2587' }] }],
+    teamRounds: { 1: [{ boards: [{ tW: 'FM', nW: 'Wu, Li', eW: 2325, tB: 'GM', nB: 'Flores, Diego', eB: 2546, res: '0-1' }] }] }
+  };
+  const b1 = BIO(conPlantel, 'Flores, Diego');
+  chk(!!b1 && b1.title === 'GM' && b1.fed === 'ARG' && b1.elo === 2546 && b1.fideId === '108049',
+      'del plantel oficial saca título, bandera, elo y fide_id', b1 && (b1.title + ' ' + b1.fed + ' ' + b1.elo));
+  chk(!!b1 && String(b1.rp) === '2587',
+      'y la Rp OFICIAL de Chess-Results (si no viene, el panel usa la calculada)');
+  chk(!!BIO(conPlantel, 'Diego Flores'),
+      'engancha aunque el nombre venga con los tokens en otro orden');
+  chk(BIO(conPlantel, 'Nadie Inexistente') === null,
+      'y un nombre que no está en el torneo devuelve null');
+
+  // Sin plantel cargado: los propios tableros del cruce traen título y elo.
+  const soloTableros = { teamRounds: conPlantel.teamRounds };
+  const b2 = BIO(soloTableros, 'Wu, Li');
+  chk(!!b2 && b2.title === 'FM' && b2.elo === 2325,
+      'sin plantel, el título y el elo salen de los tableros del cruce', b2 && (b2.title + ' ' + b2.elo));
+
+  // Torneo INDIVIDUAL (sin nada de equipos): null → el panel queda exactamente como estaba.
+  chk(BIO({ rounds: { 1: [{ w: 'Perez, Juan', b: 'Gomez, Ana', res: '1-0' }] } }, 'Perez, Juan') === null,
+      'en un torneo individual no se mete: devuelve null y no cambia nada');
+
+  // Equipos de CLUB: sin "(FED)" en el nombre no se inventa una bandera…
+  const club = { teamRoster: [{ name: 'Club Villa del Parque', players: [{ ti: 'WIM', nm: 'Zuriel, Marisa', elo: 2162 }] }] };
+  const b3 = BIO(club, 'Zuriel, Marisa');
+  chk(!!b3 && b3.title === 'WIM' && !b3.fed,
+      'en un club sin país en el nombre no se inventa bandera (título y elo sí)');
+  // …pero si el equipo trae su federación entre paréntesis, el jugador la hereda.
+  const pais = { teamRoster: [{ name: 'Uruguay (URU)', players: [{ ti: 'IM', nm: 'Fulano, Mengano', elo: 2400 }] }] };
+  chk((BIO(pais, 'Fulano, Mengano') || {}).fed === 'URU',
+      'y si el equipo lleva su federación entre paréntesis, el jugador la hereda');
 }
 
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
