@@ -391,6 +391,11 @@
       overflow-x: auto; padding-bottom: 2px; scrollbar-width: none;
     }
     .tabs::-webkit-scrollbar { display: none; }
+    /* Filas de chips de TEMA: envuelven en varios renglones en vez de desbordar.
+       Sin justify-content:center a propósito (ver el comentario del HTML). */
+    .puz-temas-fila { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 7px; }
+    .puz-temas-fila:empty { display: none; }
+    .puz-temas-fila .chip { flex-shrink: 1; min-width: 0; }
     .chip {
       flex-shrink: 0; padding: 7px 18px; border-radius: var(--r-pill);
       border: 2px solid var(--bd30); background: var(--gl40);
@@ -2638,12 +2643,34 @@
 
       <!-- ── Panel: EJERCICIOS ── -->
       <div class="train-pane active" id="train-pane-ejercicios">
-      <div class="puz-intro" id="puz-intro">Encontrá la mejor jugada en posiciones tomadas de partidas de ajedrez argentino. Elegí tu nivel.</div>
+      <div class="puz-intro" id="puz-intro">Encontrá la mejor jugada en posiciones tomadas de partidas de ajedrez argentino. Elegí tu nivel, o buscá por tema.</div>
       <div class="tabs" id="tab-ejercicios">
         <button class="chip active" onclick="puzSetLevel('inicial',this)">Nivel inicial</button>
         <button class="chip" onclick="puzSetLevel('aficionado',this)">Nivel aficionado</button>
         <button class="chip" onclick="puzSetLevel('avanzado',this)">Nivel avanzado</button>
         <button class="chip" onclick="puzSetLevel('maestro',this)">Nivel maestro</button>
+      </div>
+      <!-- Filtro POR TEMA. Los chips NO están escritos acá: los arma puzRenderTemaChips()
+           contando lo que hay en puzzles.json, y aparece el tema que llega al piso
+           (PUZ_TEMA_MIN). O sea que se actualiza solo al publicar ejercicios nuevos.
+           Es EXCLUYENTE con el nivel: al elegir un tema salen los de todos los niveles,
+           porque saber el tema ya es media pista y porque apilando los dos filtros
+           quedaban celdas de 3 ejercicios. -->
+      <!-- Tres grupos, cada uno en su renglón y con flex-wrap propio. OJO: NO usar la clase
+           .tabs acá — tiene justify-content:center con overflow-x:auto, y un flex centrado que
+           desborda RECORTA el principio de la fila sin dejar scrollear hasta él. Con 4 chips
+           (los niveles) no se nota; con 18 se comía el primero. -->
+      <div id="puz-temas-wrap" style="display:none;margin:10px 0 16px">
+        <!-- En el teléfono los 18 chips ocupaban 393 px (media pantalla) antes de que se
+             viera un solo ejercicio, así que ahí arranca plegado. En la compu son 183 px
+             y va abierto. Si hay un tema elegido, se abre igual. -->
+        <button type="button" class="chip" id="puz-temas-toggle" onclick="puzToggleTemas()"
+          style="margin-bottom:8px">O buscá por tema</button>
+        <div id="puz-temas-box">
+          <div class="puz-temas-fila" id="puz-temas-sec"></div>
+          <div class="puz-temas-fila" id="puz-temas-mot"></div>
+          <div class="puz-temas-fila" id="puz-temas-mate"></div>
+        </div>
       </div>
       <div id="puz-stats-panel"></div>
       <div style="display:flex;justify-content:flex-end;margin:-4px 0 14px">
@@ -31141,11 +31168,15 @@ var PUZ_LVL_SHORT = { inicial: 'Inicial', aficionado: 'Aficionado', avanzado: 'A
 var PUZ_SEC_LABEL = { mates:'Mate', tactics:'Táctica', defensa:'Defensa', ventaja:'Ventaja', sacrificio:'Sacrificio', finales:'Final' };
 var PUZ_MOTIF_LABEL = { horquilla:'Horquilla', clavada:'Clavada', enfilada:'Enfilada', descubierta:'Descubierta',
   'doble-jaque':'Doble jaque', 'mate-pasillo':'Mate del pasillo', coronacion:'Coronación', tablas:'Tablas',
-  'final-ganado':'Final ganado', 'final-tablas':'Final en tablas' };
+  'final-ganado':'Final ganado', 'final-tablas':'Final en tablas',
+  // Los que se marcan a mano en la revisión (los mismos de review.html).
+  desviacion:'Desviación', atraccion:'Atracción', sobrecarga:'Sobrecarga', despeje:'Despeje',
+  interferencia:'Interferencia', 'rayos-x':'Rayos X', molino:'Molino', intermedia:'Jugada intermedia',
+  'red-de-mate':'Red de mate', ahogado:'Ahogado', 'peon-pasado':'Peón pasado', colgada:'Pieza colgada' };
 // Tags técnicos o que ya muestra el badge de sección: no se listan como motivos.
 var PUZ_MOTIF_SKIP = { short:1, long:1, mate:1, sacrifice:1, sacrificio:1, defensa:1, ventaja:1, final:1, ventajaDecisiva:1 };
 
-var puz = { level:'inicial', list:[], idx:0, cur:null, chess:null, flipped:false, sel:null, legalDests:[],
+var puz = { level:'inicial', tema:null, list:[], idx:0, cur:null, chess:null, flipped:false, sel:null, legalDests:[],
   step:0, solved:false, revealed:false, failed:false, busy:false, reviewing:false, reviewIdx:0,
   lastFrom:'', lastTo:'', _revFens:[], _revMoves:[], played:[], seen:{}, editing:false, _dirty:false,
   anOn:false, anScore:null, anDepth:0, anPv:null, anBestUci:null, lines:[], recording:false, recLine:[], _srcGame:null, _srcGameMaybe:false };
@@ -31185,6 +31216,83 @@ function _shuffleCmp(a, b) { return _shuffleRank(a.id) - _shuffleRank(b.id) || (
 function puzForLevel(level) {
   return PUZZLES.filter(function(p){ return !p.hidden && puzBand(_puzEffDiff(p)).indexOf(level) >= 0; })
                 .sort(_shuffleCmp);
+}
+
+/* ── FILTRO POR TEMA ────────────────────────────────────────────────────────
+   Los chips NO son una lista fija: se cuentan de puzzles.json cada vez que carga la
+   página, y aparece solo el tema que llegó al piso. Así, cuando el autor marca en la
+   revisión el ejercicio nº 30 de "Sobrecarga", el chip aparece en la web sin tocar
+   código — sólo hay que publicar.
+   Los mates van en su propio grupo porque son de otra naturaleza: los temas los marca
+   el autor a mano y los mates los cuenta el programa (largo de la solución), así que
+   son exactos y crecen por su lado. */
+var PUZ_TEMA_MIN = 30;        // piso para que un tema se gane su chip
+// Etiquetas que NO son tema: técnicas, de sección, o que ya tienen su propio grupo.
+var PUZ_TEMA_SKIP = { short:1, long:1, mate:1, sacrifice:1, sacrificio:1, defensa:1, ventaja:1,
+  final:1, ventajaDecisiva:1, tactics:1, mates:1, finales:1, endgame:1, middlegame:1, opening:1,
+  // 'tablas' se lo salta aparte: medido, 93 de sus 94 ejercicios SON la sección Defensa,
+  // así que como chip repetiría una sección en vez de agregar un tema.
+  tablas:1 };
+
+function _puzTemaLabel(t) {
+  if (PUZ_MOTIF_LABEL[t]) return PUZ_MOTIF_LABEL[t];
+  var s = t.replace(/-/g, ' ');
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+// ¿Este ejercicio es de este tema? Hay tres familias:
+//   'sec:defensa'  -> por SECCIÓN (de qué se trata el ejercicio)
+//   'mate4+'       -> junta mate en 4, 5, 6...
+//   cualquier otro -> etiqueta suelta de themes
+function _puzEsTema(p, t) {
+  if (t.indexOf('sec:') === 0) return p.section === t.slice(4);
+  var th = p.themes || [];
+  if (t !== 'mate4+') return th.indexOf(t) >= 0;
+  for (var i=0;i<th.length;i++) { var m = /^mateIn(\d+)$/.exec(th[i]); if (m && +m[1] >= 4) return true; }
+  return false;
+}
+// Los temas que hoy se ganaron un chip, ya contados. Sale de los datos publicados.
+function puzTemas() {
+  var cuenta = {}, secs = {}, mates = { mateIn1:0, mateIn2:0, mateIn3:0, 'mate4+':0 };
+  for (var i=0;i<PUZZLES.length;i++) {
+    var p = PUZZLES[i]; if (p.hidden) continue;
+    if (p.section) secs[p.section] = (secs[p.section] || 0) + 1;
+    var th = p.themes || [], vistos = {};
+    for (var j=0;j<th.length;j++) {
+      var t = th[j];
+      var mm = /^mateIn(\d+)$/.exec(t);
+      if (mm) { var k = +mm[1] >= 4 ? 'mate4+' : t; if (mates[k] != null) mates[k]++; continue; }
+      if (PUZ_TEMA_SKIP[t] || vistos[t]) continue;
+      vistos[t] = 1; cuenta[t] = (cuenta[t] || 0) + 1;
+    }
+  }
+  // Las SECCIONES van primero: son de qué se trata el ejercicio, lo más grueso.
+  // En el orden fijo de PUZ_SEC_LABEL, que es el que el autor tiene en la cabeza.
+  var secciones = [];
+  for (var s in PUZ_SEC_LABEL) {
+    if ((secs[s] || 0) >= PUZ_TEMA_MIN) secciones.push({ id:'sec:'+s, label:PUZ_SEC_LABEL[s], n:secs[s] });
+  }
+  var motivos = [];
+  for (var t2 in cuenta) if (cuenta[t2] >= PUZ_TEMA_MIN) motivos.push({ id:t2, label:_puzTemaLabel(t2), n:cuenta[t2] });
+  motivos.sort(function(a,b){ return b.n - a.n || (a.label < b.label ? -1 : 1); });
+  var mm2 = [
+    { id:'mateIn1', label:'Mate en 1', n:mates.mateIn1 },
+    { id:'mateIn2', label:'Mate en 2', n:mates.mateIn2 },
+    { id:'mateIn3', label:'Mate en 3', n:mates.mateIn3 },
+    { id:'mate4+',  label:'Mate en 4 o más', n:mates['mate4+'] },
+  ].filter(function(x){ return x.n >= PUZ_TEMA_MIN; });
+  return { secciones: secciones, motivos: motivos, mates: mm2 };
+}
+function puzForTema(t) {
+  return PUZZLES.filter(function(p){ return !p.hidden && _puzEsTema(p, t); }).sort(_shuffleCmp);
+}
+// La lista que se está mostrando: por tema si hay uno elegido, si no por nivel.
+function puzLista() { return puz.tema ? puzForTema(puz.tema) : puzForLevel(puz.level); }
+function puzTemaLabel(t) {
+  if (!t) return '';
+  if (t.indexOf('sec:') === 0) return PUZ_SEC_LABEL[t.slice(4)] || t.slice(4);
+  if (t === 'mate4+') return 'Mate en 4 o más';
+  if (/^mateIn(\d+)$/.test(t)) return 'Mate en ' + t.slice(6);
+  return _puzTemaLabel(t);
 }
 function puzById(id) { for (var i=0;i<PUZZLES.length;i++) if (PUZZLES[i].id === id) return PUZZLES[i]; return null; }
 
@@ -31684,7 +31792,7 @@ function _routineServePuzzle() {
   if (!bag.length) { _routineAdvance(); return; }
   var p = bag[Math.floor(Math.random() * bag.length)];
   R._used[p.id] = 1;
-  puz.level = R._level; puz.list = puzForLevel(R._level);
+  puz.level = R._level; puz.tema = null; puz.list = puzForLevel(R._level);   // la rutina va por nivel, no por tema
   var ix = -1; for (var i = 0; i < puz.list.length; i++) if (puz.list[i].id === p.id) { ix = i; break; }
   if (ix < 0) { puz.list = puz.list.concat([p]); ix = puz.list.length - 1; }
   puz.idx = ix;
@@ -31913,27 +32021,89 @@ function puzUpdateChipCounts() {
     var m = chips[i].getAttribute('onclick').match(/'(inicial|aficionado|avanzado|maestro)'/); if (!m) continue;
     chips[i].innerHTML = PUZ_LVL_NAME[m[1]] + ' <span style="opacity:.6">(' + puzForLevel(m[1]).length + ')</span>';
   }
+  puzRenderTemaChips();
+}
+
+// Dibuja la fila de temas. Si todavía ningún tema llegó al piso, no muestra nada:
+// la pestaña queda exactamente como antes.
+// Abierto/plegado del bloque de temas. `null` = todavía no lo decidió nadie: manda el ancho.
+var _puzTemasAbierto = null;
+function puzToggleTemas() {
+  _puzTemasAbierto = !_puzTemasAbierto;
+  try { localStorage.setItem('puz_temas_abierto', _puzTemasAbierto ? '1' : '0'); } catch(e) {}
+  puzRenderTemaChips();
+}
+function _puzTemasArranqueAbierto() {
+  if (_puzTemasAbierto !== null) return _puzTemasAbierto;
+  try { var v = localStorage.getItem('puz_temas_abierto'); if (v !== null) return (_puzTemasAbierto = v === '1'); } catch(e) {}
+  // Si el ancho viene en 0 (pestaña oculta, iframe sin pintar) NO hay que suponer teléfono:
+  // se plegaba en la compu. Ante la duda, abierto.
+  var w = window.innerWidth || document.documentElement.clientWidth || 1024;
+  return (_puzTemasAbierto = w >= 700);
+}
+
+function puzRenderTemaChips() {
+  var wrap = document.getElementById('puz-temas-wrap');
+  if (!wrap) return;
+  var t = puzTemas();
+  if (!t.secciones.length && !t.motivos.length && !t.mates.length) { wrap.style.display = 'none'; return; }
+  wrap.style.display = '';
+  var abierto = _puzTemasArranqueAbierto() || !!puz.tema;   // con un tema puesto, siempre abierto
+  var box = document.getElementById('puz-temas-box'), tg = document.getElementById('puz-temas-toggle');
+  if (box) box.style.display = abierto ? '' : 'none';
+  if (tg) {
+    tg.innerHTML = 'O buscá por tema <span style="opacity:.6">' + (abierto ? '▴' : '▾') + '</span>';
+    tg.classList.toggle('active', !!puz.tema);
+    tg.setAttribute('aria-expanded', abierto ? 'true' : 'false');
+  }
+  function fila(id, arr) {
+    var box = document.getElementById(id); if (!box) return;
+    var h = '';
+    for (var i=0;i<arr.length;i++) {
+      var x = arr[i];
+      h += '<button class="chip' + (puz.tema === x.id ? ' active' : '') + '"'
+         + ' onclick="puzSetTema(\'' + x.id + '\',this)">' + x.label
+         + ' <span style="opacity:.6">(' + x.n + ')</span></button>';
+    }
+    box.innerHTML = h;
+  }
+  fila('puz-temas-sec', t.secciones);
+  fila('puz-temas-mot', t.motivos);
+  fila('puz-temas-mate', t.mates);
 }
 
 function puzSetLevel(level, btn) {
   puz.level = level;
+  puz.tema = null;          // nivel y tema son excluyentes
   puz._page = 1;
   try { localStorage.setItem('puz_level', level); } catch(e) {}
-  if (btn) { var chips = btn.parentNode.querySelectorAll('.chip'); for (var i=0;i<chips.length;i++) chips[i].classList.remove('active'); btn.classList.add('active'); }
+  puzRenderList();
+}
+
+// Tocar el tema que ya está puesto lo APAGA y vuelve al filtro por nivel.
+function puzSetTema(tema, btn) {
+  puz.tema = (puz.tema === tema) ? null : tema;
+  puz._page = 1;
   puzRenderList();
 }
 
 function puzSyncChips() {
   var chips = document.querySelectorAll('#tab-ejercicios .chip');
-  for (var i=0;i<chips.length;i++) chips[i].classList.toggle('active', chips[i].getAttribute('onclick').indexOf("'"+puz.level+"'") >= 0);
+  for (var i=0;i<chips.length;i++) {
+    chips[i].classList.toggle('active', !puz.tema && chips[i].getAttribute('onclick').indexOf("'"+puz.level+"'") >= 0);
+  }
+  // Con un tema elegido el nivel no se aplica: se ve apagado para que quede claro.
+  var lv = document.getElementById('tab-ejercicios');
+  if (lv) lv.style.opacity = puz.tema ? '.45' : '';
+  puzRenderTemaChips();
 }
 function puzRenderList() {
   var el = document.getElementById('puz-list'); if (!el) return;
   puzSyncChips();
   puzRenderStatsPanel();
   if (!_puzLoaded) { el.innerHTML = '<div style="text-align:center;padding:32px;color:var(--text2);font-size:13px">⏳ Cargando ejercicios…</div>'; return; }
-  var list = puzForLevel(puz.level), res = puzResults();
-  if (!list.length) { el.innerHTML = '<div style="text-align:center;padding:32px;color:var(--text2);font-size:13px">No hay ejercicios en este nivel todavía.</div>'; return; }
+  var list = puzLista(), res = puzResults();
+  if (!list.length) { el.innerHTML = '<div style="text-align:center;padding:32px;color:var(--text2);font-size:13px">No hay ejercicios ' + (puz.tema ? 'de este tema' : 'en este nivel') + ' todavía.</div>'; return; }
   var done = 0; for (var k=0;k<list.length;k++) if (res[list[k].id]) done++;
   var PUZ_PER_PAGE = 30;   // 30 = 5 filas de 6 (cierra parejo, sin última fila con huecos)
   var totalPages = Math.ceil(list.length / PUZ_PER_PAGE);
@@ -31977,10 +32147,16 @@ function puzGoPage(p) {
 
 function puzOpenById(id) {
   var p = puzById(id); if (!p) return;
-  var bands = puzBand(_puzEffDiff(p));
-  var level = bands.indexOf(puz.level) >= 0 ? puz.level : bands[0];
-  puz.level = level;
-  puz.list = puzForLevel(level);
+  // Con un tema elegido, ◀▶ recorre ESE tema; si no, la franja de nivel de siempre.
+  if (puz.tema && _puzEsTema(p, puz.tema)) {
+    puz.list = puzForTema(puz.tema);
+  } else {
+    puz.tema = null;
+    var bands = puzBand(_puzEffDiff(p));
+    var level = bands.indexOf(puz.level) >= 0 ? puz.level : bands[0];
+    puz.level = level;
+    puz.list = puzForLevel(level);
+  }
   puz.idx = 0; for (var i=0;i<puz.list.length;i++) if (puz.list[i].id === id) { puz.idx = i; break; }
   puzOpenOverlay();
   puzLoad();
@@ -32008,7 +32184,8 @@ function puzLoad() {
   var _mb = document.getElementById('puz-mute'); if (_mb) { var _on = puzSndCfg().on; _mb.textContent = _on?'🔊':'🔇'; _mb.title = (_on?'Silenciar':'Activar') + ' sonidos'; }
   puzSfOff();
   puzResolveSrcGame(p);   // identifica la partida original del pool; el boton recien aparece al resolver el ejercicio
-  document.getElementById('puz-lvl-badge').textContent = PUZ_LVL_SHORT[puz.level] || '';
+  // Con tema elegido la insignia dice el TEMA (el nivel no se aplicó para armar la lista).
+  document.getElementById('puz-lvl-badge').textContent = puz.tema ? puzTemaLabel(puz.tema) : (PUZ_LVL_SHORT[puz.level] || '');
   var side = p.sideToMove === 'w' ? 'Blancas' : 'Negras';
   document.getElementById('puz-prompt').innerHTML = '<span class="dot ' + p.sideToMove + '"></span> Juegan ' + side + ' — encontrá la mejor jugada';
   puzSetFb('aim', '🎯', 'Es tu turno. Mové la pieza que resuelve la posición.');

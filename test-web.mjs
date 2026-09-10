@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 590;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 607;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -2443,6 +2443,63 @@ console.log('\n=== 37. El id del torneo viaja con las partidas del perfil ===');
   chk(!/>Match</.test(htmlRaro) && /Des 1/.test(htmlRaro),
       'con una puntuación distinta a 2/1/0 no se rotula nada (queda Des 1)');
 }
+
+console.log('\n=== 26. Filtro por TEMA de los ejercicios (chips que se cuentan solos) ===');
+{
+  // Los chips NO son una lista fija: salen de contar puzzles.json. Se prueba con datos
+  // de mentira que el piso se respete, que los mates se agrupen y que filtre bien.
+  // Ojo: hasta el primer ';' nomás. Con ';\n' fallaba, porque estas declaraciones
+  // llevan un comentario DESPUÉS del punto y coma, en el mismo renglón.
+  const decl = (n) => {
+    const m = SRC.match(new RegExp('var ' + n + ' = [\\s\\S]*?;'));
+    if (!m) throw new Error('no encontré la declaración de ' + n + ' en index.html');
+    return m[0] + '\n';
+  };
+  const src = decl('PUZ_TEMA_MIN') + decl('PUZ_TEMA_SKIP') + decl('PUZ_MOTIF_LABEL') + decl('PUZ_SEC_LABEL')
+    + extraerFuncion('_puzTemaLabel') + extraerFuncion('_puzEsTema')
+    + extraerFuncion('puzTemas') + extraerFuncion('puzForTema') + extraerFuncion('puzTemaLabel');
+  const mk = (id, themes, section) => ({ id, themes, section: section || 'tactics', difficulty: 1200 });
+  const PUZZLES = [];
+  for (let i = 0; i < 31; i++) PUZZLES.push(mk('h' + i, ['horquilla', 'short']));
+  for (let i = 0; i < 29; i++) PUZZLES.push(mk('c' + i, ['clavada', 'short']));        // 29: no llega al piso
+  for (let i = 0; i < 30; i++) PUZZLES.push(mk('m4' + i, ['mate', 'mateIn' + (4 + i % 3)], 'mates'));
+  for (let i = 0; i < 40; i++) PUZZLES.push(mk('m1' + i, ['mate', 'mateIn1'], 'mates'));
+  for (let i = 0; i < 50; i++) PUZZLES.push(mk('t' + i, ['tablas', 'defensa'], 'defensa'));  // 'tablas' vetado
+  for (let i = 0; i < 12; i++) PUZZLES.push(mk('f' + i, ['final'], 'finales'));        // 12: sección chica
+  PUZZLES.push(Object.assign(mk('oculto', ['horquilla']), { hidden: true }));
+  const _shuffleCmp = (a, b) => (a.id < b.id ? -1 : 1);
+  const F = new Function('PUZZLES', '_shuffleCmp',
+    src + '; return { puzTemas, puzForTema, puzTemaLabel, _puzEsTema };')(PUZZLES, _shuffleCmp);
+
+  const t = F.puzTemas();
+  // Las SECCIONES son la respuesta a "¿y el tema Defensa?": no es un theme, es la sección.
+  const secIds = t.secciones.map((x) => x.id);
+  chk(secIds.includes('sec:defensa'), 'la sección Defensa tiene su propio chip');
+  chk(!secIds.includes('sec:finales'), 'y una sección de 12 no llega al piso');
+  chk(t.secciones[0] && t.secciones[0].id === 'sec:mates',
+      'las secciones salen en el orden fijo de PUZ_SEC_LABEL, no por cantidad', t.secciones[0] && t.secciones[0].id);
+  chk(F.puzForTema('sec:defensa').length === 50 && F.puzForTema('sec:defensa').every((p) => p.section === 'defensa'),
+      'filtrar por sección devuelve exactamente los de esa sección');
+  chk(F.puzTemaLabel('sec:defensa') === 'Defensa', 'la insignia de una sección dice su nombre lindo');
+  chk(!F.puzForTema('sec:defensa').some((p) => p.id === 'horquilla'), 'y no se cruza con los temas');
+  const ids = t.motivos.map((x) => x.id);
+  chk(ids.includes('horquilla'), 'un tema que llega a 30 se gana su chip solo');
+  chk(!ids.includes('clavada'), 'y uno de 29 NO aparece: el piso se respeta');
+  chk(!ids.includes('tablas'), "'tablas' queda vetado: repetía la sección Defensa");
+  chk(t.motivos[0] && t.motivos[0].n === 31, 'el ejercicio oculto no se cuenta', t.motivos[0] && t.motivos[0].n);
+  const mates = t.mates.map((x) => x.id + ':' + x.n);
+  chk(mates.includes('mateIn1:40'), 'los mates en 1 se cuentan aparte', mates.join(' '));
+  chk(mates.includes('mate4+:30'), 'mate en 4, 5 y 6 se suman en un solo chip', mates.join(' '));
+  chk(!mates.some((x) => x.startsWith('mateIn2')), 'y un grupo de mates vacío no dibuja chip');
+  chk(F.puzForTema('horquilla').length === 31, 'filtrar por tema devuelve exactamente los de ese tema');
+  chk(F.puzForTema('mate4+').every((p) => p.themes.some((x) => /^mateIn(\d+)$/.test(x) && +x.slice(6) >= 4)),
+      'y en el chip de 4 o más no se cuela ningún mate corto');
+  chk(F.puzTemaLabel('mate4+') === 'Mate en 4 o más' && F.puzTemaLabel('horquilla') === 'Horquilla',
+      'las etiquetas salen bien para las dos familias');
+  chk(F.puzTemaLabel('tema-nuevo-inventado') === 'Tema nuevo inventado',
+      'un tema que todavía no tiene etiqueta se muestra prolijo igual');
+}
+
 
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
 console.log('   Corrieron ' + corridas + ' de ' + ESPERADAS + ' comprobaciones.'
