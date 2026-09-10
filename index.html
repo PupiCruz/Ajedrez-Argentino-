@@ -1573,6 +1573,11 @@
     #cv-fix-note { margin:0 0 6px; padding:6px 10px; text-align:center; font-size:11.5px; line-height:1.35;
       border-radius:8px; background:rgba(70,180,110,0.10); border:1px solid rgba(95,195,135,0.30); color:#8fc9a6; }
     body.light #cv-fix-note { background:rgba(40,155,90,0.09); border-color:rgba(40,150,85,0.30); color:#2c7a50; }
+    /* Aviso de AJEDREZ 960: sale SOLO cuando la partida abierta es 960 (lo decide el PGN, no una
+       marca del autor). En dorado para no confundirlo con el verde de "la transmisión está
+       corrigiendo": este no avisa de un problema, explica que la fila de atrás está sorteada. */
+    #cv-960-note { margin:0 0 6px; padding:6px 10px; text-align:center; font-size:11.5px; line-height:1.35;
+      border-radius:8px; background:var(--gold-bg); border:1px solid var(--gold-dim); color:var(--gold); }
     /* El nombre de apertura se oculta del visor (ocupa lugar que se usa para agrandar el tablero). */
     .chess-opening { display: none; }
 
@@ -4197,6 +4202,7 @@
     <!-- Aviso: el operador de la transmisión está corrigiendo la partida a mano (mandó variantes y la
          línea principal todavía no avanzó). Evita que parezca que el visor se colgó. -->
     <div id="cv-fix-note" style="display:none">✎ La transmisión está corrigiendo esta partida · se actualiza sola</div>
+    <div id="cv-960-note" style="display:none" title="El enroque también es distinto: el rey va a la columna g (corto) o c (largo) y la torre a f o d, vengan de donde vengan. Si pedís análisis del motor antes de que enroquen, puede sugerir un enroque que en esta partida no existe.">🎲 Ajedrez 960 · las piezas de la última fila salieron sorteadas, no es la posición de siempre</div>
     <div class="chess-mwrap"><div class="chess-mlist" id="cv-moves"></div></div>
 
     <!-- Volver a la jugada en directo (solo transmisiones en vivo, cuando se navegó a otra jugada) -->
@@ -17874,7 +17880,22 @@ function loadPgnIntoViewer(pgn, tourName, tourLoc, activeIdx) {
   if (!ok) tmp.load_pgn(pgn.replace(/\[Variant[^\]]*\]/g,'').replace(/\[UTC[^\]]*\]/g,''));
   var moves = tmp.history({ verbose: true });
   cv.rawPgn = pgn;
-  cv.root = buildTree(moves, parseMovenags(pgn), parseMoveEvals(pgn), parseMoveClocks(pgn));
+  // POSICIÓN INICIAL del PGN ([FEN] + [SetUp]). Sin esto el árbol se armaba SIEMPRE desde la posición
+  // estándar y las jugadas se reproducían sobre un tablero que no era el de la partida: en un
+  // AJEDREZ 960 (Fischer random / freestyle) el visor se trababa a las 4 jugadas de 68. Los otros dos
+  // caminos que arman el árbol (_cvBuildTreeFromPgn y la reconstrucción del vivo) ya lo pasaban; a
+  // éste se le había pasado. También vale para cualquier PGN que arranque de una posición armada.
+  var _fenM = pgn.match(/\[FEN "([^"]+)"\]/);
+  // AJEDREZ 960: las jugadas y las posiciones las arma _replay960 (chess.js no sabe enrocar acá).
+  var _r960 = _replay960(pgn);
+  cv.is960 = !!_r960;
+  if (_r960 && _r960.moves.length) {
+    cv.root = buildTree(_r960.moves, parseMovenags(pgn), parseMoveEvals(pgn), parseMoveClocks(pgn),
+                        _r960.startFen, _r960.fens);
+  } else {
+    cv.root = buildTree(moves, parseMovenags(pgn), parseMoveEvals(pgn), parseMoveClocks(pgn), _fenM ? _fenM[1] : '');
+  }
+  cvRender960Note();
   cv.games = [meta];
   _boardBound = false;
   cvBuildMoveList();
@@ -23480,7 +23501,10 @@ function cvPlayerHtml(title, name, fideId, elo, team, isBlack) {
 }
 
 /* ── Construir árbol desde una lista de movimientos verbose ── */
-function buildTree(moves, nags, evals, clocks, startFen) {
+/* `fens` (opcional): una posición YA CALCULADA por jugada. Lo usa el ajedrez 960, donde el enroque
+   no se puede reproducir con chess.js y las posiciones vienen de _replay960. Sin `fens` todo sigue
+   igual que siempre: se reproducen las jugadas una por una. */
+function buildTree(moves, nags, evals, clocks, startFen, fens) {
   nags = nags || [];
   evals = evals || [];
   clocks = clocks || [];
@@ -23490,8 +23514,8 @@ function buildTree(moves, nags, evals, clocks, startFen) {
   var cur = root;
   for (var i = 0; i < moves.length; i++) {
     var mv = moves[i];
-    tmp.move(mv.san);
-    var child = makeNode(tmp.fen(), { san: mv.san, from: mv.from, to: mv.to, nag: nags[i] || '', ev: evals[i] || null, clk: clocks[i] || null }, cur);
+    if (!(fens && fens[i])) tmp.move(mv.san);
+    var child = makeNode((fens && fens[i]) ? fens[i] : tmp.fen(), { san: mv.san, from: mv.from, to: mv.to, nag: nags[i] || '', ev: evals[i] || null, clk: clocks[i] || null }, cur);
     cur.children.push(child);
     cur = child;
   }
@@ -23861,7 +23885,14 @@ function cvSelect(i) {
 
   cv.rawPgn = g.pgn || '';
   cv.bcFixing = false; cvRenderFixNote();   // partida nueva/reconstruida: el aviso de corrección no aplica
-  cv.root = buildTree(moves, parseMovenags(cv.rawPgn), parseMoveEvals(cv.rawPgn), parseMoveClocks(cv.rawPgn), startFen);
+  // AJEDREZ 960 (mismo camino que loadPgnIntoViewer). `is960` se recalcula SIEMPRE, así al pasar de
+  // una partida 960 a una normal la letra chica se apaga sola.
+  var _r960b = _replay960(cv.rawPgn);
+  cv.is960 = !!_r960b;
+  cvRender960Note();
+  cv.root = (_r960b && _r960b.moves.length)
+    ? buildTree(_r960b.moves, parseMovenags(cv.rawPgn), parseMoveEvals(cv.rawPgn), parseMoveClocks(cv.rawPgn), _r960b.startFen, _r960b.fens)
+    : buildTree(moves, parseMovenags(cv.rawPgn), parseMoveEvals(cv.rawPgn), parseMoveClocks(cv.rawPgn), startFen);
   _boardBound = false;
   cvBuildMoveList();
   faReset();
@@ -24181,6 +24212,13 @@ function _cvBuildTreeFromPgn(pgn) {
   if (typeof Chess === 'undefined' || !pgn) return null;
   var fenM = pgn.match(/\[FEN "([^"]+)"\]/);
   var startFen = fenM ? fenM[1] : '';
+  // AJEDREZ 960: chess.js no sabe enrocar en 960 → load_pgn falla y esto devolvía null, o sea que
+  // el vivo reconstruía la partida entera en CADA refresco (el visitante perdía dónde estaba
+  // mirando y las variantes que probaba). Con _replay960 el árbol sale bien y se puede extender.
+  var _r960c = (typeof _replay960 === 'function') ? _replay960(pgn) : null;
+  if (_r960c && _r960c.moves.length) {
+    return buildTree(_r960c.moves, parseMovenags(pgn), parseMoveEvals(pgn), parseMoveClocks(pgn), _r960c.startFen, _r960c.fens);
+  }
   var tmp = new Chess();
   var ok = tmp.load_pgn(pgn);
   if (!ok) { var clean = pgn.replace(/\[Variant[^\]]*\]/g,'').replace(/\[UTC[^\]]*\]/g,''); ok = tmp.load_pgn(clean); }
@@ -24237,6 +24275,12 @@ function _pgnHasVariations(pgn) {
 function cvRenderFixNote() {
   var el = document.getElementById('cv-fix-note');
   if (el) el.style.display = cv.bcFixing ? 'block' : 'none';
+}
+/* La letra chica del 960. Sale SÓLO si la partida abierta es 960 (lo dice su PGN); en cualquier
+   otra queda oculta. Se llama al cargar cada partida, así al pasar de una 960 a una normal se apaga. */
+function cvRender960Note() {
+  var el = document.getElementById('cv-960-note');
+  if (el) el.style.display = cv.is960 ? 'block' : 'none';
 }
 
 // Aplica `newPgn` (jugadas en vivo) a la partida abierta preservando la navegación del visitante.
@@ -27146,6 +27190,11 @@ function _siSplitGames(text) {
 // jugada — igual criterio que livechesscloud. Si la carga estricta ya anda, la partida se deja intacta.
 function _siFixPgn(pgn) {
   if (typeof Chess === 'undefined') return pgn;
+  // AJEDREZ 960: chess.js no sabe enrocar en 960, así que la carga estricta SIEMPRE falla y este
+  // "arreglo" reescribía la partida sobre el tablero de siempre, cortándola a las 3 o 4 jugadas
+  // (medido con la transmisión de Biel: 8 de 9 partidas quedaban en 1-11 jugadas). Las 960 las lee
+  // _replay960 en el visor, que ya corta el ruido del final por su cuenta: acá no se tocan.
+  if (typeof _pgnIs960 === 'function' && _pgnIs960(pgn)) return pgn;
   var body = pgn.replace(/^\s*(?:\[[^\]]*\]\s*)+/, '');
   var clean = body.replace(/\{[^}]*\}/g, ' ').replace(/\d+\.(\.\.)?/g, ' ');
   var moveTokens = clean.match(/[a-hKQRBNO][^\s{}]+|O-O(?:-O)?/g) || [];
@@ -29948,9 +29997,156 @@ var _tdPieceBase = 'assets/piezas/';   // piezas cburnett bundleadas localmente 
 
 // Devuelve { fen, last:{from,to}|null } de la posición final del PGN. `last` = casillas de la
 // última jugada, para resaltarlas en la miniatura.
-function tdFinalFen(pgn) {
-  var fallback = { fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1', last: null, wc: '', bc: '', ev: null };
+/* POSICIÓN INICIAL declarada en el PGN ([FEN] + [SetUp]), o '' si arranca de la de siempre.
+   La usan los tableritos y el visor: en AJEDREZ 960 (Fischer random / freestyle) las piezas de la
+   última fila están sorteadas y viene la posición en el header. Sin leerla, las jugadas se
+   reproducen sobre un tablero que no es el de la partida y todo se traba a las pocas jugadas. */
+function _pgnStartFen(pgn) {
+  var m = String(pgn || '').match(/\[FEN "([^"]+)"\]/);
+  return m ? m[1] : '';
+}
+
+/* ── AJEDREZ 960 (Fischer random / freestyle) ──────────────────────────────────────────────────
+   chess.js 0.10 hace TODO bien en 960 menos una cosa: el ENROQUE. Ahí el rey no sale de e1 y la
+   torre puede estar en cualquier columna, así que rechaza la jugada y la partida se corta en seco
+   (medido en una transmisión real de Lichess: 4 de 7 partidas cortadas, una a los 18 de 73).
+   En vez de cambiar la librería de ajedrez —que toca el visor, el motor y el PvP— se intercepta
+   SÓLO el enroque: se mueven rey y torre a mano y se le devuelve el tablero a chess.js, que sigue
+   con el resto. La regla del 960 es fija: corto → rey a g, torre a f; largo → rey a c, torre a d.
+   Todo esto corre únicamente si el PGN dice que es 960; una partida normal no pasa por acá. */
+function _pgnIs960(pgn) {
+  var s = String(pgn || '');
+  if (/\[Variant "(Chess ?960|Fischer ?random)"\]/i.test(s)) return true;
+  // Sin el header Variant, vale la posición inicial: si la última fila no es la de siempre, es 960.
+  var sf = _pgnStartFen(s);
+  if (!sf) return false;
+  var filas = sf.split(' ')[0].split('/');
+  return filas.length === 8 && (filas[0] !== 'rnbqkbnr' || filas[7] !== 'RNBQKBNR')
+      && /^[a-zA-Z]{8}$/.test(filas[0]) && /^[a-zA-Z]{8}$/.test(filas[7]);   // sólo la formación inicial completa
+}
+/* Columnas de origen del rey y de las DOS torres de cada bando, leídas de la posición sorteada.
+   La torre del enroque corto es la que está a la DERECHA del rey; la del largo, a su izquierda. */
+function _pgn960Origins(startFen) {
+  var out = {}, filas = String(startFen || '').split(' ')[0].split('/');
+  ['w', 'b'].forEach(function (c) {
+    var fila = c === 'w' ? filas[7] : filas[0];
+    var rey = c === 'w' ? 'K' : 'k', torre = c === 'w' ? 'R' : 'r';
+    var f = 0, kf = -1, torres = [];
+    for (var i = 0; i < (fila || '').length; i++) {
+      var ch = fila[i];
+      if (/\d/.test(ch)) { f += +ch; continue; }
+      if (ch === rey) kf = f;
+      if (ch === torre) torres.push(f);
+      f++;
+    }
+    var der = torres.filter(function (r) { return r > kf; });
+    var izq = torres.filter(function (r) { return r < kf; });
+    out[c] = { kf: kf, K: der.length ? der[der.length - 1] : -1, Q: izq.length ? izq[0] : -1,
+               rank: c === 'w' ? '1' : '8' };
+  });
+  return out;
+}
+/* Aplica un enroque de 960 y devuelve un Chess NUEVO en la posición resultante (null si no se pudo).
+   Se arma el FEN a mano porque chess.js no acepta el movimiento. */
+function _castle960(chess, side, origins, color) {
   try {
+    var FIL = 'abcdefgh', info = origins[color], rank = info.rank;
+    var oCol = (side === 'K') ? info.K : info.Q;
+    if (info.kf < 0 || oCol < 0) return null;
+    var kFrom = FIL[info.kf] + rank, rFrom = FIL[oCol] + rank;
+    var kTo = (side === 'K' ? 'g' : 'c') + rank, rTo = (side === 'K' ? 'f' : 'd') + rank;
+    var tab = {};
+    for (var i = 0; i < 8; i++) for (var r = 1; r <= 8; r++) {
+      var sq = FIL[i] + r, p = chess.get(sq); if (p) tab[sq] = p;
+    }
+    // El rey tiene que seguir en su casilla de origen y la torre en la suya: si no, este enroque no
+    // es el que dice el PGN y es mejor no inventar nada.
+    if (!tab[kFrom] || tab[kFrom].type !== 'k' || tab[kFrom].color !== color) return null;
+    if (!tab[rFrom] || tab[rFrom].type !== 'r' || tab[rFrom].color !== color) return null;
+    delete tab[kFrom]; delete tab[rFrom];
+    tab[kTo] = { type: 'k', color: color }; tab[rTo] = { type: 'r', color: color };
+    var filas = [];
+    for (var rr = 8; rr >= 1; rr--) {
+      var s = '', vac = 0;
+      for (var j = 0; j < 8; j++) {
+        var pz = tab[FIL[j] + rr];
+        if (!pz) { vac++; continue; }
+        if (vac) { s += vac; vac = 0; }
+        s += (pz.color === 'w') ? pz.type.toUpperCase() : pz.type;
+      }
+      if (vac) s += vac;
+      filas.push(s);
+    }
+    var vie = chess.fen().split(' ');
+    var der = (vie[2] || '-').replace(color === 'w' ? /[KQ]/g : /[kq]/g, '') || '-';
+    var nf = [filas.join('/'), (color === 'w' ? 'b' : 'w'), der, '-',
+              String((+vie[4] || 0) + 1), String(color === 'w' ? (+vie[5] || 1) : (+vie[5] || 1) + 1)].join(' ');
+    var c2 = new Chess();
+    return c2.load(nf) ? c2 : null;
+  } catch (e) { return null; }
+}
+/* Reproduce una partida de 960 entera. Devuelve { startFen, moves:[{san,from,to}], fens:[] } —
+   una posición por jugada, ya calculadas— o null si el PGN no es de 960 o no se pudo. */
+function _replay960(pgn) {
+  if (typeof Chess === 'undefined' || !_pgnIs960(pgn)) return null;
+  var sf = _pgnStartFen(pgn);
+  if (!sf) return null;
+  try {
+    var origins = _pgn960Origins(sf);
+    var sep = pgn.indexOf('\n\n');
+    var mvTxt = sep >= 0 ? pgn.slice(sep + 2) : pgn;
+    mvTxt = mvTxt.replace(/\{[^{}]*\}/g, ' ').replace(/;[^\n]*/g, ' ');
+    var out = '', depth = 0;                       // fuera las variantes
+    for (var i = 0; i < mvTxt.length; i++) {
+      var ch = mvTxt[i];
+      if (ch === '(') depth++; else if (ch === ')') { if (depth > 0) depth--; }
+      else if (depth === 0) out += ch;
+    }
+    var toks = out.replace(/\$\d+/g, ' ').replace(/\d+\.(\.\.)?/g, ' ')
+                  .replace(/(1-0|0-1|1\/2-1\/2|\*)/g, ' ').replace(/[!?]+/g, '')
+                  .split(/\s+/).filter(function (t) { return t.length > 0; });
+    var c = new Chess(sf), moves = [], fens = [];
+    for (var k = 0; k < toks.length; k++) {
+      var t = toks[k];
+      if (/^[0O]-[0O](-[0O])?[+#]?$/.test(t)) {     // enroque (Lichess escribe O-O; hay PGN con 0-0)
+        var lado = (t.replace(/[^0O-]/g, '').length > 3) ? 'Q' : 'K';
+        var color = c.turn(), inf = origins[color];
+        var FIL = 'abcdefgh';
+        var kF = FIL[inf.kf] + inf.rank, kT = (lado === 'K' ? 'g' : 'c') + inf.rank;
+        var nc = _castle960(c, lado, origins, color);
+        if (!nc) break;
+        c = nc; moves.push({ san: t, from: kF, to: kT }); fens.push(c.fen());
+        continue;
+      }
+      var mv = c.move(t, { sloppy: true });
+      if (!mv) break;
+      moves.push({ san: mv.san, from: mv.from, to: mv.to }); fens.push(c.fen());
+    }
+    return { startFen: sf, moves: moves, fens: fens };
+  } catch (e) { return null; }
+}
+function tdFinalFen(pgn) {
+  // Sin posición propia, la de siempre. Con posición propia (960), ESA es la del tablero vacío:
+  // si la partida todavía no tiene jugadas, la miniatura tiene que mostrar la formación sorteada.
+  var _sf = _pgnStartFen(pgn);
+  var fallback = { fen: _sf || 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1', last: null, wc: '', bc: '', ev: null };
+  try {
+    // AJEDREZ 960: camino aparte, porque el enroque corta a chess.js (ver _replay960). Sólo entra
+    // si el PGN dice que es 960; el resto de los torneos ni pasa por acá.
+    var _r960 = _replay960(pgn);
+    if (_r960 && _r960.moves.length) {
+      var _ult = _r960.moves[_r960.moves.length - 1];
+      var _c960 = parseMoveClocks(pgn), _w960 = '', _b960 = '';
+      for (var _q = _c960.length - 1; _q >= 0; _q--) {
+        if (_c960[_q] === undefined) continue;
+        if (_q % 2 === 0) { if (!_w960) _w960 = _c960[_q]; } else { if (!_b960) _b960 = _c960[_q]; }
+        if (_w960 && _b960) break;
+      }
+      var _e960 = null, _es960 = parseMoveEvals(pgn);
+      for (var _p = _es960.length - 1; _p >= 0; _p--) { if (_es960[_p]) { _e960 = _es960[_p]; break; } }
+      return { fen: _r960.fens[_r960.fens.length - 1], last: { from: _ult.from, to: _ult.to },
+               wc: _w960, bc: _b960, ev: _e960 };
+    }
     // Relojes: último [%clk] de cada lado (jugadas pares = blancas, impares = negras).
     var _clk = parseMoveClocks(pgn), _wc = '', _bc = '';
     for (var _ci = _clk.length - 1; _ci >= 0; _ci--) {
@@ -29982,16 +30178,21 @@ function tdFinalFen(pgn) {
     // 4) Quitar NAGs y colapsar espacios → movetext limpio "1. e4 c6 2. d4 ..."
     var clean = out.replace(/\$\d+/g, ' ').replace(/\s+/g, ' ').trim();
 
-    // 5) load_pgn sobre el movetext limpio (sin headers ni comentarios)
+    // 5) load_pgn sobre el movetext limpio (sin headers ni comentarios). Si la partida arranca de una
+    //    posición propia (960), se le vuelven a poner SOLO los dos headers que chess.js entiende:
+    //    `new Chess(fen)` NO sirve acá, porque load_pgn RESETEA el tablero antes de leer las jugadas
+    //    (comprobado: con new Chess(fen) reproduce 4 jugadas de 68; con los headers, las 68).
     var c = new Chess();
-    if (c.load_pgn(clean) && c.history().length > 0) {
+    var _pre = _sf ? ('[SetUp "1"]\n[FEN "' + _sf + '"]\n\n') : '';
+    if (c.load_pgn(_pre + clean) && c.history().length > 0) {
       var hv = c.history({ verbose: true });
       var lm = hv.length ? hv[hv.length - 1] : null;
       return { fen: c.fen(), last: lm ? { from: lm.from, to: lm.to } : null, wc: _wc, bc: _bc, ev: _ev };
     }
 
-    // 6) Respaldo: aplicar jugadas una por una
-    var c2 = new Chess();
+    // 6) Respaldo: aplicar jugadas una por una. Acá SÍ sirve arrancar de la posición propia, porque
+    //    no hay load_pgn de por medio que resetee el tablero.
+    var c2 = _sf ? new Chess(_sf) : new Chess();
     var tokens = clean
       .replace(/\d+\.(\.\.)?/g, ' ')
       .replace(/(1-0|0-1|1\/2-1\/2|\*)/g, ' ')
@@ -30030,7 +30231,9 @@ function tdFinalFenCached(pgn) {
   var f = tdFinalFen(pgn);
   // NO cachear un parseo fallido: posición inicial cuando el PGN sí tiene jugadas (p.ej. chess.js
   // no estaba listo). Así se reintenta en el próximo render en vez de quedar pegado en la inicial.
-  if (f.fen.split(' ')[0] === 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR' && _pgnHasMoves(pgn)) return f;
+  // La "inicial" es la del PGN: en un 960 es la sorteada, no la de siempre.
+  var _ini = (_pgnStartFen(pgn) || 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR').split(' ')[0];
+  if (f.fen.split(' ')[0] === _ini && _pgnHasMoves(pgn)) return f;
   _tdFenCache[k] = f;
   _capCache(_tdFenCache, 200);   // con la clave corta el caché pesa poco, pero igual va con tope
   return f;

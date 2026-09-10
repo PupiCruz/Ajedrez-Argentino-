@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 628;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 655;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -2622,6 +2622,164 @@ console.log('\n=== 26. Filtro por TEMA de los ejercicios (chips que se cuentan s
       'el editor por categoría ofrece Sistema y Rama');
   chk(SRC.includes("var _sel = (cur != null && cur !== '') ? String(cur) : (cf.def || '');"),
       'y el desplegable abre en el valor guardado (antes estaba clavado en "standard")');
+}
+
+// ── 44. Ajedrez 960 (Fischer random / freestyle): la posición inicial del PGN ───────────────────
+// Lo preguntó el autor (10/09/2026) al cargar las categorías "960" de los Juegos Suramericanos:
+// ¿la web dibujaría bien las piezas si hay transmisión? NO: la posición inicial viene en el header
+// [FEN] del PGN (Lichess lo manda con [Variant "Chess960"] y [SetUp "1"]) y había DOS lugares que la
+// ignoraban — los tableritos de la grilla (tdFinalFen) y el visor (loadPgnIntoViewer). Las jugadas
+// se reproducían sobre el tablero de siempre y se trababan a las 4 jugadas de 68.
+{
+  console.log('\n=== 44. Ajedrez 960: la posición inicial del PGN ===');
+  const SF = new Function(extraerFuncion('_pgnStartFen') + ' return _pgnStartFen;')();
+  const F960 = 'rkbrnnqb/pppppppp/8/8/8/8/PPPPPPPP/RKBRNNQB w KQkq - 0 1';
+
+  chk(SF('[FEN "' + F960 + '"]\n\n1. d4') === F960, 'se lee la posición inicial del header [FEN]');
+  chk(SF('[White "A"]\n\n1. e4 e5') === '', 'y una partida normal no declara ninguna (queda vacía)');
+
+  // El PGN tal cual lo manda Lichess en una transmisión de 960.
+  const pgn960 = '[Event "Round 7: A - B"]\n[White "A"]\n[Black "B"]\n[Result "*"]\n'
+               + '[Variant "Chess960"]\n[FEN "' + F960 + '"]\n[SetUp "1"]\n\n'
+               + '1. d4 { [%clk 0:58:05] } 1... f5 2. g4 fxg4 3. Qxg4 Nf6 *';
+
+  const chessSrc = fs.readFileSync(new URL('./assets/chess.min.js', import.meta.url), 'utf8');
+  const _m = { exports: {} };
+  new Function('module', 'exports', 'window', chessSrc)(_m, _m.exports, {});
+  const Chess = _m.exports.Chess || _m.exports;
+
+  // parseMoveClocks/parseMoveEvals NO se recortan del index: llevan expresiones regulares con "{"
+  // y el extractor de este banco cuenta llaves (se corta, ver el aviso de CLAUDE.md). Sólo alimentan
+  // los relojes y la barrita de evaluación, que acá no se miran: van como maniquíes.
+  const TDF = new Function('Chess',
+      extraerFuncion('_pgnStartFen') + extraerFuncion('_pgnIs960') + extraerFuncion('_pgn960Origins')
+    + extraerFuncion('_castle960') + extraerFuncion('_replay960') + extraerFuncion('tdFinalFen')
+    + 'function parseMoveClocks(){ return []; } function parseMoveEvals(){ return []; }'
+    + ' return tdFinalFen;')(Chess);
+  const R960 = new Function('Chess',
+      extraerFuncion('_pgnStartFen') + extraerFuncion('_pgnIs960') + extraerFuncion('_pgn960Origins')
+    + extraerFuncion('_castle960') + extraerFuncion('_replay960')
+    + ' return { replay:_replay960, es960:_pgnIs960 };')(Chess);
+
+  const r960 = TDF(pgn960);
+  chk(r960.fen === 'rkbr1nqb/ppppp1pp/5n2/8/3P2Q1/8/PPP1PP1P/RKBRNN1B w KQkq - 1 4',
+      'el tablerito de un 960 reproduce las 6 jugadas sobre la posición sorteada', r960.fen);
+  chk(r960.fen.split(' ')[0] !== 'rnbqkbnr/ppppp1pp/8/8/3P2p1/8/PPP1PP1P/RNBQKBNR',
+      'y NO la que salía antes, reproducida sobre el tablero de siempre');
+
+  // Sin jugadas todavía, la miniatura muestra la formación SORTEADA (no la de siempre).
+  const vacio = TDF('[FEN "' + F960 + '"]\n[SetUp "1"]\n\n*');
+  chk(vacio.fen.split(' ')[0] === 'rkbrnnqb/pppppppp/8/8/8/8/PPPPPPPP/RKBRNNQB',
+      'una partida de 960 sin jugadas muestra la formación sorteada', vacio.fen.split(' ')[0]);
+
+  // Una partida NORMAL no cambia en nada.
+  const normal = TDF('[White "A"]\n[Black "B"]\n\n1. e4 e5 2. Nf3 Nc6 *');
+  chk(normal.fen === 'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3',
+      'y una partida normal sigue dando exactamente lo mismo que antes', normal.fen);
+
+  // ── El ENROQUE de 960, que es lo que chess.js no sabe hacer ──
+  // Regla fija: corto → rey a la columna g y torre a la f; largo → rey a c y torre a d, vengan de
+  // donde vengan. En esta formación el rey blanco arranca en b1 y las torres en a1 (lado dama) y d1.
+  const ORI = R960.origenes ? null : null;   // (los orígenes se calculan adentro de _replay960)
+  chk(R960.es960('[Variant "Chess960"]\n\n1. d4') === true, 'una partida marcada Chess960 se reconoce');
+  chk(R960.es960('[White "A"]\n\n1. e4 e5') === false, 'y una partida normal NO');
+  chk(R960.es960('[FEN "r3k2r/ppp2ppp/2n5/8/8/2N5/PPP2PPP/R3K2R w KQkq - 0 1"]\n\n1. O-O') === false,
+      'y un ejercicio con posición armada tampoco (no es una formación inicial sorteada)');
+
+  // Enroque LARGO de las blancas: rey b1 → c1, torre a1 → d1 (c1 y d1 ya despejadas).
+  const largo = R960.replay('[Variant "Chess960"]\n[FEN "' + F960 + '"]\n[SetUp "1"]\n\n'
+    + '1. d4 d5 2. b3 b6 3. Bb2 Bb7 4. Rd3 Rd6 5. O-O-O *');
+  chk(!!largo && largo.moves.length === 9 && largo.moves[8].san === 'O-O-O',
+      'el enroque largo se reproduce en vez de cortar la partida',
+      largo && (largo.moves.length + ' jugadas'));
+  chk(!!largo && largo.fens[8].split(' ')[0].split('/')[7] === '2KRNNQB',
+      'y deja rey en c1 y torre en d1 (a1 y b1 vacías)',
+      largo && largo.fens[8].split(' ')[0].split('/')[7]);
+  chk(!!largo && largo.fens[8].split(' ')[2] === 'kq',
+      'las blancas pierden sus derechos de enroque y las negras conservan los suyos');
+  chk(!!largo && largo.moves[8].from === 'b1' && largo.moves[8].to === 'c1',
+      'el resaltado del último movimiento va del rey a su casilla nueva');
+
+  // Y la partida SIGUE después del enroque (era justo donde se cortaba).
+  const sigue = R960.replay('[Variant "Chess960"]\n[FEN "' + F960 + '"]\n[SetUp "1"]\n\n'
+    + '1. d4 d5 2. b3 b6 3. Bb2 Bb7 4. Rd3 Rd6 5. O-O-O O-O-O 6. e4 e5 *');
+  chk(!!sigue && sigue.moves.length === 12,
+      'y las jugadas de después del enroque se siguen leyendo', sigue && sigue.moves.length);
+  chk(!!sigue && sigue.fens[9].split(' ')[0].split('/')[0] === '2krnnqb',
+      'las negras enrocan igual (rey c8, torre d8)', sigue && sigue.fens[9].split(' ')[0].split('/')[0]);
+
+  // Una partida normal NO pasa por el camino del 960.
+  chk(R960.replay('[White "A"]\n[Black "B"]\n\n1. e4 e5 2. Nf3 *') === null,
+      'una partida normal ni entra al camino del 960');
+
+  // El visor: el mismo dato tiene que llegar al árbol de jugadas.
+  chk(/var _fenM = pgn\.match\(\/\\\[FEN "\(\[\^"\]\+\)"\\\]\/\);/.test(SRC)
+   && /buildTree\(moves, parseMovenags\(pgn\), parseMoveEvals\(pgn\), parseMoveClocks\(pgn\), _fenM \? _fenM\[1\] : ''\)/.test(SRC),
+      'el visor le pasa la posición inicial al árbol de jugadas');
+  chk(SRC.includes("var _pre = _sf ? ('[SetUp \"1\"]\\n[FEN \"' + _sf + '\"]\\n\\n') : '';"),
+      'y los tableritos se la reinyectan como header (new Chess(fen) no sirve: load_pgn resetea)');
+
+  // La letra chica: SÓLO en las partidas 960, y se apaga sola al abrir una normal.
+  chk(/function cvRender960Note\(\)[\s\S]{0,220}el\.style\.display = cv\.is960 \? 'block' : 'none';/.test(SRC),
+      'la letra chica del 960 se muestra sólo si la partida abierta es 960');
+  chk((SRC.match(/cv\.is960 = !!_r960/g) || []).length >= 2,
+      'y los DOS caminos que abren una partida la recalculan (si no, quedaría prendida al cambiar)');
+  chk(SRC.includes('id="cv-960-note" style="display:none"'),
+      'arranca oculta');
+}
+
+// ── 45. 960: el "arreglo" de PGN sucio no puede reescribir una partida de 960 ─────────────────
+// Lo cazó el autor (10/09/2026) probando la transmisión de Biel en modo autor: el tablero arrancaba
+// bien y salía la letra chica, pero TODAS las partidas se cortaban a las 3 o 4 jugadas. El culpable
+// no era el lector de 960 sino _siFixPgn, que corre al ABRIR cualquier partida del torneo: como
+// chess.js no sabe enrocar en 960, su carga estricta falla SIEMPRE y entonces regeneraba las jugadas
+// sobre el tablero de siempre, cortando en la primera que no fuera legal ahí. Medido contra la ronda
+// 1 real: 8 de 9 partidas quedaban en 1-11 jugadas (de 11, 94, 59, 119, 79, 35, 38 y 60).
+{
+  console.log('\n=== 45. 960: el arreglo de PGN sucio deja en paz a las 960 ===');
+  const chessSrc45 = fs.readFileSync(new URL('./assets/chess.min.js', import.meta.url), 'utf8');
+  const _m45 = { exports: {} };
+  new Function('module', 'exports', 'window', chessSrc45)(_m45, _m45.exports, {});
+  const Chess45 = _m45.exports.Chess || _m45.exports;
+
+  // OJO: _siFixPgn NO se puede recortar con extraerFuncion: lleva expresiones regulares con "{"
+  // y el extractor cuenta llaves (mismo aviso que en la 44). Como es una funcion de primer nivel,
+  // la cortamos hasta su "}" pegado al margen.
+  const recorteTop = function(nombre) {
+    const i = SRC.indexOf('function ' + nombre + '(');
+    const m = /\r?\n\}\r?\n/.exec(SRC.slice(i));
+    return SRC.slice(i, i + m.index + m[0].length);
+  };
+  const FIX = new Function('Chess',
+      extraerFuncion('_pgnStartFen') + extraerFuncion('_pgnIs960') + recorteTop('_siFixPgn')
+    + ' return _siFixPgn;')(Chess45);
+  const REP = new Function('Chess',
+      extraerFuncion('_pgnStartFen') + extraerFuncion('_pgnIs960') + extraerFuncion('_pgn960Origins')
+    + extraerFuncion('_castle960') + extraerFuncion('_replay960') + ' return _replay960;')(Chess45);
+
+  const F45 = 'rkbrnnqb/pppppppp/8/8/8/8/PPPPPPPP/RKBRNNQB w KQkq - 0 1';
+  const p960 = '[Event "Round 1: A - B"]\n[White "A"]\n[Black "B"]\n[Result "*"]\n'
+             + '[Variant "Chess960"]\n[FEN "' + F45 + '"]\n[SetUp "1"]\n\n'
+             + '1. d4 d5 2. b3 b6 3. Bb2 Bb7 4. Rd3 Rd6 5. O-O-O O-O-O 6. e4 e5 *';
+  chk(FIX(p960) === p960, 'una partida de 960 sale INTACTA del arreglo de PGN sucio');
+  const rr = REP(FIX(p960));
+  chk(!!rr && rr.moves.length === 12,
+      'y por eso el visor la abre entera, no cortada en las primeras jugadas', rr && rr.moves.length);
+
+  // El caso que motivó _siFixPgn (tableros DGT que dejan ruido ilegal al final) sigue funcionando.
+  const sucio = '[White "A"]\n[Black "B"]\n[Result "*"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Qh8 *';
+  const arreglado = FIX(sucio);
+  chk(arreglado !== sucio && /a6/.test(arreglado) && !/Qh8/.test(arreglado),
+      'una partida normal con ruido ilegal al final se sigue cortando ahí', arreglado);
+  const limpio = '[White "A"]\n[Black "B"]\n[Result "*"]\n\n1. e4 e5 2. Nf3 Nc6 *';
+  chk(FIX(limpio) === limpio, 'y una partida normal limpia no se toca');
+
+  // El tercer camino que arma el árbol (el del VIVO, que extiende sin reconstruir) también sabe 960:
+  // si no, cada refresco de la transmisión reconstruía todo y el visitante perdía dónde miraba.
+  chk(/function _cvBuildTreeFromPgn[\s\S]{0,700}_replay960\(pgn\)/.test(SRC),
+      'el árbol del vivo también pasa por el lector de 960');
+  chk(/function _siFixPgn[\s\S]{0,600}_pgnIs960\(pgn\)\) return pgn;/.test(SRC),
+      'y el arreglo de PGN sucio tiene el candado del 960 al principio');
 }
 
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
