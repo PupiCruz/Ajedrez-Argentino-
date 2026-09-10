@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 607;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 613;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -2500,6 +2500,76 @@ console.log('\n=== 26. Filtro por TEMA de los ejercicios (chips que se cuentan s
       'un tema que todavía no tiene etiqueta se muestra prolijo igual');
 }
 
+
+// ── 42. Cuadro cruzado INDIVIDUAL con doble ronda ──────────────────────────────────────────────
+// En un doble round robin la misma pareja juega DOS veces (ida y vuelta, colores cambiados). El
+// cuadro tenía UNA casilla por pareja con un `if(cell==null)`: se quedaba con la primera partida y
+// tiraba la revancha. Y como los puntos de la fila se suman de las casillas, el total quedaba corto.
+// Lo vio el autor (10/09/2026) en Leyendas y Prodigios II: Anton Guijarro con 4 cuando Chess-Results
+// ya le daba 4½. Peor en los DUELOS de 2 jugadores: un match a 6 partidas mostraba 0 y 1.
+// Chess-Results escribe los dos resultados juntos en la misma celda ("1 ½") y eso es lo que se copió.
+{
+  console.log('\n=== 42. Cuadro cruzado individual con doble ronda ===');
+  const XT = new Function(
+      extraerFuncion('crBuildCrosstable') + extraerFuncion('crPtsStr')
+    + 'var _ondemand = true;'                                  // modo lectura: sin onclick de autor
+    + 'function _crMaybeBakeFeds(){} function _crFlushFideFlags(){} function _crIsAuthor(){ return false; }'
+    + 'function crFedMissingCount(){ return 0; } function crTitleBadge(t){ return t?("<b>"+t+"</b>"):""; }'
+    + 'function crFlagEmoji(){ return ""; } function _tourIsESRegional(){ return false; }'
+    + 'function _esRegFlag(){ return ""; } function _crFideFlagSlot(){ return ""; }'
+    + 'function escHtml(s){ return String(s==null?"":s); } function crArg(s){ return JSON.stringify(String(s)); }'
+    + ' return crBuildCrosstable;')();
+
+  // Ayudante: los puntos de cada fila, leyendo la última celda de cada renglón del HTML.
+  const puntos = (html) => (html.match(/<td style="[^"]*font-weight:700;color:var\(--gold\)">([^<]*)<\/td>/g) || [])
+    .map(td => td.replace(/.*">/, '').replace('</td>', '').trim());
+
+  // DUELO: dos jugadores, cuatro partidas. Antes se veía una sola.
+  const duelo = { standings: [{ name: 'Quezada, Franco' }, { name: 'Yepleue, Angel Omar' }], rounds: {
+    1: [{ w: 'Quezada, Franco',     b: 'Yepleue, Angel Omar', res: '1-0' }],
+    2: [{ w: 'Yepleue, Angel Omar', b: 'Quezada, Franco',     res: '0-1' }],
+    3: [{ w: 'Quezada, Franco',     b: 'Yepleue, Angel Omar', res: '½-½' }],
+    4: [{ w: 'Yepleue, Angel Omar', b: 'Quezada, Franco',     res: '1-0' }]
+  } };
+  const hDuelo = XT('cr2_x', duelo);
+  chk(JSON.stringify(puntos(hDuelo)) === JSON.stringify(['2½', '1½']),
+      'un duelo a 4 partidas suma las 4 (antes se quedaba con la primera)', JSON.stringify(puntos(hDuelo)));
+  chk((hDuelo.match(/R1 ·/g) || []).length >= 1 && (hDuelo.match(/R4 ·/g) || []).length >= 1,
+      'y cada partida conserva su ronda y su color en el globito');
+
+  // DOBLE ROUND ROBIN de 3: cada pareja se cruza dos veces.
+  const drr = { standings: [{ name: 'A' }, { name: 'B' }, { name: 'C' }], rounds: {
+    1: [{ w: 'A', b: 'B', res: '1-0' }],
+    2: [{ w: 'C', b: 'A', res: '0-1' }],
+    3: [{ w: 'B', b: 'C', res: '½-½' }],
+    4: [{ w: 'B', b: 'A', res: '½-½' }],   // revanchas, colores cambiados
+    5: [{ w: 'A', b: 'C', res: '½-½' }],
+    6: [{ w: 'C', b: 'B', res: '1-0' }]
+  } };
+  const hDrr = XT('cr2_y', drr);
+  chk(JSON.stringify(puntos(hDrr)) === JSON.stringify(['3', '1', '2']),
+      'doble round robin: cada fila suma sus DOS partidas contra cada rival', JSON.stringify(puntos(hDrr)));
+
+  // Y la vuelta de siempre (una sola ronda) no cambia en nada.
+  const simple = { standings: [{ name: 'A' }, { name: 'B' }, { name: 'C' }], rounds: {
+    1: [{ w: 'A', b: 'B', res: '1-0' }],
+    2: [{ w: 'C', b: 'A', res: '0-1' }],
+    3: [{ w: 'B', b: 'C', res: '½-½' }]
+  } };
+  chk(JSON.stringify(puntos(XT('cr2_z', simple))) === JSON.stringify(['2', '½', '½']),
+      'el round robin de una sola vuelta sigue dando lo mismo que siempre',
+      JSON.stringify(puntos(XT('cr2_z', simple))));
+
+  // Una ronda SIN jugar todavía no inventa puntos, y deja la marca de pendiente.
+  const pend = { standings: [{ name: 'A' }, { name: 'B' }], rounds: {
+    1: [{ w: 'A', b: 'B', res: '1-0' }],
+    2: [{ w: 'B', b: 'A', res: '' }]
+  } };
+  const hPend = XT('cr2_w', pend);
+  chk(JSON.stringify(puntos(hPend)) === JSON.stringify(['1', '0']),
+      'la revancha sin jugar no suma puntos', JSON.stringify(puntos(hPend)));
+  chk(hPend.includes('>·</span>'), 'y queda marcada con el puntito de "pendiente"');
+}
 
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
 console.log('   Corrieron ' + corridas + ' de ' + ESPERADAS + ' comprobaciones.'

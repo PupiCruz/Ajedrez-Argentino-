@@ -6910,14 +6910,23 @@ function crBuildCrosstable(key,data){
   if(!N) return '<div style="color:var(--text3);font-size:12px;padding:10px">Sin datos.</div>';
   var pos={}; players.forEach(function(p,i){ pos[p.name]=i; });
   // Matriz de cruces
-  var cell=[]; for(var i=0;i<N;i++){ var row=[]; for(var j=0;j<N;j++) row.push(null); cell.push(row); }
-  Object.keys(data.rounds||{}).forEach(function(rk){
-    var r=parseInt(rk);
-    (data.rounds[rk]||[]).forEach(function(p){
+  // Cada casilla es una LISTA de partidas, no una sola. En un DOBLE ROUND ROBIN la misma pareja se
+  // enfrenta dos veces (ida y vuelta, con los colores cambiados) y antes había una casilla por pareja
+  // con un `if(cell==null)` que se quedaba con la PRIMERA: la revancha se descartaba, y como los
+  // puntos de la fila se suman de las casillas, el total quedaba corto. Caso real (Leyendas y
+  // Prodigios II, 10/09/2026): Anton Guijarro figuraba con 4 cuando Chess-Results ya le daba 4½.
+  // Se ordenan por ronda para que la ida quede antes que la vuelta, igual que en Chess-Results, que
+  // escribe los dos resultados juntos en la misma celda ("1 ½").
+  var cell=[]; for(var i=0;i<N;i++){ var row=[]; for(var j=0;j<N;j++) row.push([]); cell.push(row); }
+  Object.keys(data.rounds||{}).map(Number).filter(function(r){ return !isNaN(r); })
+    .sort(function(a,b){ return a-b; }).forEach(function(r){
+    (data.rounds[r]||[]).forEach(function(p){
       var iw=pos[p.w], ib=pos[p.b];
       if(iw==null||ib==null) return;
-      if(cell[iw][ib]==null) cell[iw][ib]={round:r,res:p.res,white:true,w:p.w,b:p.b};
-      if(cell[ib][iw]==null) cell[ib][iw]={round:r,res:p.res,white:false,w:p.w,b:p.b};
+      var yaW=cell[iw][ib].some(function(x){ return x.round===r; });
+      if(!yaW) cell[iw][ib].push({round:r,res:p.res,white:true,w:p.w,b:p.b});
+      var yaB=cell[ib][iw].some(function(x){ return x.round===r; });
+      if(!yaB) cell[ib][iw].push({round:r,res:p.res,white:false,w:p.w,b:p.b});
     });
   });
   // Puntaje numérico de la fila en un cruce (null si sin resultado).
@@ -6962,24 +6971,28 @@ function crBuildCrosstable(key,data){
       +'</span></td>';
     for(var j=0;j<N;j++){
       if(i===j){ h+='<td style="'+td+';background:var(--bg3)"></td>'; continue; }
-      var c=cell[i][j];
-      if(!c){ h+='<td style="'+td+';color:var(--text3)"></td>'; continue; }
-      var sn=scoreNum(c);
-      if(sn!=null){ rowPts+=sn; played=true; }
+      var cs=cell[i][j];
+      if(!cs.length){ h+='<td style="'+td+';color:var(--text3)"></td>'; continue; }
       // Editar resultados es SOLO del modo autor: en la web publicada (_ondemand) la
       // tabla es de lectura (sin cursor de mano, sin onclick, sin "clic para cambiar").
       var canEdit=!_ondemand;
-      var onclk=canEdit?' onclick="crCycleResult('+crArg(key)+','+(c.round==null?'null':c.round)+','+crArg(pl.name)+','+crArg(players[j].name)+')"':'';
       var cur=canEdit?';cursor:pointer':'';
-      if(sn!=null){
-        var sc=scoreStr(sn);
-        var col=sc==='½'?'var(--gold)':(sc==='1'?'#4caf50':'#e05555');
-        var tip='R'+c.round+' · '+(c.white?'⬜':'⬛')+' vs '+escHtml(players[j].name)+' · '+escHtml(c.res)+(canEdit?' · clic para cambiar':'');
-        h+='<td style="'+td+';font-weight:700;color:'+col+cur+'" title="'+tip+'"'+onclk+'>'+sc+'</td>';
-      } else {
+      // Una partida por ranura: con doble ronda son dos, y cada una se edita por su cuenta (cada
+      // clic tiene que saber de QUÉ ronda es, si no la vuelta pisaría a la ida).
+      var partes=cs.map(function(c){
+        var sn=scoreNum(c);
+        if(sn!=null){ rowPts+=sn; played=true; }
+        var onclk=canEdit?' onclick="crCycleResult('+crArg(key)+','+(c.round==null?'null':c.round)+','+crArg(pl.name)+','+crArg(players[j].name)+')"':'';
+        if(sn!=null){
+          var sc=scoreStr(sn);
+          var col=sc==='½'?'var(--gold)':(sc==='1'?'#4caf50':'#e05555');
+          var tip='R'+c.round+' · '+(c.white?'⬜':'⬛')+' vs '+escHtml(players[j].name)+' · '+escHtml(c.res)+(canEdit?' · clic para cambiar':'');
+          return '<span style="font-weight:700;color:'+col+cur+'" title="'+tip+'"'+onclk+'>'+sc+'</span>';
+        }
         var tipE='R'+c.round+' · '+(c.white?'⬜':'⬛')+' vs '+escHtml(players[j].name)+(canEdit?' · clic para cargar resultado':'');
-        h+='<td style="'+td+';color:var(--text3)'+cur+'" title="'+tipE+'"'+onclk+'>·</td>';
-      }
+        return '<span style="color:var(--text3)'+cur+'" title="'+tipE+'"'+onclk+'>·</span>';
+      });
+      h+='<td style="'+td+'">'+partes.join('<span style="color:var(--text3);font-weight:400"> </span>')+'</td>';
     }
     h+='<td style="'+td+';font-weight:700;color:var(--gold)">'+(played?crPtsStr(rowPts):'')+'</td>';
     h+='</tr>';
