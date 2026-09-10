@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 613;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 628;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -1067,8 +1067,10 @@ console.log('\n=== 28. Cuándo va la Radiografía y cuándo se hornea ===');
   // forzada a "done". Se le agrega el nombre de la categoría, que sale del sufijo de la clave.
   chk(/_statsBuild\(key, d, _metaCat\)/.test(hornear) && !/_statsBuild\(key, d, metaFin\)/.test(hornear),
       'pero las estadísticas se arman con la meta DE VERDAD, no con la forzada');
-  chk(/_metaCat\.cat = meta\.cats\[/.test(hornear),
+  chk(/var _catObj = meta\.cats\[/.test(hornear) && /_metaCat\.cat = _catObj\.name/.test(hornear),
       'y esa meta lleva el nombre de la categoría (para saber si sus medallas valen)');
+  chk(/if \(_catObj\.rama\) _metaCat\.rama = _catObj\.rama;/.test(hornear),
+      'y también su RAMA, si el autor la marcó con el tilde ⚥');
   chk(/_stSig/.test(extraerFuncion('_statsGet')),
       'y si el torneo avanzó después, la firma no coincide y se recalcula igual (no se publica nada viejo)');
 }
@@ -2569,6 +2571,57 @@ console.log('\n=== 26. Filtro por TEMA de los ejercicios (chips que se cuentan s
   chk(JSON.stringify(puntos(hPend)) === JSON.stringify(['1', '0']),
       'la revancha sin jugar no suma puntos', JSON.stringify(puntos(hPend)));
   chk(hPend.includes('>·</span>'), 'y queda marcada con el puntito de "pendiente"');
+}
+
+// ── 43. Rama y Sistema POR CATEGORÍA ───────────────────────────────────────────────────────────
+// Los XIII Juegos Suramericanos (10/09/2026) tienen 8 categorías: 4 blitz todos-contra-todos y 4
+// rápidos suizos, y cada ritmo con su rama Abs/Fem. Dos cosas no andaban: el nombre "Fem" no se
+// reconocía como femenino (la Radiografía repartía "mejor femenina" en un torneo de mujeres), y el
+// sistema sólo se podía elegir para el torneo entero, no por categoría.
+{
+  console.log('\n=== 43. Rama y Sistema por categoría ===');
+  const FEM = new Function(extraerFuncion('_stSoloFemenino') + ' return _stSoloFemenino;')();
+  const ESFEM = new Function(extraerFuncion('_stSoloFemenino') + extraerFuncion('_stEsFemenino')
+                           + ' return _stEsFemenino;')();
+  const T = 'XIII JUEGOS SURAMERICANOS SANTA FE 2026 ';
+
+  chk(FEM(T + 'Blitz Fem') && FEM(T + 'Rápido Fem') && FEM(T + '960 Blitz Fem'),
+      'la abreviatura "Fem" ahora cuenta como femenino');
+  chk(!FEM(T + 'Blitz Abs') && !FEM(T + '960 Rápido Abs'),
+      'y "Abs" no');
+  chk(!FEM('Campeonato Abs y Fem 2026'),
+      'una sola tabla mixta ("Abs y Fem") SÍ reparte la medalla: no cuenta como femenino');
+
+  // Lo de siempre sigue igual.
+  chk(FEM('77° Campeonato Argentino Superior Femenino') && FEM('World Women Championship')
+   && FEM('Panamericano SUB 14F') && FEM('Torneo de Damas'),
+      'femenino / women / damas / SUB 14F siguen reconociéndose');
+  chk(!FEM('Campeonato de España Individual Absoluto y Femenino'),
+      'y "Absoluto y Femenino" sigue siendo mixto');
+  chk(!FEM('Open Internacional de Ajedrez') && !FEM('IRT Ciudad de Avellaneda'),
+      'un torneo común no se confunde con femenino');
+  // Palabras que CONTIENEN "fem" no alcanzan: la regla exige la palabra suelta.
+  chk(!FEM('Torneo Femiclub Rosario') && !FEM('Copa Fementido'),
+      '"fem" tiene que ser palabra suelta, no un pedazo de otra');
+
+  // El tilde manda sobre el nombre, en los dos sentidos.
+  chk(ESFEM({ rama: 'fem' }, 'Torneo Cualquiera Sin Pistas') === true,
+      'el tilde ⚥ Femenino manda aunque el nombre no diga nada');
+  chk(ESFEM({ rama: 'abs' }, T + 'Blitz Fem') === false,
+      'y el tilde ⚥ Absoluto manda aunque el nombre diga "Fem"');
+  chk(ESFEM({ rama: '' }, T + 'Blitz Fem') === true,
+      'sin tilde, se deduce del nombre como siempre');
+
+  // El cableado: que el dato de la categoría llegue a los dos lados.
+  chk(SRC.includes('if (_cat.rama)                                    rama = _cat.rama;'),
+      'la rama de la CATEGORÍA pisa a la del torneo al abrir el detalle');
+  chk(SRC.includes('if (_catObj.rama) _metaCat.rama = _catObj.rama;'),
+      'y también al hornear la radiografía para publicar');
+  chk(/format:\s*\{ label: '🗂 Sistema de esta categoría'/.test(SRC)
+   && /rama:\s*\{ label: '⚥ Rama de esta categoría'/.test(SRC),
+      'el editor por categoría ofrece Sistema y Rama');
+  chk(SRC.includes("var _sel = (cur != null && cur !== '') ? String(cur) : (cf.def || '');"),
+      'y el desplegable abre en el valor guardado (antes estaba clavado en "standard")');
 }
 
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));

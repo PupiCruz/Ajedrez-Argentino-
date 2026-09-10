@@ -7343,10 +7343,17 @@ function _stTopeEdad(nombre) {
 }
 /* ¿Es sólo de mujeres? "Absoluto y Femenino" NO cuenta: ahí las dos ramas juegan en una sola tabla
    y la mejor femenina sí vale (el Campeonato de España son 142 en una tabla, campeón Pichot). */
+/* ¿El nombre dice que es un torneo SÓLO de mujeres? Se mira el nombre del torneo + el de la
+   categoría (ver _stNombreConCat). Incluye la abreviatura **"Fem"**, que es como el autor rotula las
+   categorías en la práctica (XIII Juegos Suramericanos: "Blitz Fem", "Rápido Fem"…) — sin ella, la
+   Radiografía repartía "mejor femenina" en un torneo de mujeres, donde la mejor femenina ES la
+   campeona. Mismo criterio para "Abs" en la excepción de abajo. */
 function _stSoloFemenino(nombre) {
   var s = String(nombre || '').toLowerCase();
-  if (/\babsoluto\b|\bmixto\b|\bopen\b/.test(s) && /\bfemenin/.test(s)) return false;
-  return /\bfemenin[oa]s?\b|\bwomen\b|\bgirls\b|\bdamas\b|\bsub[\s.-]?\d{1,2}\s?f\b/.test(s);
+  // Excepción: una sola tabla MIXTA que dice las dos ramas ("Absoluto y Femenino", "Abs y Fem")
+  // sí reparte la medalla femenina, porque ahí ser la mejor mujer es un logro de verdad.
+  if (/\babsolut[oa]s?\b|\babs\b|\bmixto\b|\bopen\b/.test(s) && /\bfemenin|\bfem\b/.test(s)) return false;
+  return /\bfemenin[oa]s?\b|\bfem\b|\bwomen\b|\bgirls\b|\bdamas\b|\bsub[\s.-]?\d{1,2}\s?f\b/.test(s);
 }
 function _stSoloVeteranos(nombre) {
   var s = String(nombre || '').toLowerCase();
@@ -7448,7 +7455,15 @@ function _stBakeForPublish(key, d, meta){
     var _metaCat = {};
     for (var mk2 in meta) if (Object.prototype.hasOwnProperty.call(meta, mk2)) _metaCat[mk2] = meta[mk2];
     var _mc2 = String(key).match(/_c(\d+)$/);
-    if (_mc2 && meta.cats && meta.cats[+_mc2[1]]) _metaCat.cat = meta.cats[+_mc2[1]].name || '';
+    if (_mc2 && meta.cats && meta.cats[+_mc2[1]]) {
+      var _catObj = meta.cats[+_mc2[1]];
+      _metaCat.cat = _catObj.name || '';
+      // La RAMA de la categoría manda sobre la del torneo: en un torneo con grupos Absoluto y
+      // Femenino, la rama es de cada grupo. Sin esto, el tilde que puso el autor en la categoría
+      // no llegaba a la radiografía horneada y la medalla de "mejor femenina" se decidía igual
+      // por el nombre.
+      if (_catObj.rama) _metaCat.rama = _catObj.rama;
+    }
     var st = _statsBuild(key, d, _metaCat);
     if (!st) return d;
     var copia = {};
@@ -28573,7 +28588,17 @@ var _TD_CHIP_FIELDS = {
   type:        { label: '🏷 Tipo de esta categoría',   type: 'text',   placeholder: 'Ej: Internacional' },
   rounds:      { label: '🎯 Rondas de esta categoría', type: 'number', placeholder: 'Ej: 9' },
   timeControl: { label: '⏱ Ritmo (tiempo) de esta categoría', type: 'text', placeholder: 'Ej: 90 min + 30 seg' },
-  pace:        { label: '♟ Categoría de ritmo', type: 'select', options: [['standard','♟ Clásico (Standard)'],['rapid','⚡ Rápido'],['blitz','🚀 Blitz']] }
+  pace:        { label: '♟ Categoría de ritmo', type: 'select', def: 'standard',
+                 options: [['standard','♟ Clásico (Standard)'],['rapid','⚡ Rápido'],['blitz','🚀 Blitz']] },
+  // Sistema de juego POR CATEGORÍA. En un torneo mixto (blitz todos-contra-todos + rápidos suizos)
+  // el sistema del torneo no sirve para las dos: decide si se dibuja el CUADRO CRUZADO o la tabla.
+  format:      { label: '🗂 Sistema de esta categoría', type: 'select',
+                 nota: 'Decide si se muestra el cuadro cruzado (todos contra todos) o sólo la tabla.',
+                 options: [['','↩ Usar el del torneo'],['swiss','🇨🇭 Suizo'],['rr','🔄 Todos contra todos']] },
+  // RAMA por categoría: el tilde que evita adivinar por el nombre. Manda sobre "Fem"/"Femenino".
+  rama:        { label: '⚥ Rama de esta categoría', type: 'select',
+                 nota: 'Si la marcás Femenino, la Radiografía no reparte la medalla de "mejor femenina" (ahí la mejor femenina es la campeona).',
+                 options: [['','↩ Detectar por el nombre'],['abs','♟ Absoluto / mixto'],['fem','♀ Femenino']] }
 };
 // Devuelve { cats, save } para leer/escribir el array de categorías del torneo en su almacén.
 function _tdCatStore(type, id) {
@@ -28775,8 +28800,12 @@ function _tdEditCatChip(field) {
   ov.style.cssText = 'position:fixed;inset:0;z-index:100002;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:20px';
   var ctl;
   if (cf.type === 'select') {
+    // OJO: el valor por defecto es del CAMPO (`def`), no fijo. Antes estaba clavado en 'standard'
+    // —el del ritmo—, y un select nuevo cuyas opciones no incluyan ese valor abriría siempre en la
+    // primera opción aunque la categoría ya tuviera algo guardado.
+    var _sel = (cur != null && cur !== '') ? String(cur) : (cf.def || '');
     ctl = '<select id="td-chip-input" class="tz-input">' + cf.options.map(function (o) {
-      return '<option value="' + o[0] + '"' + (((cur || 'standard') === o[0]) ? ' selected' : '') + '>' + o[1] + '</option>';
+      return '<option value="' + o[0] + '"' + ((_sel === o[0]) ? ' selected' : '') + '>' + o[1] + '</option>';
     }).join('') + '</select>';
   } else {
     var _it = cf.type === 'number' ? 'number' : (cf.type === 'date' ? 'date' : 'text');
@@ -28784,7 +28813,7 @@ function _tdEditCatChip(field) {
   }
   ov.innerHTML = '<div style="background:var(--card90);border:1px solid var(--bd22);border-radius:14px;padding:20px;max-width:420px;width:100%;box-shadow:var(--shadow-card)">'
     + '<div style="font-weight:700;color:var(--text);font-size:16px;margin-bottom:4px">' + escHtml(cf.label) + '</div>'
-    + '<div style="color:var(--text3);font-size:12.5px;margin-bottom:14px;line-height:1.4">Solo para la categoría <b style="color:var(--text2)">' + escHtml(catName) + '</b>.' + (cf.type !== 'select' ? ' Dejalo vacío para volver a usar el dato general del torneo.' : '') + '</div>'
+    + '<div style="color:var(--text3);font-size:12.5px;margin-bottom:14px;line-height:1.4">Solo para la categoría <b style="color:var(--text2)">' + escHtml(catName) + '</b>.' + (cf.type !== 'select' ? ' Dejalo vacío para volver a usar el dato general del torneo.' : '') + (cf.nota ? ' ' + escHtml(cf.nota) : '') + '</div>'
     + ctl
     + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px">'
     + '<button onclick="_tdCloseChipEdit()" style="padding:8px 14px;background:var(--gl35);border:1px solid var(--bd22);color:var(--text2);border-radius:9px;cursor:pointer;font-family:inherit;font-size:13px">Cancelar</button>'
@@ -28974,6 +29003,11 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     else if (_cat.startDate || _cat.endDate)          dates = formatDateRangeText(_cat.startDate, _cat.endDate) || dates;   // fecha propia de la categoría
     if (_cat.type)                                    typ = _cat.type;
     if (_cat.format)                                  format = _cat.format;
+    // RAMA por categoría: en un torneo con grupos Absoluto y Femenino, la rama es de LA CATEGORÍA,
+    // no del torneo. Sin esto la Radiografía tenía que adivinarla del nombre, y bastaba con rotular
+    // "Fem" en vez de "Femenino" para que repartiera "mejor femenina" en un torneo de mujeres —donde
+    // la mejor femenina ES la campeona—. Lo pidió el autor: un tilde y listo, sin depender del nombre.
+    if (_cat.rama)                                    rama = _cat.rama;
     // chesscomUrl y weburl (sitio oficial) son del torneo (no por categoría): se conservan para que
     // los botones sigan visibles al cambiar de categoría, igual que el "Sitio oficial".
     pgnGames = [];
@@ -29144,6 +29178,15 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   if (timeControl) h += _chip('⏱ ' + escHtml(timeControl), 'timeControl'); else if (_chipEdit) h += _chipAdd('timeControl', 'Tiempo');
   var _paceLbl = _paceLabel(pace);
   if (_paceLbl) h += _chip(_paceLbl, 'pace');
+  // Sistema y Rama: SÓLO se muestran en modo autor con una categoría abierta. Son ajustes del autor
+  // (deciden el cuadro cruzado y la medalla de mejor femenina), no datos que le sirvan al visitante,
+  // así que no se le agregan dos panelcitos más al encabezado a todo el mundo.
+  if (_chipEdit) {
+    var _fmtLbl = format === 'rr' ? '🗂 Todos contra todos' : (format === 'swiss' ? '🗂 Suizo' : '');
+    if (_fmtLbl) h += _chip(_fmtLbl, 'format'); else h += _chipAdd('format', 'Sistema');
+    var _ramaLbl = rama === 'fem' ? '⚥ Femenino' : (rama === 'abs' ? '⚥ Absoluto' : '');
+    if (_ramaLbl) h += _chip(_ramaLbl, 'rama'); else h += _chipAdd('rama', 'Rama');
+  }
   if (organizer) h += '<span style="' + _chipBase + '" title="Organizador">👥 ' + escHtml(organizer) + '</span>';
   if (director)  h += '<span style="' + _chipBase + '" title="Director/a del torneo">📋 ' + escHtml(director) + '</span>';
   if (arbiter)   h += '<span style="' + _chipBase + '" title="Árbitro principal">⚖ ' + escHtml(arbiter) + '</span>';

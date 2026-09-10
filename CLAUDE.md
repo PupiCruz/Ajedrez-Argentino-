@@ -16,6 +16,15 @@ campeona), la app **lee el NOMBRE**.
 > Es la salida para los torneos de mujeres que no lo dicen en ningún lado (`She Plays 2026`):
 > por el nombre es imposible saberlo. Marcalo y la Radiografía deja de adivinar.
 > Para las otras dos medallas (sub-20 y +50) sigue mandando el nombre; ahí valen las reglas de abajo.
+>
+> **Y en los torneos POR CATEGORÍAS, la Rama es de CADA CATEGORÍA.** Abrí el torneo, entrá a la
+> categoría y tocá el panelcito **⚥ Rama** del encabezado (sólo en modo autor). Es el tilde que
+> evita depender del nombre: en los XIII Juegos Suramericanos hay `Blitz Abs` / `Blitz Fem` /
+> `Rápido Abs` / `Rápido Fem`… y con marcarlas queda cerrado. La de la categoría **pisa** a la del
+> torneo, y viaja a la Radiografía horneada igual que la del torneo.
+> Al lado está **🗂 Sistema** (Suizo / Todos contra todos), por si un torneo mezcla los dos —los
+> blitz todos-contra-todos y los rápidos suizos, mismo caso—: decide si se dibuja el cuadro cruzado
+> o sólo la tabla. Sin tocarlo, la categoría hereda el sistema del torneo.
 
 Se mira el **nombre del torneo + el nombre de la categoría**, juntos. Así que alcanza con que la
 palabra esté en uno de los dos.
@@ -24,9 +33,9 @@ palabra esté en uno de los dos.
 |---|---|---|
 | **Juvenil por edad** | `Sub 14`, `Sub14`, `U16`, `SUB 18A`, `SUB 18F` | no reparte "mejor sub-20" |
 | **Juvenil sin número** | `juvenil`, `juventud`, `cadete`, `infantil`, `junior`, `youth`, `menores` | se toma como tope 20 |
-| **Sólo de mujeres** | `Femenino`, `Femenina`, `Damas`, `Women`, `Girls`, o la categoría `SUB 14F` — **o el campo Rama = Femenino** | no reparte "mejor femenina" |
+| **Sólo de mujeres** | `Femenino`, `Femenina`, **`Fem`**, `Damas`, `Women`, `Girls`, o la categoría `SUB 14F` — **o el campo Rama = Femenino** (del torneo o de la categoría) | no reparte "mejor femenina" |
 | **De veteranos** | `Senior`, `Veteranos`, `+50`, `mayores de 50` | no reparte "mejor +50" |
-| **Mixto con las dos ramas en UNA tabla** | `Absoluto y Femenino` (las dos palabras juntas) | **SÍ** reparte "mejor femenina" |
+| **Mixto con las dos ramas en UNA tabla** | `Absoluto y Femenino` (o `Abs y Fem`) | **SÍ** reparte "mejor femenina" |
 
 **Ejemplos que funcionan bien:**
 - `XXXVI Festival Panamericano de la Juventud 2026` con categorías `SUB 10A`, `SUB 12F`, `SUB 18A`…
@@ -38,8 +47,9 @@ palabra esté en uno de los dos.
 **Cuidados:**
 - **`Sub 2400` / `Sub2000` / `U1700` son topes de RATING y la app los distingue** (exige 1 o 2
   dígitos). No hay nada que hacer: se comportan como un torneo común.
-- Para las categorías, poné **`Absoluto` / `Femenino`** (o el par corto `A` / `F` pegado al número,
-  tipo `SUB 18A`). **`Varones` y `Mujeres` NO se reconocen** hoy.
+- Para las categorías sirve **`Absoluto` / `Femenino`**, la abreviatura **`Abs` / `Fem`**, o el par
+  corto `A` / `F` pegado al número (`SUB 18A`). **`Varones` y `Mujeres` NO se reconocen** hoy.
+  Y si preferís no depender del nombre: el tilde **⚥ Rama** de la categoría.
 - Si el torneo es juvenil pero el nombre no lo dice, poné la edad en la **categoría**: alcanza.
 - Si un torneo mixto se llama sólo "Femenino" por error, se le borra una medalla legítima. Se
   desarma poniendo **Rama = Absoluto / mixto**, sin tocar el nombre.
