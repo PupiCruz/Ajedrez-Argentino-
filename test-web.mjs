@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 769;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 792;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -1740,7 +1740,7 @@ console.log('\n=== 34. La vitrina de trofeos del perfil ===');
   const HTML = new Function('_manifest', 'PLAYERS', '_ondemand', '_troMan',
     "var _AW_KINDS = ['c','2','3','rp','fem','s20','m50','rev'];"
     + SRC.match(/var _TRO_INFO = \{[\s\S]*?\n\};/)[0]
-    + extraerFuncion('_troSello') + extraerFuncion('_troOlimpica')
+    + extraerFuncion('_troSello') + extraerFuncion('_troOlimpica') + extraerFuncion('_troAnio')
     + extraerFuncion('_troCopa') + extraerFuncion('_troMedalla') + extraerFuncion('_troHtml')
     + "function escHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;'); }"
     + "function escJs(s){ return String(s==null?'':s).replace(/\\\\/g,'\\\\\\\\').replace(/'/g,\"\\\\'\"); }"
@@ -1928,6 +1928,79 @@ console.log('\n=== 34. La vitrina de trofeos del perfil ===');
       'están el cartel para cargarlos y el borrado');
   chk(/window\.aaAsk\(\{ icono:'🗑'/.test(SRC),
       'y el borrado pregunta con el cartel de la app, no con el del navegador');
+
+  // ── Editar los trofeos que salen SOLOS (11/09/2026) ────────────────────────────────────────
+  // La copa del 77° Argentino Femenino de Claudia Amura salía como "Campeona" lisa y sin año, al
+  // lado de sus cinco copas argentinas cargadas a mano con bandera y año. Lo pidió el autor: poder
+  // decirle a un automático qué trofeo es y de qué año, sin perder el torneo del que salió.
+  const MANF = {
+    tournaments: [ { id:'tz_5', name:'77° Campeonato Argentino Superior Femenino', startDate:'2026-08-04', endDate:'2026-08-12' },
+                   { id:'tz_6', name:'Abierto Sub 2000', tournamentDates:'4 – 12 Ago 2019' },
+                   { id:'tz_7', name:'Torneo 2021 sin fechas' } ],
+    playerAwards: { 169: [ { t:'tz_5', k:'c', d:'7½ pts' }, { t:'tz_6', k:'2', d:'6 pts', c:1 }, { t:'tz_7', k:'fem', d:'' } ] }
+  };
+  const Ra = HTML(MANF, [], true, () => ({}))({ id:169, female:true });
+  chk(/class="tro-anio">2026</.test(Ra.h), 'un trofeo automático muestra el año de la fecha del torneo');
+  chk(/class="tro-anio">2019</.test(Ra.h), 'y si el torneo no tiene fecha estructurada, el de las fechas escritas');
+  chk(!/class="tro-anio">(2021|2000)</.test(Ra.h), 'el año no se saca del nombre ("Sub 2000" no es un año)');
+  chk(Ra.h.indexOf('tro-edit') < 0, 'en la web publicada no aparece el lápiz');
+
+  const Rae = HTML(MANF, [], false, () => ({}))({ id:169, female:true });
+  chk((Rae.h.match(/class="tro-edit"/g) || []).length === 3 && Rae.h.indexOf('class="tro-del"') < 0,
+      'en modo autor cada automático tiene su lápiz, y ninguno el ✕ de borrar');
+  chk(Rae.h.indexOf("troEditar(169,'tz_5|')") > 0 && Rae.h.indexOf("troEditar(169,'tz_6|1')") > 0,
+      'el lápiz reconoce al trofeo por su torneo y su categoría');
+
+  const corr = () => ({ 169: [ { k:'arg', y:1985, d:'38° Campeonato Argentino Superior Femenino' },
+                               { de:'tz_5|', k:'arg' },
+                               { de:'tz_6|1', y:2018, d:'Zonal' },
+                               { de:'tz_99|', k:'mun', y:1999 } ] });
+  const Rc = HTML(MANF, [], true, corr)({ id:169, female:true });
+  const nomC = [...Rc.h.matchAll(/class="tro-nm">([^<]*?)(?:<span|<\/span>)/g)].map(m => m[1]);
+  chk(nomC.join(' | ') === 'Campeona argentina | Campeona argentina | Subcampeona | Mejor femenina',
+      'corregida a campeona argentina, la copa sube con los títulos mayores y se ordena por año', nomC.join(' | '));
+  chk(Rc.h.indexOf('Campeona argentina<span class="tro-anio">2026<') > 0,
+      'y conserva el año del torneo, que no se tocó');
+  chk((Rc.h.match(/#74acdf/g) || []).length >= 2,
+      'y lleva la bandera dibujada, igual que las cargadas a mano');
+  chk(Rc.det.indexOf('?torneo=tz_5') >= 0 && Rc.det.indexOf('7½ pts') >= 0,
+      'conserva el torneo, su link y el texto que no se tocó');
+  chk(Rc.h.indexOf('Subcampeona<span class="tro-anio">2018<') > 0 && Rc.det.indexOf('Zonal') >= 0,
+      'el año y el texto corregidos pisan a los del torneo');
+  chk(Rc.h.indexOf('Campeona mundial') < 0 && (Rc.h.match(/class="tro /g) || []).length === 4,
+      'la corrección de un trofeo que el torneo ya no da no se dibuja suelta');
+  chk(/<b>2 campeonatos · 1 podio · 1 medalla<\/b>/.test(Rc.h),
+      'el resumen cuenta la corregida como campeonato', (Rc.h.match(/<b>([^<]*)<\/b>/) || [])[1]);
+  const Rce = HTML(MANF, [], false, corr)({ id:169, female:true });
+  chk((Rce.h.match(/class="tro-del"/g) || []).length === 1 && (Rce.h.match(/class="tro-edit"/g) || []).length === 4,
+      'el ✕ sólo en la cargada a mano: las corregidas se deshacen desde el lápiz, no se borran');
+  chk(Rce.h.indexOf('troEditar(169,null,0)') > 0, 'las cargadas a mano también se editan con el lápiz');
+
+  // Qué se guarda al corregir.
+  const CORR = new Function(extraerFuncion('_troCorregir') + ' return _troCorregir;')();
+  const auto5 = { k:'c', y:2026, d:'7½ pts' };
+  const L = [ { k:'arg', y:1985, d:'38° Campeonato Argentino Superior Femenino' } ];
+  CORR(L, 'tz_5|', auto5, 'c', 2026, '7½ pts');
+  chk(L.length === 1, 'guardar sin cambiar nada no anota ninguna corrección');
+  CORR(L, 'tz_5|', auto5, 'arg', 2026, '7½ pts');
+  chk(JSON.stringify(L[1]) === '{"de":"tz_5|","k":"arg"}',
+      'se anota SÓLO lo que cambia (lo demás sigue al día si el torneo se recalcula)', JSON.stringify(L[1]));
+  CORR(L, 'tz_5|', auto5, 'arg', 2025, '7½ pts');
+  chk(L.length === 2 && L[1].y === 2025, 'corregir de nuevo reemplaza, no duplica');
+  CORR(L, 'tz_5|', auto5, 'c', 0, '7½ pts');
+  chk(L.length === 1 && L[0].k === 'arg' && L[0].y === 1985,
+      'dejarlo como salió del torneo borra la corrección y no toca los trofeos a mano');
+
+  chk(/function troEditar\(pid, clave, mi\)/.test(SRC) && /function _troCartel\(pid, clave, mi\)/.test(SRC),
+      'el mismo cartel sirve para agregar, editar y corregir');
+  const cartelTro = extraerFuncion('_troCartel');
+  chk(!/\b(confirm|prompt|alert)\(/.test(cartelTro), 'y es el cartel de la app, no el del navegador');
+  chk(cartelTro.indexOf('tro-f-reset') > 0 && cartelTro.indexOf('como salió del torneo') > 0,
+      'una corrección se deshace desde el mismo cartel');
+  // Guardar un trofeo tiene que encender el aviso de "cambios sin guardar". Antes llamaba a un
+  // _markDirty que no existía, y el aviso (que es por huella) no miraba los trofeos.
+  chk(/function _estadoActualFp\(\)[\s\S]{0,1600}player_trophies/.test(SRC) && SRC.indexOf('_markDirty') < 0,
+      'agregar o corregir un trofeo enciende el aviso de cambios sin guardar (van en la huella)');
 
   // ── El horneado NO pisa el árbol de aperturas ──
   // El autor lo pidió expresamente. _stBakeForPublish copia TODOS los campos del cuadro y sólo

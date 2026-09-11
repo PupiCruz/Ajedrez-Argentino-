@@ -1167,6 +1167,15 @@
       background: var(--red, #c0392b); color: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.5); }
     .tro:hover .tro-del { display: flex; }
     @media (hover: none) { .tro-del { display: flex; } }   /* en el teléfono no hay hover: siempre visible */
+    /* El lápiz, en la otra esquina: sirve para TODOS los trofeos, también los que salen solos. */
+    .tro-edit { position: absolute; top: -3px; left: 4px; width: 17px; height: 17px; border-radius: 50%;
+      display: none; align-items: center; justify-content: center; font-size: 9px; line-height: 1;
+      background: var(--gold, #c8921a); color: #1a1206; box-shadow: 0 1px 4px rgba(0,0,0,.5); }
+    .tro:hover .tro-edit { display: flex; }
+    @media (hover: none) { .tro-edit { display: flex; } }
+    .tro-f-reset { display: block; margin: -2px 0 10px; padding: 0; background: none; border: 0; cursor: pointer;
+      font-family: inherit; font-size: 12px; font-weight: 700; color: var(--gold); text-align: left; }
+    .tro-f-reset:hover { text-decoration: underline; }
     .tro-f { display: block; text-align: left; font-size: 11.5px; font-weight: 700; color: var(--text2);
       margin: 0 0 9px; letter-spacing: .3px; }
     .tro-f-in { display: block; width: 100%; margin-top: 4px; padding: 9px 11px; border-radius: 8px;
@@ -15044,7 +15053,13 @@ function _estadoActualFp() {
   try { var o = _rankingOverride(); if (o) { var pl = (o.players||[]).concat(o.additionals||[]); rankFp = (o.month||'') + ':' + pl.length + ':' + _fpStr(pl.map(function(p){ return p.fide_id + '=' + p.elo + '=' + (p.fed||''); }).join(',')); } } catch(e){}
   var flyerFp = '';
   try { flyerFp = _fpStr(Object.keys(FLYER_REDIRECT).sort().join(',')); } catch(e){}
-  return _combinedFp(all, getTzConfig()) + '~' + _fpStr(photoKeys) + '~' + newsFp + '~' + rankFp + '~' + flyerFp;
+  // Los trofeos de las vitrinas (los cargados a mano y las correcciones de los automáticos). Sin
+  // esto, agregar o corregir un trofeo NO encendía el aviso de "cambios sin guardar" y era fácil
+  // olvidarse de guardarlo. A propósito NO se sube FP_VER: eso fijaría como "guardado" lo que haya
+  // al recargar y podría tapar un cambio real; así, a lo sumo el aviso sale una vez de más.
+  var troFp = '';
+  try { troFp = _fpStr(localStorage.getItem('player_trophies') || ''); } catch(e){}
+  return _combinedFp(all, getTzConfig()) + '~' + _fpStr(photoKeys) + '~' + newsFp + '~' + rankFp + '~' + flyerFp + '~' + troFp;
 }
 // ¿Hay torneos cambiados que todavía no se exportaron al archivo?
 function _hayCambiosSinExportar() {
@@ -16505,45 +16520,99 @@ function troPick(i) {
 
 /* Cartel para cargar un trofeo a mano. Se arma a mano (no con aaAsk) porque aaAsk toma UN solo
    campo y acá hacen falta tres: tipo, año y descripción. Usa las mismas clases del cartel de la
-   app, así se ve igual que el resto y no aparece el feo del navegador. */
-function troAgregar(pid) {
+   app, así se ve igual que el resto y no aparece el feo del navegador.
+   El mismo cartel sirve para tres cosas: AGREGAR uno a mano, EDITAR uno a mano (`mi`, su lugar en
+   la lista) y CORREGIR uno de los que salen solos de los torneos (`clave`, 'torneo|categoría'). */
+function troAgregar(pid) { _troCartel(pid, null, null); }
+function troEditar(pid, clave, mi) { _troCartel(pid, clave, mi); }
+function _troCartel(pid, clave, mi) {
   var p = PLAYERS.filter(function(x) { return x.id === pid; })[0];
   var fem = !!(p && p.female);
-  var opts = _TRO_MANUALES.map(function(k) {
-    var i = _TRO_INFO[k];
-    return '<option value="' + k + '">' + escHtml((fem && i.nf) ? i.nf : i.n) + '</option>';
+  function nom(k) { var i = _TRO_INFO[k] || {}; return (fem && i.nf) ? i.nf : (i.n || k); }
+  var arr = _troMan()[pid] || [];
+  var auto = null, corr = null, man = null, torneo = '';
+  if (clave != null) {
+    // El automático TAL COMO SALIÓ del torneo (sin la corrección): contra eso se compara al guardar.
+    var pa = [], a0 = null, t0 = null;
+    try { pa = (_manifest.playerAwards && _manifest.playerAwards[pid]) || []; } catch (e) {}
+    a0 = pa.filter(function(a) { return String(a.t) + '|' + (a.c != null ? a.c : '') === clave; })[0];
+    if (!a0) return;
+    try { t0 = (_manifest.tournaments || []).filter(function(t) { return String(t.id) === String(a0.t); })[0]; } catch (e) {}
+    torneo = t0 ? t0.name : '';
+    auto = { k: a0.k, y: a0.y || _troAnio(t0), d: a0.d || '' };
+    arr.forEach(function(m) { if (m && m.de === clave) corr = m; });
+  } else if (mi != null) {
+    man = arr[mi];
+    if (!man || man.de != null) return;
+  }
+  var act = auto ? { k: (corr && corr.k) || auto.k, y: (corr && corr.y) || auto.y, d: (corr && corr.d != null) ? corr.d : auto.d }
+          : man ? man : { k: _TRO_MANUALES[0], y: '', d: '' };
+  // Los tipos que se ofrecen son los de carga a mano. Al corregir un automático va además el suyo,
+  // primero y "como salió del torneo"; y se saca el de carga a mano que se llama igual, para no ver
+  // dos "Campeona" seguidas.
+  var tipos = _TRO_MANUALES.slice();
+  if (auto && tipos.indexOf(auto.k) < 0) {
+    tipos = tipos.filter(function(k) { return nom(k) !== nom(auto.k); });
+    tipos.unshift(auto.k);
+  }
+  if (act.k && _TRO_INFO[act.k] && tipos.indexOf(act.k) < 0) tipos.unshift(act.k);
+  var opts = tipos.map(function(k) {
+    return '<option value="' + k + '"' + (k === act.k ? ' selected' : '') + '>'
+      + escHtml(nom(k) + (auto && k === auto.k ? ' (como salió del torneo)' : '')) + '</option>';
   }).join('');
+  var editar = !!(auto || man);
+  var texto = auto
+    ? 'Sale solo del torneo <b>' + escHtml(torneo) + '</b>. Podés decir qué trofeo es y de qué año: el torneo y su link no cambian.'
+    : man ? 'De la vitrina de <b>' + escHtml(p ? p.name : '') + '</b>.'
+    : 'A la vitrina de <b>' + escHtml(p ? p.name : '') + '</b>. Para los títulos que no salen de los torneos cargados en el sitio.';
   var back = document.createElement('div'); back.className = 'aa-modal-back';
   back.innerHTML =
-    '<div class="aa-modal" role="dialog" aria-modal="true" aria-label="Agregar trofeo">' +
+    '<div class="aa-modal" role="dialog" aria-modal="true" aria-label="' + (editar ? 'Editar trofeo' : 'Agregar trofeo') + '">' +
       '<div class="aa-modal-ic">🏅</div>' +
-      '<h3 class="aa-modal-h">Agregar un trofeo</h3>' +
-      '<p class="aa-modal-p">A la vitrina de <b>' + escHtml(p ? p.name : '') + '</b>. Para los títulos que no salen de los torneos cargados en el sitio.</p>' +
+      '<h3 class="aa-modal-h">' + (editar ? 'Editar el trofeo' : 'Agregar un trofeo') + '</h3>' +
+      '<p class="aa-modal-p">' + texto + '</p>' +
       '<label class="tro-f">Trofeo<select class="tro-f-in" id="tro-f-k">' + opts + '</select></label>' +
-      '<label class="tro-f">Año<input class="tro-f-in" id="tro-f-y" type="number" min="1900" max="2100" placeholder="1998"></label>' +
-      '<label class="tro-f">Qué fue<input class="tro-f-in" id="tro-f-d" maxlength="90" placeholder="Campeonato Argentino Absoluto"></label>' +
+      '<label class="tro-f">Año<input class="tro-f-in" id="tro-f-y" type="number" min="1900" max="2100" placeholder="1998" value="' + (act.y || '') + '"></label>' +
+      '<label class="tro-f">Qué fue<input class="tro-f-in" id="tro-f-d" maxlength="90" placeholder="Campeonato Argentino Absoluto" value="' + escHtml(act.d || '') + '"></label>' +
+      (corr ? '<button class="tro-f-reset" type="button">↺ Dejarlo como salió del torneo</button>' : '') +
       '<div class="aa-modal-btns">' +
         '<button class="aa-modal-cancel" type="button">Cancelar</button>' +
-        '<button class="aa-modal-go" type="button">Agregar</button>' +
+        '<button class="aa-modal-go" type="button">' + (editar ? 'Guardar' : 'Agregar') + '</button>' +
       '</div>' +
     '</div>';
   document.body.appendChild(back);
   function cerrar() { back.remove(); document.removeEventListener('keydown', onKey); }
   function onKey(e) { if (e.key === 'Escape') cerrar(); }
+  document.addEventListener('keydown', onKey);
+  // Relee la lista en el momento de guardar (no la de cuando se abrió el cartel) y la deja guardada.
+  function guardar(cambiar) {
+    cerrar();
+    var todo = _troMan(), lst = todo[pid] || [];
+    cambiar(lst);
+    if (lst.length) todo[pid] = lst; else delete todo[pid];
+    _troManSave(todo);   // el aviso de "cambios sin guardar" se entera solo: los trofeos van en la huella (_estadoActualFp)
+    openPlayer(pid);
+  }
   back.addEventListener('click', function(e) { if (e.target === back) cerrar(); });
   back.querySelector('.aa-modal-cancel').addEventListener('click', cerrar);
   back.querySelector('.aa-modal-go').addEventListener('click', function() {
     var k = back.querySelector('#tro-f-k').value;
     var y = parseInt(back.querySelector('#tro-f-y').value, 10) || 0;
     var d = (back.querySelector('#tro-f-d').value || '').trim();
-    cerrar();
-    var todo = _troMan();
-    (todo[pid] = todo[pid] || []).push({ k: k, y: y, d: d });
-    _troManSave(todo);
-    if (typeof _markDirty === 'function') _markDirty();   // avisa que hay que guardar en la carpeta
-    openPlayer(pid);
+    guardar(function(lst) {
+      if (auto) _troCorregir(lst, clave, auto, k, y, d);
+      else if (man) lst[mi] = { k: k, y: y, d: d };
+      else lst.push({ k: k, y: y, d: d });
+    });
   });
-  setTimeout(function() { back.classList.add('open'); var el = back.querySelector('#tro-f-y'); if (el) el.focus(); }, 10);
+  var rst = back.querySelector('.tro-f-reset');
+  if (rst) rst.addEventListener('click', function() {
+    guardar(function(lst) { for (var i = lst.length - 1; i >= 0; i--) if (lst[i] && lst[i].de === clave) lst.splice(i, 1); });
+  });
+  setTimeout(function() {
+    back.classList.add('open');
+    var el = back.querySelector(editar ? '#tro-f-k' : '#tro-f-y'); if (el) el.focus();
+  }, 10);
 }
 
 /* Borra un trofeo cargado a mano (el ✕). Pregunta antes: es un dato que el autor escribió. */
@@ -16558,27 +16627,74 @@ function troBorrar(pid, i) {
     arr.splice(i, 1);
     if (!arr.length) delete todo[pid]; else todo[pid] = arr;
     _troManSave(todo);
-    if (typeof _markDirty === 'function') _markDirty();
     openPlayer(pid);
   });
 }
 
+/* El año de un trofeo que sale SOLO: el de la fecha del torneo. Antes los automáticos no traían año:
+   no mostraban nada bajo el nombre y quedaban últimos en su nivel (lo vio el autor con la copa del
+   77° Argentino Femenino de Claudia Amura). Manda la fecha estructurada; si no está, el año escrito
+   en las fechas libres. El NOMBRE no se mira a propósito: "Sub 2000" no es un año. */
+function _troAnio(t) {
+  if (!t) return 0;
+  var m = String(t.endDate || t.startDate || '').match(/^(\d{4})-\d{2}-\d{2}$/);
+  if (m) return +m[1];
+  if (t.dateKey > 19000000) return Math.floor(t.dateKey / 10000);
+  m = String(t.tournamentDates || '').match(/\b(19\d\d|20\d\d)\b/);
+  return m ? +m[1] : 0;
+}
+
+/* Guarda la CORRECCIÓN de un trofeo automático dentro de la lista a mano del jugador:
+   { de: 'torneo|categoría', k?, y?, d? }. Anota sólo lo que CAMBIA respecto de cómo salió del
+   torneo, así lo que el autor no tocó sigue al día si el torneo se recalcula (los puntos, por
+   ejemplo). Si al final no cambia nada, la corrección se borra. Vive en la misma lista que los
+   trofeos a mano a propósito: viaja al publicar por el mismo camino, sin nada nuevo. */
+function _troCorregir(arr, clave, auto, k, y, d) {
+  var c = { de: clave };
+  if (k && k !== auto.k) c.k = k;
+  if (y && y !== (auto.y || 0)) c.y = y;
+  if (d != null && d !== (auto.d || '')) c.d = d;
+  var i = -1;
+  arr.forEach(function(m, j) { if (m && m.de === clave) i = j; });
+  if (c.k == null && c.y == null && c.d == null) { if (i >= 0) arr.splice(i, 1); }
+  else if (i >= 0) arr[i] = c;
+  else arr.push(c);
+  return arr;
+}
+
 function _troHtml(p) {
-  var lista = [];
-  try { lista = (_manifest && _manifest.playerAwards && _manifest.playerAwards[p.id]) || []; } catch (e) {}
-  lista = lista.slice();
+  var tours = {};
+  try { (_manifest.tournaments || []).forEach(function(t) { tours[String(t.id)] = t; }); } catch (e) {}
+  // Los que salen solos de los torneos. Cada uno se reconoce por su CUADRO (torneo + categoría):
+  // hay uno solo por jugador y por cuadro (_awBestPerPlayer), así que esa clave alcanza para
+  // encontrarlo y corregirlo a mano.
+  var lista = [], porClave = {};
+  try {
+    ((_manifest && _manifest.playerAwards && _manifest.playerAwards[p.id]) || []).forEach(function(a) {
+      var x = { t: a.t, k: a.k, d: a.d, c: a.c, y: a.y || _troAnio(tours[String(a.t)]),
+                _cl: String(a.t) + '|' + (a.c != null ? a.c : '') };
+      porClave[x._cl] = x;
+      lista.push(x);
+    });
+  } catch (e) {}
   // Los cargados a mano se suman marcados con `_mi` (su lugar en la lista del autor), que es lo que
-  // usa el ✕ para borrar el correcto después de mezclar y ordenar.
+  // usa el ✕ para borrar el correcto después de mezclar y ordenar. Las CORRECCIONES (`de`) no se
+  // suman: pisan al automático que corrigen, que conserva su torneo y su link.
   var _man = [];
   try { _man = _troMan()[p.id] || []; } catch (e) {}
   _man.forEach(function(m, i) {
-    var e = { k: m.k, y: m.y, d: m.d, _mi: i };
-    lista.push(e);
+    if (m.de != null) {
+      var x = porClave[m.de];
+      if (!x) return;   // el torneo ya no le da ese trofeo: la corrección queda guardada pero no se dibuja
+      if (m.k && _TRO_INFO[m.k]) x.k = m.k;
+      if (m.y) x.y = m.y;
+      if (m.d != null) x.d = m.d;
+      return;
+    }
+    lista.push({ k: m.k, y: m.y, d: m.d, _mi: i });
   });
   var _autor = (typeof _ondemand !== 'undefined') && !_ondemand;
   if (!lista.length && !_autor) return '';
-  var tours = {};
-  try { (_manifest.tournaments || []).forEach(function(t) { tours[String(t.id)] = t; }); } catch (e) {}
   // Orden: primero el NIVEL (títulos mayores → campeonatos → logros) y dentro de cada nivel por AÑO,
   // del más reciente al más viejo. A igualdad de año, el tipo más alto primero.
   function _lvl(k) { var i = _TRO_INFO[k]; return i && i.tier != null ? i.tier : 9; }
@@ -16612,10 +16728,16 @@ function _troHtml(p) {
       + ' title="' + escHtml(_nom + (nom ? (' — ' + nom) : '')) + '">'
       + '<span class="tro-ico">' + ico + '</span>'
       + '<span class="tro-nm">' + escHtml(_nom)
-      + (a.y ? ('<span class="tro-anio">' + a.y + '</span>') : '') + '</span></button>';
-    // El ✕ sólo en los cargados a mano: los que salen de los torneos no se borran de acá.
-    if (_autor && a._mi != null) fichas = fichas.slice(0, -9)
-      + '<span class="tro-del" title="Borrar este trofeo" onclick="event.stopPropagation();troBorrar(' + p.id + ',' + a._mi + ')">✕</span></button>';
+      + (a.y ? ('<span class="tro-anio">' + a.y + '</span>') : '') + '</span>';
+    if (_autor) {
+      // El lápiz en TODOS: a los automáticos se les puede decir qué trofeo son (una copa argentina,
+      // un mundial) y de qué año, que el torneo solo no sabe.
+      fichas += '<span class="tro-edit" title="Editar este trofeo" onclick="event.stopPropagation();troEditar(' + p.id + ','
+        + (a._mi != null ? ('null,' + a._mi) : ('\'' + escHtml(escJs(a._cl)) + '\'')) + ')">✏️</span>';
+      // El ✕ sólo en los cargados a mano: los que salen de los torneos no se borran de acá.
+      if (a._mi != null) fichas += '<span class="tro-del" title="Borrar este trofeo" onclick="event.stopPropagation();troBorrar(' + p.id + ',' + a._mi + ')">✕</span>';
+    }
+    fichas += '</button>';
   });
   if (!fichas && !_autor) return '';
 
