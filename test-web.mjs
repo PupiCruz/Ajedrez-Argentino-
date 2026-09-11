@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 756;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 769;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -3224,6 +3224,124 @@ console.log('\n=== 46. Accesibilidad Fase 1: las tablas de torneo ===');
   chk(extraerFuncion('_teamRefresh').includes('_teamRenderSection(crk,crDataLoad(crk),tab)')
    && extraerFuncion('_teamRenderSection').includes('defaultTab=_wt;'),
       'al tocar el botón se redibuja YA en la pestaña que se miraba (sin el parpadeo de la formación)');
+}
+
+// ── 48. La visita no le vuelve a pedir a Chess-Results las rondas que ya tiene ─────────────────
+// Cada visitante de un torneo por equipos en vivo bajaba TODAS las rondas desde la 1, de a una: en la
+// ronda 11 de una Olimpiada ~24 pedidos a Chess-Results por visita, con la ronda en juego llegando
+// última, para traer rondas que el autor ya publica cada noche.
+{
+  console.log('\n=== 48. Por equipos: la visita no vuelve a bajar las rondas completas ===');
+  const pedidos = [];
+  const mundo = new Function('pedidos', 'ESTADO',
+      'var document = { getElementById: function(){ return null; } };'
+    + 'var _crAutoBusy = {}; var _ondemand = true;'
+    + 'function crDataLoad(){ return ESTADO.data; } function crDataSave(k, d){ ESTADO.guardado = d; }'
+    + 'async function _crDiscoverRounds(){ return null; }'
+    + 'function _teamRoundsFromStandings(){ return ESTADO.rondas; }'
+    + 'async function _crProxyFetch(u){ pedidos.push(u); return u; }'
+    + 'function crExtractXlsx(x){ return x; }'
+    + 'function _teamParseStandings(){ return { teams: [ { name: "Argentina" } ] }; }'
+    + 'function _teamParseRoster(){ return [ { name: "Argentina", players: [] } ]; }'
+    + 'function _rd(u){ return Number((String(u).match(/&rd=(\\d+)/) || [])[1]); }'
+    + 'function _teamParseCrosses(u){ var o = {}; o[_rd(u)] = [ { aName: "Egypt", bName: "Argentina" } ]; return o; }'
+    + 'function _teamParseRounds(u){ var o = {}; o[_rd(u)] = [ { aName: "Egypt", bName: "Argentina", boards: [ { res: "1-0" } ] } ]; return o; }'
+    + 'function _teamRefresh(){} function _tdRefreshPodium(){}'
+    + extraerFuncion('_crExportUrl') + extraerFuncion('_teamRoundComplete')
+    + 'async ' + extraerFuncion('_crAutoFetchTeam')
+    + ' return _crAutoFetchTeam;');
+  const URL_CR = 'https://s2.chess-results.com/tnr1470206.aspx?lan=2';
+  const ronda = (res) => [ { aName: 'Egypt', bName: 'Argentina', boards: [ { res }, { res } ] } ];
+  const cruce = [ { aName: 'Egypt', bName: 'Argentina' } ];
+  // Ronda 7 en juego: el autor publicó anoche las 1 a 6 completas; la 7 todavía sin resultados.
+  const publicado = () => {
+    const d = { teamRounds: {}, teamCrosses: {}, teamRoster: [ { name: 'Argentina', players: [] } ] };
+    for (let r = 1; r <= 6; r++) { d.teamRounds[r] = ronda('1-0'); d.teamCrosses[r] = cruce; }
+    d.teamRounds[7] = ronda(''); d.teamCrosses[7] = cruce;
+    return d;
+  };
+  const rdDe = (u) => Number((u.match(/&rd=(\d+)/) || [])[1]);
+  const artDe = (u) => Number((u.match(/&art=(\d+)/) || [])[1]);
+
+  let E = { data: publicado(), rondas: 7 };
+  await mundo(pedidos, E)('cr2_x', URL_CR, { silent: true });
+  const rondasPedidas = [...new Set(pedidos.filter((u) => artDe(u) === 2 || artDe(u) === 3).map(rdDe))];
+  chk(JSON.stringify(rondasPedidas) === '[8,7,6]',
+      'la visita en la ronda 7 baja sólo la 8, la 7 y la 6 (no las 1 a 5, que ya tiene completas)', JSON.stringify(rondasPedidas));
+  chk(pedidos.length === 7, 'son 7 pedidos a Chess-Results en vez de 18', pedidos.length);
+  chk(rdDe(pedidos.find((u) => artDe(u) === 2)) === 8, 'y va de la ronda más nueva a la más vieja');
+  chk(!pedidos.some((u) => artDe(u) === 8), 'el plantel no se vuelve a pedir en cada visita si el torneo ya empezó');
+  chk(!!E.guardado && E.guardado.teamRounds[3] && E.guardado.teamRounds[3][0].boards.length === 2,
+      'y las rondas salteadas quedan como estaban (no se pierden)');
+
+  // Una ronda vieja que quedó a medias (una mesa sin resultado) sí se vuelve a pedir.
+  pedidos.length = 0; E = { data: publicado(), rondas: 7 }; E.data.teamRounds[3] = ronda('');
+  await mundo(pedidos, E)('cr2_x', URL_CR, { silent: true });
+  chk(pedidos.some((u) => artDe(u) === 3 && rdDe(u) === 3) && !pedidos.some((u) => rdDe(u) === 2),
+      'una ronda vieja que quedó con una mesa sin resultado se vuelve a pedir; las completas, no');
+
+  // El botón del AUTOR (sin silent) sigue bajando todo, para agarrar las correcciones.
+  pedidos.length = 0; E = { data: publicado(), rondas: 7 };
+  await mundo(pedidos, E)('cr2_x', URL_CR, {});
+  const todas = [...new Set(pedidos.filter((u) => artDe(u) === 3).map(rdDe))].sort((a, b) => a - b);
+  chk(JSON.stringify(todas) === '[1,2,3,4,5,6,7,8]' && pedidos.some((u) => artDe(u) === 8),
+      'el botón "Actualizar desde Chess-Results" del autor sigue bajando todas las rondas y el plantel', JSON.stringify(todas));
+
+  // Un visitante sin nada guardado (torneo que el autor todavía no publicó) baja todo, como antes.
+  pedidos.length = 0; E = { data: {}, rondas: 3 };
+  await mundo(pedidos, E)('cr2_x', URL_CR, { silent: true });
+  chk([...new Set(pedidos.filter((u) => artDe(u) === 2).map(rdDe))].length === 4 && pedidos.some((u) => artDe(u) === 8),
+      'sin nada publicado todavía, la visita baja todas las rondas y el plantel, como siempre');
+}
+
+// ── 49. info64: la misma regla (la visita no vuelve a bajar las rondas completas) ────────────────
+// info64 se pide ronda por ronda y cada pedido son dos viajes del Worker: un torneo de 9 rondas eran
+// ~11 pedidos por visita. vesus no lo necesita (trae todo en un pedido) y Chess-Results individual
+// tampoco (todas las rondas en un archivo).
+{
+  console.log('\n=== 49. info64: la visita no vuelve a bajar las rondas completas ===');
+  const pedidos = [];
+  const mundo = new Function('pedidos', 'ESTADO',
+      'var document = { getElementById: function(){ return null; } };'
+    + 'var _crAutoBusy = {}; var _ondemand = true; var _lastTorneoFilter = ""; var _I64_MAX_ROUNDS = 25;'
+    + 'function _i64Base(){ return "x"; }'
+    + 'function crDataLoad(){ return ESTADO.data; } function crDataSave(k, d){ ESTADO.guardado = d; }'
+    + 'function _i64ExportUrl(u, kind, rd){ return kind + ":" + rd; }'
+    + 'async function _i64ProxyFetch(u){ pedidos.push(u); return u; }'
+    + 'function crExtractXlsx(u){ var m = String(u).match(/^round:(\\d+)$/); if (!m) return [["tabla"]]; return Number(m[1]) <= ESTADO.rondas ? [["Ronda " + m[1]], ["x"]] : []; }'
+    + 'function _crParseSections(rows, hdr){ var o = {}; if (hdr.length) o[hdr[0].num] = [ { w: "A", b: "B", res: "1-0" } ]; return o; }'
+    + 'function _crParseRoundDT(){ return null; }'
+    + 'function _crParseStandingsRows(){ return { standings: [ { name: "A", fideId: "1" } ], kind: "standings" }; }'
+    + 'function _crCarryOverFeds(){} function _crCarryOverFideIds(){}'
+    + 'function crLooksLikeRoundRobin(){ return false; } function crRefreshSection(){}'
+    + 'function _tdRefreshArgLine(){} function _tdRefreshPodium(){} function renderTorneos(){}'
+    + extraerFuncion('_crRoundCompleteIndiv')
+    + 'async ' + extraerFuncion('_i64AutoFetchIndiv')
+    + ' return _i64AutoFetchIndiv;');
+  const publicado = () => {
+    const d = { rounds: {}, standings: [ { name: 'A', fideId: '1' } ] };
+    for (let r = 1; r <= 9; r++) d.rounds[r] = [ { w: 'A', b: 'B', res: '1-0' }, { w: 'C', b: 'D', res: '½-½' } ];
+    return d;
+  };
+  const rondasDe = () => pedidos.filter((u) => u.startsWith('round:')).map((u) => Number(u.split(':')[1]));
+
+  let E = { data: publicado(), rondas: 9 };
+  await mundo(pedidos, E)('cr2_i', 'https://info64.org/torneo', { silent: true });
+  chk(JSON.stringify(rondasDe()) === '[8,9,10]',
+      'con 9 rondas publicadas, la visita pide sólo la 8, la 9 y la 10 (para ver si ya hay otra)', JSON.stringify(rondasDe()));
+  chk(pedidos.length === 4 && pedidos.includes('standings:undefined') && !pedidos.some((u) => u.startsWith('initial')),
+      'son 4 pedidos en vez de 11, y la tabla sigue siendo la clasificación (no el ranking inicial)', pedidos.join(' '));
+  chk(!!E.guardado && E.guardado.rounds[2] && E.guardado.rounds[2].length === 2,
+      'y las rondas salteadas quedan como estaban');
+
+  pedidos.length = 0; E = { data: publicado(), rondas: 9 }; E.data.rounds[3][1].res = '';
+  await mundo(pedidos, E)('cr2_i', 'https://info64.org/torneo', { silent: true });
+  chk(JSON.stringify(rondasDe()) === '[3,8,9,10]',
+      'una ronda vieja con una partida sin resultado se vuelve a pedir', JSON.stringify(rondasDe()));
+
+  pedidos.length = 0; E = { data: publicado(), rondas: 9 };
+  await mundo(pedidos, E)('cr2_i', 'https://info64.org/torneo', {});
+  chk(rondasDe().length === 10, 'el botón "Actualizar desde info64" del autor sigue bajando todas', JSON.stringify(rondasDe()));
 }
 
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));

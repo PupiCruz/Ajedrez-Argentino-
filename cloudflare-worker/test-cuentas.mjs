@@ -403,5 +403,181 @@ console.log('\n=== 10. La IA sabe redactar torneos POR EQUIPOS (Olimpiadas, liga
       'un torneo individual sigue yendo por su prompt de siempre');
 }
 
+// ── Transmisiones de Lichess (/libc): un minuto de pausa después de un 429 ─────────────────────
+// Lichess pide esperar un minuto entero tras un 429, y el refresco de fondo reintentaba a los 10 s (el
+// panel llegó a 10% de 429 el 11/09/2026). Lo que el autor exigió antes de aceptarlo: que durante esa
+// pausa el visitante SIGA VIENDO la última posición y los tableros no se borren. Eso se prueba acá, con
+// una caché y un Lichess de mentira y el reloj manejado a mano.
+{
+  console.log('\n=== 11. Lichess: pausa de un minuto después de un 429 ===');
+  const guardado = new Map();
+  const cacheFalsa = {
+    async match(k) { const r = guardado.get(typeof k === 'string' ? k : k.url); return r ? r.clone() : undefined; },
+    async put(k, r) { guardado.set(typeof k === 'string' ? k : k.url, r.clone()); },
+  };
+  const cachesAntes = globalThis.caches, fetchAntes = globalThis.fetch, nowAntes = Date.now;
+  globalThis.caches = { default: cacheFalsa };
+  let reloj = 1_000_000_000_000;
+  Date.now = () => reloj;
+  let pedidosALichess = 0, respuesta = { status: 200, cuerpo: '' };
+  globalThis.fetch = async (url) => {
+    pedidosALichess++;
+    return new Response(respuesta.cuerpo, { status: respuesta.status });
+  };
+  const pendientes = [];
+  const ctxLi = { waitUntil(p) { pendientes.push(p); } };
+  const libc = async (url) => {
+    const r = await worker.fetch(req('/libc?url=' + encodeURIComponent(url)), env, ctxLi);
+    await Promise.all(pendientes.splice(0));   // que termine el refresco de fondo antes de seguir
+    return { status: r.status, cuerpo: await r.text() };
+  };
+  const RONDA = 'https://lichess.org/api/broadcast/round/r7F25DkT.pgn';
+  const OTRA = 'https://lichess.org/api/broadcast/round/otraRonda.pgn';
+  const NUEVA = 'https://lichess.org/api/broadcast/round/nadieLaPidio.pgn';
+  try {
+    // Dos transmisiones que se están mirando, con su copia buena.
+    respuesta = { status: 200, cuerpo: 'PGN-jugada-20' };
+    let v = await libc(RONDA);
+    respuesta = { status: 200, cuerpo: 'OTRA-jugada-8' };
+    await libc(OTRA);
+    chk(v.status === 200 && v.cuerpo === 'PGN-jugada-20' && pedidosALichess === 2, 'arranque: cada transmisión se baja una vez');
+
+    // A los 11 s la copia ya no es fresca y Lichess responde 429 al refresco de fondo.
+    reloj += 11_000; respuesta = { status: 429, cuerpo: '{"error":"Too many requests"}' };
+    v = await libc(RONDA);
+    chk(v.status === 200 && v.cuerpo === 'PGN-jugada-20', 'con el 429, el visitante recibe la última posición buena (no un error)', v.status + ' ' + v.cuerpo);
+    chk(pedidosALichess === 3, 'el refresco de fondo sí intentó (y ahí llegó el 429)', pedidosALichess);
+
+    // Durante el minuto de pausa: los visitantes siguen pidiendo cada 10 s.
+    let todosBien = true, antes = pedidosALichess;
+    for (let s = 10; s <= 50; s += 10) {
+      reloj += 10_000;
+      const a = await libc(RONDA), b = await libc(OTRA);
+      if (a.status !== 200 || a.cuerpo !== 'PGN-jugada-20' || b.status !== 200 || b.cuerpo !== 'OTRA-jugada-8') todosBien = false;
+    }
+    chk(todosBien, 'durante TODO el minuto de pausa, las dos transmisiones siguen mostrando su última posición');
+    chk(pedidosALichess === antes, 'y en ese minuto no se le pidió NADA a Lichess (tampoco de la otra transmisión)', pedidosALichess - antes);
+    chk(guardado.has('https://cr-proxy.test/__li429pausa'), 'la pausa queda anotada en la caché del borde, para los otros isolates');
+
+    // Una transmisión que nadie pidió todavía: no hay copia que mostrar → se intenta igual.
+    antes = pedidosALichess;
+    await libc(NUEVA);
+    chk(pedidosALichess === antes + 1, 'el primer visitante de una transmisión nueva no queda bloqueado por la pausa');
+
+    // Pasó el minuto y Lichess volvió: se refresca y la jugada nueva llega.
+    reloj += 61_000; respuesta = { status: 200, cuerpo: 'PGN-jugada-21' };
+    antes = pedidosALichess;
+    v = await libc(RONDA);
+    chk(pedidosALichess === antes + 1 && v.cuerpo === 'PGN-jugada-20', 'terminada la pausa, vuelve a refrescar (esa vez todavía se sirve la copia)');
+    v = await libc(RONDA);
+    chk(v.status === 200 && v.cuerpo === 'PGN-jugada-21', 'y al pedido siguiente ya se ve la jugada nueva', v.cuerpo);
+
+    // Un error que NO es 429 (Lichess caído) no pausa: sigue todo como antes del cambio.
+    reloj += 11_000; respuesta = { status: 503, cuerpo: 'caído' };
+    await libc(RONDA);
+    reloj += 11_000; antes = pedidosALichess;
+    v = await libc(RONDA);
+    chk(pedidosALichess === antes + 1 && v.cuerpo === 'PGN-jugada-21', 'un 503 no pausa, y tampoco borra la copia buena');
+  } finally {
+    globalThis.caches = cachesAntes; globalThis.fetch = fetchAntes; Date.now = nowAntes;
+  }
+}
+
+// ── Rondas terminadas y el arranque en frío de Lichess ──────────────────────────────────────────
+// Medido el 11/09/2026 (Budapest 2024): Lichess entrega UNA exportación en frío por vez, ~10 s cada 100
+// partidas, y a las demás les da 429 al instante. Una ronda de Olimpiada (4-5 partes) costaba ~40 s, y
+// como la copia vivía 10 min, se volvía a pagar cada vez que nadie la miraba un rato.
+{
+  console.log('\n=== 12. Lichess: rondas terminadas guardadas y choques en frío ===');
+  const guardado = new Map();
+  const cacheFalsa = {
+    async match(k) { const r = guardado.get(typeof k === 'string' ? k : k.url); return r ? r.clone() : undefined; },
+    async put(k, r) { guardado.set(typeof k === 'string' ? k : k.url, r.clone()); },
+  };
+  const cachesAntes = globalThis.caches, fetchAntes = globalThis.fetch, nowAntes = Date.now;
+  globalThis.caches = { default: cacheFalsa };
+  let reloj = 2_000_000_000_000;
+  Date.now = () => reloj;
+  const pedidos = [];
+  let responder = () => new Response('', { status: 500 });
+  globalThis.fetch = async (url) => { pedidos.push(String(url)); return responder(String(url)); };
+  const pendientes = [];
+  const ctxLi = { waitUntil(p) { pendientes.push(p); } };
+  const pedirLibc = (url) => worker.fetch(req('/libc?url=' + encodeURIComponent(url)), env, ctxLi);
+  const libc = async (url) => {
+    const r = await pedirLibc(url);
+    await Promise.all(pendientes.splice(0));
+    return { status: r.status, cuerpo: await r.text() };
+  };
+  const pgn = (...res) => res.map((x, i) => '[Event "Olimpiada"]\n[White "B' + i + '"]\n[Black "N' + i + '"]\n[Result "' + x + '"]\n\n1. e4 ' + x).join('\n\n');
+  const ronda = (id) => 'https://lichess.org/api/broadcast/round/' + id + '.pgn';
+  const hayPausa = () => guardado.has('https://cr-proxy.test/__li429pausa');
+  try {
+    // 1) Ronda TERMINADA: se guarda larga y no se vuelve a pedir enseguida.
+    responder = () => new Response(pgn('1-0', '1/2-1/2', '0-1'), { status: 200 });
+    let v = await libc(ronda('fin1'));
+    chk(v.status === 200 && pedidos.length === 1, 'la ronda terminada se baja la primera vez');
+    const copiaFin = guardado.get('https://cr-proxy.test/libc?url=' + encodeURIComponent(ronda('fin1')));
+    chk(!!copiaFin && copiaFin.headers.get('Cache-Control') === 'public, max-age=604800' && copiaFin.headers.get('x-fa-fresh') === '3600',
+        'y queda guardada en el borde por 7 días (fresca 1 hora)', copiaFin && copiaFin.headers.get('Cache-Control'));
+    let antes = pedidos.length;
+    reloj += 11_000; await libc(ronda('fin1'));
+    reloj += 58 * 60_000; v = await libc(ronda('fin1'));
+    chk(pedidos.length === antes && v.status === 200, 'durante la primera hora no se le vuelve a pedir a Lichess (antes: a los 10 s)', pedidos.length - antes);
+    reloj += 3 * 60_000; v = await libc(ronda('fin1'));
+    chk(pedidos.length === antes + 1 && v.status === 200, 'pasada la hora se revisa por detrás, por si corrigieron un resultado');
+    reloj += 6 * 24 * 3600_000; v = await libc(ronda('fin1'));
+    chk(v.status === 200 && /1\/2-1\/2/.test(v.cuerpo), 'y días después se sigue sirviendo al toque, sin los 40 s');
+
+    // 2) Ronda EN VIVO (alguna "*"): exactamente como antes, se refresca a los 10 s.
+    responder = () => new Response(pgn('1-0', '*'), { status: 200 });
+    await libc(ronda('vivo1'));
+    antes = pedidos.length;
+    reloj += 11_000; await libc(ronda('vivo1'));
+    chk(pedidos.length === antes + 1, 'una ronda en vivo se sigue refrescando a los 10 s, como siempre');
+
+    // 3) Arranque en frío: las 4 partes de una ronda llegan juntas. Lichess atiende una (lenta) y rebota
+    //    las otras con 429. Ese choque NO es un freno de verdad: no tiene que armar la pausa del minuto.
+    let soltarLenta;
+    const lenta = new Promise((ok) => { soltarLenta = ok; });
+    responder = (url) => url.includes('parteA') ? lenta.then(() => new Response(pgn('1-0'), { status: 200 }))
+                                                : new Response('{"error":"Too many requests"}', { status: 429 });
+    const pA = pedirLibc(ronda('parteA'));
+    await new Promise((ok) => setTimeout(ok, 0));
+    const otras = await Promise.all(['parteB', 'parteC', 'parteD'].map((p) => pedirLibc(ronda(p))));
+    chk(otras.every((r) => r.status === 429), 'las partes que chocaron le devuelven 429 a la app (que las reintenta de a una)');
+    chk(!hayPausa(), 'y ese choque NO arma la pausa: las transmisiones en vivo siguen actualizando');
+
+    // 4) Mientras esa exportación lenta sigue andando, el refresco de fondo de otra ronda no se larga
+    //    (chocaría): se sirve la copia y se refresca en el sondeo siguiente.
+    antes = pedidos.length;
+    reloj += 11_000;
+    v = await pedirLibc(ronda('vivo1'));
+    chk(v.status === 200 && pedidos.length === antes, 'con una exportación en curso, el refresco de fondo espera (se sirve la copia)');
+    soltarLenta(); await pA; await Promise.all(pendientes.splice(0));
+    responder = () => new Response(pgn('1-0', '0-1'), { status: 200 });
+    v = await libc(ronda('parteB'));
+    chk(v.status === 200 && /0-1/.test(v.cuerpo), 'terminada la lenta, el reintento de la app entra bien');
+    antes = pedidos.length;
+    reloj += 11_000; await libc(ronda('vivo1'));
+    chk(pedidos.length === antes + 1, 'y el refresco de fondo vuelve a andar');
+
+    // 5) Un 429 SIN choque (no había nada andando) sí es un freno de verdad: arma la pausa.
+    responder = () => new Response('{"error":"Too many requests"}', { status: 429 });
+    await libc(ronda('nueva'));
+    chk(hayPausa(), 'un 429 sin ninguna otra exportación en curso sí arma la pausa del minuto');
+
+    // 6) Si una partida no trae resultado, no se la da por terminada (se trata como en vivo).
+    reloj += 61_000;
+    responder = () => new Response('[Event "X"]\n[White "A"]\n[Black "B"]\n\n1. e4 *', { status: 200 });
+    await libc(ronda('sinResult'));
+    antes = pedidos.length;
+    reloj += 11_000; await libc(ronda('sinResult'));
+    chk(pedidos.length === antes + 1, 'un PGN sin la etiqueta de resultado no se guarda como terminado');
+  } finally {
+    globalThis.caches = cachesAntes; globalThis.fetch = fetchAntes; Date.now = nowAntes;
+  }
+}
+
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.') + '\n');
 process.exitCode = fallos ? 1 : 0;

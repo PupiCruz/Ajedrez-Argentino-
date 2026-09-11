@@ -85,6 +85,28 @@ const LI_UA = 'AjedrezArgentinoBot/1.0 (+https://chessargentino.pages.dev)';
 // Dedup de bajadas concurrentes DENTRO de un mismo isolate (single-flight): si llegan muchos
 // pedidos del mismo torneo a la vez, UNA sola va a Lichess y las demás esperan esa respuesta.
 const _liInflight = new Map();
+// Pausa después de un 429. Lichess pide que, cuando responde 429, se espere UN MINUTO ENTERO antes de
+// volver a pedirle nada; el refresco de fondo reintentaba a los 10 s y el panel llegó a 10% de 429
+// (11/09/2026, Olimpiada para Personas con Discapacidad). Durante la pausa NO se refresca de fondo,
+// pero el visitante sigue recibiendo la última copia buena (vive LI_STALE_WINDOW = 10 min, mucho más
+// que la pausa): el tablero no se borra, sólo espera un minuto la jugada nueva — que igual no llegaba,
+// porque Lichess nos estaba frenando. Lo que NO se frena es el pedido sin ninguna copia guardada (el
+// primer visitante de una transmisión): ahí no hay nada que mostrarle y se intenta como siempre.
+// La marca vive en memoria (rápido) y en la caché del borde (así la ven los otros isolates del colo).
+const LI_429_PAUSE = 60;
+let _liPausedUntil = 0;
+// RONDAS TERMINADAS. Lichess entrega UNA exportación "en frío" a la vez y tarda ~10 s por cada 100
+// partidas (medido 11/09/2026 en Budapest 2024: 10,2 s una parte, y las otras tres 429 al instante).
+// Una ronda de Olimpiada son 4-5 partes → ~40 s para el primero que la abría. Y como la copia vivía
+// 10 min, cualquier ronda que nadie mirara hacía rato volvía a costar los 40 s. Pero una ronda donde
+// TODAS las partidas ya tienen resultado no cambia más: se guarda 7 días y se revisa por detrás (sin
+// hacer esperar a nadie) a lo sumo una vez por hora, por si el árbitro corrige un resultado.
+const LI_FIN_FRESH = 3600;
+const LI_FIN_STORE = 7 * 24 * 3600;
+// Exportaciones de PGN en curso en este isolate. Como Lichess atiende una en frío por vez, mientras
+// hay una andando NO se arranca otra de fondo (se sirve la copia; el sondeo siguiente la refresca) y
+// un 429 que llegó chocando con otra NO cuenta como freno de verdad: no arma la pausa del minuto.
+let _liPgnEnCurso = 0;
 
 export default {
   async fetch(request, env, ctx) {
@@ -483,14 +505,21 @@ async function liBc(reqUrl, ctx) {
   if (hit) {
     const fetchedAt = Number(hit.headers.get('x-fa-fetched') || 0);
     const ageMs = Date.now() - fetchedAt;
-    if (ageMs < freshTtl * 1000) {
+    // La copia dice cuánto dura fresca: una ronda terminada, una hora (ver LI_FIN_FRESH).
+    const hitFresh = Number(hit.headers.get('x-fa-fresh') || 0) || freshTtl;
+    if (ageMs < hitFresh * 1000) {
       // Fresca: servir tal cual.
       return await liClientResp(hit, contentType, freshTtl);
     }
     // "Vieja pero buena": la servimos YA (tablero al instante) y refrescamos EN SEGUNDO PLANO.
     // Esto mata la "estampida": ya no fallan la caché 20 visitantes a la vez cada 10s; sirven
     // lo último bueno y Lichess recibe UNA sola bajada de refresco (con dedup por single-flight).
-    ctx.waitUntil(liRevalidate(cache, cacheKey, cacheKeyStr, t.toString(), isPgn, contentType, storeTtl));
+    // No se refresca (sólo se sirve la copia) si Lichess nos dio un 429 hace menos de un minuto, o
+    // si ya hay otra exportación de PGN andando: chocaría con ella y Lichess la rebotaría.
+    const ocupado = isPgn && _liPgnEnCurso > 0 && !_liInflight.has(cacheKeyStr);
+    if (!ocupado && !(await liIsPaused(cache, reqUrl))) {
+      ctx.waitUntil(liRevalidate(cache, cacheKey, cacheKeyStr, t.toString(), isPgn, contentType, storeTtl, reqUrl, freshTtl));
+    }
     return await liClientResp(hit, contentType, freshTtl);
   }
 
@@ -503,13 +532,16 @@ async function liBc(reqUrl, ctx) {
     return errJson('No se pudo bajar de Lichess: ' + e.message, 502);
   }
   if (!r.ok) {
-    // Sin copia previa que servir (caso rarísimo: sólo el primerísimo pedido y Lichess frenando).
+    // Sin copia previa que servir (el primer pedido y Lichess frenando). Si el 429 fue por chocar con
+    // otra exportación en curso (lo normal al abrir una ronda en frío: sus 4-5 partes llegan juntas), la
+    // app ya lo reintenta de a una y no es un freno de verdad: no se arma la pausa.
+    if (r.status === 429 && !r.choque) ctx.waitUntil(liPause(cache, reqUrl));
     const h = corsHeaders();
     h.set('Content-Type', contentType);
     h.set('Cache-Control', 'no-store');
     return new Response(r.buf, { status: r.status, headers: h });
   }
-  ctx.waitUntil(cache.put(cacheKey, liStoredResp(r.buf, contentType, storeTtl)));
+  ctx.waitUntil(cache.put(cacheKey, liStoredCopy(r.buf, contentType, isPgn, freshTtl, storeTtl)));
   const h = corsHeaders();
   h.set('Content-Type', contentType);
   h.set('Cache-Control', 'public, max-age=' + freshTtl);
@@ -517,39 +549,81 @@ async function liBc(reqUrl, ctx) {
 }
 
 // Baja de Lichess a memoria (ArrayBuffer) con dedup por isolate: si ya hay una bajada en curso
-// para la misma URL, todos esperan esa. Devuelve { ok, status, buf }.
+// para la misma URL, todos esperan esa. Devuelve { ok, status, buf, choque } — `choque`: cuando
+// arrancó había OTRA exportación de PGN andando (un 429 así es por eso, no un freno de verdad).
 function liFetchBuffered(cacheKeyStr, targetUrl, isPgn) {
   const existing = _liInflight.get(cacheKeyStr);
   if (existing) return existing;
+  const choque = isPgn && _liPgnEnCurso > 0;
+  if (isPgn) _liPgnEnCurso++;
   const p = (async () => {
     const up = await fetch(targetUrl, {
       headers: { 'User-Agent': LI_UA, 'Accept': isPgn ? 'application/x-chess-pgn' : 'application/json' },
       redirect: 'follow',
     });
     const buf = await up.arrayBuffer();
-    return { ok: up.ok, status: up.status, buf };
+    return { ok: up.ok, status: up.status, buf, choque };
   })();
-  const wrapped = p.finally(() => { _liInflight.delete(cacheKeyStr); });
+  const wrapped = p.finally(() => { _liInflight.delete(cacheKeyStr); if (isPgn) _liPgnEnCurso--; });
   _liInflight.set(cacheKeyStr, wrapped);
   return wrapped;
 }
 
 // Refresco en segundo plano. CLAVE: si Lichess devuelve 429/5xx o se cae, NO tocamos la caché
 // → seguimos sirviendo la última copia buena. El tablero nunca queda vacío por un pico.
-async function liRevalidate(cache, cacheKey, cacheKeyStr, targetUrl, isPgn, contentType, storeTtl) {
+async function liRevalidate(cache, cacheKey, cacheKeyStr, targetUrl, isPgn, contentType, storeTtl, reqUrl, freshTtl) {
   let r;
   try { r = await liFetchBuffered(cacheKeyStr, targetUrl, isPgn); }
   catch (e) { return; }        // Lichess caído → conservamos lo viejo-pero-bueno
-  if (!r.ok) return;           // 429/5xx → idem: NO pisamos la copia buena
-  await cache.put(cacheKey, liStoredResp(r.buf, contentType, storeTtl));
+  if (r.status === 429) { if (!r.choque) await liPause(cache, reqUrl); return; }   // y un minuto sin pedirle nada
+  if (!r.ok) return;           // 5xx → idem: NO pisamos la copia buena
+  await cache.put(cacheKey, liStoredCopy(r.buf, contentType, isPgn, freshTtl, storeTtl));
 }
 
-// Copia para GUARDAR en la caché: TTL largo (fresca + gracia) + sello de tiempo para medir frescura.
-function liStoredResp(buf, contentType, storeTtl) {
+// ¿Ronda TERMINADA? Todas las partidas del PGN con resultado (ninguna "*"). Si falta el Result de
+// alguna o hay una sin terminar, no: se trata como una ronda en vivo, igual que siempre.
+function liPgnTerminada(buf) {
+  const txt = new TextDecoder().decode(buf);
+  const partidas = (txt.match(/\[Event /g) || []).length;
+  const res = txt.match(/\[Result "[^"]*"\]/g) || [];
+  return partidas > 0 && res.length === partidas && res.every((x) => x !== '[Result "*"]');
+}
+// La copia que se guarda: una ronda terminada dura 7 días (fresca 1 h); lo demás, como siempre.
+function liStoredCopy(buf, contentType, isPgn, freshTtl, storeTtl) {
+  if (isPgn && liPgnTerminada(buf)) return liStoredResp(buf, contentType, LI_FIN_STORE, LI_FIN_FRESH);
+  return liStoredResp(buf, contentType, storeTtl, freshTtl);
+}
+
+// La pausa del 429 (ver LI_429_PAUSE). La clave va con el origen del propio Worker: la Cache API sólo
+// guarda direcciones de acá.
+function liPauseKey(reqUrl) { return new Request(reqUrl.origin + '/__li429pausa'); }
+async function liIsPaused(cache, reqUrl) {
+  if (Date.now() < _liPausedUntil) return true;
+  try {
+    const m = await cache.match(liPauseKey(reqUrl));
+    const until = m ? Number(m.headers.get('x-fa-until') || 0) : 0;
+    if (Date.now() < until) { _liPausedUntil = until; return true; }
+  } catch (e) {}
+  return false;
+}
+async function liPause(cache, reqUrl) {
+  const until = Date.now() + LI_429_PAUSE * 1000;
+  if (until > _liPausedUntil) _liPausedUntil = until;
+  try {
+    await cache.put(liPauseKey(reqUrl), new Response('', {
+      headers: { 'Cache-Control': 'public, max-age=' + LI_429_PAUSE, 'x-fa-until': String(until) },
+    }));
+  } catch (e) {}
+}
+
+// Copia para GUARDAR en la caché: TTL largo (fresca + gracia) + sello de tiempo para medir frescura +
+// cuántos segundos dura fresca (`x-fa-fresh`: una ronda terminada no dura lo mismo que una en vivo).
+function liStoredResp(buf, contentType, storeTtl, freshTtl) {
   const h = corsHeaders();
   h.set('Content-Type', contentType);
   h.set('Cache-Control', 'public, max-age=' + storeTtl);
   h.set('x-fa-fetched', String(Date.now()));
+  if (freshTtl) h.set('x-fa-fresh', String(freshTtl));
   return new Response(buf, { status: 200, headers: h });
 }
 

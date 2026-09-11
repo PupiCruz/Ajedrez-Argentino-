@@ -10995,8 +10995,23 @@ function _teamRoundsFromStandings(rows){
   return best || null;
 }
 
-// Baja TODAS las rondas de cruces + la clasificación de un torneo por equipos, las pasa por los
-// parsers existentes y las guarda. silent=true → actualización en vivo (sin mensajes de estado).
+// ¿Ronda por equipos COMPLETA en lo que ya se tiene? La formación con resultado en TODAS las mesas (una
+// ronda en juego o todavía sin formación no lo está) y, si el torneo publica cruces, también su cruce.
+// Así la visita no la vuelve a pedir a Chess-Results (ver _crAutoFetchTeam). Los cruces se exigen sólo
+// cuando el torneo los tiene: hay torneos con formaciones y sin ningún cruce, y si no quedaban
+// "incompletos" para siempre.
+function _teamRoundComplete(data, r) {
+  var ms = data && data.teamRounds && data.teamRounds[r];
+  var cruces = (data && data.teamCrosses) || {};
+  if (!ms || !ms.length) return false;
+  if (Object.keys(cruces).length && !(cruces[r] && cruces[r].length)) return false;
+  return ms.every(function(m) {
+    var bs = (m && m.boards) || [];
+    return bs.length > 0 && bs.every(function(b) { return !!(b && String(b.res || '').trim()); });
+  });
+}
+// Baja las rondas de cruces + la clasificación de un torneo por equipos, las pasa por los parsers
+// existentes y las guarda. silent=true → la visita en vivo (sin mensajes; saltea las rondas completas).
 async function _crAutoFetchTeam(crk, crUrl, opts) {
   opts = opts || {};
   var st = document.getElementById('cr-status-' + crk);
@@ -11021,7 +11036,13 @@ async function _crAutoFetchTeam(crk, crUrl, opts) {
     // COMPOSICIÓN OFICIAL DE LOS EQUIPOS (art=8): el plantel inscripto de cada equipo. Se pide en
     // paralelo con la clasificación para no sumar espera, y no depende de que haya rondas jugadas
     // (en un torneo que todavía no empezó es lo ÚNICO que hay para mostrar de cada equipo).
-    var rosterP = _crProxyFetch(_crExportUrl(crUrl, 8, null)).then(crExtractXlsx).then(_teamParseRoster).catch(function(){ return null; });
+    // (La VISITA no lo vuelve a pedir si ya lo tiene y el torneo empezó: durante el torneo el plantel no
+    // cambia, y lo refresca el autor con el botón.)
+    var _visita = !!opts.silent;
+    var _yaEmpezo = Object.keys(data.teamCrosses).length > 0;
+    var rosterP = (_visita && _yaEmpezo && data.teamRoster && data.teamRoster.length)
+      ? Promise.resolve(null)
+      : _crProxyFetch(_crExportUrl(crUrl, 8, null)).then(crExtractXlsx).then(_teamParseRoster).catch(function(){ return null; });
     try {
       var srows = await crExtractXlsx(await _crProxyFetch(_crExportUrl(crUrl, 0, null)));
       var stand = _teamParseStandings(srows);
@@ -11034,7 +11055,23 @@ async function _crAutoFetchTeam(crk, crUrl, opts) {
     //    1..maxR+1 (la +1 agarra la ronda en curso, cuyos cruces ya salieron aunque la formación no).
     //    Sin maxR, MODO SONDEO hasta una ronda que no tenga NI cruces NI formación (no existe = fin).
     var probe = !maxR, cap = maxR ? maxR + 1 : 40, okR = 0;
-    for (var r = 1; r <= cap; r++) {
+    // LA VISITA NO VUELVE A BAJAR LO QUE YA TIENE (11/09/2026). Antes cada visitante de un torneo por
+    // equipos en vivo bajaba TODAS las rondas desde la 1, de a una: en la ronda 11 de una Olimpiada eran
+    // ~24 pedidos a Chess-Results por visita, 15-20 s, con la ronda que todos quieren ver llegando ÚLTIMA,
+    // y todo para volver a traer rondas que ya viajan en la web (el autor las actualiza cada noche).
+    // Ahora la visita saltea las rondas COMPLETAS (formación con resultado en todas las mesas), salvo la
+    // más nueva y la anterior, que se bajan siempre por si el árbitro corrigió algo. Y va de la más nueva
+    // a la más vieja. El botón del autor (opts sin silent) sigue bajando todo, como siempre.
+    var _rondasLocales = Object.keys(data.teamRounds).concat(Object.keys(data.teamCrosses)).map(Number).filter(function(n){ return n > 0; });
+    var _tope = maxR || (_rondasLocales.length ? Math.max.apply(null, _rondasLocales) : 0);
+    var _rondas = [];
+    for (var _r = 1; _r <= cap; _r++) {
+      if (_visita && _r < _tope - 1 && _teamRoundComplete(data, _r)) continue;
+      _rondas.push(_r);
+    }
+    if (!probe) _rondas.reverse();   // con el total conocido, la más nueva primero (en sondeo hace falta ir para arriba)
+    for (var _i = 0; _i < _rondas.length; _i++) {
+      var r = _rondas[_i];
       setS('⏳ Bajando ronda ' + r + (maxR ? '/' + maxR : '') + '…');
       var crossP = _crProxyFetch(_crExportUrl(crUrl, 2, r)).then(crExtractXlsx).then(_teamParseCrosses).catch(function(){ return null; });
       // OJO: si le pedís la formación de una ronda que NO publicó, Chess-Results NO devuelve vacío:
@@ -11468,6 +11505,14 @@ async function _crImportGamesToPool(crk, soloArgentinos) {
 // venga vacía. Reusa los MISMOS parsers que Chess-Results (_crParseSections / _crParseStandingsRows).
 var _i64UrlByKey = {};   // crk -> URL de info64 del torneo (lo setea openTournamentDetail)
 var _I64_MAX_ROUNDS = 25;
+// ¿Ronda individual COMPLETA en lo que ya se tiene? Tiene partidas y TODAS con resultado. Así la visita
+// no la vuelve a pedir (ver _i64AutoFetchIndiv). Una partida sin resultado cargado la deja incompleta
+// y se sigue pidiendo, como antes.
+function _crRoundCompleteIndiv(data, r) {
+  var ps = data && data.rounds && data.rounds[r];
+  if (!ps || !ps.length) return false;
+  return ps.every(function(p) { return !!(p && String(p.res || '').trim()); });
+}
 async function _i64AutoFetchIndiv(crk, i64url, opts) {
   opts = opts || {};
   var st = document.getElementById('cr-status-' + crk);
@@ -11477,8 +11522,18 @@ async function _i64AutoFetchIndiv(crk, i64url, opts) {
   try {
     var data = crDataLoad(crk) || { rounds:{}, standings:[] };
     if (!data.rounds) data.rounds = {};
-    var okR = 0;
+    var okR = 0, salteadas = 0;
+    // LA VISITA NO VUELVE A BAJAR LO QUE YA TIENE (11/09/2026), igual que en los torneos por equipos de
+    // Chess-Results (_crAutoFetchTeam): info64 se pide ronda por ronda, y cada pedido son DOS viajes del
+    // Worker a info64 (el POST y el archivo). En un torneo de 9 rondas eran ~11 pedidos por visita para
+    // traer rondas que ya viajan en la web. La visita saltea las rondas COMPLETAS (todas las partidas con
+    // resultado), salvo la más nueva y la anterior, por si corrigieron algo. El botón del autor sigue
+    // bajando todo. Las salteadas no cortan la búsqueda del final: completas quiere decir que tienen partidas.
+    var _visita = !!opts.silent;
+    var _rLoc = Object.keys(data.rounds).map(Number).filter(function(n){ return n > 0; });
+    var _tope = _rLoc.length ? Math.max.apply(null, _rLoc) : 0;
     for (var r = 1; r <= _I64_MAX_ROUNDS; r++) {
+      if (_visita && r < _tope - 1 && _crRoundCompleteIndiv(data, r)) { salteadas++; continue; }
       setS('⏳ Bajando emparejamientos ronda ' + r + '…');
       var got = 0;
       try {
@@ -11496,8 +11551,8 @@ async function _i64AutoFetchIndiv(crk, i64url, opts) {
       } catch(e) { /* ronda inexistente o vacía → cortamos abajo */ }
       if (!got) break;   // primera ronda sin partidas = no hay más → frenar
     }
-    // Tabla: si ya hay rondas → clasificación; si no → ranking inicial.
-    var standKind = okR > 0 ? 'standings' : 'initial';
+    // Tabla: si ya hay rondas → clasificación; si no → ranking inicial. (Las salteadas también son rondas.)
+    var standKind = (okR > 0 || salteadas > 0) ? 'standings' : 'initial';
     setS('⏳ Bajando ' + (standKind === 'initial' ? 'ranking inicial' : 'clasificación') + '…');
     try {
       var ps = _crParseStandingsRows(await crExtractXlsx(await _i64ProxyFetch(_i64ExportUrl(i64url, standKind))));
