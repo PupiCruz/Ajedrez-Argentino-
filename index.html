@@ -8772,7 +8772,12 @@ function _teamGotoFormation(crk, round, fedKey){
 var _teamArgOnly=false;
 var _teamCurTab={};   // crk -> pestaña activa (para re-aplicarla al togglear el filtro)
 function _teamToggleArg(crk){ _teamArgOnly=!_teamArgOnly; _teamRefresh(crk, _teamCurTab[crk]); }
-function _teamMatchIsArg(m){ return _teamCountryParts(m.aName).fed==='ARG' || _teamCountryParts(m.bName).fed==='ARG'; }
+// La formación (art=3) a veces trae el código pegado al nombre ("Argentina (ARG)", la Olimpiada grande)
+// y a veces NO ("Argentina", la Olimpiada para Personas con Discapacidad 2026). Sin código el filtro no
+// encontraba nunca a Argentina y decía "Argentina no juega en esta ronda". Ahora, si no viene el código,
+// se resuelve por el nombre con los cruces y la tabla del torneo (_teamResolveFed), como el salto a partidas.
+function _teamSideIsArg(name, data){ var f=_teamCountryParts(name).fed || _teamResolveFed(name, data); return String(f||'').toUpperCase()==='ARG'; }
+function _teamMatchIsArg(m, data){ return _teamSideIsArg(m.aName, data) || _teamSideIsArg(m.bName, data); }
 function _teamCrossIsArg(m){ return (m.aFed||'').toUpperCase()==='ARG' || (m.bFed||'').toUpperCase()==='ARG'; }
 // ¿Se puede llegar a las partidas de esta ronda? Sí si ya está cargada O si es on-demand y hay metadata
 // para bajarla (aunque el visitante todavía no la haya abierto). Para mostrar el ojito en TODAS las rondas.
@@ -8827,7 +8832,7 @@ function _teamBoardClick(ev, crk){
 }
 
 function _teamRenderRound(matches, roundNum, crk){
-  if(_teamArgOnly) matches=(matches||[]).filter(_teamMatchIsArg);
+  if(_teamArgOnly){ var _dArg=crk?crDataLoad(crk):null; matches=(matches||[]).filter(function(m){ return _teamMatchIsArg(m,_dArg); }); }
   if(!matches||!matches.length) return '<div style="color:var(--text3);font-size:12px;padding:10px">'+(_teamArgOnly?'' + _flagImg('ARG') + ' Argentina no juega en esta ronda.':'Sin datos.')+'</div>';
   // Nombre clickeable → abre las estadísticas del jugador en el torneo (crOpenPlayer lee teamRounds).
   function nameClk(n){ return n ? '<span title="Ver estadísticas del jugador"'+_a11yClic()+' style="cursor:pointer;border-bottom:1px dotted transparent" onmouseover="this.style.borderBottomColor=\'var(--gold)\';this.style.color=\'var(--gold)\'" onmouseout="this.style.borderBottomColor=\'transparent\';this.style.color=\'\'">'+escHtml(n)+'</span>' : ''; }
@@ -9003,7 +9008,7 @@ function _teamOpenBoardGame(round, wName, bName){
   }
   _tdToast('Esta partida no se transmitió.');
 }
-function _teamRenderSection(crk,data){
+function _teamRenderSection(crk,data,wantTab){
   var ks=crk.replace(/'/g,"\\'");
   data=data||{};
   var rounds=data.teamRounds||{};
@@ -9024,6 +9029,11 @@ function _teamRenderSection(crk,data){
   var _crucesLbl=_areCountries?'🌍 Cruces por países':'🤝 Cruces por equipos';
   // Landing: última ronda con FORMACIÓN; si no hay, última con CRUCES; si no, la tabla.
   var defaultTab=roundNums.length?roundNums[roundNums.length-1]:(crossNums.length?('x'+crossNums[crossNums.length-1]):(hasStand?'tabla':null));
+  // Al REDIBUJAR (tocar "Solo argentinos", actualizar) se arma ya abierta en la pestaña que se estaba
+  // mirando. Antes salía en la de siempre y 30 ms después _teamRefresh saltaba a la buena: parado en la
+  // Tabla, se veía un instante la formación ("Argentina no juega en esta ronda") y volvía la tabla.
+  if(wantTab!=null){ var _wt=String(wantTab);
+    if((_wt==='tabla'&&hasStand) || (_wt==='stats'&&_stStatsAvailable(crk,data)) || (_wt.charAt(0)==='x'&&crossNums.indexOf(Number(_wt.slice(1)))>=0) || roundNums.indexOf(Number(_wt))>=0) defaultTab=_wt; }
   var delBtn=function(label,onclick){ return _ondemand?'':'<div style="display:flex;justify-content:flex-end;margin-bottom:8px"><button onclick="'+onclick+'" style="padding:5px 11px;border-radius:8px;border:1px solid rgba(200,70,70,.35);background:rgba(200,60,60,.1);color:#e07070;font-size:11.5px;font-weight:600;cursor:pointer;font-family:inherit">✕ '+label+'</button></div>'; };
   var h='<div id="cr-section-'+crk+'" style="margin-bottom:20px">';
   h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px">';
@@ -9047,7 +9057,7 @@ function _teamRenderSection(crk,data){
   }
   // Filtro visitante "Solo argentinos" (mismo botón que la sección de partidas): solo si el torneo
   // tiene a Argentina. Filtra los cruces y la formación al match de ARG en cada ronda.
-  var _hasArg = crossNums.some(function(r){ return (crosses[r]||[]).some(_teamCrossIsArg); }) || roundNums.some(function(r){ return (rounds[r]||[]).some(_teamMatchIsArg); });
+  var _hasArg = crossNums.some(function(r){ return (crosses[r]||[]).some(_teamCrossIsArg); }) || roundNums.some(function(r){ return (rounds[r]||[]).some(function(m){ return _teamMatchIsArg(m,data); }); });
   if(!_hasArg) _teamArgOnly=false;   // sin ARG no hay botón para apagarlo → que un filtro pegado de otro torneo no deje todo vacío
   if(_hasArg){ h+='<div style="margin-bottom:12px"><button onclick="_teamToggleArg(\''+ks+'\')" class="arg-toggle'+(_teamArgOnly?' on':'')+'">' + _flagImg('ARG') + ' Solo argentinos</button></div>'; }
   // Botón de ronda/tabla. Mismo diseño que los botones de rondas de PARTIDAS (borde 2px + fondo glass,
@@ -9154,7 +9164,7 @@ function _teamShowTab(crk,tab){
 }
 function _teamRefresh(crk,tab){
   var sec=document.getElementById('cr-section-'+crk);
-  if(sec){ sec.outerHTML=_teamRenderSection(crk,crDataLoad(crk)); }
+  if(sec){ sec.outerHTML=_teamRenderSection(crk,crDataLoad(crk),tab); }   // ya abierta en `tab`: sin parpadeo
   if(tab!=null) setTimeout(function(){ _teamShowTab(crk,tab); },30);
 }
 function _teamDeleteRound(crk,r){

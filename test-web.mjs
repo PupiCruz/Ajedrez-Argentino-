@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 750;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 756;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -3193,6 +3193,37 @@ console.log('\n=== 46. Accesibilidad Fase 1: las tablas de torneo ===');
       'en los cuadros de cada ronda se llega a los dos jugadores con el teclado');
   chk(/_a11yEnVezDe\(escHtml\(mesaVal\), _a11yMesaFrase/.test(rnd),
       'bajando por la columna de la mesa con Ctrl+Alt se escucha UNA frase por partida y nada más');
+}
+
+// ── 47. "Solo argentinos" en las FORMACIONES por equipos ────────────────────────────────────────
+// Olimpiada para Personas con Discapacidad 2026 (11/09): la formación de Chess-Results traía los
+// equipos SIN el código pegado ("Argentina", no "Argentina (ARG)" como la Olimpiada grande), y el
+// filtro sólo miraba el código → "Argentina no juega en esta ronda". Y parado en la Tabla, al tocar el
+// botón se veía un instante esa formación antes de volver a la tabla (se redibujaba en otra pestaña).
+{
+  console.log('\n=== 47. Solo argentinos en las formaciones por equipos ===');
+  const ISO = JSON.parse(SRC.match(/var _FED_ISO = (\{.*?\});/)[1]);
+  const T = new Function('_FED_ISO', '_NAME_FED',
+      'function crFlagEmoji(){ return ""; } function _teamFlag(){ return ""; }'
+    + extraerFuncion('_teamCountryParts') + extraerFuncion('_teamResolveFed')
+    + extraerFuncion('_teamSideIsArg') + extraerFuncion('_teamMatchIsArg')
+    + ' return _teamMatchIsArg;')(ISO, { argentina: 'ARG', egypt: 'EGY' });
+  const datos = { teamCrosses: { 1: [ { aName: 'Egypt', aFed: 'EGY', bName: 'Argentina', bFed: 'ARG' },
+                                     { aName: 'Poland', aFed: 'POL', bName: 'Mongolia', bFed: 'MGL' } ] } };
+  chk(T({ aName: 'Egypt', bName: 'Argentina' }, datos) === true,
+      'la formación con "Argentina" a secas (sin "(ARG)") se reconoce por el nombre');
+  chk(T({ aName: 'Poland', bName: 'Mongolia' }, datos) === false,
+      'y un cruce donde no juega Argentina sigue afuera');
+  chk(T({ aName: 'Argentina (ARG)', bName: 'India (IND)' }, null) === true,
+      'con el código pegado, como en la Olimpiada grande, anda igual que antes');
+  chk(T({ aName: 'Argentinos Juniors', bName: 'Racing Club' }, null) === false,
+      'un club con "Argentin…" en el nombre no pasa por la selección');
+  chk(extraerFuncion('_teamRenderRound').includes('return _teamMatchIsArg(m,_dArg);')
+   && SRC.includes('(rounds[r]||[]).some(function(m){ return _teamMatchIsArg(m,data); })'),
+      'el panel de la formación y el que decide si va el botón le pasan los datos del torneo');
+  chk(extraerFuncion('_teamRefresh').includes('_teamRenderSection(crk,crDataLoad(crk),tab)')
+   && extraerFuncion('_teamRenderSection').includes('defaultTab=_wt;'),
+      'al tocar el botón se redibuja YA en la pestaña que se miraba (sin el parpadeo de la formación)');
 }
 
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
