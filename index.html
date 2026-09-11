@@ -78,6 +78,16 @@
       font-weight: 700; font-size: 14px; text-decoration: none;
     }
     .skip-link:focus { left: 0; }
+    /* ═══ ACCESIBILIDAD (Fase 1) ═══
+       Los nombres y los países de las tablas ahora se alcanzan con el Tab (role="button"). El que
+       navega con el teclado necesita VER dónde está parado, y el recuadro que pone el navegador por
+       omisión casi no se distingue sobre el fondo oscuro. :focus-visible = sólo con el teclado: con
+       el mouse o el dedo no aparece nada, así que no cambia en nada lo que se ve hoy. */
+    [role="button"]:focus-visible {
+      outline: 2px solid var(--gold, #c9a227);
+      outline-offset: 2px;
+      border-radius: 4px;
+    }
     /* El título de la sección recibe el foco al navegar (para que el lector lea dónde estás),
        pero no queremos dibujarle un marco a un texto que no es clickeable. */
     [tabindex="-1"]:focus { outline: none; }
@@ -2524,7 +2534,7 @@
       <div id="torneo-tools" style="margin:0 0 18px">
         <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-bottom:12px">
           <button class="chip active" onclick="filterTType('todos',this)">Todos</button>
-          <button class="chip" onclick="filterTType('nacional',this)"><img class="flag-ic" src="assets/flags/ar.svg" alt="ARG" loading="lazy"> Nacionales</button>
+          <button class="chip" onclick="filterTType('nacional',this)"><img class="flag-ic" src="assets/flags/ar.svg" alt="" aria-hidden="true" loading="lazy"> Nacionales</button>
           <button class="chip" onclick="filterTType('internacional',this)">🌍 Internacionales</button>
         </div>
         <div class="search-pill">
@@ -4416,7 +4426,7 @@
       <div style="font-size:11px;color:var(--text3);margin-top:6px;line-height:1.4">Pegá el link de la transmisión/evento en Chess.com. Se mostrará un botón para abrirlo.</div>
     </div>
     <div style="margin-bottom:14px">
-      <label class="tz-flabel"><img class="flag-ic" src="assets/flags/ar.svg" alt="ARG" loading="lazy"> Argentinos en el torneo <span style="font-weight:400;color:var(--text3)">(opcional — se autodetectan de la tabla; podés escribirlos a mano, uno por renglón)</span></label>
+      <label class="tz-flabel"><img class="flag-ic" src="assets/flags/ar.svg" alt="" aria-hidden="true" loading="lazy"> Argentinos en el torneo <span style="font-weight:400;color:var(--text3)">(opcional — se autodetectan de la tabla; podés escribirlos a mano, uno por renglón)</span></label>
       <textarea id="tze-arg" class="tz-input" placeholder="Mareco, Sandro
 Peralta, Fernando" style="height:60px;resize:vertical;font-family:inherit"></textarea>
     </div>
@@ -6102,12 +6112,29 @@ function _normTitle(t) {
   if (!s) return '';
   return _TITLE_ES[s] || s;
 }
+// Cómo se dice cada título en voz alta. Sin esto el lector los deletrea ("efe eme") y el peor de
+// todos es CM, que lo lee como "CENTÍMETRO".
+var _TITULO_DICHO = {
+  gm: 'Gran Maestro',        im: 'Maestro Internacional',
+  fm: 'Maestro FIDE',        cm: 'Maestro Candidato',
+  wgm: 'Gran Maestra',       wim: 'Maestra Internacional',
+  wfm: 'Maestra FIDE',       wcm: 'Maestra Candidata'
+};
+// Cómo se DICE un título. Úsenlo siempre que un título vaya a parar a una frase hablada: si se
+// deja crudo, el lector lo deletrea y CM lo lee como "centímetro".
+function _a11yTitulo(t) {
+  var s = String(t == null ? '' : t);
+  return _TITULO_DICHO[s.toLowerCase().replace(/[^a-z]/g, '')] || s;
+}
+
 function titleBadge(t) {
   t = _normTitle(t);
   if (!t) return '';
   var lc = String(t).toLowerCase().replace(/[^a-z]/g, '');
   var known = { gm:1, im:1, fm:1, cm:1, wgm:1, wim:1, wfm:1, wcm:1 };
-  return '<span class="p-title-badge' + (known[lc] ? ' p-title-' + lc : '') + '">' + escHtml(t) + '</span>';
+  var dicho = _TITULO_DICHO[lc];
+  return _a11ySep() + '<span class="p-title-badge' + (known[lc] ? ' p-title-' + lc : '') + '">'
+       + (dicho ? _a11yEnVezDe(escHtml(t), dicho) : escHtml(t)) + '</span>' + _a11ySep();
 }
 // Alias histórico usado en las tablas de Chess-Results/info64.
 function crTitleBadge(t) { return titleBadge(t); }
@@ -6134,19 +6161,25 @@ function _fedName(fed, iso) {
   return n;
 }
 // HTML de la bandera de una federación FIDE (3 letras). '' si no está mapeada.
-function _flagImg(fed) {
+// dice = true  →  además de la banderita, el nombre del país en texto que sólo oye el lector.
+// Se usa donde la bandera es el ÚNICO dato (la columna Fed, el cuadro cruzado): sin eso, un ciego
+// no se entera de la federación. En todos los demás lados el nombre ya está escrito al lado y la
+// bandera va MUDA (alt vacío + aria-hidden), que es lo que corresponde a un adorno.
+function _flagImg(fed, dice) {
   if (!fed) return '';
   fed = String(fed).toUpperCase();
   var iso = _FED_ISO[fed];
   if (!iso) return '';
-  return '<img class="flag-ic" src="assets/flags/' + iso + '.svg" alt="' + escHtml(fed) + '"'
-       + ' title="' + escHtml(_fedName(fed, iso)) + '" loading="lazy" onerror="this.remove()">';
+  var pais = _fedName(fed, iso);
+  return '<img class="flag-ic" src="assets/flags/' + iso + '.svg" alt="" aria-hidden="true"'
+       + ' title="' + escHtml(pais) + '" loading="lazy" onerror="this.remove()">'
+       + (dice ? _a11yDice(pais) : '');
 }
 // Compat: el nombre viejo (se usa en tablas de Chess-Results/info64). Ahora devuelve la IMAGEN;
 // si la federación no está mapeada, cae al código de 3 letras como respaldo.
-function crFlagEmoji(fed) {
+function crFlagEmoji(fed, dice) {
   if (!fed) return '';
-  return _flagImg(fed) || escHtml(String(fed));
+  return _flagImg(fed, dice) || escHtml(String(fed));
 }
 
 // ── Bandera por FIDE id cuando la TABLA del torneo no trae federación ─────────────────────────
@@ -6388,11 +6421,11 @@ function _crCfedMap(crKey) {
 // acá solo decide la bandera.
 // Sin `cfed` (todavía no se resolvió) se cae al criterio viejo: 🇦🇷 a los argentinos conocidos y
 // nada al resto, que es mejor que quedarse sin ninguna bandera.
-function _esRegFlag(name, fideId, crKey) {
+function _esRegFlag(name, fideId, crKey, dice) {
   var m = _crCfedMap(crKey);
   var f = (fideId && m.byId[String(fideId)]) || m.byName[crNormTokens(name)] || '';
-  if (f) return _flagImg(f);
-  return _isKnownArgPlayer(name, fideId) ? _flagImg('ARG') : '';
+  if (f) return _flagImg(f, dice);
+  return _isKnownArgPlayer(name, fideId) ? _flagImg('ARG', dice) : '';
 }
 
 // Bandera de un "equipo" del PGN (header WhiteTeam/BlackTeam). En las Olimpiadas y torneos por
@@ -6801,27 +6834,27 @@ function crBuildTabsAndPanels(key,data){
   var h='<div id="cr-tabs-'+key+'" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">';
   if(isRR){
     var aCu=(defaultTab==='cuadro');
-    h+='<button onclick="crShowTab(\''+ks+'\',\'cuadro\')" id="cr-rtab-'+key+'-cuadro" style="padding:7px 15px;border-radius:20px;border:2px solid '+(aCu?'var(--gold-dim)':'var(--bd22)')+';background:'+(aCu?'var(--gold-bg)':'var(--gl40)')+';color:'+(aCu?'var(--gold)':'var(--fg-d0)')+';font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit;text-shadow:var(--txt-out)">⊞ Cuadro</button>';
+    h+='<button onclick="crShowTab(\''+ks+'\',\'cuadro\')" id="cr-rtab-'+key+'-cuadro" aria-pressed="'+(aCu?'true':'false')+'" style="padding:7px 15px;border-radius:20px;border:2px solid '+(aCu?'var(--gold-dim)':'var(--bd22)')+';background:'+(aCu?'var(--gold-bg)':'var(--gl40)')+';color:'+(aCu?'var(--gold)':'var(--fg-d0)')+';font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit;text-shadow:var(--txt-out)">⊞ Cuadro</button>';
   }
   roundNums.forEach(function(r){
     var active=(r===defaultTab);
     if(_ondemand){
       // Web publicada: solo la pestaña de la ronda (sin el ✕ de borrar, que es del autor).
-      h+='<button onclick="crShowTab(\''+ks+'\','+r+')" id="cr-rtab-'+key+'-'+r+'" style="padding:7px 15px;border-radius:20px;border:2px solid '+(active?'var(--gold-dim)':'var(--bd22)')+';background:'+(active?'var(--gold-bg)':'var(--gl40)')+';color:'+(active?'var(--gold)':'var(--fg-d0)')+';font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit;text-shadow:var(--txt-out)">R'+r+'</button>';
+      h+='<button onclick="crShowTab(\''+ks+'\','+r+')" id="cr-rtab-'+key+'-'+r+'" aria-label="Ronda '+r+'" aria-pressed="'+(active?'true':'false')+'" style="padding:7px 15px;border-radius:20px;border:2px solid '+(active?'var(--gold-dim)':'var(--bd22)')+';background:'+(active?'var(--gold-bg)':'var(--gl40)')+';color:'+(active?'var(--gold)':'var(--fg-d0)')+';font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit;text-shadow:var(--txt-out)">R'+r+'</button>';
       return;
     }
     h+='<span style="display:inline-flex;align-items:center;gap:1px">';
-    h+='<button onclick="crShowTab(\''+ks+'\','+r+')" id="cr-rtab-'+key+'-'+r+'" style="padding:7px 11px 7px 15px;border-radius:20px 0 0 20px;border:2px solid '+(active?'var(--gold-dim)':'var(--bd22)')+';border-right:none;background:'+(active?'var(--gold-bg)':'var(--gl40)')+';color:'+(active?'var(--gold)':'var(--fg-d0)')+';font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit;text-shadow:var(--txt-out)">R'+r+'</button>';
+    h+='<button onclick="crShowTab(\''+ks+'\','+r+')" id="cr-rtab-'+key+'-'+r+'" aria-label="Ronda '+r+'" aria-pressed="'+(active?'true':'false')+'" style="padding:7px 11px 7px 15px;border-radius:20px 0 0 20px;border:2px solid '+(active?'var(--gold-dim)':'var(--bd22)')+';border-right:none;background:'+(active?'var(--gold-bg)':'var(--gl40)')+';color:'+(active?'var(--gold)':'var(--fg-d0)')+';font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit;text-shadow:var(--txt-out)">R'+r+'</button>';
     h+='<button onclick="crDeleteRound(\''+ks+'\','+r+')" title="Borrar ronda '+r+'" style="padding:7px 9px;border-radius:0 20px 20px 0;border:2px solid '+(active?'var(--gold-dim)':'var(--bd22)')+';border-left:none;background:'+(active?'var(--gold-bg)':'var(--gl40)')+';color:'+(active?'var(--gold)':'var(--text3)')+';font-size:11px;cursor:pointer;font-family:inherit;line-height:1">✕</button>';
     h+='</span>';
   });
   if(hasStandings){
     var active=(defaultTab==='tabla');
-    h+='<button onclick="crShowTab(\''+ks+'\',\'tabla\')" id="cr-rtab-'+key+'-tabla" style="padding:7px 15px;border-radius:20px;border:2px solid '+(active?'var(--gold-dim)':'var(--bd22)')+';background:'+(active?'var(--gold-bg)':'var(--gl40)')+';color:'+(active?'var(--gold)':'var(--fg-d0)')+';font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit;text-shadow:var(--txt-out)">📊 Tabla</button>';
+    h+='<button onclick="crShowTab(\''+ks+'\',\'tabla\')" id="cr-rtab-'+key+'-tabla" aria-pressed="'+(active?'true':'false')+'" style="padding:7px 15px;border-radius:20px;border:2px solid '+(active?'var(--gold-dim)':'var(--bd22)')+';background:'+(active?'var(--gold-bg)':'var(--gl40)')+';color:'+(active?'var(--gold)':'var(--fg-d0)')+';font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit;text-shadow:var(--txt-out)">📊 Tabla</button>';
   }
   // Pestaña 📈 Radiografía: solo en torneos individuales YA TERMINADOS (ver _stStatsAvailable).
   if(_stStatsAvailable(key,data)){
-    h+='<button onclick="crShowTab(\''+ks+'\',\'stats\')" id="cr-rtab-'+key+'-stats" style="padding:7px 15px;border-radius:20px;border:2px solid var(--bd22);background:var(--gl40);color:var(--fg-d0);font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit;text-shadow:var(--txt-out)">📈 Radiografía</button>';
+    h+='<button onclick="crShowTab(\''+ks+'\',\'stats\')" id="cr-rtab-'+key+'-stats" aria-pressed="false" style="padding:7px 15px;border-radius:20px;border:2px solid var(--bd22);background:var(--gl40);color:var(--fg-d0);font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit;text-shadow:var(--txt-out)">📈 Radiografía</button>';
   }
   // Botón para saltar a la sección de partidas (si hay partidas cargadas en este torneo).
   if(_tdCtx&&_tdCtx.games&&_tdCtx.games.length){
@@ -6958,49 +6991,67 @@ function crBuildCrosstable(key,data){
   var slotElo='width:42px;flex-shrink:0;text-align:right;color:var(--text3);font-size:12.5px;font-variant-numeric:tabular-nums';
   var h='<div style="max-height:560px;overflow:auto;border:1px solid var(--border);border-radius:10px;width:-moz-fit-content;width:fit-content;max-width:100%">';
   h+='<table class="cr-xt" style="border-collapse:collapse;font-size:14.5px;white-space:nowrap;margin:0">';
+  // El <caption> no se ve (sr-only) pero es lo PRIMERO que el lector de pantalla dice al entrar a la
+  // tabla: sin él son 30 filas de números sueltos y nadie sabe qué está mirando.
+  h+='<caption class="sr-only">Cuadro cruzado: '+N+' jugadores. Cada fila es un jugador y cada columna es el rival que lleva ese número de fila.</caption>';
   h+='<thead><tr>';
-  h+='<th class="cr-xt-num" style="'+th+';text-align:center;left:0;z-index:3">#</th>';
-  h+='<th class="cr-xt-nameth" style="'+th+';text-align:left;left:34px;z-index:2">Jugador</th>';
-  for(var j=0;j<N;j++){ h+='<th style="'+thCol+'" title="'+escHtml(players[j].name)+'">'+(j+1)+'</th>'; }
-  h+='<th style="'+th+'">Pts</th>';
+  h+='<th scope="col" class="cr-xt-num" style="'+th+';text-align:center;left:0;z-index:3">#</th>';
+  h+='<th scope="col" class="cr-xt-nameth" style="'+th+';text-align:left;left:34px;z-index:2">Jugador</th>';
+  // La columna se ve como un número, pero el número no le dice nada a quien no ve la tabla: al lado
+  // va el nombre del rival, invisible y sólo para el lector. (El title= NO lo lee ningún lector.)
+  for(var j=0;j<N;j++){ h+='<th scope="col" style="'+thCol+'" title="'+escHtml(players[j].name)+'"><span aria-hidden="true">'+(j+1)+'</span>'+_a11yDice('Rival '+(j+1)+': '+_a11yNombre(players[j].name))+'</th>'; }
+  h+='<th scope="col" style="'+th+'">'+_a11yEnVezDe('Pts','Puntos')+'</th>';
   h+='</tr></thead><tbody>';
   for(var i=0;i<N;i++){
     var pl=players[i], rowPts=0, played=false;
     h+='<tr>';
     h+='<td class="cr-xt-num" style="'+td+';color:var(--text3);font-size:12.5px;position:sticky;left:0;background:var(--bg2);z-index:1">'+(i+1)+'</td>';
-    h+='<td class="cr-xt-nametd" style="'+nameTd+';cursor:pointer" onclick="crOpenPlayer('+crArg(key)+','+crArg(pl.name)+')">'
+    h+='<th scope="row" class="cr-xt-nametd" style="'+nameTd+';font-weight:400;cursor:pointer" onclick="crOpenPlayer('+crArg(key)+','+crArg(pl.name)+')">'
       +'<span class="cr-xt-name" style="display:flex;align-items:center;gap:6px;min-width:430px;max-width:560px">'
       +'<span class="cr-tslot" style="'+slotTitle+'">'+crTitleBadge(pl.title)+'</span>'
-      +'<span class="cr-xt-fslot" style="'+slotFlag+'">'+(pl.fed?(_tourIsESRegional(key)?_esRegFlag(pl.name,pl.fide,key):crFlagEmoji(pl.fed)):(_tourIsESRegional(key)?'':_crFideFlagSlot(pl.fide)))+'</span>'
-      +'<span style="'+slotName+'">'+escHtml(pl.name)+'</span>'
-      +'<span class="cr-xt-elo" style="'+slotElo+'">'+(pl.elo||'')+'</span>'
-      +'</span></td>';
+      +'<span class="cr-xt-fslot" style="'+slotFlag+'">'+(pl.fed?(_tourIsESRegional(key)?_esRegFlag(pl.name,pl.fide,key,true):crFlagEmoji(pl.fed,true)):(_tourIsESRegional(key)?'':_crFideFlagSlot(pl.fide)))+'</span>'
+      // El clic vive en el <th> de afuera; a este span sólo le hace falta ser alcanzable con el Tab:
+      // al "tocarlo" con Enter el clic sube solo hasta el <th> y abre la ficha, como con el mouse.
+      +'<span style="'+slotName+'"'+_a11yClic()+'>'+escHtml(pl.name)+'</span>'
+      // El "Elo" invisible hace dos cosas: separa el número del apellido (se oía "David2632") y
+      // dice qué es ese número, que a la vista se entiende por la columna y al oído no.
+      +(pl.elo?_a11yDice('Elo'):'')+'<span class="cr-xt-elo" style="'+slotElo+'">'+(pl.elo||'')+'</span>'
+      +'</span></th>';
     for(var j=0;j<N;j++){
-      if(i===j){ h+='<td style="'+td+';background:var(--bg3)"></td>'; continue; }
+      if(i===j){ h+='<td style="'+td+';background:var(--bg3)">'+_a11yDice('No juega contra sí mismo')+'</td>'; continue; }
       var cs=cell[i][j];
-      if(!cs.length){ h+='<td style="'+td+';color:var(--text3)"></td>'; continue; }
+      if(!cs.length){ h+='<td style="'+td+';color:var(--text3)">'+_a11yDice('no se enfrentaron')+'</td>'; continue; }
       // Editar resultados es SOLO del modo autor: en la web publicada (_ondemand) la
       // tabla es de lectura (sin cursor de mano, sin onclick, sin "clic para cambiar").
       var canEdit=!_ondemand;
       var cur=canEdit?';cursor:pointer':'';
       // Una partida por ranura: con doble ronda son dos, y cada una se edita por su cuenta (cada
       // clic tiene que saber de QUÉ ronda es, si no la vuelta pisaría a la ida).
+      // Lo que se DICE de esta casilla, que a la vista es sólo "1" o "½". El contexto vivía en el
+      // title=, que ningún lector lee. NO va como aria-label (no se oye en las tablas): va como
+      // texto invisible DENTRO de la celda. Y va corto —"ronda 3, con blancas, ganó"— porque el
+      // encabezado de la fila ya dijo quién es y el de la columna contra quién.
+      var dichos=[];
       var partes=cs.map(function(c){
         var sn=scoreNum(c);
         if(sn!=null){ rowPts+=sn; played=true; }
+        dichos.push(_a11yCelda('', '', c.round, c.white,
+          sn===1?'ganó':(sn===0.5?'empató':(sn===0?'perdió':'todavía no se jugó'))));
         var onclk=canEdit?' onclick="crCycleResult('+crArg(key)+','+(c.round==null?'null':c.round)+','+crArg(pl.name)+','+crArg(players[j].name)+')"':'';
         if(sn!=null){
           var sc=scoreStr(sn);
           var col=sc==='½'?'var(--gold)':(sc==='1'?'#4caf50':'#e05555');
           var tip='R'+c.round+' · '+(c.white?'⬜':'⬛')+' vs '+escHtml(players[j].name)+' · '+escHtml(c.res)+(canEdit?' · clic para cambiar':'');
-          return '<span style="font-weight:700;color:'+col+cur+'" title="'+tip+'"'+onclk+'>'+sc+'</span>';
+          // aria-hidden: el "½" y el "·" ya los cuenta la frase de abajo. Sin esto se oía
+          // "cliqueable, ½, espacio, cliqueable, ·" ANTES de lo único que se entiende.
+          return '<span style="font-weight:700;color:'+col+cur+'" title="'+tip+'" aria-hidden="true"'+onclk+'>'+sc+'</span>';
         }
         var tipE='R'+c.round+' · '+(c.white?'⬜':'⬛')+' vs '+escHtml(players[j].name)+(canEdit?' · clic para cargar resultado':'');
-        return '<span style="color:var(--text3)'+cur+'" title="'+tipE+'"'+onclk+'>·</span>';
+        return '<span style="color:var(--text3)'+cur+'" title="'+tipE+'" aria-hidden="true"'+onclk+'>·</span>';
       });
-      h+='<td style="'+td+'">'+partes.join('<span style="color:var(--text3);font-weight:400"> </span>')+'</td>';
+      h+='<td style="'+td+'">'+partes.join('<span style="color:var(--text3);font-weight:400" aria-hidden="true"> </span>')+_a11yDice(dichos.join('. '))+'</td>';
     }
-    h+='<td style="'+td+';font-weight:700;color:var(--gold)">'+(played?crPtsStr(rowPts):'')+'</td>';
+    h+='<td style="'+td+';font-weight:700;color:var(--gold)">'+(played?crPtsStr(rowPts)+_a11yDice(_a11yPuntos(rowPts)+' en total'):'')+'</td>';
     h+='</tr>';
   }
   h+='</tbody></table></div>';
@@ -7059,14 +7110,20 @@ function crBuildRoundPanel(key,pairings,data,roundNum){
   // Emparejamientos como filas "espejo": Blancas (derecha) → resultado (centro) → Negras (izquierda).
   // Con flex y nombres que envuelven → NO desborda a lo ancho ni corta "Negras" (antes era una tabla
   // de 12 columnas con nowrap que se iba de pantalla, sobre todo en celular).
-  var subLine=function(elo,pts){ var a=[]; if(elo) a.push(elo); if(pts) a.push(pts+' pts'); return a.length?'<div style="font-size:11px;color:var(--fg-b0);margin-top:2px;text-shadow:var(--txt-out)">'+escHtml(a.join(' · '))+'</div>':''; };
-  h+='<div style="max-height:440px;overflow-y:auto;overflow-x:hidden;scrollbar-gutter:stable;background:var(--tbl-bg);border:1px solid var(--bd18);border-radius:10px">';
-  // Encabezado (sticky)
-  h+='<div style="display:flex;align-items:center;gap:6px;padding:8px 10px;position:sticky;top:0;background:var(--tbl-head);border-bottom:2px solid var(--bd20);z-index:1;font-size:11px;font-weight:700;color:var(--fg-e0);text-transform:uppercase;letter-spacing:.4px">';
-  h+='<div style="width:22px;text-align:center;flex-shrink:0">M</div>';
-  h+='<div style="flex:1;min-width:0;text-align:right">Blancas</div>';
-  h+='<div style="width:58px;text-align:center;flex-shrink:0">Res</div>';
-  h+='<div style="flex:1;min-width:0;text-align:left">Negras</div>';
+  var subLine=function(elo,pts){
+    var a=[]; if(elo) a.push(elo); if(pts) a.push(pts+' pts');
+    if(!a.length) return '';
+    // Se sigue VIENDO igual, pero el lector no lo dice: el Elo y los puntos son justo los que
+    // convertían el renglón en una metralleta, y ya están en la tabla de posiciones con su columna.
+    return '<div aria-hidden="true" style="font-size:11px;color:var(--fg-b0);margin-top:2px;text-shadow:var(--txt-out)">'+escHtml(a.join(' · '))+'</div>';
+  };
+  h+='<div role="table" aria-label="'+escHtml('Mesas de la ronda '+(roundNum==null?'':roundNum)+': '+rShown.length+(rShown.length===1?' mesa':' mesas')+'. Bajando por la primera columna se cuenta cada mesa entera; entrando a una fila están los dos jugadores y el resultado. Con Enter se abre la performance del jugador, o la partida')+'" style="max-height:440px;overflow-y:auto;overflow-x:hidden;scrollbar-gutter:stable;background:var(--tbl-bg);border:1px solid var(--bd18);border-radius:10px">';
+  // Encabezado (sticky). Los rótulos abreviados se dicen enteros: "M" al oído es "eme".
+  h+='<div role="row" style="display:flex;align-items:center;gap:6px;padding:8px 10px;position:sticky;top:0;background:var(--tbl-head);border-bottom:2px solid var(--bd20);z-index:1;font-size:11px;font-weight:700;color:var(--fg-e0);text-transform:uppercase;letter-spacing:.4px">';
+  h+='<div role="columnheader" style="width:22px;text-align:center;flex-shrink:0">'+_a11yEnVezDe('M','Mesa')+'</div>';
+  h+='<div role="columnheader" style="flex:1;min-width:0;text-align:right">Blancas</div>';
+  h+='<div role="columnheader" style="width:58px;text-align:center;flex-shrink:0">'+_a11yEnVezDe('Res','Resultado')+'</div>';
+  h+='<div role="columnheader" style="flex:1;min-width:0;text-align:left">Negras</div>';
   h+='</div>';
   rShown.forEach(function(r,rowIdx){
     var p=r.p;
@@ -7080,30 +7137,38 @@ function crBuildRoundPanel(key,pairings,data,roundNum){
     var gIdx=crFindGameIdx(roundNum,p.w,p.b);
     var resCell;
     if(gIdx>=0){
-      resCell='<span style="cursor:pointer;font-weight:700;color:'+resColor+';font-size:15px;text-shadow:var(--txt-out)" title="Ver partida" onclick="crOpenGame('+(roundNum==null?'null':roundNum)+','+nsW+','+nsB+')"><span style="border-bottom:1px dashed currentColor">'+escHtml(p.res)+'</span> <span style="font-size:12px;color:var(--blue)">👁</span></span>';
+      resCell='<span style="cursor:pointer;font-weight:700;color:'+resColor+';font-size:15px;text-shadow:var(--txt-out)" title="Ver partida"'+_a11yClic(_a11yMesaCorto(p.w, p.b, p.res)+'. Ver la partida')+' onclick="crOpenGame('+(roundNum==null?'null':roundNum)+','+nsW+','+nsB+')"><span style="border-bottom:1px dashed currentColor">'+escHtml(p.res)+'</span> <span style="font-size:12px;color:var(--blue)">👁</span></span>';
     } else if(_ondemand){
       // Visitante: el resultado es de LECTURA (sin mano, sin "clic para cambiar").
-      resCell='<span style="font-weight:700;color:'+resColor+';font-size:15px;text-shadow:var(--txt-out)">'+(p.res?escHtml(p.res):'<span style="color:var(--text3)">·</span>')+'</span>';
+      // Sin partida cargada no hay nada que abrir, así que no es un botón; pero el resultado tiene
+      // que oírse igual, y con palabras.
+      resCell='<span style="font-weight:700;color:'+resColor+';font-size:15px;text-shadow:var(--txt-out)"><span aria-hidden="true">'+(p.res?escHtml(p.res):'<span style="color:var(--text3)">·</span>')+'</span>'+_a11yDice(_a11yMesaCorto(p.w, p.b, p.res))+'</span>';
     } else {
       var resInner = p.res
         ? '<span style="border-bottom:1px dashed currentColor">'+escHtml(p.res)+'</span>'
         : '<span style="color:var(--text3);font-weight:600;border-bottom:1px dashed var(--text3);padding:0 4px">＋</span>';
-      resCell='<span style="cursor:pointer;font-weight:700;color:'+resColor+';font-size:15px;text-shadow:var(--txt-out)" title="Clic para cargar/cambiar el resultado (1-0 → ½-½ → 0-1 → vacío)" onclick="crSetRoundResult('+ks2+','+(roundNum==null?'null':roundNum)+','+nsW+','+nsB+')">'+resInner+'</span>';
+      resCell='<span style="cursor:pointer;font-weight:700;color:'+resColor+';font-size:15px;text-shadow:var(--txt-out)" title="Clic para cargar/cambiar el resultado (1-0 → ½-½ → 0-1 → vacío)"'+_a11yClic(_a11yMesaCorto(p.w, p.b, p.res)+'. Tocá para cambiarlo')+' onclick="crSetRoundResult('+ks2+','+(roundNum==null?'null':roundNum)+','+nsW+','+nsB+')">'+resInner+'</span>';
     }
-    h+='<div class="cr-prow" style="display:flex;align-items:center;gap:6px;padding:8px 10px;border-bottom:1px solid var(--bd10);'+rowBg+'">';
-    h+='<div style="width:22px;text-align:center;color:var(--fg-e8);font-size:13px;font-weight:700;flex-shrink:0;text-shadow:var(--txt-out)">'+escHtml(mesaVal)+'</div>';
+    h+='<div role="row" class="cr-prow" style="display:flex;align-items:center;gap:6px;padding:8px 10px;border-bottom:1px solid var(--bd10);'+rowBg+'">';
+    h+='<div role="cell" style="width:22px;text-align:center;color:var(--fg-e8);font-size:13px;font-weight:700;flex-shrink:0;text-shadow:var(--txt-out)">'+_a11yEnVezDe(escHtml(mesaVal), _a11yMesaFrase(mesaVal, p.w, p.b, p.res))+'</div>';
     // Blancas (derecha)
-    h+='<div style="flex:1;min-width:0;text-align:right;cursor:pointer" onclick="crOpenPlayer('+ks2+','+nsW+')">';
-    h+='<div style="line-height:1.25;overflow-wrap:anywhere">'+crTitleBadge(p.tw)+' <span style="color:var(--text);font-weight:'+(wWin?'700':'500')+';font-size:14px;text-shadow:var(--txt-out)">'+escHtml(p.w)+'</span> '+flagCell(p.w)+'</div>';
+    // El <div> entero se toca con el mouse; con el teclado no existía. role="button" + tabindex lo
+    // mete en el recorrido del Tab y el escuchador general le hace el clic con Enter.
+    // El "Blancas:" invisible va DENTRO y no como aria-label: un aria-label reemplaza al contenido y
+    // se perderían el Elo y los puntos. De qué lado está cada uno se ve, pero no se oye.
+    h+='<div role="cell" style="flex:1;min-width:0;text-align:right">';
+    h+='<div style="cursor:pointer" onclick="crOpenPlayer('+ks2+','+nsW+')"'+_a11yClic()+'>';
+    h+='<div style="line-height:1.25;overflow-wrap:anywhere"><span aria-hidden="true">'+crTitleBadge(p.tw)+'</span> <span style="color:var(--text);font-weight:'+(wWin?'700':'500')+';font-size:14px;text-shadow:var(--txt-out)">'+escHtml(p.w)+'</span> <span aria-hidden="true">'+flagCell(p.w)+'</span>'+_a11yDice('blancas')+'</div>';
     h+=subLine(p.ew,p.pw);
-    h+='</div>';
+    h+='</div></div>';
     // Resultado (centro)
-    h+='<div style="width:58px;flex-shrink:0;text-align:center">'+resCell+'</div>';
+    h+='<div role="cell" style="width:58px;flex-shrink:0;text-align:center">'+resCell+'</div>';
     // Negras (izquierda)
-    h+='<div style="flex:1;min-width:0;text-align:left;cursor:pointer" onclick="crOpenPlayer('+ks2+','+nsB+')">';
-    h+='<div style="line-height:1.25;overflow-wrap:anywhere">'+flagCell(p.b)+' <span style="color:var(--text);font-weight:'+(bWin?'700':'500')+';font-size:14px;text-shadow:var(--txt-out)">'+escHtml(p.b)+'</span> '+crTitleBadge(p.tb)+'</div>';
+    h+='<div role="cell" style="flex:1;min-width:0;text-align:left">';
+    h+='<div style="cursor:pointer" onclick="crOpenPlayer('+ks2+','+nsB+')"'+_a11yClic()+'>';
+    h+='<div style="line-height:1.25;overflow-wrap:anywhere"><span aria-hidden="true">'+flagCell(p.b)+'</span> <span style="color:var(--text);font-weight:'+(bWin?'700':'500')+';font-size:14px;text-shadow:var(--txt-out)">'+escHtml(p.b)+'</span> <span aria-hidden="true">'+crTitleBadge(p.tb)+'</span>'+_a11yDice('negras')+'</div>';
     h+=subLine(p.eb,p.pb);
-    h+='</div>';
+    h+='</div></div>';
     h+='</div>';
   });
   h+='</div>';
@@ -7151,6 +7216,17 @@ function crToggleArgManual(key,name){
   var panel=document.getElementById('cr-panel-'+key+'-tabla');
   if(panel) panel.innerHTML=crBuildStandingsPanel(key,(crDataLoad(key)||{}).standings||[]);
   try{ if(typeof _tdRefreshArgLine==='function') _tdRefreshArgLine(); }catch(e){}   // refrescar chips si están en pantalla
+}
+
+// El clic de un renglón de la tabla de posiciones. Vive en el <tbody> y NO en cada <tr> a propósito:
+// si lo tiene el <tr>, el lector de pantalla canta "cliqueable" cada vez que uno cambia de renglón
+// (en una tabla de 100 jugadores, 100 veces). Acá arriba nadie se para nunca, así que no lo canta,
+// y con el mouse se sigue tocando toda la fila igual que siempre.
+function crStandRowClick(ev, key){
+  var t = ev && ev.target;
+  var tr = (t && t.closest) ? t.closest('tr[data-p]') : null;
+  if (!tr) return;
+  crOpenPlayer(key, tr.getAttribute('data-p'));
 }
 
 function crBuildStandingsPanel(key,standings){
@@ -7218,15 +7294,29 @@ function crBuildStandingsPanel(key,standings){
     if(p.eloVar){ var sign=p.eloVar>0?'+':''; eloVarHtml='<span style="color:'+(p.eloVar>0?'#4caf50':p.eloVar<0?'#e05555':'var(--text3)')+';font-weight:600">'+sign+p.eloVar+'</span>'; }
     // Modo autor: toggle 🇦🇷 para marcar/desmarcar al jugador como argentino a mano (opacado si no está marcado).
     var argMark=(_author&&isIntl)
-      ? '<span onclick="event.stopPropagation();crToggleArgManual('+ks2+','+ns+')" title="Marcar/desmarcar como argentino" style="cursor:pointer;margin-left:7px;vertical-align:middle;display:inline-flex;opacity:'+(_isArgManual(p.name,key)?'1':'0.22')+'">'+(typeof _flagImg==='function'?_flagImg('ARG'):'🇦🇷')+'</span>'
+      ? _a11ySep()+'<span onclick="event.stopPropagation();crToggleArgManual('+ks2+','+ns+')" title="Marcar/desmarcar como argentino"'+_a11yClic('marcar argentino')+' style="cursor:pointer;margin-left:7px;vertical-align:middle;display:inline-flex;opacity:'+(_isArgManual(p.name,key)?'1':'0.22')+'">'+(typeof _flagImg==='function'?_flagImg('ARG'):'🇦🇷')+'</span>'
       : '';
-    return '<tr style="cursor:pointer;'+rowBg+'" onclick="crOpenPlayer('+ks2+','+ns+')">'
-      +'<td style="'+td+';text-align:center;width:34px;font-size:13px">'+medal+'</td>'
+    // El puesto de los tres primeros se muestra con una medalla: al oído "medalla de oro" no dice
+    // en qué puesto quedó, así que el número va igual en el aria-label.
+    // Y el nombre pasa de <td> a <th scope="row">: es lo que hace que el lector repita "Pérez" en
+    // cada celda de la fila en vez de largar números sueltos. El estilo va entero y con su
+    // font-weight, así que el <th> se ve exactamente igual que el <td> que había antes.
+    return '<tr data-p="'+escHtml(p.name)+'" style="cursor:pointer;'+rowBg+'">'
+      +'<td style="'+td+';text-align:center;width:34px;font-size:13px">'+_a11yEnVezDe(medal,
+          (isInitial?'Número de inicio ':'Puesto ')+rank
+          +(p.title?', '+_a11yTitulo(p.title):'')
+          +(p.elo?', Elo '+p.elo:''))+'</td>'
       +'<td style="'+td+';text-align:center">'+crTitleBadge(p.title)+'</td>'
-      +'<td style="'+td+';text-align:left;color:var(--text);font-size:14.5px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-shadow:var(--txt-out)">'+escHtml(p.name)+argMark+'</td>'
-      +'<td style="'+td+';text-align:center;color:var(--text2);font-size:12px;white-space:nowrap">'+(p.fed?(_tourIsESRegional(key)?_esRegFlag(p.name,p.fideId,key):crFlagEmoji(p.fed))+'<span class="fed-txt"> '+escHtml(p.fed)+'</span>':(_tourIsESRegional(key)?'':_crFideFlagSlot(p.fideId)))+'</td>'
+      // Los puntos van DENTRO del <th> pero FUERA del botón: así el encabezado de la fila los dice
+      // en cada casilla que uno recorra ("Anton Guijarro, David 5 puntos"), y el botón del nombre
+      // se sigue llamando sólo con el nombre. Antes había que caminar hasta la columna Pts para
+      // enterarse de cuánto llevaba cada uno.
+      +'<th scope="row" style="'+td+';text-align:left;color:var(--text);font-size:14.5px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-shadow:var(--txt-out)"><span'+_a11yClic()+'>'+escHtml(p.name)+'</span>'+argMark+(isInitial?'':_a11yDice(_a11yPuntos(p.pts)))+'</th>'
+      // La sigla visible ("ESP") se le esconde al lector: ya se dice el país entero, y en el
+      // teléfono la sigla ni siquiera se muestra. Antes se oía "ESP, gráfico, ESP".
+      +'<td style="'+td+';text-align:center;color:var(--text2);font-size:12px;white-space:nowrap">'+(p.fed?(_tourIsESRegional(key)?_esRegFlag(p.name,p.fideId,key,true):crFlagEmoji(p.fed,true))+'<span class="fed-txt" aria-hidden="true"> '+escHtml(p.fed)+'</span>':(_tourIsESRegional(key)?'':_crFideFlagSlot(p.fideId)))+'</td>'
       +'<td style="'+td+';text-align:center;color:var(--fg-e8);font-size:15px;font-weight:600;text-shadow:var(--txt-out)">'+(p.elo||'')+'</td>'
-      +'<td style="'+td+';text-align:right;font-weight:700;color:var(--fg-e8);font-size:15px;white-space:nowrap;text-shadow:var(--txt-out)">'+(isInitial?'':crPtsStr(p.pts))+'</td>'
+      +'<td style="'+td+';text-align:right;font-weight:700;color:var(--fg-e8);font-size:15px;white-space:nowrap;text-shadow:var(--txt-out)">'+(isInitial?'':_a11yEnVezDe(crPtsStr(p.pts), _a11yPuntos(p.pts)))+'</td>'
       +'<td class="col-var" style="'+td+';text-align:center;color:var(--text3);font-size:12px;white-space:nowrap">'+eloVarHtml+'</td>'
       +'</tr>';
   }
@@ -7234,15 +7324,18 @@ function crBuildStandingsPanel(key,standings){
   var th='padding:8px 6px;color:var(--fg-e0);font-weight:700;font-size:11px;white-space:nowrap;position:sticky;top:0;background:var(--tbl-head);z-index:1;border-bottom:2px solid var(--bd20)';
   // Mismo colgroup para la tabla del top-20 y la del resto, así las columnas quedan alineadas.
   var colgroup='<colgroup><col class="c-pos"><col class="c-tit"><col class="c-name"><col class="c-fed"><col class="c-elo"><col class="c-pts"><col class="c-var"></colgroup>';
+  // scope="col" ata cada columna con su encabezado: sin eso el lector de pantalla lee las celdas
+  // sueltas y nunca dice de qué columna son. Y los rótulos abreviados ("Tít", "Fed", "+/-") se
+  // dicen enteros con aria-label, porque al oído "más barra menos" no significa nada.
   var thead=colgroup
     +'<thead><tr>'
-    +'<th style="'+th+';text-align:center">'+(isInitial?'Nº':'Pos')+'</th>'
-    +'<th style="'+th+';text-align:center">Tít</th>'
-    +'<th style="'+th+';text-align:left">Jugador</th>'
-    +'<th style="'+th+';text-align:center">Fed</th>'
-    +'<th style="'+th+';text-align:center">Elo</th>'
-    +'<th style="'+th+';text-align:right">Pts</th>'
-    +'<th class="col-var" style="'+th+';text-align:center">+/-</th>'
+    +'<th scope="col" style="'+th+';text-align:center">'+_a11yEnVezDe(isInitial?'Nº':'Pos', isInitial?'Número de inicio':'Posición')+'</th>'
+    +'<th scope="col" style="'+th+';text-align:center">'+_a11yEnVezDe('Tít','Título')+'</th>'
+    +'<th scope="col" style="'+th+';text-align:left">Jugador</th>'
+    +'<th scope="col" style="'+th+';text-align:center">'+_a11yEnVezDe('Fed','Federación')+'</th>'
+    +'<th scope="col" style="'+th+';text-align:center">Elo</th>'
+    +'<th scope="col" style="'+th+';text-align:right">'+_a11yEnVezDe('Pts','Puntos')+'</th>'
+    +'<th scope="col" class="col-var" style="'+th+';text-align:center">'+_a11yEnVezDe('+/-','Variación de Elo')+'</th>'
     +'</tr></thead>';
 
   var h=labelHtml;
@@ -7250,20 +7343,25 @@ function crBuildStandingsPanel(key,standings){
   if(_author){ var _miss=crFedMissingCount(key); if(_miss){ h+='<div style="max-width:600px;margin:0 auto 8px;text-align:left"><button onclick="crBakeFedsBtn('+crArg(key)+',this)" style="padding:7px 12px;background:var(--gl40);border:1px solid var(--bd18);border-radius:8px;color:var(--fg-d0);font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">🏴 Traer '+_miss+' bandera'+(_miss>1?'s':'')+' faltante'+(_miss>1?'s':'')+' de Lichess (se guardan)</button></div>'; } }
   h+='<div style="max-height:520px;overflow-y:auto;background:var(--tbl-bg);border:1px solid var(--bd18);border-radius:10px;max-width:600px;margin:0 auto">';
   h+='<table class="cr-standings" style="width:100%;table-layout:fixed;border-collapse:collapse">';
+  // Lo primero que el lector dice al entrar a la tabla. El rótulo de arriba lo ve el que mira, pero
+  // es un <div> suelto: nada lo ata a la tabla.
+  h+='<caption class="sr-only">'+escHtml(_a11yTexto(labelTxt))+'. '+total+' jugadores. Bajando por la primera columna se describe a cada jugador: puesto, título y Elo. Con Enter se abre su performance.</caption>';
   h+=thead;
   if(argOnly){
     // Solo argentinos: mostrar todos (con su posición real), sin recorte top-20
     var argRows=allRows.filter(function(r){return r.arg;});
-    h+='<tbody>'+argRows.map(function(r,i){return rowHtml(r.p,r.rank,i);}).join('')+'</tbody>';
+    h+='<tbody onclick="crStandRowClick(event,'+crArg(key)+')">'+argRows.map(function(r,i){return rowHtml(r.p,r.rank,i);}).join('')+'</tbody>';
     h+='</table></div>';
     _crFlushFideFlags();
     return h;
   }
   var top20=allRows.slice(0,20), rest=allRows.slice(20);
-  h+='<tbody>'+top20.map(function(r,i){return rowHtml(r.p,r.rank,i);}).join('')+'</tbody>';
+  h+='<tbody onclick="crStandRowClick(event,'+crArg(key)+')">'+top20.map(function(r,i){return rowHtml(r.p,r.rank,i);}).join('')+'</tbody>';
   h+='</table>';
   if(rest.length){
-    h+='<div id="cr-rest-'+key+'" style="display:none"><table class="cr-standings" style="width:100%;table-layout:fixed;border-collapse:collapse">'+colgroup+'<tbody>'
+    h+='<div id="cr-rest-'+key+'" style="display:none"><table class="cr-standings" style="width:100%;table-layout:fixed;border-collapse:collapse">'
+      +'<caption class="sr-only">Resto de la tabla, del puesto 21 al '+total+'. Mismas columnas que la de arriba: posición, título, jugador, federación, Elo, puntos y variación de Elo.</caption>'
+      +colgroup+'<tbody onclick="crStandRowClick(event,'+crArg(key)+')">'
       +rest.map(function(r,i){return rowHtml(r.p,r.rank,i+20);}).join('')
       +'</tbody></table></div>';
     h+='<button onclick="crToggleRest(\''+ks+'\',this)" style="width:100%;padding:10px;background:var(--gl40);border:none;border-top:1px solid var(--bd12);color:var(--fg-d0);font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">Ver tabla completa ('+total+' jugadores)</button>';
@@ -7484,7 +7582,7 @@ function _stNm(key, raw, nombre, titulo){
   var badge = titulo ? crTitleBadge(titulo) : '';
   var txt = escHtml(nombre || raw || '');
   if (!raw) return badge + txt;
-  return badge + '<span class="st-nm" title="Ver su performance en el torneo" onclick="crOpenPlayer('
+  return badge + '<span class="st-nm" title="Ver su performance en el torneo"' + _a11yClic() + ' onclick="crOpenPlayer('
        + crArg(key) + ',' + crArg(raw) + ')">' + txt + '</span>';
 }
 // Ojito para ver la partida. Solo si está subida: un ojo que no lleva a ningún lado es peor que nada.
@@ -7493,13 +7591,16 @@ function _stEye(round, a, b){
   var hay = false;
   try { hay = (crFindGameIdx(round, a, b) >= 0); } catch(e){}
   if (!hay) return '';
-  return '<span class="st-eye" title="Ver la partida" onclick="crOpenGame('
+  // El ojito es un emoji suelto: sin aria-label el lector diría "ojo" y nada más.
+  return '<span class="st-eye" title="Ver la partida"' + _a11yClic('Ver la partida') + ' onclick="crOpenGame('
        + (round == null ? 'null' : round) + ',' + crArg(a) + ',' + crArg(b) + ')">👁</span>';
 }
 // Una tarjeta de premio.
 function _stAward(emoji, rotulo, quienHtml, detalle, top){
-  return '<div class="st-award' + (top ? ' top' : '') + '"><em>' + emoji + '</em><div>'
-       + '<div class="st-k">' + escHtml(rotulo) + '</div>'
+  // El emoji es un adorno: el rótulo de al lado ya dice qué premio es. Y el rótulo lleva separador,
+  // que si no se pega al nombre del que lo ganó ("CampeónIndia").
+  return '<div class="st-award' + (top ? ' top' : '') + '"><em aria-hidden="true">' + emoji + '</em><div>'
+       + '<div class="st-k">' + escHtml(rotulo) + _a11ySep() + '</div>'
        + '<div class="st-v">' + quienHtml + '</div>'
        + (detalle ? '<div class="st-d2">' + detalle + '</div>' : '')
        + '</div></div>';
@@ -7510,7 +7611,7 @@ function _stAperturasHtml(key, data){
   var ap = data && data.aperturas;
   var esAutor = !_ondemand;
   if (!ap && !esAutor) return '';
-  var h = '<div class="st-sec"><div class="st-h"><b>📖 Las aperturas más jugadas</b>'
+  var h = '<div class="st-sec"><div class="st-h"><b role="heading" aria-level="3"><span aria-hidden="true">📖</span> Las aperturas más jugadas</b>'
         + '<span>' + (ap ? ('sobre ' + ap.partidas + ' partidas del torneo') : '') + '</span></div>';
   if (ap && ap.top && ap.top.length){
     var max = ap.top[0].cantidad;
@@ -7570,29 +7671,36 @@ function _stPulseHtml(s){
     }
   });
   if (!max) return '';
-  var h = '<div class="st-sec"><div class="st-h"><b>📉 El pulso, ronda por ronda</b>'
-        + '<span>el alto de la columna son las partidas de esa ronda</span></div>'
-        + '<div class="st-scroll"><div class="st-pulse">';
-  c.porRonda.forEach(function(r){
-    var t = r.w + r.d + r.b;
-    var caliente = (pacifica && r.r === pacifica.r) || (brava && r.r === brava.r);
-    h += '<div class="st-pcol' + (caliente ? ' hot' : '') + '">'
-      + '<div class="st-pstack" style="height:' + Math.round(t / max * 100) + '%" title="'
-      + escHtml('Ronda ' + r.r + ': ' + r.w + ' ganaron blancas · ' + r.d + ' tablas · ' + r.b + ' ganaron negras') + '">'
-      + '<i class="st-sw" style="flex:' + r.w + '"></i>'
-      + '<i class="st-sd" style="flex:' + r.d + '"></i>'
-      + '<i class="st-sb" style="flex:' + r.b + '"></i>'
-      + '</div><div class="st-plabel">R' + r.r + '</div></div>';
-  });
-  h += '</div></div>';
+  // El resumen se arma ACÁ (antes del gráfico) para poder decirlo apenas pasado el título, que es
+  // donde cae el que salta con la "h". A la vista sigue yendo abajo, como siempre.
   var cap = [];
   if (pacifica && pacifica.d >= 2)
     cap.push('<b>La ronda ' + pacifica.r + '</b> fue la más pacífica: ' + pacifica.d + ' tablas en '
            + (pacifica.w + pacifica.d + pacifica.b) + ' partidas.');
   if (brava && pacifica && brava.r !== pacifica.r)
     cap.push('<b>La ' + brava.r + 'ª</b> fue la más brava: ' + (brava.w + brava.b) + ' partidas decisivas y solo '
-           + brava.d + (brava.d === 1 ? ' tablas.' : ' tablas.'));
-  if (cap.length) h += '<div class="st-cap">' + cap.join(' ') + '</div>';
+           + brava.d + ' tablas.');
+  var h = '<div class="st-sec"><div class="st-h"><b role="heading" aria-level="3"><span aria-hidden="true">📉</span> El pulso, ronda por ronda</b>'
+        + '<span>el alto de la columna son las partidas de esa ronda</span></div>'
+        + _a11yDice(_a11yTexto(cap.join(' ').replace(/<[^>]+>/g, '')))
+        + '<div class="st-scroll"><div class="st-pulse">';
+  c.porRonda.forEach(function(r){
+    var t = r.w + r.d + r.b;
+    var caliente = (pacifica && r.r === pacifica.r) || (brava && r.r === brava.r);
+    // La columna es un dibujo: los números viven en el alto de las barritas y en el title=, que el
+    // lector no lee. Se los pone en texto y el dibujo se calla.
+    h += '<div class="st-pcol' + (caliente ? ' hot' : '') + '">'
+      + _a11yDice('Ronda ' + r.r + ': ' + r.w + ' ganaron las blancas, ' + r.d + ' tablas, ' + r.b + ' ganaron las negras')
+      + '<div aria-hidden="true" class="st-pstack" style="height:' + Math.round(t / max * 100) + '%" title="'
+      + escHtml('Ronda ' + r.r + ': ' + r.w + ' ganaron blancas · ' + r.d + ' tablas · ' + r.b + ' ganaron negras') + '">'
+      + '<i class="st-sw" style="flex:' + r.w + '"></i>'
+      + '<i class="st-sd" style="flex:' + r.d + '"></i>'
+      + '<i class="st-sb" style="flex:' + r.b + '"></i>'
+      + '</div><div aria-hidden="true" class="st-plabel">R' + r.r + '</div></div>';
+  });
+  h += '</div></div>';
+  // (cap ya se armó arriba, junto al título: acá sólo se dibuja)
+  if (cap.length) h += '<div aria-hidden="true" class="st-cap">' + cap.join(' ') + '</div>';
   return h + '</div>';
 }
 
@@ -7674,13 +7782,18 @@ function _stRaceHtml(key, s, opts){
   });
 
   var cuento = _stRaceStory(r);
-  return '<div class="st-sec"><div class="st-h"><b>🏁 La carrera por la punta</b>'
+  // El cuento de la carrera se dice APENAS pasado el título —que es donde cae el que salta con la
+  // "h"— y abajo se sigue viendo igual, pero mudo para no decirlo dos veces. Mismo criterio que el
+  // resumen del pulso: a la vista va al final, al oído tiene que ir primero.
+  return '<div class="st-sec"><div class="st-h"><b role="heading" aria-level="3"><span aria-hidden="true">🏁</span> La carrera por la punta</b>'
        + '<span>' + escHtml(opts.sub || 'puntos del podio, ronda a ronda') + '</span></div>'
+       + (cuento ? _a11yDice(String(cuento).replace(/<[^>]+>/g, '')) : '')
        + '<div class="st-scroll"><svg class="st-chart" viewBox="0 0 ' + W + ' ' + H + '" role="img" '
        + 'aria-label="Puntos de los tres del podio en cada ronda">'
        + g + lineas + puntos + '</svg></div>'
+       + _a11yDice('Los tres del podio en el gráfico:')
        + '<div class="st-lgd">' + lgd + '</div>'
-       + (cuento ? ('<div class="st-cap">' + cuento + '</div>') : '')
+       + (cuento ? ('<div aria-hidden="true" class="st-cap">' + cuento + '</div>') : '')
        + '</div>';
 }
 
@@ -7690,6 +7803,7 @@ function _stRaceHtml(key, s, opts){
 // No hay reparto por colores: en equipos no se sabe quién llevaba las blancas (ver _stTeamBuild).
 function _stTeamPanelHtml(key, s){
   var t = s.torneo || {}, h = '<div class="st-wrap">';
+  h += '<div class="sr-only" role="heading" aria-level="2">Radiografía del torneo por equipos: los números, los premios y las curiosidades. Se salta de sección con la tecla H, y con la flecha abajo se lee lo que hay adentro de cada una.</div>';
   var nm = function(x){ return escHtml(x == null ? '' : String(x)); };
   // Nombre de jugador clickeable (abre su performance en el torneo). Los equipos NO son clickeables.
   var jug = function(p){ return p ? _stNm(key, p.raw, p.nombre, p.titulo) : ''; };
@@ -7704,9 +7818,9 @@ function _stTeamPanelHtml(key, s){
   if (t.jugadores) tiles.push({ n:t.jugadores, l:'JUGADORES' });
   if (t.elo && t.elo.prom) tiles.push({ n:t.elo.prom, l:'ELO PROMEDIO' });
   if (tiles.length){
-    h += '<div class="st-sec"><div class="st-h"><b>🔢 El torneo en números</b>'
+    h += '<div class="st-sec"><div class="st-h"><b role="heading" aria-level="3"><span aria-hidden="true">🔢</span> El torneo en números</b>'
        + '<span>' + (s.reglaMatch === '2-1-0' ? 'puntos de match: 2 por ganar, 1 por empatar' : '') + '</span></div><div class="st-tiles">';
-    tiles.forEach(function(x){ h += '<div class="st-tile"><b>' + x.n + '</b><span>' + x.l + '</span></div>'; });
+    tiles.forEach(function(x){ h += '<div class="st-tile">' + _a11yEnVezDe('<b>' + x.n + '</b><span>' + x.l + '</span>', x.n + ' ' + String(x.l).toLowerCase()) + '</div>'; });
     h += '</div></div>';
   }
 
@@ -7727,7 +7841,7 @@ function _stTeamPanelHtml(key, s){
   var gol = s.equipos && s.equipos.goleador;
   if (gol && (!s.campeon || gol.nombre !== s.campeon.nombre || gol.tablero !== s.campeon.tablero))
     aw += _stAward('🎯', 'El más goleador', nm(gol.nombre), crPtsStr(gol.tablero) + ' puntos de tablero');
-  if (aw) h += '<div class="st-sec"><div class="st-h"><b>🏅 Los equipos</b></div><div class="st-awards">' + aw + '</div></div>';
+  if (aw) h += '<div class="st-sec"><div class="st-h"><b role="heading" aria-level="3"><span aria-hidden="true">🏅</span> Los equipos</b></div><div class="st-awards">' + aw + '</div></div>';
 
   // ── La carrera por la punta (en puntos de match) ──
   h += _stRaceHtml(key, s, { sub:'puntos de match, ronda a ronda', sinClic:true });
@@ -7735,7 +7849,7 @@ function _stTeamPanelHtml(key, s){
   // ── La actuación argentina ──
   var a = s.argentina;
   if (a){
-    h += '<div class="st-sec"><div class="st-h"><b>' + _flagImg('ARG') + ' La actuación argentina</b>'
+    h += '<div class="st-sec"><div class="st-h"><b role="heading" aria-level="3">' + _flagImg('ARG') + ' La actuación argentina</b>'
        + '<span>' + a.puesto + 'º de ' + a.de + ' equipos</span></div>'
        + '<div class="st-chips">'
        + '<span class="st-chip gold">' + a.puesto + 'º puesto</span>'
@@ -7748,7 +7862,7 @@ function _stTeamPanelHtml(key, s){
         h += '<div class="st-argrow"><b>' + (p.mesa ? ('M' + p.mesa) : '') + '</b>'
           + '<div>' + jug(p) + '</div>'
           + '<div class="pts">' + puntaje(p) + '</div>'
-          + '<div class="rp">' + (p.rp ? ('Rp ' + p.rp) : '') + '</div></div>';
+          + '<div class="rp">' + (p.rp ? _a11yEnVezDe('Rp ' + p.rp, 'performance ' + p.rp) : '') + '</div></div>';
       });
       h += '</div>';
     }
@@ -7758,7 +7872,7 @@ function _stTeamPanelHtml(key, s){
   // ── Medallas por mesa ──
   if (s.premios && s.premios.porMesa && s.premios.porMesa.length){
     var MED = ['🥇','🥈','🥉'];
-    h += '<div class="st-sec"><div class="st-h"><b>🥇 Las medallas por tablero</b>'
+    h += '<div class="st-sec"><div class="st-h"><b role="heading" aria-level="3"><span aria-hidden="true">🥇</span> Las medallas por tablero</b>'
        + '<span>por performance, en el tablero que cada uno ocupa en su equipo</span></div><div class="st-mesas">';
     s.premios.porMesa.forEach(function(x){
       h += '<div class="st-mesa"><b>Tablero ' + x.mesa + '</b>';
@@ -7782,7 +7896,7 @@ function _stTeamPanelHtml(key, s){
       puntaje(pj.masPuntos) + ' · ' + escHtml(pj.masPuntos.equipo || ''));
   if (pj.racha)
     aw2 += _stAward('🔥', 'La racha más larga', _stNm(key, pj.racha.raw, pj.racha.nombre, ''), pj.racha.n + ' victorias seguidas');
-  if (aw2) h += '<div class="st-sec"><div class="st-h"><b>🏅 Los jugadores</b>'
+  if (aw2) h += '<div class="st-sec"><div class="st-h"><b role="heading" aria-level="3"><span aria-hidden="true">🏅</span> Los jugadores</b>'
     + '<span>tocá un nombre para ver su performance</span></div><div class="st-awards">' + aw2 + '</div></div>';
 
   // ── El árbol de aperturas ──
@@ -7791,18 +7905,18 @@ function _stTeamPanelHtml(key, s){
   // ── Batacazos ──
   var be = (s.equipos && s.equipos.batacazos) || [];
   if (be.length){
-    h += '<div class="st-sec"><div class="st-h"><b>💥 Los batacazos por equipos</b>'
+    h += '<div class="st-sec"><div class="st-h"><b role="heading" aria-level="3"><span aria-hidden="true">💥</span> Los batacazos por equipos</b>'
        + '<span>le ganó a un equipo de mucho mejor ranking</span></div><div class="st-ups">';
     be.forEach(function(b){
-      h += '<div class="st-up"><div class="st-rnd">R' + b.ronda + '</div>'
-        + '<div class="st-who"><b>' + nm(b.gana) + '</b> <span class="st-elo">(#' + b.no + ')</span>'
-        + ' le ganó <b>' + escHtml(b.score) + '</b> a <b>' + nm(b.pierde) + '</b> <span class="st-elo">(#' + b.noPierde + ')</span></div>'
-        + '<div class="st-gap">' + b.dif + '<i>PUESTOS</i></div></div>';
+      h += '<div class="st-up"><div class="st-rnd">' + _a11yEnVezDe('R' + b.ronda, 'Ronda ' + b.ronda) + '</div>'
+        + '<div class="st-who"><b>' + nm(b.gana) + '</b> <span class="st-elo">' + _a11yEnVezDe('(#' + b.no + ')', 'puesto ' + b.no) + '</span>'
+        + ' le ganó <b>' + escHtml(b.score) + '</b> a <b>' + nm(b.pierde) + '</b> <span class="st-elo">' + _a11yEnVezDe('(#' + b.noPierde + ')', 'puesto ' + b.noPierde) + '</span></div>'
+        + '<div class="st-gap">' + _a11yEnVezDe(b.dif + '<i>PUESTOS</i>', b.dif + ' puestos de diferencia') + '</div></div>';
     });
     h += '</div></div>';
   }
   if (s.batacazos && s.batacazos.length){
-    h += '<div class="st-sec"><div class="st-h"><b>💥 Los batacazos en los tableros</b>'
+    h += '<div class="st-sec"><div class="st-h"><b role="heading" aria-level="3"><span aria-hidden="true">💥</span> Los batacazos en los tableros</b>'
        + '<span>le ganó a alguien muy por encima de su Elo</span></div><div class="st-ups">';
     s.batacazos.forEach(function(b){
       var ojo = '';
@@ -7820,7 +7934,7 @@ function _stTeamPanelHtml(key, s){
 
   // ── Top performances ──
   if (s.topRp && s.topRp.length){
-    h += '<div class="st-sec"><div class="st-h"><b>🎯 Top performances</b><span>Rp calculado de los tableros</span></div>'
+    h += '<div class="st-sec"><div class="st-h"><b role="heading" aria-level="3"><span aria-hidden="true">🎯</span> Top performances</b><span>Rp calculado de los tableros</span></div>'
        + _stRankList(key, s.topRp.map(function(p){ return { raw:p.raw, nombre:p.nombre, titulo:p.titulo, valor:p.rp }; }),
                      function(f){ return String(f.valor); })
        + '</div>';
@@ -7830,7 +7944,7 @@ function _stTeamPanelHtml(key, s){
   if (s.pulso && s.pulso.length >= 3){
     var max = 0;
     s.pulso.forEach(function(r){ var tt = r.dec + r.tablas; if (tt > max) max = tt; });
-    h += '<div class="st-sec"><div class="st-h"><b>📉 El pulso, ronda por ronda</b>'
+    h += '<div class="st-sec"><div class="st-h"><b role="heading" aria-level="3"><span aria-hidden="true">📉</span> El pulso, ronda por ronda</b>'
        + '<span>decisivas y tablas · en equipos no se sabe quién llevaba las blancas</span></div>'
        + '<div class="st-scroll"><div class="st-pulse">';
     s.pulso.forEach(function(r){
@@ -7855,6 +7969,7 @@ function crBuildStatsPanel(key, data){
   if (!s) return '<div class="st-empty">Todavía no hay datos suficientes para la radiografía de este torneo.</div>';
   if (s.esEquipos) return _stTeamPanelHtml(key, s);
   var t = s.torneo || {}, h = '<div class="st-wrap">';
+  h += '<div class="sr-only" role="heading" aria-level="2">Radiografía del torneo: los números, los premios y las curiosidades. Se salta de sección con la tecla H, y con la flecha abajo se lee lo que hay adentro de cada una.</div>';
 
   // ── El torneo en números ──
   var tiles = [];
@@ -7870,9 +7985,9 @@ function crBuildStatsPanel(key, data){
     if (t.dias && t.dias.dias) sub.push(t.dias.dias + (t.dias.dias === 1 ? ' día de juego' : ' días de juego'));
     if (t.dias && t.dias.dobles && t.dias.dobles.length) sub.push(t.dias.dobles.length === 1 ? 'una jornada doble' : (t.dias.dobles.length + ' jornadas dobles'));
     if (t.noPresentadas) sub.push(t.noPresentadas + (t.noPresentadas === 1 ? ' incomparecencia' : ' incomparecencias'));
-    h += '<div class="st-sec"><div class="st-h"><b>🔢 El torneo en números</b><span>' + escHtml(sub.join(' · ')) + '</span></div><div class="st-tiles">';
+    h += '<div class="st-sec"><div class="st-h"><b role="heading" aria-level="3"><span aria-hidden="true">🔢</span> El torneo en números</b><span>' + escHtml(sub.join(' · ')) + '</span></div><div class="st-tiles">';
     tiles.forEach(function(x){
-      h += '<div class="st-tile"><b>' + x.n + (x.u ? '<i>' + x.u + '</i>' : '') + '</b><span>' + x.l + '</span></div>';
+      h += '<div class="st-tile">' + _a11yEnVezDe('<b>' + x.n + (x.u ? '<i>' + x.u + '</i>' : '') + '</b><span>' + x.l + '</span>', x.n + (x.u ? ' ' + x.u : '') + ' ' + String(x.l).toLowerCase()) + '</div>';
     });
     h += '</div></div>';
   }
@@ -7881,12 +7996,18 @@ function crBuildStatsPanel(key, data){
   var c = s.colores;
   if (c && c.jugadas){
     var pw = c.w / c.jugadas * 100, pd = c.d / c.jugadas * 100, pb = c.b / c.jugadas * 100;
-    h += '<div class="st-sec"><div class="st-h"><b>⚖️ Quién manda con cada color</b><span>' + c.jugadas + ' partidas jugadas</span></div>'
-      + '<div class="st-cbar">'
+    h += '<div class="st-sec"><div class="st-h"><b role="heading" aria-level="3"><span aria-hidden="true">⚖️</span> Quién manda con cada color</b><span>' + c.jugadas + ' partidas jugadas</span></div>'
+      // El resumen va PRIMERO, que es donde cae el que salta con la "h". El dibujo y su leyenda se
+      // callan: los números están todos acá, y sueltos se oían "45%, 23%, 32%, Ganaron las blancas
+      // punto medio 195…".
+      + _a11yDice('De ' + c.jugadas + ' partidas jugadas: ganaron las blancas ' + c.w + ', el ' + Math.round(pw)
+                + ' por ciento. Tablas ' + c.d + ', el ' + Math.round(pd) + ' por ciento. Ganaron las negras '
+                + c.b + ', el ' + Math.round(pb) + ' por ciento')
+      + '<div aria-hidden="true" class="st-cbar">'
       + '<span class="st-sw" style="width:' + pw.toFixed(1) + '%">' + Math.round(pw) + '%</span>'
       + '<span class="st-sd" style="width:' + pd.toFixed(1) + '%">' + Math.round(pd) + '%</span>'
       + '<span class="st-sb" style="width:' + pb.toFixed(1) + '%">' + Math.round(pb) + '%</span>'
-      + '</div><div class="st-leg">'
+      + '</div><div aria-hidden="true" class="st-leg">'
       + '<div><i style="background:var(--st-w)"></i>Ganaron las blancas · <b>' + c.w + '</b></div>'
       + '<div><i style="background:var(--st-d)"></i>Tablas · <b>' + c.d + '</b></div>'
       + '<div><i style="background:var(--st-b)"></i>Ganaron las negras · <b>' + c.b + '</b></div>'
@@ -7900,22 +8021,24 @@ function crBuildStatsPanel(key, data){
   // ── Los premios ──
   var p = s.premios || {}, aw = '';
   if (s.campeon){
+    // OJO: cada pedacito se escapa ACÁ, al agregarlo, y el join ya NO se escapa. Si se escapara
+    // al final, el HTML del ayudante de la Rp saldría impreso como texto en la tarjeta.
     var det = [];
-    if (s.campeon.puntos) det.push(s.campeon.puntos + (t.rondas ? (' de ' + t.rondas) : ' puntos'));
+    if (s.campeon.puntos) det.push(escHtml(s.campeon.puntos + (t.rondas ? (' de ' + t.rondas) : ' puntos')));
     if (s.definicion && s.definicion.puntajePerfecto) det.push('puntaje perfecto');
     else if (s.definicion && s.definicion.invicto) det.push('invicto');
-    if (s.campeon.rp) det.push('Rp ' + s.campeon.rp);
-    aw += _stAward('🏆', 'Campeón', _stNm(key, s.campeon.raw, s.campeon.nombre, s.campeon.titulo), escHtml(det.join(' · ')), true);
+    if (s.campeon.rp) det.push(_a11yEnVezDe('Rp ' + s.campeon.rp, 'performance ' + s.campeon.rp));
+    aw += _stAward('🏆', 'Campeón', _stNm(key, s.campeon.raw, s.campeon.nombre, s.campeon.titulo), det.join(' · '), true);
   }
   if (p.mejorRp)
     aw += _stAward('🎯', 'Mejor performance', _stNm(key, p.mejorRp.raw, p.mejorRp.nombre, p.mejorRp.titulo),
-      'Rp ' + p.mejorRp.rp + (p.mejorRp.calculado && p.mejorRp.partidas ? (' · calculado sobre ' + p.mejorRp.partidas + ' partidas') : ''));
+      _a11yEnVezDe('Rp ' + p.mejorRp.rp, 'performance ' + p.mejorRp.rp) + (p.mejorRp.calculado && p.mejorRp.partidas ? (' · calculado sobre ' + p.mejorRp.partidas + ' partidas') : ''));
   if (p.masRatingSumo)
     aw += _stAward('📈', 'El que más rating sumó', _stNm(key, p.masRatingSumo.raw, p.masRatingSumo.nombre, p.masRatingSumo.titulo),
       '+' + p.masRatingSumo.delta + ' de Elo');
   else if (p.sobreElo && p.sobreElo.sobreElo > 0)
     aw += _stAward('📈', 'El que más rindió', _stNm(key, p.sobreElo.raw, p.sobreElo.nombre, p.sobreElo.titulo),
-      'Rp ' + p.sobreElo.rp + ', ' + p.sobreElo.sobreElo + ' arriba de su Elo');
+      _a11yEnVezDe('Rp ' + p.sobreElo.rp, 'performance ' + p.sobreElo.rp) + ', ' + p.sobreElo.sobreElo + ' arriba de su Elo');
   if (p.revelacion)
     aw += _stAward('🚀', 'La revelación', _stNm(key, p.revelacion.raw, p.revelacion.nombre, ''),
       'Entró ' + p.revelacion.desde + 'º por rating y terminó ' + p.revelacion.hasta + 'º');
@@ -7943,7 +8066,7 @@ function crBuildStatsPanel(key, data){
     if (d.dueloClave) chips += '<span class="st-chip">La victoria más grande del campeón: '
       + escHtml(d.dueloClave.rival) + (d.dueloClave.elo ? (' (' + d.dueloClave.elo + ')') : '')
       + ', en la ' + d.dueloClave.ronda + 'ª</span>';
-    h += '<div class="st-sec"><div class="st-h"><b>🏅 Los premios del torneo</b><span>tocá un nombre para ver su performance</span></div>'
+    h += '<div class="st-sec"><div class="st-h"><b role="heading" aria-level="3"><span aria-hidden="true">🏅</span> Los premios del torneo</b><span>tocá un nombre para ver su performance</span></div>'
       + '<div class="st-awards">' + aw + '</div>'
       + (chips ? ('<div class="st-chips">' + chips + '</div>') : '') + '</div>';
   }
@@ -7953,13 +8076,13 @@ function crBuildStatsPanel(key, data){
 
   // ── Los batacazos ──
   if (s.batacazos && s.batacazos.length){
-    h += '<div class="st-sec"><div class="st-h"><b>💥 Los batacazos</b><span>le ganó a alguien muy por encima de su Elo</span></div><div class="st-ups">';
+    h += '<div class="st-sec"><div class="st-h"><b role="heading" aria-level="3"><span aria-hidden="true">💥</span> Los batacazos</b><span>le ganó a alguien muy por encima de su Elo</span></div><div class="st-ups">';
     s.batacazos.forEach(function(b){
-      h += '<div class="st-up"><div class="st-rnd">R' + b.ronda + '</div>'
-        + '<div class="st-who"><b>' + _stNm(key, b.ganadorRaw, b.ganador, '') + '</b> <span class="st-elo">(' + b.ganadorElo + ')</span>'
-        + ' le ganó a <b>' + _stNm(key, b.perdedorRaw, b.perdedor, b.perdedorTitulo) + '</b> <span class="st-elo">(' + b.perdedorElo + ')</span>'
+      h += '<div class="st-up"><div class="st-rnd">' + _a11yEnVezDe('R' + b.ronda, 'Ronda ' + b.ronda) + '</div>'
+        + '<div class="st-who"><b>' + _stNm(key, b.ganadorRaw, b.ganador, '') + '</b> <span class="st-elo">' + _a11yEnVezDe('(' + b.ganadorElo + ')', 'Elo ' + b.ganadorElo) + '</span>'
+        + ' le ganó a <b>' + _stNm(key, b.perdedorRaw, b.perdedor, b.perdedorTitulo) + '</b> <span class="st-elo">' + _a11yEnVezDe('(' + b.perdedorElo + ')', 'Elo ' + b.perdedorElo) + '</span>'
         + _stEye(b.ronda, b.ganadorRaw, b.perdedorRaw) + '</div>'
-        + '<div class="st-gap">+' + b.diff + '<i>DE DIFERENCIA</i></div></div>';
+        + '<div class="st-gap">' + _a11yEnVezDe('+' + b.diff + '<i>DE DIFERENCIA</i>', b.diff + ' puntos de diferencia') + '</div></div>';
     });
     h += '</div></div>';
   }
@@ -7970,11 +8093,11 @@ function crBuildStatsPanel(key, data){
   if (listaRp.length || listaGa.length){
     h += '<div class="st-duo">';
     if (listaRp.length)
-      h += '<div class="st-sec"><div class="st-h"><b>🎯 Top performances</b>'
+      h += '<div class="st-sec"><div class="st-h"><b role="heading" aria-level="3"><span aria-hidden="true">🎯</span> Top performances</b>'
         + (s.rpCalculado ? '<span>Rp calculado de los cruces</span>' : '') + '</div>'
         + _stRankList(key, listaRp, function(f){ return String(f.valor); }) + '</div>';
     if (listaGa.length)
-      h += '<div class="st-sec"><div class="st-h"><b>📈 Los que más sumaron</b></div>'
+      h += '<div class="st-sec"><div class="st-h"><b role="heading" aria-level="3"><span aria-hidden="true">📈</span> Los que más sumaron</b></div>'
         + _stRankList(key, listaGa, function(f){ return '+' + f.valor; }) + '</div>';
     h += '</div>';
   }
@@ -8022,6 +8145,18 @@ function crShowTab(key,tab){
     if(activePanel.getAttribute('data-lazy')){ activePanel.removeAttribute('data-lazy'); try{ activePanel.innerHTML=_crBuildPanelContent(key,data,tab); }catch(e){} }
     activePanel.style.display='block';
   }
+  // ACCESIBILIDAD. Dos cosas que a la vista se resuelven solas con el color y al oído no existían:
+  //  · aria-pressed dice CUÁL está elegida (sólo en las pestañas, nunca en la ✕ de borrar, que no
+  //    tiene id y por eso se filtra por el id);
+  //  · el parlante canta a dónde se llegó, porque si no el panel cambia EN SILENCIO y el que no ve
+  //    la pantalla cree que la tecla no hizo nada.
+  try {
+    tabs.querySelectorAll('button').forEach(function(b){
+      if (b.id && b.id.indexOf('cr-rtab-') === 0) b.setAttribute('aria-pressed', 'false');
+    });
+    if (activeBtn) activeBtn.setAttribute('aria-pressed', 'true');
+    if (window.aaDecir) window.aaDecir(_a11yNombrePestana(tab));
+  } catch(e){}
   // Sincronizar la sección de partidas subidas con la ronda elegida en los cruces.
   // El guard evita el rebote cuando la llamada vino del sentido inverso (partidas → cruces).
   if(!_crSyncing && tab!=='tabla' && tab!=='cuadro' && tab!=='stats' && document.getElementById('td-rtab-'+tab)){
@@ -8389,8 +8524,9 @@ function _teamRenderRR(standings, crk){
     }
     return algo;   // si TODO da 0 no prueba nada (torneo sin empezar): mejor no rotular
   }
+  var _mpIdx=-1;   // qué columna Des son los puntos de match (para poder decirlos en la frase)
   for(var d=0;d<nDes;d++){
-    if(!usada.mp&&coincide(d,'mp')){ lbl[d]='Match'; usada.mp=1; }
+    if(!usada.mp&&coincide(d,'mp')){ lbl[d]='Match'; usada.mp=1; _mpIdx=d; }
     else if(!usada.gp&&coincide(d,'gp')){ lbl[d]='Partida'; usada.gp=1; }
     else lbl[d]='Des '+(d+1);
   }
@@ -8400,32 +8536,41 @@ function _teamRenderRR(standings, crk){
     var fed=t.fed||_teamResolveFed(t.name,data), fl=fed?crFlagEmoji(fed):'';
     var txt=(fl?fl+' ':'')+escHtml(_paisES(t.name,fed));
     return (crk&&t.name)
-      ? '<span onclick="crOpenCountry('+crArg(crk)+','+crArg(t.name)+')" title="Ver la performance de '+escHtml(_paisES(t.name,fed))+'" style="cursor:pointer;display:inline-flex;align-items:center;gap:7px" onmouseover="this.style.color=\'var(--gold)\'" onmouseout="this.style.color=\'\'">'+txt+'</span>'
+      ? '<span onclick="crOpenCountry('+crArg(crk)+','+crArg(t.name)+')" title="Ver la performance de '+escHtml(_paisES(t.name,fed))+'"'+_a11yClic()+' style="cursor:pointer;display:inline-flex;align-items:center;gap:7px" onmouseover="this.style.color=\'var(--gold)\'" onmouseout="this.style.color=\'\'">'+txt+'</span>'
       : txt;
   }
   // ── La grilla (computadora) ──
   var h='<div class="tstd-pc" style="max-height:560px;overflow:auto;border:1px solid var(--border);border-radius:12px;max-width:860px;margin-left:auto;margin-right:auto">';
-  h+='<table style="border-collapse:collapse;white-space:nowrap;margin:0;width:100%"><thead><tr>';
-  h+='<th style="'+th+'">#</th><th style="'+th+';text-align:left">Equipo</th>';
-  for(var c=0;c<n;c++) h+='<th style="'+th+'" title="'+escHtml(teams[c].name||'')+'">'+(c+1)+'</th>';
-  for(var d2=0;d2<nDes;d2++) h+='<th style="'+th+'">'+escHtml(lbl[d2])+'</th>';
+  h+='<table style="border-collapse:collapse;white-space:nowrap;margin:0;width:100%">';
+  h+='<caption class="sr-only">Cuadro cruzado por equipos: '+n+' equipos. Cada fila es un equipo y cada columna es el rival que lleva ese número de fila; la casilla son los puntos que le hizo. Bajando por la primera columna se dice el puesto de cada equipo.</caption>';
+  h+='<thead><tr>';
+  h+='<th scope="col" style="'+th+'">'+_a11yEnVezDe('#','Puesto')+'</th><th scope="col" style="'+th+';text-align:left">Equipo</th>';
+  // Igual que en el cuadro individual: el número de columna no dice nada al oído, así que al lado va
+  // el nombre del rival en texto invisible (el title= no lo lee ningún lector de pantalla).
+  for(var c=0;c<n;c++) h+='<th scope="col" style="'+th+'" title="'+escHtml(teams[c].name||'')+'"><span aria-hidden="true">'+(c+1)+'</span>'+_a11yDice('Rival '+(c+1)+': '+_paisES(teams[c].name||'',teams[c].fed||''))+'</th>';
+  for(var d2=0;d2<nDes;d2++) h+='<th scope="col" style="'+th+'">'+escHtml(lbl[d2])+'</th>';
   h+='</tr></thead><tbody>';
   teams.forEach(function(t,i){
     // Empatados: igual que Chess-Results, el puesto se escribe una sola vez, arriba del grupo.
     var _rep=(i>0&&teams[i-1]&&teams[i-1].rk===t.rk);
     h+='<tr style="'+(i%2===1?'background:var(--zebra)':'')+'">';
-    h+='<td style="'+td+';color:var(--text3)">'+(_rep?'':escHtml(String(t.rk||i+1)))+'</td>';
-    h+='<td style="'+td+';text-align:left;font-weight:600;color:var(--text)">'+nombreHtml(t)+'</td>';
+    var _mpVal=(_mpIdx>=0)?(t.des||[])[_mpIdx]:null;
+    h+='<td style="'+td+';color:var(--text3)">'+_a11yEnVezDe(_rep?'':escHtml(String(t.rk||i+1)),
+        'Puesto '+(t.rk||i+1)+(_mpVal!=null&&_mpVal!==''?', '+_a11yMedios(_a11yNum(_mpVal))+' puntos de match':''))+'</td>';
+    h+='<th scope="row" style="'+td+';text-align:left;font-weight:600;color:var(--text)">'+nombreHtml(t)+'</th>';
+    var _miNom=_paisES(t.name||'',t.fed||'');
     for(var c2=0;c2<n;c2++){
+      var _suNom=_paisES((teams[c2]||{}).name||'',(teams[c2]||{}).fed||'');
       var raw=((t.grid||[])[c2]||'').trim();
-      if(c2===i||raw==='*'){ h+='<td style="'+td+';color:#555">—</td>'; continue; }
-      if(!raw){ h+='<td style="'+td+'"></td>'; continue; }
+      if(c2===i||raw==='*'){ h+='<td style="'+td+';color:#555">'+_a11yEnVezDe('—','No juega contra sí mismo')+'</td>'; continue; }
+      if(!raw){ h+='<td style="'+td+'">'+_a11yDice('sin jugar')+'</td>'; continue; }
       // Color por resultado: se compara con la celda espejada (lo que el rival le hizo a este).
       var mio=parseFloat(raw.replace(',','.').replace('½','.5'));
       var suyoRaw=(((teams[c2]||{}).grid||[])[i]||'').trim();
       var suyo=parseFloat(suyoRaw.replace(',','.').replace('½','.5'));
       var col=(!isNaN(mio)&&!isNaN(suyo))?(mio>suyo?'#4caf50':(mio<suyo?'#e05555':'var(--gold)')):'var(--text)';
-      h+='<td style="'+td+';color:'+col+';font-weight:600">'+escHtml(_teamPtsTxt(raw))+'</td>';
+      // Corto: la fila ya dijo qué equipo es y la columna contra cuál. Sólo falta el marcador.
+      h+='<td style="'+td+';color:'+col+';font-weight:600">'+escHtml(_teamPtsTxt(raw))+_a11yDice('le hizo '+_teamPtsTxt(raw)+' a '+_teamPtsTxt(suyoRaw))+'</td>';
     }
     for(var d3=0;d3<nDes;d3++){
       var dv=(t.des||[])[d3];
@@ -8474,10 +8619,13 @@ function _teamRenderStandings(standings, crk){
   var nDes=initial?0:teams.reduce(function(m,t){return Math.max(m,(t.des||[]).length);},0);
   // Mismo marco que las tablas de cruces/formación (ancho 860, radio 12) para que las tres queden iguales.
   var h='<div style="max-height:560px;overflow:auto;border:1px solid var(--border);border-radius:12px;max-width:860px;margin-left:auto;margin-right:auto">';
-  h+='<table style="border-collapse:collapse;white-space:nowrap;margin:0;width:100%"><thead><tr>';
-  h+='<th style="'+th+'">#</th><th style="'+th+';text-align:left">Equipo</th>';
-  if(initial){ h+='<th style="'+th+'">Elo medio</th>'; }
-  else { h+='<th style="'+th+'">Part.</th><th style="'+th+'">+</th><th style="'+th+'">=</th><th style="'+th+'">−</th>'; for(var d=0;d<nDes;d++) h+='<th style="'+th+'">Des '+(d+1)+'</th>'; }
+  h+='<table style="border-collapse:collapse;white-space:nowrap;margin:0;width:100%">';
+  h+='<caption class="sr-only">'+(initial?'Ranking inicial por equipos':'Tabla de posiciones por equipos')+': '+teams.length+' equipos. Bajando por la primera columna se describe a cada equipo: puesto y cómo le fue. Con Enter se abre su performance.</caption>';
+  h+='<thead><tr>';
+  h+='<th scope="col" style="'+th+'">'+_a11yEnVezDe('#',initial?'Número de inicio':'Puesto')+'</th><th scope="col" style="'+th+';text-align:left">Equipo</th>';
+  // "+", "=" y "−" solos no se entienden al oído: se dicen enteros.
+  if(initial){ h+='<th scope="col" style="'+th+'">Elo medio</th>'; }
+  else { h+='<th scope="col" style="'+th+'">'+_a11yEnVezDe('Part.','Cruces jugados')+'</th><th scope="col" style="'+th+'">'+_a11yEnVezDe('+','Ganados')+'</th><th scope="col" style="'+th+'">'+_a11yEnVezDe('=','Empatados')+'</th><th scope="col" style="'+th+'">'+_a11yEnVezDe('−','Perdidos')+'</th>'; for(var d=0;d<nDes;d++) h+='<th scope="col" style="'+th+'">'+_a11yEnVezDe('Des '+(d+1),'Desempate '+(d+1))+'</th>'; }
   h+='</tr></thead><tbody>';
   teams.forEach(function(t,i){
     var _fed=t.fed||_teamResolveFed(t.name,_sdata);
@@ -8488,12 +8636,15 @@ function _teamRenderStandings(standings, crk){
     h+='<tr style="'+rowBg+'">';
     // Igual que Chess-Results: en un grupo de empatados el puesto se escribe una sola vez, arriba.
     var _mismoRk=(i>0&&teams[i-1]&&teams[i-1].rk===t.rk);
-    h+='<td style="'+td+';color:var(--text3)">'+(_mismoRk?'':escHtml(String(t.rk||i+1)))+'</td>';
+    // El puesto se ESCRIBE una sola vez en un grupo de empatados (como Chess-Results), pero al oído
+    // hay que decirlo siempre: si no, el renglón de abajo del empate se queda sin puesto.
+    h+='<td style="'+td+';color:var(--text3)">'+_a11yEnVezDe(_mismoRk?'':escHtml(String(t.rk||i+1)),
+        _a11yEquipoFrase(t.rk||i+1, t.played, t.w, t.d, t.l, t.eloAvg, initial))+'</td>';
     var _flag=_fed?crFlagEmoji(_fed):'';   // bandera solo si es país; los clubes van sin bandera
     var _nm=(crk&&t.name)
-      ? '<span onclick="crOpenCountry('+crArg(crk)+','+crArg(t.name)+')" title="Ver la performance de '+escHtml(_paisES(t.name,_fed))+'" style="cursor:pointer;display:inline-flex;align-items:center;gap:7px" onmouseover="this.style.color=\'var(--gold)\'" onmouseout="this.style.color=\'\'">'+(_flag?_flag+' ':'')+'<span>'+escHtml(_paisES(t.name,_fed))+'</span></span>'
+      ? '<span onclick="crOpenCountry('+crArg(crk)+','+crArg(t.name)+')" title="Ver la performance de '+escHtml(_paisES(t.name,_fed))+'"'+_a11yClic()+' style="cursor:pointer;display:inline-flex;align-items:center;gap:7px" onmouseover="this.style.color=\'var(--gold)\'" onmouseout="this.style.color=\'\'">'+(_flag?_flag+' ':'')+'<span>'+escHtml(_paisES(t.name,_fed))+'</span></span>'
       : ((_flag?_flag+' ':'')+escHtml(t.name||''));
-    h+='<td style="'+td+';text-align:left;font-weight:'+(_isArg?'800':'600')+';color:'+((_teamArgOnly&&_isArg)?'var(--gold)':'var(--text)')+'">'+_nm+'</td>';
+    h+='<th scope="row" style="'+td+';text-align:left;font-weight:'+(_isArg?'800':'600')+';color:'+((_teamArgOnly&&_isArg)?'var(--gold)':'var(--text)')+'">'+_nm+'</th>';
     if(initial){ h+='<td style="'+td+';color:var(--text2)">'+escHtml(String(t.eloAvg||''))+'</td>'; }
     else {
       h+='<td style="'+td+'">'+escHtml(String(t.played||''))+'</td>';
@@ -8657,11 +8808,20 @@ function _tdRunPendingMatchJump(){
     }, 120);
   });
 }
+// El clic sobre un jugador de una formación. Vive en el contenedor de la tabla de cada cruce (ver
+// el comentario de arriba): alcanza con caer en cualquier parte de su celda.
+function _teamBoardClick(ev, crk){
+  var t = ev && ev.target;
+  var cel = (t && t.closest) ? t.closest('[data-jug]') : null;
+  if (!cel) return;
+  crOpenPlayer(crk, cel.getAttribute('data-jug'));
+}
+
 function _teamRenderRound(matches, roundNum, crk){
   if(_teamArgOnly) matches=(matches||[]).filter(_teamMatchIsArg);
   if(!matches||!matches.length) return '<div style="color:var(--text3);font-size:12px;padding:10px">'+(_teamArgOnly?'' + _flagImg('ARG') + ' Argentina no juega en esta ronda.':'Sin datos.')+'</div>';
   // Nombre clickeable → abre las estadísticas del jugador en el torneo (crOpenPlayer lee teamRounds).
-  function nameClk(n){ return n ? '<span onclick="crOpenPlayer('+crArg(crk||'')+','+crArg(n)+')" title="Ver estadísticas del jugador" style="cursor:pointer;border-bottom:1px dotted transparent" onmouseover="this.style.borderBottomColor=\'var(--gold)\';this.style.color=\'var(--gold)\'" onmouseout="this.style.borderBottomColor=\'transparent\';this.style.color=\'\'">'+escHtml(n)+'</span>' : ''; }
+  function nameClk(n){ return n ? '<span title="Ver estadísticas del jugador"'+_a11yClic()+' style="cursor:pointer;border-bottom:1px dotted transparent" onmouseover="this.style.borderBottomColor=\'var(--gold)\';this.style.color=\'var(--gold)\'" onmouseout="this.style.borderBottomColor=\'transparent\';this.style.color=\'\'">'+escHtml(n)+'</span>' : ''; }
   function side(t,n,e,right){ return '<span style="flex:1;min-width:0;text-align:'+(right?'right':'left')+';color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(t?'<b style="color:var(--gold);font-size:11px">'+escHtml(t)+'</b> ':'')+nameClk(n)+(e?' <span style="color:var(--text3);font-size:12px">'+escHtml(String(e))+'</span>':'')+'</span>'; }
   var inner='';
   // Día/hora de la ronda, igual que en los torneos individuales (crBuildRoundPanel): manda lo
@@ -8697,13 +8857,26 @@ function _teamRenderRound(matches, roundNum, crk){
     }
     inner+=_teamCountrySide(crk,_cb,false);
     inner+='</div>';
+    // El rótulo de la tabla es el cruce entero, más la ayuda de cómo recorrerla.
+    var _sc=String(m.score||'').split(':');
+    inner+='<div role="table" onclick="_teamBoardClick(event,'+crArg(crk||'')+')" aria-label="'+escHtml(
+        _a11yCruceFrase(m.aName?_paisES(m.aName,m.aFed):(_ca.clean||''), m.bName?_paisES(m.bName,m.bFed):(_cb.clean||''), _sc[0], _sc[1])
+      + '. Formación de la ronda '+(roundNum==null?'':roundNum)+', '+(m.boards||[]).length+' mesas. Bajando por la primera columna se cuenta cada mesa entera. Con Enter sobre un jugador se abre su performance, y sobre el resultado, la partida')+'">';
     (m.boards||[]).forEach(function(b,bi){
       // El color ALTERNA por mesa: mesa 1 (impar) el equipo de la izquierda va con blancas; mesa 2
       // (par) con negras; etc. (nW = columna izquierda/equipo A, nB = derecha/equipo B; NO son colores).
       var leftIsWhite = (bi % 2 === 0);
-      inner+='<div style="display:flex;align-items:center;gap:6px;padding:9px 16px;'+(bi?'border-top:1px solid var(--bd14);':'')+'font-size:15px">';
-      inner+=side(b.tW,b.nW,b.eW,true);
-      inner+=_teamColorDot(leftIsWhite);    // color del jugador de la izquierda en esta mesa
+      // El resultado guardado es el del jugador de la IZQUIERDA; para contarlo en blancas/negras
+      // hay que darlo vuelta cuando la izquierda lleva las negras (mesas pares).
+      var _resBl = leftIsWhite ? b.res : _a11yResInvertido(b.res);
+      var _mesaFrase = _a11yMesaFrase(bi+1,
+        leftIsWhite ? (b.nW||'') : (b.nB||''),
+        leftIsWhite ? (b.nB||'') : (b.nW||''),
+        _resBl);
+      inner+='<div role="row" style="display:flex;align-items:center;gap:6px;padding:9px 16px;'+(bi?'border-top:1px solid var(--bd14);':'')+'font-size:15px">';
+      inner+='<span role="rowheader" style="display:contents">'+_a11yDice(_mesaFrase)+'</span>';
+      inner+='<span role="cell"'+(b.nW?' data-jug="'+escHtml(b.nW)+'"':'')+' style="display:contents">'+side(b.tW,b.nW,b.eW,true)+'</span>';
+      inner+='<span role="cell" style="display:inline-flex;flex-shrink:0">'+_teamColorDot(leftIsWhite)+_a11yDice(leftIsWhite?'blancas':'negras')+'</span>';
       // Resultado clickeable: abre la partida del broadcast que coincide con ese tablero (por ronda
       // + nombres). El ojito NO depende de que haya resultado: una mesa EN JUEGO es justo la que más
       // ganas dan de abrir, y antes quedaba muerta (sin resultado no se dibujaba el ojito y no había
@@ -8719,14 +8892,16 @@ function _teamRenderRound(matches, roundNum, crk){
       var _verMesa = !_fantasma && (!!b.res || (_hasGm && (b.nW||b.nB) && (!_rondaEnMemoria || crFindGameIdx(roundNum,b.nW,b.nB)>=0)));
       if(_verMesa){
         var _resTxt = b.res ? '<span style="border-bottom:1px dashed currentColor">'+escHtml(b.res)+'</span> ' : '';
-        inner+='<span onclick="_teamOpenBoardGame('+(roundNum!=null?roundNum:'null')+','+crArg(b.nW)+','+crArg(b.nB)+')" title="'+(b.res?'Ver la partida':'Ver la partida en vivo')+'" style="flex-shrink:0;width:66px;text-align:center;font-weight:700;color:var(--text);cursor:pointer;border-radius:5px" onmouseover="this.style.background=\'var(--bg3)\';this.style.color=\'var(--gold)\'" onmouseout="this.style.background=\'\';this.style.color=\'var(--text)\'">'+_resTxt+'<span style="font-size:12px;color:var(--blue)">👁</span></span>';
+        inner+='<span role="cell" style="display:contents"><span onclick="_teamOpenBoardGame('+(roundNum!=null?roundNum:'null')+','+crArg(b.nW)+','+crArg(b.nB)+')" title="'+(b.res?'Ver la partida':'Ver la partida en vivo')+'"'+_a11yClic(_a11yMesaCorto(leftIsWhite?(b.nW||''):(b.nB||''), leftIsWhite?(b.nB||''):(b.nW||''), _resBl)+(b.res?'. Ver la partida':'. Ver la partida en vivo'))+' style="flex-shrink:0;width:66px;text-align:center;font-weight:700;color:var(--text);cursor:pointer;border-radius:5px" onmouseover="this.style.background=\'var(--bg3)\';this.style.color=\'var(--gold)\'" onmouseout="this.style.background=\'\';this.style.color=\'var(--text)\'">'+_resTxt+'<span style="font-size:12px;color:var(--blue)">👁</span></span>';
+        inner+='</span>';
       } else {
-        inner+='<span style="flex-shrink:0;width:66px;text-align:center;font-weight:700;color:var(--text)">'+escHtml(b.res||'')+'</span>';
+        inner+='<span role="cell" style="flex-shrink:0;width:66px;text-align:center;font-weight:700;color:var(--text)">'+_a11yEnVezDe(escHtml(b.res||''), _a11yMesaCorto(leftIsWhite?(b.nW||''):(b.nB||''), leftIsWhite?(b.nB||''):(b.nW||''), _resBl))+'</span>';
       }
-      inner+=_teamColorDot(!leftIsWhite);   // color del jugador de la derecha en esta mesa
-      inner+=side(b.tB,b.nB,b.eB,false);
+      inner+='<span role="cell" style="display:inline-flex;flex-shrink:0">'+_teamColorDot(!leftIsWhite)+_a11yDice(!leftIsWhite?'blancas':'negras')+'</span>';
+      inner+='<span role="cell"'+(b.nB?' data-jug="'+escHtml(b.nB)+'"':'')+' style="display:contents">'+side(b.tB,b.nB,b.eB,false)+'</span>';
       inner+='</div>';
     });
+    inner+='</div>';   // /tabla de mesas de este cruce
     inner+='</div>';
   });
   // Recuadro con scroll interno (las partidas de la ronda no quedan empujadas tan abajo), centrado.
@@ -8736,6 +8911,27 @@ function _teamRenderRound(matches, roundNum, crk){
 // Render de los CRUCES POR PAÍSES (art=2): una fila por match, país vs país con el marcador. Es la
 // vista "rápida" que sale antes que la formación. Si esa ronda ya tiene formación cargada, cada fila
 // es clickeable y salta a la formación (bottom row). Resalta los cruces con Argentina.
+// ¿Los equipos de estos cruces son PAÍSES (tienen código FIDE) o clubes? Para rotular bien.
+function _teamCrossesAreCountries(crosses){
+  var hay = false;
+  (crosses || []).slice(0, 4).forEach(function(m){
+    [[m.aName, m.aFed], [m.bName, m.bFed]].forEach(function(p){
+      var f = (p[1] && _FED_ISO[String(p[1]).toUpperCase()]) ? p[1] : _teamCountryParts(p[0]).fed;
+      if (f && _FED_ISO[String(f).toUpperCase()]) hay = true;
+    });
+  });
+  return hay;
+}
+
+// El clic de un cruce. Vive en el contenedor de la tabla y NO en cada fila: si lo tiene la fila, el
+// lector canta "cliqueable" en cada renglón (en una Olimpiada, 106 veces). Acá nadie se para nunca.
+function _teamCrossClick(ev, crk, roundNum){
+  var t = ev && ev.target;
+  var fila = (t && t.closest) ? t.closest('[data-pk]') : null;
+  if (!fila) return;
+  _teamGotoFormation(crk, roundNum, fila.getAttribute('data-pk'));
+}
+
 function _teamRenderCrosses(crosses, roundNum, crk, hasFormation){
   if(_teamArgOnly) crosses=(crosses||[]).filter(_teamCrossIsArg);
   if(!crosses||!crosses.length) return '<div style="color:var(--text3);font-size:12px;padding:10px">'+(_teamArgOnly?'' + _flagImg('ARG') + ' Argentina no juega en esta ronda.':'Sin cruces cargados.')+'</div>';
@@ -8747,21 +8943,29 @@ function _teamRenderCrosses(crosses, roundNum, crk, hasFormation){
       +'<span style="font-size:16px">🕒</span><span style="color:var(--fg-c0)">Se juega:</span> <span style="font-weight:700;color:var(--fg-e0);text-shadow:var(--txt-out)">'+escHtml(_tSched)+'</span></div>';
   }
   if(hasFormation) inner+='<div style="font-size:11px;color:var(--text3);margin-bottom:8px">Tocá un cruce para ver la formación tablero por tablero.</div>';
+  // El rótulo dice "Cruces POR PAÍSES/EQUIPOS" y no sólo "Cruces": en un torneo por equipos hay dos
+  // tablas que empiezan igual (ésta y las mesas de una ronda individual) y al oído se confundían.
+  inner+='<div role="table"'+((hasFormation&&roundNum!=null)?' onclick="_teamCrossClick(event,\''+ks+'\','+roundNum+')"':'')+' aria-label="'+escHtml((_teamCrossesAreCountries(crosses)?'Cruces por países':'Cruces por equipos')+' de la ronda '+(roundNum==null?'':roundNum)+': '+crosses.length+(crosses.length===1?' cruce':' cruces')+'. Bajando por la primera columna se cuenta cada cruce entero'+(hasFormation?'. Con Enter sobre un cruce se abre la formación de los dos equipos, tablero por tablero':''))+'">';
   crosses.forEach(function(m,ci){
     var arg=(m.aFed==='ARG'||m.bFed==='ARG');
     var _pk=_teamPairKey(m.aName,m.bName);   // clave por nombre (vincula con la formación; sirve p/ clubes)
-    var clk=(hasFormation&&_pk) ? ' onclick="_teamGotoFormation(\''+ks+'\','+(roundNum!=null?roundNum:'null')+',\''+_pk+'\')" title="Ver la formación de este cruce" style="cursor:pointer;' : ' style="';
+    var clk=(hasFormation&&_pk) ? ' data-pk="'+escHtml(_pk)+'" title="Ver la formación de este cruce" style="cursor:pointer;' : ' style="';
     var _cbg=arg?'var(--gl30)':(ci%2===1?'var(--zebra)':'var(--bg2)');   // intercalado por match (ARG resaltado)
-    inner+='<div'+clk+'display:flex;align-items:center;gap:8px;padding:11px 14px;border:1px solid '+(arg?'var(--gold-dim)':'var(--bd14)')+';border-radius:10px;margin-top:8px;background:'+_cbg+'">';
-    inner+='<span style="flex:1;min-width:0;display:flex;align-items:center;justify-content:flex-end;gap:7px;overflow:hidden">';
+    inner+='<div role="row"'+clk+'display:flex;align-items:center;gap:8px;padding:11px 14px;border:1px solid '+(arg?'var(--gold-dim)':'var(--bd14)')+';border-radius:10px;margin-top:8px;background:'+_cbg+'">';
+    var _cruceFrase=_a11yCruceFrase(m.aName?_paisES(m.aName,m.aFed):'', m.bName?_paisES(m.bName,m.bFed):'', m.aRes, m.bRes);
+    inner+='<span role="rowheader" style="flex:1;min-width:0;display:flex;align-items:center;justify-content:flex-end;gap:7px;overflow:hidden">';
+    // Botón de verdad (no display:contents, que no se puede dibujar el recuadro del foco encima):
+    // repite el flex del padre para que en pantalla quede exactamente igual.
+    inner+='<span'+_a11yClic(_cruceFrase+((hasFormation&&_pk)?'. Ver la formación':''))+' style="flex:1;min-width:0;display:flex;align-items:center;justify-content:flex-end;gap:7px;overflow:hidden">';
     inner+='<span style="color:var(--text);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(_paisES(m.aName,m.aFed))+'</span>'+crFlagEmoji(m.aFed);
-    inner+='</span>';
-    inner+='<span style="flex-shrink:0;color:var(--gold);background:var(--bg3);border-radius:6px;padding:4px 13px;font-weight:700;font-size:15px;white-space:nowrap">'+escHtml(m.aRes||'')+' : '+escHtml(m.bRes||'')+'</span>';
-    inner+='<span style="flex:1;min-width:0;display:flex;align-items:center;gap:7px;overflow:hidden">';
+    inner+='</span></span>';
+    inner+='<span role="cell" style="flex-shrink:0;color:var(--gold);background:var(--bg3);border-radius:6px;padding:4px 13px;font-weight:700;font-size:15px;white-space:nowrap">'+_a11yEnVezDe(escHtml(m.aRes||'')+' : '+escHtml(m.bRes||''), (_a11yNum(m.aRes)==null||_a11yNum(m.bRes)==null)?'sin marcador':(_a11yMedios(_a11yNum(m.aRes))+' a '+_a11yMedios(_a11yNum(m.bRes))))+'</span>';
+    inner+='<span role="cell" style="flex:1;min-width:0;display:flex;align-items:center;gap:7px;overflow:hidden">';
     inner+=crFlagEmoji(m.bFed)+'<span style="color:var(--text);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(m.bName ? _paisES(m.bName,m.bFed) : '(libre)')+'</span>';
     inner+='</span>';
     inner+='</div>';
   });
+  inner+='</div>';
   return '<div style="max-height:560px;overflow-y:auto;border:1px solid var(--border);border-radius:12px;padding:12px;background:var(--bg2);margin-left:auto;margin-right:auto;max-width:860px">'+inner+'</div>';
 }
 // Clic en el resultado de un tablero del cuadro de cruces por equipos: busca la partida del broadcast
@@ -8839,27 +9043,29 @@ function _teamRenderSection(crk,data){
   if(_hasArg){ h+='<div style="margin-bottom:12px"><button onclick="_teamToggleArg(\''+ks+'\')" class="arg-toggle'+(_teamArgOnly?' on':'')+'">' + _flagImg('ARG') + ' Solo argentinos</button></div>'; }
   // Botón de ronda/tabla. Mismo diseño que los botones de rondas de PARTIDAS (borde 2px + fondo glass,
   // legibles en modo oscuro). blue=true → acento AZUL (cruces por países); false → DORADO (formación/tabla).
-  var tabBtn=function(tab,label,blue){ var on=String(defaultTab)===String(tab); var bg=on?(blue?'rgba(70,140,210,.20)':'var(--gold-bg)'):'var(--gl40)'; var col=on?(blue?'#7ab8e6':'var(--gold)'):'var(--fg-d0)'; var bd=on?(blue?'rgba(80,155,225,.6)':'var(--gold-dim)'):'var(--bd22)'; return '<button onclick="_teamShowTab(\''+ks+'\',\''+tab+'\')" id="cr-rtab-'+crk+'-'+tab+'" style="padding:7px 15px;border-radius:20px;border:2px solid '+bd+';background:'+bg+';color:'+col+';font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit;text-shadow:var(--txt-out)">'+label+'</button>'; };
+  // dicho = cómo se llama el botón en voz alta. Hace falta porque hay DOS renglones de R1…R11
+  // (cruces por países y formaciones) que al oído son idénticos, y porque "R1" se oye "erre uno".
+  var tabBtn=function(tab,label,blue,dicho){ var on=String(defaultTab)===String(tab); var bg=on?(blue?'rgba(70,140,210,.20)':'var(--gold-bg)'):'var(--gl40)'; var col=on?(blue?'#7ab8e6':'var(--gold)'):'var(--fg-d0)'; var bd=on?(blue?'rgba(80,155,225,.6)':'var(--gold-dim)'):'var(--bd22)'; return '<button onclick="_teamShowTab(\''+ks+'\',\''+tab+'\')" id="cr-rtab-'+crk+'-'+tab+'" aria-pressed="'+(on?'true':'false')+'"'+(dicho?' aria-label="'+escHtml(dicho)+'"':'')+' style="padding:7px 15px;border-radius:20px;border:2px solid '+bd+';background:'+bg+';color:'+col+';font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit;text-shadow:var(--txt-out)">'+label+'</button>'; };
   var rowLbl='font-size:10.5px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--text2);display:inline-flex;align-items:center;gap:5px;min-width:126px';
   h+='<div id="cr-tabs-'+crk+'">';
   // Renglón 1: CRUCES POR PAÍSES (azul) — solo si hay
   if(crossNums.length){
     h+='<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px">';
     h+='<span style="'+rowLbl+'" title="Equipo vs equipo con el marcador. Salen antes que la formación.">'+_crucesLbl+'</span>';
-    crossNums.forEach(function(r){ h+=tabBtn('x'+r,'R'+r,true); });
+    crossNums.forEach(function(r){ h+=tabBtn('x'+r,'R'+r,true,(_areCountries?'Cruces por países':'Cruces por equipos')+', ronda '+r); });
     h+='</div>';
   }
   // Renglón 2: FORMACIONES (dorado) + Tabla
   if(roundNums.length){
     h+='<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:14px">';
     h+='<span style="'+rowLbl+'" title="La composición de cada equipo, tablero por tablero.">♟ Formaciones</span>';
-    roundNums.forEach(function(r){ h+=tabBtn(''+r,'R'+r,false); });
-    if(hasStand) h+=tabBtn('tabla','📊 Tabla',false);
-    if(_stStatsAvailable(crk,data)) h+=tabBtn('stats','📈 Radiografía',false);
+    roundNums.forEach(function(r){ h+=tabBtn(''+r,'R'+r,false,'Formaciones, ronda '+r); });
+    if(hasStand) h+=tabBtn('tabla','📊 Tabla',false,'Tabla de posiciones por equipos');
+    if(_stStatsAvailable(crk,data)) h+=tabBtn('stats','📈 Radiografía',false,'Radiografía del torneo');
     h+='</div>';
   } else if(hasStand){
-    h+='<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">'+tabBtn('tabla','📊 Tabla',false)
-      +(_stStatsAvailable(crk,data)?tabBtn('stats','📈 Radiografía',false):'')+'</div>';
+    h+='<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">'+tabBtn('tabla','📊 Tabla',false,'Tabla de posiciones por equipos')
+      +(_stStatsAvailable(crk,data)?tabBtn('stats','📈 Radiografía',false,'Radiografía del torneo'):'')+'</div>';
   }
   h+='</div>';   // /cr-tabs
   // Paneles PEREZOSOS: se arma SOLO el de la pestaña que se ve; los demás quedan vacíos con
@@ -8909,6 +9115,17 @@ function _teamShowTab(crk,tab){
   // Prender el botón activo con su acento (azul = cruces por países; dorado = formación/tabla).
   var ab=document.getElementById('cr-rtab-'+crk+'-'+tab);
   if(ab){ var blue=tab.charAt(0)==='x'; ab.style.background=blue?'rgba(70,140,210,.20)':'var(--gold-bg)'; ab.style.color=blue?'#7ab8e6':'var(--gold)'; ab.style.borderColor=blue?'rgba(80,155,225,.6)':'var(--gold-dim)'; }
+  // ACCESIBILIDAD: el color dice cuál está puesta, pero al oído eso no existe; y el panel cambia
+  // sin recargar, así que sin cantarlo parece que la tecla no hizo nada.
+  try {
+    if(tabs) tabs.querySelectorAll('button').forEach(function(b){
+      if(b.id && b.id.indexOf('cr-rtab-')===0) b.setAttribute('aria-pressed','false');
+    });
+    if(ab){
+      ab.setAttribute('aria-pressed','true');
+      if(window.aaDecir) window.aaDecir(ab.getAttribute('aria-label') || _a11yTexto(ab.textContent));
+    }
+  } catch(e){}
   var ap=document.getElementById('cr-panel-'+crk+'-'+tab);
   if(ap){
     if(ap.getAttribute('data-lazy')){   // se arma recién cuando lo abrís (ver _teamRenderSection)
@@ -12046,6 +12263,9 @@ function crOpenCountry(key, who){
     h+='<div style="background:var(--card90);border:1px solid var(--bd22);border-radius:var(--r-lg);box-shadow:var(--shadow-card);padding:6px 14px 10px;margin-bottom:12px">';
     h+='<div style="font-size:11px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--text2);padding:8px 0 6px">Recorrido por ronda</div>';
     h+='<table style="width:100%;border-collapse:collapse;font-size:14.5px">';
+    // Esta tabla no tiene encabezados a la vista (se entiende de un vistazo), así que lo que la
+    // explica es el <caption> invisible más el aria-label de cada celda.
+    h+='<caption class="sr-only">Recorrido de '+escHtml(cname)+' ronda por ronda: rival, marcador y resultado.</caption>';
     hist.forEach(function(hh){
       var col=hh.res==='won'?'#4caf50':hh.res==='draw'?'var(--gold)':hh.res==='lost'?'#e05555':'var(--text3)';
       var lbl=hh.res==='won'?'Ganó':hh.res==='draw'?'Empató':hh.res==='lost'?'Perdió':'—';
@@ -12057,15 +12277,16 @@ function crOpenCountry(key, who){
       // aunque los nombres no traigan "(FED)", ej. "Bulgaria" / "United States of America").
       var _rfk=_teamMatchKey(cname, hh.oppName, data);
       var resHtml=(_hasG&&_rfk)
-        ? '<span onclick="_teamGotoMatchInGames('+hh.round+',\''+_rfk+'\')" title="Ver el match en Partidas" style="cursor:pointer;color:'+col+'">'+lbl+' <span style="font-size:12px;color:var(--blue)">👁</span></span>'
+        ? '<span onclick="_teamGotoMatchInGames('+hh.round+',\''+_rfk+'\')" title="Ver el match en Partidas"'+_a11yClic(lbl+'. Ver el match de la ronda '+hh.round+' en Partidas')+' style="cursor:pointer;color:'+col+'">'+lbl+' <span style="font-size:12px;color:var(--blue)">👁</span></span>'
         : '<span style="color:'+col+'">'+lbl+'</span>';
       h+='<tr style="border-top:1px solid var(--bd14)">';
-      h+='<td style="padding:8px 6px;color:var(--text3);text-align:center;width:34px">R'+hh.round+'</td>';
+      // font-weight:400 porque un <th> viene en negrita por omisión y acá cambiaría lo que se ve.
+      h+='<th scope="row" style="padding:8px 6px;color:var(--text3);text-align:center;width:34px;font-weight:400">'+_a11yEnVezDe('R'+hh.round,'Ronda '+hh.round)+'</th>';
       // Rival clickeable → abre SU panel de performance (país/club), navegando de panel en panel (como
       // los rivales del panel de jugador). Se pasa el nombre; crOpenCountry lo resuelve.
-      var _oppClk = hh.oppName ? ' onclick="crOpenCountry('+crArg(key)+','+crArg(hh.oppName)+')" title="Ver la performance de '+escHtml(_paisES(hh.oppName,hh.oppFed))+'" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;color:var(--text)" onmouseover="this.style.color=\'var(--gold)\'" onmouseout="this.style.color=\'var(--text)\'"' : ' style="display:inline-flex;align-items:center;gap:6px;color:var(--text)"';
+      var _oppClk = hh.oppName ? ' onclick="crOpenCountry('+crArg(key)+','+crArg(hh.oppName)+')" title="Ver la performance de '+escHtml(_paisES(hh.oppName,hh.oppFed))+'"'+_a11yClic()+' style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;color:var(--text)" onmouseover="this.style.color=\'var(--gold)\'" onmouseout="this.style.color=\'var(--text)\'"' : ' style="display:inline-flex;align-items:center;gap:6px;color:var(--text)"';
       h+='<td style="padding:8px 6px"><span'+_oppClk+'>'+(crFlagEmoji(hh.oppFed)||'')+'<span>'+escHtml(hh.oppName?_paisES(hh.oppName,hh.oppFed):'')+'</span></span></td>';
-      h+='<td style="padding:8px 6px;text-align:center;font-weight:700;color:var(--text);white-space:nowrap">'+marc+'</td>';
+      h+='<td style="padding:8px 6px;text-align:center;font-weight:700;color:var(--text);white-space:nowrap">'+_a11yEnVezDe(marc, hh.my==null?'sin marcador':('Marcador '+crPtsStr(hh.my)+' a '+crPtsStr(hh.opp)))+'</td>';
       h+='<td style="padding:8px 6px;text-align:right;font-weight:700;white-space:nowrap">'+resHtml+'</td>';
       h+='</tr>';
     });
@@ -12116,7 +12337,7 @@ function crOpenCountry(key, who){
         +((fed&&fed!==_ofFed)?' <span style="color:var(--text3);font-size:11.5px">'+escHtml(fed)+'</span>':'');
       // Clickeable sólo si jugó: el panel del jugador se arma con sus partidas y sin ellas sale vacío.
       var cell=jugo
-        ? '<span onclick="crOpenPlayer('+crArg(key)+','+crArg(nm)+')" title="Ver la performance del jugador" style="cursor:pointer;color:var(--text)" onmouseover="this.style.color=\'var(--gold)\'" onmouseout="this.style.color=\'var(--text)\'">'+nameHtml+'</span>'
+        ? '<span onclick="crOpenPlayer('+crArg(key)+','+crArg(nm)+')" title="Ver la performance del jugador"'+_a11yClic()+' style="cursor:pointer;color:var(--text)" onmouseover="this.style.color=\'var(--gold)\'" onmouseout="this.style.color=\'var(--text)\'">'+nameHtml+'</span>'
         : '<span style="color:var(--text2)" title="Todavía no jugó en este torneo">'+nameHtml+'</span>';
       var der=jugo
         ? crPtsStr(score)+'<span style="color:var(--text3);font-weight:400;font-size:12.5px"> de '+games+'</span>'+(rpTxt?'<span style="color:var(--text3);font-weight:400;font-size:12px"> · Rp '+escHtml(String(rpTxt))+'</span>':'')
@@ -12135,6 +12356,7 @@ function crOpenCountry(key, who){
     }
     h+='</div>';
     h+='<table style="width:100%;border-collapse:collapse;font-size:14.5px">';
+    h+='<caption class="sr-only">'+(_ofPl.length?'Plantel oficial de ':'Plantel de ')+escHtml(cname)+': tablero, jugador y puntos de cada uno.</caption>';
     _ofPl.forEach(function(p){ h+=_plRow(p.bo,p.ti,p.nm,p.elo,p.fed,p.pts,p.gm,p.rp); });
     if(_ofPl.length&&_extraPl.length) h+='<tr><td colspan="3" style="padding:10px 6px 2px;font-size:11px;color:var(--text3);border-top:1px solid var(--bd14)">También jugaron</td></tr>';
     _extraPl.forEach(function(nm){ var p=roster[nm]; h+=_plRow('',p.title,nm,p.elo,'','','',''); });
@@ -12149,6 +12371,7 @@ function crOpenCountry(key, who){
       +'<button onclick="crBackToTour()" style="display:flex;align-items:center;gap:6px;background:none;border:none;color:var(--text2);font-size:13px;cursor:pointer;padding:0;font-family:inherit">← Volver</button>'
       +'<button onclick="crCloseAllPanels()" title="Cerrar y volver al detalle del torneo" style="display:flex;align-items:center;gap:5px;background:var(--gl40);border:1px solid var(--bd20);border-radius:8px;color:var(--fg-e0);font-size:12.5px;font-weight:600;cursor:pointer;padding:5px 11px;font-family:inherit;text-shadow:var(--txt-out)">✕ Cerrar</button>'
       +'</div>'+h;
+    try { _a11yFoco(modalBody); } catch(e){}   // sin esto el lector relee la página entera (ver arriba)
     var mm=document.querySelector('#tour-overlay .modal'); if(mm) mm.scrollTop=0;
     if(!_crPlayerHistoryPushed){ _crPlayerHistoryPushed=true; window.history.pushState({ crPlayer:true }, ''); }
   }
@@ -12285,17 +12508,18 @@ function crOpenPlayer(key,name){
   // (_hdrP ya se buscó arriba, para el año de nacimiento del cálculo de elo.)
   var _hdrPhoto = _hdrP ? _photoSrc(_hdrP.id) : null;
   var _hdrIni = name.charAt(0)||'?';
-  h+='<div data-ini="'+escHtml(_hdrIni)+'" style="width:44px;height:44px;border-radius:50%;background:var(--gold-bg);border:1.5px solid var(--gold-dim);display:flex;align-items:center;justify-content:center;font-size:17px;font-weight:700;color:var(--gold);flex-shrink:0;overflow:hidden">'
+  h+='<div aria-hidden="true" data-ini="'+escHtml(_hdrIni)+'" style="width:44px;height:44px;border-radius:50%;background:var(--gold-bg);border:1.5px solid var(--gold-dim);display:flex;align-items:center;justify-content:center;font-size:17px;font-weight:700;color:var(--gold);flex-shrink:0;overflow:hidden">'
     +(_hdrPhoto ? '<img src="'+_hdrPhoto+'" alt="" loading="lazy" onerror="_avImgErr(this)" style="width:100%;height:100%;object-fit:cover;border-radius:50%">' : escHtml(_hdrIni))
     +'</div>';
   h+='<div style="flex:1;min-width:0">';
   h+='<div style="font-size:16.5px;font-weight:700;color:var(--white-ink);line-height:1.2;text-shadow:var(--txt-out)">'+crTitleBadge(_bio&&_bio.title)+escHtml(name)+'</div>';
   if(_bio){
     h+='<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:3px;font-size:12px">';
-    if(_bio.fed) h+='<span style="color:var(--fg-c8)">'+crFlagEmoji(_bio.fed)+' '+_bio.fed+'</span>';
-    if(_bio.elo) h+='<span style="color:var(--fg-c8)">· ELO '+_bio.elo+'</span>';
+    // El "·" el lector lo canta, y "ESP" lo deletrea: se dice el país entero y se esconde la sigla.
+    if(_bio.fed) h+='<span style="color:var(--fg-c8)">'+crFlagEmoji(_bio.fed,true)+'<span aria-hidden="true"> '+escHtml(String(_bio.fed))+'</span></span>';
+    if(_bio.elo) h+='<span style="color:var(--fg-c8)">'+_a11yEnVezDe('· ELO '+_bio.elo,'Elo '+_bio.elo)+'</span>';
     var _rpShow = (parseInt(_bio.rp,10) > 0) ? _bio.rp : tourPerf;   // Rp oficial de CR si viene (>0); si no (CR manda 0), la calculada
-    if(_rpShow) h+='<span style="color:var(--gold)" title="Performance del torneo: promedio de rivales + ajuste FIDE por puntaje">· Rp '+_rpShow+'</span>';
+    if(_rpShow) h+='<span style="color:var(--gold)" title="Performance del torneo: promedio de rivales + ajuste FIDE por puntaje">'+_a11yEnVezDe('· Rp '+_rpShow,'performance '+_rpShow)+'</span>';
     h+='</div>';
   }
   h+='</div>';
@@ -12303,38 +12527,39 @@ function crOpenPlayer(key,name){
   if(info){
     var medal=info.rank===1?'🥇':info.rank===2?'🥈':info.rank===3?'🥉':'#'+info.rank;
     h+='<div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;margin-left:4px">';
-    h+='<span style="font-size:22px;font-weight:700;color:var(--gold);line-height:1">'+crPtsStr(info.pts)+'</span>';
-    h+='<span style="font-size:12px;color:var(--text3)">pts</span>';
+    h+='<span style="font-size:22px;font-weight:700;color:var(--gold);line-height:1">'+_a11yEnVezDe(crPtsStr(info.pts), crPtsStr(info.pts)+' puntos')+'</span>';
+    h+='<span aria-hidden="true" style="font-size:12px;color:var(--text3)">pts</span>';
     h+='</div>';
     h+='<div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;margin-left:8px">';
-    h+='<span style="font-size:18px;font-weight:700;color:var(--text);line-height:1">'+medal+'</span>';
-    h+='<span style="font-size:12px;color:var(--text3)">pos</span>';
+    h+='<span style="font-size:18px;font-weight:700;color:var(--text);line-height:1">'+_a11yEnVezDe(medal, 'puesto '+info.rank)+'</span>';
+    h+='<span aria-hidden="true" style="font-size:12px;color:var(--text3)">pos</span>';
     h+='</div>';
   } else if(wins+draws+losses>0){
     // Torneo POR EQUIPOS: no hay tabla individual (info=null), pero el puntaje acumulado del jugador
     // sale de sus tableros. Lo mostramos arriba a la derecha, igual que en los torneos individuales.
     h+='<div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;margin-left:4px">';
-    h+='<span style="font-size:22px;font-weight:700;color:var(--gold);line-height:1">'+crPtsStr(wins+draws*0.5)+'</span>';
-    h+='<span style="font-size:12px;color:var(--text3)">de '+(wins+draws+losses)+'</span>';
+    h+='<span style="font-size:22px;font-weight:700;color:var(--gold);line-height:1">'+_a11yEnVezDe(crPtsStr(wins+draws*0.5), crPtsStr(wins+draws*0.5)+' puntos')+'</span>';
+    h+='<span style="font-size:12px;color:var(--text3)">'+_a11yEnVezDe('de '+(wins+draws+losses), 'de '+(wins+draws+losses)+' partidas')+'</span>';
     h+='</div>';
   }
   h+='</div>';
   if(info || history.length){
     h+='<div style="font-size:13.5px;color:var(--text2);margin-bottom:10px">';
-    h+='<span style="color:#4caf50;font-weight:600">'+wins+'G</span> · ';
-    h+='<span style="color:var(--gold);font-weight:600">'+draws+'T</span> · ';
-    h+='<span style="color:#e05555;font-weight:600">'+losses+'D</span>';
-    if(pending){ h+=' · <span style="color:var(--text3);font-weight:600">'+pending+' por jugar</span>'; }
+    h+='<span aria-hidden="true"><span style="color:#4caf50;font-weight:600">'+wins+'G</span> · '
+      +'<span style="color:var(--gold);font-weight:600">'+draws+'T</span> · '
+      +'<span style="color:#e05555;font-weight:600">'+losses+'D</span></span>';
+    h+=_a11yDice(wins+' ganadas, '+draws+' tablas, '+losses+' perdidas');
+    if(pending){ h+='<span aria-hidden="true"> · </span><span style="color:var(--text3);font-weight:600">'+pending+' por jugar</span>'; }
     // La Rp acá abajo es sólo el paracaídas de cuando NO hay renglón de identidad arriba (ni tabla
     // ni plantel): si el de arriba salió, repetirla sería decir dos veces lo mismo.
-    if(!_bio && tourPerf){ h+=' · <span style="color:var(--gold);font-weight:700" title="Performance del torneo: promedio de rivales + ajuste FIDE por puntaje">Rp '+tourPerf+'</span>'; }
+    if(!_bio && tourPerf){ h+='<span aria-hidden="true"> · </span><span style="color:var(--gold);font-weight:700" title="Performance del torneo: promedio de rivales + ajuste FIDE por puntaje">'+_a11yEnVezDe('Rp '+tourPerf,'performance '+tourPerf)+'</span>'; }
     // Cambio de elo: el de Chess-Results si viene; si no, el calculado (K·Σ(res−esperado)).
     var _evShow = (info && info.eloVar) ? info.eloVar : tourEloDelta;
     if(_evShow != null){
       var _evSign = _evShow>0?'+':'';
       var _evCol  = _evShow>0?'#4caf50':(_evShow<0?'#e05555':'var(--text3)');
       var _evTit  = (info && info.eloVar) ? 'Variación de elo del torneo (Chess-Results)' : 'Variación de elo estimada: K·Σ(resultado − esperado). K según elo/edad; puede diferir para jugadores nuevos o juveniles.';
-      h+='<span style="margin-left:8px;color:'+_evCol+'" title="'+_evTit+'">Elo '+_evSign+_evShow+'</span>';
+      h+='<span style="margin-left:8px;color:'+_evCol+'" title="'+_evTit+'">'+_a11yEnVezDe('Elo '+_evSign+_evShow, 'variación de Elo '+(_evShow>0?'más ':'')+_evShow)+'</span>';
     }
     h+='</div>';
   }
@@ -12346,10 +12571,10 @@ function crOpenPlayer(key,name){
   if(argP || fideId){
     h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">';
     if(argP){
-      h+='<button onclick="crGoToProfile('+argP.id+')" style="flex:1;min-width:140px;padding:10px 12px;background:var(--gold-bg);border:1px solid var(--gold-dim);border-radius:8px;color:var(--gold);font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit">👤 Perfil completo</button>';
+      h+='<button onclick="crGoToProfile('+argP.id+')" style="flex:1;min-width:140px;padding:10px 12px;background:var(--gold-bg);border:1px solid var(--gold-dim);border-radius:8px;color:var(--gold);font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit" aria-label="'+escHtml('Ver el perfil completo de '+_a11yNombre(name))+'">👤 Perfil completo</button>';
     }
     if(fideId){
-      h+='<button onclick="window.open(\'https://ratings.fide.com/profile/'+fideId+'\',\'_blank\')" style="flex:1;min-width:140px;padding:10px 12px;background:var(--gl40);border:1px solid var(--bd20);border-radius:8px;color:var(--fg-e0);font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit;text-shadow:var(--txt-out)">🌐 Ver en FIDE ↗</button>';
+      h+='<button onclick="window.open(\'https://ratings.fide.com/profile/'+fideId+'\',\'_blank\')" style="flex:1;min-width:140px;padding:10px 12px;background:var(--gl40);border:1px solid var(--bd20);border-radius:8px;color:var(--fg-e0);font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit;text-shadow:var(--txt-out)" aria-label="'+escHtml('Ver la ficha FIDE de '+_a11yNombre(name)+'. Se abre en una pestaña nueva')+'">🌐 Ver en FIDE ↗</button>';
     }
     h+='</div>';
   }
@@ -12360,11 +12585,13 @@ function crOpenPlayer(key,name){
     h+='<div class="crp-hist-card" style="background:var(--card90);border:1px solid var(--bd22);border-radius:var(--r-lg);box-shadow:var(--shadow-card);padding:6px 14px 8px">';
     h+='<table class="crp-hist" style="width:100%;table-layout:fixed;border-collapse:collapse;font-size:15px">';
     h+='<colgroup><col class="cph-r"><col><col class="cph-col"><col class="cph-res"></colgroup>';
+    h+='<caption class="sr-only">Recorrido de '+escHtml(name)+' ronda por ronda. Bajando por la primera columna se cuenta cada ronda entera: contra quién jugó y cómo le fue. Con Enter se abre la partida.</caption>';
     h+='<thead><tr style="border-bottom:1px solid var(--bd20)">';
-    h+='<th style="padding:7px 3px;color:var(--white-ink);font-weight:700;text-align:center;text-shadow:'+_ts+'">R</th>';
-    h+='<th style="padding:7px 6px;color:var(--white-ink);font-weight:700;text-align:left;text-shadow:'+_ts+'">Rival</th>';
-    h+='<th class="cph-color" style="padding:7px 3px;color:var(--white-ink);font-weight:700;text-align:center">⬛</th>';
-    h+='<th style="padding:7px 6px;color:var(--white-ink);font-weight:700;text-align:center;text-shadow:'+_ts+'">Res</th>';
+    h+='<th scope="col" style="padding:7px 3px;color:var(--white-ink);font-weight:700;text-align:center;text-shadow:'+_ts+'">'+_a11yEnVezDe('R','Ronda')+'</th>';
+    h+='<th scope="col" style="padding:7px 6px;color:var(--white-ink);font-weight:700;text-align:left;text-shadow:'+_ts+'">Rival</th>';
+    // El encabezado es un cuadradito negro: al oído no es nada, así que se dice "Color".
+    h+='<th scope="col" class="cph-color" style="padding:7px 3px;color:var(--white-ink);font-weight:700;text-align:center">'+_a11yEnVezDe('⬛','Color')+'</th>';
+    h+='<th scope="col" style="padding:7px 6px;color:var(--white-ink);font-weight:700;text-align:center;text-shadow:'+_ts+'">'+_a11yEnVezDe('Res','Resultado')+'</th>';
     h+='</tr></thead><tbody>';
     history.forEach(function(hh){
       var resColor=hh.myRes.startsWith('✓')?'var(--green)':hh.myRes.startsWith('½')?'var(--gold)':hh.myRes.startsWith('⋯')?'var(--text3)':'var(--red)';
@@ -12374,22 +12601,25 @@ function crOpenPlayer(key,name){
       // En on-demand mostramos el 👁 aunque la ronda no esté cargada (crOpenGame la baja al tocar).
       var hgIdx=crFindGameIdx(hh.round,hw,hb);
       var _canOpen = hgIdx>=0 || (hh.round!=null && _tdRoundReachable(hh.round));
+      // Lo mismo que se ve, pero dicho con palabras (los ✓ ✗ ½ el lector los canta como símbolos).
+      var _resDicho=hh.myRes.startsWith('✓')?'ganó':hh.myRes.startsWith('½')?'empató':hh.myRes.startsWith('⋯')?'todavía no jugó':'perdió';
       h+='<tr style="border-bottom:1px solid var(--bd10)">';
-      h+='<td style="padding:8px 3px;text-align:center;font-weight:700;color:var(--white-ink);text-shadow:'+_ts+'">'+hh.round+'</td>';
+      h+='<th scope="row" style="padding:8px 3px;text-align:center;font-weight:700;color:var(--white-ink);text-shadow:'+_ts+'">'+_a11yEnVezDe(hh.round, _a11yRondaFrase(hh.round, _resDicho, hh.opp, hh.sinColor?'':(hh.color==='Blancas'?'blancas':'negras')))+'</th>';
       h+='<td class="crp-rival" style="padding:8px 6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
-        +'<span class="crp-nm">'+crTitleBadge(hh.oppTitle)+'<span style="color:var(--white-ink);cursor:pointer;text-shadow:'+_ts+'" title="Ver a este jugador" onclick="crOpenPlayer('+crArg(key)+','+crArg(hh.opp)+')">'+escHtml(hh.opp)+'</span></span>'
-        +(hh.oppElo?'<span class="crp-elo">('+hh.oppElo+')</span>':'')
+        +'<span class="crp-nm">'+crTitleBadge(hh.oppTitle)+'<span style="color:var(--white-ink);cursor:pointer;text-shadow:'+_ts+'" title="Ver a este jugador"'+_a11yClic()+' onclick="crOpenPlayer('+crArg(key)+','+crArg(hh.opp)+')">'+escHtml(hh.opp)+'</span></span>'
+        +(hh.oppElo?'<span class="crp-elo">'+_a11yEnVezDe('('+hh.oppElo+')','Elo '+hh.oppElo)+'</span>':'')
         +'</td>';
       h+='<td class="cph-color" style="padding:8px 3px;text-align:center;font-size:15px"'
        + (hh.sinColor?' title="En los torneos por equipos el color no viene en los datos"':'') + '>'
-       + (hh.sinColor ? '<span style="color:var(--text3);font-size:13px">–</span>' : (hh.color==='Blancas'?'⬜':'⬛')) + '</td>';
+       + _a11yEnVezDe(hh.sinColor ? '<span style="color:var(--text3);font-size:13px">–</span>' : (hh.color==='Blancas'?'⬜':'⬛'),
+                      hh.sinColor?'color desconocido':(hh.color==='Blancas'?'con blancas':'con negras')) + '</td>';
       if(_canOpen){
-        h+='<td style="padding:5px 6px;text-align:center;cursor:pointer;white-space:nowrap" title="Ver partida" onclick="crOpenGame('+(hh.round==null?'null':hh.round)+','+crArg(hw)+','+crArg(hb)+')">'
-          +'<span class="cph-resbtn" style="display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:7px;background:'+resBg+';border:1px solid '+resColor+';font-weight:700;font-size:13px;color:'+resColor+';text-shadow:'+_ts+'">'+resShort+' <span style="font-size:12px;opacity:.85">👁</span></span>'
+        h+='<td style="padding:5px 6px;text-align:center;white-space:nowrap">'
+          +'<span class="cph-resbtn" title="Ver partida" onclick="crOpenGame('+(hh.round==null?'null':hh.round)+','+crArg(hw)+','+crArg(hb)+')"'+_a11yClic(_resDicho+'. Ver la partida')+' style="cursor:pointer;display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:7px;background:'+resBg+';border:1px solid '+resColor+';font-weight:700;font-size:13px;color:'+resColor+';text-shadow:'+_ts+'">'+resShort+' <span style="font-size:12px;opacity:.85">👁</span></span>'
           +'</td>';
       } else {
-        h+='<td style="padding:5px 6px;text-align:center;white-space:nowrap">'
-          +'<span class="cph-resbtn" style="display:inline-block;padding:4px 9px;border-radius:7px;background:'+resBg+';border:1px solid '+resColor+';font-weight:700;font-size:13px;color:'+resColor+';text-shadow:'+_ts+'">'+resShort+'</span>'
+        h+='<td style="padding:5px 6px;text-align:center;white-space:nowrap">'+_a11yDice(_resDicho)
+          +'<span aria-hidden="true" class="cph-resbtn" style="display:inline-block;padding:4px 9px;border-radius:7px;background:'+resBg+';border:1px solid '+resColor+';font-weight:700;font-size:13px;color:'+resColor+';text-shadow:'+_ts+'">'+resShort+'</span>'
           +'</td>';
       }
       h+='</tr>';
@@ -12410,8 +12640,18 @@ function crOpenPlayer(key,name){
       +'<button onclick="crBackToTour()" style="display:flex;align-items:center;gap:6px;background:none;border:none;color:var(--text2);font-size:13px;cursor:pointer;padding:0;font-family:inherit">← Volver</button>'
       +'<button onclick="crCloseAllPanels()" title="Cerrar y volver al detalle del torneo" style="display:flex;align-items:center;gap:5px;background:var(--gl40);border:1px solid var(--bd20);border-radius:8px;color:var(--fg-e0);font-size:12.5px;font-weight:600;cursor:pointer;padding:5px 11px;font-family:inherit;text-shadow:var(--txt-out)">✕ Cerrar</button>'
       +'</div>'+h;
+    try { _a11yFoco(modalBody); } catch(e){}   // idem: anclar el cursor del lector en el contenido nuevo
     var m=document.querySelector('#tour-overlay .modal');
     if(m) m.scrollTop=0;
+    // Se abre sin recargar la página, así que para el lector no pasó NADA: se apretaba Enter y el
+    // panel cambiaba en silencio. Se canta quién es y cómo le fue, que es el resumen que a la vista
+    // se lee de un golpe en el encabezado.
+    try {
+      var _dicho='Performance de '+name;
+      if(info) _dicho+=', '+crPtsStr(info.pts)+' puntos, puesto '+info.rank;
+      if(wins+draws+losses>0) _dicho+='. '+wins+' ganadas, '+draws+' tablas, '+losses+' perdidas';
+      if(window.aaDecir) window.aaDecir(_dicho);
+    } catch(e){}
     // Empujar una entrada de historial propia para que el botón Atrás cierre el
     // visor de stats (vuelve a la tabla) en vez de salir del torneo.
     // OJO: dentro de esta función `history` es una var local (el historial de
@@ -12427,6 +12667,9 @@ function crClosePlayer(){
   var modalBody=document.getElementById('tour-modal-body');
   if(modalBody) modalBody.innerHTML=_crViewStack[0];   // el detalle del torneo (fondo de la pila)
   _crViewStack=[];
+  // Mismo caso que al abrir un panel: se reemplazó el contenido, hay que anclar el cursor del lector
+  // y decir a dónde se volvió. Si no, arranca a leer la página desde el título del torneo.
+  try { if(modalBody) _a11yFoco(modalBody); if(window.aaDecir) window.aaDecir('Volviste al torneo'); } catch(e){}
 }
 
 // Botón "← Volver" de las sub-vistas: navega UN nivel (jugador → país → torneo). Si todavía queda una
@@ -12436,6 +12679,9 @@ function crBackToTour(){
   if(_crViewStack.length>1){
     var prev=_crViewStack.pop();
     var mb=document.getElementById('tour-modal-body'); if(mb) mb.innerHTML=prev;
+    // Mismo caso que al ABRIR el panel: se reemplaza el contenido, así que hay que anclar el cursor
+    // del lector y decir a dónde se volvió. Si no, arranca a leer desde el título del torneo.
+    try { if(mb) _a11yFoco(mb); if(window.aaDecir) window.aaDecir('Volviste al torneo'); } catch(e){}
     var m=document.querySelector('#tour-overlay .modal'); if(m) m.scrollTop=0;
     return;
   }
@@ -22635,6 +22881,221 @@ function _a11yTexto(s) {
   return t.replace(/\s+/g, ' ').trim();
 }
 
+/* ═══ ACCESIBILIDAD — FASE 1: las tablas de torneo ═══════════════════════════════════════════
+   Dos agujeros, dos ayudantes.
+
+   1) NOMBRES QUE SE ABREN CON UN CLIC. Media app abre la ficha de un jugador o de un país con un
+      onclick puesto sobre un <span> o un <td>. Con el mouse anda; con el TECLADO no existe: el
+      elemento no recibe el foco y Enter no hace nada. Un ciego oye pasar el nombre y no puede entrar.
+      _a11yClic() le pone role="button" (el lector dice "botón"), tabindex="0" (el Tab lo alcanza) y
+      un nombre hablado. El escuchador de más abajo hace que Enter y la barra espaciadora lo "toquen".
+      Se hace así, y NO cambiando los <span> por <button>, porque son una decena de lugares y un
+      <button> trae estilos propios: el riesgo de descolocar algo en pantalla era mucho mayor.
+
+   2) CELDAS SIN CONTEXTO. En el cuadro cruzado la celda dice "1" y la columna se llama "7": al oído
+      eso no es nada. Todo el contexto vivía en el title=, que el lector NO lee. _a11yCelda() arma la
+      frase entera ("Pérez con blancas contra González, ronda 3, ganó") para ponerla de aria-label. */
+
+// Atributos para que un <span>/<td> clickeable se comporte como un botón para el teclado.
+function _a11yClic(etiqueta) {
+  return ' role="button" tabindex="0"' + (etiqueta ? ' aria-label="' + escHtml(etiqueta) + '"' : '');
+}
+
+/* ⚠️ APRENDIDO PROBANDO CON NVDA (10/09/2026) — LA REGLA MÁS IMPORTANTE DE TODAS:
+   **`aria-label` sobre un `<td>` o un `<th>` NO SE OYE.** Cuando el lector recorre una tabla
+   casilla por casilla (Ctrl+Alt+flechas) lee el CONTENIDO de la celda, no su aria-label. Se probó:
+   la casilla decía "0" y "·" en vez de la frase entera que tenía puesta.
+   Y donde sí se oye (un <span> con role="button"), el aria-label TAPA lo que hay adentro: en los
+   cuadros de ronda se comía el Elo y los puntos.
+   → Por eso, dentro de las tablas, todo lo que se quiera decir va como TEXTO INVISIBLE ADENTRO de
+     la celda, nunca como atributo. Estos dos ayudantes son eso. */
+
+// Agrega algo que sólo oye el lector, sin tocar lo que se ve.
+// ⚠️ Las COMAS de los costados no son un capricho y NO se pueden cambiar por espacios. Probado con
+// NVDA, dos veces y por dos motivos distintos:
+//   · al armar el NOMBRE de una celda el lector recorta los espacios de cada pedacito antes de
+//     pegarlos → se oía "GMArgentinaOro, FaustinoElo2537";
+//   · y tampoco separan de lo que el lector agrega POR SU CUENTA: como el encabezado terminaba en
+//     letra, se oía "Flores, Diegocolumna seis".
+// La coma sobrevive al recorte y se pronuncia como una PAUSA, no en voz alta. Van de los dos lados
+// porque el pedacito vecino puede estar de cualquiera de los dos.
+function _a11yDice(texto) {
+  return texto ? '<span class="sr-only">, ' + escHtml(texto) + ', </span>' : '';
+}
+
+// Cómo se llama cada pestaña del torneo cuando hay que decirla en voz alta.
+function _a11yNombrePestana(tab) {
+  if (tab === 'cuadro') return 'Cuadro cruzado';
+  if (tab === 'tabla')  return 'Tabla de posiciones';
+  if (tab === 'stats')  return 'Radiografía del torneo';
+  return 'Ronda ' + tab;
+}
+
+// Sólo el separador, sin texto: para despegar algo que ya dice lo suyo. Misma razón que las comas
+// de _a11yDice — el espacio no sobrevive, la coma sí, y se pronuncia como pausa.
+function _a11ySep() {
+  return '<span class="sr-only">, </span>';
+}
+
+// Cambia lo que se OYE por otra cosa, dejando intacto lo que se VE. Para los rótulos abreviados
+// ("Pts", "+/-", "⬛"), que al ojo alcanzan y al oído no significan nada.
+function _a11yEnVezDe(seVe, seOye) {
+  return '<span aria-hidden="true">' + seVe + '</span>' + _a11yDice(seOye);
+}
+
+// "Anton Guijarro, David" → "Anton Guijarro David". La coma de "Apellido, Nombre" el lector la
+// pronuncia como pausa y parte a la persona en dos; adentro de una frase eso confunde más de lo que
+// ayuda. Se saca sólo para hablar: en pantalla el nombre queda igual.
+function _a11yNombre(n) {
+  return String(n == null ? '' : n).replace(/\s*,\s*/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+// Toda una mesa contada en una sola frase, como la contaría una persona. Reemplaza al viejo
+// _a11yResultado, que decía "ganaron las blancas" sin nombrar a nadie: al que no ve la pantalla no
+// le sirve saber que ganaron las blancas si no sabe quién las llevaba.
+// SIN punto final: el lector lo canta como "PUNTO" en voz alta, y la pausa ya la pone la coma que
+// agrega _a11yDice. Un punto al final de un texto invisible nunca hace falta.
+function _a11yMesaFrase(mesa, blancas, negras, res) {
+  var en = 'En la mesa ' + mesa + ', ';
+  var B = _a11yNombre(blancas), N = _a11yNombre(negras);
+  var ff = (res === '+--' || res === '--+') ? ' por incomparecencia' : '';
+  // La coma antes de la "a" no es un capricho: sin ella se oye "davidacuenca".
+  if (res === '1-0' || res === '+--') return en + 'ganó ' + B + ', a ' + N + ' con blancas' + ff;
+  if (res === '0-1' || res === '--+') return en + 'ganó ' + N + ', a ' + B + ' con negras' + ff;
+  if (res === '½-½') return en + B + ' de blancas y ' + N + ' de negras hicieron tablas';
+  return en + B + ' de blancas contra ' + N + ' de negras, todavía no se jugó';
+}
+
+// "90min/40 movidas + 30 seg" → "90 minutos/40 movidas + 30 segundos". Sólo para lo que se DICE:
+// a la vista el ritmo se deja tal cual lo escribió el autor.
+function _a11yRitmo(t) {
+  return String(t == null ? '' : t)
+    .replace(/(\d)\s*min\b/gi, '$1 minutos')
+    .replace(/(\d)\s*(seg|sec)\b/gi, '$1 segundos');
+}
+
+// "2½" → 2.5. Devuelve null si no hay marcador todavía (celda vacía, un guion, etc.).
+function _a11yNum(s) {
+  var t = String(s == null ? '' : s).trim().replace(',', '.');
+  if (!t) return null;
+  var medio = /½/.test(t);
+  var v = parseFloat(t.replace('½', ''));
+  if (isNaN(v)) { if (!medio) return null; v = 0; }
+  return medio ? v + 0.5 : v;
+}
+
+// "2 y medio" — la versión corta, para marcadores. (_a11yPuntos dice "2 puntos y medio", que
+// repetido en "2 puntos y medio a 1 punto y medio" se hace largo.)
+function _a11yMedios(n) {
+  var v = Number(n) || 0, ent = Math.floor(v), medio = (v - ent) >= 0.5;
+  if (ent === 0 && medio) return 'medio';
+  return medio ? ent + ' y medio' : String(ent);
+}
+
+// "1-0" visto desde el otro lado. Hace falta en las formaciones por equipos: el resultado guardado
+// es el del jugador de la IZQUIERDA, y en las mesas pares ése lleva las negras.
+function _a11yResInvertido(res) {
+  if (res === '1-0') return '0-1';
+  if (res === '0-1') return '1-0';
+  if (res === '+--') return '--+';
+  if (res === '--+') return '+--';
+  return res;
+}
+
+// Un renglón de la tabla de posiciones por equipos. El NOMBRE no va acá: es el encabezado de la
+// fila, y el lector ya lo dice al cambiar de renglón; repetirlo sería decirlo dos veces.
+function _a11yEquipoFrase(rank, played, w, d, l, eloAvg, initial) {
+  if (initial) return 'Número de inicio ' + rank + (eloAvg ? ', Elo medio ' + eloAvg : '');
+  // Ojo: estos valores llegan como TEXTO, y en JavaScript "0" es verdadero. Sin pasarlos a número
+  // se colaba "0 perdidos" (y se habría colado "0 ganados").
+  var n = function(x){ var v = parseInt(x, 10); return isNaN(v) ? 0 : v; };
+  var P = n(played), W = n(w), D = n(d), L = n(l);
+  var p = 'Puesto ' + rank;
+  if (!P) return p;
+  p += ', ' + P + (P === 1 ? ' cruce jugado' : ' cruces jugados');
+  var r = [];
+  if (W) r.push(W + (W === 1 ? ' ganado' : ' ganados'));
+  if (D) r.push(D + (D === 1 ? ' empatado' : ' empatados'));
+  if (L) r.push(L + (L === 1 ? ' perdido' : ' perdidos'));
+  return r.length ? p + ': ' + r.join(', ') : p;
+}
+
+// Un cruce entre dos equipos, contado de un tirón y desde el equipo de la izquierda:
+//   "Argentina le ganó a Brasil, 3 a 1"
+function _a11yCruceFrase(eqA, eqB, resA, resB) {
+  var A = _a11yNombre(eqA), B = _a11yNombre(eqB);
+  var na = _a11yNum(resA), nb = _a11yNum(resB);
+  if (na == null || nb == null) return A + ' contra ' + B + ', todavía no se jugó';
+  var m = ', ' + _a11yMedios(na) + ' a ' + _a11yMedios(nb);
+  if (na > nb) return A + ' le ganó a ' + B + m;
+  if (na < nb) return A + ' perdió con ' + B + m;
+  return A + ' y ' + B + ' empataron' + m;
+}
+
+// "3½" es un símbolo: el lector lo canta como tal. Al oído, "3 puntos y medio".
+function _a11yPuntos(n) {
+  var v = Number(n) || 0;
+  var ent = Math.floor(v), medio = (v - ent) >= 0.5;
+  if (ent === 0) return medio ? 'medio punto' : 'cero puntos';
+  var s = (ent === 1) ? 'un punto' : (ent + ' puntos');
+  return medio ? s + ' y medio' : s;
+}
+
+// Una ronda del historial de un jugador, contada de un tirón:
+//   "Ronda 1, perdió contra Anton Guijarro, David con blancas"
+// El color va acá aunque tenga su propia columna: bajando por la primera columna la ronda quedaba
+// a medias sin él. Y se omite cuando no se sabe (en los torneos por equipos el color no viene en
+// los datos), en vez de inventarlo.
+function _a11yRondaFrase(ronda, resultado, rival, color) {
+  return 'Ronda ' + ronda + ', ' + resultado
+       + (rival ? ' contra ' + _a11yNombre(rival) : '')
+       + (color ? ' con ' + color : '');
+}
+
+// La versión CORTA, para la celda del resultado. La columna de la mesa ya contó la partida entera:
+// repetirla ahí era lo que hacía que esa celda "dijera muchas cosas".
+function _a11yMesaCorto(blancas, negras, res) {
+  blancas = _a11yNombre(blancas); negras = _a11yNombre(negras);
+  if (res === '1-0') return 'ganó ' + blancas;
+  if (res === '0-1') return 'ganó ' + negras;
+  if (res === '+--') return 'ganó ' + blancas + ' por incomparecencia';
+  if (res === '--+') return 'ganó ' + negras + ' por incomparecencia';
+  if (res === '½-½') return 'tablas';
+  return 'todavía no se jugó';
+}
+
+// La frase que se dice en una celda del cuadro cruzado.
+// blancas: true / false / null (null = no se sabe el color; pasa en los torneos por equipos).
+// Si se le pasa quien o rival vacíos, los saltea: dentro de una tabla el encabezado de la fila ya
+// dice de quién es y el de la columna contra quién, así que repetirlos en cada casilla es ruido.
+function _a11yCelda(quien, rival, ronda, blancas, resultado) {
+  var p = [];
+  if (quien) p.push(quien);
+  if (ronda != null) p.push('ronda ' + ronda);
+  // "empató con negras" se entiende de una; "con negras, empató" hace parar la oreja.
+  var col = blancas === true ? 'con blancas' : (blancas === false ? 'con negras' : '');
+  if (resultado && col) p.push(resultado + ' ' + col);
+  else { if (resultado) p.push(resultado); if (col) p.push(col); }
+  if (rival) p.push('contra ' + rival);
+  return p.join(', ');
+}
+
+/* Enter y la barra espaciadora sobre cualquier cosa marcada con role="button" que NO sea un botón
+   de verdad. Un solo escuchador para toda la app: los paneles se redibujan con innerHTML todo el
+   tiempo, así que enganchar el evento en cada elemento se perdería en el primer redibujo. */
+document.addEventListener('keydown', function (e) {
+  try {
+    if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+    if (e.ctrlKey || e.altKey || e.metaKey) return;
+    var t = e.target;
+    if (!t || !t.getAttribute || t.getAttribute('role') !== 'button') return;
+    var tag = t.tagName;
+    if (tag === 'BUTTON' || tag === 'A' || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    e.preventDefault();   // que la barra espaciadora no baje la página
+    t.click();
+  } catch (_) {}
+}, false);
+
 // Cambió de sección: decir cuál y parar el foco en su título.
 // vinoDeUnClic: goTo() también se llama POR CÓDIGO (al abrir la página, al cerrar un visor).
 // En esos casos se canta el destino pero NO se roba el foco, que sería molesto.
@@ -25963,7 +26424,7 @@ function linkVesus(url) {
   return '<a href="' + escHtml(url) + '" target="_blank" rel="noopener" class="pgn-btn" style="display:block;text-align:center;text-decoration:none">📊 Ver en vesus ↗</a>';
 }
 function linkWebUrl(url) {
-  return '<a href="' + escHtml(url) + '" target="_blank" rel="noopener" class="pgn-btn" style="display:block;text-align:center;text-decoration:none">' + webUrlLabel(url) + ' ↗</a>';
+  return '<a href="' + escHtml(url) + '" target="_blank" rel="noopener" class="pgn-btn" aria-label="' + escHtml(_a11yTexto(webUrlLabel(url)) + '. Se abre en una pestaña nueva') + '" style="display:block;text-align:center;text-decoration:none">' + webUrlLabel(url) + ' ↗</a>';
 }
 function linkInscription(url) {
   return '<a href="' + escHtml(url) + '" target="_blank" rel="noopener" class="pgn-btn" style="display:block;text-align:center;text-decoration:none;background:var(--gold-bg);border-color:var(--gold-dim);color:var(--gold);font-weight:700">📝 Formulario de inscripción ↗</a>';
@@ -29197,10 +29658,10 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     var _isSi = _isSiId(broadcastId);
     var _lnkCss = 'font-size:11px;color:#8ab4f8;text-decoration:none;white-space:nowrap';
     // Con livechesscloud como fuente, su propio link + (si lo pegaron) el de Lichess como botón aparte.
-    if (_isLcc) h += '<a href="' + escHtml(_lccExtUrl(broadcastId)) + '" target="_blank" rel="noopener" style="' + _lnkCss + '">⚡ Ver en livechesscloud ↗</a>';
-    if (_isSi)  h += '<a href="' + escHtml(_siExtUrl(broadcastId)) + '" target="_blank" rel="noopener" style="' + _lnkCss + '">⚡ Ver en sichess ↗</a>';
+    if (_isLcc) h += '<a href="' + escHtml(_lccExtUrl(broadcastId)) + '" target="_blank" rel="noopener" aria-label="Ver la transmisión en livechesscloud. Se abre en una pestaña nueva" style="' + _lnkCss + '">⚡ Ver en livechesscloud ↗</a>';
+    if (_isSi)  h += '<a href="' + escHtml(_siExtUrl(broadcastId)) + '" target="_blank" rel="noopener" aria-label="Ver la transmisión en sichess. Se abre en una pestaña nueva" style="' + _lnkCss + '">⚡ Ver en sichess ↗</a>';
     var _lichUrl = /lichess\.org\/broadcast/.test(String(broadcastUrl || '')) ? broadcastUrl : ((!_isLcc && !_isSi) ? (broadcastUrl || 'https://lichess.org/broadcast/' + broadcastId) : null);
-    if (_lichUrl) h += '<a href="' + escHtml(_lichUrl) + '" target="_blank" rel="noopener" style="' + _lnkCss + '">⚡ Ver en Lichess ↗</a>';
+    if (_lichUrl) h += '<a href="' + escHtml(_lichUrl) + '" target="_blank" rel="noopener" aria-label="Ver la transmisión en Lichess. Se abre en una pestaña nueva" style="' + _lnkCss + '">⚡ Ver en Lichess ↗</a>';
   }
   h += '</div>';
   h += '</div>';
@@ -29210,35 +29671,38 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   _tdChipType = type; _tdChipId = id; _tdChipCat = activeCat; _tdRoundDTCrk = crk;
   var _chipEdit = (!_ondemand && activeCat >= 0);
   var _chipBase = 'background:var(--gl35);border:1px solid var(--bd22);border-radius:20px;padding:4px 13px';
-  function _chip(inner, field) {
-    if (_chipEdit && field) return '<span onclick="_tdEditCatChip(\'' + field + '\')" role="button" tabindex="0" title="Editar solo para esta categoría" style="' + _chipBase + ';cursor:pointer">' + inner + ' <span style="opacity:.5;font-size:11px">✏️</span></span>';
-    return '<span style="' + _chipBase + '">' + inner + '</span>';
+  // dicho = cómo se lee en voz alta. A la vista el emoji dice qué es cada dato; al oído hay que
+  // decirlo con todas las letras (y el emoji, que se cantaría, se calla).
+  function _chip(inner, field, dicho) {
+    var vis = dicho ? _a11yEnVezDe(inner, dicho) : inner;
+    if (_chipEdit && field) return '<span onclick="_tdEditCatChip(\'' + field + '\')" role="button" tabindex="0" title="Editar solo para esta categoría" style="' + _chipBase + ';cursor:pointer">' + vis + ' <span aria-hidden="true" style="opacity:.5;font-size:11px">✏️</span></span>';
+    return '<span style="' + _chipBase + '">' + vis + '</span>';
   }
   // Chip vacío "➕" para AGREGAR a la categoría un dato que todavía no tiene (solo en modo edición).
   function _chipAdd(field, label) {
-    return '<span onclick="_tdEditCatChip(\'' + field + '\')" role="button" tabindex="0" title="Agregar solo para esta categoría" style="background:transparent;border:1px dashed var(--bd22);border-radius:20px;padding:4px 13px;cursor:pointer;color:var(--text3)">➕ ' + label + '</span>';
+    return '<span onclick="_tdEditCatChip(\'' + field + '\')" role="button" tabindex="0" title="Agregar solo para esta categoría" style="background:transparent;border:1px dashed var(--bd22);border-radius:20px;padding:4px 13px;cursor:pointer;color:var(--text3)">' + _a11yEnVezDe('➕ ' + label, 'Agregar ' + label + ' a esta categoría') + '</span>';
   }
   h += '<div style="display:flex;flex-wrap:wrap;gap:7px;font-size:13px;color:var(--fg-d0)">';
-  if (dates)       h += _chip('📅 ' + escHtml(dates), 'dates');           else if (_chipEdit) h += _chipAdd('dates', 'Fechas');
-  if (location)    h += _chip('📍 ' + escHtml(location), 'location');     else if (_chipEdit) h += _chipAdd('location', 'Lugar');
-  if (venue)    h += '<span onclick="openVenueMap()" role="button" tabindex="0" title="Ver en el mapa" style="' + _chipBase + ';cursor:pointer">🏛 ' + escHtml(venue) + ' <span style="opacity:.65">🗺</span></span>';
-  if (typ)         h += _chip('🏷 ' + escHtml(typ), 'type');              else if (_chipEdit) h += _chipAdd('type', 'Tipo');
-  if (rounds)      h += _chip('🎯 ' + rounds + ' rondas', 'rounds');      else if (_chipEdit) h += _chipAdd('rounds', 'Rondas');
-  if (timeControl) h += _chip('⏱ ' + escHtml(timeControl), 'timeControl'); else if (_chipEdit) h += _chipAdd('timeControl', 'Tiempo');
+  if (dates)       h += _chip('📅 ' + escHtml(dates), 'dates', 'Fechas: ' + dates);           else if (_chipEdit) h += _chipAdd('dates', 'Fechas');
+  if (location)    h += _chip('📍 ' + escHtml(location), 'location', 'Lugar: ' + location);   else if (_chipEdit) h += _chipAdd('location', 'Lugar');
+  if (venue)    h += '<span onclick="openVenueMap()" role="button" tabindex="0" title="Ver en el mapa" style="' + _chipBase + ';cursor:pointer">' + _a11yEnVezDe('🏛 ' + escHtml(venue), 'Sede: ' + venue + '. Ver en el mapa') + ' <span aria-hidden="true" style="opacity:.65">🗺</span></span>';
+  if (typ)         h += _chip('🏷 ' + escHtml(typ), 'type', 'Tipo de torneo: ' + typ);        else if (_chipEdit) h += _chipAdd('type', 'Tipo');
+  if (rounds)      h += _chip('🎯 ' + rounds + ' rondas', 'rounds', rounds + ' rondas');      else if (_chipEdit) h += _chipAdd('rounds', 'Rondas');
+  if (timeControl) h += _chip('⏱ ' + escHtml(timeControl), 'timeControl', 'Ritmo de juego: ' + _a11yRitmo(timeControl)); else if (_chipEdit) h += _chipAdd('timeControl', 'Tiempo');
   var _paceLbl = _paceLabel(pace);
-  if (_paceLbl) h += _chip(_paceLbl, 'pace');
+  if (_paceLbl) h += _chip(_paceLbl, 'pace', 'Tipo de partida: ' + _a11yTexto(_paceLbl));
   // Sistema y Rama: SÓLO se muestran en modo autor con una categoría abierta. Son ajustes del autor
   // (deciden el cuadro cruzado y la medalla de mejor femenina), no datos que le sirvan al visitante,
   // así que no se le agregan dos panelcitos más al encabezado a todo el mundo.
   if (_chipEdit) {
     var _fmtLbl = format === 'rr' ? '🗂 Todos contra todos' : (format === 'swiss' ? '🗂 Suizo' : '');
-    if (_fmtLbl) h += _chip(_fmtLbl, 'format'); else h += _chipAdd('format', 'Sistema');
+    if (_fmtLbl) h += _chip(_fmtLbl, 'format', 'Sistema: ' + _a11yTexto(_fmtLbl)); else h += _chipAdd('format', 'Sistema');
     var _ramaLbl = rama === 'fem' ? '⚥ Femenino' : (rama === 'abs' ? '⚥ Absoluto' : '');
-    if (_ramaLbl) h += _chip(_ramaLbl, 'rama'); else h += _chipAdd('rama', 'Rama');
+    if (_ramaLbl) h += _chip(_ramaLbl, 'rama', 'Rama: ' + _a11yTexto(_ramaLbl)); else h += _chipAdd('rama', 'Rama');
   }
-  if (organizer) h += '<span style="' + _chipBase + '" title="Organizador">👥 ' + escHtml(organizer) + '</span>';
-  if (director)  h += '<span style="' + _chipBase + '" title="Director/a del torneo">📋 ' + escHtml(director) + '</span>';
-  if (arbiter)   h += '<span style="' + _chipBase + '" title="Árbitro principal">⚖ ' + escHtml(arbiter) + '</span>';
+  if (organizer) h += '<span style="' + _chipBase + '" title="Organizador">' + _a11yEnVezDe('👥 ' + escHtml(organizer), 'Organiza: ' + organizer) + '</span>';
+  if (director)  h += '<span style="' + _chipBase + '" title="Director/a del torneo">' + _a11yEnVezDe('📋 ' + escHtml(director), 'Dirige el torneo: ' + director) + '</span>';
+  if (arbiter)   h += '<span style="' + _chipBase + '" title="Árbitro principal">' + _a11yEnVezDe('⚖ ' + escHtml(arbiter), 'Árbitro principal: ' + arbiter) + '</span>';
   h += '</div>';
   // "El torneo arranca": SÓLO mientras no haya ninguna ronda cargada. En cuanto aparece la pestaña
   // R1 con su día y hora, este cartel repetiría el mismo dato dos veces en la misma pantalla, así
@@ -29281,7 +29745,12 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     h += '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:14px;justify-content:center">';
     categories.forEach(function(c, ci) {
       var on = ci === activeCat;
-      h += '<button onclick="openTournamentDetail(\'' + type + '\',' + _idJs + ',false,' + ci + ')" class="cat-btn' + (on ? ' on' : '') + '">' + (on ? '🏆 ' : '') + escHtml(c.name || ('Categoría ' + (ci + 1))) + '</button>';
+      // El 🏆 se canta "trofeo" y no aporta; y sin aria-label no se entiende que el botón CAMBIA
+      // de categoría. aria-pressed dice cuál está puesta, que a la vista se ve por el color.
+      var _catNom = c.name || ('Categoría ' + (ci + 1));
+      h += '<button onclick="openTournamentDetail(\'' + type + '\',' + _idJs + ',false,' + ci + ')" class="cat-btn' + (on ? ' on' : '')
+         + '" aria-pressed="' + (on ? 'true' : 'false') + '" aria-label="' + escHtml('Ver la categoría ' + _catNom) + '">'
+         + (on ? '🏆 ' : '') + escHtml(_catNom) + '</button>';
     });
     h += '</div>';
   }

@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 655;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 742;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -575,7 +575,7 @@ console.log('\n=== 17. Radiografía POR EQUIPOS (Olimpiadas, ligas) ===');
 
 console.log('\n=== 18. La pestaña de los torneos por equipos ===');
 {
-  chk(/if\(_stStatsAvailable\(crk,data\)\) h\+=tabBtn\('stats','📈 Radiografía',false\);/.test(SRC),
+  chk(/if\(_stStatsAvailable\(crk,data\)\) h\+=tabBtn\('stats','📈 Radiografía',false,'Radiografía del torneo'\);/.test(SRC),
       'el botón está en el renglón de formaciones y tabla');
   chk(/id="cr-panel-'\+crk\+'-stats" data-lazy="1"/.test(SRC),
       'y su panel nace perezoso (una Olimpiada son 4.000 partidas: no se arma si no la abrís)');
@@ -2422,6 +2422,8 @@ console.log('\n=== 37. El id del torneo viaja con las partidas del perfil ===');
     + 'function normStr(s){ return String(s||"").toLowerCase().replace(/[^a-z0-9 ]/g," ").replace(/\\s+/g," ").trim(); }'
     + 'function escHtml(s){ return String(s==null?"":s); } function crArg(s){ return JSON.stringify(String(s)); }'
     + 'function _paisES(n){ return n; } function _teamResolveFed(){ return ""; }'
+    + extraerFuncion('_a11yClic') + extraerFuncion('_a11yDice') + extraerFuncion('_a11yEnVezDe')
+    + extraerFuncion('_a11yMedios') + extraerFuncion('_a11yNum')
     + 'var __D = null; function crDataLoad(){ return __D; } function setD(d){ __D = d; }'
     + ' return { render:_teamRenderRR, setD:setD };')();
   REN.setD(datosRR);
@@ -2520,11 +2522,16 @@ console.log('\n=== 26. Filtro por TEMA de los ejercicios (chips que se cuentan s
     + 'function crFlagEmoji(){ return ""; } function _tourIsESRegional(){ return false; }'
     + 'function _esRegFlag(){ return ""; } function _crFideFlagSlot(){ return ""; }'
     + 'function escHtml(s){ return String(s==null?"":s); } function crArg(s){ return JSON.stringify(String(s)); }'
+    + extraerFuncion('_a11yClic') + extraerFuncion('_a11yCelda')
+    + extraerFuncion('_a11yDice') + extraerFuncion('_a11yEnVezDe') + extraerFuncion('_a11yNombre') + extraerFuncion('_a11yPuntos')
     + ' return crBuildCrosstable;')();
 
   // Ayudante: los puntos de cada fila, leyendo la última celda de cada renglón del HTML.
-  const puntos = (html) => (html.match(/<td style="[^"]*font-weight:700;color:var\(--gold\)">([^<]*)<\/td>/g) || [])
-    .map(td => td.replace(/.*">/, '').replace('</td>', '').trim());
+  // Ojo: desde la Fase 1 de accesibilidad la celda lleva texto invisible ADENTRO (el "puntos en
+  // total" que oye el lector), así que ya no se puede exigir que el </td> venga pegado al número:
+  // se toma lo que hay entre el ">" y la primera etiqueta que siga.
+  const puntos = (html) => [...html.matchAll(/<td style="[^"]*font-weight:700;color:var\(--gold\)"[^>]*>([^<]*)/g)]
+    .map(m => m[1].trim());
 
   // DUELO: dos jugadores, cuatro partidas. Antes se veía una sola.
   const duelo = { standings: [{ name: 'Quezada, Franco' }, { name: 'Yepleue, Angel Omar' }], rounds: {
@@ -2780,6 +2787,381 @@ console.log('\n=== 26. Filtro por TEMA de los ejercicios (chips que se cuentan s
       'el árbol del vivo también pasa por el lector de 960');
   chk(/function _siFixPgn[\s\S]{0,600}_pgnIs960\(pgn\)\) return pgn;/.test(SRC),
       'y el arreglo de PGN sucio tiene el candado del 960 al principio');
+}
+
+
+// ── 46. ACCESIBILIDAD, FASE 1: las tablas de torneo ────────────────────────────────────────────
+// Un ciego navega con un lector de pantalla, y un lector de pantalla necesita que la tabla DIGA
+// quién es la fila y qué es la columna. Antes, en el cuadro cruzado, el nombre iba en un <td>
+// (el lector se perdía en la segunda celda), la columna era un "7" pelado y todo el contexto de la
+// casilla vivía en el title=, que ningún lector lee. Y los nombres clickeables eran <span> con
+// onclick: con el mouse abrían la ficha, con el teclado no existían.
+console.log('\n=== 46. Accesibilidad Fase 1: las tablas de torneo ===');
+{
+  // "lo que oye el lector": el texto invisible que se agrega sin tocar lo visible.
+  const oye = (html, txt) => html.includes('<span class="sr-only">, ' + txt + ', </span>');
+  // "lo que oye EN VEZ de lo que ve": rótulo abreviado a la vista, palabra entera al oído.
+  const enVezDe = (html, seVe, seOye) =>
+    html.includes('<span aria-hidden="true">' + seVe + '</span><span class="sr-only">, ' + seOye + ', </span>');
+
+  const STUBS =
+      'var _ondemand = true;'
+    + 'function _crMaybeBakeFeds(){} function _crFlushFideFlags(){} function _crIsAuthor(){ return false; }'
+    + 'function crFedMissingCount(){ return 0; } function crTitleBadge(t){ return t?("<b>"+t+"</b>"):""; }'
+    + 'function crFlagEmoji(){ return ""; } function _tourIsESRegional(){ return false; }'
+    + 'function _esRegFlag(){ return ""; } function _crFideFlagSlot(){ return ""; }'
+    + 'function escHtml(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/"/g,"&quot;"); }'
+    + 'function crArg(s){ return JSON.stringify(String(s)); }';
+
+  // ── Los dos ayudantes nuevos, sueltos ──
+  const AY = new Function(
+      extraerFuncion('_a11yClic') + extraerFuncion('_a11yCelda')
+    + 'function escHtml(s){ return String(s==null?"":s).replace(/"/g,"&quot;"); }'
+    + ' return { clic:_a11yClic, celda:_a11yCelda };')();
+
+  chk(/ role="button"/.test(AY.clic()) && / tabindex="0"/.test(AY.clic()) && !/aria-label/.test(AY.clic()),
+      'un span clickeable se vuelve alcanzable con el Tab (sin etiqueta, el nombre lo pone su texto)');
+  chk(AY.clic('Ver "la" ficha').includes('aria-label="Ver &quot;la&quot; ficha"'),
+      'y si lleva etiqueta hablada, las comillas se escapan (si no, rompen el atributo)');
+  chk(AY.celda('Pérez', 'González', 3, true, 'ganó') === 'Pérez, ronda 3, ganó con blancas, contra González',
+      'la casilla del cuadro se dice entera, no "1"', AY.celda('Pérez', 'González', 3, true, 'ganó'));
+  chk(AY.celda('Pérez', 'González', 3, false, 'perdió').includes('con negras'),
+      'con el color del que mira la fila, no el de la partida');
+  chk(!/con blancas|con negras/.test(AY.celda('Argentina', 'Brasil', null, null, 'sin jugar')),
+      'y cuando no se sabe el color (torneos por equipos) no se lo inventa',
+      AY.celda('Argentina', 'Brasil', null, null, 'sin jugar'));
+
+  // ── El cuadro cruzado, dibujado de verdad ──
+  const XT46 = new Function(
+      extraerFuncion('crBuildCrosstable') + extraerFuncion('crPtsStr')
+    + extraerFuncion('_a11yClic') + extraerFuncion('_a11yCelda')
+    + extraerFuncion('_a11yDice') + extraerFuncion('_a11yEnVezDe') + extraerFuncion('_a11yNombre') + extraerFuncion('_a11yPuntos') + STUBS
+    + ' return crBuildCrosstable;')();
+  const dXT = { standings: [{ name: 'Pérez, Ana' }, { name: 'González, Beto' }], rounds: {
+    1: [{ w: 'Pérez, Ana', b: 'González, Beto', res: '1-0' }]
+  } };
+  const hXT = XT46('cr_a11y', dXT);
+
+  chk(/<caption class="sr-only">Cuadro cruzado: 2 jugadores/.test(hXT),
+      'la tabla se presenta sola: el lector dice qué es antes de largar números');
+  chk(hXT.includes('<span aria-hidden="true">2</span><span class="sr-only">, Rival 2: González Beto, </span>'),
+      'la columna "2" lleva al lado el nombre del rival, invisible pero hablado');
+  chk(/<th scope="row" class="cr-xt-nametd"/.test(hXT) && !/<td class="cr-xt-nametd"/.test(hXT),
+      'el nombre del jugador es el ENCABEZADO de su fila (antes era un <td> y la fila quedaba anónima)');
+  chk(/font-weight:400/.test(hXT.slice(hXT.indexOf('cr-xt-nametd'), hXT.indexOf('cr-xt-nametd') + 400)),
+      'y se le pone font-weight:400 porque un <th> viene en negrita y cambiaría lo que se ve');
+  // Ojo con estas cuatro: el texto va DENTRO de la celda, nunca como aria-label. Se probó con NVDA
+  // el 10/09/2026 y un aria-label sobre un <td> no se oye: el lector lee el contenido.
+  chk(oye(hXT, 'ronda 1, ganó con blancas'),
+      'la casilla del resultado dice cómo salió, y adentro de la celda');
+  chk(oye(hXT, 'ronda 1, perdió con negras'),
+      'y la casilla espejada la dice desde el otro lado');
+  // Se escuchó con NVDA: antes de la frase útil venía "cliqueable, ½, espacio, cliqueable, ·".
+  // Los símbolos ya los cuenta la frase, así que se le esconden al lector.
+  chk(/<span style="font-weight:700;color:[^"]*" title="[^"]*" aria-hidden="true"/.test(hXT),
+      'el "½" y el "1" no se leen sueltos antes de la frase: los tapa el aria-hidden');
+  chk(!/contra González, Beto, ronda 1/.test(hXT),
+      'sin repetir quién contra quién: eso ya lo dicen el encabezado de la fila y el de la columna');
+  chk(oye(hXT, 'No juega contra sí mismo'),
+      'la diagonal no queda como una celda muda');
+  chk(hXT.includes('1<span class="sr-only">, un punto en total, '),
+      'la columna Pts dice que son puntos, y con palabras ("un punto", no "1")');
+  chk(enVezDe(hXT, 'Pts', 'Puntos'),
+      'y su encabezado se dice "Puntos", no "Pts"');
+  chk(hXT.includes('role="button" tabindex="0">Pérez, Ana<'),
+      'y el nombre se alcanza con el teclado: el clic sube solo al <th> que lo abre');
+
+  // ── La tabla de posiciones ──
+  const ST46 = new Function(
+      extraerFuncion('crBuildStandingsPanel') + extraerFuncion('crPtsStr')
+    + extraerFuncion('_a11yClic') + extraerFuncion('_a11yTexto')
+    + extraerFuncion('_a11yDice') + extraerFuncion('_a11yEnVezDe') + extraerFuncion('_a11yNombre') + extraerFuncion('_a11yPuntos') + STUBS
+    + 'function crDataLoad(){ return { rounds:{1:[{w:"Pérez, Ana",b:"González, Beto",res:"1-0"}]} }; }'
+    + 'function _hasManualArg(){ return false; } function _isArgManual(){ return false; }'
+    + 'function _argPersonIsArg(){ return false; } function crShowArgLine(){ return false; }'
+    + 'function _flagImg(){ return ""; } var _crCategory = {}; var _crStandArgOnly = {};'
+    + ' return crBuildStandingsPanel;')();
+  const hST = ST46('cr_a11y', [
+    { name: 'Pérez, Ana', pts: 1, elo: 2200, fed: '', title: '' },
+    { name: 'González, Beto', pts: 0, elo: 2100, fed: '', title: '' }
+  ]);
+
+  chk(/<caption class="sr-only">[^<]*2 jugadores\./.test(hST),
+      'la tabla de posiciones también se presenta sola');
+  chk(!/[\u{1F300}-\u{1FAFF}]/u.test(hST.slice(hST.indexOf('<caption'), hST.indexOf('</caption>'))),
+      'y en el rótulo hablado no se cuela el emoji (el lector lo cantaría: "gráfico de barras")');
+  chk((hST.match(/<th scope="col"/g) || []).length === 7,
+      'las 7 columnas quedan atadas a su encabezado', (hST.match(/<th scope="col"/g) || []).length);
+  chk(enVezDe(hST, 'Fed', 'Federación') && enVezDe(hST, '+/-', 'Variación de Elo'),
+      'las abreviaturas se dicen enteras ("más barra menos" no significa nada)');
+  chk(/<th scope="row"[^>]*><span role="button" tabindex="0">Pérez, Ana<\/span>/.test(hST),
+      'el jugador es el encabezado de su fila Y se abre con el teclado');
+  chk(hST.includes('<span class="sr-only">, Puesto 1') && hST.includes('<span class="sr-only">, Puesto 2'),
+      'la medalla de los tres primeros dice además en qué puesto quedó');
+
+  // El espacio del final de cada texto invisible: sin él, al armar el nombre de la celda el lector
+  // pega las palabras ("GMEspañaAnton Guijarro"). Se vio de verdad en los cruces por países, que
+  // cantaban "CubaIsrael" y "BangladésChile".
+  // Probado con NVDA el 10/09/2026: los ESPACIOS no sirven. El lector recorta los espacios de cada
+  // pedacito antes de pegarlos para armar el nombre de la celda, y salía "GMArgentinaOro, Faustino".
+  // La coma sobrevive al recorte y encima se pronuncia como una pausa, no en voz alta.
+  chk(/return texto \? '<span class="sr-only">, ' \+ escHtml\(texto\) \+ ', <\/span>' : ''/.test(extraerFuncion('_a11yDice')),
+      'el separador de los textos invisibles es una COMA, no un espacio (el espacio se lo come el lector)');
+  // Y que nadie vuelva a armar un sr-only a mano salteándose el ayudante: así se coló el encabezado
+  // de columna que sonaba pegado contra el "columna N" que agrega NVDA ("Flores, Diegocolumna seis").
+  const aMano = (SRC.replace(extraerFuncion('_a11yDice'), '').replace(extraerFuncion('_a11ySep'), '')
+    .match(/'<span class="sr-only">/g) || []).length;
+  chk(aMano === 0, 'ningún sr-only se arma a mano: todos pasan por _a11yDice, que pone el separador', aMano);
+
+  // ── Lo que se revisa mirando el código (no se puede ejecutar acá) ──
+  chk(/document\.addEventListener\('keydown'[\s\S]{0,600}getAttribute\('role'\) !== 'button'/.test(SRC),
+      'un solo escuchador hace que Enter y la barra espaciadora "toquen" lo que tiene role="button"');
+  chk(/tag === 'BUTTON' \|\| tag === 'A' \|\| tag === 'INPUT'/.test(SRC),
+      'y no se mete con los botones, links ni campos de verdad, que ya andan solos');
+  chk(/\[role="button"\]:focus-visible \{[\s\S]{0,120}outline: 2px solid var\(--gold/.test(SRC),
+      'el que navega con el teclado VE dónde está parado (:focus-visible, sólo con teclado)');
+
+  const nmSt = extraerFuncion('_stNm'), eyeSt = extraerFuncion('_stEye');
+  chk(/_a11yClic\(\)/.test(nmSt), 'los nombres de la radiografía también se alcanzan con el Tab');
+  // El ojito vive SÓLO en los batacazos, y ahí la frase acaba de nombrar a los dos jugadores: con
+  // "Ver la partida entre X y Y" se decía el cruce dos veces seguidas. Lo escuchó el usuario.
+  chk(eyeSt.includes("_a11yClic('Ver la partida')") && !eyeSt.includes('Ver la partida entre'),
+      'el ojito 👁 dice para qué sirve, sin repetir el cruce que la frase ya dijo');
+
+  const rrTeam = extraerFuncion('_teamRenderRR'), stTeam = extraerFuncion('_teamRenderStandings');
+  chk(/<th scope="row"/.test(rrTeam) && /<caption class="sr-only">Cuadro cruzado por equipos/.test(rrTeam),
+      'el cuadro cruzado POR EQUIPOS recibió el mismo tratamiento');
+  chk(/<th scope="row"/.test(stTeam) && stTeam.includes("_a11yEnVezDe('+','Ganados')"),
+      'y la tabla de posiciones por equipos, con el "+", el "=" y el "−" dichos con palabras');
+
+  // El candado más importante de todos: role="button" sobre un <td>, un <th> o un <tr> le SACA al
+  // lector de pantalla la noción de celda (deja de pertenecer a su columna) y arruina justo lo que
+  // esta fase vino a arreglar. El botón siempre tiene que ser algo de ADENTRO de la celda; el clic
+  // sube solo hasta el <td>, así que con el mouse se sigue tocando toda la celda igual que antes.
+  // Sólo las llamadas que se CONCATENAN a un pedazo de HTML (van pegadas con un "+"): así no se
+  // cuentan las que aparecen en los comentarios. De cada una se mira cuál fue la última etiqueta que
+  // se abrió antes.
+  const enCelda = [...SRC.matchAll(/\+\s*_a11yClic\(/g)]
+    .map(m => SRC.slice(Math.max(0, m.index - 300), m.index))
+    .map(antes => (antes.match(/<[a-z]+\b/g) || []).pop())
+    .filter(tag => tag === '<td' || tag === '<th' || tag === '<tr');
+  chk(enCelda.length === 0,
+      'ningún role="button" cae sobre una celda o una fila de tabla (les borraría el rol de celda)',
+      enCelda.join(' '));
+
+  // El onclick también vive en la pastilla: si queda en el <td>, el lector dice "cliqueable" ANTES
+  // de anunciar el botón de adentro, o sea dos veces lo mismo. Lo notó el usuario escuchando.
+  const hist = extraerFuncion('crOpenPlayer');
+  chk(/<span class="cph-resbtn" title="Ver partida" onclick="crOpenGame/.test(hist)
+   && !/<td style="padding:5px 6px[^']*onclick=/.test(hist),
+      'en el historial del jugador el botón (y su clic) son la pastilla, no la celda que la contiene');
+
+  // LA LECCIÓN DEL 10/09/2026, probada con NVDA y convertida en candado: un aria-label sobre un
+  // <td> o un <th> NO SE OYE cuando el lector recorre la tabla casilla por casilla — lee el
+  // CONTENIDO. Todo lo que se quiera decir va como texto invisible adentro (_a11yDice /
+  // _a11yEnVezDe). Si alguna vez vuelve a aparecer un aria-label en una celda, esto lo caza.
+  const labelEnCelda = [...SRC.matchAll(/<(td|th)\b[^<>]*aria-label=/g)].map(m => m[0].slice(-60));
+  chk(labelEnCelda.length === 0,
+      'ninguna celda usa aria-label: no se oye (va texto invisible adentro)', labelEnCelda.join(' | '));
+
+  // ── Lo que salió de ESCUCHAR el recorrido con NVDA (10/09/2026) ──
+  // Una mesa entera contada en UNA frase, como la contaría una persona. Lo pidió el usuario después
+  // de escucharla: salía en nueve pedacitos sueltos y había que apretar Tab tres veces por partida.
+  const FR = new Function(extraerFuncion('_a11yMesaFrase') + extraerFuncion('_a11yNombre') + extraerFuncion('_a11yPuntos') + ' return _a11yMesaFrase;')();
+  chk(FR(2, 'Oro', 'Flores', '1-0') === 'En la mesa 2, ganó Oro, a Flores con blancas',
+      'una mesa se cuenta en una frase, nombrando a quién ganó', FR(2, 'Oro', 'Flores', '1-0'));
+  chk(FR(1, 'Cuenca', 'Anton', '0-1') === 'En la mesa 1, ganó Anton, a Cuenca con negras',
+      'y si ganaron las negras, el que ganó va primero igual');
+  // Los nombres vienen "Apellido, Nombre" y esa coma el lector la usa de PAUSA, justo en el medio
+  // de la persona; y la " a " que separa a los dos jugadores se perdía entre los nombres. Se oía
+  // "ganó Anton Guijarro, DAVIDACUENCA Jimenez". Lo cazó el usuario escuchándolo.
+  chk(FR(1, 'Anton Guijarro, David', 'Cuenca Jimenez, Jose', '1-0')
+        === 'En la mesa 1, ganó Anton Guijarro David, a Cuenca Jimenez Jose con blancas',
+      'la pausa va ENTRE los dos nombres, no adentro de uno',
+      FR(1, 'Anton Guijarro, David', 'Cuenca Jimenez, Jose', '1-0'));
+  chk(FR(3, 'Sokolov, Ivan', 'Alcantara, Jose', '½-½') === 'En la mesa 3, Sokolov Ivan de blancas y Alcantara Jose de negras hicieron tablas',
+      'las tablas nombran a los dos');
+  chk(/todavía no se jugó$/.test(FR(4, 'A', 'B', '')),
+      'y una mesa sin jugar lo dice, en vez de callarse', FR(4, 'A', 'B', ''));
+  chk(/por incomparecencia/.test(FR(5, 'A', 'B', '+--')),
+      'una incomparecencia no se hace pasar por una partida ganada');
+  // Se escuchó: el lector canta "PUNTO" en voz alta al final de cada mesa. La pausa ya la da la coma
+  // que agrega _a11yDice, así que un punto al final de un texto invisible nunca hace falta.
+  chk(![FR(2,'A','B','1-0'), FR(2,'A','B','0-1'), FR(2,'A','B','½-½'), FR(2,'A','B','')].some(f => /\.$/.test(f)),
+      'ninguna frase termina en punto: el lector lo cantaría como "punto"');
+
+  // La celda del resultado NO repite la frase entera (eso ya lo contó la columna de la mesa): va la
+  // versión corta, que es lo que el usuario pidió al oír que esa celda "decía muchas cosas".
+  const CO = new Function(extraerFuncion('_a11yMesaCorto') + extraerFuncion('_a11yNombre') + extraerFuncion('_a11yPuntos') + ' return _a11yMesaCorto;')();
+  chk(CO('Oro', 'Flores', '1-0') === 'ganó Oro' && CO('Oro', 'Flores', '0-1') === 'ganó Flores'
+   && CO('A', 'B', '½-½') === 'tablas' && CO('A', 'B', '') === 'todavía no se jugó',
+      'la celda del resultado dice sólo quién ganó, sin repetir la mesa entera');
+
+  const rnd0 = extraerFuncion('crBuildRoundPanel');
+  chk((rnd0.match(/_a11yMesaFrase\(mesaVal, p\.w, p\.b, p\.res\)/g) || []).length === 1
+   && (rnd0.match(/_a11yMesaCorto\(p\.w, p\.b, p\.res\)/g) || []).length === 3,
+      'la frase entera va SÓLO en la celda de la mesa; las tres versiones del resultado llevan la corta');
+  // Lo que pidió: que la tabla enseñe sola cómo se recorre.
+  chk(/Bajando por la primera columna se cuenta cada mesa entera/.test(rnd0)
+   && /entrando a una fila están los dos jugadores/.test(rnd0),
+      'el rótulo de la tabla explica cómo recorrerla (es lo primero que se oye al entrar)');
+  // Lo que el usuario pidió sacar: el título, la bandera y el Elo hacían del renglón una metralleta.
+  chk((rnd0.match(/aria-hidden="true">'\+crTitleBadge/g) || []).length === 2
+   && (rnd0.match(/aria-hidden="true">'\+flagCell/g) || []).length === 2
+   && /<div aria-hidden="true" style="font-size:11px/.test(rnd0),
+      'en los cuadros de ronda el título, la bandera y el Elo se ven pero no se dicen (los pidió sacar)');
+  chk(/_a11yDice\('blancas'\)/.test(rnd0) && /_a11yDice\('negras'\)/.test(rnd0),
+      'de cada jugador queda el nombre y el color, nada más');
+
+  const stp = extraerFuncion('crBuildStandingsPanel');
+  chk(/_a11yDice\(_a11yPuntos\(p\.pts\)\)/.test(stp),
+      'en la tabla de posiciones los puntos van en el encabezado de la fila (antes había que caminar hasta esa columna)');
+
+  // El cuadro de una ronda NO es una <table> (son cajas flexibles, a propósito, para que no se
+  // desborde en el celular). Para el lector eso significaba que no existía: la tecla "t" no la
+  // encontraba y Ctrl+Alt+flechas contestaba "no estás en una celda de tabla". Los role= de ARIA lo
+  // presentan como tabla sin tocar una línea de CSS.
+  const rndT = extraerFuncion('crBuildRoundPanel');
+  chk(/role="table"/.test(rndT) && (rndT.match(/role="columnheader"/g) || []).length === 4,
+      'el cuadro de la ronda se presenta como tabla, con sus 4 encabezados de columna');
+  chk((rndT.match(/role="cell"/g) || []).length === 4 && /role="row" class="cr-prow"/.test(rndT),
+      'cada cruce es una fila de 4 celdas');
+  // Un elemento tiene UN solo rol: si la caja de afuera fuera "botón" dejaría de ser "celda" y se
+  // rompería la navegación por tabla. El botón va adentro y el clic sube solo.
+  // Lo que importa: que la MISMA etiqueta no lleve las dos cosas. _a11yClic() escribe role="button",
+  // así que basta con mirar que no aparezca dentro de una etiqueta que ya abrió con role="cell".
+  chk(!/role="cell"[^>]*(_a11yClic|role="button")/.test(rndT),
+      'el botón del jugador va DENTRO de la celda, no encima: si no, la celda deja de ser celda');
+
+  // "R1" al oído es "erre uno".
+  const tabs = SRC.match(/id="cr-rtab-'\+key\+'-'\+r\+'"[^>]*/g) || [];
+  chk(tabs.length === 2 && tabs.every(t => /aria-label="Ronda '\+r\+'"/.test(t)),
+      'las pestañas de ronda se dicen "Ronda 1", no "erre uno" (las dos versiones: autor y publicada)',
+      tabs.length);
+
+  // La pastilla del título se pegaba al nombre por delante ("GMCuenca") y por detrás ("DavidGM").
+  chk(/_a11ySep\(\) \+ '<span class="p-title-badge/.test(extraerFuncion('titleBadge'))
+   && /<\/span>' \+ _a11ySep\(\)/.test(extraerFuncion('titleBadge')),
+      'la pastilla del título lleva separador de los dos lados (cae antes o después del nombre según el color)');
+
+  // Las pestañas del torneo: a la vista se sabe cuál está elegida por el color, y al apretarlas se
+  // ve cambiar el panel. Al oído no existía ninguna de las dos cosas.
+  const showTab = extraerFuncion('crShowTab');
+  chk(/setAttribute\('aria-pressed', 'false'\)/.test(showTab) && /activeBtn\.setAttribute\('aria-pressed', 'true'\)/.test(showTab),
+      'la pestaña elegida se marca con aria-pressed (a la vista alcanza el color; al oído no)');
+  chk(/b\.id\.indexOf\('cr-rtab-'\) === 0/.test(showTab),
+      'y la ✕ de borrar la ronda NO se marca: no es una pestaña');
+  chk(/window\.aaDecir\(_a11yNombrePestana\(tab\)\)/.test(showTab),
+      'al cambiar de pestaña el parlante canta a dónde se llegó (si no, el panel cambia en silencio)');
+
+  const nomTab = new Function(extraerFuncion('_a11yNombrePestana') + ' return _a11yNombrePestana;')();
+  chk(nomTab(3) === 'Ronda 3' && nomTab('cuadro') === 'Cuadro cruzado' && nomTab('tabla') === 'Tabla de posiciones',
+      'y lo canta con nombres de verdad, no "erre 3" ni "cuadro"');
+
+  // Que TODAS las pestañas arranquen con el estado puesto, no sólo después del primer clic.
+  const conEstado = (SRC.match(/id="cr-rtab-'\+key\+'-[^"]*"[^>]*aria-pressed=/g) || []).length;
+  chk(conEstado === 5, 'las 5 pestañas nacen con aria-pressed puesto, sin esperar al primer clic', conEstado);
+
+  // ── El panel de performance, que se abría en silencio y tenía el encabezado ilegible al oído ──
+  const perf = extraerFuncion('crOpenPlayer');
+  chk(/window\.aaDecir\(_dicho\)/.test(perf) && /'Performance de '\+name/.test(perf),
+      'el panel de performance avisa al abrirse (antes cambiaba en silencio y parecía que no funcionaba)');
+  chk(/_dicho\+='\. '\+wins\+' ganadas, '\+draws\+' tablas, '\+losses\+' perdidas'/.test(perf),
+      'y de paso resume cómo le fue, que a la vista se lee de un golpe en el encabezado');
+  chk(/aria-hidden="true" data-ini=/.test(perf),
+      'la inicial del avatar no se lee: es un adorno y salía como una letra suelta ("C")');
+  chk(/_a11yEnVezDe\('· ELO '\+_bio\.elo,'Elo '\+_bio\.elo\)/.test(perf)
+   && /_a11yEnVezDe\('· Rp '\+_rpShow,'performance '\+_rpShow\)/.test(perf),
+      'el Elo y la Rp se dicen sin el "·" del medio, que el lector canta');
+  chk(/_a11yEnVezDe\(crPtsStr\(info\.pts\), crPtsStr\(info\.pts\)\+' puntos'\)/.test(perf)
+   && /_a11yEnVezDe\(medal, 'puesto '\+info\.rank\)/.test(perf),
+      'los dos números grandes ya no se oyen pegados a su rótulo ("2pts", "#6pos")');
+  chk(/_a11yDice\(wins\+' ganadas, '\+draws\+' tablas, '\+losses\+' perdidas'\)/.test(perf),
+      'y "0G · 4T · 3D" se dice con palabras (se sigue viendo igual)');
+  chk(/aria-hidden="true" class="cph-resbtn"/.test(perf),
+      'el resultado del historial no se dice dos veces (antes: "todavía sin jugar" y después "⋯ Por jugar")');
+
+  // Decidido con el usuario: para qué sirve cada botón se dice UNA vez, en el rótulo de la tabla.
+  // Ponerlo en cada jugador sería oírlo doce veces por ronda.
+  chk(/Con Enter se abre la performance del jugador, o la partida/.test(extraerFuncion('crBuildRoundPanel')),
+      'qué hace el Enter se explica una sola vez, en el rótulo de la tabla');
+  chk(!/title="Ver su panel de performance"/.test(SRC),
+      'y NO se repite en cada botón de jugador: sería una metralleta');
+
+  // El historial del jugador: bajando por la columna del rival se oían los nombres pero nunca cómo
+  // le había ido contra cada uno. Mismo patrón que en los cuadros de ronda — la primera columna
+  // cuenta la fila entera — con la ventaja de que acá esa celda ES el encabezado de fila, así que
+  // el lector la repite al cambiar de fila aunque uno vaya bajando por otra columna.
+  const RF = new Function(extraerFuncion('_a11yRondaFrase') + extraerFuncion('_a11yNombre') + extraerFuncion('_a11yPuntos') + ' return _a11yRondaFrase;')();
+  chk(RF(1, 'perdió', 'Anton Guijarro, David', 'blancas') === 'Ronda 1, perdió contra Anton Guijarro David con blancas',
+      'cada ronda del historial se cuenta entera: contra quién, cómo le fue y con qué piezas',
+      RF(1, 'perdió', 'Anton Guijarro, David', 'blancas'));
+  chk(RF(3, 'empató', '', '') === 'Ronda 3, empató',
+      'y sin rival ni color cargados no dice "contra" ni "con" al vacío');
+  // En los torneos por equipos el color no viene en los datos: se omite, no se inventa.
+  chk(RF(2, 'ganó', 'X', '') === 'Ronda 2, ganó contra X',
+      'cuando no se sabe el color (torneos por equipos), no se lo inventa');
+  chk(/_a11yRondaFrase\(hh\.round, _resDicho, hh\.opp, hh\.sinColor\?''/.test(perf),
+      'la frase va en el ENCABEZADO de la fila, que es lo que el lector repite al cambiar de fila');
+  chk(/_a11yClic\(_resDicho\+'\. Ver la partida'\)/.test(perf),
+      'y la celda del resultado no repite contra quién: eso ya lo dijo el encabezado');
+  chk(/todavía no jugó/.test(perf) && !/todavía sin jugar/.test(perf),
+      '"todavía no jugó contra Sokolov" se entiende; "todavía sin jugar contra Sokolov" no');
+  chk(/Bajando por la primera columna se cuenta cada ronda entera/.test(perf),
+      'y el rótulo del historial también enseña a recorrerlo');
+
+  // "3½" es un símbolo y el lector lo canta como tal. Lo pidió el usuario escuchándolo.
+  const PT = new Function(extraerFuncion('_a11yPuntos') + ' return _a11yPuntos;')();
+  chk(PT(2.5) === '2 puntos y medio' && PT(0.5) === 'medio punto' && PT(3) === '3 puntos'
+   && PT(1) === 'un punto' && PT(0) === 'cero puntos',
+      'los medios puntos se dicen con palabras: "2 puntos y medio", "medio punto"',
+      PT(2.5) + ' / ' + PT(0.5) + ' / ' + PT(1));
+
+  // El "cliqueable" de cada renglón: el <tr> tenía el onclick y el lector lo canta al cambiar de
+  // fila (en una tabla de 100 jugadores, 100 veces). Mudado al <tbody>, que es un lugar donde uno
+  // nunca se para — y con el mouse se sigue tocando toda la fila igual.
+  chk(!/<tr[^']*onclick=/.test(stp) && /<tbody onclick="crStandRowClick/.test(stp)
+   && /data-p="'\+escHtml\(p\.name\)\+'"/.test(stp),
+      'el clic del renglón vive en el <tbody>: así el lector no canta "cliqueable" en cada fila');
+  chk((stp.match(/<tbody onclick="crStandRowClick/g) || []).length === 3,
+      'y lo llevan los tres tbody (top 20, resto y "solo argentinos")',
+      (stp.match(/<tbody onclick="crStandRowClick/g) || []).length);
+  const clickFn = extraerFuncion('crStandRowClick');
+  chk(/closest\('tr\[data-p\]'\)/.test(clickFn) && /crOpenPlayer\(key, tr\.getAttribute\('data-p'\)\)/.test(clickFn),
+      'y averigua la fila por el destino del clic, así el mouse se comporta igual que antes');
+
+  chk(/Bajando por la primera columna se describe a cada jugador/.test(stp),
+      'el rótulo avisa que la primera columna describe al jugador entero');
+  chk(stp.includes("(p.title?', '+_a11yTitulo(p.title):'')") && stp.includes("(p.elo?', Elo '+p.elo:'')"),
+      'y esa columna suma el título y el Elo, que si no había que ir a buscarlos columna por columna');
+  // El arreglo de los títulos vivía DENTRO de titleBadge, así que esta frase, que se arma por su
+  // cuenta, seguía deletreando ("Puesto 53, doble ve i eme, Elo 2278"). Por eso _a11yTitulo es un
+  // ayudante aparte: sirve en cualquier frase, no sólo en la pastilla.
+  chk(!/'\+p\.title\b/.test(stp),
+      'ningún título se cuela crudo en una frase hablada: siempre pasa por _a11yTitulo');
+
+  // Los títulos de ajedrez se DELETREAN si se los deja como están ("efe eme"), y el peor es CM:
+  // el lector en castellano lo pronuncia "CENTÍMETRO". Lo cazó el usuario escuchando la radiografía.
+  const tb = extraerFuncion('titleBadge');
+  chk(tb.includes('_TITULO_DICHO[lc]') && tb.includes('_a11yEnVezDe(escHtml(t), dicho)'),
+      'los títulos se dicen con todas las letras, no deletreados');
+  const _tdIni = SRC.indexOf('var _TITULO_DICHO = {');
+  const TD = new Function(SRC.slice(_tdIni, SRC.indexOf('};', _tdIni) + 2) + ' return _TITULO_DICHO;')();
+  chk(TD.cm === 'Maestro Candidato' && TD.gm === 'Gran Maestro' && TD.wim === 'Maestra Internacional',
+      'y CM es "Maestro Candidato", que si no se lee "centímetro"', TD.cm);
+  chk(Object.keys(TD).length === 8, 'están los ocho títulos (los cuatro de ellos y los cuatro de ellas)');
+
+  // Los resúmenes de las dos secciones con gráfico van ARRIBA: el que salta con la "h" cae al
+  // principio de la sección y nunca llegaba al pie.
+  const race = extraerFuncion('_stRaceHtml');
+  chk(race.includes('(cuento ? _a11yDice(String(cuento)') && race.includes('aria-hidden="true" class="st-cap"'),
+      'el cuento de la carrera se dice apenas pasado el título, y abajo se ve pero no se repite');
+
+  const rnd = extraerFuncion('crBuildRoundPanel');
+  chk((rnd.match(/_a11yClic\(\)/g) || []).length === 2,
+      'en los cuadros de cada ronda se llega a los dos jugadores con el teclado');
+  chk(/_a11yEnVezDe\(escHtml\(mesaVal\), _a11yMesaFrase/.test(rnd),
+      'bajando por la columna de la mesa con Ctrl+Alt se escucha UNA frase por partida y nada más');
 }
 
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
