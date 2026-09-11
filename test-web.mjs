@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 742;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 750;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -2243,7 +2243,8 @@ console.log('\n=== 37. El id del torneo viaja con las partidas del perfil ===');
   const ARG = new Function('CR2',
       extraerFuncion('crNormTokens') + extraerFuncion('_tourManualArgSet') + extraerFuncion('_hasManualArg')
     + extraerFuncion('_isArgManual') + extraerFuncion('_argPersonIsArg') + extraerFuncion('_argPersonInTour')
-    + 'var _manualArgCache = {};'
+    + extraerFuncion('_tourFedIx') + extraerFuncion('_tourFedByFide') + extraerFuncion('_tourRosterByName')
+    + 'var _manualArgCache = {}; var _stdFedCache = {};'
     + 'function normStr(s){ return String(s||"").toLowerCase().normalize("NFD").replace(/[\\u0300-\\u036f]/g,"").replace(/[^a-z0-9 ]/g," ").replace(/\\s+/g," ").trim(); }'
     + 'function crDataLoad(k){ return CR2[k] || null; }'
     + 'function _getArgFideSet(){ return { "108049":1 }; }'          // Flores, argentino por fide_id
@@ -2275,6 +2276,36 @@ console.log('\n=== 37. El id del torneo viaja con las partidas del perfil ===');
       'los chips "Argentinos que compiten" suman las dos fuentes');
   chk(SRC.includes('return !!p && (_isArgManual(p.name, key) || _argPersonIsArg(p.name, p.fed, p.fideId));'),
       'y el filtro "Solo argentinos" de la tabla también');
+
+  // Olimpiada para Personas con Discapacidad 2026 (11/09): la transmisión de Lichess trae el fide_id
+  // pero NO la bandera. Valeria Simone (1626) no está en el ranking argentino (≥1700), y como
+  // "fide_id desconocido → no es argentina" se decidía sin mirar el plantel del torneo, su tablero no
+  // salía en "Solo argentinos". Y Santiago Curia (5º, no jugó la 1ª ronda) no salía en los chips.
+  CR2['cr2_ls_equipos'] = { standings: [], teamRoster: [
+    { name: 'Argentina', players: [
+      { bo: 1, nm: 'Simone, Valeria', fed: 'ARG', fid: '166944' },
+      { bo: 5, nm: 'Curia, Santiago', fed: 'ARG', fid: '' } ] },
+    { name: 'Egypt', players: [ { bo: 1, nm: 'Yousry Mohamed, Mohamed', fed: 'EGY', fid: '54220440' } ] } ] };
+  chk(ARG('Simone, Valeria', '', '166944', 'cr2_ls_equipos') === true,
+      'fide_id fuera del ranking y sin bandera en el PGN: la bandera sale del PLANTEL del equipo');
+  chk(ARG('Yousry Mohamed, Mohamed', '', '54220440', 'cr2_ls_equipos') === false,
+      'y el rival egipcio, con su bandera en el plantel, sigue afuera');
+  chk(ARG('Simone, Valeria', '', '999999', 'cr2_ls_equipos') === false,
+      'se busca por fide_id, no por nombre: un homónimo con OTRO fide_id no se vuelve argentino');
+  chk(ARG('Curia, Santiago', '', null, 'cr2_ls_equipos') === true,
+      'PGN pelado (sin bandera ni fide_id): el plantel lo reconoce por el nombre');
+  // Lo mismo en un torneo individual: la clasificación dice ARG y el PGN sólo trae el fide_id.
+  CR2['cr2_ls_indiv'] = { standings: [ { name: 'Perez, Ana', fed: 'ARG', fideId: '5551234' } ] };
+  chk(ARG('Perez, Ana', '', '5551234', 'cr2_ls_indiv') === true,
+      'en un individual, la bandera de la CLASIFICACIÓN también cuenta cuando el PGN sólo trae fide_id');
+  chk(ARG('Diego Flores', '', '108049', 'cr2_ls_indiv') === true && ARG('Anton Guijarro, David', '', '2222222', 'cr2_ls_indiv') === false,
+      'y el fide_id del ranking sigue alcanzando, sin colar a los que no están en ningún lado');
+  chk(/data\.teamRoster\.forEach\(function\(t\) \{\s*\(\(t && t\.players\) \|\| \[\]\)\.forEach\(function\(p\) \{ if \(p && p\.nm\) note\(p\.nm, p\.fed, p\.fid\); \}\);/.test(extraerFuncion('crArgPlayers')),
+      'los chips "Argentinos que compiten" leen el plantel por equipos (sale también el que no jugó)');
+  // Partidas · Lichess: el encabezado de cada enfrentamiento, en castellano; el clic, con el original.
+  const _rt = extraerFuncion('tdBuildRoundTeams');
+  chk(_rt.includes("var e = escHtml(_paisES(n||''));") && _rt.includes("crOpenCountry('+crArg(_ck)+','+crArg(n)+')"),
+      'los países de "Partidas · Lichess" se ven en castellano, y el clic sigue con el nombre original');
 }
 
 // ── 40. Panel de performance: la ficha del jugador en torneos POR EQUIPOS ──────────────────────

@@ -6052,6 +6052,15 @@ function crArgPlayers(type, id, games, crkOverride) {
         });
       });
     }
+    // Torneos POR EQUIPOS: la tabla son los EQUIPOS (`standings` vacía), así que los jugadores están
+    // en el plantel de inscripción, cada uno con su bandera. Sin esto sólo salían los que ya tenían
+    // una partida transmitida: Santiago Curia, 5º de Argentina en la Olimpiada para Personas con
+    // Discapacidad, no aparecía porque no jugó la primera ronda.
+    if (data.teamRoster && data.teamRoster.forEach) {
+      data.teamRoster.forEach(function(t) {
+        ((t && t.players) || []).forEach(function(p) { if (p && p.nm) note(p.nm, p.fed, p.fid); });
+      });
+    }
     // Partidas (PGN): FED/FideId/nombre del header. Acotamos el parseo a los primeros 600 chars.
     if (games && games.length && typeof parsePgnHeaders === 'function') {
       for (var gi = 0; gi < games.length; gi++) {
@@ -27096,12 +27105,49 @@ function _argPersonInTour(name, fed, fideId, crKey) {
   // a los que llegaban con la tabla — en las Simultáneas de Oro escondía a 25 de 26. Ahora la
   // TABLA manda y lo escrito a mano sólo agrega. Ver `crArgPlayers` y `standIsArg`.
   if (crKey && _isArgManual(name, crKey)) return true;
-  if (!fed && !fideId && crKey) {
+  if (!fed && fideId && crKey) {
+    // El PGN trae el fide_id pero NO la bandera (así vienen las transmisiones de Lichess). Si ese
+    // fide_id no está en el ranking argentino (≥1700), antes quedaba afuera sin mirar la tabla del
+    // torneo, que SÍ dice ARG. Pasó con Valeria Simone (1626) en la Olimpiada para Personas con
+    // Discapacidad. Se busca por fide_id —no por nombre—, así no se confunde con un homónimo.
+    fed = _tourFedByFide(fideId, crKey);
+  } else if (!fed && !fideId && crKey) {
     var e = _tourEntryByName(name, crKey);
     if (e) { fed = e.fed; fideId = e.fide; }
+    if (!fed && !fideId) { var r = _tourRosterByName(name, crKey); if (r) { fed = r.fed; fideId = r.fide; } }
   }
   return _argPersonIsArg(name, fed, fideId);
 }
+// Federación de cada jugador según las tablas del torneo: la clasificación y, en los torneos POR
+// EQUIPOS (donde la tabla son los equipos y `standings` viene vacía), el plantel de inscripción
+// (`teamRoster`, con la bandera de cada jugador). Índice por fide_id y, sólo del plantel, por nombre
+// (el nombre de la clasificación ya lo cubre `_tourFedMap`). Vive en `_stdFedCache` con otra clave
+// para que se borre junto con él al guardar los cuadros; si todavía no bajaron, no se cachea.
+function _tourFedIx(crKey) {
+  var ck = '#fid:' + crKey;
+  if (_stdFedCache[ck]) return _stdFedCache[ck];
+  var ix = { byId: {}, byName: {} }, hay = false;
+  try {
+    var d = crDataLoad(crKey);
+    if (d && d.standings) d.standings.forEach(function(s) {
+      hay = true;
+      if (s && s.fideId && s.fed && !ix.byId[String(s.fideId)]) ix.byId[String(s.fideId)] = s.fed;
+    });
+    if (d && d.teamRoster && d.teamRoster.forEach) d.teamRoster.forEach(function(t) {
+      ((t && t.players) || []).forEach(function(p) {
+        if (!p) return;
+        hay = true;
+        if (p.fid && p.fed && !ix.byId[String(p.fid)]) ix.byId[String(p.fid)] = p.fed;
+        var k = p.nm ? crNormTokens(p.nm) : '';
+        if (k && !ix.byName[k]) ix.byName[k] = { fed: p.fed || '', fide: p.fid ? String(p.fid) : '' };
+      });
+    });
+  } catch (e) {}
+  if (hay) _stdFedCache[ck] = ix;
+  return ix;
+}
+function _tourFedByFide(fideId, crKey) { return (fideId && crKey) ? (_tourFedIx(crKey).byId[String(fideId)] || '') : ''; }
+function _tourRosterByName(name, crKey) { return (name && crKey) ? (_tourFedIx(crKey).byName[crNormTokens(name)] || null) : null; }
 function _argGameInTour(hdrs, crKey) {
   return _argPersonInTour(hdrs.White, hdrs.WhiteCountry || hdrs.WhiteFed, hdrs.WhiteFideId, crKey)
       || _argPersonInTour(hdrs.Black, hdrs.BlackCountry || hdrs.BlackFed, hdrs.BlackFideId, crKey);
@@ -30396,7 +30442,9 @@ function tdBuildRoundTeams(rInt, panel, roundGames) {
   var _ck = (typeof _tdCtx!=='undefined' && _tdCtx) ? _tdCtx.crKey : null;
   var _ckData = _ck ? crDataLoad(_ck) : null;
   var _ckHasTeam = !!(_ckData && ((_ckData.teamRounds && Object.keys(_ckData.teamRounds).length) || (_ckData.teamCrosses && Object.keys(_ckData.teamCrosses).length)));
-  function _tdTeamName(n){ var e = escHtml(n||''); if(!_ckHasTeam || !n) return e;
+  // El país se MUESTRA en castellano ("Egypt" → "Egipto"), pero el clic sigue mandando el nombre
+  // ORIGINAL, que es con el que se busca el equipo en los cuadros (ver _paisES).
+  function _tdTeamName(n){ var e = escHtml(_paisES(n||'')); if(!_ckHasTeam || !n) return e;
     return '<span onclick="crOpenCountry('+crArg(_ck)+','+crArg(n)+')" title="Ver la performance del país" style="cursor:pointer" onmouseover="this.style.color=\'var(--gold)\'" onmouseout="this.style.color=\'\'">'+e+'</span>'; }
   var h = '';
   pageView.forEach(function(o, k) {
