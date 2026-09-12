@@ -3548,6 +3548,14 @@
       .lv-lid-b:disabled { background:var(--bg2); border-color:var(--border); color:var(--text3); cursor:default; }
       .lv-lid-tag { flex:0 0 auto; font-size:11.5px; color:var(--text3); white-space:nowrap; }
       .lv-lid-empty { font-size:12.5px; color:var(--text3); line-height:1.55; padding:6px 0; }
+      /* Dos columnas: con una sola, entre el nombre y el botón quedaba una pantalla entera
+         de aire. En el teléfono vuelve a una. minmax(0,1fr) para que no desborde. */
+      .lv-lid-tv { flex:0 0 auto; background:transparent; border:1px solid var(--border); border-radius:var(--r-sm);
+        padding:4px 7px; font-size:14px; line-height:1; cursor:pointer; font-family:inherit; }
+      .lv-lid-tv:hover { border-color:var(--gold-dim); background:var(--bg2); }
+      #lv-lid-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); column-gap:26px; }
+      #lv-lid-list .lv-lid-empty { grid-column:1 / -1; }
+      @media (max-width:640px){ #lv-lid-list { grid-template-columns:minmax(0,1fr); } }
 
       .lv-sala-card { display:flex; flex-direction:column; gap:6px; text-align:left; padding:14px 15px; border:1px solid var(--border); border-radius:var(--r-md); background:var(--bg2); color:var(--text); font-family:inherit; cursor:pointer; transition:filter .12s, border-color .12s; }
       .lv-sala-card:hover { filter:brightness(1.07); border-color:var(--gold-dim); }
@@ -38896,7 +38904,8 @@ function cvUpdateNagBadge() {
     var v=(($('lv-tc')&&$('lv-tc').value)||'300,0').split(',');
     return { base:+v[0]||0, inc:+v[1]||0, rated:lvRatedFromSeg() };
   }
-  function updateFriendlyTag(){ var e=$('lv-friendly'); if(e) e.style.display=lvRated?'none':''; }
+  // "No mueve TU rating / queda en TU historial": al que mira desde afuera no le corresponde.
+  function updateFriendlyTag(){ var e=$('lv-friendly'); if(e) e.style.display=(lvRated||lvMyColor==='spec')?'none':''; }
 
   function create(){
     var base=serverBase();
@@ -42069,7 +42078,8 @@ function cvUpdateNagBadge() {
       var yo = String((usuario() || {}).username || '').toLowerCase();
       var ids = (nombres || []).filter(function (n) { return String(n).toLowerCase() !== yo; }).slice(0, 100);
       if (!ids.length) { lidGente = []; pintarLid(); return; }
-      return fetch(LI + '/api/users/status?ids=' + encodeURIComponent(ids.join(',')))
+      /* withGameIds: además de "está jugando", trae QUÉ partida (playingId), para el 📺. */
+      return fetch(LI + '/api/users/status?withGameIds=true&ids=' + encodeURIComponent(ids.join(',')))
         .then(function (r) { return r.ok ? r.json() : []; })
         .then(function (arr) {
           lidGente = (arr || []).filter(function (u) { return u && u.online; });
@@ -42143,7 +42153,12 @@ function cvUpdateNagBadge() {
       var accion = veto
         ? '<span class="lv-lid-tag">' + lvEscLi(veto) + '</span>'
         : (u.playing
-          ? '<span class="lv-lid-tag">jugando</span><button type="button" class="lv-lid-b" data-lid="' + lvEscLi(u.id) + '" data-lnm="' + lvEscLi(u.name || u.id) + '">Desafiar</button>'
+          /* Jugando: el 📺 abre su partida en vivo en nuestro tablero, como el televisorcito
+             de Lichess. Si Lichess no mandó cuál es, queda el cartelito "jugando". */
+          ? (u.playingId
+              ? '<button type="button" class="lv-lid-tv" data-litv="' + lvEscLi(u.playingId) + '" title="Mirar su partida" aria-label="Mirar la partida de ' + lvEscLi(u.name || u.id) + '">📺</button>'
+              : '<span class="lv-lid-tag">jugando</span>')
+            + '<button type="button" class="lv-lid-b" data-lid="' + lvEscLi(u.id) + '" data-lnm="' + lvEscLi(u.name || u.id) + '">Desafiar</button>'
           : '<button type="button" class="lv-lid-b" data-lid="' + lvEscLi(u.id) + '" data-lnm="' + lvEscLi(u.name || u.id) + '">⚔️ Desafiar</button>');
       html += '<div class="lv-lid-row"><span class="lv-online-dot"></span>'
         + '<span class="lv-lid-nm">' + nm + '</span>'
@@ -42152,6 +42167,11 @@ function cvUpdateNagBadge() {
     box.innerHTML = html;
     box.querySelectorAll('.lv-lid-b').forEach(function (b) {
       b.addEventListener('click', function () { desafiar(b.getAttribute('data-lid'), b.getAttribute('data-lnm')); });
+    });
+    box.querySelectorAll('.lv-lid-tv').forEach(function (b) {
+      b.addEventListener('click', function () {
+        try { if (window.aaLiPartida && window.aaLiPartida.mirar) window.aaLiPartida.mirar(b.getAttribute('data-litv')); } catch (e) {}
+      });
     });
   }
   function lvEscLi(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -42823,7 +42843,115 @@ function cvUpdateNagBadge() {
     P = null;
     try { window.lvTablero.soltar(); } catch (e) {}
   }
-  function cortar() { soltar(); }
+  function cortar() { soltar(); dejarDeMirar(); }
+
+  /* ══ 📺 MIRAR UNA PARTIDA AJENA ═══════════════════════════════════════════════
+     `/api/stream/game/{id}` es PÚBLICO (sin permisos). Manda primero la ficha de la
+     partida, después TODA la historia jugada por jugada (fen + lm + relojes en segundos) y
+     sigue en vivo; al terminar repite la ficha con el resultado y cierra.
+     Condiciones de Lichess:
+       · Llega con 3 jugadas de ATRASO, a propósito (contra los que se ayudan con motor).
+       · Tope de 8 partidas mirándose a la vez desde la misma conexión (contesta 429).
+       · No trae el chat de la partida.
+     ⚠️ La ficha inicial real NO traía `fen` ni `status` (el ejemplo de la documentación sí):
+     no depender de esos campos. La posición se arma aplicando cada `lm`.
+     Vive APARTE de la partida propia (P), así nunca le aparecen al espectador botones de
+     "Desafiar de nuevo" ni "Nuevo oponente". */
+  var M = null;
+
+  function nombreJ(j) {
+    var u = j && j.user;
+    if (u) return (u.title ? u.title + ' ' : '') + (u.name || u.id);
+    return (j && j.aiLevel) ? ('Ordenador nivel ' + j.aiLevel) : '—';
+  }
+  function completarFen(f) {   // los mensajes a veces traen sólo "piezas turno"
+    var p = String(f || '').split(' ');
+    while (p.length < 6) p.push(p.length === 2 ? '-' : p.length === 3 ? '-' : p.length === 4 ? '0' : '1');
+    return p.join(' ');
+  }
+
+  function mirar(id) {
+    if (!id || !window.lvTablero || typeof Chess !== 'function') return false;
+    cortar();
+    var yo = { id: id, ctrl: new AbortController(), ficha: null, ch: null, sans: [], ult: null, wc: null, bc: null };
+    M = yo;
+    window.lvTablero.enganchar({ enviar: function () {}, listo: function () { return M === yo; } }, 'spec');
+    window.lvTablero.aviso('Conectando con la partida…');
+    fetch(LI + '/api/stream/game/' + encodeURIComponent(id), { signal: yo.ctrl.signal }).then(function (r) {
+      if (!r.ok) { var e = new Error('HTTP ' + r.status); e.status = r.status; throw e; }
+      var rd = r.body.getReader(), dec = new TextDecoder(), buf = '';
+      (function leer() {
+        rd.read().then(function (res) {
+          if (M !== yo || res.done) return;
+          buf += dec.decode(res.value, { stream: true });
+          var partes = buf.split('\n'); buf = partes.pop();
+          partes.forEach(function (l) {
+            l = l.trim(); if (!l) return;
+            var o = null; try { o = JSON.parse(l); } catch (e) {}
+            if (o && M === yo) mensajeMirar(o);
+          });
+          leer();
+        }).catch(function () {});
+      })();
+    }).catch(function (e) {
+      if (e && e.name === 'AbortError') return;
+      avisar(e && e.status === 429
+        ? 'Lichess no deja mirar tantas partidas a la vez. Cerrá alguna y probá de nuevo.'
+        : 'No se pudo abrir la partida para mirarla.');
+    });
+    decir('Mirando una partida en vivo.');
+    return true;
+  }
+
+  function mensajeMirar(o) {
+    if (!M) return;
+    if (o.players) {                                   // la ficha: al principio y al terminar
+      M.ficha = o;
+      if (!M.ch) {
+        var f0 = (o.initialFen && o.initialFen !== 'startpos') ? o.initialFen : null;
+        try { M.ch = f0 ? new Chess(f0) : new Chess(); } catch (e) { M.ch = new Chess(); }
+      }
+      pintarMirar(o.status);
+      return;
+    }
+    if (!o.fen) return;
+    if (!M.ch) { try { M.ch = new Chess(); } catch (e) { return; } }
+    if (o.lm) {
+      var mv = null;
+      try { mv = M.ch.move({ from: o.lm.slice(0, 2), to: o.lm.slice(2, 4), promotion: o.lm.slice(4, 5) || undefined }); } catch (e) { mv = null; }
+      if (mv) { M.sans.push(mv.san); M.ult = { from: mv.from, to: mv.to, san: mv.san }; }
+      else { try { M.ch = new Chess(completarFen(o.fen)); } catch (e) {} }   // desincronizado: manda la posición que llega
+    }
+    if (typeof o.wc === 'number') M.wc = o.wc * 1000;
+    if (typeof o.bc === 'number') M.bc = o.bc * 1000;
+    pintarMirar(null);
+  }
+
+  function pintarMirar(status) {
+    if (!M || !M.ficha || !M.ch) return;
+    var f = M.ficha;
+    var st = status ? (status.name || status) : ((f.status && (f.status.name || f.status)) || 'started');
+    var viva = (st === 'started' || st === 'created');
+    var m = {
+      fen: M.ch.fen(), turn: M.ch.turn(), status: viva ? 'playing' : 'finished',
+      moves: M.sans.slice(), lastMove: M.ult,
+      names: { w: nombreJ(f.players.white), b: nombreJ(f.players.black) },
+      players: { w: false, b: false },   // así no aparece el chat, que por acá no llega
+      ratings: { w: chapita(f.players.white), b: chapita(f.players.black) },
+      rated: !!f.rated,
+      clock: (M.wc == null) ? null : { w: M.wc, b: M.bc, running: (viva && M.sans.length >= 2) ? M.ch.turn() : null }
+    };
+    if (!viva) m.result = resultado({ status: st, winner: f.winner }, M.ch);
+    try { window.lvTablero.estado(m); } catch (e) {}
+    if (!viva) { try { M.ctrl.abort(); } catch (e) {} }
+  }
+
+  function dejarDeMirar() {
+    if (!M) return;
+    try { M.ctrl.abort(); } catch (e) {}
+    M = null;
+    try { window.lvTablero.soltar(); } catch (e) {}
+  }
 
   /* Los botones viven en el HTML del tablero; su comportamiento, acá. */
   function enganchar() {
@@ -42832,11 +42960,12 @@ function cvUpdateNagBadge() {
     var r = $$('lv-li-reclamar'); if (r && !r._li) { r._li = true; r.addEventListener('click', reclamar); }
     /* Salir del tablero con "Volver al menú" durante una partida de Lichess: soltamos el
        caño (si no, seguiría escuchando una partida que el visitante ya dejó). */
-    var x = $$('lv-exit'); if (x && !x._li) { x._li = true; x.addEventListener('click', function () { botones(false); soltar(); }); }
+    var x = $$('lv-exit'); if (x && !x._li) { x._li = true; x.addEventListener('click', function () { botones(false); soltar(); dejarDeMirar(); }); }
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', enganchar); else enganchar();
 
-  window.aaLiPartida = { jugar: jugar, soltar: soltar, enCurso: function () { return !!P; } };
+  window.aaLiPartida = { jugar: jugar, soltar: soltar, enCurso: function () { return !!P; },
+    mirar: mirar, mirando: function () { return !!M; } };
 })();
 </script>
 

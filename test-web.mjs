@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 915;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 920;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -3685,7 +3685,7 @@ console.log('\n=== 50. Puntos del torneo en el visor (6½/7) ===');
         '🔒 y el rival al azar nunca fija el color (si lo fijara, jugarías siempre de blancas)');
     chk(/function perfDe/.test(modGrid) && /s < 180 \? 'bullet' : s < 480 \? 'blitz'/.test(modGrid),
         'el rating que se muestra es el del RITMO elegido (blitz para un 3+0, rápida para un 10+0)');
-    chk(/users\/status\?ids=/.test(modGrid) && /rating\/top/.test(modGrid),
+    chk(/users\/status\?(withGameIds=true&)?ids=/.test(modGrid) && /rating\/top/.test(modGrid),
         'los nombres salen del ranking del sitio y el estado se consulta a Lichess');
     chk(/no hay nadie de ChessArgentino conectado/.test(modGrid),
         'y si no hay nadie, lo dice y manda al rival al azar (no queda un hueco)');
@@ -3737,6 +3737,22 @@ console.log('\n=== 50. Puntos del torneo en el visor (6½/7) ===');
       '🔒 y cada uno acepta por su camino: sin callback propio, sigue el del árbitro de casa');
   chk(/m\.seat==='w'\?' · jugás ⚫ Negras':''/.test(SRC),
       'el color sólo se anuncia si se sabe (en un desafío "al azar" lo sortea Lichess al arrancar)');
+
+  // 📺 Mirar la partida de alguien de la comunidad (como el televisorcito de Lichess).
+  chk(/users\/status\?withGameIds=true&ids=/.test(modGrid) && /data-litv=/.test(modGrid),
+      'los que están jugando traen su partida y muestran el 📺 para mirarla');
+  chk(/function mirar\(id\)/.test(modPartida) && /fetch\(LI \+ '\/api\/stream\/game\/' \+ encodeURIComponent\(id\), \{ signal: yo\.ctrl\.signal \}\)/.test(modPartida),
+      '🔒 mirar usa la función PÚBLICA de Lichess, sin mandar el permiso del visitante');
+  chk(/enganchar\(\{ enviar: function \(\) \{\}, listo: function \(\) \{ return M === yo; \} \}, 'spec'\)/.test(modPartida),
+      'se mira como espectador: el tablero no deja mover y nada sale para Lichess');
+  chk(/botones\(false\); soltar\(\); dejarDeMirar\(\);/.test(modPartida) && /function cortar\(\) \{ soltar\(\); dejarDeMirar\(\); \}/.test(modPartida),
+      'salir con "Volver al menú" o empezar una partida corta la conexión de lo que se miraba');
+
+  // La lista de gente para desafiar va en DOS columnas: con una, entre el nombre y el
+  // botón quedaba una pantalla entera de aire. En el teléfono vuelve a una.
+  chk(/#lv-lid-list \{ display:grid; grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/.test(SRC)
+      && /@media \(max-width:640px\)\{ #lv-lid-list \{ grid-template-columns:minmax\(0,1fr\); \} \}/.test(SRC),
+      'la gente para desafiar va en dos columnas (una en el teléfono, sin 1fr pelado)');
 
   // ── Rating al terminar + sin "(vos)" (12/09) ────────────────────────────────────
   // El estado de la partida de Lichess no trae cuánto se ganó o perdió: está en la
