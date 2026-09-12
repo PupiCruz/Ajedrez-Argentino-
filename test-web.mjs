@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 836;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 862;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -3571,8 +3571,18 @@ console.log('\n=== 50. Puntos del torneo en el visor (6½/7) ===');
   // estrenar esto. (Para lanzarlo: que `activo()` devuelva true.)
   chk(/id="lv-li-wrap" style="display:none"/.test(SRC),
       '🔒 el panel de Lichess nace oculto en el HTML (no parpadea antes de que corra el JS)');
-  chk(/function activo\(\)/.test(modGrid) && /aa_li_beta/.test(modGrid) && /_ondemand/.test(modGrid),
-      '🔒 y en la web publicada sólo se enciende a mano (?lichess=1); en modo autor se ve siempre');
+  // ESTRENADO el 12/09/2026: ya se ve para todos. Pero el freno de mano tiene que seguir
+  // existiendo: con ?lichess=0 se apaga en ese navegador, sin publicar nada.
+  chk(/function activo\(\)/.test(modGrid) && /aa_li_off/.test(modGrid) && /lichess=0/.test(modGrid),
+      '🔒 queda el freno de mano (?lichess=0 apaga el panel sin tener que publicar)');
+
+  // El cartel antes de mandar a Lichess, hermano del del login. Y su candado de honestidad:
+  // el del login dice "No podemos jugar ni tocar nada en tu cuenta", que para board:play
+  // sería MENTIRA. Si alguien copia ese texto acá, esto lo caza.
+  chk(/pedirConAviso\(\{ tipo: 'seek'/.test(modGrid), 'antes de mandar a Lichess se muestra el cartel que explica el permiso');
+  chk(/function pedirConAviso/.test(modLi) && /aa-modal-back/.test(modLi), 'y el cartel usa el mismo molde que el del login');
+  chk(!/No podemos jugar/.test(modLi) && /mover, ofrecer tablas y abandonar/.test(modLi),
+      '🔒 el cartel dice la verdad: que con este permiso SÍ se puede jugar y abandonar');
 
   // ── Candados del token (board:play puede jugar y abandonar en nombre del visitante) ──
   chk(/scope:\s*SCOPE/.test(modLi) && /SCOPE\s*=\s*'board:play'/.test(modLi),
@@ -3588,6 +3598,75 @@ console.log('\n=== 50. Puntos del torneo en el visor (6½/7) ===');
   const cssGrid = (SRC.match(/\.lv-li-grid \{[^}]*\}/) || [''])[0];
   chk(/minmax\(0,\s*1fr\)/.test(cssGrid) && !/repeat\(\d+,\s*1fr\)/.test(cssGrid),
       '🔒 la grilla usa minmax(0,1fr) y no 1fr pelado (si no, desborda en el teléfono)');
+
+  // ── Fase 2: la partida de Lichess jugada en NUESTRO tablero ─────────────────────
+  const modPartida = (SRC.match(/Fase 2 — La partida de Lichess[\s\S]*?<\/script>/) || [''])[0];
+  const puerta = (SRC.match(/window\.lvTablero = \{[\s\S]*?\n  \};/) || [''])[0];
+  chk(modPartida.length > 500 && puerta.length > 200, 'están el módulo de la partida y la puerta del tablero');
+
+  // 🔒 EL PVP ESTÁ EN VIVO: con el transporte apagado, todo tiene que comportarse igual
+  // que siempre. Estos tres candados vigilan justamente eso.
+  chk(/if\(lvTx\)\{[^}]*lvTx\.enviar/.test(SRC) && /if\(ws && ws\.readyState===1\) ws\.send/.test(SRC),
+      '🔒 send() sólo se desvía si hay transporte; si no, sigue yendo por el WebSocket de casa');
+  chk(/function lvConectado\(\)\{ return lvTx \? lvTx\.listo\(\) : !!\(ws && ws\.readyState===1\); \}/.test(SRC),
+      '🔒 sin transporte, "¿hay conexión?" sigue mirando el WebSocket de siempre');
+  chk(/show\('lv-rematch', finished && amPlayer && !lvTx\)/.test(SRC),
+      '🔒 la Revancha se esconde SÓLO en las partidas de Lichess (en el PvP sigue igual)');
+
+  // 🐛 Pasó de verdad: el tablero se dibujaba perfecto y no se podía mover una pieza,
+  // porque enganchar() no llamaba a wireBoard(). Todos los caminos de entrada al tablero
+  // llaman a los cuatro juntos.
+  chk(/showGame\(\); wireBoard\(\); startTicker\(\); renderBoard\(\);/.test(puerta),
+      '🔒 al enganchar una partida se CABLEA el tablero (si no, se ve pero no responde al clic)');
+
+  // El traductor: lo que Lichess manda y lo que el tablero espera.
+  chk(/w: st\.wtime, b: st\.btime/.test(modPartida) && !/wtime\s*\/\s*1000/.test(modPartida),
+      '🔒 los relojes pasan en milisegundos, sin convertir (el tablero los quiere así)');
+  chk(/ucis\.length >= 2/.test(modPartida),
+      'el reloj se marca "corriendo" recién cuando los dos movieron (los 30 s de gracia)');
+  chk(/\/move\/' \+ \(o\.from \+ o\.to/.test(modPartida) && /\/resign'/.test(modPartida) && /\/draw\/yes'/.test(modPartida) && /\/chat'/.test(modPartida),
+      'jugar, abandonar, tablas y chat salen a los caminos correctos de Lichess');
+  chk(/lvTablero\.chat\(\{ color: P\.color/.test(modPartida),
+      'tu propio mensaje se pinta acá (Lichess no devuelve el eco como nuestro árbitro)');
+  chk(/enCuenta\(\)/.test(modPartida) && /P\.pendiente = m/.test(modPartida),
+      'las jugadas que llegan durante el 3·2·1 se retienen y salen en el "¡Ya!"');
+
+  // 🐛 Pasó de verdad: al empezar la partida el panel de Lichess se quedaba puesto y
+  // empujaba el tablero abajo de la pantalla, había que scrollear para jugar. Entra a la
+  // misma lista que el encabezado y las salas. Al volver NO se prende a lo bruto: se
+  // repinta, porque en la web publicada el panel puede estar apagado.
+  chk(/window\.aaLiPanel\) window\.aaLiPanel\.ocultar\(\)/.test(SRC),
+      '🔒 al entrar a una partida el panel de Lichess se esconde (si no, el tablero queda abajo)');
+  chk(/window\.aaLiPanel\) window\.aaLiPanel\.refrescar\(\)/.test(SRC),
+      'y al volver al salón se repinta respetando el interruptor');
+
+  // ── Fase 3: los botones del final ───────────────────────────────────────────────
+  chk(/id="lv-li-nuevo"/.test(SRC) && /id="lv-li-reclamar"/.test(SRC),
+      'están los botones de "Nuevo oponente" y de reclamar la victoria');
+  chk(/aaLiPanel\.buscar\(t, i, conRating\)/.test(modPartida) && /f\.clock\.initial \/ 60000/.test(modPartida),
+      '"Nuevo oponente" vuelve a buscar con el MISMO ritmo de la partida que terminó');
+  chk(/claim-victory/.test(modPartida) && /claimWinInSeconds/.test(modPartida),
+      'el reclamo espera los segundos que dice Lichess antes de ofrecerse');
+  chk(/lv-exit[\s\S]{0,140}botones\(false\); soltar\(\)/.test(modPartida),
+      'salir del tablero suelta el caño (si no, seguiría escuchando una partida ya dejada)');
+
+  // ── El reloj, emparejado con Lichess (12/09) ────────────────────────────────────
+  // Antes redondeaba para ARRIBA y mostraba siempre un segundo de más que lichess.org
+  // (5:12 contra 5:11, en los dos relojes, hasta con la partida terminada). No era
+  // desfasaje: era redondeo. Estas pruebas corren la función de verdad, no miran el texto.
+  {
+    const fmtSrc = (SRC.match(/function fmt\(ms\)\{[\s\S]*?\n  \}/) || [''])[0];
+    let fmt = null; try { fmt = new Function('return (' + fmtSrc + ')')(); } catch (e) {}
+    chk(typeof fmt === 'function', 'se pudo sacar el formateador del reloj del index.html');
+    if (typeof fmt === 'function') {
+      chk(fmt(311400) === '5:11', '🔒 redondea PARA ABAJO, como Lichess (311,4 s → 5:11, no 5:12)', fmt(311400));
+      chk(fmt(332600) === '5:32', 'y el otro reloj de la misma partida también coincide', fmt(332600));
+      chk(fmt(6100) === '0:06.1', 'abajo de 10 s muestra décimas, como Lichess', fmt(6100));
+      chk(fmt(9999) === '0:09.9' && fmt(10000) === '0:10', 'el corte de las décimas está justo en los 10 s', fmt(9999) + ' / ' + fmt(10000));
+      chk(fmt(400) === '0:00.4', 'con menos de un segundo dice la verdad (0:00.4, no 0:01)', fmt(400));
+      chk(fmt(0) === '0:00.0' && fmt(null) === '--:--', 'cero y "sin reloj" siguen andando', fmt(0) + ' / ' + fmt(null));
+    }
+  }
 
   // Los ids que busca el JS tienen que existir en el HTML.
   const ids = [...new Set([...modGrid.matchAll(/\$\('([a-z0-9-]+)'\)/g)].map(m => m[1]))];

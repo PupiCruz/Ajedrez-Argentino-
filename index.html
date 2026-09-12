@@ -3641,7 +3641,6 @@
           <div class="lv-salas-head">
             <h3>♞ Rival al azar en Lichess</h3>
             <span>elegí un ritmo y a jugar</span>
-            <span id="lv-li-beta" style="display:none;font-size:11px;font-weight:700;color:var(--gold);background:var(--gold-bg);border:1px solid var(--gold-dim);border-radius:var(--r-pill);padding:2px 9px">en prueba</span>
           </div>
           <p class="lv-salas-sub">Te buscamos rival entre toda la gente conectada a Lichess. Suele tardar menos de un minuto.</p>
           <div id="lv-li-guest" class="lv-li-guest" style="display:none"></div>
@@ -3824,6 +3823,12 @@
             <!-- Revancha + Volver al menú en un solo renglón (dos columnas), para dejarle aire al chat -->
             <div class="lv-controls-row">
               <button id="lv-rematch" class="lv-btn-main" style="display:none">Revancha 🔁</button>
+              <!-- En las partidas de Lichess no hay revancha (su API no la tiene), pero sí está lo
+                   que allá más se usa: buscar otro rival al toque, con el mismo ritmo. Lo maneja
+                   el módulo aaLiPartida; acá sólo existe el botón. -->
+              <button id="lv-li-nuevo" class="lv-btn-main" style="display:none">⚡ Nuevo oponente</button>
+              <!-- Cuando el rival se va, Lichess deja reclamar la victoria pasado un rato. -->
+              <button id="lv-li-reclamar" class="lv-btn-sec" style="display:none">🏳️ Reclamar la victoria</button>
               <!-- Mientras esperás rival: ir al salón a charlar SIN cancelar el desafío. Distinto de
                    "Volver al menú" (#lv-exit), que sí retira el desafío y cierra la sala. -->
               <button id="lv-tolobby" class="lv-btn-sec" style="display:none">💬 Ir al salón</button>
@@ -37320,7 +37325,13 @@ function cvUpdateNagBadge() {
 
   // ── Reloj (cálculo por marca temporal, inmune a pestañas de fondo) ──────────
   function fmt(ms){ if(ms==null) return '--:--'; ms=Math.max(0,ms);
-    var tot=Math.ceil(ms/1000), m=Math.floor(tot/60), s=String(tot%60).padStart(2,'0');
+    // Se redondea PARA ABAJO, como Lichess, chess.com y los relojes de torneo. Antes se
+    // redondeaba para arriba y mostraba un segundo que no tenías, justo cuando más
+    // importa: con 0,4 s decía 0:01. Ahora dice 0:00, que es la verdad.
+    var tot=Math.floor(ms/1000), m=Math.floor(tot/60), s=String(tot%60).padStart(2,'0');
+    // Abajo de 10 segundos, DÉCIMAS (igual que Lichess): saber si te quedan 9,8 o 9,1
+    // cambia la jugada. Se mantiene el formato m:ss para que no salte el ancho.
+    if(ms<10000) return m+':'+s+'.'+Math.floor((ms%1000)/100);
     return m+':'+s;
   }
   function liveMs(side){
@@ -37350,7 +37361,23 @@ function cvUpdateNagBadge() {
     if(lvClock.running===lvMyColor && mb!=null && mb<10000 && mb>0 && !lvLowWarned){ lvLowWarned=true; sndLow(); }
     if(mb!=null && mb>=10000) lvLowWarned=false;
   }
-  function startTicker(){ if(!lvTicker) lvTicker=setInterval(renderClocks,250); }
+  // El ritmo con que se repinta el reloj. 250 ms alcanzan de sobra para los segundos, pero
+  // con las décimas en pantalla se ve a los saltos: abajo de 10 s se acelera a 100 ms y
+  // vuelve solo al subir (con incremento, un reloj sube). Así no se repinta 10 veces por
+  // segundo durante toda la partida por un detalle que sólo importa al final.
+  var lvTickMs=0;
+  function tickRate(){
+    var a=liveMs('w'), b=liveMs('b');
+    return ((a!=null&&a<10000)||(b!=null&&b<10000)) ? 100 : 250;
+  }
+  function startTicker(){
+    if(lvTicker) return;
+    lvTickMs=tickRate();
+    lvTicker=setInterval(function(){
+      renderClocks();
+      if(tickRate()!==lvTickMs){ clearInterval(lvTicker); lvTicker=null; startTicker(); }
+    }, lvTickMs);
+  }
 
   // ── Cuenta regresiva por desconexión del rival (30s; el server termina la partida) ──
   function startDiscCountdown(graceMs){
@@ -37458,9 +37485,10 @@ function cvUpdateNagBadge() {
     // (y el cartel de "reconectando" lo pisaba un "Turno del rival"), mientras el rival no veía nada
     // y tu reloj seguía corriendo. Mejor no aceptarla y avisar; el premove sí se puede seguir
     // dejando, porque recién se dispara cuando vuelve el estado del servidor.
-    if(!(ws && ws.readyState===1)){
+    if(!lvConectado()){
       lvSelected=null; renderBoard();
-      try{ lvToast('Se cortó la conexión con el árbitro: esperá a que vuelva para mover.'); }catch(e){}
+      try{ lvToast(lvTx ? 'Se cortó la conexión con Lichess: esperá a que vuelva para mover.'
+                        : 'Se cortó la conexión con el árbitro: esperá a que vuelva para mover.'); }catch(e){}
       return;
     }
     var mv=null; try { mv=lvChess.move({from:from,to:to,promotion:promo}); } catch(e){ mv=null; }
@@ -37728,7 +37756,10 @@ function cvUpdateNagBadge() {
     show('lv-offerdraw', playing && amPlayer && !lvDrawOffer);
     show('lv-resign', playing && amPlayer);
     show('lv-analyze', finished && lvMoves.length>0);   // analizar la partida en el visor completo
-    show('lv-rematch', finished && amPlayer);
+    // La REVANCHA no existe en la API de Lichess: no se puede ofrecer y tampoco llega el
+    // aviso si la ofrece el rival desde lichess.org. Un botón ahí sería mentira, así que
+    // en esas partidas se esconde. En el PvP de casa sigue igual que siempre.
+    show('lv-rematch', finished && amPlayer && !lvTx);
     // "Ir al salón" sólo mientras esperás rival en TU sala (ver goToLobbyKeepingChallenge).
     show('lv-tolobby', (lvStatus==='waiting') && amPlayer && !!lvMyChallenge);
     var rm=$('lv-rematch'); if(rm && finished){ rm.disabled=false; rm.textContent='Revancha 🔁'; }
@@ -37744,7 +37775,17 @@ function cvUpdateNagBadge() {
   }
 
   // ── Conexión / mensajes ─────────────────────────────────────────────────────
-  function send(o){ if(ws && ws.readyState===1) ws.send(JSON.stringify(o)); }
+  // 🔌 TRANSPORTE de la partida. Normalmente es null y todo va por el WebSocket de nuestro
+  // árbitro, como siempre. Si está puesto, la partida se está jugando CONTRA LICHESS y todo
+  // lo que sale (jugadas, chat, abandonar, tablas) se desvía para allá. Como acá pasa TODO
+  // lo que el tablero manda, no hubo que tocar ni un botón: ver el módulo "aaLiPartida".
+  var lvTx = null;
+  function send(o){
+    if(lvTx){ try{ lvTx.enviar(o); }catch(e){} return; }
+    if(ws && ws.readyState===1) ws.send(JSON.stringify(o));
+  }
+  /* ¿Hay con quién hablar? Con Lichess no hay WebSocket nuestro: manda el transporte. */
+  function lvConectado(){ return lvTx ? lvTx.listo() : !!(ws && ws.readyState===1); }
   // Suelta el WebSocket actual SIN dejar rastro: primero se le sacan los manejadores (si no,
   // su 'onclose' llega tarde y dispara la reconexión) y recién después se cierra.
   function lvDropWs(){
@@ -38681,11 +38722,17 @@ function cvUpdateNagBadge() {
   function showGame(){ lvViewingGame=true; lvGenteStop(); $('lv-lobby').style.display='none'; $('lv-game').style.display='';
     var h=$('lv-pghead'); if(h) h.style.display='none';
     var sw=$('lv-salas-wrap'); if(sw) sw.style.display='none';
+    // El panel de Lichess también se va: si no, el tablero arranca abajo y hay que scrollear.
+    try{ if(window.aaLiPanel) window.aaLiPanel.ocultar(); }catch(e){}
     try{ var m=document.querySelector('.main'); if(m) m.scrollTop=0; }catch(e){}
+    try{ window.scrollTo(0,0); }catch(e){}
     lvSyncColsSoon(); }
   function showLobby(){ lvViewingGame=false; $('lv-game').style.display='none'; $('lv-lobby').style.display='';
     var h=$('lv-pghead'); if(h) h.style.display='';
     var sw=$('lv-salas-wrap'); if(sw) sw.style.display='';
+    // No se prende a lo bruto: `refrescar` mira el interruptor (en la web publicada
+    // puede estar apagado) y el candado de invitado.
+    try{ if(window.aaLiPanel) window.aaLiPanel.refrescar(); }catch(e){}
     if(lvOnTab) lvGenteStart(); }
   // Ir al salón SIN irse del desafío: no toca lvMyChallenge ni cierra el WebSocket de la sala, así
   // podés charlar en el chat mientras esperás rival. Cuando entre alguien, applyState te trae de
@@ -39278,6 +39325,31 @@ function cvUpdateNagBadge() {
   // `foco` (opcional) = clave de la columna a la que hay que ir (ej. 'tactica' desde Entrenar).
   // Sin esto, en el teléfono el que viene por los ejercicios cae arriba de todo y tiene que
   // bajar por tres tablas de partidas antes de encontrar la suya.
+  /* ── 🔌 Puerta para jugar en ESTE tablero una partida que arbitra OTRO (hoy: Lichess) ──
+     Se expone lo mínimo: enganchar el transporte, empujarle estados y soltarlo. Toda la
+     traducción de Lichess vive afuera, en el módulo "aaLiPartida", para no ensuciar el PvP.
+     El mensaje de `estado` es el MISMO que manda nuestro árbitro (ver applyState). */
+  window.lvTablero = {
+    enganchar: function(tx, color){
+      lvTx = tx;
+      lvIntentionalClose = true;      // no queremos que el PvP intente reconectar su socket
+      lvDropWs();
+      resetState();
+      lvMyColor = color;              // 'w' | 'b'
+      lvRoom = ''; lvSala = null; lvMyChallenge = null;
+      /* Mismo orden que usan los otros caminos de entrada al tablero (crear, unirse,
+         entrar a una sala). Sin wireBoard() el tablero se dibuja pero NO escucha los
+         clics: se ve perfecto y no se puede mover ni una pieza. */
+      showGame(); wireBoard(); startTicker(); renderBoard();
+    },
+    estado: function(m){ applyState(m); },
+    chat:   function(m){ lvAddChat(m); },
+    aviso:  function(txt){ setStatus(txt); },
+    volver: function(){ showLobby(); },
+    soltar: function(){ lvTx = null; },
+    enPartida: function(){ return !!lvTx; }
+  };
+
   window.lvOpenRanking=function(foco){
     lvCloseRanking();
     _rankFoco=foco||null;
@@ -41435,12 +41507,81 @@ function cvUpdateNagBadge() {
     return true;
   }
 
+  /* Cartel aclaratorio antes de mandar a Lichess, hermano del que muestra el login
+     (`showLoginInfo`). OJO con el texto: el del login puede decir "no podemos jugar ni
+     tocar nada en tu cuenta", pero acá ESO SERÍA MENTIRA — board:play sí puede mover y
+     abandonar. Hay que decirlo, y decir también que el permiso dura lo que la pestaña. */
+  function pedirConAviso(intent) {
+    var back = document.createElement('div'); back.className = 'aa-modal-back';
+    back.innerHTML =
+      '<div class="aa-modal" role="dialog" aria-modal="true" aria-label="Permiso para jugar en Lichess">' +
+        '<div class="aa-modal-ic">&#9822;</div>' +
+        '<h3 class="aa-modal-h">Permiso para jugar en Lichess</h3>' +
+        '<p class="aa-modal-p">Para buscarte rival, Lichess te va a pedir permiso. Lo aceptás <b>allá</b>: esta web nunca ve tu contraseña.</p>' +
+        '<ul class="aa-modal-ul">' +
+          '<li>🔒 No vemos tu contraseña ni tu e-mail.</li>' +
+          '<li>♟️ Sólo sirve para jugar: mover, ofrecer tablas y abandonar en las partidas que empieces desde acá.</li>' +
+          '<li>🚪 Dura lo que dure esta pestaña. Al cerrarla, o al salir de tu cuenta, se lo devolvemos a Lichess.</li>' +
+        '</ul>' +
+        '<div class="aa-modal-btns">' +
+          '<button class="aa-modal-cancel" type="button">Cancelar</button>' +
+          '<button class="aa-modal-go" type="button">Continuar a Lichess &#9822;</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(back);
+    function cerrar() { back.remove(); document.removeEventListener('keydown', onKey); }
+    function onKey(e) { if (e.key === 'Escape') cerrar(); }
+    back.addEventListener('click', function (e) { if (e.target === back) cerrar(); });
+    back.querySelector('.aa-modal-cancel').addEventListener('click', cerrar);
+    back.querySelector('.aa-modal-go').addEventListener('click', function () { cerrar(); pedir(intent); });
+    document.addEventListener('keydown', onKey);
+    setTimeout(function () { back.classList.add('open'); }, 10);
+  }
+
   /* Si sale de la cuenta del sitio, le devolvemos el permiso a Lichess. */
   document.addEventListener('aa-auth-changed', function (e) {
     if (!(e && e.detail && e.detail.user)) olvidar();
   });
 
-  window.aaLi = { tiene: function () { return !!token(); }, token: token, pedir: pedir, olvidar: olvidar, avisar: avisar };
+  /* ── Leer un caño de ndjson (una línea = un objeto) ───────────────────────────
+     Vive acá porque lo usan los dos módulos de Lichess: el que busca rival y el que
+     juega la partida. Uno solo, así no se desincronizan.
+     · `ctrl` es un AbortController: cortarlo cierra la conexión (y con eso Lichess
+       cancela el pedido de partida, que es justo lo que queremos).
+     · Los errores llegan a onFin con `.status` y `.motivo` ya desarmados. */
+  function cano(url, opts, ctrl, onObj, onFin) {
+    opts = opts || {}; opts.signal = ctrl.signal;
+    opts.headers = Object.assign({ Authorization: 'Bearer ' + token() }, opts.headers || {});
+    fetch(url, opts).then(function (r) {
+      if (!r.ok) {
+        /* Lichess explica el motivo en el cuerpo ({"error":…}). Sin eso, un fallo es un
+           número pelado y no hay con qué arreglarlo. */
+        return r.text().then(function (tx) {
+          var motivo = '';
+          try { motivo = (JSON.parse(tx) || {}).error || ''; } catch (e) { motivo = (tx || '').slice(0, 200); }
+          var err = new Error('HTTP ' + r.status + ' — ' + (tx || '').slice(0, 300));
+          err.status = r.status; err.motivo = motivo; err.cuerpo = tx; throw err;
+        });
+      }
+      var rd = r.body.getReader(), dec = new TextDecoder(), buf = '';
+      (function leer() {
+        rd.read().then(function (res) {
+          if (res.done) { if (onFin) onFin(null); return; }
+          buf += dec.decode(res.value, { stream: true });
+          var partes = buf.split('\n'); buf = partes.pop();
+          partes.forEach(function (l) {
+            l = l.trim(); if (!l) return;            // las líneas vacías son latidos
+            var o = null; try { o = JSON.parse(l); } catch (e) {}
+            if (o && onObj) onObj(o);
+          });
+          leer();
+        }).catch(function (e) { if (onFin) onFin(e); });
+      })();
+    }).catch(function (e) { if (onFin) onFin(e); });
+  }
+
+  window.aaLi = { tiene: function () { return !!token(); }, token: token, pedir: pedir,
+    pedirConAviso: pedirConAviso, olvidar: olvidar, avisar: avisar, cano: cano };
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', volver); else volver();
 })();
@@ -41504,23 +41645,23 @@ function cvUpdateNagBadge() {
 
   function $(id) { return document.getElementById(id); }
 
-  /* ── 🚦 Interruptor de estreno ────────────────────────────────────────────
-     El panel NO se muestra en la web publicada hasta que se decida estrenarlo.
-     Así se pueden publicar otros cambios del index.html sin lanzar esto todavía.
-     · En MODO AUTOR (local) se ve siempre.
-     · En la web publicada se enciende entrando a  …/?lichess=1  y se apaga con
-       …/?lichess=0. Queda guardado en ESE navegador —y tiene que quedar guardado,
-       porque la app reescribe la dirección al cambiar de pestaña y el ?lichess=1
-       se perdería al primer clic. Sirve para probarlo en el teléfono de verdad.
-     · PARA ESTRENARLO: que esta función devuelva true y nada más. */
+  /* ── 🚦 Interruptor ───────────────────────────────────────────────────────
+     ✅ ESTRENADO el 12/09/2026: el panel se ve para todos.
+
+     Queda el FRENO DE MANO por si algo sale mal y hay que apagarlo sin publicar:
+     entrando a  …/?lichess=0  se apaga en ESE navegador, y con  …/?lichess=1  se
+     vuelve a prender. Tiene que guardarse, y no depender del ?lichess=0 en la
+     dirección, porque la app reescribe el URL al cambiar de pestaña y se perdería
+     al primer clic.
+     Para apagarlo PARA TODOS, sin esperar a nadie: que esta función devuelva false. */
   function activo() {
     try {
       var q = location.search || '';
-      if (/[?&]lichess=1/.test(q)) localStorage.setItem('aa_li_beta', '1');
-      if (/[?&]lichess=0/.test(q)) localStorage.removeItem('aa_li_beta');
+      if (/[?&]lichess=1/.test(q)) localStorage.removeItem('aa_li_off');
+      if (/[?&]lichess=0/.test(q)) localStorage.setItem('aa_li_off', '1');
+      if (localStorage.getItem('aa_li_off') === '1') return false;
     } catch (e) {}
-    if (typeof _ondemand === 'undefined' || !_ondemand) return true;   // modo autor
-    try { return localStorage.getItem('aa_li_beta') === '1'; } catch (e) { return false; }
+    return true;
   }
   function usuario() { try { return window.aaAuth && window.aaAuth.getUser && window.aaAuth.getUser(); } catch (e) { return null; } }
   function decir(t) { try { if (typeof window.aaDecir === 'function') window.aaDecir(t); } catch (e) {} }
@@ -41534,10 +41675,6 @@ function cvUpdateNagBadge() {
     var on = activo();
     var wrap = $('lv-li-wrap'); if (wrap) wrap.style.display = on ? '' : 'none';
     if (!on) return;
-    /* Encendido a mano en la web publicada: se avisa que es una prueba, para que no
-       parezca lanzado si alguien comparte el enlace. */
-    var chip = $('lv-li-beta');
-    if (chip) chip.style.display = (typeof _ondemand !== 'undefined' && _ondemand) ? '' : 'none';
 
     var invitado = !usuario();
 
@@ -41573,44 +41710,16 @@ function cvUpdateNagBadge() {
     });
   }
 
-  /* ── Leer un caño de ndjson (una línea = un objeto) ──────────────────────── */
-  function caño(url, opts, ctrl, onObj, onFin) {
-    opts = opts || {}; opts.signal = ctrl.signal;
-    opts.headers = Object.assign({ Authorization: 'Bearer ' + window.aaLi.token() }, opts.headers || {});
-    fetch(url, opts).then(function (r) {
-      if (!r.ok) {
-        /* Lichess explica el motivo en el cuerpo ({"error":"..."}). Sin eso, un fallo
-           es un número pelado y no hay con qué arreglarlo. */
-        return r.text().then(function (tx) {
-          var motivo = '';
-          try { motivo = (JSON.parse(tx) || {}).error || ''; } catch (e) { motivo = (tx || '').slice(0, 200); }
-          var err = new Error('HTTP ' + r.status + ' — ' + (tx || '').slice(0, 300));
-          err.status = r.status; err.motivo = motivo; err.cuerpo = tx; throw err;
-        });
-      }
-      var rd = r.body.getReader(), dec = new TextDecoder(), buf = '';
-      (function leer() {
-        rd.read().then(function (res) {
-          if (res.done) { if (onFin) onFin(null); return; }
-          buf += dec.decode(res.value, { stream: true });
-          var partes = buf.split('\n'); buf = partes.pop();
-          partes.forEach(function (l) {
-            l = l.trim(); if (!l) return;            // las líneas vacías son latidos
-            var o = null; try { o = JSON.parse(l); } catch (e) {}
-            if (o && onObj) onObj(o);
-          });
-          leer();
-        }).catch(function (e) { if (onFin) onFin(e); });
-      })();
-    }).catch(function (e) { if (onFin) onFin(e); });
-  }
+  /* El lector de caños vive en aaLi (lo comparten la grilla y la partida). */
+  function caño(url, opts, ctrl, onObj, onFin) { return window.aaLi.cano(url, opts, ctrl, onObj, onFin); }
 
   /* ── Buscar rival ───────────────────────────────────────────────────────── */
   function arrancar(t, i) {
     if (busca) return;
     if (!usuario()) { if (window.aaAuth && window.aaAuth.login) window.aaAuth.login(); return; }
-    /* Sin permiso todavía: lo pedimos y nos acordamos de lo que quería hacer. */
-    if (!window.aaLi.tiene()) { window.aaLi.pedir({ tipo: 'seek', t: t, i: i, rated: rated }); return; }
+    /* Sin permiso todavía: primero el cartel que explica qué se está por dar (igual que
+       el del login), y después Lichess. Nos acordamos de lo que quería hacer. */
+    if (!window.aaLi.tiene()) { window.aaLi.pedirConAviso({ tipo: 'seek', t: t, i: i, rated: rated }); return; }
 
     var ctrlEv = new AbortController(), ctrlSeek = new AbortController();
     busca = { ev: ctrlEv, seek: ctrlSeek, t0: Date.now(), timer: 0, tc: tcTexto(t, i) };
@@ -41731,6 +41840,14 @@ function cvUpdateNagBadge() {
      gesto del visitante. Por eso se muestra un botón y lo aprieta él. */
   function mostrarPartida(g) {
     var w = $('lv-li-wait'); if (!w) return;
+
+    /* Fase 2: la partida se juega ACÁ, en el tablero de casa. Si por lo que sea no se
+       pudiera enganchar (librería de ajedrez caída, por ejemplo), no se pierde la
+       partida: queda el camino viejo, que es el botón para jugarla en lichess.org. */
+    var enCasa = false;
+    try { enCasa = !!(window.aaLiPartida && window.aaLiPartida.jugar(g)); } catch (e) { enCasa = false; }
+    if (enCasa) { busca = null; restaurarEspera(); mostrarEspera(false); return; }
+
     var url = LI + '/' + (g.fullId || g.gameId || '');
     var color = g.color === 'black' ? '⚫ Jugás con negras' : '⚪ Jugás con blancas';
     var riv = (g.opponent && (g.opponent.username || g.opponent.id)) || 'tu rival';
@@ -41746,6 +41863,24 @@ function cvUpdateNagBadge() {
   }
 
   /* ── Enganches ──────────────────────────────────────────────────────────── */
+  /* Al entrar a una partida, el tablero tiene que quedar ARRIBA de todo: el PvP esconde
+     el encabezado y las salas, y este panel se suma a esa lista. Al volver al salón no
+     se puede prender a lo bruto (`display=''`), porque en la web publicada el panel puede
+     estar apagado: se vuelve a pintar y `pintar` decide según el interruptor. */
+  window.aaLiPanel = {
+    ocultar: function () { var w = $('lv-li-wrap'); if (w) w.style.display = 'none'; },
+    refrescar: function () { pintar(); },
+    /* "Nuevo oponente": volver a buscar con el MISMO ritmo, sin pasar por la grilla.
+       Es el botón más usado de Lichess y acá es el mismo pedido de siempre, otra vez. */
+    buscar: function (t, i, conRating) {
+      rated = !!conRating;
+      Array.prototype.forEach.call(document.querySelectorAll('#lv-li-rated [data-lirated]'), function (x) {
+        x.classList.toggle('lv-seg-on', (x.getAttribute('data-lirated') === '1') === rated);
+      });
+      arrancar(t, i);
+    }
+  };
+
   function init() {
     pintar(); initRated();
     var w = $('lv-li-wait'); if (w) esperaHTML = w.innerHTML;   // guardar la caja original
@@ -41765,6 +41900,310 @@ function cvUpdateNagBadge() {
     });
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
+})();
+</script>
+
+<script>
+/* ─────────────────────────────────────────────────────────────────────────────
+   Fase 2 — La partida de Lichess, jugada en NUESTRO tablero.
+
+   La idea en una línea: Lichess hace de árbitro y nosotros ponemos la cara.
+
+   El tablero es EL MISMO del PvP de casa —nada de una copia paralela— y se lo maneja
+   por la puerta `window.lvTablero`, que recibe exactamente el mismo mensaje de estado
+   que manda nuestro propio árbitro. Acá adentro sólo se TRADUCE de un idioma al otro.
+
+   Lo que manda Lichess por el caño de la partida:
+     · gameFull     — al abrir: colores, nombres, reloj inicial y el estado de ahora
+     · gameState    — en cada jugada: las jugadas en UCI y los dos relojes
+     · chatLine     — lo que escribe el rival
+     · opponentGone — el rival se fue (y en cuántos segundos se le puede reclamar)
+
+   Tres cosas que hay que respetar y no se pueden cambiar:
+     · La REVANCHA no existe en la API: ni se ofrece ni se recibe. El botón se esconde
+       solo (lo hace `updateControls` mirando el transporte).
+     · El RELOJ lo manda Lichess: acá se MUESTRA, nunca se calcula. Si nos pusiéramos a
+       contar por nuestra cuenta, en un 5+5 el desfasaje se nota enseguida.
+     · El reloj NO baja hasta que los dos hicieron su primera jugada (son los 30 s de
+       gracia). Por eso el 3·2·1 no le cuesta tiempo a nadie.
+   ───────────────────────────────────────────────────────────────────────────── */
+(function () {
+  'use strict';
+  var LI = 'https://lichess.org';
+  var P = null;   // partida en curso: { id, full, ctrl, color, cdHasta, pendiente, timer }
+
+  function tok() { try { return (window.aaLi && window.aaLi.token()) || ''; } catch (e) { return ''; } }
+  function avisar(t) { try { window.aaLi.avisar(t); } catch (e) {} }
+  function decir(t) { try { if (typeof window.aaDecir === 'function') window.aaDecir(t); } catch (e) {} }
+
+  /* Un pedido corto a Lichess (mover, chatear, abandonar…). */
+  function post(ruta, campos) {
+    var o = { method: 'POST', headers: { Authorization: 'Bearer ' + tok() } };
+    if (campos) {
+      o.headers['Content-Type'] = 'application/x-www-form-urlencoded';
+      o.body = new URLSearchParams(campos).toString();
+    }
+    return fetch(LI + ruta, o).then(function (r) {
+      if (r.ok) return;
+      return r.text().then(function (t) {
+        var motivo = ''; try { motivo = (JSON.parse(t) || {}).error || ''; } catch (e) {}
+        var err = new Error('HTTP ' + r.status + (motivo ? (' — ' + motivo) : ''));
+        err.status = r.status; throw err;
+      });
+    });
+  }
+
+  function nombre(j) { return (j && (j.name || j.id)) || (j && j.aiLevel ? ('Ordenador nivel ' + j.aiLevel) : ''); }
+  function chapita(j) { return (j && j.rating) ? { r: j.rating, prov: !!j.provisional } : null; }
+  function lado(x) { return x === 'white' ? 'w' : x === 'black' ? 'b' : null; }
+
+  /* ── Del final de Lichess al cartel de casa ────────────────────────────────
+     Nuestro `describeResult` habla de {reason, winner, by}. Lichess manda un `status`
+     y, si hubo ganador, `winner`. Para las tablas Lichess dice sólo "draw": el motivo
+     se lo preguntamos al tablero, que ya tiene la posición final. */
+  function resultado(st, ch) {
+    var gan = lado(st.winner), perd = gan ? (gan === 'w' ? 'b' : 'w') : null;
+    switch (st.status) {
+      case 'mate':      return { reason: 'checkmate', winner: gan };
+      case 'resign':    return { reason: 'resign', by: perd };
+      case 'outoftime': return { reason: 'flag', by: perd };
+      case 'timeout':   return { reason: 'abandon', by: perd };   // no movió / se fue
+      case 'stalemate': return { reason: 'stalemate' };
+      case 'aborted':   return { reason: 'abort' };
+      case 'noStart':   return { reason: 'abort' };
+      case 'draw':
+        try {
+          if (ch.insufficient_material && ch.insufficient_material()) return { reason: 'material' };
+          if (ch.in_threefold_repetition && ch.in_threefold_repetition()) return { reason: 'threefold' };
+        } catch (e) {}
+        return { reason: 'draw-agree' };
+      default:          return { reason: 'default' };
+    }
+  }
+
+  /* ── El traductor ──────────────────────────────────────────────────────────
+     Lichess manda las jugadas en UCI ("e2e4 e7e5"); el tablero las quiere en SAN y con
+     la posición armada. Se rearman con la misma librería de ajedrez que usa el visor. */
+  function traducir(full, st) {
+    var fen0 = (full.initialFen && full.initialFen !== 'startpos') ? full.initialFen : null;
+    var ch; try { ch = fen0 ? new Chess(fen0) : new Chess(); } catch (e) { ch = new Chess(); }
+    var sans = [], ult = null;
+    var ucis = String(st.moves || '').split(' ').filter(Boolean);
+    for (var i = 0; i < ucis.length; i++) {
+      var u = ucis[i], mv = null;
+      try { mv = ch.move({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u.slice(4, 5) || undefined }); } catch (e) { mv = null; }
+      if (!mv) break;
+      sans.push(mv.san); ult = { from: mv.from, to: mv.to, san: mv.san };
+    }
+    var viva = (st.status === 'started' || st.status === 'created');
+    var inc = full.clock ? Math.round(full.clock.increment / 1000) : 0;
+    var m = {
+      fen: ch.fen(),
+      turn: ch.turn(),
+      status: viva ? 'playing' : 'finished',
+      moves: sans,
+      lastMove: ult,
+      names: { w: nombre(full.white) || 'Blancas', b: nombre(full.black) || 'Negras' },
+      players: { w: true, b: true, connW: true, connB: true },
+      ratings: { w: chapita(full.white), b: chapita(full.black) },
+      rated: !!full.rated,
+      base: full.clock ? Math.round(full.clock.initial / 1000) : 0,
+      inc: inc,
+      /* Los tiempos vienen en milisegundos, igual que los quiere el tablero: no se
+         convierten. El "corriendo" recién se enciende cuando los dos movieron. */
+      clock: (st.wtime == null) ? null : {
+        w: st.wtime, b: st.btime, inc: inc,
+        running: (viva && ucis.length >= 2) ? ch.turn() : null
+      },
+      drawOffer: st.wdraw ? 'w' : (st.bdraw ? 'b' : null)
+    };
+    if (!viva) m.result = resultado(st, ch);
+    return m;
+  }
+
+  /* ── El 3·2·1 ──────────────────────────────────────────────────────────────
+     El tablero ya sabe hacer la cuenta: alcanza con mandarle un `startAt` futuro en el
+     primer estado. Lo nuestro es RETENER lo que llegue mientras dura, así no aparece el
+     peón del rival debajo del cartel. Como el reloj todavía no baja, no cuesta tiempo.
+     Candado: si algo falla, la jugada se muestra igual — nunca se queda escondida. */
+  function enCuenta() { return P && P.cdHasta && Date.now() < P.cdHasta; }
+  function empujar(m) {
+    if (!P) return;
+    if (enCuenta()) {                       // guardar y mostrar en el "¡Ya!"
+      P.pendiente = m;
+      if (!P.timer) P.timer = setTimeout(soltarPendiente, (P.cdHasta - Date.now()) + 120);
+      return;
+    }
+    aplicar(m);
+  }
+  /* Un solo lugar donde el estado llega al tablero: así el botón del final aparece
+     siempre, venga el estado directo o retenido por la cuenta regresiva. */
+  function aplicar(m) {
+    try { window.lvTablero.estado(m); } catch (e) {}
+    if (m && m.status === 'finished') botones(true);
+  }
+  function soltarPendiente() {
+    if (!P) return;
+    P.timer = null; P.cdHasta = 0;
+    var m = P.pendiente; P.pendiente = null;
+    if (m) aplicar(m);
+  }
+
+  /* ── Lo que sale del tablero hacia Lichess ─────────────────────────────────
+     Le llega TODO lo que el tablero manda, porque el PvP lo encauza por un solo lugar
+     (`send`). Lo que Lichess no tiene (revancha, configurar, sentarse) se ignora. */
+  function enviar(o) {
+    if (!P || !o) return;
+    var id = P.id, t = o.type;
+    var p = null;
+    if (t === 'move')          p = post('/api/board/game/' + id + '/move/' + (o.from + o.to + (o.promotion || '')));
+    else if (t === 'chat') {
+      var txt = String(o.text || '').slice(0, 140);
+      p = post('/api/board/game/' + id + '/chat', { room: 'player', text: txt });
+      /* En el PvP tu propio mensaje aparece cuando lo devuelve nuestro árbitro. Lichess
+         no devuelve el eco, así que lo pintamos acá o el visitante escribe y no ve nada. */
+      try { window.lvTablero.chat({ color: P.color, text: txt }); } catch (e) {}
+    }
+    else if (t === 'resign')   p = post('/api/board/game/' + id + '/resign');
+    else if (t === 'abort')    p = post('/api/board/game/' + id + '/abort');
+    else if (t === 'draw-offer' || t === 'draw-accept') p = post('/api/board/game/' + id + '/draw/yes');
+    else if (t === 'draw-decline') p = post('/api/board/game/' + id + '/draw/no');
+    else return;               // 'rematch', 'config', 'sit', 'leave'… no existen allá
+    p.catch(function (e) {
+      var msg = (e && e.message) || '';
+      avisar(t === 'move' ? ('Lichess no aceptó la jugada (' + msg + ').') : ('Lichess no aceptó la acción (' + msg + ').'));
+      /* Si la jugada rebotó, el tablero quedó adelantado: el próximo estado de Lichess
+         lo vuelve a la realidad, así que no hay que deshacer nada a mano. */
+    });
+  }
+
+  /* ── Arrancar ──────────────────────────────────────────────────────────────
+     `g` es el aviso `gameStart` que llega por el caño de la cuenta. */
+  function jugar(g) {
+    if (!g || !window.lvTablero || typeof Chess !== 'function') return false;
+    var id = g.gameId || g.id || (g.fullId || '').slice(0, 8);
+    if (!id) return false;
+    cortar();
+    botones(false);
+    var color = (g.color === 'black') ? 'b' : 'w';
+    P = { id: id, full: null, ctrl: new AbortController(), color: color, cdHasta: 0, pendiente: null, timer: null, relTimer: null };
+
+    window.lvTablero.enganchar({ enviar: enviar, listo: function () { return !!P; } }, color);
+    window.lvTablero.aviso('Conectando con la partida…');
+
+    window.aaLi.cano(LI + '/api/board/game/stream/' + id, {}, P.ctrl, alLlegar, function (e) {
+      if (e && e.name === 'AbortError') return;
+      if (!P) return;
+      /* El caño se cierra solo cuando la partida termina: eso NO es un error. */
+      if (!e) { soltar(); return; }
+      avisar('Se cortó la conexión con la partida' + (e.status ? (' (' + e.status + ')') : '') + '.');
+      soltar();
+    });
+    return true;
+  }
+
+  function alLlegar(o) {
+    if (!P || !o) return;
+    if (o.type === 'gameFull') {
+      P.full = o;
+      var st = o.state || {};
+      var m = traducir(o, st);
+      /* Cuenta regresiva sólo si la partida recién empieza (no al reconectarse a una
+         que ya va por la jugada 20). */
+      var reciente = !String(st.moves || '').trim() && m.status === 'playing';
+      if (reciente) { P.cdHasta = Date.now() + 3000; m.startAt = P.cdHasta; }
+      aplicar(m);
+      decir('Partida contra ' + (color() === 'w' ? m.names.b : m.names.w) + '. Jugás con ' + (color() === 'w' ? 'blancas' : 'negras') + '.');
+      return;
+    }
+    if (o.type === 'gameState') { if (P.full) empujar(traducir(P.full, o)); return; }
+    if (o.type === 'chatLine') {
+      if (o.room !== 'player') return;                       // la tribuna no va al chat de la partida
+      var mio = P.full && nombre(P.full[P.color === 'w' ? 'white' : 'black']) === o.username;
+      if (mio) return;                                        // el eco de lo que escribí yo
+      try { window.lvTablero.chat({ color: (P.color === 'w' ? 'b' : 'w'), name: o.username, text: o.text }); } catch (e) {}
+      return;
+    }
+    if (o.type === 'opponentGone') { rivalSeFue(o); return; }
+  }
+  function color() { return P ? P.color : 'w'; }
+
+  /* ── Botones del final ─────────────────────────────────────────────────────
+     "Nuevo oponente" es lo más usado de Lichess y acá es barato: el MISMO pedido de la
+     grilla, otra vez, con el ritmo de la partida que acaba de terminar. */
+  function $$(id) { return document.getElementById(id); }
+  function botones(finTerminado) {
+    var n = $$('lv-li-nuevo'); if (n) n.style.display = finTerminado ? '' : 'none';
+    if (!finTerminado) { var r = $$('lv-li-reclamar'); if (r) r.style.display = 'none'; }
+  }
+  function nuevoOponente() {
+    var f = P && P.full;
+    var t = 10, i = 0, conRating = false;
+    if (f && f.clock) {
+      t = f.clock.initial / 60000;
+      if (Math.abs(t - Math.round(t)) < 0.01) t = Math.round(t);
+      i = Math.round(f.clock.increment / 1000);
+      conRating = !!f.rated;
+    }
+    soltar(); botones(false);
+    try { window.lvTablero.volver(); } catch (e) {}
+    try { window.aaLiPanel.refrescar(); window.aaLiPanel.buscar(t, i, conRating); } catch (e) {}
+  }
+
+  /* ── El rival se fue ───────────────────────────────────────────────────────
+     Lichess avisa y dice en cuántos segundos se le puede reclamar la victoria. Hasta que
+     llega ese momento no hay nada que apretar: se muestra la cuenta en el renglón de
+     estado y recién ahí aparece el botón. */
+  function rivalSeFue(o) {
+    if (!P) return;
+    if (P.relTimer) { clearInterval(P.relTimer); P.relTimer = null; }
+    var r = $$('lv-li-reclamar');
+    if (!o.gone) { if (r) r.style.display = 'none'; return; }
+    var seg = (o.claimWinInSeconds == null) ? null : +o.claimWinInSeconds;
+    if (seg == null) { window.lvTablero.aviso('⏳ Tu rival se fue de la partida…'); return; }
+    var hasta = Date.now() + seg * 1000;
+    var tic = function () {
+      if (!P) return;
+      var falta = Math.max(0, Math.ceil((hasta - Date.now()) / 1000));
+      if (falta > 0) { window.lvTablero.aviso('⏳ Tu rival se fue. Podés reclamar la victoria en <b>' + falta + 's</b>…'); return; }
+      clearInterval(P.relTimer); P.relTimer = null;
+      window.lvTablero.aviso('Tu rival no volvió: ya podés reclamar la victoria.');
+      if (r) r.style.display = '';
+    };
+    tic(); P.relTimer = setInterval(tic, 500);
+  }
+  function reclamar() {
+    if (!P) return;
+    var r = $$('lv-li-reclamar'); if (r) r.style.display = 'none';
+    post('/api/board/game/' + P.id + '/claim-victory').catch(function (e) {
+      avisar('Lichess no aceptó el reclamo (' + ((e && e.message) || '') + ').');
+      if (r) r.style.display = '';
+    });
+  }
+
+  /* Soltar el tablero (la partida terminó o se cortó), sin cerrar la vista: el visitante
+     se queda mirando el resultado y sale con el botón de siempre. */
+  function soltar() {
+    if (!P) return;
+    if (P.timer) { clearTimeout(P.timer); soltarPendiente(); }
+    if (P.relTimer) { clearInterval(P.relTimer); P.relTimer = null; }
+    try { P.ctrl.abort(); } catch (e) {}
+    P = null;
+    try { window.lvTablero.soltar(); } catch (e) {}
+  }
+  function cortar() { soltar(); }
+
+  /* Los botones viven en el HTML del tablero; su comportamiento, acá. */
+  function enganchar() {
+    var n = $$('lv-li-nuevo'); if (n && !n._li) { n._li = true; n.addEventListener('click', nuevoOponente); }
+    var r = $$('lv-li-reclamar'); if (r && !r._li) { r._li = true; r.addEventListener('click', reclamar); }
+    /* Salir del tablero con "Volver al menú" durante una partida de Lichess: soltamos el
+       caño (si no, seguiría escuchando una partida que el visitante ya dejó). */
+    var x = $$('lv-exit'); if (x && !x._li) { x._li = true; x.addEventListener('click', function () { botones(false); soltar(); }); }
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', enganchar); else enganchar();
+
+  window.aaLiPartida = { jugar: jugar, soltar: soltar, enCurso: function () { return !!P; } };
 })();
 </script>
 
