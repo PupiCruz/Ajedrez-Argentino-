@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 867;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 909;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -3651,6 +3651,93 @@ console.log('\n=== 50. Puntos del torneo en el visor (6½/7) ===');
         'y sigue explicando lo del rating de Lichess y el límite de ritmos');
   }
 
+  // ── Fase 4: desafiar a alguien de la comunidad ──────────────────────────────────
+  {
+    const rd = (modGrid.match(/var RITMOS_DESAFIO = \[([\s\S]*?)\];/) || ['', ''])[1];
+    const tcs = [...rd.matchAll(/\[\s*(\d+)\s*,\s*(\d+)\s*\]/g)].map(m => [+m[1], +m[2]]);
+    chk(tcs.length >= 4, 'hay ritmos para desafiar a alguien', tcs.map(t => t[0] + '+' + t[1]).join(' '));
+    // 🚧 En un desafío a alguien puntual Lichess acepta de BLITZ para arriba (180 s
+    // estimados), no como el rival al azar que exige Rápida. Pero BALA sigue prohibida, y
+    // con una trampa: el desafío en bala Lichess TE LO CREA igual, y despues la partida
+    // sale marcada como no jugable desde afuera y el visitante no puede mover.
+    chk(tcs.every(([m, i]) => m * 60 + 40 * i >= 180), '🔒 ninguno es bala (Lichess lo crearía pero después no se podría jugar)');
+    chk(tcs.some(([m, i]) => m * 60 + 40 * i < 480), 'y hay blitz, que es lo que el rival al azar no permite');
+    // ⚠️ Tercera unidad de reloj del proyecto: el desafío lo quiere en SEGUNDOS.
+    chk(/'clock\.limit': String\(Math\.round\(t \* 60\)\)/.test(modGrid),
+        '🔒 el desafío manda el reloj en SEGUNDOS (el rival al azar lo manda en minutos)');
+    chk(/keepAliveStream: 'true'/.test(modGrid),
+        '🔒 el desafío se mantiene abierto (sin eso caduca a los 20 segundos)');
+    chk(/'Accept-Language': 'es-AR,es'/.test(modGrid),
+        'se pide el motivo del rechazo en castellano');
+    // El desafío tiene su PROPIO tilde de rating: antes usaba el de la tarjeta de arriba,
+    // que no se ve desde acá, y no había forma de elegir amistosa.
+    chk(/var lidRated = false/.test(modGrid) && /rated: conRating \? 'true' : 'false'/.test(modGrid),
+        'el desafío tiene su propio tilde Con rating / Amistosa');
+    chk(/data-lidrated="0"[^>]*>🤝 Amistosa/.test(SRC) && /class="lv-seg lv-seg-on" data-lidrated="0"/.test(SRC),
+        '🔒 y arranca en AMISTOSA (jugar contra tu propia cuenta por rating es manipulación de Elo)');
+    // El color se elige al desafiar; en el rival AL AZAR no, a propósito: la documentación
+    // de Lichess pide dejarlo vacío ("better left empty to automatically get 50% white").
+    chk(/data-lidcolor="rnd"/.test(SRC) && /class="lv-seg lv-seg-on" data-lidcolor="rnd"/.test(SRC),
+        'el desafío deja elegir color y arranca en Al azar');
+    chk(/if \(color === 'white' \|\| color === 'black'\) p\.set\('color', color\)/.test(modGrid),
+        '🔒 "Al azar" NO manda el campo color: lo sortea Lichess 50/50');
+    chk(!/color:/.test((modGrid.match(/\/api\/board\/seek[\s\S]{0,400}/) || [''])[0]),
+        '🔒 y el rival al azar nunca fija el color (si lo fijara, jugarías siempre de blancas)');
+    chk(/function perfDe/.test(modGrid) && /s < 180 \? 'bullet' : s < 480 \? 'blitz'/.test(modGrid),
+        'el rating que se muestra es el del RITMO elegido (blitz para un 3+0, rápida para un 10+0)');
+    chk(/users\/status\?ids=/.test(modGrid) && /rating\/top/.test(modGrid),
+        'los nombres salen del ranking del sitio y el estado se consulta a Lichess');
+    chk(/no hay nadie de ChessArgentino conectado/.test(modGrid),
+        'y si no hay nadie, lo dice y manda al rival al azar (no queda un hueco)');
+    chk(/lidVetos\[id\]/.test(modGrid) && /recordarVeto/.test(modGrid),
+        'si a alguien no se le puede desafiar, el renglón se lo acuerda y no se insiste');
+    // 🐛 Pasó de verdad: el desafío se aceptaba y la partida arrancaba SÓLO en lichess.org.
+    // Lichess cierra el caño del desafío apenas lo aceptan, y el aviso de "arrancó la
+    // partida" viene por el OTRO caño un instante después: al cortar todo en el cierre,
+    // no quedaba nadie escuchando. Ahora el cierre limpio espera.
+    chk(/busca\.aceptado = true/.test(modGrid) && /busca\.aceptado \? 8000 : 3000/.test(modGrid),
+        '🔒 tras aceptar el desafío se espera el aviso de la partida (no se corta en el cierre)');
+  }
+
+  // ── Fase 5: quedar en línea en Lichess y recibir desafíos de allá ───────────────
+  chk(/function idleOn\(\)/.test(modGrid) && /function idleSync\(\)/.test(modGrid),
+      'se mantiene una conexión con Lichess mientras el visitante está en la pestaña Jugar');
+  // No alcanza con "no abrir": si activa No molestar o se va a otra pestaña con la conexión
+  // ya abierta, seguiría figurando disponible. Por eso idleSync CIERRA además de abrir.
+  chk(/idleSync\(\) \{ if \(enLaPestanaJugar\(\) && !noMolestar\(\)\) idleOn\(\); else idleOff\(\); \}/.test(modGrid),
+      '🔒 y se CIERRA al activar No molestar o al irse de la pestaña (no sólo deja de abrirse)');
+  chk(/evEspera \* 2, 60000/.test(modGrid),
+      '🔒 la reconexión espera cada vez más (un corte de red en bucle es nuestro único riesgo real de 429)');
+  chk(/idleOff\(\);   \/\/ la conexión ociosa se cierra: la búsqueda abre la suya/.test(modGrid),
+      'y no quedan dos conexiones abiertas cuando se busca rival');
+  // Lo que no se puede jugar en nuestro tablero se rechaza SOLO, con el motivo que Lichess
+  // le traduce al idioma del que desafió.
+  chk(/reason: 'standard'/.test(modGrid) && /reason: 'timeControl'/.test(modGrid) && /reason: 'tooFast'/.test(modGrid),
+      '🔒 se rechazan solos los desafíos de variante, correspondencia y bala');
+  // 🐛 Pasó de verdad: el visitante desafió a otro y el aviso le volvió a él mismo
+  // ("Chess_Argentino te desafía"). Mirar `direction` NO alcanza: no es un campo obligatorio
+  // de la API y a veces no viene. Hay que mirar quién desafía y a quién.
+  chk(/ch\.direction === 'out'\) return/.test(modGrid)
+      && /deQuien === yo\) return/.test(modGrid)
+      && /paraQuien !== yo\) return/.test(modGrid),
+      '🔒 el eco de los desafíos propios se filtra por QUIÉN desafía, no sólo por direction');
+
+  // El chat crecía con cada mensaje y le comía la columna a los botones (con 25 mensajes se
+  // quedaba con el 76% y dejaba "Rendirme" en 73 px dentro de una barrita).
+  chk(/\.lv-left-scroll \{ flex:0 0 auto; min-height:0; max-height:60%/.test(SRC) && /\.lv-chat \{[^}]*min-height:120px/.test(SRC),
+      '🔒 el chat no le come la columna a los botones (arriba hasta 60%, el chat el resto)');
+  chk(/challenge\/' \+ id \+ '\/accept'/.test(modGrid) && /lvTablero\.desafioEntrante/.test(modGrid),
+      'los que sí se pueden jugar salen con Aceptar y Rechazar');
+  // Un desafío es un desafío: los de Lichess entran al MISMO apilador de arriba a la derecha
+  // que los del sitio (tarjeta que se vuelve globito). Dos carteles distintos para lo mismo
+  // obligaban al visitante a aprender dos lugares.
+  chk(/desafioEntrante: function\(m\)\{ lvOnIncoming\(m\); \}/.test(SRC),
+      '🔒 los desafíos de Lichess usan el MISMO apilador que los del sitio, no un cartel aparte');
+  chk(/if\(m\.acc\)\{ try\{ m\.acc\(\); \}catch\(e\)\{\} return; \}\n?\s*acceptChallenge\(id\); goToVivoGame\(\);/.test(SRC.replace(/\r/g, '')),
+      '🔒 y cada uno acepta por su camino: sin callback propio, sigue el del árbitro de casa');
+  chk(/m\.seat==='w'\?' · jugás ⚫ Negras':''/.test(SRC),
+      'el color sólo se anuncia si se sabe (en un desafío "al azar" lo sortea Lichess al arrancar)');
+
   // ── Fase 3: los botones del final ───────────────────────────────────────────────
   chk(/id="lv-li-nuevo"/.test(SRC) && /id="lv-li-reclamar"/.test(SRC),
       'están los botones de "Nuevo oponente" y de reclamar la victoria');
@@ -3669,6 +3756,66 @@ console.log('\n=== 50. Puntos del torneo en el visor (6½/7) ===');
       '🔒 la fila de botones se apila cuando no entran (antes desbordaba la columna)');
   chk(/claim-victory/.test(modPartida) && /claimWinInSeconds/.test(modPartida),
       'el reclamo espera los segundos que dice Lichess antes de ofrecerse');
+  // 🐛 "Nuevo oponente" busca AL AZAR, y eso Lichess sólo lo permite de rápida para arriba.
+  // Después de un blitz (que se puede jugar, pero sólo por desafío directo) el botón
+  // invitaba a apretarlo y devolvía "no acepta ese control de tiempo".
+  chk(/function sirveAlAzarEstaPartida/.test(modPartida) && /finTerminado && sirveAlAzarEstaPartida\(\)/.test(modPartida),
+      '🔒 "Nuevo oponente" no aparece si el ritmo jugado no sirve para buscar al azar');
+  // La revancha que la API de Lichess NO tiene, hecha con un desafío nuevo al mismo rival.
+  // Sirve para cualquier ritmo jugable, así que cubre el blitz que "Nuevo oponente" no puede.
+  chk(/id="lv-li-revan"/.test(SRC) && /function desafiarDeNuevo/.test(modPartida),
+      'existe "Desafiar de nuevo" (la revancha por la puerta de atrás)');
+  chk(/var color = \(P\.color === 'w'\) \? 'black' : 'white'/.test(modPartida),
+      '🔒 y da vuelta los colores: si jugaste blancas, el desafío nuevo te pide negras');
+  chk(/rated: conRating/.test(modPartida) && /f\.clock\.initial \/ 60000/.test(modPartida),
+      'repitiendo el ritmo y el rating de la partida que acaba de terminar');
+  // El ofrecimiento de tablas del rival dibuja un cartel chico y mudo: en una partida
+  // rápida es facilísimo no verlo, y parece que no llegó.
+  chk(/ofertaVista/.test(modPartida) && /ofrece tablas/.test(modPartida),
+      'el ofrecimiento de tablas del rival se anuncia una sola vez, no en cada jugada');
+  // 🐛 Pasó de verdad: MOVER cancela el ofrecimiento en la web de Lichess, pero su servidor
+  // NO lo borra (wdraw/bdraw salen de isOfferingDraw, que el movimiento no toca). Si le
+  // creemos al dato, el cartel queda colgado: "esperando respuesta" de algo que el rival ya
+  // no ve, y "Aceptar" no hace nada.
+  chk(/plyNuevo > P\.ply && m\.drawOffer && P\.ofertaVista === m\.drawOffer/.test(modPartida),
+      '🔒 mover cancela el ofrecimiento de tablas que ya estaba (Lichess lo sigue mandando igual)');
+  chk(/if \(m\.drawOffer !== P\.color\) post\('\/api\/board\/game\/' \+ P\.id \+ '\/draw\/no'\)/.test(modPartida),
+      'y si la oferta era del rival, se la rechazamos de verdad (servidor y pantallas de acuerdo)');
+  // Sin esto la oferta RESUCITABA en la jugada siguiente, porque el campo sigue llegando.
+  chk(/P\.ignorarOferta = m\.drawOffer/.test(modPartida) && /P\.ignorarOferta === m\.drawOffer\) m\.drawOffer = null/.test(modPartida),
+      '🔒 y se la sigue ignorando hasta que Lichess la borre (si no, resucita a la jugada siguiente)');
+  // En el PvP de casa el ofrecimiento llega como mensaje 'draw-offered' y ya sonaba desde
+  // siempre; en las partidas de Lichess llega por el campo drawOffer del estado y se
+  // quedaba mudo. Es el MISMO pitido, no uno nuevo.
+  chk(/sonarTablas: function\(\)\{ try\{ sndDraw\(\)/.test(SRC) && /lvTablero\.sonarTablas\(\)/.test(modPartida),
+      'y suena el mismo pitido que el PvP de casa (sndDraw), no uno distinto');
+  // Sólo pitido: el cartel flotante sale abajo, encima del tablero, y estorba.
+  chk(!/avisar\('🤝/.test(modPartida) && !/lvToast\('🤝 Tu rival te ofrece tablas/.test(SRC),
+      '🔒 el ofrecimiento de tablas NO saca cartel flotante (tapa el tablero): sólo suena');
+
+  // 🚧 REGLA DE LICHESS: no se puede ofrecer tablas cuando se te canta. Su código dice
+  // `drawOffers.lastBy(color).exists(_ >= ply - 20)`, o sea que hay que esperar 20 MEDIAS
+  // jugadas (10 completas) desde tu último ofrecimiento, y la partida tiene que llevar 2.
+  // Sin esto el botón quedaba invitando a apretarlo y el ofrecimiento no le llegaba a
+  // nadie: decías "esperando al rival" y del otro lado no pasaba nada.
+  chk(/puedeTablas: function \(ply\)/.test(modPartida) && /ply < 2\) return false/.test(modPartida),
+      'la partida tiene que llevar 2 medias jugadas para poder ofrecer tablas');
+  chk(/ply <= P\.ofreciEnPly \+ 20/.test(modPartida),
+      '🔒 y hay que esperar 20 medias jugadas (con <=, no con <: si no vuelve un ply antes y ese intento se pierde)');
+  // El botón NO se esconde: queda en gris, como en Lichess. Si desaparece y reaparece 10
+  // jugadas después, la columna se mueve sola en medio de la partida y desconcentra.
+  chk(/lvTx\.puedeTablas\(_ply\)/.test(SRC) && /show\('lv-offerdraw', playing && amPlayer\);/.test(SRC),
+      'el botón de ofrecer tablas sigue a la vista mientras se juega');
+  // Se pone gris en los TRES casos, y en ninguno se esconde. El que faltaba era el primero:
+  // con tu propia oferta en pie el botón se iba, y volvía recién varias jugadas después.
+  chk(/_od\.disabled = !puedeTablas \|\| !!lvDrawOffer/.test(SRC)
+      && /Ofreciste tablas — esperando la respuesta/.test(SRC)
+      && /Tu rival te ofreció tablas/.test(SRC)
+      && /10 jugadas después de tu último ofrecimiento/.test(SRC),
+      '🔒 y se pone GRIS —nunca se esconde— con tu oferta en pie, con la del rival, y en la espera');
+  // La MISMA regla en el PvP de casa: la manda el árbitro en el campo drawPly del estado.
+  chk(/_ply >= 2\) && \(_ult == null \|\| _ply > _ult \+ 20\)/.test(SRC) && /if\(m\.drawPly\) lvDrawPly=m\.drawPly/.test(SRC),
+      'y el PvP de casa aplica la misma regla, con el dato que manda el árbitro');
   chk(/lv-exit[\s\S]{0,140}botones\(false\); soltar\(\)/.test(modPartida),
       'salir del tablero suelta el caño (si no, seguiría escuchando una partida ya dejada)');
 

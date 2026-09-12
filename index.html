@@ -3347,7 +3347,12 @@
       /* La caja de arriba se ACHICA antes que el chat (flex-shrink) y scrollea adentro; el chat
          se queda pegado abajo con un alto mínimo, así no desaparece cuando hay mucho que mostrar.
          Cuando entra todo (una partida suelta), se comporta igual que antes. */
-      .lv-left-scroll { flex:0 1 auto; min-height:0; overflow-y:auto; margin:0 -4px; padding:0 4px; }
+      /* Reparto de la columna izquierda entre los botones (arriba) y el chat (abajo).
+         Antes el chat crecía con cada mensaje y le comía el lugar a los botones: con 25
+         mensajes se quedaba con el 76% y dejaba a "Rendirme" y compañía en 73 píxeles,
+         dentro de una barrita de scroll. Ahora arriba toma lo que necesita hasta el 60%
+         de la columna y el chat se queda con el resto (nunca menos de 120 px). */
+      .lv-left-scroll { flex:0 0 auto; min-height:0; max-height:60%; overflow-y:auto; margin:0 -4px; padding:0 4px; }
       /* Adentro de una sala hay más cosas apiladas: botones y textos un poco más compactos. */
       #lv-game.lv-sala .lv-controls { gap:7px; }
       #lv-game.lv-sala .lv-controls button { padding:8px 12px; font-size:13px; }
@@ -3376,7 +3381,7 @@
       /* Chat de la partida (columna izquierda, debajo de los controles). En pantalla ancha
          llena el espacio que queda hasta el borde inferior del tablero (columna alineada por
          lvSyncCols) y scrollea adentro; en móvil se topa (ver @media más abajo). */
-      .lv-chat { display:flex; flex-direction:column; flex:1 1 auto; min-height:0; margin-top:12px; padding-top:12px; border-top:1px solid var(--border); }
+      .lv-chat { display:flex; flex-direction:column; flex:1 1 auto; min-height:120px; margin-top:12px; padding-top:12px; border-top:1px solid var(--border); }
       .lv-chat.is-collapsed { flex:0 0 auto; }
       .lv-chat-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:0 0 8px; }
       .lv-chat-title { font-size:12px; font-weight:800; letter-spacing:.6px; text-transform:uppercase; color:var(--text3); }
@@ -3526,6 +3531,24 @@
       .lv-li-note { font-size:11.5px; color:var(--text3); margin:12px 0 0; line-height:1.5; }
       .lv-li-guest { font-size:12.5px; color:var(--text2); background:var(--bg2); border:1px dashed var(--border);
         border-radius:var(--r-sm); padding:10px 12px; margin:0 0 12px; line-height:1.5; }
+
+      /* ── Desafiar a alguien de la comunidad que está en Lichess ── */
+      .lv-lid-card { margin-top:14px; }
+      .lv-lid-tc { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px; }
+      .lv-lid-tc button { flex:0 1 auto; min-width:66px; background:var(--bg2); border:1px solid var(--border);
+        color:var(--text2); border-radius:var(--r-sm); padding:7px 12px; font-size:13px; font-weight:700;
+        font-family:inherit; cursor:pointer; }
+      .lv-lid-tc button.on { background:var(--gold-bg); border-color:var(--gold-dim); color:var(--gold); }
+      .lv-lid-row { display:flex; align-items:center; gap:9px; padding:9px 0; border-bottom:1px solid var(--border); min-width:0; }
+      .lv-lid-row:last-child { border-bottom:none; }
+      .lv-lid-nm { flex:1 1 auto; min-width:0; font-size:14px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+      .lv-lid-elo { flex:0 0 auto; font-size:12px; color:var(--text3); font-variant-numeric:tabular-nums; }
+      .lv-lid-b { flex:0 0 auto; background:var(--gold-bg); border:1px solid var(--gold-dim); color:var(--gold);
+        border-radius:var(--r-sm); padding:6px 11px; font-size:12.5px; font-weight:700; font-family:inherit; cursor:pointer; white-space:nowrap; }
+      .lv-lid-b:disabled { background:var(--bg2); border-color:var(--border); color:var(--text3); cursor:default; }
+      .lv-lid-tag { flex:0 0 auto; font-size:11.5px; color:var(--text3); white-space:nowrap; }
+      .lv-lid-empty { font-size:12.5px; color:var(--text3); line-height:1.55; padding:6px 0; }
+
       .lv-sala-card { display:flex; flex-direction:column; gap:6px; text-align:left; padding:14px 15px; border:1px solid var(--border); border-radius:var(--r-md); background:var(--bg2); color:var(--text); font-family:inherit; cursor:pointer; transition:filter .12s, border-color .12s; }
       .lv-sala-card:hover { filter:brightness(1.07); border-color:var(--gold-dim); }
       .lv-sala-top { display:flex; align-items:center; gap:8px; min-width:0; }
@@ -3658,11 +3681,44 @@
           </div>
           <div id="lv-li-wait" class="lv-li-wait" style="display:none">
             <div class="lv-li-wait-tc" id="lv-li-wait-tc"></div>
-            <div class="lv-li-wait-tx"><span class="lv-li-dots">Buscando rival en Lichess</span></div>
+            <div class="lv-li-wait-tx"><span class="lv-li-dots" id="lv-li-wait-tx">Buscando rival en Lichess</span></div>
             <div class="lv-li-wait-el" id="lv-li-wait-el"></div>
             <button type="button" class="lv-btn-sec" id="lv-li-cancel">Cancelar</button>
           </div>
           <p class="lv-li-note" id="lv-li-note"><b>Jugás acá</b>, en el tablero del sitio: la partida queda en tu cuenta de Lichess y suma tu rating de allá. Para rival al azar, Lichess sólo permite <b>rápidas y clásicas</b> desde otras apps: <b>5+5 es lo más rápido que se puede</b>. Si querés bala o blitz, te esperan las <b>salas</b> de acá arriba.</p>
+        </div>
+
+        <!-- DESAFIAR A ALGUIEN DE LA COMUNIDAD que está conectado en Lichess.
+             Por qué acá y no una lista de "conectados de Lichess": esa lista NO existe.
+             /api/users/status es una consulta (le pasás nombres, te dice quién está), no un
+             directorio. Así que los nombres salen de lo nuestro: el ranking del sitio y la
+             gente en línea acá. Y como las cuentas del sitio SON cuentas de Lichess, el
+             usuario enlaza directo.
+             Acá SÍ se puede blitz: en un desafío a alguien puntual Lichess acepta de 3+0
+             para arriba (isBoardCompatible con fuente Friend/Api). Bala sigue sin poder. -->
+        <div class="lv-salas-card lv-lid-card" id="lv-lid-card">
+          <div class="lv-salas-head">
+            <h3>⚔️ Desafiar a alguien</h3>
+            <span>gente de ChessArgentino conectada ahora en Lichess</span>
+          </div>
+          <p class="lv-salas-sub">Acá sí se puede <b>blitz</b>: desde 3+0.</p>
+          <div id="lv-lid-tc" class="lv-lid-tc" role="group" aria-label="Ritmo del desafío"></div>
+          <!-- Tilde propio: antes usaba el de la tarjeta de arriba, que acá no se ve, y no
+               había manera de elegir amistosa al desafiar. Arranca en Amistosa a propósito
+               (es también lo que hace Lichess por defecto en su API). -->
+          <div id="lv-lid-rated" class="lv-color-seg lv-li-rated" style="margin-bottom:8px">
+            <button type="button" class="lv-seg" data-lidrated="1">🏅 Con rating</button>
+            <button type="button" class="lv-seg lv-seg-on" data-lidrated="0">🤝 Amistosa</button>
+          </div>
+          <!-- Color: en el rival AL AZAR no se elige a propósito (la documentación de Lichess
+               pide dejarlo vacío para que sortee 50/50), pero al desafiar a alguien sí tiene
+               sentido. "Al azar" no manda el campo: lo sortea Lichess. -->
+          <div id="lv-lid-color" class="lv-color-seg lv-li-rated" style="margin-bottom:12px">
+            <button type="button" class="lv-seg" data-lidcolor="white">⚪ Blancas</button>
+            <button type="button" class="lv-seg lv-seg-on" data-lidcolor="rnd">🎲 Al azar</button>
+            <button type="button" class="lv-seg" data-lidcolor="black">⚫ Negras</button>
+          </div>
+          <div id="lv-lid-list"></div>
         </div>
       </div>
 
@@ -3831,6 +3887,9 @@
               <!-- En las partidas de Lichess no hay revancha (su API no la tiene), pero sí está lo
                    que allá más se usa: buscar otro rival al toque, con el mismo ritmo. Lo maneja
                    el módulo aaLiPartida; acá sólo existe el botón. -->
+              <!-- La revancha que la API de Lichess no tiene, hecha con un desafío nuevo al
+                   mismo rival: mismo ritmo, mismo rating y los colores dados vuelta. -->
+              <button id="lv-li-revan" class="lv-btn-main" style="display:none">🔁 Desafiar de nuevo</button>
               <button id="lv-li-nuevo" class="lv-btn-main" style="display:none">⚡ Nuevo oponente</button>
               <!-- Cuando el rival se va, Lichess deja reclamar la victoria pasado un rato. -->
               <button id="lv-li-reclamar" class="lv-btn-sec" style="display:none">🏳️ Reclamar la victoria</button>
@@ -36957,6 +37016,9 @@ function cvUpdateNagBadge() {
   var lvFen='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
   var lvChess=null, lvTurn='w', lvStatus='waiting', lvLastMove=null;
   var lvNames={}, lvPlayers={}, lvDrawOffer=null, lvMoves=[];
+  // En qué media jugada ofreció tablas cada color. Lo manda el árbitro: no se puede volver
+  // a ofrecer hasta 20 medias jugadas (10 completas) después, como en Lichess.
+  var lvDrawPly=null;
   var lvUsers={};       // {w:<usuario del sitio>|null, b:…} — sólo asientos LOGUEADOS → nick clickeable al perfil
   var lvRatings=null;   // {w:{r,prov}|null, b:{…}, cat} — rating del sitio de cada asiento (para las chapitas)
   var lvRated=true;     // ¿esta partida suma rating? (false = amistosa; lo eligió el creador)
@@ -37758,7 +37820,36 @@ function cvUpdateNagBadge() {
     var noMoves=(!lvLastMove && isStartFen(lvFen));
     function show(id,on){ var e=$(id); if(e) e.style.display=on?'':'none'; }
     show('lv-abort', playing && amPlayer && noMoves);
-    show('lv-offerdraw', playing && amPlayer && !lvDrawOffer);
+    // Lichess NO deja ofrecer tablas cuando se le canta: hay que esperar 20 medias jugadas
+    // (10 jugadas completas) desde tu último ofrecimiento, y la partida tiene que llevar al
+    // menos 2. Si no se respeta, el botón queda invitando a apretarlo y el ofrecimiento
+    // no le llega a nadie: decís "esperando al rival" y del otro lado no pasa nada.
+    // En el PvP de casa manda nuestro árbitro, así que esto sólo aplica con transporte.
+    var puedeTablas = true, _ply = lvMoves.length;
+    if (lvTx && lvTx.puedeTablas) { try { puedeTablas = !!lvTx.puedeTablas(_ply); } catch(e){} }
+    else if (lvMyColor==='w' || lvMyColor==='b') {
+      // Misma regla en el PvP de casa: la manda el árbitro (campo drawPly del estado) y acá
+      // sólo se dibuja. Antes se podía ofrecer, que te rechacen y volver a ofrecer en el
+      // acto, una y otra vez, justo cuando el otro está pensando.
+      var _ult = lvDrawPly ? lvDrawPly[lvMyColor] : null;
+      puedeTablas = (_ply >= 2) && (_ult == null || _ply > _ult + 20);
+    }
+    /* El botón NO desaparece mientras no se pueda: queda en gris, como en Lichess. Si se
+       esconde y reaparece diez jugadas después, la columna se mueve sola en medio de la
+       partida y desconcentra justo cuando estás pensando. */
+    show('lv-offerdraw', playing && amPlayer);
+    var _od=$('lv-offerdraw');
+    if(_od){
+      // Se pone gris en los tres casos en que no se puede ofrecer, pero NUNCA se esconde:
+      // mientras tu propia oferta está en pie, mientras te están ofreciendo a vos, y durante
+      // las 10 jugadas de espera. Antes, con tu oferta en pie, el botón se iba.
+      var _mia=(lvDrawOffer===lvMyColor), _suya=(lvDrawOffer && !_mia);
+      _od.disabled = !puedeTablas || !!lvDrawOffer;
+      _od.title = _mia ? 'Ofreciste tablas — esperando la respuesta de tu rival'
+                : _suya ? 'Tu rival te ofreció tablas: respondé arriba'
+                : puedeTablas ? 'Ofrecer tablas'
+                : 'Podés volver a ofrecer tablas 10 jugadas después de tu último ofrecimiento';
+    }
     show('lv-resign', playing && amPlayer);
     show('lv-analyze', finished && lvMoves.length>0);   // analizar la partida en el visor completo
     // La REVANCHA no existe en la API de Lichess: no se puede ofrecer y tampoco llega el
@@ -37848,6 +37939,7 @@ function cvUpdateNagBadge() {
     if(wasLive) lvViewPly=null; else lvViewPly=Math.min(lvViewPly, lvMoves.length);
     lvPrevMovesLen=lvMoves.length;
     lvDrawOffer=('drawOffer' in m)?(m.drawOffer||null):lvDrawOffer;
+    if(m.drawPly) lvDrawPly=m.drawPly;   // en qué jugada ofreció tablas cada uno (regla de las 10 jugadas)
     // sonido + animación de la jugada (evita duplicar con la que ya sonó/mostré localmente).
     // slideMove queda seteado SOLO si es una jugada nueva (la del rival), no el eco de la mía.
     var slideMove=null;
@@ -38020,7 +38112,11 @@ function cvUpdateNagBadge() {
       lvOnRatingUpdate(m);
     } else if(m.type==='draw-offered'){
       if(m.by===lvMyColor){ setStatus('Ofreciste tablas — esperando respuesta…'); }
-      else { lvDrawOffer=m.by; sndDraw(); updateDrawPrompt(); updateControls(); }
+      // Pitido + parlante, sin cartel flotante: ése sale abajo, encima del tablero, y
+      // estorba más de lo que avisa. El de Aceptar/Rechazar ya está en la columna.
+      else { lvDrawOffer=m.by; sndDraw();
+        try{ if(typeof window.aaDecir==='function') window.aaDecir('Tu rival ofrece tablas.'); }catch(e){}
+        updateDrawPrompt(); updateControls(); }
     } else if(m.type==='draw-declined'){
       lvDrawOffer=null; updateDrawPrompt(); updateControls();
       if(!m.auto) setStatus('Tablas rechazadas.');
@@ -38751,7 +38847,7 @@ function cvUpdateNagBadge() {
     lvMyColor=null; lvFen='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
     lvChess=null; lvTurn='w'; lvStatus='waiting'; lvLastMove=null; lvNames={}; lvUsers={}; lvPlayers={};
     lvRatings=null; lvRatingMsg=''; lvRated=true; updateFriendlyTag();
-    lvSelected=null; lvPremove=null; lvDrawOffer=null; lvClock=null; lvLowWarned=false;
+    lvSelected=null; lvPremove=null; lvDrawOffer=null; lvDrawPly=null; lvClock=null; lvLowWarned=false;
     lvPendingSoundId=null; lvLastSoundId=null; lvEndSoundDone=false;
     lvMoves=[]; lvManualFlip=false; lvResultCode='*';
     lvArrows=[]; lvHighlights={}; lvRmDown=null; lvViewPly=null; lvPrevMovesLen=0;
@@ -39131,7 +39227,9 @@ function cvUpdateNagBadge() {
   }
   function lvOnIncoming(m){
     if(!lvIncomingList.some(function(x){ return x.id===m.id; }))
-      lvIncomingList.push({ id:m.id, base:m.base, inc:m.inc, seat:m.seat, from:m.from||{}, expiresAt:Date.now()+600000 });
+      lvIncomingList.push({ id:m.id, base:m.base, inc:m.inc, seat:m.seat, from:m.from||{},
+        rated:m.rated, origen:m.origen||'', acc:m.acc||null, dec:m.dec||null,
+        expiresAt:Date.now()+(m.duraMs||600000) });
     lvIncExpanded=true; lvIncScheduleCollapse(); lvIncEnsureExpiry();
     try{ if(typeof sndDraw==='function') sndDraw(); }catch(e){}
     lvRenderIncoming();
@@ -39160,15 +39258,26 @@ function cvUpdateNagBadge() {
       var who=lvEsc((m.from&&m.from.name)||'Alguien');
       var rat=(m.from&&m.from.rating!=null)?(' <span class="lv-inc-rat">'+m.from.rating+(m.from.prov?'?':'')+'</span>'):'';
       var more=(lvIncomingList.length>1)?(' <span class="lv-inc-more">(+'+(lvIncomingList.length-1)+')</span>'):'';
-      var youColor=(m.seat==='b')?'⚪ Blancas':'⚫ Negras';   // el retador juega m.seat → vos jugás el otro
+      // El color sólo se anuncia si se sabe: en un desafío de Lichess "al azar" lo sortean
+      // ellos y recién se conoce cuando arranca la partida.
+      var youColor=(m.seat==='b')?' · jugás ⚪ Blancas':(m.seat==='w'?' · jugás ⚫ Negras':'');
       var d=document.createElement('div'); d.id='lv-incoming'; d.className='lv-incoming';
       var fri=(m.rated===false)?' <span class="lv-chal-friendly">🤝 Amistosa</span>':'';
-      d.innerHTML='<div class="lv-inc-txt"><b>⚔️ '+who+rat+' te desafía'+more+'</b><span>'+lvEsc(tcLabel(m.base,m.inc))+fri+' · jugás '+youColor+'</span></div>'+
+      // De dónde viene: los de Lichess se juegan acá igual, pero conviene decirlo.
+      var orig=m.origen?(' <span class="lv-inc-more">'+lvEsc(m.origen)+'</span>'):'';
+      d.innerHTML='<div class="lv-inc-txt"><b>⚔️ '+who+rat+' te desafía'+more+'</b><span>'+lvEsc(tcLabel(m.base,m.inc))+fri+youColor+orig+'</span></div>'+
         '<div class="lv-inc-btns"><button type="button" class="lv-inc-no">Rechazar</button>'+
         '<button type="button" class="lv-inc-yes">Aceptar</button></div>';
       host.appendChild(d);
-      d.querySelector('.lv-inc-yes').onclick=function(){ var id=m.id; lvIncRemove(id); acceptChallenge(id); goToVivoGame(); };
-      d.querySelector('.lv-inc-no').onclick=function(){ lobbySend({type:'challenge-decline', id:m.id}); lvIncRemove(m.id); };
+      // Cada desafío puede traer su propia forma de aceptar y rechazar: los del sitio van por
+      // nuestro árbitro y los de Lichess van para allá. Sin esto habría dos carteles distintos
+      // para la misma cosa.
+      d.querySelector('.lv-inc-yes').onclick=function(){ var id=m.id; lvIncRemove(id);
+        if(m.acc){ try{ m.acc(); }catch(e){} return; }
+        acceptChallenge(id); goToVivoGame(); };
+      d.querySelector('.lv-inc-no').onclick=function(){
+        if(m.dec){ try{ m.dec(); }catch(e){} } else lobbySend({type:'challenge-decline', id:m.id});
+        lvIncRemove(m.id); };
       lvIncScheduleCollapse();
     } else {
       var p=document.createElement('button'); p.id='lv-inc-pill'; p.className='lv-inc-pill'; p.type='button';
@@ -39351,6 +39460,15 @@ function cvUpdateNagBadge() {
     chat:   function(m){ lvAddChat(m); },
     aviso:  function(txt){ setStatus(txt); },
     volver: function(){ showLobby(); },
+    /* El mismo pitido que ya usa el PvP de casa cuando te ofrecen tablas. En las partidas
+       de Lichess el ofrecimiento llega por otro camino (el campo drawOffer del estado, no
+       el mensaje 'draw-offered' del árbitro) y se quedaba mudo. */
+    sonarTablas: function(){ try{ sndDraw(); }catch(e){} },
+    /* Un desafío que llega de AFUERA (hoy, de Lichess) entra al MISMO apilador de arriba a
+       la derecha que los del sitio: tarjeta que se convierte en globito. Trae su propia
+       forma de aceptar y rechazar. Sin esto había dos carteles distintos para lo mismo. */
+    desafioEntrante: function(m){ lvOnIncoming(m); },
+    sacarDesafioEntrante: function(id){ lvIncRemove(id); },
     soltar: function(){ lvTx = null; },
     enPartida: function(){ return !!lvTx; }
   };
@@ -41689,6 +41807,11 @@ function cvUpdateNagBadge() {
       if (invitado) g.innerHTML = '💡 <b>Entrá con Lichess</b> (arriba a la derecha) para jugar contra gente de Lichess desde acá.';
     }
     var panel = $('lv-li-panel'); if (panel) panel.style.display = invitado ? 'none' : '';
+    var lid = $('lv-lid-card'); if (lid) lid.style.display = (invitado || busca) ? 'none' : '';
+    /* La lista de gente conectada se refresca sola mientras el panel esté a la vista. */
+    if (invitado) { if (lidTimer) { clearInterval(lidTimer); lidTimer = 0; } idleOff(); }
+    else if (!lidTimer) { pintarTcDesafio(); refrescarGente(); lidTimer = setInterval(latido, 15000); }
+    if (!invitado) idleSync();
 
     if (grid.childNodes.length !== RITMOS_AZAR.length) {
       grid.innerHTML = '';
@@ -41726,6 +41849,7 @@ function cvUpdateNagBadge() {
        el del login), y después Lichess. Nos acordamos de lo que quería hacer. */
     if (!window.aaLi.tiene()) { window.aaLi.pedirConAviso({ tipo: 'seek', t: t, i: i, rated: rated }); return; }
 
+    idleOff();   // la conexión ociosa se cierra: la búsqueda abre la suya
     var ctrlEv = new AbortController(), ctrlSeek = new AbortController();
     busca = { ev: ctrlEv, seek: ctrlSeek, t0: Date.now(), timer: 0, tc: tcTexto(t, i) };
     mostrarEspera(true);
@@ -41793,12 +41917,18 @@ function cvUpdateNagBadge() {
   }
 
   function onAviso(o) {
-    if (!o || o.type !== 'gameStart' || !o.game || !busca) return;
-    busca.listo = true;
-    var g = o.game;
-    pararCanos();
-    mostrarPartida(g);
-    decir('Apareció rival. Partida lista.');
+    if (!o) return;
+    if (o.type === 'gameStart' && o.game) {
+      /* Puede llegar buscando rival, esperando que acepten un desafío, o porque alguien
+         te desafió desde Lichess y aceptaste. En los tres casos se abre el tablero. */
+      if (busca) { busca.listo = true; pararCanos(); }
+      idleOff();
+      mostrarPartida(o.game);
+      decir('Empieza la partida.');
+      return;
+    }
+    if (o.type === 'challenge' && o.challenge) { entraDesafio(o.challenge); return; }
+    if (o.type === 'challengeCanceled' && o.challenge) { sacarEntrante(o.challenge.id); return; }
   }
 
   function pararCanos() {
@@ -41807,7 +41937,7 @@ function cvUpdateNagBadge() {
     try { busca.ev.abort(); } catch (e) {}
     if (busca.timer) { clearInterval(busca.timer); busca.timer = 0; }
   }
-  function parar() { pararCanos(); busca = null; restaurarEspera(); mostrarEspera(false); }
+  function parar() { pararCanos(); busca = null; restaurarEspera(); mostrarEspera(false); idleOn(); }
 
   /* La caja de espera se reescribe entera cuando aparece rival; ésta la devuelve a
      como estaba. Se prefiere esto a recargar la página: en modo autor una recarga
@@ -41828,8 +41958,11 @@ function cvUpdateNagBadge() {
     if (!w || !p) return;
     w.style.display = on ? '' : 'none';
     p.style.display = on ? 'none' : '';
+    /* Mientras esperás, la lista de gente para desafiar estorba: se va. */
+    var lid = $('lv-lid-card'); if (lid) lid.style.display = on ? 'none' : '';
     if (!on) return;
     var tc = $('lv-li-wait-tc'); if (tc) tc.textContent = busca ? busca.tc : '';
+    var tx = $('lv-li-wait-tx'); if (tx) tx.textContent = (busca && busca.txt) || 'Buscando rival en Lichess';
     var el = $('lv-li-wait-el');
     if (el && busca) {
       el.textContent = '0 s';
@@ -41872,8 +42005,343 @@ function cvUpdateNagBadge() {
      el encabezado y las salas, y este panel se suma a esa lista. Al volver al salón no
      se puede prender a lo bruto (`display=''`), porque en la web publicada el panel puede
      estar apagado: se vuelve a pintar y `pintar` decide según el interruptor. */
+  /* ══ DESAFIAR A ALGUIEN DE LA COMUNIDAD ═══════════════════════════════════════
+     Acá se puede BLITZ, que en el rival al azar no: Lichess acepta de 180 s estimados
+     para arriba cuando la partida sale de un desafío directo. Bala sigue prohibida, y
+     ojo con esto: el desafío en bala Lichess TE LO CREA igual (la validación de
+     velocidad al crear sólo mira a los bots), pero la partida sale marcada como no
+     jugable desde afuera y el visitante se queda con un tablero donde no puede mover.
+     Por eso el piso de 180 está acá y con candado en el banco. */
+  var RITMOS_DESAFIO = [[3, 0], [3, 2], [5, 0], [5, 5], [10, 0]];
+  function sirveDesafio(t, i) { return (t * 60 + 40 * i) >= 180; }
+  /* El ritmo decide en qué rating te mira Lichess si el otro tiene puesto "sólo gente de
+     mi nivel": un 3+0 mira los blitz, un 10+0 los rápidos. */
+  function perfDe(t, i) { var s = t * 60 + 40 * i; return s < 180 ? 'bullet' : s < 480 ? 'blitz' : s < 1500 ? 'rapid' : 'classical'; }
+
+  var lidTc = [3, 2];      // ritmo elegido para desafiar
+  var lidRated = false;    // ¿el desafío suma rating? Arranca en amistosa (ver el HTML)
+  var lidColor = 'rnd';    // 'white' | 'black' | 'rnd' (rnd = no se manda y lo sortea Lichess)
+  var lidTop = null;       // nombres de la comunidad (del ranking del sitio)
+  var lidGente = [];       // los que están conectados en Lichess ahora
+  var lidRatings = {};     // id -> perfs de Lichess
+  var lidVetos = {};       // id -> por qué no se le puede desafiar (se lo acuerda)
+  var lidTimer = 0;
+
+  /* Los nombres salen del ranking del sitio: son cuentas de Lichess, así que enlazan
+     directo. (No existe forma de pedirle a Lichess "dame tus conectados".) */
+  function traerComunidad() {
+    if (lidTop) return Promise.resolve(lidTop);
+    var PROXY = (typeof CR_PROXY !== 'undefined' && CR_PROXY) ? CR_PROXY : 'https://cr-proxy.mmatiasscruz.workers.dev';
+    return fetch(PROXY + '/rating/top?limit=25').then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        var set = {};
+        if (d) Object.keys(d).forEach(function (cat) {
+          (d[cat] || []).forEach(function (u) { if (u && u.username) set[u.username] = 1; });
+        });
+        lidTop = Object.keys(set);
+        return lidTop;
+      }).catch(function () { lidTop = []; return lidTop; });
+  }
+
+  /* Cada 15 segundos: refrescar quién está conectado Y revisar si corresponde tener la
+     conexión abierta. Lo segundo hace falta porque el visitante puede irse a otra pestaña
+     del sitio (Torneos, Jugadores…) sin que nadie nos avise. */
+  function latido() {
+    refrescarGente();
+    idleSync();
+  }
+
+  /* Quién está conectado AHORA. Lichess dice que esta consulta es barata y que se puede
+     llamar cada 5 segundos; acá se hace cada 15, que alcanza y sobra. */
+  function refrescarGente() {
+    if (!activo() || !usuario() || busca) return;
+    traerComunidad().then(function (nombres) {
+      var yo = String((usuario() || {}).username || '').toLowerCase();
+      var ids = (nombres || []).filter(function (n) { return String(n).toLowerCase() !== yo; }).slice(0, 100);
+      if (!ids.length) { lidGente = []; pintarLid(); return; }
+      return fetch(LI + '/api/users/status?ids=' + encodeURIComponent(ids.join(',')))
+        .then(function (r) { return r.ok ? r.json() : []; })
+        .then(function (arr) {
+          lidGente = (arr || []).filter(function (u) { return u && u.online; });
+          pintarLid();
+          return traerRatings(lidGente.map(function (u) { return u.id; }));
+        })
+        .then(function () { pintarLid(); });
+    }).catch(function () {});
+  }
+
+  function traerRatings(ids) {
+    ids = (ids || []).filter(function (id) { return id && !lidRatings[id]; });
+    if (!ids.length) return Promise.resolve();
+    return fetch(LI + '/api/users', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: ids.join(',') })
+      .then(function (r) { return r.ok ? r.json() : []; })
+      .then(function (arr) { (arr || []).forEach(function (u) { if (u && u.id) lidRatings[u.id] = u.perfs || {}; }); })
+      .catch(function () {});
+  }
+
+  function pintarTcDesafio() {
+    var rb = $('lv-lid-rated');
+    if (rb && !rb._li) {
+      rb._li = true;
+      rb.addEventListener('click', function (e) {
+        var b = e.target.closest('[data-lidrated]'); if (!b) return;
+        lidRated = b.getAttribute('data-lidrated') === '1';
+        Array.prototype.forEach.call(rb.querySelectorAll('[data-lidrated]'), function (x) {
+          x.classList.toggle('lv-seg-on', x === b);
+        });
+      });
+    }
+    var cb = $('lv-lid-color');
+    if (cb && !cb._li) {
+      cb._li = true;
+      cb.addEventListener('click', function (e) {
+        var b = e.target.closest('[data-lidcolor]'); if (!b) return;
+        lidColor = b.getAttribute('data-lidcolor');
+        Array.prototype.forEach.call(cb.querySelectorAll('[data-lidcolor]'), function (x) {
+          x.classList.toggle('lv-seg-on', x === b);
+        });
+      });
+    }
+    var box = $('lv-lid-tc'); if (!box || box.children.length) return;
+    RITMOS_DESAFIO.forEach(function (r) {
+      var b = document.createElement('button');
+      b.type = 'button'; b.textContent = tcTexto(r[0], r[1]);
+      b.className = (r[0] === lidTc[0] && r[1] === lidTc[1]) ? 'on' : '';
+      b.addEventListener('click', function () {
+        lidTc = [r[0], r[1]];
+        Array.prototype.forEach.call(box.children, function (x) { x.classList.toggle('on', x === b); });
+        pintarLid();   // cambia el rating que se muestra (blitz vs rápida)
+      });
+      box.appendChild(b);
+    });
+  }
+
+  function pintarLid() {
+    var box = $('lv-lid-list'); if (!box) return;
+    var perf = perfDe(lidTc[0], lidTc[1]);
+    if (!lidGente.length) {
+      box.innerHTML = '<div class="lv-lid-empty">Ahora mismo no hay nadie de ChessArgentino conectado en Lichess. '
+        + 'Probá el <b>rival al azar</b> de acá arriba, que ahí hay gente siempre.</div>';
+      return;
+    }
+    var html = '';
+    lidGente.forEach(function (u) {
+      var perfs = lidRatings[u.id] || {}, p = perfs[perf];
+      var elo = (p && p.rating) ? (p.rating + (p.prov ? '?' : '')) : '—';
+      var veto = lidVetos[u.id];
+      var nm = (u.title ? '<b>' + lvEscLi(u.title) + '</b> ' : '') + lvEscLi(u.name || u.id);
+      var accion = veto
+        ? '<span class="lv-lid-tag">' + lvEscLi(veto) + '</span>'
+        : (u.playing
+          ? '<span class="lv-lid-tag">jugando</span><button type="button" class="lv-lid-b" data-lid="' + lvEscLi(u.id) + '" data-lnm="' + lvEscLi(u.name || u.id) + '">Desafiar</button>'
+          : '<button type="button" class="lv-lid-b" data-lid="' + lvEscLi(u.id) + '" data-lnm="' + lvEscLi(u.name || u.id) + '">⚔️ Desafiar</button>');
+      html += '<div class="lv-lid-row"><span class="lv-online-dot"></span>'
+        + '<span class="lv-lid-nm">' + nm + '</span>'
+        + '<span class="lv-lid-elo">' + elo + '</span>' + accion + '</div>';
+    });
+    box.innerHTML = html;
+    box.querySelectorAll('.lv-lid-b').forEach(function (b) {
+      b.addEventListener('click', function () { desafiar(b.getAttribute('data-lid'), b.getAttribute('data-lnm')); });
+    });
+  }
+  function lvEscLi(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+
+  /* Mandar el desafío. Igual que el rival al azar: primero el caño de avisos, después el
+     pedido. La diferencia es que este pedido hay que MANTENERLO abierto (keepAliveStream)
+     o el desafío caduca a los 20 segundos. */
+  /* `o` (opcional) pisa lo elegido en el panel: lo usa "Desafiar de nuevo" al terminar una
+     partida, que repite ritmo y rating y da vuelta los colores. */
+  function desafiar(id, nombre, o) {
+    o = o || {};
+    var t = (o.t != null) ? o.t : lidTc[0];
+    var i = (o.i != null) ? o.i : lidTc[1];
+    var conRating = (o.rated != null) ? !!o.rated : lidRated;
+    var color = o.color || lidColor;
+
+    if (busca) return;
+    if (!usuario()) { if (window.aaAuth && window.aaAuth.login) window.aaAuth.login(); return; }
+    if (!window.aaLi.tiene()) { window.aaLi.pedirConAviso({ tipo: 'desafio', id: id, nombre: nombre, t: t, i: i, rated: conRating, color: color }); return; }
+    if (!sirveDesafio(t, i)) { window.aaLi.avisar('Lichess no permite bala desde otras apps.'); return; }
+
+    idleOff();   // la conexión ociosa se cierra: el desafío abre la suya
+    var ctrlEv = new AbortController(), ctrlCh = new AbortController();
+    busca = { ev: ctrlEv, seek: ctrlCh, t0: Date.now(), timer: 0, tc: tcTexto(t, i), txt: 'Esperando a que acepte ' + nombre };
+    mostrarEspera(true);
+    decir('Desafío enviado a ' + nombre);
+
+    caño(LI + '/api/stream/event', {}, ctrlEv, onAviso, function (e) {
+      if (e && e.name === 'AbortError') return;
+      if (!busca) return; parar(); avisarFallo(e);
+    });
+
+    caño(LI + '/api/challenge/' + encodeURIComponent(id), {
+      method: 'POST',
+      /* Accept-Language para que el motivo del rechazo venga en castellano: Lichess los
+         traduce del lado del servidor y este encabezado se puede mandar desde el navegador. */
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept-Language': 'es-AR,es' },
+      body: (function () {
+        var p = new URLSearchParams({
+          'clock.limit': String(Math.round(t * 60)),   // ⚠️ acá el reloj va en SEGUNDOS
+          'clock.increment': String(i),
+          rated: conRating ? 'true' : 'false',
+          keepAliveStream: 'true'
+        });
+        // "Al azar" = NO mandar el campo. Lichess sortea 50/50, que es lo que recomienda
+        // su propia documentación ("better left empty to automatically get 50% white").
+        if (color === 'white' || color === 'black') p.set('color', color);
+        return p.toString();
+      })()
+    }, ctrlCh, function (o) {
+      if (!o || !o.done || !busca) return;
+      if (o.done === 'accepted') { busca.aceptado = true; return; }   // ya viene "arrancó la partida"
+      var txt = (o.done === 'declined') ? (nombre + ' rechazó el desafío.') : ('El desafío terminó (' + o.done + ').');
+      parar(); window.aaLi.avisar(txt);
+    }, function (e) {
+      if (e && e.name === 'AbortError') return;
+      if (!busca || busca.listo) return;
+      /* Error de verdad (lo rechazó el filtro de Lichess, se cayó la red…). */
+      if (e) { parar(); recordarVeto(id, e); window.aaLi.avisar(motivoDesafio(e, nombre)); return; }
+      /* 🐛 CIERRE LIMPIO: Lichess cierra ESTE caño apenas el desafío se acepta, y el aviso
+         de "arrancó la partida" viene por el OTRO caño un instante después. Antes acá se
+         cortaba todo de una y la partida arrancaba sólo en lichess.org: el visitante se
+         quedaba mirando su web sin enterarse. Ahora se le da tiempo a que llegue. */
+      var esperaMs = busca.aceptado ? 8000 : 3000;
+      setTimeout(function () {
+        if (!busca || busca.listo) return;
+        var aceptado = busca.aceptado;
+        parar();
+        window.aaLi.avisar(aceptado
+          ? 'La partida arrancó en Lichess pero no llegó el aviso. Abrila desde lichess.org.'
+          : 'El desafío se cerró sin respuesta.');
+      }, esperaMs);
+    });
+  }
+
+  /* Lichess explica por qué no se puede: "no acepta desafíos", "sólo de amigos", "tu
+     rating está muy lejos"… Si es de los permanentes, el renglón se lo acuerda y no
+     se insiste más en esta visita. */
+  function motivoDesafio(e, nombre) {
+    var m = (e && e.motivo) || '';
+    if (e && e.status === 429) return 'Lichess pidió esperar un momento. Probá en un minuto.';
+    return m ? ('No se pudo desafiar a ' + nombre + ': ' + m) : ('No se pudo mandar el desafío a ' + nombre + '.');
+  }
+  function recordarVeto(id, e) {
+    var m = String((e && e.motivo) || '').toLowerCase();
+    if (/no acepta|does not accept|doesn't accept/.test(m)) lidVetos[id] = 'no acepta desafíos';
+    else if (/amigos|friends/.test(m)) lidVetos[id] = 'sólo amigos';
+    else if (/rating|nivel/.test(m)) lidVetos[id] = 'fuera de su rango de rating';
+    pintarLid();
+  }
+
+  /* ══ FASE 5: quedar EN LÍNEA en Lichess y recibir desafíos de allá ══════════════
+     Mientras el visitante está en la pestaña Jugar se mantiene abierta una conexión con
+     Lichess. Eso hace dos cosas: figura conectado allá (es el mismo mecanismo por el que
+     los bots aparecen en línea) y le pueden llegar desafíos, que se juegan en NUESTRO
+     tablero. La conexión va del navegador a Lichess: nuestro Worker no participa y no
+     cuesta nada. Se corta al irse de la pestaña, al ponerse en No molestar o al jugar
+     (ahí ya hay otra conexión abierta por la partida).
+     ⚠️ Lo que no podemos jugar se rechaza SOLO: bala, variantes y correspondencia. Si no,
+     el visitante quedaría con un tablero en el que no puede mover. */
+  var evIdle = null, evEspera = 3000;
+
+  function noMolestar() { try { return !!(window.aaAuth && window.aaAuth.getDnd && window.aaAuth.getDnd()); } catch (e) { return false; } }
+  function enLaPestanaJugar() { try { return document.getElementById('s-vivo').classList.contains('active'); } catch (e) { return false; } }
+
+  function idleOn() {
+    if (evIdle || busca) return;
+    if (!activo() || !usuario() || !window.aaLi.tiene()) return;
+    if (noMolestar() || !enLaPestanaJugar()) return;
+    try { if (window.aaLiPartida && window.aaLiPartida.enCurso()) return; } catch (e) {}
+    var c = new AbortController(); evIdle = c;
+    caño(LI + '/api/stream/event', {}, c, onAviso, function (e) {
+      if (e && e.name === 'AbortError') { evIdle = null; return; }
+      evIdle = null;
+      if (e && e.status === 401) { window.aaLi.olvidar(); pintar(); return; }
+      /* Espera creciente: sin esto, un corte de red se convierte en cientos de pedidos por
+         minuto y Lichess contesta 429. Es el único riesgo real de 429 que tenemos. */
+      setTimeout(function () { idleOn(); }, evEspera);
+      evEspera = Math.min(evEspera * 2, 60000);
+    });
+    evEspera = 3000;
+  }
+  function idleOff() { if (evIdle) { try { evIdle.abort(); } catch (e) {} evIdle = null; } }
+  /* Decide en el momento: abre si corresponde y CIERRA si no. Hace falta el cierre —no
+     alcanza con no abrir— porque si el visitante activa No molestar o se va a otra pestaña
+     del sitio, la conexión abierta lo seguiría mostrando disponible. */
+  function idleSync() { if (enLaPestanaJugar() && !noMolestar()) idleOn(); else idleOff(); }
+
+  function liPost(ruta, campos) {
+    var o = { method: 'POST', headers: { Authorization: 'Bearer ' + window.aaLi.token() } };
+    if (campos) { o.headers['Content-Type'] = 'application/x-www-form-urlencoded'; o.body = new URLSearchParams(campos).toString(); }
+    return fetch(LI + ruta, o);
+  }
+
+  /* ¿Podemos jugar este desafío en nuestro tablero? Si no, se dice por qué, con el motivo
+     que Lichess le traduce al idioma del que desafió. */
+  function noSePuede(ch) {
+    var v = (ch.variant && ch.variant.key) || 'standard';
+    if (v !== 'standard') return { reason: 'standard', txt: 'es ' + ((ch.variant && ch.variant.name) || v) + ', y acá sólo se juega ajedrez clásico' };
+    var tc = ch.timeControl || {};
+    if (tc.type !== 'clock') return { reason: 'timeControl', txt: 'es por correspondencia o sin reloj' };
+    var est = (+tc.limit || 0) + 40 * (+tc.increment || 0);
+    if (est < 180) return { reason: 'tooFast', txt: 'es bala, y Lichess no deja jugarla desde otras apps' };
+    return null;
+  }
+
+  function entraDesafio(ch) {
+    if (!ch || !ch.id) return;
+    if (ch.status && ch.status !== 'created') return;
+    /* 🐛 Filtrar el eco de los desafíos que mandamos NOSOTROS. Mirar `direction` no alcanza:
+       NO es un campo obligatorio de la API y a veces no viene — y cuando no vino, el desafío
+       que el visitante le mandó a otro le volvió a él mismo ("Chess_Argentino te desafía").
+       Así que se mira quién desafía y a quién: si el retador soy yo, o el destinatario no
+       soy yo, el aviso no es para mostrar. */
+    var yo = String((usuario() || {}).username || '').toLowerCase();
+    var deQuien = String((ch.challenger && (ch.challenger.id || ch.challenger.name)) || '').toLowerCase();
+    var paraQuien = String((ch.destUser && (ch.destUser.id || ch.destUser.name)) || '').toLowerCase();
+    if (ch.direction === 'out') return;
+    if (yo && deQuien && deQuien === yo) return;              // lo mandé yo
+    if (yo && paraQuien && paraQuien !== yo) return;          // no es para mí
+    var quien = (ch.challenger && (ch.challenger.name || ch.challenger.id)) || 'Alguien';
+    var no = noSePuede(ch);
+    if (no) {
+      liPost('/api/challenge/' + ch.id + '/decline', { reason: no.reason });
+      window.aaLi.avisar('Rechazamos el desafío de ' + quien + ': ' + no.txt + '.');
+      return;
+    }
+    /* Va al MISMO apilador de arriba a la derecha que los desafíos del sitio (tarjeta que
+       se convierte en globito), no a un cartel aparte: para el visitante es la misma cosa
+       y no tiene por qué aprender dos lugares distintos. */
+    var tc = ch.timeControl || {};
+    var col = ch.finalColor || ch.color;
+    try {
+      window.lvTablero.desafioEntrante({
+        id: ch.id,
+        base: +tc.limit || 0, inc: +tc.increment || 0,
+        seat: (col === 'white') ? 'w' : ((col === 'black') ? 'b' : null),
+        rated: !!ch.rated,
+        origen: '· desde Lichess',
+        from: {
+          name: quien,
+          rating: (ch.challenger && ch.challenger.rating) || null,
+          prov: !!(ch.challenger && ch.challenger.provisional)
+        },
+        acc: function () { aceptarEntrante(ch.id); },
+        dec: function () { liPost('/api/challenge/' + ch.id + '/decline', { reason: 'generic' }); }
+      });
+    } catch (e) {}
+  }
+  function aceptarEntrante(id) {
+    liPost('/api/challenge/' + id + '/accept').then(function (r) {
+      /* Si sale bien, el aviso de "arrancó la partida" abre el tablero solo. */
+      if (!r.ok) window.aaLi.avisar('No se pudo aceptar el desafío (quizá lo retiraron).');
+    }).catch(function () { window.aaLi.avisar('No se pudo aceptar el desafío.'); });
+  }
+  function sacarEntrante(id) { try { window.lvTablero.sacarDesafioEntrante(id); } catch (e) {} }
+
   window.aaLiPanel = {
-    ocultar: function () { var w = $('lv-li-wrap'); if (w) w.style.display = 'none'; },
+    ocultar: function () { idleOff(); var w = $('lv-li-wrap'); if (w) w.style.display = 'none'; },
     refrescar: function () { pintar(); },
     /* "Nuevo oponente": volver a buscar con el MISMO ritmo, sin pasar por la grilla.
        Es el botón más usado de Lichess y acá es el mismo pedido de siempre, otra vez. */
@@ -41883,7 +42351,10 @@ function cvUpdateNagBadge() {
         x.classList.toggle('lv-seg-on', (x.getAttribute('data-lirated') === '1') === rated);
       });
       arrancar(t, i);
-    }
+    },
+    /* "Desafiar de nuevo" al terminar una partida: repite ritmo y rating y da vuelta los
+       colores. Es la revancha que la API de Lichess no tiene, hecha con un desafío nuevo. */
+    desafiarA: function (o) { desafiar(o.id, o.nombre, o); }
   };
 
   function init() {
@@ -41895,12 +42366,19 @@ function cvUpdateNagBadge() {
     /* Vuelve de darle el permiso a Lichess: retomamos el ritmo que había apretado. */
     document.addEventListener('aa-li-listo', function (e) {
       var it = e && e.detail;
-      if (!it || it.tipo !== 'seek') return;
+      if (!it || (it.tipo !== 'seek' && it.tipo !== 'desafio')) return;
       if (typeof goTo === 'function') { try { goTo('vivo'); } catch (err) {} }
       rated = !!it.rated;
       Array.prototype.forEach.call(document.querySelectorAll('#lv-li-rated [data-lirated]'), function (x) {
         x.classList.toggle('lv-seg-on', (x.getAttribute('data-lirated') === '1') === rated);
       });
+      if (it.tipo === 'desafio') {
+        lidTc = [it.t, it.i]; lidRated = !!it.rated; if (it.color) lidColor = it.color;
+        Array.prototype.forEach.call(document.querySelectorAll('#lv-lid-rated [data-lidrated]'), function (x) {
+          x.classList.toggle('lv-seg-on', (x.getAttribute('data-lidrated') === '1') === lidRated);
+        });
+        setTimeout(function () { desafiar(it.id, it.nombre); }, 60); return;
+      }
       setTimeout(function () { arrancar(it.t, it.i); }, 60);
     });
   }
@@ -42044,8 +42522,47 @@ function cvUpdateNagBadge() {
   /* Un solo lugar donde el estado llega al tablero: así el botón del final aparece
      siempre, venga el estado directo o retenido por la cuenta regresiva. */
   function aplicar(m) {
+    /* 🤝 MOVER CANCELA EL OFRECIMIENTO DE TABLAS.
+       Lichess NO lo borra en su servidor: `wdraw`/`bdraw` salen de `isOfferingDraw`, y al
+       mover ese campo no se toca — su propia web lo esconde del lado del navegador. Si le
+       creemos al dato, el cartel queda colgado: te mostraba "esperando respuesta" de una
+       oferta que el rival ya no veía, y "Aceptar" no hacía nada.
+       Sólo se cancela la oferta que YA estaba antes de esta jugada (P.ofertaVista): si el
+       rival mueve y ofrece en el mismo mensaje, esa es nueva y se respeta. */
+    if (m && P) {
+      var plyNuevo = (m.moves || []).length;
+      if (P.ply != null && plyNuevo > P.ply && m.drawOffer && P.ofertaVista === m.drawOffer) {
+        /* Si la oferta era del rival, se la rechazamos de verdad: así el servidor y las dos
+           pantallas dicen lo mismo y no puede aceptarla nadie más tarde por sorpresa. */
+        if (m.drawOffer !== P.color) post('/api/board/game/' + P.id + '/draw/no').catch(function () {});
+        P.ignorarOferta = m.drawOffer;   // Lichess la va a seguir mandando: hay que acordarse
+        P.ofertaVista = null;
+      }
+      /* Y se la ignora en TODOS los estados que vengan después, hasta que Lichess la borre
+         de verdad. Sin esto la oferta resucitaba en la jugada siguiente, porque el campo
+         sigue llegando. No hay riesgo de tapar una oferta nueva: mientras ese campo esté en
+         pie, Lichess NO deja que ese jugador vuelva a ofrecer. */
+      if (m.drawOffer && P.ignorarOferta === m.drawOffer) m.drawOffer = null;
+      else if (!m.drawOffer) P.ignorarOferta = null;
+    }
     try { window.lvTablero.estado(m); } catch (e) {}
-    if (m && m.status === 'finished') botones(true);
+    if (!m) return;
+    /* El ofrecimiento de tablas del rival dibuja un cartelito chico en la columna de la
+       izquierda, sin ruido. En una partida rápida es facilísimo no verlo —y si no lo ves,
+       parece que no llegó—. Acá se avisa además con el cartel flotante y por el parlante,
+       una sola vez por ofrecimiento. */
+    if (P) {
+      var ofre = m.drawOffer || null;
+      if (ofre && ofre !== P.color && P.ofertaVista !== ofre) {
+        /* Sólo el pitido: el cartel flotante sale abajo, encima del tablero, y molesta
+           más de lo que avisa. El cartel de Aceptar/Rechazar ya está en la columna. */
+        try { window.lvTablero.sonarTablas(); } catch (e) {}
+        decir('Tu rival ofrece tablas.');
+      }
+      P.ofertaVista = ofre;
+      P.ply = (m.moves || []).length;   // para la regla de las 10 jugadas de abajo
+    }
+    if (m.status === 'finished') botones(true);
   }
   function soltarPendiente() {
     if (!P) return;
@@ -42071,7 +42588,12 @@ function cvUpdateNagBadge() {
     }
     else if (t === 'resign')   p = post('/api/board/game/' + id + '/resign');
     else if (t === 'abort')    p = post('/api/board/game/' + id + '/abort');
-    else if (t === 'draw-offer' || t === 'draw-accept') p = post('/api/board/game/' + id + '/draw/yes');
+    else if (t === 'draw-offer' || t === 'draw-accept') {
+      /* Anotar en qué jugada ofrecí: Lichess no me deja volver a ofrecer hasta 20 medias
+         jugadas después, y el botón tiene que desaparecer mientras tanto. */
+      if (t === 'draw-offer') P.ofreciEnPly = P.ply || 0;
+      p = post('/api/board/game/' + id + '/draw/yes');
+    }
     else if (t === 'draw-decline') p = post('/api/board/game/' + id + '/draw/no');
     else return;               // 'rematch', 'config', 'sit', 'leave'… no existen allá
     p.catch(function (e) {
@@ -42093,7 +42615,22 @@ function cvUpdateNagBadge() {
     var color = (g.color === 'black') ? 'b' : 'w';
     P = { id: id, full: null, ctrl: new AbortController(), color: color, cdHasta: 0, pendiente: null, timer: null, relTimer: null };
 
-    window.lvTablero.enganchar({ enviar: enviar, listo: function () { return !!P && !P.terminada; } }, color);
+    window.lvTablero.enganchar({
+      enviar: enviar,
+      listo: function () { return !!P && !P.terminada; },
+      /* Copiada de `playerCanOfferDraw` de Lichess: la partida tiene que llevar 2 medias
+         jugadas, y desde tu último ofrecimiento tienen que pasar 20 (10 jugadas completas).
+         Comprobado en su código y jugando: ofreciste en la 2 y se rehabilitó en la 12. */
+      puedeTablas: function (ply) {
+        if (!P || ply < 2) return false;
+        /* Lichess bloquea mientras `ultimoOfrecimiento >= plyActual - 20`, o sea que
+           habilita recién cuando la jugada actual SUPERA a la del ofrecimiento más 20.
+           Con "<" en vez de "<=" el botón volvía un ply antes de tiempo y ese primer
+           intento se perdía en silencio, que es justo lo que queríamos evitar. */
+        if (P.ofreciEnPly != null && ply <= P.ofreciEnPly + 20) return false;
+        return true;
+      }
+    }, color);
     window.lvTablero.aviso('Conectando con la partida…');
 
     window.aaLi.cano(LI + '/api/board/game/stream/' + id, {}, P.ctrl, alLlegar, function (e) {
@@ -42137,9 +42674,45 @@ function cvUpdateNagBadge() {
      "Nuevo oponente" es lo más usado de Lichess y acá es barato: el MISMO pedido de la
      grilla, otra vez, con el ritmo de la partida que acaba de terminar. */
   function $$(id) { return document.getElementById(id); }
+  /* "Nuevo oponente" busca un rival AL AZAR, y para eso Lichess exige rápida o más lenta.
+     Después de un blitz (que sí se puede jugar, pero sólo por desafío directo) el botón
+     invitaba a apretarlo y devolvía "Lichess no acepta ese control de tiempo". Ahora
+     directamente no aparece: mejor que no esté a que esté y falle. */
+  function sirveAlAzarEstaPartida() {
+    var c = P && P.full && P.full.clock;
+    if (!c) return false;
+    return (c.initial / 1000 + 40 * (c.increment / 1000)) >= 480;
+  }
   function botones(finTerminado) {
-    var n = $$('lv-li-nuevo'); if (n) n.style.display = finTerminado ? '' : 'none';
+    var n = $$('lv-li-nuevo');
+    if (n) n.style.display = (finTerminado && sirveAlAzarEstaPartida()) ? '' : 'none';
+    /* "Desafiar de nuevo" sirve para cualquier ritmo jugable (por desafío directo Lichess
+       acepta blitz), así que aparece siempre que sepamos contra quién se jugó. */
+    var v = $$('lv-li-revan');
+    if (v) v.style.display = (finTerminado && !!rivalDeLaPartida()) ? '' : 'none';
     if (!finTerminado) { var r = $$('lv-li-reclamar'); if (r) r.style.display = 'none'; }
+  }
+  function rivalDeLaPartida() {
+    var f = P && P.full; if (!f) return null;
+    var r = (P.color === 'w') ? f.black : f.white;
+    if (!r || !r.id || r.aiLevel) return null;      // contra la máquina no hay a quién desafiar
+    return r;
+  }
+  /* La revancha por la puerta de atrás: mismo ritmo, mismo rating y COLORES AL REVÉS —
+     si jugaste con blancas, ahora pedís negras. */
+  function desafiarDeNuevo() {
+    var f = P && P.full, r = rivalDeLaPartida();
+    if (!f || !r) return;
+    var t = f.clock ? f.clock.initial / 60000 : 5;
+    var i = f.clock ? Math.round(f.clock.increment / 1000) : 0;
+    var color = (P.color === 'w') ? 'black' : 'white';
+    var conRating = !!f.rated;
+    soltar(); botones(false);
+    try { window.lvTablero.volver(); } catch (e) {}
+    try {
+      window.aaLiPanel.refrescar();
+      window.aaLiPanel.desafiarA({ id: r.id, nombre: r.name || r.id, t: t, i: i, rated: conRating, color: color });
+    } catch (e) {}
   }
   function nuevoOponente() {
     var f = P && P.full;
@@ -42212,6 +42785,7 @@ function cvUpdateNagBadge() {
   /* Los botones viven en el HTML del tablero; su comportamiento, acá. */
   function enganchar() {
     var n = $$('lv-li-nuevo'); if (n && !n._li) { n._li = true; n.addEventListener('click', nuevoOponente); }
+    var v = $$('lv-li-revan'); if (v && !v._li) { v._li = true; v.addEventListener('click', desafiarDeNuevo); }
     var r = $$('lv-li-reclamar'); if (r && !r._li) { r._li = true; r.addEventListener('click', reclamar); }
     /* Salir del tablero con "Volver al menú" durante una partida de Lichess: soltamos el
        caño (si no, seguiría escuchando una partida que el visitante ya dejó). */
