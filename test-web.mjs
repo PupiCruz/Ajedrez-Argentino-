@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 909;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 915;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -3737,6 +3737,25 @@ console.log('\n=== 50. Puntos del torneo en el visor (6½/7) ===');
       '🔒 y cada uno acepta por su camino: sin callback propio, sigue el del árbitro de casa');
   chk(/m\.seat==='w'\?' · jugás ⚫ Negras':''/.test(SRC),
       'el color sólo se anuncia si se sabe (en un desafío "al azar" lo sortea Lichess al arrancar)');
+
+  // ── Rating al terminar + sin "(vos)" (12/09) ────────────────────────────────────
+  // El estado de la partida de Lichess no trae cuánto se ganó o perdió: está en la
+  // exportación pública (players.white.ratingDiff). Se le pasa al tablero en el MISMO
+  // formato que manda nuestro servidor de cuentas, así el "+6 / −7" se dibuja igual.
+  chk(/function traerVariacion/.test(modPartida) && /\/game\/export\//.test(modPartida) && /ratingDiff/.test(modPartida),
+      'al terminar una partida de Lichess con rating se pide cuánto se ganó o perdió');
+  chk(/if \(!P \|\| !P\.full \|\| !P\.full\.rated \|\| P\.varPedida\) return/.test(modPartida),
+      'sólo en partidas con rating y una sola vez por partida');
+  chk(/ratingFinal: function\(m\)\{ lvOnRatingUpdate\(m\); \}/.test(SRC),
+      'y se dibuja con la misma función que el PvP de casa');
+  chk(/d:\(typeof rw\.delta==='number'\?rw\.delta:undefined\)/.test(SRC) && /ri\.d>0\?'\+':'−'/.test(SRC),
+      'la chapita del nombre muestra la variación en verde o rojo, como Lichess');
+  // Sólo en las CHAPITAS de nombre del tablero (partida suelta y salas). En las listas —la
+  // gente de la sala y la cola— el "(vos)" se queda a propósito: ahí sirve para encontrarse.
+  chk(!/nmHtml\+rat\+\(mine\?' <span style="color:var\(--text3\)">\(vos\)/.test(SRC),
+      '🔒 ya no aparece "(vos)" en la chapita del propio nombre (el propio siempre está abajo)');
+  chk(/soyYo\?' \(vos\)':''/.test(SRC),
+      'pero en la cola de la sala sigue, porque ahí sirve para encontrarse entre muchos');
 
   // ── Fase 3: los botones del final ───────────────────────────────────────────────
   chk(/id="lv-li-nuevo"/.test(SRC) && /id="lv-li-reclamar"/.test(SRC),

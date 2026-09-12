@@ -37112,7 +37112,7 @@ function cvUpdateNagBadge() {
   function lvSiteRatings(){ try{ return window.aaAuth ? window.aaAuth.getRatings() : null; }catch(e){ return null; } }
   // Categoría del ritmo (mismo criterio que el servidor: estimado = base + 40·inc, en seg).
   function lvTcCategory(base,inc){ var est=(+base||0)+40*(+inc||0); return est<=179?'bullet':est<=479?'blitz':'rapid'; }
-  var LV_CAT_LABEL={ bullet:'🔫 Bullet', blitz:'⚡ Blitz', rapid:'🐢 Rápido' };
+  var LV_CAT_LABEL={ bullet:'🔫 Bullet', blitz:'⚡ Blitz', rapid:'🐢 Rápido', classical:'🏛️ Clásica' };
   // Mi rating del sitio en una categoría (o null si no estoy logueado / no lo trajo aún).
   function lvMyRating(cat){ var R=lvSiteRatings(); if(!R||!R.ratings) return null; var v=R.ratings[cat];
     if(typeof v!=='number') return null; return { r:v, prov:!!(R.prov&&R.prov[cat]) }; }
@@ -37768,11 +37768,16 @@ function cvUpdateNagBadge() {
       var dis=(lvStatus==='playing' && lvPlayers && lvPlayers[connKey]===false && lvPlayers[color==='w'?'w':'b']) ? ' <span class="lv-conn">(reconectando…)</span>' : '';
       // Rating del sitio de ese asiento (si el jugador está logueado).
       var ri=lvRatings && lvRatings[color];
-      var rat=ri ? ' <span class="lv-plate-rat">'+ri.r+(ri.prov?'?':'')+'</span>' : '';
+      // Al terminar una partida con rating, al lado va cuánto ganó o perdió cada uno (como
+      // Lichess: "2003 −7"), en verde o en rojo.
+      var dl=(ri && typeof ri.d==='number' && ri.d!==0)
+        ? ' <span style="font-weight:700;color:'+(ri.d>0?'var(--green,#3a9d4a)':'var(--red,#d0473d)')+'">'+(ri.d>0?'+':'−')+Math.abs(ri.d)+'</span>' : '';
+      var rat=ri ? ' <span class="lv-plate-rat">'+ri.r+(ri.prov?'?':'')+'</span>'+dl : '';
       // Si el asiento es un usuario del sitio (logueado), el nick abre su perfil al tocarlo.
       var nmHtml=lvEsc(nm), acct=lvUsers && lvUsers[color];
       if(acct) nmHtml=(window.aaPatron?window.aaPatron.badge(acct):'')+'<span class="aa-nick-clk" data-uprofile="'+lvEsc(acct)+'" title="Ver el perfil de '+lvEsc(acct)+'">'+nmHtml+'</span>';
-      return (color==='w'?'⚪ ':'⚫ ')+nmHtml+rat+(mine?' <span style="color:var(--text3)">(vos)</span>':'')+dis;
+      // Sin "(vos)": el propio siempre está abajo y se entiende solo (pedido del usuario, 12/09).
+      return (color==='w'?'⚪ ':'⚫ ')+nmHtml+rat+dis;
     }
     var nb=$('lv-name-bot'), nt=$('lv-name-top');
     if(nb) nb.innerHTML=label(bottom);
@@ -37793,8 +37798,8 @@ function cvUpdateNagBadge() {
       return (color==='w')?m.w:m.b;
     }
     var rw=ratDe('w'), rb=ratDe('b');
-    if(rw) lvRatings.w={ r:rw.rating, prov:!!rw.prov };
-    if(rb) lvRatings.b={ r:rb.rating, prov:!!rb.prov };
+    if(rw) lvRatings.w={ r:rw.rating, prov:!!rw.prov, d:(typeof rw.delta==='number'?rw.delta:undefined) };
+    if(rb) lvRatings.b={ r:rb.rating, prov:!!rb.prov, d:(typeof rb.delta==='number'?rb.delta:undefined) };
     updateNames();
     var _myId=lvMyId();
     var mine=(_myId && byId[_myId]) ? byId[_myId]
@@ -38427,7 +38432,9 @@ function cvUpdateNagBadge() {
     if(lvStatus!=='playing' && lvListo[color]) tags+='<span class="lv-seat-tag lv-seat-ready">✅ Listo</span>';
     var connKey=(color==='w')?'connW':'connB';
     var dis=(lvStatus==='playing' && lvPlayers && lvPlayers[connKey]===false) ? ' <span class="lv-conn">(reconectando…)</span>' : '';
-    el.innerHTML=ic+nmHtml+rat+(mine?' <span style="color:var(--text3)">(vos)</span>':'')+tags+dis;
+    // Sin "(vos)" en la chapita: el propio está abajo y se entiende solo (pedido del usuario,
+    // 12/09). En las LISTAS (gente de la sala, cola) sí queda: ahí sirve para encontrarse.
+    el.innerHTML=ic+nmHtml+rat+tags+dis;
   }
   // ¿Puedo tocar este asiento? Si hay cola, el asiento libre es del primero de la fila.
   // Al que no entró con su cuenta le dejamos el botón igual: es más claro avisarle por qué
@@ -39468,6 +39475,9 @@ function cvUpdateNagBadge() {
        la derecha que los del sitio: tarjeta que se convierte en globito. Trae su propia
        forma de aceptar y rechazar. Sin esto había dos carteles distintos para lo mismo. */
     desafioEntrante: function(m){ lvOnIncoming(m); },
+    /* El cambio de rating al terminar. Recibe el MISMO formato que manda nuestro servidor de
+       cuentas ({category, w:{rating,prov,delta}, b:{…}}), así se dibuja igual en los dos. */
+    ratingFinal: function(m){ lvOnRatingUpdate(m); },
     sacarDesafioEntrante: function(id){ lvIncRemove(id); },
     soltar: function(){ lvTx = null; },
     enPartida: function(){ return !!lvTx; }
@@ -42562,7 +42572,40 @@ function cvUpdateNagBadge() {
       P.ofertaVista = ofre;
       P.ply = (m.moves || []).length;   // para la regla de las 10 jugadas de abajo
     }
-    if (m.status === 'finished') botones(true);
+    if (m.status === 'finished') { botones(true); traerVariacion(); }
+  }
+
+  /* 📈 CUÁNTO SE GANÓ O PERDIÓ DE RATING. El estado de la partida no lo trae: Lichess lo
+     calcula al terminar y aparece en la exportación pública de la partida
+     (`players.white.ratingDiff`, sin permisos). A veces tarda un instante en estar, así que se
+     reintenta unas veces. Sólo en partidas con rating, y una sola vez por partida. Se le pasa
+     al tablero en el MISMO formato que usa nuestro servidor de cuentas, así el "+6 / −7" se
+     dibuja igual que en el PvP de casa. */
+  function traerVariacion() {
+    if (!P || !P.full || !P.full.rated || P.varPedida) return;
+    P.varPedida = true;
+    var id = P.id, f = P.full;
+    var cat = f.speed;
+    if (!cat && f.clock) { var s = f.clock.initial / 1000 + 40 * (f.clock.increment / 1000); cat = s < 180 ? 'bullet' : s < 480 ? 'blitz' : s < 1500 ? 'rapid' : 'classical'; }
+    var intento = 0;
+    (function pedir() {
+      intento++;
+      fetch(LI + '/game/export/' + id + '?moves=false&clocks=false&evals=false&opening=false', { headers: { Accept: 'application/json' } })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (g) {
+          var pw = g && g.players && g.players.white, pb = g && g.players && g.players.black;
+          var listo = pw && pb && typeof pw.ratingDiff === 'number' && typeof pb.ratingDiff === 'number';
+          if (!listo) { if (intento < 5) setTimeout(pedir, 1500); return; }
+          try {
+            window.lvTablero.ratingFinal({
+              category: cat,
+              w: { rating: pw.rating + pw.ratingDiff, prov: !!pw.provisional, delta: pw.ratingDiff },
+              b: { rating: pb.rating + pb.ratingDiff, prov: !!pb.provisional, delta: pb.ratingDiff }
+            });
+          } catch (e) {}
+        })
+        .catch(function () { if (intento < 5) setTimeout(pedir, 1500); });
+    })();
   }
   function soltarPendiente() {
     if (!P) return;
