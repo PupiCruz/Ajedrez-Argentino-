@@ -1537,6 +1537,7 @@
     .cv-pn-name:hover { color:var(--gold); }
     .cv-psub { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--fg-c8); text-shadow:var(--txt-out); min-width:0; }
     .cv-psub .cv-pelo { font-weight:700; color:var(--fg-c0); }
+    .cv-psub .cv-ppts { font-weight:700; color:var(--gold); white-space:nowrap; }
     /* Banderas por imagen (SVG local). Escalan con el texto (height en em); sirven en tablas y visor. */
     .flag-ic { display:inline-block; height:0.9em; width:auto; vertical-align:-0.1em; border-radius:2px;
       box-shadow:0 0 0 .5px rgba(0,0,0,.35); }
@@ -3495,6 +3496,31 @@
       .lv-salas-sub { color:var(--text2); font-size:13px; margin:0 0 14px; line-height:1.5; }
       .lv-salas { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
       @media (max-width:760px){ .lv-salas { grid-template-columns:1fr; } }
+
+      /* ── Rival al azar en Lichess (grilla tipo "emparejamiento rápido") ──
+         OJO: minmax(0,1fr) y NO 1fr pelado. Con 1fr las celdas no se pueden achicar
+         y la grilla desborda en el teléfono (ya pasó en el sitio, ver las notas). */
+      .lv-li-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+      @media (max-width:560px){ .lv-li-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+      .lv-li-cell { min-width:0; background:var(--bg2); border:1px solid var(--border); border-radius:var(--r-md);
+        padding:14px 8px; text-align:center; cursor:pointer; font-family:inherit; color:var(--text);
+        transition:background .15s,border-color .15s,transform .1s; }
+      .lv-li-cell:hover:not(:disabled) { background:var(--bg3); border-color:var(--gold-dim); }
+      .lv-li-cell:active:not(:disabled) { transform:scale(.98); }
+      .lv-li-cell:disabled { opacity:.45; cursor:default; }
+      .lv-li-tc { font-size:21px; font-weight:800; letter-spacing:-.5px; line-height:1.1; }
+      .lv-li-kind { font-size:11px; color:var(--text3); margin-top:2px; }
+      .lv-li-rated { margin-bottom:12px; }
+      /* Espera: reemplaza a la grilla mientras Lichess busca rival. */
+      .lv-li-wait { text-align:center; padding:22px 10px; }
+      .lv-li-wait-tc { font-size:26px; font-weight:800; letter-spacing:-.6px; }
+      .lv-li-wait-tx { font-size:13px; color:var(--text2); margin:6px 0 4px; }
+      .lv-li-wait-el { font-size:12px; color:var(--text3); font-variant-numeric:tabular-nums; margin-bottom:14px; }
+      .lv-li-dots::after { content:'…'; animation:lvLiDots 1.2s steps(4,end) infinite; }
+      @keyframes lvLiDots { 0%{content:''} 25%{content:'.'} 50%{content:'..'} 75%{content:'…'} }
+      .lv-li-note { font-size:11.5px; color:var(--text3); margin:12px 0 0; line-height:1.5; }
+      .lv-li-guest { font-size:12.5px; color:var(--text2); background:var(--bg2); border:1px dashed var(--border);
+        border-radius:var(--r-sm); padding:10px 12px; margin:0 0 12px; line-height:1.5; }
       .lv-sala-card { display:flex; flex-direction:column; gap:6px; text-align:left; padding:14px 15px; border:1px solid var(--border); border-radius:var(--r-md); background:var(--bg2); color:var(--text); font-family:inherit; cursor:pointer; transition:filter .12s, border-color .12s; }
       .lv-sala-card:hover { filter:brightness(1.07); border-color:var(--gold-dim); }
       .lv-sala-top { display:flex; align-items:center; gap:8px; min-width:0; }
@@ -3601,6 +3627,38 @@
           </div>
           <p class="lv-salas-sub">Entrá, mirá, charlá y anotate en la cola. El que gana se queda.</p>
           <div id="lv-salas-list" class="lv-salas"></div>
+        </div>
+      </div>
+
+      <!-- RIVAL AL AZAR EN LICHESS — copia la grilla de "emparejamiento rápido" de Lichess.
+           Por qué: la pestaña Jugar del sitio puede estar vacía y Lichess tiene ~44.000
+           conectados. Probado el 11/09/2026: el ritmo MÁS impopular (30+20) consiguió rival
+           real en 29 segundos. El pedido cae en la "Sala de espera" de Lichess, no en su
+           emparejamiento rápido (lo dice la API: source=lobby); igual empareja rápido.
+           Fase 1: la partida se abre EN lichess.org. En la Fase 2 pasa a jugarse acá. -->
+      <div id="lv-li-wrap" style="display:none">
+        <div class="lv-salas-card">
+          <div class="lv-salas-head">
+            <h3>♞ Rival al azar en Lichess</h3>
+            <span>elegí un ritmo y a jugar</span>
+            <span id="lv-li-beta" style="display:none;font-size:11px;font-weight:700;color:var(--gold);background:var(--gold-bg);border:1px solid var(--gold-dim);border-radius:var(--r-pill);padding:2px 9px">en prueba</span>
+          </div>
+          <p class="lv-salas-sub">Te buscamos rival entre toda la gente conectada a Lichess. Suele tardar menos de un minuto.</p>
+          <div id="lv-li-guest" class="lv-li-guest" style="display:none"></div>
+          <div id="lv-li-panel">
+            <div id="lv-li-rated" class="lv-color-seg lv-li-rated">
+              <button type="button" class="lv-seg lv-seg-on" data-lirated="1">🏅 Con rating</button>
+              <button type="button" class="lv-seg" data-lirated="0">🤝 Amistosa</button>
+            </div>
+            <div id="lv-li-grid" class="lv-li-grid" role="group" aria-label="Ritmos de juego"></div>
+          </div>
+          <div id="lv-li-wait" class="lv-li-wait" style="display:none">
+            <div class="lv-li-wait-tc" id="lv-li-wait-tc"></div>
+            <div class="lv-li-wait-tx"><span class="lv-li-dots">Buscando rival en Lichess</span></div>
+            <div class="lv-li-wait-el" id="lv-li-wait-el"></div>
+            <button type="button" class="lv-btn-sec" id="lv-li-cancel">Cancelar</button>
+          </div>
+          <p class="lv-li-note" id="lv-li-note">La partida se juega en Lichess y cuenta para tu rating de allá. Para rival al azar, Lichess sólo permite <b>rápidas y clásicas</b> desde otras apps: <b>5+5 es lo más rápido que se puede</b>. Si querés bala o blitz, te esperan las <b>salas</b> de acá arriba.</p>
         </div>
       </div>
 
@@ -6527,6 +6585,56 @@ function _titleByName(name, crKey) {
 function _eloByName(name, crKey) {
   var e = _tourEntryByName(name, crKey);
   return (e && e.elo) ? e.elo : 0;
+}
+
+// ── Puntos del jugador EN LA RONDA que se está viendo ───────────────────────────────────────
+// Los cruces de cada ronda traen la columna "Pts." de Chess-Results (pw/pb): los puntos con los que
+// cada jugador LLEGA a esa ronda. Sumándole lo que saca en esa partida sale el acumulado hasta ahí,
+// que es lo que muestra el visor ("6½/7", como chess.com).
+// Medido contra los totales de la tabla oficial: da exacto en el 99,7% de los jugadores (7.751 de
+// 7.773, en los 85 cuadros que traen la columna).
+// ⚠️ A propósito NO se calcula sumando los resultados ronda por ronda cuando la tabla no trae la
+// columna: esa cuenta falla en el 14% de los jugadores (byes, y rondas donde el jugador no figura)
+// y mostraría números inventados. Sin columna, el visor no muestra puntos y listo.
+// Vive en _stdFedCache con otra clave, para borrarse junto con él al guardar cuadros nuevos.
+function _tourPtsIx(crKey) {
+  var ck = '#pts:' + crKey;
+  if (_stdFedCache[ck]) return _stdFedCache[ck];
+  var ix = {}, hay = false;
+  try {
+    var d = crDataLoad(crKey);
+    if (d && d.rounds) Object.keys(d.rounds).forEach(function(r) {
+      var rn = parseInt(r, 10); if (isNaN(rn)) return;
+      (d.rounds[r] || []).forEach(function(p) {
+        if (!p) return;
+        var aw = _stPts(p.pw), ab = _stPts(p.pb);
+        if (p.w && aw != null) { ix[crNormTokens(p.w) + '|' + rn] = { antes: aw, res: p.res || '', color: 'w' }; hay = true; }
+        if (p.b && ab != null) { ix[crNormTokens(p.b) + '|' + rn] = { antes: ab, res: p.res || '', color: 'b' }; hay = true; }
+      });
+    });
+  } catch (e) {}
+  if (hay) _stdFedCache[ck] = ix;
+  return ix;
+}
+/* Puntos acumulados hasta la ronda que se está viendo, contando ESTA partida si ya terminó.
+   `resPgn` es el resultado del PGN: en el vivo la partida termina en el tablero antes de que la
+   tabla se entere, así que sirve para cerrar la cuenta sin esperar a Chess-Results.
+   `rondas` es el DENOMINADOR que se muestra: las rondas que ya cuentan en esos puntos. Si la
+   partida está en juego, la de hoy todavía no cuenta (jugándose la 8ª: "6/7", no "6/8" — lo marcó
+   el autor mirando cómo lo muestra chess.com); si ya terminó, sí cuenta ("3/3" en la ronda 3).
+   Devuelve { pts, ronda, rondas, jugando } o null si esa tabla no trae puntos. */
+function _ptsByName(name, crKey, round, resPgn) {
+  var rn = parseInt(round, 10);
+  if (!crKey || !name || !rn) return null;
+  var e = _tourPtsIx(crKey)[crNormTokens(name) + '|' + rn];
+  if (!e) return null;
+  var res = (_stJugada(e.res) || e.res === '+--' || e.res === '--+') ? e.res : String(resPgn || '');
+  var sw = (res === '1-0' || res === '+--') ? 1
+         : (res === '0-1' || res === '--+') ? 0
+         : (res === '½-½' || res === '1/2-1/2') ? 0.5 : null;
+  var jugando = (sw == null);
+  return { pts: e.antes + (jugando ? 0 : (e.color === 'w' ? sw : 1 - sw)),
+           ronda: rn, rondas: jugando ? rn - 1 : rn, jugando: jugando };
 }
 
 // ── XLSX descompresión (compartida) — usa regex para evitar problemas de namespace XML ──
@@ -18303,8 +18411,8 @@ function loadPgnIntoViewer(pgn, tourName, tourLoc, activeIdx) {
   var _rf = document.getElementById('cv-round-filter'); if (_rf) _rf.style.display = 'none';
 
   // Cabeceras de jugadores
-  document.getElementById('cv-wname').innerHTML  = cvPlayerHtml(meta.wt, meta.w, meta.wfide, meta.we, meta.wteam, false);
-  document.getElementById('cv-bname').innerHTML  = cvPlayerHtml(meta.bt, meta.b, meta.bfide, meta.be, meta.bteam, true);
+  document.getElementById('cv-wname').innerHTML  = cvPlayerHtml(meta.wt, meta.w, meta.wfide, meta.we, meta.wteam, false, meta);
+  document.getElementById('cv-bname').innerHTML  = cvPlayerHtml(meta.bt, meta.b, meta.bfide, meta.be, meta.bteam, true, meta);
   // Llenar banderas via caché (instantáneo para argentinos) o fetch async para el resto
   if (meta.wfide) cvLoadFlag('cv-wflag', meta.wfide);
   if (meta.bfide) cvLoadFlag('cv-bflag', meta.bfide);
@@ -24117,7 +24225,7 @@ function cvUpdateMaterial() {
 
 // Genera el HTML completo de un jugador en el visor: bandera + título + nombre (clickeable) + ELO
 // isBlack: true para alinear a la derecha
-function cvPlayerHtml(title, name, fideId, elo, team, isBlack) {
+function cvPlayerHtml(title, name, fideId, elo, team, isBlack, gm) {
   if (!name) return '';
   var found = cvFindPlayer(name, fideId);
   var isVivo = _cvGameIsVivo();            // partida PvP del sitio: el nick abre la ficha del sitio
@@ -24153,7 +24261,19 @@ function cvPlayerHtml(title, name, fideId, elo, team, isBlack) {
   // con banderas de un torneo viejo si se abrió una partida suelta).
   var stdFlag = _flagByName(name, _crK, fideId);
   var flagStr = (stdFlag || fideId) ? '<span id="' + flagId + '">' + stdFlag + '</span>' : '';
-  var sub = (eloStr || flagStr) ? '<span class="cv-psub">' + eloStr + flagStr + '</span>' : '';
+  // Puntos en el torneo hasta la ronda que se está viendo ("6½/7"), de la MISMA tabla de la que
+  // salen la bandera y el título. `gm` es la partida abierta (trae ronda y resultado). Si esa tabla
+  // no trae la columna de puntos, no se muestra nada.
+  var _pt = gm ? _ptsByName(name, _crK, gm.round, gm.res) : null;
+  var ptsStr = '';
+  // Con la primera ronda en juego no hay nada que contar todavía ("0/0"): no se muestra.
+  if (_pt && _pt.rondas > 0) {
+    var _pn = crPtsStr(_pt.pts);
+    var _tip = _pn + (_pt.pts === 1 ? ' punto' : ' puntos') + ' en ' + _pt.rondas + (_pt.rondas === 1 ? ' ronda' : ' rondas')
+      + (_pt.jugando ? (' · la ronda ' + _pt.ronda + ' está en juego') : '');
+    ptsStr = '<span class="cv-ppts" title="' + escHtml(_tip) + '">' + _pn + '/' + _pt.rondas + '</span>';
+  }
+  var sub = (eloStr || flagStr || ptsStr) ? '<span class="cv-psub">' + eloStr + flagStr + ptsStr + '</span>' : '';
   return avatarStr + '<span class="cv-pcol"><span class="cv-pn">' + badge + nameStr + '</span>' + sub + '</span>';
 }
 
@@ -24519,8 +24639,8 @@ function cvSelect(i) {
   // Nombres CLICKEABLES (abren el perfil) — igual que loadPgnIntoViewer. Antes se ponían con
   // textContent plano, y por eso en las transmisiones EN VIVO, al refrescar con jugadas nuevas
   // (que pasan por cvSelect), el nombre dejaba de abrir el perfil.
-  document.getElementById('cv-wname').innerHTML     = cvPlayerHtml(g.wt, g.w, g.wfide, g.we, g.wteam, false);
-  document.getElementById('cv-bname').innerHTML     = cvPlayerHtml(g.bt, g.b, g.bfide, g.be, g.bteam, true);
+  document.getElementById('cv-wname').innerHTML     = cvPlayerHtml(g.wt, g.w, g.wfide, g.we, g.wteam, false, g);
+  document.getElementById('cv-bname').innerHTML     = cvPlayerHtml(g.bt, g.b, g.bfide, g.be, g.bteam, true, g);
   if (g.wfide) cvLoadFlag('cv-wflag', g.wfide);
   if (g.bfide) cvLoadFlag('cv-bflag', g.bfide);
   cvSetResult(g.res);
@@ -41158,6 +41278,493 @@ function cvUpdateNagBadge() {
     if(!handled) verify();    // revalida en segundo plano
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+
+<!-- ══════════════════════════════════════════════════════════════════════════════
+     JUGAR CONTRA GENTE DE LICHESS — Fase 0 (el permiso) + Fase 1 (la grilla)
+     Plan completo y datos comprobados: nota "plan_jugar_con_lichess".
+     ══════════════════════════════════════════════════════════════════════════ -->
+<script>
+/* ─────────────────────────────────────────────────────────────────────────────
+   aaLi — el permiso de Lichess para JUGAR (scope board:play)
+
+   Es un permiso APARTE del login del sitio, y a propósito:
+
+   · El login de arriba NO pide ningún permiso: entrar sólo dice quién sos. Si le
+     metiéramos board:play, TODOS los que ya entraron tendrían que volver a entrar,
+     porque cada permiso nuevo obliga a aceptar de nuevo la pantalla de Lichess.
+     Por eso éste se pide aparte y SÓLO cuando el visitante aprieta un ritmo.
+
+   · Este token SÍ puede jugar y abandonar en nombre del visitante, así que NO va
+     al Worker ni a localStorage: vive en sessionStorage, que muere al cerrar la
+     pestaña. El canje del código lo hace el navegador DIRECTO contra Lichess (su
+     API manda Access-Control-Allow-Origin:*), así que el token no pasa por ningún
+     servidor nuestro ni queda escrito en ningún lado.
+
+   · Para Lichess el identificador de la app ES la dirección. O sea que el
+     localhost del modo autor y el sitio publicado son DOS aplicaciones distintas:
+     el permiso se da una vez en cada lado y son independientes.
+
+   Comprobado contra la API real el 11/09/2026.
+   ───────────────────────────────────────────────────────────────────────────── */
+(function () {
+  'use strict';
+  var LI = 'https://lichess.org';
+  var SCOPE = 'board:play';
+  var K = { tok:'aali_tok', exp:'aali_exp', ver:'aali_ver', st:'aali_st', ret:'aali_ret', int:'aali_int' };
+
+  function ss(k) { try { return sessionStorage.getItem(k) || ''; } catch (e) { return ''; } }
+  function ssSet(k, v) {
+    try { if (v == null || v === '') sessionStorage.removeItem(k); else sessionStorage.setItem(k, v); } catch (e) {}
+  }
+  /* El identificador de la app y la dirección de vuelta son la MISMA cosa, sin hash
+     ni parámetros: Lichess exige que coincida exacto entre el pedido y el canje. */
+  function appId() { return location.origin + location.pathname; }
+
+  function rnd(n) {
+    var a = new Uint8Array(n); crypto.getRandomValues(a);
+    return Array.prototype.map.call(a, function (b) { return ('0' + b.toString(16)).slice(-2); }).join('').slice(0, n);
+  }
+  function b64url(buf) {
+    var s = btoa(String.fromCharCode.apply(null, new Uint8Array(buf)));
+    return s.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  function sha256(s) { return crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)); }
+
+  /* Mismo cartelito flotante que usa el login (clase .aa-toast). */
+  function avisar(msg) {
+    try {
+      var t = document.createElement('div'); t.className = 'aa-toast'; t.textContent = msg;
+      document.body.appendChild(t);
+      setTimeout(function () { t.classList.add('show'); }, 10);
+      setTimeout(function () { t.classList.remove('show'); setTimeout(function () { t.remove(); }, 250); }, 3400);
+    } catch (e) {}
+  }
+
+  function limpiarToken() { ssSet(K.tok, null); ssSet(K.exp, null); }
+
+  function token() {
+    var t = ss(K.tok); if (!t) return '';
+    var exp = parseInt(ss(K.exp) || '0', 10);
+    if (exp && Date.now() > exp) { limpiarToken(); return ''; }   // venció: como si no hubiera
+    return t;
+  }
+
+  /* Devolverle el permiso a Lichess. Se llama al salir de la cuenta del sitio: si el
+     visitante se fue, su permiso para jugar no tiene por qué seguir vivo. */
+  function olvidar() {
+    var t = ss(K.tok); limpiarToken();
+    if (!t) return Promise.resolve();
+    return fetch(LI + '/api/token', { method: 'DELETE', headers: { Authorization: 'Bearer ' + t } })
+      .catch(function () {});
+  }
+
+  /* Mandar al visitante a la pantalla de permiso de Lichess. `intent` es lo que
+     estaba por hacer (p.ej. {tipo:'seek',t:5,i:0,rated:true}): se guarda y se retoma
+     solo al volver, así no tiene que apretar el ritmo dos veces. */
+  async function pedir(intent) {
+    if (!window.crypto || !crypto.subtle) { avisar('Tu navegador no soporta este permiso.'); return false; }
+    var ver = rnd(64), st = rnd(24);
+    ssSet(K.ver, ver); ssSet(K.st, st);
+    ssSet(K.ret, location.href);
+    ssSet(K.int, intent ? JSON.stringify(intent) : '');
+    var p = new URLSearchParams({
+      response_type: 'code', client_id: appId(), redirect_uri: appId(),
+      code_challenge_method: 'S256', code_challenge: b64url(await sha256(ver)),
+      scope: SCOPE, state: st
+    });
+    /* Pista para que Lichess ya muestre la cuenta con la que entró al sitio. */
+    try {
+      var u = window.aaAuth && window.aaAuth.getUser && window.aaAuth.getUser();
+      if (u && u.username) p.set('username', u.username);
+    } catch (e) {}
+    location.href = LI + '/oauth?' + p.toString();
+    return true;
+  }
+
+  /* Saca code/state del URL y devuelve el hash que tenía antes de irse a Lichess
+     (la dirección de vuelta no lo trae, así que el visitante caería en la portada). */
+  function limpiarUrl(ret) {
+    try {
+      var u = new URL(location.href);
+      ['code', 'state', 'error', 'error_description', 'iss'].forEach(function (k) { u.searchParams.delete(k); });
+      var hash = u.hash || '';
+      try { if (ret) hash = (new URL(ret)).hash || hash; } catch (e) {}
+      history.replaceState(null, '', u.pathname + (u.search || '') + hash);
+    } catch (e) {}
+  }
+
+  /* La vuelta de Lichess. Ojo con el orden: el login del sitio también mira ?code=
+     al arrancar, pero usa OTRAS claves de sessionStorage y se va sin tocar nada si
+     no encuentra las suyas (`if(!pendingState) return false`). Por eso conviven. */
+  async function volver() {
+    var mio = ss(K.st);
+    if (!mio) return false;                                  // este code no es nuestro
+    var qs = new URLSearchParams(location.search);
+    var code = qs.get('code'), st = qs.get('state'), err = qs.get('error');
+    if (!code && !err) return false;
+
+    var ver = ss(K.ver), intent = ss(K.int), ret = ss(K.ret);
+    ssSet(K.st, null); ssSet(K.ver, null); ssSet(K.int, null); ssSet(K.ret, null);
+    limpiarUrl(ret);
+
+    if (err) { avisar(err === 'access_denied' ? 'No diste el permiso, así que todavía no se puede jugar en Lichess.' : 'Lichess no dio el permiso.'); return true; }
+    if (st !== mio || !ver) { avisar('Se perdió el pedido de permiso, probá de nuevo.'); return true; }
+
+    try {
+      var r = await fetch(LI + '/api/token', {
+        method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'authorization_code', code: code, code_verifier: ver,
+          redirect_uri: appId(), client_id: appId()
+        }).toString()
+      });
+      var d = await r.json();
+      if (!r.ok || !d.access_token) throw new Error(d.error || ('HTTP ' + r.status));
+      ssSet(K.tok, d.access_token);
+      ssSet(K.exp, String(Date.now() + ((parseInt(d.expires_in, 10) || 3600) * 1000)));
+    } catch (e) {
+      avisar('No se pudo obtener el permiso: ' + (e && e.message || e));
+      return true;
+    }
+
+    /* Retomar lo que estaba por hacer antes de que lo mandáramos a Lichess. */
+    var it = null; try { it = intent ? JSON.parse(intent) : null; } catch (e) {}
+    document.dispatchEvent(new CustomEvent('aa-li-listo', { detail: it }));
+    return true;
+  }
+
+  /* Si sale de la cuenta del sitio, le devolvemos el permiso a Lichess. */
+  document.addEventListener('aa-auth-changed', function (e) {
+    if (!(e && e.detail && e.detail.user)) olvidar();
+  });
+
+  window.aaLi = { tiene: function () { return !!token(); }, token: token, pedir: pedir, olvidar: olvidar, avisar: avisar };
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', volver); else volver();
+})();
+</script>
+
+<script>
+/* ─────────────────────────────────────────────────────────────────────────────
+   Fase 1 — "Rival al azar en Lichess": la grilla de ritmos y la espera.
+
+   Cómo funciona, en criollo: le pedimos a Lichess que nos busque rival y DEJAMOS
+   LA CONEXIÓN ABIERTA. Mientras esté abierta, el pedido sigue vivo; apenas se
+   corta (cancelar, cerrar la pestaña, irse del sitio) Lichess lo da de baja solo.
+   Eso último no es un efecto secundario: está pensado así, para que no te
+   emparejen en una partida que ya no ibas a jugar.
+
+   En paralelo escuchamos los avisos de la cuenta, que es por donde llega
+   "arrancó una partida". La documentación pide abrir ESE caño PRIMERO, para no
+   perderse el aviso si el emparejamiento es instantáneo.
+
+   Fase 1: la partida se abre en lichess.org. En la Fase 2 se juega en el tablero
+   de acá y hay que cambiar el texto de #lv-li-note.
+   ───────────────────────────────────────────────────────────────────────────── */
+(function () {
+  'use strict';
+  var LI = 'https://lichess.org';
+
+  /* Los 11 ritmos de la grilla de Lichess, en su mismo orden.
+     ⚠️ El pedido de rival al azar quiere el tiempo en MINUTOS. El desafío a alguien
+     puntual lo quiere en SEGUNDOS, y el formulario de "Crear un desafío" de acá al
+     lado los guarda en segundos ("300,0" = 5+0). Tres unidades en la misma pantalla. */
+  var RITMOS = [
+    [1, 0, 'Bala'], [2, 1, 'Bala'], [3, 0, 'Blitz'],
+    [3, 2, 'Blitz'], [5, 0, 'Blitz'], [5, 3, 'Blitz'],
+    /* Estos cuatro NO están en la grilla de Lichess: los sumamos nosotros porque son lo
+       MÁS RÁPIDO que se puede pedir al azar desde afuera. Los segundos estimados son
+       5+5=500, 6+3=480, 7+2=500 y 8+0=480, todos justo arriba (o encima) del corte de
+       480. Para comparar: 5+4 da 460 y ya lo rechazan. Para el que quiere algo parecido
+       a un blitz, esto es lo único que hay.
+       ⚠️ Como no son ritmos de la grilla de Lichess, caen en su "Sala de espera" como
+       ritmos raros: pueden tardar más en que los agarren que un 10+0. */
+    [5, 5, 'Rápida'], [6, 3, 'Rápida'], [7, 2, 'Rápida'], [8, 0, 'Rápida'],
+    [10, 0, 'Rápida'], [10, 5, 'Rápida'], [15, 10, 'Rápida'],
+    [30, 0, 'Clásica'], [30, 20, 'Clásica']
+  ];
+
+  /* 🚧 Lichess NO deja pedir rival AL AZAR en bala ni en blitz desde una app de afuera.
+     Su documentación: "Time controls: Rapid, Classical and Correspondence only". En el
+     código lo hace `boardApiHook`, que exige `isBoardCompatible` y si no contesta
+     400 "Invalid time control" — que es lo que pasaba con 1+0 y 5+0.
+     La cuenta es la que usa Lichess para clasificar, copiada de su código:
+     `estimateTotalSeconds = limitSeconds + 40*incrementSeconds`, y en su tabla de
+     velocidades Blitz va de 180 a 479 y Rápida de 480 a 1499. O sea: 480 s o más.
+     Por eso 5+5 (500) entra y 5+4 (460) no.
+     (Para un desafío a alguien PUNTUAL sí acepta blitz: sirve para la Fase 4.)
+     Comprobado el 11/09/2026 contra la API real. */
+  function sirveAlAzar(t, i) { return (t * 60 + 40 * i) >= 480; }
+  var RITMOS_AZAR = RITMOS.filter(function (r) { return sirveAlAzar(r[0], r[1]); });
+
+  var rated = true;      // como Lichess: puntuada por defecto
+  var busca = null;      // {seek, ev, t0, timer, tc} mientras se busca rival
+
+  function $(id) { return document.getElementById(id); }
+
+  /* ── 🚦 Interruptor de estreno ────────────────────────────────────────────
+     El panel NO se muestra en la web publicada hasta que se decida estrenarlo.
+     Así se pueden publicar otros cambios del index.html sin lanzar esto todavía.
+     · En MODO AUTOR (local) se ve siempre.
+     · En la web publicada se enciende entrando a  …/?lichess=1  y se apaga con
+       …/?lichess=0. Queda guardado en ESE navegador —y tiene que quedar guardado,
+       porque la app reescribe la dirección al cambiar de pestaña y el ?lichess=1
+       se perdería al primer clic. Sirve para probarlo en el teléfono de verdad.
+     · PARA ESTRENARLO: que esta función devuelva true y nada más. */
+  function activo() {
+    try {
+      var q = location.search || '';
+      if (/[?&]lichess=1/.test(q)) localStorage.setItem('aa_li_beta', '1');
+      if (/[?&]lichess=0/.test(q)) localStorage.removeItem('aa_li_beta');
+    } catch (e) {}
+    if (typeof _ondemand === 'undefined' || !_ondemand) return true;   // modo autor
+    try { return localStorage.getItem('aa_li_beta') === '1'; } catch (e) { return false; }
+  }
+  function usuario() { try { return window.aaAuth && window.aaAuth.getUser && window.aaAuth.getUser(); } catch (e) { return null; } }
+  function decir(t) { try { if (typeof window.aaDecir === 'function') window.aaDecir(t); } catch (e) {} }
+  function tcTexto(t, i) { return t + '+' + i; }
+
+  /* ── Pintar la grilla ───────────────────────────────────────────────────── */
+  function pintar() {
+    var grid = $('lv-li-grid'); if (!grid) return;
+
+    /* Apagado (web publicada, sin encender): el panel entero no existe para el visitante. */
+    var on = activo();
+    var wrap = $('lv-li-wrap'); if (wrap) wrap.style.display = on ? '' : 'none';
+    if (!on) return;
+    /* Encendido a mano en la web publicada: se avisa que es una prueba, para que no
+       parezca lanzado si alguien comparte el enlace. */
+    var chip = $('lv-li-beta');
+    if (chip) chip.style.display = (typeof _ondemand !== 'undefined' && _ondemand) ? '' : 'none';
+
+    var invitado = !usuario();
+
+    var g = $('lv-li-guest');
+    if (g) {
+      g.style.display = invitado ? '' : 'none';
+      if (invitado) g.innerHTML = '💡 <b>Entrá con Lichess</b> (arriba a la derecha) para jugar contra gente de Lichess desde acá.';
+    }
+    var panel = $('lv-li-panel'); if (panel) panel.style.display = invitado ? 'none' : '';
+
+    if (grid.childNodes.length !== RITMOS_AZAR.length) {
+      grid.innerHTML = '';
+      RITMOS_AZAR.forEach(function (r) {
+        var b = document.createElement('button');
+        b.type = 'button'; b.className = 'lv-li-cell';
+        b.setAttribute('aria-label', tcTexto(r[0], r[1]) + ' ' + r[2]);
+        b.innerHTML = '<div class="lv-li-tc">' + tcTexto(r[0], r[1]) + '</div><div class="lv-li-kind">' + r[2] + '</div>';
+        b.addEventListener('click', function () { arrancar(r[0], r[1]); });
+        grid.appendChild(b);
+      });
+    }
+  }
+
+  /* ── El botón Con rating / Amistosa ─────────────────────────────────────── */
+  function initRated() {
+    var box = $('lv-li-rated'); if (!box) return;
+    box.addEventListener('click', function (e) {
+      var b = e.target.closest('[data-lirated]'); if (!b) return;
+      rated = b.getAttribute('data-lirated') === '1';
+      Array.prototype.forEach.call(box.querySelectorAll('[data-lirated]'), function (x) {
+        x.classList.toggle('lv-seg-on', x === b);
+      });
+    });
+  }
+
+  /* ── Leer un caño de ndjson (una línea = un objeto) ──────────────────────── */
+  function caño(url, opts, ctrl, onObj, onFin) {
+    opts = opts || {}; opts.signal = ctrl.signal;
+    opts.headers = Object.assign({ Authorization: 'Bearer ' + window.aaLi.token() }, opts.headers || {});
+    fetch(url, opts).then(function (r) {
+      if (!r.ok) {
+        /* Lichess explica el motivo en el cuerpo ({"error":"..."}). Sin eso, un fallo
+           es un número pelado y no hay con qué arreglarlo. */
+        return r.text().then(function (tx) {
+          var motivo = '';
+          try { motivo = (JSON.parse(tx) || {}).error || ''; } catch (e) { motivo = (tx || '').slice(0, 200); }
+          var err = new Error('HTTP ' + r.status + ' — ' + (tx || '').slice(0, 300));
+          err.status = r.status; err.motivo = motivo; err.cuerpo = tx; throw err;
+        });
+      }
+      var rd = r.body.getReader(), dec = new TextDecoder(), buf = '';
+      (function leer() {
+        rd.read().then(function (res) {
+          if (res.done) { if (onFin) onFin(null); return; }
+          buf += dec.decode(res.value, { stream: true });
+          var partes = buf.split('\n'); buf = partes.pop();
+          partes.forEach(function (l) {
+            l = l.trim(); if (!l) return;            // las líneas vacías son latidos
+            var o = null; try { o = JSON.parse(l); } catch (e) {}
+            if (o && onObj) onObj(o);
+          });
+          leer();
+        }).catch(function (e) { if (onFin) onFin(e); });
+      })();
+    }).catch(function (e) { if (onFin) onFin(e); });
+  }
+
+  /* ── Buscar rival ───────────────────────────────────────────────────────── */
+  function arrancar(t, i) {
+    if (busca) return;
+    if (!usuario()) { if (window.aaAuth && window.aaAuth.login) window.aaAuth.login(); return; }
+    /* Sin permiso todavía: lo pedimos y nos acordamos de lo que quería hacer. */
+    if (!window.aaLi.tiene()) { window.aaLi.pedir({ tipo: 'seek', t: t, i: i, rated: rated }); return; }
+
+    var ctrlEv = new AbortController(), ctrlSeek = new AbortController();
+    busca = { ev: ctrlEv, seek: ctrlSeek, t0: Date.now(), timer: 0, tc: tcTexto(t, i) };
+    mostrarEspera(true);
+    decir('Buscando rival en Lichess, ritmo ' + tcTexto(t, i));
+
+    /* 1) Primero el caño de avisos (lo pide la documentación). */
+    caño(LI + '/api/stream/event', {}, ctrlEv, onAviso, function (e) {
+      if (e && e.name === 'AbortError') return;
+      if (!busca) return;
+      parar();
+      avisarFallo(e);
+    });
+
+    /* 2) Después el pedido: mientras el caño siga abierto, el pedido sigue vivo. */
+    caño(LI + '/api/board/seek', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        rated: rated ? 'true' : 'false', time: String(t), increment: String(i), variant: 'standard'
+      }).toString()
+    }, ctrlSeek, null, function (e) {
+      if (e && e.name === 'AbortError') return;
+      if (!busca || busca.listo) return;
+
+      /* Si Lichess contestó con un error, no hay nada que esperar: se avisa YA y se
+         dice el motivo. (Antes esto esperaba 4 segundos para todo y el cartel salía
+         tarde y sin explicar nada.) */
+      if (e) { parar(); avisarFallo(e); return; }
+
+      /* Cierre limpio: Lichess corta este caño cuando el pedido se acepta o vence. Si
+         fue aceptado, el aviso de "arrancó la partida" viene por el otro caño en un
+         instante; por eso acá sí se le da un respiro antes de darlo por perdido. */
+      setTimeout(function () {
+        if (busca && !busca.listo) { parar(); window.aaLi.avisar('Nadie tomó el pedido. Probá otro ritmo.'); }
+      }, 4000);
+    });
+  }
+
+  /* Un solo lugar para explicar por qué se cayó, en castellano y sin esconder el motivo
+     de Lichess: sin eso, un fallo es un número pelado y no hay con qué arreglarlo. */
+  /* Cuando Lichess rechaza un formulario NO manda un texto: manda los errores campo por
+     campo, tipo {"error":{"time":["error.min"]}}. Pegarlo tal cual da "[object Object]"
+     y no se entiende nada, así que acá se desarma y se nombra el campo. */
+  function textoError(x) {
+    if (!x) return '';
+    if (typeof x === 'string') return x;
+    try {
+      var partes = Object.keys(x).map(function (k) {
+        var v = x[k];
+        if (Array.isArray(v)) v = v.join(', ');
+        else if (v && typeof v === 'object') v = JSON.stringify(v);
+        return k + ' (' + v + ')';
+      });
+      return partes.join(' · ');
+    } catch (e) { try { return JSON.stringify(x).slice(0, 200); } catch (e2) { return ''; } }
+  }
+
+  function avisarFallo(e) {
+    try { console.warn('[Lichess] falló el pedido de partida:', (e && e.message) || e, e && e.cuerpo ? JSON.parse(e.cuerpo) : ''); } catch (x) {}
+    var st = e && e.status;
+    if (st === 401) { window.aaLi.olvidar(); pintar(); window.aaLi.avisar('Se venció el permiso de Lichess. Apretá de nuevo el ritmo para renovarlo.'); return; }
+    if (st === 429) { window.aaLi.avisar('Lichess pidió esperar un momento (demasiados pedidos seguidos). Probá en un minuto.'); return; }
+    var motivo = textoError(e && e.motivo);
+    window.aaLi.avisar(motivo ? ('Lichess rechazó el pedido → ' + motivo) : ('Se cortó el pedido a Lichess' + (e && e.message ? (' (' + e.message + ')') : '') + '.'));
+  }
+
+  function onAviso(o) {
+    if (!o || o.type !== 'gameStart' || !o.game || !busca) return;
+    busca.listo = true;
+    var g = o.game;
+    pararCanos();
+    mostrarPartida(g);
+    decir('Apareció rival. Partida lista.');
+  }
+
+  function pararCanos() {
+    if (!busca) return;
+    try { busca.seek.abort(); } catch (e) {}     // cortar = cancelar el pedido en Lichess
+    try { busca.ev.abort(); } catch (e) {}
+    if (busca.timer) { clearInterval(busca.timer); busca.timer = 0; }
+  }
+  function parar() { pararCanos(); busca = null; restaurarEspera(); mostrarEspera(false); }
+
+  /* La caja de espera se reescribe entera cuando aparece rival; ésta la devuelve a
+     como estaba. Se prefiere esto a recargar la página: en modo autor una recarga
+     dispara el aviso de "tenés cambios sin guardar". */
+  var esperaHTML = '';
+  function restaurarEspera() {
+    var w = $('lv-li-wait');
+    if (w && esperaHTML) { w.innerHTML = esperaHTML; engancharCancelar(); }
+  }
+  function engancharCancelar() {
+    var c = $('lv-li-cancel');
+    if (c) c.addEventListener('click', function () { parar(); decir('Búsqueda cancelada.'); });
+  }
+
+  /* ── Pantallas ──────────────────────────────────────────────────────────── */
+  function mostrarEspera(on) {
+    var w = $('lv-li-wait'), p = $('lv-li-panel');
+    if (!w || !p) return;
+    w.style.display = on ? '' : 'none';
+    p.style.display = on ? 'none' : '';
+    if (!on) return;
+    var tc = $('lv-li-wait-tc'); if (tc) tc.textContent = busca ? busca.tc : '';
+    var el = $('lv-li-wait-el');
+    if (el && busca) {
+      el.textContent = '0 s';
+      busca.timer = setInterval(function () {
+        if (!busca) return;
+        el.textContent = Math.round((Date.now() - busca.t0) / 1000) + ' s';
+      }, 1000);
+    }
+  }
+
+  /* Apareció rival. OJO: acá NO se puede abrir la pestaña sola — el aviso llega por
+     el caño, no por un clic, y el navegador bloquea las ventanas que no nacen de un
+     gesto del visitante. Por eso se muestra un botón y lo aprieta él. */
+  function mostrarPartida(g) {
+    var w = $('lv-li-wait'); if (!w) return;
+    var url = LI + '/' + (g.fullId || g.gameId || '');
+    var color = g.color === 'black' ? '⚫ Jugás con negras' : '⚪ Jugás con blancas';
+    var riv = (g.opponent && (g.opponent.username || g.opponent.id)) || 'tu rival';
+    var elo = (g.opponent && g.opponent.rating) ? (' (' + g.opponent.rating + ')') : '';
+    w.innerHTML =
+      '<div class="lv-li-wait-tc">¡Apareció rival!</div>' +
+      '<div class="lv-li-wait-tx">Contra <b>' + String(riv).replace(/[<>&]/g, '') + elo + '</b> · ' + color + '</div>' +
+      '<a class="lv-btn-main" style="display:inline-block;text-decoration:none;margin-top:6px" ' +
+      'href="' + url + '" target="_blank" rel="noopener">Entrar a la partida ↗</a>' +
+      '<div style="margin-top:12px"><button type="button" class="lv-btn-sec" id="lv-li-volver">Volver</button></div>';
+    var v = $('lv-li-volver');
+    if (v) v.addEventListener('click', function () { busca = null; restaurarEspera(); mostrarEspera(false); });
+  }
+
+  /* ── Enganches ──────────────────────────────────────────────────────────── */
+  function init() {
+    pintar(); initRated();
+    var w = $('lv-li-wait'); if (w) esperaHTML = w.innerHTML;   // guardar la caja original
+    engancharCancelar();
+    /* Si entra o sale de la cuenta, la grilla cambia de cara. */
+    document.addEventListener('aa-auth-changed', function () { if (!busca) pintar(); });
+    /* Vuelve de darle el permiso a Lichess: retomamos el ritmo que había apretado. */
+    document.addEventListener('aa-li-listo', function (e) {
+      var it = e && e.detail;
+      if (!it || it.tipo !== 'seek') return;
+      if (typeof goTo === 'function') { try { goTo('vivo'); } catch (err) {} }
+      rated = !!it.rated;
+      Array.prototype.forEach.call(document.querySelectorAll('#lv-li-rated [data-lirated]'), function (x) {
+        x.classList.toggle('lv-seg-on', (x.getAttribute('data-lirated') === '1') === rated);
+      });
+      setTimeout(function () { arrancar(it.t, it.i); }, 60);
+    });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();
 </script>
 

@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 792;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 836;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -3415,6 +3415,185 @@ console.log('\n=== 46. Accesibilidad Fase 1: las tablas de torneo ===');
   pedidos.length = 0; E = { data: publicado(), rondas: 9 };
   await mundo(pedidos, E)('cr2_i', 'https://info64.org/torneo', {});
   chk(rondasDe().length === 10, 'el botón "Actualizar desde info64" del autor sigue bajando todas', JSON.stringify(rondasDe()));
+}
+
+
+console.log('\n=== 50. Puntos del torneo en el visor (6½/7) ===');
+{
+  // Los cruces de cada ronda traen la columna "Pts." de Chess-Results (pw/pb): con cuántos puntos
+  // LLEGA cada jugador a esa ronda. El visor muestra eso + lo que saque en la partida que se está
+  // viendo, así al navegar a una ronda vieja el número es el de ESA ronda (como chess.com).
+  const PTS = (cuadro) => new Function('CUADRO',
+      extraerFuncion('_stPts') + extraerFuncion('_stJugada')
+    + extraerFuncion('crNormTokens') + extraerFuncion('_tourPtsIx') + extraerFuncion('_ptsByName')
+    + 'function normStr(s){ return String(s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9 ]/g," ").replace(/\s+/g," ").trim(); }'
+    + 'function crDataLoad(){ return CUADRO; }'
+    + 'var _stdFedCache = {};'
+    + ' return _ptsByName;')(cuadro);
+
+  const CU = { rounds: {
+    3: [ { m:'1', w:'PEREZ PONSA, Federico', pw:'2',  res:'1-0', b:'SANHUEZA, Cristian', pb:'2'  },
+         { m:'2', w:'BARRIONUEVO, Pablo',    pw:'1½', res:'½-½', b:'OBREGON, Andres',    pb:'2'  },
+         { m:'3', w:'MARTINEZ, Juan',        pw:'1',  res:'',    b:'GOMEZ, Luis',        pb:'1½' },
+         { m:'4', w:'RIVAS, Ana',            pw:'2',  res:'+--', b:'SOSA, Eva',          pb:'1'  } ],
+    4: [ { m:'1', w:'SANHUEZA, Cristian',    pw:'2',  res:'*',   b:'PEREZ PONSA, Federico', pb:'3' } ]
+  } };
+  const P = PTS(CU);
+  const v = (n, r, res) => { const x = P(n, 'cr_x', r, res); return x ? x.pts : null; };
+
+  chk(v('PEREZ PONSA, Federico', 3, '1-0') === 3, 'el que ganó la ronda 3 llevando 2 puntos queda en 3');
+  chk(v('SANHUEZA, Cristian', 3, '1-0') === 2, 'y el que la perdió se queda con los 2 que traía');
+  chk(v('OBREGON, Andres', 3, '½-½') === 2.5, 'las tablas suman medio punto al de negras');
+  chk(v('BARRIONUEVO, Pablo', 3, '½-½') === 2, 'y medio al de blancas (1½ + ½)');
+
+  const enJuego = P('PEREZ PONSA, Federico', 'cr_x', '4.1', '*');
+  chk(enJuego && enJuego.pts === 3 && enJuego.ronda === 4 && enJuego.jugando === true,
+      'con la partida en juego muestra los puntos con los que llega, y la ronda sale de "4.1"',
+      JSON.stringify(enJuego));
+
+  // El DENOMINADOR son las rondas que YA cuentan en esos puntos, no el número de la ronda que se
+  // está viendo. Jugándose la 8ª con 6 puntos de las 7 anteriores va "6/7", no "6/8": lo marcó el
+  // autor comparando con chess.com en la ronda en curso del Masters de Tigre.
+  chk(enJuego.rondas === 3,
+      'jugándose la 4ª ronda, el denominador son las 3 anteriores', String(enJuego.rondas));
+  const term = P('PEREZ PONSA, Federico', 'cr_x', 3, '1-0');
+  chk(term.rondas === 3 && term.jugando === false,
+      'y con la partida terminada esa ronda sí cuenta (3 puntos en 3 rondas)');
+  const r1 = PTS({ rounds: { 1: [ { w:'A, Uno', pw:'0', res:'', b:'B, Dos', pb:'0' } ] } })('A, Uno', 'cr_x', 1, '*');
+  chk(r1 && r1.rondas === 0, 'con la PRIMERA ronda en juego no hay ninguna ronda que contar');
+  chk(SRC.indexOf('if (_pt && _pt.rondas > 0)') > 0 && SRC.indexOf("_pn + '/' + _pt.rondas") > 0,
+      'el visor dibuja ese denominador, y nada cuando es cero (evita un "0/0")');
+
+  // EN VIVO: la partida termina en el tablero antes de que Chess-Results actualice la tabla.
+  chk(v('MARTINEZ, Juan', 3, '1-0') === 2, 'si la tabla todavía no tiene el resultado, vale el del PGN');
+  chk(v('GOMEZ, Luis', 3, '1/2-1/2') === 2, 'también con el empate escrito como 1/2-1/2 (formato PGN)');
+  chk(P('MARTINEZ, Juan', 'cr_x', 3, '*').pts === 1, 'y sin resultado en ningún lado, los puntos que traía');
+
+  chk(v('RIVAS, Ana', 3, '') === 3 && v('SOSA, Eva', 3, '') === 1,
+      'una incomparecencia (+--) cuenta como punto entero para el que se presentó');
+  chk(v('Federico Perez Ponsa', 3, '1-0') === 3,
+      'el nombre matchea aunque venga al revés que en la tabla (Apellido, Nombre)');
+  chk(P('PEREZ PONSA, Federico', 'cr_x', 9, '*') === null, 'en una ronda que no jugó (bye) no muestra nada');
+  chk(P('PEREZ PONSA, Federico', '', 3, '1-0') === null, 'y fuera de un torneo del sitio, tampoco');
+
+  // ⚠️ Lo que NO hay que hacer: sumar los resultados ronda por ronda cuando la tabla no trae la
+  // columna de puntos. Esa cuenta falla en el 14% de los jugadores (byes, rondas donde no figuran):
+  // mostraría números inventados. Sin columna, no se muestra nada.
+  const SIN = PTS({ rounds: { 3: [ { w:'PEREZ PONSA, Federico', res:'1-0', b:'SANHUEZA, Cristian' } ] } });
+  chk(SIN('PEREZ PONSA, Federico', 'cr_x', 3, '1-0') === null,
+      'si la tabla NO trae la columna de puntos, el visor no inventa ninguno');
+
+  // El visor: el renglón y que las dos vías le pasen la partida (de ahí salen ronda y resultado).
+  chk(/function cvPlayerHtml\(title, name, fideId, elo, team, isBlack, gm\)/.test(SRC),
+      'el visor recibe la partida abierta');
+  chk((SRC.match(/cvPlayerHtml\([^)]*, (?:meta|g)\);/g) || []).length === 4,
+      'las dos vías del visor (torneo y vivo) se la pasan, para blancas y negras',
+      (SRC.match(/cvPlayerHtml\([^)]*, (?:meta|g)\);/g) || []).length + ' llamadas');
+  chk(SRC.indexOf('.cv-psub .cv-ppts') > 0 && /ptsStr = '<span class="cv-ppts"/.test(SRC),
+      'y los puntos van en el renglón de abajo, con el ELO y la bandera');
+
+  // ── Contra los cuadros REALES del sitio ────────────────────────────────────────────────────
+  // La prueba de fuego: los puntos de la ÚLTIMA ronda tienen que dar el total de la tabla oficial.
+  if (fs.existsSync('data/cr')) {
+    let ok = 0, total = 0, cuadros = 0;
+    fs.readdirSync('data/cr').filter(x => x.endsWith('.json')).forEach(x => {
+      let d; try { d = JSON.parse(fs.readFileSync('data/cr/' + x, 'utf8')); } catch (e) { return; }
+      if (!d.rounds || !d.standings || !d.standings.length) return;
+      const rs = Object.keys(d.rounds).map(Number).filter(n => !isNaN(n)).sort((a, b) => a - b);
+      if (!rs.length) return;
+      const p = PTS(d), ult = rs[rs.length - 1];
+      let hubo = false;
+      d.standings.forEach(st => {
+        if (!st || st.name == null || st.pts == null) return;
+        const r = p(st.name, 'k_' + x, ult, '');
+        if (!r) return;
+        hubo = true; total++;
+        if (Math.abs(r.pts - st.pts) < 0.01) ok++;
+      });
+      if (hubo) cuadros++;
+    });
+    const pct = total ? (100 * ok / total) : 0;
+    chk(total > 5000, 'la comprobación corre sobre los cuadros reales', total + ' jugadores en ' + cuadros + ' cuadros');
+    chk(pct >= 99, 'los puntos de la última ronda dan el total de la tabla oficial', pct.toFixed(1) + '% (' + ok + '/' + total + ')');
+  }
+}
+
+// ── JUGAR CONTRA GENTE DE LICHESS — Fase 0 (el permiso) y Fase 1 (la grilla) ────────
+// Casi todo esto son CANDADOS: cosas que hoy están bien y que si mañana alguien cambia
+// sin darse cuenta, rompen algo que ya costó averiguar (o filtran un token).
+{
+  const modLi   = (SRC.match(/aaLi — el permiso[\s\S]*?window\.aaLi = \{[\s\S]*?\};/) || [''])[0];
+  const modGrid = (SRC.match(/Fase 1 — "Rival al azar en Lichess"[\s\S]*?<\/script>/) || [''])[0];
+  chk(modLi.length > 500 && modGrid.length > 500, 'están los dos módulos de Lichess en el index.html');
+
+  // La grilla: los 11 ritmos de Lichess, en su orden.
+  const rit = (modGrid.match(/var RITMOS = \[([\s\S]*?)\];/) || ['', ''])[1];
+  const tcs = [...rit.matchAll(/\[\s*(\d+)\s*,\s*(\d+)\s*,/g)].map(m => m[1] + '+' + m[2]);
+  const ESPERADOS = ['1+0', '2+1', '3+0', '3+2', '5+0', '5+3', '10+0', '10+5', '15+10', '30+0', '30+20'];
+  const NUESTROS = ['5+5', '6+3', '7+2', '8+0'];   // los que agregamos nosotros
+  chk(tcs.length === 15, 'la lista tiene los 11 ritmos de Lichess más los 4 nuestros', tcs.length);
+  chk(ESPERADOS.every(t => tcs.includes(t)), 'están los 11 de Lichess');
+  chk(NUESTROS.every(t => tcs.includes(t)), 'y los 4 rápidos del borde que Lichess sí acepta al azar', NUESTROS.join(' '));
+
+  // 🚧 Lichess NO acepta bala ni blitz para rival AL AZAR desde una app de afuera:
+  // contesta 400 "Invalid time control" (pasó de verdad el 11/09/2026 con 1+0 y 5+0).
+  // Su regla: duración estimada = minutos*60 + 40*incremento, y de 480 s para arriba
+  // ya es Rápida. Si alguien vuelve a ofrecer blitz, esto lo caza antes de publicar.
+  const ofrecidos = tcs.filter(t => { const [m, i] = t.split('+').map(Number); return m * 60 + 40 * i >= 480; });
+  chk(/RITMOS_AZAR = RITMOS\.filter/.test(modGrid), 'la grilla filtra los ritmos que Lichess no acepta al azar');
+  chk(/>=\s*480/.test(modGrid), '🔒 el filtro usa la cuenta de Lichess (480 s = Rápida)');
+  chk(ofrecidos.join(' ') === '5+5 6+3 7+2 8+0 10+0 10+5 15+10 30+0 30+20',
+      'quedan ofrecidas las 9 rápidas y clásicas, ninguna bala ni blitz', ofrecidos.join(' '));
+  // El borde, que es donde se juega todo: 5+5 = 500 s entra, 5+4 = 460 s no.
+  const est = (m, i) => m * 60 + 40 * i;
+  chk(est(5, 5) >= 480 && est(5, 4) < 480, 'el corte está bien puesto: 5+5 sí, 5+4 no',
+      est(5, 5) + ' s vs ' + est(5, 4) + ' s');
+
+  // El tiempo va en MINUTOS. Si alguien "arregla" esto pasándolo a segundos (como el
+  // formulario de Crear un desafío, que guarda "300,0"), se pediría 300 minutos de reloj.
+  chk(Math.max(...tcs.map(t => +t.split('+')[0])) === 30,
+      'el reloj de la grilla está en MINUTOS (el máximo es 30, no 1800)');
+  chk(/time:\s*String\(t\)/.test(modGrid), 'y el pedido manda ese número tal cual, sin convertir');
+
+  // Nunca una variante: se declara al pedir, así no llega un Atómico por sorpresa.
+  chk(/variant:\s*'standard'/.test(modGrid), "el pedido declara variant standard");
+
+  // El orden importa: la documentación pide abrir el caño de avisos ANTES del pedido,
+  // para no perderse el aviso si el emparejamiento es instantáneo.
+  chk(modGrid.indexOf('/api/stream/event') < modGrid.indexOf('/api/board/seek'),
+      'se abre el caño de avisos antes del pedido de partida');
+
+  // Cancelar = cortar la conexión. Lichess da el pedido de baja solo cuando se corta.
+  chk(/seek\.abort\(\)/.test(modGrid), 'cancelar corta la conexión (eso cancela el pedido en Lichess)');
+
+  // 🚦 Interruptor de estreno: mientras esto no se decida lanzar, la web publicada NO
+  // tiene que mostrar el panel. Así se pueden publicar otros cambios del index.html sin
+  // estrenar esto. (Para lanzarlo: que `activo()` devuelva true.)
+  chk(/id="lv-li-wrap" style="display:none"/.test(SRC),
+      '🔒 el panel de Lichess nace oculto en el HTML (no parpadea antes de que corra el JS)');
+  chk(/function activo\(\)/.test(modGrid) && /aa_li_beta/.test(modGrid) && /_ondemand/.test(modGrid),
+      '🔒 y en la web publicada sólo se enciende a mano (?lichess=1); en modo autor se ve siempre');
+
+  // ── Candados del token (board:play puede jugar y abandonar en nombre del visitante) ──
+  chk(/scope:\s*SCOPE/.test(modLi) && /SCOPE\s*=\s*'board:play'/.test(modLi),
+      'se pide un solo permiso y es board:play');
+  // Se busca el USO (localStorage.setItem/getItem), no la palabra: el comentario del
+  // módulo la nombra justamente para explicar por qué NO se usa.
+  chk(!/localStorage\s*\./.test(modLi), '🔒 el permiso de jugar NUNCA se guarda en localStorage');
+  chk(!/CR_PROXY|workers\.dev|PROXY/.test(modLi), '🔒 el permiso de jugar NUNCA viaja a nuestro Worker');
+  chk(/fetch\(LI \+ '\/api\/token'/.test(modLi), 'el canje se hace directo contra Lichess');
+  chk(/method:\s*'DELETE'[\s\S]{0,120}Bearer/.test(modLi), 'al salir de la cuenta se le devuelve el permiso a Lichess');
+
+  // La grilla es una GRILLA: con 1fr pelado desborda en el teléfono (ya pasó en el sitio).
+  const cssGrid = (SRC.match(/\.lv-li-grid \{[^}]*\}/) || [''])[0];
+  chk(/minmax\(0,\s*1fr\)/.test(cssGrid) && !/repeat\(\d+,\s*1fr\)/.test(cssGrid),
+      '🔒 la grilla usa minmax(0,1fr) y no 1fr pelado (si no, desborda en el teléfono)');
+
+  // Los ids que busca el JS tienen que existir en el HTML.
+  const ids = [...new Set([...modGrid.matchAll(/\$\('([a-z0-9-]+)'\)/g)].map(m => m[1]))];
+  const faltan = ids.filter(id => !SRC.includes('id="' + id + '"'));
+  chk(ids.length >= 6 && faltan.length === 0, 'todos los ids que usa la grilla existen en el HTML',
+      faltan.length ? ('faltan: ' + faltan.join(', ')) : (ids.length + ' ids'));
 }
 
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
