@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 862;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 864;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -3639,6 +3639,17 @@ console.log('\n=== 50. Puntos del torneo en el visor (6½/7) ===');
       '🔒 al entrar a una partida el panel de Lichess se esconde (si no, el tablero queda abajo)');
   chk(/window\.aaLiPanel\) window\.aaLiPanel\.refrescar\(\)/.test(SRC),
       'y al volver al salón se repinta respetando el interruptor');
+
+  // El renglón de abajo del panel tiene que decir la verdad de HOY: desde la Fase 2 la
+  // partida se juega en NUESTRO tablero. El texto viejo ("la partida se juega en Lichess")
+  // era cierto en la Fase 1 y quedó mintiendo cuando llegó la 2.
+  {
+    const nota = (SRC.match(/<p class="lv-li-note" id="lv-li-note">([\s\S]*?)<\/p>/) || ['', ''])[1];
+    chk(/Jugás acá/.test(nota) && !/La partida se juega en Lichess/.test(nota),
+        '🔒 la letra chica dice que se juega ACÁ, no en Lichess');
+    chk(/rating de allá/.test(nota) && /5\+5/.test(nota),
+        'y sigue explicando lo del rating de Lichess y el límite de ritmos');
+  }
 
   // ── Fase 3: los botones del final ───────────────────────────────────────────────
   chk(/id="lv-li-nuevo"/.test(SRC) && /id="lv-li-reclamar"/.test(SRC),
