@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 864;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 867;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -3656,6 +3656,17 @@ console.log('\n=== 50. Puntos del torneo en el visor (6½/7) ===');
       'están los botones de "Nuevo oponente" y de reclamar la victoria');
   chk(/aaLiPanel\.buscar\(t, i, conRating\)/.test(modPartida) && /f\.clock\.initial \/ 60000/.test(modPartida),
       '"Nuevo oponente" vuelve a buscar con el MISMO ritmo de la partida que terminó');
+  // 🐛 Pasó de verdad: después de un 5+5 se puso a buscar un 10+0. Lichess cierra el caño
+  // en cuanto la partida termina, y ahí se soltaba TODO — incluida la ficha de la partida,
+  // así que el botón no sabía qué ritmo pedir y caía en el valor de fábrica. Ahora el
+  // cierre del caño conserva la ficha; soltar de verdad es sólo al irse del tablero.
+  chk(/function cerrarCano\(\)/.test(modPartida) && /P\.terminada = true/.test(modPartida),
+      '🔒 cuando la partida termina se cierra el caño pero se CONSERVA el ritmo jugado');
+  chk(/if \(e\) avisar\([\s\S]{0,140}cerrarCano\(\);/.test(modPartida),
+      'y el cierre del caño no suelta el transporte (si no, reaparecería la Revancha)');
+  // Y que los botones se apilen en vez de irse de ancho (pasó con el tercer botón).
+  chk(/\.lv-controls-row \{[^}]*flex-wrap:wrap/.test(SRC),
+      '🔒 la fila de botones se apila cuando no entran (antes desbordaba la columna)');
   chk(/claim-victory/.test(modPartida) && /claimWinInSeconds/.test(modPartida),
       'el reclamo espera los segundos que dice Lichess antes de ofrecerse');
   chk(/lv-exit[\s\S]{0,140}botones\(false\); soltar\(\)/.test(modPartida),

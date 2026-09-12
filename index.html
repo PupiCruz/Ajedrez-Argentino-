@@ -3364,8 +3364,13 @@
       .lv-controls button { width:100%; }
       /* Revancha + Volver al menú comparten un renglón (dos columnas), para dejarle aire al chat.
          Menos padding + fuente + nowrap para que cada texto entre en una línea en la columna angosta. */
-      .lv-controls-row { display:flex; gap:8px; }
-      .lv-controls-row button { flex:1; width:auto; white-space:nowrap; font-size:13px; padding-left:6px; padding-right:6px; }
+      /* Dos botones entran lado a lado, pero desde que hay un tercero ("Nuevo oponente" de
+         las partidas de Lichess) no entraban y la columna se iba de ancho, con barra de
+         scroll horizontal. Con wrap + un ancho mínimo, el que no entra se apila solo:
+         cuando hay lugar quedan al lado (que es como se veía siempre) y cuando no, uno
+         abajo del otro. */
+      .lv-controls-row { display:flex; gap:8px; flex-wrap:wrap; }
+      .lv-controls-row button { flex:1 1 150px; min-width:0; width:auto; white-space:nowrap; font-size:13px; padding-left:6px; padding-right:6px; }
       /* Al terminar la partida, "Volver al menú" se resalta para que sea obvio cómo salir */
       #lv-exit.lv-exit-hot { border-color:var(--gold-dim); color:var(--gold); font-weight:800; background:var(--gold-bg); }
       /* Chat de la partida (columna izquierda, debajo de los controles). En pantalla ancha
@@ -42088,16 +42093,16 @@ function cvUpdateNagBadge() {
     var color = (g.color === 'black') ? 'b' : 'w';
     P = { id: id, full: null, ctrl: new AbortController(), color: color, cdHasta: 0, pendiente: null, timer: null, relTimer: null };
 
-    window.lvTablero.enganchar({ enviar: enviar, listo: function () { return !!P; } }, color);
+    window.lvTablero.enganchar({ enviar: enviar, listo: function () { return !!P && !P.terminada; } }, color);
     window.lvTablero.aviso('Conectando con la partida…');
 
     window.aaLi.cano(LI + '/api/board/game/stream/' + id, {}, P.ctrl, alLlegar, function (e) {
       if (e && e.name === 'AbortError') return;
       if (!P) return;
-      /* El caño se cierra solo cuando la partida termina: eso NO es un error. */
-      if (!e) { soltar(); return; }
-      avisar('Se cortó la conexión con la partida' + (e.status ? (' (' + e.status + ')') : '') + '.');
-      soltar();
+      /* El caño se cierra solo cuando la partida termina: eso NO es un error. En los dos
+         casos se cierra el caño pero se conserva la ficha, para "Nuevo oponente". */
+      if (e) avisar('Se cortó la conexión con la partida' + (e.status ? (' (' + e.status + ')') : '') + '.');
+      cerrarCano();
     });
     return true;
   }
@@ -42183,11 +42188,22 @@ function cvUpdateNagBadge() {
 
   /* Soltar el tablero (la partida terminó o se cortó), sin cerrar la vista: el visitante
      se queda mirando el resultado y sale con el botón de siempre. */
-  function soltar() {
+  /* Cerrar el caño PERO conservar la ficha de la partida. Lichess cierra la conexión en
+     cuanto la partida termina, y antes acá se soltaba todo: "Nuevo oponente" se quedaba
+     sin saber a qué ritmo se venía jugando y pedía el 10+0 de fábrica (pasó de verdad,
+     después de un 5+5). Además, soltar el transporte hace que el tablero vuelva a creer
+     que es una partida de casa y reaparezca el botón de Revancha, que acá no funciona. */
+  function cerrarCano() {
     if (!P) return;
     if (P.timer) { clearTimeout(P.timer); soltarPendiente(); }
     if (P.relTimer) { clearInterval(P.relTimer); P.relTimer = null; }
     try { P.ctrl.abort(); } catch (e) {}
+    P.terminada = true;
+  }
+  /* Soltar de verdad: se va del tablero o empieza otra partida. */
+  function soltar() {
+    if (!P) return;
+    cerrarCano();
     P = null;
     try { window.lvTablero.soltar(); } catch (e) {}
   }
