@@ -8377,10 +8377,15 @@ function crClearData(key){
   if(sec) sec.outerHTML=crRenderSection(key);
 }
 
-function crRefreshSection(key,afterTab){
+// quiet=true: refresco automático (tablas que se actualizan solas en el vivo). Vuelve a la pestaña SIN
+// arrastrar la ronda de las partidas (crShowTab llamaría a tdShowRound y redibujaría la grilla entera).
+function crRefreshSection(key,afterTab,quiet){
   var sec=document.getElementById('cr-section-'+key);
   if(sec){ sec.outerHTML=crRenderSection(key); }
-  if(afterTab!=null) setTimeout(function(){ crShowTab(key,afterTab); },30);
+  if(afterTab!=null) setTimeout(function(){
+    var prev=_crSyncing; if(quiet) _crSyncing=true;
+    try { crShowTab(key,afterTab); } finally { _crSyncing=prev; }
+  },30);
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -9356,10 +9361,13 @@ function _teamShowTab(crk,tab){
     _crSyncing=false;
   }
 }
-function _teamRefresh(crk,tab){
+function _teamRefresh(crk,tab,quiet){
   var sec=document.getElementById('cr-section-'+crk);
   if(sec){ sec.outerHTML=_teamRenderSection(crk,crDataLoad(crk),tab); }   // ya abierta en `tab`: sin parpadeo
-  if(tab!=null) setTimeout(function(){ _teamShowTab(crk,tab); },30);
+  if(tab!=null) setTimeout(function(){
+    var prev=_crSyncing; if(quiet) _crSyncing=true;   // ver crRefreshSection: no arrastrar las partidas
+    try { _teamShowTab(crk,tab); } finally { _crSyncing=prev; }
+  },30);
 }
 function _teamDeleteRound(crk,r){
   if(!confirm('¿Borrar la FORMACIÓN (tablero por tablero) de la ronda '+r+'?')) return;
@@ -11294,7 +11302,9 @@ async function _crAutoFetchTeam(crk, crUrl, opts) {
     var rn = Object.keys(data.teamRounds).map(Number).sort(function(a,b){return a-b;});
     var xn = Object.keys(data.teamCrosses).map(Number).sort(function(a,b){return a-b;});
     if (!opts.silent) setS('✓ Actualizado desde Chess-Results — ' + okR + ' ronda(s)' + (data.teamStandings ? ' + tabla' : '') + (_ondemand ? '' : '. Acordate de "Guardar datos en mi carpeta" y publicar.'));
-    _teamRefresh(crk, rn.length ? rn[rn.length-1] : (xn.length ? ('x'+xn[xn.length-1]) : (data.teamStandings ? 'tabla' : null)));
+    // keepTab (refresco automático del vivo): quedarse en la pestaña que el visitante estaba mirando.
+    var _tKeep = (opts.keepTab && _teamCurTab[crk] != null) ? _teamCurTab[crk] : null;
+    _teamRefresh(crk, _tKeep != null ? _tKeep : (rn.length ? rn[rn.length-1] : (xn.length ? ('x'+xn[xn.length-1]) : (data.teamStandings ? 'tabla' : null))), !!opts.keepTab);
     try { _tdRefreshPodium(crk); } catch(e){}  // si llegó la tabla de equipos y el torneo terminó, mostrar el podio
     return okR > 0 || !!data.teamStandings;
   } catch(e) { setS('❌ ' + e.message); return false; }
@@ -11358,7 +11368,9 @@ async function _crAutoFetchIndiv(crk, crUrl, opts) {
     }
     var isRR = crLooksLikeRoundRobin(data,crk);
     var lastR = Object.keys(data.rounds).map(Number).sort(function(a,b){return a-b;});
-    crRefreshSection(crk, isRR ? 'cuadro' : (lastR.length ? lastR[lastR.length-1] : (hasStand ? 'tabla' : null)));
+    // keepTab (refresco automático del vivo): quedarse en la pestaña que el visitante estaba mirando.
+    var _iKeep = (opts.keepTab && _crActiveTab[crk] != null) ? _crActiveTab[crk] : null;
+    crRefreshSection(crk, _iKeep != null ? _iKeep : (isRR ? 'cuadro' : (lastR.length ? lastR[lastR.length-1] : (hasStand ? 'tabla' : null))), !!opts.keepTab);
     try { _tdRefreshArgLine(); } catch(e){}   // ya con la tabla, completar la línea de argentinos
     try { _tdRefreshPodium(crk); } catch(e){}  // si llegó la clasificación final, mostrar el podio ya
     try { renderTorneos(_lastTorneoFilter); } catch(e){}
@@ -11783,7 +11795,9 @@ async function _i64AutoFetchIndiv(crk, i64url, opts) {
     }
     var isRR = crLooksLikeRoundRobin(data,crk);
     var lastR = Object.keys(data.rounds).map(Number).sort(function(a,b){return a-b;});
-    crRefreshSection(crk, isRR ? 'cuadro' : (lastR.length ? lastR[lastR.length-1] : (hasStand ? 'tabla' : null)));
+    // keepTab (refresco automático del vivo): quedarse en la pestaña que el visitante estaba mirando.
+    var _iKeep = (opts.keepTab && _crActiveTab[crk] != null) ? _crActiveTab[crk] : null;
+    crRefreshSection(crk, _iKeep != null ? _iKeep : (isRR ? 'cuadro' : (lastR.length ? lastR[lastR.length-1] : (hasStand ? 'tabla' : null))), !!opts.keepTab);
     try { _tdRefreshArgLine(); } catch(e){}   // ya con la tabla, completar la línea de argentinos
     try { _tdRefreshPodium(crk); } catch(e){}  // si llegó la clasificación final, mostrar el podio ya
     try { renderTorneos(_lastTorneoFilter); } catch(e){}
@@ -11930,7 +11944,9 @@ async function _vsAutoFetchIndiv(crk, vsurl, opts) {
     if (!opts.silent) setS('✓ Actualizado desde vesus — ' + playedR + ' ronda(s) + tabla' + (_ondemand ? '' : '. Acordate de "Guardar datos en mi carpeta" y publicar.'));
     var isRR = crLooksLikeRoundRobin(data, crk);
     var lastR = Object.keys(data.rounds).map(Number).sort(function(a, b) { return a - b; });
-    crRefreshSection(crk, isRR ? 'cuadro' : (lastR.length ? lastR[lastR.length - 1] : 'tabla'));
+    // keepTab (refresco automático del vivo): quedarse en la pestaña que el visitante estaba mirando.
+    var _vKeep = (opts.keepTab && _crActiveTab[crk] != null) ? _crActiveTab[crk] : null;
+    crRefreshSection(crk, _vKeep != null ? _vKeep : (isRR ? 'cuadro' : (lastR.length ? lastR[lastR.length - 1] : 'tabla')), !!opts.keepTab);
     try { _tdRefreshArgLine(); } catch (e) {}
     try { _tdRefreshPodium(crk); } catch (e) {}
     try { renderTorneos(_lastTorneoFilter); } catch (e) {}
@@ -14672,18 +14688,39 @@ async function _fsPickDir() {
 // se crean solas. content = string, Blob o Uint8Array. Cachea los handles de subcarpeta para no
 // re-resolverlos en cada uno de los miles de archivos de data/t.
 var _fsSubdirCache = null;
+// REINTENTO (13/09/2026). El autor veía "An operation that depends on state cached in an interface object
+// was made but the state had changed since it was read from disk" (InvalidStateError) al guardar, y tenía
+// que elegir la carpeta varias veces hasta que agarraba. Chrome lo tira cuando el archivo o la carpeta
+// cambiaron POR FUERA desde que los tenía agarrados: `git merge` de iniciar-servidor.cmd/publicar-web.cmd
+// reemplaza manifest.js y los data/, y Drive o el antivirus también los tocan. Elegir la carpeta de nuevo
+// "arreglaba" porque re-agarraba todo fresco. Ahora lo hace solo: vuelve a resolver carpeta y archivo,
+// espera un poco y reintenta; al último intento borra el archivo y lo crea de cero. Un error de PERMISO
+// (NotAllowedError) no se reintenta: ahí sí hace falta que el autor vuelva a dar permiso.
 async function _fsWriteFile(dir, rel, content) {
-  var parts = rel.split('/'), name = parts.pop(), d = dir, acc = '';
-  for (var i = 0; i < parts.length; i++) {
-    acc += parts[i] + '/';
-    var cached = _fsSubdirCache && _fsSubdirCache[acc];
-    d = cached || await d.getDirectoryHandle(parts[i], { create: true });
-    if (_fsSubdirCache) _fsSubdirCache[acc] = d;
+  var parts = rel.split('/'), name = parts.pop();
+  var INTENTOS = 4;
+  for (var intento = 1; ; intento++) {
+    try {
+      var d = dir, acc = '';
+      for (var i = 0; i < parts.length; i++) {
+        acc += parts[i] + '/';
+        var cached = _fsSubdirCache && _fsSubdirCache[acc];
+        d = cached || await d.getDirectoryHandle(parts[i], { create: true });
+        if (_fsSubdirCache) _fsSubdirCache[acc] = d;
+      }
+      if (intento === INTENTOS) { try { await d.removeEntry(name); } catch (e) {} }   // último recurso: de cero
+      var fh = await d.getFileHandle(name, { create: true });
+      var w = await fh.createWritable();
+      try { await w.write(content); await w.close(); }
+      catch (e) { try { await w.abort(); } catch (e2) {} throw e; }
+      return;
+    } catch (err) {
+      var nombre = err && err.name;
+      if (nombre === 'NotAllowedError' || nombre === 'SecurityError' || intento >= INTENTOS) throw err;
+      if (_fsSubdirCache) _fsSubdirCache = {};   // los handles de subcarpeta pueden ser los viejos
+      await new Promise(function (ok) { setTimeout(ok, 300 * intento); });
+    }
   }
-  var fh = await d.getFileHandle(name, { create: true });
-  var w = await fh.createWritable();
-  await w.write(content);
-  await w.close();
 }
 
 // Hash de contenido (texto o bytes) para detectar si un archivo cambió. No es criptográfico (djb2),
@@ -18299,41 +18336,103 @@ function cvBackToTournament() {
 var _cvMiniPage = 0;
 var _CV_MINI_PER_PAGE = 24;   // miniaturas por página dentro del visor (igual que la pantalla principal)
 // keepPage=true mantiene la página elegida con el pager; sin él, salta a la página de la partida abierta.
-function _cvRoundMinisHtml(keepPage) {
+// Qué partidas (índices globales) muestra la página de miniaturas. keepPage: ver _cvRoundMinisHtml.
+function _cvMiniPageIdx(keepPage) {
   var curRound = parseInt(parsePgnHeaders(_cvTourGames[_cvTourIdx]).Round) || 0;
-  // Índices (globales) de las partidas de la ronda actual.
   var roundIdx = [];
   _cvTourGames.forEach(function(pgn, i) { if ((parseInt(parsePgnHeaders(pgn).Round) || 0) === curRound) roundIdx.push(i); });
-  if (!roundIdx.length) return '';
   var totalPages = Math.max(1, Math.ceil(roundIdx.length / _CV_MINI_PER_PAGE));
   if (keepPage) { _cvMiniPage = Math.min(Math.max(0, _cvMiniPage), totalPages - 1); }
   else { var activePos = roundIdx.indexOf(_cvTourIdx); _cvMiniPage = activePos >= 0 ? Math.floor(activePos / _CV_MINI_PER_PAGE) : 0; }
-  var pageIdx = roundIdx.slice(_cvMiniPage * _CV_MINI_PER_PAGE, _cvMiniPage * _CV_MINI_PER_PAGE + _CV_MINI_PER_PAGE);
+  return { roundIdx: roundIdx, totalPages: totalPages,
+           pageIdx: roundIdx.slice(_cvMiniPage * _CV_MINI_PER_PAGE, _cvMiniPage * _CV_MINI_PER_PAGE + _CV_MINI_PER_PAGE) };
+}
+// Barrita de una miniatura: la evaluación de la posición o, si todavía no hay, la última de esa partida.
+function _cvMiniEv(ff, gk) {
+  var ev = _liveEvalFor(ff.fen, ff.ev);
+  if (ev == null && _tdEvMemo[gk] != null) return _tdEvMemo[gk];
+  if (ev != null) _tdEvRemember(gk, ev);
+  return ev;
+}
+// Las dos filas de nombres (negras arriba, blancas abajo) con título, bandera, reloj y resultado.
+function _cvMiniRows(h, ff) {
+  var wParts = (h.White || '?').split(','); var white = wParts.length > 1 ? (wParts[1].trim() + ' ' + wParts[0].trim()) : wParts[0].trim();
+  var bParts = (h.Black || '?').split(','); var black = bParts.length > 1 ? (bParts[1].trim() + ' ' + bParts[0].trim()) : bParts[0].trim();
+  // Título (pastilla) + bandera. La bandera sale de la TABLA DE CRUCES por nombre (tiene a todos);
+  // si el torneo no tiene tabla, cae al equipo/país del PGN (Olimpiadas/torneos por equipos).
+  var _mCrK = (typeof _tdCtx !== 'undefined' && _tdCtx && _tdCtx.crKey) || null;
+  var wTitle = titleBadge(h.WhiteTitle || _titleByName(white, _mCrK));
+  var bTitle = titleBadge(h.BlackTitle || _titleByName(black, _mCrK));
+  var wFlag = _flagByName(white, _mCrK, h.WhiteFideId) || _teamFlag(h.WhiteTeam);
+  var bFlag = _flagByName(black, _mCrK, h.BlackFideId) || _teamFlag(h.BlackTeam);
+  var res = h.Result || '*';
+  var wClk = ff.wc ? '<span class="cv-rm-clk">' + escHtml(fmtClock(ff.wc)) + '</span>' : '';
+  var bClk = ff.bc ? '<span class="cv-rm-clk">' + escHtml(fmtClock(ff.bc)) + '</span>' : '';
+  var bResClr = res === '0-1' ? 'var(--green)' : res === '1-0' ? 'var(--red)' : 'var(--text2)';
+  var wResClr = res === '1-0' ? 'var(--green)' : res === '0-1' ? 'var(--red)' : 'var(--text2)';
+  return {
+    black: '<div class="cv-rm-name">' + bTitle + '<span class="cv-rm-nm">' + escHtml(black) + '</span>' + bFlag + bClk + '<span class="cv-rm-res" style="color:' + bResClr + '">' + (res === '0-1' ? '1' : res === '1-0' ? '0' : res === '1/2-1/2' ? '½' : '') + '</span></div>',
+    white: '<div class="cv-rm-name">' + wTitle + '<span class="cv-rm-nm">' + escHtml(white) + '</span>' + wFlag + wClk + '<span class="cv-rm-res" style="color:' + wResClr + '">' + (res === '1-0' ? '1' : res === '0-1' ? '0' : res === '1/2-1/2' ? '½' : '') + '</span></div>'
+  };
+}
+function _cvMiniBoardAttrs(ff, gk) {
+  var l = ff.last || {};
+  return ' data-gk="' + escHtml(gk) + '" data-fen="' + escHtml(ff.fen) + '" data-lf="' + (l.from || '') + '" data-lt="' + (l.to || '') + '"';
+}
+// Refresco en vivo de las miniaturas del visor: si la página muestra las MISMAS partidas, se parchea
+// cada una en su lugar (casillas que cambiaron, barrita, relojes, resultado). Antes se borraba y se
+// redibujaba todo en cada refresco: saltito de la barrita y, si estabas en la página 2, te devolvía
+// a la página de la partida abierta.
+function _cvRefreshRoundMinis(minis) {
+  if (!minis) return;
+  var p = _cvMiniPageIdx(true);
+  var grid = minis.querySelector('.cv-rm-grid');
+  var cards = minis.querySelectorAll('.cv-rm-card');
+  var ok = !!(grid && p.pageIdx.length && cards.length === p.pageIdx.length && parseInt(grid.getAttribute('data-n')) === p.roundIdx.length);
+  for (var k = 0; ok && k < cards.length; k++) {
+    var bd0 = cards[k].querySelector('.td-bd');
+    ok = parseInt(cards[k].getAttribute('data-mi')) === p.pageIdx[k] && bd0
+      && bd0.getAttribute('data-gk') === _tdEvKey(parsePgnHeaders(_cvTourGames[p.pageIdx[k]]));
+  }
+  if (!ok) { minis.innerHTML = _cvRoundMinisHtml(true); return; }
+  for (var j = 0; j < cards.length; j++) {
+    var card = cards[j], i = p.pageIdx[j], pgn = _cvTourGames[i], h = parsePgnHeaders(pgn);
+    var ff = tdFinalFenCached(pgn), bd = card.querySelector('.td-bd'), gk = bd.getAttribute('data-gk');
+    card.classList.toggle('active', i === _cvTourIdx);
+    var rows = _cvMiniRows(h, ff);
+    if (card.firstElementChild.outerHTML !== rows.black) card.firstElementChild.outerHTML = rows.black;
+    if (card.lastElementChild.outerHTML !== rows.white) card.lastElementChild.outerHTML = rows.white;
+    if (bd.getAttribute('data-fen') !== ff.fen) {
+      // Primera vez que se parchea este tablero: memorizar pieza/resaltado de cada casilla tal como se dibujó.
+      if (!bd._ck) { _tdSetCellKeys(bd, bd.getAttribute('data-fen'), { from: bd.getAttribute('data-lf'), to: bd.getAttribute('data-lt') }); bd._ck = 1; }
+      if (!tdPatchMiniBoard(bd, ff.fen, ff.last)) {
+        var bar = bd.querySelector(':scope > .td-evbar');
+        bd.innerHTML = tdMiniFen(ff.fen, ff.last); if (bar) bd.appendChild(bar); bd._ck = 0;
+      }
+      var l = ff.last || {};
+      bd.setAttribute('data-fen', ff.fen); bd.setAttribute('data-lf', l.from || ''); bd.setAttribute('data-lt', l.to || '');
+    }
+    var ev = _cvMiniEv(ff, gk);
+    if (ev != null) _tdSetEvalBar(bd, ev);   // sin evaluación nueva todavía → la barra anterior queda
+  }
+}
+function _cvRoundMinisHtml(keepPage) {
+  var p = _cvMiniPageIdx(keepPage);
+  var roundIdx = p.roundIdx, totalPages = p.totalPages, pageIdx = p.pageIdx;
+  if (!roundIdx.length) return '';
   var cards = '';
   pageIdx.forEach(function(i) {
     var pgn = _cvTourGames[i], h = parsePgnHeaders(pgn);
     var sk = _cvShareKeys[i];
-    var wParts = (h.White || '?').split(','); var white = wParts.length > 1 ? (wParts[1].trim() + ' ' + wParts[0].trim()) : wParts[0].trim();
-    var bParts = (h.Black || '?').split(','); var black = bParts.length > 1 ? (bParts[1].trim() + ' ' + bParts[0].trim()) : bParts[0].trim();
-    // Título (pastilla) + bandera. La bandera sale de la TABLA DE CRUCES por nombre (tiene a todos);
-    // si el torneo no tiene tabla, cae al equipo/país del PGN (Olimpiadas/torneos por equipos).
-    var _mCrK = (typeof _tdCtx !== 'undefined' && _tdCtx && _tdCtx.crKey) || null;
-    var wTitle = titleBadge(h.WhiteTitle || _titleByName(white, _mCrK));
-    var bTitle = titleBadge(h.BlackTitle || _titleByName(black, _mCrK));
-    var wFlag = _flagByName(white, _mCrK, h.WhiteFideId) || _teamFlag(h.WhiteTeam);
-    var bFlag = _flagByName(black, _mCrK, h.BlackFideId) || _teamFlag(h.BlackTeam);
-    var res = h.Result || '*';
     var ff = tdFinalFenCached(pgn);
-    var mEv = _liveEvalFor(ff.fen, ff.ev);
+    var gk = _tdEvKey(h);
+    var mEv = _cvMiniEv(ff, gk);
     var href = sk ? sk.url : '#';
-    var wClk = ff.wc ? '<span class="cv-rm-clk">' + escHtml(fmtClock(ff.wc)) + '</span>' : '';
-    var bClk = ff.bc ? '<span class="cv-rm-clk">' + escHtml(fmtClock(ff.bc)) + '</span>' : '';
-    var bResClr = res === '0-1' ? 'var(--green)' : res === '1-0' ? 'var(--red)' : 'var(--text2)';
-    var wResClr = res === '1-0' ? 'var(--green)' : res === '0-1' ? 'var(--red)' : 'var(--text2)';
-    cards += '<a class="cv-rm-card' + (i === _cvTourIdx ? ' active' : '') + '" href="' + href + '" onclick="return tdGameNavClick(event,' + i + ')">'
-      + '<div class="cv-rm-name">' + bTitle + '<span class="cv-rm-nm">' + escHtml(black) + '</span>' + bFlag + bClk + '<span class="cv-rm-res" style="color:' + bResClr + '">' + (res === '0-1' ? '1' : res === '1-0' ? '0' : res === '1/2-1/2' ? '½' : '') + '</span></div>'
-      + '<div class="td-bd' + (mEv != null ? ' has-ev' : '') + '" style="position:relative">' + tdMiniFen(ff.fen, ff.last) + _tdEvalBarHtml(mEv) + '</div>'
-      + '<div class="cv-rm-name">' + wTitle + '<span class="cv-rm-nm">' + escHtml(white) + '</span>' + wFlag + wClk + '<span class="cv-rm-res" style="color:' + wResClr + '">' + (res === '1-0' ? '1' : res === '0-1' ? '0' : res === '1/2-1/2' ? '½' : '') + '</span></div>'
+    var rows = _cvMiniRows(h, ff);
+    cards += '<a class="cv-rm-card' + (i === _cvTourIdx ? ' active' : '') + '" data-mi="' + i + '" href="' + href + '" onclick="return tdGameNavClick(event,' + i + ')">'
+      + rows.black
+      + '<div class="td-bd' + (mEv != null ? ' has-ev' : '') + '"' + _cvMiniBoardAttrs(ff, gk) + ' style="position:relative">' + tdMiniFen(ff.fen, ff.last) + _tdEvalBarHtml(mEv) + '</div>'
+      + rows.white
       + '</a>';
   });
   if (!cards) return '';
@@ -18346,7 +18445,7 @@ function _cvRoundMinisHtml(keepPage) {
       + '<button onclick="cvMiniGoPage(' + (_cvMiniPage + 1) + ')"' + (_cvMiniPage >= totalPages - 1 ? ' disabled' : '') + ' style="' + bs + (_cvMiniPage >= totalPages - 1 ? ';opacity:.35' : '') + '">▶</button>'
       + '</div>';
   }
-  return '<div class="m-sec-lbl" style="margin-bottom:10px">Partidas de la ronda</div>' + pager + '<div class="cv-rm-grid">' + cards + '</div>' + pager;
+  return '<div class="m-sec-lbl" style="margin-bottom:10px">Partidas de la ronda</div>' + pager + '<div class="cv-rm-grid" data-n="' + roundIdx.length + '">' + cards + '</div>' + pager;
 }
 function cvMiniGoPage(p) {
   _cvMiniPage = p;
@@ -30772,7 +30871,10 @@ function _tdCardHtml(g, flip) {
   h += flip ? rowWhite : rowBlack;
   // El tablero arranca con un placeholder vacío; la posición final se calcula
   // en segundo plano (tdFillBoards) para que la apertura sea instantánea.
-  h += '<div class="td-bd" id="td-bd-' + globalIdx + '" data-gidx="' + globalIdx + '" data-res="' + res + '"' + (flip ? ' data-flip="1"' : '') + ' style="position:relative">' + _tdPlaceholderBoard() + '</div>';
+  // data-gk = identidad de la partida (ronda + jugadores) para recordar su última barrita. Si ya la
+  // tenía, el placeholder nace con la franja reservada (has-ev) y el tablero no se achica al llenarse.
+  var _gk = _tdEvKey(g.h);
+  h += '<div class="td-bd' + (_tdEvMemo[_gk] != null ? ' has-ev' : '') + '" id="td-bd-' + globalIdx + '" data-gidx="' + globalIdx + '" data-gk="' + escHtml(_gk) + '" data-res="' + res + '"' + (flip ? ' data-flip="1"' : '') + ' style="position:relative">' + _tdPlaceholderBoard() + '</div>';
   h += flip ? rowBlack : rowWhite;
   h += '</a>';
   return h;
@@ -31175,6 +31277,11 @@ function tdFillBoards(rInt) {
       // Resultado centrado sobre el tablero (partidas terminadas) o '·' si aún no arrancó.
       html += _tdResBadgeHtml(el.getAttribute('data-res') || '*', fen.split(' ')[0] === START);
       var _ev = _liveEvalFor(rr.fen, rr.ev);
+      // Posición todavía sin evaluar → seguir mostrando la última barrita de ESA partida (el motor la
+      // corrige en unos segundos). Sin esto la barra desaparecía y todos los tableros daban un saltito.
+      var _gk = el.getAttribute('data-gk');
+      if (_ev == null && _gk && _tdEvMemo[_gk] != null) _ev = _tdEvMemo[_gk];
+      else if (_ev != null && _gk) _tdEvRemember(_gk, _ev);
       html += _tdEvalBarHtml(_ev, flip);   // barrita: [%eval] del PGN o, en vivo, motor local
       el.innerHTML = html;
       el.classList.toggle('has-ev', _ev != null);   // reserva la franja izquierda solo si hay barra
@@ -31249,8 +31356,14 @@ function _tdSetResultBadge(el, res) {
 }
 // Crea o actualiza la barrita de un mini-tablero ya dibujado (ruta de refresco en vivo). flip se toma
 // del data-flip del tablero si no se pasa (la vista por equipos voltea las mesas pares).
+// Última evaluación conocida de cada partida (clave: ronda + jugadores, no la posición). Sirve para que
+// la barrita no se borre cuando el tablero se redibuja con una posición que el motor aún no evaluó.
+var _tdEvMemo = {};
+function _tdEvKey(h) { h = h || {}; return (h.Round || '') + '|' + (h.White || '') + '|' + (h.Black || ''); }
+function _tdEvRemember(gk, ev) { if (!gk || ev == null) return; _tdEvMemo[gk] = ev; _capCache(_tdEvMemo, 600); }
 function _tdSetEvalBar(el, ev, flip) {
   if (flip === undefined) flip = !!(el.getAttribute && el.getAttribute('data-flip') === '1');
+  if (ev && el.getAttribute) _tdEvRemember(el.getAttribute('data-gk'), ev);
   var bar = el.querySelector(':scope > .td-evbar');
   if (!ev) { if (bar) bar.parentNode.removeChild(bar); if (el.classList) el.classList.remove('has-ev'); return; }
   if (el.classList) el.classList.add('has-ev');   // reserva la franja izquierda para la barra
@@ -31389,9 +31502,8 @@ function mevHandleMsg(line) {
 
 // Pinta la barrita en los tableros que siguen mostrando esa posición (pudo cambiar mientras tanto).
 function mevApply(fen, score) {
-  var panel = document.getElementById('td-round-' + _tdCurrentRound);
-  if (!panel) return;
-  var bds = panel.querySelectorAll('.td-bd');
+  // Grilla de la ronda + miniaturas del visor ("Partidas de la ronda"), si está abierto.
+  var bds = document.querySelectorAll('#td-round-' + _tdCurrentRound + ' .td-bd, #cv-round-minis .td-bd');
   for (var i = 0; i < bds.length; i++) {
     if (bds[i].getAttribute('data-fen') === fen) _tdSetEvalBar(bds[i], score);
   }
@@ -31689,6 +31801,7 @@ function _tdLiveFetchMulti(tourIds, name, location, pgnKey, typ, hasFallback) {
     _tdLiveCtx._fetched[merged.currentNum] = true;   // la ronda actual llega con este init (Lichess)
     var res = _bcOnDemandRes(merged, currentGames);
     _tdLiveBuild(res, sec, null);
+    _tdCrTablesOnNewRound(_tdMaxRoundNum(merged.roundsMeta.map(function(r){ return r.num; })));   // anota la ronda de partida
     _crFetchRoundOnDemand(merged.currentNum, true);   // Chess-Results de la ronda actual (además de Lichess)
     _tdShareRemember(res);
     _tdLastGood = Date.now(); _tdFetchFails = 0;
@@ -31706,6 +31819,7 @@ function _tdLiveFetchMultiEager(tourIds, key, hasFallback) {
     if (!res || !res.roundsWithGames || !res.roundsWithGames.length) { _tdLivePolling = false; if (!hasFallback) _tdLiveError(null); return; }
     _tdLiveBuild(res, sec, null);
     _tdShareRemember(res);
+    try { _tdCrTablesOnNewRound(_tdMaxRoundNum(Object.keys(_tdCtx.byRound))); } catch(e) {}   // anota la ronda de partida
     // EAGER (livechesscloud o respaldo si falló la metadata de Lichess): no hay maquinaria on-demand por
     // ronda, así que las partidas de Chess-Results se bajan TODAS de una (comportamiento original).
     var _crk = _tdLiveCtx && _tdLiveCtx.crKey, _crU = _crk ? _crUrlByKey[_crk] : '';
@@ -31894,6 +32008,15 @@ function _tdLiveBuild(res, sec, keepRound) {
   // rondas anteriores en torneos NACIONALES. Las que queden vacías se bajan de Lichess al abrirlas.
   if (res._ondemandLive && ctx && ctx.roundsMeta) {
     ctx.roundsMeta.forEach(function(rm){ if (!byRound[rm.num]) { byRound[rm.num] = []; roundOrder.push(rm.num); } });
+    // Llegó una ronda NUEVA en pleno vivo (res._prevByRound = lo que ya estaba en pantalla): conservar
+    // las partidas de las rondas anteriores que el visitante ya había bajado. Antes se tiraban, pero
+    // quedaban marcadas como "ya pedidas" y nadie las volvía a bajar → "Sin tableros" hasta el F5.
+    var prev = res._prevByRound;
+    if (prev) Object.keys(prev).forEach(function(k){
+      var n = parseInt(k);
+      if (n === ctx.currentNum || !byRound[n] || byRound[n].length || !prev[k] || !prev[k].length) return;
+      byRound[n] = prev[k].slice();
+    });
   }
   // Incorpora las subidas en las rondas donde superen a Lichess y arma el array plano de games.
   var games = _tdMergeUploadedRounds(byRound, roundOrder);
@@ -31984,10 +32107,12 @@ function _tdLiveApplyRefresh(res, sec) {
     r.games.forEach(function(pgn){ byRound[rInt].push({ pgn: pgn, h: parsePgnHeaders(pgn) }); });
   });
   var games = _tdMergeUploadedRounds(byRound, roundOrder);
+  _tdCrTablesOnNewRound(_tdMaxRoundNum(roundOrder));   // ronda nueva → tablas de CR (rápidas/blitz)
   var oldRoundN = (_tdCtx && _tdCtx.byRound[curR]) ? _tdCtx.byRound[curR].length : -1;
   var newRoundN = byRound[curR] ? byRound[curR].length : -2;
   var sameRoundSet = _tdCtx && roundOrder.length === Object.keys(_tdCtx.byRound).length;
-  if (!_tdCtx || !sameRoundSet || oldRoundN !== newRoundN || !document.getElementById('td-round-' + curR)) {
+  var oldGames = _tdCtx ? _tdCtx.games : null;
+  if (!_tdCtx || !sameRoundSet || oldRoundN !== newRoundN || !_tdSameBoardSlots(curR, oldGames, games)) {
     _tdLiveBuild(res, sec, curR);   // estructura cambió → reconstruir
     return;
   }
@@ -31995,7 +32120,35 @@ function _tdLiveApplyRefresh(res, sec) {
   _tdCtx.byRound = byRound; _tdCtx.games = games;
   PGN_DB[_tdLiveCtx.pgnKey] = { title: _tdLiveCtx.name, sub: _tdLiveCtx.location, url: '', games: games };
   if (_pendingDeepGame) _tryOpenPendingDeepGame();   // deep-link: por si la partida recién aparece en un refresco
+  _tdPatchRoundBoards(curR, games);
+  _tdApplyViewerRefresh(_tdLiveCtx && _tdLiveCtx.pgnKey);
+  if (_tdLiveCtx) setTimeout(mevTick, 900);   // evaluar (motor local) las posiciones nuevas de esta tanda
+}
+
+// ¿Cada tablero dibujado en la ronda sigue apuntando (data-gidx) a la MISMA partida en el array nuevo?
+// Si una ronda anterior sumó o perdió partidas, los índices globales se corren y parchear pintaría la
+// partida equivocada en cada casillero → hay que reconstruir.
+function _tdSameBoardSlots(curR, oldGames, newGames) {
   var panel = document.getElementById('td-round-' + curR);
+  if (!panel || !oldGames || !newGames) return false;
+  var bds = panel.querySelectorAll('.td-bd');
+  if (!bds.length) return false;
+  for (var i = 0; i < bds.length; i++) {
+    var gidx = parseInt(bds[i].getAttribute('data-gidx'));
+    var a = oldGames[gidx], b = newGames[gidx];
+    if (a === undefined || b === undefined) return false;
+    if (a === b) continue;
+    var ha = parsePgnHeaders(a), hb = parsePgnHeaders(b);
+    if ((ha.White || '') !== (hb.White || '') || (ha.Black || '') !== (hb.Black || '')) return false;
+  }
+  return true;
+}
+
+// Actualiza EN SU LUGAR los tableros ya dibujados de la ronda: casillas que cambiaron, resultado, reloj y
+// barrita. No toca la grilla → sin parpadeo ni saltitos. Lo usan los dos refrescos del vivo.
+function _tdPatchRoundBoards(curR, games) {
+  var panel = document.getElementById('td-round-' + curR);
+  if (!panel) return;
   var bds = panel.querySelectorAll('.td-bd');
   var START = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR';
   var needFull = 0;
@@ -32040,8 +32193,6 @@ function _tdLiveApplyRefresh(res, sec) {
   }
   if (needFull) tdFillBoards(curR);   // re-dibuja entero solo los pocos que lo necesitaron
   if (_tdLiveCtx && _tdLiveCtx.isTeam) _tdUpdateMatchScores(curR);   // marcador de cada match al día con los resultados nuevos
-  _tdApplyViewerRefresh(_tdLiveCtx && _tdLiveCtx.pgnKey);
-  if (_tdLiveCtx) setTimeout(mevTick, 900);   // evaluar (motor local) las posiciones nuevas de esta tanda
 }
 
 // Si el visor está abierto con una partida de este torneo, la actualiza con las jugadas nuevas
@@ -32067,7 +32218,7 @@ function _tdApplyViewerRefresh(pgnKey) {
   if (newIdx >= 0) _cvTourIdx = newIdx;
   var _minis = document.getElementById('cv-round-minis');
   if (_minis && _cvFromTournament && _cvShareKeys[_cvTourIdx] && _cvTourGames.length > 1) {
-    _minis.innerHTML = _cvRoundMinisHtml();
+    _cvRefreshRoundMinis(_minis);   // parchea en su lugar (y mantiene la página elegida)
     _minis.style.display = '';
   }
   // Actualizar la partida que se MIRA solo si cambió (jugadas nuevas).
@@ -32090,6 +32241,42 @@ function _tdApplyViewerRefresh(pgnKey) {
   else { var n = cv.root; for (var k = 0; k < prevDepth && n.children.length > 0; k++) { n = n.children[0]; cvSetNode(n); } }
   _cvStampLiveArrival();   // registrar cuándo llegó la última jugada (para la cuenta regresiva)
   faMaybeAutoLive();   // auto-mostrar/actualizar el gráfico en vivo con las jugadas nuevas
+}
+
+/* TABLAS DE CHESS-RESULTS QUE SE ACTUALIZAN SOLAS (13/09/2026) — sólo rápidas y blitz.
+   Idea del autor: en un suizo el árbitro no puede sortear la ronda siguiente sin cargar los resultados de
+   la anterior; así que cuando aparece la ronda NUEVA de Lichess, Chess-Results ya tiene la tabla al día y
+   el emparejamiento nuevo. Ahí se piden las tablas (cruces + clasificación), en silencio y sin mover al
+   visitante de pestaña. Se pide dos veces: al llegar la ronda y otra a los 3 minutos (el Worker guarda
+   las tablas 2 minutos, y a veces Lichess abre la ronda por horario antes de que el árbitro sortee).
+   La primera vez que se ve el torneo sólo se anota la ronda: al abrirlo las tablas ya se bajaron. */
+var _TD_CR_TABLES_RETRY_MS = 3 * 60 * 1000;
+function _tdCrTablesOnNewRound(maxRound) {
+  var ctx = _tdLiveCtx;
+  if (!ctx || !_ondemand || !(maxRound > 0)) return;
+  if (_tdLivePace !== 'rapid' && _tdLivePace !== 'blitz') return;
+  // Las mismas fuentes que se actualizan al ABRIR el torneo: Chess-Results (individual y por equipos),
+  // info64 y vesus (sólo individuales, igual que al abrir). Si tiene varias, se piden todas.
+  var crk = ctx.crKey;
+  var crUrl = (crk && _crUrlByKey[crk]) || '', i64url = (crk && _i64UrlByKey[crk]) || '', vsurl = (crk && _vsUrlByKey[crk]) || '';
+  var hayCr = /tnr\d+/i.test(crUrl), hayI64 = !ctx.isTeam && !!_i64Base(i64url), hayVs = !ctx.isTeam && !!_vsKey(vsurl);
+  if (!hayCr && !hayI64 && !hayVs) return;
+  if (ctx._crTablesMax == null) { ctx._crTablesMax = maxRound; return; }
+  if (maxRound <= ctx._crTablesMax) return;
+  ctx._crTablesMax = maxRound;
+  var key = ctx.key;
+  function pedir() {
+    if (!_tdLiveCtx || _tdLiveCtx.key !== key) return;   // el visitante cerró el torneo o abrió otro
+    var opts = { silent: true, keepTab: true };
+    if (hayCr) { if (_tdLiveCtx.isTeam) _crAutoFetchTeam(crk, crUrl, opts); else _crAutoFetchIndiv(crk, crUrl, opts); }
+    if (hayI64) _i64AutoFetchIndiv(crk, i64url, opts);
+    if (hayVs) _vsAutoFetchIndiv(crk, vsurl, opts);
+  }
+  pedir();
+  setTimeout(pedir, _TD_CR_TABLES_RETRY_MS);
+}
+function _tdMaxRoundNum(nums) {
+  var m = 0; (nums || []).forEach(function(n){ n = parseInt(n); if (n > m) m = n; }); return m;
 }
 
 function _tdLiveRefresh() {
@@ -32139,9 +32326,10 @@ function _tdLiveRefreshOnDemand(gen, key, tourIds) {
     var keep;
     if (merged) {
       _tdLastGood = Date.now(); _tdFetchFails = 0;
+      var prevCur = _tdLiveCtx.currentNum;
       _tdLiveCtx.roundsMeta = merged.roundsMeta; _tdLiveCtx.currentNum = merged.currentNum;
       var res = _bcOnDemandRes(merged, currentGames);
-      try { _tdOnDemandApplyRefresh(merged, currentGames, sec); _tdShareRemember(res); } catch(e) {}
+      try { _tdOnDemandApplyRefresh(merged, currentGames, sec, prevCur); _tdShareRemember(res); } catch(e) {}
       keep = _tdKeepPolling(res);
     } else {
       keep = (++_tdFetchFails <= _TD_MAX_FETCH_FAILS);
@@ -32156,8 +32344,9 @@ function _tdLiveRefreshOnDemand(gen, key, tourIds) {
 }
 // Si aparecieron rondas nuevas (cambió el set de pestañas) → reconstruye; si no, actualiza SOLO la ronda
 // actual (la viva) con las partidas frescas + pool, sin re-armar ni re-bajar el resto.
-function _tdOnDemandApplyRefresh(merged, currentGames, sec) {
+function _tdOnDemandApplyRefresh(merged, currentGames, sec, prevCur) {
   if (!_tdCtx) return;
+  _tdCrTablesOnNewRound(_tdMaxRoundNum(merged.roundsMeta.map(function(r){ return r.num; })));   // ronda nueva → tablas de CR (rápidas/blitz)
   var curNum = merged.currentNum;
   var tabsOk = merged.roundsMeta.every(function(r){ return document.getElementById('td-rtab-' + r.num); });
   // ESTABILIDAD (tableros "pegajosos"): si el refresco viene SIN partidas de la ronda actual pero YA
@@ -32169,13 +32358,35 @@ function _tdOnDemandApplyRefresh(merged, currentGames, sec) {
     return;
   }
   if (_tdLiveCtx) { if (!_tdLiveCtx._fetched) _tdLiveCtx._fetched = {}; _tdLiveCtx._fetched[curNum] = true; }
-  _crFetchRoundOnDemand(curNum, true);   // la ronda en vivo sigue sumando partidas en Chess-Results
-  if (!tabsOk) { _tdLiveBuild(_bcOnDemandRes(merged, currentGames), sec, _tdCurrentRound); return; }
+  // Chess-Results UNA vez por ronda por visita (sin force): los organizadores suben las partidas cada
+  // tanto y casi nunca durante la ronda, así que pedirlas en cada refresco (~30 s) era gasto al pedo.
+  // Si la ronda es nueva (todavía no se pidió) se pide acá; si ya se pidió, no se repite.
+  _crFetchRoundOnDemand(curNum);
+  if (!tabsOk) {
+    // Ronda nueva → hay que rearmar las pestañas, pero SIN perder las rondas ya bajadas.
+    var odRes = _bcOnDemandRes(merged, currentGames);
+    odRes._prevByRound = _tdCtx.byRound;
+    // La ronda que venía en vivo quedó con su última foto (sin el cierre). La marcamos como "no pedida"
+    // para que al abrirla se baje la versión final; mientras tanto se ve la que ya estaba.
+    if (prevCur != null && prevCur !== curNum && _tdLiveCtx && _tdLiveCtx._fetched) delete _tdLiveCtx._fetched[prevCur];
+    _tdLiveBuild(odRes, sec, _tdCurrentRound);
+    if (prevCur != null && prevCur !== curNum && _tdCurrentRound === prevCur && _tdLiveCtx) {
+      var _prm = (_tdLiveCtx.roundsMeta || []).filter(function(r){ return r.num === prevCur; })[0];
+      if (_prm && _prm.roundIds && _prm.roundIds.length) _tdFetchRoundOnDemand(prevCur, _prm.roundIds);
+    }
+    return;
+  }
+  var oldGames = _tdCtx.games, oldN = (_tdCtx.byRound[curNum] || []).length;
   _tdCtx.byRound[curNum] = (currentGames || []).map(function(pgn){ return { pgn: pgn, h: parsePgnHeaders(pgn) }; });
   _tdMergeOneRound(curNum);
   _tdRebuildFlatGames();
   if (_pendingDeepGame) _tryOpenPendingDeepGame();
-  if (_tdCurrentRound === curNum && document.getElementById('td-round-' + curNum)) tdBuildRound(curNum);
+  if (_tdCurrentRound === curNum && document.getElementById('td-round-' + curNum)) {
+    // Mismos tableros que ya están en pantalla → parchear en su lugar (antes se redibujaba la grilla
+    // entera en cada refresco: parpadeo + la barrita que aparecía tarde y achicaba los tableros).
+    if (_tdCtx.byRound[curNum].length === oldN && _tdSameBoardSlots(curNum, oldGames, _tdCtx.games)) _tdPatchRoundBoards(curNum, _tdCtx.games);
+    else tdBuildRound(curNum);
+  }
   _tdApplyViewerRefresh(_tdCtx.pgnKey);
   try { _tdRefreshArgLine(); } catch(e) {}
   if (_tdLiveCtx) setTimeout(mevTick, 900);

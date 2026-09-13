@@ -579,5 +579,93 @@ console.log('\n=== 10. La IA sabe redactar torneos POR EQUIPOS (Olimpiadas, liga
   }
 }
 
+// ── Partidas de Chess-Results (/crpgn): guardadas una semana si hay, cortas si no (13/09/2026) ────────
+// Los organizadores suben partidas cada tanto; cada pedido no guardado le cuesta a Chess-Results dos
+// (formulario + descarga). Lo que se acordó con el autor: sin partidas, caché corta como siempre (una
+// respuesta vacía guardada una semana escondería lo que suban después); con partidas, 7 días, revisando
+// por detrás a lo sumo una vez por hora por si agregaron más.
+{
+  console.log('\n=== 13. Chess-Results: partidas guardadas una semana ===');
+  const guardado = new Map();
+  const cacheFalsa = {
+    async match(k) { const r = guardado.get(typeof k === 'string' ? k : k.url); return r ? r.clone() : undefined; },
+    async put(k, r) { guardado.set(typeof k === 'string' ? k : k.url, r.clone()); },
+  };
+  const cachesAntes = globalThis.caches, fetchAntes = globalThis.fetch, nowAntes = Date.now;
+  globalThis.caches = { default: cacheFalsa };
+  let reloj = 3_000_000_000_000;
+  Date.now = () => reloj;
+  let visitasCR = 0, pgnEnCR = '', crCaido = false;
+  const FORM = '<form><input type="hidden" name="__VIEWSTATE" value="x"><input type="submit" name="P1$cb_DownLoadPGN" value="Descargar"></form>';
+  globalThis.fetch = async (url, opt) => {
+    visitasCR++;
+    if (crCaido) throw new Error('caído');
+    if (!opt || opt.method !== 'POST') return new Response(FORM, { status: 200 });
+    return new Response(pgnEnCR || '<html>sin resultados</html>', { status: 200 });
+  };
+  const pendientes = [];
+  const ctxCr = { waitUntil(p) { pendientes.push(p); } };
+  const crpgn = async (q) => {
+    const r = await worker.fetch(req('/crpgn?' + q), env, ctxCr);
+    await Promise.all(pendientes.splice(0));
+    return { status: r.status, cuerpo: await r.text(), cc: r.headers.get('Cache-Control') };
+  };
+  const partidas = (n) => Array.from({ length: n }, (_, i) => '[Event "Nacional"]\n[Round "1"]\n[White "B' + i + '"]\n[Black "N' + i + '"]\n[Result "1-0"]\n\n1. e4 1-0').join('\n\n');
+  try {
+    // 1) Sin partidas: caché corta, como siempre.
+    pgnEnCR = '';
+    let v = await crpgn('tnr=111&rd=1');
+    const copiaVacia = guardado.get('https://cr-proxy.test/crpgn?tnr=111&rd=1');
+    chk(v.status === 200 && v.cuerpo === '' && copiaVacia && copiaVacia.headers.get('Cache-Control') === 'public, max-age=1800',
+        'sin partidas: la respuesta vacía se guarda media hora (no una semana)', copiaVacia && copiaVacia.headers.get('Cache-Control'));
+
+    // 2) Con partidas: 7 días.
+    pgnEnCR = partidas(3);
+    visitasCR = 0;
+    v = await crpgn('tnr=222&rd=1');
+    const copia = guardado.get('https://cr-proxy.test/crpgn?tnr=222&rd=1');
+    chk(v.status === 200 && (v.cuerpo.match(/\[Event /g) || []).length === 3 && visitasCR === 2,
+        'con partidas: la primera visita baja de Chess-Results (formulario + descarga)', visitasCR);
+    chk(copia && copia.headers.get('Cache-Control') === 'public, max-age=604800' && v.cc === 'public, max-age=120',
+        '🔒 y queda guardada 7 días, pero al navegador del visitante se le dice 2 minutos', copia && copia.headers.get('Cache-Control'));
+
+    // 3) Durante la primera hora, ni un pedido a Chess-Results.
+    let antes = visitasCR;
+    reloj += 5 * 60_000; await crpgn('tnr=222&rd=1');
+    reloj += 50 * 60_000; v = await crpgn('tnr=222&rd=1');
+    chk(visitasCR === antes && (v.cuerpo.match(/\[Event /g) || []).length === 3, 'durante la primera hora no se le pide nada a Chess-Results', visitasCR - antes);
+
+    // 4) Pasada la hora: se sirve al instante lo guardado y se revisa por detrás. Subieron más partidas.
+    pgnEnCR = partidas(5);
+    reloj += 6 * 60_000; antes = visitasCR;
+    v = await crpgn('tnr=222&rd=1');
+    chk((v.cuerpo.match(/\[Event /g) || []).length === 3 && visitasCR === antes + 2,
+        'pasada la hora se sirve lo guardado al instante y se revisa por detrás');
+    v = await crpgn('tnr=222&rd=1');
+    chk((v.cuerpo.match(/\[Event /g) || []).length === 5, '🔒 y las partidas que el organizador agregó aparecen en la visita siguiente', (v.cuerpo.match(/\[Event /g) || []).length);
+
+    // 5) Si la revisión falla, no se pierde la copia buena ni se reintenta en cada visita.
+    crCaido = true;
+    reloj += 61 * 60_000; await crpgn('tnr=222&rd=1');
+    antes = visitasCR;
+    reloj += 60_000; v = await crpgn('tnr=222&rd=1');
+    chk((v.cuerpo.match(/\[Event /g) || []).length === 5 && visitasCR === antes,
+        'con Chess-Results caído se sigue sirviendo la copia buena, sin reintentar en cada visita');
+
+    // 6) Una revisión que vuelve vacía no pisa las partidas guardadas.
+    crCaido = false; pgnEnCR = '';
+    reloj += 61 * 60_000; await crpgn('tnr=222&rd=1');
+    v = await crpgn('tnr=222&rd=1');
+    chk((v.cuerpo.match(/\[Event /g) || []).length === 5, 'una revisión que vuelve vacía no borra las partidas guardadas');
+
+    // 7) Días después sigue ahí, al instante.
+    pgnEnCR = partidas(5);
+    reloj += 6 * 24 * 3600_000; v = await crpgn('tnr=222&rd=1');
+    chk(v.status === 200 && (v.cuerpo.match(/\[Event /g) || []).length === 5, 'y días después se sigue sirviendo al toque');
+  } finally {
+    globalThis.caches = cachesAntes; globalThis.fetch = fetchAntes; Date.now = nowAntes;
+  }
+}
+
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.') + '\n');
 process.exitCode = fallos ? 1 : 0;

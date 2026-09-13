@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 920;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 934;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -3877,6 +3877,82 @@ console.log('\n=== 50. Puntos del torneo en el visor (6½/7) ===');
   const faltan = ids.filter(id => !SRC.includes('id="' + id + '"'));
   chk(ids.length >= 6 && faltan.length === 0, 'todos los ids que usa la grilla existen en el HTML',
       faltan.length ? ('faltan: ' + faltan.join(', ')) : (ids.length + ' ids'));
+}
+
+// ── 50. Vivo on-demand: ronda nueva sin borrar las anteriores + tableros que no saltan (13/09) ──
+// Lo vio el autor siguiendo un blitz: al llegar la ronda nueva, las anteriores decían "Sin tableros"
+// hasta el F5 (se tiraban, pero quedaban marcadas como ya pedidas). Y en cada refresco la grilla se
+// redibujaba entera: la barrita aparecía tarde y todos los tableros se achicaban de un saltito.
+{
+  console.log('\n=== 50. Vivo: rondas anteriores y barrita estable ===');
+  const od = extraerFuncion('_tdOnDemandApplyRefresh'), lb = extraerFuncion('_tdLiveBuild');
+  chk(/odRes\._prevByRound = _tdCtx\.byRound/.test(od) && /var prev = res\._prevByRound/.test(lb),
+      '🔒 al llegar una ronda nueva se conservan las partidas de las rondas ya bajadas');
+  chk(/delete _tdLiveCtx\._fetched\[prevCur\]/.test(od),
+      'la ronda que venía en vivo se vuelve a bajar (versión final) al abrirla');
+  chk(/_tdSameBoardSlots\(curNum, oldGames, _tdCtx\.games\)\) _tdPatchRoundBoards\(curNum, _tdCtx\.games\)/.test(od),
+      '🔒 el refresco con los mismos tableros PARCHEA en su lugar, no redibuja la grilla');
+  chk(/_tdEvMemo\[_gk\] != null \? ' has-ev'/.test(extraerFuncion('_tdCardHtml'))
+      && /if \(_ev == null && _gk && _tdEvMemo\[_gk\] != null\) _ev = _tdEvMemo\[_gk\]/.test(extraerFuncion('tdFillBoards')),
+      'la barrita recuerda la última evaluación de cada partida (el tablero nace ya con su franja)');
+  // Las miniaturas del visor ("Partidas de la ronda") tampoco se redibujan enteras en cada refresco.
+  const avr = extraerFuncion('_tdApplyViewerRefresh');
+  chk(/_cvRefreshRoundMinis\(_minis\)/.test(avr) && !/_minis\.innerHTML = _cvRoundMinisHtml\(\)/.test(avr),
+      '🔒 el refresco del visor parchea las miniaturas de la ronda en vez de redibujarlas');
+  chk(/_cvMiniPageIdx\(true\)/.test(extraerFuncion('_cvRefreshRoundMinis')) && /#cv-round-minis \.td-bd/.test(extraerFuncion('mevApply')),
+      'y mantiene la página elegida, y el motor también les pinta la barrita');
+  // Chess-Results: una vez por ronda por visita, no en cada refresco del vivo.
+  chk(/_crFetchRoundOnDemand\(curNum\);/.test(od) && !/_crFetchRoundOnDemand\(curNum, true\)/.test(od),
+      '🔒 el refresco del vivo NO vuelve a pedirle las partidas a Chess-Results cada 30 s');
+  // Tablas de Chess-Results que se actualizan solas al llegar una ronda nueva (sólo rápidas y blitz).
+  const trig = extraerFuncion('_tdCrTablesOnNewRound');
+  chk(/_tdLivePace !== 'rapid' && _tdLivePace !== 'blitz'\) return/.test(trig) && /ctx\._crTablesMax == null\) \{ ctx\._crTablesMax = maxRound; return; \}/.test(trig),
+      '🔒 las tablas de CR sólo se piden solas en rápidas/blitz, y NO al abrir (ahí ya se bajaron)');
+  chk(/_tdCrTablesOnNewRound\(/.test(od) && /_tdCrTablesOnNewRound\(/.test(extraerFuncion('_tdLiveApplyRefresh')),
+      'se disparan desde los dos refrescos del vivo (on-demand y el que baja todo)');
+  chk(/keepTab: true/.test(trig) && /if\(quiet\) _crSyncing=true/.test(extraerFuncion('crRefreshSection')) && /if\(quiet\) _crSyncing=true/.test(extraerFuncion('_teamRefresh')),
+      '🔒 el refresco automático deja al visitante en su pestaña y no le mueve la ronda de las partidas');
+  chk(/if \(hayI64\) _i64AutoFetchIndiv\(crk, i64url, opts\)/.test(trig) && /if \(hayVs\) _vsAutoFetchIndiv\(crk, vsurl, opts\)/.test(trig)
+      && /_iKeep != null/.test(extraerFuncion('_i64AutoFetchIndiv')) && /_vKeep != null/.test(extraerFuncion('_vsAutoFetchIndiv')),
+      '🔒 funciona igual para info64 y vesus (mismo disparador, misma pestaña)');
+}
+
+// ── 51. Guardar en la carpeta: reintento cuando Chrome dice que el archivo cambió por fuera (13/09) ──
+// "An operation that depends on state cached in an interface object was made but the state had changed
+// since it was read from disk" (InvalidStateError): git merge / Drive / antivirus tocaron data\ y el
+// autor tenía que elegir la carpeta varias veces. Se prueba con una carpeta de mentira.
+{
+  console.log('\n=== 51. Guardar en la carpeta: reintento ===');
+  // extraerFuncion recorta desde "function": el "async" de adelante hay que ponerlo (si no, el await no compila).
+  const WF = new Function('var _fsSubdirCache = null;' + extraerFuncion('_fsWriteFile').replace(/^\s*(async\s+)?function/, 'async function') + ' return _fsWriteFile;')();
+  const carpeta = (fallasPrevistas, tipo) => {
+    const st = { escritos: {}, fallas: 0, borrados: 0, pedidosHandle: 0 };
+    const err = () => { const e = new Error('state had changed since it was read from disk'); e.name = tipo; return e; };
+    const dir = {
+      async getDirectoryHandle() { return dir; },
+      async removeEntry() { st.borrados++; },
+      async getFileHandle(n) {
+        st.pedidosHandle++;
+        return { async createWritable() {
+          if (st.fallas < fallasPrevistas) { st.fallas++; throw err(); }
+          let buf = '';
+          return { async write(c) { buf += c; }, async close() { st.escritos[n] = buf; }, async abort() {} };
+        } };
+      },
+    };
+    return { dir, st };
+  };
+  const a = carpeta(2, 'InvalidStateError');
+  let okA = true; try { await WF(a.dir, 'manifest.js', 'var x=1;'); } catch (e) { okA = false; }
+  chk(okA && a.st.escritos['manifest.js'] === 'var x=1;' && a.st.fallas === 2 && a.st.pedidosHandle === 3,
+      '🔒 si Chrome dice que el archivo cambió por fuera, reintenta solo (con el handle de nuevo) y guarda', JSON.stringify(a.st));
+  const b = carpeta(3, 'InvalidStateError');
+  let okB = true; try { await WF(b.dir, 't/tz_1.json', '{}'); } catch (e) { okB = false; }
+  chk(okB && b.st.borrados === 1 && b.st.escritos['tz_1.json'] === '{}',
+      'al último intento borra el archivo y lo crea de cero', JSON.stringify(b.st));
+  const c = carpeta(9, 'NotAllowedError');
+  let tiroC = false; try { await WF(c.dir, 'manifest.js', 'x'); } catch (e) { tiroC = e.name === 'NotAllowedError'; }
+  chk(tiroC && c.st.fallas === 1, 'un error de PERMISO no se reintenta (hace falta volver a dar permiso)', JSON.stringify(c.st));
 }
 
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));

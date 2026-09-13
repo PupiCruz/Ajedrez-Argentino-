@@ -336,26 +336,81 @@ async function crPgn(reqUrl, ctx) {
   const rdRaw = (reqUrl.searchParams.get('rd') || '').trim();
   const rd = /^\d{1,3}$/.test(rdRaw) ? rdRaw : '';
 
-  // Caché: igual que el resto del Worker. Muchos visitantes mirando el mismo torneo en vivo
-  // comparten esta respuesta → Chess-Results recibe ~1 pedido cada CACHE_SECONDS, no uno por persona.
+  // Caché (13/09/2026). Los organizadores suben las partidas cada tanto, casi siempre después de la
+  // ronda, y cada pedido que no está guardado le cuesta a Chess-Results DOS (cargar el formulario +
+  // descargar). Por eso:
+  //   · CON partidas: se guarda 7 días. Durante la primera hora se sirve tal cual; después se sigue
+  //     sirviendo al instante y se revisa POR DETRÁS (a lo sumo una vez por hora) por si subieron más.
+  //     Si la revisión falla o vuelve vacía, NO se pisa la copia buena.
+  //   · SIN partidas: se guarda media hora (CR_PGN_EMPTY). Una respuesta vacía guardada una semana
+  //     escondería las partidas que el organizador suba después; media hora alcanza (nadie se queda
+  //     una hora refrescando esperando partidas de Chess-Results) y ahorra la mayoría de los pedidos.
   const cache = caches.default;
   const cacheKey = new Request(reqUrl.toString());
+  const cacheKeyStr = reqUrl.toString();
   const hit = await cache.match(cacheKey);
-  if (hit) return hit;
+  if (hit) {
+    const fetchedAt = Number(hit.headers.get('x-fa-fetched') || 0);
+    if (!fetchedAt) return hit;   // copia corta (sin partidas, o del formato anterior): tal cual
+    const body = await hit.text();
+    if (Date.now() - fetchedAt >= CR_PGN_FRESH * 1000) {
+      ctx.waitUntil(crPgnRevalidate(cache, cacheKey, cacheKeyStr, host, tnr, fideList, rd, body));
+    }
+    return crPgnClientResp(body);
+  }
 
   let pgn;
   try {
-    pgn = await crPgnDownload(host, tnr, fideList, rd);
+    pgn = await crPgnFetchOnce(cacheKeyStr, host, tnr, fideList, rd);
   } catch (e) {
     return errJson('No se pudieron bajar las partidas de chess-results: ' + e.message, 502);
   }
+  ctx.waitUntil(cache.put(cacheKey, crPgnStoredResp(pgn)));
+  return crPgnClientResp(pgn);
+}
 
-  const headers = corsHeaders();
-  headers.set('Content-Type', 'application/x-chess-pgn; charset=utf-8');
-  headers.set('Cache-Control', 'public, max-age=' + CACHE_SECONDS);
-  const resp = new Response(pgn, { status: 200, headers });
-  ctx.waitUntil(cache.put(cacheKey, resp.clone()));
-  return resp;
+const CR_PGN_FRESH = 3600;               // con partidas: fresca 1 hora…
+const CR_PGN_STORE = 7 * 24 * 3600;      // …y guardada 7 días
+const CR_PGN_EMPTY = 1800;               // sin partidas: media hora
+const _crPgnInflight = new Map();        // single-flight por isolate: pedidos simultáneos comparten una bajada
+
+function crPgnHasGames(txt) { return /\[Event\s/i.test(txt || ''); }
+
+function crPgnFetchOnce(key, host, tnr, fideList, rd) {
+  const existing = _crPgnInflight.get(key);
+  if (existing) return existing;
+  const p = crPgnDownload(host, tnr, fideList, rd).finally(() => _crPgnInflight.delete(key));
+  _crPgnInflight.set(key, p);
+  return p;
+}
+
+// Revisión de fondo. Si trae partidas, se guarda la versión nueva. Si falla o vuelve vacía, se vuelve a
+// guardar la copia buena con el sello renovado: así no se reintenta en cada visita (sólo dentro de una hora).
+async function crPgnRevalidate(cache, cacheKey, key, host, tnr, fideList, rd, oldBody) {
+  let pgn = '';
+  try { pgn = await crPgnFetchOnce(key, host, tnr, fideList, rd); } catch (e) { pgn = ''; }
+  await cache.put(cacheKey, crPgnStoredResp(crPgnHasGames(pgn) ? pgn : oldBody));
+}
+
+// Copia para GUARDAR: con partidas, 7 días + sello de tiempo; sin partidas, corta y sin sello.
+function crPgnStoredResp(pgn) {
+  const h = corsHeaders();
+  h.set('Content-Type', 'application/x-chess-pgn; charset=utf-8');
+  if (crPgnHasGames(pgn)) {
+    h.set('Cache-Control', 'public, max-age=' + CR_PGN_STORE);
+    h.set('x-fa-fetched', String(Date.now()));
+  } else {
+    h.set('Cache-Control', 'public, max-age=' + CR_PGN_EMPTY);
+  }
+  return new Response(pgn, { status: 200, headers: h });
+}
+
+// Copia para EL VISITANTE: Cache-Control corto (su navegador no se queda una semana con lo viejo).
+function crPgnClientResp(pgn) {
+  const h = corsHeaders();
+  h.set('Content-Type', 'application/x-chess-pgn; charset=utf-8');
+  h.set('Cache-Control', 'public, max-age=' + CACHE_SECONDS);
+  return new Response(pgn, { status: 200, headers: h });
 }
 
 // Baja el PGN del torneo. Sin fide → un solo pedido con todas las partidas. Con fide → un
