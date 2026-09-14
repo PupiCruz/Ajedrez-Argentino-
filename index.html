@@ -3256,6 +3256,11 @@
       .lv-clock { font-variant-numeric:tabular-nums; font-weight:800; font-size:24px; letter-spacing:.5px; padding:2px 12px; border-radius:8px; background:var(--bg2); min-width:88px; text-align:center; transition:opacity .2s; }
       .lv-clock.lv-run { background:var(--gold-bg); color:var(--gold); }
       .lv-clock.lv-low { color:var(--red) !important; }
+      /* ⚡ Berserk: redondo, dorado, pegado a tu reloj (como en lichess.org). */
+      .lv-berserk { width:38px; height:38px; flex-shrink:0; border-radius:50%; border:1px solid var(--gold-dim); background:var(--gold-bg);
+        color:var(--gold); font-size:19px; line-height:1; cursor:pointer; font-family:inherit; margin-left:auto; margin-right:8px;
+        animation:lvPop .3s cubic-bezier(.2,1.2,.5,1); }
+      .lv-berserk:hover { filter:brightness(1.1); transform:scale(1.05); }
       .lv-clock.lv-idle { opacity:.5; }
 
       .lv-board-wrap { position:relative; width:100%; aspect-ratio:1/1; }
@@ -3670,6 +3675,16 @@
       .lv-as-mia { margin-left:6px; width:28px; height:28px; border-radius:50%; background:var(--bg2); border:1px solid var(--border);
         color:var(--text2); cursor:pointer; font-family:inherit; flex-shrink:0; line-height:1; }
       .lv-as-mia:hover { color:var(--text); background:var(--bg3); }
+      /* Páginas de la tabla (de a 10, como Lichess) + 📍 "Ir a tu puesto". */
+      .lv-as-tabla-head { display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; margin-bottom:6px; }
+      .lv-as-tabla-head .lv-as-sec { margin-bottom:0; }
+      .lv-as-pag { display:flex; align-items:center; gap:4px; }
+      .lv-as-pb { min-width:30px; height:28px; padding:0 6px; border-radius:var(--r-sm); background:var(--bg2); border:1px solid var(--border);
+        color:var(--text2); font-family:inherit; font-size:12px; cursor:pointer; line-height:1; }
+      .lv-as-pb:hover:not(:disabled) { background:var(--bg3); color:var(--text); }
+      .lv-as-pb:disabled { opacity:.4; cursor:default; }
+      .lv-as-pb-yo:not(:disabled) { background:var(--gold-bg); border-color:var(--gold-dim); color:var(--gold); }
+      .lv-as-pag-txt { font-size:12px; color:var(--text3); font-variant-numeric:tabular-nums; padding:0 4px; white-space:nowrap; }
       .lv-as-nm { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
       .lv-as-nm small { color:var(--text3); font-weight:400; margin-left:5px; }
       .lv-as-hoja { font-size:12px; color:var(--text3); font-variant-numeric:tabular-nums; letter-spacing:1px; white-space:nowrap;
@@ -4000,7 +4015,10 @@
           </div>
           <div id="lv-as-podio"></div>
           <div class="lv-as-cols">
-            <div><div class="lv-as-sec">Tabla de posiciones</div><div id="lv-as-tabla"></div></div>
+            <div>
+              <div class="lv-as-tabla-head"><div class="lv-as-sec">Tabla de posiciones</div><div id="lv-as-pag"></div></div>
+              <div id="lv-as-tabla"></div>
+            </div>
             <div class="lv-as-estado-box"><div id="lv-as-estado" aria-live="polite"></div><div id="lv-as-yo"></div></div>
           </div>
         </div>
@@ -4161,6 +4179,11 @@
           <div class="lv-player lv-bottom">
             <span class="lv-pname" id="lv-name-bot">Vos</span>
             <span class="aa-mat" id="lv-mat-bot"></span>
+            <!-- ⚡ BERSERK (plan del arena, Fase 3): sólo en partidas de arena y antes de tu primera
+                 jugada. Lo prende y apaga el módulo de la partida de Lichess. -->
+            <button type="button" class="lv-berserk" id="lv-li-berserk" style="display:none"
+              title="Berserk: te quedás con la mitad del reloj y, si ganás, sumás un punto extra"
+              aria-label="Berserk: te quedás con la mitad del reloj y, si ganás, sumás un punto extra">⚡</button>
             <span class="lv-clock lv-idle" id="lv-clk-bot">--:--</span>
           </div>
         </div>
@@ -41932,6 +41955,8 @@ function cvUpdateNagBadge() {
         '<div class="aa-pref-sec">Partida</div>'+
         prefRow('autoqueen','Coronar siempre en dama','Al coronar no te pregunta la pieza. Mantené <b>Ctrl</b> (o ⌘) apretado al coronar para elegir otra esta vez.', prefRead('aa_pref_autoqueen'))+
         prefRow('pvpchatoff','Ocultar el chat en mis partidas','No se muestra el chat dentro de las partidas en vivo.', prefRead('aa_pref_pvpchat_off'))+
+        // Plan del arena, Fase 3. Por ahora sólo con la llave de la cartelera (?arena=1), como todo el arena.
+        (window.aaArena&&window.aaArena.activo&&window.aaArena.activo() ? prefRow('berserksnd','Silenciar el sonido del berserk','En los torneos arena, no suena el golpe cuando vos o tu rival hacen berserk.', prefRead('aa_pref_berserk_snd_off')) : '')+
         '<div class="aa-pref-sec">Apariencia</div>'+
         prefRow('theme','Tema claro','', light)+
         '<div class="aa-pref-sec">Privacidad</div>'+
@@ -41949,6 +41974,7 @@ function cvUpdateNagBadge() {
       var p=el.getAttribute('data-pref');
       if(p==='autoqueen') setPref('aa_pref_autoqueen', el.checked);
       else if(p==='pvpchatoff') setPref('aa_pref_pvpchat_off', el.checked);
+      else if(p==='berserksnd') setPref('aa_pref_berserk_snd_off', el.checked);
       else if(p==='theme'){ if(typeof toggleTheme==='function') toggleTheme(); }
       else if(p==='dnd'){
         // "No molestar" se guarda en la cuenta (no en el navegador) → requiere login.
@@ -43264,12 +43290,13 @@ function cvUpdateNagBadge() {
     }).join('');
   }
 
-  function _asCaja(est, d, yo, segs, restaPausa, demora) {
+  function _asCaja(est, d, yo, segs, restaPausa, demora, filaYo) {
     d = d || {};
     var me = d.me || {}, fila = null, ylc = String(yo || '').toLowerCase();
     ((d.standing && d.standing.players) || []).forEach(function (p) {
       if (ylc && String(p.name || '').toLowerCase() === ylc) fila = p;
     });
+    if (!fila && filaYo) fila = filaYo;   // mirando otra página de la tabla: tu renglón guardado
     var nums = me.rank
       ? '<div class="lv-as-nums">' +
           '<div class="lv-as-num"><span>Puesto</span><b>' + (+me.rank) + '.º</b></div>' +
@@ -43317,6 +43344,25 @@ function cvUpdateNagBadge() {
     }
     if (est === 'terminado') return caja('El torneo terminó', '', nums + fila2(btn('cartelera', 'Volver a la cartelera', true)));
     return '';
+  }
+
+  /* Las páginas de la tabla, como en lichess.org: de a 10, con ⏮ ◀ "41–50 / 1875" ▶ ⏭ y el
+     📍 "Ir a tu puesto" (en Lichess: "Scroll to your player"). Pedido del autor, 14/09. */
+  function _asPaginador(pag, nb, miPag) {
+    nb = +nb || 0; pag = +pag || 1;
+    var paginas = Math.max(1, Math.ceil(nb / 10));
+    if (paginas <= 1) return '';
+    var desde = (pag - 1) * 10 + 1, hasta = Math.min(pag * 10, nb);
+    function b(accion, txt, titulo, apagado, extra) {
+      return '<button type="button" class="lv-as-pb' + (extra || '') + '" data-as-pag="' + accion + '" title="' + titulo + '" aria-label="' + titulo + '"' +
+        (apagado ? ' disabled' : '') + '>' + txt + '</button>';
+    }
+    return '<div class="lv-as-pag" role="group" aria-label="Páginas de la tabla">' +
+      b('1', '⏮', 'Primera página', pag <= 1) + b('prev', '◀', 'Página anterior', pag <= 1) +
+      '<span class="lv-as-pag-txt">' + desde + '–' + hasta + ' / ' + nb + '</span>' +
+      b('next', '▶', 'Página siguiente', pag >= paginas) + b('last', '⏭', 'Última página', pag >= paginas) +
+      (miPag ? b('yo', '📍', 'Ir a tu puesto', miPag === pag, ' lv-as-pb-yo') : '') +
+    '</div>';
   }
 
   /* ── Tus partidas, tu tarjeta y el podio (pedido del autor al ver terminar el torneo, 14/09) ──
@@ -43405,7 +43451,8 @@ function cvUpdateNagBadge() {
   /* ── Estado y pantalla ──────────────────────────────────────────────────── */
   var S = { id: null, d: null, t0: 0, pidiendo: false, ultJoin: 0, timer: 0, reloj: 0, html: '', pausaHasta: 0, ultForzado: 0, ultEst: '',
             pausaUsuario: false, ultJoinUsuario: 0, partidas: [], claveP: '', ultP: 0, pidiendoP: false, finVisto: 0,
-            ver: '', verFila: null };   // ver = el jugador que tocó en la tabla ('' = la tarjeta propia)
+            ver: '', verFila: null,     // ver = el jugador que tocó en la tabla ('' = la tarjeta propia)
+            pagina: 0, miFila: null };  // pagina 0 = seguir la página donde estás; miFila = tu renglón guardado
 
   /* 🐛 PROBADO EN UN ARENA DE VERDAD (14/09): apretabas Pausar, tu nombre salía en gris… y
      igual te emparejaban. Dos cosas juntas: (1) según Lichess, anotarse de nuevo "también saca
@@ -43479,7 +43526,7 @@ function cvUpdateNagBadge() {
     if (!window.aaLi.tiene()) { window.aaLi.pedirConAviso({ tipo: 'arena', id: id }); return; }
     S.id = id; S.d = null; S.html = ''; S.ultJoin = 0; S.ultEst = ''; S.pausaUsuario = false;
     guardarRecuerdo(null);   // ya está adentro: el globito sobra
-    S.partidas = []; S.claveP = ''; S.ultP = 0; S.finVisto = 0; S.ver = ''; S.verFila = null;
+    S.partidas = []; S.claveP = ''; S.ultP = 0; S.finVisto = 0; S.ver = ''; S.verFila = null; S.pagina = 0; S.miFila = null;
     urlArena(id);
     mostrar(true); pintar();
     try { window.scrollTo(0, 0); } catch (e) {}
@@ -43520,8 +43567,8 @@ function cvUpdateNagBadge() {
   function traer() {
     if (!S.id || S.pidiendo) return;
     S.pidiendo = true;
-    var id = S.id;
-    fetch(LI_AS + rutaDe(id, '?page=' + _asPagina(S.d)), { headers: { Authorization: 'Bearer ' + window.aaLi.token() } })
+    var id = S.id, pagPedida = paginaActual();
+    fetch(LI_AS + rutaDe(id, '?page=' + pagPedida), { headers: { Authorization: 'Bearer ' + window.aaLi.token() } })
       .then(function (r) {
         if (!r.ok) { var e = new Error('HTTP ' + r.status); e.status = r.status; throw e; }
         return r.json();
@@ -43535,6 +43582,7 @@ function cvUpdateNagBadge() {
         if (!S.pausaUsuario && e0 === 'buscando' && Date.now() - S.ultJoin >= AS_LATIDO_MS) unirse(true);
         if (d.isFinished && !S.finVisto) S.finVisto = Date.now();
         /* Tus partidas: se vuelven a pedir cuando cambia cuántas jugaste o la que está en curso. */
+        var fyo = filaDe(d, yo()); if (fyo) S.miFila = fyo;
         /* (La tuya, o la del jugador que tocaste en la tabla.) */
         var vn = verNombre(), fv = filaDe(d, vn);
         if (fv && S.ver) S.verFila = fv;
@@ -43547,7 +43595,59 @@ function cvUpdateNagBadge() {
         if (e && e.status === 401) { permisoVencido(); return; }
         if (e && e.status === 429) S.pausaHasta = Date.now() + 60000;
       })
-      .then(function () { S.pidiendo = false; });
+      .then(function () {
+        S.pidiendo = false;
+        /* Cambió la página que hay que mostrar (tocó una flecha, o recién se supo en qué página
+           está): se pide ya, sin esperar al próximo refresco. */
+        if (S.id === id && paginaActual() !== pagPedida && Date.now() >= S.pausaHasta) traer();
+      });
+  }
+
+  /* La página de la tabla que se pide: la que eligió con las flechas, o la suya. */
+  function paginaActual() { return S.pagina || _asPagina(S.d); }
+  function irAPagina(a) {
+    if (!S.d) return;
+    var nb = Math.max(+S.d.nbPlayers || 0, 1), paginas = Math.max(1, Math.ceil(nb / 10));
+    var actual = (S.d.standing && +S.d.standing.page) || paginaActual();
+    var miPag = _asPagina(S.d);
+    var nueva = a === '1' ? 1 : a === 'prev' ? actual - 1 : a === 'next' ? actual + 1 : a === 'last' ? paginas : miPag;
+    nueva = Math.max(1, Math.min(paginas, nueva));
+    S.pagina = (a === 'yo' || (S.d.me && S.d.me.rank && nueva === miPag)) ? 0 : nueva;
+    traer();
+  }
+
+  /* 🎵 "Coronación": la musiquita del final, elegida por el autor el 14/09 (propia, hecha con
+     osciladores como el resto de los sonidos del sitio: nunca el archivo de Lichess). Dos acordes
+     que preparan (fa, sol), una escalera rápida y el do mayor grande con eco de sala. ~5 s. */
+  function sonarCoronacion() {
+    try {
+      var c = _getAudioCtx(); if (c.state === 'suspended') c.resume();
+      var t0 = c.currentTime + 0.05, vol = 0.6;
+      var out = c.createDynamicsCompressor(); out.threshold.value = -14; out.ratio.value = 4; out.connect(c.destination);
+      var len = Math.floor(c.sampleRate * 1.8), ir = c.createBuffer(2, len, c.sampleRate);
+      for (var ch = 0; ch < 2; ch++) {
+        var dd = ir.getChannelData(ch);
+        for (var i = 0; i < len; i++) dd[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.6);
+      }
+      var conv = c.createConvolver(); conv.buffer = ir;
+      var wet = c.createGain(); wet.gain.value = 0.28; wet.connect(conv); conv.connect(out);
+      var hz = function (m) { return 440 * Math.pow(2, (m - 69) / 12); };
+      var nota = function (t, m, dur, v) {
+        var g = c.createGain();
+        g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(v * vol, t + 0.006);
+        g.gain.exponentialRampToValueAtTime(v * vol * 0.35, t + 0.25); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+        g.connect(out); g.connect(wet);
+        [[1, 1], [2, 0.45], [3, 0.22], [4, 0.1], [5, 0.05]].forEach(function (p) {
+          var o = c.createOscillator(); o.type = 'sine'; o.frequency.value = hz(m) * p[0] * (1 + (p[0] - 1) * 0.0008);
+          var ga = c.createGain(); ga.gain.value = p[1]; o.connect(ga); ga.connect(g); o.start(t); o.stop(t + dur + 0.05);
+        });
+      };
+      var acorde = function (t, ms, dur, v) { ms.forEach(function (m, k) { nota(t + k * 0.012, m, dur, v / ms.length * 1.6); }); };
+      acorde(t0, [53, 57, 60, 65], 0.8, 0.36);
+      acorde(t0 + 0.6, [55, 59, 62, 67], 0.8, 0.36);
+      [72, 74, 76, 77, 79, 81, 83, 84].forEach(function (m, k) { nota(t0 + 1.15 + k * 0.065, m, 0.5, 0.16); });
+      acorde(t0 + 1.75, [48, 60, 64, 67, 72, 76], 3.4, 0.46);
+    } catch (e) {}
   }
 
   function filaDe(d, nombre) {
@@ -43684,19 +43784,21 @@ function cvUpdateNagBadge() {
     }
     var tabla = S.d ? _asTabla(S.d, yo(), S.ver) : '<p class="lv-ar-empty">Trayendo la tabla…</p>';
     var rp = restaPausa(), dem = demoraPausa();
-    var caja = _asCaja(est, S.d, yo(), segundosRestantes(), rp, dem);
+    var caja = _asCaja(est, S.d, yo(), segundosRestantes(), rp, dem, S.miFila);
     /* Sólo se toca la pantalla si cambió algo (así no se pierde el foco del teclado). Las
        cuentas regresivas de adentro las actualiza pintarReloj, cada segundo. */
     var vn = verNombre(), esOtro = !!S.ver;
-    var fv = S.d ? (filaDe(S.d, vn) || (esOtro ? S.verFila : null)) : null;
+    var fv = S.d ? (filaDe(S.d, vn) || (esOtro ? S.verFila : S.miFila)) : null;
     var rankV = esOtro ? (fv && fv.rank) : (S.d && S.d.me && S.d.me.rank);
     var tarjeta = S.d ? _asTarjeta(vn, rankV ? { rank: rankV } : null, fv, S.partidas, perfOficial(vn), esOtro) : '';
+    var nbTabla = S.d ? Math.max(+S.d.nbPlayers || 0, ((S.d.standing && S.d.standing.players) || []).length) : 0;
+    var pagH = S.d ? _asPaginador((S.d.standing && S.d.standing.page) || 1, nbTabla, (S.d.me && S.d.me.rank) ? _asPagina(S.d) : 0) : '';
     var podio = '';
     if (est === 'terminado' && S.d && S.d.podium && S.d.podium.length && typeof _podioDibujo === 'function') {
       podio = _podioDibujo(_asPodioTop(S.d.podium), 'Podio final', false) + _asStats(S.d.stats);
     }
     var html = tabla + '|' + est + '|' + (est === 'espera' ? '' : (est === 'pausado' ? (rp > 0 ? 'ultima' : (dem > 0 ? 'demora' : 'quieta')) : caja))
-      + '|' + tarjeta + '|' + podio;
+      + '|' + tarjeta + '|' + podio + '|' + pagH;
     if (html !== S.html) {
       S.html = html;
       var t = $s('lv-as-tabla'), c = $s('lv-as-estado'), yy = $s('lv-as-yo'), po = $s('lv-as-podio');
@@ -43704,8 +43806,11 @@ function cvUpdateNagBadge() {
       if (c) c.innerHTML = caja;
       if (yy) yy.innerHTML = tarjeta;
       if (po) po.innerHTML = podio;
+      var pg = $s('lv-as-pag'); if (pg) pg.innerHTML = pagH;
     }
     if (est !== S.ultEst) {
+      /* El torneo terminó MIENTRAS lo mirabas (no al abrir uno ya terminado) y jugaste: musiquita. */
+      if (est === 'terminado' && S.ultEst && S.ultEst !== 'terminado' && S.d && S.d.me) { sonarCoronacion(); decir('Terminó el torneo.'); }
       if (est === 'buscando') decir('Buscando rival en el torneo.');
       else if (est === 'pausado') decir('Estás en pausa en el torneo.');
       S.ultEst = est;
@@ -43794,6 +43899,8 @@ function cvUpdateNagBadge() {
     if (sala) sala.addEventListener('click', function (e) {
       var j = e.target.closest('[data-as-jug]');
       if (j) { verJugador(j.getAttribute('data-as-jug')); return; }
+      var pgb = e.target.closest('[data-as-pag]');
+      if (pgb) { if (!pgb.disabled) irAPagina(pgb.getAttribute('data-as-pag')); return; }
       var b = e.target.closest('[data-as]');
       if (b) {
         var a = b.getAttribute('data-as');
@@ -43987,7 +44094,8 @@ function cvUpdateNagBadge() {
       status: viva ? 'playing' : 'finished',
       moves: sans,
       lastMove: ult,
-      names: { w: nombre(full.white) || 'Blancas', b: nombre(full.black) || 'Negras' },
+      /* ⚡ junto al nombre del que hizo berserk (Lichess lo avisa en cada estado). */
+      names: { w: (nombre(full.white) || 'Blancas') + (st.wberserk ? ' ⚡' : ''), b: (nombre(full.black) || 'Negras') + (st.bberserk ? ' ⚡' : '') },
       players: { w: true, b: true, connW: true, connB: true },
       ratings: { w: chapita(full.white), b: chapita(full.black) },
       rated: !!full.rated,
@@ -44147,7 +44255,8 @@ function cvUpdateNagBadge() {
     cortar();
     botones(false);
     var color = (g.color === 'black') ? 'b' : 'w';
-    P = { id: id, full: null, ctrl: new AbortController(), color: color, cdHasta: 0, pendiente: null, timer: null, relTimer: null };
+    P = { id: id, full: null, ctrl: new AbortController(), color: color, cdHasta: 0, pendiente: null, timer: null, relTimer: null,
+          bk: { w: false, b: false }, bkPedido: false, ultSt: null };   // berserk: quién ya lo hizo (suena una vez)
 
     window.lvTablero.enganchar({
       enviar: enviar,
@@ -44191,10 +44300,11 @@ function cvUpdateNagBadge() {
          La ficha trae tournamentId sólo en las partidas de torneo. */
       if (reciente && !o.tournamentId) { P.cdHasta = Date.now() + 3000; m.startAt = P.cdHasta; }
       aplicar(m);
+      berserkSync(st);
       decir('Partida contra ' + (color() === 'w' ? m.names.b : m.names.w) + '. Jugás con ' + (color() === 'w' ? 'blancas' : 'negras') + '.');
       return;
     }
-    if (o.type === 'gameState') { if (P.full) empujar(traducir(P.full, o)); return; }
+    if (o.type === 'gameState') { if (P.full) { empujar(traducir(P.full, o)); berserkSync(o); } return; }
     if (o.type === 'chatLine') {
       if (o.room !== 'player') return;                       // la tribuna no va al chat de la partida
       var mio = P.full && nombre(P.full[P.color === 'w' ? 'white' : 'black']) === o.username;
@@ -44205,6 +44315,99 @@ function cvUpdateNagBadge() {
     if (o.type === 'opponentGone') { rivalSeFue(o); return; }
   }
   function color() { return P ? P.color : 'w'; }
+
+  /* ══ ⚡ BERSERK (plan del arena, Fase 3 — 14/09/2026) ═══════════════════════════
+     Sólo en partidas de ARENA (la ficha trae tournamentId) y antes de TU primera jugada: te
+     quedás con la mitad del reloj (y sin incremento) y, si ganás, sumás un punto extra.
+     Se pide con POST /api/board/game/{id}/berserk. Lichess manda en CADA estado wberserk y
+     bberserk: con eso se marca ⚡ junto al nombre y suena el golpe elegido por el autor, UNA vez
+     por jugador (también cuando lo hace el rival). El reloj a la mitad NO se calcula: lo manda
+     Lichess. Silenciable en ⚙️ Preferencias (aa_pref_berserk_snd_off). */
+  function puedeBerserk(st) {
+    if (!P || !P.full || !P.full.tournamentId || !st || P.bkPedido) return false;
+    if (st.status && st.status !== 'started' && st.status !== 'created') return false;
+    if (P.color === 'w' ? st.wberserk : st.bberserk) return false;
+    var n = String(st.moves || '').split(' ').filter(Boolean).length;
+    return P.color === 'w' ? n < 1 : n < 2;   // todavía no hiciste tu primera jugada
+  }
+  function berserkMudo() { try { return localStorage.getItem('aa_pref_berserk_snd_off') === '1'; } catch (e) { return false; } }
+  function berserkSync(st) {
+    if (!P || !st) return;
+    P.ultSt = st;
+    ['w', 'b'].forEach(function (c) {
+      if ((c === 'w' ? st.wberserk : st.bberserk) && !P.bk[c]) {
+        P.bk[c] = true;
+        if (!berserkMudo()) sndBerserk();
+        decir(c === P.color ? 'Hiciste berserk.' : 'Tu rival hizo berserk.');
+      }
+    });
+    var b = $$('lv-li-berserk'); if (b) b.style.display = puedeBerserk(st) ? '' : 'none';
+  }
+  function berserk() {
+    if (!P || !puedeBerserk(P.ultSt)) return;
+    P.bkPedido = true;
+    var b = $$('lv-li-berserk'); if (b) b.style.display = 'none';
+    var yo = P.color, id = P.id;
+    post('/api/board/game/' + id + '/berserk').then(function () {
+      /* Suena al toque, sin esperar al próximo estado; P.bk evita que suene dos veces. */
+      if (P && P.id === id && !P.bk[yo]) { P.bk[yo] = true; if (!berserkMudo()) sndBerserk(); decir('Hiciste berserk.'); }
+    }).catch(function (e) {
+      if (!P || P.id !== id) return;
+      P.bkPedido = false;
+      avisar('Lichess no aceptó el berserk' + (e && e.message ? ' (' + e.message + ')' : '') + '.');
+      berserkSync(P.ultSt);
+    });
+  }
+  /* 🔊 El golpe elegido por el autor el 13/09 con el mezclador: aire que se carga (200 %),
+     estallido (120 %), golpe grave (70 %) y retumbe (140 %). Propio, con osciladores y ruido
+     filtrado: nunca el archivo de Lichess. ~1,5 s. */
+  function sndBerserk() {
+    try {
+      var c = _getAudioCtx(); if (c.state === 'suspended') c.resume();
+      var t = c.currentTime + 0.03, vol = 0.6;
+      var OUT = c.createDynamicsCompressor(); OUT.threshold.value = -12; OUT.ratio.value = 6; OUT.connect(c.destination);
+      var dist = function (k) {
+        var w = c.createWaveShaper(), n = 2048, cu = new Float32Array(n);
+        for (var i = 0; i < n; i++) { var x = i * 2 / n - 1; cu[i] = (1 + k) * x / (1 + k * Math.abs(x)); }
+        w.curve = cu; w.oversample = '4x'; return w;
+      };
+      var src = function (dur, t0) {
+        var n = Math.floor(c.sampleRate * (dur + 0.05)), bf = c.createBuffer(1, n, c.sampleRate), dd = bf.getChannelData(0);
+        for (var i = 0; i < n; i++) dd[i] = Math.random() * 2 - 1;
+        var s = c.createBufferSource(); s.buffer = bf; s.start(t0); s.stop(t0 + dur + 0.05); return s;
+      };
+      var env = function (t0, pts) {
+        var g = c.createGain(); g.gain.setValueAtTime(0.0001, t0);
+        pts.forEach(function (p) { g.gain.exponentialRampToValueAtTime(Math.max(0.0001, p[1] * vol), t0 + p[0]); });
+        return g;
+      };
+      var chain = function (a) { for (var i = 0; i < a.length - 1; i++) a[i].connect(a[i + 1]); a[a.length - 1].connect(OUT); };
+      var bp = function (type, q, f0, f1, t0, dt) {
+        var f = c.createBiquadFilter(); f.type = type; f.Q.value = q; f.frequency.setValueAtTime(f0, t0);
+        if (f1) f.frequency.exponentialRampToValueAtTime(f1, t0 + dt); return f;
+      };
+      // AIRE
+      var L = 2.0, d = 0.14 * L;
+      chain([src(d, t), bp('bandpass', 1.1, 5500, 1300, t, d * 0.93), env(t, [[d * 0.15, 0.08], [d * 0.85, 0.45], [d, 0.0001]])]);
+      var T = t + d;
+      // ESTALLIDO
+      L = 1.2; d = 0.24 * L;
+      chain([src(d, T), dist(25), bp('bandpass', 0.7, 3500, 2600, T, d * 0.9), env(T, [[0.004, 0.9], [d * 0.75, 0.6], [d, 0.0001]])]);
+      var T2 = T + 0.2 * L, d2 = 0.55 * L;
+      chain([src(d2, T2), bp('bandpass', 0.9, 2600, 0, T2, 0), env(T2, [[0.02, 0.35], [0.16 * L, 0.25], [d2, 0.0001]])]);
+      // GOLPE
+      L = 0.7;
+      var o = c.createOscillator(); o.type = 'sine';
+      o.frequency.setValueAtTime(110, T); o.frequency.exponentialRampToValueAtTime(62, T + 0.08 * L); o.frequency.exponentialRampToValueAtTime(44, T + 0.4 * L);
+      o.start(T); o.stop(T + 0.75 * L + 0.02);
+      chain([o, dist(10), env(T, [[0.005, 1], [0.2 * L, 0.8], [0.36 * L, 0.55], [0.75 * L, 0.0001]])]);
+      // RETUMBE
+      L = 1.4; d = 0.85 * L;
+      chain([src(d, T + 0.02), bp('lowpass', 0.7, 260, 90, T, d * 0.95), dist(7), env(T + 0.02, [[0.1 * L, 0.5], [0.35 * L, 0.55], [0.55 * L, 0.08], [d, 0.0001]])]);
+      var T3 = T + 0.45 * L;
+      chain([src(0.4 * L, T3), bp('highpass', 0.7, 6000, 0, T3, 0), env(T3, [[0.05, 0.03], [0.4 * L, 0.0001]])]);
+    } catch (e) {}
+  }
 
   /* ── Botones del final ─────────────────────────────────────────────────────
      "Nuevo oponente" es lo más usado de Lichess y acá es barato: el MISMO pedido de la
@@ -44327,6 +44530,7 @@ function cvUpdateNagBadge() {
   }
   /* Soltar de verdad: se va del tablero o empieza otra partida. */
   function soltar() {
+    var bkb = $$('lv-li-berserk'); if (bkb) bkb.style.display = 'none';
     if (!P) return;
     cerrarCano();
     P = null;
@@ -44449,6 +44653,7 @@ function cvUpdateNagBadge() {
     var r = $$('lv-li-reclamar'); if (r && !r._li) { r._li = true; r.addEventListener('click', reclamar); }
     var vt = $$('lv-li-torneo'); if (vt && !vt._li) { vt._li = true; vt.addEventListener('click', function () { volverAlTorneo(false); }); }
     var tp = $$('lv-li-tpausa'); if (tp && !tp._li) { tp._li = true; tp.addEventListener('click', function () { volverAlTorneo(true); }); }
+    var bk = $$('lv-li-berserk'); if (bk && !bk._li) { bk._li = true; bk.addEventListener('click', berserk); }
     /* Salir del tablero con "Volver al menú" durante una partida de Lichess: soltamos el
        caño (si no, seguiría escuchando una partida que el visitante ya dejó). */
     var x = $$('lv-exit'); if (x && !x._li) { x._li = true; x.addEventListener('click', function () { botones(false); soltar(); dejarDeMirar(); }); }

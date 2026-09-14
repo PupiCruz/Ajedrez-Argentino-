@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1028;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1038;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -4147,7 +4147,7 @@ console.log('\n=== Arena de Lichess — Fase 0: la cartelera ===');
 console.log('\n=== Arena de Lichess — Fase 1: anotarse y la pantalla de espera ===');
 {
   const N = ['_asEsc', '_asTiempo', '_asEstado', '_asPagina', '_asHoja', '_asTabla', '_asCaja', '_asIdDeUrl',
-    '_asPartidas', '_asPerf', '_asTarjeta', '_asPodioTop'];
+    '_asPartidas', '_asPerf', '_asTarjeta', '_asPodioTop', '_asPaginador'];
   const A = new Function(N.map(extraerFuncion).join('\n') + '; return {' + N.join(',') + '};')();
   const modS = (SRC.match(/ARENA DE LICHESS — Fase 1[\s\S]*?<\/script>/) || [''])[0];
   const modLi2 = (SRC.match(/aaLi — el permiso[\s\S]*?window\.aaLi = \{[\s\S]*?\};/) || [''])[0];
@@ -4261,11 +4261,39 @@ console.log('\n=== Arena de Lichess — Fase 1: anotarse y la pantalla de espera
       'cada renglón de la tabla se puede tocar para ver las partidas de ese jugador (y el elegido queda marcado)');
   chk(/data-as="vermia"/.test(A._asTarjeta('Otro', { rank: 5 }, { score: 2 }, [], 0, true)) && !/data-as="vermia"/.test(tj),
       'la tarjeta de otro jugador tiene la ✕ para volver a la tuya');
+  // Páginas de la tabla + 📍 "Ir a tu puesto" (como Lichess) y la musiquita (pedidos del 14/09).
+  const pg5 = A._asPaginador(5, 1875, 8), pg1 = A._asPaginador(1, 60, 1);
+  chk(/41–50 \/ 1875/.test(pg5) && /data-as-pag="yo"(?! disabled)/.test(pg5) && /data-as-pag="1"[^>]* disabled/.test(pg1)
+      && /data-as-pag="yo"[^>]* disabled/.test(pg1) && A._asPaginador(1, 8, 1) === '',
+      'la tabla va de a 10 con flechas y "📍 Ir a tu puesto" (apagado si ya estás en tu página; sin flechas si entra en una)');
+  chk(/function paginaActual\(\) \{ return S\.pagina \|\| _asPagina\(S\.d\); \}/.test(modS) && /'\?page=' \+ pagPedida/.test(modS),
+      'se pide la página que eligió con las flechas, o la suya');
+  chk(/<span>Puntos<\/span><b>7</.test(A._asCaja('buscando', { isStarted: true, me: { rank: 25 } }, 'yo', 0, 0, 0, { score: 7, sheet: { scores: '22' } })),
+      'mirando otra página de la tabla, tus puntos siguen en tu recuadro');
+  chk(/function sonarCoronacion/.test(modS) && /est === 'terminado' && S\.ultEst && S\.ultEst !== 'terminado' && S\.d && S\.d\.me\) \{ sonarCoronacion\(\)/.test(modS),
+      '🎵 la musiquita "Coronación" suena cuando el torneo termina mientras lo mirás (no al abrir uno ya terminado)');
   chk(/function verJugador/.test(modS) && /closest\('\[data-as-jug\]'\)/.test(modS) && /var id = S\.id, jug = verNombre\(\)/.test(modS)
       && /verNombre\(\) !== jug\) return;/.test(modS),
       'al tocar a otro jugador se piden SUS partidas, y una respuesta atrasada del anterior se descarta');
   chk(/aaArenaSala\.abrir/.test(SRC) && /id="lv-arena-sala" style="display:none"/.test(SRC),
       '"Jugar acá" abre la pantalla del arena, que nace oculta');
+}
+
+// ── ARENA DE LICHESS — Fase 3: berserk (14/09/2026) ─────────────────────────────────
+console.log('\n=== Arena de Lichess — Fase 3: berserk ===');
+{
+  const modP = (SRC.match(/Fase 2 — La partida de Lichess[\s\S]*?<\/script>/) || [''])[0];
+  chk(/<div class="lv-player lv-bottom">[\s\S]{0,400}id="lv-li-berserk"[^>]*style="display:none"/.test(SRC),
+      'el botón ⚡ de berserk va en tu barra, junto a tu reloj, y nace oculto');
+  const pb = (modP.match(/function puedeBerserk\(st\) \{[\s\S]*?\n  \}/) || [''])[0];
+  chk(/P\.full\.tournamentId/.test(pb) && /n < 1 : n < 2/.test(pb),
+      '🔒 berserk sólo en partidas de arena y antes de TU primera jugada (blancas: 0 jugadas; negras: 1)');
+  chk(/post\('\/api\/board\/game\/' \+ id \+ '\/berserk'\)/.test(modP), 'se le pide a Lichess con /api/board/game/{id}/berserk');
+  chk(/!P\.bk\[c\]/.test(modP) && /Tu rival hizo berserk/.test(modP) && /aa_pref_berserk_snd_off/.test(modP) && /function sndBerserk/.test(modP),
+      'el golpe suena UNA vez por jugador, también con el berserk del rival, salvo que lo silencies');
+  chk(/aaArena\.activo\(\) \? prefRow\('berserksnd'/.test(SRC) && /p==='berserksnd'\) setPref\('aa_pref_berserk_snd_off'/.test(SRC),
+      'en ⚙️ Preferencias está "Silenciar el sonido del berserk" (por ahora sólo con la llave del arena)');
+  chk(/st\.wberserk \? ' ⚡' : ''/.test(modP) && /berserkSync\(o\)/.test(modP), 'el que hizo berserk lleva ⚡ junto al nombre, y se revisa en cada estado');
 }
 
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
