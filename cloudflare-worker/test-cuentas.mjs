@@ -579,6 +579,82 @@ console.log('\n=== 10. La IA sabe redactar torneos POR EQUIPOS (Olimpiadas, liga
   }
 }
 
+// ── Una exportación colgada no congela el vivo (14/09/2026) ─────────────────────────────────────────
+// Juegos Suramericanos, 960 blitz: la copia de la ronda 6 quedó en la jugada 2 mientras Lichess iba por la
+// 20 ("se cortan en la apertura"). El refresco de fondo se salteaba por "otra exportación en curso" y la
+// bajada a Lichess no tenía tiempo límite: una colgada frenaba TODO. Lichess de mentira que nunca contesta.
+{
+  console.log('\n=== 12b. Lichess: una exportación colgada no congela el vivo ===');
+  const guardado = new Map();
+  const cacheFalsa = {
+    async match(k) { const r = guardado.get(typeof k === 'string' ? k : k.url); return r ? r.clone() : undefined; },
+    async put(k, r) { guardado.set(typeof k === 'string' ? k : k.url, r.clone()); },
+  };
+  const cachesAntes = globalThis.caches, fetchAntes = globalThis.fetch, nowAntes = Date.now;
+  const stAntes = globalThis.setTimeout, ctAntes = globalThis.clearTimeout;
+  globalThis.caches = { default: cacheFalsa };
+  let reloj = 3_000_000_000_000;
+  Date.now = () => reloj;
+  const pedidos = [];
+  let conSenal = 0;
+  let responder = () => new Response('', { status: 500 });
+  globalThis.fetch = async (url, opts) => { pedidos.push(String(url)); if (opts && opts.signal) conSenal++; return responder(String(url), opts); };
+  const pendientes = [];
+  const ctxLi = { waitUntil(p) { pendientes.push(p); } };
+  const pedirLibc = (url) => worker.fetch(req('/libc?url=' + encodeURIComponent(url)), env, ctxLi);
+  const ronda = (id) => 'https://lichess.org/api/broadcast/round/' + id + '.pgn';
+  const vivo = (j) => '[Event "X"]\n[White "A"]\n[Black "B"]\n[Result "*"]\n\n1. e4 * jugada-' + j;
+  try {
+    let jugada = 2;
+    responder = (url, opts) => url.includes('colgada')
+      ? new Promise((_, no) => opts.signal.addEventListener('abort', () => no(new Error('timeout'))))
+      : new Response(vivo(jugada), { status: 200 });
+    let r = await pedirLibc(ronda('r6')); await Promise.all(pendientes.splice(0));
+    chk(r.status === 200 && /jugada-2/.test(await r.text()) && r.headers.get('x-fa-estado') === 'nueva',
+        'la ronda en vivo se baja (y avisa que es copia nueva)', r.headers.get('x-fa-estado'));
+    chk(conSenal === pedidos.length, 'toda bajada a Lichess va con tiempo límite', conSenal + '/' + pedidos.length);
+
+    // Una exportación que se cuelga. Su timer se captura para dispararlo a mano (sin esperar 45 s de verdad).
+    const timers = [];
+    globalThis.setTimeout = (fn, ms) => { timers.push({ fn, ms }); return timers.length; };
+    globalThis.clearTimeout = () => {};
+    const pColgada = pedirLibc(ronda('colgada'));
+    for (let i = 0; i < 200 && !pedidos.some((u) => u.includes('colgada')); i++) await Promise.resolve();
+    globalThis.setTimeout = stAntes; globalThis.clearTimeout = ctAntes;
+    chk(timers.some((t) => t.ms === 45000), 'la bajada colgada tiene su tiempo límite de 45 s');
+
+    // Con la colgada andando y la copia de 11 s: se sirve la copia, como antes.
+    jugada = 5; reloj += 11_000;
+    let antes = pedidos.length;
+    r = await pedirLibc(ronda('r6')); await Promise.all(pendientes.splice(0));
+    chk(pedidos.length === antes && r.headers.get('x-fa-estado') === 'vieja-ocupado',
+        'con otra exportación andando y la copia de 11 s, se sirve la copia (igual que antes)', r.headers.get('x-fa-estado'));
+
+    // 25 s más (copia de 36 s): antes quedaba congelada; ahora se refresca igual.
+    reloj += 25_000; antes = pedidos.length;
+    r = await pedirLibc(ronda('r6')); await Promise.all(pendientes.splice(0));
+    chk(pedidos.length === antes + 1 && r.headers.get('x-fa-estado') === 'vieja-refrescando' && r.headers.get('x-fa-edad') === '36',
+        '🔒 si la copia ya tiene más de 30 s se refresca aunque haya otra exportación colgada',
+        r.headers.get('x-fa-estado') + ' ' + r.headers.get('x-fa-edad') + 's');
+    r = await pedirLibc(ronda('r6'));
+    chk(/jugada-5/.test(await r.text()), 'y al pedido siguiente ya llega la jugada nueva');
+
+    // Pasan los 45 s: la colgada se corta con error y libera el lugar.
+    timers.find((t) => t.ms === 45000).fn();
+    const rc = await pColgada;
+    chk(rc.status === 502, '🔒 a los 45 s la bajada colgada se corta con error (la app reintenta)', rc.status);
+    jugada = 7; reloj += 11_000; antes = pedidos.length;
+    r = await pedirLibc(ronda('r6')); await Promise.all(pendientes.splice(0));
+    chk(pedidos.length === antes + 1 && r.headers.get('x-fa-estado') === 'vieja-refrescando',
+        'cortada la colgada, el refresco de fondo vuelve a andar con la copia recién vencida', r.headers.get('x-fa-estado'));
+    chk(/x-fa-estado/.test(r.headers.get('Access-Control-Expose-Headers') || ''),
+        'el navegador puede leer el diagnóstico (edad y estado de la copia)');
+  } finally {
+    globalThis.caches = cachesAntes; globalThis.fetch = fetchAntes; Date.now = nowAntes;
+    globalThis.setTimeout = stAntes; globalThis.clearTimeout = ctAntes;
+  }
+}
+
 // ── Partidas de Chess-Results (/crpgn): guardadas una semana si hay, cortas si no (13/09/2026) ────────
 // Los organizadores suben partidas cada tanto; cada pedido no guardado le cuesta a Chess-Results dos
 // (formulario + descarga). Lo que se acordó con el autor: sin partidas, caché corta como siempre (una

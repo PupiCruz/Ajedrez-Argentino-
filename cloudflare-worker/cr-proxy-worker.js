@@ -107,6 +107,13 @@ const LI_FIN_STORE = 7 * 24 * 3600;
 // hay una andando NO se arranca otra de fondo (se sirve la copia; el sondeo siguiente la refresca) y
 // un 429 que llegó chocando con otra NO cuenta como freno de verdad: no arma la pausa del minuto.
 let _liPgnEnCurso = 0;
+// EXPORTACIÓN COLGADA (14/09/2026, Juegos Suramericanos 960 blitz): la copia de la ronda 6 quedó en la
+// jugada 2 mientras Lichess iba por la 20, y los tableros "se cortaban en la apertura". La bajada a Lichess
+// no tenía tiempo límite: si una se colgaba, `_liPgnEnCurso` no volvía a 0 y NINGÚN refresco de fondo
+// volvía a correr. Ahora: toda bajada se corta a los 45 s (una ronda de Olimpiada en frío tarda ~40 s), y
+// "hay otra exportación andando" sólo frena el refresco mientras la copia tenga menos de 30 s.
+const LI_FETCH_TIMEOUT_MS = 45000;
+const LI_BUSY_MAX_STALE = 30;
 
 export default {
   async fetch(request, env, ctx) {
@@ -564,18 +571,21 @@ async function liBc(reqUrl, ctx) {
     const hitFresh = Number(hit.headers.get('x-fa-fresh') || 0) || freshTtl;
     if (ageMs < hitFresh * 1000) {
       // Fresca: servir tal cual.
-      return await liClientResp(hit, contentType, freshTtl);
+      return await liClientResp(hit, contentType, freshTtl, 'fresca', ageMs);
     }
     // "Vieja pero buena": la servimos YA (tablero al instante) y refrescamos EN SEGUNDO PLANO.
     // Esto mata la "estampida": ya no fallan la caché 20 visitantes a la vez cada 10s; sirven
     // lo último bueno y Lichess recibe UNA sola bajada de refresco (con dedup por single-flight).
     // No se refresca (sólo se sirve la copia) si Lichess nos dio un 429 hace menos de un minuto, o
     // si ya hay otra exportación de PGN andando: chocaría con ella y Lichess la rebotaría.
-    const ocupado = isPgn && _liPgnEnCurso > 0 && !_liInflight.has(cacheKeyStr);
-    if (!ocupado && !(await liIsPaused(cache, reqUrl))) {
-      ctx.waitUntil(liRevalidate(cache, cacheKey, cacheKeyStr, t.toString(), isPgn, contentType, storeTtl, reqUrl, freshTtl));
-    }
-    return await liClientResp(hit, contentType, freshTtl);
+    // "Ocupado" sólo mientras la copia sea reciente (LI_BUSY_MAX_STALE): si no, una exportación lenta o
+    // colgada dejaba la copia congelada en la jugada que tenía.
+    const ocupado = isPgn && _liPgnEnCurso > 0 && !_liInflight.has(cacheKeyStr) && ageMs < LI_BUSY_MAX_STALE * 1000;
+    let estado = 'vieja-refrescando';
+    if (ocupado) estado = 'vieja-ocupado';
+    else if (await liIsPaused(cache, reqUrl)) estado = 'vieja-pausa';
+    else ctx.waitUntil(liRevalidate(cache, cacheKey, cacheKeyStr, t.toString(), isPgn, contentType, storeTtl, reqUrl, freshTtl));
+    return await liClientResp(hit, contentType, freshTtl, estado, ageMs);
   }
 
   // No hay NADA cacheado (primer visitante del torneo, o expiró toda la ventana de gracia):
@@ -600,6 +610,8 @@ async function liBc(reqUrl, ctx) {
   const h = corsHeaders();
   h.set('Content-Type', contentType);
   h.set('Cache-Control', 'public, max-age=' + freshTtl);
+  h.set('x-fa-estado', 'nueva');
+  h.set('x-fa-edad', '0');
   return new Response(r.buf, { status: 200, headers: h });
 }
 
@@ -612,12 +624,20 @@ function liFetchBuffered(cacheKeyStr, targetUrl, isPgn) {
   const choque = isPgn && _liPgnEnCurso > 0;
   if (isPgn) _liPgnEnCurso++;
   const p = (async () => {
-    const up = await fetch(targetUrl, {
-      headers: { 'User-Agent': LI_UA, 'Accept': isPgn ? 'application/x-chess-pgn' : 'application/json' },
-      redirect: 'follow',
-    });
-    const buf = await up.arrayBuffer();
-    return { ok: up.ok, status: up.status, buf, choque };
+    // Tiempo límite: una bajada colgada tiene que terminar (con error) para liberar _liPgnEnCurso.
+    const ac = new AbortController();
+    const corte = setTimeout(() => { try { ac.abort(); } catch (e) {} }, LI_FETCH_TIMEOUT_MS);
+    try {
+      const up = await fetch(targetUrl, {
+        headers: { 'User-Agent': LI_UA, 'Accept': isPgn ? 'application/x-chess-pgn' : 'application/json' },
+        redirect: 'follow',
+        signal: ac.signal,
+      });
+      const buf = await up.arrayBuffer();
+      return { ok: up.ok, status: up.status, buf, choque };
+    } finally {
+      clearTimeout(corte);
+    }
   })();
   const wrapped = p.finally(() => { _liInflight.delete(cacheKeyStr); if (isPgn) _liPgnEnCurso--; });
   _liInflight.set(cacheKeyStr, wrapped);
@@ -683,11 +703,15 @@ function liStoredResp(buf, contentType, storeTtl, freshTtl) {
 }
 
 // Copia para EL VISITANTE: mismo cuerpo, pero Cache-Control corto (que su navegador siga sondeando).
-async function liClientResp(cachedResp, contentType, freshTtl) {
+// Diagnóstico (se ve desde el navegador): `x-fa-estado` = fresca | vieja-refrescando | vieja-ocupado |
+// vieja-pausa, y `x-fa-edad` = segundos de la copia. Así, si un tablero se queda quieto, se sabe por qué.
+async function liClientResp(cachedResp, contentType, freshTtl, estado, ageMs) {
   const buf = await cachedResp.arrayBuffer();
   const h = corsHeaders();
   h.set('Content-Type', contentType);
   h.set('Cache-Control', 'public, max-age=' + freshTtl);
+  if (estado) h.set('x-fa-estado', estado);
+  if (ageMs != null) h.set('x-fa-edad', String(Math.round(ageMs / 1000)));
   return new Response(buf, { status: 200, headers: h });
 }
 
@@ -1102,6 +1126,7 @@ function corsHeaders() {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': '*',
+    'Access-Control-Expose-Headers': 'x-fa-estado, x-fa-edad',
   });
 }
 
