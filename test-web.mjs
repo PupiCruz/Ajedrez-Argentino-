@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1051;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1060;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -4148,7 +4148,7 @@ console.log('\n=== Arena de Lichess — Fase 0: la cartelera ===');
 console.log('\n=== Arena de Lichess — Fase 1: anotarse y la pantalla de espera ===');
 {
   const N = ['_asEsc', '_asTiempo', '_asEstado', '_asPagina', '_asHoja', '_asTabla', '_asCaja', '_asIdDeUrl',
-    '_asPartidas', '_asPerf', '_asTarjeta', '_asPodioTop', '_asPaginador'];
+    '_asPartidas', '_asPerf', '_asTarjeta', '_asPodioTop', '_asPaginador', '_asTablaMini'];
   const A = new Function(N.map(extraerFuncion).join('\n') + '; return {' + N.join(',') + '};')();
   const modS = (SRC.match(/ARENA DE LICHESS — Fase 1[\s\S]*?<\/script>/) || [''])[0];
   const modLi2 = (SRC.match(/aaLi — el permiso[\s\S]*?window\.aaLi = \{[\s\S]*?\};/) || [''])[0];
@@ -4280,11 +4280,41 @@ console.log('\n=== Arena de Lichess — Fase 1: anotarse y la pantalla de espera
   const esc = (SRC.match(/escuchar: function \(\) \{[\s\S]*?\n    \}/) || [''])[0];
   chk(/idleSync\(\)/.test(esc) && !/pintar\(\)/.test(esc),
       '🔒 la grilla ofrece "escuchar": abre la conexión de avisos de Lichess sin prender la grilla encima del tablero');
-  chk(/S\.miFila = null;\s*escucharAvisos\(\);/.test(modS) && /function tick\(\) \{\s*if \(!enPantalla\(\)\) return;\s*escucharAvisos\(\);/.test(modS),
+  chk(/escucharAvisos\(\);/.test((modS.match(/function abrir\(id\) \{[\s\S]*?\n  \}/) || [''])[0]) && /function tick\(\) \{\s*if \(!enPantalla\(\)\) return;\s*escucharAvisos\(\);/.test(modS),
       '🔒 la pantalla del arena mantiene abierta la conexión de avisos (al abrirse y en cada refresco)');
   chk(/P\.terminada = true;[\s\S]{0,400}P\.full\.tournamentId[\s\S]{0,120}aaLiPanel\.escuchar\(\)/.test(SRC)
       && /enCurso: function \(\) \{ return !!P && !P\.terminada; \}/.test(SRC),
       'al terminar una partida de arena se reabre la conexión de avisos: la siguiente se abre sola en el tablero');
+  // Pedidos del 14/09 (tarde): cuenta de 10 s antes del arranque y el tiempo del torneo en la partida.
+  chk(/id="lv-as-cd"/.test(SRC) && /function cuentaTorneo\(d, seg\) \{\s*if \(!d \|\| d\.isFinished \|\| !d\.me/.test(modS) && /lv-cd-num/.test(modS)
+      && /S\.cdFin = Date\.now\(\) \+ seg \* 1000;\s*S\.cdTimer = setInterval\(pasoCuenta, 150\);/.test(modS)
+      && /var s = S\.d\.isStarted \? 0 : Math\.ceil\(\(S\.cdFin - Date\.now\(\)\) \/ 1000\);/.test(modS),
+      'los últimos 10 s antes del arranque cuentan parejo (reloj propio, sin saltear números, sólo anotado) y si Lichess arranca antes va el "¡Ya!"');
+  chk(/id="lv-li-tclock"/.test(SRC) && /torneo: function \(\) \{ return \(P && P\.full && P\.full\.tournamentId\) \|\| ''; \}/.test(SRC)
+      && /relojEnPartida\(d, seg\);/.test(modS),
+      'en la partida de arena se ve cuánto le queda al torneo (y si terminó, que esa partida no suma)');
+  chk(/ocultarCuenta\(\); relojEnPartida\(null\);/.test(modS), 'al irse del torneo se apagan la cuenta y el reloj de la partida');
+  // En la partida de arena, la tabla del torneo en vez del chat (pedido del autor, 14/09).
+  const mini = A._asTablaMini({ standing: { players: [{ rank: 1, name: '<b>A</b>', score: 9, sheet: { fire: true } },
+    { rank: 2, name: 'Yo', score: 5 }, { rank: 3, name: 'Otro', score: 4 }] } }, 'yo');
+  chk(/class="lv-tt-row yo"/.test(mini) && (mini.match(/lv-tt-row yo/g) || []).length === 1 && /🔥/.test(mini) && !/<b>A/.test(mini),
+      'la tabla chica del tablero marca tu fila si estás entre los punteros, con 🔥 y los nombres escapados');
+  chk(/id="lv-li-ttabla"/.test(SRC) && /#lv-game\.lv-arena-partida #lv-chat \{ display:none !important; \}/.test(SRC)
+      && /tab\.classList\.add\('lv-arena-partida'\)/.test(modS) && /function traerTop\(\)/.test(modS) && /pl\.slice\(0, 10\)/.test(modS)
+      && /S\.topUlt \|\| 0\) > 20000\) traerTop\(\)/.test(modS),
+      'en las partidas de arena el TOP 10 del torneo reemplaza al chat (que el rival nunca leía), refrescado cada 20 s');
+  // Detalles de lichess.org (captura del autor, 14/09): #puesto junto al reloj y el tiempo para la 1.ª jugada.
+  chk(/id="lv-trank-bot"/.test(SRC) && /id="lv-trank-top"/.test(SRC) && /#lv-game\.lv-arena-partida \.lv-trank \{ display:inline-block; \}/.test(SRC)
+      && /function pintarPuestos\(\)/.test(modS) && /Math\.ceil\(S\.meRank \/ 10\)/.test(modS)
+      && /<span class="lv-clkgrp">\s*<span class="lv-trank" id="lv-trank-top"><\/span>\s*<span class="lv-clock lv-idle" id="lv-clk-top">/.test(SRC),
+      'en la partida de arena va el #puesto al lado de cada reloj (el del rival, si está en el top 10 o en tu página)');
+  chk(/id="lv-li-expira"/.test(SRC) && /\(\+ex\.millisToMove \|\| 0\) - \(\+ex\.idleMillis \|\| 0\)/.test(SRC) && /var meToca = \(n % 2 === 0\) === \(P\.color === 'w'\)/.test(SRC)
+      && /expiraSync\(o\);/.test(SRC) && /expiraSync\(st\);/.test(SRC),
+      '🔒 "N segundos para hacer tu primera jugada" (sale de expiration de Lichess, sólo cuando te toca): no mover en un arena te saca');
+  chk(/rival: function \(\) \{ var f = P && P\.full;/.test(SRC) && /resta <= 5/.test(SRC),
+      'la barra se pone roja en los últimos 5 segundos');
+  chk(/AS_LATIDO_MS && enPantalla\(\)\) unirse\(true\)/.test(modS) && /est !== S\.ultEst && enPantalla\(\)/.test(modS),
+      '🔒 refrescar la tabla desde el tablero no pide rival ni hace sonar la musiquita (eso va al volver al torneo)');
   chk(/aaArenaSala\.abrir/.test(SRC) && /id="lv-arena-sala" style="display:none"/.test(SRC),
       '"Jugar acá" abre la pantalla del arena, que nace oculta');
 }
@@ -4293,7 +4323,7 @@ console.log('\n=== Arena de Lichess — Fase 1: anotarse y la pantalla de espera
 console.log('\n=== Arena de Lichess — Fase 3: berserk ===');
 {
   const modP = (SRC.match(/Fase 2 — La partida de Lichess[\s\S]*?<\/script>/) || [''])[0];
-  chk(/<div class="lv-player lv-bottom">[\s\S]{0,400}id="lv-li-berserk"[^>]*style="display:none"/.test(SRC),
+  chk(/<div class="lv-player lv-bottom">[\s\S]{0,700}id="lv-li-berserk"[^>]*style="display:none"/.test(SRC),
       'el botón ⚡ de berserk va en tu barra, junto a tu reloj, y nace oculto');
   const pb = (modP.match(/function puedeBerserk\(st\) \{[\s\S]*?\n  \}/) || [''])[0];
   chk(/P\.full\.tournamentId/.test(pb) && /n < 1 : n < 2/.test(pb),
