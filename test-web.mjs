@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 951;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1028;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -3585,8 +3585,8 @@ console.log('\n=== 50. Puntos del torneo en el visor (6½/7) ===');
       '🔒 el cartel dice la verdad: que con este permiso SÍ se puede jugar y abandonar');
 
   // ── Candados del token (board:play puede jugar y abandonar en nombre del visitante) ──
-  chk(/scope:\s*SCOPE/.test(modLi) && /SCOPE\s*=\s*'board:play'/.test(modLi),
-      'se pide un solo permiso y es board:play');
+  chk(/scope:\s*SCOPE/.test(modLi) && /SCOPE\s*=\s*'board:play tournament:write'/.test(modLi),
+      'se piden los dos permisos en UN solo cartel: jugar (board:play) y torneos (tournament:write)');
   // Se busca el USO (localStorage.setItem/getItem), no la palabra: el comentario del
   // módulo la nombra justamente para explicar por qué NO se usa.
   chk(!/localStorage\s*\./.test(modLi), '🔒 el permiso de jugar NUNCA se guarda en localStorage');
@@ -4041,6 +4041,231 @@ console.log('\n=== 50. Puntos del torneo en el visor (6½/7) ===');
   const wake = extraerFuncion('_tdLiveWake');
   chk(/_tdLiveRefresh\(\)/.test(wake) && /document\.addEventListener\('visibilitychange', _tdLiveWake\)/.test(SRC),
       '🔒 al volver a la pestaña se piden las jugadas enseguida (no espera al timer frenado por Chrome)');
+}
+
+// ── ARENA DE LICHESS — Fase 0: la cartelera (plan del 13/09/2026) ─────────────────────
+console.log('\n=== Arena de Lichess — Fase 0: la cartelera ===');
+{
+  const NOMBRES = ['_arActivo', '_arRitmo', '_arReloj', '_arNombre', '_arArmar', '_arCuando', '_arEsc', '_arFila'];
+  const AR = new Function(NOMBRES.map(extraerFuncion).join('\n') + '; return {' + NOMBRES.join(',') + '};')();
+
+  // 🚦 Oculta hasta el estreno: el autor publica tablas y partidas y el público no la ve.
+  const ls = mkLS([]);
+  chk(AR._arActivo({ search: '' }, ls) === false, '🔒 la cartelera nace APAGADA: la web publicada no la muestra');
+  chk(AR._arActivo({ search: '?arena=1' }, ls) === true && AR._arActivo({ search: '' }, ls) === true,
+      'con ?arena=1 se prende en ese navegador y queda prendida (aunque la app reescriba la dirección)');
+  chk(AR._arActivo({ search: '?x=2&arena=0' }, ls) === false && AR._arActivo({ search: '' }, ls) === false, 'con ?arena=0 se vuelve a apagar');
+  chk(AR._arActivo({ search: '?arena=10' }, mkLS([])) === false, 'arena=10 no cuenta como arena=1');
+  chk(AR._arActivo(null, { getItem() { throw new Error('bloqueado'); } }) === false, 'si el navegador bloquea el almacenamiento, queda apagada sin romper nada');
+  chk(/id="lv-arena-wrap" style="display:none"/.test(SRC), '🔒 el panel nace oculto en el HTML (no parpadea antes de que corra el JS)');
+
+  // Ritmos: como los agrupa Lichess.
+  const tt = (lim, inc, key) => ({ clock: { limit: lim, increment: inc }, perf: key ? { key } : undefined });
+  chk([tt(15, 0, 'ultraBullet'), tt(30, 0, 'hyperBullet'), tt(60, 1, 'bullet')].every(x => AR._arRitmo(x) === 'bullet'),
+      'UltraBullet, HyperBullet y bala caen en Bala');
+  chk(AR._arRitmo(tt(180, 0, 'blitz')) === 'blitz' && AR._arRitmo(tt(600, 0, 'rapid')) === 'rapid' && AR._arRitmo(tt(480, 2, 'rapid')) === 'rapid',
+      'SuperBlitz es Blitz; 10+0 y 8+2 son Rápidas');
+  chk(AR._arRitmo(tt(300, 5)) === 'rapid' && AR._arRitmo(tt(300, 4)) === 'blitz' && AR._arRitmo(tt(1800, 0)) === 'classical',
+      'sin perf usa la cuenta de Lichess: 5+5 rápida, 5+4 blitz, 30+0 clásica');
+  const rel = [{ limit: 15, increment: 0 }, { limit: 30, increment: 0 }, { limit: 600, increment: 0 }, { limit: 480, increment: 2 }].map(AR._arReloj).join(' ');
+  chk(rel === '¼+0 ½+0 10+0 8+2', 'el reloj se muestra en MINUTOS como en Lichess (la API lo manda en segundos)', rel);
+
+  // El nombre se arma con el RITMO y la FRECUENCIA, no leyendo el texto: Lichess manda
+  // fullName ya traducido según el idioma del navegador ("≤1700 Torneo Rápida",
+  // "Torneo rápido por hora"), a medias y con el tope de rating pegado adelante.
+  const sc = (freq, speed, extra) => Object.assign({ schedule: { freq, speed }, fullName: 'lo que sea' }, extra);
+  const nm = [sc('hourly', 'rapid'), sc('hourly', 'rapid', { hasMaxRating: true, fullName: '≤1700 Torneo Rápida' }),
+    sc('hourly', 'superBlitz'), sc('daily', 'rapid'), sc('weekly', 'bullet'),
+    sc('hourly', 'rapid', { position: { name: 'Caro-Kann Defense: Karpov Variation' } }), sc('hourly', 'hyperBullet'),
+    sc('unique', 'blitz', { fullName: "Streamer Arena September '26" }), { fullName: '≤2000 Mi torneo' }].map(AR._arNombre).join(' | ');
+  chk(nm === "Arena rápida de cada hora | Arena rápida | Arena SuperBlitz de cada hora | Arena rápida del día | Arena bala de la semana | Arena rápida de cada hora · Caro-Kann Defense | Arena HiperBala de cada hora | Streamer Arena September '26 | Mi torneo",
+      'los nombres salen en castellano, sin el tope repetido (va aparte como marca); los torneos especiales quedan como vinieron', nm);
+
+  // Armar la lista con datos con la forma real de /api/tournament.
+  const ahora = 1789400000000;
+  const mk = (id, extra) => Object.assign({ id, clock: { limit: 600, increment: 0 }, perf: { key: 'rapid' }, variant: { key: 'standard' },
+    nbPlayers: 5, fullName: 'Hourly Rapid Arena', startsAt: ahora + 3600000, finishesAt: ahora + 7200000 }, extra);
+  const data = {
+    started: [mk('s1', { nbPlayers: 10, startsAt: ahora - 600000 }), mk('s2', { nbPlayers: 300, startsAt: ahora - 600000 }),
+      mk('v1', { variant: { key: 'atomic' } }), mk('old', { finishesAt: ahora - 1000 })],
+    created: [mk('c2', { startsAt: ahora + 7200000 }), mk('c1', { startsAt: ahora + 600000 }), mk('lejos', { startsAt: ahora + 10 * 3600000 })],
+    finished: [mk('f1')]
+  };
+  const L = AR._arArmar(data, ahora).map(x => x.t.id);
+  chk(!L.includes('v1'), '🔒 las variantes (Atómico, Crazyhouse…) quedan afuera: el tablero juega ajedrez normal');
+  chk(!L.includes('f1') && !L.includes('old'), 'los torneos terminados no aparecen');
+  chk(L.join(',') === 's2,s1,c1,c2', 'primero los que están en juego (el más concurrido arriba), después los próximos por hora', L.join(','));
+  chk(!L.includes('lejos'), 'no se llena de torneos de dentro de 10 horas');
+
+  const f1 = AR._arFila({ t: mk('ab"c', { fullName: '<img src=x onerror=alert(1)> Rapid Arena', hasMaxRating: true, maxRating: { rating: 1700 } }), estado: 'created', ritmo: 'rapid' }, ahora);
+  chk(!/<img/.test(f1) && !/data-arjugar="ab"c"/.test(f1), '🔒 lo que manda Lichess se escapa (un nombre de torneo no puede meter HTML)');
+  chk(/hasta 1700/.test(f1) && !/berserk/.test(f1) && /Jugar acá/.test(f1), 'una rápida muestra el tope de rating y "Jugar acá"; el berserk no se anuncia (lo tienen todos)');
+  const f2 = AR._arFila({ t: mk('bl', { perf: { key: 'blitz' }, clock: { limit: 180, increment: 0 } }), estado: 'started', ritmo: 'blitz' }, ahora);
+  chk(/Ver en Lichess/.test(f2) && !/Jugar acá/.test(f2),
+      '🔒 blitz y bala NUNCA ofrecen "Jugar acá" (Lichess no deja jugarlos desde otras apps)');
+  chk(/En juego/.test(f2) && /quedan 120 min/.test(f2), 'el que está en juego dice cuánto le queda');
+  const f3 = AR._arFila({ t: mk('nb', { noBerserk: true }), estado: 'created', ritmo: 'rapid' }, ahora);
+  chk(/sin berserk/.test(f3), 'sólo se avisa la excepción: el torneo que NO permite berserk');
+  const f4 = AR._arFila({ t: mk('tem', { position: { name: 'Caro-Kann Defense: Karpov Variation' } }), estado: 'created', ritmo: 'rapid' }, ahora);
+  chk(/temático/.test(f4) && /Ver en Lichess/.test(f4) && !/Jugar acá/.test(f4),
+      'los temáticos (arrancan desde una apertura) van a "Ver en Lichess" por ahora (decisión del autor)');
+
+  const mod = (SRC.match(/ARENA DE LICHESS — Fase 0[\s\S]*?<\/script>/) || [''])[0];
+  chk(mod.length > 3000, 'está el módulo de la cartelera', mod.length);
+  chk(!/Authorization|Bearer|aaLi\./.test(mod), '🔒 la cartelera no usa el permiso de Lichess (es pública, no hace falta cuenta)');
+  chk(/AR_CADA_MS = 60000/.test(mod) && /status === 429/.test(mod) && /5 \* 60000/.test(mod),
+      'pide a Lichess como mucho una vez por minuto, y si contesta 429 frena 5 minutos');
+  chk(/aaArena\.ocultar\(\)/.test(SRC) && /aaArena\.refrescar\(\)/.test(SRC), 'se esconde al abrir una partida y vuelve con el salón');
+  // Pasó armando esta fase: un caracter nulo escrito en el código terminó como un carácter
+  // invisible DE VERDAD dentro del index.html (git lo toma como archivo binario).
+  chk(!SRC.includes(String.fromCharCode(0)), '🔒 el index.html no tiene caracteres nulos invisibles');
+  // Reacomodo de Jugar en dos columnas (pedido del autor, 14/09): va con la MISMA llave.
+  chk(/<div id="lv-jugar">[\s\S]*id="lv-arena-wrap"[\s\S]*id="lv-li-wrap"[\s\S]*id="lv-lobby"[\s\S]*<\/div><!-- \/#lv-jugar -->\s*(<!--[\s\S]*?-->\s*<div id="lv-arena-sala"[\s\S]*?)?<div id="lv-game"/.test(SRC),
+      'la cartelera, el rival al azar y el salón viven juntos en #lv-jugar (y la partida queda afuera)');
+  chk(/jg\.classList\.toggle\('lv-g2', on\)/.test(mod) && !/class="[^"]*lv-g2/.test(SRC),
+      '🔒 las dos columnas sólo se prenden con la llave (?arena=1): el público ve el orden de siempre');
+  const cssG2 = (SRC.match(/#lv-jugar\.lv-g2 \{[^}]*\}/) || [''])[0];
+  chk(/grid-template-columns:minmax\(0,1fr\) minmax\(0,1fr\)/.test(cssG2) && /"azar arena" "desafiar crear" "chat abiertos"/.test(cssG2),
+      'dos columnas: rival | torneos · desafiar | crear · chat | abiertos');
+  const cssLista = (SRC.match(/#lv-jugar\.lv-g2 #lv-ar-list \{[^}]*\}/) || [''])[0];
+  chk(/overflow-y:auto/.test(cssLista) && /flex:1 1 0/.test(cssLista),
+      'la lista de torneos scrollea adentro: no estira el panel (mide lo mismo que el rival al azar)');
+  chk(/#lv-jugar\.lv-g2:has\(#lv-lid-card\[style\*="none"\]\)/.test(SRC),
+      'sin "Desafiar a alguien" (invitados) no queda un hueco: el chat sube a la izquierda');
+  const cssLid = (SRC.match(/#lv-jugar\.lv-g2 #lv-lid-list \{[^}]*\}/) || [''])[0];
+  chk(/overflow-y:auto/.test(cssLid) && /flex:1 1 0/.test(cssLid),
+      'con mucha gente conectada, "Desafiar a alguien" scrollea adentro y no corre los paneles');
+  chk(/class="lv-create-where">[^<]*Se juega <b>acá, en ChessArgentino<\/b>/.test(SRC)
+      && /\.lv-create-where \{ display:none;/.test(SRC) && /#lv-jugar\.lv-g2 \.lv-create-where \{ display:block; \}/.test(SRC),
+      '"Crear un desafío" aclara que se juega en el sitio (y la aclaración va con la misma llave)');
+  const cssRow = (SRC.match(/\.lv-ar-row \{[^}]*\}/) || [''])[0];
+  chk(/minmax\(0,1fr\)/.test(cssRow) && !/(^|[^,(])1fr/.test(cssRow.replace(/minmax\(0,1fr\)/g, '')),
+      '🔒 los renglones usan minmax(0,1fr) y no 1fr pelado (desborda en el teléfono)');
+}
+
+// ── ARENA DE LICHESS — Fase 1: anotarse y la pantalla de espera (14/09/2026) ─────────
+console.log('\n=== Arena de Lichess — Fase 1: anotarse y la pantalla de espera ===');
+{
+  const N = ['_asEsc', '_asTiempo', '_asEstado', '_asPagina', '_asHoja', '_asTabla', '_asCaja', '_asIdDeUrl',
+    '_asPartidas', '_asPerf', '_asTarjeta', '_asPodioTop'];
+  const A = new Function(N.map(extraerFuncion).join('\n') + '; return {' + N.join(',') + '};')();
+  const modS = (SRC.match(/ARENA DE LICHESS — Fase 1[\s\S]*?<\/script>/) || [''])[0];
+  const modLi2 = (SRC.match(/aaLi — el permiso[\s\S]*?window\.aaLi = \{[\s\S]*?\};/) || [''])[0];
+  chk(modS.length > 3000, 'está el módulo de la pantalla del arena', modS.length);
+  chk(/torneos/.test((modLi2.match(/function pedirConAviso[\s\S]*?\n  \}/) || [''])[0]),
+      'el cartel del permiso avisa que también sirve para anotarse en los torneos');
+
+  const st = x => A._asEstado(x);
+  const est = [st(null), st({ isFinished: true, me: { rank: 3 } }), st({}), st({ verdicts: { accepted: false } }), st({ me: { rank: 5 } }),
+    st({ isStarted: true, me: { rank: 5 } }), st({ isStarted: true, me: { rank: 5, gameId: 'abc' } }), st({ isStarted: true, me: { rank: 5, withdraw: true } })].join(' ');
+  chk(est === 'cargando terminado afuera no_cumple espera buscando jugando pausado', 'los 8 estados del arena salen de lo que manda Lichess', est);
+  chk(A._asPagina({ me: { rank: 25 } }) === 3 && A._asPagina({ me: { rank: 10 } }) === 1 && A._asPagina({}) === 1,
+      'la tabla muestra la página donde estás (puesto 25 → página 3)');
+  const tiempos = [A._asTiempo(59), A._asTiempo(600), A._asTiempo(3725), A._asTiempo(-5)].join(' ');
+  chk(tiempos === '0:59 10:00 1:02:05 0:00', 'el reloj del torneo', tiempos);
+
+  const tabla = A._asTabla({ standing: { players: [
+    { rank: 1, name: '<b>x</b>', rating: 2000, score: 9, sheet: { scores: '542', fire: true } },
+    { rank: 2, name: 'ElPupiCruz', rating: 1900, score: 5, sheet: { scores: '22' }, withdraw: true }] } }, 'elpupicruz');
+  chk(!/<b>x<\/b>/.test(tabla), '🔒 los nombres de la tabla se escapan');
+  chk(/lv-as-yo[^"]*"[\s\S]*ElPupiCruz/.test(tabla) && (tabla.match(/lv-as-yo/g) || []).length === 1,
+      'tu fila se resalta (sin importar mayúsculas), y sólo la tuya');
+  chk(/<b>5<\/b><b>4<\/b>2/.test(tabla) && /🔥/.test(tabla), 'la hoja marca los puntos dobles de la racha y el fueguito');
+  chk(/lv-as-pausa/.test(tabla), 'el que está en pausa se ve apagado');
+
+  const caja = (e, d) => A._asCaja(e, d, 'yo', 90);
+  chk(/data-as="anotar"/.test(caja('afuera', {})) && /data-as="salir"/.test(caja('buscando', { isStarted: true, me: { rank: 3 } }))
+      && /data-as="anotar"/.test(caja('pausado', { me: { rank: 3, withdraw: true } })),
+      'cada estado ofrece su botón: Anotarme, Pausar, Volver a jugar');
+  const nc = caja('no_cumple', { verdicts: { accepted: false, list: [
+    { condition: '≥ 20 rated Rapid games', verdict: 'ok' }, { condition: 'Rated ≤ 1500 in Rapid', verdict: 'Your top weekly rating is too high' }] } });
+  chk(/Rated ≤ 1500/.test(nc) && !/≥ 20 rated/.test(nc) && !/data-as="anotar"/.test(nc),
+      'si no cumple las condiciones lo dice ANTES (sólo las que no cumple) y sin botón de anotarse');
+  chk(/1:30/.test(caja('espera', { me: { rank: 1 } })), 'anotado antes del arranque: muestra cuánto falta');
+
+  chk(/pairMeAsap: 'true'/.test(modS), 'al anotarse pide pairMeAsap (emparejar aunque no esté en la página del torneo)');
+  chk(/AS_LATIDO_MS = 25000/.test(modS) && /AS_REFRESCO_MS = 10000/.test(modS),
+      '🔒 el latido se renueva bien antes del minuto en que vence pairMeAsap');
+  chk(/function enPantalla[\s\S]{0,300}document\.hidden/.test(modS),
+      '🔒 sin la pantalla del arena a la vista no hay latido: Lichess deja de emparejar solo');
+  chk(/function cerrar[\s\S]{0,700}withdraw/.test(modS),
+      'al volver a la cartelera en pleno torneo te pone en pausa (no te emparejan sin mirar)');
+  chk(/scope/i.test(modS) && /permisoVencido/.test(modS), 'un permiso viejo (sólo de jugar) no rompe: vuelve a pedir los dos');
+  chk(!/localStorage/.test(modS), '🔒 la pantalla del arena no guarda nada en localStorage (ni el permiso)');
+  // ⚠️ ?torneo= ya es de la app (abre los torneos DEL SITIO): la entrada del arena NUNCA lo toma.
+  const ids = [A._asIdDeUrl('?arena=1&arenali=IMBvPObA'), A._asIdDeUrl('?arenali=abc'), A._asIdDeUrl('?arenali=IMBvPObA1'),
+    A._asIdDeUrl('?arenali=<script>'), A._asIdDeUrl('?torneo=IMBvPObA')].join('|');
+  chk(ids === 'IMBvPObA||||', '🔒 la entrada ?arenali=CÓDIGO acepta sólo un código de Lichess, y nunca confunde el ?torneo= del sitio', ids);
+  chk(/idUrl[\s\S]{0,900}aaArena\.activo\(\)/.test(modS) && /activo: activo,/.test(SRC),
+      '🔒 la entrada ?arenali= también va con la llave de la cartelera');
+  chk(/function urlArena[\s\S]{0,300}set\('ir', 'jugar'\); u\.searchParams\.set\('arenali', id\)/.test(modS)
+      && /urlArena\(id\)/.test(modS) && /urlArena\(null\)/.test(modS) && /addEventListener\('popstate'/.test(modS),
+      'la dirección recuerda el arena (?ir=jugar&arenali=): recargar o apretar Atrás te devuelven al torneo');
+  chk(/S\.pausaUsuario = true/.test((modS.match(/function salir\(\)[\s\S]*?\n  \}/) || [''])[0])
+      && /!S\.pausaUsuario && e0 === 'buscando'/.test(modS),
+      '🔒 Pausar apaga el latido: re-anotarse SACA la pausa en Lichess y la tabla llega atrasada (pasó en la prueba real)');
+  const cp = A._asCaja('pausado', { me: { rank: 3, withdraw: true } }, 'yo', 0, 42);
+  const cp0 = A._asCaja('pausado', { me: { rank: 3, withdraw: true } }, 'yo', 0, 0);
+  chk(/última partida/.test(cp) && /data-as-pausa>42</.test(cp) && !/última partida/.test(cp0) && /No te emparejan/.test(cp0)
+      && /70 - \(Date\.now\(\) - S\.ultJoin\) \/ 1000/.test(modS),
+      '🔒 la pausa avisa que Lichess todavía te puede dar UNA partida hasta 70 s después del último aviso (su lista de apps de afuera no mira la pausa)');
+  chk(/refrescar: function \(\) \{ if \(!S\.id\) return; S\.ultJoin = 0;/.test(modS),
+      'al volver de una partida pide emparejar ENSEGUIDA (no espera al próximo latido)');
+  // Pedidos del autor después de la prueba real del 14/09.
+  chk(/id="lv-li-torneo"/.test(SRC) && /id="lv-li-tpausa"/.test(SRC)
+      && /finTerminado && sirveAlAzarEstaPartida\(\) && !tor/.test(SRC) && /finTerminado && !!rivalDeLaPartida\(\) && !tor/.test(SRC),
+      'al terminar una partida de arena: "Volver al torneo" y "Pausar" en lugar de "Nuevo oponente" y "Desafiar de nuevo"');
+  const vdp = (SRC.match(/volverDePartida: function[\s\S]*?\n    \}/) || [''])[0];
+  chk(vdp.indexOf('S.pausaUsuario = true') > -1 && vdp.indexOf('S.pausaUsuario = true') < vdp.indexOf('lvTablero.volver()'),
+      '🔒 "Pausar" desde el tablero marca la pausa ANTES de soltarlo (si no, el refresco re-anotaría y sacaría la pausa)');
+  chk(/if \(reciente && !o\.tournamentId\)/.test(SRC), 'en las partidas de arena no corre el 3·2·1 (la gracia es encadenar partidas rápido)');
+  chk(/function pintarReloj\(\) \{[\s\S]{0,500}_asIdDeUrl\(location\.search\) !== S\.id\) urlArena\(S\.id\)/.test(modS),
+      'la dirección repone el arenali= si la app lo pisó (F5 después de Atrás te mandaba al salón general)');
+  // Paso 1 del reordenamiento (14/09): pausa honesta, globito y un solo botón para volver.
+  const cDem = A._asCaja('pausado', { me: { rank: 1, withdraw: true } }, 'yo', 0, 0, 30);
+  chk(/data-as-demora>30</.test(cDem) && /data-as="anotar" disabled/.test(cDem) && !/data-as="anotar" disabled/.test(cp0),
+      'con la demora de Lichess, "Volver a jugar" queda apagado y la espera cuenta (antes el número no bajaba y el botón prometía buscar)');
+  chk(/S\.ultJoinUsuario = 0;/.test((modS.match(/function unirse\(silencioso\)[\s\S]*?\n  \}/) || [''])[0]),
+      'si Lichess rechaza "Volver a jugar", la pantalla deja de decir "Buscando rival"');
+  chk(/el\.id = 'lv-ar-globo'/.test(modS) && /getElementById\('lv-notices'\)/.test(modS)
+      && /function cerrar[\s\S]{0,1500}guardarRecuerdo\(\{/.test(modS) && /sessionStorage/.test(modS),
+      'con el arena en curso, al volver a la cartelera aparece el globito "Volver al torneo" (flotante: no corre ningún panel)');
+  chk(/ex\.style\.display = arena \? 'none' : ''/.test(SRC),
+      'al terminar una partida de arena queda sólo "Volver al torneo" (sin "Volver al menú", que hacía lo mismo)');
+  // Pantalla del arena más completa (pedido del autor al ver terminar el torneo real, 14/09).
+  const gsEj = [
+    { id: 'g3', status: 'started', players: { white: { user: { id: 'yo', name: 'Yo' }, rating: 1800 }, black: { user: { name: 'Ana' }, rating: 1700 } } },
+    { id: 'g2', status: 'resign', winner: 'black', players: { white: { user: { name: '<i>Beto</i>', title: 'FM' }, rating: 2000 }, black: { user: { id: 'yo' }, rating: 1800, berserk: true } } },
+    { id: 'g1', status: 'draw', players: { white: { user: { id: 'yo' }, rating: 1800 }, black: { user: { name: 'Caro' }, rating: 1600 } } },
+    { id: 'g0', status: 'aborted', players: { white: { user: { id: 'yo' } }, black: { user: { name: 'X' } } } }];
+  const psEj = A._asPartidas(gsEj, 'YO');
+  const psTxt = psEj.map(p => p.id + p.res + p.color + (p.berserk ? 'B' : '')).join(' ');
+  chk(psTxt === 'g3Pw g2WbB g1Dw', 'tus partidas del arena: en curso, ganada con berserk y tablas (la abortada no cuenta)', psTxt);
+  chk(A._asPerf(psEj) === Math.round((2000 + 1600 + 500) / 2),
+      'la performance se calcula como Lichess: (rivales + 500 × (ganadas − perdidas)) ÷ partidas', A._asPerf(psEj));
+  const tj = A._asTarjeta('Yo', { rank: 2 }, { score: 4, rating: 1800 }, psEj, 0);
+  chk(/1G<\/span> · <span class="t">1T<\/span> · <span class="d">0D/.test(tj) && /🥈/.test(tj) && !/<i>Beto/.test(tj) && /FM/.test(tj),
+      'tu tarjeta muestra G·T·D y el puesto, y escapa los nombres de los rivales');
+  const topEj = A._asPodioTop([{ name: 'A', score: 14, performance: 1902 }, { name: 'B', score: 10 }]);
+  chk(topEj[0].score === '14' && topEj[0].sub === 'Perf. 1902' && topEj[1].sub === '', 'el podio del arena se arma con los datos de Lichess');
+  chk(/function _podioDibujo\(top, titulo, conFotos\)/.test(SRC)
+      && /return _podioDibujo\(top, isTeam \? 'Equipos ganadores' : 'Podio final', !isTeam\)/.test(SRC) && /_podioDibujo\(_asPodioTop\(/.test(modS),
+      'el podio del arena es EL MISMO que el de los torneos del sitio (una sola función de dibujo)');
+  chk(/var ph = \$s\('lv-pghead'\); if \(ph\) ph\.style\.display = on \? 'none' : ''/.test(modS),
+      'dentro del arena se esconde el encabezado de Jugar y su botón Ranking (confundía con el ranking del torneo)');
+  chk(/\/games\?player=/.test(modS), 'los rivales salen de la API de Lichess que sí se puede leer desde otro sitio');
+  // Tocar a otro jugador de la tabla (pedido del autor, 14/09).
+  const tSel = A._asTabla({ standing: { players: [{ rank: 1, name: '<b>x</b>', score: 1, sheet: { scores: '2' } },
+    { rank: 2, name: 'Otro', score: 0, sheet: { scores: '0' } }] } }, 'yo', 'otro');
+  chk(/data-as-jug="&lt;b&gt;x&lt;\/b&gt;"/.test(tSel) && (tSel.match(/lv-as-sel/g) || []).length === 1 && /role="button"/.test(tSel),
+      'cada renglón de la tabla se puede tocar para ver las partidas de ese jugador (y el elegido queda marcado)');
+  chk(/data-as="vermia"/.test(A._asTarjeta('Otro', { rank: 5 }, { score: 2 }, [], 0, true)) && !/data-as="vermia"/.test(tj),
+      'la tarjeta de otro jugador tiene la ✕ para volver a la tuya');
+  chk(/function verJugador/.test(modS) && /closest\('\[data-as-jug\]'\)/.test(modS) && /var id = S\.id, jug = verNombre\(\)/.test(modS)
+      && /verNombre\(\) !== jug\) return;/.test(modS),
+      'al tocar a otro jugador se piden SUS partidas, y una respuesta atrasada del anterior se descarta');
+  chk(/aaArenaSala\.abrir/.test(SRC) && /id="lv-arena-sala" style="display:none"/.test(SRC),
+      '"Jugar acá" abre la pantalla del arena, que nace oculta');
 }
 
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
