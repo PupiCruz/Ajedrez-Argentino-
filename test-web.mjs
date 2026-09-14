@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 934;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 951;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -3953,6 +3953,94 @@ console.log('\n=== 50. Puntos del torneo en el visor (6½/7) ===');
   const c = carpeta(9, 'NotAllowedError');
   let tiroC = false; try { await WF(c.dir, 'manifest.js', 'x'); } catch (e) { tiroC = e.name === 'NotAllowedError'; }
   chk(tiroC && c.st.fallas === 1, 'un error de PERMISO no se reintenta (hace falta volver a dar permiso)', JSON.stringify(c.st));
+}
+
+// ── 52. Vivo: la pestaña abierta sigue la ronda siguiente, con tope de tiempo (14/09) ──
+// Juegos Suramericanos, 960 blitz: Lichess crea las rondas que siguen SIN horario ("empieza cuando
+// termine la anterior"). La app no las contaba → al terminar la R3 daba el torneo por terminado, dejaba
+// de preguntar y la R3 quedaba "inconclusa" (última copia del proxy) y la R4 no llegaba hasta F5.
+{
+  console.log('\n=== 52. Vivo: seguir preguntando entre rondas (con tope) ===');
+  const MIN = 60000, T0 = 1789392166928;   // fin real de la R3 (14/09 13:22 UTC)
+  let ahora = T0;
+  const FakeDate = { now: () => ahora };
+  const M = new Function('Date',
+    'var _TD_PENDING_WINDOW_MS = 3*3600*1000, _TD_MAX_IDLE_MS = 20*60*1000, _TD_FIN_GRACE = 3;'
+    + 'var _tdLiveNoPoll = false, _tdIdleSince = 0, _tdFinGrace = 0, _tdIdlePolls = 0;'
+    + extraerFuncion('_bcMergeMeta') + extraerFuncion('_bcOnDemandRes') + extraerFuncion('_tdKeepPolling')
+    + 'return { merge: _bcMergeMeta, odRes: _bcOnDemandRes, keep: _tdKeepPolling,'
+    + '  reset: function(){ _tdIdleSince = 0; _tdFinGrace = 0; _tdLiveNoPoll = false; }, noPoll: function(){ _tdLiveNoPoll = true; } };')(FakeDate);
+  const R = (n, extra) => Object.assign({ id: 'r' + n, name: 'Ronda ' + n }, extra);
+  const fin = (n, at) => R(n, { finished: true, finishedAt: at, startsAt: at - 15 * MIN });
+  const res = (rounds) => { const m = M.merge([{ rounds }]); return M.odRes(m, []); };
+
+  // Lo que había a las 13:27: R1-R3 terminadas, R4-R7 sin horario.
+  const hueco = [fin(1, T0 - 30 * MIN), fin(2, T0 - 10 * MIN), fin(3, T0), R(4, { startsAfterPrevious: true }), R(5), R(6), R(7)];
+  const m1 = M.merge([{ rounds: hueco }]);
+  chk(m1.pending === true && m1.lastFinishedAt === T0 && m1.roundsMeta.length === 3,
+      'la metadata avisa que queda una ronda por jugar (sin horario) y cuándo terminó la última', JSON.stringify({ p: m1.pending, n: m1.roundsMeta.length }));
+
+  M.reset(); ahora = T0 + 5 * MIN;
+  chk(M.keep(res(hueco)) === true, '🔒 5 min después de terminar la R3, la pestaña SIGUE preguntando (antes se rendía)');
+  ahora = T0 + 19 * MIN;
+  chk(M.keep(res(hueco)) === true, 'a los 19 min todavía pregunta');
+  ahora = T0 + 21 * MIN;
+  chk(M.keep(res(hueco)) === false, '🔒 pasados los 20 min desde el fin de la ronda deja de preguntar (tope)');
+
+  // Recargar la página mucho después NO reinicia el tope: se cuenta desde el fin de la ronda.
+  M.reset(); ahora = T0 + 3 * 3600 * 1000;
+  chk(M.keep(res(hueco)) === false, 'abrir la página horas después no deja preguntando (el tope cuenta desde el fin de la ronda)');
+
+  // Blitz partido en dos días: la segunda mitad tiene horario de mañana → no pregunta.
+  M.reset(); ahora = T0 + 2 * MIN;
+  const manana = [fin(1, T0 - 20 * MIN), fin(2, T0), R(3, { startsAt: T0 + 20 * 3600 * 1000 }), R(4, { startsAt: T0 + 21 * 3600 * 1000 })];
+  chk(M.merge([{ rounds: manana }]).pending === false && M.keep(res(manana)) === false,
+      '🔒 si la ronda siguiente tiene horario de OTRO día, no se queda preguntando');
+
+  // Ronda siguiente con horario dentro de las 3 h: sí pregunta, con el mismo tope.
+  M.reset(); ahora = T0 + 2 * MIN;
+  const tarde = [fin(1, T0), R(2, { startsAt: T0 + 90 * MIN })];
+  chk(M.keep(res(tarde)) === true, 'ronda siguiente con horario dentro de 3 h: sigue preguntando');
+  ahora = T0 + 25 * MIN;
+  chk(M.keep(res(tarde)) === false, 'y también corta a los 20 min');
+
+  // Ronda en vivo → siempre pregunta.
+  M.reset(); ahora = T0;
+  const vivo = [fin(1, T0 - 20 * MIN), R(2, { ongoing: true, startsAt: T0 - 5 * MIN }), R(3)];
+  chk(M.keep(res(vivo)) === true, 'con una ronda en vivo pregunta como siempre');
+
+  // Última ronda: al terminar, 3 consultas más para quedarse con los resultados finales, y se detiene.
+  const ultimaViva = [fin(1, T0 - 20 * MIN), R(2, { ongoing: true, startsAt: T0 - 10 * MIN })];
+  const ultimaFin = [fin(1, T0 - 20 * MIN), fin(2, T0)];
+  M.reset(); ahora = T0 - MIN;
+  M.keep(res(ultimaViva));
+  ahora = T0 + 5000;
+  const extra = [M.keep(res(ultimaFin)), M.keep(res(ultimaFin)), M.keep(res(ultimaFin)), M.keep(res(ultimaFin))];
+  chk(extra.join() === 'true,true,true,false', '🔒 al terminar la última ronda pregunta 3 veces más (resultados finales) y se detiene', extra.join());
+
+  M.reset(); ahora = T0 + 5000;
+  chk(M.keep(res(ultimaFin)) === false, 'abrir un torneo ya terminado no se pone a preguntar');
+  M.reset(); M.noPoll(); ahora = T0 + MIN;
+  chk(M.keep(res(hueco)) === false, 'un torneo marcado "Finalizado" a mano nunca pregunta');
+
+  // Si una ronda nueva y la anterior cambian en el mismo refresco, la anterior se vuelve a bajar
+  // un rato después (el proxy puede haber dado una copia de segundos antes del final).
+  const od = extraerFuncion('_tdOnDemandApplyRefresh');
+  chk(/_TD_FINAL_REFETCH_MS/.test(od), 'la ronda que acaba de terminar se vuelve a pedir un rato después (versión final)');
+  chk(/if \(!\(gs && gs\.length\) && _tdCtx\.byRound\[rInt\] && _tdCtx\.byRound\[rInt\]\.length\)/.test(extraerFuncion('_tdFetchRoundOnDemand')),
+      '🔒 y si esa bajada viene vacía (bache de red) no borra los tableros que ya estaban');
+
+  // Ronda nueva: si el visitante miraba la que terminó, la pantalla la sigue; si miraba otra, se queda.
+  chk(/var _follow = prevCur != null && prevCur !== curNum && _tdCurrentRound === prevCur;/.test(od)
+      && /_tdLiveBuild\(odRes, sec, _follow \? null : _tdCurrentRound\)/.test(od),
+      '🔒 al arrancar la ronda siguiente, la pantalla pasa sola a ella (sólo si miraba la que terminó)');
+  chk(/_tdLiveBuild\(res, sec, _follow \? null : curR\)/.test(extraerFuncion('_tdLiveApplyRefresh')),
+      'lo mismo en el vivo que baja todo el torneo');
+
+  // Volver a la pestaña después de un rato: las partidas quedaban paradas hasta el próximo sondeo.
+  const wake = extraerFuncion('_tdLiveWake');
+  chk(/_tdLiveRefresh\(\)/.test(wake) && /document\.addEventListener\('visibilitychange', _tdLiveWake\)/.test(SRC),
+      '🔒 al volver a la pestaña se piden las jugadas enseguida (no espera al timer frenado por Chrome)');
 }
 
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));

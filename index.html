@@ -28397,10 +28397,16 @@ function _bcFetchMetaMulti(tourIds, cb){
 }
 // Fusiona la metadata por NÚMERO de ronda. Solo lista las rondas ya EMPEZADAS (finished/ongoing/
 // startsAt<=ahora). Cada ronda lleva sus roundIds (uno por sub-transmisión) para bajarla después.
+// También avisa si queda una ronda POR JUGAR que puede arrancar pronto (`pending`) y cuándo terminó la
+// última (`lastFinishedAt`): así el sondeo sigue en el hueco entre rondas (ver _tdKeepPolling).
+// "Pronto" = sin horario (Lichess: "empieza cuando termine la anterior") o con horario dentro de 3 h.
+// Una ronda con horario de OTRO día (clásicos, o un blitz partido en dos jornadas) no cuenta.
 function _bcMergeMeta(metas){
   if(!metas || !metas.length) return null;
-  var now = Date.now(), byNum = {};
+  var now = Date.now(), byNum = {}, pending = false, lastFinishedAt = 0;
   metas.forEach(function(meta){ (meta.rounds || []).forEach(function(r){
+    if(r.finished && r.finishedAt > lastFinishedAt) lastFinishedAt = r.finishedAt;
+    if(!r.finished && !r.ongoing && (!r.startsAt || (r.startsAt > now && r.startsAt <= now + _TD_PENDING_WINDOW_MS))) pending = true;
     if(!(r.finished || r.ongoing || (r.startsAt && r.startsAt <= now))) return;   // futuras/relleno: sin pestaña
     var mm = (r.name || '').match(/(\d+)/), num = mm ? parseInt(mm[1]) : null; if(num == null) return;
     if(!byNum[num]) byNum[num] = { num: num, name: r.name, live: false, finished: true, roundIds: [] };
@@ -28413,7 +28419,7 @@ function _bcMergeMeta(metas){
   var roundsMeta = nums.map(function(n){ return byNum[n]; });
   var liveNums = roundsMeta.filter(function(r){ return r.live; }).map(function(r){ return r.num; });
   var currentNum = liveNums.length ? Math.max.apply(null, liveNums) : nums[nums.length - 1];
-  return { roundsMeta: roundsMeta, currentNum: currentNum };
+  return { roundsMeta: roundsMeta, currentNum: currentNum, pending: pending, lastFinishedAt: lastFinishedAt };
 }
 // Baja los PGN de UNA ronda (varios roundIds = esa ronda en cada sub-transmisión) → array de PGNs.
 // Baja el PGN de una ronda. Ojo: una ronda de Olimpiada NO es una transmisión sola — Lichess la
@@ -28492,7 +28498,8 @@ function _bcOnDemandRes(merged, currentGames){
   });
   var isLive = merged.roundsMeta.some(function(r){ return r.live; });
   return { tourSlug: null, rounds: [], allGames: currentGames, isLive: isLive,
-           liveRound: isLive ? { name: 'Ronda ' + merged.currentNum } : null, roundsWithGames: rwg, _ondemandLive: true };
+           liveRound: isLive ? { name: 'Ronda ' + merged.currentNum } : null, roundsWithGames: rwg, _ondemandLive: true,
+           _odPending: !!merged.pending, _odLastFin: merged.lastFinishedAt || 0 };   // hueco entre rondas (_tdKeepPolling)
 }
 
 // Carga (isRefresh=false) o recarga (true) el broadcast activo. En recarga, actualiza los datos
@@ -31658,8 +31665,12 @@ var _tdLiveCtx = null;   // { tourId, pgnKey, name, location, typ }
 // de cruces no se re-renderizaba al llegar el vivo y faltaba el botón "♟ Ver partidas".
 var _tdLiveCrKey = null;
 var _tdLiveIsTeam = false;   // si el torneo es por equipos: el vivo NO debe re-renderizar la sección como cuadro individual
-var _tdIdlePolls = 0;        // refrescos consecutivos SIN ronda en curso (hueco entre rondas)
-var _TD_MAX_IDLE = 40;       // tope de sondeos "en el hueco" (a 30s ≈ 20 min) antes de rendirse
+var _tdIdleSince = 0;        // Date.now() del primer refresco SIN ronda en curso (hueco entre rondas)
+var _TD_MAX_IDLE_MS = 20 * 60 * 1000;   // tope del hueco: 20 min (desde el fin de la última ronda si se sabe) y se rinde
+var _TD_PENDING_WINDOW_MS = 3 * 3600 * 1000;   // ronda siguiente "pronto" = sin horario o con horario dentro de 3 h
+var _tdFinGrace = 0;         // refrescos de gracia que quedan después de la última ronda en vivo
+var _TD_FIN_GRACE = 3;       // al terminar la ÚLTIMA ronda, 3 refrescos más para quedarse con los resultados finales
+var _TD_FINAL_REFETCH_MS = 25000;   // la ronda que acaba de terminar se vuelve a pedir a los 25 s (el proxy cachea 10 s)
 var _tdFetchFails = 0;       // fetches consecutivos que fallaron (res null/vacío = error de red/Lichess)
 var _TD_MAX_FETCH_FAILS = 80; // ~40 min de fallos SEGUIDOS antes de rendirse (rarísimo; cubre caídas largas)
 var _tdLastGood = 0;         // Date.now() del último fetch que trajo datos (lo vigila el watchdog)
@@ -31684,19 +31695,37 @@ function _tdStartWatchdog() {
 }
 function _tdStopWatchdog() { if (_tdWatchdog) { clearInterval(_tdWatchdog); _tdWatchdog = null; } }
 
+// ── VOLVER A LA PESTAÑA: refrescar YA ─────────────────────────────────────────────────────────────
+// Con la pestaña en segundo plano Chrome frena los timers (más de 5 min oculta: una vez por minuto; si la
+// congela, nada) y el watchdog no actúa mientras está oculta. Al volver, las partidas quedaban paradas
+// hasta el próximo sondeo o el watchdog (~1 min o más). Ahora se pide enseguida. Si el sondeo se había
+// cortado (hueco largo) y el torneo es on-demand de Lichess, se pregunta una vez: _tdKeepPolling decide
+// si retomar (por ejemplo, arrancó la ronda siguiente mientras no estabas).
+var _tdWakeLast = 0;
+function _tdLiveWake() {
+  if (document.hidden || !_tdLiveCtx || _tdLiveNoPoll || !document.getElementById('td-games-section')) return;
+  if (!_tdLivePolling && !(_tdLiveCtx.onDemand && _tdLastGood)) return;   // torneo sin vivo que seguir
+  if (Date.now() - _tdWakeLast < 5000 || (_tdLastGood && Date.now() - _tdLastGood < 3000)) return;   // recién refrescado
+  _tdWakeLast = Date.now();
+  _tdLiveRefresh();
+}
+document.addEventListener('visibilitychange', _tdLiveWake);
+window.addEventListener('pageshow', _tdLiveWake);   // volver con Atrás (página guardada en memoria)
+window.addEventListener('online', _tdLiveWake);     // volvió la conexión
+
 // ¿Seguir sondeando el broadcast? Sí si hay una ronda EN CURSO (se reinicia el contador de huecos).
 // Si no (hueco entre rondas), seguir mientras Lichess anuncie una ronda que TODAVÍA no terminó, para
-// que la SIGUIENTE ronda aparezca sola sin recargar la página. Acotado a _TD_MAX_IDLE sondeos para no
+// que la SIGUIENTE ronda aparezca sola sin recargar la página. Acotado a _TD_MAX_IDLE_MS (20 min) para no
 // quedar sondeando indefinidamente un torneo que ya terminó o que hizo una pausa larga.
 function _tdKeepPolling(res) {
-  if (_tdLiveNoPoll) { _tdIdlePolls = 0; return false; }   // finalizado a mano → nunca sondear
+  if (_tdLiveNoPoll) { _tdIdleSince = 0; _tdFinGrace = 0; return false; }   // finalizado a mano → nunca sondear
   if (!res || !res.roundsWithGames || !res.roundsWithGames.length) return false;
-  if (res.roundsWithGames.some(function(r){ return r.live; })) { _tdIdlePolls = 0; return true; }
+  if (res.roundsWithGames.some(function(r){ return r.live; })) { _tdIdleSince = 0; _tdFinGrace = _TD_FIN_GRACE; return true; }
   var pendiente;
   if (res._si) {
     // sichess: del config sabemos cuántas rondas tiene el torneo. Entre rondas (todas las cargadas
     // terminadas) seguir sondeando mientras falten rondas por jugar, para que la siguiente aparezca
-    // sola sin recargar. El tope _TD_MAX_IDLE corta si la pausa se hace muy larga.
+    // sola sin recargar. El tope _TD_MAX_IDLE_MS corta si la pausa se hace muy larga.
     pendiente = res.roundsWithGames.some(function(r){ return !r.finished; })
              || (res.roundsWithGames.length < (res._siRounds || 0));
   } else if (res.rounds && res.rounds.length && !res._lcc) {
@@ -31705,13 +31734,24 @@ function _tdKeepPolling(res) {
     pendiente = res.rounds.some(function(r){ return !r.finished && (r.ongoing || !r.startsAt || r.startsAt <= now + WINDOW); });
   } else {
     // Multi-transmisión o livechesscloud (sin calendario fiable): seguir si alguna ronda cargada aún no terminó.
-    pendiente = res.roundsWithGames.some(function(r){ return !r.finished; });
+    // On-demand de Lichess: también si la metadata anuncia una ronda por jugar que arranca pronto
+    // (_odPending). Sin esto, al terminar una ronda con la siguiente "sin horario" (Lichess: empieza cuando
+    // termine la anterior) se dejaba de preguntar: la ronda quedaba inconclusa y la siguiente no llegaba.
+    pendiente = res.roundsWithGames.some(function(r){ return !r.finished; }) || !!res._odPending;
   }
-  if (!pendiente) { _tdIdlePolls = 0; return false; }   // todo finalizado → torneo terminado
-  return (++_tdIdlePolls <= _TD_MAX_IDLE);               // el hueco se hizo muy largo → el visitante recarga
+  if (!pendiente) {
+    // Todo finalizado. Si veníamos de una ronda en vivo, unos refrescos más: la última copia pudo ser de
+    // segundos antes del final (caché del proxy) y así se ven los resultados finales sin F5.
+    if (_tdFinGrace > 0) { _tdFinGrace--; return true; }
+    _tdIdleSince = 0; return false;
+  }
+  // Hueco entre rondas: tope de TIEMPO (no de cantidad: en blitz, 40 sondeos eran sólo 8 min). Se cuenta
+  // desde el fin de la última ronda si Lichess lo dice, así recargar la página horas después no reinicia.
+  if (!_tdIdleSince) _tdIdleSince = Date.now();
+  return (Date.now() - (res._odLastFin || _tdIdleSince)) <= _TD_MAX_IDLE_MS;
 }
 
-function _tdLiveStop() { if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; } _tdLivePolling = false; _tdLiveNoPoll = false; _tdLivePace = ''; _tdStopWatchdog(); _tdPollGen++; _tdLiveCtx = null; _tdIdlePolls = 0; _tdFetchFails = 0; _tdLastGood = 0; _tdStopClocks(); mevAbort(); }
+function _tdLiveStop() { if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; } _tdLivePolling = false; _tdLiveNoPoll = false; _tdLivePace = ''; _tdStopWatchdog(); _tdPollGen++; _tdLiveCtx = null; _tdIdleSince = 0; _tdFinGrace = 0; _tdFetchFails = 0; _tdLastGood = 0; _tdStopClocks(); mevAbort(); }
 
 function _tdLoadLiveGames(broadcastId, broadcastUrl, name, location, pgnKey, typ, status, hasFallback) {
   // OJO: NO prender acá _tdLivePolling. Al abrir en PESTAÑA NUEVA todavía no sabemos si el torneo está
@@ -31942,6 +31982,8 @@ function _tdFetchRoundOnDemand(rInt, roundIds) {
     if (!_tdLiveCtx || _tdLiveCtx.key !== key) return;   // cambió de torneo mientras tanto → descartar
     delete _tdLiveCtx._loading[rInt];
     if (!_tdCtx) return;
+    // Bajada vacía (bache de red / 429) pero la ronda ya tenía tableros → dejarlos como están.
+    if (!(gs && gs.length) && _tdCtx.byRound[rInt] && _tdCtx.byRound[rInt].length) return;
     _tdCtx.byRound[rInt] = (gs || []).map(function(pgn){ return { pgn: pgn, h: parsePgnHeaders(pgn) }; });
     _tdMergeOneRound(rInt);            // sumar pool/Chess-Results de esa ronda + dedup
     _tdRebuildFlatGames();             // refrescar games plano + PGN_DB (para el visor/deep-link)
@@ -32113,7 +32155,11 @@ function _tdLiveApplyRefresh(res, sec) {
   var sameRoundSet = _tdCtx && roundOrder.length === Object.keys(_tdCtx.byRound).length;
   var oldGames = _tdCtx ? _tdCtx.games : null;
   if (!_tdCtx || !sameRoundSet || oldRoundN !== newRoundN || !_tdSameBoardSlots(curR, oldGames, games)) {
-    _tdLiveBuild(res, sec, curR);   // estructura cambió → reconstruir
+    // Apareció una ronda NUEVA en vivo y el visitante miraba la última que había → seguirla (igual que on-demand).
+    var _newLive = null;
+    res.roundsWithGames.forEach(function(r){ var mm = (r.name||'').match(/(\d+)/); if (r.live && r.games && r.games.length && mm) _newLive = parseInt(mm[1]); });
+    var _follow = _newLive != null && _tdCtx && !_tdCtx.byRound[_newLive] && curR === _tdMaxRoundNum(Object.keys(_tdCtx.byRound));
+    _tdLiveBuild(res, sec, _follow ? null : curR);   // estructura cambió → reconstruir
     return;
   }
   // estructura igual → actualizar datos y re-dibujar solo los tableros que cambiaron
@@ -32369,10 +32415,22 @@ function _tdOnDemandApplyRefresh(merged, currentGames, sec, prevCur) {
     // La ronda que venía en vivo quedó con su última foto (sin el cierre). La marcamos como "no pedida"
     // para que al abrirla se baje la versión final; mientras tanto se ve la que ya estaba.
     if (prevCur != null && prevCur !== curNum && _tdLiveCtx && _tdLiveCtx._fetched) delete _tdLiveCtx._fetched[prevCur];
-    _tdLiveBuild(odRes, sec, _tdCurrentRound);
-    if (prevCur != null && prevCur !== curNum && _tdCurrentRound === prevCur && _tdLiveCtx) {
-      var _prm = (_tdLiveCtx.roundsMeta || []).filter(function(r){ return r.num === prevCur; })[0];
-      if (_prm && _prm.roundIds && _prm.roundIds.length) _tdFetchRoundOnDemand(prevCur, _prm.roundIds);
+    // Si el visitante miraba la ronda que acaba de terminar, lo llevamos a la nueva (si no, parecía que
+    // "no llegaban las jugadas"). Si había abierto una ronda anterior a propósito, lo dejamos ahí.
+    var _follow = prevCur != null && prevCur !== curNum && _tdCurrentRound === prevCur;
+    _tdLiveBuild(odRes, sec, _follow ? null : _tdCurrentRound);
+    var _prm = (prevCur != null && prevCur !== curNum && _tdLiveCtx)
+      ? (_tdLiveCtx.roundsMeta || []).filter(function(r){ return r.num === prevCur; })[0] : null;
+    if (_prm && _prm.roundIds && _prm.roundIds.length) {
+      if (_tdCurrentRound === prevCur) _tdFetchRoundOnDemand(prevCur, _prm.roundIds);
+      // El proxy pudo dar una copia de segundos antes del final → otra vez un rato después: si el visitante
+      // la está mirando se baja; si no, queda "no pedida" para bajarla fresca al abrirla.
+      var _fk = _tdLiveCtx.key, _fids = _prm.roundIds;
+      setTimeout(function(){
+        if (!_tdLiveCtx || _tdLiveCtx.key !== _fk) return;
+        if (_tdCurrentRound === prevCur) _tdFetchRoundOnDemand(prevCur, _fids);
+        else if (_tdLiveCtx._fetched) delete _tdLiveCtx._fetched[prevCur];
+      }, _TD_FINAL_REFETCH_MS);
     }
     return;
   }
