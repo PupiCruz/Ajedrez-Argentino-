@@ -3261,6 +3261,16 @@
         color:var(--gold); font-size:19px; line-height:1; cursor:pointer; font-family:inherit; margin-left:auto; margin-right:8px;
         animation:lvPop .3s cubic-bezier(.2,1.2,.5,1); }
       .lv-berserk:hover { filter:brightness(1.1); transform:scale(1.05); }
+      /* 🔥 Berserk en el reloj (opción "A" elegida por el autor, 14/09):
+         · LLAMARADA: al hacer berserk, rojo fuego que late 3 s ("adrenalina").
+         · Después vuelve a sus colores (así se sigue viendo el dorado del turno) y queda una RAYA
+           ROJA abajo del reloj toda la partida, parecida a la barrita de lichess.org. */
+      .lv-player.lv-bk-on .lv-clock { box-shadow:inset 0 -4px 0 #e24b4a; }
+      .lv-player.lv-bk-flash .lv-clock { background:linear-gradient(135deg,#ff6a3d,#d7263d); color:#fff;
+        animation:lvBkLate .55s ease-in-out infinite; }
+      .lv-player.lv-bk-flash .lv-clock.lv-low { color:#fff !important; }
+      @keyframes lvBkLate { 0%,100% { box-shadow:inset 0 -4px 0 #e24b4a, 0 0 6px rgba(255,80,50,.45); } 50% { box-shadow:inset 0 -4px 0 #e24b4a, 0 0 22px rgba(255,80,50,.95); } }
+      @media (prefers-reduced-motion: reduce) { .lv-player.lv-bk-flash .lv-clock { animation:none; } }
       .lv-clock.lv-idle { opacity:.5; }
 
       .lv-board-wrap { position:relative; width:100%; aspect-ratio:1/1; }
@@ -42043,6 +42053,12 @@ function cvUpdateNagBadge() {
   /* Permiso "C" (decisión del autor, 14/09/2026): SIEMPRE los dos juntos, sea para el rival
      al azar, un desafío o un arena. Así nadie pasa por dos carteles en la misma visita. */
   var SCOPE = 'board:play tournament:write';
+  /* Mientras el arena siga oculto detrás de la llave (?arena=1), el público pide SÓLO board:play:
+     así la pantalla de Lichess no le muestra un permiso para torneos que todavía no puede ver.
+     Para estrenarlo: que devuelva siempre SCOPE. */
+  function scopeActual() {
+    try { return (window.aaArena && window.aaArena.activo && window.aaArena.activo()) ? SCOPE : 'board:play'; } catch (e) { return 'board:play'; }
+  }
   var K = { tok:'aali_tok', exp:'aali_exp', ver:'aali_ver', st:'aali_st', ret:'aali_ret', int:'aali_int' };
 
   function ss(k) { try { return sessionStorage.getItem(k) || ''; } catch (e) { return ''; } }
@@ -42103,7 +42119,7 @@ function cvUpdateNagBadge() {
     var p = new URLSearchParams({
       response_type: 'code', client_id: appId(), redirect_uri: appId(),
       code_challenge_method: 'S256', code_challenge: b64url(await sha256(ver)),
-      scope: SCOPE, state: st
+      scope: scopeActual(), state: st
     });
     /* Pista para que Lichess ya muestre la cuenta con la que entró al sitio. */
     try {
@@ -42180,7 +42196,7 @@ function cvUpdateNagBadge() {
         '<ul class="aa-modal-ul">' +
           '<li>🔒 No vemos tu contraseña ni tu e-mail.</li>' +
           '<li>♟️ Sirve para jugar: mover, ofrecer tablas y abandonar en las partidas que empieces desde acá.</li>' +
-          '<li>🏟️ También te deja anotarte y salir de los torneos arena de la cartelera.</li>' +
+          (scopeActual() === SCOPE ? '<li>🏟️ También te deja anotarte y salir de los torneos arena de la cartelera.</li>' : '') +
           '<li>🚪 Dura lo que dure esta pestaña. Al cerrarla, o al salir de tu cuenta, se lo devolvemos a Lichess.</li>' +
         '</ul>' +
         '<div class="aa-modal-btns">' +
@@ -42455,6 +42471,16 @@ function cvUpdateNagBadge() {
 
   function onAviso(o) {
     if (!o) return;
+    /* Al (re)abrir la conexión, Lichess repite los avisos de las partidas que considera activas.
+       Si es la MISMA partida que ya está en el tablero (viva o recién terminada) se ignora: si no,
+       se volvía a abrir, sonaba el berserk viejo y se mostraba la pantalla del torneo encima
+       (prueba real del 14/09, al terminar el torneo). */
+    if (o.type === 'gameStart' && o.game) {
+      try {
+        var gid = o.game.gameId || o.game.id;
+        if (gid && window.aaLiPartida && window.aaLiPartida.actual && window.aaLiPartida.actual() === gid) return;
+      } catch (e) {}
+    }
     if (o.type === 'gameStart' && o.game) {
       /* Puede llegar buscando rival, esperando que acepten un desafío, o porque alguien
          te desafió desde Lichess y aceptaste. En los tres casos se abre el tablero. */
@@ -42891,6 +42917,15 @@ function cvUpdateNagBadge() {
   window.aaLiPanel = {
     ocultar: function () { idleOff(); var w = $('lv-li-wrap'); if (w) w.style.display = 'none'; },
     refrescar: function () { pintar(); },
+    /* 🐛 PRUEBA REAL DEL ARENA (14/09): con la pantalla del arena a la vista (por ejemplo después
+       de un F5) nadie abría la conexión de avisos de Lichess: la abría el latido de esta grilla,
+       que está escondida detrás y a veces ni arrancaba. Lichess te emparejaba, el tablero no se
+       abría, no movías y te ponía en pausa. Esto abre la conexión SIN tocar la pantalla (pintar
+       prendería la grilla encima del tablero). */
+    escuchar: function () {
+      if (usuario() && !lidTimer) { lidTimer = setInterval(latido, 15000); }
+      idleSync();
+    },
     /* "Nuevo oponente": volver a buscar con el MISMO ritmo, sin pasar por la grilla.
        Es el botón más usado de Lichess y acá es el mismo pedido de siempre, otra vez. */
     buscar: function (t, i, conRating) {
@@ -43513,6 +43548,11 @@ function cvUpdateNagBadge() {
 
   function mostrar(on) {
     var sala = $s('lv-arena-sala'), jg = $s('lv-jugar'), sw = $s('lv-salas-wrap');
+    /* 🐛 Prueba real (14/09): terminó el torneo con un tablero abierto y el podio apareció ENCIMA
+       de la partida (con la musiquita y el golpe de berserk superpuestos). Con un tablero a la
+       vista esta pantalla NO se muestra: aparece, con su podio y su música, cuando volvés al torneo. */
+    var tab = $s('lv-game');
+    if (on && tab && tab.style.display !== 'none') return;
     if (sala) sala.style.display = on ? '' : 'none';
     /* El encabezado de "Jugar en vivo" (con su botón Ranking) se esconde: el arena trae el suyo. */
     var ph = $s('lv-pghead'); if (ph) ph.style.display = on ? 'none' : '';
@@ -43527,6 +43567,7 @@ function cvUpdateNagBadge() {
     S.id = id; S.d = null; S.html = ''; S.ultJoin = 0; S.ultEst = ''; S.pausaUsuario = false;
     guardarRecuerdo(null);   // ya está adentro: el globito sobra
     S.partidas = []; S.claveP = ''; S.ultP = 0; S.finVisto = 0; S.ver = ''; S.verFila = null; S.pagina = 0; S.miFila = null;
+    escucharAvisos();
     urlArena(id);
     mostrar(true); pintar();
     try { window.scrollTo(0, 0); } catch (e) {}
@@ -43762,8 +43803,13 @@ function cvUpdateNagBadge() {
     if (!d.isFinished && seg <= 0 && Date.now() - S.ultForzado > 5000 && enPantalla()) { S.ultForzado = Date.now(); traer(); }
   }
 
+  /* Sin la conexión de avisos de Lichess abierta, cuando te emparejan el tablero no se abre
+     (prueba real del 14/09). Se asegura al abrir esta pantalla y en cada refresco. */
+  function escucharAvisos() { try { if (window.aaLiPanel && window.aaLiPanel.escuchar) window.aaLiPanel.escuchar(); } catch (e) {} }
+
   function tick() {
     if (!enPantalla()) return;
+    escucharAvisos();
     if (S.finVisto && Date.now() - S.finVisto > 30000) return;   // terminado: ya no cambia nada
     if (Date.now() < S.pausaHasta) return;
     traer();
@@ -44095,7 +44141,8 @@ function cvUpdateNagBadge() {
       moves: sans,
       lastMove: ult,
       /* ⚡ junto al nombre del que hizo berserk (Lichess lo avisa en cada estado). */
-      names: { w: (nombre(full.white) || 'Blancas') + (st.wberserk ? ' ⚡' : ''), b: (nombre(full.black) || 'Negras') + (st.bberserk ? ' ⚡' : '') },
+      names: { w: (nombre(full.white) || 'Blancas') + ((st.wberserk || (P && P.bk && P.bk.w)) ? ' ⚡' : ''),
+               b: (nombre(full.black) || 'Negras') + ((st.bberserk || (P && P.bk && P.bk.b)) ? ' ⚡' : '') },
       players: { w: true, b: true, connW: true, connB: true },
       ratings: { w: chapita(full.white), b: chapita(full.black) },
       rated: !!full.rated,
@@ -44256,7 +44303,7 @@ function cvUpdateNagBadge() {
     botones(false);
     var color = (g.color === 'black') ? 'b' : 'w';
     P = { id: id, full: null, ctrl: new AbortController(), color: color, cdHasta: 0, pendiente: null, timer: null, relTimer: null,
-          bk: { w: false, b: false }, bkPedido: false, ultSt: null };   // berserk: quién ya lo hizo (suena una vez)
+          bk: { w: false, b: false }, bkPedido: false, ultSt: null, bkVigia: 0 };   // berserk: quién ya lo hizo (suena una vez)
 
     window.lvTablero.enganchar({
       enviar: enviar,
@@ -44292,6 +44339,7 @@ function cvUpdateNagBadge() {
     if (o.type === 'gameFull') {
       P.full = o;
       var st = o.state || {};
+      berserkSync(st);   // antes de dibujar: el ⚡ del nombre sale de lo que sepa del berserk
       var m = traducir(o, st);
       /* Cuenta regresiva sólo si la partida recién empieza (no al reconectarse a una
          que ya va por la jugada 20). */
@@ -44300,11 +44348,11 @@ function cvUpdateNagBadge() {
          La ficha trae tournamentId sólo en las partidas de torneo. */
       if (reciente && !o.tournamentId) { P.cdHasta = Date.now() + 3000; m.startAt = P.cdHasta; }
       aplicar(m);
-      berserkSync(st);
+      vigilarBerserk();
       decir('Partida contra ' + (color() === 'w' ? m.names.b : m.names.w) + '. Jugás con ' + (color() === 'w' ? 'blancas' : 'negras') + '.');
       return;
     }
-    if (o.type === 'gameState') { if (P.full) { empujar(traducir(P.full, o)); berserkSync(o); } return; }
+    if (o.type === 'gameState') { if (P.full) { berserkSync(o); empujar(traducir(P.full, o)); } return; }
     if (o.type === 'chatLine') {
       if (o.room !== 'player') return;                       // la tribuna no va al chat de la partida
       var mio = P.full && nombre(P.full[P.color === 'w' ? 'white' : 'black']) === o.username;
@@ -44324,33 +44372,142 @@ function cvUpdateNagBadge() {
      por jugador (también cuando lo hace el rival). El reloj a la mitad NO se calcula: lo manda
      Lichess. Silenciable en ⚙️ Preferencias (aa_pref_berserk_snd_off). */
   function puedeBerserk(st) {
-    if (!P || !P.full || !P.full.tournamentId || !st || P.bkPedido) return false;
+    if (!P || !P.full || !P.full.tournamentId || !st || P.bkPedido || !arenaOn()) return false;
     if (st.status && st.status !== 'started' && st.status !== 'created') return false;
-    if (P.color === 'w' ? st.wberserk : st.bberserk) return false;
+    if (P.bk[P.color]) return false;
     var n = String(st.moves || '').split(' ').filter(Boolean).length;
     return P.color === 'w' ? n < 1 : n < 2;   // todavía no hiciste tu primera jugada
   }
+  /* La llamarada de 3 s en el reloj del que acaba de hacer berserk (abajo va tu color). */
+  function llamarada(c) {
+    var barra = document.querySelector(c === P.color ? '.lv-player.lv-bottom' : '.lv-player.lv-top');
+    if (!barra) return;
+    barra.classList.add('lv-bk-flash');
+    setTimeout(function () { barra.classList.remove('lv-bk-flash'); }, 3000);
+  }
   function berserkMudo() { try { return localStorage.getItem('aa_pref_berserk_snd_off') === '1'; } catch (e) { return false; } }
-  function berserkSync(st) {
+  /* 🐛 PRUEBA REAL (14/09): la raya y el ⚡ desaparecían con la primera jugada. Leído en lila
+     (BotJsonView.gameState): el estado de la partida NO trae ninguna marca de berserk (sólo
+     jugadas, relojes, estado, tablas, retroceso, ganador y revancha). Así que P.bk MANDA y no se
+     borra nunca, y el berserk se sabe por: tu pedido aceptado, la lista del torneo, o el RELOJ —
+     hasta que los dos movieron el reloj no corre, y uno en la mitad del inicial es berserk (así
+     el aviso sale con la misma jugada del rival, sin esperar a la vigilancia). */
+  function berserkSync(st, silencioso) {
     if (!P || !st) return;
+    if (!arenaOn()) { P.ultSt = st; return; }   // arena oculto (llave ?arena=1): nada de berserk para el público
+    var n = String(st.moves || '').split(' ').filter(Boolean).length;
+    /* Suena SÓLO un berserk que pasa AHORA, en una partida viva. Al abrir una partida ya empezada
+       (F5) o ya terminada que se vuelve a abrir, se marca callado: al terminar el torneo sonó el
+       golpe de un berserk viejo (prueba real del 14/09). Una partida recién empezada (0 jugadas)
+       sí suena, por si el rival berserkeó en el primer segundo. */
+    var callado = !!silencioso || (!P.ultSt && n > 0) || !!(st.status && st.status !== 'started' && st.status !== 'created');
     P.ultSt = st;
+    var clk = (P.full && P.full.clock) || null;
+    var mitad = clk ? clk.initial / 2 : 0, inc = clk ? (clk.increment || 0) : 0;
     ['w', 'b'].forEach(function (c) {
-      if ((c === 'w' ? st.wberserk : st.bberserk) && !P.bk[c]) {
+      var t = c === 'w' ? st.wtime : st.btime;
+      var porReloj = !!(P.full && P.full.tournamentId && mitad && n <= 2 && t != null && t <= mitad + inc + 1000);
+      if ((st[c + 'berserk'] || porReloj) && !P.bk[c]) {
         P.bk[c] = true;
-        if (!berserkMudo()) sndBerserk();
-        decir(c === P.color ? 'Hiciste berserk.' : 'Tu rival hizo berserk.');
+        if (!callado) {
+          llamarada(c);
+          if (!berserkMudo()) sndBerserk();
+          decir(c === P.color ? 'Hiciste berserk.' : 'Tu rival hizo berserk.');
+        }
       }
     });
     var b = $$('lv-li-berserk'); if (b) b.style.display = puedeBerserk(st) ? '' : 'none';
+    /* 🔥 El reloj del que hizo berserk, "en llamas" (en lichess.org se pone rojo). Abajo va tu color. */
+    var bot = document.querySelector('.lv-player.lv-bottom'), top = document.querySelector('.lv-player.lv-top');
+    var miB = !!P.bk[P.color], suB = !!P.bk[P.color === 'w' ? 'b' : 'w'];
+    if (bot) bot.classList.toggle('lv-bk-on', miB);
+    if (top) top.classList.toggle('lv-bk-on', suB);
   }
+  /* 🐛 PROBADO EN UN ARENA DE VERDAD (14/09): el berserk del RIVAL no llegaba hasta que movía
+     (su reloj seguía en 5:00 y no sonaba nada). Leído en el código de Lichess (GameStateStream):
+     la conexión de la partida manda estados SÓLO con jugadas, tablas, retroceso, tiempo extra y
+     final — el berserk no dispara nada. Tampoco lo traen la ficha pública (/game/export) ni el
+     primer mensaje de /api/stream/game. SÍ lo trae la lista de partidas del torneo, que incluye
+     las EN CURSO (comprobado: 28 de 30 en un arena de 1269 jugadores). Mientras alguno de los dos
+     no hizo su primera jugada, se pregunta ahí cada 3 s (sólo el primer renglón = la partida en
+     curso). Al aparecer, ⚡ + golpe + su reloj a la mitad, sin esperar a que mueva. */
+  function primeraPartidaDelTorneo(tor, jugador) {
+    var ctrl = new AbortController();
+    return fetch(LI + '/api/tournament/' + encodeURIComponent(tor) + '/games?player=' + encodeURIComponent(jugador) +
+        '&moves=false&tags=false&clocks=false&evals=false&opening=false', { headers: { Accept: 'application/x-ndjson' }, signal: ctrl.signal })
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        var rd = r.body.getReader(), dec = new TextDecoder(), buf = '';
+        function leer() {
+          return rd.read().then(function (x) {
+            if (x.value) buf += dec.decode(x.value, { stream: true });
+            var i = buf.indexOf('\n');
+            if (i >= 0 || x.done) {
+              try { ctrl.abort(); } catch (e) {}
+              var l = (i >= 0 ? buf.slice(0, i) : buf).trim();
+              return l ? JSON.parse(l) : null;
+            }
+            return leer();
+          });
+        }
+        return leer();
+      });
+  }
+  function vigilarBerserk() {
+    if (!P || !P.full || !P.full.tournamentId || P.bkVigia || !arenaOn()) return;
+    var id = P.id, tor = P.full.tournamentId, yoNom = nombre(P.full[P.color === 'w' ? 'white' : 'black']);
+    if (!yoNom) return;
+    var vueltas = 0;
+    function revisar(primera) {
+      primeraPartidaDelTorneo(tor, yoNom).then(function (g) {
+        if (!P || P.id !== id || !g || g.id !== id) return;
+        var s = P.ultSt || {};
+        var wb = !!(g.players && g.players.white && g.players.white.berserk);
+        var bb = !!(g.players && g.players.black && g.players.black.berserk);
+        if (!(wb && !P.bk.w) && !(bb && !P.bk.b)) return;
+        /* Lichess le descuenta la MITAD del reloj inicial; antes de mover, eso es quedar en la
+           mitad. Después de mover, el reloj que llega ya es el verdadero: no se toca. */
+        var n0 = String(s.moves || '').split(' ').filter(Boolean).length;
+        var mitad = P.full.clock ? P.full.clock.initial / 2 : null;
+        var s2 = Object.assign({}, s, { wberserk: wb, bberserk: bb });
+        if (mitad != null && n0 < 2) {
+          if (wb && !P.bk.w && s2.wtime != null) s2.wtime = Math.min(s2.wtime, mitad);
+          if (bb && !P.bk.b && s2.btime != null) s2.btime = Math.min(s2.btime, mitad);
+        }
+        berserkSync(s2, primera && n0 > 0);   // la primera revisión de una partida ya empezada: callada
+        empujar(traducir(P.full, s2));
+      }).catch(function () {});
+    }
+    revisar(true);   // una vez al abrir la partida: también sirve si recargaste a mitad de partida
+    var h = setInterval(function () {
+      var st0 = (P && P.id === id && P.ultSt) || {};
+      var n = String(st0.moves || '').split(' ').filter(Boolean).length;
+      if (!P || P.id !== id || P.terminada || n >= 2 || (P.bk.w && P.bk.b) || ++vueltas > 20 ||
+          (st0.status && st0.status !== 'started' && st0.status !== 'created')) {
+        clearInterval(h); if (P && P.bkVigia === h) P.bkVigia = 0; return;
+      }
+      revisar(false);
+    }, 3000);
+    P.bkVigia = h;
+  }
+
   function berserk() {
     if (!P || !puedeBerserk(P.ultSt)) return;
     P.bkPedido = true;
     var b = $$('lv-li-berserk'); if (b) b.style.display = 'none';
     var yo = P.color, id = P.id;
     post('/api/board/game/' + id + '/berserk').then(function () {
+      if (!P || P.id !== id) return;
       /* Suena al toque, sin esperar al próximo estado; P.bk evita que suene dos veces. */
-      if (P && P.id === id && !P.bk[yo]) { P.bk[yo] = true; if (!berserkMudo()) sndBerserk(); decir('Hiciste berserk.'); }
+      if (!P.bk[yo]) { P.bk[yo] = true; llamarada(yo); if (!berserkMudo()) sndBerserk(); decir('Hiciste berserk.'); }
+      /* 🐛 Prueba real (14/09): tu reloj seguía en 5:00 hasta mover (Lichess no manda estado por el
+         berserk, tampoco el propio). Como en lichess.org, pasa YA a la mitad y se pone "en llamas". */
+      var s = P.ultSt || {}, s2 = Object.assign({}, s);
+      s2[yo + 'berserk'] = true;
+      var campo = yo + 'time', mitad = (P.full && P.full.clock) ? P.full.clock.initial / 2 : null;
+      if (mitad != null && s2[campo] != null) s2[campo] = Math.min(s2[campo], mitad);
+      empujar(traducir(P.full, s2));
+      berserkSync(s2);
     }).catch(function (e) {
       if (!P || P.id !== id) return;
       P.bkPedido = false;
@@ -44423,7 +44580,11 @@ function cvUpdateNagBadge() {
     return (c.initial / 1000 + 40 * (c.increment / 1000)) >= 480;
   }
   /* ¿Es una partida de un ARENA? La ficha de Lichess trae tournamentId sólo en ésas. */
-  function torneoDeLaPartida() { return (P && P.full && P.full.tournamentId) || ''; }
+  /* Todo lo del arena en la partida (berserk, "Volver al torneo", "Pausar") va con la MISMA llave
+     que la cartelera (?arena=1): una partida de arena que alguien juegue desde lichess.org con esta
+     web abierta en Jugar se sigue viendo como antes para el público. */
+  function arenaOn() { try { return !!(window.aaArena && window.aaArena.activo && window.aaArena.activo()); } catch (e) { return false; } }
+  function torneoDeLaPartida() { return (arenaOn() && P && P.full && P.full.tournamentId) || ''; }
   function botones(finTerminado) {
     var tor = torneoDeLaPartida();
     var n = $$('lv-li-nuevo');
@@ -44525,12 +44686,18 @@ function cvUpdateNagBadge() {
     if (!P) return;
     if (P.timer) { clearTimeout(P.timer); soltarPendiente(); }
     if (P.relTimer) { clearInterval(P.relTimer); P.relTimer = null; }
+    if (P.bkVigia) { clearInterval(P.bkVigia); P.bkVigia = 0; }
     try { P.ctrl.abort(); } catch (e) {}
     P.terminada = true;
+    /* Partida de ARENA terminada: mientras mirás el resultado Lichess te puede emparejar de
+       nuevo. Se reabre YA la conexión de avisos, así la partida nueva se abre sola en el tablero
+       (como en lichess.org, que te lleva directo). */
+    if (P.full && P.full.tournamentId) { try { if (window.aaLiPanel && window.aaLiPanel.escuchar) window.aaLiPanel.escuchar(); } catch (e) {} }
   }
   /* Soltar de verdad: se va del tablero o empieza otra partida. */
   function soltar() {
     var bkb = $$('lv-li-berserk'); if (bkb) bkb.style.display = 'none';
+    Array.prototype.forEach.call(document.querySelectorAll('.lv-player.lv-bk-on, .lv-player.lv-bk-flash'), function (x) { x.classList.remove('lv-bk-on', 'lv-bk-flash'); });
     if (!P) return;
     cerrarCano();
     P = null;
@@ -44660,7 +44827,10 @@ function cvUpdateNagBadge() {
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', enganchar); else enganchar();
 
-  window.aaLiPartida = { jugar: jugar, soltar: soltar, enCurso: function () { return !!P; },
+  /* enCurso = hay una partida VIVA (una terminada que se está mirando no cuenta: si contara, la
+     conexión de avisos no se reabría y la partida siguiente del arena no llegaba al tablero). */
+  window.aaLiPartida = { jugar: jugar, soltar: soltar, enCurso: function () { return !!P && !P.terminada; },
+    actual: function () { return P ? P.id : ''; },
     mirar: mirar, mirando: function () { return !!M; } };
 })();
 </script>

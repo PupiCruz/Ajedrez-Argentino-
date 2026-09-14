@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1038;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1051;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -3585,8 +3585,9 @@ console.log('\n=== 50. Puntos del torneo en el visor (6½/7) ===');
       '🔒 el cartel dice la verdad: que con este permiso SÍ se puede jugar y abandonar');
 
   // ── Candados del token (board:play puede jugar y abandonar en nombre del visitante) ──
-  chk(/scope:\s*SCOPE/.test(modLi) && /SCOPE\s*=\s*'board:play tournament:write'/.test(modLi),
-      'se piden los dos permisos en UN solo cartel: jugar (board:play) y torneos (tournament:write)');
+  chk(/scope:\s*scopeActual\(\)/.test(modLi) && /SCOPE\s*=\s*'board:play tournament:write'/.test(modLi)
+      && /activo\(\)\) \? SCOPE : 'board:play'/.test(modLi),
+      'con la llave del arena se piden los dos permisos en UN cartel; el público (sin llave) sigue pidiendo sólo board:play');
   // Se busca el USO (localStorage.setItem/getItem), no la palabra: el comentario del
   // módulo la nombra justamente para explicar por qué NO se usa.
   chk(!/localStorage\s*\./.test(modLi), '🔒 el permiso de jugar NUNCA se guarda en localStorage');
@@ -4275,6 +4276,15 @@ console.log('\n=== Arena de Lichess — Fase 1: anotarse y la pantalla de espera
   chk(/function verJugador/.test(modS) && /closest\('\[data-as-jug\]'\)/.test(modS) && /var id = S\.id, jug = verNombre\(\)/.test(modS)
       && /verNombre\(\) !== jug\) return;/.test(modS),
       'al tocar a otro jugador se piden SUS partidas, y una respuesta atrasada del anterior se descarta');
+  // Prueba real del 14/09: después de un F5 en el arena, Lichess te emparejaba y el tablero no se abría.
+  const esc = (SRC.match(/escuchar: function \(\) \{[\s\S]*?\n    \}/) || [''])[0];
+  chk(/idleSync\(\)/.test(esc) && !/pintar\(\)/.test(esc),
+      '🔒 la grilla ofrece "escuchar": abre la conexión de avisos de Lichess sin prender la grilla encima del tablero');
+  chk(/S\.miFila = null;\s*escucharAvisos\(\);/.test(modS) && /function tick\(\) \{\s*if \(!enPantalla\(\)\) return;\s*escucharAvisos\(\);/.test(modS),
+      '🔒 la pantalla del arena mantiene abierta la conexión de avisos (al abrirse y en cada refresco)');
+  chk(/P\.terminada = true;[\s\S]{0,400}P\.full\.tournamentId[\s\S]{0,120}aaLiPanel\.escuchar\(\)/.test(SRC)
+      && /enCurso: function \(\) \{ return !!P && !P\.terminada; \}/.test(SRC),
+      'al terminar una partida de arena se reabre la conexión de avisos: la siguiente se abre sola en el tablero');
   chk(/aaArenaSala\.abrir/.test(SRC) && /id="lv-arena-sala" style="display:none"/.test(SRC),
       '"Jugar acá" abre la pantalla del arena, que nace oculta');
 }
@@ -4293,7 +4303,36 @@ console.log('\n=== Arena de Lichess — Fase 3: berserk ===');
       'el golpe suena UNA vez por jugador, también con el berserk del rival, salvo que lo silencies');
   chk(/aaArena\.activo\(\) \? prefRow\('berserksnd'/.test(SRC) && /p==='berserksnd'\) setPref\('aa_pref_berserk_snd_off'/.test(SRC),
       'en ⚙️ Preferencias está "Silenciar el sonido del berserk" (por ahora sólo con la llave del arena)');
-  chk(/st\.wberserk \? ' ⚡' : ''/.test(modP) && /berserkSync\(o\)/.test(modP), 'el que hizo berserk lleva ⚡ junto al nombre, y se revisa en cada estado');
+  chk(/\(st\.wberserk \|\| \(P && P\.bk && P\.bk\.w\)\) \? ' ⚡' : ''/.test(modP) && /berserkSync\(o\); empujar\(traducir\(P\.full, o\)\)/.test(modP),
+      'el que hizo berserk lleva ⚡ junto al nombre, y se revisa en cada estado ANTES de dibujarlo');
+  // Prueba real del 14/09: el estado de la partida de Lichess NO trae marca de berserk (BotJsonView).
+  chk(/t <= mitad \+ inc \+ 1000/.test(modP) && /var miB = !!P\.bk\[P\.color\]/.test(modP) && /if \(P\.bk\[P\.color\]\) return false;/.test(modP),
+      '🔒 el berserk no se borra con la jugada siguiente (Lichess no lo manda en el estado) y se detecta por el reloj a la mitad');
+  // Prueba real del 14/09: el berserk del rival no llegaba hasta que movía (Lichess no manda estado por eso).
+  const vb = (modP.match(/function vigilarBerserk\(\) \{[\s\S]*?\n  \}/) || [''])[0];
+  chk(/\/api\/tournament\/' \+ encodeURIComponent\(tor\) \+ '\/games\?player=/.test(modP) && /n >= 2/.test(vb) && /\}, 3000\);/.test(vb)
+      && /vigilarBerserk\(\);/.test(modP),
+      '🔒 el berserk del rival se ve ANTES de que mueva: se pregunta a la lista de partidas del torneo cada 3 s hasta que los dos movieron');
+  chk(/if \(P\.bkVigia\) \{ clearInterval\(P\.bkVigia\); P\.bkVigia = 0; \}/.test(modP) && /initial \/ 2/.test(vb),
+      'al detectarlo, su reloj se muestra a la mitad; y la vigilancia se apaga al cerrar la partida');
+  // Prueba real del 14/09: al terminar el torneo sonó un berserk viejo y el podio salió encima del tablero.
+  chk(/var callado = !!silencioso \|\| \(!P\.ultSt && n > 0\) \|\| !!\(st\.status && st\.status !== 'started'/.test(modP) && /berserkSync\(s2, primera && n0 > 0\)/.test(modP),
+      '🔒 el golpe suena sólo por un berserk que pasa AHORA (no al reabrir una partida empezada o terminada)');
+  chk(/actual\(\) === gid\) return;/.test(SRC) && /actual: function \(\) \{ return P \? P\.id : ''; \}/.test(SRC),
+      'un aviso repetido de la partida que ya está en el tablero se ignora (no la reabre)');
+  chk(/var tab = \$s\('lv-game'\);\s*if \(on && tab && tab\.style\.display !== 'none'\) return;/.test(SRC),
+      '🔒 con un tablero abierto la pantalla del torneo no se muestra: el podio y la musiquita salen al volver al torneo');
+  chk(/function torneoDeLaPartida\(\) \{ return \(arenaOn\(\) &&/.test(modP) && /if \(!arenaOn\(\)\) \{ P\.ultSt = st; return; \}/.test(modP)
+      && /P\.bkVigia \|\| !arenaOn\(\)\) return;/.test(modP),
+      '🔒 publicado oculto: el berserk y los botones del arena en la partida van con la llave ?arena=1');
+  const bkFn = (modP.match(/function berserk\(\) \{[\s\S]*?\n  \}/) || [''])[0];
+  chk(/initial \/ 2/.test(bkFn) && /empujar\(traducir\(P\.full, s2\)\)/.test(bkFn),
+      'al tocar ⚡ tu reloj pasa YA a la mitad (en la prueba real seguía en 5:00 hasta mover)');
+  chk(/classList\.toggle\('lv-bk-on', miB\)/.test(modP) && /\.lv-player\.lv-bk-on \.lv-clock \{ box-shadow:inset 0 -4px 0 #e24b4a; \}/.test(SRC),
+      'el que hizo berserk lleva una raya roja abajo del reloj toda la partida (opción A del autor)');
+  chk(/function llamarada\(c\)[\s\S]{0,400}lv-bk-flash[\s\S]{0,200}3000/.test(modP) && /P\.bk\[c\] = true;\s*if \(!callado\) \{\s*llamarada\(c\);/.test(modP)
+      && /prefers-reduced-motion: reduce\) \{ \.lv-player\.lv-bk-flash/.test(SRC),
+      'al hacer berserk el reloj hace una llamarada roja de 3 s y vuelve a sus colores (el dorado del turno se sigue viendo)');
 }
 
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
