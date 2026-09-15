@@ -4050,14 +4050,14 @@ console.log('\n=== Arena de Lichess — Fase 0: la cartelera ===');
   const NOMBRES = ['_arActivo', '_arRitmo', '_arReloj', '_arNombre', '_arArmar', '_arCuando', '_arEsc', '_arFila'];
   const AR = new Function(NOMBRES.map(extraerFuncion).join('\n') + '; return {' + NOMBRES.join(',') + '};')();
 
-  // 🚦 Oculta hasta el estreno: el autor publica tablas y partidas y el público no la ve.
+  // 🚦 Estrenada para todos (14/09): nace prendida; ?arena=0 la apaga en ese navegador.
   const ls = mkLS([]);
-  chk(AR._arActivo({ search: '' }, ls) === false, '🔒 la cartelera nace APAGADA: la web publicada no la muestra');
-  chk(AR._arActivo({ search: '?arena=1' }, ls) === true && AR._arActivo({ search: '' }, ls) === true,
-      'con ?arena=1 se prende en ese navegador y queda prendida (aunque la app reescriba la dirección)');
-  chk(AR._arActivo({ search: '?x=2&arena=0' }, ls) === false && AR._arActivo({ search: '' }, ls) === false, 'con ?arena=0 se vuelve a apagar');
-  chk(AR._arActivo({ search: '?arena=10' }, mkLS([])) === false, 'arena=10 no cuenta como arena=1');
-  chk(AR._arActivo(null, { getItem() { throw new Error('bloqueado'); } }) === false, 'si el navegador bloquea el almacenamiento, queda apagada sin romper nada');
+  chk(AR._arActivo({ search: '' }, ls) === true, '🏟️ la cartelera nace PRENDIDA: la ve todo el público');
+  chk(AR._arActivo({ search: '?x=2&arena=0' }, ls) === false && AR._arActivo({ search: '' }, ls) === false,
+      'con ?arena=0 se apaga en ese navegador y queda apagada (aunque la app reescriba la dirección)');
+  chk(AR._arActivo({ search: '?arena=1' }, ls) === true && AR._arActivo({ search: '' }, ls) === true, 'con ?arena=1 se vuelve a prender');
+  chk(AR._arActivo({ search: '?arena=00' }, mkLS([])) === true, 'arena=00 no cuenta como arena=0');
+  chk(AR._arActivo(null, { getItem() { throw new Error('bloqueado'); } }) === true, 'si el navegador bloquea el almacenamiento, queda prendida sin romper nada');
   chk(/id="lv-arena-wrap" style="display:none"/.test(SRC), '🔒 el panel nace oculto en el HTML (no parpadea antes de que corra el JS)');
 
   // Ritmos: como los agrupa Lichess.
