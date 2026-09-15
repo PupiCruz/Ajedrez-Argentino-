@@ -38113,7 +38113,10 @@ function cvUpdateNagBadge() {
       // Premove: encolar cualquier from→to (incluida RECAPTURA sobre una casilla propia,
       // la pieza que va a ser capturada). Se valida recién al llegar mi turno.
       var promo; if(needsPromo(from,to)) promo='q';
-      lvPremove={from:from,to:to,promotion:promo}; lvSelected=null; renderBoard(); return;
+      lvPremove={from:from,to:to,promotion:promo}; lvSelected=null; renderBoard();
+      // En una partida de Lichess: adelantar la consulta del navegador para que el premove salga sin espera.
+      try{ if(window.aaLiPartida && window.aaLiPartida.precalentar) window.aaLiPartida.precalentar(from,to,promo); }catch(e){}
+      return;
     }
     var legal=[]; try { legal=lvChess.moves({square:from,verbose:true}).filter(function(m){return m.to===to;}); } catch(e){}
     if(!legal.length){ lvSelected=null; renderBoard(); return; }
@@ -44265,6 +44268,21 @@ function cvUpdateNagBadge() {
   function avisar(t) { try { window.aaLi.avisar(t); } catch (e) {} }
   function decir(t) { try { if (typeof window.aaDecir === 'function') window.aaDecir(t); } catch (e) {} }
 
+  /* 🏎️ PREMOVE MÁS RÁPIDO (medido 14/09: de ~480 a ~240 ms por jugada).
+     Mandar con la llave a OTRO sitio obliga al navegador a preguntarle antes a Lichess si lo
+     acepta (la consulta "preflight" de CORS), y esa respuesta la recuerda POR DIRECCIÓN
+     EXACTA: cada jugada (…/move/e2e4, …/move/g1f3) la pagaba de nuevo, ~250 ms que Lichess
+     descuenta del reloj. Al dejar el premove ya se sabe la dirección: se hace la consulta
+     en ese momento con un GET (esa ruta no existe por GET: Lichess no mueve nada). */
+  var calentadas = {};
+  function precalentar(from, to, promo) {
+    if (!P || P.terminada || !from || !to || !tok()) return;
+    var ruta = '/api/board/game/' + P.id + '/move/' + from + to + (promo || '');
+    if (calentadas[ruta] && Date.now() - calentadas[ruta] < 60000) return;
+    calentadas[ruta] = Date.now();
+    try { fetch(LI + ruta, { method: 'GET', headers: { Authorization: 'Bearer ' + tok() } }).catch(function () {}); } catch (e) {}
+  }
+
   /* Un pedido corto a Lichess (mover, chatear, abandonar…). */
   function post(ruta, campos) {
     var o = { method: 'POST', headers: { Authorization: 'Bearer ' + tok() } };
@@ -44295,8 +44313,10 @@ function cvUpdateNagBadge() {
     switch (st.status) {
       case 'mate':      return { reason: 'checkmate', winner: gan };
       case 'resign':    return { reason: 'resign', by: perd };
-      case 'outoftime': return { reason: 'flag', by: perd };
-      case 'timeout':   return { reason: 'abandon', by: perd };   // no movió / se fue
+      /* Bandera SIN ganador = el que quedó en pie no tiene material para dar mate: tablas.
+         (Sin esto, `by` quedaba vacío y el cartel le daba la victoria al que se quedó sin tiempo.) */
+      case 'outoftime': return gan ? { reason: 'flag', by: perd } : { reason: 'flag-draw' };
+      case 'timeout':   return gan ? { reason: 'abandon', by: perd } : { reason: 'draw-agree' };   // no movió / se fue
       case 'stalemate': return { reason: 'stalemate' };
       case 'aborted':   return { reason: 'abort' };
       case 'noStart':   return { reason: 'abort' };
@@ -45056,7 +45076,7 @@ function cvUpdateNagBadge() {
 
   /* enCurso = hay una partida VIVA (una terminada que se está mirando no cuenta: si contara, la
      conexión de avisos no se reabría y la partida siguiente del arena no llegaba al tablero). */
-  window.aaLiPartida = { jugar: jugar, soltar: soltar, enCurso: function () { return !!P && !P.terminada; },
+  window.aaLiPartida = { jugar: jugar, soltar: soltar, precalentar: precalentar, enCurso: function () { return !!P && !P.terminada; },
     actual: function () { return P ? P.id : ''; },
     torneo: function () { return (P && P.full && P.full.tournamentId) || ''; },
     rival: function () { var f = P && P.full; if (!f) return ''; var r = P.color === 'w' ? f.black : f.white; return (r && (r.name || r.id)) || ''; },

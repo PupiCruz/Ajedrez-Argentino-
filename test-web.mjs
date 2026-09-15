@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1060;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1064;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -4323,6 +4323,20 @@ console.log('\n=== Arena de Lichess — Fase 1: anotarse y la pantalla de espera
 console.log('\n=== Arena de Lichess — Fase 3: berserk ===');
 {
   const modP = (SRC.match(/Fase 2 — La partida de Lichess[\s\S]*?<\/script>/) || [''])[0];
+  {
+    // Bandera sin ganador (el rival no tenía material para dar mate) = TABLAS, no "¡Ganaste!".
+    const fLado = (SRC.match(/function lado\(x\) \{[^\n]*\}/) || [''])[0];
+    const fRes = (SRC.match(/function resultado\(st, ch\) \{[\s\S]*?\n  \}\n/) || [''])[0];
+    const res = new Function(fLado + '\n' + fRes + '; return resultado;')();
+    const sinCh = {};
+    chk(res({ status: 'outoftime' }, sinCh).reason === 'flag-draw', 'bandera SIN ganador de Lichess = tablas por material insuficiente (no "ganaste")');
+    const f = res({ status: 'outoftime', winner: 'white' }, sinCh);
+    chk(f.reason === 'flag' && f.by === 'b', 'bandera CON ganador: pierde el otro color');
+    chk(res({ status: 'timeout' }, sinCh).by == null && res({ status: 'timeout' }, sinCh).reason !== 'abandon', 'timeout sin ganador tampoco regala la victoria');
+  }
+  chk(/lvPremove=\{from:from,to:to,promotion:promo\};[\s\S]{0,300}aaLiPartida\.precalentar\(from,to,promo\)/.test(SRC) &&
+      /function precalentar\([\s\S]{0,400}method: 'GET'/.test(SRC) && /precalentar: precalentar/.test(SRC),
+      '🏎️ al dejar un premove en Lichess se adelanta la consulta del navegador (con GET: no mueve nada)');
   chk(/<div class="lv-player lv-bottom">[\s\S]{0,700}id="lv-li-berserk"[^>]*style="display:none"/.test(SRC),
       'el botón ⚡ de berserk va en tu barra, junto a tu reloj, y nace oculto');
   const pb = (modP.match(/function puedeBerserk\(st\) \{[\s\S]*?\n  \}/) || [''])[0];
