@@ -9305,7 +9305,19 @@ function _tdRunPendingMatchJump(){
       var matches=_tdTeamMatches(games);
       var _ck=_tdCtx.crKey, _ckData=_ck?crDataLoad(_ck):null, idx=-1;
       for(var i=0;i<matches.length;i++){ if(_teamMatchKey(matches[i].teamA,matches[i].teamB,_ckData)===j.fedKey){ idx=i; break; } }
-      if(idx>=0){ _tdPage=Math.floor(idx/_TD_TEAM_PER_PAGE); if(_tdCurrentRound===j.round) tdBuildRound(j.round); }
+      if(idx>=0){
+        // Los filtros de las partidas ("Solo argentinos" y el buscador) esconden cruces. Si el pedido queda
+        // afuera, se sacan: antes se decía "Este match no se transmitió" teniéndolo ahí (16/09/2026).
+        var _terms=_tdSearch?_tdSearchTerms(_tdSearch):[];
+        var _pasa=function(m){ return m.boards.some(function(g){ return (!_tdArgOnly||_tdIsArgGame(g.h)) && (!_terms.length||_tdSearchMatch(g.h,_terms)); }); };
+        if((_tdArgOnly||_terms.length) && !_pasa(matches[idx])){
+          _tdArgOnly=false; var _ab=document.getElementById('td-arg-btn'); if(_ab) _ab.classList.remove('on');
+          _tdSearch=''; _terms=[]; var _si=document.getElementById('td-search'); if(_si) _si.value='';
+        }
+        // La página se cuenta sobre los cruces que se VEN (con los filtros que quedaron), no sobre todos.
+        var _pos=matches.slice(0,idx).filter(_pasa).length;
+        _tdPage=Math.floor(_pos/_TD_TEAM_PER_PAGE); if(_tdCurrentRound===j.round) tdBuildRound(j.round);
+      }
     }catch(e){}
     setTimeout(function(){
       var el=document.getElementById('tdm-'+j.round+'-'+j.fedKey);
@@ -40629,8 +40641,10 @@ function cvUpdateNagBadge() {
     return div;
   }
   // ── Reacciones + citar (responder) ────────────────────────────────────────────
-  var CHAT_RX_ORDER=['👍','👎','❤️','🔥','👏','😂','😢'];
-  var CHAT_RX_SET={ '👍':1,'👎':1,'❤️':1,'🔥':1,'👏':1,'😂':1,'😢':1 };
+  // 😮 (sorpresa, el ":o") sumado el 16/09/2026. Tiene que estar TAMBIÉN en CHAT_REACTIONS del vivo-worker:
+  // el servidor descarta cualquier emoji que no conozca.
+  var CHAT_RX_ORDER=['👍','👎','❤️','🔥','👏','😂','😮','😢'];
+  var CHAT_RX_SET={ '👍':1,'👎':1,'❤️':1,'🔥':1,'👏':1,'😂':1,'😮':1,'😢':1 };
   function _tcCssId(id){ return String(id==null?'':id).replace(/["\\]/g,''); }
   function tcFind(id){ for(var i=0;i<tcMsgs.length;i++){ if(tcMsgs[i].id===id) return tcMsgs[i]; } return null; }
   // Chips de reacciones de un mensaje (según m.reactions = {emoji:[userId,…]}). '' si no tiene ninguna.

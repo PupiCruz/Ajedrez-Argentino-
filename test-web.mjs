@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1095;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1099;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -4149,6 +4149,26 @@ console.log('\n=== 54. Vivo: buscar por país, flechas en el chat y páginas aba
   const pg = extraerFuncion('_tdRenderPager');
   chk(pg.includes("['td-pager', 'td-pager-bottom'].forEach"), 'los botones de página se dibujan arriba y abajo');
   chk((SRC.match(/id="td-pager-bottom"/g) || []).length === 2, 'y el lugar de abajo está en las dos vistas (vivo y partidas cargadas)', (SRC.match(/id="td-pager-bottom"/g) || []).length);
+
+  // "Ver match" desde el panel de un país, con "Solo argentinos" (o el buscador) prendido: decía "Este match
+  // no se transmitió" porque el cruce estaba escondido por el filtro.
+  const salto = extraerFuncion('_tdRunPendingMatchJump');
+  chk(salto.includes('if((_tdArgOnly||_terms.length) && !_pasa(matches[idx])){') && salto.includes("_tdArgOnly=false;") && salto.includes("_tdSearch='';"),
+      '🔒 "Ver match" de un cruce escondido por "Solo argentinos" o el buscador saca los filtros y lo muestra');
+  chk(salto.includes('var _pos=matches.slice(0,idx).filter(_pasa).length;') && salto.includes('_tdPage=Math.floor(_pos/_TD_TEAM_PER_PAGE)'),
+      'y la página del cruce se cuenta sobre los que se ven (con el filtro que quedó)');
+
+  // Reacciones del chat: 😮 (el ":o", pedido del autor). La lista de la página y la del servidor tienen que ser
+  // la misma: el vivo-worker descarta cualquier emoji que no conozca y la reacción se perdería.
+  const rxWeb = (SRC.match(/var CHAT_RX_ORDER=\[([^\]]*)\]/) || ['', ''])[1].replace(/['\s]/g, '').split(',');
+  let rxSrv = null;
+  try {
+    const w = fs.readFileSync(new URL('../vivo-worker/src/index.js', import.meta.url), 'utf8');
+    rxSrv = (w.match(/const CHAT_REACTIONS = new Set\(\[([^\]]*)\]\)/) || ['', ''])[1].replace(/['\s]/g, '').split(',');
+  } catch (e) {}
+  chk(rxWeb.includes('😮') && /'😮':1/.test(SRC), 'la reacción de sorpresa 😮 está en el chat', rxWeb.join(' '));
+  chk(!rxSrv || JSON.stringify([...rxSrv].sort()) === JSON.stringify([...rxWeb].sort()),
+      '🔒 las reacciones de la página y las que acepta el servidor del chat son las mismas', rxSrv ? rxSrv.join(' ') : '(sin vivo-worker al lado)');
 }
 
 // ── ARENA DE LICHESS — Fase 0: la cartelera (plan del 13/09/2026) ─────────────────────
