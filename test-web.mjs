@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1082;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1095;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -4104,6 +4104,51 @@ console.log('\n=== 53. Vivo: los tableros que se miran, sueltos y al instante (1
   chk(SRC.includes("function _tdFocusWake() { if (!document.hidden && _tdFocusTimer) _tdFocusTick(); }")
       && SRC.includes("document.addEventListener('visibilitychange', _tdFocusWake);") && SRC.includes("window.addEventListener('online', _tdFocusWake);"),
       '🔒 al volver a la pestaña los tableros que se miran se piden en el acto (no a los 8 s)');
+}
+
+// ── 54. Vivo: buscar por país, flechas en el chat y páginas también abajo (16/09) ──
+// Pedidos del autor mirando la Olimpiada: filtrar tableros por país desde el mismo buscador de jugadores;
+// escribiendo en el chat del visor, las flechas movían la partida; y la paginación sólo estaba arriba.
+console.log('\n=== 54. Vivo: buscar por país, flechas en el chat y páginas abajo (16/09) ===');
+{
+  const N = ['_tdNorm', '_teamCountryParts', '_tdSearchHay', '_tdSearchTerms', '_tdSearchMatch'];
+  const B = new Function(
+      'var _FED_ES = { NED: "Países Bajos", PER: "Perú", USA: "Estados Unidos", SMR: "San Marino", BIH: "Bosnia y Herzegovina", ARG: "Argentina", GUI: "Guinea", GEQ: "Guinea Ecuatorial" };'
+    + 'var _NAME_FED = { "netherlands": "NED", "peru": "PER", "united states": "USA", "san marino": "SMR" };'
+    + 'var _tdPaisesLargos = null, _tdCtx = { crKey: "cr2_x" };'
+    + 'function normStr(s){ return String(s||"").toLowerCase().normalize("NFD").replace(/[\\u0300-\\u036f]/g,"").replace(/[^a-z0-9 ]/g," ").replace(/\\s+/g," ").trim(); }'
+    + 'function _nombreFedIx(){ return { "paises bajos": "NED", "netherlands": "NED", "peru": "PER", "united states of america": "USA", "estados unidos": "USA", "san marino": "SMR" }; }'
+    + 'function _paisES(n){ var ix = _nombreFedIx(), c = ix[normStr(n)]; return c ? _FED_ES[c] : n; }'
+    + 'var FEDS = { "Gonzalez, Ana": "PER" }; function _tourEntryByName(n){ return FEDS[n] ? { fed: FEDS[n] } : null; }'
+    + 'function _teamFlag(){ return ""; } function crFlagEmoji(){ return ""; }'
+    + N.map(extraerFuncion).join('\n') + '; return {' + N.join(',') + '};')();
+  const equipo = { White: 'Van Wely, Loek', Black: 'Lam, Chun Yung Samuel', WhiteTeam: 'Netherlands', BlackTeam: 'Hong Kong' };
+  const usa = { White: 'Caruana, Fabiano', Black: 'Kennedy, Ali', WhiteTeam: 'United States of America', BlackTeam: 'Iraq' };
+  const indiv = { White: 'Gonzalez, Ana', Black: 'Sandro, Mareco' };
+  const pasa = (h, q) => B._tdSearchMatch(h, B._tdSearchTerms(q));
+  chk(pasa(equipo, 'Países Bajos') && pasa(equipo, 'paises bajos') && pasa(equipo, 'netherlands'), 'el país se encuentra en castellano, sin acentos y en inglés (equipo del PGN)');
+  chk(pasa(equipo, 'NED') && pasa(equipo, 'ned') && pasa(usa, 'USA') && pasa(usa, 'Estados Unidos'), 'también por el código de 3 letras ("United States of America" es USA)');
+  chk(!pasa(usa, 'NED'), '🔒 el código se compara ENTERO: "ned" no trae a Kennedy');
+  chk(pasa(indiv, 'Perú') && pasa(indiv, 'PER'), 'en un torneo individual, el país sale de la federación de la tabla');
+  chk(pasa(equipo, 'Van Wely') && pasa(indiv, 'mareco'), 'los nombres de jugadores se siguen buscando como siempre');
+  const t = B._tdSearchTerms('San Marino Mareco');
+  chk(t.includes('san marino') && t.includes('mareco') && !t.includes('san'), '🔒 un país de varias palabras va entero ("san" no trae a Sandro)', JSON.stringify(t));
+  chk(JSON.stringify(B._tdSearchTerms('Guinea Ecuatorial')) === '["guinea ecuatorial"]', 'el nombre de país más largo gana ("Guinea Ecuatorial", no "Guinea")', JSON.stringify(B._tdSearchTerms('Guinea Ecuatorial')));
+  chk(pasa(indiv, 'Perú Kasparov') && !pasa(usa, 'Perú Kasparov'), 'con varios términos alcanza con que coincida uno (como antes)');
+  chk(extraerFuncion('tdBuildRound').includes('_tdSearchMatch(g.h, _terms)') && extraerFuncion('tdBuildRoundTeams').includes('_tdSearchMatch(g.h, _terms)'),
+      'el buscador por país anda en la grilla común y en la vista por equipos');
+  chk(SRC.includes('placeholder="Filtrar jugador o país (ej: Mareco, Perú)"'), 'el cartelito del buscador avisa que acepta países');
+
+  // Flechas escribiendo en el chat del visor.
+  const kd = (SRC.match(/document\.addEventListener\('keydown',function\(e\)\{\s*if\(!document\.getElementById\('chess-overlay'\)[\s\S]*?\n\}\);/) || [''])[0];
+  const iEsc = kd.indexOf('isContentEditable)) return;'), iFlecha = kd.indexOf("if(e.key==='ArrowLeft')");
+  chk(iEsc > 0 && iFlecha > iEsc && /\^\(INPUT\|TEXTAREA\|SELECT\)\$/.test(kd),
+      '🔒 escribiendo en el chat (o cualquier campo) las flechas mueven el cursor, no la partida del visor');
+
+  // Paginación arriba y abajo.
+  const pg = extraerFuncion('_tdRenderPager');
+  chk(pg.includes("['td-pager', 'td-pager-bottom'].forEach"), 'los botones de página se dibujan arriba y abajo');
+  chk((SRC.match(/id="td-pager-bottom"/g) || []).length === 2, 'y el lugar de abajo está en las dos vistas (vivo y partidas cargadas)', (SRC.match(/id="td-pager-bottom"/g) || []).length);
 }
 
 // ── ARENA DE LICHESS — Fase 0: la cartelera (plan del 13/09/2026) ─────────────────────

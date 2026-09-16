@@ -26290,6 +26290,9 @@ window.addEventListener('popstate', function() {
 
 document.addEventListener('keydown',function(e){
   if(!document.getElementById('chess-overlay').classList.contains('open')) return;
+  // Escribiendo (el chat del torneo, un buscador…): las flechas mueven el cursor del texto, no la partida.
+  var _tg = e.target;
+  if (_tg && (/^(INPUT|TEXTAREA|SELECT)$/.test(_tg.tagName || '') || _tg.isContentEditable)) return;
   if(e.key==='ArrowLeft')  { e.preventDefault(); cvPrev(); }
   if(e.key==='ArrowRight') { e.preventDefault(); cvNext(); }
   if(e.key==='Home')       { e.preventDefault(); cvFirst(); }
@@ -29442,6 +29445,7 @@ function _tdLocalGamesHtml(byRound, roundOrder, games, pgnKey, typ) {
   roundOrder.forEach(function(rInt, ri) {
     h += '<div id="td-round-' + rInt + '" class="td-round-grid" style="display:' + (ri===0?'grid':'none') + ';grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:4px"></div>';
   });
+  h += '<div id="td-pager-bottom" style="display:none;align-items:center;justify-content:center;gap:14px;margin-top:16px"></div>';
   return h;
 }
 
@@ -31088,11 +31092,62 @@ function _tdNorm(s){ return (s||'').toString().toLowerCase().normalize('NFD').re
 function _tdSearchBoxHtml(){
   return '<div class="search-pill" style="margin:0;flex:1 1 200px;min-width:160px;max-width:340px">'
     + '<span class="sp-icon">🔍</span>'
-    + '<input id="td-search" type="search" autocomplete="off" placeholder="Filtrar jugador (ej: Paveto Valerga)" value="' + escHtml(_tdSearch) + '" oninput="tdSearchInput(this.value)">'
+    + '<input id="td-search" type="search" autocomplete="off" placeholder="Filtrar jugador o país (ej: Mareco, Perú)" value="' + escHtml(_tdSearch) + '" oninput="tdSearchInput(this.value)">'
     + '</div>';
 }
 // Al tipear: reconstruye la ronda actual (el input vive en el header, que tdBuildRound NO reconstruye,
 // así que no pierde el foco). Debounce corto para no rearmar en cada tecla.
+// Todo lo que el buscador acepta de una partida: los dos nombres y, además, el PAÍS de cada lado (16/09/2026,
+// Olimpiada: "quiero ver Perú"). El país sale del equipo del PGN (Olimpiadas y torneos por equipos: "Netherlands"
+// y "Países Bajos") y de la federación de la tabla del torneo (individuales: "NED" y "Países Bajos"). Se busca
+// sin acentos: "paises bajos", "peru", "ned" o "netherlands" traen lo mismo.
+// Devuelve { texto, codigos }: los códigos de 3 letras ("NED") van aparte y se comparan ENTEROS, porque como
+// pedazo de texto "ned" también encontraba a cualquiera que se llame Kennedy.
+function _tdSearchHay(h) {
+  var crk = (typeof _tdCtx !== 'undefined' && _tdCtx && _tdCtx.crKey) || null, partes = [h.White || '', h.Black || ''], codigos = {};
+  function fedDe(code) { code = String(code || '').toUpperCase(); if (!_FED_ES[code]) return; codigos[code] = 1; partes.push(_FED_ES[code]); }
+  [h.WhiteTeam, h.BlackTeam].forEach(function(t) {
+    if (!t) return;
+    partes.push(t, _paisES(t));
+    var p = _teamCountryParts(t);
+    var limpio = String(p.clean || t);
+    fedDe(p.fed || _nombreFedIx()[normStr(limpio.replace(/[ ]+([0-9]{1,2}|[A-DIVX]{1,3})$/, ''))] || _NAME_FED[limpio.toLowerCase()] || (/^[A-Za-z]{3}$/.test(t) ? t : ''));
+  });
+  [h.White, h.Black].forEach(function(n) {
+    var e = n ? _tourEntryByName(n, crk) : null;
+    if (e && e.fed) fedDe(e.fed);
+  });
+  return { texto: _tdNorm(partes.join(' ')), codigos: codigos };
+}
+// Los términos del buscador. Un país de VARIAS palabras va entero ("paises bajos", "san marino", "hong kong"):
+// partido en palabras, "san" traía también a Sandro Mareco. Lo demás se separa por espacios, como siempre.
+var _tdPaisesLargos = null;
+function _tdSearchTerms(q) {
+  if (!_tdPaisesLargos) {
+    var vistos = {};
+    _tdPaisesLargos = Object.keys(_NAME_FED).concat(Object.keys(_FED_ES).map(function(k) { return _FED_ES[k]; }))
+      .map(function(n) { return _tdNorm(n).replace(/\s+/g, ' ').trim(); })
+      .filter(function(n) { if (n.indexOf(' ') < 0 || vistos[n]) return false; vistos[n] = 1; return true; })
+      .sort(function(a, b) { return b.length - a.length; });   // el más largo primero ("guinea ecuatorial" antes que "guinea")
+  }
+  var s = ' ' + _tdNorm(q).replace(/\s+/g, ' ').trim() + ' ', terms = [];
+  _tdPaisesLargos.forEach(function(n) {
+    if (s.indexOf(' ' + n + ' ') === -1) return;
+    terms.push(n);
+    s = s.split(' ' + n + ' ').join('  ');
+  });
+  return terms.concat(s.split(/\s+/).filter(Boolean));
+}
+// ¿La partida pasa el buscador? Alcanza con que coincida uno de los términos (igual que antes con los nombres).
+function _tdSearchMatch(h, terms) {
+  if (!terms || !terms.length) return true;
+  var hay = _tdSearchHay(h);
+  return terms.some(function(t) {
+    var cod = t.toUpperCase();
+    if (t.length === 3 && _FED_ES[cod]) return !!hay.codigos[cod];   // "ned", "per", "arg": el código del país
+    return hay.texto.indexOf(t) !== -1;
+  });
+}
 function tdSearchInput(val){
   _tdSearch = val || '';
   if (_tdSearchTimer) clearTimeout(_tdSearchTimer);
@@ -31119,8 +31174,8 @@ function tdBuildRound(rInt) {
   var _all = _roundGames;
   if (_tdArgOnly) _all = _all.filter(function(g){ return _tdIsArgGame(g.h); });   // filtrar ANTES de paginar (los argentinos juntos)
   if (_tdSearch) {   // buscador: dejar solo los tableros cuyo nombre (blancas o negras) matchee algún término
-    var _terms = _tdNorm(_tdSearch).split(/\s+/).filter(Boolean);
-    if (_terms.length) _all = _all.filter(function(g){ var _hay = _tdNorm((g.h.White||'') + ' ' + (g.h.Black||'')); return _terms.some(function(t){ return _hay.indexOf(t) !== -1; }); });
+    var _terms = _tdSearchTerms(_tdSearch);
+    if (_terms.length) _all = _all.filter(function(g){ return _tdSearchMatch(g.h, _terms); });   // nombre o país
   }
   var _totalPages = Math.max(1, Math.ceil(_all.length / _TD_PER_PAGE));
   if (_tdPage >= _totalPages) _tdPage = _totalPages - 1;
@@ -31226,11 +31281,11 @@ function tdBuildRoundTeams(rInt, panel, roundGames) {
     // Filtros (argentinos y/o buscador): dejar solo los enfrentamientos con algún tablero que pase, y
     // dentro solo esos tableros (el marcador de la cabecera sigue siendo el del match completo). El
     // buscador en torneos por equipos se aplica ACÁ (tdBuildRound delega antes de su propio filtro).
-    var _terms = _tdSearch ? _tdNorm(_tdSearch).split(/\s+/).filter(Boolean) : [];
+    var _terms = _tdSearch ? _tdSearchTerms(_tdSearch) : [];
     view = view.map(function(o) {
       var bs = o.m.boards;
       if (_tdArgOnly) bs = bs.filter(function(g) { return _tdIsArgGame(g.h); });
-      if (_terms.length) bs = bs.filter(function(g) { var hay = _tdNorm((g.h.White||'') + ' ' + (g.h.Black||'')); return _terms.some(function(t) { return hay.indexOf(t) !== -1; }); });
+      if (_terms.length) bs = bs.filter(function(g) { return _tdSearchMatch(g.h, _terms); });   // nombre o país
       return bs.length ? { m: { teamA: o.m.teamA, teamB: o.m.teamB, boards: bs, a: o.m.a, b: o.m.b }, idx: o.idx } : null;
     }).filter(Boolean);
   }
@@ -31288,15 +31343,19 @@ function _tdUpdateMatchScores(rInt) {
 }
 
 // Navegación de páginas de miniaturas (◀ Página X/Y ▶). Usa el contenedor #td-pager.
+// Va dos veces: arriba de los tableros (#td-pager) y al final (#td-pager-bottom), así no hay que subir
+// para pasar de página. Al pasar, tdGoPage lleva la vista al principio de los tableros.
 function _tdRenderPager(rInt, totalPages, total, unit) {
-  var pg = document.getElementById('td-pager');
-  if (!pg) return;
-  if (totalPages <= 1) { pg.innerHTML = ''; pg.style.display = 'none'; return; }
-  pg.style.display = 'flex';
   var bs = 'background:var(--bg3);border:1px solid var(--border);color:var(--text2);font-size:14px;border-radius:8px;padding:6px 13px;cursor:pointer;font-family:inherit';
-  pg.innerHTML = '<button onclick="tdGoPage(' + rInt + ',' + (_tdPage-1) + ')"' + (_tdPage===0?' disabled':'') + ' style="' + bs + (_tdPage===0?';opacity:.4':'') + '">◀</button>'
-    + '<span style="font-size:12px;color:var(--text2)">Página ' + (_tdPage+1) + ' de ' + totalPages + ' · ' + total + ' ' + (unit || 'partidas') + '</span>'
-    + '<button onclick="tdGoPage(' + rInt + ',' + (_tdPage+1) + ')"' + (_tdPage>=totalPages-1?' disabled':'') + ' style="' + bs + (_tdPage>=totalPages-1?';opacity:.4':'') + '">▶</button>';
+  ['td-pager', 'td-pager-bottom'].forEach(function(id) {
+    var pg = document.getElementById(id);
+    if (!pg) return;
+    if (totalPages <= 1) { pg.innerHTML = ''; pg.style.display = 'none'; return; }
+    pg.style.display = 'flex';
+    pg.innerHTML = '<button onclick="tdGoPage(' + rInt + ',' + (_tdPage-1) + ')"' + (_tdPage===0?' disabled':'') + ' aria-label="Página anterior" style="' + bs + (_tdPage===0?';opacity:.4':'') + '">◀</button>'
+      + '<span style="font-size:12px;color:var(--text2)">Página ' + (_tdPage+1) + ' de ' + totalPages + ' · ' + total + ' ' + (unit || 'partidas') + '</span>'
+      + '<button onclick="tdGoPage(' + rInt + ',' + (_tdPage+1) + ')"' + (_tdPage>=totalPages-1?' disabled':'') + ' aria-label="Página siguiente" style="' + bs + (_tdPage>=totalPages-1?';opacity:.4':'') + '">▶</button>';
+  });
 }
 
 function tdGoPage(rInt, p) {
@@ -32409,6 +32468,7 @@ function _tdLiveBuild(res, sec, keepRound) {
   roundOrder.forEach(function(rInt) {
     h += '<div id="td-round-' + rInt + '" class="td-round-grid" style="display:' + (rInt===startRound?'grid':'none') + ';grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:4px"></div>';
   });
+  h += '<div id="td-pager-bottom" style="display:none;align-items:center;justify-content:center;gap:14px;margin-top:16px"></div>';
   sec.innerHTML = h;
   if (keepRound == null) _tdPage = 0;   // apertura: arranca en la página 1 (el refresco mantiene la página)
   tdBuildRound(startRound);
