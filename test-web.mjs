@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1081;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1082;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -4101,6 +4101,9 @@ console.log('\n=== 53. Vivo: los tableros que se miran, sueltos y al instante (1
       '🔒 el refresco de la ronda pasa por el filtro que no pisa lo más nuevo');
   chk(/_tdStartWatchdog\(\); _tdFocusStart\(\); \}/.test(extraerFuncion('_tdLiveFetchMulti')) && /^function _tdLiveStop\(\) \{ _tdFocusStop\(\);/.test(extraerFuncion('_tdLiveStop')),
       'arranca con el vivo on-demand y se apaga al salir');
+  chk(SRC.includes("function _tdFocusWake() { if (!document.hidden && _tdFocusTimer) _tdFocusTick(); }")
+      && SRC.includes("document.addEventListener('visibilitychange', _tdFocusWake);") && SRC.includes("window.addEventListener('online', _tdFocusWake);"),
+      '🔒 al volver a la pestaña los tableros que se miran se piden en el acto (no a los 8 s)');
 }
 
 // ── ARENA DE LICHESS — Fase 0: la cartelera (plan del 13/09/2026) ─────────────────────
