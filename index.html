@@ -32060,7 +32060,7 @@ function _tdKeepPolling(res) {
   return (Date.now() - (res._odLastFin || _tdIdleSince)) <= _TD_MAX_IDLE_MS;
 }
 
-function _tdLiveStop() { if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; } _tdLivePolling = false; _tdLiveNoPoll = false; _tdLivePace = ''; _tdStopWatchdog(); _tdPollGen++; _tdLiveCtx = null; _tdIdleSince = 0; _tdFinGrace = 0; _tdFetchFails = 0; _tdLastGood = 0; _tdStopClocks(); mevAbort(); }
+function _tdLiveStop() { _tdFocusStop(); if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; } _tdLivePolling = false; _tdLiveNoPoll = false; _tdLivePace = ''; _tdStopWatchdog(); _tdPollGen++; _tdLiveCtx = null; _tdIdleSince = 0; _tdFinGrace = 0; _tdFetchFails = 0; _tdLastGood = 0; _tdStopClocks(); mevAbort(); }
 
 function _tdLoadLiveGames(broadcastId, broadcastUrl, name, location, pgnKey, typ, status, hasFallback) {
   // OJO: NO prender acá _tdLivePolling. Al abrir en PESTAÑA NUEVA todavía no sabemos si el torneo está
@@ -32156,7 +32156,7 @@ function _tdLiveFetchMulti(tourIds, name, location, pgnKey, typ, hasFallback) {
     _tdLastGood = Date.now(); _tdFetchFails = 0;
     if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; }
     _tdLivePolling = _tdKeepPolling(res);   // si el torneo ya no está en vivo, salir de modo vivo (gráfico → análisis normal)
-    if (_tdLivePolling) { _tdLiveTimer = setTimeout(_tdLiveRefresh, _liveRefreshMs(_tdLiveCtx && _tdLiveCtx.tourId)); _tdStartWatchdog(); }
+    if (_tdLivePolling) { _tdLiveTimer = setTimeout(_tdLiveRefresh, _liveRefreshMs(_tdLiveCtx && _tdLiveCtx.tourId)); _tdStartWatchdog(); _tdFocusStart(); }
   });
 }
 // Camino EAGER (baja TODAS las rondas): para livechesscloud y como respaldo si la metadata de Lichess falla.
@@ -32598,6 +32598,125 @@ function _tdApplyViewerRefresh(pgnKey) {
   faMaybeAutoLive();   // auto-mostrar/actualizar el gráfico en vivo con las jugadas nuevas
 }
 
+/* LOS TABLEROS QUE SE ESTÁN MIRANDO, AL INSTANTE (16/09/2026).
+   Olimpiada de Samarcanda: 9 transmisiones, 776 partidas. Lichess exporta la ronda entera a ~10 partidas
+   por segundo y de a una transmisión por vez, así que por el Worker cada tablero llegaba con 1-2 minutos
+   de atraso. Pero nadie mira 776 partidas: se miran las 8 de los argentinos. Una partida SUELTA
+   (/api/study/<ronda>/<partida>.pgn) sale en ~0,1 s, con CORS abierto y el MISMO formato que la ronda.
+   Entonces: cada _TD_FOCUS_MS, el navegador del visitante (con SU dirección, no la compartida del Worker)
+   pide directo a Lichess las partidas en curso que tiene EN PANTALLA —o la que tiene abierta en el visor—
+   y las pone en su lugar. La ronda completa sigue llegando como siempre y no pisa una versión más nueva
+   (_tdFocusPreferNewer). Con un 429, un minuto sin pedir (lo que pide Lichess). */
+var _TD_FOCUS_MS = 8000;
+var _TD_FOCUS_MAX = 12;          // tope de partidas por vuelta (las 8 de un equipo entran de sobra)
+var _TD_FOCUS_429_MS = 60000;
+var _tdFocusTimer = null, _tdFocusBusy = false, _tdFocusHold = 0;
+var _tdFocusNew = {};            // id de partida → su PGN suelto, mientras vaya más adelante que el de la ronda
+// Ronda y partida de Lichess, sacadas del [Site]/[GameURL] del PGN de la transmisión.
+function _bcGameIds(pgn) {
+  var m = /lichess\.org\/broadcast\/[^\/"\s]+\/[^\/"\s]+\/([A-Za-z0-9]{8})\/([A-Za-z0-9]{8})/.exec(pgn || '');
+  return m ? { round: m[1], game: m[2] } : null;
+}
+// Cantidad de medias jugadas (sin cabeceras, comentarios, variantes, números ni resultado).
+function _pgnPlies(pgn) {
+  var ABRE = String.fromCharCode(123), CIERRA = String.fromCharCode(125);   // llaves de comentario (sin escribirlas: el banco corta funciones contando llaves)
+  var body = String(pgn || '').replace(/^\s*(\[[^\]]*\]\s*)+/, '').split(ABRE)
+    .map(function(parte, i){ if (!i) return parte; var j = parte.indexOf(CIERRA); return j < 0 ? '' : parte.slice(j + 1); }).join(' ')
+    .replace(/\([^)]*\)/g, ' ').replace(/\$\d+/g, ' ').replace(/\d+\.(\.\.)?/g, ' ');
+  return body.split(/\s+/).filter(function(t){ return t && !/^(1-0|0-1|1\/2-1\/2|\*)$/.test(t); }).length;
+}
+// ¿El PGN `a` va más adelante que `b`? Más jugadas, o las mismas y `a` ya tiene resultado.
+function _pgnAhead(a, b) {
+  var pa = _pgnPlies(a), pb = _pgnPlies(b);
+  if (pa !== pb) return pa > pb;
+  return (parsePgnHeaders(a).Result || '*') !== '*' && (parsePgnHeaders(b).Result || '*') === '*';
+}
+// Las partidas que llegan con la ronda (lentas): donde la suelta va más adelante, queda la suelta.
+function _tdFocusPreferNewer(pgns) {
+  if (!pgns) return pgns;
+  return pgns.map(function(p){
+    var id = _bcGameIds(p), n = id && _tdFocusNew[id.game];
+    if (!n) return p;
+    if (_pgnAhead(n, p)) return n;
+    delete _tdFocusNew[id.game];   // la ronda ya la alcanzó: vuelve a mandar la ronda
+    return p;
+  });
+}
+// Qué se está mirando: la partida del visor (si está abierto, tapa la grilla) o los tableros EN PANTALLA.
+// Sólo partidas en curso de Lichess.
+function _tdFocusTargets() {
+  var out = [], seen = {};
+  function add(pgn) {
+    if (out.length >= _TD_FOCUS_MAX || !pgn || (parsePgnHeaders(pgn).Result || '*') !== '*') return;
+    var id = _bcGameIds(pgn);
+    if (!id || seen[id.game]) return;
+    seen[id.game] = 1; out.push({ id: id, pgn: pgn });
+  }
+  if (!_tdCtx) return out;
+  var ov = document.getElementById('chess-overlay');
+  if (ov && ov.classList.contains('open')) {
+    if (_cvTourPgnKey === _tdCtx.pgnKey && cv.rawPgn) add(cv.rawPgn);
+    return out;
+  }
+  var panel = _tdCurrentRound != null ? document.getElementById('td-round-' + _tdCurrentRound) : null;
+  if (!panel) return out;
+  var vh = window.innerHeight || 800, bds = panel.querySelectorAll('.td-bd');
+  for (var i = 0; i < bds.length; i++) {
+    var r = bds[i].getBoundingClientRect();
+    if ((!r.width && !r.height) || r.bottom < -100 || r.top > vh + 100) continue;   // oculto o fuera de la pantalla
+    add(_tdCtx.games[parseInt(bds[i].getAttribute('data-gidx'))]);
+  }
+  return out;
+}
+// Pone las versiones sueltas en su lugar (en la ronda que sea) y parchea tableros y visor.
+function _tdFocusApply(fresh) {
+  if (!_tdCtx || !fresh || !fresh.length) return;
+  var changed = false;
+  fresh.forEach(function(f){
+    Object.keys(_tdCtx.byRound).forEach(function(k){
+      (_tdCtx.byRound[k] || []).forEach(function(g){
+        var id = _bcGameIds(g.pgn);
+        if (!id || id.game !== f.id.game || g.pgn === f.pgn || !_pgnAhead(f.pgn, g.pgn)) return;
+        g.pgn = f.pgn; g.h = parsePgnHeaders(f.pgn); changed = true;
+        _tdFocusNew[f.id.game] = f.pgn;
+      });
+    });
+  });
+  if (!changed) return;
+  _tdRebuildFlatGames();   // mismo orden → los índices de los tableros dibujados siguen valiendo
+  if (_tdCurrentRound != null && document.getElementById('td-round-' + _tdCurrentRound)) _tdPatchRoundBoards(_tdCurrentRound, _tdCtx.games);
+  _tdApplyViewerRefresh(_tdCtx.pgnKey);
+  if (_tdLiveCtx) setTimeout(mevTick, 900);
+}
+function _tdFocusTick() {
+  if (_tdFocusBusy || !_tdLiveCtx || !_tdLiveCtx.onDemand || !_tdLivePolling || document.hidden || Date.now() < _tdFocusHold) return;
+  var targets = _tdFocusTargets();
+  if (!targets.length) return;
+  _tdFocusBusy = true;
+  var key = _tdLiveCtx.key, fresh = [], pending = targets.length;
+  targets.forEach(function(t){
+    _fetchTO('https://lichess.org/api/study/' + t.id.round + '/' + t.id.game + '.pgn', 7000)
+      .then(function(r){
+        if (r.status === 429) _tdFocusHold = Date.now() + _TD_FOCUS_429_MS;
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.text();
+      })
+      .then(function(txt){
+        txt = String(txt || '').trim();
+        var h = parsePgnHeaders(txt), h0 = parsePgnHeaders(t.pgn);
+        if (/^\[Event /.test(txt) && (h.White || '') === (h0.White || '') && (h.Black || '') === (h0.Black || '')) fresh.push({ id: t.id, pgn: txt });
+      })
+      .catch(function(){})
+      .then(function(){
+        if (--pending > 0) return;
+        _tdFocusBusy = false;
+        if (_tdLiveCtx && _tdLiveCtx.key === key) { try { _tdFocusApply(fresh); } catch (e) {} }
+      });
+  });
+}
+function _tdFocusStart() { if (!_tdFocusTimer) _tdFocusTimer = setInterval(_tdFocusTick, _TD_FOCUS_MS); }
+function _tdFocusStop() { if (_tdFocusTimer) { clearInterval(_tdFocusTimer); _tdFocusTimer = null; } _tdFocusBusy = false; _tdFocusNew = {}; }
+
 /* TABLAS DE CHESS-RESULTS QUE SE ACTUALIZAN SOLAS (13/09/2026) — sólo rápidas y blitz.
    Idea del autor: en un suizo el árbitro no puede sortear la ronda siguiente sin cargar los resultados de
    la anterior; así que cuando aparece la ronda NUEVA de Lichess, Chess-Results ya tiene la tabla al día y
@@ -32701,6 +32820,7 @@ function _tdLiveRefreshOnDemand(gen, key, tourIds) {
 // actual (la viva) con las partidas frescas + pool, sin re-armar ni re-bajar el resto.
 function _tdOnDemandApplyRefresh(merged, currentGames, sec, prevCur) {
   if (!_tdCtx) return;
+  currentGames = _tdFocusPreferNewer(currentGames);   // lo que llegó suelto (tableros en pantalla) va más adelante
   _tdCrTablesOnNewRound(_tdMaxRoundNum(merged.roundsMeta.map(function(r){ return r.num; })));   // ronda nueva → tablas de CR (rápidas/blitz)
   var curNum = merged.currentNum;
   var tabsOk = merged.roundsMeta.every(function(r){ return document.getElementById('td-rtab-' + r.num); });

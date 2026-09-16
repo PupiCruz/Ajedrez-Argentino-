@@ -79,7 +79,8 @@ const LI_RESOLVE_CACHE = 3600; // resolución id-de-ronda→id-de-torneo: es FIJ
 // Ventana de gracia: cuánto tiempo MÁS (después de que la copia deja de ser "fresca") seguimos
 // sirviendo la última posición buena mientras Lichess se recupera de un 429/caída. Así el tablero
 // NUNCA queda vacío por un pico: mostramos lo último bueno hasta que el refresco vuelva a andar.
-const LI_STALE_WINDOW = 600;   // 10 min de gracia
+const LI_STALE_WINDOW = 1800;  // 30 min de gracia (eran 10: en la Olimpiada de 2026, con 9 transmisiones y
+                               // Lichess frenando, alguna copia llegaba a los 10 min y se borraba → tablero vacío)
 // UA identificable (Lichess pide identificarse; así, si algo raro pasa, saben quiénes somos).
 const LI_UA = 'AjedrezArgentinoBot/1.0 (+https://chessargentino.pages.dev)';
 // Dedup de bajadas concurrentes DENTRO de un mismo isolate (single-flight): si llegan muchos
@@ -114,6 +115,22 @@ let _liPgnEnCurso = 0;
 // "hay otra exportación andando" sólo frena el refresco mientras la copia tenga menos de 30 s.
 const LI_FETCH_TIMEOUT_MS = 45000;
 const LI_BUSY_MAX_STALE = 30;
+// LA FILA ES DE TODO EL COLO, NO DE CADA ISOLATE (16/09/2026, Olimpiada de Samarcanda: 9 transmisiones,
+// 776 partidas). Lichess exporta ~10 partidas por segundo y de a UNA por vez: 100 partidas = 10 s.
+// `_liPgnEnCurso` sólo veía lo de su propio isolate, y el colo de Buenos Aires corre varios: dos isolates
+// refrescaban a la vez, el segundo se comía un 429 que creía "de verdad" y armaba la pausa del minuto para
+// TODOS. Medido: las 9 copias pasaban casi todo el tiempo en `vieja-pausa`, con 1 a 6 minutos de atraso.
+// Ahora la exportación en curso se anota también en la caché del borde (`/__liexport`, con la hora en que
+// arrancó): los otros isolates la ven, no largan otra encima y, si igual chocan, no pausan.
+// "Ocupada" dura a lo sumo LI_BUSY_MAX_STALE desde que ARRANCÓ (así una colgada no frena todo 45 s).
+const _liPgnDesde = new Map();   // exportaciones de este isolate: clave → cuándo arrancó
+// POR TURNO, LA MÁS VIEJA PRIMERO (16/09/2026). Con la fila, cuando Lichess se liberaba ganaba el primer
+// pedido en llegar, y la app pide las transmisiones siempre en el mismo orden: Open I, II y IV se
+// refrescaban cada 30-60 s y Open III, V o Women IV quedaban 7-10 minutos atrás. Ahora cada copia vieja
+// que se sirve anota su edad en la caché del borde (`/__liturno`); se refresca sólo si no hay otra, pedida
+// hace poco, más vieja por más de LI_TURNO_MARGEN.
+const LI_TURNO_VISTA = 60_000;   // una transmisión que nadie pide hace 1 min deja de contar
+const LI_TURNO_MARGEN = 5_000;
 
 export default {
   async fetch(request, env, ctx) {
@@ -580,10 +597,13 @@ async function liBc(reqUrl, ctx) {
     // si ya hay otra exportación de PGN andando: chocaría con ella y Lichess la rebotaría.
     // "Ocupado" sólo mientras la copia sea reciente (LI_BUSY_MAX_STALE): si no, una exportación lenta o
     // colgada dejaba la copia congelada en la jugada que tenía.
-    const ocupado = isPgn && _liPgnEnCurso > 0 && !_liInflight.has(cacheKeyStr) && ageMs < LI_BUSY_MAX_STALE * 1000;
+    const vence = fetchedAt + hitFresh * 1000;   // desde cuándo está vieja (una ronda terminada, 1 h después)
+    if (isPgn) await liTurnoAnotar(cache, reqUrl, cacheKeyStr, vence);
+    const ocupado = isPgn && !_liInflight.has(cacheKeyStr) && (await liExportDesde(cache, reqUrl)) > Date.now() - LI_BUSY_MAX_STALE * 1000;
     let estado = 'vieja-refrescando';
     if (ocupado) estado = 'vieja-ocupado';
     else if (await liIsPaused(cache, reqUrl)) estado = 'vieja-pausa';
+    else if (isPgn && !(await liEsSuTurno(cache, reqUrl, cacheKeyStr, vence))) estado = 'vieja-turno';
     else ctx.waitUntil(liRevalidate(cache, cacheKey, cacheKeyStr, t.toString(), isPgn, contentType, storeTtl, reqUrl, freshTtl));
     return await liClientResp(hit, contentType, freshTtl, estado, ageMs);
   }
@@ -592,7 +612,7 @@ async function liBc(reqUrl, ctx) {
   // hay que bajar ahora, con dedup para que muchos misses simultáneos compartan una sola bajada.
   let r;
   try {
-    r = await liFetchBuffered(cacheKeyStr, t.toString(), isPgn);
+    r = await liFetchBuffered(cacheKeyStr, t.toString(), isPgn, cache, reqUrl);
   } catch (e) {
     return errJson('No se pudo bajar de Lichess: ' + e.message, 502);
   }
@@ -618,12 +638,18 @@ async function liBc(reqUrl, ctx) {
 // Baja de Lichess a memoria (ArrayBuffer) con dedup por isolate: si ya hay una bajada en curso
 // para la misma URL, todos esperan esa. Devuelve { ok, status, buf, choque } — `choque`: cuando
 // arrancó había OTRA exportación de PGN andando (un 429 así es por eso, no un freno de verdad).
-function liFetchBuffered(cacheKeyStr, targetUrl, isPgn) {
+function liFetchBuffered(cacheKeyStr, targetUrl, isPgn, cache, reqUrl) {
   const existing = _liInflight.get(cacheKeyStr);
   if (existing) return existing;
-  const choque = isPgn && _liPgnEnCurso > 0;
-  if (isPgn) _liPgnEnCurso++;
+  let choque = isPgn && _liPgnEnCurso > 0;
+  const desde = Date.now();
+  if (isPgn) { _liPgnEnCurso++; _liPgnDesde.set(cacheKeyStr, desde); }
   const p = (async () => {
+    if (isPgn && cache && reqUrl) {
+      // ¿Otro isolate del colo tiene una exportación andando? (Arrancada hace menos del tiempo límite.)
+      if (!choque) choque = (await liExportColo(cache, reqUrl)) > desde - LI_FETCH_TIMEOUT_MS;
+      await liExportMarcar(cache, reqUrl, desde);
+    }
     // Tiempo límite: una bajada colgada tiene que terminar (con error) para liberar _liPgnEnCurso.
     const ac = new AbortController();
     const corte = setTimeout(() => { try { ac.abort(); } catch (e) {} }, LI_FETCH_TIMEOUT_MS);
@@ -637,9 +663,10 @@ function liFetchBuffered(cacheKeyStr, targetUrl, isPgn) {
       return { ok: up.ok, status: up.status, buf, choque };
     } finally {
       clearTimeout(corte);
+      if (isPgn && cache && reqUrl) await liExportLiberar(cache, reqUrl, desde);
     }
   })();
-  const wrapped = p.finally(() => { _liInflight.delete(cacheKeyStr); if (isPgn) _liPgnEnCurso--; });
+  const wrapped = p.finally(() => { _liInflight.delete(cacheKeyStr); if (isPgn) { _liPgnEnCurso--; _liPgnDesde.delete(cacheKeyStr); } });
   _liInflight.set(cacheKeyStr, wrapped);
   return wrapped;
 }
@@ -648,11 +675,13 @@ function liFetchBuffered(cacheKeyStr, targetUrl, isPgn) {
 // → seguimos sirviendo la última copia buena. El tablero nunca queda vacío por un pico.
 async function liRevalidate(cache, cacheKey, cacheKeyStr, targetUrl, isPgn, contentType, storeTtl, reqUrl, freshTtl) {
   let r;
-  try { r = await liFetchBuffered(cacheKeyStr, targetUrl, isPgn); }
+  try { r = await liFetchBuffered(cacheKeyStr, targetUrl, isPgn, cache, reqUrl); }
   catch (e) { return; }        // Lichess caído → conservamos lo viejo-pero-bueno
   if (r.status === 429) { if (!r.choque) await liPause(cache, reqUrl); return; }   // y un minuto sin pedirle nada
   if (!r.ok) return;           // 5xx → idem: NO pisamos la copia buena
-  await cache.put(cacheKey, liStoredCopy(r.buf, contentType, isPgn, freshTtl, storeTtl));
+  const copia = liStoredCopy(r.buf, contentType, isPgn, freshTtl, storeTtl);
+  await cache.put(cacheKey, copia);
+  if (isPgn) await liTurnoAnotar(cache, reqUrl, cacheKeyStr, Date.now() + Number(copia.headers.get('x-fa-fresh') || freshTtl) * 1000);
 }
 
 // ¿Ronda TERMINADA? Todas las partidas del PGN con resultado (ninguna "*"). Si falta el Result de
@@ -667,6 +696,58 @@ function liPgnTerminada(buf) {
 function liStoredCopy(buf, contentType, isPgn, freshTtl, storeTtl) {
   if (isPgn && liPgnTerminada(buf)) return liStoredResp(buf, contentType, LI_FIN_STORE, LI_FIN_FRESH);
   return liStoredResp(buf, contentType, storeTtl, freshTtl);
+}
+
+// La exportación en curso, anotada para todo el colo (ver _liPgnDesde): guarda cuándo arrancó; 0 = libre.
+function liExportKey(reqUrl) { return new Request(reqUrl.origin + '/__liexport'); }
+async function liExportColo(cache, reqUrl) {
+  try {
+    const m = await cache.match(liExportKey(reqUrl));
+    return m ? Number(m.headers.get('x-fa-desde') || 0) : 0;
+  } catch (e) { return 0; }
+}
+// La más reciente entre las de este isolate y la anotada en el colo.
+async function liExportDesde(cache, reqUrl) {
+  let d = 0;
+  for (const v of _liPgnDesde.values()) if (v > d) d = v;
+  const c = await liExportColo(cache, reqUrl);
+  return c > d ? c : d;
+}
+async function liExportMarcar(cache, reqUrl, desde) {
+  try {
+    await cache.put(liExportKey(reqUrl), new Response('', {
+      headers: { 'Cache-Control': 'public, max-age=' + Math.ceil(LI_FETCH_TIMEOUT_MS / 1000), 'x-fa-desde': String(desde) },
+    }));
+  } catch (e) {}
+}
+// Al terminar se libera, pero sólo si la anotación sigue siendo la nuestra (si otra arrancó después, queda).
+async function liExportLiberar(cache, reqUrl, desde) {
+  if ((await liExportColo(cache, reqUrl)) !== desde) return;
+  await liExportMarcar(cache, reqUrl, 0);
+}
+
+// El turno (ver LI_TURNO_VISTA): { clave: { f: desde cuándo está vieja su copia, v: cuándo la pidieron por última vez } }.
+function liTurnoKey(reqUrl) { return new Request(reqUrl.origin + '/__liturno'); }
+async function liTurnoLeer(cache, reqUrl) {
+  try { const m = await cache.match(liTurnoKey(reqUrl)); return m ? (await m.json()) : {}; } catch (e) { return {}; }
+}
+async function liTurnoAnotar(cache, reqUrl, clave, vence) {
+  const t = await liTurnoLeer(cache, reqUrl), ahora = Date.now();
+  t[clave] = { f: vence, v: ahora };
+  for (const k of Object.keys(t)) if (!(t[k] && ahora - t[k].v < LI_TURNO_VISTA)) delete t[k];
+  try {
+    await cache.put(liTurnoKey(reqUrl), new Response(JSON.stringify(t), {
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=' + Math.ceil(LI_TURNO_VISTA / 1000) },
+    }));
+  } catch (e) {}
+}
+async function liEsSuTurno(cache, reqUrl, clave, vence) {
+  const t = await liTurnoLeer(cache, reqUrl), ahora = Date.now();
+  for (const k of Object.keys(t)) {
+    if (k === clave || !t[k] || ahora - t[k].v >= LI_TURNO_VISTA) continue;
+    if (t[k].f < vence - LI_TURNO_MARGEN) return false;
+  }
+  return true;
 }
 
 // La pausa del 429 (ver LI_429_PAUSE). La clave va con el origen del propio Worker: la Cache API sólo

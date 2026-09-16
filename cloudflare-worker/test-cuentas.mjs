@@ -655,6 +655,158 @@ console.log('\n=== 10. La IA sabe redactar torneos POR EQUIPOS (Olimpiadas, liga
   }
 }
 
+// ── Dos isolates del mismo colo no exportan a la vez (16/09/2026) ──────────────────────────────────────
+// Olimpiada de Samarcanda: 9 transmisiones. El colo de Buenos Aires corre varios isolates y cada uno sólo
+// veía SUS exportaciones: dos refrescaban juntas, Lichess rebotaba la segunda con 429, ese isolate lo tomaba
+// como freno de verdad y pausaba un minuto a TODOS. Las copias vivían en `vieja-pausa`, 1 a 6 min atrasadas.
+// Dos isolates = el mismo Worker importado dos veces (cada import tiene su propia memoria), con la caché
+// del borde compartida.
+{
+  console.log('\n=== 12c. Lichess: dos isolates del colo no exportan a la vez ===');
+  const guardado = new Map();
+  const cacheFalsa = {
+    async match(k) { const r = guardado.get(typeof k === 'string' ? k : k.url); return r ? r.clone() : undefined; },
+    async put(k, r) { guardado.set(typeof k === 'string' ? k : k.url, r.clone()); },
+  };
+  const cachesAntes = globalThis.caches, fetchAntes = globalThis.fetch, nowAntes = Date.now;
+  globalThis.caches = { default: cacheFalsa };
+  let reloj = 4_000_000_000_000;
+  Date.now = () => reloj;
+  const pedidos = [];
+  let lichessOcupado = false;     // Lichess de mentira: UNA exportación por vez, a la segunda le da 429
+  const soltar = [];              // exportaciones que quedan "andando" hasta que la prueba las suelta
+  let lenta = false;
+  const vivo = (id, j) => '[Event "X"]\n[White "A"]\n[Black "B"]\n[Result "*"]\n\n1. e4 * ' + id + '-jugada-' + j;
+  let jugada = 1;
+  globalThis.fetch = async (url) => {
+    url = String(url); pedidos.push(url);
+    if (lichessOcupado) return new Response('{"error":"Too many requests"}', { status: 429 });
+    const id = (url.match(/round\/(\w+)\.pgn/) || [])[1];
+    const cuerpo = vivo(id, jugada);
+    if (!lenta) return new Response(cuerpo, { status: 200 });
+    lichessOcupado = true;
+    await new Promise((ok) => soltar.push(ok));
+    lichessOcupado = false;
+    return new Response(cuerpo, { status: 200 });
+  };
+  const A = worker;
+  const B = (await import('./cr-proxy-worker.js?isolate=B')).default;
+  const pendientes = [];
+  const ctxLi = { waitUntil(p) { pendientes.push(p); } };
+  const ronda = (id) => 'https://lichess.org/api/broadcast/round/' + id + '.pgn';
+  const pedirEn = (w, id) => w.fetch(req('/libc?url=' + encodeURIComponent(ronda(id))), env, ctxLi);
+  const hayPausa = () => guardado.has('https://cr-proxy.test/__li429pausa');
+  const esperar = async () => { for (let i = 0; i < 50; i++) await Promise.resolve(); };
+  try {
+    // Las dos transmisiones ya tienen copia (bajadas cuando Lichess estaba libre).
+    await pedirEn(A, 'open1'); await pedirEn(B, 'open2'); await Promise.all(pendientes.splice(0));
+    chk(pedidos.length === 2, 'las dos transmisiones tienen su copia', pedidos.length);
+
+    // 11 s después: el isolate A arranca el refresco de Open I, que tarda (Lichess exporta 10 partidas/s).
+    reloj += 11_000; jugada = 2; lenta = true;
+    let r = await pedirEn(A, 'open1');
+    chk(r.headers.get('x-fa-estado') === 'vieja-refrescando', 'el isolate A refresca Open I de fondo', r.headers.get('x-fa-estado'));
+    await esperar();
+    chk(pedidos.length === 3 && soltar.length === 1, 'y esa exportación queda andando en Lichess', pedidos.length);
+
+    // Mientras tanto, al isolate B le piden Open II (copia de 11 s). ANTES: la refrescaba, chocaba y pausaba.
+    reloj += 2_000;
+    r = await pedirEn(B, 'open2'); await esperar();
+    chk(pedidos.length === 3, '🔒 el isolate B VE la exportación del A y no larga otra encima', pedidos.length);
+    chk(r.status === 200 && r.headers.get('x-fa-estado') === 'vieja-ocupado', 'B sirve su copia y avisa que Lichess está ocupado', r.headers.get('x-fa-estado'));
+    chk(!hayPausa(), '🔒 y no se arma la pausa del minuto');
+
+    // Un primer visitante SIN copia en B (Open III) sí va a Lichess, choca, y ese 429 tampoco pausa.
+    lenta = false;
+    r = await pedirEn(B, 'open3'); await esperar();
+    chk(r.status === 429, 'una transmisión sin copia en B se intenta igual (y choca)', r.status);
+    chk(!hayPausa(), '🔒 ese choque con el isolate A tampoco arma la pausa');
+
+    // Termina la exportación de A: la anotación se libera y B ya puede refrescar Open II.
+    lenta = false; soltar.shift()(); await esperar(); await Promise.all(pendientes.splice(0));
+    r = await pedirEn(A, 'open1');
+    chk(/open1-jugada-2/.test(await r.text()), 'A guardó la jugada nueva de Open I');
+    const antes = pedidos.length;
+    r = await pedirEn(B, 'open2'); await Promise.all(pendientes.splice(0));
+    chk(pedidos.length === antes + 1 && r.headers.get('x-fa-estado') === 'vieja-refrescando',
+        '🔒 terminada la de A, B refresca Open II enseguida', r.headers.get('x-fa-estado'));
+    r = await pedirEn(B, 'open2');
+    chk(/open2-jugada-2/.test(await r.text()), 'y Open II ya muestra la jugada nueva');
+
+    // Una exportación del otro isolate que quedó anotada y nunca se liberó no frena más de 30 s.
+    await cacheFalsa.put('https://cr-proxy.test/__liexport', new Response('', { headers: { 'x-fa-desde': String(reloj) } }));
+    reloj += 11_000;
+    r = await pedirEn(B, 'open2'); await Promise.all(pendientes.splice(0));
+    chk(r.headers.get('x-fa-estado') === 'vieja-ocupado', 'con una anotación de hace 11 s, B espera', r.headers.get('x-fa-estado'));
+    reloj += 25_000;
+    r = await pedirEn(B, 'open2'); await Promise.all(pendientes.splice(0));
+    chk(r.headers.get('x-fa-estado') === 'vieja-refrescando', '🔒 una anotación olvidada de hace 36 s ya no frena', r.headers.get('x-fa-estado'));
+  } finally {
+    globalThis.caches = cachesAntes; globalThis.fetch = fetchAntes; Date.now = nowAntes;
+  }
+}
+
+// ── Por turno: se refresca primero la copia más atrasada (16/09/2026) ──────────────────────────────────
+// Con la fila, al liberarse Lichess ganaba el primer pedido en llegar, y la app pide siempre en el mismo
+// orden: Open I se refrescaba cada 30 s y Women IV llegó a 10 min de atraso (y ahí se borraba la copia).
+{
+  console.log('\n=== 12d. Lichess: por turno, la copia más atrasada primero ===');
+  const guardado = new Map();
+  const cacheFalsa = {
+    async match(k) { const r = guardado.get(typeof k === 'string' ? k : k.url); return r ? r.clone() : undefined; },
+    async put(k, r) { guardado.set(typeof k === 'string' ? k : k.url, r.clone()); },
+  };
+  const cachesAntes = globalThis.caches, fetchAntes = globalThis.fetch, nowAntes = Date.now;
+  globalThis.caches = { default: cacheFalsa };
+  let reloj = 5_000_000_000_000;
+  Date.now = () => reloj;
+  const pedidos = [];
+  globalThis.fetch = async (url) => { pedidos.push(String(url)); return new Response('[Event "X"]\n[Result "*"]\n\n1. e4 *', { status: 200 }); };
+  const pendientes = [];
+  const ctxLi = { waitUntil(p) { pendientes.push(p); } };
+  const ronda = (id) => 'https://lichess.org/api/broadcast/round/' + id + '.pgn';
+  const libc = async (id) => {
+    const r = await worker.fetch(req('/libc?url=' + encodeURIComponent(ronda(id))), env, ctxLi);
+    await Promise.all(pendientes.splice(0));
+    return r.headers.get('x-fa-estado');
+  };
+  const bajo = (id) => pedidos.some((u) => u.includes('/' + id + '.pgn'));
+  try {
+    await libc('womenIV');                 // la más vieja
+    reloj += 40_000; await libc('openI');  // 40 s más nueva
+    reloj += 11_000;
+    await libc('womenIV');                 // queda anotada su edad... y como es la más vieja, se refresca
+    chk(pedidos.filter((u) => u.includes('womenIV')).length === 2, 'la copia más atrasada (Women IV) se refresca');
+    // Otra vuelta: ahora Women IV está al día y Open I es la atrasada. Llega primero el pedido de Women IV.
+    reloj += 11_000; pedidos.length = 0;
+    let e = await libc('openI');
+    chk(e === 'vieja-refrescando' && bajo('openI'), 'Open I, ahora la más atrasada, se refresca', e);
+
+    // El caso de la Olimpiada: Open I (al día, pero vencida) llega primero; Women IV lleva más atraso.
+    reloj += 30_000; pedidos.length = 0;
+    await libc('womenIV');                 // anota su atraso (y se refresca: es la más vieja)
+    reloj += 1_000; pedidos.length = 0;
+    // Open I vence recién ahora; si alguna otra pedida hace poco lleva más atraso, espera su turno.
+    guardado.set('https://cr-proxy.test/__liturno', new Response(JSON.stringify({
+      ['https://cr-proxy.test/libc?url=' + encodeURIComponent(ronda('womenV'))]: { f: reloj - 120_000, v: reloj - 2_000 },
+    })));
+    e = await libc('openI');
+    chk(e === 'vieja-turno' && !bajo('openI'), '🔒 Open I espera: hay otra transmisión con 2 min de atraso', e);
+    reloj += 61_000; pedidos.length = 0;
+    e = await libc('openI');
+    chk(e === 'vieja-refrescando' && bajo('openI'), 'si esa otra transmisión deja de pedirse (1 min), no frena más', e);
+
+    // Una ronda terminada (fresca 1 h) no le gana el turno a las que están en vivo.
+    const copiaVieja = guardado.get('https://cr-proxy.test/libc?url=' + encodeURIComponent(ronda('openI')));
+    chk(!!copiaVieja, 'las copias quedan guardadas con la ventana de gracia de 30 min',
+        copiaVieja && copiaVieja.headers.get('Cache-Control'));
+    chk(copiaVieja && copiaVieja.headers.get('Cache-Control') === 'public, max-age=1810',
+        '🔒 la copia en vivo dura 30 min (eran 10: con Lichess frenando se borraba)', copiaVieja && copiaVieja.headers.get('Cache-Control'));
+  } finally {
+    globalThis.caches = cachesAntes; globalThis.fetch = fetchAntes; Date.now = nowAntes;
+  }
+}
+
 // ── Partidas de Chess-Results (/crpgn): guardadas una semana si hay, cortas si no (13/09/2026) ────────
 // Los organizadores suben partidas cada tanto; cada pedido no guardado le cuesta a Chess-Results dos
 // (formulario + descarga). Lo que se acordó con el autor: sin partidas, caché corta como siempre (una

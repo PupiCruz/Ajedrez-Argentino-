@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1064;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1081;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -4042,6 +4042,65 @@ console.log('\n=== 50. Puntos del torneo en el visor (6½/7) ===');
   const wake = extraerFuncion('_tdLiveWake');
   chk(/_tdLiveRefresh\(\)/.test(wake) && /document\.addEventListener\('visibilitychange', _tdLiveWake\)/.test(SRC),
       '🔒 al volver a la pestaña se piden las jugadas enseguida (no espera al timer frenado por Chrome)');
+}
+
+// ── 53. Vivo: los tableros que se están mirando llegan al instante (16/09) ──
+// Olimpiada de Samarcanda: la ronda entera por el Worker llegaba 1-2 min atrasada (Lichess exporta 10
+// partidas/s). Los tableros en pantalla se piden sueltos, directo a Lichess, y la ronda lenta no los pisa.
+console.log('\n=== 53. Vivo: los tableros que se miran, sueltos y al instante (16/09) ===');
+{
+  const N = ['parsePgnHeaders', '_bcGameIds', '_pgnPlies', '_pgnAhead', '_tdFocusPreferNewer', '_tdFocusApply'];
+  const F = new Function('var _tdFocusNew = {}, _tdCtx = null, _tdCurrentRound = null, _tdLiveCtx = null, llamadas = [];'
+    + 'function _tdRebuildFlatGames(){ llamadas.push("flat"); var g=[]; Object.keys(_tdCtx.byRound).forEach(function(k){ _tdCtx.byRound[k].forEach(function(x){ g.push(x.pgn); }); }); _tdCtx.games = g; }'
+    + 'function _tdPatchRoundBoards(){ llamadas.push("patch"); } function _tdApplyViewerRefresh(){ llamadas.push("visor"); } function mevTick(){}'
+    + 'var document = { getElementById: function(){ return {}; } };'
+    + N.map(extraerFuncion).join('\n')
+    + '; return { ' + N.join(',') + ', set ctx(c){ _tdCtx = c; _tdCurrentRound = 1; }, get nuevos(){ return _tdFocusNew; }, llamadas: llamadas };')();
+  const site = (g) => '[Event "Olymp 2026 Open"]\n[Site "https://lichess.org/broadcast/46th-fide-chess-olympiad-samarkand-2026-open-ii/round-1/aJJ3Lq0n/' + g + '"]\n[White "Pichot, Alan"]\n[Black "Carlsen, Magnus"]\n';
+  const partida = (g, jugadas, res) => site(g) + '[Result "' + res + '"]\n\n' + jugadas + ' ' + res;
+  const p6 = partida('mLMFfXfK', '1. d4 { [%clk 1:30:53] } 1... Nf6 { [%clk 1:30:49] } 2. Nf3 { [%clk 1:31:15] } 2... g6 { [%clk 1:30:33] } 3. Nbd2 3... Bg7', '*');
+  const p8 = partida('mLMFfXfK', '1. d4 { [%clk 1:30:53] } 1... Nf6 2. Nf3 2... g6 3. Nbd2 3... Bg7 4. e4 { [%clk 1:31:04] } 4... O-O', '*');
+  const p8fin = partida('mLMFfXfK', '1. d4 1... Nf6 2. Nf3 2... g6 3. Nbd2 3... Bg7 4. e4 4... O-O', '0-1');
+
+  const id = F._bcGameIds(p6);
+  chk(id && id.round === 'aJJ3Lq0n' && id.game === 'mLMFfXfK', 'saca la ronda y la partida de Lichess del [Site] del PGN', JSON.stringify(id));
+  chk(F._bcGameIds('[Event "X"]\n[Site "https://chess-results.com"]') === null, 'una partida que no es de Lichess no se pide suelta');
+  chk(F._pgnPlies(p6) === 6 && F._pgnPlies(p8) === 8, 'cuenta las medias jugadas sin confundirse con relojes, números ni resultado', F._pgnPlies(p6) + ' / ' + F._pgnPlies(p8));
+  chk(F._pgnAhead(p8, p6) && !F._pgnAhead(p6, p8), 'la que tiene más jugadas va más adelante');
+  chk(F._pgnAhead(p8fin, p8) && !F._pgnAhead(p8, p8fin), 'con las mismas jugadas, la que ya tiene resultado va más adelante');
+
+  // Llega la suelta (8 jugadas) mientras la ronda tiene 6: se pone en su lugar y se parchea.
+  const otra = partida('zzzzzzzz', '1. e4 1... e5', '*');
+  F.ctx = { byRound: { 1: [{ pgn: p6, h: {} }, { pgn: otra, h: {} }] }, games: [p6, otra], pgnKey: 'k' };
+  F._tdFocusApply([{ id, pgn: p8 }]);
+  chk(F.llamadas.join(',') === 'flat,patch,visor', 'la partida suelta se pone en su lugar y se parchean los tableros y el visor', F.llamadas.join(','));
+  chk(!!F.nuevos.mLMFfXfK, 'y queda anotada como más nueva que la ronda');
+  // 🔒 La ronda lenta llega con 6 jugadas: NO pisa la de 8.
+  let r = F._tdFocusPreferNewer([p6, otra]);
+  chk(r[0] === p8 && r[1] === otra, '🔒 la ronda que llega atrasada NO pisa el tablero que ya llegó suelto');
+  // La ronda alcanza (o pasa) a la suelta: vuelve a mandar la ronda.
+  r = F._tdFocusPreferNewer([p8fin, otra]);
+  chk(r[0] === p8fin && !F.nuevos.mLMFfXfK, 'cuando la ronda la alcanza, manda la ronda otra vez (y se olvida la suelta)');
+  // Una suelta más vieja que lo que hay no retrocede el tablero.
+  F.llamadas.length = 0;
+  F._tdFocusApply([{ id, pgn: p6 }]);
+  chk(F.llamadas.length === 0, 'una versión suelta más vieja no hace retroceder el tablero');
+
+  // Lo que no se puede correr sin navegador: que esté enganchado donde corresponde.
+  const tick = extraerFuncion('_tdFocusTick'), targ = extraerFuncion('_tdFocusTargets');
+  chk(/'https:\/\/lichess\.org\/api\/study\/' \+ t\.id\.round \+ '\/' \+ t\.id\.game \+ '\.pgn'/.test(tick),
+      '🔒 se pide DIRECTO a Lichess desde el navegador (no por el Worker, que comparte dirección y hace fila)');
+  chk(/r\.status === 429\) _tdFocusHold = Date\.now\(\) \+ _TD_FOCUS_429_MS/.test(tick) && /Date\.now\(\) < _tdFocusHold/.test(tick) && /var _TD_FOCUS_429_MS = 60000;/.test(SRC),
+      'con un 429, un minuto sin pedir');
+  chk(/document\.hidden/.test(tick) && /_tdLiveCtx\.onDemand/.test(tick) && /_tdLivePolling/.test(tick),
+      'sólo con la pestaña a la vista y el vivo de Lichess andando');
+  chk(/getBoundingClientRect/.test(targ) && /r\.top > vh \+ 100/.test(targ) && /_TD_FOCUS_MAX/.test(targ) && /!== '\*'\) return;/.test(targ),
+      'se piden sólo los tableros EN PANTALLA y en curso, con tope');
+  chk(/chess-overlay[\s\S]*cv\.rawPgn\) add\(cv\.rawPgn\);\s*return out;/.test(targ), 'con el visor abierto se pide la partida que se está viendo');
+  chk(/currentGames = _tdFocusPreferNewer\(currentGames\);/.test(extraerFuncion('_tdOnDemandApplyRefresh')),
+      '🔒 el refresco de la ronda pasa por el filtro que no pisa lo más nuevo');
+  chk(/_tdStartWatchdog\(\); _tdFocusStart\(\); \}/.test(extraerFuncion('_tdLiveFetchMulti')) && /^function _tdLiveStop\(\) \{ _tdFocusStop\(\);/.test(extraerFuncion('_tdLiveStop')),
+      'arranca con el vivo on-demand y se apaga al salir');
 }
 
 // ── ARENA DE LICHESS — Fase 0: la cartelera (plan del 13/09/2026) ─────────────────────
