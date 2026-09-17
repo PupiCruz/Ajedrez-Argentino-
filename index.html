@@ -38886,7 +38886,9 @@ function cvUpdateNagBadge() {
     if(m.lastMove){
       var ply=(m.moves ? m.moves.length : lvMoves.length);
       var id=m.lastMove.from+m.lastMove.to+':'+ply;   // misma clave por jugada que en doMove
-      if(id!==lvPendingSoundId && id!==lvLastSoundId){ try { cvPlayMoveSound(m.lastMove.san); } catch(e){} slideMove=m.lastMove; }
+      /* m.mudo: posición que llega de un tirón (al empezar a MIRAR una partida de Lichess, que manda
+         todas las jugadas anteriores en ráfaga): se dibuja sin sonido ni deslizamiento (16/09/2026). */
+      if(id!==lvPendingSoundId && id!==lvLastSoundId && !m.mudo){ try { cvPlayMoveSound(m.lastMove.san); } catch(e){} slideMove=m.lastMove; }
       lvLastSoundId=id;
     }
     lvPendingSoundId=null;
@@ -45476,11 +45478,17 @@ function cvUpdateNagBadge() {
           if (M !== yo || res.done) return;
           buf += dec.decode(res.value, { stream: true });
           var partes = buf.split('\n'); buf = partes.pop();
+          /* 🔇 Al conectarse, Lichess manda TODAS las jugadas anteriores, una por renglón y de un
+             tirón: cada una hacía sonar el tablero (el autor, 16/09: "todos apilados"). Ahora las
+             jugadas de un mismo paquete se aplican juntas y se dibuja UNA vez; si llegaron varias, o
+             en el primer segundo y medio después de la ficha, se dibuja callado. */
+          var jugadas = 0;
           partes.forEach(function (l) {
             l = l.trim(); if (!l) return;
             var o = null; try { o = JSON.parse(l); } catch (e) {}
-            if (o && M === yo) mensajeMirar(o);
+            if (o && M === yo && mensajeMirar(o, true)) jugadas++;
           });
+          if (jugadas && M === yo) pintarMirar(null, jugadas > 1 || (yo.tFicha && Date.now() - yo.tFicha < 1500));
           leer();
         }).catch(function () {});
       })();
@@ -45494,18 +45502,20 @@ function cvUpdateNagBadge() {
     return true;
   }
 
-  function mensajeMirar(o) {
-    if (!M) return;
+  /* Devuelve true si era una jugada. Con `juntar`, no dibuja: lo hace quien llama, una vez por paquete. */
+  function mensajeMirar(o, juntar) {
+    if (!M) return false;
     if (o.players) {                                   // la ficha: al principio y al terminar
+      if (!M.tFicha) M.tFicha = Date.now();
       M.ficha = o;
       if (!M.ch) {
         var f0 = (o.initialFen && o.initialFen !== 'startpos') ? completarFen(o.initialFen) : null;
         try { M.ch = f0 ? new Chess(f0) : new Chess(); } catch (e) { M.ch = new Chess(); }
       }
-      pintarMirar(o.status);
-      return;
+      pintarMirar(o.status, true);                      // la ficha nunca suena (al final, el tablero hace su sonido de fin)
+      return false;
     }
-    if (!o.fen) return;
+    if (!o.fen) return false;
     if (!M.ch) { try { M.ch = new Chess(); } catch (e) { return; } }
     if (o.lm) {
       var mv = null;
@@ -45515,10 +45525,11 @@ function cvUpdateNagBadge() {
     }
     if (typeof o.wc === 'number') M.wc = o.wc * 1000;
     if (typeof o.bc === 'number') M.bc = o.bc * 1000;
-    pintarMirar(null);
+    if (!juntar) pintarMirar(null);
+    return true;
   }
 
-  function pintarMirar(status) {
+  function pintarMirar(status, mudo) {
     if (!M || !M.ficha || !M.ch) return;
     var f = M.ficha;
     var st = status ? (status.name || status) : ((f.status && (f.status.name || f.status)) || 'started');
@@ -45532,6 +45543,7 @@ function cvUpdateNagBadge() {
       players: { w: false, b: false },   // así no aparece el chat, que por acá no llega
       ratings: { w: chapita(f.players.white), b: chapita(f.players.black) },
       rated: !!f.rated,
+      mudo: !!mudo,
       clock: (M.wc == null) ? null : { w: M.wc, b: M.bc, running: (viva && M.sans.length >= 2) ? M.ch.turn() : null }
     };
     if (!viva) m.result = resultado({ status: st, winner: f.winner }, M.ch);

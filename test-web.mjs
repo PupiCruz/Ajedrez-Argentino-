@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1120;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1121;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -4537,6 +4537,11 @@ console.log('\n=== Partidas de Lichess: visor propio y perfil del rival ===');
       'panel de performance: la partida se abre en el visor del sitio (Ctrl/clic medio: lichess.org en otra pestaña)');
   chk(/Site "'\+\(esLi\?'lichess\.org':'chessargentino\.ar'\)\+'"/.test(SRC) && /replace\(\/\\s\*⚡\$\/,''\)/.test(SRC),
       '"Analizar" una partida de Lichess: Site lichess.org (para enlazar los nicks) y nombres sin la ⚡ del berserk');
+  // 16/09: al empezar a MIRAR, Lichess manda todas las jugadas anteriores en ráfaga y sonaban todas apiladas.
+  chk(/if \(o && M === yo && mensajeMirar\(o, true\)\) jugadas\+\+;/.test(SRC)
+      && /if \(jugadas && M === yo\) pintarMirar\(null, jugadas > 1 \|\| \(yo\.tFicha && Date\.now\(\) - yo\.tFicha < 1500\)\);/.test(SRC)
+      && /mudo: !!mudo,/.test(SRC) && /id!==lvLastSoundId && !m\.mudo\)\{ try \{ cvPlayMoveSound/.test(SRC),
+      '🔇 mirar una partida de Lichess: la ráfaga inicial de jugadas se dibuja una vez y callada (después suenan normal)');
 }
 
 // ── ARENA DE LICHESS — Fase 3: berserk (14/09/2026) ─────────────────────────────────
