@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1189;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1192;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -4870,6 +4870,24 @@ console.log('\n=== Arena de Lichess — Fase 3: berserk ===');
   chk(b.nW === 'Ortiz Verdezoto, Anahi' && b.eW === 2245 && b.tW === 'WIM' && b.nB === 'Khamdamova, Afruza' && b.eB === 2443 && b.tB === 'WGM' && b.res === '0-1',
       '🔒 con una columna vacía de más, las mesas traen los dos nombres, títulos, Elo y resultado', JSON.stringify(b));
 }
+
+// ── El ojito del marcador en las rondas VIEJAS por equipos (17/09) ──
+// Los cuadros por equipos preguntan '¿se puede llegar a esta ronda?' con el nº como TEXTO (la pestaña es
+// "1"), y la comparación con la metadata del vivo es estricta: daba false y la ronda vieja se quedaba sin
+// el ojito que lleva al match en Partidas. La de hoy lo tenía sólo porque sus partidas ya estaban bajadas.
+{
+  const fn = new Function('_tdCtx', '_tdLiveCtx', 'return (' + extraerFuncion('_tdRoundReachable') + ')');
+  const vivo = { onDemand: true, roundsMeta: [ { num: 1 }, { num: 2 } ] };
+  const cargada = { byRound: { 2: [ { pgn: 'x' } ] } };
+  const alcanza = (ctx, round) => fn(ctx, vivo)(round);
+  chk(alcanza(cargada, 1) === true && alcanza(cargada, '1') === true,
+      '🔒 a una ronda vieja se llega igual, venga el número como número o como texto ("1")');
+  chk(alcanza(cargada, 2) === true && alcanza(cargada, '2') === true,
+      'y la ronda que ya tiene sus partidas cargadas sigue alcanzable');
+  chk(fn({ byRound: {} }, { onDemand: true, roundsMeta: [] })('1') === false,
+      'una ronda que no existe en el vivo ni tiene partidas NO lleva ojito (no manda a la nada)');
+}
+
 
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
 console.log('   Corrieron ' + corridas + ' de ' + ESPERADAS + ' comprobaciones.'
