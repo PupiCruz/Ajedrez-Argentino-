@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1186;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1189;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -4845,6 +4845,30 @@ console.log('\n=== Arena de Lichess — Fase 3: berserk ===');
   chk(/function llamarada\(c\)[\s\S]{0,400}lv-bk-flash[\s\S]{0,200}3000/.test(modP) && /P\.bk\[c\] = true;\s*if \(!callado\) \{\s*llamarada\(c\);/.test(modP)
       && /prefers-reduced-motion: reduce\) \{ \.lv-player\.lv-bk-flash/.test(SRC),
       'al hacer berserk el reloj hace una llamarada roja de 3 s y vuelve a sus colores (el dorado del turno se sigue viendo)');
+}
+
+// ── Formaciones por equipos con una columna VACÍA de más (Olimpiada femenina Samarkand 2026, 17/09) ──
+// Chess-Results agregó una columna después del Elo sólo en el Excel femenino; al leer por posición fija
+// salía "13" como país rival y las mesas sin nombres. Ahora cada lado se ubica por el guion "-".
+{
+  const vars = ['_TEAM_TITLES', '_TEAM_SIN_JUGADOR', '_TEAM_RES'].map(n => (SRC.match(new RegExp('var ' + n + '=[^\\n]*')) || [''])[0]).join('\n');
+  // _normTitle de verdad traduce los títulos con _TITLE_ES; acá alcanza con una versión simple.
+  const fns = 'function _normTitle(t){ return String(t || "").trim().toUpperCase(); }\n' + ['_teamIsPlaceholder', '_teamNormRes', '_teamStripColor', '_teamRoundHasBoards', '_teamParseRounds'].map(extraerFuncion).join('\n');
+  const parse = new Function(vars + '\n' + fns + '\nreturn _teamParseRounds;')();
+  const hdr = ['2. Ronda'];
+  const abierto = parse([hdr,
+    ['M.', '87', 'Ecuador (ECU)', 'Elo', '-', '38', 'Slovakia (SVK)', 'Elo', '1 : 3'],
+    ['37/1', 'IM', 'Noboa Silva, Kevin (b)', '2400', '-', 'GM', 'Pechac, Jergus (n)', '2538', '1 - 0']])[2][0];
+  const femenino = parse([hdr,
+    ['M.', '59', 'Ecuador (ECU)', 'Elo', '', '-', '13', 'Uzbekistan (UZB)', 'Elo', '', '0 : 4'],
+    ['1/1', 'WIM', 'Ortiz Verdezoto, Anahi (b)', '2245', '', '-', 'WGM', 'Khamdamova, Afruza (n)', '2443', '', '0 - 1']])[2][0];
+  chk(abierto.bName === 'Slovakia (SVK)' && abierto.boards[0].nW === 'Noboa Silva, Kevin' && abierto.boards[0].eB === 2538 && abierto.boards[0].tB === 'GM',
+      'formación por equipos de siempre (sin columnas de más): se lee igual que antes');
+  chk(femenino.bNo === '13' && femenino.bName === 'Uzbekistan (UZB)' && femenino.score === '0 : 4',
+      '🔒 con una columna vacía de más, el país rival sale con su nombre (no "13")');
+  const b = femenino.boards[0] || {};
+  chk(b.nW === 'Ortiz Verdezoto, Anahi' && b.eW === 2245 && b.tW === 'WIM' && b.nB === 'Khamdamova, Afruza' && b.eB === 2443 && b.tB === 'WGM' && b.res === '0-1',
+      '🔒 con una columna vacía de más, las mesas traen los dos nombres, títulos, Elo y resultado', JSON.stringify(b));
 }
 
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));

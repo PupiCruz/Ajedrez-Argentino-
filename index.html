@@ -8887,7 +8887,12 @@ function _teamParseRounds(rows){
       var c0=(r[0]||'').trim();
       if(/^M\.?$/i.test(c0)){
         var score=''; for(var c=r.length-1;c>=0;c--){ if((r[c]||'').indexOf(':')>=0){ score=(r[c]||'').trim(); break; } }
-        cur={ aNo:(r[1]||'').trim(), aName:(r[2]||'').trim(), bNo:(r[5]||'').trim(), bName:(r[6]||'').trim(), score:score, boards:[] };
+        // El lado derecho se ubica por el guion "-" que separa los dos equipos, no por posición fija:
+        // en la Olimpiada femenina de Samarkand 2026 Chess-Results metió una columna vacía después del
+        // Elo (en la abierta no) y todo quedaba corrido un lugar: sin nombres y el nº de equipo como país.
+        var sepH=-1; for(var cH=3;cH<r.length;cH++){ if((r[cH]||'').trim()==='-'){ sepH=cH; break; } }
+        var bNoI=sepH>0?sepH+1:5;
+        cur={ aNo:(r[1]||'').trim(), aName:(r[2]||'').trim(), bNo:(r[bNoI]||'').trim(), bName:(r[bNoI+1]||'').trim(), score:score, boards:[] };
         vistas={};   // mesas ya vistas en ESTE cruce (ver el salteo de duplicados de abajo)
         if(cur.aName||cur.bName) matches.push(cur); else cur=null;
       } else if(/^\d+\/\d+$/.test(c0)){
@@ -8916,6 +8921,14 @@ function _teamParseRounds(rows){
         if(rIdx<4) continue;
         var eB=parseInt(r[rIdx-1])||'', nB=(r[rIdx-2]||'').trim(), tB=(r[rIdx-3]||'').trim();
         var eW=parseInt(r[rIdx-5])||'', nW=(r[rIdx-6]||'').trim(), tW=(r[rIdx-7]||'').trim();
+        // Mesa "37/1 | título | nombre | elo | … | - | título | nombre | elo | … | resultado": con el guion
+        // entre los dos lados, cada lado se lee desde su comienzo y no importan las columnas vacías que
+        // Chess-Results agregue (ver la cabecera del cruce, arriba).
+        var sepB=-1; for(var c5=3;c5<rIdx;c5++){ if((r[c5]||'').trim()==='-'){ sepB=c5; break; } }
+        if(sepB>0){
+          tW=(r[1]||'').trim(); nW=(r[2]||'').trim(); eW=parseInt(r[3])||'';
+          tB=(r[sepB+1]||'').trim(); nB=(r[sepB+2]||'').trim(); eB=parseInt(r[sepB+3])||'';
+        }
         tB=_normTitle(tB); tW=_normTitle(tW);
         if(!_TEAM_TITLES.test(tB)) tB=''; if(!_TEAM_TITLES.test(tW)) tW='';
         var _res=_teamNormRes(r[rIdx]);
