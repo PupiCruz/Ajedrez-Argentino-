@@ -3674,7 +3674,13 @@
       /* 🎯 Arena temático: la posición de la que arrancan todas las partidas (16/09/2026). */
       .lv-as-tema { display:flex; align-items:center; gap:14px; margin:0 0 14px; padding:10px 12px; border:1px solid var(--gold-dim);
         border-radius:var(--r-md); background:var(--gold-bg); }
-      .lv-as-tema-bd { flex:0 0 auto; width:92px; border-radius:4px; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,.35); }
+      .lv-as-tema-bd { flex:0 0 auto; width:92px; border-radius:4px; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,.35);
+        cursor:zoom-in; transition:width .18s ease; }
+      /* Tocarlo lo agranda (pedido del autor, 16/09: "se ve muy chiquito"); tocarlo de nuevo, vuelve. */
+      .lv-as-tema-bd.grande { width:min(300px, 72vw); cursor:zoom-out; }
+      .lv-as-tema-bd:focus-visible { outline:2px solid var(--gold); outline-offset:2px; }
+      @media (max-width:560px){ .lv-as-tema:has(.lv-as-tema-bd.grande) { flex-wrap:wrap; } }
+      @media (prefers-reduced-motion:reduce){ .lv-as-tema-bd { transition:none; } }
       .lv-as-tema-tx { min-width:0; font-size:13px; line-height:1.45; color:var(--text2); }
       .lv-as-tema-tx b { color:var(--text); }
       .lv-as-tema-tx .nm { display:block; font-size:15px; font-weight:800; color:var(--gold); }
@@ -44421,6 +44427,12 @@ function cvUpdateNagBadge() {
     traer();
   }
 
+  function agrandarTema(tb) {
+    var g = tb.classList.toggle('grande');
+    tb.setAttribute('aria-expanded', g ? 'true' : 'false');
+    tb.setAttribute('aria-label', g ? 'Achicar el tablero de la posición inicial' : 'Agrandar el tablero de la posición inicial');
+    tb.title = g ? 'Tocá para achicar' : 'Tocá para agrandar';
+  }
   /* 🎯 Temático: tablerito + nombre de la apertura + quién empieza. Se redibuja sólo si cambia. */
   function pintarTema(pos) {
     var el = $s('lv-as-tema'); if (!el) return;
@@ -44429,7 +44441,7 @@ function cvUpdateNagBadge() {
     el._fen = fen;
     if (!fen || typeof tdMiniFen !== 'function') { el.style.display = 'none'; el.innerHTML = ''; return; }
     var negras = fen.split(' ')[1] === 'b';
-    el.innerHTML = '<div class="lv-as-tema-bd" aria-hidden="true">' + tdMiniFen(fen) + '</div>' +
+    el.innerHTML = '<div class="lv-as-tema-bd" role="button" tabindex="0" aria-expanded="false" aria-label="Agrandar el tablero de la posición inicial" title="Tocá para agrandar">' + tdMiniFen(fen) + '</div>' +
       '<div class="lv-as-tema-tx"><span class="nm">🎯 ' + _asEsc(pos.name || 'Torneo temático') + (pos.eco ? ' <small>(' + _asEsc(pos.eco) + ')</small>' : '') + '</span>' +
       'Torneo <b>temático</b>: todas las partidas arrancan desde esta posición. ' +
       'Empiezan <b>las ' + (negras ? 'negras' : 'blancas') + '</b>.' +
@@ -44601,6 +44613,8 @@ function cvUpdateNagBadge() {
   function init() {
     var sala = $s('lv-arena-sala');
     if (sala) sala.addEventListener('click', function (e) {
+      var tb = e.target.closest('.lv-as-tema-bd');
+      if (tb) { agrandarTema(tb); return; }
       var pa = e.target.closest('[data-as-partida]');
       if (pa) {
         if (e.ctrlKey || e.metaKey || e.shiftKey || e.button === 1) return;   // pestaña nueva: a lichess.org
@@ -44633,6 +44647,11 @@ function cvUpdateNagBadge() {
       if (e.key !== 'Enter' && e.key !== ' ') return;
       var j = e.target && e.target.closest && e.target.closest('[data-as-jug]'); if (!j) return;
       e.preventDefault(); verJugador(j.getAttribute('data-as-jug'));
+    });
+    if (sala) sala.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      var tb = e.target && e.target.classList && e.target.classList.contains('lv-as-tema-bd') ? e.target : null;
+      if (tb) { e.preventDefault(); agrandarTema(tb); }
     });
     document.addEventListener('visibilitychange', function () { if (enPantalla()) traer(); });
     /* Llegó la lista de la cartelera: la caja del torneo terminado ya puede ofrecer el próximo. */

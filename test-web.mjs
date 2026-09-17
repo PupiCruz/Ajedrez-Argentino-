@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1121;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1122;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -4516,6 +4516,10 @@ console.log('\n=== Arenas temáticos: posición inicial ===');
   chk(/var pre=\(lvStartFen && typeof _apJugadasA==='function'\) \? _apJugadasA\(lvStartFen\) : null;/.test(SRC)
       && /if\(lvStartFen && !pre\) h\+='\[SetUp "1"\]/.test(SRC) && /todas=pre\?pre\.concat\(lvMoves\):lvMoves/.test(SRC),
       '"Analizar" un temático: la partida va entera desde 1.d4 si se conocen las jugadas; si no, desde la posición');
+  chk(/class="lv-as-tema-bd" role="button" tabindex="0" aria-expanded="false"/.test(SRC) && /\.lv-as-tema-bd\.grande \{ width:min\(300px, 72vw\);/.test(SRC)
+      && /if \(tb\) \{ agrandarTema\(tb\); return; \}/.test(SRC) && /function agrandarTema\(tb\)/.test(SRC)
+      && /<div id="lv-as-tema"[^>]*><\/div>\s*<div id="lv-as-podio"><\/div>/.test(SRC),
+      'temático: el tablerito se agranda al tocarlo (también con el teclado) y va ANTES del podio, sin pisarlo');
 }
 
 // ── Partidas de Lichess: panel de performance → visor, y nick → perfil de Lichess (16/09/2026) ──
