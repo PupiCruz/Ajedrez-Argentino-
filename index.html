@@ -9392,7 +9392,25 @@ function _teamRenderRound(matches, roundNum, crk){
   var _rdata=crk?crDataLoad(crk):null;
   // ¿Las partidas de esta ronda ya están cargadas? Lo miramos UNA vez por panel (no por mesa).
   var _rondaEnMemoria = !!(typeof _tdCtx!=='undefined' && _tdCtx && _tdCtx.byRound && _tdCtx.byRound[roundNum] && _tdCtx.byRound[roundNum].length);
+  var _hayParcial=false, _filas='';
   matches.forEach(function(m,mi){
+    var inner='';
+    // Mesas sin resultado de Chess-Results → el de Lichess, si esa partida ya terminó (ver _teamLiveScores).
+    // Se trabaja sobre una COPIA de la mesa: lo guardado de Chess-Results no se toca.
+    var _boards=(m.boards||[]).map(function(b){
+      if(b.res) return b;
+      var lr=_teamLiveBoardRes(roundNum, b.nW, b.nB);
+      if(!lr) return b;
+      var c={}; for(var k in b) c[k]=b[k];
+      c.res=lr; c._vivo=true;
+      return c;
+    });
+    var _score=m.score, _parcial=false;
+    if(!/\d/.test(String(m.score||'')) && _boards.some(function(b){ return b._vivo; })){
+      var _pa=0, _pb=0;
+      _boards.forEach(function(b){ var p=_teamResPts(b.res); if(p){ _pa+=p[0]; _pb+=p[1]; } });
+      _score=_fmtHalf(_pa)+' : '+_fmtHalf(_pb); _parcial=true; _hayParcial=true;
+    }
     var _ca=_teamCountryParts(m.aName), _cb=_teamCountryParts(m.bName);
     var _pk=_teamPairKey(m.aName,m.bName);  // id por NOMBRE para vincular cruce↔formación (países y clubes)
     // clave por FED para el salto a Partidas: resolvemos el nombre→fed (aunque no traiga "(FED)", ej.
@@ -9407,18 +9425,18 @@ function _teamRenderRound(matches, roundNum, crk){
     // panel de país). Solo si esa ronda tiene partidas cargadas del vivo.
     var _hasGm=_tdRoundReachable(roundNum);
     if(_hasGm&&_fk){
-      inner+='<span onclick="_teamGotoMatchInGames('+(roundNum!=null?roundNum:'null')+',\''+_fk+'\')" title="Ver el match en Partidas" style="flex-shrink:0;color:var(--gold);background:var(--bg3);border-radius:6px;padding:3px 12px;cursor:pointer" onmouseover="this.style.background=\'var(--gl40)\'" onmouseout="this.style.background=\'var(--bg3)\'">'+escHtml(m.score||'')+' <span style="font-size:11px;color:var(--blue)">👁</span></span>';
+      inner+='<span onclick="_teamGotoMatchInGames('+(roundNum!=null?roundNum:'null')+',\''+_fk+'\')" title="Ver el match en Partidas" style="flex-shrink:0;color:var(--gold);background:var(--bg3);border-radius:6px;padding:3px 12px;cursor:pointer" onmouseover="this.style.background=\'var(--gl40)\'" onmouseout="this.style.background=\'var(--bg3)\'">'+escHtml(_score||'')+(_parcial?_TEAM_LIVE_DOT:'')+' <span style="font-size:11px;color:var(--blue)">👁</span></span>';
     } else {
-      inner+='<span style="flex-shrink:0;color:var(--gold);background:var(--bg3);border-radius:6px;padding:3px 12px">'+escHtml(m.score||'')+'</span>';
+      inner+='<span style="flex-shrink:0;color:var(--gold);background:var(--bg3);border-radius:6px;padding:3px 12px">'+escHtml(_score||'')+(_parcial?_TEAM_LIVE_DOT:'')+'</span>';
     }
     inner+=_teamCountrySide(crk,_cb,false);
     inner+='</div>';
     // El rótulo de la tabla es el cruce entero, más la ayuda de cómo recorrerla.
-    var _sc=String(m.score||'').split(':');
+    var _sc=String(_score||'').split(':');
     inner+='<div role="table" onclick="_teamBoardClick(event,'+crArg(crk||'')+')" aria-label="'+escHtml(
         _a11yCruceFrase(m.aName?_paisES(m.aName,m.aFed):(_ca.clean||''), m.bName?_paisES(m.bName,m.bFed):(_cb.clean||''), _sc[0], _sc[1])
-      + '. Formación de la ronda '+(roundNum==null?'':roundNum)+', '+(m.boards||[]).length+' mesas. Bajando por la primera columna se cuenta cada mesa entera. Con Enter sobre un jugador se abre su performance, y sobre el resultado, la partida')+'">';
-    (m.boards||[]).forEach(function(b,bi){
+      + '. Formación de la ronda '+(roundNum==null?'':roundNum)+', '+_boards.length+' mesas. Bajando por la primera columna se cuenta cada mesa entera. Con Enter sobre un jugador se abre su performance, y sobre el resultado, la partida')+'">';
+    _boards.forEach(function(b,bi){
       // El color ALTERNA por mesa: mesa 1 (impar) el equipo de la izquierda va con blancas; mesa 2
       // (par) con negras; etc. (nW = columna izquierda/equipo A, nB = derecha/equipo B; NO son colores).
       var leftIsWhite = (bi % 2 === 0);
@@ -9459,7 +9477,11 @@ function _teamRenderRound(matches, roundNum, crk){
     });
     inner+='</div>';   // /tabla de mesas de este cruce
     inner+='</div>';
+    _filas+=inner;
   });
+  // La aclaración del parcial va ARRIBA de los cruces (se sabe recién al armarlos).
+  if(_hayParcial) inner+='<div style="font-size:11.5px;color:var(--text3);margin-bottom:8px">'+_TEAM_LIVE_DOT.replace('margin-left:6px','margin-right:6px')+'Marcador parcial con las partidas ya terminadas en Lichess. El final lo carga Chess-Results.</div>';
+  inner+=_filas;
   // Recuadro con scroll interno (las partidas de la ronda no quedan empujadas tan abajo), centrado.
   // En PC sobra lugar a los costados: ancho más generoso (860) para que los nombres no se corten.
   return '<div style="max-height:560px;overflow-y:auto;border:1px solid var(--border);border-radius:12px;padding:12px;background:var(--bg2);margin-left:auto;margin-right:auto;max-width:860px">'+inner+'</div>';
@@ -9488,6 +9510,75 @@ function _teamCrossClick(ev, crk, roundNum){
   _teamGotoFormation(crk, roundNum, fila.getAttribute('data-pk'));
 }
 
+/* MARCADORES PARCIALES CON LO QUE VA MANDANDO LICHESS (17/09/2026). Pedido del autor en la Olimpiada:
+   Chess-Results carga el marcador del match recién cuando termina la ÚLTIMA mesa, así que un match que
+   iba 2 a 1 se veía vacío. Mientras Chess-Results no tenga el marcador, se arma con las partidas de
+   Lichess ya terminadas (las de la ronda y las de la ficha liviana, ver _tdGameRes) y se marca con un
+   punto rojo: es PARCIAL. Cuando Chess-Results carga el suyo, manda el de Chess-Results. La TABLA de
+   posiciones no se toca: un match a medio jugar no reparte puntos. No se guarda nada: se calcula al dibujar. */
+var _TEAM_LIVE_DOT = '<span aria-hidden="true" title="Parcial: el match sigue en juego" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#e24b4a;margin-left:6px;vertical-align:middle"></span>';
+// Marcador de cada cruce de UNA ronda con las partidas de Lichess que ya terminaron. Clave: la del salto a
+// Partidas (_teamMatchKey, por par de federaciones: los nombres de Lichess y Chess-Results no siempre coinciden).
+function _teamLiveScores(round, data){
+  var out={};
+  if(typeof _tdCtx==='undefined'||!_tdCtx||!_tdCtx.byRound) return out;
+  var games=_tdCtx.byRound[round];
+  if(!games||!games.length) return out;
+  _tdTeamMatches(games).forEach(function(m){
+    var dec=m.boards.filter(function(g){ return _tdGameRes(g)!=='*'; }).length;
+    if(!dec) return;
+    var p={ teamA:m.teamA, a:m.a, b:m.b }, k=_teamMatchKey(m.teamA,m.teamB,data), kn=_teamPairKey(m.teamA,m.teamB);
+    if(k) out[k]=p;
+    if(kn) out['n:'+kn]=p;   // por NOMBRE también: "Cote d’Ivoire" (apóstrofo curvo) no resuelve la federación
+  });
+  return out;
+}
+// El parcial de un cruce visto desde el equipo de la IZQUIERDA del cuadro (aName). null si no hay.
+function _teamLiveScoreFor(live, aName, bName, data){
+  var k=_teamMatchKey(aName,bName,data), kn=_teamPairKey(aName,bName), p=(k&&live[k])||(kn&&live['n:'+kn]);
+  if(!p) return null;
+  var fa=_teamResolveFed(p.teamA,data);
+  var mismo=_teamNorm(p.teamA)===_teamNorm(aName) || (!!fa && fa===_teamResolveFed(aName,data));
+  return mismo ? { a:p.a, b:p.b } : { a:p.b, b:p.a };
+}
+// Resultado de UNA mesa de la formación según Lichess, visto desde el jugador de la IZQUIERDA (nW), en el
+// formato de Chess-Results ("1-0", "½-½", "0-1"). '' si la partida no está o sigue en juego.
+function _teamLiveBoardRes(round, nW, nB){
+  if(typeof _tdCtx==='undefined'||!_tdCtx||!_tdCtx.games||!nW||!nB) return '';
+  var idx=crFindGameIdx(round, nW, nB);
+  if(idx<0) idx=crFindGameIdx(round, nB, nW);
+  var pgn=idx>=0?_tdCtx.games[idx]:null;
+  if(!pgn) return '';
+  var h=parsePgnHeaders(pgn), res=_tdGameRes({ pgn:pgn, h:h });
+  if(res==='*') return '';
+  var tw=crNormTokens(nW), hw=crNormTokens(h.White);
+  var izqBlancas=(tw===hw) || _crNombreContenido(tw, hw);
+  if(!izqBlancas) res=_a11yResInvertido(res);
+  return res==='1/2-1/2' ? '½-½' : res;
+}
+// Vuelve a dibujar los cruces y la formación de la ronda en vivo cuando cambia algún resultado de Lichess.
+// Sólo los paneles ya armados (los perezosos se arman al abrirlos, con lo último). Si el foco está adentro
+// (lector de pantalla, teclado), se espera al próximo cambio para no sacarle el lugar.
+var _teamLiveSig={};
+function _teamLiveRefresh(){
+  if(typeof _tdLiveCtx==='undefined'||!_tdLiveCtx||!_tdLiveCtx.crKey||!_tdCtx||!_tdCtx.byRound) return;
+  var crk=_tdLiveCtx.crKey, r=_tdLiveCtx.currentNum;
+  if(r==null) return;
+  var sig=(_tdCtx.byRound[r]||[]).map(_tdGameRes).join(',');
+  if(_teamLiveSig[crk+'|'+r]===sig) return;
+  var listo=true;
+  ['x'+r, ''+r].forEach(function(tab){
+    var ap=document.getElementById('cr-panel-'+crk+'-'+tab);
+    if(!ap||ap.getAttribute('data-lazy')) return;
+    if(document.activeElement&&ap.contains(document.activeElement)){ listo=false; return; }
+    var sc=ap.querySelector('div[style*="overflow-y:auto"]'), arriba=sc?sc.scrollTop:0;
+    try { ap.innerHTML=_teamPanelContent(crk, crDataLoad(crk), tab); } catch(e){ return; }
+    var sc2=ap.querySelector('div[style*="overflow-y:auto"]');
+    if(sc2) sc2.scrollTop=arriba;   // que no salte al principio de la lista
+  });
+  if(listo) _teamLiveSig[crk+'|'+r]=sig;
+}
+
 function _teamRenderCrosses(crosses, roundNum, crk, hasFormation){
   if(_teamArgOnly) crosses=(crosses||[]).filter(_teamCrossIsArg);
   if(!crosses||!crosses.length) return '<div style="color:var(--text3);font-size:12px;padding:10px">'+(_teamArgOnly?'' + _flagImg('ARG') + ' Argentina no juega en esta ronda.':'Sin cruces cargados.')+'</div>';
@@ -9501,26 +9592,40 @@ function _teamRenderCrosses(crosses, roundNum, crk, hasFormation){
   if(hasFormation) inner+='<div style="font-size:11px;color:var(--text3);margin-bottom:8px">Tocá un cruce para ver la formación tablero por tablero.</div>';
   // El rótulo dice "Cruces POR PAÍSES/EQUIPOS" y no sólo "Cruces": en un torneo por equipos hay dos
   // tablas que empiezan igual (ésta y las mesas de una ronda individual) y al oído se confundían.
-  inner+='<div role="table"'+((hasFormation&&roundNum!=null)?' onclick="_teamCrossClick(event,\''+ks+'\','+roundNum+')"':'')+' aria-label="'+escHtml((_teamCrossesAreCountries(crosses)?'Cruces por países':'Cruces por equipos')+' de la ronda '+(roundNum==null?'':roundNum)+': '+crosses.length+(crosses.length===1?' cruce':' cruces')+'. Bajando por la primera columna se cuenta cada cruce entero'+(hasFormation?'. Con Enter sobre un cruce se abre la formación de los dos equipos, tablero por tablero':''))+'">';
+  var _tablaAbre='<div role="table"'+((hasFormation&&roundNum!=null)?' onclick="_teamCrossClick(event,\''+ks+'\','+roundNum+')"':'')+' aria-label="'+escHtml((_teamCrossesAreCountries(crosses)?'Cruces por países':'Cruces por equipos')+' de la ronda '+(roundNum==null?'':roundNum)+': '+crosses.length+(crosses.length===1?' cruce':' cruces')+'. Bajando por la primera columna se cuenta cada cruce entero'+(hasFormation?'. Con Enter sobre un cruce se abre la formación de los dos equipos, tablero por tablero':''))+'">';
+  var _xData=crk?crDataLoad(crk):null, _live=_teamLiveScores(roundNum, _xData), _hayParcial=false;
+  var _filas='';
   crosses.forEach(function(m,ci){
+    var fila='';
+    // Sin marcador de Chess-Results → el parcial de Lichess, si ya terminó alguna mesa.
+    var aRes=m.aRes, bRes=m.bRes, parcial=null;
+    if(!String(aRes||'').trim() && !String(bRes||'').trim()){
+      parcial=_teamLiveScoreFor(_live, m.aName, m.bName, _xData);
+      if(parcial){ aRes=_fmtHalf(parcial.a); bRes=_fmtHalf(parcial.b); _hayParcial=true; }
+    }
     var arg=(m.aFed==='ARG'||m.bFed==='ARG');
     var _pk=_teamPairKey(m.aName,m.bName);   // clave por nombre (vincula con la formación; sirve p/ clubes)
     var clk=(hasFormation&&_pk) ? ' data-pk="'+escHtml(_pk)+'" title="Ver la formación de este cruce" style="cursor:pointer;' : ' style="';
     var _cbg=arg?'var(--gl30)':(ci%2===1?'var(--zebra)':'var(--bg2)');   // intercalado por match (ARG resaltado)
-    inner+='<div role="row"'+clk+'display:flex;align-items:center;gap:8px;padding:11px 14px;border:1px solid '+(arg?'var(--gold-dim)':'var(--bd14)')+';border-radius:10px;margin-top:8px;background:'+_cbg+'">';
-    var _cruceFrase=_a11yCruceFrase(m.aName?_paisES(m.aName,m.aFed):'', m.bName?_paisES(m.bName,m.bFed):'', m.aRes, m.bRes);
-    inner+='<span role="rowheader" style="flex:1;min-width:0;display:flex;align-items:center;justify-content:flex-end;gap:7px;overflow:hidden">';
+    fila+='<div role="row"'+clk+'display:flex;align-items:center;gap:8px;padding:11px 14px;border:1px solid '+(arg?'var(--gold-dim)':'var(--bd14)')+';border-radius:10px;margin-top:8px;background:'+_cbg+'">';
+    var _cruceFrase=parcial
+      ? _a11yNombre(m.aName?_paisES(m.aName,m.aFed):'')+' contra '+_a11yNombre(m.bName?_paisES(m.bName,m.bFed):'')+', en juego, va '+_a11yMedios(parcial.a)+' a '+_a11yMedios(parcial.b)
+      : _a11yCruceFrase(m.aName?_paisES(m.aName,m.aFed):'', m.bName?_paisES(m.bName,m.bFed):'', m.aRes, m.bRes);
+    fila+='<span role="rowheader" style="flex:1;min-width:0;display:flex;align-items:center;justify-content:flex-end;gap:7px;overflow:hidden">';
     // Botón de verdad (no display:contents, que no se puede dibujar el recuadro del foco encima):
     // repite el flex del padre para que en pantalla quede exactamente igual.
-    inner+='<span'+_a11yClic(_cruceFrase+((hasFormation&&_pk)?'. Ver la formación':''))+' style="flex:1;min-width:0;display:flex;align-items:center;justify-content:flex-end;gap:7px;overflow:hidden">';
-    inner+='<span style="color:var(--text);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(_paisES(m.aName,m.aFed))+'</span>'+crFlagEmoji(m.aFed);
-    inner+='</span></span>';
-    inner+='<span role="cell" style="flex-shrink:0;color:var(--gold);background:var(--bg3);border-radius:6px;padding:4px 13px;font-weight:700;font-size:15px;white-space:nowrap">'+_a11yEnVezDe(escHtml(m.aRes||'')+' : '+escHtml(m.bRes||''), (_a11yNum(m.aRes)==null||_a11yNum(m.bRes)==null)?'sin marcador':(_a11yMedios(_a11yNum(m.aRes))+' a '+_a11yMedios(_a11yNum(m.bRes))))+'</span>';
-    inner+='<span role="cell" style="flex:1;min-width:0;display:flex;align-items:center;gap:7px;overflow:hidden">';
-    inner+=crFlagEmoji(m.bFed)+'<span style="color:var(--text);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(m.bName ? _paisES(m.bName,m.bFed) : '(libre)')+'</span>';
-    inner+='</span>';
-    inner+='</div>';
+    fila+='<span'+_a11yClic(_cruceFrase+((hasFormation&&_pk)?'. Ver la formación':''))+' style="flex:1;min-width:0;display:flex;align-items:center;justify-content:flex-end;gap:7px;overflow:hidden">';
+    fila+='<span style="color:var(--text);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(_paisES(m.aName,m.aFed))+'</span>'+crFlagEmoji(m.aFed);
+    fila+='</span></span>';
+    fila+='<span role="cell" style="flex-shrink:0;color:var(--gold);background:var(--bg3);border-radius:6px;padding:4px 13px;font-weight:700;font-size:15px;white-space:nowrap">'+_a11yEnVezDe(escHtml(aRes||'')+' : '+escHtml(bRes||''), (_a11yNum(aRes)==null||_a11yNum(bRes)==null)?'sin marcador':((parcial?'parcial, ':'')+_a11yMedios(_a11yNum(aRes))+' a '+_a11yMedios(_a11yNum(bRes))))+(parcial?_TEAM_LIVE_DOT:'')+'</span>';
+    fila+='<span role="cell" style="flex:1;min-width:0;display:flex;align-items:center;gap:7px;overflow:hidden">';
+    fila+=crFlagEmoji(m.bFed)+'<span style="color:var(--text);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(m.bName ? _paisES(m.bName,m.bFed) : '(libre)')+'</span>';
+    fila+='</span>';
+    fila+='</div>';
+    _filas+=fila;
   });
+  if(_hayParcial) inner+='<div style="font-size:11.5px;color:var(--text3);margin-bottom:6px">'+_TEAM_LIVE_DOT.replace('margin-left:6px','margin-right:6px')+'Marcador parcial con las partidas ya terminadas en Lichess. El final lo carga Chess-Results.</div>';
+  inner+=_tablaAbre+_filas;   // la aclaración del parcial va ARRIBA de la tabla (se sabe recién al armar las filas)
   inner+='</div>';
   return '<div style="max-height:560px;overflow-y:auto;border:1px solid var(--border);border-radius:12px;padding:12px;background:var(--bg2);margin-left:auto;margin-right:auto;max-width:860px">'+inner+'</div>';
 }
@@ -31392,7 +31497,7 @@ function _tdTeamMatches(games) {
     var key = [wt, bt].sort().join(' «» ');
     if (!cur || key !== curKey) { cur = { teamA: wt, teamB: bt, boards: [], a: 0, b: 0 }; matches.push(cur); curKey = key; }
     cur.boards.push(g);
-    var res = g.h.Result, aWhite = (wt === cur.teamA);
+    var res = _tdGameRes(g), aWhite = (wt === cur.teamA);
     if (res === '1-0') { aWhite ? cur.a++ : cur.b++; }
     else if (res === '0-1') { aWhite ? cur.b++ : cur.a++; }
     else if (res === '1/2-1/2') { cur.a += 0.5; cur.b += 0.5; }
@@ -31777,7 +31882,8 @@ function tdFillBoards(rInt) {
       el.setAttribute('data-filled', '1');
       var gidx = parseInt(el.getAttribute('data-gidx'));
       var pgn = _tdCtx.games[gidx];
-      var rr = tdFinalFenCached(pgn);
+      var st = _tdBoardState(pgn), rr = st.rr;   // la ficha liviana de Lichess, si va más adelante que el PGN
+      if (st.ficha) el.setAttribute('data-res', st.res);
       var fen = rr.fen;
       var flip = el.getAttribute('data-flip') === '1';   // vista por equipos: tableros pares dados vuelta
       var html = tdMiniFen(fen, rr.last, flip);
@@ -32339,6 +32445,7 @@ function _tdLiveFetchMulti(tourIds, name, location, pgnKey, typ, hasFallback) {
     _tdLiveCtx.onDemand = true; _tdLiveCtx.roundsMeta = merged.roundsMeta; _tdLiveCtx.currentNum = merged.currentNum;
     _tdLiveCtx._loading = {}; _tdLiveCtx._fetched = {}; _tdLiveCtx._crFetched = {};
     _tdLiveCtx._fetched[merged.currentNum] = true;   // la ronda actual llega con este init (Lichess)
+    if (currentGames && currentGames.length) { _tdLiveCtx._pgnAt = Date.now(); _tdLiveCtx._pgnSig = _bcMergedSig(merged); _tdLiveCtx._pgnRaw = currentGames; }   // (c)
     var res = _bcOnDemandRes(merged, currentGames);
     _tdLiveBuild(res, sec, null);
     _tdCrTablesOnNewRound(_tdMaxRoundNum(merged.roundsMeta.map(function(r){ return r.num; })));   // anota la ronda de partida
@@ -32706,12 +32813,12 @@ function _tdPatchRoundBoards(curR, games) {
     if (newPgn === undefined) continue;
     // La partida terminó → poner el resultado centrado AUNQUE el FEN no cambie (abandono/bandera/tablas
     // sin jugada nueva caen al `continue` de abajo, sin tocar el tablero): se actualiza acá.
-    var newRes = parsePgnHeaders(newPgn).Result || '*';
+    var st = _tdBoardState(newPgn), rr = st.rr;   // la ficha liviana de Lichess, si va más adelante que el PGN
+    var newRes = st.res;
     if (newRes !== (el.getAttribute('data-res') || '*')) {
       el.setAttribute('data-res', newRes);
       _tdSetResultBadge(el, newRes);
     }
-    var rr = tdFinalFenCached(newPgn);
     if (rr.fen === el.getAttribute('data-fen')) {
       // Misma posición, pero pudo aparecer el %eval del PGN (Lichess solo lo agrega al TERMINAR la
       // ronda) o una nueva eval del motor local → mover la barrita aunque el tablero no cambie.
@@ -32724,13 +32831,13 @@ function _tdPatchRoundBoards(curR, games) {
     if (nowStart || wasStart || !tdPatchMiniBoard(el, rr.fen, rr.last, el.getAttribute('data-flip') === '1')) {
       // empieza/termina sin jugadas o no se puede parchear → redibujar el tablero entero
       el.removeAttribute('data-filled');
-      el.setAttribute('data-res', parsePgnHeaders(newPgn).Result || '*');
+      el.setAttribute('data-res', newRes);
       needFull++;
     } else {
       // jugada nueva → solo se redibujaron las casillas que cambiaron. Actualizar fen, resultado y
       // re-sincronizar el reloj (el countdown sigue desde el [%clk] nuevo del PGN).
       el.setAttribute('data-fen', rr.fen);
-      el.setAttribute('data-res', parsePgnHeaders(newPgn).Result || '*');
+      el.setAttribute('data-res', newRes);
       _tdSetClocks(el, gidx, rr.fen, rr);
       // Jugada nueva: el [%eval] del PGN aún no existe (Lichess lo agrega al terminar) y el motor
       // todavía no evaluó esta posición → dejar la barra anterior; mevTick la actualiza enseguida.
@@ -32879,6 +32986,7 @@ function _tdFocusApply(fresh) {
   if (_tdCurrentRound != null && document.getElementById('td-round-' + _tdCurrentRound)) _tdPatchRoundBoards(_tdCurrentRound, _tdCtx.games);
   _tdApplyViewerRefresh(_tdCtx.pgnKey);
   if (_tdLiveCtx) setTimeout(mevTick, 900);
+  _teamLiveRefresh();
 }
 function _tdFocusTick() {
   if (_tdFocusBusy || !_tdLiveCtx || !_tdLiveCtx.onDemand || !_tdLivePolling || document.hidden || Date.now() < _tdFocusHold) return;
@@ -32906,14 +33014,115 @@ function _tdFocusTick() {
       });
   });
 }
-function _tdFocusStart() { if (!_tdFocusTimer) _tdFocusTimer = setInterval(_tdFocusTick, _TD_FOCUS_MS); }
+function _tdFocusStart() { if (!_tdFocusTimer) _tdFocusTimer = setInterval(_tdFocusTick, _TD_FOCUS_MS); _tdJsonStart(); }
 // Al volver a la pestaña (o volver la conexión), pedir YA lo que se está mirando: si no, esperaba la
 // vuelta siguiente del intervalo, hasta 8 s. _tdFocusTick se cuida solo (oculta, sin vivo, ocupado, 429).
 function _tdFocusWake() { if (!document.hidden && _tdFocusTimer) _tdFocusTick(); }
 document.addEventListener('visibilitychange', _tdFocusWake);
 window.addEventListener('pageshow', _tdFocusWake);
 window.addEventListener('online', _tdFocusWake);
-function _tdFocusStop() { if (_tdFocusTimer) { clearInterval(_tdFocusTimer); _tdFocusTimer = null; } _tdFocusBusy = false; _tdFocusNew = {}; }
+function _tdFocusStop() { if (_tdFocusTimer) { clearInterval(_tdFocusTimer); _tdFocusTimer = null; } _tdFocusBusy = false; _tdFocusNew = {}; _tdJsonStop(); }
+
+/* LAS MINIATURAS DEL RESTO DE LA RONDA, CON LA FICHA LIVIANA DE LICHESS (17/09/2026).
+   Medido en la ronda 2 de la Olimpiada: la ronda entera por el Worker llegaba con 2 a 6 minutos de atraso
+   (Lichess tarda ~10 s en exportar 100 partidas y frena al Worker con 429). Los tableros EN PANTALLA ya
+   llegan al instante (arriba, _tdFocusTick) y eso NO se toca. Para el resto: Lichess tiene la ficha de
+   la ronda en JSON (/api/broadcast/-/-/<ronda>) que sale en ~1 s y trae, por partida, la posición, la
+   última jugada, los relojes y el resultado. El navegador del visitante la pide directo cada
+   _TD_JSON_MS (una transmisión por vez) y, donde va más adelante que el PGN, la miniatura muestra ESA
+   posición. El PGN no se toca: cuando la ronda (o la partida suelta) lo alcanza, vuelve a mandar el PGN. */
+var _TD_JSON_MS = 30000;   // con la Olimpiada (5 transmisiones de ~3 s cada una, de a una) queda holgado y no se arrima al límite de Lichess
+var _TD_JSON_429_MS = 60000;
+var _TD_JSON_TICK_MS = 4000;     // el intervalo mira cada 4 s; _tdJsonTick decide si ya toca pedir
+var _tdJsonTimer = null, _tdJsonBusy = false, _tdJsonHold = 0, _tdJsonLast = 0;
+var _tdJsonNew = {};             // id de partida → { fen, last, wc, bc, ev, res, plies }, mientras vaya más adelante que su PGN
+// Medias jugadas según el FEN (número de jugada + turno). Sirve para comparar dos FEN de la MISMA partida.
+function _fenPlies(fen) {
+  var p = String(fen || '').split(' ');
+  return ((parseInt(p[5], 10) || 1) - 1) * 2 + (p[1] === 'b' ? 1 : 0);
+}
+// Reloj de la ficha (centésimas) → "H:MM:SS", el formato del [%clk] del PGN.
+function _csToClk(cs) {
+  if (typeof cs !== 'number' || cs < 0) return '';
+  var s = Math.floor(cs / 100), m = Math.floor((s % 3600) / 60), ss = s % 60;
+  return Math.floor(s / 3600) + ':' + (m < 10 ? '0' : '') + m + ':' + (ss < 10 ? '0' : '') + ss;
+}
+function _tdJsonRes(st) {
+  if (st === '1-0' || st === '0-1') return st;
+  return (st === '½-½' || st === '1/2-1/2') ? '1/2-1/2' : '*';
+}
+// ¿La ficha va más adelante que lo que dice el PGN? (más jugadas, o las mismas y ya tiene resultado)
+function _tdJsonAhead(o, rr, res) {
+  var pp = _fenPlies(rr.fen);
+  return o.plies > pp || (o.plies === pp && o.res !== '*' && res === '*');
+}
+// Lo que muestra una miniatura: lo del PGN o, si la ficha va más adelante, lo de la ficha.
+function _tdBoardState(pgn) {
+  var rr = tdFinalFenCached(pgn), res = parsePgnHeaders(pgn).Result || '*';
+  var id = _bcGameIds(pgn), o = id && _tdJsonNew[id.game];
+  if (!o) return { rr: rr, res: res, ficha: false };
+  if (_tdJsonAhead(o, rr, res)) return { rr: o, res: o.res, ficha: true };
+  delete _tdJsonNew[id.game];      // el PGN ya la alcanzó: vuelve a mandar el PGN
+  return { rr: rr, res: res, ficha: false };
+}
+// Resultado de una partida para el marcador del match (el de la ficha si ya terminó y el PGN no se enteró).
+function _tdGameRes(g) {
+  var res = (g.h && g.h.Result) || '*', id = res === '*' && _bcGameIds(g.pgn), o = id && _tdJsonNew[id.game];
+  return (o && o.res !== '*') ? o.res : res;
+}
+// Anota lo que trajo la ficha de UNA transmisión y parchea los tableros si algo avanzó.
+function _tdJsonApply(games) {
+  if (!_tdCtx || !_tdLiveCtx || !games || !games.length) return;
+  var cur = _tdLiveCtx.currentNum, byId = {}, changed = false;
+  (_tdCtx.byRound[cur] || []).forEach(function(g){ var id = _bcGameIds(g.pgn); if (id) byId[id.game] = g; });
+  games.forEach(function(j){
+    var g = j && j.id && j.fen && byId[j.id];
+    if (!g) return;
+    var p = j.players || [], lm = /^([a-h][1-8])([a-h][1-8])/.exec(j.lastMove || '');
+    var o = { fen: j.fen, last: lm ? { from: lm[1], to: lm[2] } : null, wc: _csToClk(p[0] && p[0].clock), bc: _csToClk(p[1] && p[1].clock),
+              ev: null, res: _tdJsonRes(j.status), plies: _fenPlies(j.fen) };
+    var prev = _tdJsonNew[j.id];
+    if (prev && prev.fen === o.fen && prev.res === o.res && prev.wc === o.wc && prev.bc === o.bc) return;
+    if (!_tdJsonAhead(o, tdFinalFenCached(g.pgn), parsePgnHeaders(g.pgn).Result || '*')) return;
+    _tdJsonNew[j.id] = o; changed = true;
+  });
+  if (!changed) return;
+  if (_tdCurrentRound === cur && document.getElementById('td-round-' + cur)) _tdPatchRoundBoards(cur, _tdCtx.games);
+  _teamLiveRefresh();   // un abandono que llegó por la ficha también suma en el marcador parcial del cruce
+}
+function _tdJsonTick() {
+  if (_tdJsonBusy || !_tdCtx || !_tdLiveCtx || !_tdLiveCtx.onDemand || !_tdLivePolling || document.hidden || Date.now() < _tdJsonHold) return;
+  if (!_tdLiveAhorra(_tdLiveCtx.tourIds)) return;   // una transmisión con poca gente: la copia del Worker ya llega al día (como siempre)
+  // Cada cuánto: 30 s en los grandes; en una transmisión, al ritmo del torneo (un blitz, cada 12 s), así las
+  // miniaturas no van más lentas que antes. El intervalo mira seguido y acá se decide si ya toca.
+  var cada = _tdLiveGrande(_tdLiveCtx.tourIds) ? _TD_JSON_MS : Math.min(_TD_JSON_MS, _liveRefreshMs(_tdLiveCtx.tourId));
+  var cur = _tdLiveCtx.currentNum;
+  if (_tdCurrentRound !== cur) return;   // mirando una ronda anterior: no hace falta
+  var rm = (_tdLiveCtx.roundsMeta || []).filter(function(r){ return r.num === cur; })[0];
+  if (!rm || rm.finished || !rm.roundIds || !rm.roundIds.length) return;
+  if (Date.now() - _tdJsonLast < cada) return;
+  _tdJsonLast = Date.now();
+  _tdJsonBusy = true;
+  var key = _tdLiveCtx.key, ids = rm.roundIds.slice(), i = 0;
+  (function uno(){   // de a una transmisión: con la Olimpiada son 9 pedidos chicos, no 9 a la vez
+    if (!_tdLiveCtx || _tdLiveCtx.key !== key || i >= ids.length || Date.now() < _tdJsonHold) { _tdJsonBusy = false; return; }
+    _fetchTO('https://lichess.org/api/broadcast/-/-/' + ids[i++], 8000)
+      .then(function(r){
+        if (r.status === 429) _tdJsonHold = Date.now() + _TD_JSON_429_MS;
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function(d){ if (_tdLiveCtx && _tdLiveCtx.key === key) { try { _tdJsonApply(d && d.games); } catch (e) {} } })
+      .catch(function(){})
+      .then(uno);
+  })();
+}
+function _tdJsonStart() { if (!_tdJsonTimer) _tdJsonTimer = setInterval(_tdJsonTick, _TD_JSON_TICK_MS); }
+function _tdJsonStop() { if (_tdJsonTimer) { clearInterval(_tdJsonTimer); _tdJsonTimer = null; } _tdJsonBusy = false; _tdJsonNew = {}; _tdJsonLast = 0; }
+// Al volver a la pestaña, en el acto (si la última fue hace más de 10 s: ir y venir rápido no suma pedidos).
+function _tdJsonWake() { if (document.hidden || !_tdJsonTimer) return; if (Date.now() - _tdJsonLast > 10000) _tdJsonLast = 0; _tdJsonTick(); }
+document.addEventListener('visibilitychange', _tdJsonWake);
+window.addEventListener('online', _tdJsonWake);
 
 /* TABLAS DE CHESS-RESULTS QUE SE ACTUALIZAN SOLAS (13/09/2026) — sólo rápidas y blitz.
    Idea del autor: en un suizo el árbitro no puede sortear la ronda siguiente sin cargar los resultados de
@@ -32957,6 +33166,12 @@ function _tdLiveRefresh() {
   // mientras había un fetch viejo en vuelo (o colgado), ese callback viejo queda invalidado y NO
   // reprograma un segundo timer (evita cadenas de sondeo duplicadas).
   if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; }
+  // (a) Pestaña oculta (en TODOS los vivos: Lichess, livechesscloud y sichess): no se pide nada, sólo se
+  // vuelve a mirar en la vuelta siguiente. Al volver a la pestaña, _tdLiveWake pide en el acto.
+  if (document.hidden) {
+    _tdLiveTimer = setTimeout(_tdLiveRefresh, _liveRefreshMs(_tdLiveCtx.tourId));
+    return;
+  }
   var gen = ++_tdPollGen;
   var key = _tdLiveCtx.key, tourIds = _tdLiveCtx.tourIds || [_tdLiveCtx.tourId];
   if (_tdLiveCtx.onDemand) { _tdLiveRefreshOnDemand(gen, key, tourIds); return; }   // on-demand: solo la ronda viva
@@ -32989,8 +33204,98 @@ function _tdLiveRefresh() {
 
 // Refresco ON-DEMAND: re-baja la metadata (detecta rondas nuevas / la que pasó a en vivo) + las partidas
 // de la ronda ACTUAL (la única que cambia). Las rondas terminadas quedan cacheadas, no se re-piden.
+/* TORNEOS DE VARIAS TRANSMISIONES: MENOS PEDIDOS AL WORKER (17/09/2026). Medido en la R2 de la Olimpiada:
+   ~220 pedidos por minuto con 13 visitantes, mitad la lista de rondas de cada transmisión y mitad la ronda
+   entera, que igual llegaba con minutos de atraso. Con los tableros en pantalla sueltos (_tdFocusTick) y la
+   ficha liviana (_tdJsonTick) al día, se ahorra así (SÓLO con 2 transmisiones o más; los torneos de una
+   sola siguen exactamente como antes):
+   a) pestaña oculta → no se pide nada (al volver, _tdLiveWake pide en el acto);
+   b) la lista de rondas se pide a UNA transmisión por vuelta, directo a Lichess (liviana, CORS abierto):
+      si cambió, se piden todas; y todas igual cada _BC_META_ALL_MS por si alguna va distinta;
+   c) la ronda entera, cada _TD_PGN_WAIT_MS mientras no cambie nada de las rondas (una ronda que empieza o
+      termina se pide en el acto). */
+var _BC_META_ALL_MS = 5 * 60 * 1000;
+var _TD_PGN_WAIT_MS = 2 * 60 * 1000;
+function _tdLiveGrande(tourIds) { return !!(tourIds && tourIds.length >= 2); }
+/* TORNEOS DE UNA TRANSMISIÓN CON MUCHA GENTE (17/09/2026, idea del autor). Lo que cuesta el cupo es la
+   gente: cada visitante son ~4 pedidos por minuto al Worker en un clásico y ~10 en un blitz. Con pocos no
+   se nota; con muchos, sí. Entonces, con _TD_AHORRO_ON espectadores o más (el "👁 X mirando" del chat del
+   torneo), un torneo de una transmisión pasa al modo ahorro de los grandes: la ficha liviana para las
+   miniaturas y la ronda entera cada _TD_PGN_WAIT_MS. Se apaga recién al bajar de _TD_AHORRO_OFF, para que
+   con 29-30 personas no cambie de modo a cada rato. Sin dato del contador (chat caído) = modo normal. */
+var _TD_AHORRO_ON = 30, _TD_AHORRO_OFF = 20;
+var _tdAhorroOn = false;
+function _tdAhorroCon(n, antes) { return n >= _TD_AHORRO_ON ? true : (n < _TD_AHORRO_OFF ? false : antes); }
+function _tdAhorro() {
+  var n = 0;
+  try { n = (window.aaTourChat && window.aaTourChat.seeing) ? (Number(window.aaTourChat.seeing()) || 0) : 0; } catch (e) {}
+  _tdAhorroOn = _tdAhorroCon(n, _tdAhorroOn);
+  return _tdAhorroOn;
+}
+// ¿Este vivo ahorra pedidos? Varias transmisiones siempre; una sola, si hay mucha gente mirando.
+function _tdLiveAhorra(tourIds) { return _tdLiveGrande(tourIds) || _tdAhorro(); }
+// Lista de rondas de UNA transmisión, directo a Lichess; si falla, por el Worker como siempre.
+function _bcFetchMetaDirect(tourId, cb) {
+  _fetchTO('https://lichess.org/api/broadcast/' + tourId, 12000)
+    .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(function(data){ cb({ tourSlug: data.tour && data.tour.slug, rounds: (data.tour && data.tour.rounds) || data.rounds || [] }); })
+    .catch(function(){ _bcFetchMeta(tourId, cb); });
+}
+// Huella de las rondas de una transmisión: cambia si aparece una ronda o una empieza / termina.
+function _bcRoundsSig(meta) {
+  return ((meta && meta.rounds) || []).map(function(r){ return r.id + (r.ongoing ? 'o' : '') + (r.finished ? 'f' : '') + (r.startsAt || ''); }).join(',');
+}
+function _bcFetchMetaLive(tourIds, cb) {
+  var c = _tdLiveCtx;
+  if (!c || !_tdLiveGrande(tourIds)) { _bcFetchMetaMulti(tourIds, cb); return; }   // una transmisión: como siempre
+  function todas() {
+    var out = new Array(tourIds.length), pend = tourIds.length;
+    tourIds.forEach(function(t, k){
+      _bcFetchMetaDirect(t, function(m){
+        out[k] = m;
+        if (--pend > 0) return;
+        if (out.every(Boolean)) { c._metas = out; c._metasAllAt = Date.now(); }
+        cb(out.filter(Boolean));
+      });
+    });
+  }
+  var metas = c._metas;
+  if (!metas || metas.length !== tourIds.length || Date.now() - (c._metasAllAt || 0) > _BC_META_ALL_MS) { todas(); return; }
+  var i = (c._metaTurn || 0) % tourIds.length;
+  c._metaTurn = i + 1;   // de a una por vuelta, rotando
+  _bcFetchMetaDirect(tourIds[i], function(m){
+    if (!m) { cb(metas.slice()); return; }
+    var cambio = _bcRoundsSig(m) !== _bcRoundsSig(metas[i]);
+    metas[i] = m;
+    if (cambio) { todas(); return; }   // empezó o terminó algo → todas en el acto
+    cb(metas.slice());
+  });
+}
+// Huella de las rondas ya fusionadas (qué ronda es la actual y cuáles están en vivo o terminadas).
+function _bcMergedSig(merged) {
+  return merged.currentNum + '|' + merged.roundsMeta.map(function(r){ return r.num + (r.live ? 'L' : '') + (r.finished ? 'F' : ''); }).join(',');
+}
+// ¿Se puede saltear la ronda entera en esta vuelta? (c) Sí si es grande, la última se pidió hace menos de
+// _TD_PGN_WAIT_MS y no cambió nada de las rondas.
+function _tdPgnCanWait(tourIds, merged, now) {
+  var c = _tdLiveCtx;
+  return !!(c && _tdLiveAhorra(tourIds) && c._pgnAt && now - c._pgnAt < _TD_PGN_WAIT_MS && c._pgnSig === _bcMergedSig(merged) && c._pgnRaw);
+}
 function _tdLiveRefreshOnDemand(gen, key, tourIds) {
-  _bcFetchOnDemandInit(tourIds, function(merged, currentGames){
+  _bcFetchMetaLive(tourIds, function(metas){
+    if (gen !== _tdPollGen) return;
+    if (!_tdLiveCtx || _tdLiveCtx.key !== key) return;
+    var merged = _bcMergeMeta(metas);
+    if (merged && _tdPgnCanWait(tourIds, merged, Date.now())) { listo(merged, _tdLiveCtx._pgnRaw, true); return; }
+    var cur = merged && merged.roundsMeta.filter(function(r){ return r.num === merged.currentNum; })[0];
+    if (!merged) { listo(null, null); return; }
+    _bcFetchRoundPgns(cur ? cur.roundIds : [], function(games){
+      if (gen !== _tdPollGen || !_tdLiveCtx || _tdLiveCtx.key !== key) return;
+      if (games && games.length) { _tdLiveCtx._pgnAt = Date.now(); _tdLiveCtx._pgnSig = _bcMergedSig(merged); _tdLiveCtx._pgnRaw = games; }
+      listo(merged, games || []);
+    });
+  });
+  function listo(merged, currentGames, salteada) {
     if (gen !== _tdPollGen) return;
     if (!_tdLiveCtx || _tdLiveCtx.key !== key) return;
     var sec = document.getElementById('td-games-section');
@@ -33001,7 +33306,9 @@ function _tdLiveRefreshOnDemand(gen, key, tourIds) {
       var prevCur = _tdLiveCtx.currentNum;
       _tdLiveCtx.roundsMeta = merged.roundsMeta; _tdLiveCtx.currentNum = merged.currentNum;
       var res = _bcOnDemandRes(merged, currentGames);
-      try { _tdOnDemandApplyRefresh(merged, currentGames, sec, prevCur); _tdShareRemember(res); } catch(e) {}
+      // Ronda salteada (c): los tableros ya están; la ficha y los tableros sueltos los mantienen al día.
+      if (!salteada) { try { _tdOnDemandApplyRefresh(merged, currentGames, sec, prevCur); _tdShareRemember(res); } catch(e) {} }
+      try { _teamLiveRefresh(); } catch(e) {}   // marcadores parciales de los cruces con lo que terminó en Lichess
       keep = _tdKeepPolling(res);
     } else {
       keep = (++_tdFetchFails <= _TD_MAX_FETCH_FAILS);
@@ -33012,7 +33319,7 @@ function _tdLiveRefreshOnDemand(gen, key, tourIds) {
       _tdLiveTimer = setTimeout(_tdLiveRefresh, _liveRefreshMs(_tdLiveCtx && _tdLiveCtx.tourId));
       _tdStartWatchdog();
     } else { _tdStopWatchdog(); }
-  });
+  }
 }
 // Si aparecieron rondas nuevas (cambió el set de pestañas) → reconstruye; si no, actualiza SOLO la ronda
 // actual (la viva) con las partidas frescas + pool, sin re-armar ni re-bajar el resto.
@@ -40965,6 +41272,9 @@ function cvUpdateNagBadge() {
      + '<div class="tchat-guest" id="tchat-guest-'+which+'" style="display:none">💡 <b>Entrá con Lichess</b> (arriba a la derecha) para escribir en el chat.</div>';
   }
   window.aaTourChat={
+    // Cuánta gente tiene abierto el torneo ("👁 X mirando"). 0 si no hay sala o no llegó el dato. Lo usa
+    // el vivo para decidir si ahorra pedidos (ver _tdAhorro).
+    seeing:function(){ return tcRoom ? tcSeeing : 0; },
     // Abre/mantiene la sala del torneo `name`. Idempotente: si ya es la misma sala, no reconecta.
     open:function(name){
       var slug=tcSlug(name);

@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1122;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1169;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -4052,7 +4052,7 @@ console.log('\n=== 53. Vivo: los tableros que se miran, sueltos y al instante (1
   const N = ['parsePgnHeaders', '_bcGameIds', '_pgnPlies', '_pgnAhead', '_tdFocusPreferNewer', '_tdFocusApply'];
   const F = new Function('var _tdFocusNew = {}, _tdCtx = null, _tdCurrentRound = null, _tdLiveCtx = null, llamadas = [];'
     + 'function _tdRebuildFlatGames(){ llamadas.push("flat"); var g=[]; Object.keys(_tdCtx.byRound).forEach(function(k){ _tdCtx.byRound[k].forEach(function(x){ g.push(x.pgn); }); }); _tdCtx.games = g; }'
-    + 'function _tdPatchRoundBoards(){ llamadas.push("patch"); } function _tdApplyViewerRefresh(){ llamadas.push("visor"); } function mevTick(){}'
+    + 'function _tdPatchRoundBoards(){ llamadas.push("patch"); } function _tdApplyViewerRefresh(){ llamadas.push("visor"); } function mevTick(){} function _teamLiveRefresh(){}'
     + 'var document = { getElementById: function(){ return {}; } };'
     + N.map(extraerFuncion).join('\n')
     + '; return { ' + N.join(',') + ', set ctx(c){ _tdCtx = c; _tdCurrentRound = 1; }, get nuevos(){ return _tdFocusNew; }, llamadas: llamadas };')();
@@ -4104,6 +4104,178 @@ console.log('\n=== 53. Vivo: los tableros que se miran, sueltos y al instante (1
   chk(SRC.includes("function _tdFocusWake() { if (!document.hidden && _tdFocusTimer) _tdFocusTick(); }")
       && SRC.includes("document.addEventListener('visibilitychange', _tdFocusWake);") && SRC.includes("window.addEventListener('online', _tdFocusWake);"),
       '🔒 al volver a la pestaña los tableros que se miran se piden en el acto (no a los 8 s)');
+}
+
+// ── 53b. Vivo: las miniaturas del resto de la ronda con la ficha liviana de Lichess (17/09) ──
+// Medido en la R2 de la Olimpiada: la ronda por el Worker llegaba 2-6 min atrasada. La ficha JSON de la
+// ronda sale en ~1 s y trae posición, última jugada, relojes y resultado de cada partida.
+console.log('\n=== 53b. Vivo: miniaturas con la ficha liviana de Lichess (17/09) ===');
+{
+  const N = ['parsePgnHeaders', '_bcGameIds', '_fenPlies', '_csToClk', '_tdJsonRes', '_tdJsonAhead', '_tdBoardState', '_tdGameRes', '_tdJsonApply', '_tdTeamMatches'];
+  const F = new Function('var _tdJsonNew = {}, _tdCtx = null, _tdCurrentRound = 2, _tdLiveCtx = { currentNum: 2 }, llamadas = [];'
+    + 'var FENS = {}; function tdFinalFenCached(p){ return FENS[p]; }'
+    + 'function _tdPatchRoundBoards(r){ llamadas.push("patch" + r); } function _teamLiveRefresh(){}'
+    + 'var document = { getElementById: function(){ return {}; } };'
+    + N.map(extraerFuncion).join('\n')
+    + '; return { ' + N.join(',') + ', FENS: FENS, set ctx(c){ _tdCtx = c; }, get nuevos(){ return _tdJsonNew; }, llamadas: llamadas };')();
+  const pg = (g, res, eq) => '[Event "Olymp"]\n[Site "https://lichess.org/broadcast/olimpiada/round-2/HnCuRMmB/' + g + '"]\n[White "A"]\n[Black "B"]\n'
+    + (eq ? '[WhiteTeam "Argentina"]\n[BlackTeam "Peru"]\n' : '') + '[Result "' + res + '"]\n\n1. e4 ' + res;
+  const viejo = pg('EQVqQ7iM', '*', true), otra = pg('zzzzzzzz', '*', true);
+  F.FENS[viejo] = { fen: 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1', last: { from: 'e2', to: 'e4' }, wc: '1:30:00', bc: '', ev: null };
+  F.FENS[otra] = F.FENS[viejo];
+  chk(F._fenPlies('4kb1r/8/8/8/8/8/8/4K3 w k - 3 25') === 48 && F._fenPlies(F.FENS[viejo].fen) === 1, 'cuenta las medias jugadas por el FEN (número de jugada + turno)');
+  chk(F._csToClk(198100) === '0:33:01' && F._csToClk(undefined) === '', 'el reloj de la ficha (centésimas) pasa al formato del PGN');
+  chk(F._tdJsonRes('½-½') === '1/2-1/2' && F._tdJsonRes('1-0') === '1-0' && F._tdJsonRes('*') === '*', 'el resultado de la ficha (con ½) se traduce al del PGN');
+
+  const ctx2 = { byRound: { 2: [{ pgn: viejo, h: F.parsePgnHeaders(viejo) }, { pgn: otra, h: F.parsePgnHeaders(otra) }] }, games: [viejo, otra] };
+  F.ctx = ctx2;
+  const ficha = { id: 'EQVqQ7iM', fen: '4kb1r/1p3pp1/q1n1p3/rb1pP1B1/1p1P2P1/1P3N2/P2Q1PK1/RB2R3 w k - 3 25', lastMove: 'a7a6',
+                  players: [{ clock: 198100 }, { clock: 202400 }], status: '*' };
+  F._tdJsonApply([ficha, { id: 'noesdeaca', fen: 'x w - - 0 9', status: '*' }]);
+  let st = F._tdBoardState(viejo);
+  chk(F.llamadas.join(',') === 'patch2' && st.ficha && st.rr.fen === ficha.fen && st.rr.last.from === 'a7' && st.rr.wc === '0:33:01' && st.rr.bc === '0:33:44',
+      'la ficha que va más adelante pone su posición, última jugada y relojes en la miniatura', F.llamadas.join(',') + ' ' + JSON.stringify(st.rr));
+  chk(!F._tdBoardState(otra).ficha, 'una partida que la ficha no nombra sigue con su PGN');
+  F.llamadas.length = 0;
+  F._tdJsonApply([ficha]);
+  chk(F.llamadas.length === 0, 'la misma ficha otra vez no vuelve a parchear los tableros');
+  // 🔒 Una ficha más vieja que el PGN (p. ej. el tablero ya llegó suelto) no hace retroceder la miniatura.
+  F.llamadas.length = 0;
+  F._tdJsonApply([{ id: 'zzzzzzzz', fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1', status: '*' }]);
+  chk(F.llamadas.length === 0 && !F._tdBoardState(otra).ficha, '🔒 una ficha más vieja que el PGN no hace retroceder el tablero');
+  // Termina sin jugada nueva (abandono): la ficha trae el resultado y el marcador del match lo cuenta.
+  F._tdJsonApply([{ id: 'zzzzzzzz', fen: F.FENS[otra].fen, status: '0-1' }]);
+  st = F._tdBoardState(otra);
+  const m = F._tdTeamMatches(ctx2.byRound[2]);
+  chk(st.ficha && st.res === '0-1' && m.length === 1 && m[0].b === 1 && m[0].a === 0, 'un abandono sin jugada nueva pone el resultado y suma en el marcador del match', JSON.stringify(m.map(x => [x.a, x.b])));
+  // El PGN alcanza a la ficha: vuelve a mandar el PGN y se olvida la ficha.
+  const alcanzo = pg('EQVqQ7iM', '*', true);
+  F.FENS[alcanzo + ' '] = { fen: ficha.fen, last: null, wc: '', bc: '', ev: null };
+  st = F._tdBoardState(alcanzo + ' ');
+  chk(!st.ficha && !F.nuevos.EQVqQ7iM, 'cuando el PGN alcanza a la ficha, vuelve a mandar el PGN (y la ficha se olvida)');
+
+  const tick = extraerFuncion('_tdJsonTick');
+  chk(/'https:\/\/lichess\.org\/api\/broadcast\/-\/-\/' \+ ids\[i\+\+\]/.test(tick) && /r\.status === 429\) _tdJsonHold = Date\.now\(\) \+ _TD_JSON_429_MS/.test(tick),
+      '🔒 la ficha se pide DIRECTO a Lichess desde el navegador, de a una transmisión, y con un 429 un minuto sin pedir');
+  chk(/document\.hidden/.test(tick) && /_tdCurrentRound !== cur\) return;/.test(tick) && /rm\.finished/.test(tick),
+      'sólo con la pestaña a la vista, mirando la ronda en curso');
+  chk(/_tdFocusTimer = setInterval\(_tdFocusTick, _TD_FOCUS_MS\); _tdJsonStart\(\);/.test(SRC) && /_tdFocusNew = \{\}; _tdJsonStop\(\); \}/.test(SRC),
+      'arranca y se apaga junto con los tableros sueltos (que siguen igual que antes)');
+  chk(/var st = _tdBoardState\(newPgn\), rr = st\.rr;/.test(extraerFuncion('_tdPatchRoundBoards')) && /var st = _tdBoardState\(pgn\), rr = st\.rr;/.test(extraerFuncion('tdFillBoards')),
+      '🔒 las miniaturas (dibujo entero y parche) pasan por la ficha');
+}
+
+// ── 53c. Por equipos: marcadores parciales con las partidas terminadas en Lichess (17/09) ──
+// Chess-Results carga el marcador del match recién al terminar la última mesa: un 2 a 1 se veía vacío.
+console.log('\n=== 53c. Por equipos: marcadores parciales con lo que terminó en Lichess (17/09) ===');
+{
+  const N = ['_teamNorm', '_teamPairKey', '_teamFedKey', '_teamMatchKey', '_teamLiveScoreFor', '_teamLiveBoardRes', '_a11yResInvertido', '_crNombreContenido'];
+  const F = new Function('var FEDS = { "Argentina":"ARG", "South Korea":"KOR", "Corea del Sur":"KOR", "Korea, Republic of":"KOR" };'
+    + 'function _teamResolveFed(n){ return FEDS[n] || ""; }'
+    + 'var _tdCtx = null, IDX = {}; function crFindGameIdx(r, w, b){ var k = r + "|" + w + "|" + b; return IDX[k] != null ? IDX[k] : -1; }'
+    + 'function crNormTokens(s){ return String(s||"").toLowerCase().replace(/[^a-z ]/g," ").split(" ").filter(Boolean).sort().join(" "); }'
+    + 'function parsePgnHeaders(p){ var h = {}; String(p).replace(/\\[(\\w+) "([^"]*)"\\]/g, function(_, k, v){ h[k] = v; }); return h; }'
+    + 'function _tdGameRes(g){ return g.h.Result || "*"; }'
+    + N.map(extraerFuncion).join('\n')
+    + '; return { ' + N.join(',') + ', set ctx(c){ _tdCtx = c; }, IDX: IDX };')();
+  // Lichess lo tiene como "South Korea" (A) vs Argentina (B), 1½ a ½; el cuadro de Chess-Results, al revés.
+  const live = { 'ARG-KOR': { teamA: 'South Korea', a: 1.5, b: 0.5 } };
+  let p = F._teamLiveScoreFor(live, 'Argentina', 'Korea, Republic of', {});
+  chk(p && p.a === 0.5 && p.b === 1.5, '🔒 el parcial se da vuelta si el cuadro pone a los equipos al revés que Lichess', JSON.stringify(p));
+  p = F._teamLiveScoreFor(live, 'Corea del Sur', 'Argentina', {});
+  chk(p && p.a === 1.5 && p.b === 0.5, 'con el mismo orden, queda como está (aunque el nombre cambie de idioma: manda la federación)', JSON.stringify(p));
+  chk(F._teamLiveScoreFor({ 'n:cotedivoire__kiribati': { teamA: 'Kiribati', a: 1, b: 0 } }, 'Cote d\u2019Ivoire', 'Kiribati', {}).a === 0,
+      'un equipo sin federación reconocible se engancha por el nombre (el apóstrofo curvo de Costa de Marfil)');
+  chk(F._teamLiveScoreFor(live, 'Argentina', 'Chile', {}) === null, 'un cruce que Lichess no tiene terminado no inventa marcador');
+
+  const pg = (w, b, r) => '[White "' + w + '"]\n[Black "' + b + '"]\n[Result "' + r + '"]\n\n1. e4 ' + r;
+  F.ctx = { games: [pg('Flores, Diego', 'Huh, Isaak', '0-1'), pg('Lee, Junhyeok', 'Perez Ponsa, Federico', '1/2-1/2'), pg('Mekhitarian, Krikor', 'Kim, Ho', '*')] };
+  F.IDX['2|Flores, Diego|Huh, Isaak'] = 0; F.IDX['2|Lee, Junhyeok|Perez Ponsa, Federico'] = 1; F.IDX['2|Mekhitarian, Krikor|Kim, Ho'] = 2;
+  chk(F._teamLiveBoardRes(2, 'Flores, Diego', 'Huh, Isaak') === '0-1', 'la mesa toma el resultado de la partida terminada (izquierda con blancas)');
+  chk(F._teamLiveBoardRes(2, 'Huh, Isaak', 'Flores, Diego') === '1-0', '🔒 si el de la izquierda jugó con negras, el resultado se da vuelta');
+  chk(F._teamLiveBoardRes(2, 'Perez Ponsa, Federico', 'Lee, Junhyeok') === '½-½', 'las tablas salen como las escribe Chess-Results (½-½)');
+  chk(F._teamLiveBoardRes(2, 'Mekhitarian, Krikor', 'Kim, Ho') === '' && F._teamLiveBoardRes(2, 'Nadie', 'Tampoco') === '', 'una partida en juego o que no está no pone nada');
+
+  const cruces = extraerFuncion('_teamRenderCrosses'), forma = extraerFuncion('_teamRenderRound');
+  chk(/if\(!String\(aRes\|\|''\)\.trim\(\) && !String\(bRes\|\|''\)\.trim\(\)\)\{\s*parcial=_teamLiveScoreFor/.test(cruces),
+      '🔒 en los cruces, el parcial sólo entra si Chess-Results todavía no tiene marcador');
+  chk(/if\(b\.res\) return b;/.test(forma) && /var c=\{\}; for\(var k in b\) c\[k\]=b\[k\];/.test(forma) && /if\(!\/\\d\/\.test\(String\(m\.score\|\|''\)\)/.test(forma),
+      '🔒 en la formación, sólo las mesas sin resultado, sobre una COPIA (lo guardado de Chess-Results no se toca)');
+  chk(/\(parcial\?_TEAM_LIVE_DOT:''\)/.test(cruces) && /\(_parcial\?_TEAM_LIVE_DOT:''\)/.test(forma) && /Marcador parcial con las partidas ya terminadas en Lichess/.test(cruces),
+      'el parcial lleva el punto rojo y la aclaración arriba');
+  chk(!/_teamLiveScore|_teamLiveBoardRes/.test(extraerFuncion('_teamRenderStandings')), '🔒 la TABLA de posiciones no usa parciales (un match a medio jugar no reparte puntos)');
+  chk(/try \{ _teamLiveRefresh\(\); \} catch\(e\) \{\}/.test(extraerFuncion('_tdLiveRefreshOnDemand')) && /_teamLiveRefresh\(\);/.test(extraerFuncion('_tdJsonApply')) && /_teamLiveRefresh\(\);/.test(extraerFuncion('_tdFocusApply')),
+      'se redibuja al llegar resultados nuevos (ronda, ficha liviana o tablero suelto)');
+  chk(/ap\.contains\(document\.activeElement\)\)\{ listo=false; return; \}/.test(extraerFuncion('_teamLiveRefresh')),
+      'con el foco adentro (lector de pantalla) no se redibuja debajo del usuario');
+}
+
+// ── 53d. Vivo de varias transmisiones: menos pedidos al Worker (17/09) ──
+// Medido en la R2 de la Olimpiada: ~220 pedidos/min con 13 visitantes. Sólo con 2 transmisiones o más.
+console.log('\n=== 53d. Varias transmisiones: menos pedidos al Worker (17/09) ===');
+{
+  const N = ['_tdLiveGrande', '_tdAhorroCon', '_tdAhorro', '_tdLiveAhorra', '_bcRoundsSig', '_bcFetchMetaLive', '_bcMergedSig', '_tdPgnCanWait'];
+  const F = new Function('var _tdLiveCtx = null, pedidos = [], RESP = {}, _BC_META_ALL_MS = 300000, _TD_PGN_WAIT_MS = 120000;'
+    + 'var _TD_AHORRO_ON = 30, _TD_AHORRO_OFF = 20, _tdAhorroOn = false, MIRANDO = 0; var window = { aaTourChat: { seeing: function(){ return MIRANDO; } } };'
+    + 'function _bcFetchMetaDirect(t, cb){ pedidos.push("directo:" + t); cb(RESP[t]); }'
+    + 'function _bcFetchMetaMulti(ts, cb){ pedidos.push("worker:" + ts.join("+")); cb(ts.map(function(t){ return RESP[t]; })); }'
+    + N.map(extraerFuncion).join('\n')
+    + '; return { ' + N.join(',') + ', set ctx(c){ _tdLiveCtx = c; }, set mirando(n){ MIRANDO = n; }, pedidos: pedidos, RESP: RESP };')();
+  const meta = (ongoing, fin) => ({ rounds: [{ id: 'r1', finished: true }, { id: 'r2', ongoing: ongoing, finished: fin, startsAt: 5 }] });
+  ['A', 'B', 'C'].forEach(t => { F.RESP[t] = meta(true, false); });
+  let got = null; const cb = (m) => { got = m; };
+
+  chk(!F._tdLiveGrande(['A']) && F._tdLiveGrande(['A', 'B']), 'se activa sólo con 2 transmisiones o más');
+  F.ctx = {};
+  F._bcFetchMetaLive(['A'], cb);
+  chk(F.pedidos.join() === 'worker:A' && got.length === 1, '🔒 un torneo de UNA transmisión pide la lista como siempre (por el Worker)', F.pedidos.join());
+
+  const ctx = {}; F.ctx = ctx; F.pedidos.length = 0;
+  F._bcFetchMetaLive(['A', 'B', 'C'], cb);
+  chk(F.pedidos.join() === 'directo:A,directo:B,directo:C' && got.length === 3 && ctx._metas && ctx._metasAllAt > 0,
+      'la primera vez pide la lista de TODAS, directo a Lichess', F.pedidos.join());
+  F.pedidos.length = 0;
+  F._bcFetchMetaLive(['A', 'B', 'C'], cb);
+  F._bcFetchMetaLive(['A', 'B', 'C'], cb);
+  chk(F.pedidos.join() === 'directo:A,directo:B' && got.length === 3, 'después, UNA por vuelta y rotando', F.pedidos.join());
+  F.pedidos.length = 0;
+  F.RESP.C = meta(false, true);   // en C terminó la ronda
+  F._bcFetchMetaLive(['A', 'B', 'C'], cb);
+  chk(F.pedidos.join() === 'directo:C,directo:A,directo:B,directo:C', '🔒 si la que tocó cambió (empezó o terminó una ronda), se piden todas en el acto', F.pedidos.join());
+  F.pedidos.length = 0;
+  ctx._metasAllAt = Date.now() - 301000;
+  F._bcFetchMetaLive(['A', 'B', 'C'], cb);
+  chk(F.pedidos.length === 3, 'y todas igual cada 5 minutos, por si alguna va distinta', F.pedidos.join());
+
+  const merged = { currentNum: 2, roundsMeta: [{ num: 1, finished: true }, { num: 2, live: true }] };
+  const ahora = Date.now();
+  F.ctx = { _pgnAt: ahora - 60000, _pgnSig: F._bcMergedSig(merged), _pgnRaw: ['x'] };
+  chk(F._tdPgnCanWait(['A', 'B'], merged, ahora), 'la ronda entera se saltea si se pidió hace menos de 2 minutos y no cambió nada');
+  chk(!F._tdPgnCanWait(['A'], merged, ahora), '🔒 con UNA transmisión y poca gente se pide siempre, como antes');
+  F.mirando = 30;
+  chk(F._tdPgnCanWait(['A'], merged, ahora), 'con UNA transmisión y 30 espectadores o más, pasa al modo ahorro');
+  F.mirando = 25;
+  chk(F._tdAhorro() === true, 'entre 20 y 29 sigue en el modo en que estaba (no titila con 29-30 personas)');
+  F.mirando = 19;
+  chk(F._tdAhorro() === false && !F._tdPgnCanWait(['A'], merged, ahora), 'al bajar de 20, vuelve al modo normal');
+  F.mirando = 25;
+  chk(F._tdAhorro() === false, 'y entre 20 y 29 no vuelve a prenderse hasta llegar a 30');
+  chk(F._tdAhorroCon(0, true) === false, '🔒 sin dato del contador (chat caído) = modo normal');
+  chk(!F._tdPgnCanWait(['A', 'B'], merged, ahora + 61000), 'pasados los 2 minutos, se pide');
+  chk(!F._tdPgnCanWait(['A', 'B'], { currentNum: 2, roundsMeta: [{ num: 1, finished: true }, { num: 2, finished: true }] }, ahora),
+      '🔒 si la ronda terminó (o empezó otra), se pide en el acto');
+
+  const ref = extraerFuncion('_tdLiveRefresh');
+  chk(/if \(document\.hidden\) \{\s*_tdLiveTimer = setTimeout\(_tdLiveRefresh/.test(ref) && ref.indexOf('document.hidden') < ref.indexOf('++_tdPollGen')
+      && ref.indexOf('document.hidden') < ref.indexOf('_tdLiveRefreshOnDemand') && ref.indexOf('document.hidden') < ref.indexOf('_bcFetchAllMulti'),
+      'con la pestaña oculta no se pide nada, en TODOS los vivos: Lichess, livechesscloud y sichess (y no se invalida lo que venía en camino)');
+  const jt = extraerFuncion('_tdJsonTick');
+  chk(/if \(!_tdLiveAhorra\(_tdLiveCtx\.tourIds\)\) return;/.test(jt), '🔒 la ficha liviana, sólo en torneos de varias transmisiones o con mucha gente');
+  chk(/Math\.min\(_TD_JSON_MS, _liveRefreshMs\(_tdLiveCtx\.tourId\)\)/.test(jt) && /if \(Date\.now\(\) - _tdJsonLast < cada\) return;/.test(jt),
+      'en una transmisión, la ficha va al ritmo del torneo (un blitz, cada 12 s)');
+  chk(/seeing:function\(\)\{ return tcRoom \? tcSeeing : 0; \}/.test(SRC), 'el contador sale del "👁 X mirando" del chat del torneo');
+  chk(/'https:\/\/lichess\.org\/api\/broadcast\/' \+ tourId, 12000\)/.test(extraerFuncion('_bcFetchMetaDirect')) && /\.catch\(function\(\)\{ _bcFetchMeta\(tourId, cb\); \}\)/.test(extraerFuncion('_bcFetchMetaDirect')),
+      'si Lichess no contesta la lista, se pide por el Worker como siempre');
 }
 
 // ── 54. Vivo: buscar por país, flechas en el chat y páginas también abajo (16/09) ──
