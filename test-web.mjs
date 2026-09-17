@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1101;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1111;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -4235,8 +4235,11 @@ console.log('\n=== Arena de Lichess — Fase 0: la cartelera ===');
   const f3 = AR._arFila({ t: mk('nb', { noBerserk: true }), estado: 'created', ritmo: 'rapid' }, ahora);
   chk(/sin berserk/.test(f3), 'sólo se avisa la excepción: el torneo que NO permite berserk');
   const f4 = AR._arFila({ t: mk('tem', { position: { name: 'Caro-Kann Defense: Karpov Variation' } }), estado: 'created', ritmo: 'rapid' }, ahora);
-  chk(/temático/.test(f4) && /Ver en Lichess/.test(f4) && !/Jugar acá/.test(f4),
-      'los temáticos (arrancan desde una apertura) van a "Ver en Lichess" por ahora (decisión del autor)');
+  chk(/temático/.test(f4) && /Jugar acá/.test(f4),
+      'los temáticos RÁPIDOS (arrancan desde una apertura) se juegan acá desde el 16/09');
+  const f5 = AR._arFila({ t: mk('temb', { position: { name: 'Rapport-Jobava System' }, perf: { key: 'blitz' }, clock: { limit: 180, increment: 0 } }), estado: 'created', ritmo: 'blitz' }, ahora);
+  chk(/temático/.test(f5) && /Ver en Lichess/.test(f5) && !/Jugar acá/.test(f5),
+      '🔒 un temático BLITZ sigue yendo a "Ver en Lichess"');
 
   const mod = (SRC.match(/ARENA DE LICHESS — Fase 0[\s\S]*?<\/script>/) || [''])[0];
   chk(mod.length > 3000, 'está el módulo de la cartelera', mod.length);
@@ -4444,7 +4447,7 @@ console.log('\n=== Arena de Lichess — Fase 1: anotarse y la pantalla de espera
       && /function pintarPuestos\(\)/.test(modS) && /Math\.ceil\(S\.meRank \/ 10\)/.test(modS)
       && /<span class="lv-clkgrp">\s*<span class="lv-trank" id="lv-trank-top"><\/span>\s*<span class="lv-clock lv-idle" id="lv-clk-top">/.test(SRC),
       'en la partida de arena va el #puesto al lado de cada reloj (el del rival, si está en el top 10 o en tu página)');
-  chk(/id="lv-li-expira"/.test(SRC) && /\(\+ex\.millisToMove \|\| 0\) - \(\+ex\.idleMillis \|\| 0\)/.test(SRC) && /var meToca = \(n % 2 === 0\) === \(P\.color === 'w'\)/.test(SRC)
+  chk(/id="lv-li-expira"/.test(SRC) && /\(\+ex\.millisToMove \|\| 0\) - \(\+ex\.idleMillis \|\| 0\)/.test(SRC) && /var meToca = \(n % 2 === 0\) === \(P\.color === primero\(\)\)/.test(SRC)
       && /expiraSync\(o\);/.test(SRC) && /expiraSync\(st\);/.test(SRC),
       '🔒 "N segundos para hacer tu primera jugada" (sale de expiration de Lichess, sólo cuando te toca): no mover en un arena te saca');
   chk(/rival: function \(\) \{ var f = P && P\.full;/.test(SRC) && /resta <= 5/.test(SRC),
@@ -4453,6 +4456,49 @@ console.log('\n=== Arena de Lichess — Fase 1: anotarse y la pantalla de espera
       '🔒 refrescar la tabla desde el tablero no pide rival ni hace sonar la musiquita (eso va al volver al torneo)');
   chk(/aaArenaSala\.abrir/.test(SRC) && /id="lv-arena-sala" style="display:none"/.test(SRC),
       '"Jugar acá" abre la pantalla del arena, que nace oculta');
+}
+
+// ── ARENAS TEMÁTICOS: partidas desde una posición inicial (16/09/2026) ─────────────────
+console.log('\n=== Arenas temáticos: posición inicial ===');
+{
+  // El visor numera y colorea las jugadas leyendo el FEN de la posición ANTERIOR.
+  const moveNo = new Function(extraerFuncion('nodeDepth') + '\n' + extraerFuncion('_cvMoveNo') + '; return _cvMoveNo;')();
+  const raiz = { fen: 'rnbqkb1r/ppp1pppp/5n2/3p4/3P1B2/2N5/PPP1PPPP/R2QKBNR b KQkq - 0 1', parent: null };
+  const n1 = { fen: 'x w - - 0 2', parent: raiz }, n2 = { fen: 'x b - - 0 2', parent: n1 };
+  const a = moveNo(n1), b = moveNo(n2);
+  chk(a.num === 1 && a.white === false && b.num === 2 && b.white === true,
+      'visor: si arrancan las NEGRAS, la 1.ª jugada es "1… " y la 2.ª "2." (no "1. e6 e3")', JSON.stringify([a, b]));
+  const sinFen = moveNo({ parent: { parent: null } });
+  chk(sinFen.num === 1 && sinFen.white === true, 'visor: sin FEN usable, se numera como siempre');
+  chk(/function obLocalUpdate\(\) \{\s*if \(!cv\.chess\) return;\s*if \(!_cvRootIsStd\(\)\)/.test(SRC),
+      'visor: con otra posición inicial no se muestra el libro de 1.e4/1.d4 (ni un nombre de apertura equivocado)');
+  chk(/startFen: fen0,/.test(SRC) && /completarFen\(full\.initialFen\)/.test(SRC) && /if\('startFen' in m\)\{\s*lvStartFen=m\.startFen\|\|null;/.test(SRC)
+      && /var c=lvStartFen\?new Chess\(lvStartFen\):new Chess\(\), lm=null;/.test(SRC)
+      && /\[SetUp "1"\]\\n\[FEN "'\+lvStartFen\+'"\]/.test(SRC) && /else if\(i===0\) mv\+=st\.num\+'\.\.\. ';/.test(SRC),
+      'tablero: la partida de Lichess trae su posición inicial; repasar, numerar y el PGN de "Analizar" parten de ahí');
+  chk(/return P\.color === primero\(\) \? n < 1 : n < 2;/.test(SRC) && /String\(f\)\.split\(' '\)\[1\] === 'b'\) \? 'b' : 'w'/.test(SRC),
+      '🔒 berserk: "antes de tu primera jugada" cuenta bien cuando empiezan las negras');
+  // Jugadas que llevan a la posición (assets/aperturas-jugadas.json): "Se llega con…" y "Analizar" desde el principio.
+  {
+    const JUG = JSON.parse(fs.readFileSync(new URL('./assets/aperturas-jugadas.json', import.meta.url), 'utf8'));
+    const _mj = { exports: {} };
+    new Function('module', 'exports', 'window', fs.readFileSync(new URL('./assets/chess.min.js', import.meta.url), 'utf8'))(_mj, _mj.exports, {});
+    const ChessLib = _mj.exports.Chess || _mj.exports;
+    const fx = new Function('window', 'Chess', 'cvFan',
+      extraerFuncion('_apJugKey') + '\n' + extraerFuncion('_apJugadasA') + '\n' + extraerFuncion('_apJugadasTexto') +
+      '; return { A: _apJugadasA, T: _apJugadasTexto };');
+    const fan = (s) => s.replace(/[KQRBN]/g, (c) => ({ K: '♚', Q: '♛', R: '♜', B: '♝', N: '♞' })[c]);
+    const api = fx({ __APERTURAS_JUG__: JUG }, ChessLib, fan);
+    const jov = api.A('rnbqkb1r/ppp1pppp/5n2/3p4/3P1B2/2N5/PPP1PPPP/R2QKBNR b KQkq -');
+    chk(Array.isArray(jov) && jov.join(' ') === 'd4 d5 Nc3 Nf6 Bf4' && api.T(jov) === '1.d4 d5 2.♞c3 ♞f6 3.♝f4',
+        'temático: se sabe que al Rapport-Jobava se llega con 1.d4 d5 2.♞c3 ♞f6 3.♝f4', JSON.stringify(jov));
+    chk(api.A('8/8/8/8/8/8/8/K6k w - -') === null && api.A('') === null, 'posición desconocida: no se inventan jugadas');
+    chk(Object.keys(JUG).length > 3000 && /'assets\/aperturas-jugadas\.json', \/\/ jugadas/.test(SRC),
+        'el archivo de jugadas existe y viaja en la exportación para publicar');
+  }
+  chk(/var pre=\(lvStartFen && typeof _apJugadasA==='function'\) \? _apJugadasA\(lvStartFen\) : null;/.test(SRC)
+      && /if\(lvStartFen && !pre\) h\+='\[SetUp "1"\]/.test(SRC) && /todas=pre\?pre\.concat\(lvMoves\):lvMoves/.test(SRC),
+      '"Analizar" un temático: la partida va entera desde 1.d4 si se conocen las jugadas; si no, desde la posición');
 }
 
 // ── ARENA DE LICHESS — Fase 3: berserk (14/09/2026) ─────────────────────────────────

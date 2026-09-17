@@ -3668,6 +3668,14 @@
       /* ── Pantalla de un arena (Fase 1): tabla | estado ── */
       #lv-arena-sala { max-width:1120px; margin:0 auto 16px; }
       .lv-as-top { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px; }
+      /* 🎯 Arena temático: la posición de la que arrancan todas las partidas (16/09/2026). */
+      .lv-as-tema { display:flex; align-items:center; gap:14px; margin:0 0 14px; padding:10px 12px; border:1px solid var(--gold-dim);
+        border-radius:var(--r-md); background:var(--gold-bg); }
+      .lv-as-tema-bd { flex:0 0 auto; width:92px; border-radius:4px; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,.35); }
+      .lv-as-tema-tx { min-width:0; font-size:13px; line-height:1.45; color:var(--text2); }
+      .lv-as-tema-tx b { color:var(--text); }
+      .lv-as-tema-tx .nm { display:block; font-size:15px; font-weight:800; color:var(--gold); }
+      .lv-as-tema-jug:not(:empty) { display:block; margin-top:3px; font-size:13px; font-weight:600; color:var(--text); }
       .lv-as-tit { flex:1 1 200px; min-width:0; }
       .lv-as-ic { font-size:40px; line-height:1; flex-shrink:0; }
       .lv-as-tit h2 { font-size:24px; font-weight:800; margin:0 0 2px; letter-spacing:-.4px; line-height:1.15; }
@@ -4078,6 +4086,7 @@
               <button type="button" class="lv-btn-sec lv-as-volver" id="lv-as-volver">← Cartelera</button>
             </div>
           </div>
+          <div id="lv-as-tema" class="lv-as-tema" style="display:none"></div>
           <div id="lv-as-podio"></div>
           <div class="lv-as-cols">
             <div>
@@ -14675,6 +14684,7 @@ var _EXPORT_ASSET_PATHS = [
   'assets/stockfish-embedded.js', // SF16 + wasm en base64 (plan B y modo file:// con doble clic)
   'assets/stockfish-nnue-16-single.js','assets/stockfish-nnue-16-single.wasm', // motor local (antes jsDelivr)
   'assets/aperturas.js', // índice de nombres de aperturas por EPD (lichess CC0, traducido)
+  'assets/aperturas-jugadas.json', // jugadas que llevan a cada posición (temáticos; se baja por demanda)
   'assets/piezas/wK.svg','assets/piezas/wQ.svg','assets/piezas/wR.svg','assets/piezas/wB.svg','assets/piezas/wN.svg','assets/piezas/wP.svg',
   'assets/piezas/bK.svg','assets/piezas/bQ.svg','assets/piezas/bR.svg','assets/piezas/bB.svg','assets/piezas/bN.svg','assets/piezas/bP.svg',
   'assets/sonidos/Move.mp3','assets/sonidos/Capture.mp3'
@@ -21170,6 +21180,44 @@ var _openingDetectCache = {};
    por EPD (FEN sin relojes) para reconocer TRANSPOSICIONES. Se baja por demanda vía
    <script src> (anda en http Y en file:// con doble clic, sin fetch). Formato:
    window.__APERTURAS__ = { "<epd>": "ECO\tNombre" }.  Se genera con build-aperturas.js. */
+/* ── Jugadas que LLEVAN a una posición (assets/aperturas-jugadas.json, 16/09/2026) ──────────
+   Los arenas temáticos de Lichess mandan sólo el FEN. Con esto se muestra "Se llega con 1.d4 d5…"
+   y "Analizar" abre la partida desde el principio. Va aparte del índice de nombres: se baja sólo
+   cuando hace falta. Clave = piezas + turno + enroques. Se genera con build-aperturas-jugadas.js. */
+var _apJugState = 0, _apJugCbs = [];   // 0=sin cargar, 1=cargando, 2=ok, 3=error
+function _apJugKey(fen) { return String(fen || '').split(' ').slice(0, 3).join(' '); }
+function _ensureAperturasJugadas(cb) {
+  if (window.__APERTURAS_JUG__) { if (cb) cb(true); return; }
+  if (_apJugState === 3) { if (cb) cb(false); return; }
+  if (cb) _apJugCbs.push(cb);
+  if (_apJugState === 1) return;
+  _apJugState = 1;
+  fetch('assets/aperturas-jugadas.json').then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(function (j) { window.__APERTURAS_JUG__ = j; _apJugState = 2; })
+    .catch(function () { _apJugState = 3; })
+    .then(function () {
+      var cbs = _apJugCbs; _apJugCbs = [];
+      cbs.forEach(function (f) { try { f(_apJugState === 2); } catch (e) {} });
+    });
+}
+/* Las jugadas (SAN) que llevan a esa posición, COMPROBADAS con chess.js; null si no están o no
+   coinciden. Sincrónica: el archivo tiene que estar cargado (_ensureAperturasJugadas). */
+function _apJugadasA(fen) {
+  var t = window.__APERTURAS_JUG__;
+  if (!t || !fen || typeof Chess !== 'function') return null;
+  var k = _apJugKey(fen), v = t[k];
+  if (!v) return null;
+  var sans = String(v).split(' '), ch = new Chess();
+  for (var i = 0; i < sans.length; i++) { if (!ch.move(sans[i])) return null; }
+  return _apJugKey(ch.fen()) === k ? sans : null;
+}
+/* "1.d4 d5 2.♞c3 ♞f6 3.♝f4" (con los dibujitos de las piezas, como la notación del visor) */
+function _apJugadasTexto(sans) {
+  var out = [];
+  for (var i = 0; i < (sans || []).length; i++) out.push((i % 2 === 0 ? ((i / 2) + 1) + '.' : '') + (typeof cvFan === 'function' ? cvFan(sans[i]) : sans[i]));
+  return out.join(' ');
+}
+
 var _apState = 0; // 0=sin cargar, 1=cargando, 2=ok, 3=error
 var _apCbs = [];
 function _ensureAperturas(cb) {
@@ -24849,8 +24897,8 @@ function cvSetNode(node) {
   if (depth === 0 || !node.move) {
     counterText = '0 mov.';
   } else {
-    var moveNum = Math.ceil(depth / 2);
-    var isBlack = (depth % 2 === 0);
+    var _mn0 = _cvMoveNo(node), moveNum = _mn0.num;
+    var isBlack = !_mn0.white;
     counterText = isBlack ? moveNum + '…' + cvFan(node.move.san) : moveNum + '.' + cvFan(node.move.san);
   }
   var _cvCounterEl = document.getElementById('cv-counter'); if (_cvCounterEl) _cvCounterEl.textContent = counterText;
@@ -24891,6 +24939,27 @@ function _cvSettleNode() {
   // búsqueda que ya viene corriendo). Solo analiza el settle en el resto de los casos (atrás, saltos,
   // navegación rápida que recién frena, jugada propia).
   if (sf.on && sf.ready && !_fa.running && !_animMid && _cvSfNode !== cv.node) { sfAnalyze(); _cvSfNode = cv.node; }
+}
+
+/* Número y color de la jugada que lleva a ESTE nodo, leídos de la posición ANTERIOR (turno y número
+   del FEN). Antes salían de la profundidad y se daba por hecho que empezaban las blancas: una
+   partida que arranca desde una posición con NEGRAS a mover (arenas temáticos, 16/09/2026) se
+   numeraba "1. e6 e3" en vez de "1… e6 2. e3". Sin FEN usable, lo de siempre. */
+function _cvMoveNo(node) {
+  var par = node && node.parent, p = (par && par.fen) ? String(par.fen).split(' ') : null;
+  if (p && (p[1] === 'w' || p[1] === 'b')) {
+    var n = parseInt(p[5], 10);
+    if (n > 0) return { num: n, white: p[1] === 'w' };
+  }
+  var d = nodeDepth(node);
+  return { num: Math.ceil(d / 2), white: d % 2 === 1 };
+}
+
+/* A quién le toca en la posición de un nodo (del FEN; sin FEN, por la profundidad). */
+function _cvTurnoDe(node) {
+  var t = (node && node.fen) ? String(node.fen).split(' ')[1] : '';
+  if (t === 'w' || t === 'b') return t;
+  return ((node ? nodeDepth(node) : 0) % 2 === 0) ? 'w' : 'b';
 }
 
 function nodeDepth(node) {
@@ -24969,7 +25038,7 @@ function cvUpdateClocks() {
   var wc = '', bc = '';
   var n = cv.node;
   while (n && n.move) {
-    var isWhite = (nodeDepth(n) % 2 === 1);
+    var isWhite = _cvMoveNo(n).white;
     if (isWhite && !wc && n.move.clk) wc = n.move.clk;
     if (!isWhite && !bc && n.move.clk) bc = n.move.clk;
     if (wc && bc) break;
@@ -24980,7 +25049,7 @@ function cvUpdateClocks() {
   // Resaltar el reloj del jugador que tiene el TURNO en la posición actual (solo si hay relojes).
   // La profundidad par = le toca a las blancas. Los ids cv-wclock/cv-bclock viajan con el contenido
   // al girar el tablero, así que basta con marcar por color (no por posición visual).
-  var _toMove = (cv.node ? nodeDepth(cv.node) : 0) % 2 === 0 ? 'w' : 'b';
+  var _toMove = _cvTurnoDe(cv.node);
   var _hasClk = !!(wc || bc);
   wEl.classList.toggle('cv-clock-active', _hasClk && _toMove === 'w');
   bEl.classList.toggle('cv-clock-active', _hasClk && _toMove === 'b');
@@ -24989,7 +25058,7 @@ function cvUpdateClocks() {
   _cvStopLiveClock();
   if (cv.node && cv.node.move && cv.node === cvLiveEndNode() && (wc || bc) &&
       cv.rawPgn && /\[Result\s+"[*]"\]/.test(cv.rawPgn)) {
-    var turn = (nodeDepth(cv.node) % 2 === 0) ? 'w' : 'b';
+    var turn = _cvTurnoDe(cv.node);
     // Descontar desde que la jugada LLEGÓ (no desde que el visitante se paró acá): al navegar
     // por la partida y volver, el reloj retoma donde va de verdad, no se resetea al valor del PGN.
     _cvStampLiveArrival();
@@ -25257,9 +25326,8 @@ function renderMoveTable(root) {
       out += '<div class="cv-mvar">' + vhOwn + '</div>';
       break;
     }
-    var depth = nodeDepth(mc);
-    var moveNum = Math.ceil(depth / 2);
-    var isWhite = (depth % 2 === 1);
+    var _mn1 = _cvMoveNo(mc), moveNum = _mn1.num;
+    var isWhite = _mn1.white;
     var mv = '<span class="cmv" id="cvn' + mc._id + '" onclick="cvGoNode(' + mc._id + ')">'
            + cvFanHtml(mc.move.san) + '</span>' + nagSpan(mc.move.nag) + _cvMoveTimeHtml(mc);
     if (isWhite) {
@@ -25296,9 +25364,8 @@ function renderLine(startNode, isMain) {
 
   while (node.children.length > 0) {
     var mainChild = node.children[0];  // línea principal
-    var depth = nodeDepth(mainChild);
-    var moveNum = Math.ceil(depth / 2);
-    var isWhite = (depth % 2 === 1);
+    var _mn2 = _cvMoveNo(mainChild), moveNum = _mn2.num;
+    var isWhite = _mn2.white;
 
     // número de movimiento
     if (isWhite) {
@@ -25336,9 +25403,8 @@ function renderVariantLine(startNode) {
   var first = true;
 
   while (node) {
-    var depth = nodeDepth(node);
-    var moveNum = Math.ceil(depth / 2);
-    var isWhite = (depth % 2 === 1);
+    var _mn3 = _cvMoveNo(node), moveNum = _mn3.num;
+    var isWhite = _mn3.white;
 
     if (isWhite || first) {
       h += '<span class="cmn">' + moveNum + (isWhite ? '.' : '…') + '</span>';
@@ -26473,8 +26539,23 @@ function _cvBookLine() {
   return sans;
 }
 
+/* ¿La partida del visor arranca de la posición de siempre? El libro y el nombre de la apertura se
+   buscan por la LISTA de jugadas desde el principio: con otra posición inicial (temáticos, 960)
+   mostraban los números de 1.e4/1.d4 como si nada. */
+function _cvRootIsStd() {
+  var n = cv.node; while (n && n.parent) n = n.parent;
+  if (!n || !n.fen) return true;
+  return String(n.fen).split(' ').slice(0, 2).join(' ') === 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w';
+}
+
 function obLocalUpdate() {
   if (!cv.chess) return;
+  if (!_cvRootIsStd()) {
+    var opX = document.getElementById('cv-opening'); if (opX) opX.textContent = '';
+    var faX = document.getElementById('fa-opening'); if (faX) faX.textContent = '';
+    obSetVisible(false);
+    return;
+  }
   var line = _cvBookLine(), key = line.join(' ');
   // Nombre de la apertura: se setea SIEMPRE y ANTES del libro de jugadas (que puede tardar
   // en armarse ~20s en modo autor). Solo depende del índice EPD (assets/aperturas.js) con
@@ -37173,7 +37254,7 @@ function faHover(e) {
   if (!node || !node.move || !tip) { faHoverEnd(); return; }
   var score = _fa.results[ply];
   if (!score) score = _faInterp(_fa.results)[ply];   // hueco: mismo valor que dibuja la curva
-  var d = nodeDepth(node), mv = Math.ceil(d / 2), white = (d % 2 === 1);
+  var _mnT = _cvMoveNo(node), mv = _mnT.num, white = _mnT.white;
   var evs = score ? ('<span class="fa-tip-ev">' + sfScoreStr(score, false) + '</span>') : '';
   tip.innerHTML = mv + (white ? '.' : '…') + ' ' + cvFanHtml(node.move.san) + nagSpan(node.move.nag) + evs;
   tip.style.display = 'block';
@@ -37480,7 +37561,7 @@ function faClassify() {
     var rBefore = i === 0 ? {cp:20} : R[i-1];
     // Ambos extremos confirmados; si no, sin símbolo (queda pendiente) y no suma a stats.
     if (!_faSettled(rAfter, i) || !_faSettled(rBefore, i-1)) { node.move.nag = ''; continue; }
-    var whiteMoved = (nodeDepth(node) % 2 === 1);
+    var whiteMoved = _cvMoveNo(node).white;
     var wpA = _faWinP(rAfter), wpB = _faWinP(rBefore);
     var dwin = whiteMoved ? (wpB - wpA) : (wpA - wpB);   // puntos de win% que perdió el que movió
     var loss = whiteMoved ? (faNum(rBefore) - faNum(rAfter)) : (faNum(rAfter) - faNum(rBefore));
@@ -37524,7 +37605,7 @@ function _faGameAccuracy() {
     if (!nodes[j].move) continue;
     var rA = R[j], rB = j === 0 ? {cp:20} : R[j-1];
     if (!_faSettled(rA, j) || !_faSettled(rB, j-1)) continue;
-    var whiteMoved = (nodeDepth(nodes[j]) % 2 === 1);
+    var whiteMoved = _cvMoveNo(nodes[j]).white;
     var dwin = whiteMoved ? (_faWinP(rB) - _faWinP(rA)) : (_faWinP(rA) - _faWinP(rB));
     var acc = Math.max(0, Math.min(100, 103.1668 * Math.exp(-0.04354 * Math.max(0, dwin)) - 3.1669));
     moves.push({ acc: acc, white: whiteMoved, pos: j });
@@ -37817,6 +37898,14 @@ function cvUpdateNagBadge() {
   var lvFen='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
   var lvChess=null, lvTurn='w', lvStatus='waiting', lvLastMove=null;
   var lvNames={}, lvPlayers={}, lvDrawOffer=null, lvMoves=[];
+  /* 🎯 Posición inicial de la partida (null = la de siempre). La mandan las partidas de Lichess que
+     arrancan desde una apertura (arenas temáticos, 16/09/2026): sin esto, repasar jugadas, numerarlas
+     y armar el PGN partían de la posición normal. Las partidas propias no la mandan. */
+  var lvStartFen=null;
+  function lvStartInfo(){
+    var p=String(lvStartFen||'').split(' ');
+    return { b: p[1]==='b', num: Math.max(1, parseInt(p[5],10)||1) };
+  }
   // En qué media jugada ofreció tablas cada color. Lo manda el árbitro: no se puede volver
   // a ofrecer hasta 20 medias jugadas (10 completas) después, como en Lichess.
   var lvDrawPly=null;
@@ -37952,7 +38041,7 @@ function cvUpdateNagBadge() {
   function computeView(){
     if(liveView()) return { fen:lvFen, last:lvLastMove, live:true };
     try {
-      var c=new Chess(), lm=null;
+      var c=lvStartFen?new Chess(lvStartFen):new Chess(), lm=null;
       for(var i=0;i<lvViewPly;i++) lm=c.move(lvMoves[i]);
       return { fen:c.fen(), last: lm?{from:lm.from,to:lm.to,san:lm.san}:null, live:false };
     } catch(e){ return { fen:lvFen, last:lvLastMove, live:true }; }
@@ -38130,11 +38219,14 @@ function cvUpdateNagBadge() {
     var el=$('lv-moves'); if(!el) return;
     if(!lvMoves.length){ el.innerHTML='<div class="lv-moves-empty">Sin jugadas todavía.</div>'; return; }
     var cur=curPly(), n=lvMoves.length, html='';
-    for(var i=0;i<n;i+=2){
-      var num=(i/2)+1, w=lvMoves[i], b=lvMoves[i+1];
-      html+='<div class="lv-mv-row"><span class="lv-mv-num">'+num+'.</span>'+
-            '<span class="lv-mv-san'+((cur===i+1)?' last':'')+'" data-ply="'+(i+1)+'">'+esc(w)+'</span>'+
-            (b?'<span class="lv-mv-san'+((cur===i+2)?' last':'')+'" data-ply="'+(i+2)+'">'+esc(b)+'</span>':'<span></span>')+
+    // Si la posición inicial es con NEGRAS a mover (temáticos), el primer renglón es "N. … jugada".
+    var st=lvStartInfo(), off=st.b?1:0;
+    function cel(i){ return '<span class="lv-mv-san'+((cur===i+1)?' last':'')+'" data-ply="'+(i+1)+'">'+esc(lvMoves[i])+'</span>'; }
+    for(var r=0;r*2<n+off;r++){
+      var iw=r*2-off, ib=iw+1;
+      html+='<div class="lv-mv-row"><span class="lv-mv-num">'+(st.num+r)+'.</span>'+
+            (iw>=0?cel(iw):'<span class="lv-mv-san lv-mv-dots">…</span>')+
+            (ib<n?cel(ib):'<span></span>')+
             '</div>';
     }
     el.innerHTML=html;
@@ -38157,9 +38249,21 @@ function cvUpdateNagBadge() {
     var wN=lvNames.w||'Blancas', bN=lvNames.b||'Negras', res=lvResultCode||'*';
     var d=new Date(), ds=d.getFullYear()+'.'+pad2(d.getMonth()+1)+'.'+pad2(d.getDate());
     var h='[Event "Partida en vivo — ChessArgentino"]\n[Site "chessargentino.ar"]\n[Date "'+ds+'"]\n'+
-          '[White "'+wN+'"]\n[Black "'+bN+'"]\n[Result "'+res+'"]\n\n';
-    var mv='';
-    for(var i=0;i<lvMoves.length;i++){ if(i%2===0) mv+=((i/2)+1)+'. '; mv+=lvMoves[i]+' '; }
+          '[White "'+wN+'"]\n[Black "'+bN+'"]\n[Result "'+res+'"]\n'+
+          '';
+    /* Temático: si se conocen las jugadas que llevan a la posición (1.d4 d5 2.Nc3 Nf6 3.Bf4), la
+       partida va ENTERA desde el principio, como en la página de la apertura de Lichess: el visor
+       numera "3… e6" y vuelven el nombre de la apertura y el libro. Si no, desde la posición. */
+    var pre=(lvStartFen && typeof _apJugadasA==='function') ? _apJugadasA(lvStartFen) : null;
+    if(lvStartFen && !pre) h+='[SetUp "1"]\n[FEN "'+lvStartFen+'"]\n';
+    h+='\n';
+    var mv='', st=pre?{b:false,num:1}:lvStartInfo(), todas=pre?pre.concat(lvMoves):lvMoves, off=st.b?1:0;
+    for(var i=0;i<todas.length;i++){
+      var v=i+off;
+      if(v%2===0) mv+=(st.num+v/2)+'. ';
+      else if(i===0) mv+=st.num+'... ';
+      mv+=todas[i]+' ';
+    }
     return h+(mv+res).trim()+'\n';
   }
   function clip(text, btn, okLabel){
@@ -38715,6 +38819,10 @@ function cvUpdateNagBadge() {
     var prev=lvStatus, wasLive=liveView();
     lvFen=m.fen; try { lvChess=new Chess(m.fen); } catch(e){ lvChess=new Chess(); }
     lvTurn=m.turn; lvStatus=m.status;
+    if('startFen' in m){
+      lvStartFen=m.startFen||null;
+      if(lvStartFen && typeof _ensureAperturasJugadas==='function') _ensureAperturasJugadas();   // para "Analizar"
+    }
     // Al arrancar la partida (entró el rival por el lobby o por link): retiro mi
     // desafío público y, si estaba navegando por otra parte de la web, me traigo a la sala.
     if(prev!=='playing' && lvStatus==='playing'){
@@ -39665,7 +39773,7 @@ function cvUpdateNagBadge() {
     lvRatings=null; lvRatingMsg=''; lvRated=true; updateFriendlyTag();
     lvSelected=null; lvPremove=null; lvDrawOffer=null; lvDrawPly=null; lvClock=null; lvLowWarned=false;
     lvPendingSoundId=null; lvLastSoundId=null; lvEndSoundDone=false;
-    lvMoves=[]; lvManualFlip=false; lvResultCode='*';
+    lvMoves=[]; lvManualFlip=false; lvResultCode='*'; lvStartFen=null;
     lvArrows=[]; lvHighlights={}; lvRmDown=null; lvViewPly=null; lvPrevMovesLen=0;
     lvResult=null; lvBannerDismissed=false; stopDiscCountdown(); stopArrancaCountdown();
     lvClearChat();   // partida nueva (crear/unirse/aceptar) → chat en limpio. NO se llama en la reconexión.
@@ -43380,9 +43488,10 @@ function cvUpdateNagBadge() {
      SIEMPRE escapado. */
   function _arFila(it, ahora) {
     var t = it.t, c = _arCuando(it, ahora);
-    /* Temáticos (arrancan desde una apertura): "Ver en Lichess" hasta comprobar que el tablero
-       arranque desde esa posición. Decisión del autor, 14/09: se patea a una fase posterior. */
-    var aca = (it.ritmo === 'rapid' || it.ritmo === 'classical') && !t.position;
+    /* Temáticos (arrancan desde una apertura): desde el 16/09 también "Jugar acá" si son rápidos o
+       clásicos. El tablero arranca, numera y repasa desde esa posición (lvStartFen). Lichess no pone
+       trabas por la posición: sólo exige el ritmo (isBoardCompatible). */
+    var aca = (it.ritmo === 'rapid' || it.ritmo === 'classical');
     var url = 'https://lichess.org/tournament/' + encodeURIComponent(t.id);
     var marcas = '';
     if (t.hasMaxRating && t.maxRating && t.maxRating.rating) marcas += '<span class="lv-ar-tag lv-ar-tope">hasta ' + (+t.maxRating.rating) + '</span>';
@@ -44232,6 +44341,27 @@ function cvUpdateNagBadge() {
     traer();
   }
 
+  /* 🎯 Temático: tablerito + nombre de la apertura + quién empieza. Se redibuja sólo si cambia. */
+  function pintarTema(pos) {
+    var el = $s('lv-as-tema'); if (!el) return;
+    var fen = (pos && pos.fen) ? String(pos.fen) : '';
+    if (el._fen === fen) return;
+    el._fen = fen;
+    if (!fen || typeof tdMiniFen !== 'function') { el.style.display = 'none'; el.innerHTML = ''; return; }
+    var negras = fen.split(' ')[1] === 'b';
+    el.innerHTML = '<div class="lv-as-tema-bd" aria-hidden="true">' + tdMiniFen(fen) + '</div>' +
+      '<div class="lv-as-tema-tx"><span class="nm">🎯 ' + _asEsc(pos.name || 'Torneo temático') + (pos.eco ? ' <small>(' + _asEsc(pos.eco) + ')</small>' : '') + '</span>' +
+      'Torneo <b>temático</b>: todas las partidas arrancan desde esta posición. ' +
+      'Empiezan <b>las ' + (negras ? 'negras' : 'blancas') + '</b>.' +
+      '<span class="lv-as-tema-jug"></span></div>';
+    el.style.display = '';
+    if (typeof _ensureAperturasJugadas === 'function') _ensureAperturasJugadas(function () {
+      var sans = _apJugadasA(fen), j = el.querySelector('.lv-as-tema-jug');
+      if (el._fen !== fen || !j || !sans) return;
+      j.textContent = 'Se llega con ' + _apJugadasTexto(sans);
+    });
+  }
+
   function pintar() {
     var d = S.d || {}, est = estadoActual();
     var nm = $s('lv-as-nombre'), meta = $s('lv-as-meta');
@@ -44245,6 +44375,7 @@ function cvUpdateNagBadge() {
       var dur = mins >= 60 ? (String(Math.round(mins / 6) / 10).replace('.', ',') + ' h') : (mins + ' min');
       meta.textContent = S.d ? ('Torneo arena de Lichess · ⏱ ' + rel + (mins ? ' · ' + dur : '') + ' · 👥 ' + nJug + ' jugadores') : '';
     }
+    pintarTema(S.d && S.d.position);
     var tabla = S.d ? _asTabla(S.d, yo(), S.ver) : '<p class="lv-ar-empty">Trayendo la tabla…</p>';
     var rp = restaPausa(), dem = demoraPausa();
     var caja = _asCaja(est, S.d, yo(), segundosRestantes(), rp, dem, S.miFila);
@@ -44558,7 +44689,7 @@ function cvUpdateNagBadge() {
      Lichess manda las jugadas en UCI ("e2e4 e7e5"); el tablero las quiere en SAN y con
      la posición armada. Se rearman con la misma librería de ajedrez que usa el visor. */
   function traducir(full, st) {
-    var fen0 = (full.initialFen && full.initialFen !== 'startpos') ? full.initialFen : null;
+    var fen0 = (full.initialFen && full.initialFen !== 'startpos') ? completarFen(full.initialFen) : null;
     var ch; try { ch = fen0 ? new Chess(fen0) : new Chess(); } catch (e) { ch = new Chess(); }
     var sans = [], ult = null;
     var ucis = String(st.moves || '').split(' ').filter(Boolean);
@@ -44572,6 +44703,7 @@ function cvUpdateNagBadge() {
     var inc = full.clock ? Math.round(full.clock.increment / 1000) : 0;
     var m = {
       fen: ch.fen(),
+      startFen: fen0,            // temáticos: el tablero numera, repasa y arma el PGN desde acá
       turn: ch.turn(),
       status: viva ? 'playing' : 'finished',
       moves: sans,
@@ -44801,6 +44933,11 @@ function cvUpdateNagBadge() {
     if (o.type === 'opponentGone') { rivalSeFue(o); return; }
   }
   function color() { return P ? P.color : 'w'; }
+  /* Quién mueve primero: en los arenas TEMÁTICOS la posición puede arrancar con negras (16/09). */
+  function primero() {
+    var f = P && P.full && P.full.initialFen;
+    return (f && f !== 'startpos' && String(f).split(' ')[1] === 'b') ? 'b' : 'w';
+  }
 
   /* ══ ⚡ BERSERK (plan del arena, Fase 3 — 14/09/2026) ═══════════════════════════
      Sólo en partidas de ARENA (la ficha trae tournamentId) y antes de TU primera jugada: te
@@ -44814,7 +44951,7 @@ function cvUpdateNagBadge() {
     if (st.status && st.status !== 'started' && st.status !== 'created') return false;
     if (P.bk[P.color]) return false;
     var n = String(st.moves || '').split(' ').filter(Boolean).length;
-    return P.color === 'w' ? n < 1 : n < 2;   // todavía no hiciste tu primera jugada
+    return P.color === primero() ? n < 1 : n < 2;   // todavía no hiciste tu primera jugada
   }
   /* La llamarada de 3 s en el reloj del que acaba de hacer berserk (abajo va tu color). */
   function llamarada(c) {
@@ -44832,7 +44969,7 @@ function cvUpdateNagBadge() {
     if (!P) return;
     var ex = st && st.expiration;
     var n = String((st && st.moves) || '').split(' ').filter(Boolean).length;
-    var meToca = (n % 2 === 0) === (P.color === 'w');
+    var meToca = (n % 2 === 0) === (P.color === primero());
     var vivo = !st || !st.status || st.status === 'started' || st.status === 'created';
     if (!arenaOn() || !P.full || !P.full.tournamentId || !ex || !meToca || !vivo || n >= 2) { P.expiraFin = 0; pintarExpira(); return; }
     P.expiraFin = Date.now() + Math.max(0, (+ex.millisToMove || 0) - (+ex.idleMillis || 0));
