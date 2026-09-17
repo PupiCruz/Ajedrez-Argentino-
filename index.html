@@ -33052,18 +33052,21 @@ function _tdJsonRes(st) {
   return (st === '½-½' || st === '1/2-1/2') ? '1/2-1/2' : '*';
 }
 // ¿La ficha va más adelante que lo que dice el PGN? (más jugadas, o las mismas y ya tiene resultado)
-function _tdJsonAhead(o, rr, res) {
-  var pp = _fenPlies(rr.fen);
+// pp = medias jugadas del PGN contadas sobre el TEXTO (_pgnPlies). OJO: no usar tdFinalFenCached acá —
+// reproduce la partida con el motor (~decenas de ms) y su caché guarda 200: con las 500 partidas de la
+// ficha recalculaba casi todas en cada vuelta y la página se congelaba (Olimpiada, 17/09).
+function _tdJsonAhead(o, pp, res) {
   return o.plies > pp || (o.plies === pp && o.res !== '*' && res === '*');
 }
 // Lo que muestra una miniatura: lo del PGN o, si la ficha va más adelante, lo de la ficha.
 function _tdBoardState(pgn) {
-  var rr = tdFinalFenCached(pgn), res = parsePgnHeaders(pgn).Result || '*';
+  var res = parsePgnHeaders(pgn).Result || '*';
   var id = _bcGameIds(pgn), o = id && _tdJsonNew[id.game];
-  if (!o) return { rr: rr, res: res, ficha: false };
-  if (_tdJsonAhead(o, rr, res)) return { rr: o, res: o.res, ficha: true };
-  delete _tdJsonNew[id.game];      // el PGN ya la alcanzó: vuelve a mandar el PGN
-  return { rr: rr, res: res, ficha: false };
+  if (o) {
+    if (_tdJsonAhead(o, _pgnPlies(pgn), res)) return { rr: o, res: o.res, ficha: true };
+    delete _tdJsonNew[id.game];    // el PGN ya la alcanzó: vuelve a mandar el PGN
+  }
+  return { rr: tdFinalFenCached(pgn), res: res, ficha: false };
 }
 // Resultado de una partida para el marcador del match (el de la ficha si ya terminó y el PGN no se enteró).
 function _tdGameRes(g) {
@@ -33083,7 +33086,8 @@ function _tdJsonApply(games) {
               ev: null, res: _tdJsonRes(j.status), plies: _fenPlies(j.fen) };
     var prev = _tdJsonNew[j.id];
     if (prev && prev.fen === o.fen && prev.res === o.res && prev.wc === o.wc && prev.bc === o.bc) return;
-    if (!_tdJsonAhead(o, tdFinalFenCached(g.pgn), parsePgnHeaders(g.pgn).Result || '*')) return;
+    if (g._plPgn !== g.pgn) { g._plPgn = g.pgn; g._pl = _pgnPlies(g.pgn); }   // se cuenta una vez por versión del PGN
+    if (!_tdJsonAhead(o, g._pl, (g.h && g.h.Result) || '*')) return;
     _tdJsonNew[j.id] = o; changed = true;
   });
   if (!changed) return;

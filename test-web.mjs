@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1169;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1171;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -4113,7 +4113,7 @@ console.log('\n=== 53b. Vivo: miniaturas con la ficha liviana de Lichess (17/09)
 {
   const N = ['parsePgnHeaders', '_bcGameIds', '_fenPlies', '_csToClk', '_tdJsonRes', '_tdJsonAhead', '_tdBoardState', '_tdGameRes', '_tdJsonApply', '_tdTeamMatches'];
   const F = new Function('var _tdJsonNew = {}, _tdCtx = null, _tdCurrentRound = 2, _tdLiveCtx = { currentNum: 2 }, llamadas = [];'
-    + 'var FENS = {}; function tdFinalFenCached(p){ return FENS[p]; }'
+    + 'var FENS = {}; function tdFinalFenCached(p){ return FENS[p]; } function _pgnPlies(p){ return FENS[p] ? _fenPlies(FENS[p].fen) : 0; }'
     + 'function _tdPatchRoundBoards(r){ llamadas.push("patch" + r); } function _teamLiveRefresh(){}'
     + 'var document = { getElementById: function(){ return {}; } };'
     + N.map(extraerFuncion).join('\n')
@@ -4163,6 +4163,14 @@ console.log('\n=== 53b. Vivo: miniaturas con la ficha liviana de Lichess (17/09)
       'arranca y se apaga junto con los tableros sueltos (que siguen igual que antes)');
   chk(/var st = _tdBoardState\(newPgn\), rr = st\.rr;/.test(extraerFuncion('_tdPatchRoundBoards')) && /var st = _tdBoardState\(pgn\), rr = st\.rr;/.test(extraerFuncion('tdFillBoards')),
       '🔒 las miniaturas (dibujo entero y parche) pasan por la ficha');
+  // Olimpiada 17/09, ya publicado: comparar con tdFinalFenCached reproducía cada partida con el motor
+  // (~66 ms c/u, caché de 200) → con 408 partidas, ~27 s de pantalla congelada en cada vuelta de la ficha.
+  chk(!/tdFinalFenCached/.test(extraerFuncion('_tdJsonApply')) && !/tdFinalFenCached/.test(extraerFuncion('_tdJsonAhead'))
+      && extraerFuncion('_tdJsonApply').includes('g._pl = _pgnPlies(g.pgn)'),
+      '🔒 la ficha compara contando jugadas en el TEXTO del PGN, sin reproducir partidas con el motor (congelaba la página)');
+  const bs = extraerFuncion('_tdBoardState');
+  chk(bs.indexOf('_pgnPlies(pgn)') > 0 && bs.indexOf('_pgnPlies(pgn)') < bs.indexOf('tdFinalFenCached(pgn)'),
+      'y la miniatura con ficha no reproduce su PGN al pedo');
 }
 
 // ── 53c. Por equipos: marcadores parciales con las partidas terminadas en Lichess (17/09) ──
