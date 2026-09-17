@@ -1538,6 +1538,7 @@
     .cv-pn { font-size:15px; font-weight:600; text-shadow:var(--txt-out); display:flex; align-items:center; gap:0; min-width:0; }
     .cv-pn-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; transition:color .12s; }
     .cv-pn-name:hover { color:var(--gold); }
+    a.cv-pn-name { color:inherit; text-decoration:none; }
     .cv-psub { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--fg-c8); text-shadow:var(--txt-out); min-width:0; }
     .cv-psub .cv-pelo { font-weight:700; color:var(--fg-c0); }
     .cv-psub .cv-ppts { font-weight:700; color:var(--gold); white-space:nowrap; }
@@ -3459,6 +3460,8 @@
       .lv-mv-row { display:grid; grid-template-columns:34px 1fr 1fr; align-items:center; font-size:13.5px; }
       .lv-mv-row:nth-child(odd) { background:var(--bd08, rgba(128,128,128,.08)); }
       .lv-mv-num { color:var(--text3); text-align:right; padding-right:8px; font-variant-numeric:tabular-nums; }
+      a.lv-li-nick { color:inherit; text-decoration:none; border-bottom:1px dotted var(--text3); }
+      a.lv-li-nick:hover { color:var(--gold); border-bottom-color:var(--gold); }
       .lv-mv-san { padding:4px 7px; border-radius:5px; }
       .lv-mv-san[data-ply] { cursor:pointer; }
       .lv-mv-san[data-ply]:hover { background:var(--bd15, rgba(128,128,128,.15)); }
@@ -24543,7 +24546,14 @@ function pgMeta(pgn) {
            we:g('WhiteElo'), be:g('BlackElo'), wt:g('WhiteTitle'), bt:g('BlackTitle'),
            eco:g('ECO'), op:g('Opening'), round:g('Round'),
            wfide:g('WhiteFideId'), bfide:g('BlackFideId'),
-           wteam:g('WhiteTeam'), bteam:g('BlackTeam') };
+           wteam:g('WhiteTeam'), bteam:g('BlackTeam'), site:g('Site') };
+}
+
+/* ¿La partida es de lichess.org? [Site "https://lichess.org/abcd1234"] (exportada) o "lichess.org"
+   (la que arma "Analizar" en una partida de Lichess). Las TRANSMISIONES quedan afuera: sus nombres son
+   de personas ("Carlsen, Magnus"), no usuarios de Lichess. */
+function _cvSiteLichess(site) {
+  return /^(?:https?:\/\/)?lichess\.org(?:\/[A-Za-z0-9]{8,12})?\/?$/.test(String(site || '').trim());
 }
 
 // Mapa de nombre/código de país → emoji de bandera
@@ -24808,8 +24818,14 @@ function cvPlayerHtml(title, name, fideId, elo, team, isBlack, gm) {
   // Si el PGN no trae el tag Title, lo sacamos de las tablas del torneo (mismo cableado que la bandera).
   var badge = titleBadge(title || _titleByName(name, _crK));
   // Nombre clickeable (abre el perfil) — SIN subrayado; se resalta en dorado al pasar el mouse.
+  /* Partida de lichess.org con un jugador que no es de la base: el nick abre su perfil en Lichess
+     (pestaña nueva), para chusmearlo o bloquearlo allá. Pedido del autor, 16/09/2026. Los usuarios de
+     Lichess no llevan espacios ni comas: si los tiene, es un nombre de persona y no se enlaza. */
+  var liNick = !clickable && gm && _cvSiteLichess(gm.site) && /^[A-Za-z0-9_-]{2,30}$/.test(name) ? name : '';
   var nameStr = clickable
     ? '<span class="cv-pn-name" title="' + titleAttr + '" onclick="cvClickPlayer(\'' + safeName + '\',\'' + safeFide + '\')">' + escHtml(name) + '</span>'
+    : liNick
+    ? '<a class="cv-pn-name cv-pn-li" href="https://lichess.org/@/' + encodeURIComponent(liNick) + '" target="_blank" rel="noopener" title="Ver el perfil de ' + escHtml(liNick) + ' en Lichess">' + escHtml(name) + '</a>'
     : '<span class="cv-pn-name" style="cursor:default">' + escHtml(name) + '</span>';
   // Elo: si la partida es de un torneo, preferir el de las TABLAS (mismo ritmo que la clasificación —
   // en un torneo blitz muestra el blitz, no el clásico que a veces trae el PGN del broadcast).
@@ -37910,6 +37926,7 @@ function cvUpdateNagBadge() {
   // a ofrecer hasta 20 medias jugadas (10 completas) después, como en Lichess.
   var lvDrawPly=null;
   var lvUsers={};       // {w:<usuario del sitio>|null, b:…} — sólo asientos LOGUEADOS → nick clickeable al perfil
+  var lvLiUsers={};     // {w:<usuario de Lichess>, b:…} — partidas de Lichess: el nick abre su perfil ALLÁ (16/09/2026)
   var lvRatings=null;   // {w:{r,prov}|null, b:{…}, cat} — rating del sitio de cada asiento (para las chapitas)
   var lvRated=true;     // ¿esta partida suma rating? (false = amistosa; lo eligió el creador)
   var lvPendingCfg=null;// {base,inc,rated} del desafío que estoy creando — lo consume maybeSendConfig()
@@ -38246,9 +38263,11 @@ function cvUpdateNagBadge() {
     }
   }
   function buildPGN(){
+    var esLi=!!(lvLiUsers && (lvLiUsers.w || lvLiUsers.b));
     var wN=lvNames.w||'Blancas', bN=lvNames.b||'Negras', res=lvResultCode||'*';
+    if(esLi){ wN=String(wN).replace(/\s*⚡$/,''); bN=String(bN).replace(/\s*⚡$/,''); }   // la marca de berserk no es parte del nombre
     var d=new Date(), ds=d.getFullYear()+'.'+pad2(d.getMonth()+1)+'.'+pad2(d.getDate());
-    var h='[Event "Partida en vivo — ChessArgentino"]\n[Site "chessargentino.ar"]\n[Date "'+ds+'"]\n'+
+    var h='[Event "Partida en vivo — ChessArgentino"]\n[Site "'+(esLi?'lichess.org':'chessargentino.ar')+'"]\n[Date "'+ds+'"]\n'+
           '[White "'+wN+'"]\n[Black "'+bN+'"]\n[Result "'+res+'"]\n'+
           '';
     /* Temático: si se conocen las jugadas que llevan a la posición (1.d4 d5 2.Nc3 Nf6 3.Bf4), la
@@ -38684,6 +38703,9 @@ function cvUpdateNagBadge() {
       // Si el asiento es un usuario del sitio (logueado), el nick abre su perfil al tocarlo.
       var nmHtml=lvEsc(nm), acct=lvUsers && lvUsers[color];
       if(acct) nmHtml=(window.aaPatron?window.aaPatron.badge(acct):'')+'<span class="aa-nick-clk" data-uprofile="'+lvEsc(acct)+'" title="Ver el perfil de '+lvEsc(acct)+'">'+nmHtml+'</span>';
+      /* Partida de Lichess: el nick abre su perfil en lichess.org (pestaña nueva), para chusmearlo
+         o bloquearlo allá. Pedido del autor, 16/09/2026. */
+      else if(lvLiUsers && lvLiUsers[color]) nmHtml='<a class="lv-li-nick" href="https://lichess.org/@/'+encodeURIComponent(lvLiUsers[color])+'" target="_blank" rel="noopener" title="Ver su perfil en Lichess">'+nmHtml+'</a>';
       // Sin "(vos)": el propio siempre está abajo y se entiende solo (pedido del usuario, 12/09).
       return (color==='w'?'⚪ ':'⚫ ')+nmHtml+rat+dis;
     }
@@ -38844,6 +38866,7 @@ function cvUpdateNagBadge() {
     if(m.sala) lvApplySala(m);   // asientos, cola, Listo, desempate… (sólo en una sala)
     if(m.names) lvNames=m.names; if(m.players) lvPlayers=m.players;
     if(m.users) lvUsers=m.users;
+    if('liUsers' in m) lvLiUsers=m.liUsers||{};
     if(m.ratings) lvRatings=m.ratings;
     if('rated' in m) lvRated=(m.rated!==false);
     updateFriendlyTag();
@@ -39769,7 +39792,7 @@ function cvUpdateNagBadge() {
 
   function resetState(){
     lvMyColor=null; lvFen='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
-    lvChess=null; lvTurn='w'; lvStatus='waiting'; lvLastMove=null; lvNames={}; lvUsers={}; lvPlayers={};
+    lvChess=null; lvTurn='w'; lvStatus='waiting'; lvLastMove=null; lvNames={}; lvUsers={}; lvLiUsers={}; lvPlayers={};
     lvRatings=null; lvRatingMsg=''; lvRated=true; updateFriendlyTag();
     lvSelected=null; lvPremove=null; lvDrawOffer=null; lvDrawPly=null; lvClock=null; lvLowWarned=false;
     lvPendingSoundId=null; lvLastSoundId=null; lvEndSoundDone=false;
@@ -43463,6 +43486,41 @@ function cvUpdateNagBadge() {
     return out;
   }
 
+  /* 🏟️ El PRÓXIMO arena para anotarse al terminar uno (16/09/2026). De la lista de la cartelera, uno
+     que se pueda jugar acá (rápida o clásica), que no sea el mismo y que no esté por terminar. Entre
+     los que empiezan en la próxima hora y media (o ya están en juego) gana el más PARECIDO: mismo tope
+     de rating, temático o no, misma velocidad y frecuencia; a igual parecido, el que arranca antes.
+     Si no hay ninguno tan cerca, el que empiece antes. Devuelve {id, nombre, cuando} o null. */
+  function _arProximo(data, d, ahora) {
+    d = d || {};
+    function tope(t) { return (t && t.hasMaxRating !== false && t.maxRating && +t.maxRating.rating) || 0; }
+    var lista = _arArmar(data, ahora).filter(function (it) {
+      if (!it.t || it.t.id === d.id) return false;
+      if (it.ritmo !== 'rapid' && it.ritmo !== 'classical') return false;
+      if (it.estado === 'started' && (+it.t.finishesAt || 0) - ahora < 15 * 60000) return false;
+      return true;
+    });
+    if (!lista.length) return null;
+    var sc = d.schedule || {}, miTope = tope(d), miTema = !!d.position, miRitmo = _arRitmo(d);
+    function parecido(it) {
+      var t = it.t, s2 = t.schedule || {}, p = 0;
+      if (tope(t) === miTope) p += 8;
+      if (!!t.position === miTema) p += 4;
+      if (it.ritmo === miRitmo) p += 2;
+      if (sc.speed && s2.speed === sc.speed) p += 1;
+      if (sc.freq && s2.freq === sc.freq) p += 1;
+      return p;
+    }
+    function arranque(it) { return it.estado === 'started' ? 0 : (+it.t.startsAt || 0); }
+    var cerca = lista.filter(function (it) { return arranque(it) - ahora <= 90 * 60000; });
+    var elegido = (cerca.length ? cerca : lista).slice().sort(function (a, b) {
+      if (cerca.length) { var dp = parecido(b) - parecido(a); if (dp) return dp; }
+      return arranque(a) - arranque(b);
+    })[0];
+    var c = _arCuando(elegido, ahora);
+    return { id: elegido.t.id, nombre: _arNombre(elegido.t), cuando: c.vivo ? ('en juego, ' + c.abajo) : (c.arriba + ' (' + c.abajo + ')') };
+  }
+
   function _arCuando(it, ahora) {
     var t = it.t;
     if (it.estado === 'started') {
@@ -43542,7 +43600,10 @@ function cvUpdateNagBadge() {
       })
       .then(function (j) { arDatos = j; arUlt = Date.now(); arError = false; })
       .catch(function () { arError = true; arUlt = Date.now(); })
-      .then(function () { arPidiendo = false; pintar(); });
+      .then(function () {
+        arPidiendo = false; pintar();
+        try { document.dispatchEvent(new Event('aa-arena-lista')); } catch (e) {}   // la pantalla final espera el "próximo"
+      });
   }
 
   function pintar() {
@@ -43595,7 +43656,13 @@ function cvUpdateNagBadge() {
     nombre: _arNombre, reloj: _arReloj,   // los usa la pantalla del arena (Fase 1)
     activo: activo,                       // la llave (?arena=1), para la entrada ?torneo=
     ocultar: function () { var w = $a('lv-arena-wrap'); if (w) w.style.display = 'none'; },
-    refrescar: function () { pintar(); if (aLaVista()) pedir(false); }
+    refrescar: function () { pintar(); if (aLaVista()) pedir(false); },
+    /* Para la pantalla final del arena: el próximo parecido, con la lista que ya se tiene (si está
+       vieja, se pide otra; la respuesta llega al próximo refresco de esa pantalla). */
+    proximo: function (d) {
+      if (!arDatos || Date.now() - arUlt > 3 * 60000) pedir(true);
+      return arDatos ? _arProximo(arDatos, d, Date.now()) : null;
+    }
   };
 
   function init() {
@@ -43728,7 +43795,7 @@ function cvUpdateNagBadge() {
     }).join('');
   }
 
-  function _asCaja(est, d, yo, segs, restaPausa, demora, filaYo) {
+  function _asCaja(est, d, yo, segs, restaPausa, demora, filaYo, prox) {
     d = d || {};
     var me = d.me || {}, fila = null, ylc = String(yo || '').toLowerCase();
     ((d.standing && d.standing.players) || []).forEach(function (p) {
@@ -43780,7 +43847,14 @@ function cvUpdateNagBadge() {
           : 'No te emparejan hasta que vuelvas.');
       return caja('Estás en pausa', txt, nums + fila2(btn('anotar', 'Volver a jugar', false, dem > 0)));
     }
-    if (est === 'terminado') return caja('El torneo terminó', '', nums + fila2(btn('cartelera', 'Volver a la cartelera', true)));
+    /* Terminado: el próximo arena parecido, a un toque (hay uno cada hora). */
+    if (est === 'terminado') {
+      if (prox && prox.id) return caja('El torneo terminó',
+        'Próximo: <b>' + _asEsc(prox.nombre) + '</b> · ' + _asEsc(prox.cuando),
+        nums + fila2('<button type="button" class="lv-btn-main" data-as="proximo" data-as-id="' + _asEsc(prox.id) + '">🏟️ Anotarme en el próximo</button>' +
+          btn('cartelera', 'Volver a la cartelera', true)));
+      return caja('El torneo terminó', '', nums + fila2(btn('cartelera', 'Volver a la cartelera', true)));
+    }
     return '';
   }
 
@@ -43859,7 +43933,9 @@ function cvUpdateNagBadge() {
     if (!ps.length) h += '<p class="lv-as-vacio">Todavía no jugaste partidas en este torneo.</p>';
     else h += '<div class="lv-as-riv">' + ps.map(function (p, i) {
       var sim = p.res === 'W' ? '✓' : p.res === 'D' ? '½' : p.res === 'L' ? '✗' : '⋯';
-      return '<a class="lv-as-rv r' + p.res + '" href="https://lichess.org/' + encodeURIComponent(p.id) + '" target="_blank" rel="noopener">' +
+      /* Tocarla la abre en el visor del sitio (pedido del autor, 16/09); Ctrl/clic medio, en lichess.org. */
+      return '<a class="lv-as-rv r' + p.res + '" href="https://lichess.org/' + encodeURIComponent(p.id) + '" target="_blank" rel="noopener"' +
+        ' data-as-partida="' + _asEsc(p.id) + '" data-as-res="' + _asEsc(p.res) + '" title="' + (p.res === 'P' ? 'Mirar la partida' : 'Ver la partida en el visor') + '">' +
         '<span class="n">' + (ps.length - i) + '</span>' +
         '<span title="' + (p.color === 'w' ? 'Con blancas' : 'Con negras') + '">' + (p.color === 'w' ? '⚪' : '⚫') + '</span>' +
         '<span class="o">' + (p.opTitle ? _asEsc(p.opTitle) + ' ' : '') + _asEsc(p.op) + (p.opRating ? ' <small>' + p.opRating + '</small>' : '') +
@@ -44024,6 +44100,8 @@ function cvUpdateNagBadge() {
         S.d = d; S.t0 = Date.now();
         /* El LATIDO: mientras busca rival, renovar pairMeAsap antes de que venza. */
         var e0 = _asEstado(d);
+        /* Vino de "Anotarme en el próximo": se anota solo (si puede; si no cumple, lo dice la pantalla). */
+        if (S.autoAnotar === id) { S.autoAnotar = ''; if (e0 === 'afuera') unirse(false); }
         if (e0 === 'pausado' && Date.now() - S.ultJoinUsuario >= 15000) S.pausaUsuario = true;   // pausa de Lichess o de otra pestaña
         /* Sólo con ESTA pantalla a la vista: refrescando desde el tablero (para la tabla) no se pide
            rival, así no te emparejan mirando el resultado sin apretar "Volver al torneo". */
@@ -44362,6 +44440,32 @@ function cvUpdateNagBadge() {
     });
   }
 
+  /* 🔍 Una partida del panel de performance, en NUESTRO visor (con motor, gráfico y todo).
+     Terminada: se baja su PGN de Lichess (/game/export, CORS abierto) y se abre en el visor.
+     En curso: se mira en vivo en el tablero, con el mismo mecanismo de "mirar" de la cartelera. */
+  var verPartidaEnCurso = '';
+  function verPartida(id, res) {
+    if (!id || verPartidaEnCurso === id) return;
+    if (res === 'P' && window.aaLiPartida && window.aaLiPartida.mirar) {
+      try { if (window.aaLiPartida.mirar(id)) return; } catch (e) {}
+    }
+    if (typeof loadPgnIntoViewer !== 'function') { window.open('https://lichess.org/' + encodeURIComponent(id), '_blank', 'noopener'); return; }
+    verPartidaEnCurso = id;
+    avisar('Abriendo la partida…');
+    fetch('https://lichess.org/game/export/' + encodeURIComponent(id) + '?clocks=true&evals=true&opening=true',
+      { headers: { Accept: 'application/x-chess-pgn' } })
+      .then(function (r) { if (!r.ok) { var er = new Error('HTTP ' + r.status); er.status = r.status; throw er; } return r.text(); })
+      .then(function (pgn) {
+        verPartidaEnCurso = '';
+        if (!/\S/.test(pgn || '')) throw new Error('vacío');
+        loadPgnIntoViewer(pgn);
+      })
+      .catch(function (e) {
+        verPartidaEnCurso = '';
+        avisar(e && e.status === 429 ? 'Lichess pidió esperar un momento. Probá de nuevo en un minuto.' : 'No se pudo traer la partida de Lichess.');
+      });
+  }
+
   function pintar() {
     var d = S.d || {}, est = estadoActual();
     var nm = $s('lv-as-nombre'), meta = $s('lv-as-meta');
@@ -44378,7 +44482,9 @@ function cvUpdateNagBadge() {
     pintarTema(S.d && S.d.position);
     var tabla = S.d ? _asTabla(S.d, yo(), S.ver) : '<p class="lv-ar-empty">Trayendo la tabla…</p>';
     var rp = restaPausa(), dem = demoraPausa();
-    var caja = _asCaja(est, S.d, yo(), segundosRestantes(), rp, dem, S.miFila);
+    var prox = null;
+    if (est === 'terminado') { try { prox = window.aaArena.proximo(S.d); } catch (e) {} }
+    var caja = _asCaja(est, S.d, yo(), segundosRestantes(), rp, dem, S.miFila, prox);
     /* Sólo se toca la pantalla si cambió algo (así no se pierde el foco del teclado). Las
        cuentas regresivas de adentro las actualiza pintarReloj, cada segundo. */
     var vn = verNombre(), esOtro = !!S.ver;
@@ -44493,6 +44599,13 @@ function cvUpdateNagBadge() {
   function init() {
     var sala = $s('lv-arena-sala');
     if (sala) sala.addEventListener('click', function (e) {
+      var pa = e.target.closest('[data-as-partida]');
+      if (pa) {
+        if (e.ctrlKey || e.metaKey || e.shiftKey || e.button === 1) return;   // pestaña nueva: a lichess.org
+        e.preventDefault();
+        verPartida(pa.getAttribute('data-as-partida'), pa.getAttribute('data-as-res'));
+        return;
+      }
       var j = e.target.closest('[data-as-jug]');
       if (j) { verJugador(j.getAttribute('data-as-jug')); return; }
       var pgb = e.target.closest('[data-as-pag]');
@@ -44501,6 +44614,11 @@ function cvUpdateNagBadge() {
       if (b) {
         var a = b.getAttribute('data-as');
         if (a === 'vermia') { verJugador(''); return; }
+        if (a === 'proximo') {
+          var pid = b.getAttribute('data-as-id');
+          if (pid) { b.disabled = true; abrir(pid); S.autoAnotar = pid; }   // se anota apenas llegan sus datos
+          return;
+        }
         if (a === 'anotar') { b.disabled = true; unirse(false); }
         else if (a === 'salir') { b.disabled = true; salir(); }
         else if (a === 'cartelera') cerrar();
@@ -44515,6 +44633,8 @@ function cvUpdateNagBadge() {
       e.preventDefault(); verJugador(j.getAttribute('data-as-jug'));
     });
     document.addEventListener('visibilitychange', function () { if (enPantalla()) traer(); });
+    /* Llegó la lista de la cartelera: la caja del torneo terminado ya puede ofrecer el próximo. */
+    document.addEventListener('aa-arena-lista', function () { if (S.id && S.d && S.d.isFinished && enPantalla()) pintar(); });
     /* Botón Atrás/Adelante: si la dirección nombra un arena, se vuelve a esa pantalla (salvo
        que haya una partida abierta: ahí manda el tablero). */
     window.addEventListener('popstate', function () {
@@ -44658,6 +44778,7 @@ function cvUpdateNagBadge() {
   function nombre(j) { return (j && (j.name || j.id)) || (j && j.aiLevel ? ('Ordenador nivel ' + j.aiLevel) : ''); }
   function chapita(j) { return (j && j.rating) ? { r: j.rating, prov: !!j.provisional } : null; }
   function lado(x) { return x === 'white' ? 'w' : x === 'black' ? 'b' : null; }
+  function usuarioLi(j) { return (j && !j.aiLevel && (j.id || j.name)) ? String(j.id || j.name) : null; }
 
   /* ── Del final de Lichess al cartel de casa ────────────────────────────────
      Nuestro `describeResult` habla de {reason, winner, by}. Lichess manda un `status`
@@ -44704,6 +44825,7 @@ function cvUpdateNagBadge() {
     var m = {
       fen: ch.fen(),
       startFen: fen0,            // temáticos: el tablero numera, repasa y arma el PGN desde acá
+      liUsers: { w: usuarioLi(full.white), b: usuarioLi(full.black) },   // el nick abre su perfil de Lichess
       turn: ch.turn(),
       status: viva ? 'playing' : 'finished',
       moves: sans,
@@ -45327,6 +45449,7 @@ function cvUpdateNagBadge() {
      "Desafiar de nuevo" ni "Nuevo oponente". */
   var M = null;
 
+  function idJ(j) { var u = j && j.user; return (u && (u.id || u.name)) ? String(u.id || u.name) : null; }
   function nombreJ(j) {
     var u = j && j.user;
     if (u) return (u.title ? u.title + ' ' : '') + (u.name || u.id);
@@ -45376,7 +45499,7 @@ function cvUpdateNagBadge() {
     if (o.players) {                                   // la ficha: al principio y al terminar
       M.ficha = o;
       if (!M.ch) {
-        var f0 = (o.initialFen && o.initialFen !== 'startpos') ? o.initialFen : null;
+        var f0 = (o.initialFen && o.initialFen !== 'startpos') ? completarFen(o.initialFen) : null;
         try { M.ch = f0 ? new Chess(f0) : new Chess(); } catch (e) { M.ch = new Chess(); }
       }
       pintarMirar(o.status);
@@ -45404,6 +45527,8 @@ function cvUpdateNagBadge() {
       fen: M.ch.fen(), turn: M.ch.turn(), status: viva ? 'playing' : 'finished',
       moves: M.sans.slice(), lastMove: M.ult,
       names: { w: nombreJ(f.players.white), b: nombreJ(f.players.black) },
+      startFen: (f.initialFen && f.initialFen !== 'startpos') ? completarFen(f.initialFen) : null,
+      liUsers: { w: idJ(f.players.white), b: idJ(f.players.black) },
       players: { w: false, b: false },   // así no aparece el chat, que por acá no llega
       ratings: { w: chapita(f.players.white), b: chapita(f.players.black) },
       rated: !!f.rated,

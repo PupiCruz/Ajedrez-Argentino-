@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1111;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1120;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -4174,7 +4174,7 @@ console.log('\n=== 54. Vivo: buscar por país, flechas en el chat y páginas aba
 // ── ARENA DE LICHESS — Fase 0: la cartelera (plan del 13/09/2026) ─────────────────────
 console.log('\n=== Arena de Lichess — Fase 0: la cartelera ===');
 {
-  const NOMBRES = ['_arActivo', '_arRitmo', '_arReloj', '_arNombre', '_arArmar', '_arCuando', '_arEsc', '_arFila'];
+  const NOMBRES = ['_arActivo', '_arRitmo', '_arReloj', '_arNombre', '_arArmar', '_arCuando', '_arEsc', '_arFila', '_arProximo'];
   const AR = new Function(NOMBRES.map(extraerFuncion).join('\n') + '; return {' + NOMBRES.join(',') + '};')();
 
   // 🚦 Estrenada para todos (14/09): nace prendida; ?arena=0 la apaga en ese navegador.
@@ -4240,6 +4240,19 @@ console.log('\n=== Arena de Lichess — Fase 0: la cartelera ===');
   const f5 = AR._arFila({ t: mk('temb', { position: { name: 'Rapport-Jobava System' }, perf: { key: 'blitz' }, clock: { limit: 180, increment: 0 } }), estado: 'created', ritmo: 'blitz' }, ahora);
   chk(/temático/.test(f5) && /Ver en Lichess/.test(f5) && !/Jugar acá/.test(f5),
       '🔒 un temático BLITZ sigue yendo a "Ver en Lichess"');
+  // 16/09: "Anotarme en el próximo" al terminar un arena.
+  {
+    const H = 3600000;
+    const px = (created, started, d) => AR._arProximo({ created, started: started || [] }, d, ahora);
+    const base = { id: 'fin', perf: { key: 'rapid' }, clock: { limit: 600, increment: 0 }, schedule: { freq: 'hourly', speed: 'rapid' } };
+    const p1 = px([mk('bl', { perf: { key: 'blitz' }, clock: { limit: 180, increment: 0 }, startsAt: ahora + 5 * 60000 }),
+                   mk('r2', { startsAt: ahora + 50 * 60000, schedule: { freq: 'hourly', speed: 'rapid' } }),
+                   mk('tope', { startsAt: ahora + 20 * 60000, hasMaxRating: true, maxRating: { rating: 1700 }, schedule: { freq: 'hourly', speed: 'rapid' } })], [], base);
+    chk(p1 && p1.id === 'r2', 'el próximo: se salta el blitz y prefiere uno SIN tope de rating como el que terminó, aunque arranque más tarde', JSON.stringify(p1));
+    const p2 = px([mk('lejos', { startsAt: ahora + 5 * H })], [mk('casi', { startsAt: ahora - H, finishesAt: ahora + 5 * 60000 }), mk('fin', {})], base);
+    chk(p2 && p2.id === 'lejos' && p2.cuando.includes('('), 'no ofrece el mismo torneo ni uno que está por terminar', JSON.stringify(p2));
+    chk(px([mk('bl', { perf: { key: 'blitz' }, clock: { limit: 180, increment: 0 } })], [], base) === null, 'sin arenas jugables acá: no hay botón');
+  }
 
   const mod = (SRC.match(/ARENA DE LICHESS — Fase 0[\s\S]*?<\/script>/) || [''])[0];
   chk(mod.length > 3000, 'está el módulo de la cartelera', mod.length);
@@ -4314,6 +4327,10 @@ console.log('\n=== Arena de Lichess — Fase 1: anotarse y la pantalla de espera
   chk(/lv-as-pausa/.test(tabla), 'el que está en pausa se ve apagado');
 
   const caja = (e, d) => A._asCaja(e, d, 'yo', 90);
+  const cfin = A._asCaja('terminado', {}, 'yo', 0, 0, 0, null, { id: 'XgaRA4At', nombre: '<i>Arena</i>', cuando: '21:00 (en 12 min)' });
+  chk(/data-as="proximo" data-as-id="XgaRA4At"/.test(cfin) && /Anotarme en el próximo/.test(cfin) && !/<i>Arena/.test(cfin)
+      && /data-as="cartelera"/.test(cfin) && !/data-as="proximo"/.test(A._asCaja('terminado', {}, 'yo', 0)),
+      'torneo terminado: botón "Anotarme en el próximo" (nombre escapado); sin próximo, sólo volver a la cartelera');
   chk(/data-as="anotar"/.test(caja('afuera', {})) && /data-as="salir"/.test(caja('buscando', { isStarted: true, me: { rank: 3 } }))
       && /data-as="anotar"/.test(caja('pausado', { me: { rank: 3, withdraw: true } })),
       'cada estado ofrece su botón: Anotarme, Pausar, Volver a jugar');
@@ -4499,6 +4516,27 @@ console.log('\n=== Arenas temáticos: posición inicial ===');
   chk(/var pre=\(lvStartFen && typeof _apJugadasA==='function'\) \? _apJugadasA\(lvStartFen\) : null;/.test(SRC)
       && /if\(lvStartFen && !pre\) h\+='\[SetUp "1"\]/.test(SRC) && /todas=pre\?pre\.concat\(lvMoves\):lvMoves/.test(SRC),
       '"Analizar" un temático: la partida va entera desde 1.d4 si se conocen las jugadas; si no, desde la posición');
+}
+
+// ── Partidas de Lichess: panel de performance → visor, y nick → perfil de Lichess (16/09/2026) ──
+console.log('\n=== Partidas de Lichess: visor propio y perfil del rival ===');
+{
+  const siteLi = new Function(extraerFuncion('_cvSiteLichess') + '; return _cvSiteLichess;')();
+  chk(siteLi('https://lichess.org/bWUg1suQ') && siteLi('lichess.org') && !siteLi('https://lichess.org/broadcast/biel-2026/round-7/abc')
+      && !siteLi('Biel SUI') && !siteLi('chessargentino.ar'),
+      'visor: se reconoce una partida de lichess.org, pero NO una transmisión (ahí los nombres son de personas)');
+  chk(/liNick = !clickable && gm && _cvSiteLichess\(gm\.site\) && \/\^\[A-Za-z0-9_-\]\{2,30\}\$\/\.test\(name\)/.test(SRC)
+      && /href="https:\/\/lichess\.org\/@\/' \+ encodeURIComponent\(liNick\)/.test(SRC),
+      'visor: el nick de una partida de Lichess abre su perfil allá (sólo si parece usuario: sin espacios ni comas)');
+  chk(/liUsers: \{ w: usuarioLi\(full\.white\), b: usuarioLi\(full\.black\) \}/.test(SRC) && /liUsers: \{ w: idJ\(f\.players\.white\), b: idJ\(f\.players\.black\) \}/.test(SRC)
+      && /else if\(lvLiUsers && lvLiUsers\[color\]\) nmHtml='<a class="lv-li-nick" href="https:\/\/lichess\.org\/@\/'/.test(SRC),
+      'tablero: jugando o mirando una partida de Lichess, el nick abre su perfil de Lichess');
+  chk(/data-as-partida="' \+ _asEsc\(p\.id\)/.test(SRC) && /function verPartida\(id, res\)/.test(SRC)
+      && /\/game\/export\/' \+ encodeURIComponent\(id\)/.test(SRC) && /loadPgnIntoViewer\(pgn\);/.test(SRC)
+      && /if \(e\.ctrlKey \|\| e\.metaKey \|\| e\.shiftKey \|\| e\.button === 1\) return;   \/\/ pestaña nueva/.test(SRC),
+      'panel de performance: la partida se abre en el visor del sitio (Ctrl/clic medio: lichess.org en otra pestaña)');
+  chk(/Site "'\+\(esLi\?'lichess\.org':'chessargentino\.ar'\)\+'"/.test(SRC) && /replace\(\/\\s\*⚡\$\/,''\)/.test(SRC),
+      '"Analizar" una partida de Lichess: Site lichess.org (para enlazar los nicks) y nombres sin la ⚡ del berserk');
 }
 
 // ── ARENA DE LICHESS — Fase 3: berserk (14/09/2026) ─────────────────────────────────
