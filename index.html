@@ -12878,9 +12878,16 @@ function _teamResolveFed(who, data){
   var s=String(who||'').trim(); if(!s) return '';
   if(/^[A-Za-z]{3}$/.test(s) && _FED_ISO[s.toUpperCase()]) return s.toUpperCase();
   var lo=s.toLowerCase().replace(/\s*\([a-z]{3}\)\s*$/i,'').trim(), found='';
-  var scan=function(nm,fed){ if(!found && nm && fed && String(nm).toLowerCase().replace(/\s*\([a-z]{3}\)\s*$/i,'').trim()===lo) found=String(fed).toUpperCase(); };
+  // Para comparar nombres: sin mayúsculas, acentos ni signos, y "&" igual a "and". Chess-Results escribe
+  // "Trinidad & Tobago" y Lichess "Trinidad and Tobago": no se reconocían y el match Brasil-Trinidad y
+  // Tobago quedaba sin marcador parcial ni salto a Partidas (Olimpiada, 17/09/2026).
+  var eq=function(n){ var t=String(n||'').toLowerCase().replace(/\s*\([a-z]{3}\)\s*$/i,'').replace(/&/g,' and ');
+    try{ t=t.normalize('NFD').replace(/[̀-ͯ]/g,''); }catch(e){}
+    return t.replace(/[^a-z0-9]+/g,''); };
+  var elo=eq(s);
+  var scan=function(nm,fed){ if(!found && nm && fed && eq(nm)===elo) found=String(fed).toUpperCase(); };
   var xr=(data&&data.teamCrosses)||{}; Object.keys(xr).forEach(function(r){ (xr[r]||[]).forEach(function(m){ scan(m.aName,m.aFed); scan(m.bName,m.bFed); }); });
-  if(!found){ var tr=(data&&data.teamRounds)||{}; Object.keys(tr).forEach(function(r){ (tr[r]||[]).forEach(function(m){ var pa=_teamCountryParts(m.aName),pb=_teamCountryParts(m.bName); if(!found&&pa.fed&&pa.clean.toLowerCase()===lo)found=pa.fed; if(!found&&pb.fed&&pb.clean.toLowerCase()===lo)found=pb.fed; }); }); }
+  if(!found){ var tr=(data&&data.teamRounds)||{}; Object.keys(tr).forEach(function(r){ (tr[r]||[]).forEach(function(m){ var pa=_teamCountryParts(m.aName),pb=_teamCountryParts(m.bName); if(!found&&pa.fed&&eq(pa.clean)===elo)found=pa.fed; if(!found&&pb.fed&&eq(pb.clean)===elo)found=pb.fed; }); }); }
   // La TABLA de posiciones trae el FED de cada equipo (columna FED): resuelve nombres oficiales largos
   // que el mapa Intl no tiene (ej. "United States of America" → USA).
   if(!found && data && data.teamStandings && data.teamStandings.teams){ data.teamStandings.teams.forEach(function(t){ scan(t.name, t.fed); }); }

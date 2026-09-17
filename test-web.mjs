@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1175;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1176;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -3287,6 +3287,12 @@ console.log('\n=== 46. Accesibilidad Fase 1: las tablas de torneo ===');
       'la formación con "Argentina" a secas (sin "(ARG)") se reconoce por el nombre');
   chk(T({ aName: 'Poland', bName: 'Mongolia' }, datos) === false,
       'y un cruce donde no juega Argentina sigue afuera');
+  // Olimpiada 17/09: Chess-Results "Trinidad & Tobago", Lichess "Trinidad and Tobago".
+  const R = new Function('_FED_ISO', '_NAME_FED', 'function crFlagEmoji(){ return ""; } function _teamFlag(){ return ""; }'
+    + extraerFuncion('_teamCountryParts') + extraerFuncion('_teamResolveFed') + ' return _teamResolveFed;')(ISO, {});
+  const datosTT = { teamCrosses: { 2: [ { aName: 'Brazil', aFed: 'BRA', bName: 'Trinidad & Tobago', bFed: 'TTO' } ] } };
+  chk(R('Trinidad and Tobago', datosTT) === 'TTO' && R('trinidad & tobago', datosTT) === 'TTO' && R('Trinidad Tobago', datosTT) === '',
+      '🔒 "Trinidad and Tobago" (Lichess) es el mismo país que "Trinidad & Tobago" (Chess-Results)');
   chk(T({ aName: 'Argentina (ARG)', bName: 'India (IND)' }, null) === true,
       'con el código pegado, como en la Olimpiada grande, anda igual que antes');
   chk(T({ aName: 'Argentinos Juniors', bName: 'Racing Club' }, null) === false,
