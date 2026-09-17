@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1176;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1177;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -4117,7 +4117,7 @@ console.log('\n=== 53. Vivo: los tableros que se miran, sueltos y al instante (1
 // ronda sale en ~1 s y trae posición, última jugada, relojes y resultado de cada partida.
 console.log('\n=== 53b. Vivo: miniaturas con la ficha liviana de Lichess (17/09) ===');
 {
-  const N = ['parsePgnHeaders', '_bcGameIds', '_fenPlies', '_csToClk', '_tdJsonRes', '_tdJsonAhead', '_tdBoardState', '_tdGameRes', '_tdJsonApply', '_tdTeamMatches'];
+  const N = ['parsePgnHeaders', '_bcGameIds', '_fenPlies', '_csToClk', '_tdJsonRes', '_tdJsonAhead', '_tdFichaSirve', '_tdBoardState', '_tdGameRes', '_tdJsonApply', '_tdTeamMatches'];
   const F = new Function('var _tdJsonNew = {}, _tdCtx = null, _tdCurrentRound = 2, _tdLiveCtx = { currentNum: 2 }, llamadas = [];'
     + 'var FENS = {}; function tdFinalFenCached(p){ return FENS[p]; } function _pgnPlies(p){ return FENS[p] ? _fenPlies(FENS[p].fen) : 0; }'
     + 'function _tdPatchRoundBoards(r){ llamadas.push("patch" + r); } function _teamLiveRefresh(){}'
@@ -4154,11 +4154,17 @@ console.log('\n=== 53b. Vivo: miniaturas con la ficha liviana de Lichess (17/09)
   st = F._tdBoardState(otra);
   const m = F._tdTeamMatches(ctx2.byRound[2]);
   chk(st.ficha && st.res === '0-1' && m.length === 1 && m[0].b === 1 && m[0].a === 0, 'un abandono sin jugada nueva pone el resultado y suma en el marcador del match', JSON.stringify(m.map(x => [x.a, x.b])));
-  // El PGN alcanza a la ficha: vuelve a mandar el PGN y se olvida la ficha.
+  // El PGN alcanza a la ficha (mismas jugadas): se sigue usando la ficha, que es la misma posición, y así la
+  // miniatura no reproduce la partida con el motor (~80 ms por tablero, los tironcitos al scrollear).
   const alcanzo = pg('EQVqQ7iM', '*', true);
   F.FENS[alcanzo + ' '] = { fen: ficha.fen, last: null, wc: '', bc: '', ev: null };
   st = F._tdBoardState(alcanzo + ' ');
-  chk(!st.ficha && !F.nuevos.EQVqQ7iM, 'cuando el PGN alcanza a la ficha, vuelve a mandar el PGN (y la ficha se olvida)');
+  chk(st.ficha && !!F.nuevos.EQVqQ7iM, '🔒 con el PGN IGUAL a la ficha se usa la ficha (misma posición, sin motor)');
+  // El PGN la pasa (llegó una jugada nueva por el tablero suelto): vuelve a mandar el PGN y la ficha se olvida.
+  const paso = pg('EQVqQ7iM', '*', true) + '  ';
+  F.FENS[paso] = { fen: '4kb1r/1p3pp1/q1n1p3/rb1pP1B1/1p1P2P1/1P3N2/P2Q1PK1/RB2R3 b k - 3 25', last: null, wc: '', bc: '', ev: null };
+  st = F._tdBoardState(paso);
+  chk(!st.ficha && !F.nuevos.EQVqQ7iM, 'cuando el PGN pasa a la ficha, vuelve a mandar el PGN (y la ficha se olvida)');
 
   const tick = extraerFuncion('_tdJsonTick');
   chk(/'https:\/\/lichess\.org\/api\/broadcast\/-\/-\/' \+ ids\[i\+\+\]/.test(tick) && /r\.status === 429\) _tdJsonHold = Date\.now\(\) \+ _TD_JSON_429_MS/.test(tick),

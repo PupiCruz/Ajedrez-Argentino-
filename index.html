@@ -6856,12 +6856,16 @@ var _ES_REGION_FEDS = {AND:1,ARA:1,AST:1,BAL:1,CAN:1,CAT:1,CNT:1,CTL:1,CTM:1,EXT
 // Regiones que NO coinciden con ningún país FIDE: su sola presencia (≥2 distintas) delata el torneo regional.
 var _ES_REGION_UNIQUE = {ARA:1,AST:1,BAL:1,CAT:1,CNT:1,CTL:1,CTM:1,EXT:1,GAL:1,MEL:1,MUR:1,NAV:1,VAL:1,VAS:1,RIO:1,CEU:1};
 var _esRegionalCache = {};
+var _esRegionalMiss = {};   // crKey → cuándo se miró y no había tabla (ver _tourIsESRegional)
 function _tourIsESRegional(crKey) {
   if (!crKey) return false;
   if (_esRegionalCache.hasOwnProperty(crKey)) return _esRegionalCache[crKey];
+  // Sin tabla individual (torneos por equipos, u on-demand todavía sin bajar) se volvía a leer el cuadro
+  // entero en CADA tarjeta de partida: se reintenta, pero como mucho una vez cada 2 s (17/09/2026).
+  if (_esRegionalMiss[crKey] && Date.now() - _esRegionalMiss[crKey] < 2000) return false;
   var st;
   try { var d = crDataLoad(crKey); st = (d && d.standings) || []; } catch (e) { st = []; }
-  if (!st.length) return false;   // la tabla todavía no cargó (on-demand) → no cachear, reintentar luego
+  if (!st.length) { _esRegionalMiss[crKey] = Date.now(); return false; }   // la tabla todavía no cargó → reintentar luego
   var seen = {};
   for (var i = 0; i < st.length; i++) {
     var f = (st[i] && st[i].fed || '').toUpperCase();
@@ -28142,17 +28146,22 @@ function _isArgGame(hdrs) {
 var _manualArgCache = {};
 function _tourManualArgSet(crKey) {
   if (!crKey) return null;
+  // Se consulta UNA vez por jugador de cada partida (Olimpiada: ~2.000 veces al entrar), y cada consulta
+  // leía y decodificaba el cuadro entero (279 KB): 3 s de pantalla trabada (medido 17/09/2026). Ahora lo
+  // que se armó hace menos de 2 s se reusa sin leer nada. Guardar el cuadro (crDataSave) lo borra al instante;
+  // los 2 s cubren lo que llega por otro lado (el archivo del torneo que baja después).
+  var c = _manualArgCache[crKey];
+  if (c && Date.now() - c.at < 2000) return c.set;
   var d; try { d = crDataLoad(crKey); } catch (e) { d = null; }
   var raw = (d && d.argManual) || '';
-  var c = _manualArgCache[crKey];
-  if (c && c.raw === raw) return c.set;
+  if (c && c.raw === raw) { c.at = Date.now(); return c.set; }
   var set = null;
   if (raw) {
     set = {};
     String(raw).split(/[\n;]+/).forEach(function (s) { s = s.trim(); if (s) { var k = crNormTokens(s); if (k) set[k] = 1; } });
     if (!Object.keys(set).length) set = null;
   }
-  _manualArgCache[crKey] = { raw: raw, set: set };
+  _manualArgCache[crKey] = { raw: raw, set: set, at: Date.now() };
   return set;
 }
 function _hasManualArg(crKey) { return !!_tourManualArgSet(crKey); }
@@ -33088,12 +33097,18 @@ function _tdJsonAhead(o, pp, res) {
   return o.plies > pp || (o.plies === pp && o.res !== '*' && res === '*');
 }
 // Lo que muestra una miniatura: lo del PGN o, si la ficha va más adelante, lo de la ficha.
+// Con la ficha IGUAL al PGN (mismas jugadas) también se usa la ficha: es la misma posición y así la miniatura
+// no reproduce la partida con el motor (~80 ms por tablero: eran los tironcitos al scrollear, 17/09/2026).
+// Sólo manda el PGN cuando va MÁS adelante (jugada nueva por el tablero suelto, o resultado que la ficha no tiene).
+function _tdFichaSirve(o, pp, res) {
+  return o.plies > pp || (o.plies === pp && (o.res !== '*' || res === '*'));
+}
 function _tdBoardState(pgn) {
   var res = parsePgnHeaders(pgn).Result || '*';
   var id = _bcGameIds(pgn), o = id && _tdJsonNew[id.game];
   if (o) {
-    if (_tdJsonAhead(o, _pgnPlies(pgn), res)) return { rr: o, res: o.res, ficha: true };
-    delete _tdJsonNew[id.game];    // el PGN ya la alcanzó: vuelve a mandar el PGN
+    if (_tdFichaSirve(o, _pgnPlies(pgn), res)) return { rr: o, res: o.res !== '*' ? o.res : res, ficha: true };
+    delete _tdJsonNew[id.game];    // el PGN la pasó: vuelve a mandar el PGN
   }
   return { rr: tdFinalFenCached(pgn), res: res, ficha: false };
 }
@@ -33116,8 +33131,10 @@ function _tdJsonApply(games) {
     var prev = _tdJsonNew[j.id];
     if (prev && prev.fen === o.fen && prev.res === o.res && prev.wc === o.wc && prev.bc === o.bc) return;
     if (g._plPgn !== g.pgn) { g._plPgn = g.pgn; g._pl = _pgnPlies(g.pgn); }   // se cuenta una vez por versión del PGN
-    if (!_tdJsonAhead(o, g._pl, (g.h && g.h.Result) || '*')) return;
-    _tdJsonNew[j.id] = o; changed = true;
+    var pres = (g.h && g.h.Result) || '*';
+    if (!_tdFichaSirve(o, g._pl, pres)) return;   // la ficha va atrás del PGN: manda el PGN
+    _tdJsonNew[j.id] = o;
+    if (!prev || _tdJsonAhead(o, g._pl, pres)) changed = true;   // primera vez (deja de usar el motor) o va más adelante
   });
   if (!changed) return;
   if (_tdCurrentRound === cur && document.getElementById('td-round-' + cur)) _tdPatchRoundBoards(cur, _tdCtx.games);
