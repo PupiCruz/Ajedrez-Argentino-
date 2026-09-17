@@ -18834,12 +18834,22 @@ var _CV_MINI_PER_PAGE = 24;   // miniaturas por página dentro del visor (igual 
 // Qué partidas (índices globales) muestra la página de miniaturas. keepPage: ver _cvRoundMinisHtml.
 function _cvMiniPageIdx(keepPage) {
   var curRound = parseInt(parsePgnHeaders(_cvTourGames[_cvTourIdx]).Round) || 0;
-  var roundIdx = [];
-  _cvTourGames.forEach(function(pgn, i) { if ((parseInt(parsePgnHeaders(pgn).Round) || 0) === curRound) roundIdx.push(i); });
+  var roundIdx = [], total = 0;
+  // Los MISMOS filtros que la grilla del torneo (buscador y "Solo argentinos"), así lo que se filtra en un
+  // lado queda filtrado en el otro. "Solo argentinos" sólo cuenta donde la grilla muestra el botón.
+  var terms = _tdSearch ? _tdSearchTerms(_tdSearch) : [], soloArg = _tdArgOnly && _cvMiniArgOk();
+  _cvTourGames.forEach(function(pgn, i) {
+    var h = parsePgnHeaders(pgn);
+    if ((parseInt(h.Round) || 0) !== curRound) return;
+    total++;
+    if (soloArg && !_tdIsArgGame(h)) return;
+    if (terms.length && !_tdSearchMatch(h, terms)) return;
+    roundIdx.push(i);
+  });
   var totalPages = Math.max(1, Math.ceil(roundIdx.length / _CV_MINI_PER_PAGE));
   if (keepPage) { _cvMiniPage = Math.min(Math.max(0, _cvMiniPage), totalPages - 1); }
   else { var activePos = roundIdx.indexOf(_cvTourIdx); _cvMiniPage = activePos >= 0 ? Math.floor(activePos / _CV_MINI_PER_PAGE) : 0; }
-  return { roundIdx: roundIdx, totalPages: totalPages,
+  return { roundIdx: roundIdx, totalPages: totalPages, total: total,
            pageIdx: roundIdx.slice(_cvMiniPage * _CV_MINI_PER_PAGE, _cvMiniPage * _CV_MINI_PER_PAGE + _CV_MINI_PER_PAGE) };
 }
 // Barrita de una miniatura: la evaluación de la posición o, si todavía no hay, la última de esa partida.
@@ -18889,10 +18899,10 @@ function _cvRefreshRoundMinis(minis) {
     ok = parseInt(cards[k].getAttribute('data-mi')) === p.pageIdx[k] && bd0
       && bd0.getAttribute('data-gk') === _tdEvKey(parsePgnHeaders(_cvTourGames[p.pageIdx[k]]));
   }
-  if (!ok) { minis.innerHTML = _cvRoundMinisHtml(true); return; }
+  if (!ok) { _cvMiniRebody(true); return; }
   for (var j = 0; j < cards.length; j++) {
-    var card = cards[j], i = p.pageIdx[j], pgn = _cvTourGames[i], h = parsePgnHeaders(pgn);
-    var ff = tdFinalFenCached(pgn), bd = card.querySelector('.td-bd'), gk = bd.getAttribute('data-gk');
+    var card = cards[j], i = p.pageIdx[j], pgn = _cvTourGames[i], h = _cvMiniHdr(pgn);
+    var ff = _tdBoardState(pgn).rr, bd = card.querySelector('.td-bd'), gk = bd.getAttribute('data-gk');
     card.classList.toggle('active', i === _cvTourIdx);
     var rows = _cvMiniRows(h, ff);
     if (card.firstElementChild.outerHTML !== rows.black) card.firstElementChild.outerHTML = rows.black;
@@ -18911,15 +18921,65 @@ function _cvRefreshRoundMinis(minis) {
     if (ev != null) _tdSetEvalBar(bd, ev);   // sin evaluación nueva todavía → la barra anterior queda
   }
 }
+// ¿Va el botón "Solo argentinos" en el visor? Donde la grilla del torneo lo muestra (torneos internacionales
+// con argentinos).
+function _cvMiniArgOk() { return !!document.getElementById('td-arg-btn'); }
+// Cabeceras de la miniatura con el resultado de la ficha liviana si va más adelante (ver _tdBoardState).
+function _cvMiniHdr(pgn) {
+  var h = parsePgnHeaders(pgn), st = _tdBoardState(pgn);
+  if (!st.ficha || st.res === (h.Result || '*')) return h;
+  var c = {}; for (var k in h) c[k] = h[k];
+  c.Result = st.res;
+  return c;
+}
+// Arriba de las miniaturas del visor: el buscador y "Solo argentinos" (pedido de un visitante, 17/09/2026:
+// mirando a un argentino, para pasar a otro había que volver al torneo). Queda FIJO: al tipear sólo se
+// rearma el cuerpo (_cvMiniRebody), así el cuadro de texto no pierde el foco.
+function _cvRoundMinisHead() {
+  var arg = _cvMiniArgOk()
+    ? '<button id="cv-rm-arg" onclick="cvMiniToggleArg()" aria-pressed="' + (_tdArgOnly ? 'true' : 'false') + '" class="arg-toggle' + (_tdArgOnly ? ' on' : '') + '">' + _flagImg('ARG') + ' Solo argentinos</button>'
+    : '';
+  return '<div class="cv-rm-head" style="display:flex;align-items:center;gap:10px;row-gap:8px;flex-wrap:wrap;margin-bottom:10px">'
+    + '<div class="m-sec-lbl" style="margin:0">Partidas de la ronda</div>'
+    + '<div class="search-pill" style="margin:0;flex:1 1 180px;min-width:150px;max-width:300px"><span class="sp-icon">🔍</span>'
+    + '<input id="cv-rm-search" type="search" autocomplete="off" aria-label="Filtrar las partidas de la ronda por jugador o país" placeholder="Jugador o país" value="' + escHtml(_tdSearch) + '" oninput="cvMiniSearchInput(this.value)"></div>'
+    + arg + '</div>';
+}
 function _cvRoundMinisHtml(keepPage) {
   var p = _cvMiniPageIdx(keepPage);
+  if (!p.total) return '';
+  return _cvRoundMinisHead() + '<div id="cv-rm-body">' + _cvRoundMinisBody(p) + '</div>';
+}
+function _cvMiniRebody(keepPage) {
+  var minis = document.getElementById('cv-round-minis'); if (!minis) return;
+  var body = document.getElementById('cv-rm-body');
+  if (body) body.innerHTML = _cvRoundMinisBody(_cvMiniPageIdx(keepPage));
+  else minis.innerHTML = _cvRoundMinisHtml(keepPage);
+}
+function cvMiniToggleArg() {
+  tdToggleArg();   // el mismo filtro que la grilla del torneo (la rearma detrás del visor)
+  var b = document.getElementById('cv-rm-arg');
+  if (b) { b.classList.toggle('on', _tdArgOnly); b.setAttribute('aria-pressed', _tdArgOnly ? 'true' : 'false'); }
+  _cvMiniRebody(false);
+}
+var _cvMiniSearchTimer = null;
+function cvMiniSearchInput(val) {
+  _tdSearch = val || '';
+  var gi = document.getElementById('td-search'); if (gi) gi.value = _tdSearch;   // el buscador de la grilla, igual
+  if (_cvMiniSearchTimer) clearTimeout(_cvMiniSearchTimer);
+  _cvMiniSearchTimer = setTimeout(function(){
+    _cvMiniRebody(false);
+    if (_tdCurrentRound !== null) { _tdPage = 0; tdBuildRound(_tdCurrentRound); }
+  }, 180);
+}
+function _cvRoundMinisBody(p) {
   var roundIdx = p.roundIdx, totalPages = p.totalPages, pageIdx = p.pageIdx;
-  if (!roundIdx.length) return '';
+  if (!roundIdx.length) return '<div style="text-align:center;padding:22px 0;color:var(--text3);font-size:13px">Ninguna partida de la ronda coincide con el filtro.</div>';
   var cards = '';
   pageIdx.forEach(function(i) {
-    var pgn = _cvTourGames[i], h = parsePgnHeaders(pgn);
+    var pgn = _cvTourGames[i], h = _cvMiniHdr(pgn);
     var sk = _cvShareKeys[i];
-    var ff = tdFinalFenCached(pgn);
+    var ff = _tdBoardState(pgn).rr;   // la ficha liviana si está: sin reproducir la partida con el motor
     var gk = _tdEvKey(h);
     var mEv = _cvMiniEv(ff, gk);
     var href = sk ? sk.url : '#';
@@ -18940,12 +19000,11 @@ function _cvRoundMinisHtml(keepPage) {
       + '<button onclick="cvMiniGoPage(' + (_cvMiniPage + 1) + ')"' + (_cvMiniPage >= totalPages - 1 ? ' disabled' : '') + ' style="' + bs + (_cvMiniPage >= totalPages - 1 ? ';opacity:.35' : '') + '">▶</button>'
       + '</div>';
   }
-  return '<div class="m-sec-lbl" style="margin-bottom:10px">Partidas de la ronda</div>' + pager + '<div class="cv-rm-grid" data-n="' + roundIdx.length + '">' + cards + '</div>' + pager;
+  return pager + '<div class="cv-rm-grid" data-n="' + roundIdx.length + '">' + cards + '</div>' + pager;
 }
 function cvMiniGoPage(p) {
   _cvMiniPage = p;
-  var minis = document.getElementById('cv-round-minis');
-  if (minis) minis.innerHTML = _cvRoundMinisHtml(true);
+  _cvMiniRebody(true);
 }
 
 async function openTourGameByIndex(idx) {

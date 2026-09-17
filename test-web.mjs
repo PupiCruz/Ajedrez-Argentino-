@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1177;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1186;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -4306,6 +4306,43 @@ console.log('\n=== 53d. Varias transmisiones: menos pedidos al Worker (17/09) ==
   chk(/seeing:function\(\)\{ return tcRoom \? tcSeeing : 0; \}/.test(SRC), 'el contador sale del "👁 X mirando" del chat del torneo');
   chk(/'https:\/\/lichess\.org\/api\/broadcast\/' \+ tourId, 12000\)/.test(extraerFuncion('_bcFetchMetaDirect')) && /\.catch\(function\(\)\{ _bcFetchMeta\(tourId, cb\); \}\)/.test(extraerFuncion('_bcFetchMetaDirect')),
       'si Lichess no contesta la lista, se pide por el Worker como siempre');
+}
+
+// ── 53e. Visor: buscador y "Solo argentinos" en las partidas de la ronda (17/09) ──
+// Pedido de un visitante: mirando a un argentino, para pasar a otro había que volver al torneo.
+console.log('\n=== 53e. Visor: buscador y Solo argentinos debajo del tablero (17/09) ===');
+{
+  const N = ['_cvMiniPageIdx'];
+  const F = new Function('var _cvTourGames = [], _cvTourIdx = 0, _cvMiniPage = 0, _CV_MINI_PER_PAGE = 24, _tdSearch = "", _tdArgOnly = false, BOTON = true;'
+    + 'function parsePgnHeaders(p){ var h = {}; String(p).replace(/\\[(\\w+) "([^"]*)"\\]/g, function(_, k, v){ h[k] = v; }); return h; }'
+    + 'function _cvMiniArgOk(){ return BOTON; } function _tdIsArgGame(h){ return /ARG/.test(h.WhiteTeam + h.BlackTeam); }'
+    + 'function _tdSearchTerms(q){ return [q.toLowerCase()]; } function _tdSearchMatch(h, t){ return (h.White + " " + h.Black + " " + h.WhiteTeam + " " + h.BlackTeam).toLowerCase().indexOf(t[0]) >= 0; }'
+    + N.map(extraerFuncion).join('\n')
+    + '; return { _cvMiniPageIdx, set games(g){ _cvTourGames = g; }, set idx(i){ _cvTourIdx = i; }, set arg(v){ _tdArgOnly = v; }, set busca(v){ _tdSearch = v; }, set boton(v){ BOTON = v; } };')();
+  const g = (r, w, b, wt, bt) => '[Round "' + r + '"]\n[White "' + w + '"]\n[Black "' + b + '"]\n[WhiteTeam "' + wt + '"]\n[BlackTeam "' + bt + '"]\n\n1. e4 *';
+  F.games = [g(2, 'Oro', 'Lee', 'ARG', 'KOR'), g(2, 'Cori', 'Abdusattorov', 'PER', 'UZB'), g(2, 'Flores', 'Ahn', 'ARG', 'KOR'), g(1, 'Oro', 'X', 'ARG', 'JAM')];
+  F.idx = 0;
+  let p = F._cvMiniPageIdx(false);
+  chk(p.roundIdx.join() === '0,1,2' && p.total === 3, 'sin filtro, todas las partidas de la ronda de la partida abierta');
+  F.arg = true;
+  p = F._cvMiniPageIdx(false);
+  chk(p.roundIdx.join() === '0,2' && p.total === 3, '"Solo argentinos" deja sólo las de Argentina (y cuenta el total para saber que la ronda tiene partidas)');
+  F.boton = false;
+  chk(F._cvMiniPageIdx(false).roundIdx.join() === '0,1,2', '🔒 donde la grilla no muestra el botón, el filtro guardado no esconde partidas en el visor');
+  F.boton = true; F.arg = false; F.busca = 'per';
+  chk(F._cvMiniPageIdx(false).roundIdx.join() === '1', 'el buscador filtra igual que en la grilla (jugador o país)');
+
+  const head = extraerFuncion('_cvRoundMinisHead'), rb = extraerFuncion('_cvMiniRebody'), si = extraerFuncion('cvMiniSearchInput'), ta = extraerFuncion('cvMiniToggleArg');
+  chk(/oninput="cvMiniSearchInput\(this\.value\)"/.test(head) && /onclick="cvMiniToggleArg\(\)" aria-pressed=/.test(head) && /_cvMiniArgOk\(\)/.test(head),
+      'arriba de las miniaturas: buscador y botón "Solo argentinos" (sólo donde la grilla lo tiene)');
+  chk(/getElementById\('cv-rm-body'\)/.test(rb) && /body\.innerHTML = _cvRoundMinisBody/.test(rb) && /_cvMiniRebody\(true\)/.test(extraerFuncion('cvMiniGoPage')),
+      '🔒 al tipear o cambiar de página se rearma sólo el cuerpo: el buscador no pierde el foco');
+  chk(/tdToggleArg\(\);/.test(ta) && /getElementById\('td-search'\)/.test(si) && /tdBuildRound\(_tdCurrentRound\)/.test(si),
+      'comparten los filtros con la grilla del torneo (lo filtrado en el visor queda filtrado al volver)');
+  chk(/Ninguna partida de la ronda coincide con el filtro/.test(extraerFuncion('_cvRoundMinisBody')) && /if \(!p\.total\) return '';/.test(extraerFuncion('_cvRoundMinisHtml')),
+      'con un filtro sin coincidencias queda el buscador a mano y un aviso (no desaparece la sección)');
+  chk(/_tdBoardState\(pgn\)\.rr/.test(extraerFuncion('_cvRoundMinisBody')) && /_tdBoardState\(pgn\)\.rr/.test(extraerFuncion('_cvRefreshRoundMinis')),
+      'las miniaturas del visor usan la ficha liviana como la grilla (sin reproducir partidas con el motor)');
 }
 
 // ── 54. Vivo: buscar por país, flechas en el chat y páginas también abajo (16/09) ──
