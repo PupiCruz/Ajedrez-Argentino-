@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1099;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1101;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -4263,9 +4263,18 @@ console.log('\n=== Arena de Lichess — Fase 0: la cartelera ===');
   const cssLid = (SRC.match(/#lv-jugar\.lv-g2 #lv-lid-list \{[^}]*\}/) || [''])[0];
   chk(/overflow-y:auto/.test(cssLid) && /flex:1 1 0/.test(cssLid),
       'con mucha gente conectada, "Desafiar a alguien" scrollea adentro y no corre los paneles');
-  chk(/class="lv-create-where">[^<]*Se juega <b>acá, en ChessArgentino<\/b>/.test(SRC)
+  chk(/class="lv-create-where">[^<]*Se juegan <b>acá, en ChessArgentino<\/b>/.test(SRC)
       && /\.lv-create-where \{ display:none;/.test(SRC) && /#lv-jugar\.lv-g2 \.lv-create-where \{ display:block; \}/.test(SRC),
       '"Crear un desafío" aclara que se juega en el sitio (y la aclaración va con la misma llave)');
+  // 16/09: "Crear un desafío" + "Desafíos abiertos" = una sola tarjeta (se pegan: sin hueco ni esquinas del medio).
+  chk(/#lv-jugar\.lv-g2 \.lv-lobby-right \{ margin-top:-16px; \}/.test(SRC)
+      && /<span class="lv-dz-g2">🎯 Desafíos del salón<\/span>/.test(SRC) && /<span class="lv-dz-g2">📋 Abiertos<\/span>/.test(SRC)
+      && /#lv-jugar\.lv-g2 \.lv-dz-g1 \{ display:none; \}/.test(SRC),
+      'crear y abiertos se ven como UNA tarjeta "Desafíos del salón" (sólo con la llave)');
+  // 16/09: en el teléfono los panelcitos de las salas se salían a la derecha (1fr a secas).
+  chk(/@media \(max-width:760px\)\{ \.lv-salas \{ grid-template-columns:minmax\(0,1fr\); \}/.test(SRC)
+      && /\.lv-sala-card \{[^}]*min-width:0;/.test(SRC),
+      'salas en el teléfono: minmax(0,1fr) + min-width:0, no se salen por la derecha');
   const cssRow = (SRC.match(/\.lv-ar-row \{[^}]*\}/) || [''])[0];
   chk(/minmax\(0,1fr\)/.test(cssRow) && !/(^|[^,(])1fr/.test(cssRow.replace(/minmax\(0,1fr\)/g, '')),
       '🔒 los renglones usan minmax(0,1fr) y no 1fr pelado (desborda en el teléfono)');
