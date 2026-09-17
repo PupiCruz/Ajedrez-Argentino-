@@ -9405,10 +9405,13 @@ function _teamRenderRound(matches, roundNum, crk){
       c.res=lr; c._vivo=true;
       return c;
     });
-    var _score=m.score, _parcial=false;
-    if(!/\d/.test(String(m.score||'')) && _boards.some(function(b){ return b._vivo; })){
-      var _pa=0, _pb=0;
-      _boards.forEach(function(b){ var p=_teamResPts(b.res); if(p){ _pa+=p[0]; _pb+=p[1]; } });
+    // Marcador: si las mesas ya terminadas suman más que el de Chess-Results (vacío o "0 : 0"), va la suma
+    // de las mesas. `_final`: ya tienen resultado todas las mesas con jugadores.
+    var _score=m.score, _parcial=false, _final=false;
+    var _pa=0, _pb=0, _sc0=String(m.score||'').split(':');
+    _boards.forEach(function(b){ var p=_teamResPts(b.res); if(p){ _pa+=p[0]; _pb+=p[1]; } });
+    if(_pa+_pb > _teamCrTotal(_sc0[0], _sc0[1])){
+      _final=_boards.every(function(b){ return !!b.res || (_teamIsPlaceholder(b.nW) && _teamIsPlaceholder(b.nB)); });
       _score=_fmtHalf(_pa)+' : '+_fmtHalf(_pb); _parcial=true; _hayParcial=true;
     }
     var _ca=_teamCountryParts(m.aName), _cb=_teamCountryParts(m.bName);
@@ -9425,16 +9428,18 @@ function _teamRenderRound(matches, roundNum, crk){
     // panel de país). Solo si esa ronda tiene partidas cargadas del vivo.
     var _hasGm=_tdRoundReachable(roundNum);
     if(_hasGm&&_fk){
-      inner+='<span onclick="_teamGotoMatchInGames('+(roundNum!=null?roundNum:'null')+',\''+_fk+'\')" title="Ver el match en Partidas" style="flex-shrink:0;color:var(--gold);background:var(--bg3);border-radius:6px;padding:3px 12px;cursor:pointer" onmouseover="this.style.background=\'var(--gl40)\'" onmouseout="this.style.background=\'var(--bg3)\'">'+escHtml(_score||'')+(_parcial?_TEAM_LIVE_DOT:'')+' <span style="font-size:11px;color:var(--blue)">👁</span></span>';
+      inner+='<span onclick="_teamGotoMatchInGames('+(roundNum!=null?roundNum:'null')+',\''+_fk+'\')" title="Ver el match en Partidas" style="flex-shrink:0;color:var(--gold);background:var(--bg3);border-radius:6px;padding:3px 12px;cursor:pointer" onmouseover="this.style.background=\'var(--gl40)\'" onmouseout="this.style.background=\'var(--bg3)\'">'+escHtml(_score||'')+(_parcial?_teamLiveDot(_final):'')+' <span style="font-size:11px;color:var(--blue)">👁</span></span>';
     } else {
-      inner+='<span style="flex-shrink:0;color:var(--gold);background:var(--bg3);border-radius:6px;padding:3px 12px">'+escHtml(_score||'')+(_parcial?_TEAM_LIVE_DOT:'')+'</span>';
+      inner+='<span style="flex-shrink:0;color:var(--gold);background:var(--bg3);border-radius:6px;padding:3px 12px">'+escHtml(_score||'')+(_parcial?_teamLiveDot(_final):'')+'</span>';
     }
     inner+=_teamCountrySide(crk,_cb,false);
     inner+='</div>';
     // El rótulo de la tabla es el cruce entero, más la ayuda de cómo recorrerla.
     var _sc=String(_score||'').split(':');
     inner+='<div role="table" onclick="_teamBoardClick(event,'+crArg(crk||'')+')" aria-label="'+escHtml(
-        _a11yCruceFrase(m.aName?_paisES(m.aName,m.aFed):(_ca.clean||''), m.bName?_paisES(m.bName,m.bFed):(_cb.clean||''), _sc[0], _sc[1])
+        ((_parcial&&!_final)
+          ? _a11yNombre(m.aName?_paisES(m.aName,m.aFed):(_ca.clean||''))+' contra '+_a11yNombre(m.bName?_paisES(m.bName,m.bFed):(_cb.clean||''))+', en juego, va '+_a11yMedios(_pa)+' a '+_a11yMedios(_pb)
+          : _a11yCruceFrase(m.aName?_paisES(m.aName,m.aFed):(_ca.clean||''), m.bName?_paisES(m.bName,m.bFed):(_cb.clean||''), _sc[0], _sc[1]) + (_final?', según la transmisión en vivo':''))
       + '. Formación de la ronda '+(roundNum==null?'':roundNum)+', '+_boards.length+' mesas. Bajando por la primera columna se cuenta cada mesa entera. Con Enter sobre un jugador se abre su performance, y sobre el resultado, la partida')+'">';
     _boards.forEach(function(b,bi){
       // El color ALTERNA por mesa: mesa 1 (impar) el equipo de la izquierda va con blancas; mesa 2
@@ -9480,7 +9485,7 @@ function _teamRenderRound(matches, roundNum, crk){
     _filas+=inner;
   });
   // La aclaración del parcial va ARRIBA de los cruces (se sabe recién al armarlos).
-  if(_hayParcial) inner+='<div style="font-size:11.5px;color:var(--text3);margin-bottom:8px">'+_TEAM_LIVE_DOT.replace('margin-left:6px','margin-right:6px')+'Marcador parcial con las partidas ya terminadas en Lichess. El final lo carga Chess-Results.</div>';
+  if(_hayParcial) inner+=_teamLiveLegend();
   inner+=_filas;
   // Recuadro con scroll interno (las partidas de la ronda no quedan empujadas tan abajo), centrado.
   // En PC sobra lugar a los costados: ancho más generoso (860) para que los nombres no se corten.
@@ -9515,8 +9520,21 @@ function _teamCrossClick(ev, crk, roundNum){
    iba 2 a 1 se veía vacío. Mientras Chess-Results no tenga el marcador, se arma con las partidas de
    Lichess ya terminadas (las de la ronda y las de la ficha liviana, ver _tdGameRes) y se marca con un
    punto rojo: es PARCIAL. Cuando Chess-Results carga el suyo, manda el de Chess-Results. La TABLA de
-   posiciones no se toca: un match a medio jugar no reparte puntos. No se guarda nada: se calcula al dibujar. */
-var _TEAM_LIVE_DOT = '<span aria-hidden="true" title="Parcial: el match sigue en juego" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#e24b4a;margin-left:6px;vertical-align:middle"></span>';
+   posiciones no se toca: un match a medio jugar no reparte puntos. No se guarda nada: se calcula al dibujar.
+   Ajuste del autor (mismo día): el punto rojo decía "sigue en juego" aunque el match ya hubiera terminado →
+   rojo = sigue en juego, verde = terminaron todas las mesas según la transmisión (falta el oficial). Y
+   Chess-Results a veces trae "0 : 0" en vez de vacío: manda el marcador que más mesas terminadas cuenta. */
+function _teamLiveDot(final){
+  return '<span aria-hidden="true" title="'+(final?'Terminado según la transmisión en vivo. Chess-Results todavía no cargó el resultado oficial':'Parcial según la transmisión en vivo: el match sigue en juego')
+    +'" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:'+(final?'#3aa757':'#e24b4a')+';margin-left:6px;vertical-align:middle"></span>';
+}
+function _teamLiveLegend(){
+  var d=function(f){ return _teamLiveDot(f).replace('margin-left:6px','margin-right:5px'); };
+  return '<div style="font-size:11.5px;color:var(--text3);margin-bottom:8px;line-height:1.7">Marcadores armados con las partidas ya terminadas en la transmisión en vivo: '
+    +'<span style="white-space:nowrap">'+d(false)+'parcial, el match sigue en juego</span> · <span style="white-space:nowrap">'+d(true)+'terminado</span>. El resultado oficial lo carga Chess-Results.</div>';
+}
+// Puntos que ya reparte un marcador de Chess-Results ("2½" y "1½" → 4). Vacío o "0 : 0" → 0.
+function _teamCrTotal(a, b){ return (_a11yNum(a)||0)+(_a11yNum(b)||0); }
 // Marcador de cada cruce de UNA ronda con las partidas de Lichess que ya terminaron. Clave: la del salto a
 // Partidas (_teamMatchKey, por par de federaciones: los nombres de Lichess y Chess-Results no siempre coinciden).
 function _teamLiveScores(round, data){
@@ -9527,7 +9545,7 @@ function _teamLiveScores(round, data){
   _tdTeamMatches(games).forEach(function(m){
     var dec=m.boards.filter(function(g){ return _tdGameRes(g)!=='*'; }).length;
     if(!dec) return;
-    var p={ teamA:m.teamA, a:m.a, b:m.b }, k=_teamMatchKey(m.teamA,m.teamB,data), kn=_teamPairKey(m.teamA,m.teamB);
+    var p={ teamA:m.teamA, a:m.a, b:m.b, dec:dec, n:m.boards.length }, k=_teamMatchKey(m.teamA,m.teamB,data), kn=_teamPairKey(m.teamA,m.teamB);
     if(k) out[k]=p;
     if(kn) out['n:'+kn]=p;   // por NOMBRE también: "Cote d’Ivoire" (apóstrofo curvo) no resuelve la federación
   });
@@ -9539,7 +9557,7 @@ function _teamLiveScoreFor(live, aName, bName, data){
   if(!p) return null;
   var fa=_teamResolveFed(p.teamA,data);
   var mismo=_teamNorm(p.teamA)===_teamNorm(aName) || (!!fa && fa===_teamResolveFed(aName,data));
-  return mismo ? { a:p.a, b:p.b } : { a:p.b, b:p.a };
+  return mismo ? { a:p.a, b:p.b, dec:p.dec, n:p.n } : { a:p.b, b:p.a, dec:p.dec, n:p.n };
 }
 // Resultado de UNA mesa de la formación según Lichess, visto desde el jugador de la IZQUIERDA (nW), en el
 // formato de Chess-Results ("1-0", "½-½", "0-1"). '' si la partida no está o sigue en juego.
@@ -9597,11 +9615,15 @@ function _teamRenderCrosses(crosses, roundNum, crk, hasFormation){
   var _filas='';
   crosses.forEach(function(m,ci){
     var fila='';
-    // Sin marcador de Chess-Results → el parcial de Lichess, si ya terminó alguna mesa.
-    var aRes=m.aRes, bRes=m.bRes, parcial=null;
-    if(!String(aRes||'').trim() && !String(bRes||'').trim()){
-      parcial=_teamLiveScoreFor(_live, m.aName, m.bName, _xData);
-      if(parcial){ aRes=_fmtHalf(parcial.a); bRes=_fmtHalf(parcial.b); _hayParcial=true; }
+    // Si la transmisión cuenta más mesas terminadas que el marcador de Chess-Results (vacío o "0 : 0"),
+    // manda el de la transmisión. `final`: ya terminaron todas las mesas (las de la formación, si está).
+    var aRes=m.aRes, bRes=m.bRes, parcial=null, final=false;
+    var _lp=_teamLiveScoreFor(_live, m.aName, m.bName, _xData);
+    if(_lp && _lp.a+_lp.b > _teamCrTotal(m.aRes, m.bRes)){
+      parcial=_lp; aRes=_fmtHalf(_lp.a); bRes=_fmtHalf(_lp.b); _hayParcial=true;
+      var _fm=((_xData&&_xData.teamRounds)||{})[roundNum], _pkx=_teamPairKey(m.aName,m.bName), _mesas=_lp.n;
+      (_fm||[]).forEach(function(f){ if(_teamPairKey(f.aName,f.bName)===_pkx && (f.boards||[]).length) _mesas=f.boards.length; });
+      final=_lp.dec>=_mesas;
     }
     var arg=(m.aFed==='ARG'||m.bFed==='ARG');
     var _pk=_teamPairKey(m.aName,m.bName);   // clave por nombre (vincula con la formación; sirve p/ clubes)
@@ -9609,7 +9631,7 @@ function _teamRenderCrosses(crosses, roundNum, crk, hasFormation){
     var _cbg=arg?'var(--gl30)':(ci%2===1?'var(--zebra)':'var(--bg2)');   // intercalado por match (ARG resaltado)
     fila+='<div role="row"'+clk+'display:flex;align-items:center;gap:8px;padding:11px 14px;border:1px solid '+(arg?'var(--gold-dim)':'var(--bd14)')+';border-radius:10px;margin-top:8px;background:'+_cbg+'">';
     var _cruceFrase=parcial
-      ? _a11yNombre(m.aName?_paisES(m.aName,m.aFed):'')+' contra '+_a11yNombre(m.bName?_paisES(m.bName,m.bFed):'')+', en juego, va '+_a11yMedios(parcial.a)+' a '+_a11yMedios(parcial.b)
+      ? _a11yNombre(m.aName?_paisES(m.aName,m.aFed):'')+' contra '+_a11yNombre(m.bName?_paisES(m.bName,m.bFed):'')+(final?', terminó ':', en juego, va ')+_a11yMedios(parcial.a)+' a '+_a11yMedios(parcial.b)+(final?' según la transmisión en vivo':'')
       : _a11yCruceFrase(m.aName?_paisES(m.aName,m.aFed):'', m.bName?_paisES(m.bName,m.bFed):'', m.aRes, m.bRes);
     fila+='<span role="rowheader" style="flex:1;min-width:0;display:flex;align-items:center;justify-content:flex-end;gap:7px;overflow:hidden">';
     // Botón de verdad (no display:contents, que no se puede dibujar el recuadro del foco encima):
@@ -9617,14 +9639,14 @@ function _teamRenderCrosses(crosses, roundNum, crk, hasFormation){
     fila+='<span'+_a11yClic(_cruceFrase+((hasFormation&&_pk)?'. Ver la formación':''))+' style="flex:1;min-width:0;display:flex;align-items:center;justify-content:flex-end;gap:7px;overflow:hidden">';
     fila+='<span style="color:var(--text);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(_paisES(m.aName,m.aFed))+'</span>'+crFlagEmoji(m.aFed);
     fila+='</span></span>';
-    fila+='<span role="cell" style="flex-shrink:0;color:var(--gold);background:var(--bg3);border-radius:6px;padding:4px 13px;font-weight:700;font-size:15px;white-space:nowrap">'+_a11yEnVezDe(escHtml(aRes||'')+' : '+escHtml(bRes||''), (_a11yNum(aRes)==null||_a11yNum(bRes)==null)?'sin marcador':((parcial?'parcial, ':'')+_a11yMedios(_a11yNum(aRes))+' a '+_a11yMedios(_a11yNum(bRes))))+(parcial?_TEAM_LIVE_DOT:'')+'</span>';
+    fila+='<span role="cell" style="flex-shrink:0;color:var(--gold);background:var(--bg3);border-radius:6px;padding:4px 13px;font-weight:700;font-size:15px;white-space:nowrap">'+_a11yEnVezDe(escHtml(aRes||'')+' : '+escHtml(bRes||''), (_a11yNum(aRes)==null||_a11yNum(bRes)==null)?'sin marcador':((parcial?(final?'terminado según la transmisión, ':'parcial, '):'')+_a11yMedios(_a11yNum(aRes))+' a '+_a11yMedios(_a11yNum(bRes))))+(parcial?_teamLiveDot(final):'')+'</span>';
     fila+='<span role="cell" style="flex:1;min-width:0;display:flex;align-items:center;gap:7px;overflow:hidden">';
     fila+=crFlagEmoji(m.bFed)+'<span style="color:var(--text);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(m.bName ? _paisES(m.bName,m.bFed) : '(libre)')+'</span>';
     fila+='</span>';
     fila+='</div>';
     _filas+=fila;
   });
-  if(_hayParcial) inner+='<div style="font-size:11.5px;color:var(--text3);margin-bottom:6px">'+_TEAM_LIVE_DOT.replace('margin-left:6px','margin-right:6px')+'Marcador parcial con las partidas ya terminadas en Lichess. El final lo carga Chess-Results.</div>';
+  if(_hayParcial) inner+=_teamLiveLegend();
   inner+=_tablaAbre+_filas;   // la aclaración del parcial va ARRIBA de la tabla (se sabe recién al armar las filas)
   inner+='</div>';
   return '<div style="max-height:560px;overflow-y:auto;border:1px solid var(--border);border-radius:12px;padding:12px;background:var(--bg2);margin-left:auto;margin-right:auto;max-width:860px">'+inner+'</div>';

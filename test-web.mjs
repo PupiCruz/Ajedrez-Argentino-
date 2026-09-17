@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1171;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1175;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -4205,12 +4205,22 @@ console.log('\n=== 53c. Por equipos: marcadores parciales con lo que terminó en
   chk(F._teamLiveBoardRes(2, 'Mekhitarian, Krikor', 'Kim, Ho') === '' && F._teamLiveBoardRes(2, 'Nadie', 'Tampoco') === '', 'una partida en juego o que no está no pone nada');
 
   const cruces = extraerFuncion('_teamRenderCrosses'), forma = extraerFuncion('_teamRenderRound');
-  chk(/if\(!String\(aRes\|\|''\)\.trim\(\) && !String\(bRes\|\|''\)\.trim\(\)\)\{\s*parcial=_teamLiveScoreFor/.test(cruces),
-      '🔒 en los cruces, el parcial sólo entra si Chess-Results todavía no tiene marcador');
-  chk(/if\(b\.res\) return b;/.test(forma) && /var c=\{\}; for\(var k in b\) c\[k\]=b\[k\];/.test(forma) && /if\(!\/\\d\/\.test\(String\(m\.score\|\|''\)\)/.test(forma),
-      '🔒 en la formación, sólo las mesas sin resultado, sobre una COPIA (lo guardado de Chess-Results no se toca)');
-  chk(/\(parcial\?_TEAM_LIVE_DOT:''\)/.test(cruces) && /\(_parcial\?_TEAM_LIVE_DOT:''\)/.test(forma) && /Marcador parcial con las partidas ya terminadas en Lichess/.test(cruces),
-      'el parcial lleva el punto rojo y la aclaración arriba');
+  chk(cruces.includes('if(_lp && _lp.a+_lp.b > _teamCrTotal(m.aRes, m.bRes)){'),
+      '🔒 en los cruces, manda la transmisión sólo si cuenta MÁS mesas terminadas que Chess-Results (vacío o "0 : 0")');
+  chk(/if\(b\.res\) return b;/.test(forma) && /var c=\{\}; for\(var k in b\) c\[k\]=b\[k\];/.test(forma) && forma.includes('if(_pa+_pb > _teamCrTotal(_sc0[0], _sc0[1])){'),
+      '🔒 en la formación: mesas sin resultado sobre una COPIA, y el marcador "0 : 0" de Chess-Results no tapa las mesas terminadas');
+  chk(cruces.includes('(parcial?_teamLiveDot(final):\'\')') && forma.includes('(_parcial?_teamLiveDot(_final):\'\')')
+      && cruces.includes('inner+=_teamLiveLegend();') && forma.includes('inner+=_teamLiveLegend();'),
+      'el marcador de la transmisión lleva el punto y la aclaración arriba (cruces y formación)');
+  // Rumania 4 : 0 Costa Rica ya había terminado y el punto decía "sigue en juego" (autor, 17/09).
+  const G = new Function('function _a11yNum(s){ var t=String(s==null?"":s).trim(); if(!t) return null; var m=/½/.test(t), v=parseFloat(t.replace("½","")); if(isNaN(v)){ if(!m) return null; v=0; } return m?v+0.5:v; }'
+    + ['_teamLiveDot', '_teamLiveLegend', '_teamCrTotal'].map(extraerFuncion).join('\n') + '; return { _teamLiveDot, _teamLiveLegend, _teamCrTotal };')();
+  chk(/sigue en juego/.test(G._teamLiveDot(false)) && /#e24b4a/.test(G._teamLiveDot(false)) && /Terminado según la transmisión/.test(G._teamLiveDot(true)) && /#3aa757/.test(G._teamLiveDot(true)),
+      '🔒 punto rojo = el match sigue en juego; verde = terminado según la transmisión (falta el oficial)');
+  chk(/parcial, el match sigue en juego/.test(G._teamLiveLegend()) && /terminado/.test(G._teamLiveLegend()) && /oficial lo carga Chess-Results/.test(G._teamLiveLegend()),
+      'la aclaración explica los dos puntos y que el oficial lo carga Chess-Results');
+  chk(G._teamCrTotal('0', '0') === 0 && G._teamCrTotal('', '') === 0 && G._teamCrTotal('2½', '1½') === 4, 'el marcador de Chess-Results se cuenta en puntos repartidos ("0 : 0" = 0)');
+  chk(cruces.includes('final=_lp.dec>=_mesas;') && forma.includes('_final=_boards.every('), 'terminado = todas las mesas con resultado (las de la formación, si Chess-Results ya la publicó)');
   chk(!/_teamLiveScore|_teamLiveBoardRes/.test(extraerFuncion('_teamRenderStandings')), '🔒 la TABLA de posiciones no usa parciales (un match a medio jugar no reparte puntos)');
   chk(/try \{ _teamLiveRefresh\(\); \} catch\(e\) \{\}/.test(extraerFuncion('_tdLiveRefreshOnDemand')) && /_teamLiveRefresh\(\);/.test(extraerFuncion('_tdJsonApply')) && /_teamLiveRefresh\(\);/.test(extraerFuncion('_tdFocusApply')),
       'se redibuja al llegar resultados nuevos (ronda, ficha liviana o tablero suelto)');
