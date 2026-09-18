@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1192;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1201;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -4886,6 +4886,53 @@ console.log('\n=== Arena de Lichess — Fase 3: berserk ===');
       'y la ronda que ya tiene sus partidas cargadas sigue alcanzable');
   chk(fn({ byRound: {} }, { onDemand: true, roundsMeta: [] })('1') === false,
       'una ronda que no existe en el vivo ni tiene partidas NO lleva ojito (no manda a la nada)');
+}
+
+
+console.log('\n=== 55. Practicar: niveles del módulo calibrados con la tabla de Stockfish (17/09) ===');
+{
+  // La tabla OFICIAL (commit a08b8d4e9711c2 de Stockfish, ene-2023): Skill Level → Elo CCRL Blitz.
+  // Escala de MÁQUINAS, no FIDE. Si algún día se cambian los niveles, que sigan saliendo de acá.
+  const TABLA = { 0:1320, 1:1468, 2:1608, 3:1742, 4:1923, 5:2204, 6:2363, 7:2500, 8:2596, 9:2703,
+                  10:2788, 11:2856, 12:2923, 13:2973, 14:3025, 15:3070, 16:3111, 17:3141, 18:3170, 19:3191 };
+  const recortar = (nombre) => {
+    const i = SRC.indexOf('var ' + nombre + ' = ');
+    const a = SRC.indexOf(SRC[SRC.indexOf('=', i) + 2] === '[' ? '[' : '{', i);
+    const cierra = SRC[a] === '[' ? ']' : '}';
+    let d = 0;
+    for (let k = a; k < SRC.length; k++) {
+      if (SRC[k] === SRC[a]) d++;
+      else if (SRC[k] === cierra && --d === 0) return new Function('return ' + SRC.slice(a, k + 1))();
+    }
+  };
+  const NIV = recortar('PRAC_LEVELS');
+  const ORDEN = recortar('PRAC_LEVEL_ORDER');
+  const PUZ = recortar('PUZ_LVL_NAME');
+  const calibrados = ORDEN.filter(k => NIV[k] && NIV[k].skill < 20);
+
+  chk(ORDEN.length === Object.keys(NIV).length && ORDEN.every(k => NIV[k]),
+      'el orden de los niveles nombra a todos, y a nadie de más', ORDEN.join(','));
+  chk(ORDEN.every((k, i) => i === 0 || NIV[k].skill > NIV[ORDEN[i - 1]].skill),
+      'cada nivel es más fuerte que el anterior (el Skill sube siempre)');
+  chk(calibrados.every(k => NIV[k].eloCcrl === TABLA[NIV[k].skill]),
+      '🔒 el Elo anotado de cada nivel es el de la tabla oficial para su Skill (no a ojo)');
+  chk(calibrados.every(k => NIV[k].depth === NIV[k].skill + 1),
+      '🔒 cada nivel busca a profundidad Skill+1: ahí elige Stockfish su jugada, como en la tabla',
+      calibrados.map(k => k + ':' + NIV[k].skill + '/' + NIV[k].depth).join(' '));
+  const saltos = calibrados.slice(1).map((k, i) => NIV[k].eloCcrl - NIV[calibrados[i]].eloCcrl);
+  chk(saltos.every(s => s >= 250 && s <= 350),
+      '🔒 escalones parejos entre niveles (antes había un pozo de ~1000 entre el 1 y el 2)', saltos.join(' / '));
+  chk(NIV.maestro && NIV.maestro.skill === 20 && NIV.maestro.eloCcrl === undefined,
+      'el Maestro juega a fuerza plena y no se le inventa un Elo (está fuera de la tabla)');
+  chk(Object.keys(PUZ).every(k => NIV[k]),
+      '🔒 los niveles que la RUTINA comparte con los ejercicios siguen existiendo (si no, la práctica de la rutina revienta)',
+      Object.keys(PUZ).join(','));
+  const bloque = SRC.slice(SRC.indexOf('id="prac-ov-level"'), SRC.indexOf('</div>', SRC.indexOf('id="prac-ov-level"')));
+  const botones = [...bloque.matchAll(/pracSetLevelLive\('(\w+)'/g)].map(m => m[1]);
+  chk(botones.join(',') === ORDEN.join(','),
+      'hay un botón por nivel, en el mismo orden', botones.join(','));
+  chk((SRC.match(/Skill Level value 20/g) || []).length >= 2 && SRC.indexOf('UCI_LimitStrength') < 0,
+      '🔒 al salir de Practicar el motor vuelve a fuerza plena (es el MISMO que dibuja las barritas del vivo)');
 }
 
 

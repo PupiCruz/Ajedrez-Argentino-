@@ -4590,8 +4590,11 @@
           <span style="font-size:12px;font-weight:700;color:var(--text2)">Nivel del módulo:</span>
           <div class="tabs" id="prac-ov-level" style="margin:0">
             <button class="chip" onclick="pracSetLevelLive('inicial',this)">Inicial</button>
+            <button class="chip" onclick="pracSetLevelLive('principiante',this)">Principiante</button>
             <button class="chip" onclick="pracSetLevelLive('aficionado',this)">Aficionado</button>
+            <button class="chip" onclick="pracSetLevelLive('intermedio',this)">Intermedio</button>
             <button class="chip" onclick="pracSetLevelLive('avanzado',this)">Avanzado</button>
+            <button class="chip" onclick="pracSetLevelLive('experto',this)">Experto</button>
             <button class="chip" onclick="pracSetLevelLive('maestro',this)">Maestro</button>
           </div>
         </div>
@@ -35538,15 +35541,33 @@ puzInit();
    ruta de mensajes (prac.running) y barrera readyok, igual que `_fa`.
 ═══════════════════════════════════════════════════════ */
 var PRACTICE = [], _pracLoaded = false;
-// 4 niveles de fuerza: Skill Level de Stockfish (0–20, agrega imprecisión a propósito
-// en los bajos) + tope de profundidad y de tiempo por jugada.
+// Niveles de fuerza calibrados con la tabla OFICIAL de Stockfish (commit a08b8d4e9711c2, ene-2023):
+// miles de partidas de cada Skill Level contra el motor Stash, que está rankeado en CCRL.
+// Skill → Elo:  0→1320 · 2→1608 · 4→1923 · 5→2204 · 7→2500 · 10→2788
+// Son escalones parejos de ~290 puntos. Antes estaban puestos a ojo y del Inicial (Skill 0) al
+// Aficionado (Skill 6) había ~1000 puntos de golpe: el que le ganaba al primero se chocaba una pared.
+//
+// OJO, esos números son escala CCRL, de MÁQUINAS: no son FIDE ni Lichess (un 2300 CCRL no es un MF).
+// Por eso `eloCcrl` NO se le muestra al visitante; queda para las pruebas y para medir después contra
+// gente de verdad (plan: Elo de los niveles del motor).
+//
+// La profundidad tampoco es a ojo: con Skill < 20, Stockfish ELIGE su jugada cuando la búsqueda llega a
+// profundidad 1 + Skill (search.h, `time_to_pick`), y así se calibró la tabla. Buscar más hondo no
+// cambia la jugada (es CPU tirada) y buscar menos la debilita por debajo de la tabla (le pasaba al
+// Avanzado viejo: Skill 13 con tope 12). Por eso depth = skill + 1.
+// El tope de ms es sólo una red para teléfonos lentos: si corta antes, ese nivel queda algo más flojo.
+// Las claves inicial/aficionado/avanzado/maestro las comparte la RUTINA con los ejercicios
+// (PUZ_LVL_NAME): no renombrarlas.
 var PRAC_LEVELS = {
-  inicial:    { name:'Inicial',    skill:0,  depth:4,  capMs:400  },
-  aficionado: { name:'Aficionado', skill:6,  depth:8,  capMs:800  },
-  avanzado:   { name:'Avanzado',   skill:13, depth:12, capMs:1300 },
-  maestro:    { name:'Maestro',    skill:20, depth:18, capMs:2400 }
+  inicial:      { name:'Inicial',      skill:0,  depth:1,  capMs:400,  eloCcrl:1320 },
+  principiante: { name:'Principiante', skill:2,  depth:3,  capMs:500,  eloCcrl:1608 },
+  aficionado:   { name:'Aficionado',   skill:4,  depth:5,  capMs:700,  eloCcrl:1923 },
+  intermedio:   { name:'Intermedio',   skill:5,  depth:6,  capMs:900,  eloCcrl:2204 },
+  avanzado:     { name:'Avanzado',     skill:7,  depth:8,  capMs:1300, eloCcrl:2500 },
+  experto:      { name:'Experto',      skill:10, depth:11, capMs:2000, eloCcrl:2788 },
+  maestro:      { name:'Maestro',      skill:20, depth:18, capMs:2400 }   // fuerza plena: fuera de la tabla
 };
-var PRAC_LEVEL_ORDER = ['inicial','aficionado','avanzado','maestro'];
+var PRAC_LEVEL_ORDER = ['inicial','principiante','aficionado','intermedio','avanzado','experto','maestro'];
 // Nombres lindos de los temas de medio juego (espejo de MID_LABELS del generador).
 var PRAC_MID_LABELS = {
   'carlsbad':'Estructura Carlsbad', 'maroczy':'Maróczy (clamp c4+e4)', 'stonewall':'Stonewall',
