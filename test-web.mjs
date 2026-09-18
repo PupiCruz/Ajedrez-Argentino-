@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1210;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1224;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -1618,6 +1618,53 @@ console.log('\n=== 34. La vitrina de trofeos del perfil ===');
       'y en modo autor la toma del torneo abierto');
   chk(/femenina: _stEsFemenino\(meta, _nomCat\) \? null :/.test(extraerFuncion('_statsBuild')),
       'la medalla de mejor femenina se decide con la rama, no sólo con el nombre');
+  // 18/09: en los torneos de +Agregar (tz) la rama no se copiaba al juntar los torneos para publicar.
+  chk(/rama: d\.rama \|\| null, coleccion: d\.coleccion/.test(extraerFuncion('_collectAllTournaments')),
+      '🔒 la rama de los torneos de +Agregar también viaja al publicar');
+
+  // 🏛️ TORNEOS HISTÓRICOS (18/09): colección + "sólo en su colección" + crédito del flyer, de punta a punta.
+  const colAll = extraerFuncion('_collectAllTournaments'), colMeta = extraerFuncion('_tourManifestMeta');
+  chk(/coleccionSolo: d\.coleccionSolo/.test(colAll) && /flyerCreditUrl: d\.flyerCreditUrl/.test(colAll)
+      && /coleccionSolo: entry\.coleccionSolo/.test(colMeta) && /flyerCredit: entry\.flyerCredit/.test(colMeta)
+      && (SRC.match(/coleccion: entry\.coleccion \|\| null, coleccionSolo: !!entry\.coleccionSolo/g) || []).length === 2,
+      '🏛️ la colección y el crédito del flyer viajan al publicar y llegan a la lista de la web');
+  chk((SRC.match(/coleccion:_col\.coleccion, coleccionSolo:_col\.coleccionSolo, flyerCredit:flyerCredit\|\|null/g) || []).length === 2
+      && /tours2\[k\]\.coleccion = _col\.coleccion/.test(SRC) && /\['coleccion', 'coleccionSolo'\]\.forEach/.test(SRC)
+      && (SRC.match(/_tzeColSet\(/g) || []).length >= 5,
+      '🏛️ Editar torneo carga y guarda la colección en los 4 tipos de torneo (si no, se borraba al guardar)');
+  chk(/if \(!_q\) filtered = filtered\.filter\(function\(item\)\{ var c = _itemCol\(item, tzCfg\); return !\(c && c\.solo\); \}\);/.test(SRC)
+      && /badge: dentroDeCol \? null : \(\(col && col\.solo\) \? \{ txt: '🏛️ HISTÓRICO'/.test(extraerFuncion('_itemTileHtml')),
+      '🏛️ los "sólo de su colección" no llenan la lista general, pero el buscador los encuentra (con la etiqueta HISTÓRICO)');
+  // 📥 Importar torneo histórico: el paquete se revisa ANTES de tocar nada.
+  const PAQ = new Function("var COLECCIONES = [{ k: 'olimpiadas' }];\n" + extraerFuncion('_colDef') + '\n' + extraerFuncion('_histPaqueteError') + '; return _histPaqueteError;')();
+  const paqOk = { tipo: 'chessargentino-torneo-historico', v: 1, id: 'tz_ob1939', cfg: { name: 'X', coleccion: 'olimpiadas', categories: [] },
+    cr: { cr2_tz_tz_ob1939_c0: {} }, partidas: { 'X · Final A': ['[Event "X · Final A"]'] } };
+  chk(PAQ(paqOk) === '' && /No es un archivo/.test(PAQ({ tipo: 'otra cosa' }))
+      && /no son de este torneo/.test(PAQ(Object.assign({}, paqOk, { cr: { cr2_tz_tz_otro_c0: {} } })))
+      && /no existe/.test(PAQ(Object.assign({}, paqOk, { cfg: { name: 'X', coleccion: 'inventada' } })))
+      && /identificador/.test(PAQ(Object.assign({}, paqOk, { id: 'hc_1' })))
+      && /vienen mal/.test(PAQ(Object.assign({}, paqOk, { partidas: { 'X · A': [3] } }))),
+      '📥 el importador rechaza lo que no es un paquete sano (otro torneo, colección inventada, partidas rotas) antes de tocar nada');
+  chk(/if \(categories\[_ci0\] && categories\[_ci0\]\.inicial\) \{ _catIni = _ci0; break; \}/.test(SRC)
+      && /var c = _tdPodiumCtx; if \(!c \|\| c\.sinPodio\) return '';/.test(SRC)
+      && /name: _paisES\(t\.name \|\| '', t\.fed\) \|\| t\.name/.test(extraerFuncion('_tdPodiumHtml')),
+      '🏛️ la ficha abre en la categoría "inicial" (la Final A), los grupos sin medallas no muestran podio y el podio va en castellano');
+  chk(/sinPodio:\s+\{ label: '🏆 Podio de esta categoría'/.test(SRC) && /if \(value === 'true'\) cat\.sinPodio = true; else delete cat\.sinPodio;/.test(SRC)
+      && /h \+= _chip\(_sinPod \? '🚫 Sin podio' : '🏆 Con podio', 'sinPodio'/.test(SRC),
+      '🏆 cada categoría tiene su panelcito Podio (Con / Sin) para las zonas o grupos clasificatorios');
+  // La limpieza de duplicados no le saca partidas a un TORNEO del sitio (se quedaba con la copia vieja suelta).
+  const cpd = extraerFuncion('_computeProfileDedup'), cfd = extraerFuncion('_computeFenDedup');
+  chk(/var prot = _eventosDeTorneos\(\);/.test(cpd) && /if \(a\.prot !== b\.prot\) return a\.prot \? -1 : 1;/.test(cpd) && /if \(!it\.prot && dedupIndexHas\(idx, it\.pgn\)\)/.test(cpd)
+      && /isProfile: !pr/.test(cfd) && /_protEv\[_normEvName\(t\.name \|\| ''\)\]\) return;/.test(SRC)
+      && /s\[_normEvName\(_catEventName\(nombre, c\.name\)\)\] = true/.test(extraerFuncion('_eventosDeTorneos')),
+      '🔒 "Limpiar duplicados" nunca quita las partidas de un torneo del sitio (ni de sus categorías): quita la otra copia');
+  chk(/if\(m\.nota && !\(_boards && _boards\.length\)\) inner\+=/.test(SRC),
+      '🏛️ un match sin mesas que trae nota (se dio 2-2 sin jugar) la muestra en vez del marcador solo');
+  chk(!/<nav class="hist-miga"/.test(SRC) && /class="hist-miga" role="navigation"/.test(SRC),
+      '🔒 el camino de Torneos históricos no es un <nav> (las reglas de la barra de la app lo ponían ENCIMA del visor)');
+  const ANIO = new Function(extraerFuncion('_itemAnio') + '; return _itemAnio;')();
+  chk(ANIO({ _startKey: 19390824, _endKey: 19390919 }) === 1939 && ANIO({ _startKey: 0, _endKey: 20240922 }) === 2024 && ANIO({}) === 0,
+      '🏛️ la portada automática saca el año de las fechas del torneo');
 
   chk(VETS('FIDE World Senior Chess Championships 2026 - Open 50+') === true &&
       VETS('Campeonato de Veteranos') === true && VETS('IRT de la primavera') === false,
@@ -4571,8 +4618,8 @@ console.log('\n=== Arena de Lichess — Fase 0: la cartelera ===');
 console.log('\n=== Arena de Lichess — Fase 1: anotarse y la pantalla de espera ===');
 {
   const N = ['_asEsc', '_asTiempo', '_asEstado', '_asPagina', '_asHoja', '_asTabla', '_asCaja', '_asIdDeUrl',
-    '_asPartidas', '_asPerf', '_asTarjeta', '_asPodioTop', '_asPaginador', '_asTablaMini'];
-  const A = new Function(N.map(extraerFuncion).join('\n') + '; return {' + N.join(',') + '};')();
+    '_asPartidas', '_asPerf', '_asTarjeta', '_asPodioTop', '_asPaginador', '_asTablaMini', '_bkMiniHtml'];
+  const A = new Function('var _bkMiniN = 0;\n' + N.map(extraerFuncion).join('\n') + '; return {' + N.join(',') + '};')();
   const modS = (SRC.match(/ARENA DE LICHESS — Fase 1[\s\S]*?<\/script>/) || [''])[0];
   const modLi2 = (SRC.match(/aaLi — el permiso[\s\S]*?window\.aaLi = \{[\s\S]*?\};/) || [''])[0];
   chk(modS.length > 3000, 'está el módulo de la pantalla del arena', modS.length);
@@ -4674,6 +4721,10 @@ console.log('\n=== Arena de Lichess — Fase 1: anotarse y la pantalla de espera
   const tj = A._asTarjeta('Yo', { rank: 2 }, { score: 4, rating: 1800 }, psEj, 0);
   chk(/1G<\/span> · <span class="t">1T<\/span> · <span class="d">0D/.test(tj) && /🥈/.test(tj) && !/<i>Beto/.test(tj) && /FM/.test(tj),
       'tu tarjeta muestra G·T·D y el puesto, y escapa los nombres de los rivales');
+  // 18/09: el ⚡ no se entendía; la partida con berserk lleva el relojito cortado (una sola vez, la del berserk).
+  chk(!/⚡/.test(tj) && (tj.match(/class="bk-mini"/g) || []).length === 1 && /aria-label="Hiciste berserk"/.test(tj)
+      && /var bkMk=\/\\s⚡\$\/\.test\(nm\); if\(bkMk\) nm=nm\.replace/.test(SRC) && /\(bkMk\?' '\+_bkMiniHtml\(/.test(SRC),
+      'el berserk se marca con el relojito cortado (no con ⚡): en tu lista de partidas y junto al nombre en el tablero');
   const topEj = A._asPodioTop([{ name: 'A', score: 14, performance: 1902 }, { name: 'B', score: 10 }]);
   chk(topEj[0].score === '14' && topEj[0].sub === 'Perf. 1902' && topEj[1].sub === '', 'el podio del arena se arma con los datos de Lichess');
   chk(/function _podioDibujo\(top, titulo, conFotos\)/.test(SRC)
@@ -4733,7 +4784,7 @@ console.log('\n=== Arena de Lichess — Fase 1: anotarse y la pantalla de espera
   // Detalles de lichess.org (captura del autor, 14/09): #puesto junto al reloj y el tiempo para la 1.ª jugada.
   chk(/id="lv-trank-bot"/.test(SRC) && /id="lv-trank-top"/.test(SRC) && /#lv-game\.lv-arena-partida \.lv-trank \{ display:inline-block; \}/.test(SRC)
       && /function pintarPuestos\(\)/.test(modS) && /Math\.ceil\(S\.meRank \/ 10\)/.test(modS)
-      && /<span class="lv-clkgrp">\s*<span class="lv-trank" id="lv-trank-top"><\/span>\s*<span class="lv-clock lv-idle" id="lv-clk-top">/.test(SRC),
+      && /<span class="lv-clkgrp">\s*<span class="lv-trank" id="lv-trank-top"><\/span>\s*(?:<!--[^>]*-->\s*<span class="lv-berserk lv-bk-rival" id="lv-bk-top"[^>]*><\/span>\s*)?<span class="lv-clock lv-idle" id="lv-clk-top">/.test(SRC),
       'en la partida de arena va el #puesto al lado de cada reloj (el del rival, si está en el top 10 o en tu página)');
   chk(/id="lv-li-expira"/.test(SRC) && /\(\+ex\.millisToMove \|\| 0\) - \(\+ex\.idleMillis \|\| 0\)/.test(SRC) && /var meToca = \(n % 2 === 0\) === \(P\.color === primero\(\)\)/.test(SRC)
       && /expiraSync\(o\);/.test(SRC) && /expiraSync\(st\);/.test(SRC),
@@ -4874,9 +4925,21 @@ console.log('\n=== Arena de Lichess — Fase 3: berserk ===');
       'al tocar ⚡ tu reloj pasa YA a la mitad (en la prueba real seguía en 5:00 hasta mover)');
   chk(/classList\.toggle\('lv-bk-on', miB\)/.test(modP) && /\.lv-player\.lv-bk-on \.lv-clock \{ box-shadow:inset 0 -4px 0 #e24b4a; \}/.test(SRC),
       'el que hizo berserk lleva una raya roja abajo del reloj toda la partida (opción A del autor)');
-  chk(/function llamarada\(c\)[\s\S]{0,400}lv-bk-flash[\s\S]{0,200}3000/.test(modP) && /P\.bk\[c\] = true;\s*if \(!callado\) \{\s*llamarada\(c\);/.test(modP)
+  // 18/09: la llamarada ya no sale al detectar el berserk sino EN EL GOLPE del sonido (bkEfecto la agenda).
+  chk(/function llamarada\(c\)[\s\S]{0,400}lv-bk-flash[\s\S]{0,200}3000/.test(modP) && /P\.bk\[c\] = true;\s*if \(!callado\) \{\s*bkEfecto\(c\);/.test(modP)
+      && /function bkEfecto\(c\) \{[\s\S]{0,300}llamarada\(c\)/.test(modP)
       && /prefers-reduced-motion: reduce\) \{ \.lv-player\.lv-bk-flash/.test(SRC),
       'al hacer berserk el reloj hace una llamarada roja de 3 s y vuelve a sus colores (el dorado del turno se sigue viendo)');
+  // 🕰️⚔️ Ícono del berserk (18/09): la espada corta el reloj JUSTO en la explosión del "reloj bomba".
+  const sndFn = (modP.match(/function sndBerserk\(\) \{[\s\S]*?\n  \}/) || [''])[0];
+  const corteFn = (modP.match(/function bkCorte\(el, leadMs, alFinal\) \{[\s\S]*?\n  \}/) || [''])[0];
+  chk(/bkTiempos\(\)/.test(sndFn) && /return lead;/.test(sndFn) && /bkTiempos\(\)/.test(corteFn)
+      && /var lead = berserkMudo\(\) \? 30 : sndBerserk\(\);/.test(bkFn) && /bkCorte\(b, lead,/.test(bkFn)
+      && /if \(b && !b\._bkAnim\) b\.style\.display/.test(modP),
+      '🔒 el sonido y la espada usan los MISMOS tiempos (bkTiempos) y el botón no se esconde a mitad del corte');
+  chk(/id="lv-bk-top"[^>]*aria-hidden="true"/.test(SRC) && /\.lv-bk-rival \{ cursor:default; pointer-events:none; \}/.test(SRC)
+      && /function bkEfecto\(c\) \{[\s\S]{0,500}if \(c !== P\.color\) \{[\s\S]{0,120}\$\$\('lv-bk-top'\)/.test(modP),
+      'cuando el RIVAL hace berserk, su relojito aparece junto a su reloj y se corta (sólo para ver, no se toca)');
 }
 
 // ── Formaciones por equipos con una columna VACÍA de más (Olimpiada femenina Samarkand 2026, 17/09) ──

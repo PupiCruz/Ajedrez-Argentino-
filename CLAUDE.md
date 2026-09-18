@@ -65,6 +65,33 @@ también en las vitrinas de los perfiles, que salen de lo mismo.
 `_stTopeEdad` / `_stSoloFemenino` / `_stSoloVeteranos` del `index.html`, con pruebas en la sección
 34 del banco.)
 
+## 🏛️ Torneos históricos (colecciones)
+
+En **Torneos** hay un botón **🏛️ Torneos históricos**: adentro están las **colecciones** (Olimpíadas, Mar
+del Plata, Torneo Clarín, Festival Najdorf) como tarjetas, y adentro de cada una sus torneos, también
+como tarjetas. Al tocar uno se abre la ficha de siempre.
+
+- **Meter un torneo en una colección:** ✏️ Editar torneo → **Colección**. Con el tilde **"Mostrar también
+  en la lista general"**, aparece en los dos lados (ej. Budapest 2024: en Finalizados y en Olimpíadas);
+  sin el tilde, **sólo** en su colección (los viejos, para no llenar la lista de todos los días), aunque
+  el **buscador** lo encuentra igual, con la etiqueta 🏛️ HISTÓRICO. Es el **mismo torneo**: no se duplica.
+- **Sin flyer**, la tarjeta lleva una **portada automática** (año grande, sede, color de la colección).
+- **Crédito del flyer:** si la imagen es prestada, en Editar torneo, debajo del flyer, van el crédito y
+  su link (aparece chiquito debajo del flyer). El Museo de la FIDE lo pide: *link activo a la fuente*.
+- **Una colección nueva** = un renglón en `COLECCIONES` del `index.html` (nombre, etiqueta, colores).
+- **📥 Importar torneo histórico** (modo autor, dentro de la sección): carga un **paquete** `.json` con la
+  ficha, los cuadros de cada categoría y las partidas (van al pool, una por categoría). Volver a importar
+  el mismo torneo lo **reemplaza**. **Después: 💾 Guardar datos en mi carpeta** (hasta entonces las
+  partidas viven sólo en la pestaña) **y publicar.** Los paquetes los arma Claude desde OlimpBase con los
+  programitas de `.claude/olimpbase/` (`convert.mjs` → `limpiar-pgn.mjs` → `paquete.mjs`) y quedan en
+  `Escritorio\Torneos historicos\`.
+- Por categoría, dos marcas que respeta la ficha: `inicial: true` (abre en esa pestaña, ej. la Final A) y
+  `sinPodio: true` (sin podio, ej. los grupos preliminares de una Olimpiada vieja).
+- En la web publicada el botón y cada colección aparecen **recién cuando tienen algún torneo**.
+- **Fuentes y permisos:** los datos de OlimpBase se usan con permiso de Wojciech Bartelski (18/09/2026),
+  con una sola condición: **citar la fuente** → cada torneo lleva en "Sitio web del torneo" el link a su
+  página de OlimpBase (sale como "📚 Fuente de los datos: OlimpBase").
+
 ## ✅ Auditoría 2026: TERMINADA
 La auditoría de seguridad y código del **26/08/2026** (27 hallazgos) se arregló entera en
 **8 fases**, todas publicadas y andando al **27/08/2026**. El registro completo de qué se
