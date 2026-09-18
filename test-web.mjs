@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1224;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1227;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -1658,6 +1658,15 @@ console.log('\n=== 34. La vitrina de trofeos del perfil ===');
       && /isProfile: !pr/.test(cfd) && /_protEv\[_normEvName\(t\.name \|\| ''\)\]\) return;/.test(SRC)
       && /s\[_normEvName\(_catEventName\(nombre, c\.name\)\)\] = true/.test(extraerFuncion('_eventosDeTorneos')),
       '🔒 "Limpiar duplicados" nunca quita las partidas de un torneo del sitio (ni de sus categorías): quita la otra copia');
+  chk(/try \{ if \(_histVista !== null\) histSalir\(\); \} catch \(_\) \{\}/.test(extraerFuncion('goHome')),
+      '🏛️ el logo lleva a la lista principal aunque estés adentro de Torneos históricos');
+  chk(/var src = _ondemand \? \(window\.__EMBEDDED_TZ__ \|\| \{\}\) : getTzConfig\(\);/.test(extraerFuncion('_colCfg'))
+      && /flyerUrl: cc\.flyerUrl \|\| ''/.test(SRC) && /key\.indexOf\('col_'\) === 0\) add\(tzCfg\[key\]\.flyerUrl\)/.test(extraerFuncion('_collectFlyerUrls')),
+      '🏛️ cada colección puede tener su flyer (lo carga el autor, viaja en el manifest y se puede migrar de Imgur)');
+  // (extraerFuncion cuenta llaves y esta función tiene "[^}]" en sus regex: se buscan por posición.)
+  const _dobI = SRC.indexOf('function detectOpeningByMoves('), _dobL = SRC.indexOf("t = t.replace(/^\\d+\\.+(?=\\S)/, '');");
+  chk(_dobI > 0 && _dobL > _dobI && _dobL - _dobI < 3000,
+      '📖 las aperturas se reconocen también con el número pegado a la jugada ("1.d4", como en OlimpBase/ChessBase)');
   chk(/if\(m\.nota && !\(_boards && _boards\.length\)\) inner\+=/.test(SRC),
       '🏛️ un match sin mesas que trae nota (se dio 2-2 sin jugar) la muestra en vez del marcador solo');
   chk(!/<nav class="hist-miga"/.test(SRC) && /class="hist-miga" role="navigation"/.test(SRC),

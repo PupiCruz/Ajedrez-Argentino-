@@ -722,6 +722,29 @@
     .hist-btn { padding: 8px 14px; background: var(--gold-bg); border: 1px solid var(--gold-dim); color: var(--gold); font-size: 13px;
       font-weight: 700; border-radius: 9px; cursor: pointer; font-family: inherit; flex-shrink: 0; white-space: nowrap; }
     .hist-btn:hover { filter: brightness(1.08); }
+    /* El botón de ENTRADA (encabezado de Torneos), en estilo "calcomanía" (pedido del autor: más
+       caricaturesco y lúdico): dorado con borde y sombra de historieta, apenas torcido; al pasar el mouse
+       se endereza y salta. Mismos colores en claro y oscuro (es una calcomanía, no un botón del tema). */
+    .hist-cta { position: relative; display: inline-flex; align-items: center; gap: 9px; padding: 5px 15px 5px 5px; border-radius: 16px;
+      background: linear-gradient(135deg, #ffe38f 0%, #f6b73c 55%, #e8932a 100%); color: #3d2406; border: 2px solid #3d2406;
+      box-shadow: 3px 3px 0 #3d2406; font-family: inherit; cursor: pointer; transform: rotate(-2deg);
+      transition: transform .16s cubic-bezier(.3,1.6,.5,1), box-shadow .16s; flex-shrink: 0; }
+    .hist-cta:hover { transform: rotate(0) translate(-1px, -2px) scale(1.04); box-shadow: 5px 5px 0 #3d2406; }
+    .hist-cta:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 #3d2406; }
+    .hist-cta:focus-visible { outline: 3px solid var(--gold); outline-offset: 3px; }
+    .hist-cta .hc-ic { width: 34px; height: 34px; border-radius: 50%; background: #fff7e0; border: 2px solid #3d2406;
+      display: flex; align-items: center; justify-content: center; font-size: 18px; line-height: 1; }
+    .hist-cta .hc-tx { display: flex; flex-direction: column; line-height: 1.05; text-align: left; }
+    .hist-cta .hc-a { font-size: 10px; font-weight: 800; letter-spacing: .9px; text-transform: uppercase; opacity: .8; }
+    .hist-cta .hc-b { font-size: 15.5px; font-weight: 900; letter-spacing: -.2px; }
+    .hist-cta .hc-star { position: absolute; top: -9px; right: -7px; font-size: 15px; animation: hcTw 2.6s ease-in-out infinite; pointer-events: none; }
+    .hist-cta:hover .hc-ic { animation: hcBob .45s ease; }
+    @keyframes hcTw { 0%, 100% { transform: scale(1) rotate(0); opacity: 1; } 50% { transform: scale(1.3) rotate(25deg); opacity: .75; } }
+    @keyframes hcBob { 0%, 100% { transform: translateY(0); } 40% { transform: translateY(-4px) rotate(-10deg); } }
+    @media (prefers-reduced-motion: reduce) {
+      .hist-cta, .hist-cta:hover { transform: none; transition: none; }
+      .hist-cta .hc-star, .hist-cta:hover .hc-ic { animation: none; }
+    }
     .hist-miga { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; color: var(--text2); margin: 0 0 6px; }
     .hist-miga button { background: none; border: none; padding: 0; font: inherit; color: var(--gold); cursor: pointer; font-weight: 700; }
     .hist-miga b { color: var(--text); }
@@ -2560,7 +2583,7 @@
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;margin-top:4px">
           <!-- 🏛️ Torneos históricos: colecciones (Olimpíadas, Mar del Plata…). Se esconde sola si no hay ninguno. -->
-          <button id="btn-hist" class="hist-btn" onclick="histAbrir('')" style="display:none">🏛️ Torneos históricos</button>
+          <button id="btn-hist" class="hist-cta" onclick="histAbrir('')" style="display:none" aria-label="Torneos históricos"><span class="hc-ic" aria-hidden="true">🏛️</span><span class="hc-tx" aria-hidden="true"><span class="hc-a">Torneos</span><span class="hc-b">Históricos</span></span><span class="hc-star" aria-hidden="true">✨</span></button>
           <button id="btn-add-tour" onclick="openTzModal(null)" style="padding:8px 14px;background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-size:12px;font-weight:700;border-radius:9px;cursor:pointer;font-family:inherit;flex-shrink:0">+ Agregar</button>
         </div>
       </div>
@@ -6395,6 +6418,29 @@ var COLECCIONES = [
     desc: 'El Festival Internacional Miguel Najdorf, en Buenos Aires.' }
 ];
 function _colDef(k) { for (var i = 0; i < COLECCIONES.length; i++) if (COLECCIONES[i].k === k) return COLECCIONES[i]; return null; }
+// FLYER de una colección (lo carga el autor con el ✏️ de su tarjeta; sin flyer, portada automática).
+// Vive en tz_config bajo 'col_<k>' —como los datos extra de los torneos fijos, 'hc_<id>'—, que viaja
+// entero al publicar (__EMBEDDED_TZ__ del manifest). Sin `name`, los recorridos de torneos lo saltean.
+function _colCfg(k) {
+  var src = _ondemand ? (window.__EMBEDDED_TZ__ || {}) : getTzConfig();
+  return (src && src['col_' + k]) || {};
+}
+async function histColFlyer(k) {
+  var c = _colDef(k); if (!c) return;
+  var actual = _colCfg(k).flyerUrl || '';
+  var p = window.aaAsk({ icono: '🖼️', titulo: 'Flyer de la colección ' + c.nombre,
+    texto: 'Pegá el link de la imagen, como en los flyers de los torneos (Imgur, tu hosting…). Dejalo vacío para volver a la portada automática.',
+    campo: 'https://i.imgur.com/…', max: 600, ok: 'Guardar' });
+  var inp = document.querySelector('.aa-modal-in'); if (inp) inp.value = actual;
+  var v = await p;
+  if (v === null) return;
+  v = String(v).trim();
+  var cfg = getTzConfig(), key = 'col_' + k;
+  if (v) cfg[key] = Object.assign({}, cfg[key] || {}, { flyerUrl: v, flyerPos: (cfg[key] && cfg[key].flyerPos) || '50% 0%' });
+  else delete cfg[key];
+  saveTzConfig(cfg);
+  renderTorneos(_lastTorneoFilter);
+}
 
 var _histVista = null;   // null = la lista de siempre · '' = las colecciones · 'olimpiadas' = adentro de una
 
@@ -6559,7 +6605,10 @@ function _histRender(items, tzCfg) {
       var anios = its.map(_itemAnio).filter(Boolean);
       var rango = anios.length ? (Math.min.apply(null, anios) === Math.max.apply(null, anios) ? String(anios[0]) : Math.min.apply(null, anios) + '–' + Math.max.apply(null, anios)) : '';
       var cuenta = its.length ? (its.length + (its.length === 1 ? ' torneo' : ' torneos')) : 'Todavía sin torneos';
+      var cc = _colCfg(c.k);
       h += _tourTileHtml({
+        flyerUrl: cc.flyerUrl || '', flyerPos: cc.flyerPos || '',
+        editHtml: _ondemand ? '' : ('<div class="t-tile-edit"><button onclick="histColFlyer(\'' + escJs(c.k) + '\')" title="Flyer de la colección" class="t-tile-ebtn">✏️</button></div>'),
         name: c.nombre, dates: cuenta + (rango ? ' · ' + rango : ''), badge: null,
         portadaHtml: _portadaHtml(c, c.sub, rango || c.nombre, rango ? c.nombre : ''),
         href: '?historicos=' + encodeURIComponent(c.k), onclickJs: "histAbrir('" + escJs(c.k) + "');return false;"
@@ -15273,7 +15322,8 @@ function _collectFlyerUrls() {
   function add(u) { if (u && /^https?:\/\//i.test(u) && !seen[u]) { seen[u] = 1; urls.push(u); } }
   try { (typeof TORNEOS !== 'undefined' ? TORNEOS : []).forEach(function(t) { var ov = tzCfg['hc_' + t.id] || {}; add(ov.flyerUrl || t.flyerUrl); }); } catch(e){}
   try { pgnGetTorneosForList().forEach(function(st) { add(st.flyerUrl); }); } catch(e){}
-  Object.keys(tzCfg).forEach(function(key) { if (key.indexOf('tz_') === 0) add(tzCfg[key].flyerUrl); });
+  // …y los de las colecciones de 🏛️ Torneos históricos ('col_<k>'), que también pueden venir de Imgur.
+  Object.keys(tzCfg).forEach(function(key) { if (key.indexOf('tz_') === 0 || key.indexOf('col_') === 0) add(tzCfg[key].flyerUrl); });
   return urls;
 }
 // Carga una imagen externa (CORS), la achica a maxW de ancho y la devuelve como dataURL JPEG.
@@ -21888,6 +21938,10 @@ function detectOpeningByMoves(pgn, fast) {
   for (var i = 0; i < tokens.length && moves.length < 30; i++) {
     var t = tokens[i];
     if (!t) continue;
+    // Número PEGADO a la jugada ("1.d4", "12...Nf6"), como en los PGN de OlimpBase/ChessBase (Lichess
+    // pone "1. d4"). Sin esto el token no empezaba con letra y se tiraba ENTERO: se perdían todas las
+    // jugadas de blancas y no se reconocía ninguna apertura (Olimpiada de 1939, 18/09/2026).
+    t = t.replace(/^\d+\.+(?=\S)/, '');
     // Saltar números de jugada (1. / 1...), resultados y NAG
     if (/^\d+\.+$/.test(t) || t === '*' || t === '1-0' || t === '0-1' || t === '1/2-1/2' || /^\$\d+$/.test(t)) continue;
     t = t.replace(/[+#!?()\[\]]+$/, '').replace(/^[+#!?()\[\]]+/, ''); // quitar símbolos inicio/fin
@@ -30544,6 +30598,9 @@ function goHome(e) {
   _tourHistoryPushed = false; _playerHistoryPushed = false; _tourReturnToProfile = false;
   var btn = document.querySelector('.nav-btn[onclick*="\'torneos\'"]');
   if (btn) { try { goTo('torneos', btn); } catch (_) {} }
+  // Inicio de verdad: si estabas adentro de 🏛️ Torneos históricos, el logo te devuelve a la lista de
+  // siempre (el botón "Torneos" de arriba, en cambio, te deja donde estabas — pedido del autor, 18/09).
+  try { if (_histVista !== null) histSalir(); } catch (_) {}
   try { history.replaceState({}, '', location.pathname); } catch (_) {}
   return false;
 }
