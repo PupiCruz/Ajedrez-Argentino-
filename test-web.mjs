@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1201;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1210;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -4154,6 +4154,23 @@ console.log('\n=== 53b. Vivo: miniaturas con la ficha liviana de Lichess (17/09)
   st = F._tdBoardState(otra);
   const m = F._tdTeamMatches(ctx2.byRound[2]);
   chk(st.ficha && st.res === '0-1' && m.length === 1 && m[0].b === 1 && m[0].a === 0, 'un abandono sin jugada nueva pone el resultado y suma en el marcador del match', JSON.stringify(m.map(x => [x.a, x.b])));
+  // Olimpiada R3 (18/09): cargaron mal el resultado (0-1), lo corrigieron en Lichess (1-0) y la copia del Worker
+  // siguió 11 minutos con el viejo: la miniatura ya decía 1-0 pero el match quedaba 1:1.
+  const mal = pg('mmmmmmmm', '0-1', true);
+  F.FENS[mal] = F.FENS[viejo];
+  const gMal = { pgn: mal, h: F.parsePgnHeaders(mal) };
+  ctx2.byRound[2].push(gMal);
+  F.llamadas.length = 0;
+  F._tdJsonApply([{ id: 'mmmmmmmm', fen: F.FENS[viejo].fen, status: '0-1' }]);
+  chk(F._tdGameRes(gMal) === '0-1', 'con la ficha y el PGN de acuerdo, el resultado es ese');
+  F.llamadas.length = 0;
+  F._tdJsonApply([{ id: 'mmmmmmmm', fen: F.FENS[viejo].fen, status: '1-0' }]);
+  chk(F.llamadas.join(',') === 'patch2', '🔒 un resultado corregido (misma posición) cuenta como cambio y redibuja', F.llamadas.join(','));
+  chk(F._tdGameRes(gMal) === '1-0' && F._tdBoardState(mal).res === '1-0', '🔒 el marcador del match toma el resultado corregido de la ficha, igual que la miniatura');
+  const masAdelante = pg('mmmmmmmm', '0-1', true) + '   ';
+  F.FENS[masAdelante] = { fen: ficha.fen, last: null, wc: '', bc: '', ev: null };
+  chk(F._tdGameRes({ pgn: masAdelante, h: F.parsePgnHeaders(masAdelante) }) === '0-1', '🔒 si el PGN va MÁS adelante que la ficha, manda el resultado del PGN');
+  ctx2.byRound[2].pop();
   // El PGN alcanza a la ficha (mismas jugadas): se sigue usando la ficha, que es la misma posición, y así la
   // miniatura no reproduce la partida con el motor (~80 ms por tablero, los tironcitos al scrollear).
   const alcanzo = pg('EQVqQ7iM', '*', true);
@@ -4343,6 +4360,21 @@ console.log('\n=== 53e. Visor: buscador y Solo argentinos debajo del tablero (17
       'con un filtro sin coincidencias queda el buscador a mano y un aviso (no desaparece la sección)');
   chk(/_tdBoardState\(pgn\)\.rr/.test(extraerFuncion('_cvRoundMinisBody')) && /_tdBoardState\(pgn\)\.rr/.test(extraerFuncion('_cvRefreshRoundMinis')),
       'las miniaturas del visor usan la ficha liviana como la grilla (sin reproducir partidas con el motor)');
+
+  // Relojes corriendo en las miniaturas del visor (pedido del autor, 18/09).
+  const R = new Function(['_clkToSec', '_secToClk', '_cvMiniClkData', '_cvMiniClkNorm'].map(extraerFuncion).join('\n') + '; return { _cvMiniClkData, _cvMiniClkNorm, _secToClk };')();
+  const enJuego = R._cvMiniClkData({ fen: '8/8/8/8/8/8/8/8 b - - 0 40', wc: '0:29:27', bc: '1:18:46' }, '*');
+  chk(enJuego.turn === 'b' && enJuego.wsec === 1767 && enJuego.bsec === 4726 && enJuego.running === '1', 'partida en juego: corre el reloj del que mueve (negras)', JSON.stringify(enJuego));
+  chk(R._cvMiniClkData({ fen: 'x w', wc: '0:10:00', bc: '0:09:00' }, '1-0').running === '0' && R._cvMiniClkData({ fen: 'x w', wc: '', bc: '0:09:00' }, '*').running === '0',
+      '🔒 terminada o sin reloj, no corre');
+  chk(R._cvMiniClkNorm('<div><span class="cv-rm-clk">29:27</span></div>') === R._cvMiniClkNorm('<div><span class="cv-rm-clk">28:50</span></div>'),
+      '🔒 el refresco compara el renglón sin mirar el reloj (si no, lo haría volver atrás cada 30 s)');
+  const rf = extraerFuncion('_cvRefreshRoundMinis');
+  chk(rf.includes("if (bd.getAttribute('data-fen') !== ff.fen || res !== '*' || bd.getAttribute('data-running') !== '1') _cvMiniClkSet(bd, ff, res);")
+      && rf.indexOf('_cvMiniClkSet') < rf.indexOf('tdPatchMiniBoard') && rf.includes('_cvMiniClkShow(card, bd)'),
+      'se re-sincroniza sólo con jugada nueva o partida terminada (antes de actualizar la posición guardada)');
+  chk(extraerFuncion('_cvRoundMinisBody').includes('_cvMiniClkAttrs(ff, h.Result)') && extraerFuncion('_cvMiniClkTick').includes('.cv-rm-card > .td-bd[data-running="1"]'),
+      'las miniaturas del visor nacen con su reloj y tienen su propio contador (el de la grilla no se toca)');
 }
 
 // ── 54. Vivo: buscar por país, flechas en el chat y páginas también abajo (16/09) ──

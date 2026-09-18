@@ -18910,6 +18910,50 @@ function _cvMiniBoardAttrs(ff, gk) {
   var l = ff.last || {};
   return ' data-gk="' + escHtml(gk) + '" data-fen="' + escHtml(ff.fen) + '" data-lf="' + (l.from || '') + '" data-lt="' + (l.to || '') + '"';
 }
+// Relojes corriendo en las miniaturas del visor, como en la grilla (_tdSetClocks/_tdClockTick), con su
+// propio contador: cada segundo descuenta al lado al que le toca mover. Se re-sincroniza sólo cuando llega
+// una jugada nueva (o termina la partida); el refresco con la misma posición no lo hace volver atrás.
+function _cvMiniClkData(ff, res) {
+  var ws = _clkToSec(ff.wc), bs = _clkToSec(ff.bc);
+  return { turn: String(ff.fen || '').split(' ')[1] === 'b' ? 'b' : 'w', wsec: ws, bsec: bs,
+           running: (res || '*') === '*' && ws >= 0 && bs >= 0 ? '1' : '0' };
+}
+function _cvMiniClkAttrs(ff, res) {
+  var d = _cvMiniClkData(ff, res);
+  return ' data-turn="' + d.turn + '" data-wsec="' + d.wsec + '" data-bsec="' + d.bsec + '" data-running="' + d.running + '"';
+}
+function _cvMiniClkSet(bd, ff, res) {
+  var d = _cvMiniClkData(ff, res);
+  bd.setAttribute('data-turn', d.turn); bd.setAttribute('data-wsec', d.wsec); bd.setAttribute('data-bsec', d.bsec); bd.setAttribute('data-running', d.running);
+}
+// El renglón del nombre sin el texto del reloj: para comparar en el refresco sin mirar lo que ya descontó.
+function _cvMiniClkNorm(html) { return String(html).replace(/(<span class="cv-rm-clk">)[^<]*/g, '$1'); }
+function _cvMiniClkSpan(card, side) {
+  var row = side === 'b' ? card.firstElementChild : card.lastElementChild;
+  return row && row.querySelector('.cv-rm-clk');
+}
+// Pinta los dos relojes de una miniatura con lo que lleva contado.
+function _cvMiniClkShow(card, bd) {
+  ['w', 'b'].forEach(function(side){
+    var sec = parseInt(bd.getAttribute('data-' + side + 'sec')), span = _cvMiniClkSpan(card, side);
+    if (span && sec >= 0) span.textContent = _secToClk(sec);
+  });
+}
+var _cvMiniClkTimer = null;
+function _cvMiniClkStart() { if (!_cvMiniClkTimer) _cvMiniClkTimer = setInterval(_cvMiniClkTick, 1000); }
+function _cvMiniClkTick() {
+  var minis = document.getElementById('cv-round-minis');
+  var bds = minis ? minis.querySelectorAll('.cv-rm-card > .td-bd[data-running="1"]') : [];
+  if (!bds.length) { clearInterval(_cvMiniClkTimer); _cvMiniClkTimer = null; return; }   // nada corriendo: se apaga (el refresco lo vuelve a prender)
+  for (var i = 0; i < bds.length; i++) {
+    var bd = bds[i], turn = bd.getAttribute('data-turn'), attr = 'data-' + turn + 'sec';
+    var sec = parseInt(bd.getAttribute(attr));
+    if (isNaN(sec) || sec <= 0) continue;
+    sec--; bd.setAttribute(attr, String(sec));
+    var span = _cvMiniClkSpan(bd.parentNode, turn);
+    if (span) span.textContent = _secToClk(sec);
+  }
+}
 // Refresco en vivo de las miniaturas del visor: si la página muestra las MISMAS partidas, se parchea
 // cada una en su lugar (casillas que cambiaron, barrita, relojes, resultado). Antes se borraba y se
 // redibujaba todo en cada refresco: saltito de la barrita y, si estabas en la página 2, te devolvía
@@ -18930,9 +18974,12 @@ function _cvRefreshRoundMinis(minis) {
     var card = cards[j], i = p.pageIdx[j], pgn = _cvTourGames[i], h = _cvMiniHdr(pgn);
     var ff = _tdBoardState(pgn).rr, bd = card.querySelector('.td-bd'), gk = bd.getAttribute('data-gk');
     card.classList.toggle('active', i === _cvTourIdx);
-    var rows = _cvMiniRows(h, ff);
-    if (card.firstElementChild.outerHTML !== rows.black) card.firstElementChild.outerHTML = rows.black;
-    if (card.lastElementChild.outerHTML !== rows.white) card.lastElementChild.outerHTML = rows.white;
+    var rows = _cvMiniRows(h, ff), res = h.Result || '*';
+    // Reloj: se re-sincroniza con jugada nueva, partida terminada o si no venía corriendo; si no, sigue descontando.
+    if (bd.getAttribute('data-fen') !== ff.fen || res !== '*' || bd.getAttribute('data-running') !== '1') _cvMiniClkSet(bd, ff, res);
+    if (_cvMiniClkNorm(card.firstElementChild.outerHTML) !== _cvMiniClkNorm(rows.black)) card.firstElementChild.outerHTML = rows.black;
+    if (_cvMiniClkNorm(card.lastElementChild.outerHTML) !== _cvMiniClkNorm(rows.white)) card.lastElementChild.outerHTML = rows.white;
+    _cvMiniClkShow(card, bd);
     if (bd.getAttribute('data-fen') !== ff.fen) {
       // Primera vez que se parchea este tablero: memorizar pieza/resaltado de cada casilla tal como se dibujó.
       if (!bd._ck) { _tdSetCellKeys(bd, bd.getAttribute('data-fen'), { from: bd.getAttribute('data-lf'), to: bd.getAttribute('data-lt') }); bd._ck = 1; }
@@ -18946,6 +18993,7 @@ function _cvRefreshRoundMinis(minis) {
     var ev = _cvMiniEv(ff, gk);
     if (ev != null) _tdSetEvalBar(bd, ev);   // sin evaluación nueva todavía → la barra anterior queda
   }
+  _cvMiniClkStart();
 }
 // ¿Va el botón "Solo argentinos" en el visor? Donde la grilla del torneo lo muestra (torneos internacionales
 // con argentinos).
@@ -19012,11 +19060,12 @@ function _cvRoundMinisBody(p) {
     var rows = _cvMiniRows(h, ff);
     cards += '<a class="cv-rm-card' + (i === _cvTourIdx ? ' active' : '') + '" data-mi="' + i + '" href="' + href + '" onclick="return tdGameNavClick(event,' + i + ')">'
       + rows.black
-      + '<div class="td-bd' + (mEv != null ? ' has-ev' : '') + '"' + _cvMiniBoardAttrs(ff, gk) + ' style="position:relative">' + tdMiniFen(ff.fen, ff.last) + _tdEvalBarHtml(mEv) + '</div>'
+      + '<div class="td-bd' + (mEv != null ? ' has-ev' : '') + '"' + _cvMiniBoardAttrs(ff, gk) + _cvMiniClkAttrs(ff, h.Result) + ' style="position:relative">' + tdMiniFen(ff.fen, ff.last) + _tdEvalBarHtml(mEv) + '</div>'
       + rows.white
       + '</a>';
   });
   if (!cards) return '';
+  _cvMiniClkStart();
   var pager = '';
   if (totalPages > 1) {
     var bs = 'background:var(--panel0);border:1px solid var(--bd35);color:var(--fg0);font-size:14px;border-radius:8px;padding:5px 12px;cursor:pointer;font-family:inherit';
@@ -33198,9 +33247,15 @@ function _tdBoardState(pgn) {
   return { rr: tdFinalFenCached(pgn), res: res, ficha: false };
 }
 // Resultado de una partida para el marcador del match (el de la ficha si ya terminó y el PGN no se enteró).
+// También si el PGN trae OTRO resultado en la misma jugada: lo corrigieron en Lichess y la copia del Worker
+// sigue atrasada (Olimpiada R3, 18/09: Borda Rodas ganó, se cargó 0-1, el match quedó 1:1 unos 11 minutos
+// mientras la miniatura ya decía 1-0). Misma regla que la miniatura (_tdFichaSirve): marcador y tablero, iguales.
 function _tdGameRes(g) {
-  var res = (g.h && g.h.Result) || '*', id = res === '*' && _bcGameIds(g.pgn), o = id && _tdJsonNew[id.game];
-  return (o && o.res !== '*') ? o.res : res;
+  var res = (g.h && g.h.Result) || '*', id = _bcGameIds(g.pgn), o = id && _tdJsonNew[id.game];
+  if (!o || o.res === '*' || o.res === res) return res;
+  if (res === '*') return o.res;
+  if (g._plPgn !== g.pgn) { g._plPgn = g.pgn; g._pl = _pgnPlies(g.pgn); }   // sólo cuando no coinciden (casi nunca)
+  return o.plies >= g._pl ? o.res : res;
 }
 // Anota lo que trajo la ficha de UNA transmisión y parchea los tableros si algo avanzó.
 function _tdJsonApply(games) {
@@ -33219,7 +33274,7 @@ function _tdJsonApply(games) {
     var pres = (g.h && g.h.Result) || '*';
     if (!_tdFichaSirve(o, g._pl, pres)) return;   // la ficha va atrás del PGN: manda el PGN
     _tdJsonNew[j.id] = o;
-    if (!prev || _tdJsonAhead(o, g._pl, pres)) changed = true;   // primera vez (deja de usar el motor) o va más adelante
+    if (!prev || _tdJsonAhead(o, g._pl, pres) || prev.res !== o.res) changed = true;   // primera vez (deja de usar el motor), va más adelante o le corrigieron el resultado
   });
   if (!changed) return;
   if (_tdCurrentRound === cur && document.getElementById('td-round-' + cur)) _tdPatchRoundBoards(cur, _tdCtx.games);
