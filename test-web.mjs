@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1326;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1343;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -5014,6 +5014,52 @@ console.log('\n=== Arena de Lichess — Fase 3: berserk ===');
       'y la ronda que ya tiene sus partidas cargadas sigue alcanzable');
   chk(fn({ byRound: {} }, { onDemand: true, roundsMeta: [] })('1') === false,
       'una ronda que no existe en el vivo ni tiene partidas NO lleva ojito (no manda a la nada)');
+}
+
+
+console.log('\n=== 🔌 El vigía del caño de la partida de Lichess (19/09) ===');
+// 🐛 PRUEBA REAL: en un arena temático el rival movió, en lichess.org corría el tiempo del autor y la
+// web seguía diciendo "le toca al rival", congelada, hasta que abandonó. El caño se había quedado MUDO
+// y no había ni vigía ni reintento. Estos candados son para que no vuelva a quedarse sin red.
+{
+  const M = new Function('return (' + extraerFuncion('partidaViva') + ')');
+  // La función mira P, que no existe acá: se la inyecta como global del sandbox.
+  const viva = (ultSt) => new Function('P', 'return (' + extraerFuncion('partidaViva') + ')()')({ ultSt });
+  chk(viva({ status: 'started' }) === true && viva({ status: 'created' }) === true,
+      'partida en juego: el caño que se cae se reconecta');
+  chk(viva({ status: 'mate' }) === false && viva({ status: 'resign' }) === false && viva({ status: 'outoftime' }) === false,
+      'partida terminada: el caño se cierra solo y NO se reintenta (no es un error)');
+  chk(viva(null) === true && viva({}) === true,
+      'sin saber en qué anda: se supone viva (mejor un reintento de más que un tablero clavado)');
+  chk(typeof M === 'function', 'la función existe con ese nombre');
+
+  chk(/alLatir/.test(SRC) && /if \(latir\) \{ try \{ latir\(\); \} catch \(e\) \{\} \}[\s\S]{0,120}buf \+= dec\.decode/.test(SRC),
+      '🔒 el lector de caños avisa con CADA pedacito, también con los renglones vacíos (el latido de Lichess)');
+  chk(/var VIG_MUDO = 15000/.test(SRC), '🔒 15 s de silencio = caño muerto (Lichess late cada ~6 s)');
+  chk(/Date\.now\(\) - \(P\.latido \|\| 0\) > VIG_MUDO\) caida\(null\)/.test(SRC),
+      '🔒 hay un vigía que mira el último latido y no espera a que salte un error');
+  chk(/st === 401 \|\| st === 403 \|\| st === 404/.test(SRC),
+      '🔒 si Lichess dice que no (permiso vencido, partida ajena) no se insiste: se avisa y listo');
+  chk(/function congelarReloj\(\)[\s\S]{0,400}m\.clock\.running = null/.test(SRC),
+      '🔒 sin conexión el reloj queda QUIETO: si sigue descontando, muestra un tiempo que no existe');
+  chk(/if \(P\.caido\) return;/.test(SRC),
+      '🔒 con el caño caído, la vigilancia del berserk no vuelve a empujar el estado viejo (el reloj saltaba para atrás)');
+  chk(/if \(!P\.presentada\)/.test(SRC),
+      '🔒 al reconectar no se vuelve a anunciar la partida (el lector de pantalla la repetía en cada parpadeo de la red)');
+  chk(/el tablero no pudo pintar el estado/.test(SRC),
+      '🔒 si el tablero se rompe pintando, queda anotado en la consola (antes el error se tragaba en silencio)');
+}
+
+console.log('\n=== ▶️ Volver a mi partida después de un F5 (19/09) ===');
+// Antes, si el aviso `gameStart` de Lichess no llegaba (o llegó antes de que cargara la cuenta), la
+// pantalla del arena decía "tenés una partida en curso" y el único camino era lichess.org.
+{
+  chk(/data-as="volverpartida" data-as-gid="/.test(SRC), '🔒 el cartel de "partida en curso" trae el botón para volver');
+  chk(/api\/account\/playing\?nb=30/.test(SRC),
+      '🔒 el color lo dice Lichess (/api/account/playing devuelve las partidas en curso con el color puesto)');
+  chk(/reanudar: reanudar/.test(SRC), 'la pantalla del arena puede llamarlo (está exportado en aaLiPartida)');
+  chk(/window\.aaLiPartida\.reanudar\(gid\)/.test(SRC), 'y el botón lo llama con el id de la partida');
+  chk(/Abrir en Lichess ↗/.test(SRC), 'el camino viejo (abrirla en lichess.org) sigue estando al lado');
 }
 
 

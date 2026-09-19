@@ -44936,9 +44936,15 @@ function cvUpdateNagBadge() {
      juega la partida. Uno solo, así no se desincronizan.
      · `ctrl` es un AbortController: cortarlo cierra la conexión (y con eso Lichess
        cancela el pedido de partida, que es justo lo que queremos).
-     · Los errores llegan a onFin con `.status` y `.motivo` ya desarmados. */
+     · Los errores llegan a onFin con `.status` y `.motivo` ya desarmados.
+     · `opts.alLatir` (nuestro, no de fetch): se llama con CADA pedacito que llega, incluidos
+       los renglones vacíos que Lichess manda cada ~6 s como latido. Es la única manera de
+       darse cuenta de que un caño se quedó MUDO: un corte silencioso no da error nunca
+       (el tablero de un arena quedó congelado media partida por esto, 19/09/2026). */
   function cano(url, opts, ctrl, onObj, onFin) {
-    opts = opts || {}; opts.signal = ctrl.signal;
+    opts = opts || {};
+    var latir = opts.alLatir; if (latir) delete opts.alLatir;
+    opts.signal = ctrl.signal;
     opts.headers = Object.assign({ Authorization: 'Bearer ' + token() }, opts.headers || {});
     fetch(url, opts).then(function (r) {
       if (!r.ok) {
@@ -44951,10 +44957,12 @@ function cvUpdateNagBadge() {
           err.status = r.status; err.motivo = motivo; err.cuerpo = tx; throw err;
         });
       }
+      if (latir) { try { latir(); } catch (e) {} }   // la conexión quedó abierta: arranca el vigía
       var rd = r.body.getReader(), dec = new TextDecoder(), buf = '';
       (function leer() {
         rd.read().then(function (res) {
           if (res.done) { if (onFin) onFin(null); return; }
+          if (latir) { try { latir(); } catch (e) {} }   // llegó algo (jugada o latido): está viva
           buf += dec.decode(res.value, { stream: true });
           var partes = buf.split('\n'); buf = partes.pop();
           partes.forEach(function (l) {
@@ -46132,8 +46140,12 @@ function cvUpdateNagBadge() {
       fila2(btn('salir', 'Borrarme', true)));
     if (est === 'buscando') return caja('<span class="lv-li-dots">Buscando rival</span>', 'Te emparejan apenas se libere alguien.',
       nums + fila2(btn('salir', 'Pausar', true)));
-    if (est === 'jugando') return caja('Tenés una partida en curso', 'Se abre en el tablero. Si no aparece, abrila en Lichess.',
-      nums + fila2('<a class="lv-btn-sec" href="https://lichess.org/' + encodeURIComponent(me.gameId || '') + '" target="_blank" rel="noopener">Abrir en Lichess ↗</a>'));
+    /* El botón "Volver a mi partida" es la red de seguridad del F5: si el aviso de Lichess no
+       llega (o llegó antes de que cargara la cuenta), acá se abre a mano, en NUESTRO tablero.
+       Antes el único camino era lichess.org y la partida se perdía (prueba real, 19/09). */
+    if (est === 'jugando') return caja('Tenés una partida en curso', 'Se abre sola en el tablero. Si no aparece, tocá acá.',
+      nums + fila2('<button type="button" class="lv-btn-main" data-as="volverpartida" data-as-gid="' + _asEsc(me.gameId || '') + '">▶️ Volver a mi partida</button>' +
+        '<a class="lv-btn-sec" href="https://lichess.org/' + encodeURIComponent(me.gameId || '') + '" target="_blank" rel="noopener">Abrir en Lichess ↗</a>'));
     if (est === 'pausado') {
       /* Regla de Lichess para las apps de afuera (leída en su código, 14/09): quedás en su lista
          de espera hasta 70 s después del último aviso, y al emparejar NO mira la pausa. */
@@ -46928,6 +46940,11 @@ function cvUpdateNagBadge() {
           if (pid) { b.disabled = true; abrir(pid); S.autoAnotar = pid; }   // se anota apenas llegan sus datos
           return;
         }
+        if (a === 'volverpartida') {
+          var gid = b.getAttribute('data-as-gid');
+          if (gid) { b.disabled = true; try { window.aaLiPartida.reanudar(gid); } catch (err) { b.disabled = false; } }
+          return;
+        }
         if (a === 'anotar') { b.disabled = true; unirse(false); }
         else if (a === 'salir') { b.disabled = true; salir(); }
         else if (a === 'cartelera') cerrar();
@@ -47205,7 +47222,10 @@ function cvUpdateNagBadge() {
       if (m.drawOffer && P.ignorarOferta === m.drawOffer) m.drawOffer = null;
       else if (!m.drawOffer) P.ignorarOferta = null;
     }
-    try { window.lvTablero.estado(m); } catch (e) {}
+    /* Si el tablero se rompe pintando un estado, ANTES no quedaba ni rastro: el error se
+       tragaba en silencio y la partida se veía congelada, igual que si se hubiera cortado la
+       red. Se sigue tragando (mejor un tablero viejo que ninguno), pero queda anotado. */
+    try { window.lvTablero.estado(m); } catch (e) { try { console.error('[Lichess] el tablero no pudo pintar el estado:', e); } catch (x) {} }
     if (!m) return;
     /* El ofrecimiento de tablas del rival dibuja un cartelito chico en la columna de la
        izquierda, sin ruido. En una partida rápida es facilísimo no verlo —y si no lo ves,
@@ -47306,9 +47326,10 @@ function cvUpdateNagBadge() {
     cortar();
     botones(false);
     var color = (g.color === 'black') ? 'b' : 'w';
-    P = { id: id, full: null, ctrl: new AbortController(), color: color, cdHasta: 0, pendiente: null, timer: null, relTimer: null,
+    P = { id: id, full: null, ctrl: null, color: color, cdHasta: 0, pendiente: null, timer: null, relTimer: null,
           bk: { w: false, b: false }, bkPedido: false, ultSt: null, bkVigia: 0,   // berserk: quién ya lo hizo (suena una vez)
-          expiraFin: 0, expiraTimer: 0 };                                          // tiempo para la primera jugada
+          expiraFin: 0, expiraTimer: 0,                                            // tiempo para la primera jugada
+          latido: 0, caido: false, intentos: 0, vigTimer: 0, presentada: false };  // vigía del caño (ver abajo)
 
     window.lvTablero.enganchar({
       enviar: enviar,
@@ -47327,16 +47348,96 @@ function cvUpdateNagBadge() {
       }
     }, color);
     window.lvTablero.aviso('Conectando con la partida…');
+    abrirCano();
+    /* El vigía: cada 4 s mira si el caño sigue dando señales de vida. */
+    P.vigTimer = setInterval(function () {
+      if (!P || P.terminada || P.caido) return;
+      if (Date.now() - (P.latido || 0) > VIG_MUDO) caida(null);
+    }, 4000);
+    return true;
+  }
 
-    window.aaLi.cano(LI + '/api/board/game/stream/' + id, {}, P.ctrl, alLlegar, function (e) {
+  /* ══ 🔌 EL VIGÍA DEL CAÑO (19/09/2026) ═══════════════════════════════════════
+     🐛 PRUEBA REAL: en un arena temático el rival movió, en lichess.org corría el tiempo del
+     visitante… y la web seguía mostrando "le toca al rival", congelada, hasta que abandonó.
+     El motivo: el caño de la partida se quedó MUDO. Un corte silencioso no da error nunca
+     (`fetch` se queda esperando para siempre), y acá no había ni vigía ni reintento: se abría
+     una sola vez y si se caía, se caía.
+     Ahora: Lichess manda un renglón vacío cada ~6 s, así que si pasan 15 s sin que llegue NADA
+     —o si el caño se cierra con la partida todavía en juego— se vuelve a conectar sola. Al
+     reconectar, Lichess manda otra vez el `gameFull` entero: posición, relojes y estado se
+     acomodan solos, sin que haya que arreglar nada a mano. */
+  var VIG_MUDO = 15000;    // silencio que se considera "se murió" (el latido de Lichess son ~6 s)
+  var VIG_MAX = 6;         // intentos antes de rendirse y mandar a lichess.org
+
+  /* ¿La partida sigue viva según lo ÚLTIMO que dijo Lichess? Si no sabemos, se supone que sí:
+     es preferible un reintento de más que dejar el tablero clavado. */
+  function partidaViva() {
+    var s = P && P.ultSt;
+    if (!s || !s.status) return true;
+    return s.status === 'started' || s.status === 'created';
+  }
+
+  function abrirCano() {
+    if (!P || P.terminada) return;
+    var id = P.id;
+    P.ctrl = new AbortController();
+    P.latido = Date.now();
+    window.aaLi.cano(LI + '/api/board/game/stream/' + id, {
+      alLatir: function () { if (P && P.id === id) { P.latido = Date.now(); if (P.caido) recuperado(); } }
+    }, P.ctrl, alLlegar, function (e) {
       if (e && e.name === 'AbortError') return;
-      if (!P) return;
-      /* El caño se cierra solo cuando la partida termina: eso NO es un error. En los dos
-         casos se cierra el caño pero se conserva la ficha, para "Nuevo oponente". */
+      if (!P || P.id !== id || P.terminada) return;
+      /* El caño se cierra solo cuando la partida TERMINA: eso NO es un error. Pero si la
+         partida sigue en juego, lo que se cayó es la conexión: se reconecta. */
+      if (partidaViva()) { caida(e); return; }
       if (e) avisar('Se cortó la conexión con la partida' + (e.status ? (' (' + e.status + ')') : '') + '.');
       cerrarCano();
     });
-    return true;
+  }
+
+  /* Mientras no hay conexión, el reloj de la pantalla es MENTIRA: el tablero lo descuenta solo
+     entre estado y estado, y sin estados sigue bajando un tiempo que ya no existe. Se lo deja
+     QUIETO en lo último que dijo Lichess (`running: null`). Al reconectar, el `gameFull` manda
+     los valores de verdad y todo vuelve a su lugar. */
+  function congelarReloj() {
+    if (!P || !P.full || !P.ultSt) return;
+    try {
+      var m = traducir(P.full, P.ultSt);
+      if (m.clock) m.clock.running = null;
+      window.lvTablero.estado(m);
+    } catch (e) {}
+  }
+
+  function caida(e) {
+    if (!P || P.caido || P.terminada) return;
+    P.caido = true;
+    P.intentos = (P.intentos || 0) + 1;
+    try { P.ctrl.abort(); } catch (x) {}
+    congelarReloj();   // primero el reloj: pintar el estado pisa el renglón de aviso
+    /* Si Lichess contestó que no (permiso vencido, partida que no es tuya), insistir no arregla
+       nada: se avisa una vez y se deja de reintentar. */
+    var st = e && e.status;
+    if (st === 401 || st === 403 || st === 404) {
+      try { window.lvTablero.aviso('🔌 Lichess cortó la partida (' + st + ').'); } catch (x) {}
+      avisar(st === 401 ? 'Se venció el permiso de Lichess: volvé a entrar para seguir jugando.'
+                        : 'Lichess no deja seguir esta partida desde acá (' + st + ').');
+      return;
+    }
+    if (P.intentos > VIG_MAX) {
+      try { window.lvTablero.aviso('🔌 Sin conexión con Lichess. Seguí la partida en lichess.org.'); } catch (x) {}
+      avisar('No se pudo recuperar la conexión con la partida. Abrila en lichess.org para no perderla.');
+      return;
+    }
+    try { window.lvTablero.aviso('🔌 Se cortó la conexión con Lichess. Reconectando…'); } catch (x) {}
+    var id = P.id, espera = Math.min(1000 * P.intentos, 5000);   // 1 s, 2 s, 3 s… y 5 s de tope
+    setTimeout(function () { if (P && P.id === id && P.caido && !P.terminada) abrirCano(); }, espera);
+  }
+
+  function recuperado() {
+    if (!P) return;
+    P.caido = false; P.intentos = 0;
+    /* No hace falta borrar el aviso: el `gameFull` que llega enseguida repinta el renglón. */
   }
 
   function alLlegar(o) {
@@ -47355,7 +47456,12 @@ function cvUpdateNagBadge() {
       aplicar(m);
       expiraSync(st);
       vigilarBerserk();
-      decir('Partida contra ' + (color() === 'w' ? m.names.b : m.names.w) + '. Jugás con ' + (color() === 'w' ? 'blancas' : 'negras') + '.');
+      /* Al RECONECTAR llega otro `gameFull`: la partida no se presenta de nuevo (el lector de
+         pantalla no tiene por qué anunciarla cada vez que parpadea la red). */
+      if (!P.presentada) {
+        P.presentada = true;
+        decir('Partida contra ' + (color() === 'w' ? m.names.b : m.names.w) + '. Jugás con ' + (color() === 'w' ? 'blancas' : 'negras') + '.');
+      }
       return;
     }
     if (o.type === 'gameState') { if (P.full) { berserkSync(o); empujar(traducir(P.full, o)); expiraSync(o); } return; }
@@ -47368,6 +47474,30 @@ function cvUpdateNagBadge() {
     }
     if (o.type === 'opponentGone') { rivalSeFue(o); return; }
   }
+  /* ── ▶️ VOLVER A MI PARTIDA (19/09/2026) ───────────────────────────────────
+     🐛 PRUEBA REAL: después de un F5 en pleno arena, el tablero sólo se reabría si Lichess
+     reenviaba el aviso `gameStart` por el caño de la cuenta. Si no llegaba, la pantalla del
+     torneo decía "tenés una partida en curso" y el único camino era lichess.org.
+     Esto la abre a mano. El color no lo sabemos de antemano, así que se lo pregunta a Lichess:
+     /api/account/playing devuelve las partidas en curso con el color ya puesto, en el MISMO
+     formato que el aviso `gameStart` (gameId, fullId, color), así que se le pasa tal cual. */
+  function reanudar(id) {
+    if (!id || !window.lvTablero) return false;
+    try { window.lvTablero.aviso('Buscando tu partida en Lichess…'); } catch (e) {}
+    fetch(LI + '/api/account/playing?nb=30', { headers: { Authorization: 'Bearer ' + tok(), Accept: 'application/json' } })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        var l = (d && d.nowPlaying) || [];
+        for (var i = 0; i < l.length; i++) {
+          var g = l[i];
+          if ((g.gameId || String(g.fullId || '').slice(0, 8)) === id) { jugar(g); return; }
+        }
+        avisar('Lichess ya no muestra esa partida entre las tuyas (quizá terminó).');
+      })
+      .catch(function () { avisar('No se pudo volver a la partida. Probá abrirla en lichess.org.'); });
+    return true;
+  }
+
   function color() { return P ? P.color : 'w'; }
   /* Quién mueve primero: en los arenas TEMÁTICOS la posición puede arrancar con negras (16/09). */
   function primero() {
@@ -47501,6 +47631,10 @@ function cvUpdateNagBadge() {
     function revisar(primera) {
       primeraPartidaDelTorneo(tor, yoNom).then(function (g) {
         if (!P || P.id !== id || !g || g.id !== id) return;
+        /* Con el caño caído, `P.ultSt` está VIEJO: volver a empujarlo hace que los relojes de
+           la pantalla salten para atrás y arranquen de nuevo (el autor lo vio como "se le
+           reinició el reloj desde 10 minutos"). Mientras no haya conexión, no se toca nada. */
+        if (P.caido) return;
         var s = P.ultSt || {};
         var wb = !!(g.players && g.players.white && g.players.white.berserk);
         var bb = !!(g.players && g.players.black && g.players.black.berserk);
@@ -47820,6 +47954,7 @@ function cvUpdateNagBadge() {
     if (P.timer) { clearTimeout(P.timer); soltarPendiente(); }
     if (P.relTimer) { clearInterval(P.relTimer); P.relTimer = null; }
     if (P.bkVigia) { clearInterval(P.bkVigia); P.bkVigia = 0; }
+    if (P.vigTimer) { clearInterval(P.vigTimer); P.vigTimer = 0; }   // el vigía del caño
     if (P.expiraTimer) { clearInterval(P.expiraTimer); P.expiraTimer = 0; }
     P.expiraFin = 0; var exb = $$('lv-li-expira'); if (exb) exb.style.display = 'none';
     try { P.ctrl.abort(); } catch (e) {}
@@ -47984,7 +48119,7 @@ function cvUpdateNagBadge() {
     actual: function () { return P ? P.id : ''; },
     torneo: function () { return (P && P.full && P.full.tournamentId) || ''; },
     rival: function () { var f = P && P.full; if (!f) return ''; var r = P.color === 'w' ? f.black : f.white; return (r && (r.name || r.id)) || ''; },
-    mirar: mirar, mirando: function () { return !!M; } };
+    mirar: mirar, mirando: function () { return !!M; }, reanudar: reanudar };
 })();
 </script>
 
