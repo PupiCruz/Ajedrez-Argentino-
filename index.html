@@ -3308,6 +3308,8 @@
       .cg-tab { padding:6px 12px; border-radius:18px; font-size:12.5px; cursor:pointer; font-family:inherit; background:var(--bg3); border:1px solid var(--border); color:var(--text2); }
       .cg-tab.on { background:var(--gold-bg); border-color:var(--gold-dim); color:var(--text); font-weight:700; }
       .cg-lista { display:flex; flex-direction:column; gap:10px; }
+      .cg-caida { margin-top:-4px; align-items:center; }
+      .cg-caida-t { font-size:12.5px; color:var(--text2); margin-right:2px; }
       .cg-vacio { color:var(--text3); font-size:13px; padding:18px 4px; }
       .cg-card { display:grid; grid-template-columns:130px minmax(0,1fr); gap:12px; padding:10px; border-radius:12px; background:var(--bg3); border:1px solid var(--border); }
       .cg-card.cg-ok { border-color:#2e9e6b; } .cg-card.cg-no { opacity:.55; }
@@ -33640,9 +33642,17 @@ function _cgRender() {
 }
 function _cgRenderYa() {
   var ov = document.getElementById('cg-ov'); if (!ov || !ov.classList.contains('open')) return;
-  var its = _cgItems(_cg.tour, _cg.rk);
+  var todas = _cgItems(_cg.tour, _cg.rk);
+  // Caída mínima (pedido del autor): con 200 colgadas en una ronda grande, quedarse sólo con las más fuleras.
+  // Filtra la lista y los contadores; lo ya aceptado/rechazado no se toca.
+  if (_cg.caidaMin == null) { try { _cg.caidaMin = parseInt(localStorage.getItem('aa_cg_caida'), 10) || 0; } catch (e) { _cg.caidaMin = 0; } }
+  var its = todas.filter(function(it){ return _cgCaida(it) >= _cg.caidaMin; });
   var n = { todas: its.length, pend: 0, ok: 0, no: 0 };
   its.forEach(function(it){ n[it.estado]++; });
+  var caidaBtn = function(v, t){
+    var k = todas.filter(function(it){ return _cgCaida(it) >= v; }).length;
+    return '<button class="cg-tab' + (_cg.caidaMin === v ? ' on' : '') + '" onclick="cgCaida(' + v + ')">' + t + ' (' + k + ')</button>';
+  };
   var vis = its.filter(function(it){ return (_cg.filtro === 'todas' || it.estado === _cg.filtro) && (!_cg.soloArg || it.arg) && (!_cg.soloUnica || it.unico) && (!_cg.soloDecisivas || it.tipo !== 'C'); });
   var tab = function(k, t){ return '<button class="cg-tab' + (_cg.filtro === k ? ' on' : '') + '" onclick="cgFiltro(\'' + k + '\')">' + t + ' (' + n[k] + ')</button>'; };
   var h = '<div class="cg-box">'
@@ -33656,8 +33666,9 @@ function _cgRenderYa() {
     + '<button class="cg-tab' + (_cg.soloArg ? ' on' : '') + '" onclick="cgSoloArg()">' + _flagImg('ARG') + ' Solo argentinos</button>'
     + '<button class="cg-tab' + (_cg.soloUnica ? ' on' : '') + '" onclick="cgSoloUnica()">Castigo único</button>'
     + '<button class="cg-tab' + (_cg.soloDecisivas ? ' on' : '') + '" onclick="cgSoloDecisivas()" title="Oculta las que se dieron vuelta sin quedar decididas">Sólo decisivas</button></div>'
+    + '<div class="cg-tabs cg-caida"><span class="cg-caida-t">Caída mínima:</span>' + caidaBtn(0, 'Todas') + caidaBtn(300, '3 peones') + caidaBtn(400, '4 peones') + caidaBtn(500, '5 peones') + '</div>'
     + '<div class="cg-lista">';
-  if (!vis.length) h += '<div class="cg-vacio">' + (_cg.corriendo ? 'Buscando…' : (its.length ? 'Nada en este filtro.' : 'No se encontraron colgadas en esta ronda.')) + '</div>';
+  if (!vis.length) h += '<div class="cg-vacio">' + (_cg.corriendo ? 'Buscando…' : (todas.length ? 'Nada en este filtro.' : 'No se encontraron colgadas en esta ronda.')) + '</div>';
   vis.forEach(function(it){
     var solver = it.fen.split(' ')[1], last = { from: it.jug.slice(0, 2), to: it.jug.slice(2, 4) };
     h += '<div class="cg-card cg-' + it.estado + '">'
@@ -33685,10 +33696,17 @@ function _cgRenderYa() {
 function _cgEvSolverHtml(it) {
   var solver = it.fen.split(' ')[1], sg = solver === 'w' ? 1 : -1;
   return 'para ' + escHtml(_cgApellido(solver === 'w' ? it.w : it.b)) + ': <span class="col-ch col-ch-a">' + _cgEvTxt(it.antes * sg)
-    + '</span> → <span class="col-ch cg-ch-bien">' + _cgEvTxt(it.despues * sg) + '</span>';
+    + '</span> → <span class="col-ch cg-ch-bien">' + _cgEvTxt(it.despues * sg) + '</span>'
+    + (Math.abs(_cgCaida(it)) < 5000 ? ' · cae ' + (_cgCaida(it) / 100).toFixed(1).replace('.', ',') : '');
 }
 function _cgTipoTxt(t) { return t === 'B' ? 'tiró la ganada' : t === 'C' ? 'se dio vuelta' : 'perdió una pareja'; }
 function cgFiltro(k) { _cg.filtro = k; _cgRenderYa(); }
+// Cuánto empeoró el que se colgó, en centipeones (los mates cuentan como ±100 peones).
+function _cgCaida(it) {
+  var s = it.fen.split(' ')[1] === 'w' ? -1 : 1;   // el que movió es el contrario del que castiga
+  return Math.round((it.antes - it.despues) * s);
+}
+function cgCaida(v) { _cg.caidaMin = v; try { localStorage.setItem('aa_cg_caida', String(v)); } catch (e) {} _cgRenderYa(); }
 function cgSoloDecisivas() { _cg.soloDecisivas = !_cg.soloDecisivas; _cgRenderYa(); }
 function cgSoloArg() { _cg.soloArg = !_cg.soloArg; _cgRenderYa(); }
 function cgSoloUnica() { _cg.soloUnica = !_cg.soloUnica; _cgRenderYa(); }

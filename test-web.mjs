@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1297;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1300;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -5256,6 +5256,13 @@ console.log('\n=== 53h. Colgadas de la ronda: barrido, revisión y tablero de ej
   chk(/var clara = deLichess \? \(bestSol - c\.a \* solSign\) >= _CG_CLARA_MIN : true;/.test(verif)
       && /Math\.max\(_CG_ALT_MARGEN_MIN, Math\.round\(Math\.min\(bestSol, 1000\) \* _CG_ALT_MARGEN_FRAC\)\)/.test(verif),
       '🔒 "no clara" = el castigo no le mejora ni un peón al que castiga (medido R1: 53% → 22%; "tiró la ganada" ya no sale toda como no clara); alternativas con margen que crece con la ventaja');
+  const CA = new Function(extraerFuncion('_cgCaida') + '; return _cgCaida;')();
+  chk(CA({ fen: 'x w', antes: 110, despues: 590 }) === 480,
+      'la caída se mide desde el que se colgó: Eltag (negras) de −1,1 a −5,9 = cae 4,8 (castigan las blancas)');
+  chk(CA({ fen: 'x b', antes: -170, despues: -520 }) === 350,
+      'lo mismo si se cuelgan las blancas: de −1,7 a −5,2 = cae 3,5 (castigan las negras)');
+  chk(/caidaBtn\(300, '3 peones'\) \+ caidaBtn\(400, '4 peones'\) \+ caidaBtn\(500, '5 peones'\)/.test(cr) && /aa_cg_caida/.test(cr),
+      'selector "Caída mínima": Todas / 3 / 4 / 5 peones, con cuántas quedan en cada uno, y recuerda la elección (pedido del autor)');
   chk(!/\+0 que/.test(cr) && /it\.alts\.length === 1 \? ' que también sirve\)'/.test(cr), 'sin el "(+0 que también sirven)" cuando no hay alternativas');
   chk(/960\|fischer\|freestyle/.test(posic) && !/tdFinalFen/.test(posic), 'el 960 no se barre (lo reproduce otro camino)');
 
