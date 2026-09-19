@@ -34306,6 +34306,8 @@ function _tdSlotBeats(a, b) {
 // fantasma del POOL: sus partidas se enganchan por nombre de evento y puede colarse un torneo ajeno
 // (Pichot apareciendo como R9-R12 en un torneo de 7 rondas). Para Chess-Results va en true: esas
 // partidas salen del tnr de ESTE torneo, no hay nada que colar.
+// nuevasRondas también puede ser un NÚMERO: acepta rondas nuevas sólo por debajo de él (ver
+// _tdMergeUploadedRounds: transmisión que arranca a mitad del torneo).
 function _tdMergeSlots(byRound, roundOrder, srcByRound, nuevasRondas) {
   Object.keys(srcByRound || {}).forEach(function(rk) {
     var rInt = parseInt(rk); if (isNaN(rInt)) rInt = rk;
@@ -34313,6 +34315,7 @@ function _tdMergeSlots(byRound, roundOrder, srcByRound, nuevasRondas) {
     if (!src.length) return;
     if (!byRound[rInt]) {
       if (!nuevasRondas) return;
+      if (typeof nuevasRondas === 'number' && !(typeof rInt === 'number' && rInt >= 1 && rInt < nuevasRondas)) return;
       byRound[rInt] = []; roundOrder.push(rInt);
     }
     var arr = byRound[rInt], slot = Object.create(null), tocada = false;
@@ -34332,8 +34335,14 @@ function _tdMergeSlots(byRound, roundOrder, srcByRound, nuevasRondas) {
 // de games en el orden de roundOrder. El orden importa: el broadcast ya ocupa sus casilleros, las
 // subidas rellenan, y Chess-Results rellena lo que quede. Sólo Chess-Results puede aportar rondas
 // que el broadcast no tenga (ver _tdMergeSlots).
+// Excepción: rondas del pool ANTERIORES a la última del broadcast. Pasa cuando la transmisión de
+// Lichess arranca a mitad del torneo (Liga Nacional Superior 2026: sólo transmitieron la R4, y la R1 y
+// la R2 cargadas al pool desaparecían al empezar el vivo). La ronda fantasma de Pichot era POSTERIOR
+// (R9-R12 en un torneo de 7), así que sigue bloqueada.
 function _tdMergeUploadedRounds(byRound, roundOrder) {
-  _tdMergeSlots(byRound, roundOrder, _tdUploadedByRound || {}, false);
+  var bcMax = 0;
+  roundOrder.forEach(function(r){ if (typeof r === 'number' && r > bcMax) bcMax = r; });
+  _tdMergeSlots(byRound, roundOrder, _tdUploadedByRound || {}, bcMax || false);
   _tdMergeSlots(byRound, roundOrder, _tdCrByRound || {}, true);
   roundOrder.sort(function(a,b){ return (parseInt(a)||0) - (parseInt(b)||0); });
   var games = [];

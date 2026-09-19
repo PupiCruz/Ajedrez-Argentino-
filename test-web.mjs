@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1304;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1309;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -5303,6 +5303,34 @@ console.log('\n=== 53h. Colgadas de la ronda: barrido, revisión y tablero de ej
   const exp = extraerFuncion('cgExportar');
   chk(/schemaVersion: 1/.test(exp) && /difficulty: rat/.test(exp) && /themes: temas/.test(exp) && /acceptedAlts: \[it\.alts\.slice\(\)\]/.test(exp),
       '"A Entrenar": mismo formato que los ejercicios de siempre, con el rating y los temas que pone el autor');
+}
+
+// ── Pool + transmisión que arranca a mitad del torneo (19/09, Liga Nacional Superior 2026) ─────────
+// Lichess transmitía sólo la R4: las R1 y R2 del pool se descartaban al empezar el vivo.
+{
+  console.log('\n🧩 Pool con rondas ANTERIORES a la transmisión');
+  const mk = new Function(
+    'function _tdSlotKey(g){ return g.h.White + "|" + g.h.Black; }\n'
+    + 'function _tdSlotBeats(){ return false; }\n'
+    + 'function dedupGamesByMoves(a){ return a; }\n'
+    + 'var _tdUploadedByRound = {}, _tdCrByRound = {};\n'
+    + extraerFuncion('_tdMergeSlots') + '\n' + extraerFuncion('_tdMergeUploadedRounds')
+    + '\nreturn function(bc, up, cr){ _tdUploadedByRound = up; _tdCrByRound = cr || {};'
+    + ' var byRound = {}, ord = []; Object.keys(bc).forEach(function(k){ byRound[+k] = bc[k].slice(); ord.push(+k); });'
+    + ' var games = _tdMergeUploadedRounds(byRound, ord); return { byRound: byRound, ord: ord, games: games }; };');
+  const merge = mk();
+  const g = (w, b) => ({ pgn: w + '-' + b, h: { White: w, Black: b } });
+  const r = merge({ 4: [g('A', 'B')] }, { 1: [g('C', 'D'), g('E', 'F')], 2: [g('G', 'H')] });
+  chk(r.ord.join(',') === '1,2,4' && r.byRound[1].length === 2 && r.byRound[2].length === 1,
+      '🔒 transmisión sólo con la R4: las R1 y R2 del pool se conservan (antes desaparecían)', r.ord.join(','));
+  chk(r.games.join(' ') === 'C-D E-F G-H A-B', 'las partidas quedan en orden de ronda');
+  const p = merge({ 1: [g('A', 'B')], 7: [g('C', 'D')] }, { 9: [g('X', 'Y')], 12: [g('Z', 'W')] });
+  chk(p.ord.join(',') === '1,7' && !p.byRound[9] && !p.byRound[12],
+      '🔒 caso Pichot: rondas del pool POSTERIORES a la última transmitida siguen afuera', p.ord.join(','));
+  const q = merge({ 4: [g('A', 'B')] }, { '?': [g('Q', 'R')], 0: [g('S', 'T')] });
+  chk(q.ord.join(',') === '4', 'rondas sin número ("?") o ronda 0 del pool no crean pestañas');
+  const c = merge({ 4: [g('A', 'B')] }, {}, { 6: [g('M', 'N')] });
+  chk(c.ord.join(',') === '4,6', 'Chess-Results sigue pudiendo agregar cualquier ronda (sale del tnr de este torneo)');
 }
 
 
