@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1300;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1304;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -5274,6 +5274,17 @@ console.log('\n=== 53h. Colgadas de la ronda: barrido, revisión y tablero de ej
   chk(/getElementById\('td-cg-slot'\)/.test(extraerFuncion('_cgBarInsert')) && /_cgBarInsert\(null, rInt\)/.test(extraerFuncion('tdShowRound'))
       && (SRC.match(/<div id="td-cg-slot"><\/div>'/g) || []).length === 2,
       'el botón va justo debajo de R1 R2 R3 (pedido del autor) y cambia con la ronda aunque se esté bajando');
+  // Otras jugadas que también castigan (pedido del autor 20/09): el motor las analiza en el momento.
+  const OK = new Function(SRC.match(/var _CG_ALT_MARGEN_MIN[^\n]*/)[0] + '\n' + SRC.match(/var _CG_ALT_MARGEN_FRAC[^\n]*/)[0] + '\n'
+    + extraerFuncion('_cgOtraOk') + '; return _cgOtraOk;')();
+  chk(OK(480, 510) === true, '🔒 la posición del autor: Ac4 (+4,8) se acepta junto a Dh6 (+5,1)');
+  chk(OK(0, 560) === false && OK(280, 480) === false, 'una floja no: b3 (0,0 contra +5,6) ni Te3 en Peralta–Eltag (+2,8 contra +4,8)');
+  const am = extraerFuncion('puzApplyUserMove');
+  chk(am.includes('if (p.colgada) {') && am.includes('_cgAceptarOtra(from, to, promo, null); return;') && am.includes('_cgValidarJugada(from, to, promo); return;'),
+      'en las colgadas, las alternativas del barrido son CORRECTAS (no "buena pero hay una mejor") y cualquier otra la mira el motor');
+  const vj = extraerFuncion('_cgValidarJugada');
+  chk(/depth: _CG_OTRA_DEPTH/.test(vj) && (vj.match(/_mevExtra\.push/g) || []).length === 2 && /_CG_OTRA_TIMEOUT/.test(vj),
+      'compara la jugada del visitante y la marcada con la MISMA profundidad, y si el motor no contesta no se queda colgado');
   const ra = extraerFuncion('puzRenderActions');
   chk(ra.includes("'Próxima colgada →'") && ra.includes("'Saltar a la próxima colgada →'") && ra.includes("'Volver a la ronda'"),
       'los botones dicen "Próxima colgada" (el visitante sabe que sigue en las colgadas, no en Entrenar)');

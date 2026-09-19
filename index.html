@@ -33822,12 +33822,66 @@ function cgProbar(id) {   // modo autor: probarla desde la revisión (esté acep
 }
 function _cgAbrirEnTablero(its, desdeId) {
   if (typeof puzOpenOverlay !== 'function') return;
+  if (typeof sfStart === 'function' && !sf.engine) sfStart();   // precargar: se usa para verificar otras jugadas
   puz.tema = null;
   puz.list = its.map(_cgPuzzle);
   puz.idx = 0;
   if (desdeId) for (var i = 0; i < its.length; i++) if (its[i].id === desdeId) puz.idx = i;
   puzOpenOverlay();
   puzLoad();
+}
+// ── ¿Otra jugada también castiga? (pedido del autor 20/09: en una colgada Dh6 era la marcada y Ac4 también
+// ganaba, +5,2 contra +6,2). El motor evalúa con la MISMA profundidad la posición después de la jugada del
+// visitante y la de después de la marcada, y la acepta si queda cerca (mismo margen que el barrido).
+var _CG_OTRA_DEPTH = 16, _CG_OTRA_TIMEOUT = 20000;
+function _cgOtraOk(userSol, bestSol) {
+  var margen = Math.max(_CG_ALT_MARGEN_MIN, Math.round(Math.min(bestSol, 1000) * _CG_ALT_MARGEN_FRAC));
+  return userSol >= bestSol - margen;
+}
+function _cgAceptarOtra(from, to, promo, txt) {
+  var san = puzPlay(from, to, promo);
+  puz._cgOtra = txt || ('Tu jugada también castiga (la marcada era ' + escHtml(typeof cvFan === 'function' ? cvFan(puz.cur.cg.solSan[0]) : puz.cur.cg.solSan[0]) + '). ');
+  puz.step++; puzRenderBoard(); puzOnSolved();
+}
+function _cgRechazar(msg) {
+  puz.failed = true;
+  puzSetFb('bad', '✗', msg);
+  puzPlaySound('bad');
+  var col = document.getElementById('puz-board-col'); if (col) { col.classList.remove('shake'); void col.offsetWidth; col.classList.add('shake'); }
+  puzRenderBoard();
+}
+function _cgValidarJugada(from, to, promo) {
+  var p = puz.cur, id = p.id, fen0 = p.fen, best = p.cg.sol[0];
+  var tu = new Chess(fen0), mu = tu.move({ from: from, to: to, promotion: promo || 'q' });
+  var tb = new Chess(fen0), mb = tb.move({ from: best.slice(0, 2), to: best.slice(2, 4), promotion: best[4] || 'q' });
+  if (!mu || !mb) { _cgRechazar('No es la mejor. Probá de nuevo, o mirá la solución.'); return; }
+  var fu = tu.fen(), fb = tb.fen(), res = {}, listo = false;
+  puz.busy = true;
+  puzSetFb('hint', '🔎', 'No es la jugada marcada: el motor la está analizando…');
+  puzRenderBoard();
+  var s = fen0.split(' ')[1] === 'w' ? 1 : -1;   // desde el que resuelve
+  function terminar() {
+    if (listo || res.u === undefined || res.b === undefined) return;
+    listo = true; clearTimeout(tm);
+    if (!puz.cur || puz.cur.id !== id || puz.solved || puz.revealed) return;
+    puz.busy = false;
+    var us = res.u * s, bs = res.b * s;
+    if (_cgOtraOk(us, bs)) {
+      _cgAceptarOtra(from, to, promo, 'Tu jugada también castiga: el motor le da ' + _colEvTxt(us) + ' (a la marcada, '
+        + escHtml(typeof cvFan === 'function' ? cvFan(p.cg.solSan[0]) : p.cg.solSan[0]) + ', ' + _colEvTxt(bs) + '). ');
+    } else {
+      _cgRechazar('No alcanza: con esa jugada el motor da ' + _colEvTxt(us) + ', y hay una que da ' + _colEvTxt(bs) + '. Probá de nuevo, o mirá la solución.');
+    }
+  }
+  var tm = setTimeout(function(){
+    if (listo) return; listo = true;
+    if (!puz.cur || puz.cur.id !== id || puz.solved) return;
+    puz.busy = false;
+    _cgRechazar('No es la jugada marcada (el motor no llegó a analizarla). Probá de nuevo, o mirá la solución.');
+  }, _CG_OTRA_TIMEOUT);
+  _mevExtra.push({ fen: fu, depth: _CG_OTRA_DEPTH, cb: function(sc){ res.u = _colCp(sc, fu); terminar(); } });
+  _mevExtra.push({ fen: fb, depth: _CG_OTRA_DEPTH, cb: function(sc){ res.b = _colCp(sc, fb); terminar(); } });
+  mevTick();
 }
 // Texto del desafío (reemplaza "encontrá la mejor jugada").
 function _cgDesafio(it) {
@@ -36285,6 +36339,7 @@ function puzOpenOverlay() {
 
 function puzLoad() {
   var p = puz.list[puz.idx]; if (!p) return;
+  puz._cgOtra = '';
   _puzIntroTok++;   // invalida cualquier intro pendiente de un ejercicio anterior
   puz.cur = p; puz.chess = new Chess(p.fen); puz.flipped = (p.sideToMove === 'b');
   puz.sel = null; puz.legalDests = []; puz.step = 0; puz.played = [];
@@ -36578,6 +36633,12 @@ function puzApplyUserMove(from, to, promo) {
     return;
   }
   var alts = (p.acceptedAlts && p.acceptedAlts[Math.floor(puz.step / 2)]) || [];   // buena pero no la mejor
+  // Colgadas de la ronda: una sola jugada, y castigar bien alcanza. Las alternativas que encontró el barrido
+  // son correctas; cualquier otra la analiza el motor en el momento (como "Aprendé de tus errores" de Lichess).
+  if (p.colgada) {
+    if (alts.some(function(a){ return puzUciEq(uci, a); })) { _cgAceptarOtra(from, to, promo, null); return; }
+    _cgValidarJugada(from, to, promo); return;
+  }
   if (alts.some(function(a){ return puzUciEq(uci, a); })) {
     puzSetFb('hint', '💡', 'Esa es buena… pero hay una <b>mejor</b>. Seguí intentando.');
     puzPlaySound('hint'); puzRenderBoard(); return;
@@ -36597,7 +36658,7 @@ function puzOnSolved() {
   if (routine.active && routine.steps[routine.idx] && routine.steps[routine.idx].type === 'puzzles' && clean && !puz.hinted) { routine.puzClean++; routineRenderBar(); }
   if (clean) puzSetFb('ok', '🏆', '¡Correcto! Resolviste el ejercicio.');
   else puzSetFb('ok', '✔', 'Ejercicio completado' + (puz.failed ? ' (hubo algún intento fallido).' : '.'));
-  if (puz.cur.colgada) puzSetFb('ok', clean ? '🏆' : '✔', (clean ? '¡Correcto! ' : 'Completado. ') + escHtml(_cgTextoPartida(puz.cur.cg)));
+  if (puz.cur.colgada) puzSetFb('ok', clean ? '🏆' : '✔', (clean ? '¡Correcto! ' : 'Completado. ') + (puz._cgOtra || '') + escHtml(_cgTextoPartida(puz.cur.cg)));
   puzSetupReview(puz.played.length ? puz.played : puz.cur.solution, false);
   document.getElementById('puz-motifs').innerHTML = puzMotifsHtml(puz.cur);   // ahora sí: el motivo ya no espoilea
   puzRenderActions();
