@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1230;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1246;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -5060,6 +5060,77 @@ console.log('\n=== 55. Practicar: niveles del módulo calibrados con la tabla de
       'hay un botón por nivel, en el mismo orden', botones.join(','));
   chk((SRC.match(/Skill Level value 20/g) || []).length >= 2 && SRC.indexOf('UCI_LimitStrength') < 0,
       '🔒 al salir de Practicar el motor vuelve a fuerza plena (es el MISMO que dibuja las barritas del vivo)');
+}
+
+// ── 53f. Visor en el TELÉFONO: pasar de partida (19/09, lo notó el autor) ──
+console.log('\n=== 53f. Visor en el teléfono: tocar piezas y gráfico al cambiar de partida (19/09) ===');
+{
+  // 1) El toque se enganchaba de nuevo en cada partida girada distinto → cada toque 2 veces.
+  const B = new Function('var _boardBound = false, oyentes = {}, boardEl = { addEventListener: function(t){ oyentes[t] = (oyentes[t] || 0) + 1; } };'
+    + 'var document = { getElementById: function(){ return boardEl; } }; function cvInitDrag(){} function cvHandleClick(){}'
+    + extraerFuncion('cvBindBoardOnce')
+    + '; return { bind: function(){ cvBindBoardOnce(); }, reset: function(){ _boardBound = false; }, oyentes: oyentes };')();
+  for (let i = 0; i < 4; i++) { B.reset(); B.bind(); }
+  chk(B.oyentes.touchend === 1 && B.oyentes.click === 1,
+      '🔒 abrir 4 partidas (con el tablero girado distinto) engancha el toque UNA sola vez: si no, en el teléfono una partida sí y otra no se podía mover',
+      JSON.stringify(B.oyentes));
+
+  // 2) El gráfico de la partida anterior quedaba en la pestaña Estadísticas.
+  const M = new Function('var _cvAnalysisStarted = false, llam = [], VISIBLE = false;'
+    + 'var el = function(){ return { style: { display: "" }, classList: { add: function(){}, remove: function(){} } }; };'
+    + 'var _cvMPanelMoves = el(), _cvMPanelAnalysis = el();'
+    + 'var document = { getElementById: function(id){ if (id === "eval-graph-wrap") return { style: { display: VISIBLE ? "block" : "none" } }; return el(); } };'
+    + 'function faToggle(){ llam.push("toggle"); } function faMaybeAutoLive(){ llam.push("rehacer"); }'
+    + extraerFuncion('cvMobileTab')
+    + '; return { tab: cvMobileTab, llam: llam, set visible(v){ VISIBLE = v; }, nueva: function(){ _cvAnalysisStarted = false; llam.length = 0; } };')();
+  M.visible = true; M.tab('analysis');
+  chk(M.llam.join() === 'rehacer', '🔒 gráfico en pantalla que viene de la partida anterior: al abrir Estadísticas se rehace con la partida nueva', M.llam.join());
+  M.tab('moves'); M.tab('analysis');
+  chk(M.llam.join() === 'rehacer', 'volver a la pestaña en la MISMA partida no lo rehace de nuevo');
+  M.nueva(); M.visible = false; M.tab('analysis');
+  chk(M.llam.join() === 'toggle', 'sin gráfico, la pestaña lo arranca como siempre');
+
+  // 3) La eval honda del visor pinta la miniatura de la misma posición (19/09).
+  const D = new Function('var _SF_BAR_MINDEPTH = 14, _tdCurrentRound = 4, _mevEvals = {}, pint = [];'
+    + 'function _capCache(){} function _tdSetEvalBar(el, sc){ pint.push(el.id + ":" + JSON.stringify(sc)); }'
+    + 'var bd = function(id, fen, res){ return { id: id, getAttribute: function(a){ return a === "data-fen" ? fen : a === "data-res" ? res : null; } }; };'
+    + 'var BDS = [bd("vivo", "8/8/8/8/8/8/8/K6k b - e3 0 49", "*"), bd("otra", "8/8/8/8/8/8/8/K6k w - - 0 49", "*"), bd("fin", "8/8/8/8/8/8/8/K6k b - - 0 49", "1-0")];'
+    + 'var document = { querySelectorAll: function(){ return BDS; } };'
+    + extraerFuncion('_tdMiniFromDeep')
+    + '; var _tdDeepSeen = {}; return { f: _tdMiniFromDeep, pint: pint, mev: _mevEvals };')();
+  D.f('8/8/8/8/8/8/8/K6k b - - 1 49', { cp: -300 }, 10);
+  chk(D.pint.length === 0, 'una eval corta (menos que la barra del visor) no toca la miniatura');
+  D.f('8/8/8/8/8/8/8/K6k b - - 1 49', { cp: -450 }, 22);
+  chk(D.pint.join() === 'vivo:{"cp":-450}' && D.mev['8/8/8/8/8/8/8/K6k b - e3 0 49'].cp === -450,
+      '🔒 la eval del visor pinta la miniatura de la MISMA posición aunque el FEN difiera en al-paso/contadores; no la del otro turno ni la terminada', D.pint.join());
+  D.f('8/8/8/8/8/8/8/K6k b - - 1 49', { cp: -100 }, 16);
+  chk(D.pint.length === 1, 'no se pisa una eval honda con otra más corta');
+  chk(/_tdMiniFromDeep\(sf\.curFen/.test(extraerFuncion('sfUpdateUI')), 'el motor del visor la alimenta (con el signo normalizado a blancas)');
+
+  // 4) Con el motor del visor prendido, las miniaturas le piden una pausa (19/09).
+  const T = new Function('var _tdLiveCtx = {}, _MEV_YIELD_DEPTH = 20, Chess = function(){}, env = [], JOBS = [1];'
+    + 'var _fa = { running: false }, _mev = {}, sf = {};'
+    + 'function mevAbort(){} function sfStart(){} function mevCollect(){ return JOBS; }'
+    + extraerFuncion('mevTick')
+    + '; return { tick: function(s, fa){ sf = s; sf.ready = true; sf.engine = { postMessage: function(m){ env.push(m); } }; _fa.running = !!fa; _mev = {}; env.length = 0; mevTick(); return { corre: !!_mev.running, espera: !!_mev.want, pausa: !!_mev.resume, env: env.slice() }; } };')();
+  let t = T.tick({ on: false });
+  chk(t.corre && t.env.indexOf('ucinewgame') >= 0, 'sin motor del visor, las miniaturas se evalúan como siempre');
+  t = T.tick({ on: true, armed: true, searching: true, depth: 9, curFen: 'x' });
+  chk(!t.corre && t.espera, 'con el visor recién arrancando (prof. 9) esperan: su barra todavía no está firme');
+  t = T.tick({ on: true, armed: true, searching: true, depth: 22, curFen: 'x', _searchT0: 5 });
+  chk(t.corre && t.pausa && t.env.indexOf('ucinewgame') < 0,
+      '🔒 con el visor en prof. 22 le piden una pausa SIN borrarle la memoria (así retoma en un instante)', t.env.join('|'));
+  t = T.tick({ on: true, capped: true, searching: false });
+  chk(t.corre && !t.pausa, 'con el visor ya terminado (motor quieto) lo usan sin pausar a nadie');
+  t = T.tick({ on: true, capped: false, deepened: true, searching: true, depth: 40 });
+  chk(!t.corre, '"Seguir analizando" no se interrumpe');
+  t = T.tick({ on: false }, true);
+  chk(!t.corre && t.espera, 'mientras el gráfico calcula esperan y reintentan al terminar');
+  const dp = extraerFuncion('sfDeepen');
+  chk(/mevAbort\(\)[\s\S]*sfRestart\(sf\.curFen, sf\.curSide\)[\s\S]*pending\.deep = true/.test(dp) && /_p\.deep/.test(extraerFuncion('_sfStartPending')),
+      '🔒 "Seguir analizando" después de las miniaturas pasa por la barrera: darle la posición con una búsqueda en curso tumbaba al motor');
+  chk(/_mevResumeViewer\(\)/.test(extraerFuncion('mevNext')) && /_SF_LIVE_MAXMS - \(Date\.now\(\) - /.test(extraerFuncion('_mevResumeViewer')),
+      'al terminar la pausa el visor retoma su posición, y su tope de tiempo sigue contando desde el arranque');
 }
 
 

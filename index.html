@@ -26506,6 +26506,13 @@ function cvBindBoardOnce() {
   if (_boardBound) return;
   _boardBound = true;
   var boardEl = document.getElementById('cv-board');
+  // El #cv-board es SIEMPRE el mismo elemento (sólo cambia su innerHTML), pero `_boardBound` se pone
+  // en false en cada partida nueva: si la partida venía girada distinto, el rebuild completo volvía a
+  // llamar acá y SUMABA otro par de oyentes. En el teléfono cada toque se procesaba 2 veces (elegía la
+  // pieza y la soltaba al instante) → "una partida sí y otra no" no dejaba mover. Marca en el elemento,
+  // como `_dragBound` y `_arrowsBound`.
+  if (!boardEl || boardEl._cvTapBound) return;
+  boardEl._cvTapBound = true;
 
   boardEl.addEventListener('click', function(e) {
     if (_dragSuppressClick) { _dragSuppressClick = false; return; }
@@ -26924,6 +26931,10 @@ function cvMobileTab(which) {
       var gw = document.getElementById('eval-graph-wrap');
       var shown = gw && gw.style.display !== 'none';
       if (!shown && typeof faToggle === 'function') { try { faToggle(); } catch (err) {} }
+      // Visible pero de la partida ANTERIOR: al pasar de una partida en vivo a otra, faReset deja el
+      // gráfico armado (para no parpadear en los refrescos) y faMaybeAutoLive no lo rehace en el
+      // teléfono hasta abrir esta pestaña → se veían el gráfico y los nombres de la otra partida.
+      else if (shown && typeof faMaybeAutoLive === 'function') { try { faMaybeAutoLive(); } catch (err) {} }
     }
   } else {
     _cvMPanelAnalysis.style.display = 'none'; _cvMPanelMoves.style.display = '';
@@ -27646,6 +27657,7 @@ function sfOnMsg(line) {
     if (sf._capTimer) { clearTimeout(sf._capTimer); sf._capTimer = null; }
     sf.capped = true;
     _sfDeepenBtn(true);
+    if (_mev.want) setTimeout(mevTick, 0);   // motor quieto: las miniaturas que esperaban, ahora
     return;
   }
   if (line === 'uciok') {
@@ -27708,6 +27720,10 @@ function sfOnMsg(line) {
   var score = mtM ? {mate:parseInt(mtM[1])} : {cp:parseInt(cpM[1])};
   sf.lines[mpv] = {depth:depth, score:score, pv:pvArr};
   sf.depth = depth;
+  // Miniaturas esperando (llegó un refresco mientras el visor arrancaba): al llegar a prof. firme, pausa.
+  if (_mev.want && mpv === 0 && depth >= _MEV_YIELD_DEPTH && sf.armed && !sf.deepened) {
+    _mev.want = false; setTimeout(mevTick, 0);
+  }
   if (mpv === 0) sfUpdateUI();
   cvUpdateSfArrows();
 }
@@ -27794,7 +27810,14 @@ function _sfStartPending() {
   sf.extended = false;
   sf._searchT0 = Date.now();   // para medir si llegó "rápido" a la prof. tope (y estirarlo)
   _sfDeepenBtn(false);
+  if (typeof _mev !== 'undefined') _mev.used = false;   // el motor vuelve a la posición del visor
   sf.engine.postMessage('position fen ' + _p.fen);
+  if (_p.deep) {   // "Seguir analizando" después de que las miniaturas usaran el motor (ver sfDeepen)
+    sf.deepened = true;
+    sf.engine.postMessage('go infinite');
+    sf.searching = true;
+    return;
+  }
   sf.engine.postMessage('go depth ' + _SF_LIVE_MAXDEPTH);
   sf.searching = true;
   // Backstop de tiempo: si la posición es tan aguda que no llega a la prof. tope, cortar igual. El
@@ -27811,6 +27834,16 @@ function _sfStartPending() {
 function sfDeepen() {
   if (!sf.engine || !sf.ready || !sf.on || !sf.capped) return;
   if (sf._capTimer) { clearTimeout(sf._capTimer); sf._capTimer = null; }
+  if (_mev.running || _mev.used) {
+    // Las miniaturas aprovecharon el motor quieto: quedó en la posición de OTRA partida (o todavía
+    // calculándola). Mandarle 'position' con una búsqueda en curso TUMBA a Stockfish (probado: el
+    // vigilante tuvo que reiniciarlo) → relanzar por la barrera de siempre, marcada "sin tope".
+    mevAbort(); _mev.used = false;
+    sf.capped = false; _sfDeepenBtn(false);
+    sfRestart(sf.curFen, sf.curSide);
+    sf.pending.deep = true;
+    return;
+  }
   sf.deepened = true;
   sf.capped = false;
   _sfDeepenBtn(false);
@@ -27926,6 +27959,10 @@ function sfUpdateUI() {
   // las evals que entran de la posición anterior, cuando el tablero ya avanzó, salían del bando contrario.
   var flip = sf.curSide === 'b';
   var main = sf.lines[0];
+  if (main && sf.depth >= _SF_BAR_MINDEPTH && sf.curFen) {   // la miniatura de esta posición, con la misma eval
+    _tdMiniFromDeep(sf.curFen, main.score.mate !== undefined ? { mate: flip ? -main.score.mate : main.score.mate }
+                                                            : { cp: flip ? -main.score.cp : main.score.cp }, sf.depth);
+  }
 
   // vertical eval bar + main score
   if (main) {
@@ -32727,6 +32764,7 @@ var _mevEvals = {};   // FEN → score {cp|mate} en perspectiva de blancas (memo
 var _mev = { running: false, armed: false, jobs: [], i: 0, last: null };
 var _MEV_DEPTH = 12;        // orientativo: rápido y suficiente para la barrita
 var _MEV_MAX_JOBS = 40;     // tope de tableros por ciclo (no saturar el motor)
+var _MEV_YIELD_DEPTH = 20;  // con el motor del visor prendido, las miniaturas le piden una pausa recién desde acá
 var _mevReadyPoll = null;
 
 // Evaluación a usar para la barrita: el [%eval] del PGN (Lichess) MANDA; si no hay (partida en curso
@@ -32740,8 +32778,35 @@ function _liveEvalFor(fen, pgnEv) {
 function mevAbort() {
   if (_mevReadyPoll) { clearInterval(_mevReadyPoll); _mevReadyPoll = null; }
   if (!_mev.running) return;
+  var _r = _mev.resume; _mev.resume = null;
   _mev.running = false; _mev.armed = false; _mev.jobs = []; _mev.i = 0; _mev.last = null;
   if (sf.engine) { sf.engine.postMessage('stop'); sf.engine.postMessage('setoption name MultiPV value 3'); }
+  if (_r) {
+    // Se cortó a mitad de una PAUSA del visor: el 'bestmove' de la miniatura que llega ahora no debe
+    // tomarse como "el visor terminó solo" (desarmar), y el visor se relanza si nadie más tomó el motor
+    // (sfAnalyze ya lo hace solo; el gráfico lo relanza al terminar; la práctica se queda con el motor).
+    sf.armed = false;
+    setTimeout(function() {
+      if (sf.on && !sf.armed && !sf.pending && !_fa.running && !_mev.running
+          && (typeof prac === 'undefined' || !prac.running)) sfAnalyze();
+    }, 0);
+  }
+}
+
+// Fin de la pausa: el visor retoma la MISMA posición (con la memoria del motor intacta vuelve a su
+// profundidad casi al instante) y su tope de tiempo sigue contando desde el arranque original.
+function _mevResumeViewer() {
+  var r = _mev.resume; _mev.resume = null;
+  if (!r || !sf.engine || !sf.on || !sf.armed || sf.pending || sf.curFen !== r.fen) return;
+  sf.engine.postMessage('position fen ' + r.fen);
+  sf.engine.postMessage('go depth ' + (sf.extended ? _SF_LIVE_EXTDEPTH : _SF_LIVE_MAXDEPTH));
+  sf.searching = true;
+  var left = Math.max(3000, _SF_LIVE_MAXMS - (Date.now() - (r.t0 || Date.now())));
+  if (sf._capTimer) clearTimeout(sf._capTimer);
+  sf._capTimer = setTimeout(function() {
+    sf._capTimer = null;
+    if (sf.engine && sf.searching && sf.armed && !sf.deepened) sf.engine.postMessage('stop');
+  }, left);
 }
 
 // Recolecta los tableros EN CURSO de la ronda visible cuya posición aún no fue evaluada.
@@ -32768,7 +32833,20 @@ function mevCollect() {
 // Dispara un ciclo de evaluación. Lo llaman el refresco del vivo y la apertura/cambio de ronda.
 function mevTick() {
   if (!_tdLiveCtx) { mevAbort(); return; }            // no hay transmisión activa
-  if (_fa.running || sf.on || _mev.running) return;   // cede a los análisis que pidió el usuario
+  if (_mev.running) return;
+  if (_fa.running) { _mev.want = true; return; }      // el pase del gráfico es corto: al terminar, reintenta
+  // Con el motor del VISOR prendido las miniaturas antes no se evaluaban NUNCA (y la barrita quedaba
+  // con la eval vieja: una colgada en el apuro se veía "un poco peor"). Ahora le piden el motor un
+  // momento: si el visor ya terminó (tope de prof./tiempo, motor quieto) o si ya va por prof.
+  // _MEV_YIELD_DEPTH (su barra ya está firme). Si todavía está arrancando, se anotan (`want`) y
+  // reintentan cuando llegue a esa profundidad o termine. "Seguir analizando" no se interrumpe.
+  var _yield = false;
+  if (sf.on) {
+    var _idle = sf.capped && !sf.searching && !sf.deepened && !sf.pending;
+    var _ripe = sf.armed && sf.searching && !sf.deepened && !sf.pending && sf.depth >= _MEV_YIELD_DEPTH;
+    if (!_idle && !_ripe) { _mev.want = true; return; }
+    _yield = _ripe;
+  }
   if (typeof Chess === 'undefined') return;
   if (!sf.ready) {
     sfStart();   // cargar el motor on-demand y reintentar cuando esté listo
@@ -32782,11 +32860,18 @@ function mevTick() {
     return;
   }
   var jobs = mevCollect();
+  _mev.want = false;
   if (!jobs.length) return;
   _mev.running = true; _mev.armed = false; _mev.rokSeen = false; _mev.jobs = jobs; _mev.i = 0; _mev.last = null;
+  // Pausa del visor: anotar su posición y el arranque de SU búsqueda (el tope de 60 s sigue contando
+  // desde ahí, no se estira con cada pausa). Su reloj de tope se frena: no debe cortar una miniatura.
+  _mev.resume = _yield ? { fen: sf.curFen, t0: sf._searchT0 } : null;
+  if (sf.on && !_yield) _mev.used = true;   // visor quieto: el motor queda en otra posición (ver sfDeepen)
+  if (_yield && sf._capTimer) { clearTimeout(sf._capTimer); sf._capTimer = null; }
   // Barrera readyok: descarta el 'bestmove' fantasma de una búsqueda anterior (igual que el _fa).
   sf.engine.postMessage('stop');
-  sf.engine.postMessage('ucinewgame');
+  // ucinewgame BORRA la memoria del motor: con el visor prendido no, así al volver retoma en un instante.
+  if (!sf.on) sf.engine.postMessage('ucinewgame');
   sf.engine.postMessage('setoption name MultiPV value 1');
   sf.engine.postMessage('isready');
 }
@@ -32796,6 +32881,7 @@ function mevNext() {
   if (_mev.i >= _mev.jobs.length) {
     _mev.running = false; _mev.armed = false;
     if (sf.engine) sf.engine.postMessage('setoption name MultiPV value 3');   // restaurar para el visor
+    _mevResumeViewer();
     return;
   }
   _mev.last = null;
@@ -32848,6 +32934,29 @@ function mevApply(fen, score) {
   var bds = document.querySelectorAll('#td-round-' + _tdCurrentRound + ' .td-bd, #cv-round-minis .td-bd');
   for (var i = 0; i < bds.length; i++) {
     if (bds[i].getAttribute('data-fen') === fen) _tdSetEvalBar(bds[i], score);
+  }
+}
+
+// La partida abierta en el VISOR se analiza mucho más hondo (módulo: prof. 14-30; gráfico: su pase)
+// que las miniaturas (prof. 12, y en pausa mientras el visor usa el motor). Esa eval también pinta la
+// miniatura de la misma posición: si no, quedaba congelada con la de antes (caso real 19/09: una
+// colgada en el apuro que la miniatura mostraba "un poco peor"). Se compara por piezas + turno (el FEN
+// de la ficha de Lichess y el de chess.js pueden diferir en el al-paso y los contadores). `ws` viene
+// normalizado a blancas; sólo sube de profundidad (no pisa una eval honda con una más corta).
+var _tdDeepSeen = {};
+function _tdMiniFromDeep(fen, ws, depth) {
+  if (!fen || !ws || !(depth >= _SF_BAR_MINDEPTH)) return;
+  var key = fen.split(' ').slice(0, 2).join(' ');
+  if ((_tdDeepSeen[key] || 0) >= depth) return;
+  _tdDeepSeen[key] = depth; _capCache(_tdDeepSeen, 400);
+  var sc = ws.mate !== undefined ? { mate: ws.mate } : { cp: ws.cp };
+  var bds = document.querySelectorAll('#td-round-' + _tdCurrentRound + ' .td-bd, #cv-round-minis .td-bd');
+  for (var i = 0; i < bds.length; i++) {
+    var mf = bds[i].getAttribute('data-fen');
+    if (!mf || mf.split(' ').slice(0, 2).join(' ') !== key) continue;
+    if ((bds[i].getAttribute('data-res') || '*') !== '*') continue;   // terminada: manda el [%eval] de Lichess
+    _mevEvals[mf] = sc; _capCache(_mevEvals, 2000);   // un redibujo posterior conserva la eval honda
+    _tdSetEvalBar(bds[i], sc);
   }
 }
 
@@ -38116,6 +38225,8 @@ function faFinish() {
   document.getElementById('fa-prog-row').style.display = 'none';
   document.getElementById('fa-cancel-btn').style.display = 'none';
   faUpdateBuildBtn();
+  // Miniaturas que esperaron al pase: sin motor del visor, ya (con él prendido, pausan al llegar a prof. firme).
+  if (_mev.want && !sf.on) setTimeout(mevTick, 0);
 }
 
 function cancelFA() {
@@ -38262,6 +38373,7 @@ function faHandleMsg(line) {
     _faLiveCache[node.fen] = score;
     _capCache(_faLiveCache, 4000);
     _faSaveLiveCache();
+    if (_fa.live) _tdMiniFromDeep(node.fen, score, score.d);   // su miniatura, si es la posición actual
     if (_fa.live) {
       faRender(_faInterp(_fa.results));          // el gráfico se va llenando jugada a jugada
     }
