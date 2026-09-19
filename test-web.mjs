@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1266;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1286;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -5203,6 +5203,64 @@ console.log('\n=== 53g. Aviso de colgadas graves (19/09) ===');
   chk(cm.includes('_colAbrir(it.gk, it.now.plies)') && cm.includes("data-ply=\"' + x.now.plies") && extraerFuncion('tdOpenGame').includes('return openTourGameByIndex(idx)')
       && extraerFuncion('_colIrA').includes('node = node.children[0]'),
       '"Ver partida" abre JUSTO después de la colgada (el momento de buscar el castigo), no en la última jugada');
+}
+
+// ── 53h. Colgadas de la ronda (19/09, idea del autor) ──
+console.log('\n=== 53h. Colgadas de la ronda: barrido, revisión y tablero de ejercicios (19/09) ===');
+{
+  const decl = SRC.slice(SRC.indexOf('var _COL_PAR = '), SRC.indexOf('var _COL_CONFIRM_DEPTH'));
+  const G = new Function(decl + 'var _CG_DESDE_PLY = 10;'
+    + ['_colClasifica', '_cgDetectar', '_cgPublicable', '_cgRoundCmp'].map(extraerFuncion).join('\n')
+    + '; return { _cgDetectar: _cgDetectar, _cgPublicable: _cgPublicable, _cgRoundCmp: _cgRoundCmp };')();
+  // 14 medias jugadas; en la 11 (juegan negras: índice impar) las negras pasan de −0,5 a +5.
+  const fens = Array.from({ length: 15 }, (_, k) => 'x ' + (k % 2 ? 'b' : 'w'));
+  const P = { fens: fens, uci: Array(14).fill('e2e4') };
+  const ev = [20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, -50, 500, 480, 470];
+  chk(JSON.stringify(G._cgDetectar(P, ev, true)) === JSON.stringify([{ i: 11, a: -50, d: 500, tipo: 'A' }]),
+      '🔒 detecta la colgada del que MOVIÓ (las negras en la 11: de −0,5 a +5)', JSON.stringify(G._cgDetectar(P, ev, true)));
+  const ev2 = ev.slice(); ev2[6] = 20; ev2[7] = 600;   // en la 6 juegan blancas y MEJORAN: no es colgada de nadie
+  chk(G._cgDetectar(P, ev2, true).every(c => c.i !== 6), 'si el que movió mejora (el rival se había colgado antes), esa jugada no cuenta');
+  const ev3 = ev.map(() => 20); ev3[3] = 20; ev3[4] = -600;
+  chk(G._cgDetectar(P, ev3, true).length === 0, 'la apertura (antes de la jugada 6) no cuenta');
+  const pub = G._cgPublicable({ '|3': { items: [{ id: 'a', estado: 'ok', exp: 'x', fen: 'f' }, { id: 'b', estado: 'no' }, { id: 'c', estado: 'pend' }] }, '|4': { items: [{ id: 'd', estado: 'no' }] } });
+  chk(JSON.stringify(pub) === JSON.stringify({ '|3': { items: [{ id: 'a', fen: 'f' }] } }),
+      '🔒 a la web viajan SÓLO las aceptadas, sin los datos de trabajo (estado, exportación)', JSON.stringify(pub));
+  chk(G._cgRoundCmp('3.12', '3.101') < 0 && G._cgRoundCmp('4.1', '3.200') > 0, 'orden por tablero: "3.12" antes que "3.101"');
+
+  const barrer = extraerFuncion('cgBarrer'), verif = extraerFuncion('_cgVerificar'), posic = extraerFuncion('_cgPosiciones');
+  chk(/_tdIsArgGame\(g\.h\); \}\)\.concat/.test(barrer), 'el barrido empieza por las partidas de argentinos');
+  chk(/setTimeout\(una, 0\)/.test(barrer) && /conEv/.test(barrer) && /_cgPasadaRapida\(g, P\)/.test(barrer),
+      'de a una partida por vuelta (no congela); con eval de Lichess sin motor, sin eval en dos pasadas');
+  chk(/deLichess \? _CG_VERIF_DEPTH_LI : _CG_VERIF_DEPTH, multipv: 3/.test(verif) && /clara/.test(verif),
+      '🔒 la verificación da el castigo con 3 líneas, y marca las que Lichess ve pero el motor no ve claras (no son "únicas")');
+  chk(/960\|fischer\|freestyle/.test(posic) && !/tdFinalFen/.test(posic), 'el 960 no se barre (lo reproduce otro camino)');
+
+  // Tablero de ejercicios: no suman rating, no tocan el link, en orden, desafío según la partida.
+  chk(/if \(puz\.cur && puz\.cur\.colgada\) return;/.test(extraerFuncion('puzSetResult')), '🔒 NO suman rating ni estadística (pedido del autor)');
+  chk(/puz\.cur\.colgada\) return;/.test(extraerFuncion('puzUpdateUrl')) && /puz\.cur\.colgada\)\) h \+= '<button class="puz-btn" id="puz-share"/.test(extraerFuncion('puzRenderActions')),
+      'no cambian la dirección ni ofrecen compartir (no son ejercicios de Entrenar)');
+  chk(/puz\.idx\+\+; puzLoad\(\); return;/.test(extraerFuncion('puzNext')), '"Próximo" sigue en orden y al final cierra');
+  chk(/getElementById\('td-cg-slot'\)/.test(extraerFuncion('_cgBarInsert')) && /_cgBarInsert\(null, rInt\)/.test(extraerFuncion('tdShowRound'))
+      && (SRC.match(/<div id="td-cg-slot"><\/div>'/g) || []).length === 2,
+      'el botón va justo debajo de R1 R2 R3 (pedido del autor) y cambia con la ronda aunque se esté bajando');
+  const ra = extraerFuncion('puzRenderActions');
+  chk(ra.includes("'Próxima colgada →'") && ra.includes("'Saltar a la próxima colgada →'") && ra.includes("'Volver a la ronda'"),
+      'los botones dicen "Próxima colgada" (el visitante sabe que sigue en las colgadas, no en Entrenar)');
+  const des = extraerFuncion('_cgDesafio');
+  chk(/lo castigó bien, ¿probás si vos también\?/.test(des) && /no lo castigó, ¿vos podés\?/.test(des),
+      'el desafío: "X lo castigó bien, ¿probás si vos también?" / "X no lo castigó, ¿vos podés?"');
+  chk(/_cgVerPartida\(puz\.cur\.cg\)/.test(extraerFuncion('puzOpenSourceGame')) && /_colIrA\(it\.ply\)/.test(extraerFuncion('_cgVerPartida')),
+      '"Ver la partida original" abre la del torneo en la jugada de la colgada');
+
+  // Guardado y publicación.
+  chk((SRC.match(/'window\.__EMBEDDED_COLG__=' \+ JSON\.stringify\(_cgMan\(\)\)/g) || []).length === 2,
+      '🔒 viajan con 💾 Guardar datos (y en el respaldo completo)');
+  chk(/tFiles\[id\]\.colgadas = pub/.test(extraerFuncion('buildSplitData')) && /_cgPub\[String\(id\)\] = \(j && j\.colgadas\)/.test(extraerFuncion('fetchTournamentGames')),
+      'se publican dentro del archivo del torneo y la web las lee al abrirlo (no engordan la carga inicial)');
+  chk(/aa_colgadas/.test(extraerFuncion('_estadoActualFp')), 'aceptar o rechazar enciende el aviso de "cambios sin guardar"');
+  const exp = extraerFuncion('cgExportar');
+  chk(/schemaVersion: 1/.test(exp) && /difficulty: rat/.test(exp) && /themes: temas/.test(exp) && /acceptedAlts: \[it\.alts\.slice\(\)\]/.test(exp),
+      '"A Entrenar": mismo formato que los ejercicios de siempre, con el rating y los temas que pone el autor');
 }
 
 
