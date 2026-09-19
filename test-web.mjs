@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1246;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1265;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -4199,7 +4199,7 @@ console.log('\n=== 53b. Vivo: miniaturas con la ficha liviana de Lichess (17/09)
   const N = ['parsePgnHeaders', '_bcGameIds', '_fenPlies', '_csToClk', '_tdJsonRes', '_tdJsonAhead', '_tdFichaSirve', '_tdBoardState', '_tdGameRes', '_tdJsonApply', '_tdTeamMatches'];
   const F = new Function('var _tdJsonNew = {}, _tdCtx = null, _tdCurrentRound = 2, _tdLiveCtx = { currentNum: 2 }, llamadas = [];'
     + 'var FENS = {}; function tdFinalFenCached(p){ return FENS[p]; } function _pgnPlies(p){ return FENS[p] ? _fenPlies(FENS[p].fen) : 0; }'
-    + 'function _tdPatchRoundBoards(r){ llamadas.push("patch" + r); } function _teamLiveRefresh(){}'
+    + 'function _tdPatchRoundBoards(r){ llamadas.push("patch" + r); } function _teamLiveRefresh(){} function _colOn(){ return false; } function mevTick(){}'
     + 'var document = { getElementById: function(){ return {}; } };'
     + N.map(extraerFuncion).join('\n')
     + '; return { ' + N.join(',') + ', FENS: FENS, set ctx(c){ _tdCtx = c; }, get nuevos(){ return _tdJsonNew; }, llamadas: llamadas };')();
@@ -5091,7 +5091,7 @@ console.log('\n=== 53f. Visor en el teléfono: tocar piezas y gráfico al cambia
   chk(M.llam.join() === 'toggle', 'sin gráfico, la pestaña lo arranca como siempre');
 
   // 3) La eval honda del visor pinta la miniatura de la misma posición (19/09).
-  const D = new Function('var _SF_BAR_MINDEPTH = 14, _tdCurrentRound = 4, _mevEvals = {}, pint = [];'
+  const D = new Function('var _SF_BAR_MINDEPTH = 14, _tdCurrentRound = 4, _mevEvals = {}, _colDeep = {}, pint = [];'
     + 'function _capCache(){} function _tdSetEvalBar(el, sc){ pint.push(el.id + ":" + JSON.stringify(sc)); }'
     + 'var bd = function(id, fen, res){ return { id: id, getAttribute: function(a){ return a === "data-fen" ? fen : a === "data-res" ? res : null; } }; };'
     + 'var BDS = [bd("vivo", "8/8/8/8/8/8/8/K6k b - e3 0 49", "*"), bd("otra", "8/8/8/8/8/8/8/K6k w - - 0 49", "*"), bd("fin", "8/8/8/8/8/8/8/K6k b - - 0 49", "1-0")];'
@@ -5131,6 +5131,75 @@ console.log('\n=== 53f. Visor en el teléfono: tocar piezas y gráfico al cambia
       '🔒 "Seguir analizando" después de las miniaturas pasa por la barrera: darle la posición con una búsqueda en curso tumbaba al motor');
   chk(/_mevResumeViewer\(\)/.test(extraerFuncion('mevNext')) && /_SF_LIVE_MAXMS - \(Date\.now\(\) - /.test(extraerFuncion('_mevResumeViewer')),
       'al terminar la pausa el visor retoma su posición, y su tope de tiempo sigue contando desde el arranque');
+}
+
+// ── 53g. Aviso de colgadas graves (19/09, en prueba con ?colgadas=1) ──
+console.log('\n=== 53g. Aviso de colgadas graves (19/09) ===');
+{
+  const decl = SRC.slice(SRC.indexOf('var _COL_PAR = '), SRC.indexOf('var _colQ0 = '));
+  const N = ['_colActivo', '_colCp', '_colClasifica', '_colPos', '_colRonda', '_colScan', '_colConfirmar', '_colAvisar', '_colDespachar', '_colBuscar', '_fenPlies'];
+  const C = new Function('var AHORA = 1e9, Date = { now: function(){ return AHORA; } }, timers = [], mostrados = [];'
+    + 'var _tdJsonNew = {}, _mevEvals = {}, _mev = {}, _tdCurrentRound = 5, _tdLiveCtx = { currentNum: 5 }, _tdCtx = { byRound: { 5: [] } };'
+    + 'var document = { querySelectorAll: function(){ return []; } };'
+    + 'function setTimeout(fn, ms){ timers.push({ fn: fn, ms: ms }); return timers.length; }'
+    + 'function _colOn(){ return true; } function _capCache(){} function mevTick(){} function _bcGameIds(p){ return { game: p }; }'
+    + 'function _tdEvKey(h){ return h.k; } function _tdIsArgGame(h){ return !!h.arg; } function _colMostrar(items){ mostrados.push(items.map(function(i){ return i.gk; })); }'
+    + decl + N.map(extraerFuncion).join('\n')
+    + '; return { _colActivo: _colActivo, _colClasifica: _colClasifica, _colCp: _colCp, scan: _colScan, extra: _mevExtra, mostrados: mostrados, timers: timers,'
+    + '  set ahora(v){ AHORA = v; }, get ahora(){ return AHORA; }, ficha: _tdJsonNew, evals: _mevEvals, deep: _colDeep, ronda: _tdCtx.byRound[5] };')();
+
+  const ls = (() => { const m = {}; return { getItem: k => (k in m ? m[k] : null), setItem: (k, v) => { m[k] = String(v); }, removeItem: k => { delete m[k]; } }; })();
+  chk(C._colActivo('', ls) === false, 'la llave arranca APAGADA: el público no lo ve mientras se prueba');
+  chk(C._colActivo('?colgadas=1', ls) === true && C._colActivo('', ls) === true, 'con ?colgadas=1 se prende y queda guardado en ese navegador');
+  chk(C._colActivo('?torneo=x&colgadas=0', ls) === false, 'con ?colgadas=0 se apaga');
+
+  const K = C._colClasifica;
+  chk(JSON.stringify(K(-170, -440, false)) === '{"lado":"w","tipo":"A"}', '🔒 caso real Campos R4: −1,7 → −4,4 a prof. 12 es candidata (de pareja a perdida)');
+  chk(JSON.stringify(K(-170, -500, true)) === '{"lado":"w","tipo":"A"}' && K(-170, -350, true) === null,
+      'confirmada a prof. 16 hace falta −4 o peor');
+  chk(JSON.stringify(K(420, 100, true)) === '{"lado":"w","tipo":"B"}', '🔒 "Betito": estaba +4 y queda +1 → tiró la ganada, también avisa');
+  chk(K(-600, -1000, true) === null && K(700, 450, true) === null, 'una partida ya decidida que empeora más NO avisa (−6 → −10), ni +7 → +4,5');
+  chk(JSON.stringify(K(50, 450, true)) === '{"lado":"b","tipo":"A"}' && JSON.stringify(K(-450, -100, true)) === '{"lado":"b","tipo":"B"}',
+      'lo mismo para las negras');
+  chk(C._colCp({ mate: 3 }) === 10000 && C._colCp({ mate: -2 }) === -10000 && C._colCp({ mate: 0 }, '8/8/8/8/8/8/8/K6k w - - 0 60') === -10000,
+      'los mates cuentan como ±100 (dejarse mate = colgada; el mate 0 lo perdió el que mueve)');
+
+  // Vigilancia: una partida de OTRA página, con ficha. Primera vuelta sólo anota; la segunda detecta.
+  const f1 = 'r7/8/8/8/8/8/8/K6k w - - 0 36', f2 = 'r7/8/8/8/8/8/8/K6k b - - 0 36', f3 = 'r7/8/8/8/8/8/8/K6k w - - 0 37';
+  C.ronda.push({ h: { k: 'mesa7', arg: true }, pgn: 'p7' }, { h: { k: 'mesa9' }, pgn: 'p9' });
+  C.ficha.p7 = { fen: f1, res: '*' }; C.evals[f1] = { cp: -170 };
+  C.scan();
+  chk(C.extra.length === 0 && C.mostrados.length === 0, 'la primera vez que ve una partida sólo la anota (no avisa colgadas viejas al entrar)');
+  C.ficha.p7 = { fen: f2, res: '*' }; C.evals[f2] = { cp: -440 };
+  C.scan();
+  chk(C.extra.length === 1 && C.extra[0].depth === 16 && C.extra[0].fen === f2 && C.mostrados.length === 0,
+      '🔒 candidata a prof. 12: NO avisa todavía, pide confirmar esa posición a prof. 16', JSON.stringify(C.extra.map(j => j.depth)));
+  C.extra.shift().cb({ cp: -520 });
+  chk(C.mostrados.length === 1 && C.mostrados[0].join() === 'mesa7', 'confirmada a fondo → sale el cartel');
+  // Otra colgada en la MISMA mesa a los 5 minutos: no avisa (20 min por mesa).
+  C.ahora = C.ahora + 5 * 60000; C.deep[f3] = 16;
+  C.ficha.p7 = { fen: 'r7/8/8/8/8/8/8/K6k w - - 0 38', res: '*' }; C.evals['r7/8/8/8/8/8/8/K6k w - - 0 38'] = { cp: 0 }; C.scan();
+  C.ficha.p7 = { fen: f3, res: '*' }; C.evals[f3] = { cp: 900 };
+  C.scan();
+  chk(C.mostrados.length === 1, '🔒 la misma mesa no vuelve a avisar por 20 minutos (el apuro trae colgadas en cadena)');
+  // Dos mesas distintas dentro de los 2 minutos del cartel anterior: esperan y salen JUNTAS.
+  C.ahora = C.ahora + 21 * 60000;
+  const mostrar = (clave, pgn, a, b, fa, fb) => { C.ficha[pgn] = { fen: fa, res: '*' }; C.evals[fa] = { cp: a }; C.scan(); C.ficha[pgn] = { fen: fb, res: '*' }; C.evals[fb] = { cp: b }; C.deep[fb] = 16; C.scan(); };
+  mostrar('mesa9', 'p9', 30, 600, '1k6/8/8/8/8/8/8/K7 w - - 0 30', '1k6/8/8/8/8/8/8/K7 b - - 0 30');
+  const n0 = C.mostrados.length;
+  mostrar('mesa7', 'p7', 20, -700, '2k5/8/8/8/8/8/8/K7 w - - 0 50', '2k5/8/8/8/8/8/8/K7 b - - 0 50');
+  chk(n0 === 2 && C.mostrados.length === 2, 'un cartel como mucho cada 2 minutos: el segundo espera', C.mostrados.length);
+  C.ahora = C.ahora + 2 * 60000 + 1; C.timers.pop().fn();
+  chk(C.mostrados.length === 3 && C.mostrados[2].join() === 'mesa7', 'al cumplirse los 2 minutos sale lo que esperaba');
+
+  const cm = extraerFuncion('_colMostrar');
+  chk(/Hubo colgadas en ' \+ items\.length \+ ' tableros/.test(cm) && /_COL_CARTEL_MS\)/.test(cm) && /col-nomas/.test(cm) && /_colSonido\(\)/.test(cm),
+      'el cartel: "Hubo colgadas en N tableros" si son varias, sonido, "No avisarme más" y se va solo a los 15 s');
+  chk(/Hubo colgada en el tablero ' \+ m\[1\]/.test(extraerFuncion('_colTitulo')), 'el título dice "Hubo colgada en el tablero N" (pedido del autor)');
+  chk(/tdFinalFen|new Chess/.test(extraerFuncion('_colScan') + extraerFuncion('_colMasTrabajos') + extraerFuncion('_colPos')) === false,
+      '🔒 la vigilancia de la ronda NUNCA reproduce partidas (eso congeló la página el 17/09): sólo ficha o miniatura dibujada');
+  chk(/aa_pref_col_off/.test(SRC.slice(SRC.indexOf('function openPrefs'), SRC.indexOf('function openPrefs') + 6000)),
+      'se puede apagar en ⚙️ Preferencias');
 }
 
 

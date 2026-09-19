@@ -3249,6 +3249,34 @@
         background:linear-gradient(135deg,#ffd257,#f0a830); box-shadow:0 6px 18px rgba(240,168,48,.42);
         animation:lvPop .3s cubic-bezier(.2,1.2,.5,1); }
       .lv-inc-pill:hover { filter:brightness(1.05); }
+      /* AVISO DE COLGADA GRAVE (19/09, en prueba con ?colgadas=1): como el de desafíos, pero rojo y con el
+         "??" del visor (#cv-nag-badge.nb-blunder). Se va solo a los 15 s: la rayita de abajo se achica. */
+      .col-cartel { position:relative; overflow:hidden; display:flex; flex-direction:column; gap:8px; width:260px; max-width:calc(100vw - 28px);
+        padding:11px 13px 13px; border-radius:14px; background:#2a2023; border:1.5px solid #d03030;
+        box-shadow:0 10px 28px rgba(0,0,0,.45); animation:lvPop .3s cubic-bezier(.2,1.2,.5,1); transition:opacity .3s, transform .3s; }
+      .col-cartel.col-fuera { opacity:0; transform:translateY(-8px); }
+      .col-top { display:flex; gap:9px; align-items:flex-start; }
+      .col-nb { width:26px; height:26px; border-radius:50%; background:#d03030; color:#fff; display:flex; align-items:center;
+        justify-content:center; font-size:12.5px; font-weight:800; flex-shrink:0; letter-spacing:-.5px; box-shadow:0 1px 3px rgba(0,0,0,.5); }
+      .col-txt { display:flex; flex-direction:column; gap:3px; min-width:0; line-height:1.35; }
+      .col-txt b { color:#f7e3e3; font-size:13px; }
+      .col-txt > span, .col-fila span { color:#c9b8b8; font-size:12px; }
+      .col-txt .flag-ic { vertical-align:-1px; }
+      .col-ch { display:inline-block; padding:0 5px; border-radius:5px; font-size:11.5px; font-weight:700; }
+      .col-ch-a { background:#3a2a22; color:#e8b48a; } .col-ch-d { background:#4a1c1c; color:#f5a3a3; }
+      .col-fila { display:flex; flex-direction:column; gap:1px; text-align:left; background:rgba(255,255,255,.04); border:1px solid rgba(208,48,48,.35);
+        border-radius:9px; padding:5px 8px; margin-top:3px; color:#f7e3e3; font-size:12px; font-family:inherit; cursor:pointer; }
+      .col-fila:hover { background:rgba(208,48,48,.16); }
+      .col-fila .col-fila-j { color:#f7e3e3; font-weight:600; }
+      .col-btns { display:flex; gap:6px; }
+      .col-btns button { flex:1; padding:7px 8px; border-radius:9px; font-size:12.5px; font-weight:700; cursor:pointer; font-family:inherit; white-space:nowrap; }
+      .col-no { background:#1e1719; color:#c9b8b8; border:1px solid #4a3a3d; }
+      .col-no:hover { color:#f7e3e3; }
+      .col-si { border:none; color:#fff; background:linear-gradient(135deg,#52b788,#2e9e6b); }
+      .col-si:hover { filter:brightness(1.06); }
+      .col-nomas { background:none; border:none; padding:0; font-family:inherit; font-size:11px; color:#9a8a8a; text-decoration:underline; cursor:pointer; align-self:center; }
+      .col-barra { position:absolute; left:0; bottom:0; height:3px; width:100%; background:#d03030; animation-name:colBarra; animation-timing-function:linear; animation-fill-mode:forwards; }
+      @keyframes colBarra { from { width:100%; } to { width:0%; } }
       /* Presencia: contenedor ABAJO a la DERECHA (esquinado, estilo Lichess). Crece hacia arriba. */
       #lv-online-host { position:fixed; right:12px; bottom:12px; z-index:100001;
         display:flex; flex-direction:column; align-items:flex-end; gap:8px; max-width:calc(100vw - 24px);
@@ -32779,6 +32807,8 @@ function mevAbort() {
   if (_mevReadyPoll) { clearInterval(_mevReadyPoll); _mevReadyPoll = null; }
   if (!_mev.running) return;
   var _r = _mev.resume; _mev.resume = null;
+  // Las confirmaciones del aviso de colgadas que no llegaron a correr vuelven a la fila (si no, se perdían).
+  (_mev.jobs || []).slice(_mev.i).forEach(function(j){ if (j.cb) _mevExtra.push(j); });
   _mev.running = false; _mev.armed = false; _mev.jobs = []; _mev.i = 0; _mev.last = null;
   if (sf.engine) { sf.engine.postMessage('stop'); sf.engine.postMessage('setoption name MultiPV value 3'); }
   if (_r) {
@@ -32811,12 +32841,14 @@ function _mevResumeViewer() {
 
 // Recolecta los tableros EN CURSO de la ronda visible cuya posición aún no fue evaluada.
 function mevCollect() {
-  var jobs = [];
+  // Primero las confirmaciones del aviso de colgadas (una posición más a fondo, ver _colConfirmar).
+  var jobs = _mevExtra.splice(0, _mevExtra.length);
+  var seen = {};
+  jobs.forEach(function(j){ seen[j.fen] = 1; });
   var panel = document.getElementById('td-round-' + _tdCurrentRound);
   if (!panel) return jobs;
   var bds = panel.querySelectorAll('.td-bd');
   var START = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR';
-  var seen = {};
   for (var i = 0; i < bds.length; i++) {
     var el = bds[i];
     if ((el.getAttribute('data-res') || '*') !== '*') continue;   // solo partidas en curso
@@ -32827,6 +32859,7 @@ function mevCollect() {
     jobs.push({ fen: fen });
     if (jobs.length >= _MEV_MAX_JOBS) break;
   }
+  _colMasTrabajos(jobs, seen);   // aviso de colgadas: partidas de OTRAS páginas, si alcanza el presupuesto
   return jobs;
 }
 
@@ -32861,7 +32894,7 @@ function mevTick() {
   }
   var jobs = mevCollect();
   _mev.want = false;
-  if (!jobs.length) return;
+  if (!jobs.length) { _colScan(); return; }   // nada nuevo que evaluar: igual mirar si hubo colgadas (evals ya guardadas)
   _mev.running = true; _mev.armed = false; _mev.rokSeen = false; _mev.jobs = jobs; _mev.i = 0; _mev.last = null;
   // Pausa del visor: anotar su posición y el arranque de SU búsqueda (el tope de 60 s sigue contando
   // desde ahí, no se estira con cada pausa). Su reloj de tope se frena: no debe cortar una miniatura.
@@ -32882,12 +32915,14 @@ function mevNext() {
     _mev.running = false; _mev.armed = false;
     if (sf.engine) sf.engine.postMessage('setoption name MultiPV value 3');   // restaurar para el visor
     _mevResumeViewer();
+    setTimeout(_colScan, 0);   // tanda terminada: ¿alguna partida se colgó?
     return;
   }
   _mev.last = null;
+  _mev.t0 = Date.now();   // para medir cuánto tarda una posición en ESTE equipo (presupuesto del aviso)
   sf.engine.postMessage('stop');
   sf.engine.postMessage('position fen ' + _mev.jobs[_mev.i].fen);
-  sf.engine.postMessage('go depth ' + _MEV_DEPTH);
+  sf.engine.postMessage('go depth ' + (_mev.jobs[_mev.i].depth || _MEV_DEPTH));
   sf.searching = true;
 }
 
@@ -32923,6 +32958,12 @@ function mevHandleMsg(line) {
       _mevEvals[job.fen] = score;
       _capCache(_mevEvals, 2000);
       mevApply(job.fen, score);
+      if (!job.depth && _mev.t0) {   // promedio móvil de lo que tarda una posición a prof. 12
+        var _ms = Date.now() - _mev.t0;
+        _mev.avgMs = _mev.avgMs ? Math.round(_mev.avgMs * 0.8 + _ms * 0.2) : _ms;
+      }
+      if (job.depth) _colDeep[job.fen] = job.depth;
+      if (job.cb) { try { job.cb(score); } catch (e) {} }
     }
     _mev.i++; _mev.last = null; mevNext();
   }
@@ -32956,9 +32997,274 @@ function _tdMiniFromDeep(fen, ws, depth) {
     if (!mf || mf.split(' ').slice(0, 2).join(' ') !== key) continue;
     if ((bds[i].getAttribute('data-res') || '*') !== '*') continue;   // terminada: manda el [%eval] de Lichess
     _mevEvals[mf] = sc; _capCache(_mevEvals, 2000);   // un redibujo posterior conserva la eval honda
+    _colDeep[mf] = depth;
     _tdSetEvalBar(bds[i], sc);
   }
 }
+
+/* ══ AVISO DE COLGADAS GRAVES (19/09/2026, EN PRUEBA) ══════════════════════════════════════════
+   Plan acordado con el autor. Mientras se prueba, sólo en el navegador que entró con ?colgadas=1
+   (queda guardado; ?colgadas=0 lo apaga). Cada visitante lo puede apagar en ⚙️ Preferencias o con
+   "No avisarme más" en el mismo cartel.
+   · Qué es una colgada, mirando desde el bando que EMPEORÓ (los números salen del generador de
+     ejercicios, chess-puzzle-gen/config.js: DETECT y DEFENSE):
+       A "perdió una pareja": antes entre −2 y +2 → después −4 o peor.
+       B "tiró la ganada":    antes +4 o más     → después +1,5 o menos.
+     Un −6 que pasa a −10 no es aviso (la partida ya estaba decidida).
+   · Se detecta con la eval de las miniaturas (prof. 12, con umbrales algo más anchos porque a esa
+     profundidad el motor subestima: Campos–Tokhirjonova R4, d12 −4,4 / d16 −5,0 / real −8) y se
+     CONFIRMA esa sola posición a prof. 16 antes de avisar.
+   · Toda la ronda: la página en pantalla como siempre + las de otras páginas que tengan FICHA de
+     Lichess (nunca reproducir partidas con chess.js en un tick: congeló la página el 17/09), primero
+     las de argentinos, hasta un presupuesto de tiempo del motor que se mide en cada equipo.
+   · Topes: una mesa que avisó no vuelve a avisar por 20 min (el apuro de tiempo trae colgadas en
+     cadena); un cartel como mucho cada 2 min, y si hubo varias se juntan en uno.
+   ════════════════════════════════════════════════════════════════════════════════════════════ */
+var _COL_PAR = 200, _COL_GAN = 400;                 // "pareja" = |eval| ≤ 2 · "ganada" = +4 o más
+var _COL_CAND_A = -300, _COL_FIN_A = -400;          // A: candidata a prof. 12 / confirmada a prof. 16
+var _COL_CAND_B = 200, _COL_FIN_B = 150;            // B: ídem
+var _COL_CONFIRM_DEPTH = 16;
+var _COL_MESA_MS = 20 * 60000, _COL_GLOBAL_MS = 2 * 60000, _COL_CARTEL_MS = 15000;
+var _COL_PRESUPUESTO_MS = 6000;   // motor por tanda (~cada 30 s) para las partidas de otras páginas: ~20%
+var _COL_MAX_JOBS = 80;
+var _mevExtra = [];               // trabajos de confirmación (prof. 16) que mevCollect pone primero
+var _colDeep = {};                // fen → profundidad de la eval guardada, si fue más de 12
+var _colEst = {}, _colMesaHasta = {}, _colPend = {}, _colCola = [], _colUltimo = 0, _colTimer = null, _colCartelTimer = null;
+var _colQ0 = '';
+try { _colQ0 = location.search || ''; } catch (e) {}   // antes de que la app reescriba la dirección
+var _colLlaveVal = null;
+
+function _colActivo(q, ls) {
+  try {
+    if (/[?&]colgadas=1(?!\w)/.test(q)) ls.setItem('aa_col_on', '1');
+    if (/[?&]colgadas=0(?!\w)/.test(q)) ls.removeItem('aa_col_on');
+    return ls.getItem('aa_col_on') === '1';
+  } catch (e) { return false; }
+}
+function _colLlave() {
+  if (_colLlaveVal === null) { try { _colLlaveVal = _colActivo(_colQ0, localStorage); } catch (e) { _colLlaveVal = false; } }
+  return _colLlaveVal;
+}
+function _colOn() {
+  if (!_colLlave()) return false;
+  try { return localStorage.getItem('aa_pref_col_off') !== '1'; } catch (e) { return true; }
+}
+
+// Eval en centipeones desde las BLANCAS (mate = ±10000; el mate 0 lo perdió el que mueve en ese FEN).
+function _colCp(sc, fen) {
+  if (!sc) return null;
+  if (sc.mate !== undefined) {
+    if (sc.mate > 0) return 10000;
+    if (sc.mate < 0) return -10000;
+    return (String(fen || '').split(' ')[1] === 'b') ? 10000 : -10000;
+  }
+  return sc.cp;
+}
+// ¿Es colgada? antes/despues desde las blancas. `fin` = confirmada a prof. 16 (umbrales finales).
+function _colClasifica(antes, despues, fin) {
+  if (antes == null || despues == null) return null;
+  var tA = fin ? _COL_FIN_A : _COL_CAND_A, tB = fin ? _COL_FIN_B : _COL_CAND_B;
+  for (var k = 0; k < 2; k++) {
+    var lado = k ? 'b' : 'w', s = k ? -1 : 1, a = antes * s, d = despues * s;
+    if (a >= -_COL_PAR && a <= _COL_PAR && d <= tA) return { lado: lado, tipo: 'A' };
+    if (a >= _COL_GAN && d <= tB) return { lado: lado, tipo: 'B' };
+  }
+  return null;
+}
+
+// Posición actual de una partida SIN reproducirla: la ficha de Lichess o la miniatura dibujada.
+function _colPos(g, enPantalla) {
+  var id = _bcGameIds(g.pgn), o = id && _tdJsonNew[id.game];
+  if (o && o.fen) return { fen: o.fen, res: o.res || '*', last: o.last || null };
+  return enPantalla || null;
+}
+function _colRonda() {
+  if (!_tdCtx || !_tdLiveCtx || _tdCurrentRound !== _tdLiveCtx.currentNum) return null;
+  return _tdCtx.byRound[_tdLiveCtx.currentNum] || null;
+}
+
+// Partidas de OTRAS páginas para la tanda del motor: sólo con ficha, argentinos primero, con presupuesto.
+function _colMasTrabajos(jobs, seen) {
+  if (!_colOn()) return;
+  var games = _colRonda(); if (!games) return;
+  var tope = Math.min(_COL_MAX_JOBS, Math.floor(_COL_PRESUPUESTO_MS / (_mev.avgMs || 80)));
+  if (jobs.length >= tope) return;
+  var START = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR', arg = [], resto = [];
+  games.forEach(function(g){
+    var id = _bcGameIds(g.pgn), o = id && _tdJsonNew[id.game];
+    if (!o || !o.fen || (o.res || '*') !== '*' || o.fen.split(' ')[0] === START) return;
+    if (_mevEvals[o.fen] !== undefined || seen[o.fen]) return;
+    (_tdIsArgGame(g.h) ? arg : resto).push(o.fen);
+  });
+  arg.concat(resto).some(function(f){ seen[f] = 1; jobs.push({ fen: f }); return jobs.length >= tope; });
+}
+
+// Recorre la ronda en vivo: compara la eval de cada partida con la anterior que se le conocía.
+function _colScan() {
+  if (!_colOn()) return;
+  var games = _colRonda(); if (!games) return;
+  var enPantalla = {};
+  document.querySelectorAll('#td-round-' + _tdCurrentRound + ' .td-bd, #cv-round-minis .td-bd').forEach(function(el){
+    var gk = el.getAttribute('data-gk'), f = el.getAttribute('data-fen');
+    if (gk && f) enPantalla[gk] = { fen: f, res: el.getAttribute('data-res') || '*', last: null };
+  });
+  var ahora = Date.now();
+  games.forEach(function(g){
+    var gk = _tdEvKey(g.h), p = _colPos(g, enPantalla[gk]);
+    if (!p || p.res !== '*') return;
+    var ev = _mevEvals[p.fen];
+    if (ev === undefined) return;
+    var prev = _colEst[gk];
+    if (prev && prev.fen === p.fen) return;
+    var now = { fen: p.fen, cp: _colCp(ev, p.fen), plies: _fenPlies(p.fen), last: p.last };
+    _colEst[gk] = now; _capCache(_colEst, 1500);
+    if (!prev || now.plies <= prev.plies) return;             // la primera vez sólo se anota
+    if (ahora < (_colMesaHasta[gk] || 0)) return;             // esta mesa ya avisó hace poco
+    var honda = (_colDeep[p.fen] || 0) >= _COL_CONFIRM_DEPTH;
+    var c = _colClasifica(prev.cp, now.cp, honda);
+    if (!c) return;
+    var info = { gk: gk, g: g, prev: prev, now: now, c: c };
+    if (honda) _colAvisar(info); else _colConfirmar(info);
+  });
+}
+
+// Confirmar a prof. 16 esa sola posición (en la próxima tanda del motor, antes que las miniaturas).
+function _colConfirmar(info) {
+  var f = info.now.fen;
+  if (_colPend[f]) return;
+  _colPend[f] = 1;
+  _mevExtra.push({ fen: f, depth: _COL_CONFIRM_DEPTH, cb: function(score){
+    delete _colPend[f];
+    var cp = _colCp(score, f), c = _colClasifica(info.prev.cp, cp, true);
+    if (!c || c.lado !== info.c.lado) return;               // a fondo no era tan grave
+    if (Date.now() < (_colMesaHasta[info.gk] || 0)) return;
+    info.now.cp = cp; info.c = c;
+    _colAvisar(info);
+  } });
+  setTimeout(mevTick, 0);
+}
+
+function _colAvisar(info) {
+  _colMesaHasta[info.gk] = Date.now() + _COL_MESA_MS;
+  try { info.arg = _tdIsArgGame(info.g.h); } catch (e) { info.arg = false; }
+  _colCola.push(info);
+  _colDespachar();
+}
+// Un cartel como mucho cada 2 min: lo que llega antes espera y sale junto.
+function _colDespachar() {
+  if (!_colCola.length) return;
+  var falta = _colUltimo + _COL_GLOBAL_MS - Date.now();
+  if (falta > 0) {
+    if (!_colTimer) _colTimer = setTimeout(function(){ _colTimer = null; _colDespachar(); }, falta);
+    return;
+  }
+  var items = _colCola.splice(0, _colCola.length);
+  // Sólo las que siguen en la ronda en vivo (el PGN pudo renovarse: se toma el objeto nuevo).
+  items = items.filter(function(it){ var g = _colBuscar(it.gk); if (g) it.g = g; return !!g; });
+  if (!items.length || !_colOn()) return;
+  items.sort(function(a, b){ return (b.arg ? 1 : 0) - (a.arg ? 1 : 0); });   // argentinos primero
+  _colUltimo = Date.now();
+  _colMostrar(items);
+}
+function _colBuscar(gk) {
+  var games = (_tdCtx && _tdLiveCtx && _tdCtx.byRound[_tdLiveCtx.currentNum]) || [];
+  for (var i = 0; i < games.length; i++) if (_tdEvKey(games[i].h) === gk) return games[i];
+  return null;
+}
+
+// ── Textos del cartel ──
+function _colApellido(n) { n = String(n || '?'); return n.indexOf(',') > 0 ? n.split(',')[0].trim() : n.trim(); }
+function _colEvTxt(cp) {
+  if (cp >= 10000) return '#+'; if (cp <= -10000) return '#−';
+  var v = Math.abs(cp) / 100;
+  return (cp > 0 ? '+' : cp < 0 ? '−' : '') + v.toFixed(1).replace('.', ',');
+}
+// "37.♝xh5??" si se sabe la jugada (una sola media jugada entre las dos evals); si no, la jugada a la que se llegó.
+function _colJugada(prev, now) {
+  var fp = String(prev.fen).split(' '), n = parseInt(fp[5], 10) || 1;
+  if (now.plies === prev.plies + 1 && now.last && now.last.from && typeof Chess !== 'undefined') {
+    try {
+      var ch = new Chess(prev.fen), m = ch.move({ from: now.last.from, to: now.last.to, promotion: 'q' });
+      if (m && m.san) return n + (fp[1] === 'w' ? '.' : '...') + (typeof cvFan === 'function' ? cvFan(m.san) : m.san) + '??';
+    } catch (e) {}
+  }
+  return 'jugada ' + (parseInt(String(now.fen).split(' ')[5], 10) || n);
+}
+function _colTitulo(it) {
+  var h = it.g.h || {};
+  if (h.WhiteTeam && h.BlackTeam) return 'Hubo colgada en ' + escHtml(_paisES(h.WhiteTeam)) + ' – ' + escHtml(_paisES(h.BlackTeam));
+  var m = /^\d+\.(\d+)$/.exec(String(h.Round || ''));
+  return m ? 'Hubo colgada en el tablero ' + m[1] : 'Hubo colgada';
+}
+function _colJugadoresHtml(it) {
+  var h = it.g.h || {}, crk = (_tdCtx && _tdCtx.crKey) || null;
+  function nom(n){ var p = String(n || '?').split(','); return p.length > 1 ? (p[1].trim() + ' ' + p[0].trim()) : p[0].trim(); }   // como la miniatura
+  var wf = _flagByName(nom(h.White), crk, h.WhiteFideId) || _teamFlag(h.WhiteTeam) || '';
+  var bf = _flagByName(nom(h.Black), crk, h.BlackFideId) || _teamFlag(h.BlackTeam) || '';
+  return escHtml(_colApellido(h.White)) + (wf ? ' ' + wf : '') + ' – ' + escHtml(_colApellido(h.Black)) + (bf ? ' ' + bf : '');
+}
+function _colDetalleHtml(it) {
+  var a = it.prev.cp, d = it.now.cp;
+  return escHtml(_colJugada(it.prev, it.now)) + ' &nbsp;<span class="col-ch col-ch-a">' + _colEvTxt(a) + '</span> → <span class="col-ch col-ch-d">' + _colEvTxt(d) + '</span>';
+}
+
+function _colSonido() {
+  try {
+    var A = window.AudioContext || window.webkitAudioContext; if (!A) return;
+    var ctx = _colSonido._c || (_colSonido._c = new A());
+    [[880, 0], [660, 0.16]].forEach(function(n){
+      var o = ctx.createOscillator(), g = ctx.createGain(), t = ctx.currentTime + n[1];
+      o.type = 'triangle'; o.frequency.value = n[0];
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.22, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
+      o.connect(g); g.connect(ctx.destination); o.start(t); o.stop(t + 0.25);
+    });
+  } catch (e) {}
+}
+
+function _colCerrar() {
+  if (_colCartelTimer) { clearTimeout(_colCartelTimer); _colCartelTimer = null; }
+  var c = document.getElementById('col-cartel'); if (!c) return;
+  c.classList.add('col-fuera');
+  setTimeout(function(){ if (c.parentNode) c.parentNode.removeChild(c); }, 350);
+}
+function _colAbrir(gk) {
+  var g = _colBuscar(gk); if (!g || !_tdCtx) return;
+  var idx = _tdCtx.games.indexOf(g.pgn); if (idx < 0) return;
+  _colCerrar();
+  tdOpenGame(idx, _tdCtx.pgnKey, _tdCtx.name, _tdCtx.location);
+}
+function _colNoMas() {
+  try { localStorage.setItem('aa_pref_col_off', '1'); } catch (e) {}
+  _colCola = [];
+  _colCerrar();
+}
+function _colMostrar(items) {
+  var host = document.getElementById('lv-notices');
+  if (!host) { host = document.createElement('div'); host.id = 'lv-notices'; document.body.appendChild(host); }
+  var viejo = document.getElementById('col-cartel'); if (viejo && viejo.parentNode) viejo.parentNode.removeChild(viejo);
+  if (_colCartelTimer) clearTimeout(_colCartelTimer);
+  var d = document.createElement('div');
+  d.id = 'col-cartel'; d.className = 'col-cartel'; d.setAttribute('role', 'status');
+  var uno = items.length === 1, it = items[0];
+  var cuerpo = uno
+    ? '<b>' + _colTitulo(it) + '</b><span>' + _colJugadoresHtml(it) + '</span><span>' + _colDetalleHtml(it) + '</span>'
+    : '<b>Hubo colgadas en ' + items.length + ' tableros</b>' + items.map(function(x){
+        return '<button type="button" class="col-fila" data-gk="' + escHtml(x.gk) + '"><span class="col-fila-j">' + _colJugadoresHtml(x) + '</span><span>' + _colDetalleHtml(x) + '</span></button>';
+      }).join('');
+  d.innerHTML = '<div class="col-top"><span class="col-nb" aria-hidden="true">??</span><div class="col-txt">' + cuerpo + '</div></div>'
+    + '<div class="col-btns"><button type="button" class="col-no">Descartar</button>'
+    + (uno ? '<button type="button" class="col-si">Ver partida</button>' : '') + '</div>'
+    + '<button type="button" class="col-nomas">No avisarme más</button>'
+    + '<div class="col-barra" style="animation-duration:' + _COL_CARTEL_MS + 'ms"></div>';
+  host.appendChild(d);
+  d.querySelector('.col-no').onclick = _colCerrar;
+  d.querySelector('.col-nomas').onclick = _colNoMas;
+  if (uno) d.querySelector('.col-si').onclick = function(){ _colAbrir(it.gk); };
+  Array.prototype.forEach.call(d.querySelectorAll('.col-fila'), function(b){ b.onclick = function(){ _colAbrir(b.getAttribute('data-gk')); }; });
+  _colSonido();
+  _colCartelTimer = setTimeout(_colCerrar, _COL_CARTEL_MS);
+}
+window.aaCol = { llave: _colLlave };
 
 // Expande una fila de FEN ("r1bk...") a 8 elementos (pieza o null).
 function _tdExpandRow(row) {
@@ -33945,6 +34251,7 @@ function _tdJsonApply(games) {
   if (!changed) return;
   if (_tdCurrentRound === cur && document.getElementById('td-round-' + cur)) _tdPatchRoundBoards(cur, _tdCtx.games);
   _teamLiveRefresh();   // un abandono que llegó por la ficha también suma en el marcador parcial del cruce
+  if (_colOn()) setTimeout(mevTick, 900);   // aviso de colgadas: evaluar también lo que cambió en OTRAS páginas
 }
 function _tdJsonTick() {
   if (_tdJsonBusy || !_tdCtx || !_tdLiveCtx || !_tdLiveCtx.onDemand || !_tdLivePolling || document.hidden || Date.now() < _tdJsonHold) return;
@@ -43586,6 +43893,9 @@ function cvUpdateNagBadge() {
         prefRow('pvpchatoff','Ocultar el chat en mis partidas','No se muestra el chat dentro de las partidas en vivo.', prefRead('aa_pref_pvpchat_off'))+
         // Plan del arena, Fase 3. Sale cuando el arena está prendido (lo está salvo ?arena=0).
         (window.aaArena&&window.aaArena.activo&&window.aaArena.activo() ? prefRow('berserksnd','Silenciar el sonido del berserk','En los torneos arena, no suena el golpe cuando vos o tu rival hacen berserk.', prefRead('aa_pref_berserk_snd_off')) : '')+
+        // Aviso de colgadas (19/09): mientras se prueba, sólo donde se prendió con ?colgadas=1.
+        (window.aaCol && window.aaCol.llave() ? '<div class="aa-pref-sec">Transmisiones en vivo</div>'+
+          prefRow('colgadas','Avisar colgadas graves','Un cartelito con sonido cuando alguien comete un error grave en el torneo que estás mirando.', !prefRead('aa_pref_col_off')) : '')+
         '<div class="aa-pref-sec">Apariencia</div>'+
         prefRow('theme','Tema claro','', light)+
         '<div class="aa-pref-sec">Privacidad</div>'+
@@ -43604,6 +43914,7 @@ function cvUpdateNagBadge() {
       if(p==='autoqueen') setPref('aa_pref_autoqueen', el.checked);
       else if(p==='pvpchatoff') setPref('aa_pref_pvpchat_off', el.checked);
       else if(p==='berserksnd') setPref('aa_pref_berserk_snd_off', el.checked);
+      else if(p==='colgadas') setPref('aa_pref_col_off', !el.checked);
       else if(p==='theme'){ if(typeof toggleTheme==='function') toggleTheme(); }
       else if(p==='dnd'){
         // "No molestar" se guarda en la cuenta (no en el navegador) → requiere login.
