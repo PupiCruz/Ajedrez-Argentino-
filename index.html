@@ -3284,6 +3284,9 @@
         font-size:13px; font-weight:700; color:#f7e3e3; background:#2a2023; border:1.5px solid #d03030; }
       .cg-pub span { color:#e8b48a; font-weight:600; }
       .cg-pub:hover { background:#3a2226; }
+      body.light .cg-pub { background:#fbeceb; color:#8f2b2b; border-color:#e5a3a3; }   /* modo claro: suave (el oscuro quedaba muy fuerte) */
+      body.light .cg-pub span { color:#b5654a; }
+      body.light .cg-pub:hover { background:#f6dedc; }
       .cg-autor { padding:8px 14px; border-radius:20px; cursor:pointer; font-family:inherit; font-size:12.5px; font-weight:600;
         color:var(--text2); background:var(--bg3); border:1px dashed var(--border); }
       .cg-ov { position:fixed; inset:0; z-index:100001; background:rgba(0,0,0,.6); display:none; align-items:flex-start; justify-content:center;
@@ -33154,6 +33157,20 @@ function _colClasifica(antes, despues, fin, vuelta) {
   return null;
 }
 
+// EN VIVO, además del tipo, una caída mínima que depende del tamaño de la ronda (idea del autor 19/09):
+// en una ronda gigante (Olimpiada, 400 partidas) 4 peones, para no bombardear con avisos; en un torneo
+// normal (hasta 50 partidas) 3. Ojo, medido con la R1 de la Olimpiada: con 4 peones quedan afuera la
+// mitad de las que Lichess marca "??" (146 de 284), y nuestro motor ve las colgadas más chicas (Campos
+// R4: Lichess −8, acá −5,0 a prof. 16 = caída 3,3 → avisa en un torneo normal, no en la Olimpiada).
+// Las Colgadas de la ronda NO usan esto.
+var _COL_VIVO_GRANDE = 50;                                  // más partidas que esto en la ronda = "grande"
+var _COL_VIVO_CAIDA = 300, _COL_VIVO_CAIDA_CAND = 200;      // normal: final (prof. 16) / candidata (prof. 12)
+var _COL_VIVO_CAIDA_G = 400, _COL_VIVO_CAIDA_G_CAND = 300;  // grande
+function _colVivoCaidaOk(antes, despues, lado, fin, nPartidas) {
+  var s = lado === 'w' ? 1 : -1, g = (nPartidas || 0) > _COL_VIVO_GRANDE;
+  var min = g ? (fin ? _COL_VIVO_CAIDA_G : _COL_VIVO_CAIDA_G_CAND) : (fin ? _COL_VIVO_CAIDA : _COL_VIVO_CAIDA_CAND);
+  return (antes * s - despues * s) >= min;
+}
 // Posición actual de una partida SIN reproducirla: la ficha de Lichess o la miniatura dibujada.
 function _colPos(g, enPantalla) {
   var id = _bcGameIds(g.pgn), o = id && _tdJsonNew[id.game];
@@ -33204,6 +33221,7 @@ function _colScan() {
     if (ahora < (_colMesaHasta[gk] || 0)) return;             // esta mesa ya avisó hace poco
     var honda = (_colDeep[p.fen] || 0) >= _COL_CONFIRM_DEPTH;
     var c = _colClasifica(prev.cp, now.cp, honda, true);   // los 3 tipos, también "se dio vuelta" (pedido del autor)
+    if (c && !_colVivoCaidaOk(prev.cp, now.cp, c.lado, honda, games.length)) c = null;   // en vivo, además, caída grande
     if (!c) return;
     var info = { gk: gk, g: g, prev: prev, now: now, c: c };
     if (honda) _colAvisar(info); else _colConfirmar(info);
@@ -33219,6 +33237,7 @@ function _colConfirmar(info) {
     delete _colPend[f];
     var cp = _colCp(score, f), c = _colClasifica(info.prev.cp, cp, true, true);
     if (!c || c.lado !== info.c.lado) return;               // a fondo no era tan grave
+    if (!_colVivoCaidaOk(info.prev.cp, cp, c.lado, true, (_colRonda() || []).length)) return;
     if (Date.now() < (_colMesaHasta[info.gk] || 0)) return;
     info.now.cp = cp; info.c = c;
     _colAvisar(info);

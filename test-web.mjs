@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1295;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1297;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -5136,8 +5136,8 @@ console.log('\n=== 53f. Visor en el teléfono: tocar piezas y gráfico al cambia
 // ── 53g. Aviso de colgadas graves (19/09, en prueba con ?colgadas=1) ──
 console.log('\n=== 53g. Aviso de colgadas graves (19/09) ===');
 {
-  const decl = SRC.slice(SRC.indexOf('var _COL_PAR = '), SRC.indexOf('var _colQ0 = ')) + SRC.match(/var _COL_C_ANTES[^\n]*/)[0];
-  const N = ['_colActivo', '_colCp', '_colClasifica', '_colPos', '_colRonda', '_colScan', '_colConfirmar', '_colAvisar', '_colDespachar', '_colBuscar', '_fenPlies'];
+  const decl = SRC.slice(SRC.indexOf('var _COL_PAR = '), SRC.indexOf('var _colQ0 = ')) + SRC.match(/var _COL_C_ANTES[^\n]*/)[0] + SRC.slice(SRC.indexOf('var _COL_VIVO_GRANDE'), SRC.indexOf('function _colVivoCaidaOk'));
+  const N = ['_colActivo', '_colCp', '_colClasifica', '_colVivoCaidaOk', '_colPos', '_colRonda', '_colScan', '_colConfirmar', '_colAvisar', '_colDespachar', '_colBuscar', '_fenPlies'];
   const C = new Function('var AHORA = 1e9, Date = { now: function(){ return AHORA; } }, timers = [], mostrados = [];'
     + 'var _tdJsonNew = {}, _mevEvals = {}, _mev = {}, _tdCurrentRound = 5, _tdLiveCtx = { currentNum: 5 }, _tdCtx = { byRound: { 5: [] } };'
     + 'var document = { querySelectorAll: function(){ return []; } };'
@@ -5170,11 +5170,11 @@ console.log('\n=== 53g. Aviso de colgadas graves (19/09) ===');
   C.ficha.p7 = { fen: f1, res: '*' }; C.evals[f1] = { cp: -170 };
   C.scan();
   chk(C.extra.length === 0 && C.mostrados.length === 0, 'la primera vez que ve una partida sólo la anota (no avisa colgadas viejas al entrar)');
-  C.ficha.p7 = { fen: f2, res: '*' }; C.evals[f2] = { cp: -440 };
+  C.ficha.p7 = { fen: f2, res: '*' }; C.evals[f2] = { cp: -480 };
   C.scan();
   chk(C.extra.length === 1 && C.extra[0].depth === 16 && C.extra[0].fen === f2 && C.mostrados.length === 0,
       '🔒 candidata a prof. 12: NO avisa todavía, pide confirmar esa posición a prof. 16', JSON.stringify(C.extra.map(j => j.depth)));
-  C.extra.shift().cb({ cp: -520 });
+  C.extra.shift().cb({ cp: -580 });
   chk(C.mostrados.length === 1 && C.mostrados[0].join() === 'mesa7', 'confirmada a fondo → sale el cartel');
   // Otra colgada en la MISMA mesa a los 5 minutos: no avisa (20 min por mesa).
   C.ahora = C.ahora + 5 * 60000; C.deep[f3] = 16;
@@ -5192,6 +5192,12 @@ console.log('\n=== 53g. Aviso de colgadas graves (19/09) ===');
   C.ahora = C.ahora + 2 * 60000 + 1; C.timers.pop().fn();
   chk(C.mostrados.length === 3 && C.mostrados[2].join() === 'mesa7', 'al cumplirse los 2 minutos sale lo que esperaba');
 
+  // En vivo, además, una caída mínima según el tamaño de la ronda (idea del autor 19/09).
+  const V = new Function(decl + extraerFuncion('_colVivoCaidaOk') + '; return _colVivoCaidaOk;')();
+  chk(V(-170, -500, 'w', true, 24) === true && V(-170, -500, 'w', true, 400) === false && V(-170, -580, 'w', true, 400) === true,
+      '🔒 en vivo: 3 peones en un torneo normal (Campos −1,7 → −5 avisa con 24 partidas) y 4 en uno gigante (con 400 no)');
+  chk(V(20, -200, 'w', false, 24) === true && V(20, -200, 'w', false, 400) === false && V(20, -300, 'w', false, 400) === true,
+      'como candidata (prof. 12): 2 peones en uno normal, 3 en uno gigante (más de 50 partidas)');
   const cm = extraerFuncion('_colMostrar');
   chk(/Hubo colgadas en ' \+ items\.length \+ ' tableros/.test(cm) && /_COL_CARTEL_MS\)/.test(cm) && /col-nomas/.test(cm) && /_colSonido\(\)/.test(cm),
       'el cartel: "Hubo colgadas en N tableros" si son varias, sonido, "No avisarme más" y se va solo a los 15 s');
