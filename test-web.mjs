@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1316;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1321;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -5136,8 +5136,10 @@ console.log('\n=== 53f. Visor en el teléfono: tocar piezas y gráfico al cambia
 // ── 53g. Aviso de colgadas graves (19/09, en prueba con ?colgadas=1) ──
 console.log('\n=== 53g. Aviso de colgadas graves (19/09) ===');
 {
-  const decl = SRC.slice(SRC.indexOf('var _COL_PAR = '), SRC.indexOf('var _colQ0 = ')) + SRC.match(/var _COL_C_ANTES[^\n]*/)[0] + SRC.slice(SRC.indexOf('var _COL_VIVO_GRANDE'), SRC.indexOf('function _colVivoCaidaOk'));
-  const N = ['_colActivo', '_colCp', '_colClasifica', '_colVivoCaidaOk', '_colPos', '_colRonda', '_colScan', '_colConfirmar', '_colAvisar', '_colDespachar', '_colBuscar', '_fenPlies'];
+  const decl = SRC.slice(SRC.indexOf('var _COL_PAR = '), SRC.indexOf('var _colQ0 = ')) + SRC.match(/var _COL_C_ANTES[^\n]*/)[0]
+    + '\n' + SRC.match(/var _COL_MATE_ANTES[^\n]*/)[0]
+    + '\n' + SRC.slice(SRC.indexOf('var _COL_VIVO_GRANDE'), SRC.indexOf('function _colVivoCaidaOk'));
+  const N = ['_colActivo', '_colCp', '_colClasifica', '_colVivoCaidaOk', '_colMirandoGk', '_colPos', '_colRonda', '_colScan', '_colConfirmar', '_colAvisar', '_colDespachar', '_colBuscar', '_fenPlies'];
   const C = new Function('var AHORA = 1e9, Date = { now: function(){ return AHORA; } }, timers = [], mostrados = [];'
     + 'var _tdJsonNew = {}, _mevEvals = {}, _mev = {}, _tdCurrentRound = 5, _tdLiveCtx = { currentNum: 5 }, _tdCtx = { byRound: { 5: [] } };'
     + 'var document = { querySelectorAll: function(){ return []; } };'
@@ -5198,10 +5200,22 @@ console.log('\n=== 53g. Aviso de colgadas graves (19/09) ===');
       '🔒 en vivo: 3 peones en un torneo normal (Campos −1,7 → −5 avisa con 24 partidas) y 4 en uno gigante (con 400 no)');
   chk(V(20, -200, 'w', false, 24) === true && V(20, -200, 'w', false, 400) === false && V(20, -300, 'w', false, 400) === true,
       'como candidata (prof. 12): 2 peones en uno normal, 3 en uno gigante (más de 50 partidas)');
+  // Tipo M "se dejó mate" (idea del autor 20/09, con el caso real Barrionuevo–Valerga R4).
+  chk(JSON.stringify(K(375, 10000, true, true)) === '{"lado":"b","tipo":"M"}',
+      '🔒 Valerga venía −3,7 (fuera de "todavía en juego") y quedó con mate: ahora SÍ avisa, como mate');
+  chk(K(600, 10000, true, true) === null, 'si ya estaba perdido del todo (−6), el mate no avisa');
+  chk(/Hay mate' \+ \(it\.mateN \? ' en ' \+ it\.mateN/.test(extraerFuncion('_colTitulo')),
+      'el cartel dice "Hay mate en 3 en el tablero 7" en vez de "Hubo colgada"');
+  const mg = extraerFuncion('_colMirandoGk');
+  chk(/chess-overlay/.test(mg) && /_tdEvKey\(parsePgnHeaders\(cv\.rawPgn\)\)/.test(mg)
+      && /gk === _colMirandoGk\(\)/.test(extraerFuncion('_colScan')) && /_colMirandoGk\(\)/.test(extraerFuncion('_colConfirmar')),
+      '🔒 la partida abierta en el visor NO avisa (la está viendo): ni al detectarla ni al confirmarla');
+  chk(extraerFuncion('_colDetalleHtml').includes("'mate' : _colEvTxt(d)"), 'en el aviso de mate, el renglón termina en la palabra "mate" (el "#−" no se entendía)');
   const cm = extraerFuncion('_colMostrar');
   chk(/Hubo colgadas en ' \+ items\.length \+ ' tableros/.test(cm) && /_COL_CARTEL_MS\)/.test(cm) && /col-nomas/.test(cm) && /_colSonido\(\)/.test(cm),
       'el cartel: "Hubo colgadas en N tableros" si son varias, sonido, "No avisarme más" y se va solo a los 15 s');
-  chk(/Hubo colgada en el tablero ' \+ m\[1\]/.test(extraerFuncion('_colTitulo')), 'el título dice "Hubo colgada en el tablero N" (pedido del autor)');
+  chk(/'Hubo colgada'/.test(extraerFuncion('_colTitulo')) && /que \+ ' en el tablero ' \+ m\[1\]/.test(extraerFuncion('_colTitulo')),
+      'el título dice "Hubo colgada en el tablero N" (pedido del autor), o "Hay mate en N" si se dejó mate');
   chk(/tdFinalFen|new Chess/.test(extraerFuncion('_colScan') + extraerFuncion('_colMasTrabajos') + extraerFuncion('_colPos')) === false,
       '🔒 la vigilancia de la ronda NUNCA reproduce partidas (eso congeló la página el 17/09): sólo ficha o miniatura dibujada');
   chk(/aa_pref_col_off/.test(SRC.slice(SRC.indexOf('function openPrefs'), SRC.indexOf('function openPrefs') + 6000)),

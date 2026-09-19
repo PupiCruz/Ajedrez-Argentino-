@@ -33147,11 +33147,16 @@ function _colCp(sc, fen) {
 // colgada decisiva (pedido del autor, 19/09: "si venía con −1 en contra y queda +2, estaría bien").
 // Es la sección "ventaja" del generador de ejercicios (EDGE: de igualado a +3).
 var _COL_C_ANTES = -100, _COL_CAND_C = -100, _COL_FIN_C = -150, _COL_CAND_C_CAIDA = 200, _COL_FIN_C_CAIDA = 250;
+// Tipo M "se dejó mate" (idea del autor 20/09; caso Barrionuevo–Valerga R4: venía −3,7, o sea fuera de la
+// franja de "todavía en juego", y quedó con mate forzado, así que no avisaba). Vale desde cualquier
+// posición que no estuviera ya perdida del todo.
+var _COL_MATE_ANTES = -400;
 function _colClasifica(antes, despues, fin, vuelta) {
   if (antes == null || despues == null) return null;
   var tA = fin ? _COL_FIN_A : _COL_CAND_A, tB = fin ? _COL_FIN_B : _COL_CAND_B;
   for (var k = 0; k < 2; k++) {
     var lado = k ? 'b' : 'w', s = k ? -1 : 1, a = antes * s, d = despues * s;
+    if (d <= -9000 && a >= _COL_MATE_ANTES) return { lado: lado, tipo: 'M' };   // le dieron mate forzado
     if (a >= -_COL_PAR && a <= _COL_PAR && d <= tA) return { lado: lado, tipo: 'A' };
     if (a >= _COL_GAN && d <= tB) return { lado: lado, tipo: 'B' };
     if (vuelta && a >= _COL_C_ANTES && a < _COL_GAN && d <= (fin ? _COL_FIN_C : _COL_CAND_C)
@@ -33173,6 +33178,15 @@ function _colVivoCaidaOk(antes, despues, lado, fin, nPartidas) {
   var s = lado === 'w' ? 1 : -1, g = (nPartidas || 0) > _COL_VIVO_GRANDE;
   var min = g ? (fin ? _COL_VIVO_CAIDA_G : _COL_VIVO_CAIDA_G_CAND) : (fin ? _COL_VIVO_CAIDA : _COL_VIVO_CAIDA_CAND);
   return (antes * s - despues * s) >= min;
+}
+// La partida que el visitante tiene ABIERTA en el visor no se avisa: la está viendo con sus propios ojos
+// (pedido del autor 20/09). Además ahí la eval viene del motor del visor, mucho más honda.
+function _colMirandoGk() {
+  try {
+    var ov = document.getElementById('chess-overlay');
+    if (!ov || !ov.classList.contains('open') || !cv || !cv.rawPgn) return '';
+    return _tdEvKey(parsePgnHeaders(cv.rawPgn));
+  } catch (e) { return ''; }
 }
 // Posición actual de una partida SIN reproducirla: la ficha de Lichess o la miniatura dibujada.
 function _colPos(g, enPantalla) {
@@ -33222,6 +33236,7 @@ function _colScan() {
     _colEst[gk] = now; _capCache(_colEst, 1500);
     if (!prev || now.plies <= prev.plies) return;             // la primera vez sólo se anota
     if (ahora < (_colMesaHasta[gk] || 0)) return;             // esta mesa ya avisó hace poco
+    if (gk === _colMirandoGk()) return;                       // la está mirando: no hace falta avisarle
     var honda = (_colDeep[p.fen] || 0) >= _COL_CONFIRM_DEPTH;
     var c = _colClasifica(prev.cp, now.cp, honda, true);   // los 3 tipos, también "se dio vuelta" (pedido del autor)
     if (c && !_colVivoCaidaOk(prev.cp, now.cp, c.lado, honda, games.length)) c = null;   // en vivo, además, caída grande
@@ -33240,6 +33255,9 @@ function _colConfirmar(info) {
     delete _colPend[f];
     var cp = _colCp(score, f), c = _colClasifica(info.prev.cp, cp, true, true);
     if (!c || c.lado !== info.c.lado) return;               // a fondo no era tan grave
+    if (info.gk === _colMirandoGk()) return;                // la abrió mientras el motor confirmaba
+    if (score && score.mate !== undefined) info.mateN = Math.abs(score.mate);
+    info.c = c;
     if (!_colVivoCaidaOk(info.prev.cp, cp, c.lado, true, (_colRonda() || []).length)) return;
     if (Date.now() < (_colMesaHasta[info.gk] || 0)) return;
     info.now.cp = cp; info.c = c;
@@ -33295,10 +33313,11 @@ function _colJugada(prev, now) {
   return 'jugada ' + (parseInt(String(now.fen).split(' ')[5], 10) || n);
 }
 function _colTitulo(it) {
-  var h = it.g.h || {};
-  if (h.WhiteTeam && h.BlackTeam) return 'Hubo colgada en ' + escHtml(_paisES(h.WhiteTeam)) + ' – ' + escHtml(_paisES(h.BlackTeam));
+  var h = it.g.h || {}, mate = it.c && it.c.tipo === 'M';
+  var que = mate ? ('Hay mate' + (it.mateN ? ' en ' + it.mateN : '')) : 'Hubo colgada';
+  if (h.WhiteTeam && h.BlackTeam) return que + ' en ' + escHtml(_paisES(h.WhiteTeam)) + ' – ' + escHtml(_paisES(h.BlackTeam));
   var m = /^\d+\.(\d+)$/.exec(String(h.Round || ''));
-  return m ? 'Hubo colgada en el tablero ' + m[1] : 'Hubo colgada';
+  return m ? que + ' en el tablero ' + m[1] : que;
 }
 function _colJugadoresHtml(it) {
   var h = it.g.h || {}, crk = (_tdCtx && _tdCtx.crKey) || null;
@@ -33309,7 +33328,8 @@ function _colJugadoresHtml(it) {
 }
 function _colDetalleHtml(it) {
   var a = it.prev.cp, d = it.now.cp;
-  return escHtml(_colJugada(it.prev, it.now)) + ' &nbsp;<span class="col-ch col-ch-a">' + _colEvTxt(a) + '</span> → <span class="col-ch col-ch-d">' + _colEvTxt(d) + '</span>';
+  var fin = (it.c && it.c.tipo === 'M') ? 'mate' : _colEvTxt(d);   // "#−" no se entiende; en el mate, la palabra
+  return escHtml(_colJugada(it.prev, it.now)) + ' &nbsp;<span class="col-ch col-ch-a">' + _colEvTxt(a) + '</span> → <span class="col-ch col-ch-d">' + fin + '</span>';
 }
 
 function _colSonido() {
@@ -33360,7 +33380,7 @@ function _colMostrar(items) {
   var uno = items.length === 1, it = items[0];
   var cuerpo = uno
     ? '<b>' + _colTitulo(it) + '</b><span>' + _colJugadoresHtml(it) + '</span><span>' + _colDetalleHtml(it) + '</span>'
-    : '<b>Hubo colgadas en ' + items.length + ' tableros</b>' + items.map(function(x){
+    : '<b>' + (items.every(function(x){ return x.c && x.c.tipo === 'M'; }) ? 'Hay mate en ' + items.length + ' tableros' : 'Hubo colgadas en ' + items.length + ' tableros') + '</b>' + items.map(function(x){
         return '<button type="button" class="col-fila" data-gk="' + escHtml(x.gk) + '" data-ply="' + x.now.plies + '"><span class="col-fila-j">' + _colJugadoresHtml(x) + '</span><span>' + _colDetalleHtml(x) + '</span></button>';
       }).join('');
   d.innerHTML = '<div class="col-top"><span class="col-nb" aria-hidden="true">??</span><div class="col-txt">' + cuerpo + '</div></div>'
@@ -33700,7 +33720,7 @@ function _cgEvSolverHtml(it) {
     + '</span> → <span class="col-ch cg-ch-bien">' + _cgEvTxt(it.despues * sg) + '</span>'
     + (Math.abs(_cgCaida(it)) < 5000 ? ' · cae ' + (_cgCaida(it) / 100).toFixed(1).replace('.', ',') : '');
 }
-function _cgTipoTxt(t) { return t === 'B' ? 'tiró la ganada' : t === 'C' ? 'se dio vuelta' : 'perdió una pareja'; }
+function _cgTipoTxt(t) { return t === 'M' ? 'se dejó mate' : t === 'B' ? 'tiró la ganada' : t === 'C' ? 'se dio vuelta' : 'perdió una pareja'; }
 function cgFiltro(k) { _cg.filtro = k; _cgRenderYa(); }
 // Cuánto empeoró el que se colgó, en centipeones (los mates cuentan como ±100 peones).
 function _cgCaida(it) {
@@ -33732,7 +33752,7 @@ function _cgTemasConocidos() {
 }
 function _cgExpHtml(it) {
   var mate = it.despues >= 10000 || it.despues <= -10000;
-  var sec = it.tipo === 'B' ? 'defensa' : it.tipo === 'C' ? 'ventaja' : (mate ? 'mates' : 'tactics');
+  var sec = (it.tipo === 'M' || mate) ? 'mates' : it.tipo === 'B' ? 'defensa' : it.tipo === 'C' ? 'ventaja' : 'tactics';
   var temas = _cgTemasConocidos();
   return '<div class="cg-exp" id="cg-exp">'
     + '<label>Rating <input type="number" id="cg-exp-rat" min="400" max="3000" step="25" value="1500"></label>'
