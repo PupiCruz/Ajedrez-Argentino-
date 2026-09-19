@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1294;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1295;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -5136,7 +5136,7 @@ console.log('\n=== 53f. Visor en el teléfono: tocar piezas y gráfico al cambia
 // ── 53g. Aviso de colgadas graves (19/09, en prueba con ?colgadas=1) ──
 console.log('\n=== 53g. Aviso de colgadas graves (19/09) ===');
 {
-  const decl = SRC.slice(SRC.indexOf('var _COL_PAR = '), SRC.indexOf('var _colQ0 = '));
+  const decl = SRC.slice(SRC.indexOf('var _COL_PAR = '), SRC.indexOf('var _colQ0 = ')) + SRC.match(/var _COL_C_ANTES[^\n]*/)[0];
   const N = ['_colActivo', '_colCp', '_colClasifica', '_colPos', '_colRonda', '_colScan', '_colConfirmar', '_colAvisar', '_colDespachar', '_colBuscar', '_fenPlies'];
   const C = new Function('var AHORA = 1e9, Date = { now: function(){ return AHORA; } }, timers = [], mostrados = [];'
     + 'var _tdJsonNew = {}, _mevEvals = {}, _mev = {}, _tdCurrentRound = 5, _tdLiveCtx = { currentNum: 5 }, _tdCtx = { byRound: { 5: [] } };'
@@ -5215,7 +5215,9 @@ console.log('\n=== 53h. Colgadas de la ronda: barrido, revisión y tablero de ej
   // Tipo C "se dio vuelta" (pedido del autor): el que movió estaba +1 y queda −2 (el rival: de −1 a +2).
   const KC = G._colClasifica;
   chk(JSON.stringify(KC(100, -200, true, true)) === '{"lado":"w","tipo":"C"}', '🔒 "se dio vuelta": de +1 a −2 para el que movió (el ejemplo del autor) cuenta en el barrido');
-  chk(KC(100, -200, true) === null, '🔒 …pero NO en el aviso en vivo (avisaría demasiado seguido)');
+  chk(extraerFuncion('_colScan').includes('_colClasifica(prev.cp, now.cp, honda, true)') && extraerFuncion('_colConfirmar').includes('_colClasifica(info.prev.cp, cp, true, true)'),
+      '🔒 …y también en el aviso en vivo (pedido del autor: de +1 a −3 o de +2 a −2 siguen siendo colgadas)');
+  chk(JSON.stringify(KC(200, -200, true, true)) === '{"lado":"w","tipo":"C"}', 'de +2 a −2 también es "se dio vuelta"');
   chk(KC(100, -120, true, true) === null && KC(-150, -350, true, true) === null && KC(50, -130, true, true) === null,
       'no cuenta si queda apenas peor (−1,2), si ya venía perdiendo (−1,5), ni con una caída chica');
   chk(JSON.stringify(KC(50, -500, true, true)) === '{"lado":"w","tipo":"A"}', 'si el vuelco deja la partida decidida, es "perdió una pareja" (tipo A), no C');
