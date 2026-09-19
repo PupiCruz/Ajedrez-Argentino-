@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1325;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1326;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -5223,6 +5223,8 @@ console.log('\n=== 53g. Aviso de colgadas graves (19/09) ===');
       '🔒 la partida abierta en el visor NO avisa (la está viendo): ni al detectarla ni al confirmarla');
   chk(extraerFuncion('_colDetalleHtml').includes("'mate' : _colEvTxt(d)"), 'en el aviso de mate, el renglón termina en la palabra "mate" (el "#−" no se entendía)');
   const cm = extraerFuncion('_colMostrar');
+  chk(cm.includes("soloMate ? ' col-mate' : ''") && cm.includes("soloMate ? '#' : '??'") && /.col-cartel.col-mate { background:#2a2419; border-color:#e0a33a;/.test(SRC),
+      '🔒 el aviso de MATE va en amarillo y con "#"; el de colgada sigue rojo con "??" (pedido del autor)');
   chk(/Hubo colgadas en ' \+ items\.length \+ ' tableros/.test(cm) && /_COL_CARTEL_MS\)/.test(cm) && /col-nomas/.test(cm) && /_colSonido\(\)/.test(cm),
       'el cartel: "Hubo colgadas en N tableros" si son varias, sonido, "No avisarme más" y se va solo a los 15 s');
   chk(/'Hubo colgada'/.test(extraerFuncion('_colTitulo')) && /que \+ ' en el tablero ' \+ m\[1\]/.test(extraerFuncion('_colTitulo')),
