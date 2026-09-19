@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1315;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1316;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -5297,6 +5297,8 @@ console.log('\n=== 53h. Colgadas de la ronda: barrido, revisión y tablero de ej
   const ra = extraerFuncion('puzRenderActions');
   chk(ra.includes("_cg1 && !_ondemand && _cg.desdeRevision") && ra.includes('cgMarcarPuz(\\\'ok\\\')') && ra.includes('cgMarcarPuz(\\\'no\\\')'),
       '🔒 con "Probar" desde la revisión, Aceptar / Rechazar en el mismo tablero (sólo el autor; comillas escapadas: sin eso se rompía la página)');
+  chk(/_cg\.retomar = \{ lista:/.test(extraerFuncion('_cgVerPartida')) && /_cgVigilarVuelta\(\);/.test(extraerFuncion('_cgVerPartida')),
+      '🔒 cualquier visitante que va a la partida original vuelve a la MISMA colgada (antes lo devolvía al torneo y empezaba de la primera)');
   const vv = extraerFuncion('_cgVigilarVuelta');
   chk(/cgAbrirRevision\(\);\s*_cgIrACard\(_cg\.volverA\)/.test(vv) && /_cg\.esperarVisor/.test(vv) && /_cg\.esperarVisor = Date\.now\(\) \+ 4000/.test(extraerFuncion('_cgVerPartida')),
       'al cerrar el tablero o la partida original, la revisión vuelve sola y queda en la colgada que se estaba mirando (pedido del autor)');

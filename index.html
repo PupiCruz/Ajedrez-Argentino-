@@ -33842,9 +33842,19 @@ function _cgVigilarVuelta() {
     var puzAb = po && po.classList.contains('open'), visAb = co && co.classList.contains('open');
     if (puzAb && puz.cur && puz.cur.colgada && puz.cur.cg) _cg.volverA = puz.cur.cg.id;
     if (puzAb || visAb || Date.now() < (_cg.esperarVisor || 0)) return;   // (el visor tarda un poco en abrir)
-    clearInterval(_cg.vueltaT); _cg.vueltaT = null; _cg.desdeRevision = false;
-    cgAbrirRevision();
-    _cgIrACard(_cg.volverA);
+    clearInterval(_cg.vueltaT); _cg.vueltaT = null;
+    var ret = _cg.retomar; _cg.retomar = null;
+    if (_cg.desdeRevision) {   // el autor estaba revisando: vuelve la revisión, parada en esa colgada
+      _cg.desdeRevision = false;
+      cgAbrirRevision();
+      _cgIrACard(_cg.volverA);
+      return;
+    }
+    // Cualquier visitante: vuelve el tablero de colgadas, en la misma y con la misma lista (mismo orden).
+    if (ret && ret.lista.length && String(_tdTourKey) === ret.tour && typeof puzOpenOverlay === 'function') {
+      puz.tema = null; puz.list = ret.lista; puz.idx = Math.min(ret.idx, ret.lista.length - 1);
+      puzOpenOverlay(); puzLoad();
+    }
   }, 400);
 }
 function _cgIrACard(id) {
@@ -33940,7 +33950,11 @@ function _cgVerPartida(it) {
   for (var i = 0; i < games.length; i++) {
     var h = parsePgnHeaders(games[i]);
     if (_cgGameKeyId(h) === _cgGameKeyId({ Round: it.r, White: it.w, Black: it.b })) {
-      _cg.esperarVisor = Date.now() + 4000;   // si se vino de la revisión, que no vuelva antes de que abra el visor
+      // Al cerrar la partida, volver a la colgada que se estaba resolviendo (a TODOS, no sólo al autor: el
+      // visitante volvía al torneo y, al entrar de nuevo, empezaba desde la primera colgada).
+      _cg.esperarVisor = Date.now() + 4000;   // el visor tarda un poco en abrir: no volver antes
+      _cg.retomar = { lista: (puz.list || []).slice(), idx: puz.idx, tour: String(_tdTourKey) };
+      _cgVigilarVuelta();
       if (typeof _puzDoClose === 'function') _puzDoClose();
       Promise.resolve(tdOpenGame(i, _tdCtx.pgnKey, _tdCtx.name, _tdCtx.location)).then(function(){ _colIrA(it.ply); });
       return true;
