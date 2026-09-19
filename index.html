@@ -3264,6 +3264,7 @@
       .col-txt .flag-ic { vertical-align:-1px; }
       .col-ch { display:inline-block; padding:0 5px; border-radius:5px; font-size:11.5px; font-weight:700; }
       .col-ch-a { background:#3a2a22; color:#e8b48a; } .col-ch-d { background:#4a1c1c; color:#f5a3a3; }
+      .cg-ch-bien { background:#1c3a2a; color:#8fe0b0; }   /* después, desde el que castiga: su ventaja */
       .col-fila { display:flex; flex-direction:column; gap:1px; text-align:left; background:rgba(255,255,255,.04); border:1px solid rgba(208,48,48,.35);
         border-radius:9px; padding:5px 8px; margin-top:3px; color:#f7e3e3; font-size:12px; font-family:inherit; cursor:pointer; }
       .col-fila:hover { background:rgba(208,48,48,.16); }
@@ -33135,13 +33136,20 @@ function _colCp(sc, fen) {
   return sc.cp;
 }
 // ¿Es colgada? antes/despues desde las blancas. `fin` = confirmada a prof. 16 (umbrales finales).
-function _colClasifica(antes, despues, fin) {
+// `vuelta` suma el tipo C "se dio vuelta" (sólo en Colgadas de la ronda; en vivo avisaría de más):
+// el que movió no estaba peor que −1, pierde 2,5 peones o más y queda −1,5 o peor, sin llegar a la
+// colgada decisiva (pedido del autor, 19/09: "si venía con −1 en contra y queda +2, estaría bien").
+// Es la sección "ventaja" del generador de ejercicios (EDGE: de igualado a +3).
+var _COL_C_ANTES = -100, _COL_CAND_C = -100, _COL_FIN_C = -150, _COL_CAND_C_CAIDA = 200, _COL_FIN_C_CAIDA = 250;
+function _colClasifica(antes, despues, fin, vuelta) {
   if (antes == null || despues == null) return null;
   var tA = fin ? _COL_FIN_A : _COL_CAND_A, tB = fin ? _COL_FIN_B : _COL_CAND_B;
   for (var k = 0; k < 2; k++) {
     var lado = k ? 'b' : 'w', s = k ? -1 : 1, a = antes * s, d = despues * s;
     if (a >= -_COL_PAR && a <= _COL_PAR && d <= tA) return { lado: lado, tipo: 'A' };
     if (a >= _COL_GAN && d <= tB) return { lado: lado, tipo: 'B' };
+    if (vuelta && a >= _COL_C_ANTES && a < _COL_GAN && d <= (fin ? _COL_FIN_C : _COL_CAND_C)
+        && a - d >= (fin ? _COL_FIN_C_CAIDA : _COL_CAND_C_CAIDA)) return { lado: lado, tipo: 'C' };
   }
   return null;
 }
@@ -33365,7 +33373,9 @@ var _CG_DESDE_PLY = 10;          // la apertura no cuenta (desde la jugada 6)
 var _CG_VERIF_DEPTH = 18;        // la vara del gráfico (_FA_MANUAL_DEPTH): confirma las candidatas del motor
 var _CG_VERIF_DEPTH_LI = 14;     // con eval de Lichess la gravedad ya está confirmada: sólo hace falta el castigo
                                  // (Olimpiada R3: 289 candidatas; a prof. 18 eran ~2,5 s cada una = 12 min)
-var _CG_ALT_MARGEN = 150;        // otra jugada vale como castigo si queda a menos de 1,5 de la mejor
+var _CG_ALT_MARGEN_MIN = 80;     // otra jugada vale como castigo si queda cerca de la mejor: 0,8 peones…
+var _CG_ALT_MARGEN_FRAC = 0.35;  // …o el 35% de la ventaja, lo que sea más
+var _CG_CLARA_MIN = 100;         // con eval de Lichess: si el castigo no le mejora ni 1 peón al que castiga, "no clara"
 var _cgPub = {}, _cgPubPedido = {};
 var _cg = { corriendo: false, tour: null, rk: null, ronda: null, hechas: 0, total: 0, filtro: 'todas', soloArg: false, soloUnica: false, abiertaExp: null, renderT: null };
 
@@ -33429,7 +33439,7 @@ function _cgDetectar(P, evCp, fin) {
   for (var i = _CG_DESDE_PLY; i < P.uci.length; i++) {
     var a = evCp[i], d = evCp[i + 1];
     if (a == null || d == null) continue;
-    var mover = P.fens[i].split(' ')[1], c = _colClasifica(a, d, fin);
+    var mover = P.fens[i].split(' ')[1], c = _colClasifica(a, d, fin, true);
     if (c && c.lado === mover) out.push({ i: i, a: a, d: d, tipo: c.tipo });
   }
   return out;
@@ -33504,17 +33514,23 @@ function _cgVerificar(g, P, c, deLichess) {
     try {
       lines = (lines && lines.length) ? lines : [];
       if (lines.length) {
-        var best = lines[0], bestCp = _colCp(best.sc, f), ok = _colClasifica(c.a, bestCp, true);
-        // ¿El motor del navegador VE el castigo? Con eval de Lichess puede que no: hay colgadas que sólo
-        // un análisis muy hondo encuentra (Levacic–Mesic R3, 25.g5: Lichess −4,6, acá −2,1 aun a prof. 22,
-        // con otras dos jugadas a −1,5). Esas se muestran igual, pero marcadas: como ejercicio no sirven.
-        var cand = _colClasifica(c.a, bestCp, false), clara = !!(cand && cand.lado === mover);
+        var best = lines[0], bestCp = _colCp(best.sc, f), ok = _colClasifica(c.a, bestCp, true, true);
+        var solSign = mover === 'w' ? -1 : 1, bestSol = bestCp * solSign;
+        // Con eval de Lichess la GRAVEDAD ya está confirmada; acá sólo importa si el castigo se destaca.
+        // Medido en la R1 de la Olimpiada: a prof. 14 nuestro motor ve estas ventajas un 40-60% más chicas
+        // que Lichess (+4,7 → +1,95), así que exigirle el umbral de la colgada marcaba la mitad como "no
+        // clara". "No clara" queda para cuando el castigo no le MEJORA ni un peón al que castiga respecto de
+        // antes de la colgada (no "queda con ventaja": en "tiró la ganada" el que castiga venía −4 y el
+        // castigo lo deja igualado, cerca de 0).
+        var clara = deLichess ? (bestSol - c.a * solSign) >= _CG_CLARA_MIN : true;
         if (deLichess || (ok && ok.lado === mover)) {
-          var solSign = mover === 'w' ? -1 : 1, bestSol = bestCp * solSign;
+          // Otra jugada también vale si queda cerca de la mejor: el margen crece con la ventaja (a prof. 14
+          // los números vienen comprimidos, un margen fijo de 1,5 aceptaba casi todo).
+          var margen = Math.max(_CG_ALT_MARGEN_MIN, Math.round(Math.min(bestSol, 1000) * _CG_ALT_MARGEN_FRAC));
           var alts = lines.slice(1).filter(function(l){
-            var cp = _colCp(l.sc, f), k2 = _colClasifica(c.a, cp, false);
-            return cp * solSign >= bestSol - _CG_ALT_MARGEN && (!clara || (k2 && k2.lado === mover));
+            return _colCp(l.sc, f) * solSign >= bestSol - margen;
           }).map(function(l){ return l.mv; });
+          if (!deLichess && ok) c.tipo = ok.tipo;   // a fondo puede cambiar de tipo (una "se dio vuelta" que era decisiva)
           _cgAgregar(g, P, c, deLichess ? c.d : bestCp, best.mv, alts, clara && (lines.length < 2 || alts.length === 0), deLichess, clara);
         }
       }
@@ -33608,7 +33624,7 @@ function _cgRenderYa() {
   var its = _cgItems(_cg.tour, _cg.rk);
   var n = { todas: its.length, pend: 0, ok: 0, no: 0 };
   its.forEach(function(it){ n[it.estado]++; });
-  var vis = its.filter(function(it){ return (_cg.filtro === 'todas' || it.estado === _cg.filtro) && (!_cg.soloArg || it.arg) && (!_cg.soloUnica || it.unico); });
+  var vis = its.filter(function(it){ return (_cg.filtro === 'todas' || it.estado === _cg.filtro) && (!_cg.soloArg || it.arg) && (!_cg.soloUnica || it.unico) && (!_cg.soloDecisivas || it.tipo !== 'C'); });
   var tab = function(k, t){ return '<button class="cg-tab' + (_cg.filtro === k ? ' on' : '') + '" onclick="cgFiltro(\'' + k + '\')">' + t + ' (' + n[k] + ')</button>'; };
   var h = '<div class="cg-box">'
     + '<div class="cg-head"><b>🎯 Colgadas de la ronda ' + escHtml(String(_cg.ronda)) + '</b>'
@@ -33619,7 +33635,8 @@ function _cgRenderYa() {
     + '<div class="cg-tabs">' + tab('todas', 'Todas') + tab('pend', 'Por revisar') + tab('ok', '✅ Aceptadas') + tab('no', '❌ Rechazadas')
     + '<span style="flex:1"></span>'
     + '<button class="cg-tab' + (_cg.soloArg ? ' on' : '') + '" onclick="cgSoloArg()">' + _flagImg('ARG') + ' Solo argentinos</button>'
-    + '<button class="cg-tab' + (_cg.soloUnica ? ' on' : '') + '" onclick="cgSoloUnica()">Castigo único</button></div>'
+    + '<button class="cg-tab' + (_cg.soloUnica ? ' on' : '') + '" onclick="cgSoloUnica()">Castigo único</button>'
+    + '<button class="cg-tab' + (_cg.soloDecisivas ? ' on' : '') + '" onclick="cgSoloDecisivas()" title="Oculta las que se dieron vuelta sin quedar decididas">Sólo decisivas</button></div>'
     + '<div class="cg-lista">';
   if (!vis.length) h += '<div class="cg-vacio">' + (_cg.corriendo ? 'Buscando…' : (its.length ? 'Nada en este filtro.' : 'No se encontraron colgadas en esta ronda.')) + '</div>';
   vis.forEach(function(it){
@@ -33628,10 +33645,10 @@ function _cgRenderYa() {
       + '<div class="cg-bd" onclick="cgProbar(\'' + escJs(it.id) + '\')" title="Probarla">' + tdMiniFen(it.fen, last, solver === 'b') + '</div>'
       + '<div class="cg-info">'
       + '<b>' + escHtml(_cgApellido(it.w)) + ' – ' + escHtml(_cgApellido(it.b)) + '</b>'
-      + '<span>' + escHtml(_cgJugadaTxt(it)) + ' &nbsp;<span class="col-ch col-ch-a">' + _cgEvTxt(it.antes) + '</span> → <span class="col-ch col-ch-d">' + _cgEvTxt(it.despues) + '</span>'
-      + ' · ' + (it.tipo === 'B' ? 'tiró la ganada' : 'perdió una pareja') + '</span>'
+      + '<span>' + escHtml(_cgJugadaTxt(it)) + ' · ' + _cgTipoTxt(it.tipo) + '</span>'
+      + '<span>' + _cgEvSolverHtml(it) + '</span>'
       + '<span>Castigo: <b>' + escHtml(typeof cvFan === 'function' ? cvFan(it.solSan[0]) : it.solSan[0]) + '</b>'
-      + (it.unico ? ' (única)' : ' (+' + it.alts.length + ' que también sirven)') + ' · ' + escHtml(_cgTextoPartida(it)) + '</span>'
+      + (it.unico ? ' (única)' : it.alts.length ? ' (+' + it.alts.length + (it.alts.length === 1 ? ' que también sirve)' : ' que también sirven)') : '') + ' · ' + escHtml(_cgTextoPartida(it)) + '</span>'
       + (it.clara === false ? '<span class="cg-aviso">⚠ Lichess la ve, pero acá el castigo no es claro: mejor no usarla como ejercicio.</span>' : '')
       + '<div class="cg-acc">'
       + '<button class="cg-si' + (it.estado === 'ok' ? ' on' : '') + '" onclick="cgMarcar(\'' + escJs(it.id) + '\',\'ok\')">✅ Aceptar</button>'
@@ -33645,7 +33662,15 @@ function _cgRenderYa() {
   h += '</div></div>';
   ov.innerHTML = h;
 }
+// La eval desde el que CASTIGA ("para Peralta: +1,1 → +5,9"): con negras se lee mejor que "−1,1 → −5,9".
+function _cgEvSolverHtml(it) {
+  var solver = it.fen.split(' ')[1], sg = solver === 'w' ? 1 : -1;
+  return 'para ' + escHtml(_cgApellido(solver === 'w' ? it.w : it.b)) + ': <span class="col-ch col-ch-a">' + _cgEvTxt(it.antes * sg)
+    + '</span> → <span class="col-ch cg-ch-bien">' + _cgEvTxt(it.despues * sg) + '</span>';
+}
+function _cgTipoTxt(t) { return t === 'B' ? 'tiró la ganada' : t === 'C' ? 'se dio vuelta' : 'perdió una pareja'; }
 function cgFiltro(k) { _cg.filtro = k; _cgRenderYa(); }
+function cgSoloDecisivas() { _cg.soloDecisivas = !_cg.soloDecisivas; _cgRenderYa(); }
 function cgSoloArg() { _cg.soloArg = !_cg.soloArg; _cgRenderYa(); }
 function cgSoloUnica() { _cg.soloUnica = !_cg.soloUnica; _cgRenderYa(); }
 function _cgBuscarItem(id) { var its = _cgItems(_cg.tour, _cg.rk); for (var i = 0; i < its.length; i++) if (its[i].id === id) return its[i]; return null; }
@@ -33669,7 +33694,7 @@ function _cgTemasConocidos() {
 }
 function _cgExpHtml(it) {
   var mate = it.despues >= 10000 || it.despues <= -10000;
-  var sec = it.tipo === 'B' ? 'defensa' : (mate ? 'mates' : 'tactics');
+  var sec = it.tipo === 'B' ? 'defensa' : it.tipo === 'C' ? 'ventaja' : (mate ? 'mates' : 'tactics');
   var temas = _cgTemasConocidos();
   return '<div class="cg-exp" id="cg-exp">'
     + '<label>Rating <input type="number" id="cg-exp-rat" min="400" max="3000" step="25" value="1500"></label>'

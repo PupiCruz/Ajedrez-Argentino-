@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1287;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1294;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -5209,9 +5209,19 @@ console.log('\n=== 53g. Aviso de colgadas graves (19/09) ===');
 console.log('\n=== 53h. Colgadas de la ronda: barrido, revisión y tablero de ejercicios (19/09) ===');
 {
   const decl = SRC.slice(SRC.indexOf('var _COL_PAR = '), SRC.indexOf('var _COL_CONFIRM_DEPTH'));
-  const G = new Function(decl + 'var _CG_DESDE_PLY = 10;'
+  const G = new Function(decl + SRC.match(/var _COL_C_ANTES[^\n]*/)[0] + 'var _CG_DESDE_PLY = 10;'
     + ['_colClasifica', '_cgDetectar', '_cgPublicable', '_cgRoundCmp'].map(extraerFuncion).join('\n')
-    + '; return { _cgDetectar: _cgDetectar, _cgPublicable: _cgPublicable, _cgRoundCmp: _cgRoundCmp };')();
+    + '; return { _cgDetectar: _cgDetectar, _cgPublicable: _cgPublicable, _cgRoundCmp: _cgRoundCmp, _colClasifica: _colClasifica };')();
+  // Tipo C "se dio vuelta" (pedido del autor): el que movió estaba +1 y queda −2 (el rival: de −1 a +2).
+  const KC = G._colClasifica;
+  chk(JSON.stringify(KC(100, -200, true, true)) === '{"lado":"w","tipo":"C"}', '🔒 "se dio vuelta": de +1 a −2 para el que movió (el ejemplo del autor) cuenta en el barrido');
+  chk(KC(100, -200, true) === null, '🔒 …pero NO en el aviso en vivo (avisaría demasiado seguido)');
+  chk(KC(100, -120, true, true) === null && KC(-150, -350, true, true) === null && KC(50, -130, true, true) === null,
+      'no cuenta si queda apenas peor (−1,2), si ya venía perdiendo (−1,5), ni con una caída chica');
+  chk(JSON.stringify(KC(50, -500, true, true)) === '{"lado":"w","tipo":"A"}', 'si el vuelco deja la partida decidida, es "perdió una pareja" (tipo A), no C');
+  const cr = extraerFuncion('_cgRenderYa');
+  chk(/_cgEvSolverHtml\(it\)/.test(cr) && /'para ' \+/.test(extraerFuncion('_cgEvSolverHtml')) && /cgSoloDecisivas/.test(cr),
+      'la revisión muestra la eval desde el que castiga ("para Peralta: +1,1 → +5,9") y el filtro "Sólo decisivas"');
   // 14 medias jugadas; en la 11 (juegan negras: índice impar) las negras pasan de −0,5 a +5.
   const fens = Array.from({ length: 15 }, (_, k) => 'x ' + (k % 2 ? 'b' : 'w'));
   const P = { fens: fens, uci: Array(14).fill('e2e4') };
@@ -5235,6 +5245,10 @@ console.log('\n=== 53h. Colgadas de la ronda: barrido, revisión y tablero de ej
       '🔒 la verificación da el castigo con 3 líneas, y marca las que Lichess ve pero el motor no ve claras (no son "únicas")');
   chk(/if \(_mevExtra\.length\) setTimeout\(mevTick, 0\);/.test(extraerFuncion('mevNext')) && /_cg\.vigia = setInterval/.test(barrer),
       '🔒 lo que se encola mientras el motor trabaja arranca otra tanda (sin nada en vivo el barrido se quedaba clavado en "motor 140 / 255")');
+  chk(/var clara = deLichess \? \(bestSol - c\.a \* solSign\) >= _CG_CLARA_MIN : true;/.test(verif)
+      && /Math\.max\(_CG_ALT_MARGEN_MIN, Math\.round\(Math\.min\(bestSol, 1000\) \* _CG_ALT_MARGEN_FRAC\)\)/.test(verif),
+      '🔒 "no clara" = el castigo no le mejora ni un peón al que castiga (medido R1: 53% → 22%; "tiró la ganada" ya no sale toda como no clara); alternativas con margen que crece con la ventaja');
+  chk(!/\+0 que/.test(cr) && /it\.alts\.length === 1 \? ' que también sirve\)'/.test(cr), 'sin el "(+0 que también sirven)" cuando no hay alternativas');
   chk(/960\|fischer\|freestyle/.test(posic) && !/tdFinalFen/.test(posic), 'el 960 no se barre (lo reproduce otro camino)');
 
   // Tablero de ejercicios: no suman rating, no tocan el link, en orden, desafío según la partida.
