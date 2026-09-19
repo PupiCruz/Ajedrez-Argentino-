@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1311;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1313;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -5290,6 +5290,11 @@ console.log('\n=== 53h. Colgadas de la ronda: barrido, revisión y tablero de ej
       '🔒 en las colgadas no aparece el panel "Tu rating" (parecía que se jugaban puntos): va "No suma rating: probá tranquilo" (pedido del autor)');
   chk(/return dot \+ '<span><b>' \+ quien/.test(extraerFuncion('_cgDesafio')),'la frase del desafío va en un solo bloque (en pantallas angostas el nombre quedaba en otra columna)');
   const ra = extraerFuncion('puzRenderActions');
+  chk(ra.includes("_cg1 && !_ondemand && _cg.desdeRevision") && ra.includes('cgMarcarPuz(\\\'ok\\\')') && ra.includes('cgMarcarPuz(\\\'no\\\')'),
+      '🔒 con "Probar" desde la revisión, Aceptar / Rechazar en el mismo tablero (sólo el autor; comillas escapadas: sin eso se rompía la página)');
+  const vv = extraerFuncion('_cgVigilarVuelta');
+  chk(/cgAbrirRevision\(\);\s*_cgIrACard\(_cg\.volverA\)/.test(vv) && /_cg\.esperarVisor/.test(vv) && /_cg\.esperarVisor = Date\.now\(\) \+ 4000/.test(extraerFuncion('_cgVerPartida')),
+      'al cerrar el tablero o la partida original, la revisión vuelve sola y queda en la colgada que se estaba mirando (pedido del autor)');
   chk(ra.includes("'Próxima colgada →'") && ra.includes("'Saltar a la próxima colgada →'") && ra.includes("'Volver a la ronda'"),
       'los botones dicen "Próxima colgada" (el visitante sabe que sigue en las colgadas, no en Entrenar)');
   const des = extraerFuncion('_cgDesafio');

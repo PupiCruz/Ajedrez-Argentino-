@@ -3313,6 +3313,7 @@
       .cg-vacio { color:var(--text3); font-size:13px; padding:18px 4px; }
       .cg-card { display:grid; grid-template-columns:130px minmax(0,1fr); gap:12px; padding:10px; border-radius:12px; background:var(--bg3); border:1px solid var(--border); }
       .cg-card.cg-ok { border-color:#2e9e6b; } .cg-card.cg-no { opacity:.55; }
+      .cg-card.cg-flash { box-shadow:0 0 0 3px var(--gold); transition:box-shadow .3s; }   /* la que se estaba probando */
       .cg-bd { cursor:pointer; border-radius:6px; overflow:hidden; align-self:start; }
       .cg-info { display:flex; flex-direction:column; gap:4px; min-width:0; font-size:12.5px; color:var(--text2); line-height:1.4; }
       .cg-info > b { font-size:14px; color:var(--text); }
@@ -33671,7 +33672,7 @@ function _cgRenderYa() {
   if (!vis.length) h += '<div class="cg-vacio">' + (_cg.corriendo ? 'Buscando…' : (todas.length ? 'Nada en este filtro.' : 'No se encontraron colgadas en esta ronda.')) + '</div>';
   vis.forEach(function(it){
     var solver = it.fen.split(' ')[1], last = { from: it.jug.slice(0, 2), to: it.jug.slice(2, 4) };
-    h += '<div class="cg-card cg-' + it.estado + '">'
+    h += '<div class="cg-card cg-' + it.estado + '" data-cgid="' + escHtml(it.id) + '">'
       + '<div class="cg-bd" onclick="cgProbar(\'' + escJs(it.id) + '\')" title="Probarla">' + tdMiniFen(it.fen, last, solver === 'b') + '</div>'
       + '<div class="cg-info">'
       + '<b>' + escHtml(_cgApellido(it.w)) + ' – ' + escHtml(_cgApellido(it.b)) + '</b>'
@@ -33818,7 +33819,38 @@ function cgJugar(rInt, desdeId) {
 function cgProbar(id) {   // modo autor: probarla desde la revisión (esté aceptada o no)
   var its = _cgItems(_cg.tour, _cg.rk); if (!its.length) return;
   var ov = document.getElementById('cg-ov'); if (ov) ov.classList.remove('open');
+  _cg.desdeRevision = true; _cg.volverA = id;
+  _cgVigilarVuelta();
   _cgAbrirEnTablero(its, id);
+}
+// Al cerrar el tablero (o la partida original que se abrió desde ahí), la revisión vuelve sola y deja
+// al autor parado en la colgada que estaba mirando (pedido del autor 20/09: "tengo que buscar el
+// ejercicio de vuelta en el panel para aprobarlo o rechazarlo").
+function _cgVigilarVuelta() {
+  if (_cg.vueltaT) clearInterval(_cg.vueltaT);
+  _cg.vueltaT = setInterval(function(){
+    var po = document.getElementById('puz-overlay'), co = document.getElementById('chess-overlay');
+    var puzAb = po && po.classList.contains('open'), visAb = co && co.classList.contains('open');
+    if (puzAb && puz.cur && puz.cur.colgada && puz.cur.cg) _cg.volverA = puz.cur.cg.id;
+    if (puzAb || visAb || Date.now() < (_cg.esperarVisor || 0)) return;   // (el visor tarda un poco en abrir)
+    clearInterval(_cg.vueltaT); _cg.vueltaT = null; _cg.desdeRevision = false;
+    cgAbrirRevision();
+    _cgIrACard(_cg.volverA);
+  }, 400);
+}
+function _cgIrACard(id) {
+  var c = Array.prototype.filter.call(document.querySelectorAll('#cg-ov .cg-card'), function(x){ return x.getAttribute('data-cgid') === id; })[0];
+  if (!c) return;
+  c.scrollIntoView({ block: 'center' });
+  c.classList.add('cg-flash'); setTimeout(function(){ c.classList.remove('cg-flash'); }, 1600);
+}
+// Aceptar / Rechazar desde el mismo tablero (modo autor, abierta con "Probar" desde la revisión).
+function cgMarcarPuz(est) {
+  if (!puz.cur || !puz.cur.colgada) return;
+  var id = puz.cur.cg.id;
+  cgMarcar(id, est);
+  var it = _cgBuscarItem(id); if (it) puz.cur.cg.estado = it.estado;
+  puzRenderActions();
 }
 function _cgAbrirEnTablero(its, desdeId) {
   if (typeof puzOpenOverlay !== 'function') return;
@@ -33899,6 +33931,7 @@ function _cgVerPartida(it) {
   for (var i = 0; i < games.length; i++) {
     var h = parsePgnHeaders(games[i]);
     if (_cgGameKeyId(h) === _cgGameKeyId({ Round: it.r, White: it.w, Black: it.b })) {
+      _cg.esperarVisor = Date.now() + 4000;   // si se vino de la revisión, que no vuelva antes de que abra el visor
       if (typeof _puzDoClose === 'function') _puzDoClose();
       Promise.resolve(tdOpenGame(i, _tdCtx.pgnKey, _tdCtx.name, _tdCtx.location)).then(function(){ _colIrA(it.ply); });
       return true;
@@ -36466,6 +36499,11 @@ function puzRenderActions() {
     ? '<button class="puz-btn" onclick="puzOpenSourceGame()">♟ Ver la partida original</button>' : '';
   // Colgadas de la ronda: los botones lo dicen, así el visitante sabe que sigue en las colgadas (no en Entrenar).
   var _cg1 = puz.cur && puz.cur.colgada, _cgUlt = _cg1 && puz.idx + 1 >= puz.list.length;
+  if (_cg1 && !_ondemand && _cg.desdeRevision) {   // revisión del autor: decidirla acá mismo
+    var _ce = puz.cur.cg.estado;
+    h += '<button class="cg-si' + (_ce === 'ok' ? ' on' : '') + '" onclick="cgMarcarPuz(\'ok\')">' + (_ce === 'ok' ? '✅ Aceptada' : '✅ Aceptar') + '</button>'
+       + '<button class="cg-no' + (_ce === 'no' ? ' on' : '') + '" onclick="cgMarcarPuz(\'no\')">' + (_ce === 'no' ? '❌ Rechazada' : '❌ Rechazar') + '</button>';
+  }
   if (puz.solved || puz.revealed) {
     h += '<button class="puz-btn primary" onclick="puzNext()">' + (_cg1 ? (_cgUlt ? 'Volver a la ronda' : 'Próxima colgada →') : 'Próximo ejercicio →') + '</button>';
     if (!(puz.cur && puz.cur.colgada)) h += '<button class="puz-btn" id="puz-share" onclick="puzShare()">🔗 Compartir</button>';
