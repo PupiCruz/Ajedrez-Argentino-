@@ -32044,6 +32044,8 @@ function tdBuildRound(rInt) {
     return;
   }
   var _roundGames = _tdCtx.byRound[rInt] || [];
+  // Por equipos: completar el país de las partidas que Lichess mandó sin él (ver _tdTeamOrden).
+  if (_tdCtx.isTeam) { try { _roundGames = _tdTeamOrden(_roundGames, rInt); } catch (e) {} }
   // Torneos POR EQUIPOS con tags [WhiteTeam]/[BlackTeam] (los trae la transmisión de Lichess):
   // agrupar los tableros por enfrentamiento (Equipo A vs Equipo B) con su marcador, estilo chess.com.
   if (_tdCtx.isTeam && _roundGames.some(function(g){ return g.h.WhiteTeam && g.h.BlackTeam; })) {
@@ -32130,6 +32132,55 @@ function _tdCardHtml(g, flip) {
   return h;
 }
 
+// PAÍS DE CADA PARTIDA desde la formación de Chess-Results (pedido del autor, 18/09). La transmisión de
+// Lichess no siempre trae [WhiteTeam]/[BlackTeam]: en la Olimpiada de Chennai 2022 la ronda 11 llegaba
+// con 1 partida con país y 366 sin, y como alcanzaba con UNA para armar la vista por matches, las 366
+// quedaban en un match gigante sin nombre ("215 : 151" y cientos de tableros finitos). Acá cada partida
+// se busca por sus DOS jugadores en la formación de esa ronda (teamRounds[r]); si están en el mismo
+// match, se le ponen los países con el nombre de los cuadros (el que usa el panel de país) y la ronda
+// queda ordenada match → tablero, que es lo que _tdTeamMatches necesita para agrupar. Devuelve una
+// COPIA ordenada (las tarjetas encuentran su partida por el PGN, no por la posición) o la original.
+function _tdTeamOrden(games, r) {
+  games = games || [];
+  // Lo normal (Samarkand 2026 y cualquier transmisión que SÍ etiqueta): todas traen país → no hay nada
+  // que completar y ni se leen los cuadros. Esto corre en cada refresco en vivo de la ronda abierta:
+  // así, en el caso común, cuesta sólo recorrer la lista y queda EXACTAMENTE como antes.
+  if (games.every(function (g) { return g && g.h && g.h.WhiteTeam && g.h.BlackTeam; })) return games;
+  var data = null;
+  try { data = (_tdCtx && _tdCtx.crKey) ? crDataLoad(_tdCtx.crKey) : null; } catch (e) {}
+  var ms = data && data.teamRounds && data.teamRounds[r];
+  if (!ms || !ms.length || !games.length) return games;
+  // Índice directo por nombre (normalizado): lo corre también el refresco en vivo, tiene que ser barato.
+  var idx = [], porNombre = Object.create(null);
+  ms.forEach(function (m, mi) {
+    (m.boards || []).forEach(function (b, bi) {
+      [[b.nW, m.aName], [b.nB, m.bName]].forEach(function (p) {
+        if (!p[0]) return;
+        var e = { t: crNormTokens(p[0]), team: p[1], mi: mi, bi: bi };
+        idx.push(e); if (!porNombre[e.t]) porNombre[e.t] = e;
+      });
+    });
+  });
+  function buscar(nombre) {
+    var t = crNormTokens(nombre || ''); if (!t) return null;
+    if (porNombre[t]) return porNombre[t];
+    // Segundo intento, como crFindGameIdx: un nombre contenido en el otro ("Gukesh D." / "Gukesh, D").
+    for (var j = 0; j < idx.length; j++) if (_crNombreContenido(t, idx[j].t)) return idx[j];
+    return null;
+  }
+  var cambio = false;
+  var orden = games.map(function (g, k) {
+    var w = buscar(g.h.White), b = buscar(g.h.Black);
+    if (w && b && w.mi === b.mi && w.team && b.team) {
+      if (g.h.WhiteTeam !== w.team || g.h.BlackTeam !== b.team) { g.h.WhiteTeam = w.team; g.h.BlackTeam = b.team; cambio = true; }
+      return { g: g, mi: w.mi, bi: w.bi, k: k };
+    }
+    return { g: g, mi: 1e9, bi: 0, k: k };   // no está en la formación: va al final, como venía
+  });
+  orden.sort(function (a, b) { return (a.mi - b.mi) || (a.bi - b.bi) || (a.k - b.k); });
+  var out = orden.map(function (o) { return o.g; });
+  return (cambio || out.some(function (g, i) { return g !== games[i]; })) ? out : games;
+}
 // Agrupa las partidas de la ronda en enfrentamientos por equipo (boards consecutivos con el
 // mismo par de equipos) y calcula el marcador del match desde los resultados de cada tablero.
 function _tdTeamMatches(games) {
@@ -32215,7 +32266,10 @@ function tdBuildRoundTeams(rInt, panel, roundGames) {
 // Refresca solo los marcadores de cada match (sin reconstruir) cuando llegan resultados en vivo.
 function _tdUpdateMatchScores(rInt) {
   if (!_tdCtx) return;
-  _tdTeamMatches(_tdCtx.byRound[rInt] || []).forEach(function(m, mi) {
+  // Mismo orden (y mismos países) que al dibujar, si no los ids de los marcadores no coinciden.
+  var _rg = _tdCtx.byRound[rInt] || [];
+  if (_tdCtx.isTeam) { try { _rg = _tdTeamOrden(_rg, rInt); } catch (e) {} }
+  _tdTeamMatches(_rg).forEach(function(m, mi) {
     var el = document.getElementById('td-mscore-' + rInt + '-' + mi);
     if (el) el.textContent = _fmtHalf(m.a) + ' : ' + _fmtHalf(m.b);
   });

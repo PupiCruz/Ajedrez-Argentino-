@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1227;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1229;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -1667,6 +1667,24 @@ console.log('\n=== 34. La vitrina de trofeos del perfil ===');
   const _dobI = SRC.indexOf('function detectOpeningByMoves('), _dobL = SRC.indexOf("t = t.replace(/^\\d+\\.+(?=\\S)/, '');");
   chk(_dobI > 0 && _dobL > _dobI && _dobL - _dobI < 3000,
       '📖 las aperturas se reconocen también con el número pegado a la jugada ("1.d4", como en OlimpBase/ChessBase)');
+  // Chennai 2022, R11: Lichess mandó 1 partida con país y 366 sin → un match gigante sin nombre.
+  const ORD = new Function('crDataLoad', 'crNormTokens', '_crNombreContenido', '_tdCtx',
+    extraerFuncion('_tdTeamOrden') + '; return _tdTeamOrden;');
+  const _norm = s => String(s).toLowerCase().replace(/[^a-z ]/g, ' ').split(/\s+/).filter(Boolean).sort().join(' ');
+  const _cont = (a, b) => { const A = a.split(' '), B = b.split(' '); const c = A.length <= B.length ? A : B, l = A.length <= B.length ? B : A; return c.length >= 2 && c.every(x => l.includes(x)); };
+  const _crTR = { teamRounds: { 11: [
+    { aName: 'Germany', bName: 'India 2', boards: [{ nW: 'Keymer, Vincent', nB: 'Gukesh, D' }, { nW: 'Nisipeanu, Liviu-Dieter', nB: 'Sarin, Nihal' }] },
+    { aName: 'Armenia', bName: 'Spain', boards: [{ nW: 'Sargissian, Gabriel', nB: 'Anton Guijarro, David' }] }] } };
+  const _gs = [{ h: { White: 'Sargissian Gabriel', Black: 'Anton Guijarro David', WhiteTeam: 'Armenia', BlackTeam: 'Spain' } },
+               { h: { White: 'Sarin Nihal', Black: 'Nisipeanu Liviu-Dieter' } }, { h: { White: 'Keymer Vincent', Black: 'Gukesh D' } }];
+  const _ord = ORD(() => _crTR, _norm, _cont, { crKey: 'x' })(_gs, 11);
+  chk(_ord.map(g => g.h.White.split(' ')[0]).join(',') === 'Keymer,Sarin,Sargissian'
+      && _ord[0].h.WhiteTeam === 'Germany' && _ord[0].h.BlackTeam === 'India 2' && _ord[1].h.WhiteTeam === 'India 2'
+      && /_roundGames = _tdTeamOrden\(_roundGames, rInt\)/.test(SRC) && /_rg = _tdTeamOrden\(_rg, rInt\)/.test(SRC),
+      '♟️ por equipos, las partidas de Lichess SIN país lo toman de la formación de Chess-Results y se ordenan por match');
+  const _todas = [{ h: { White: 'A', Black: 'B', WhiteTeam: 'X', BlackTeam: 'Y' } }];
+  chk(ORD(() => { throw new Error('no debía leer los cuadros'); }, _norm, _cont, { crKey: 'x' })(_todas, 11) === _todas,
+      '🔒 si TODAS las partidas ya traen país (lo normal en vivo), ni se leen los cuadros: queda como antes y no cuesta nada');
   chk(/if\(m\.nota && !\(_boards && _boards\.length\)\) inner\+=/.test(SRC),
       '🏛️ un match sin mesas que trae nota (se dio 2-2 sin jugar) la muestra en vez del marcador solo');
   chk(!/<nav class="hist-miga"/.test(SRC) && /class="hist-miga" role="navigation"/.test(SRC),
