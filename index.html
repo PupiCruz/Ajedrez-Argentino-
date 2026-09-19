@@ -33227,11 +33227,19 @@ function _colCerrar() {
   c.classList.add('col-fuera');
   setTimeout(function(){ if (c.parentNode) c.parentNode.removeChild(c); }, 350);
 }
-function _colAbrir(gk) {
+// Abre la partida JUSTO después de la colgada (el momento de buscar el castigo), no en la última jugada.
+// En vivo, el visor muestra "Volver a la jugada en directo" para seguirla después.
+function _colAbrir(gk, ply) {
   var g = _colBuscar(gk); if (!g || !_tdCtx) return;
   var idx = _tdCtx.games.indexOf(g.pgn); if (idx < 0) return;
   _colCerrar();
-  tdOpenGame(idx, _tdCtx.pgnKey, _tdCtx.name, _tdCtx.location);
+  Promise.resolve(tdOpenGame(idx, _tdCtx.pgnKey, _tdCtx.name, _tdCtx.location)).then(function(){ _colIrA(ply); });
+}
+function _colIrA(ply) {
+  if (!(ply > 0) || typeof cv === 'undefined' || !cv || !cv.root) return;
+  var node = cv.root;
+  for (var k = 0; k < ply && node.children && node.children.length; k++) node = node.children[0];
+  if (node && node !== cv.root && node !== cv.node) cvSetNode(node);
 }
 function _colNoMas() {
   try { localStorage.setItem('aa_pref_col_off', '1'); } catch (e) {}
@@ -33249,7 +33257,7 @@ function _colMostrar(items) {
   var cuerpo = uno
     ? '<b>' + _colTitulo(it) + '</b><span>' + _colJugadoresHtml(it) + '</span><span>' + _colDetalleHtml(it) + '</span>'
     : '<b>Hubo colgadas en ' + items.length + ' tableros</b>' + items.map(function(x){
-        return '<button type="button" class="col-fila" data-gk="' + escHtml(x.gk) + '"><span class="col-fila-j">' + _colJugadoresHtml(x) + '</span><span>' + _colDetalleHtml(x) + '</span></button>';
+        return '<button type="button" class="col-fila" data-gk="' + escHtml(x.gk) + '" data-ply="' + x.now.plies + '"><span class="col-fila-j">' + _colJugadoresHtml(x) + '</span><span>' + _colDetalleHtml(x) + '</span></button>';
       }).join('');
   d.innerHTML = '<div class="col-top"><span class="col-nb" aria-hidden="true">??</span><div class="col-txt">' + cuerpo + '</div></div>'
     + '<div class="col-btns"><button type="button" class="col-no">Descartar</button>'
@@ -33259,8 +33267,8 @@ function _colMostrar(items) {
   host.appendChild(d);
   d.querySelector('.col-no').onclick = _colCerrar;
   d.querySelector('.col-nomas').onclick = _colNoMas;
-  if (uno) d.querySelector('.col-si').onclick = function(){ _colAbrir(it.gk); };
-  Array.prototype.forEach.call(d.querySelectorAll('.col-fila'), function(b){ b.onclick = function(){ _colAbrir(b.getAttribute('data-gk')); }; });
+  if (uno) d.querySelector('.col-si').onclick = function(){ _colAbrir(it.gk, it.now.plies); };
+  Array.prototype.forEach.call(d.querySelectorAll('.col-fila'), function(b){ b.onclick = function(){ _colAbrir(b.getAttribute('data-gk'), parseInt(b.getAttribute('data-ply'), 10)); }; });
   _colSonido();
   _colCartelTimer = setTimeout(_colCerrar, _COL_CARTEL_MS);
 }
@@ -33392,7 +33400,7 @@ function tdOpenGame(idx, pgnKey, tname, tloc) {
   _cvTourName  = tname;
   _cvTourLoc   = tloc;
   _cvTourPgnKey = pgnKey;
-  openTourGameByIndex(idx);
+  return openTourGameByIndex(idx);   // promesa: quien quiera ir a una jugada puede esperar a que cargue
 }
 
 /* ── Partidas EN VIVO dentro del detalle del torneo (mismo formato que las miniaturas subidas) ──

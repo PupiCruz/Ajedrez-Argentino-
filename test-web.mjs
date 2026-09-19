@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1265;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1266;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -5200,6 +5200,9 @@ console.log('\n=== 53g. Aviso de colgadas graves (19/09) ===');
       '🔒 la vigilancia de la ronda NUNCA reproduce partidas (eso congeló la página el 17/09): sólo ficha o miniatura dibujada');
   chk(/aa_pref_col_off/.test(SRC.slice(SRC.indexOf('function openPrefs'), SRC.indexOf('function openPrefs') + 6000)),
       'se puede apagar en ⚙️ Preferencias');
+  chk(cm.includes('_colAbrir(it.gk, it.now.plies)') && cm.includes("data-ply=\"' + x.now.plies") && extraerFuncion('tdOpenGame').includes('return openTourGameByIndex(idx)')
+      && extraerFuncion('_colIrA').includes('node = node.children[0]'),
+      '"Ver partida" abre JUSTO después de la colgada (el momento de buscar el castigo), no en la última jugada');
 }
 
 
