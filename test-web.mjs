@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1286;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1287;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -5233,6 +5233,8 @@ console.log('\n=== 53h. Colgadas de la ronda: barrido, revisión y tablero de ej
       'de a una partida por vuelta (no congela); con eval de Lichess sin motor, sin eval en dos pasadas');
   chk(/deLichess \? _CG_VERIF_DEPTH_LI : _CG_VERIF_DEPTH, multipv: 3/.test(verif) && /clara/.test(verif),
       '🔒 la verificación da el castigo con 3 líneas, y marca las que Lichess ve pero el motor no ve claras (no son "únicas")');
+  chk(/if \(_mevExtra\.length\) setTimeout\(mevTick, 0\);/.test(extraerFuncion('mevNext')) && /_cg\.vigia = setInterval/.test(barrer),
+      '🔒 lo que se encola mientras el motor trabaja arranca otra tanda (sin nada en vivo el barrido se quedaba clavado en "motor 140 / 255")');
   chk(/960\|fischer\|freestyle/.test(posic) && !/tdFinalFen/.test(posic), 'el 960 no se barre (lo reproduce otro camino)');
 
   // Tablero de ejercicios: no suman rating, no tocan el link, en orden, desafío según la partida.

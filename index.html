@@ -32972,6 +32972,10 @@ function mevNext() {
     if (sf.engine) sf.engine.postMessage('setoption name MultiPV value 3');   // restaurar para el visor
     _mevResumeViewer();
     setTimeout(_colScan, 0);   // tanda terminada: ¿alguna partida se colgó?
+    // Lo que se encoló MIENTRAS corría la tanda (el barrido de colgadas agrega verificaciones sobre la
+    // marcha) arranca otra tanda. Sin esto quedaba esperando un refresco del vivo: con la ronda
+    // terminada y nada en vivo, el barrido se quedaba clavado (lo vio el autor: "motor 140 / 255").
+    if (_mevExtra.length) setTimeout(mevTick, 0);
     return;
   }
   _mev.last = null; _mev.lines = [];
@@ -33444,6 +33448,12 @@ function cgBarrer(rInt) {
   ((m[_cg.tour][_cg.rk] || {}).items || []).forEach(function(it){ viejo[it.id] = it; });
   m[_cg.tour][_cg.rk] = { t: Date.now(), items: [] }; _cgSave(m);
   _cg.viejo = viejo;
+  // Red de seguridad: mientras dura el barrido, si el motor quedó quieto con trabajo en la fila, despertarlo.
+  if (_cg.vigia) clearInterval(_cg.vigia);
+  _cg.vigia = setInterval(function(){
+    if (!_cg.corriendo) { clearInterval(_cg.vigia); _cg.vigia = null; return; }
+    if (!_mev.running && _mevExtra.length) mevTick();
+  }, 3000);
   cgAbrirRevision();
   var i = 0;
   (function una() {   // de a una partida por vuelta: la página no se congela aunque sean 400
