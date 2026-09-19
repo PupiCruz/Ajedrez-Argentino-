@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1309;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1311;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -5285,6 +5285,10 @@ console.log('\n=== 53h. Colgadas de la ronda: barrido, revisión y tablero de ej
   const vj = extraerFuncion('_cgValidarJugada');
   chk(/depth: _CG_OTRA_DEPTH/.test(vj) && (vj.match(/_mevExtra\.push/g) || []).length === 2 && /_CG_OTRA_TIMEOUT/.test(vj),
       'compara la jugada del visitante y la marcada con la MISMA profundidad, y si el motor no contesta no se queda colgado');
+  const rs = extraerFuncion('puzRenderSession');
+  chk(rs.indexOf('puz.cur && puz.cur.colgada') >= 0 && rs.indexOf('No suma rating') >= 0 && rs.indexOf('puz.cur.colgada') < rs.indexOf('var P = puzPlayer()'),
+      '🔒 en las colgadas no aparece el panel "Tu rating" (parecía que se jugaban puntos): va "No suma rating: probá tranquilo" (pedido del autor)');
+  chk(/return dot \+ '<span><b>' \+ quien/.test(extraerFuncion('_cgDesafio')),'la frase del desafío va en un solo bloque (en pantallas angostas el nombre quedaba en otra columna)');
   const ra = extraerFuncion('puzRenderActions');
   chk(ra.includes("'Próxima colgada →'") && ra.includes("'Saltar a la próxima colgada →'") && ra.includes("'Volver a la ronda'"),
       'los botones dicen "Próxima colgada" (el visitante sabe que sigue en las colgadas, no en Entrenar)');
