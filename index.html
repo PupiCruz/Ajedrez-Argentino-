@@ -6484,16 +6484,29 @@ function _histBotonSync(items, tzCfg) {
   b.style.display = (hay && _histVista === null) ? '' : 'none';
 }
 // Entrar a la sección ('' = las colecciones) o a una colección. Esconde los filtros de la lista.
-function histAbrir(k) {
+// La DIRECCIÓN acompaña (pedido del autor, 18/09: "no se pueden compartir las olimpiadas, sólo una por
+// una"): ?historicos (las colecciones) o ?historicos=olimpiadas. Así se copia y se comparte, y Atrás /
+// Adelante andan (los reconcilia _navReconciliar). sinHistorial = ya estamos parados en esa dirección.
+function histAbrir(k, sinHistorial) {
   _histVista = k || '';
   _histUi(true);
   renderTorneos(_lastTorneoFilter);
   var s = document.getElementById('s-torneos'); if (s && s.scrollIntoView) s.scrollIntoView({ block: 'start' });
+  if (!sinHistorial) {
+    try {
+      var u = location.pathname + '?historicos' + (_histVista ? '=' + encodeURIComponent(_histVista) : '');
+      if (location.pathname + location.search !== u) history.pushState({ hist: _histVista }, '', u);
+    } catch (e) {}
+  }
+  var def = _colDef(_histVista);
+  try { document.title = (def ? def.nombre + ' — ' : '') + 'Torneos históricos | ChessArgentino'; } catch (e) {}
 }
-function histSalir() {
+function histSalir(sinHistorial) {
   _histVista = null;
   _histUi(false);
   renderTorneos(_lastTorneoFilter);
+  if (!sinHistorial && /[?&]historicos/.test(location.search)) { try { history.pushState({}, '', location.pathname); } catch (e) {} }
+  try { if (typeof _seoDesdeUrl === 'function') _seoDesdeUrl(); } catch (e) {}
 }
 function _histUi(on) {
   ['tab-torneos', 'torneo-tools'].forEach(function(id) { var e = document.getElementById(id); if (e) e.style.display = on ? 'none' : ''; });
@@ -24745,6 +24758,8 @@ function _seoDesdeUrl() {
     if (q.get('noticia')) return _seoNoticia();
     if (q.get('jugador')) return _seoJugador();
     if (q.get('torneo')) return _seoTorneo();
+    // 🏛️ Torneos históricos: el título lo pone histAbrir (no pisarlo con el de la portada).
+    if (q.has('historicos')) { var _hd = _colDef(q.get('historicos') || ''); document.title = (_hd ? _hd.nombre + ' — ' : '') + 'Torneos históricos | ChessArgentino'; return; }
     // Pestaña por link (?ir=jugar). Hace falta acá porque al ENTRAR directo la app restaura la
     // sección tocando clases, sin pasar por goTo(): sin esto, quien cae en ?ir=jugar (una persona
     // o Google) ve el título y el canonical de la portada, y la dirección cuenta como repetida.
@@ -24791,11 +24806,19 @@ var _SEC_INICIAL = 'torneos';        // la que se ve al entrar a "/"
 var _navDesdePop = false;            // el que navega es el botón Atrás: NO volver a apilar historial
 
 function _secUrl(sec) {
+  // 🏛️ Parado adentro de Torneos históricos, la pestaña Torneos ES esa vista: su dirección es la de la
+  // colección (si no, la barra decía "/" mientras se veían las Olimpíadas, y no se podía compartir).
+  if (sec === 'torneos' && typeof _histVista !== 'undefined' && _histVista !== null)
+    return location.pathname + '?historicos' + (_histVista ? '=' + encodeURIComponent(_histVista) : '');
   var slug = _SEC_SLUG[sec];
   return location.pathname + ((!slug || sec === _SEC_INICIAL) ? '' : '?ir=' + slug);
 }
 
 function _seoSeccion(secEl) {
+  // Torneos históricos: su propio título (ver histAbrir), no el de la portada.
+  if (secEl && secEl.id === 's-torneos' && typeof _histVista !== 'undefined' && _histVista !== null) {
+    var _hd = _colDef(_histVista); document.title = (_hd ? _hd.nombre + ' — ' : '') + 'Torneos históricos | ChessArgentino'; return;
+  }
   // La pestaña inicial vive en "/" (la portada), así que le corresponde el título de la portada:
   // si no, la misma dirección tendría dos títulos según cómo llegaste.
   if (secEl && secEl.id === 's-' + _SEC_INICIAL) return _seoHome();
@@ -24949,6 +24972,15 @@ function _navReconciliar() {
     // por las dudas: cerrar de prepo es más peligroso que dejar algo abierto).
     if (document.querySelector('#tour-overlay.open, #overlay.open, #chess-overlay.open,'
       + ' #puz-overlay.open, #prac-overlay.open, #n-reader-overlay.open')) return;
+    // 🏛️ Torneos históricos: ?historicos / ?historicos=olimpiadas (Atrás desde un torneo de la colección,
+    // o Adelante/Atrás entre la lista, las colecciones y una colección).
+    if (q.has('historicos')) {
+      _secMostrar('torneos');
+      var hk = q.get('historicos') || '';
+      if (_histVista !== hk) histAbrir(hk, true);
+      return;
+    }
+    if (_histVista !== null) histSalir(true);
     var slug = q.get('ir');
     _secMostrar((slug && _SLUG_SEC[slug]) ? _SLUG_SEC[slug] : _SEC_INICIAL);
   } catch (e) {}
@@ -30596,11 +30628,12 @@ function goHome(e) {
   try { var pl = document.getElementById('overlay'); if (pl) { pl.classList.remove('open'); _playerPageOff(); } } catch (_) {}
   try { var to = document.getElementById('tour-overlay'); if (to && to.classList.contains('open')) { _tdLiveStop(); to.classList.remove('open'); _tourPageOff(); } } catch (_) {}
   _tourHistoryPushed = false; _playerHistoryPushed = false; _tourReturnToProfile = false;
-  var btn = document.querySelector('.nav-btn[onclick*="\'torneos\'"]');
-  if (btn) { try { goTo('torneos', btn); } catch (_) {} }
   // Inicio de verdad: si estabas adentro de 🏛️ Torneos históricos, el logo te devuelve a la lista de
   // siempre (el botón "Torneos" de arriba, en cambio, te deja donde estabas — pedido del autor, 18/09).
-  try { if (_histVista !== null) histSalir(); } catch (_) {}
+  // ANTES de goTo: así la pestaña toma la dirección y el título de la portada, no los de la colección.
+  try { if (_histVista !== null) histSalir(true); } catch (_) {}
+  var btn = document.querySelector('.nav-btn[onclick*="\'torneos\'"]');
+  if (btn) { try { goTo('torneos', btn); } catch (_) {} }
   try { history.replaceState({}, '', location.pathname); } catch (_) {}
   return false;
 }
@@ -36935,10 +36968,11 @@ try { var _seEl0 = document.getElementById('s-entrenar'); if (_seEl0 && _seEl0.c
   }
   // 🏛️ Torneos históricos compartidos: ?historicos= (las colecciones) o ?historicos=olimpiadas.
   if (params.has('historicos') && !tk) {
-    var hbtn = document.querySelector('.nav-btn[onclick*="\'torneos\'"]');
-    if (hbtn) { try { goTo('torneos', hbtn); } catch (e) {} }
-    try { history.replaceState({}, '', location.pathname); } catch (e) {}
-    try { histAbrir(params.get('historicos') || ''); } catch (e) {}
+    // Primero la vista (así _secUrl ya sabe que estamos en la colección) y después la pestaña, sin
+    // botón: goTo REEMPLAZA la dirección con la de la colección en vez de apilar "/". La dirección
+    // QUEDA (?historicos=…): es la que se compartió, y recargar vuelve acá.
+    try { histAbrir(params.get('historicos') || '', true); } catch (e) {}
+    try { goTo('torneos'); } catch (e) {}
     return;
   }
   if (nk) {

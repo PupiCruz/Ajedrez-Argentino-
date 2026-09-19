@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1229;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1230;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -1658,7 +1658,7 @@ console.log('\n=== 34. La vitrina de trofeos del perfil ===');
       && /isProfile: !pr/.test(cfd) && /_protEv\[_normEvName\(t\.name \|\| ''\)\]\) return;/.test(SRC)
       && /s\[_normEvName\(_catEventName\(nombre, c\.name\)\)\] = true/.test(extraerFuncion('_eventosDeTorneos')),
       '🔒 "Limpiar duplicados" nunca quita las partidas de un torneo del sitio (ni de sus categorías): quita la otra copia');
-  chk(/try \{ if \(_histVista !== null\) histSalir\(\); \} catch \(_\) \{\}/.test(extraerFuncion('goHome')),
+  chk(/try \{ if \(_histVista !== null\) histSalir\(true\); \} catch \(_\) \{\}/.test(extraerFuncion('goHome')),
       '🏛️ el logo lleva a la lista principal aunque estés adentro de Torneos históricos');
   chk(/var src = _ondemand \? \(window\.__EMBEDDED_TZ__ \|\| \{\}\) : getTzConfig\(\);/.test(extraerFuncion('_colCfg'))
       && /flyerUrl: cc\.flyerUrl \|\| ''/.test(SRC) && /key\.indexOf\('col_'\) === 0\) add\(tzCfg\[key\]\.flyerUrl\)/.test(extraerFuncion('_collectFlyerUrls')),
@@ -1685,6 +1685,11 @@ console.log('\n=== 34. La vitrina de trofeos del perfil ===');
   const _todas = [{ h: { White: 'A', Black: 'B', WhiteTeam: 'X', BlackTeam: 'Y' } }];
   chk(ORD(() => { throw new Error('no debía leer los cuadros'); }, _norm, _cont, { crKey: 'x' })(_todas, 11) === _todas,
       '🔒 si TODAS las partidas ya traen país (lo normal en vivo), ni se leen los cuadros: queda como antes y no cuesta nada');
+  chk(/history\.pushState\(\{ hist: _histVista \}, '', u\)/.test(extraerFuncion('histAbrir'))
+      && /if \(sec === 'torneos' && typeof _histVista !== 'undefined' && _histVista !== null\)/.test(extraerFuncion('_secUrl'))
+      && /if \(q\.has\('historicos'\)\) \{\s*_secMostrar\('torneos'\);/.test(SRC)
+      && /histAbrir\(params\.get\('historicos'\) \|\| '', true\); \} catch \(e\) \{\}\s*try \{ goTo\('torneos'\); \}/.test(SRC),
+      '🔗 cada colección tiene su dirección (?historicos=olimpiadas) para compartir, y Atrás/Adelante la respetan');
   chk(/if\(m\.nota && !\(_boards && _boards\.length\)\) inner\+=/.test(SRC),
       '🏛️ un match sin mesas que trae nota (se dio 2-2 sin jugar) la muestra en vez del marcador solo');
   chk(!/<nav class="hist-miga"/.test(SRC) && /class="hist-miga" role="navigation"/.test(SRC),
