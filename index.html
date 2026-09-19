@@ -33181,6 +33181,14 @@ function _colVivoCaidaOk(antes, despues, lado, fin, nPartidas) {
 }
 // La partida que el visitante tiene ABIERTA en el visor no se avisa: la está viendo con sus propios ojos
 // (pedido del autor 20/09). Además ahí la eval viene del motor del visor, mucho más honda.
+// El aviso de colgadas pide la ficha de Lichess también en torneos de UNA transmisión, si la ronda no entra
+// en una página (pedido del autor 20/09: sin ficha sólo se vigila la página que se está mirando). Es un
+// pedido cada 30 s directo a Lichess, así que no toca el cupo de Cloudflare.
+function _colFichaHace() {
+  if (!_colOn() || !_tdCtx || !_tdLiveCtx) return false;
+  var r = _tdCtx.byRound[_tdLiveCtx.currentNum];
+  return !!(r && r.length > _TD_PER_PAGE);
+}
 function _colMirandoGk() {
   try {
     var ov = document.getElementById('chess-overlay');
@@ -34983,10 +34991,12 @@ function _tdJsonApply(games) {
 }
 function _tdJsonTick() {
   if (_tdJsonBusy || !_tdCtx || !_tdLiveCtx || !_tdLiveCtx.onDemand || !_tdLivePolling || document.hidden || Date.now() < _tdJsonHold) return;
-  if (!_tdLiveAhorra(_tdLiveCtx.tourIds)) return;   // una transmisión con poca gente: la copia del Worker ya llega al día (como siempre)
+  if (!_tdLiveAhorra(_tdLiveCtx.tourIds) && !_colFichaHace()) return;   // una transmisión con poca gente: la copia del Worker ya llega al día (como siempre)
   // Cada cuánto: 30 s en los grandes; en una transmisión, al ritmo del torneo (un blitz, cada 12 s), así las
   // miniaturas no van más lentas que antes. El intervalo mira seguido y acá se decide si ya toca.
-  var cada = _tdLiveGrande(_tdLiveCtx.tourIds) ? _TD_JSON_MS : Math.min(_TD_JSON_MS, _liveRefreshMs(_tdLiveCtx.tourId));
+  // Si la ficha se pide SÓLO por el aviso de colgadas, alcanza con cada 30 s (un pedido de ~70 KB directo a
+  // Lichess, sin pasar por el Worker).
+  var cada = (_tdLiveGrande(_tdLiveCtx.tourIds) || !_tdLiveAhorra(_tdLiveCtx.tourIds)) ? _TD_JSON_MS : Math.min(_TD_JSON_MS, _liveRefreshMs(_tdLiveCtx.tourId));
   var cur = _tdLiveCtx.currentNum;
   if (_tdCurrentRound !== cur) return;   // mirando una ronda anterior: no hace falta
   var rm = (_tdLiveCtx.roundsMeta || []).filter(function(r){ return r.num === cur; })[0];

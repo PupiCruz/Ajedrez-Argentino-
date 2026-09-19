@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1321;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1325;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -4396,7 +4396,8 @@ console.log('\n=== 53d. Varias transmisiones: menos pedidos al Worker (17/09) ==
       && ref.indexOf('document.hidden') < ref.indexOf('_tdLiveRefreshOnDemand') && ref.indexOf('document.hidden') < ref.indexOf('_bcFetchAllMulti'),
       'con la pestaña oculta no se pide nada, en TODOS los vivos: Lichess, livechesscloud y sichess (y no se invalida lo que venía en camino)');
   const jt = extraerFuncion('_tdJsonTick');
-  chk(/if \(!_tdLiveAhorra\(_tdLiveCtx\.tourIds\)\) return;/.test(jt), '🔒 la ficha liviana, sólo en torneos de varias transmisiones o con mucha gente');
+  chk(/if \(!_tdLiveAhorra\(_tdLiveCtx\.tourIds\) && !_colFichaHace\(\)\) return;/.test(jt),
+      '🔒 la ficha liviana, sólo en torneos de varias transmisiones, con mucha gente, o con el aviso de colgadas prendido y la ronda en varias páginas');
   chk(/Math\.min\(_TD_JSON_MS, _liveRefreshMs\(_tdLiveCtx\.tourId\)\)/.test(jt) && /if \(Date\.now\(\) - _tdJsonLast < cada\) return;/.test(jt),
       'en una transmisión, la ficha va al ritmo del torneo (un blitz, cada 12 s)');
   chk(/seeing:function\(\)\{ return tcRoom \? tcSeeing : 0; \}/.test(SRC), 'el contador sale del "👁 X mirando" del chat del torneo');
@@ -5206,6 +5207,16 @@ console.log('\n=== 53g. Aviso de colgadas graves (19/09) ===');
   chk(K(600, 10000, true, true) === null, 'si ya estaba perdido del todo (−6), el mate no avisa');
   chk(/Hay mate' \+ \(it\.mateN \? ' en ' \+ it\.mateN/.test(extraerFuncion('_colTitulo')),
       'el cartel dice "Hay mate en 3 en el tablero 7" en vez de "Hubo colgada"');
+  // La ficha de Lichess también en torneos de UNA transmisión, si la ronda no entra en una página.
+  const FH = new Function('var _TD_PER_PAGE = 24, ON = true, _tdCtx = { byRound: { 4: [] } }, _tdLiveCtx = { currentNum: 4 };'
+    + 'function _colOn(){ return ON; }'
+    + extraerFuncion('_colFichaHace')
+    + '; return { f: _colFichaHace, set n(v){ _tdCtx.byRound[4] = new Array(v); }, set on(v){ ON = v; } };')();
+  FH.n = 6;  chk(FH.f() === false, 'torneo chico (6 partidas, entran en una página): sigue sin pedir la ficha');
+  FH.n = 70; chk(FH.f() === true, '🔒 torneo de varias páginas con el aviso prendido: pide la ficha y vigila TODA la ronda (pedido del autor)');
+  FH.on = false; chk(FH.f() === false, 'con el aviso apagado, nada cambia para el resto de los visitantes');
+  chk(/!_tdLiveAhorra\(_tdLiveCtx\.tourIds\) && !_colFichaHace\(\)/.test(extraerFuncion('_tdJsonTick')),
+      'la puerta de la ficha suma ese caso sin tocar lo de antes');
   const mg = extraerFuncion('_colMirandoGk');
   chk(/chess-overlay/.test(mg) && /_tdEvKey\(parsePgnHeaders\(cv\.rawPgn\)\)/.test(mg)
       && /gk === _colMirandoGk\(\)/.test(extraerFuncion('_colScan')) && /_colMirandoGk\(\)/.test(extraerFuncion('_colConfirmar')),
