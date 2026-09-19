@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1313;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1315;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -5289,6 +5289,11 @@ console.log('\n=== 53h. Colgadas de la ronda: barrido, revisión y tablero de ej
   chk(rs.indexOf('puz.cur && puz.cur.colgada') >= 0 && rs.indexOf('No suma rating') >= 0 && rs.indexOf('puz.cur.colgada') < rs.indexOf('var P = puzPlayer()'),
       '🔒 en las colgadas no aparece el panel "Tu rating" (parecía que se jugaban puntos): va "No suma rating: probá tranquilo" (pedido del autor)');
   chk(/return dot \+ '<span><b>' \+ quien/.test(extraerFuncion('_cgDesafio')),'la frase del desafío va en un solo bloque (en pantallas angostas el nombre quedaba en otra columna)');
+  const EP = new Function(extraerFuncion('_cgEloProm') + '; return _cgEloProm;')();
+  chk(EP({ wElo: '2750', bElo: '2450' }) === 2600 && EP({ wElo: '', bElo: '2300' }) === 2300 && EP({ wElo: '', bElo: '' }) === 0,
+      'promedio de Elo de la partida (con uno solo, ése; sin Elo, 0)');
+  chk(/\.sort\(function\(a, b\)\{ return \(b\.e - a\.e\) \|\| \(a\.i - b\.i\); \}\)/.test(extraerFuncion('cgJugar')),
+      '🔒 en la web, las colgadas salen de la partida de más nivel a la de menos (pedido del autor: la del indio top salía por la mitad)');
   const ra = extraerFuncion('puzRenderActions');
   chk(ra.includes("_cg1 && !_ondemand && _cg.desdeRevision") && ra.includes('cgMarcarPuz(\\\'ok\\\')') && ra.includes('cgMarcarPuz(\\\'no\\\')'),
       '🔒 con "Probar" desde la revisión, Aceptar / Rechazar en el mismo tablero (sólo el autor; comillas escapadas: sin eso se rompía la página)');
