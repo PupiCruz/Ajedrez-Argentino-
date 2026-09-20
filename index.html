@@ -44249,6 +44249,10 @@ function cvUpdateNagBadge() {
   .aa-pref-txt{display:flex;flex-direction:column;gap:2px;min-width:0}
   .aa-pref-t{font-size:.9rem;font-weight:700;color:var(--text)}
   .aa-pref-d{font-size:.76rem;color:var(--text2);line-height:1.4}
+  /* Renglón de Preferencias que en vez de tilde lleva un botón (hoy: la libreta, sólo moderadores). */
+  .aa-pref-btn{flex:0 0 auto;background:var(--bg3);border:1px solid var(--border);color:var(--text);
+    border-radius:10px;padding:7px 12px;font-size:.82rem;font-weight:700;font-family:inherit;cursor:pointer;transition:filter .15s}
+  .aa-pref-btn:hover{filter:brightness(1.12)}
   .aa-switch{appearance:none;-webkit-appearance:none;flex:0 0 auto;width:42px;height:24px;border-radius:999px;background:var(--border);position:relative;cursor:pointer;transition:background .15s;outline:none;margin:0}
   .aa-switch:checked{background:var(--gold-dim,#c9a227)}
   .aa-switch::after{content:"";position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:#fff;transition:transform .15s;box-shadow:0 1px 3px rgba(0,0,0,.3)}
@@ -44664,6 +44668,14 @@ function cvUpdateNagBadge() {
         '<input type="checkbox" class="aa-switch" data-pref="'+key+'"'+(on?' checked':'')+'>'+
       '</label>';
   }
+  /* Igual que prefRow pero con un BOTÓN en vez del tilde (no todo lo de acá se prende y se apaga). */
+  function prefBtn(key, title, desc, label){
+    return '<div class="aa-pref-row" style="cursor:default">'+
+        '<span class="aa-pref-txt"><span class="aa-pref-t">'+title+'</span>'+
+          (desc?'<span class="aa-pref-d">'+desc+'</span>':'')+'</span>'+
+        '<button type="button" class="aa-pref-btn" data-prefbtn="'+key+'">'+label+'</button>'+
+      '</div>';
+  }
   function openPrefs(){
     var light=document.body.classList.contains('light');
     var back=document.createElement('div'); back.className='aa-modal-back';
@@ -44684,6 +44696,12 @@ function cvUpdateNagBadge() {
         '<div class="aa-pref-sec">Privacidad</div>'+
         prefRow('dnd','🔕 No molestar','Otros jugadores <b>no te pueden desafiar</b>. Seguís navegando normal y podés desafiar vos cuando quieras. Se guarda en tu cuenta.', !!(window.aaAuth&&window.aaAuth.getDnd&&window.aaAuth.getDnd()))+
         prefRow('noguests','🪪 No aceptar desafíos de invitados','Sólo te pueden desafiar los que <b>entraron con su cuenta</b>. En el sitio se puede jugar sin cuenta; con esto prendido, esos desafíos no te llegan. Se guarda en tu cuenta.', !!(window.aaAuth&&window.aaAuth.getNoGuests&&window.aaAuth.getNoGuests()))+
+        /* 📋 La libreta de la partida de Lichess: SÓLO moderadores. Es un registro técnico —qué
+           llegó del caño y qué no— para entender un tablero que se congela; no es para el público.
+           Vive en este navegador y se pisa con cada partida nueva. */
+        ((window.aaMod && window.aaMod.isMod && window.aaMod.isMod()) ?
+          '<div class="aa-pref-sec">Moderación</div>'+
+          prefBtn('libreta','📋 Registro de la última partida de Lichess','Qué llegó (y qué no) de Lichess en tu última partida: jugadas, relojes, latidos y reconexiones. Sirve para entender un tablero que se queda clavado. Queda sólo en este navegador.','Copiar') : '')+
       '</div>'+
       '<div class="aa-modal-btns"><button class="aa-modal-go" type="button">Listo</button></div>'+
     '</div>';
@@ -44711,6 +44729,25 @@ function cvUpdateNagBadge() {
       }
     });
     back.querySelector('.aa-modal-go').addEventListener('click', close);
+    /* 📋 Copiar la libreta. Se toma la GUARDADA (no la de esta pestaña): así sirve aunque hayas
+       recargado después de que se colgara la partida, que es justo lo que suele pasar. */
+    back.addEventListener('click', function(ev){
+      var b=ev.target.closest&&ev.target.closest('[data-prefbtn="libreta"]'); if(!b) return;
+      var d=null; try{ d=window.aaLiDiag&&window.aaLiDiag(true); }catch(e){}
+      var decir=function(t){ b.textContent=t; setTimeout(function(){ b.textContent='Copiar'; },1800); };
+      if(!d||!d.renglones||!d.renglones.length){ decir('Vacío'); return; }
+      var txt=JSON.stringify(d,null,1);
+      var aMano=function(){
+        try{
+          var ta=document.createElement('textarea'); ta.value=txt;
+          ta.style.cssText='position:fixed;opacity:0;pointer-events:none';
+          document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+          decir('¡Copiado!');
+        }catch(e){ decir('No se pudo'); }
+      };
+      try{ navigator.clipboard.writeText(txt).then(function(){ decir('¡Copiado!'); }, aMano); }
+      catch(e){ aMano(); }
+    });
     back.addEventListener('click', function(ev){ if(ev.target===back) close(); });
   }
 
@@ -47417,7 +47454,19 @@ function cvUpdateNagBadge() {
      foto de la pantalla. Acá queda anotado lo que pasó de verdad: cada mensaje de Lichess, cada
      reconexión y cuántos latidos llegaron. Se pide en la consola con `aaLiDiag()` y se copia con
      `copy(aaLiDiag())`. No se manda a ningún lado: vive en esta pestaña y se borra al recargar. */
-  var DIAG = [], DIAG_MAX = 120, DIAG_LATIDOS = 0;
+  var DIAG_LLAVE = 'aa_li_libreta';
+  var DIAG = [], DIAG_MAX = 120, DIAG_LATIDOS = 0, DIAG_ULT_GUARDADO = 0;
+  /* 🐛 La libreta vivía SÓLO en memoria… y las dos veces que se colgó la partida, el autor recargó
+     la página. O sea que la prueba se borraba justo cuando hacía falta. Ahora se guarda en el
+     navegador y sobrevive al F5 y a cerrar la pestaña. Son ~120 renglones chiquitos; se pisa la de
+     la partida anterior. No sale de esta máquina. */
+  function guardarLibreta(yaMismo) {
+    if (!yaMismo && Date.now() - DIAG_ULT_GUARDADO < 1000) return;   // no escribir en cada jugada
+    DIAG_ULT_GUARDADO = Date.now();
+    try { localStorage.setItem(DIAG_LLAVE, JSON.stringify({ partida: P && P.id, fecha: new Date().toISOString(), renglones: DIAG })); } catch (e) {}
+  }
+  /* Lo que se anota de un tirón (algo salió mal) no puede esperar al próximo guardado. */
+  var DIAG_URGENTE = { 'mudo': 1, 'sin-eco': 1, 'sin-novedad': 1, 'estado-anejo': 1, 'gameFull': 1 };
   function diag(que, o) {
     try {
       var s = o && (o.state || o), n = s && s.moves != null ? String(s.moves).split(' ').filter(Boolean).length : null;
@@ -47425,9 +47474,15 @@ function cvUpdateNagBadge() {
                   wtime: s && s.wtime, btime: s && s.btime, estado: s && s.status,
                   latidos: DIAG_LATIDOS, caido: !!(P && P.caido), intentos: (P && P.intentos) || 0 });
       if (DIAG.length > DIAG_MAX) DIAG.shift();
+      guardarLibreta(!!DIAG_URGENTE[que] || String(que).indexOf('caida') === 0);
     } catch (e) {}
   }
-  window.aaLiDiag = function () { return DIAG.slice(); };
+  /* En la consola: `aaLiDiag()` (esta partida) y `aaLiDiag(true)` (la que quedó guardada, aunque
+     hayas recargado). El botón de ⚙️ Preferencias usa la guardada. */
+  window.aaLiDiag = function (guardada) {
+    if (!guardada) return DIAG.slice();
+    try { return JSON.parse(localStorage.getItem(DIAG_LLAVE) || 'null'); } catch (e) { return null; }
+  };
 
   /* ¿La partida sigue viva según lo ÚLTIMO que dijo Lichess? Si no sabemos, se supone que sí:
      es preferible un reintento de más que dejar el tablero clavado. */

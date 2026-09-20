@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1350;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1356;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -5053,8 +5053,22 @@ console.log('\n=== 🔌 El vigía del caño de la partida de Lichess (19/09) ===
       '🔒 cualquier novedad (jugada o gameFull de una reconexión) pone el vigía a cero');
   chk(/P\.esperoEco = 0; P\.ultNovedad = Date\.now\(\);/.test(SRC),
       '🔒 al reconectar se arranca de cero, o el vigía cortaba el caño nuevo al instante, en bucle');
-  chk(/window\.aaLiDiag = function/.test(SRC) && /var DIAG = \[\], DIAG_MAX = 120/.test(SRC),
+  chk(/window\.aaLiDiag = function/.test(SRC) && /DIAG = \[\], DIAG_MAX = 120/.test(SRC),
       '🔒 la libreta: aaLiDiag() en la consola dice qué llegó y qué no (dos veces hubo que adivinar de una foto)');
+  // Las dos veces que se colgó una partida, el autor RECARGÓ: una libreta que vive sólo en memoria
+  // se borra justo cuando hace falta.
+  chk(/localStorage\.setItem\(DIAG_LLAVE/.test(SRC) && /function guardarLibreta\(/.test(SRC),
+      '🔒 la libreta se guarda en el navegador: sobrevive al F5 y a cerrar la pestaña');
+  chk(/Date\.now\(\) - DIAG_ULT_GUARDADO < 1000\) return;/.test(SRC),
+      'no se escribe en cada jugada (una vez por segundo alcanza)');
+  chk(/DIAG_URGENTE = \{ 'mudo': 1, 'sin-eco': 1, 'sin-novedad': 1/.test(SRC),
+      '🔒 pero lo que sale mal se guarda YA, sin esperar al próximo guardado');
+  chk(/window\.aaLiDiag\(true\)/.test(SRC) || /aaLiDiag && window\.aaLiDiag\(true\)/.test(SRC),
+      'el botón lee la libreta GUARDADA, no la de la pestaña (que se perdió al recargar)');
+  chk(/window\.aaMod && window\.aaMod\.isMod && window\.aaMod\.isMod\(\)\) \?\s*\n?\s*'<div class="aa-pref-sec">Moderación<\/div>'/.test(SRC.replace(/\r/g, '')),
+      '🔒 el renglón de la libreta sale SÓLO para moderadores (es un registro técnico, no para el público)');
+  chk(/function prefBtn\(key, title, desc, label\)/.test(SRC) && /\.aa-pref-btn\{/.test(SRC),
+      'los renglones con botón (en vez de tilde) tienen su ayudante y su estilo');
   chk(/st === 401 \|\| st === 403 \|\| st === 404/.test(SRC),
       '🔒 si Lichess dice que no (permiso vencido, partida ajena) no se insiste: se avisa y listo');
   chk(/function congelarReloj\(\)[\s\S]{0,400}m\.clock\.running = null/.test(SRC),
