@@ -9179,6 +9179,20 @@ function crClearData(key){
   if(sec) sec.outerHTML=crRenderSection(key);
 }
 
+// Las partidas de una ronda llegaron (se bajaron al abrirla): se rehace SU tabla de cruces para que
+// aparezcan los ojitos y se completen los resultados con los del vivo. No se pide nada nuevo, se
+// aprovecha lo que acaba de llegar. Sin esto, la tabla se quedaba como se armó —sin partidas— y sólo
+// la ronda cargada de entrada tenía ojitos (Torneo Selección de Rosario 2026, 19/09).
+function _crTablaConOjitos(rInt){
+  if(typeof _tdCtx==='undefined' || !_tdCtx || !_tdCtx.crKey) return;
+  if(typeof _tdLiveCtx!=='undefined' && _tdLiveCtx && _tdLiveCtx.isTeam) return;   // por equipos dibuja _teamRenderSection
+  var k=_tdCtx.crKey;
+  var panel=document.getElementById('cr-panel-'+k+'-'+parseInt(rInt,10));
+  if(!panel || panel.getAttribute('data-lazy')) return;   // esa tabla no se abrió todavía: se arma sola al abrirla
+  try { crSyncResultsFromPgn(k); } catch(e){}
+  try { var d=crDataLoad(k); if(d) panel.innerHTML=_crBuildPanelContent(k,d,parseInt(rInt,10)); } catch(e){}
+}
+
 // quiet=true: refresco automático (tablas que se actualizan solas en el vivo). Vuelve a la pestaña SIN
 // arrastrar la ronda de las partidas (crShowTab llamaría a tdShowRound y redibujaría la grilla entera).
 function crRefreshSection(key,afterTab,quiet){
@@ -34521,6 +34535,7 @@ function _tdFetchRoundOnDemand(rInt, roundIds) {
     _tdCtx.byRound[rInt] = (gs || []).map(function(pgn){ return _tdGameEntry(pgn, rInt); });
     _tdMergeOneRound(rInt);            // sumar pool/Chess-Results de esa ronda + dedup
     _tdRebuildFlatGames();             // refrescar games plano + PGN_DB (para el visor/deep-link)
+    _crTablaConOjitos(rInt);           // y la tabla de cruces de esa ronda, ahora con sus ojitos
     if (_pendingDeepGame) _tryOpenPendingDeepGame();
     if (_tdCurrentRound === rInt && document.getElementById('td-round-' + rInt)) {
       tdBuildRound(rInt); _tdStartClocks(); if (_tdLiveCtx) setTimeout(mevTick, 900);

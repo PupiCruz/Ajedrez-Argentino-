@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1380;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1386;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -5573,6 +5573,58 @@ console.log('\n=== 89. El ojito de las tablas cuando Lichess no manda [Round] ==
       && /_tdGameEntry\(pgn, curNum\)/.test(SRC) && /_tdGameEntry\(pgn, rm\.num\)/.test(SRC),
       'todas las partidas del vivo pasan por _tdGameEntry (ninguna entra sin ronda)');
 }
+
+console.log('\n=== 90. La tabla de cruces se rehace cuando llegan las partidas de esa ronda ===');
+{
+  // Segunda parte del 19/09: con la ronda puesta, los ojitos salían SÓLO en la ronda que venía
+  // cargada (la R7). Las tablas de las otras se arman una vez —vacías— y no se volvían a tocar,
+  // aunque al abrirlas la app baje sus partidas. Desde la ficha del jugador sí se abrían.
+  console.log('\n👁️ Llegan las partidas de la ronda → su tabla vuelve a dibujarse');
+
+  const mk = (opts) => new Function('OPTS',
+    'var PANEL = OPTS.panel, PINTADO = [], SYNC = 0;\n'
+    + 'var document = { getElementById: function(id){ return (PANEL && id === PANEL.id) ? PANEL : null; } };\n'
+    + 'var _tdCtx = OPTS.ctx, _tdLiveCtx = OPTS.live;\n'
+    + 'function crSyncResultsFromPgn(){ SYNC++; }\n'
+    + 'function crDataLoad(){ return OPTS.data; }\n'
+    + 'function _crBuildPanelContent(k, d, r){ PINTADO.push(k + "|" + r); return "TABLA R" + r; }\n'
+    + extraerFuncion('_crTablaConOjitos') + '\n'
+    + 'return { correr: _crTablaConOjitos, pintado: function(){ return PINTADO; }, sync: function(){ return SYNC; } };')(opts);
+
+  const ctx = { crKey: 'cr2_tz_x', byRound: {} };
+  // 1) La tabla de esa ronda está abierta → se rehace.
+  {
+    const panel = { id: 'cr-panel-cr2_tz_x-5', innerHTML: '', getAttribute: () => null };
+    const A = mk({ panel, ctx, live: null, data: { rounds: { 5: [] } } });
+    A.correr(5);
+    chk(panel.innerHTML === 'TABLA R5' && A.pintado().join() === 'cr2_tz_x|5',
+        '🔒 llegaron las partidas de la R5 → su tabla de cruces se vuelve a dibujar (con sus ojitos)', panel.innerHTML);
+    chk(A.sync() === 1, 'y de paso se completan los resultados con los del vivo');
+  }
+  // 2) La tabla nunca se abrió (panel lazy) → no se toca: se arma sola al abrirla.
+  {
+    const panel = { id: 'cr-panel-cr2_tz_x-5', innerHTML: '', getAttribute: (a) => (a === 'data-lazy' ? '1' : null) };
+    const A = mk({ panel, ctx, live: null, data: { rounds: { 5: [] } } });
+    A.correr(5);
+    chk(panel.innerHTML === '' && A.sync() === 0, 'la tabla que el visitante nunca abrió no se dibuja de prepo');
+  }
+  // 3) Sin tabla de cruces de esa ronda (o torneo por equipos) → no hace nada y no se rompe.
+  {
+    const A = mk({ panel: null, ctx, live: null, data: null });
+    A.correr(5);
+    chk(A.pintado().length === 0, 'si no hay tabla de esa ronda, no pasa nada');
+    const panel = { id: 'cr-panel-cr2_tz_x-5', innerHTML: '', getAttribute: () => null };
+    const B = mk({ panel, ctx, live: { isTeam: true }, data: { rounds: { 5: [] } } });
+    B.correr(5);
+    chk(panel.innerHTML === '', 'en los torneos POR EQUIPOS no se toca (esa sección la dibuja _teamRenderSection)');
+  }
+
+  const bajada = extraerFuncion('_tdFetchRoundOnDemand');
+  chk(bajada.indexOf('_crTablaConOjitos(rInt);') > bajada.indexOf('_tdRebuildFlatGames();'),
+      'la tabla se rehace DESPUÉS de que las partidas estén en su lugar');
+}
+
+
 
 
 
