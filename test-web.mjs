@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1386;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1461;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -5217,20 +5217,30 @@ console.log('\n=== 53g. Aviso de colgadas graves (19/09) ===');
   const decl = SRC.slice(SRC.indexOf('var _COL_PAR = '), SRC.indexOf('var _colQ0 = ')) + SRC.match(/var _COL_C_ANTES[^\n]*/)[0]
     + '\n' + SRC.match(/var _COL_MATE_ANTES[^\n]*/)[0]
     + '\n' + SRC.slice(SRC.indexOf('var _COL_VIVO_GRANDE'), SRC.indexOf('function _colVivoCaidaOk'));
-  const N = ['_colActivo', '_colCp', '_colClasifica', '_colVivoCaidaOk', '_colMirandoGk', '_colPos', '_colRonda', '_colScan', '_colConfirmar', '_colAvisar', '_colDespachar', '_colBuscar', '_fenPlies'];
+  const N = ['_colActivo', '_colCp', '_colClasifica', '_colVivoCaidaOk', '_colMirandoGk', '_colPos', '_colRonda', '_colScan', '_colConfirmar', '_colAvisar', '_colDespachar', '_colBuscar', '_fenPlies', '_colHistGuardar', '_colHistDe', '_colRepartir'];
   const C = new Function('var AHORA = 1e9, Date = { now: function(){ return AHORA; } }, timers = [], mostrados = [];'
     + 'var _tdJsonNew = {}, _mevEvals = {}, _mev = {}, _tdCurrentRound = 5, _tdLiveCtx = { currentNum: 5 }, _tdCtx = { byRound: { 5: [] } };'
-    + 'var document = { querySelectorAll: function(){ return []; } };'
+    + 'var document = { querySelectorAll: function(){ return []; } }, _tdTourKey = "T1", _colVerifBusy = false, _colRedEspera = 0, repartidos = [], lotes = [];'
+    + 'var window = { aaTourChat: { avisarColgada: function(cs){ lotes.push(cs); cs.forEach(function(c){ repartidos.push(c); }); return true; } } };'
     + 'function setTimeout(fn, ms){ timers.push({ fn: fn, ms: ms }); return timers.length; }'
     + 'function _colOn(){ return true; } function _capCache(){} function mevTick(){} function _bcGameIds(p){ return { game: p }; }'
+    + 'function _cgBarRefrescar(){}'
+    // El chequeo de verdad (pedirle a Lichess el PGN otra vez) es asincrónico: se prueba aparte, más abajo.
+    + 'function _colChequear(items, cb){ items.sort(function(a, b){ return (b.arg ? 1 : 0) - (a.arg ? 1 : 0); }); cb(items); }'
     + 'function _tdEvKey(h){ return h.k; } function _tdIsArgGame(h){ return !!h.arg; } function _colMostrar(items){ mostrados.push(items.map(function(i){ return i.gk; })); }'
-    + decl + N.map(extraerFuncion).join('\n')
+    + decl + '\n' + SRC.match(/var _COL_RED_LOTE[^\n]*/)[0] + '\n' + SRC.match(/var _COL_HIST_MAX[^\n]*/)[0] + '\n' + SRC.match(/var _colHist = \[\][^\n]*/)[0] + '\n'
+    + N.map(extraerFuncion).join('\n')
     + '; return { _colActivo: _colActivo, _colClasifica: _colClasifica, _colCp: _colCp, scan: _colScan, extra: _mevExtra, mostrados: mostrados, timers: timers,'
-    + '  set ahora(v){ AHORA = v; }, get ahora(){ return AHORA; }, ficha: _tdJsonNew, evals: _mevEvals, deep: _colDeep, ronda: _tdCtx.byRound[5] };')();
+    + '  set ahora(v){ AHORA = v; }, get ahora(){ return AHORA; }, ficha: _tdJsonNew, evals: _mevEvals, deep: _colDeep, ronda: _tdCtx.byRound[5],'
+    + '  hist: function(){ return _colHist; }, histDe: _colHistDe, tope: _COL_HIST_MAX, repartidos: repartidos, lotes: lotes };')();
 
   const ls = (() => { const m = {}; return { getItem: k => (k in m ? m[k] : null), setItem: (k, v) => { m[k] = String(v); }, removeItem: k => { delete m[k]; } }; })();
   chk(C._colActivo('', ls) === false, 'la llave arranca APAGADA: el público no lo ve mientras se prueba');
   chk(C._colActivo('?colgadas=1', ls) === true && C._colActivo('', ls) === true, 'con ?colgadas=1 se prende y queda guardado en ese navegador');
+  ls.setItem('aa_pref_col_off', '1');
+  C._colActivo('?colgadas=1', ls);
+  chk(ls.getItem('aa_pref_col_off') === null,
+      '🔒 y PRENDE de verdad: borra el "No avisarme más". Es la única vuelta atrás para el que no tiene cuenta (⚙️ Preferencias pide cuenta)');
   chk(C._colActivo('?torneo=x&colgadas=0', ls) === false, 'con ?colgadas=0 se apaga');
 
   const K = C._colClasifica;
@@ -5286,7 +5296,7 @@ console.log('\n=== 53g. Aviso de colgadas graves (19/09) ===');
       'el cartel dice "Hay mate en 3 en el tablero 7" en vez de "Hubo colgada"');
   // La ficha de Lichess también en torneos de UNA transmisión, si la ronda no entra en una página.
   const FH = new Function('var _TD_PER_PAGE = 24, ON = true, _tdCtx = { byRound: { 4: [] } }, _tdLiveCtx = { currentNum: 4 };'
-    + 'function _colOn(){ return ON; }'
+    + 'function _colOn(){ return ON; } function _colBarreRonda(){ return true; }'
     + extraerFuncion('_colFichaHace')
     + '; return { f: _colFichaHace, set n(v){ _tdCtx.byRound[4] = new Array(v); }, set on(v){ ON = v; } };')();
   FH.n = 6;  chk(FH.f() === false, 'torneo chico (6 partidas, entran en una página): sigue sin pedir la ficha');
@@ -5294,6 +5304,22 @@ console.log('\n=== 53g. Aviso de colgadas graves (19/09) ===');
   FH.on = false; chk(FH.f() === false, 'con el aviso apagado, nada cambia para el resto de los visitantes');
   chk(/!_tdLiveAhorra\(_tdLiveCtx\.tourIds\) && !_colFichaHace\(\)/.test(extraerFuncion('_tdJsonTick')),
       'la puerta de la ficha suma ese caso sin tocar lo de antes');
+  // ── Quién barre la ronda entera: se MIDE el equipo (idea del autor 20/09) ──
+  {
+    const B = new Function('var _mev = {}, CHICA = false, _COL_BARRE_MS = ' + SRC.match(/var _COL_BARRE_MS = (\d+)/)[1] + ';'
+      + 'var _cvMobileMQ = { get matches(){ return CHICA; } };'
+      + extraerFuncion('_colBarreRonda')
+      + '; return { b: _colBarreRonda, set ms(v){ _mev.avgMs = v; }, set chica(v){ CHICA = v; } };')();
+    B.ms = 64;  chk(B.b() === true,  '🔒 una PC (64 ms por posición, lo medido con el SF18 lite) barre toda la ronda');
+    B.ms = 400; chk(B.b() === false, '🔒 un teléfono (lento) NO barre: gastaba la batería en un barrido que nunca termina; recibe por el arbitrito');
+    B.ms = 0; B.chica = true;  chk(B.b() === false, 'hasta tener medida, decide la pantalla: la chica no barre');
+    B.chica = false;           chk(B.b() === true,  '…y la grande sí');
+  }
+  chk(extraerFuncion('_colMasTrabajos').includes('!_colOn() || !_colBarreRonda()')
+      && extraerFuncion('_colFichaHace').includes('!_colOn() || !_colBarreRonda()'),
+      '…y eso decide las DOS cosas caras: el barrido de las otras páginas y la ficha de Lichess');
+  chk(/data-fen|enPantalla/.test(extraerFuncion('_colScan')),
+      'lo de siempre no cambia: todos vigilan los tableros que tienen en pantalla (esas evals ya se calculan para la barrita)');
   const mg = extraerFuncion('_colMirandoGk');
   chk(/chess-overlay/.test(mg) && /_tdEvKey\(parsePgnHeaders\(cv\.rawPgn\)\)/.test(mg)
       && /gk === _colMirandoGk\(\)/.test(extraerFuncion('_colScan')) && /_colMirandoGk\(\)/.test(extraerFuncion('_colConfirmar')),
@@ -5310,9 +5336,309 @@ console.log('\n=== 53g. Aviso de colgadas graves (19/09) ===');
       '🔒 la vigilancia de la ronda NUNCA reproduce partidas (eso congeló la página el 17/09): sólo ficha o miniatura dibujada');
   chk(/aa_pref_col_off/.test(SRC.slice(SRC.indexOf('function openPrefs'), SRC.indexOf('function openPrefs') + 6000)),
       'se puede apagar en ⚙️ Preferencias');
-  chk(cm.includes('_colAbrir(it.gk, it.now.plies)') && cm.includes("data-ply=\"' + x.now.plies") && extraerFuncion('tdOpenGame').includes('return openTourGameByIndex(idx)')
+  chk(cm.includes('_colAbrir(it.gk, _colPlyColgada(it))') && cm.includes("data-ply=\"' + _colPlyColgada(x)") && extraerFuncion('tdOpenGame').includes('return openTourGameByIndex(idx)')
       && extraerFuncion('_colIrA').includes('node = node.children[0]'),
       '"Ver partida" abre JUSTO después de la colgada (el momento de buscar el castigo), no en la última jugada');
+  // ── ¿Cuál de las jugadas que llegaron juntas fue la colgada? (caso del autor 20/09) ──
+  {
+    const P = new Function(extraerFuncion('_colPlyColgada') + '; return _colPlyColgada;')();
+    const it = (prev, now, lado) => ({ prev: { plies: prev }, now: { plies: now }, c: { lado: lado } });
+    chk(P(it(34, 35, 'w')) === 35 && P(it(34, 35, 'b')) === 35,
+        'si llegó UNA sola jugada, es ésa (como siempre)');
+    chk(P(it(34, 36, 'w')) === 35,
+        '🔒 llegaron dos juntas y se colgaron las BLANCAS: la colgada es la 35 (impar), no la 36 — antes se abría una jugada DESPUÉS (caso Manish – Suleimen)');
+    chk(P(it(34, 36, 'b')) === 36, 'si se colgaron las negras, es la 36 (par)');
+    chk(P(it(30, 34, 'w')) === 33 && P(it(30, 34, 'b')) === 34,
+        'con un hueco más grande se toma la ÚLTIMA jugada de ese bando');
+    chk(P({ prev: { plies: 34 }, now: { plies: 36 }, c: null }) === 36, 'sin bando (no debería pasar), la última');
+  }
+  chk(extraerFuncion('colUltimaIr').includes('_colPlyColgada(_colHist[i])')
+      && extraerFuncion('_colDetalleHtml').includes('_colJugada(it.prev, it.now, _colPlyColgada(it))')
+      && extraerFuncion('_colJugada').includes("'jugada ' + Math.ceil((ply || now.plies) / 2)"),
+      '…y lo mismo desde 🕑 Últimas colgadas, y el renglón dice el NÚMERO de jugada de la colgada (no el de la respuesta)');
+
+  // ── 🕑 Últimas colgadas: las que ya se avisaron quedan a mano (pedido del autor 20/09) ──
+  // Arriba salieron 3 carteles (mesa7, mesa9, mesa7): tienen que estar guardados, el último primero.
+  const H = C.hist();
+  chk(H.length === 3 && H[0].gk === 'mesa7' && H[2].gk === 'mesa7' && H[1].gk === 'mesa9',
+      '🔒 las colgadas avisadas quedan guardadas (la más nueva arriba): el cartel se va a los 15 s y antes se perdían', H.length);
+  chk(H[0].now && H[0].prev && H[0].c && H[0].ts > 0 && H[0].r === 5 && H[0].tour === 'T1',
+      'de cada una se guarda todo lo que necesita el renglón (jugadores, evals, jugada, hora) y a qué ronda y torneo es');
+  chk(C.histDe(5).length === 3 && C.histDe(4).length === 0, 'el botón sólo muestra las de la ronda que se está mirando');
+  for (let k = 0; k < 10; k++) C.hist().unshift({ gk: 'x' + k, tour: 'T1', r: 5 });
+  C.hist().length = Math.min(C.hist().length, 99);
+  chk(C.tope === 8, 'se guardan las últimas 8 (no crece para siempre)');
+  const bh = extraerFuncion('_cgBarHtml');
+  chk(/_colHistDe\(rInt\)/.test(bh) && /🕑 Últimas colgadas/.test(bh) && /_colUltPanelHtml\(rInt\)/.test(bh),
+      '🔒 el botón "🕑 Últimas colgadas" va en la MISMA barra que "🎯 Colgadas de la ronda" (pedido del autor)');
+  chk(/colUltimaIr\(' \+ x\.hid/.test(extraerFuncion('_colUltPanelHtml')) && extraerFuncion('colUltimaIr').includes('_colAbrir(_colHist[i].gk, _colPlyColgada(_colHist[i]))'),
+      'cada renglón del desplegable abre esa partida en la jugada de la colgada');
+  chk(extraerFuncion('_colDespachar').includes('_colHistGuardar(ok)'), 'se guardan las que SALIERON (no las que la verificación descartó)');
+
+  // ── Volver a la partida que se estaba viendo (pedido del autor 20/09) ──
+  const ab = extraerFuncion('_colAbrir'), ap = extraerFuncion('_colApilarVuelta');
+  chk(ab.includes('_colApilarVuelta(idx)') && /_cvJumpStack\.push/.test(ap) && /idx: _cvTourIdx, ply: nodeDepth\(cv\.node\)/.test(ap),
+      '🔒 si ya estaba mirando OTRA partida, se guarda en la pila de saltos antes de abrir la de la colgada');
+  chk(/classList\.contains\('open'\) \|\| !_cvHistoryPushed/.test(ap) && /_cvTourIdx === idxNuevo/.test(ap),
+      'con el visor cerrado (o si es la misma partida) no se apila nada: no hay a dónde volver');
+  chk(extraerFuncion('cvBackToTournament').includes('if (_cvJumpStack.length && _cvHistoryPushed) { history.back(); return; }'),
+      '🔒 "Volver" (y el Atrás del navegador) devuelven a ESA partida, no a la grilla del torneo');
+  chk(/_cvJumpStack\.length \? _cvJumpStack\[_cvJumpStack\.length - 1\] : null/.test(extraerFuncion('_cvBuildPageExtras'))
+      && /Volver a ' \+ escHtml\(_sn\)/.test(extraerFuncion('_cvBuildPageExtras')),
+      '…y el botón lo dice con los apellidos ("◀ Oro – Carlsen"), así se sabe a dónde vuelve');
+
+  // ── 📣 El arbitrito las reparte: lo que sale de acá (los 3 carteles de más arriba) ──
+  const R = C.repartidos;
+  chk(R.length === 3 && R[0].gk === 'mesa7' && R[0].r === 5 && R[0].ply > 0 && R[0].tipo === 'A',
+      '🔒 cada colgada que sale del cartel se le manda al arbitrito para que la reparta (el teléfono no la puede detectar solo)', R.length);
+  chk(typeof R[0].fa === 'string' && typeof R[0].fd === 'string' && typeof R[0].a === 'number' && typeof R[0].d === 'number'
+      && Object.keys(R[0]).every(function(k){ return ['gk', 'r', 'ply', 'tipo', 'a', 'd', 'fa', 'fd', 'lm'].indexOf(k) >= 0; }),
+      '🔒 viajan las dos posiciones y los números, NADA de texto ni de las variantes que cada uno prueba en su tablero');
+  chk(extraerFuncion('_colRepartir').includes('if (it.red) return;') && extraerFuncion('_colDespachar').includes('_colRepartir(ok)'),
+      'lo que llegó POR el arbitrito no se vuelve a repartir (no rebota), y sólo se reparte lo ya verificado');
+  chk(C.lotes.length === 3 && C.lotes.every(function(l){ return Array.isArray(l) && l.length >= 1; }),
+      '🔒 cada cartel se manda en UN mensaje con todas sus colgadas juntas: de a una, el tope por persona del arbitrito se comía las últimas', C.lotes.length);
+  chk(/cs\.slice\(0, _COL_RED_LOTE\)/.test(extraerFuncion('_colRepartir')) && /var _COL_RED_LOTE = 20/.test(SRC),
+      'y no más de 20 por tanda (lo mismo que acepta el arbitrito)');
+}
+
+// ── 53g-ter. El aviso que llega del arbitrito lo confirma MI motor (20/09) ──
+console.log('\n=== 53g-ter. El aviso repartido: el que lo recibe lo confirma con su motor (20/09) ===');
+{
+  const decl = SRC.slice(SRC.indexOf('var _COL_PAR = '), SRC.indexOf('var _colQ0 = ')) + SRC.match(/var _COL_C_ANTES[^\n]*/)[0]
+    + '\n' + SRC.match(/var _COL_MATE_ANTES[^\n]*/)[0]
+    + '\n' + SRC.slice(SRC.indexOf('var _COL_VIVO_GRANDE'), SRC.indexOf('function _colVivoCaidaOk'))
+    + '\n' + SRC.match(/var _colRedPend[^\n]*/)[0]
+    + '\n' + SRC.match(/var _colRedEspera[^\n]*/)[0]
+    + '\n' + SRC.match(/var _COL_RED_ESPERA_MAX[^\n]*/)[0];
+  const N = ['_colCp', '_colClasifica', '_colVivoCaidaOk', '_colDeRed', '_colMirar', '_fenPlies', '_colRedFin'];
+  const D = new Function('var AHORA = 1e9, Date = { now: function(){ return AHORA; } }, avisados = [], mirando = "", ronda = new Array(400);'
+    + 'var _mevEvals = {}, _tdLiveCtx = { currentNum: 5 }, ON = true;'
+    + 'function setTimeout(fn, ms){ return { fn: fn, ms: ms }; } function clearTimeout(){}'
+    + 'function _colOn(){ return ON; } function mevTick(){} function _colRonda(){ return ronda; }'
+    + 'function _colMirandoGk(){ return mirando; }'
+    + 'function _colBuscar(gk){ return gk.indexOf("mesa") === 0 ? { h: { k: gk }, pgn: "p" } : null; }'
+    + 'function _colAvisar(info){ avisados.push(info); } function _colDespachar(){}'
+    + decl + N.map(extraerFuncion).join('\n')
+    + '; return { deRed: _colDeRed, extra: _mevExtra, avisados: avisados, evals: _mevEvals, deep: _colDeep, hasta: _colMesaHasta, pend: _colRedPend,'
+    + '  set mirando(v){ mirando = v; }, set on(v){ ON = v; }, set ahora(v){ AHORA = v; }, get ahora(){ return AHORA; },'
+    + '  set nPartidas(v){ ronda = new Array(v); } };')();
+
+  const FA = 'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 4 24';
+  const FD = 'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 5 24';
+  const aviso = { gk: 'mesa7', r: 5, ply: 47, tipo: 'A', a: -20, d: -560, fa: FA, fd: FD, lm: 'g5h5' };
+  const correr = (m, cpA, cpD) => {
+    D.deRed(m);
+    const j1 = D.extra.shift(); if (!j1) return null;
+    j1.cb({ cp: cpA });
+    const j2 = D.extra.shift(); if (!j2) return null;
+    j2.cb(typeof cpD === 'object' ? cpD : { cp: cpD });
+    return D.avisados[D.avisados.length - 1] || null;
+  };
+  const j0 = (D.deRed(aviso), D.extra[0]);
+  chk(j0 && j0.fen === FA && j0.depth === 16, '🔒 al llegar un aviso, el que lo recibe manda a SU motor esa posición (dos, no cuatrocientas)', j0 && j0.depth);
+  D.extra.length = 0; delete D.hasta.mesa7; delete D.pend.mesa7;
+  const a1 = correr(aviso, -20, -560);
+  chk(a1 && a1.gk === 'mesa7' && a1.red === true && a1.c.tipo === 'A' && a1.now.cp === -560 && a1.prev.cp === -20,
+      '🔒 si mi motor ve la colgada, suena el cartel (y queda marcado como venido del arbitrito, para no rebotar)');
+  chk(a1.now.last && a1.now.last.from === 'g5' && a1.now.last.to === 'h5' && a1.now.plies === 47,
+      'la jugada viaja en el aviso, así el cartel puede decir "24.♝xh5??" en vez de "jugada 24"');
+  const antes = D.avisados.length;
+  D.hasta.mesa7 = 0; D.extra.length = 0;
+  correr({ ...aviso, gk: 'mesa9' }, -20, -180);
+  chk(D.avisados.length === antes,
+      '🔒 si mi motor NO la ve así (cae poco), no suena: un aviso inventado no pasa este candado');
+  D.extra.length = 0;
+  D.deRed({ ...aviso, gk: 'mesa3', r: 4 });
+  chk(D.extra.length === 0, 'un aviso de OTRA ronda ni se mira');
+  D.mirando = 'mesa4';
+  D.deRed({ ...aviso, gk: 'mesa4' });
+  chk(D.extra.length === 0, 'la partida que tengo abierta en el visor no me la avisa nadie (la estoy viendo)');
+  D.mirando = '';
+  D.hasta.mesa5 = D.ahora + 60000;
+  D.deRed({ ...aviso, gk: 'mesa5' });
+  chk(D.extra.length === 0, '🔒 una mesa que ya avisó acá hace poco no vuelve a sonar (aunque el arbitrito la reparta otra vez)');
+  D.deRed({ ...aviso, gk: 'mesaX', fa: FA, fd: '' });
+  chk(D.extra.length === 0, 'un aviso incompleto se descarta');
+  D.on = false; D.deRed({ ...aviso, gk: 'mesa8' });
+  chk(D.extra.length === 0, 'con el aviso apagado (⚙️ Preferencias) no se mira ni se suena');
+  D.on = true;
+  // Mate: la cuenta la pone MI motor, no el que avisó.
+  D.extra.length = 0; delete D.hasta.mesa6;
+  const a2 = correr({ ...aviso, gk: 'mesa6', tipo: 'M', mateN: 99 }, 100, { mate: -3 });
+  chk(a2 && a2.c.tipo === 'M' && a2.mateN === 3, 'en el aviso de mate, en cuántas es lo dice mi propio motor (no el que avisó)', a2 && a2.mateN);
+  // Tope de confirmaciones en curso: el teléfono no se pone a mirar 20 posiciones de una.
+  {
+    const L = new Function('var pend = {}, mirados = [], despachos = [];'
+      + SRC.match(/var _COL_RED_LOTE[^\n]*/)[0] + '\n' + SRC.match(/var _COL_RED_MAX = \d+;/)[0]
+      + '\n' + SRC.match(/var _colRedEspera[^\n]*/)[0] + '\nvar _colRedPend = pend;'
+      + 'function _colOn(){ return true; } function _colDeRed(m){ pend[m.gk] = 1; mirados.push(m.gk); _colRedEspera++; }'
+      + 'function _colDespachar(){ despachos.push(Object.keys(pend).length); }'
+      + extraerFuncion('_colDeRedLote') + extraerFuncion('_colRedFin')
+      + '; return { lote: _colDeRedLote, fin: _colRedFin, mirados: mirados, pend: pend, despachos: despachos,'
+      + '  get espera(){ return _colRedEspera; } };')();
+    L.lote(Array.from({ length: 12 }, function(_, i){ return { gk: 'mesa' + i }; }));
+    chk(L.mirados.length === 4, '🔒 de una tanda grande se confirman 4 a la vez (cada una son dos posiciones de motor: en el teléfono se nota)', L.mirados.length);
+    chk(L.mirados[0] === 'mesa0', 'las primeras, que vienen con los argentinos adelante');
+    delete L.pend.mesa0; delete L.pend.mesa1;
+    L.lote([{ gk: 'nueva1' }, { gk: 'nueva2' }, { gk: 'nueva3' }]);
+    chk(L.mirados.length === 6, 'cuando el motor va contestando, entran las siguientes', L.mirados.length);
+    chk(L.despachos.length === 0 && L.espera > 0,
+        '🔒 mientras el motor confirma la tanda no sale ningún cartel: si no, la primera salía sola y las otras esperaban 2 minutos');
+    while (L.espera > 0) L.fin();   // van contestando todas
+    chk(L.despachos.length === 1, '…y al terminar la tanda sale UN cartel con todas juntas', L.despachos.length);
+  }
+  // Ya evaluada a fondo: no se vuelve a pedir al motor.
+  D.extra.length = 0; delete D.hasta.mesa2;
+  D.evals[FA] = { cp: -20 }; D.deep[FA] = 16;
+  D.deRed({ ...aviso, gk: 'mesa2' });
+  chk(D.extra.length === 1 && D.extra[0].fen === FD, 'la posición que ya miró a fondo no se la vuelve a pedir al motor');
+
+  // ── Si MI motor no llega a contestar (teléfono ocupado, motor cargando), el aviso NO se pierde ──
+  D.extra.length = 0; delete D.hasta.mesaT; delete D.pend.mesaT;
+  D.deRed({ ...aviso, gk: 'mesaT' });
+  const plazo = D.pend.mesaT;
+  chk(plazo && plazo.ms === 25000, 'el aviso ajeno tiene un plazo para que lo confirme mi motor', plazo && plazo.ms);
+  const n0 = D.avisados.length;
+  plazo.fn();   // se cumple el plazo sin que el motor haya contestado
+  const aT = D.avisados[D.avisados.length - 1];
+  chk(D.avisados.length === n0 + 1 && aT.gk === 'mesaT' && aT.sinMotor === true && aT.now.cp === -560 && aT.prev.cp === -20,
+      '🔒 vencido el plazo, el cartel sale igual con los números del que avisó (le queda el candado del PGN): mejor un aviso con un candado que ningún aviso');
+  // Y si el motor contesta DESPUÉS, no sale duplicado.
+  const j1 = D.extra.shift(); if (j1) j1.cb({ cp: -20 });
+  const j2 = D.extra.shift(); if (j2) j2.cb({ cp: -560 });
+  chk(D.avisados.length === n0 + 1, 'si el motor contesta tarde, no sale el cartel dos veces', D.avisados.length - n0);
+  // Números que NO son de colgada tampoco pasan por el camino del plazo.
+  D.extra.length = 0; delete D.hasta.mesaU; delete D.pend.mesaU;
+  D.deRed({ ...aviso, gk: 'mesaU', a: -20, d: -100 });
+  D.pend.mesaU.fn();
+  chk(D.avisados.length === n0 + 1, '🔒 sin motor, los números del que avisó igual tienen que ser de colgada: si no, no suena');
+}
+
+// ── 53g-bis. Antes de avisar, se pide el PGN otra vez (20/09: los falsos positivos eran jugadas corregidas) ──
+console.log('\n=== 53g-bis. La colgada se verifica contra el PGN antes de avisar (20/09) ===');
+{
+  // chess.js de mentira: la "posición" es la lista de jugadas, así se ve si undo() vuelve a la altura justa.
+  const fake = 'function Chess(){ this.h = []; }'
+    + 'Chess.prototype.load_pgn = function(t){ var b = String(t).replace(/^\\s*(\\[[^\\]]*\\]\\s*)+/, "").replace(/\\d+\\.(\\.\\.)?/g, " ").trim();'
+    + '  this.h = b ? b.split(/\\s+/).filter(function(x){ return x && !/^(1-0|0-1|1\\/2-1\\/2|\\*)$/.test(x); }) : []; return true; };'
+    + 'Chess.prototype.history = function(){ return this.h; };'
+    + 'Chess.prototype.undo = function(){ this.h.pop(); };'
+    + 'Chess.prototype.fen = function(){ return "P:" + this.h.join("-") + " w - - 0 1"; };';
+  const V = new Function(fake + extraerFuncion('parsePgnHeaders') + extraerFuncion('_pgnPlies')
+    + extraerFuncion('_colPgnTiene') + extraerFuncion('_colFenEnPly')
+    + '; return { tiene: _colPgnTiene, fen: _colFenEnPly };')();
+  const cab = '[Event "Olimpiada"]\n[White "Oro, Faustino"]\n[Black "Carlsen, Magnus"]\n\n';
+  const it = { g: { h: { White: 'Oro, Faustino', Black: 'Carlsen, Magnus' } }, now: { plies: 4, fen: 'P:e4-e5-Nf3-Nc6 w - - 0 1' } };
+  chk(V.fen(cab + '1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 *', 4) === 'P:e4-e5-Nf3-Nc6 w - - 0 1',
+      'la posición a las 4 medias jugadas se saca volviendo atrás el PGN completo (no se reproduce dos veces)');
+  chk(V.tiene(cab + '1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 *', it) === true,
+      '🔒 la jugada de la colgada sigue en la partida → el aviso sale');
+  chk(V.tiene(cab + '1. e4 e5 2. Nf3 Nf6 3. Bb5 a6 *', it) === false,
+      '🔒 se la corrigieron (la 2ª de las negras es otra) → NO se avisa: eran los falsos positivos de la Olimpiada');
+  chk(V.tiene(cab + '1. e4 e5 *', it) === true, 'si el PGN todavía viene atrás de la ficha no se puede comparar: se avisa igual');
+  chk(V.tiene('se cayó lichess', it) === true && V.tiene(cab.replace('Carlsen, Magnus', 'Otro, Jugador') + '1. e4 e5 2. Nf3 Nf6 *', it) === true,
+      'sin PGN, o si llegó OTRA partida, no se opina: se avisa igual (perder una colgada de verdad es peor)');
+  const ver = extraerFuncion('_colVerificar');
+  chk(/if \(!id \|\| typeof Chess === 'undefined'\) \{ cb\(true\); return; \}/.test(ver) && /catch\(function\(\)\{ cb\(true\); \}\)/.test(ver.replace(/\s+/g, ' ').replace('.catch(function(){ cb(true); });', 'catch(function(){ cb(true); })')),
+      'sin ids de Lichess (Chess-Results) o sin red, tampoco se pierde el aviso');
+  chk(/lichess\.org\/api\/study\/' \+ id\.round \+ '\/' \+ id\.game \+ '\.pgn'/.test(ver),
+      'el pedido es el de UNA partida, directo a Lichess (el mismo de los tableros en pantalla): no toca el Worker');
+  const chq = extraerFuncion('_colChequear');
+  chk(/_COL_VERIF_ESPERA\)/.test(chq) && /delete _colEst\[it\.gk\]; _colMesaHasta\[it\.gk\] = 0;/.test(chq),
+      '🔒 se esperan unos segundos (que la transmisión corrija) y, si se descarta, esa mesa vuelve a cero: puede avisar de nuevo');
+  chk(extraerFuncion('_colDespachar').includes('!_colCola.length || _colVerifBusy || _colRedEspera > 0') && chq.includes('_colVerifBusy = false;'),
+      'mientras se verifica (o se confirma una tanda del arbitrito), la cola espera: no salen dos carteles encimados');
+}
+
+// ── 53g-quater. Entrar desde el aviso: frenar EN la colgada y empezar el gráfico por ahí (20/09) ──
+console.log('\n=== 53g-quater. Al entrar desde un aviso: parar en la colgada y gráfico desde ahí (20/09) ===');
+{
+  // Árbol de mentira: una línea de `n` jugadas.
+  const linea = (n) => { const root = { children: [] }; let cur = root;
+    for (let i = 0; i < n; i++) { const hijo = { i: i + 1, children: [] }; cur.children.push(hijo); cur = hijo; } return root; };
+  const IR = new Function('var puesto = [], cv = { root: null, node: null };'
+    + 'var _cvPlyObjetivo = 0;'
+    + 'function cvSetNode(n){ puesto.push(n); cv.node = n; _cvPlyObjetivo = 0; }'
+    + extraerFuncion('_colIrA')
+    + '; return { ir: _colIrA, puesto: puesto, cv: cv, get obj(){ return _cvPlyObjetivo; }, set obj(v){ _cvPlyObjetivo = v; } };')();
+
+  IR.cv.root = linea(60); IR.cv.node = IR.cv.root;
+  IR.ir(47);
+  chk(IR.puesto[0] && IR.puesto[0].i === 47 && IR.obj === 0,
+      'con la partida al día, se abre PARADA en la jugada de la colgada', IR.puesto[0] && IR.puesto[0].i);
+  // La misma partida, pero el PGN que teníamos venía atrasado (10 jugadas).
+  IR.puesto.length = 0; IR.cv.root = linea(10); IR.cv.node = IR.cv.root;
+  IR.ir(47);
+  chk(IR.puesto[0] && IR.puesto[0].i === 10 && IR.obj === 47,
+      '🔒 si el PGN viene atrasado queda anotada la jugada: al llegar, el visor tiene que FRENAR ahí (antes seguía de largo hasta la última)', IR.obj);
+  // Las jugadas propias del visitante no cuentan como partida.
+  IR.puesto.length = 0; const r2 = linea(5); let fin = r2; while (fin.children.length) fin = fin.children[0];
+  fin.children.push({ i: 99, own: true, children: [] });
+  IR.cv.root = r2; IR.cv.node = r2; IR.ir(47);
+  chk(IR.puesto[0] && IR.puesto[0].i === 5, 'y no se mete en las variantes propias del visitante');
+
+  // El vivo, con una colgada pendiente, no lo arrastra al final.
+  const ext = extraerFuncion('_cvLiveExtendInPlace');
+  chk(/if \(_cvPlyObjetivo\) followLive = false;/.test(ext) && /if \(_cvPlyObjetivo\) \{\s*\n[^]*?_colIrA\(_cvPlyObjetivo\);/.test(ext),
+      '🔒 mientras la colgada esté pendiente, las jugadas que llegan NO lo llevan hasta el final: lo dejan en la colgada');
+  chk(/if \(!_cvAnimStepping\) _cvPlyObjetivo = 0;/.test(extraerFuncion('cvSetNode'))
+      && extraerFuncion('cvBackToLive').includes('_cvPlyObjetivo = 0;'),
+      'si el visitante navega a mano (o pide "Volver a la jugada en directo"), se olvida de la colgada');
+  chk(extraerFuncion('closeChessViewer').includes('_cvPlyObjetivo = 0; _colFoco = null;'),
+      'al cerrar el visor no queda nada pegado para la próxima partida');
+
+  // El gráfico empieza una jugada ANTES de la colgada.
+  const FI = new Function('var _fa = { nodes: [] }, _colFoco = null, ABIERTA = "mesa7";'
+    + 'function _colMirandoGk(){ return ABIERTA; }'
+    + extraerFuncion('_faInicio')
+    + '; return { i: _faInicio, set n(v){ _fa.nodes = new Array(v); }, set foco(v){ _colFoco = v; },'
+    + '  set partida(v){ ABIERTA = v; } };')();
+  FI.n = 60; FI.foco = { gk: 'mesa7', ply: 47 };
+  chk(FI.i() === 45, '🔒 el pase del motor arranca una jugada ANTES de la colgada (índice 45 = jugada 46)', FI.i());
+  FI.partida = 'mesa9';
+  chk(FI.i() === 0, '🔒 si el visitante pasa a OTRA partida (◀ ▶), esa arranca por el principio como siempre', FI.i());
+  FI.partida = 'mesa7';
+  FI.foco = null; chk(FI.i() === 0, 'sin aviso de colgada, el gráfico empieza por el principio como siempre');
+  FI.foco = { gk: 'mesa7', ply: 1 };   chk(FI.i() === 0, 'una colgada en la jugada 1 no se va de rango');
+  FI.foco = { gk: 'mesa7', ply: 61 };
+  chk(FI.i() === 0, '🔒 si la partida TODAVÍA no llegó a la colgada (PGN atrasado), el gráfico va como siempre: quedarse en el final y volver al principio hacía que el "?? " saliera último', FI.i());
+  chk(/if \(_fa\.running && !_faSaltoPendiente\(\)\) return;/.test(extraerFuncion('faMaybeAutoLive'))
+      && /faGetNodes\(\)\.length >= _colFoco\.ply && _fa\.ply < _colFoco\.ply - 2/.test(extraerFuncion('_faSaltoPendiente')),
+      '🔒 y el "ya está calculando" deja pasar ESE caso: si no, el pase seguía dibujando el principio y el arreglo no corría nunca');
+  const fh = extraerFuncion('faHandleMsg');
+  chk(/faRender\(_faInterp\(_fa\.results\)\);[^]*?_faReclassifyIfChanged\(\);/.test(fh)
+      && /if \(sig === _faNagSig\) return;/.test(extraerFuncion('_faReclassifyIfChanged')),
+      '🔒 el "??" sale apenas el motor evalúa esa jugada, sin esperar a que el gráfico termine (y la notación se repinta sólo si algún símbolo cambió)');
+  const lb = extraerFuncion('faLiveBuild');
+  chk(/_fa\.running && _ini > 0 && _fa\.ply < _ini && !_colFoco\.saltado && _faNeedsPassEval\(_ini\)/.test(lb)
+      && /_colFoco\.saltado = true;/.test(lb) && /_fa\.running = false; _fa\.armed = false;/.test(lb),
+      '🔒 …y cuando las jugadas llegan, se corta el pase en curso y se arranca POR la colgada (una sola vez por aviso)');
+
+  // Empezó por el medio: al llegar al final vuelve al principio y completa el resto.
+  const NX = new Function('var pedidas = [], terminado = 0;'
+    + 'var _fa = { running: true, nodes: new Array(60), results: new Array(60).fill(1), ply: 45, desde: 45, live: false, _capTimer: null },'
+    + '    sf = { on: false, ready: false, engine: { postMessage: function(){} } }, _FA_LIVE_DEEP_N = 6, _FA_LIVE_DEPTH = 18, _FA_LIVE_DEEP_DEPTH = 20, _FA_MANUAL_DEPTH = 18, _FA_LIVE_CAP_MS = 450, _FA_LIVE_DEEP_CAP_MS = 900, _FA_MANUAL_CAP_MS = 450, _FA_LIVE_MIN = 12, _FA_LIVE_DEEP_MIN = 14;'
+    + 'function _faNeedsPassEval(i){ return _fa.results[i] == null; }'
+    + 'function faFinish(){ terminado++; _fa.running = false; } function faClassify(){} function faRender(){} function faRenderStats(){}'
+    + 'function faApplyNags(){} function cvUpdateNagBadge(){} function faUpdateBar(){} function faGetNodes(){ return _fa.nodes; }'
+    + 'function sfAnalyze(){} function setTimeout(){} function clearTimeout(){} var _faNagSig = "";'
+    + 'var document = { getElementById: function(){ return { style: {}, textContent: "", classList: { add: function(){}, remove: function(){} } }; } };'
+    + 'Object.defineProperty(_fa.nodes, "fen", { value: "" });'
+    + extraerFuncion('faNext')
+    + '; return { next: faNext, fa: _fa, get fin(){ return terminado; } };')();
+  // Falta evaluar la 46 (índice 45, la colgada) y la 3 (índice 2, del principio).
+  NX.fa.results[45] = null; NX.fa.results[2] = null;
+  for (let i = 0; i < 60; i++) NX.fa.nodes[i] = { fen: 'f' + i };
+  NX.next();
+  chk(NX.fa.ply === 45, '🔒 la primera que mira el motor es la de la colgada, no la jugada 3', NX.fa.ply);
+  NX.fa.results[45] = 1; NX.fa.ply = 46;   // ya la evaluó y sigue
+  NX.next();
+  chk(NX.fa.ply === 2 && NX.fa.desde === 0 && NX.fin === 0,
+      '…y al llegar al final vuelve al principio por las que quedaron: el gráfico igual sale entero', NX.fa.ply);
+  NX.fa.results[2] = 1; NX.fa.ply = 3;
+  NX.next();
+  chk(NX.fin === 1, 'recién ahí termina el pase', NX.fin);
 }
 
 // ── 53h. Colgadas de la ronda (19/09, idea del autor) ──

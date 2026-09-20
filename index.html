@@ -3299,6 +3299,23 @@
       body.light .cg-pub:hover { background:#f6dedc; }
       .cg-autor { padding:8px 14px; border-radius:20px; cursor:pointer; font-family:inherit; font-size:12.5px; font-weight:600;
         color:var(--text2); background:var(--bg3); border:1px dashed var(--border); }
+      /* 🕑 ÚLTIMAS COLGADAS (20/09): el cartel del aviso se va a los 15 s y, si cayeron varias juntas, las
+         otras se perdían. Este botón las deja a mano al lado de "🎯 Colgadas de la ronda". */
+      .cg-ult { display:inline-flex; align-items:center; gap:6px; padding:8px 14px; border-radius:20px; cursor:pointer; font-family:inherit;
+        font-size:12.5px; font-weight:700; color:var(--text2); background:var(--bg3); border:1px solid var(--border); }
+      .cg-ult:hover { color:var(--text); border-color:var(--gold-dim); }
+      .cg-ult.on { background:var(--gold-bg); border-color:var(--gold-dim); color:var(--text); }
+      .cg-ult span { font-weight:600; opacity:.8; }
+      .cg-ult-panel { flex:1 1 100%; display:flex; flex-direction:column; gap:6px; margin-top:-2px;
+        background:var(--card90); border:1px solid var(--bd22); border-radius:var(--r-md); padding:8px; box-shadow:var(--shadow-card); }
+      .cg-ult-fila { display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; text-align:left; cursor:pointer; font-family:inherit;
+        font-size:12.5px; color:var(--text); background:var(--bg2); border:1px solid var(--border); border-left:3px solid #d03030;
+        border-radius:9px; padding:6px 9px; }
+      .cg-ult-fila:hover { border-color:var(--gold-dim); border-left-color:#d03030; }
+      .cg-ult-fila.cg-ult-mate { border-left-color:#e0a33a; }
+      .cg-ult-j { font-weight:700; }
+      .cg-ult-d { color:var(--text2); font-size:11.5px; }
+      .cg-ult-t { margin-left:auto; color:var(--text3); font-size:11px; white-space:nowrap; }
       .cg-ov { position:fixed; inset:0; z-index:100001; background:rgba(0,0,0,.6); display:none; align-items:flex-start; justify-content:center;
         overflow-y:auto; padding:40px 12px; }
       .cg-ov.open { display:flex; }
@@ -19254,10 +19271,17 @@ function _cvBuildPageExtras() {
   if (backbar) { backbar.style.display = 'none'; backbar.innerHTML = ''; }
   if (bookBack) {
     var _fromTrain = _cvFromPuzzle || _cvFromPractice || _cvFromProfile;   // partida abierta desde Ejercicios/Practicar/Perfil
-    if ((sk && sk.tour != null) || _fromTrain) {
+    var _salto = _cvJumpStack.length ? _cvJumpStack[_cvJumpStack.length - 1] : null;   // partida de la que se saltó
+    if ((sk && sk.tour != null) || _fromTrain || _salto) {
       bookBack.style.display = '';
       var _arrowSvg = '<svg class="cv-bb-ic" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"></polyline></svg>';
-      if (_fromTrain) {
+      if (_salto) {
+        // Se llegó acá saltando (aviso de colgada / libro): el botón nombra la partida a la que vuelve.
+        var _sh = parsePgnHeaders(_salto.games[_salto.idx] || ''), _sn = 'la partida';
+        if (_sh.White || _sh.Black) _sn = _colApellido(_sh.White) + ' – ' + _colApellido(_sh.Black);
+        bookBack.innerHTML = '<button class="cv-bb-btn" onclick="cvBackToTournament()" title="Volver a ' + escHtml(_sn) + '" aria-label="Volver a ' + escHtml(_sn) + '">'
+          + _arrowSvg + '<span class="cv-bb-name">' + escHtml(_sn) + '</span></button>';
+      } else if (_fromTrain) {
         // Volver AL ejercicio/práctica/perfil (no a un torneo): caja clicable con el rótulo correcto.
         var _bl = _cvFromPuzzle ? 'Volver al ejercicio' : _cvFromPractice ? 'Volver a la práctica' : 'Volver al perfil';
         bookBack.innerHTML = '<button class="cv-bb-btn" onclick="cvBackToTournament()" title="' + _bl + '" aria-label="' + _bl + '">'
@@ -19327,6 +19351,9 @@ function cvToggleTourChat() {
 // "Volver al torneo": si el torneo quedó abierto detrás (deep-link o apertura desde el torneo) usamos
 // Atrás (restaura su URL); si la partida se abrió suelta (desde el buscador), abrimos el torneo.
 function cvBackToTournament() {
+  // Si se llegó SALTANDO desde otra partida (aviso de colgada, libro de aperturas), volver a ELLA:
+  // el popstate desapila y la reabre en la jugada en la que estaba.
+  if (_cvJumpStack.length && _cvHistoryPushed) { history.back(); return; }
   // Si la partida se abrió desde un ejercicio/práctica ("Ver la partida original"), este botón
   // debe volver AL ejercicio, no a un torneo. El visor ya empujó su entrada de historial, así que
   // delegamos en Atrás (el popstate reabre el ejercicio/práctica, igual que el botón del navegador).
@@ -25701,6 +25728,7 @@ function cvSetNode(node) {
   // Si hay una reproducción en curso (jugadas que llegaron en vivo de a varias) y el usuario navega
   // a mano, cortarla. La propia reproducción marca _cvAnimStepping para no autocancelarse.
   if (_cvAnimTimer && !_cvAnimStepping) { clearTimeout(_cvAnimTimer); _cvAnimTimer = null; _cvLiveCatchup = false; }
+  if (!_cvAnimStepping) _cvPlyObjetivo = 0;   // navegó a mano: ya no hay que llevarlo a la colgada
   var _prevNode = cv.node;   // para animar el deslizamiento SOLO al avanzar de a una jugada
   cv.node = node;
   cv.sel = null;
@@ -26364,6 +26392,7 @@ function cvLiveEndNode() {
 // Botón "Volver a la jugada en directo" (estilo Lichess): aparece cuando la partida está EN CURSO
 // y el visitante navegó a otra jugada o está en una variante propia. Lo actualiza el settle.
 function cvBackToLive() {
+  _cvPlyObjetivo = 0;   // pidió el directo: olvidar la colgada a la que había que llevarlo
   var end = cvLiveEndNode();
   if (end) cvSetNode(end);
 }
@@ -26480,6 +26509,7 @@ function cvRender960Note() {
 function _cvLiveExtendInPlace(newPgn, meta) {
   // ¿Estaba siguiendo la jugada en directo? (en el final real, o en plena reproducción de ponerse al día)
   var followLive = (cv.node === cvLiveEndNode()) || (_cvAnimTimer != null);
+  if (_cvPlyObjetivo) followLive = false;   // vino de un aviso de colgada: hay que frenar ahí, no seguir de largo
   var prevDepth = _cvNodeDepth(cv.node);
   var r = _cvExtendLiveGame(newPgn);
   if (r === 'rebuild') return false;
@@ -26496,7 +26526,13 @@ function _cvLiveExtendInPlace(newPgn, meta) {
   }
   if (r === 'same') { _cvStampLiveArrival(); _cvScheduleSettle(); return true; }
   // r === 'extended'
-  if (followLive) {
+  if (_cvPlyObjetivo) {
+    // Llegaron las jugadas que faltaban: dejarlo parado EN la colgada (y, si todavía no llegó hasta
+    // ahí, seguir esperando el próximo refresco).
+    _colIrA(_cvPlyObjetivo);
+    cvHighlight();
+    _cvScheduleSettle();
+  } else if (followLive) {
     // Seguía en vivo: avanzar al nuevo final. Si llegaron varias, reproducirlas de a una.
     var endDepth = _cvEndDepth();
     if (endDepth - prevDepth >= 2) _cvAnimateToEnd(prevDepth);
@@ -27105,7 +27141,7 @@ function closeChessViewer(e){
     // Limpiar la altura seteada por JS en las columnas para que el CSS retome el control.
     ['.cv-moves-col', '.cv-book-col'].forEach(function(sel) { var c = document.querySelector(sel); if (c) { c.style.height = ''; c.style.maxHeight = ''; } });
     // Reset del libro de partidas opt-in y de la pila de "volver a la partida anterior".
-    _cvBookGamesOn = false; _cvJumpStack = [];
+    _cvBookGamesOn = false; _cvJumpStack = []; _cvPlyObjetivo = 0; _colFoco = null;
     try { if (window.aaTourChat) window.aaTourChat.unmount('viewer'); } catch (_) {}   // la vista del visor se va (el detalle sigue con su sala)
     var _bcc = document.querySelector('.cv-book-col'); if (_bcc) _bcc.classList.remove('chat-mode');
   }
@@ -33160,7 +33196,10 @@ var _colLlaveVal = null;
 
 function _colActivo(q, ls) {
   try {
-    if (/[?&]colgadas=1(?!\w)/.test(q)) ls.setItem('aa_col_on', '1');
+    // ?colgadas=1 PRENDE de verdad: también borra el "No avisarme más". Sin esto, el que tocaba
+    // ese link (que es la única salida para el que no tiene cuenta, porque ⚙️ Preferencias pide
+    // cuenta) no tenía forma de volver a prenderlo en ese navegador.
+    if (/[?&]colgadas=1(?!\w)/.test(q)) { ls.setItem('aa_col_on', '1'); ls.removeItem('aa_pref_col_off'); }
     if (/[?&]colgadas=0(?!\w)/.test(q)) ls.removeItem('aa_col_on');
     return ls.getItem('aa_col_on') === '1';
   } catch (e) { return false; }
@@ -33222,13 +33261,27 @@ function _colVivoCaidaOk(antes, despues, lado, fin, nPartidas) {
   var min = g ? (fin ? _COL_VIVO_CAIDA_G : _COL_VIVO_CAIDA_G_CAND) : (fin ? _COL_VIVO_CAIDA : _COL_VIVO_CAIDA_CAND);
   return (antes * s - despues * s) >= min;
 }
+/* ¿Este equipo barre TODA la ronda con el motor, o sólo vigila lo que tiene EN PANTALLA?
+   Medido con el SF18 lite de la app en la PC del autor: prof. 12 = 64 ms por posición, o sea que una
+   ronda de 400 partidas son ~21 s de motor por vuelta… y hay que repetirlo cada 30 s. Un teléfono no
+   llega ni cerca: gastaría la batería en un barrido que nunca termina (por eso no le llegaba ningún
+   aviso). Así que **barre el que puede, y el resto se entera por el arbitrito** (_colDeRedLote).
+   No se adivina "PC o teléfono": se MIDE este equipo con _mev.avgMs, que es el promedio real de lo que
+   tarda acá una posición a prof. 12. Hasta tener medida (los primeros segundos), decide la pantalla.
+   Lo que sigue igual para todos: los tableros en pantalla (esas evals ya se calculan para la barrita,
+   comparar una con la anterior son 2 ms sobre 400 partidas) y la confirmación a prof. 16 de lo propio. */
+var _COL_BARRE_MS = 150;   // más lento que esto por posición = no barre (una PC común mide ~64 ms)
+function _colBarreRonda() {
+  if (_mev.avgMs) return _mev.avgMs <= _COL_BARRE_MS;
+  try { return !_cvMobileMQ.matches; } catch (e) { return true; }
+}
 // La partida que el visitante tiene ABIERTA en el visor no se avisa: la está viendo con sus propios ojos
 // (pedido del autor 20/09). Además ahí la eval viene del motor del visor, mucho más honda.
 // El aviso de colgadas pide la ficha de Lichess también en torneos de UNA transmisión, si la ronda no entra
 // en una página (pedido del autor 20/09: sin ficha sólo se vigila la página que se está mirando). Es un
 // pedido cada 30 s directo a Lichess, así que no toca el cupo de Cloudflare.
 function _colFichaHace() {
-  if (!_colOn() || !_tdCtx || !_tdLiveCtx) return false;
+  if (!_colOn() || !_colBarreRonda() || !_tdCtx || !_tdLiveCtx) return false;   // el que no barre no la necesita
   var r = _tdCtx.byRound[_tdLiveCtx.currentNum];
   return !!(r && r.length > _TD_PER_PAGE);
 }
@@ -33252,7 +33305,7 @@ function _colRonda() {
 
 // Partidas de OTRAS páginas para la tanda del motor: sólo con ficha, argentinos primero, con presupuesto.
 function _colMasTrabajos(jobs, seen) {
-  if (!_colOn()) return;
+  if (!_colOn() || !_colBarreRonda()) return;   // el teléfono no barre: recibe lo que detectaron las PC
   var games = _colRonda(); if (!games) return;
   var tope = Math.min(_COL_MAX_JOBS, Math.floor(_COL_PRESUPUESTO_MS / (_mev.avgMs || 80)));
   if (jobs.length >= tope) return;
@@ -33325,7 +33378,7 @@ function _colAvisar(info) {
 }
 // Un cartel como mucho cada 2 min: lo que llega antes espera y sale junto.
 function _colDespachar() {
-  if (!_colCola.length) return;
+  if (!_colCola.length || _colVerifBusy || _colRedEspera > 0) return;   // tanda verificándose o confirmándose: la cola espera su vuelta
   var falta = _colUltimo + _COL_GLOBAL_MS - Date.now();
   if (falta > 0) {
     if (!_colTimer) _colTimer = setTimeout(function(){ _colTimer = null; _colDespachar(); }, falta);
@@ -33335,9 +33388,101 @@ function _colDespachar() {
   // Sólo las que siguen en la ronda en vivo (el PGN pudo renovarse: se toma el objeto nuevo).
   items = items.filter(function(it){ var g = _colBuscar(it.gk); if (g) it.g = g; return !!g; });
   if (!items.length || !_colOn()) return;
-  items.sort(function(a, b){ return (b.arg ? 1 : 0) - (a.arg ? 1 : 0); });   // argentinos primero
-  _colUltimo = Date.now();
-  _colMostrar(items);
+  _colUltimo = Date.now();   // el turno del cartel ya se gastó, aunque la verificación las descarte a todas
+  _colChequear(items, function(ok){
+    if (ok.length) { _colHistGuardar(ok); _colMostrar(ok); _colRepartir(ok); }
+    if (_colCola.length) _colDespachar();   // lo que llegó mientras se verificaba
+  });
+}
+
+/* ── ¿Sigue en pie? Última mirada al PGN antes de avisar (20/09, pedido del autor) ──────────────
+   Los pocos falsos positivos que vio el autor en la Olimpiada eran jugadas mal cargadas que la
+   transmisión corrigió enseguida (se entraba a la partida y no había ningún desequilibrio). Así que
+   ahora, con la colgada ya confirmada a prof. 16, se esperan _COL_VERIF_ESPERA y se le pide a Lichess
+   el PGN de ESA partida (un pedido chico, directo, como el de los tableros en pantalla): si la
+   posición de la colgada ya no está en la partida, se la corrigieron y NO se avisa.
+   Si no se puede comprobar (sin ids de Lichess, sin red, PGN atrasado, 960), se avisa igual: perder
+   una colgada de verdad es peor que un falso positivo cada tanto. */
+var _COL_VERIF_ESPERA = 6000, _COL_VERIF_TO = 7000;
+var _colVerifBusy = false;
+function _colChequear(items, cb) {
+  _colVerifBusy = true;
+  setTimeout(function(){
+    var falta = items.length, ok = [];
+    items.forEach(function(it){
+      _colVerificar(it, function(sirve){
+        if (sirve) ok.push(it);
+        else { delete _colEst[it.gk]; _colMesaHasta[it.gk] = 0; }   // jugada corregida: se vuelve a anotar de cero
+        if (--falta > 0) return;
+        _colVerifBusy = false;
+        ok.sort(function(a, b){ return (b.arg ? 1 : 0) - (a.arg ? 1 : 0); });   // argentinos primero
+        cb(ok);
+      });
+    });
+  }, _COL_VERIF_ESPERA);
+}
+function _colVerificar(it, cb) {
+  var id = _bcGameIds(it.g.pgn);
+  if (!id || typeof Chess === 'undefined') { cb(true); return; }
+  _fetchTO('https://lichess.org/api/study/' + id.round + '/' + id.game + '.pgn', _COL_VERIF_TO)
+    .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+    .then(function(txt){ cb(_colPgnTiene(txt, it)); })
+    .catch(function(){ cb(true); });
+}
+// ¿La posición de la colgada sigue estando en el PGN que acaba de mandar Lichess?
+function _colPgnTiene(txt, it) {
+  txt = String(txt || '').trim();
+  if (!/^\[Event /.test(txt)) return true;                       // no llegó un PGN: no opinar
+  var h = parsePgnHeaders(txt), h0 = it.g.h || {};
+  if ((h.White || '') !== (h0.White || '') || (h.Black || '') !== (h0.Black || '')) return true;   // otra partida
+  if (_pgnPlies(txt) < it.now.plies) return true;                // el PGN viene atrás de la ficha: no se puede comparar
+  var pos = _colFenEnPly(txt, it.now.plies);
+  return pos == null ? true : pos.split(' ')[0] === String(it.now.fen).split(' ')[0];
+}
+// Posición a las `ply` medias jugadas del PGN. Reproduce UNA partida, en la respuesta de un pedido:
+// nada que ver con reproducir la ronda entera en un tick (17/09).
+function _colFenEnPly(pgn, ply) {
+  try {
+    var ch = new Chess();
+    if (!ch.load_pgn(String(pgn))) return null;
+    var n = ch.history().length;
+    if (n < ply) return null;
+    for (var k = n; k > ply; k--) ch.undo();
+    return ch.fen();
+  } catch (e) { return null; }
+}
+
+/* ── 🧪 Un aviso de PRUEBA, sin esperar una colgada de verdad ───────────────────────────────────
+   Sólo existe con la llave (?colgadas=1). En la consola del navegador:
+     aaCol.probar()      → inventa un aviso sobre una partida de la ronda en vivo que se está
+                           mirando, con las posiciones REALES de esa partida (así pasa el chequeo
+                           del PGN) y una caída inventada de −0,2 a −6,5.
+     aaCol.probar(120)   → apunta a una jugada que la partida TODAVÍA no tiene: sirve para ver que
+                           el visor frena ahí cuando lleguen las jugadas, en vez de irse al final.
+   Pasa por el camino completo: espera de verificación, cartel, 🕑 Últimas colgadas y reparto por el
+   arbitrito (si estás con tu cuenta puesta). Ojo con el tope de un cartel cada 2 minutos. */
+function _colProbar(plyPedido) {
+  if (!_colLlave()) return 'Falta la llave: entrá una vez con ?colgadas=1';
+  var games = _colRonda();
+  if (!games || !games.length) return 'Abrí primero un torneo con la ronda EN VIVO.';
+  var g = null, n = 0;
+  for (var i = 0; i < games.length; i++) {
+    var p = _pgnPlies(games[i].pgn);
+    if (p <= 12) continue;
+    if (!g || _tdIsArgGame(games[i].h)) { g = games[i]; n = p; }
+    if (g && _tdIsArgGame(g.h)) break;                 // si hay una argentina, ésa
+  }
+  if (!g) return 'Ninguna partida de la ronda tiene jugadas suficientes todavía.';
+  var hasta = Math.max(2, Math.min(plyPedido > 0 ? plyPedido : n, n));
+  var fd = _colFenEnPly(g.pgn, hasta), fa = _colFenEnPly(g.pgn, hasta - 1);
+  if (!fa || !fd) return 'No se pudo reproducir esa partida (¿960?).';
+  var info = { gk: _tdEvKey(g.h), g: g, prueba: true, c: { lado: 'w', tipo: 'A' },
+    prev: { fen: fa, cp: -20, plies: hasta - 1, last: null },
+    now:  { fen: fd, cp: -650, plies: (plyPedido > 0 ? plyPedido : hasta), last: null } };
+  _colMesaHasta[info.gk] = 0;   // que se pueda probar de nuevo la misma mesa
+  _colAvisar(info);
+  return 'Aviso de prueba: ' + (g.h.White || '?') + ' – ' + (g.h.Black || '?') + ', jugada ' + info.now.plies
+       + (info.now.plies > n ? ' (la partida va por la ' + n + ': el visor tiene que esperarla)' : '');
 }
 function _colBuscar(gk) {
   var games = (_tdCtx && _tdLiveCtx && _tdCtx.byRound[_tdLiveCtx.currentNum]) || [];
@@ -33353,7 +33498,20 @@ function _colEvTxt(cp) {
   return (cp > 0 ? '+' : cp < 0 ? '−' : '') + v.toFixed(1).replace('.', ',');
 }
 // "37.♝xh5??" si se sabe la jugada (una sola media jugada entre las dos evals); si no, la jugada a la que se llegó.
-function _colJugada(prev, now) {
+/* ¿En qué media jugada está la colgada? Normalmente es la última que llegó (`now.plies`), pero entre
+   una mirada y la otra pueden haber entrado DOS: la colgada y la respuesta del rival. Ahí abrir en la
+   última caía UNA JUGADA DESPUÉS de la colgada (lo vio el autor 20/09, caso "Manish – Suleimen").
+   La colgada la hizo el bando que EMPEORÓ (`c.lado`), y las blancas mueven en los plies IMPARES
+   (`_fenPlies`: fullmove 24 con blancas = 46 jugadas hechas → la 47 es de las blancas). Con eso se
+   elige, de atrás para adelante, la última jugada de ese bando dentro de lo que llegó. */
+function _colPlyColgada(it) {
+  var fin = it.now.plies, ini = (it.prev && it.prev.plies >= 0) ? it.prev.plies + 1 : fin;
+  var lado = it.c && it.c.lado;
+  if (!lado || !(fin > ini)) return fin;   // llegó una sola jugada: no hay nada que elegir
+  for (var p = fin; p >= ini; p--) if (((p % 2) === 1) === (lado === 'w')) return p;
+  return fin;
+}
+function _colJugada(prev, now, ply) {
   var fp = String(prev.fen).split(' '), n = parseInt(fp[5], 10) || 1;
   if (now.plies === prev.plies + 1 && now.last && now.last.from && typeof Chess !== 'undefined') {
     try {
@@ -33361,7 +33519,8 @@ function _colJugada(prev, now) {
       if (m && m.san) return n + (fp[1] === 'w' ? '.' : '...') + (typeof cvFan === 'function' ? cvFan(m.san) : m.san) + '??';
     } catch (e) {}
   }
-  return 'jugada ' + (parseInt(String(now.fen).split(' ')[5], 10) || n);
+  // Sin la jugada a mano: al menos el NÚMERO de jugada correcto (el de la colgada, no el de la respuesta).
+  return 'jugada ' + Math.ceil((ply || now.plies) / 2);
 }
 function _colTitulo(it) {
   var h = it.g.h || {}, mate = it.c && it.c.tipo === 'M';
@@ -33380,7 +33539,7 @@ function _colJugadoresHtml(it) {
 function _colDetalleHtml(it) {
   var a = it.prev.cp, d = it.now.cp;
   var fin = (it.c && it.c.tipo === 'M') ? 'mate' : _colEvTxt(d);   // "#−" no se entiende; en el mate, la palabra
-  return escHtml(_colJugada(it.prev, it.now)) + ' &nbsp;<span class="col-ch col-ch-a">' + _colEvTxt(a) + '</span> → <span class="col-ch col-ch-d">' + fin + '</span>';
+  return escHtml(_colJugada(it.prev, it.now, _colPlyColgada(it))) + ' &nbsp;<span class="col-ch col-ch-a">' + _colEvTxt(a) + '</span> → <span class="col-ch col-ch-d">' + fin + '</span>';
 }
 
 function _colSonido() {
@@ -33408,13 +33567,57 @@ function _colAbrir(gk, ply) {
   var g = _colBuscar(gk); if (!g || !_tdCtx) return;
   var idx = _tdCtx.games.indexOf(g.pgn); if (idx < 0) return;
   _colCerrar();
+  _colApilarVuelta(idx);
+  _colFoco = { gk: gk, ply: ply };   // el gráfico de ESA partida empieza por acá (ver _faInicio)
   Promise.resolve(tdOpenGame(idx, _tdCtx.pgnKey, _tdCtx.name, _tdCtx.location)).then(function(){ _colIrA(ply); });
 }
+/* Jugada por la que conviene EMPEZAR el gráfico, y de qué partida ({gk, ply}; null = por el
+   principio, como siempre). La pone el aviso de colgada: en una partida de 60 jugadas, el pase del
+   motor tardaba en llegar a la 47 y hasta entonces no aparecía el "??" en la notación. Ahora arranca
+   ahí y al terminar vuelve al principio a completar el resto, así el gráfico igual sale entero.
+   Va atado a la PARTIDA (jugadores + ronda, como el resto del aviso) y no al índice: en una ronda en
+   vivo la lista se rearma sola y el índice se mueve. Si el visitante pasa a otra partida (◀ ▶), esa
+   arranca por el principio.
+   Si la partida TODAVÍA no llegó a la colgada (el PGN venía atrasado), esto devuelve 0: el gráfico se
+   dibuja como siempre mientras tanto, y en cuanto lleguen las jugadas faLiveBuild corta el pase y lo
+   manda ahí (si no, el "??" aparecía recién al terminar TODO el gráfico). */
+var _colFoco = null;
+function _faInicio() {
+  var n = (_fa.nodes || []).length;
+  if (!n || !_colFoco || !(_colFoco.ply > 0) || _colFoco.ply > n) return 0;
+  if (_colFoco.gk !== _colMirandoGk()) return 0;   // es otra partida
+  return Math.max(0, _colFoco.ply - 2);            // una jugada ANTES de la colgada
+}
+// Si el visitante YA estaba en el visor mirando OTRA partida, se guarda en la pila de saltos (la misma
+// del libro de aperturas): así "Volver" —y el Atrás del navegador— lo devuelven A ESA PARTIDA y no a la
+// grilla del torneo (pedido del autor 20/09: "tengo que buscarla de vuelta").
+function _colApilarVuelta(idxNuevo) {
+  try {
+    var ov = document.getElementById('chess-overlay');
+    if (!ov || !ov.classList.contains('open') || !_cvHistoryPushed) return;
+    if (typeof cv === 'undefined' || !cv || !cv.node || !_cvTourGames.length) return;
+    if (_cvTourIdx === idxNuevo) return;   // es la misma partida: no hay nada a donde volver
+    _cvJumpStack.push({
+      games: _cvTourGames, keys: _cvShareKeys, fromTour: _cvFromTournament,
+      name: _cvTourName, loc: _cvTourLoc, idx: _cvTourIdx, ply: nodeDepth(cv.node)
+    });
+    var _u = location.href;
+    try { if (_tdTourKey != null) _u = _gameHref(_tdTourKey, idxNuevo, _tdActiveCat); } catch (e) {}
+    history.pushState({ chessViewer: true, cvJump: _cvJumpStack.length }, '', _u);
+  } catch (e) {}
+}
+/* Jugada en la que hay que dejar parado al visitante cuando la partida LLEGUE hasta ahí. Se abre
+   desde un aviso y el PGN que teníamos venía atrasado (pasa seguido: el aviso llega por la ficha,
+   que va más adelante que el PGN). Antes, al llegar las jugadas, el visor las reproducía de largo
+   hasta la última y había que buscar la colgada a mano. Mientras esto esté pendiente, el vivo NO
+   arrastra al visitante: se frena EN la colgada. Cualquier navegación a mano lo cancela (cvSetNode). */
+var _cvPlyObjetivo = 0;
 function _colIrA(ply) {
-  if (!(ply > 0) || typeof cv === 'undefined' || !cv || !cv.root) return;
-  var node = cv.root;
-  for (var k = 0; k < ply && node.children && node.children.length; k++) node = node.children[0];
-  if (node && node !== cv.root && node !== cv.node) cvSetNode(node);
+  if (!(ply > 0) || typeof cv === 'undefined' || !cv || !cv.root) { _cvPlyObjetivo = 0; return; }
+  var node = cv.root, k = 0;
+  for (; k < ply && node.children && node.children.length && !node.children[0].own; k++) node = node.children[0];
+  if (node && node !== cv.root && node !== cv.node) cvSetNode(node);   // (esto limpia _cvPlyObjetivo)
+  _cvPlyObjetivo = (k < ply) ? ply : 0;   // ¿todavía no llegó? queda anotada para cuando llegue
 }
 function _colNoMas() {
   try { localStorage.setItem('aa_pref_col_off', '1'); } catch (e) {}
@@ -33434,7 +33637,7 @@ function _colMostrar(items) {
   var cuerpo = uno
     ? '<b>' + _colTitulo(it) + '</b><span>' + _colJugadoresHtml(it) + '</span><span>' + _colDetalleHtml(it) + '</span>'
     : '<b>' + (items.every(function(x){ return x.c && x.c.tipo === 'M'; }) ? 'Hay mate en ' + items.length + ' tableros' : 'Hubo colgadas en ' + items.length + ' tableros') + '</b>' + items.map(function(x){
-        return '<button type="button" class="col-fila" data-gk="' + escHtml(x.gk) + '" data-ply="' + x.now.plies + '"><span class="col-fila-j">' + _colJugadoresHtml(x) + '</span><span>' + _colDetalleHtml(x) + '</span></button>';
+        return '<button type="button" class="col-fila" data-gk="' + escHtml(x.gk) + '" data-ply="' + _colPlyColgada(x) + '"><span class="col-fila-j">' + _colJugadoresHtml(x) + '</span><span>' + _colDetalleHtml(x) + '</span></button>';
       }).join('');
   d.innerHTML = '<div class="col-top"><span class="col-nb" aria-hidden="true">' + (soloMate ? '#' : '??') + '</span><div class="col-txt">' + cuerpo + '</div></div>'
     + '<div class="col-btns"><button type="button" class="col-no">Descartar</button>'
@@ -33444,12 +33647,160 @@ function _colMostrar(items) {
   host.appendChild(d);
   d.querySelector('.col-no').onclick = _colCerrar;
   d.querySelector('.col-nomas').onclick = _colNoMas;
-  if (uno) d.querySelector('.col-si').onclick = function(){ _colAbrir(it.gk, it.now.plies); };
+  if (uno) d.querySelector('.col-si').onclick = function(){ _colAbrir(it.gk, _colPlyColgada(it)); };
   Array.prototype.forEach.call(d.querySelectorAll('.col-fila'), function(b){ b.onclick = function(){ _colAbrir(b.getAttribute('data-gk'), parseInt(b.getAttribute('data-ply'), 10)); }; });
   _colSonido();
   _colCartelTimer = setTimeout(_colCerrar, _COL_CARTEL_MS);
 }
-window.aaCol = { llave: _colLlave };
+/* ══ 📣 EL ARBITRITO REPARTE LAS COLGADAS (20/09/2026, pedido del autor) ══════════════════════════
+   En el teléfono no llegaba ningún aviso: no tiene nafta para vigilar 400 partidas con el motor.
+   Ahora, la PC que detecta una colgada (y ya la confirmó a prof. 16 y contra el PGN) se la manda al
+   arbitrito del torneo por el MISMO caño del chat "La hinchada", y él se la reparte a todos los que
+   están mirando ese torneo. No es un mensaje: no se guarda ni se ve en el chat.
+   · Lo que viaja es un puntero a la partida de la TRANSMISIÓN OFICIAL: quiénes juegan, la ronda, la
+     jugada y las dos posiciones. Nunca texto, y nunca nada de las variantes que cada uno prueba en su
+     tablero (el detector sólo mira la posición que manda Lichess, jamás el árbol del visor).
+   · El que lo recibe NO confía en el que avisó: mira esas dos posiciones con SU motor —son dos, no
+     cuatrocientas— y, si su motor no ve la colgada, no suena. Después sigue el camino de siempre
+     (_colAvisar → _colDespachar), que le pide el PGN a Lichess y comprueba que esa jugada exista de
+     verdad en la partida. Un aviso inventado no pasa ninguno de los dos candados.
+   · El arbitrito, por su lado, sólo acepta avisos de los logueados (como el chat: así hay a quién
+     silenciar), no repite una mesa antes de 20 minutos y tiene tope por persona y por sala.
+   ══════════════════════════════════════════════════════════════════════════════════════════════ */
+var _colRedPend = {};
+var _COL_RED_LOTE = 20;   // mesas por tanda (el arbitrito corta ahí también)
+// Cuántos avisos ajenos se confirman A LA VEZ. Cada uno son dos posiciones de motor y en el teléfono
+// se nota; el cartel igual va a salir uno solo, agrupado. Vienen con los argentinos adelante.
+var _COL_RED_MAX = 4;
+// Plazo que se le da al motor PROPIO para confirmar un aviso ajeno. Medido en la PC del autor con el
+// SF18 lite: prof. 12 = 64 ms y prof. 16 = 418 ms por posición (en las posiciones desequilibradas de
+// una colgada, 242 ms), o sea menos de 1 segundo las dos. Un teléfono tarda varias veces más, pero
+// sigue siendo un pestañeo al lado de barrer la ronda entera (400 posiciones a prof. 12 = 21 s por
+// vuelta en la PC, y hay que repetirlo cada 30 s: ESO es lo que el teléfono no puede).
+// Si aun así no contesta a tiempo (motor todavía cargando, teléfono ocupado, poca memoria), el aviso
+// NO se pierde: sale con los números del que avisó, que igual tienen que ser de colgada y tienen que
+// pasar el chequeo del PGN. Mejor un aviso con un candado que ningún aviso.
+var _COL_RED_ESPERA_MAX = 25000;
+function _colRepartir(items) {
+  try {
+    if (!window.aaTourChat || !window.aaTourChat.avisarColgada) return;
+    var r = _tdLiveCtx && _tdLiveCtx.currentNum; if (!r) return;
+    var cs = [];
+    items.forEach(function(it){
+      if (it.red) return;   // ésta llegó por el arbitrito: no vuelve a salir (no rebota)
+      var lm = (it.now.last && it.now.last.from) ? (it.now.last.from + it.now.last.to) : '';
+      cs.push({ gk: it.gk, r: r, ply: it.now.plies, tipo: it.c.tipo,
+        a: it.prev.cp, d: it.now.cp, fa: it.prev.fen, fd: it.now.fen, lm: lm });
+    });
+    // Un solo mensaje con todas: mandarlas de a una se comía el tope por persona del arbitrito y un
+    // cartel agrupado de 10 perdía las últimas.
+    if (cs.length) window.aaTourChat.avisarColgada(cs.slice(0, _COL_RED_LOTE));
+  } catch (e) {}
+}
+// Llega una tanda del arbitrito: se miran las primeras, hasta _COL_RED_MAX en curso. Mientras el
+// motor las confirma NO se despacha ningún cartel (_colRedEspera), así las de una misma tanda salen
+// JUNTAS en un cartel agrupado y no de a una cada dos minutos.
+var _colRedEspera = 0;
+function _colDeRedLote(cs) {
+  if (!Array.isArray(cs) || !_colOn()) return;
+  _colRedEspera++;   // ficha propia mientras se reparte la tanda (si no, la primera saldría sola)
+  for (var i = 0; i < cs.length && i < _COL_RED_LOTE; i++) {
+    var k = 0; for (var q in _colRedPend) k++;
+    if (k >= _COL_RED_MAX) break;
+    _colDeRed(cs[i]);
+  }
+  _colRedFin();
+}
+function _colRedFin() {
+  if (--_colRedEspera > 0) return;
+  _colRedEspera = 0;
+  _colDespachar();
+}
+// Llega un aviso de otro. Antes de hacer ruido, que lo diga MI motor.
+function _colDeRed(m) {
+  if (!_colOn() || !m || !m.gk || !m.fa || !m.fd) return;
+  var r = _tdLiveCtx && _tdLiveCtx.currentNum;
+  if (!r || m.r !== r) return;                             // no estoy siguiendo esa ronda
+  if (m.gk === _colMirandoGk()) return;                    // la tengo abierta: la veo con mis propios ojos
+  if (Date.now() < (_colMesaHasta[m.gk] || 0)) return;     // esa mesa ya avisó acá
+  if (_colRedPend[m.gk] || !_colBuscar(m.gk)) return;      // ya la estoy mirando, o no es de esta ronda
+  _colRedEspera++;
+  var cerrado = false;
+  // Los controles son los mismos venga la eval de mi motor o del que avisó; lo único que cambia es
+  // quién puso los números (`sinMotor`).
+  function terminar(cpA, cpD, score, sinMotor) {
+    if (cerrado) return;
+    cerrado = true;
+    clearTimeout(_colRedPend[m.gk]); delete _colRedPend[m.gk];
+    var g = _colBuscar(m.gk);
+    var c = (g && cpA != null && cpD != null && _colOn()) ? _colClasifica(cpA, cpD, true, true) : null;
+    if (c && !_colVivoCaidaOk(cpA, cpD, c.lado, true, (_colRonda() || []).length)) c = null;   // no la ve así
+    if (c && (m.gk === _colMirandoGk() || Date.now() < (_colMesaHasta[m.gk] || 0))) c = null;
+    if (c) {
+      var last = /^[a-h][1-8][a-h][1-8]$/.test(String(m.lm || '')) ? { from: m.lm.slice(0, 2), to: m.lm.slice(2, 4) } : null;
+      var info = { gk: m.gk, g: g, red: true, sinMotor: !!sinMotor, c: c,
+        prev: { fen: m.fa, cp: cpA, plies: _fenPlies(m.fa), last: null },
+        now:  { fen: m.fd, cp: cpD, plies: _fenPlies(m.fd), last: last } };
+      if (score && score.mate !== undefined) info.mateN = Math.abs(score.mate);   // el mate lo cuenta MI motor
+      _colAvisar(info);
+    }
+    _colRedFin();
+  }
+  // El plazo: si mi motor no llegó, sale con los números del que avisó (ver _COL_RED_ESPERA_MAX).
+  _colRedPend[m.gk] = setTimeout(function(){ terminar(m.a, m.d, null, true); }, _COL_RED_ESPERA_MAX);
+  _colMirar(m.fa, function(cpA){
+    _colMirar(m.fd, function(cpD, score){ terminar(cpA, cpD, score, false); });
+  });
+}
+// Una sola posición con mi motor (si ya la miré a fondo, no la vuelvo a mirar).
+function _colMirar(fen, cb) {
+  var ev = _mevEvals[fen];
+  if (ev !== undefined && (_colDeep[fen] || 0) >= _COL_CONFIRM_DEPTH) { cb(_colCp(ev, fen), ev); return; }
+  _mevExtra.push({ fen: fen, depth: _COL_CONFIRM_DEPTH, cb: function(score){ cb(_colCp(score, fen), score); } });
+  setTimeout(mevTick, 0);
+}
+
+/* ── 🕑 ÚLTIMAS COLGADAS (20/09, pedido del autor) ──────────────────────────────────────────────
+   "Cuando llegan más de una, sólo se puede elegir una y las otras se pierden." Las últimas
+   _COL_HIST_MAX avisadas quedan guardadas y se abren con el botón "🕑 Últimas colgadas", al lado de
+   "🎯 Colgadas de la ronda" (mismo renglón, debajo de R1 R2 R3). Vive en memoria: son las de la ronda
+   que se está siguiendo, no hace falta que sobrevivan a un F5. */
+var _COL_HIST_MAX = 8;
+var _colHist = [], _colHid = 0, _colUltAbierto = false;
+function _colHistGuardar(items) {
+  var tour = String(_tdTourKey), r = (_tdLiveCtx && _tdLiveCtx.currentNum) || _tdCurrentRound;
+  items.forEach(function(it){
+    _colHist.unshift({ hid: ++_colHid, gk: it.gk, g: it.g, prev: it.prev, now: it.now, c: it.c, mateN: it.mateN, ts: Date.now(), tour: tour, r: r });
+  });
+  if (_colHist.length > _COL_HIST_MAX) _colHist = _colHist.slice(0, _COL_HIST_MAX);
+  try { _cgBarRefrescar(); } catch (e) {}
+}
+function _colHistDe(rInt) {
+  var tour = String(_tdTourKey);
+  return _colHist.filter(function(x){ return x.tour === tour && x.r === rInt; });
+}
+function _colHace(ts) {
+  var s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  if (s < 75) return 'recién';
+  var m = Math.round(s / 60);
+  return m < 60 ? ('hace ' + m + ' min') : ('hace ' + Math.round(m / 60) + ' h');
+}
+function colUltimas() { _colUltAbierto = !_colUltAbierto; try { _cgBarRefrescar(); } catch (e) {} }
+function colUltimaIr(hid) {
+  for (var i = 0; i < _colHist.length; i++) if (_colHist[i].hid === hid) { _colAbrir(_colHist[i].gk, _colPlyColgada(_colHist[i])); return; }
+}
+function _colUltPanelHtml(rInt) {
+  if (!_colUltAbierto) return '';
+  var hist = _colHistDe(rInt); if (!hist.length) return '';
+  return '<div class="cg-ult-panel">' + hist.map(function(x){
+    var mate = !!(x.c && x.c.tipo === 'M');
+    return '<button type="button" class="cg-ult-fila' + (mate ? ' cg-ult-mate' : '') + '" onclick="colUltimaIr(' + x.hid + ')">'
+      + '<span class="cg-ult-j">' + _colJugadoresHtml(x) + '</span>'
+      + '<span class="cg-ult-d">' + _colDetalleHtml(x) + '</span>'
+      + '<span class="cg-ult-t">' + escHtml(_colHace(x.ts)) + '</span></button>';
+  }).join('') + '</div>';
+}
+window.aaCol = { llave: _colLlave, probar: _colProbar };
 
 /* ══ COLGADAS DE LA RONDA (19/09/2026, idea del autor) ═══════════════════════════════════════════
    Al terminar una ronda, el autor toca "🔎 Buscar colgadas": se barren las partidas con los MISMOS
@@ -33857,11 +34208,15 @@ function _cgBarHtml(rInt) {
   }
   var h = '';
   if (ok.length) h += '<button class="cg-pub" onclick="cgJugar(' + rInt + ')">🎯 Colgadas de la ronda ' + rInt + ' <span>(' + ok.length + ')</span></button>';
+  // 🕑 Las que avisó el cartel en esta ronda (pedido del autor 20/09: cuando caen varias juntas se perdían).
+  var _ult = _colHistDe(rInt);
+  if (_ult.length) h += '<button class="cg-ult' + (_colUltAbierto ? ' on' : '') + '" onclick="colUltimas()">🕑 Últimas colgadas <span>(' + _ult.length + ')</span></button>';
   if (!_ondemand) {
     var fin = (_tdCtx.byRound[rInt] || []).some(function(g){ return (g.h.Result || '*') !== '*'; });
     if (fin) h += '<button class="cg-autor" onclick="' + (its.length ? 'cgAbrirRevision(' + rInt + ')' : 'cgBarrer(' + rInt + ')') + '">🔎 '
       + (its.length ? 'Revisar colgadas (' + its.filter(function(i){ return i.estado === 'ok'; }).length + ' aceptadas de ' + its.length + ')' : 'Buscar colgadas') + '</button>';
   }
+  h += _colUltPanelHtml(rInt);   // el desplegable, debajo de los botones (ocupa todo el ancho)
   return h ? '<div class="cg-bar" id="cg-bar-' + rInt + '">' + h + '</div>' : '';
 }
 function _cgBarInsert(panel, rInt) {
@@ -39081,7 +39436,7 @@ function cvPlayObMove(san) {
    ANÁLISIS COMPLETO DE PARTIDA + GRÁFICO
    (usa MultiPV 1 para capturar la evaluación real de la mejor línea)
 ═══════════════════════════════════════════════════════ */
-var _fa = { running:false, armed:false, results:[], nodes:[], ply:0, lastScore:null, live:false, _capTimer:null };
+var _fa = { running:false, armed:false, results:[], nodes:[], ply:0, desde:0, lastScore:null, live:false, _capTimer:null };
 
 // ── GRÁFICO EN VIVO (modo híbrido) ───────────────────────────────────────────────────────────────
 // En transmisiones en vivo el gráfico de análisis se muestra solo y se va llenando jugada a jugada,
@@ -39183,9 +39538,20 @@ function faMaybeAutoLive() {
   // entrar a una partida en vivo se ve el MÓDULO encendido enseguida (no el gráfico dibujándose solo,
   // que hacía pensar que el motor en vivo no andaba). Al tocar "Estadísticas", cvMobileTab lo arranca.
   if (_cvMobileOn && !_cvAnalysisStarted) return;
-  if (_fa.running) return;                           // ya está calculando
+  // "Ya está calculando" → normalmente no se toca. La excepción: acaban de llegar las jugadas que
+  // faltaban para la colgada por la que se entró, y el pase anda dibujando el principio. Ahí sí se
+  // entra a faLiveBuild, que lo corta y lo manda a la colgada (si no, el "??" salía último).
+  if (_fa.running && !_faSaltoPendiente()) return;
   _fa.live = true;
   faLiveBuild();
+}
+
+// ¿Hay que abandonar el pase en curso para ir a la colgada? Mira el árbol de AHORA (no `_fa.nodes`,
+// que todavía es el de antes de que llegaran las jugadas nuevas).
+function _faSaltoPendiente() {
+  if (!_colFoco || _colFoco.saltado || !(_colFoco.ply > 0)) return false;
+  if (_colFoco.gk !== _colMirandoGk()) return false;
+  return faGetNodes().length >= _colFoco.ply && _fa.ply < _colFoco.ply - 2;
 }
 
 // (Re)construye el gráfico en vivo: siembra desde el [%eval] del PGN + el caché del motor, lo dibuja
@@ -39218,6 +39584,15 @@ function faLiveBuild() {
   // ANTERIOR hasta que el pase terminaba (faReset no la limpia en vivo para no parpadear en cada
   // refresco). Con esto los nombres son siempre los de la partida abierta; el pase refina después.
   faClassify(); faRenderStats(); faApplyNags(); cvUpdateNagBadge();
+  // ¿Llegó la colgada que estábamos esperando y el pase anda por otro lado? Cortarlo y arrancar
+  // ahí. Pasa siempre que se entra desde un aviso con el PGN atrasado: el pase ya estaba dibujando
+  // desde el principio y el "??" aparecía recién al final. Se hace UNA vez por aviso.
+  var _ini = _faInicio();
+  if (_fa.running && _ini > 0 && _fa.ply < _ini && !_colFoco.saltado && _faNeedsPassEval(_ini)) {
+    _colFoco.saltado = true;
+    _fa.running = false; _fa.armed = false;
+    if (sf.engine) sf.engine.postMessage('stop');
+  }
   // ¿Falta (re)evaluar alguna? Lanzar el pase del motor (incremental) que solo calcula esas.
   if (_fa.nodes.some(function(nd, i) { return _faNeedsPassEval(i); })) {
     // PARTIDA NUEVA con el módulo prendido: antes de que el pase del gráfico le saque el motor,
@@ -39266,7 +39641,8 @@ function faLiveEngineStart() {
   // (de una búsqueda del módulo que no llegó a capear) podía disparar un 'stop' EN MEDIO del pase.
   if (sf._capTimer) { clearTimeout(sf._capTimer); sf._capTimer = null; }
   sf.capped = false; _sfDeepenBtn(false);   // el pase manda ahora: nada de "Seguir analizando"
-  _fa.running = true; _fa.armed = false; _fa.rokSeen = false; _fa.ply = 0;
+  _fa.running = true; _fa.armed = false; _fa.rokSeen = false;
+  _fa.ply = _fa.desde = _faInicio();   // si vino de un aviso de colgada, empieza por ahí
   // Cuántas jugadas va a (re)evaluar este pase: el cartel "armando gráfico…" solo sale si son ≥ N
   // (ver faSetBuilding). Así los refrescos de 1-2 jugadas no reacomodan la columna a cada rato.
   var _bc = 0; for (var _i = 0; _i < _fa.nodes.length; _i++) if (_faNeedsPassEval(_i)) _bc++;
@@ -39376,7 +39752,8 @@ function startFA() {
   // Sembrar las jugadas que ya traen [%eval] del PGN o que están en el caché del motor: el motor se
   // saltea esas y solo calcula el resto.
   _fa.results = nodes.map(function(nd) { return (nd.move && nd.move.ev) || _faLiveCache[nd.fen] || null; });
-  _fa.ply = 0; _fa.lastScore = null;
+  _fa.ply = _fa.desde = _faInicio();   // si vino de un aviso de colgada, empieza por ahí
+  _fa.lastScore = null;
   document.getElementById('fa-btn').classList.add('active');
   document.getElementById('eval-graph-wrap').style.display = 'block';
   document.getElementById('fa-prog-row').style.display = 'flex';
@@ -39435,6 +39812,12 @@ function faNext() {
   // re-evalúa las últimas que solo traen [%eval] de Lichess, para tener NUESTRA profundidad y poder
   // calificarlas sin parpadeo (ver _faNeedsPassEval).
   while (_fa.ply < _fa.nodes.length && !_faNeedsPassEval(_fa.ply)) _fa.ply++;
+  // Se empezó por el medio (aviso de colgada) y se llegó al final: volver al principio por las que
+  // quedaron. El gráfico sale entero igual, sólo que la parte que interesa se dibuja primero.
+  if (_fa.ply >= _fa.nodes.length && _fa.desde > 0) {
+    _fa.desde = 0; _fa.ply = 0;
+    while (_fa.ply < _fa.nodes.length && !_faNeedsPassEval(_fa.ply)) _fa.ply++;
+  }
   if (_fa.ply >= _fa.nodes.length) {
     faFinish();
     faClassify();
@@ -39552,6 +39935,11 @@ function faHandleMsg(line) {
     if (_fa.live) _tdMiniFromDeep(node.fen, score, score.d);   // su miniatura, si es la posición actual
     if (_fa.live) {
       faRender(_faInterp(_fa.results));          // el gráfico se va llenando jugada a jugada
+      // …y los símbolos también: el "??" de una colgada aparecía recién al terminar TODO el gráfico
+      // (lo vio el autor entrando desde un aviso). Esto califica con lo que ya hay y SÓLO repinta la
+      // notación si algún símbolo cambió de verdad (la firma _faNagSig), así no parpadea a cada jugada.
+      // Una jugada queda sin símbolo hasta que ella y la anterior están confirmadas: eso no cambia.
+      _faReclassifyIfChanged();
     }
     _fa.ply++;
     faNext();
@@ -40077,7 +40465,7 @@ function faReset() {
   if (_fa._capTimer) { clearTimeout(_fa._capTimer); _fa._capTimer = null; }
   if (_fa.running) { _fa.running = false; if (sf.engine) { sf.engine.postMessage('stop'); sf.engine.postMessage('setoption name MultiPV value 3'); } }
   _fa.armed = false;
-  _fa.results = []; _fa.nodes = []; _fa.ply = 0; _fa.stats = null;
+  _fa.results = []; _fa.nodes = []; _fa.ply = 0; _fa.desde = 0; _fa.stats = null;
   // En modo en vivo NO ocultamos el gráfico NI la barra (faLiveBuild los repuebla enseguida con la
   // partida nueva, sin parpadeo): ocultar la barra acá hacía que, con el motor apagado, DESAPARECIERA
   // unos segundos en cada jugada nueva del vivo (hasta que el pase evaluaba). Fuera del vivo, sí.
@@ -43130,6 +43518,8 @@ function cvUpdateNagBadge() {
         else { tcMsgs.push({id:m.id,name:m.name,userId:m.userId,text:m.text,ts:m.ts,reply:m.reply}); if(tcMsgs.length>40) tcMsgs=tcMsgs.slice(-40); tcAppendAll(m); }
       }
       else if(m.type==='presence'){ tcSeeing=Number(m.n)||0; tcRenderPresence(); }
+      // 🚨 Aviso de colgada repartido por el arbitrito (no es un mensaje del chat: no se guarda ni se ve).
+      else if(m.type==='colgada'){ try{ if(typeof _colDeRedLote==='function') _colDeRedLote(m.cs); }catch(e){} }
       else if(m.type==='reaction'){ tcApplyReaction(m.id, m.emoji, m.userId, !!m.on); }
       else if(m.type==='msg-deleted'){ tcMsgs=tcMsgs.filter(function(x){ return x.id!==m.id; }); tcRemoveNode(m.id); }
       else if(m.type==='muted'){ tcMutedNotice(m.until); }
@@ -43354,6 +43744,9 @@ function cvUpdateNagBadge() {
       tcRoom=null; tcMsgs=[]; tcSeeing=0; tcRenderPresence(); tcViews={};
     },
     hasRoom:function(){ return !!tcRoom; },
+    // 🚨 Avisar una colgada al arbitrito para que se la reparta a todo el torneo (ver _colRepartir).
+    // Sólo los logueados avisan, igual que para escribir: así hay a quién silenciar si alguien abusa.
+    avisarColgada:function(cs){ if(!tcRoom || !lvAuthUser() || !(cs && cs.length)) return false; tcRawSend({ type:'colgada', cs:cs }); return true; },
     // Monta el panel en `host` y registra esa vista. Idempotente por host (no reconstruye el DOM).
     mount:function(which, host){
       if(!host) return;
