@@ -2016,7 +2016,7 @@
     .puz-prompt { font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 9px; display: flex; align-items: center; gap: 8px; }
     .puz-prompt .dot { width: 15px; height: 15px; border-radius: 50%; border: 1px solid var(--text3); flex-shrink: 0; }
     .puz-prompt .dot.w { background: var(--fg0); } .puz-prompt .dot.b { background: #2b2b2b; }
-    .puz-ctrls { display: flex; gap: 6px; margin-top: 8px; }
+    .puz-ctrls { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
     .puz-ctrls button { background: var(--gl40); border: 1px solid var(--bd20); color: var(--fg0);
       padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 15px; font-family: inherit; line-height: 1; }
     .puz-ctrls button:hover { border-color: var(--gold-dim); color: var(--gold); }
@@ -4675,6 +4675,7 @@
           <button onclick="puzReviewPrev()" title="Jugada anterior" id="puz-prev" style="display:none">◀</button>
           <span class="puz-counter" id="puz-counter"></span>
           <button onclick="puzReviewNext()" title="Jugada siguiente" id="puz-next" style="display:none">▶</button>
+          <button onclick="puzVolverSolucion()" title="Volver a la solución" aria-label="Volver a la solución" id="puz-sol" style="display:none">↩</button>
           <button onclick="puzFlip()" title="Girar tablero" style="font-size:16px">⇅</button>
           <button onclick="toggleBoard()" title="Cambiar color del tablero">◧</button>
           <button onclick="puzSndToggleMute(this)" id="puz-mute" title="Sonidos" style="font-size:15px;line-height:1">🔊</button>
@@ -4692,7 +4693,7 @@
             <span style="font-size:11px;color:var(--text3)">Stockfish</span>
           </div>
           <div class="puz-eval-line" id="puz-eval-line"></div>
-          <div style="font-size:11px;color:var(--text3);margin-top:6px">Podés mover las piezas para probar variantes; el módulo las analiza. Usá ◀ ▶ para volver a la solución.</div>
+          <div style="font-size:11px;color:var(--text3);margin-top:6px">Podés mover las piezas para probar variantes; el módulo las analiza. Con ◀ ▶ recorrés tu variante y con ↩ volvés a la solución.</div>
         </div>
         <div id="puz-session"></div>
         <div class="puz-author" id="puz-author" style="display:none"></div>
@@ -36464,6 +36465,7 @@ function puzLoad() {
   puz.solved = false; puz.revealed = false; puz.failed = false; puz.busy = false; puz.editing = false;
   puz.hinted = false;   // ¿pidió pista en este ejercicio? (suma la mitad si resuelve con ayuda)
   puz.reviewing = false; puz.reviewIdx = 0; puz.lastFrom = ''; puz.lastTo = '';
+  puz._revVar = false; puz._revSolFens = null; puz._revSolMoves = null;   // variante probada con el módulo: arranca limpia
   puz.seen[p.id] = 1;
   puz._srcGame = null; puz._srcGameMaybe = false;
   var _mb = document.getElementById('puz-mute'); if (_mb) { var _on = puzSndCfg().on; _mb.textContent = _on?'🔊':'🔇'; _mb.title = (_on?'Silenciar':'Activar') + ' sonidos'; }
@@ -36482,6 +36484,7 @@ function puzLoad() {
   document.getElementById('puz-motifs').innerHTML = puzMotifsHtml(p);
   document.getElementById('puz-prev').style.display = 'none';
   document.getElementById('puz-next').style.display = 'none';
+  _puzSolBtn(false);
   document.getElementById('puz-counter').textContent = '';
   puzRenderActions();
   puzRenderSession();
@@ -36808,18 +36811,50 @@ function puzSetupReview(lineUci, atStart) {
   if (!puz.editing) document.getElementById('puz-prompt').innerHTML = '<span style="color:var(--gold)">Solución</span> — recorré las jugadas con ◀ ▶';
   document.getElementById('puz-prev').style.display = '';
   document.getElementById('puz-next').style.display = '';
+  puz._revSolFens = puz._revFens.slice(); puz._revSolMoves = puz._revMoves.slice();   // copia limpia: el ↩ la trae de vuelta
+  puz._revVar = false;
   puzReviewShow();
 }
 function puzReviewShow(anim) {
   puz.chess = new Chess(puz._revFens[puz.reviewIdx]);
   var mv = puz._revMoves[puz.reviewIdx]; puz.lastFrom = mv ? mv.from : ''; puz.lastTo = mv ? mv.to : '';
   puz.sel = null; puz.legalDests = [];
-  document.getElementById('puz-counter').textContent = 'Jugada ' + puz.reviewIdx + ' / ' + (puz._revFens.length - 1);
+  _puzRevCount();
   puzRenderBoard(anim && mv ? {from:mv.from, to:mv.to} : null);   // deslizar solo al AVANZAR (▶); atrás instantáneo
   if (puz.anOn) { puz.anScore = null; puz.anPv = null; puz.anBestUci = null; document.getElementById('puz-eval-score').textContent = '…'; puzDrawArrow(); puzSfGo(); }
 }
 function puzReviewPrev() { if (puz.reviewing && puz.reviewIdx > 0) { puz.reviewIdx--; puzReviewShow(false); } }
 function puzReviewNext() { if (puz.reviewing && puz.reviewIdx < puz._revFens.length - 1) { puz.reviewIdx++; puzReviewShow(true); } }
+/* ── Las variantes que se prueban con 🔬 Análisis entran en el recorrido ◀ ▶ ──────────────────────
+   Antes las jugadas del módulo quedaban FUERA de _revFens: ◀ no deshacía la variante (saltaba a la
+   solución) y ▶ "reseteaba" la posición y repetía la jugada buena. Lo notó el autor el 20/09 en las
+   Colgadas de la ronda; pasaba igual en Entrenar, porque es el mismo tablero. */
+function _puzSolBtn(mostrar) { var b = document.getElementById('puz-sol'); if (b) b.style.display = mostrar ? '' : 'none'; }
+function _puzRevCount() {
+  var c = document.getElementById('puz-counter');
+  if (c) c.textContent = (puz._revVar ? 'Variante ' : 'Jugada ') + puz.reviewIdx + ' / ' + (puz._revFens.length - 1);   // mientras se prueba una variante el contador lo dice (y aparece el ↩)
+  _puzSolBtn(!!puz._revVar);
+}
+// Agrega al recorrido la jugada recién hecha sobre el tablero. Lo que seguía se corta (la línea que se
+// ve es la que se está probando); la solución queda guardada aparte y vuelve con el ↩.
+function _puzRevPush(m, fen) {
+  if (!puz.reviewing || !puz._revFens || !puz._revFens.length) return;
+  var i = puz.reviewIdx, sig = puz._revMoves[i + 1];
+  if (sig && sig.from === m.from && sig.to === m.to && puz._revFens[i + 1] === fen) { puz.reviewIdx = i + 1; _puzRevCount(); return; }   // repitió la jugada de la línea: sólo avanza
+  puz._revFens.length = i + 1; puz._revMoves.length = i + 1;
+  puz._revFens.push(fen); puz._revMoves.push({ from: m.from, to: m.to });
+  puz.reviewIdx = i + 1;
+  puz._revVar = true;
+  _puzRevCount();
+}
+// ↩ Volver a la solución: descarta la variante probada y deja el recorrido como salió del ejercicio.
+function puzVolverSolucion() {
+  if (!puz._revSolFens) return;
+  puz._revFens = puz._revSolFens.slice(); puz._revMoves = puz._revSolMoves.slice();
+  puz._revVar = false;
+  puz.reviewIdx = Math.min(puz.reviewIdx, puz._revFens.length - 1);
+  puzReviewShow(false);
+}
 
 function puzFlip() { puz.flipped = !puz.flipped; puz.sel = null; puz.legalDests = []; puzRenderBoard(); if (puz.anOn) { puzDrawArrow(); puzSfRender(); } }
 // Próximo ejercicio AL AZAR del nivel (variedad por visita), prefiriendo no vistos en esta sesión.
@@ -37336,6 +37371,7 @@ function puzAnalysisMove(from, to) {
   var m = puz.chess.move({ from:from, to:to, promotion:promo || 'q' });
   if (!m) { puzRenderBoard(); return; }
   puz.lastFrom = m.from; puz.lastTo = m.to;
+  _puzRevPush(m, puz.chess.fen());   // la variante entra en el recorrido ◀ ▶ (si no, ◀ saltaba a la solución)
   puzRenderBoard();
   puz.anScore = null; puz.anPv = null; puz.anBestUci = null;
   var sc = document.getElementById('puz-eval-score'); if (sc) sc.textContent = '…';

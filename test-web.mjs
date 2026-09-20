@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1356;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1366;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -5452,6 +5452,68 @@ console.log('\n=== 53h. Colgadas de la ronda: barrido, revisión y tablero de ej
   const c = merge({ 4: [g('A', 'B')] }, {}, { 6: [g('M', 'N')] });
   chk(c.ord.join(',') === '4,6', 'Chess-Results sigue pudiendo agregar cualquier ronda (sale del tnr de este torneo)');
 }
+
+console.log('\n=== 88. Las variantes del 🔬 Análisis entran en el recorrido ◀ ▶ del ejercicio ===');
+{
+  // Lo que notó el autor el 20/09 en las Colgadas de la ronda (y pasaba igual en Entrenar, porque es el
+  // mismo tablero): al resolver y abrir el módulo, las jugadas que uno prueba quedaban FUERA de _revFens.
+  // Entonces ◀ no deshacía la variante (saltaba a la solución) y ▶ "reseteaba" y repetía la jugada buena.
+  console.log('\n🔬 Probar variantes con el módulo y volver con ◀ ▶');
+  const mk = new Function(
+    'var CONT = { textContent: "" }, SOL = { style: { display: "none" } }, VISTA = [];\n'
+    + 'var document = { getElementById: function(id){ return id === "puz-counter" ? CONT : (id === "puz-sol" ? SOL : null); } };\n'
+    + 'var puz = {};\n'
+    + 'function puzReviewShow(){ VISTA.push(puz.reviewIdx); _puzRevCount(); }\n'
+    + extraerFuncion('_puzSolBtn') + '\n' + extraerFuncion('_puzRevCount') + '\n'
+    + extraerFuncion('_puzRevPush') + '\n' + extraerFuncion('puzVolverSolucion') + '\n'
+    + extraerFuncion('puzReviewPrev') + '\n' + extraerFuncion('puzReviewNext') + '\n'
+    + 'return { puz: puz, push: _puzRevPush, volver: puzVolverSolucion, atras: puzReviewPrev, adelante: puzReviewNext,'
+    + ' cont: function(){ return CONT.textContent; }, boton: function(){ return SOL.style.display; } };');
+  const A = mk();
+  // Recorrido de una solución de n jugadas, parado al final (como queda al resolver el ejercicio).
+  function armar(n) {
+    A.puz.reviewing = true; A.puz._revFens = []; A.puz._revMoves = [];
+    for (let i = 0; i <= n; i++) { A.puz._revFens.push('f' + i); A.puz._revMoves.push(i ? { from: 'a' + i, to: 'b' + i } : null); }
+    A.puz._revSolFens = A.puz._revFens.slice(); A.puz._revSolMoves = A.puz._revMoves.slice();
+    A.puz._revVar = false; A.puz.reviewIdx = n;
+  }
+
+  armar(1);                                                  // una colgada: la solución es UNA jugada
+  A.push({ from: 'e2', to: 'e4' }, 'v1');
+  A.push({ from: 'e7', to: 'e5' }, 'v2');
+  chk(A.puz.reviewIdx === 3 && A.puz._revFens.length === 4 && A.puz._revFens[3] === 'v2',
+      '🔒 las jugadas que se prueban con el módulo entran en el recorrido', A.puz._revFens.join(','));
+  chk(A.cont() === 'Variante 3 / 3' && A.boton() === '',
+      'el contador avisa que es una variante y aparece el ↩ para volver a la solución', A.cont());
+  A.atras(); A.atras();
+  chk(A.puz.reviewIdx === 1, '🔒 ◀ deshace la variante jugada por jugada (antes saltaba a la solución)', A.puz.reviewIdx);
+  A.adelante();
+  chk(A.puz.reviewIdx === 2, '▶ vuelve a avanzar por la variante (antes repetía la jugada buena)', A.puz.reviewIdx);
+  A.volver();
+  chk(A.puz._revFens.length === 2 && A.puz._revVar === false && A.boton() === 'none',
+      '↩ deja el recorrido como salió del ejercicio y esconde el botón', A.puz._revFens.join(','));
+
+  armar(4); A.puz.reviewIdx = 2;                             // ramificar en el MEDIO de la solución
+  A.push({ from: 'g1', to: 'f3' }, 'v1');
+  chk(A.puz._revFens.join(',') === 'f0,f1,f2,v1' && A.puz.reviewIdx === 3,
+      'al ramificar en el medio se corta lo que seguía (la línea que se ve es la que se prueba)', A.puz._revFens.join(','));
+  A.volver();
+  chk(A.puz._revFens.join(',') === 'f0,f1,f2,f3,f4' && A.puz.reviewIdx === 3,
+      '🔒 y el ↩ trae la solución completa de vuelta', A.puz._revFens.join(','));
+
+  armar(3); A.puz.reviewIdx = 0;                             // repetir la jugada de la línea no ramifica
+  A.push({ from: 'a1', to: 'b1' }, 'f1');
+  chk(A.puz._revFens.length === 4 && A.puz.reviewIdx === 1 && !A.puz._revVar && A.cont() === 'Jugada 1 / 3',
+      'repetir la jugada de la solución sólo avanza (no la borra ni la marca como variante)', A.cont());
+
+  chk(/_puzRevPush\(m, puz\.chess\.fen\(\)\)/.test(extraerFuncion('puzAnalysisMove')),
+      'la jugada del módulo se registra en el recorrido (puzAnalysisMove)');
+  chk(/_puzRevCount\(\);/.test(extraerFuncion('puzReviewShow')) && /_puzSolBtn\(false\);/.test(extraerFuncion('puzLoad'))
+      && /puz\._revSolFens = puz\._revFens\.slice\(\)/.test(extraerFuncion('puzSetupReview')),
+      'el contador y el ↩ pasan por un solo lugar, y cada ejercicio arranca limpio');
+}
+
+
 
 
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
