@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1343;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1350;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -5036,8 +5036,25 @@ console.log('\n=== 🔌 El vigía del caño de la partida de Lichess (19/09) ===
   chk(/alLatir/.test(SRC) && /if \(latir\) \{ try \{ latir\(\); \} catch \(e\) \{\} \}[\s\S]{0,120}buf \+= dec\.decode/.test(SRC),
       '🔒 el lector de caños avisa con CADA pedacito, también con los renglones vacíos (el latido de Lichess)');
   chk(/var VIG_MUDO = 15000/.test(SRC), '🔒 15 s de silencio = caño muerto (Lichess late cada ~6 s)');
-  chk(/Date\.now\(\) - \(P\.latido \|\| 0\) > VIG_MUDO\) caida\(null\)/.test(SRC),
+  chk(/Date\.now\(\) - \(P\.latido \|\| 0\) > VIG_MUDO\) \{ diag\('mudo'\); caida\(null\)/.test(SRC),
       '🔒 hay un vigía que mira el último latido y no espera a que salte un error');
+  // 🐛 SEGUNDA PRUEBA REAL (19/09): el caño seguía respirando —los latidos llegaban y el abandono
+  // del autor llegó al instante— pero dejaron de llegar JUGADAS. Mirar la conexión no alcanza:
+  // hay que mirar la PARTIDA.
+  chk(/var ECO_MS = 7000/.test(SRC) && /P\.esperoEco = Date\.now\(\); diag\('mando-jugada'\)/.test(SRC),
+      '🔒 al mandar una jugada se anota la hora: Lichess confirma en menos de un segundo');
+  chk(/P\.esperoEco && Date\.now\(\) - P\.esperoEco > ECO_MS/.test(SRC),
+      '🔒 mi jugada sin confirmar a los 7 s = caño roto aunque respire → se reconecta');
+  chk(/var NOVEDAD_MS = 40000/.test(SRC) && /Date\.now\(\) - \(P\.ultNovedad \|\| 0\) > NOVEDAD_MS/.test(SRC),
+      '🔒 40 s sin NINGUNA novedad de la partida (con el caño vivo) → resincronización callada');
+  chk(/function resincronizar\(\)[\s\S]{0,320}abrirCano\(\)/.test(SRC),
+      'la resincronización es abrir el caño de nuevo: el gameFull dice la verdad');
+  chk(/P\.ultNovedad = Date\.now\(\); P\.esperoEco = 0;/.test(SRC),
+      '🔒 cualquier novedad (jugada o gameFull de una reconexión) pone el vigía a cero');
+  chk(/P\.esperoEco = 0; P\.ultNovedad = Date\.now\(\);/.test(SRC),
+      '🔒 al reconectar se arranca de cero, o el vigía cortaba el caño nuevo al instante, en bucle');
+  chk(/window\.aaLiDiag = function/.test(SRC) && /var DIAG = \[\], DIAG_MAX = 120/.test(SRC),
+      '🔒 la libreta: aaLiDiag() en la consola dice qué llegó y qué no (dos veces hubo que adivinar de una foto)');
   chk(/st === 401 \|\| st === 403 \|\| st === 404/.test(SRC),
       '🔒 si Lichess dice que no (permiso vencido, partida ajena) no se insiste: se avisa y listo');
   chk(/function congelarReloj\(\)[\s\S]{0,400}m\.clock\.running = null/.test(SRC),

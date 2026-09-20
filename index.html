@@ -44967,7 +44967,10 @@ function cvUpdateNagBadge() {
           var partes = buf.split('\n'); buf = partes.pop();
           partes.forEach(function (l) {
             l = l.trim(); if (!l) return;            // las líneas vacías son latidos
-            var o = null; try { o = JSON.parse(l); } catch (e) {}
+            /* Un renglón que no se entiende se descartaba en SILENCIO. Si alguna vez se pierde una
+               jugada por acá, que quede la huella: es justo lo que no pudimos ver las dos veces
+               que una partida se congeló (19/09/2026). */
+            var o = null; try { o = JSON.parse(l); } catch (e) { try { console.warn('[Lichess] renglón ilegible en el caño:', l.slice(0, 300)); } catch (x) {} }
             if (o && onObj) onObj(o);
           });
           leer();
@@ -47199,6 +47202,14 @@ function cvUpdateNagBadge() {
   /* Un solo lugar donde el estado llega al tablero: así el botón del final aparece
      siempre, venga el estado directo o retenido por la cuenta regresiva. */
   function aplicar(m) {
+    /* Llegó noticia de la partida (por el caño o por el `gameFull` de una reconexión): el vigía
+       vuelve a cero y mi jugada queda confirmada. */
+    if (P) { P.ultNovedad = Date.now(); P.esperoEco = 0; }
+    /* Y nunca para atrás: un caño abortado puede escupir un estado añejo justo después de que el
+       nuevo trajo la verdad, y el tablero retrocedía jugadas. El final sí pasa siempre (trae las
+       mismas jugadas y el resultado). Acá no hay retrocesos legítimos: la API no nos deja aceptar
+       un "deshacer", así que la lista de jugadas sólo puede crecer. */
+    if (P && m && m.status !== 'finished' && P.ply != null && (m.moves || []).length < P.ply) { diag('estado-anejo'); return; }
     /* 🤝 MOVER CANCELA EL OFRECIMIENTO DE TABLAS.
        Lichess NO lo borra en su servidor: `wdraw`/`bdraw` salen de `isOfferingDraw`, y al
        mover ese campo no se toca — su propia web lo esconde del lado del navegador. Si le
@@ -47291,7 +47302,9 @@ function cvUpdateNagBadge() {
     if (!P || !o) return;
     var id = P.id, t = o.type;
     var p = null;
-    if (t === 'move')          p = post('/api/board/game/' + id + '/move/' + (o.from + o.to + (o.promotion || '')));
+    /* Lichess confirma una jugada en menos de un segundo. Si a los 7 s no vino el eco, el caño
+       está roto aunque siga respirando: el vigía lo reconecta (pregunta 2). */
+    if (t === 'move')          { P.esperoEco = Date.now(); diag('mando-jugada'); p = post('/api/board/game/' + id + '/move/' + (o.from + o.to + (o.promotion || ''))); }
     else if (t === 'chat') {
       var txt = String(o.text || '').slice(0, 140);
       p = post('/api/board/game/' + id + '/chat', { room: 'player', text: txt });
@@ -47329,7 +47342,8 @@ function cvUpdateNagBadge() {
     P = { id: id, full: null, ctrl: null, color: color, cdHasta: 0, pendiente: null, timer: null, relTimer: null,
           bk: { w: false, b: false }, bkPedido: false, ultSt: null, bkVigia: 0,   // berserk: quién ya lo hizo (suena una vez)
           expiraFin: 0, expiraTimer: 0,                                            // tiempo para la primera jugada
-          latido: 0, caido: false, intentos: 0, vigTimer: 0, presentada: false };  // vigía del caño (ver abajo)
+          latido: 0, caido: false, intentos: 0, vigTimer: 0, presentada: false,    // vigía del caño (ver abajo)
+          esperoEco: 0, ultNovedad: Date.now() };                                  // mi jugada sin confirmar / última novedad
 
     window.lvTablero.enganchar({
       enviar: enviar,
@@ -47349,12 +47363,41 @@ function cvUpdateNagBadge() {
     }, color);
     window.lvTablero.aviso('Conectando con la partida…');
     abrirCano();
-    /* El vigía: cada 4 s mira si el caño sigue dando señales de vida. */
-    P.vigTimer = setInterval(function () {
-      if (!P || P.terminada || P.caido) return;
-      if (Date.now() - (P.latido || 0) > VIG_MUDO) caida(null);
-    }, 4000);
+    /* El vigía: cada 2 s mira las tres formas que tiene el caño de fallarte. */
+    P.vigTimer = setInterval(vigilar, 2000);
     return true;
+  }
+
+  /* ── 👁️ Las TRES preguntas del vigía ───────────────────────────────────────
+     🐛 SEGUNDA PRUEBA REAL (19/09, arena temático Rapport-Jobava): el tablero se volvió a
+     congelar… y esta vez el caño NO estaba mudo. Los latidos llegaban, el traductor andaba
+     (se reprodujo la partida entera, enroque largo incluido) y el tablero no tiró ningún
+     error. Simplemente dejaron de llegar JUGADAS por un caño que seguía respirando.
+     Moraleja: que la conexión esté viva no dice nada de la partida. Hay que mirar la partida.
+       1) ¿Se quedó MUDO? (ni jugadas ni latidos) → ya estaba.
+       2) ¿Mandé una jugada y Lichess no la confirmó? Siempre contesta en menos de un segundo:
+          si a los 7 s no llegó el eco, el caño está roto aunque respire.
+       3) ¿Hace mucho que no llega NINGUNA novedad? A los 40 s se vuelve a conectar calladito
+          (sin cartel: lo más probable es que el rival esté pensando, y no hay nada que avisar).
+          Cuesta un pedido y Lichess remanda la partida entera. */
+  var ECO_MS = 7000;        // mi jugada sin confirmar
+  var NOVEDAD_MS = 40000;   // silencio de JUGADAS con el caño vivo
+
+  function vigilar() {
+    if (!P || P.terminada || P.caido) return;
+    if (Date.now() - (P.latido || 0) > VIG_MUDO) { diag('mudo'); caida(null); return; }
+    if (!partidaViva()) return;
+    if (P.esperoEco && Date.now() - P.esperoEco > ECO_MS) { diag('sin-eco'); caida(null); return; }
+    if (Date.now() - (P.ultNovedad || 0) > NOVEDAD_MS) { diag('sin-novedad'); resincronizar(); return; }
+  }
+
+  /* Reconexión CALLADA: no se avisa ni se congela el reloj, porque no sabemos que haya pasado
+     nada malo. Se abre el caño de nuevo y el `gameFull` dice la verdad. */
+  function resincronizar() {
+    if (!P || P.terminada || P.caido) return;
+    P.ultNovedad = Date.now();   // no volver a intentar hasta dentro de otros 40 s
+    try { P.ctrl.abort(); } catch (e) {}
+    abrirCano();
   }
 
   /* ══ 🔌 EL VIGÍA DEL CAÑO (19/09/2026) ═══════════════════════════════════════
@@ -47370,6 +47413,22 @@ function cvUpdateNagBadge() {
   var VIG_MUDO = 15000;    // silencio que se considera "se murió" (el latido de Lichess son ~6 s)
   var VIG_MAX = 6;         // intentos antes de rendirse y mandar a lichess.org
 
+  /* 📋 LA LIBRETA. Dos veces se congeló una partida y las dos veces hubo que adivinar mirando una
+     foto de la pantalla. Acá queda anotado lo que pasó de verdad: cada mensaje de Lichess, cada
+     reconexión y cuántos latidos llegaron. Se pide en la consola con `aaLiDiag()` y se copia con
+     `copy(aaLiDiag())`. No se manda a ningún lado: vive en esta pestaña y se borra al recargar. */
+  var DIAG = [], DIAG_MAX = 120, DIAG_LATIDOS = 0;
+  function diag(que, o) {
+    try {
+      var s = o && (o.state || o), n = s && s.moves != null ? String(s.moves).split(' ').filter(Boolean).length : null;
+      DIAG.push({ hora: new Date().toTimeString().slice(0, 8), que: que, ply: n,
+                  wtime: s && s.wtime, btime: s && s.btime, estado: s && s.status,
+                  latidos: DIAG_LATIDOS, caido: !!(P && P.caido), intentos: (P && P.intentos) || 0 });
+      if (DIAG.length > DIAG_MAX) DIAG.shift();
+    } catch (e) {}
+  }
+  window.aaLiDiag = function () { return DIAG.slice(); };
+
   /* ¿La partida sigue viva según lo ÚLTIMO que dijo Lichess? Si no sabemos, se supone que sí:
      es preferible un reintento de más que dejar el tablero clavado. */
   function partidaViva() {
@@ -47383,11 +47442,23 @@ function cvUpdateNagBadge() {
     var id = P.id;
     P.ctrl = new AbortController();
     P.latido = Date.now();
+    /* Arranca de cero: el `gameFull` que viene enseguida es la verdad. Sin esto, una jugada sin
+       eco quedaba marcada y el vigía volvía a cortar el caño nuevo al instante, en bucle. */
+    P.esperoEco = 0; P.ultNovedad = Date.now();
+    /* Cada caño lleva su NÚMERO. Un caño abortado puede seguir escupiendo un latido tardío, y ese
+       latido "revivía" la conexión muerta (P.caido = false) justo para que el vigía la volviera a
+       matar: en la prueba salieron dos avisos de reconexión seguidos. Con el número, lo que llega
+       de un caño viejo se ignora. */
+    var gen = (P.gen = (P.gen || 0) + 1);
+    diag('abrir-cano');
     window.aaLi.cano(LI + '/api/board/game/stream/' + id, {
-      alLatir: function () { if (P && P.id === id) { P.latido = Date.now(); if (P.caido) recuperado(); } }
+      alLatir: function () {
+        if (!P || P.id !== id || P.gen !== gen) return;
+        DIAG_LATIDOS++; P.latido = Date.now(); if (P.caido) recuperado();
+      }
     }, P.ctrl, alLlegar, function (e) {
       if (e && e.name === 'AbortError') return;
-      if (!P || P.id !== id || P.terminada) return;
+      if (!P || P.id !== id || P.gen !== gen || P.terminada) return;
       /* El caño se cierra solo cuando la partida TERMINA: eso NO es un error. Pero si la
          partida sigue en juego, lo que se cayó es la conexión: se reconecta. */
       if (partidaViva()) { caida(e); return; }
@@ -47413,6 +47484,8 @@ function cvUpdateNagBadge() {
     if (!P || P.caido || P.terminada) return;
     P.caido = true;
     P.intentos = (P.intentos || 0) + 1;
+    diag('caida-' + ((e && e.status) || (e && e.name) || 'silencio'));
+    P.gen = (P.gen || 0) + 1;   // lo que llegue tarde del caño muerto ya no cuenta
     try { P.ctrl.abort(); } catch (x) {}
     congelarReloj();   // primero el reloj: pintar el estado pisa el renglón de aviso
     /* Si Lichess contestó que no (permiso vencido, partida que no es tuya), insistir no arregla
@@ -47442,6 +47515,7 @@ function cvUpdateNagBadge() {
 
   function alLlegar(o) {
     if (!P || !o) return;
+    diag(o.type, o);
     if (o.type === 'gameFull') {
       P.full = o;
       var st = o.state || {};
