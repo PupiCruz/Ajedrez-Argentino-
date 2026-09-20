@@ -7624,19 +7624,23 @@ function _crGameIndex(pgnKey){
   if(!data || !data.games) return null;
   var c=_crGameIdxCache[pgnKey];
   if(c && c._ref===data.games) return c;
-  var byKey={}, porRonda={};
+  var byKey={}, porRonda={}, conRonda=0;
   for(var i=0;i<data.games.length;i++){
     var hh=parsePgnHeaders(data.games[i]);
     var gw=crNormTokens(hh.White), gb=crNormTokens(hh.Black);
     if(!gw||!gb) continue;
-    var gr=String(parseInt(hh.Round)||hh.Round);
+    // Sin [Round] (o con "?") van TODAS al mismo casillero "?": antes caían en "undefined" y no
+    // había forma de saber que el torneo no traía rondas. Lo usa el último intento de crFindGameIdx.
+    var _gn=parseInt(hh.Round), _rr=String(hh.Round==null?'':hh.Round).trim();
+    var gr=_gn?String(_gn):((_rr&&_rr!=='?')?_rr:'?');
+    if(gr!=='?') conRonda++;
     (porRonda[gr]||(porRonda[gr]=[])).push({ i:i, w:gw, b:gb });
     // Clave por ronda (ambas orientaciones) y comodín de ronda. Primera partida gana.
     [gr+'|'+gw+'|'+gb, gr+'|'+gb+'|'+gw, '*|'+gw+'|'+gb, '*|'+gb+'|'+gw].forEach(function(k){
       if(byKey[k]===undefined) byKey[k]=i;
     });
   }
-  c={ byKey:byKey, porRonda:porRonda, _ref:data.games };
+  c={ byKey:byKey, porRonda:porRonda, sinRondas:!conRonda, _ref:data.games };
   _crGameIdxCache[pgnKey]=c;
   _capCache(_crGameIdxCache, 40);
   return c;
@@ -7674,6 +7678,20 @@ function crFindGameIdx(round, wName, bName){
       var e=lista[j];
       if((_crNombreContenido(wt,e.w) && _crNombreContenido(bt,e.b)) ||
          (_crNombreContenido(wt,e.b) && _crNombreContenido(bt,e.w))) return e.i;
+    }
+  }
+  // ÚLTIMO INTENTO: el torneo no dice de qué ronda es NINGUNA de sus partidas (Lichess no siempre
+  // manda el renglón [Round] — el Torneo Selección de Rosario 2026 no lo trae —, y hay 1.300 torneos
+  // publicados así). Ahí no se puede errar de ronda: alcanza con los dos nombres. Si las rondas SÍ se
+  // conocen no se hace, porque en un doble todos contra todos abriría la revancha.
+  if(idx.sinRondas){
+    var libre=idx.byKey['*|'+wt+'|'+bt];
+    if(libre!==undefined) return libre;
+    var sueltas=idx.porRonda ? (idx.porRonda['?']||[]) : [];
+    for(var q=0;q<sueltas.length;q++){
+      var t=sueltas[q];
+      if((_crNombreContenido(wt,t.w) && _crNombreContenido(bt,t.b)) ||
+         (_crNombreContenido(wt,t.b) && _crNombreContenido(bt,t.w))) return t.i;
     }
   }
   return -1;
@@ -34449,6 +34467,23 @@ function _tdMergeUploadedRounds(byRound, roundOrder) {
   return games;
 }
 
+// Lichess no siempre manda el renglón [Round] en el PGN de la transmisión: el Torneo Selección de
+// Rosario 2026 no lo trae en NINGUNA ronda (el número sólo está en el [Event] y en el link). Sin ese
+// renglón el ojito de las tablas no encontraba la partida (busca por ronda + los dos nombres) y el
+// visor tampoco podía decir "R7". Como la app bajó la partida DE esa ronda, sabe cuál es: se la
+// escribe ella. Si la transmisión ya la trae, no se toca nada.
+function _tdStampRound(pgn, rInt) {
+  if (!pgn || rInt == null || rInt === '') return pgn;
+  var m = /^\[Round\s+"([^"]*)"\]/m.exec(pgn);
+  if (m && m[1] && m[1] !== '?') return pgn;                        // ya dice la ronda
+  var linea = '[Round "' + rInt + '"]';
+  if (m) return pgn.replace(m[0], linea);                           // venía vacía o con "?"
+  var i = pgn.indexOf('\n[White ');                                 // el orden del PGN: …Date, Round, White…
+  return i < 0 ? (linea + '\n' + pgn) : (pgn.slice(0, i + 1) + linea + '\n' + pgn.slice(i + 1));
+}
+// Partida del vivo lista para byRound: con la ronda puesta y los headers ya leídos.
+function _tdGameEntry(pgn, rInt) { var p = _tdStampRound(pgn, rInt); return { pgn: p, h: parsePgnHeaders(p) }; }
+
 // Fusiona el pool/Chess-Results en UNA sola ronda (para el on-demand, que baja de a una).
 function _tdMergeOneRound(rInt) {
   if (!_tdCtx || !_tdCtx.byRound) return;
@@ -34483,7 +34518,7 @@ function _tdFetchRoundOnDemand(rInt, roundIds) {
     if (!_tdCtx) return;
     // Bajada vacía (bache de red / 429) pero la ronda ya tenía tableros → dejarlos como están.
     if (!(gs && gs.length) && _tdCtx.byRound[rInt] && _tdCtx.byRound[rInt].length) return;
-    _tdCtx.byRound[rInt] = (gs || []).map(function(pgn){ return { pgn: pgn, h: parsePgnHeaders(pgn) }; });
+    _tdCtx.byRound[rInt] = (gs || []).map(function(pgn){ return _tdGameEntry(pgn, rInt); });
     _tdMergeOneRound(rInt);            // sumar pool/Chess-Results de esa ronda + dedup
     _tdRebuildFlatGames();             // refrescar games plano + PGN_DB (para el visor/deep-link)
     if (_pendingDeepGame) _tryOpenPendingDeepGame();
@@ -34526,7 +34561,7 @@ function _tdEnsureAllLoaded(cb, onProgress) {
     if (onProgress) onProgress(i, pending.length);
     var rm = pending[i++];
     _bcFetchRoundPgns(rm.roundIds, function(gs){
-      if (_tdCtx) { _tdCtx.byRound[rm.num] = (gs || []).map(function(pgn){ return { pgn: pgn, h: parsePgnHeaders(pgn) }; }); _tdMergeOneRound(rm.num); }
+      if (_tdCtx) { _tdCtx.byRound[rm.num] = (gs || []).map(function(pgn){ return _tdGameEntry(pgn, rm.num); }); _tdMergeOneRound(rm.num); }
       next();
     });
   })();
@@ -34540,7 +34575,7 @@ function _tdLiveBuild(res, sec, keepRound) {
     var mm = (r.name||'').match(/(\d+)/);
     var rInt = mm ? parseInt(mm[1]) : (ri + 1);
     if (!byRound[rInt]) { byRound[rInt] = []; roundOrder.push(rInt); }
-    r.games.forEach(function(pgn){ byRound[rInt].push({ pgn: pgn, h: parsePgnHeaders(pgn) }); });
+    r.games.forEach(function(pgn){ byRound[rInt].push(_tdGameEntry(pgn, rInt)); });
     if (r.live) liveRoundInt = rInt;
   });
   var ctx = _tdLiveCtx;
@@ -34647,7 +34682,7 @@ function _tdLiveApplyRefresh(res, sec) {
     var mm = (r.name||'').match(/(\d+)/);
     var rInt = mm ? parseInt(mm[1]) : (ri + 1);
     if (!byRound[rInt]) { byRound[rInt] = []; roundOrder.push(rInt); }
-    r.games.forEach(function(pgn){ byRound[rInt].push({ pgn: pgn, h: parsePgnHeaders(pgn) }); });
+    r.games.forEach(function(pgn){ byRound[rInt].push(_tdGameEntry(pgn, rInt)); });
   });
   var games = _tdMergeUploadedRounds(byRound, roundOrder);
   _tdCrTablesOnNewRound(_tdMaxRoundNum(roundOrder));   // ronda nueva → tablas de CR (rápidas/blitz)
@@ -35283,7 +35318,7 @@ function _tdOnDemandApplyRefresh(merged, currentGames, sec, prevCur) {
     return;
   }
   var oldGames = _tdCtx.games, oldN = (_tdCtx.byRound[curNum] || []).length;
-  _tdCtx.byRound[curNum] = (currentGames || []).map(function(pgn){ return { pgn: pgn, h: parsePgnHeaders(pgn) }; });
+  _tdCtx.byRound[curNum] = (currentGames || []).map(function(pgn){ return _tdGameEntry(pgn, curNum); });
   _tdMergeOneRound(curNum);
   _tdRebuildFlatGames();
   if (_pendingDeepGame) _tryOpenPendingDeepGame();

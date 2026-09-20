@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1366;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1380;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -5512,6 +5512,69 @@ console.log('\n=== 88. Las variantes del 🔬 Análisis entran en el recorrido �
       && /puz\._revSolFens = puz\._revFens\.slice\(\)/.test(extraerFuncion('puzSetupReview')),
       'el contador y el ↩ pasan por un solo lugar, y cada ejercicio arranca limpio');
 }
+
+console.log('\n=== 89. El ojito de las tablas cuando Lichess no manda [Round] ===');
+{
+  // Torneo Selección de Rosario 2026 (19/09): el PGN de la transmisión NO trae el renglón [Round]
+  // en ninguna ronda (el número sólo está en el [Event] y en el link). El ojito busca por ronda +
+  // los dos nombres, así que no encontraba NADA: la tabla de la R7 mostraba 20 cruces y 0 ojitos.
+  console.log('\n👁️ La ronda se la pone la app (y el último intento para los torneos viejos)');
+
+  const stamp = new Function('return (' + extraerFuncion('_tdStampRound') + ')')();
+  const sinR = '[Event "Round 7: Izaguirre - Dioses"]\n[Site "https://lichess.org/…"]\n[Date "2026.09.19"]\n[White "Izaguirre, Lucia Belen"]\n[Black "Dioses, Ismael"]\n[Result "1-0"]\n\n1. e4 e5 1-0';
+  const conR = sinR.replace('[White ', '[Round "4.169"]\n[White ');
+  const interR = sinR.replace('[White ', '[Round "?"]\n[White ');
+
+  chk(/\[Round "7"\]/.test(stamp(sinR, 7)), '🔒 a la partida sin ronda se le escribe la de la transmisión');
+  chk(stamp(sinR, 7).indexOf('[Round "7"]') < stamp(sinR, 7).indexOf('[White '),
+      'y queda en su lugar del PGN, justo antes de [White]');
+  chk(stamp(sinR, 7).indexOf('1. e4 e5 1-0') > 0, 'las jugadas quedan intactas');
+  chk(stamp(conR, 4) === conR, '🔒 si la transmisión SÍ la trae ("4.169", la Olimpiada), no se toca nada');
+  chk(/\[Round "7"\]/.test(stamp(interR, 7)) && !/\[Round "\?"\]/.test(stamp(interR, 7)),
+      'un [Round "?"] se completa (no se duplica el renglón)');
+  chk(stamp(sinR, null) === sinR && stamp(sinR, '') === sinR, 'sin número de ronda, la partida no se toca');
+
+  // Y el ojito de punta a punta: índice + búsqueda.
+  const mk = (games, ctxRound) => new Function(
+    'var PGN_DB = { k: { games: ' + JSON.stringify(games) + ' } };\n'
+    + 'var _crGameIdxCache = {};\n'
+    + 'var _tdCtx = { pgnKey: "k" };\n'
+    + 'function normStr(s){ return String(s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim(); }\n'
+    + extraerFuncion('crNormTokens') + '\n' + extraerFuncion('parsePgnHeaders') + '\n'
+    + extraerFuncion('_capCache') + '\n' + extraerFuncion('_crNombreContenido') + '\n'
+    + extraerFuncion('_crGameIndex') + '\n' + extraerFuncion('crFindGameIdx') + '\n'
+    + 'return { buscar: crFindGameIdx, idx: function(){ return _crGameIndex("k"); } };')();
+
+  const partida = (w, b, round) => '[Event "x"]\n' + (round ? '[Round "' + round + '"]\n' : '')
+    + '[White "' + w + '"]\n[Black "' + b + '"]\n[Result "1-0"]\n\n1. e4 e5 1-0';
+
+  // Caso Rosario: NINGUNA partida dice la ronda.
+  {
+    const A = mk([partida('Izaguirre, Lucia Belen', 'Dioses, Ismael'), partida('Anelo, Gino', 'Bona, Luca Jesus')]);
+    chk(A.idx().sinRondas === true, '🔒 el índice se da cuenta de que el torneo no dice ninguna ronda');
+    chk(A.buscar(7, 'Izaguirre, Lucia Belen', 'Dioses, Ismael') === 0,
+        '🔒 el ojito de la R7 encuentra la partida igual (antes daba "no se transmitió")',
+        A.buscar(7, 'Izaguirre, Lucia Belen', 'Dioses, Ismael'));
+    chk(A.buscar(7, 'Dioses, Ismael', 'Izaguirre, Lucia Belen') === 0, 'con los colores al revés, también');
+    chk(A.buscar(7, 'Perez, Juan', 'Gomez, Luis') === -1, 'y un cruce que no se transmitió sigue diciendo que no');
+  }
+  // Con las rondas puestas (lo normal): NO se acepta la partida de otra ronda.
+  {
+    const B = mk([partida('Krysa, Leandro', 'Pichot, Alan', '1'), partida('Pichot, Alan', 'Krysa, Leandro', '2')]);
+    chk(B.idx().sinRondas === false, 'con rondas conocidas el índice lo sabe');
+    chk(B.buscar(1, 'Krysa, Leandro', 'Pichot, Alan') === 0 && B.buscar(2, 'Pichot, Alan', 'Krysa, Leandro') === 1,
+        'cada ronda abre SU partida');
+    chk(B.buscar(3, 'Krysa, Leandro', 'Pichot, Alan') === -1,
+        '🔒 doble todos contra todos: una ronda sin partida NO abre la revancha');
+  }
+
+  chk(/_tdGameEntry\(pgn, rInt\)/.test(extraerFuncion('_tdLiveBuild'))
+      && /_tdGameEntry\(pgn, rInt\)/.test(extraerFuncion('_tdFetchRoundOnDemand'))
+      && /_tdGameEntry\(pgn, curNum\)/.test(SRC) && /_tdGameEntry\(pgn, rm\.num\)/.test(SRC),
+      'todas las partidas del vivo pasan por _tdGameEntry (ninguna entra sin ronda)');
+}
+
+
 
 
 
