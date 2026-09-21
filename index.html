@@ -33838,17 +33838,24 @@ function _colMirar(fen, cb) {
    que se está siguiendo, no hace falta que sobrevivan a un F5. */
 var _COL_HIST_MAX = 8;
 var _colHist = [], _colHid = 0, _colUltAbierto = false;
+// Cada colgada queda anotada con su SECCIÓN: torneo + categoría (rama absoluta / femenina, que
+// comparten torneo y número de ronda) + ronda. Pedido del autor 21/09: con 5 del absoluto, al pasar
+// a la femenina seguían en "Últimas colgadas" y al tocarlas no pasaba nada (no son de esa transmisión).
 function _colHistGuardar(items) {
-  var tour = String(_tdTourKey), r = (_tdLiveCtx && _tdLiveCtx.currentNum) || _tdCurrentRound;
+  var tour = String(_tdTourKey), cat = _tdActiveCat, r = (_tdLiveCtx && _tdLiveCtx.currentNum) || _tdCurrentRound;
   items.forEach(function(it){
-    _colHist.unshift({ hid: ++_colHid, gk: it.gk, g: it.g, prev: it.prev, now: it.now, c: it.c, mateN: it.mateN, ts: Date.now(), tour: tour, r: r });
+    _colHist.unshift({ hid: ++_colHid, gk: it.gk, g: it.g, prev: it.prev, now: it.now, c: it.c, mateN: it.mateN, ts: Date.now(), tour: tour, cat: cat, r: r });
   });
-  if (_colHist.length > _COL_HIST_MAX) _colHist = _colHist.slice(0, _COL_HIST_MAX);
+  // Tope POR SECCIÓN (las del absoluto no desplazan a las de la femenina).
+  var cuenta = {};
+  _colHist = _colHist.filter(function(x){ var k = x.tour + '|' + x.cat + '|' + x.r; cuenta[k] = (cuenta[k] || 0) + 1; return cuenta[k] <= _COL_HIST_MAX; });
   try { _cgBarRefrescar(); } catch (e) {}
 }
+// Sólo las de la sección que se está mirando, y que se puedan abrir desde acá (la partida está en
+// esta ronda en vivo): así nunca queda un renglón que al tocarlo no hace nada.
 function _colHistDe(rInt) {
   var tour = String(_tdTourKey);
-  return _colHist.filter(function(x){ return x.tour === tour && x.r === rInt; });
+  return _colHist.filter(function(x){ return x.tour === tour && x.cat === _tdActiveCat && x.r === rInt && !!_colBuscar(x.gk); });
 }
 function _colHace(ts) {
   var s = Math.max(0, Math.round((Date.now() - ts) / 1000));

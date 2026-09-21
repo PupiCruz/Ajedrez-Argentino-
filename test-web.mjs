@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1471;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1474;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -5220,7 +5220,7 @@ console.log('\n=== 53g. Aviso de colgadas graves (19/09) ===');
   const N = ['_colActivo', '_colCp', '_colClasifica', '_colVivoCaidaOk', '_colMirandoGk', '_colPos', '_colRonda', '_colScan', '_colConfirmar', '_colAvisar', '_colDespachar', '_colBuscar', '_fenPlies', '_colHistGuardar', '_colHistDe', '_colRepartir'];
   const C = new Function('var AHORA = 1e9, Date = { now: function(){ return AHORA; } }, timers = [], mostrados = [];'
     + 'var _tdJsonNew = {}, _mevEvals = {}, _mev = {}, _tdCurrentRound = 5, _tdLiveCtx = { currentNum: 5 }, _tdCtx = { byRound: { 5: [] } };'
-    + 'var document = { querySelectorAll: function(){ return []; } }, _tdTourKey = "T1", _colVerifBusy = false, _colRedEspera = 0, repartidos = [], lotes = [];'
+    + 'var document = { querySelectorAll: function(){ return []; } }, _tdTourKey = "T1", _tdActiveCat = 0, _colVerifBusy = false, _colRedEspera = 0, repartidos = [], lotes = [];'
     + 'var window = { aaTourChat: { avisarColgada: function(cs){ lotes.push(cs); cs.forEach(function(c){ repartidos.push(c); }); return true; } } };'
     + 'function setTimeout(fn, ms){ timers.push({ fn: fn, ms: ms }); return timers.length; }'
     + 'function _colOn(){ return true; } function _capCache(){} function mevTick(){} function _bcGameIds(p){ return { game: p }; }'
@@ -5232,7 +5232,8 @@ console.log('\n=== 53g. Aviso de colgadas graves (19/09) ===');
     + N.map(extraerFuncion).join('\n')
     + '; return { _colActivo: _colActivo, _colClasifica: _colClasifica, _colCp: _colCp, scan: _colScan, extra: _mevExtra, mostrados: mostrados, timers: timers,'
     + '  set ahora(v){ AHORA = v; }, get ahora(){ return AHORA; }, ficha: _tdJsonNew, evals: _mevEvals, deep: _colDeep, ronda: _tdCtx.byRound[5],'
-    + '  hist: function(){ return _colHist; }, histDe: _colHistDe, tope: _COL_HIST_MAX, repartidos: repartidos, lotes: lotes };')();
+    + '  hist: function(){ return _colHist; }, histDe: _colHistDe, tope: _COL_HIST_MAX, repartidos: repartidos, lotes: lotes,'
+    + '  set cat(v){ _tdActiveCat = v; } };')();
 
   const ls = (() => { const m = {}; return { getItem: k => (k in m ? m[k] : null), setItem: (k, v) => { m[k] = String(v); }, removeItem: k => { delete m[k]; } }; })();
   chk(C._colActivo('', ls) === false, 'la llave arranca APAGADA: el público no lo ve mientras se prueba');
@@ -5365,6 +5366,11 @@ console.log('\n=== 53g. Aviso de colgadas graves (19/09) ===');
   chk(H[0].now && H[0].prev && H[0].c && H[0].ts > 0 && H[0].r === 5 && H[0].tour === 'T1',
       'de cada una se guarda todo lo que necesita el renglón (jugadores, evals, jugada, hora) y a qué ronda y torneo es');
   chk(C.histDe(5).length === 3 && C.histDe(4).length === 0, 'el botón sólo muestra las de la ronda que se está mirando');
+  C.cat = 1;
+  chk(C.histDe(5).length === 0, '🔒 al pasar a OTRA rama (absoluto → femenino, mismo torneo y ronda) no aparecen las del absoluto (pedido del autor 21/09)');
+  C.cat = 0;
+  chk(C.histDe(5).length === 3, '…y al volver al absoluto siguen ahí');
+  chk(/!!_colBuscar\(x\.gk\)/.test(extraerFuncion('_colHistDe')), 'y sólo se listan las que se pueden abrir desde acá: nunca un renglón que al tocarlo no hace nada');
   for (let k = 0; k < 10; k++) C.hist().unshift({ gk: 'x' + k, tour: 'T1', r: 5 });
   C.hist().length = Math.min(C.hist().length, 99);
   chk(C.tope === 8, 'se guardan las últimas 8 (no crece para siempre)');
