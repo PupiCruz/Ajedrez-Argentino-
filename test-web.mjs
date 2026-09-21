@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1461;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1471;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -5539,6 +5539,62 @@ console.log('\n=== 53g-bis. La colgada se verifica contra el PGN antes de avisar
   chk(V.tiene(cab + '1. e4 e5 *', it) === true, 'si el PGN todavía viene atrás de la ficha no se puede comparar: se avisa igual');
   chk(V.tiene('se cayó lichess', it) === true && V.tiene(cab.replace('Carlsen, Magnus', 'Otro, Jugador') + '1. e4 e5 2. Nf3 Nf6 *', it) === true,
       'sin PGN, o si llegó OTRA partida, no se opina: se avisa igual (perder una colgada de verdad es peor)');
+  // ── Afinar cuál de las jugadas que llegaron juntas fue la colgada (casos del autor 20/09) ──
+  {
+    const A = new Function('var pedidas = [], evs = {}, _COL_AFINA_MAX = ' + SRC.match(/var _COL_AFINA_MAX = (\d+)/)[1] + ';'
+      + 'function Chess(){} '
+      + 'function _colMirar(fen, cb){ pedidas.push(fen); cb(evs[fen]); }'
+      + 'function _colFenEnPly(pgn, ply){ return "f" + ply; }'
+      + 'function _colJugadaEnPly(pgn, ply){ return { from: "a1", to: "a2" }; }'
+      + SRC.match(/var _COL_PAR[^\n]*/)[0] + '\n' + SRC.match(/var _COL_CAND_A[^\n]*/)[0] + '\n' + SRC.match(/var _COL_CAND_B[^\n]*/)[0] + '\n'
+      + SRC.match(/var _COL_C_ANTES[^\n]*/)[0] + '\n' + SRC.match(/var _COL_MATE_ANTES[^\n]*/)[0] + '\n'
+      + SRC.match(/var _COL_AFINA_MIN[^\n]*/)[0] + '\n'
+      + extraerFuncion('_colClasifica') + extraerFuncion('_colAfinar')
+      + '; return { afinar: _colAfinar, pedidas: pedidas, evs: evs };')();
+    // Llegaron 6 medias jugadas de una (44 → 50). La colgada de las blancas fue la 47: de +0,2 a −5,0.
+    A.evs['f45'] = 20; A.evs['f46'] = 10; A.evs['f47'] = -500; A.evs['f48'] = -520; A.evs['f49'] = -540;
+    const it = { c: { lado: 'w', tipo: 'A' },
+      prev: { fen: 'f44', cp: 20, plies: 44, last: null },
+      now:  { fen: 'f50', cp: -560, plies: 50, last: { from: 'h1', to: 'h2' } } };
+    let listo = false; A.afinar(it, 'PGN', function(){ listo = true; });
+    chk(listo && it.now.plies === 47 && it.prev.plies === 46,
+        '🔒 con VARIAS jugadas juntas se mira cada una y se elige la del salto más grande: la 47, no la 50 (caso "entra en la 26 y la colgada es la 24")', it.now.plies);
+    chk(it.now.cp === -500 && it.prev.cp === 10 && it.now.last.from === 'a1',
+        '…y se queda con las evals y la jugada de ESA, así el cartel la puede nombrar y el visor abre ahí');
+    chk(A.pedidas.length === 5, 'el motor mira sólo las intermedias (las dos puntas ya estaban evaluadas)', A.pedidas.length);
+    // Tres colgadas seguidas: se queda con la más grande.
+    const it3 = { c: { lado: 'b', tipo: 'A' },
+      prev: { fen: 'f44', cp: -20, plies: 44, last: null },
+      now:  { fen: 'f50', cp: 900, plies: 50, last: null } };
+    A.evs['f45'] = -10; A.evs['f46'] = 250; A.evs['f47'] = 240; A.evs['f48'] = 820; A.evs['f49'] = 830;
+    A.afinar(it3, 'PGN', function(){});
+    chk(it3.now.plies === 48 && it3.prev.plies === 47,
+        '🔒 con TRES COLGADAS SEGUIDAS ninguna entra sola en la franja (la partida ya venía mal): igual se queda con la más grande, no con la última (el otro caso del autor)', it3.now.plies);
+    chk(it3.c.tipo === 'A' && it3.c.lado === 'b', '…y en ese caso se respeta la clasificación original del aviso');
+    // Un salto chico no mueve el aviso: si no hay una jugada clara, se deja como estaba.
+    const itCh = { c: { lado: 'w', tipo: 'A' }, prev: { fen: 'f44', cp: -300, plies: 44, last: null },
+      now: { fen: 'f50', cp: -560, plies: 50, last: null } };
+    A.evs['f45'] = -340; A.evs['f46'] = -380; A.evs['f47'] = -420; A.evs['f48'] = -470; A.evs['f49'] = -520;
+    A.afinar(itCh, 'PGN', function(){});
+    chk(itCh.now.plies === 50, 'si ninguna jugada tiene un salto claro (todas chiquitas), no se mueve nada');
+    // "Se dejó mate": la última jugada ES el mate, no se afina.
+    const itM = { c: { lado: 'w', tipo: 'M' }, prev: { fen: 'f44', cp: 0, plies: 44, last: null },
+      now: { fen: 'f50', cp: -10000, plies: 50, last: null } };
+    const nM = A.pedidas.length;
+    A.afinar(itM, 'PGN', function(){});
+    chk(itM.now.plies === 50 && A.pedidas.length === nM, 'el aviso de MATE no se afina: la última jugada es el mate y ahí hay que abrir');
+    // Hueco enorme: no se afina (no vale la pena gastar motor), y el aviso NO se pierde.
+    const itG = { c: { lado: 'w', tipo: 'A' }, prev: { fen: 'f10', cp: 0, plies: 10, last: null },
+      now: { fen: 'f40', cp: -600, plies: 40, last: null } };
+    let ok2 = false; A.afinar(itG, 'PGN', function(){ ok2 = true; });
+    chk(ok2 && itG.now.plies === 40, 'con un hueco enorme no se afina, pero el aviso sale igual');
+    // Una sola jugada: ni se mira.
+    const n0 = A.pedidas.length;
+    A.afinar({ c: { lado: 'w' }, prev: { fen: 'f44', cp: 0, plies: 44 }, now: { fen: 'f45', cp: -600, plies: 45 } }, 'PGN', function(){});
+    chk(A.pedidas.length === n0, 'si llegó una sola jugada no se gasta ni un pedido de motor');
+  }
+  chk(extraerFuncion('_colVerificar').includes('_colAfinar(it, txt, function(){ cb(true); })'),
+      'se afina con el MISMO PGN que ya se pidió para el chequeo (no hay un pedido de más)');
   const ver = extraerFuncion('_colVerificar');
   chk(/if \(!id \|\| typeof Chess === 'undefined'\) \{ cb\(true\); return; \}/.test(ver) && /catch\(function\(\)\{ cb\(true\); \}\)/.test(ver.replace(/\s+/g, ' ').replace('.catch(function(){ cb(true); });', 'catch(function(){ cb(true); })')),
       'sin ids de Lichess (Chess-Results) o sin red, tampoco se pierde el aviso');

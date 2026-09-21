@@ -33426,8 +33426,79 @@ function _colVerificar(it, cb) {
   if (!id || typeof Chess === 'undefined') { cb(true); return; }
   _fetchTO('https://lichess.org/api/study/' + id.round + '/' + id.game + '.pgn', _COL_VERIF_TO)
     .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
-    .then(function(txt){ cb(_colPgnTiene(txt, it)); })
+    .then(function(txt){
+      if (!_colPgnTiene(txt, it)) { cb(false); return; }
+      _colAfinar(it, txt, function(){ cb(true); });   // ya que tenemos el PGN, buscar la jugada exacta
+    })
     .catch(function(){ cb(true); });
+}
+
+/* ── ¿En CUÁL de las jugadas está la colgada? (20/09, casos del autor) ─────────────────────────
+   Entre una mirada y la otra pueden haber llegado VARIAS jugadas: el aviso se dispara comparando la
+   última eval conocida con la de ahora, y con la ronda entera el motor no alcanza a mirar cada
+   partida en cada vuelta. Abrir en la última jugada caía tarde (el autor: "entra en la 26 y la
+   colgada es la 24 blanca"; en otra, con tres colgadas seguidas, entraba mucho después).
+   Ya tenemos el PGN en la mano (el del chequeo), así que se reproducen las posiciones intermedias,
+   se las mira con el motor y se elige el salto MÁS GRANDE para el bando que se colgó. Después de
+   esto, prev y now son la jugada exacta: el cartel puede nombrarla ("24.♗xh5??"), el visor abre
+   ahí y eso es lo que viaja por el arbitrito.
+   Si no se puede (960, PGN raro, hueco enorme), se deja lo de antes: se pierde precisión, no el aviso. */
+var _COL_AFINA_MAX = 10;   // hueco máximo (en medias jugadas) que se mira; más que eso no se afina
+var _COL_AFINA_MIN = 150;  // caída mínima (1,5 peones) para mover el aviso a una jugada que no es colgada por sí sola
+function _colAfinar(it, pgn, cb) {
+  var n = it.now.plies - it.prev.plies;
+  if (!(n > 1) || n > _COL_AFINA_MAX || !it.c || typeof Chess === 'undefined') { cb(); return; }
+  if (it.c.tipo === 'M') { cb(); return; }   // "se dejó mate": la última jugada ES el mate, ahí hay que abrir
+  var pos = [], p, f;
+  for (p = it.prev.plies; p <= it.now.plies; p++) {
+    f = (p === it.prev.plies) ? it.prev.fen : (p === it.now.plies ? it.now.fen : _colFenEnPly(pgn, p));
+    if (!f) { cb(); return; }
+    pos.push({ ply: p, fen: f });
+  }
+  var ev = new Array(pos.length);
+  ev[0] = it.prev.cp; ev[ev.length - 1] = it.now.cp;
+  var falta = pos.length - 2;
+  if (falta <= 0) { cb(); return; }
+  for (var i = 1; i < pos.length - 1; i++) (function(k){
+    _colMirar(pos[k].fen, function(cp){ ev[k] = cp; if (--falta <= 0) elegir(); });
+  })(i);
+  function elegir() {
+    var s = (it.c.lado === 'w') ? 1 : -1;
+    // Se mira jugada por jugada cuánto empeoró EL QUE SE COLGÓ y se elige el salto MÁS GRANDE: ésa es
+    // la jugada que hay que ir a ver. No se exige que entre sola en la franja de "colgada", porque con
+    // TRES COLGADAS SEGUIDAS la segunda y la tercera ya arrancan de una partida mala y ninguna entra
+    // (era el caso del autor). Si ni el salto más grande llega a _COL_AFINA_MIN, se deja todo igual.
+    var mejor = -1, caida = 0;
+    for (var k = 1; k < ev.length; k++) {
+      if (ev[k] == null || ev[k - 1] == null) continue;
+      var d = ev[k - 1] * s - ev[k] * s;
+      if (d > caida) { caida = d; mejor = k; }
+    }
+    var elegida = (caida >= _COL_AFINA_MIN) ? mejor : -1;
+    if (elegida > 0) {
+      var ultima = (elegida === pos.length - 1);
+      it.prev = { fen: pos[elegida - 1].fen, cp: ev[elegida - 1], plies: pos[elegida - 1].ply, last: null };
+      it.now  = { fen: pos[elegida].fen,     cp: ev[elegida],     plies: pos[elegida].ply,
+                  last: ultima ? it.now.last : _colJugadaEnPly(pgn, pos[elegida].ply) };
+      // Si esa jugada es colgada POR SÍ SOLA, su clasificación manda (puede cambiar de tipo). Si no
+      // —tres colgadas seguidas: cuando llega la segunda la partida ya estaba mal—, se respeta la del
+      // aviso original, que miró el tramo entero.
+      var cE = _colClasifica(ev[elegida - 1], ev[elegida], true, true);
+      if (cE && cE.lado === it.c.lado) it.c = cE;
+      if (it.mateN !== undefined && !ultima) delete it.mateN;   // el mate era de la última, no de ésta
+    }
+    cb();
+  }
+}
+// De dónde a dónde fue la jugada nº `ply` del PGN (para que el cartel pueda nombrarla).
+function _colJugadaEnPly(pgn, ply) {
+  try {
+    var ch = new Chess();
+    if (!ch.load_pgn(String(pgn))) return null;
+    var h = ch.history({ verbose: true });
+    var m = h[ply - 1];
+    return (m && m.from) ? { from: m.from, to: m.to } : null;
+  } catch (e) { return null; }
 }
 // ¿La posición de la colgada sigue estando en el PGN que acaba de mandar Lichess?
 function _colPgnTiene(txt, it) {
