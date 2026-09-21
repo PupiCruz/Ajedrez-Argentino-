@@ -47738,6 +47738,23 @@ function cvUpdateNagBadge() {
   /* ── El traductor ──────────────────────────────────────────────────────────
      Lichess manda las jugadas en UCI ("e2e4 e7e5"); el tablero las quiere en SAN y con
      la posición armada. Se rearman con la misma librería de ajedrez que usa el visor. */
+  /* ── 🏰 EL ENROQUE "REY COME TORRE" (21/09/2026) ─────────────────────────
+     🐛 LA CAUSA DE LAS PARTIDAS CONGELADAS EN LOS ARENAS TEMÁTICOS. Las partidas que arrancan
+     desde una posición ("From Position") Lichess las manda con el enroque escrito como en el
+     960: el rey "va a la torre" (e8h8, e1a1), no a su casilla (e8g8, e1c1). chess.js no entiende
+     esa forma, la jugada no entraba y el traductor cortaba ahí: el tablero se quedaba en la
+     posición de ANTES del enroque para siempre. Pasó en las tres pruebas reales (ESfg5XK7 con el
+     O-O-O del rival, RDgp9t8m con el O-O propio, jbLbz3wE con el O-O del rival). En los arenas
+     normales llega e1g1 y por eso nunca se vio.
+     Si la jugada no entra y es el rey yendo a una torre propia, se traduce al enroque de siempre. */
+  function enroqueReyTorre(ch, u) {
+    var de = u.slice(0, 2), a = u.slice(2, 4);
+    var rey = ch.get(de), torre = ch.get(a);
+    if (!rey || !torre || rey.type !== 'k' || torre.type !== 'r' || rey.color !== torre.color || de[1] !== a[1]) return null;
+    var dest = (a[0] > de[0] ? 'g' : 'c') + de[1];
+    try { return ch.move({ from: de, to: dest }); } catch (e) { return null; }
+  }
+
   function traducir(full, st) {
     var fen0 = (full.initialFen && full.initialFen !== 'startpos') ? completarFen(full.initialFen) : null;
     var ch; try { ch = fen0 ? new Chess(fen0) : new Chess(); } catch (e) { ch = new Chess(); }
@@ -47746,6 +47763,7 @@ function cvUpdateNagBadge() {
     for (var i = 0; i < ucis.length; i++) {
       var u = ucis[i], mv = null;
       try { mv = ch.move({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u.slice(4, 5) || undefined }); } catch (e) { mv = null; }
+      if (!mv) mv = enroqueReyTorre(ch, u);
       if (!mv) break;
       sans.push(mv.san); ult = { from: mv.from, to: mv.to, san: mv.san };
     }

@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1476;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1477;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -3716,6 +3716,21 @@ console.log('\n=== 50. Puntos del torneo en el visor (6½/7) ===');
       '🔒 la jugada sale con reloj (6 s) y la libreta anota qué contestó Lichess (21/09, RDgp9t8m)');
   chk(/P\.jugPend && P\.ply > P\.jugPend\.ply/.test(modPartida) && /jp\.intento < JUG_MAX/.test(modPartida),
       '🔒 si la reconexión trae la partida ANTES de mi jugada, se reenvía sola (no se la deshace al jugador)');
+  {
+    // 21/09 — LA causa de los arenas temáticos congelados: Lichess manda el enroque de las
+    // partidas "From Position" como el 960 (rey a la torre: e8h8) y chess.js no lo entendía.
+    const fEnr = (SRC.match(/function enroqueReyTorre\(ch, u\) \{[\s\S]*?\n  \}\n/) || [''])[0];
+    const enr = fEnr ? new Function('return ' + fEnr)() : null;
+    const _mjE = { exports: {} };
+    new Function('module', 'exports', 'window', fs.readFileSync(new URL('./assets/chess.min.js', import.meta.url), 'utf8'))(_mjE, _mjE.exports, {});
+    const Chess = _mjE.exports.Chess || _mjE.exports;
+    const fen = 'rnbqkbnr/pppp1ppp/8/4p3/2P5/8/PP1PPPPP/RNBQKBNR w KQkq - 0 1';
+    const ucis = 'b1c3 c7c6 d2d3 d7d6 g1f3 b8d7 g2g3 f8e7 f1g2 g8f6 b2b3 e8h8'.split(' ');   // jbLbz3wE
+    let n = 0;
+    if (enr) { const ch = new Chess(fen); for (const u of ucis) { let mv = null; try { mv = ch.move({ from: u.slice(0, 2), to: u.slice(2, 4) }); } catch (e) {} if (!mv) mv = enr(ch, u); if (!mv) break; n++; } }
+    chk(n === 12 && /if \(!mv\) mv = enroqueReyTorre\(ch, u\);/.test(modPartida),
+        '🔒 el enroque "rey a la torre" (e8h8) de los arenas temáticos entra al tablero (jbLbz3wE: 12 de 12)', n);
+  }
   chk(/lvTablero\.chat\(\{ color: P\.color/.test(modPartida),
       'tu propio mensaje se pinta acá (Lichess no devuelve el eco como nuestro árbitro)');
   chk(/enCuenta\(\)/.test(modPartida) && /P\.pendiente = m/.test(modPartida),
