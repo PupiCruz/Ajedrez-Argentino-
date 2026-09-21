@@ -47687,8 +47687,9 @@ function cvUpdateNagBadge() {
   }
 
   /* Un pedido corto a Lichess (mover, chatear, abandonar…). */
-  function post(ruta, campos) {
+  function post(ruta, campos, senal) {
     var o = { method: 'POST', headers: { Authorization: 'Bearer ' + tok() } };
+    if (senal) o.signal = senal;
     if (campos) {
       o.headers['Content-Type'] = 'application/x-www-form-urlencoded';
       o.body = new URLSearchParams(campos).toString();
@@ -47846,6 +47847,7 @@ function cvUpdateNagBadge() {
       }
       P.ofertaVista = ofre;
       P.ply = (m.moves || []).length;   // para la regla de las 10 jugadas de abajo
+      if (P.jugPend && P.ply > P.jugPend.ply) P.jugPend = null;   // mi jugada llegó
     }
     if (m.status === 'finished') { botones(true); traerVariacion(); }
   }
@@ -47898,7 +47900,7 @@ function cvUpdateNagBadge() {
     var p = null;
     /* Lichess confirma una jugada en menos de un segundo. Si a los 7 s no vino el eco, el caño
        está roto aunque siga respirando: el vigía lo reconecta (pregunta 2). */
-    if (t === 'move')          { P.esperoEco = Date.now(); diag('mando-jugada'); p = post('/api/board/game/' + id + '/move/' + (o.from + o.to + (o.promotion || ''))); }
+    if (t === 'move')          { mandarJugada(o.from + o.to + (o.promotion || '')); return; }
     else if (t === 'chat') {
       var txt = String(o.text || '').slice(0, 140);
       p = post('/api/board/game/' + id + '/chat', { room: 'player', text: txt });
@@ -47921,6 +47923,49 @@ function cvUpdateNagBadge() {
       avisar(t === 'move' ? ('Lichess no aceptó la jugada (' + msg + ').') : ('Lichess no aceptó la acción (' + msg + ').'));
       /* Si la jugada rebotó, el tablero quedó adelantado: el próximo estado de Lichess
          lo vuelve a la realidad, así que no hay que deshacer nada a mano. */
+    });
+  }
+
+  /* ── 📮 MANDAR LA JUGADA CON ACUSE DE RECIBO (21/09/2026) ─────────────────
+     🐛 TERCERA PRUEBA REAL (arena temático "English Opening", partida RDgp9t8m): la libreta
+     mostró que el caño andaba bien. Al reconectar, el `gameFull` decía que Lichess seguía en la
+     MISMA jugada: lo que se perdía era la JUGADA QUE MANDÁBAMOS. El tablero la mostraba hecha,
+     la reconexión la deshacía, el autor la volvía a hacer… y recién a la tercera entró. En la
+     siguiente pasó lo mismo y siguió en lichess.org.
+     Antes el pedido salía una vez, sin reloj y sin anotar qué contestaba Lichess. Ahora:
+       · tiene 6 s para contestar (si no, se corta: un pedido colgado no avisa nunca);
+       · la libreta anota la respuesta (jugada-ok / jugada-rebote / jugada-colgada, con ms);
+       · si la jugada no quedó registrada, se REENVÍA sola (hasta 3 veces). Es seguro: si Lichess
+         ya la tenía, el reenvío rebota con "no es tu turno" y no pasa nada;
+       · si la reconexión trae la partida todavía ANTES de mi jugada, también se reenvía. */
+  var JUG_ESPERA = 6000, JUG_MAX = 3;
+  function mandarJugada(uci, intento) {
+    if (!P || P.terminada) return;
+    intento = intento || 1;
+    var id = P.id, ply = P.ply, t0 = Date.now();
+    P.jugPend = { uci: uci, ply: ply, intento: intento, t: t0 };
+    P.esperoEco = t0;
+    diag(intento === 1 ? 'mando-jugada' : 'reenvio-jugada', { nota: uci + (intento > 1 ? (' #' + intento) : '') });
+    var ctrl = null, reloj = 0;
+    try { ctrl = new AbortController(); reloj = setTimeout(function () { try { ctrl.abort(); } catch (e) {} }, JUG_ESPERA); } catch (e) {}
+    function pendiente() { return P && P.id === id && !P.terminada && P.jugPend && P.jugPend.uci === uci && P.ply === ply; }
+    post('/api/board/game/' + id + '/move/' + uci, null, ctrl && ctrl.signal).then(function () {
+      clearTimeout(reloj);
+      diag('jugada-ok', { nota: uci, ms: Date.now() - t0 });
+    }, function (e) {
+      clearTimeout(reloj);
+      var colgada = e && e.name === 'AbortError', msg = colgada ? 'no contestó' : ((e && e.message) || 'sin red');
+      diag(colgada ? 'jugada-colgada' : 'jugada-rebote', { nota: uci + ' · ' + msg, ms: Date.now() - t0 });
+      if (!pendiente()) return;   // ya llegó por el caño: el rebote era de un envío repetido
+      /* Un "no" de verdad (jugada ilegal, partida terminada) no se arregla insistiendo. En un
+         reenvío tampoco se avisa: lo más probable es que la primera ya hubiera entrado. */
+      if (e && e.status >= 400 && e.status < 500 && e.status !== 429) {
+        P.jugPend = null;
+        if (intento === 1) avisar('Lichess no aceptó la jugada (' + msg + ').');
+        return;
+      }
+      if (intento < JUG_MAX) setTimeout(function () { if (pendiente()) mandarJugada(uci, intento + 1); }, 400);
+      else { P.jugPend = null; avisar('Lichess no recibió la jugada (' + msg + '). Hacela de nuevo.'); }
     });
   }
 
@@ -48023,13 +48068,15 @@ function cvUpdateNagBadge() {
     try { localStorage.setItem(DIAG_LLAVE, JSON.stringify({ partida: P && P.id, fecha: new Date().toISOString(), renglones: DIAG })); } catch (e) {}
   }
   /* Lo que se anota de un tirón (algo salió mal) no puede esperar al próximo guardado. */
-  var DIAG_URGENTE = { 'mudo': 1, 'sin-eco': 1, 'sin-novedad': 1, 'estado-anejo': 1, 'gameFull': 1 };
+  var DIAG_URGENTE = { 'jugada-colgada': 1, 'jugada-rebote': 1, 'reenvio-jugada': 1, 'mudo': 1, 'sin-eco': 1, 'sin-novedad': 1, 'estado-anejo': 1, 'gameFull': 1 };
   function diag(que, o) {
     try {
       var s = o && (o.state || o), n = s && s.moves != null ? String(s.moves).split(' ').filter(Boolean).length : null;
       DIAG.push({ hora: new Date().toTimeString().slice(0, 8), que: que, ply: n,
                   wtime: s && s.wtime, btime: s && s.btime, estado: s && s.status,
                   latidos: DIAG_LATIDOS, caido: !!(P && P.caido), intentos: (P && P.intentos) || 0 });
+      if (o && o.nota) DIAG[DIAG.length - 1].nota = o.nota;
+      if (o && o.ms != null) DIAG[DIAG.length - 1].ms = o.ms;
       if (DIAG.length > DIAG_MAX) DIAG.shift();
       guardarLibreta(!!DIAG_URGENTE[que] || String(que).indexOf('caida') === 0);
     } catch (e) {}
@@ -48140,6 +48187,12 @@ function cvUpdateNagBadge() {
          La ficha trae tournamentId sólo en las partidas de torneo. */
       if (reciente && !o.tournamentId) { P.cdHasta = Date.now() + 3000; m.startAt = P.cdHasta; }
       aplicar(m);
+      /* Reconexión que muestra la partida todavía ANTES de mi jugada: Lichess no la recibió.
+         Se reenvía sola en vez de deshacérsela al jugador (ver mandarJugada). */
+      var jp = P.jugPend;
+      if (jp && P.ply === jp.ply && m.status === 'playing' && jp.intento < JUG_MAX && Date.now() - jp.t < 30000) {
+        setTimeout(function () { if (P && P.jugPend === jp && P.ply === jp.ply) mandarJugada(jp.uci, jp.intento + 1); }, 150);
+      }
       expiraSync(st);
       vigilarBerserk();
       /* Al RECONECTAR llega otro `gameFull`: la partida no se presenta de nuevo (el lector de

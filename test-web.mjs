@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1474;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1476;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -3710,8 +3710,12 @@ console.log('\n=== 50. Puntos del torneo en el visor (6½/7) ===');
       '🔒 los relojes pasan en milisegundos, sin convertir (el tablero los quiere así)');
   chk(/ucis\.length >= 2/.test(modPartida),
       'el reloj se marca "corriendo" recién cuando los dos movieron (los 30 s de gracia)');
-  chk(/\/move\/' \+ \(o\.from \+ o\.to/.test(modPartida) && /\/resign'/.test(modPartida) && /\/draw\/yes'/.test(modPartida) && /\/chat'/.test(modPartida),
+  chk(/mandarJugada\(o\.from \+ o\.to/.test(modPartida) && /\/move\/' \+ uci/.test(modPartida) && /\/resign'/.test(modPartida) && /\/draw\/yes'/.test(modPartida) && /\/chat'/.test(modPartida),
       'jugar, abandonar, tablas y chat salen a los caminos correctos de Lichess');
+  chk(/JUG_ESPERA = 6000/.test(modPartida) && /ctrl\.abort\(\)/.test(modPartida) && /'jugada-colgada'/.test(modPartida) && /'jugada-ok'/.test(modPartida),
+      '🔒 la jugada sale con reloj (6 s) y la libreta anota qué contestó Lichess (21/09, RDgp9t8m)');
+  chk(/P\.jugPend && P\.ply > P\.jugPend\.ply/.test(modPartida) && /jp\.intento < JUG_MAX/.test(modPartida),
+      '🔒 si la reconexión trae la partida ANTES de mi jugada, se reenvía sola (no se la deshace al jugador)');
   chk(/lvTablero\.chat\(\{ color: P\.color/.test(modPartida),
       'tu propio mensaje se pinta acá (Lichess no devuelve el eco como nuestro árbitro)');
   chk(/enCuenta\(\)/.test(modPartida) && /P\.pendiente = m/.test(modPartida),
@@ -5041,7 +5045,7 @@ console.log('\n=== 🔌 El vigía del caño de la partida de Lichess (19/09) ===
   // 🐛 SEGUNDA PRUEBA REAL (19/09): el caño seguía respirando —los latidos llegaban y el abandono
   // del autor llegó al instante— pero dejaron de llegar JUGADAS. Mirar la conexión no alcanza:
   // hay que mirar la PARTIDA.
-  chk(/var ECO_MS = 7000/.test(SRC) && /P\.esperoEco = Date\.now\(\); diag\('mando-jugada'\)/.test(SRC),
+  chk(/var ECO_MS = 7000/.test(SRC) && /P\.esperoEco = t0;\s*diag\(intento === 1 \? 'mando-jugada'/.test(SRC),
       '🔒 al mandar una jugada se anota la hora: Lichess confirma en menos de un segundo');
   chk(/P\.esperoEco && Date\.now\(\) - P\.esperoEco > ECO_MS/.test(SRC),
       '🔒 mi jugada sin confirmar a los 7 s = caño roto aunque respire → se reconecta');
@@ -5061,7 +5065,7 @@ console.log('\n=== 🔌 El vigía del caño de la partida de Lichess (19/09) ===
       '🔒 la libreta se guarda en el navegador: sobrevive al F5 y a cerrar la pestaña');
   chk(/Date\.now\(\) - DIAG_ULT_GUARDADO < 1000\) return;/.test(SRC),
       'no se escribe en cada jugada (una vez por segundo alcanza)');
-  chk(/DIAG_URGENTE = \{ 'mudo': 1, 'sin-eco': 1, 'sin-novedad': 1/.test(SRC),
+  chk(/DIAG_URGENTE = \{ 'jugada-colgada': 1, 'jugada-rebote': 1, 'reenvio-jugada': 1, 'mudo': 1, 'sin-eco': 1, 'sin-novedad': 1/.test(SRC),
       '🔒 pero lo que sale mal se guarda YA, sin esperar al próximo guardado');
   chk(/window\.aaLiDiag\(true\)/.test(SRC) || /aaLiDiag && window\.aaLiDiag\(true\)/.test(SRC),
       'el botón lee la libreta GUARDADA, no la de la pestaña (que se perdió al recargar)');
