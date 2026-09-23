@@ -45786,26 +45786,7 @@ function cvUpdateNagBadge() {
     }
     var panel = $('lv-li-panel'); if (panel) panel.style.display = invitado ? 'none' : '';
     var lid = $('lv-lid-card'); if (lid) lid.style.display = (invitado || busca) ? 'none' : '';
-    /* 🔌 Devolver el permiso (auditoría 23/09): el cartel prometía devolverlo "al cerrar la pestaña",
-       y eso no pasaba — el permiso seguía vigente en Lichess. Ahora el texto dice la verdad y se puede
-       cortar a mano. No se ofrece con una partida en curso ni buscando rival: lo cortaría en el medio. */
-    var perm = $('lv-li-perm');
-    if (perm) {
-      var enJuego = false; try { enJuego = !!(window.aaLiPartida && window.aaLiPartida.enCurso()); } catch (e) {}
-      perm.style.display = (!invitado && window.aaLi.tiene() && !busca && !enJuego) ? '' : 'none';
-      var dv = $('lv-li-devolver');
-      if (dv && !dv._li) {
-        dv._li = true;
-        dv.addEventListener('click', function () {
-          dv.disabled = true;
-          idleOff();
-          window.aaLi.olvidar().then(function () {
-            dv.disabled = false; pintar();
-            window.aaLi.avisar('Listo: le devolvimos el permiso a Lichess. Si querés volver a jugar, te lo va a pedir de nuevo.');
-          });
-        });
-      }
-    }
+    pintarPermiso();
     /* La lista de gente conectada se refresca sola mientras el panel esté a la vista. */
     if (invitado) { if (lidTimer) { clearInterval(lidTimer); lidTimer = 0; } idleOff(); }
     else if (!lidTimer) { pintarTcDesafio(); refrescarGente(); lidTimer = setInterval(latido, 15000); }
@@ -45960,8 +45941,33 @@ function cvUpdateNagBadge() {
     if (c) c.addEventListener('click', function () { parar(); decir('Búsqueda cancelada.'); });
   }
 
+  /* 🔌 Devolver el permiso (auditoría 23/09): el cartel prometía devolverlo "al cerrar la pestaña",
+     y eso no pasaba — el permiso seguía vigente en Lichess. Ahora el texto dice la verdad y se puede
+     cortar a mano. No se ofrece con una partida en curso ni buscando rival: lo cortaría en el medio.
+     🐛 Va APARTE de pintar() (24/09): la línea no aparecía nunca. Al volver de Lichess el panel se pinta
+     ANTES de que termine de llegar el permiso, y al cancelar o terminar una búsqueda el panel vuelve sin
+     repintarse. Ahora se recalcula también en esos dos momentos (ver 'aa-li-listo' y mostrarEspera). */
+  function pintarPermiso() {
+    var perm = $('lv-li-perm'); if (!perm) return;
+    var enJuego = false; try { enJuego = !!(window.aaLiPartida && window.aaLiPartida.enCurso()); } catch (e) {}
+    perm.style.display = (activo() && usuario() && window.aaLi.tiene() && !busca && !enJuego) ? '' : 'none';
+    var dv = $('lv-li-devolver');
+    if (dv && !dv._li) {
+      dv._li = true;
+      dv.addEventListener('click', function () {
+        dv.disabled = true;
+        idleOff();
+        window.aaLi.olvidar().then(function () {
+          dv.disabled = false; pintar();
+          window.aaLi.avisar('Listo: le devolvimos el permiso a Lichess. Si querés volver a jugar, te lo va a pedir de nuevo.');
+        });
+      });
+    }
+  }
+
   /* ── Pantallas ──────────────────────────────────────────────────────────── */
   function mostrarEspera(on) {
+    pintarPermiso();
     var w = $('lv-li-wait'), p = $('lv-li-panel');
     if (!w || !p) return;
     w.style.display = on ? '' : 'none';
@@ -46400,6 +46406,8 @@ function cvUpdateNagBadge() {
     engancharCancelar();
     /* Si entra o sale de la cuenta, la grilla cambia de cara. */
     document.addEventListener('aa-auth-changed', function () { if (!busca) pintar(); });
+    /* Llegó el permiso de Lichess: que aparezca la línea de "Devolver el permiso" (24/09). */
+    document.addEventListener('aa-li-listo', function () { pintarPermiso(); });
     /* Vuelve de darle el permiso a Lichess: retomamos el ritmo que había apretado. */
     document.addEventListener('aa-li-listo', function (e) {
       var it = e && e.detail;

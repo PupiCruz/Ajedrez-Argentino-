@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1499;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1500;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -6090,6 +6090,11 @@ console.log('\n=== Auditoría 23/09 — Fase 3: seguridad y Lichess en la web ==
   // 6) Permiso de Lichess: el cartel ya no promete devolverlo al cerrar la pestaña, y hay botón.
   chk(!/Al cerrarla, o al salir de tu cuenta, se lo devolvemos/.test(SRC) && /id="lv-li-devolver"/.test(SRC),
       '🔒 el cartel del permiso dice la verdad (cerrar la pestaña NO lo devuelve) y hay botón "Devolver el permiso"');
+
+  // 6b) 🐛 24/09: la línea no aparecía nunca. Tiene que recalcularse al llegar el permiso y al empezar o
+  //     terminar una búsqueda, no sólo cuando se repinta el panel entero.
+  chk(/function mostrarEspera\(on\) \{\s*pintarPermiso\(\);/.test(SRC) && /addEventListener\('aa-li-listo', function \(\) \{ pintarPermiso\(\); \}\)/.test(SRC),
+      '🔒 la línea "Devolver el permiso" aparece al volver de Lichess y al cancelar o terminar una búsqueda');
 
   // 7) Avisos de colgadas que el motor propio no confirmó: sin sonido.
   const cm = extraerFuncion('_colMostrar');
