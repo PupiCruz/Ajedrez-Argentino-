@@ -16307,7 +16307,7 @@ function _estadoActualFp() {
   var troFp = '';
   try { troFp = _fpStr(localStorage.getItem('player_trophies') || ''); } catch(e){}
   var cgFp = '';   // Colgadas de la ronda: aceptar o rechazar también es un cambio para guardar
-  try { cgFp = _fpStr(localStorage.getItem('aa_colgadas') || ''); } catch(e){}
+  try { var cgS = JSON.stringify(_cgMan()); if (cgS !== '{}') cgFp = _fpStr(cgS); } catch(e){}   // de la memoria: el navegador ya no siempre tiene copia
   return _combinedFp(all, getTzConfig()) + '~' + _fpStr(photoKeys) + '~' + newsFp + '~' + rankFp + '~' + flyerFp + '~' + troFp + (cgFp ? '~' + cgFp : '');
 }
 // ¿Hay torneos cambiados que todavía no se exportaron al archivo?
@@ -28292,6 +28292,7 @@ function liberarEspacioLS() {
   try { window.__EMBEDDED_CR__ = _collectCrData(); } catch (e) {}                                          // tablas: embebido ∪ localStorage
   try { var rk = localStorage.getItem('fide_ranking'); if (rk) window.__EMBEDDED_PLAYERS__ = JSON.parse(rk); } catch (e) {}  // ranking
   // Las fotos ya viven completas en PLAYER_PHOTOS (memoria); no hay que volcar nada.
+  try { _cgMan(); } catch (e) {}   // colgadas de la ronda: quedan cargadas en memoria antes de borrarlas del navegador
 
   // 2) Borrar del navegador lo que ahora es redundante (queda en memoria y, si guardaste, en el archivo).
   var borradas = 0;
@@ -28299,6 +28300,7 @@ function liberarEspacioLS() {
   drop('fa_eval_cache3');   // caché del motor: 100% descartable, se regenera sola
   drop('player_photos');
   drop('fide_ranking');
+  drop('aa_colgadas');      // la Olimpiada sola ocupaba 5,3 MB
   for (var i = localStorage.length - 1; i >= 0; i--) { var k = localStorage.key(i); if (k && k.indexOf('cr2_') === 0) drop(k); }
 
   var despues = _lsBytesUsed();
@@ -33903,13 +33905,25 @@ var _CG_CLARA_MIN = 100;         // con eval de Lichess: si el castigo no le mej
 var _cgPub = {}, _cgPubPedido = {};
 var _cg = { corriendo: false, tour: null, rk: null, ronda: null, hechas: 0, total: 0, filtro: 'todas', soloArg: false, soloUnica: false, abiertaExp: null, renderT: null };
 
+// Modo autor: la copia de trabajo vive EN MEMORIA y viaja al archivo con 💾 Guardar datos (como las
+// tablas). El navegador guarda sólo una copia de respaldo si es chica: la Olimpiada juntó 5.260
+// colgadas = 5,3 MB, más de la mitad del localStorage, y cada tabla de Chess-Results que se bajaba
+// hacía saltar el cartel de "lleno" (23/09). Sin inicializador a propósito: si alguien llama a
+// _cgMan() antes de llegar a esta línea, no se pisa lo ya cargado.
+var _cgMemAutor;
+var _CG_LS_TOPE = 400000;        // caracteres (~0,8 MB); más grande → sólo memoria + archivo
 function _cgMan() {
   if (_ondemand) return _cgPub;
-  try { return JSON.parse(localStorage.getItem('aa_colgadas') || '{}'); } catch (e) { return {}; }
+  if (!_cgMemAutor) { try { _cgMemAutor = JSON.parse(localStorage.getItem('aa_colgadas') || '{}'); } catch (e) { _cgMemAutor = {}; } }
+  return _cgMemAutor;
 }
 function _cgSave(o) {
-  try { localStorage.setItem('aa_colgadas', JSON.stringify(o)); }
-  catch (e) { if (typeof lsQuotaAlert === 'function') lsQuotaAlert(); }
+  _cgMemAutor = o;
+  try {
+    var s = JSON.stringify(o);
+    if (s.length > _CG_LS_TOPE) localStorage.removeItem('aa_colgadas');   // si no, una copia vieja taparía la del archivo al recargar
+    else localStorage.setItem('aa_colgadas', s);
+  } catch (e) { try { localStorage.removeItem('aa_colgadas'); } catch (e2) {} }
 }
 // Al arrancar en modo autor, lo del archivo llena lo que el navegador no tenga (lo local no se pisa).
 (function() {
@@ -34161,7 +34175,8 @@ function _cgRenderYa() {
   var h = '<div class="cg-box">'
     + '<div class="cg-head"><b>🎯 Colgadas de la ronda ' + escHtml(String(_cg.ronda)) + '</b>'
     + '<span style="flex:1"></span>'
-    + (!_cg.corriendo ? '<button class="cg-mini" onclick="cgBarrer(' + _cg.ronda + ')">🔎 Volver a buscar</button>' : '')
+    + (!_cg.corriendo ? '<button class="cg-mini" onclick="cgBarrer(' + _cg.ronda + ')">🔎 Volver a buscar</button>'
+                      + '<button class="cg-mini" onclick="cgPodar()" title="Borra de todos los torneos las que no aceptaste (quedan las aceptadas y las pasadas a Entrenar)">🧹 Borrar las no aceptadas</button>' : '')
     + '<button class="cg-x" onclick="cgCerrarRevision()" aria-label="Cerrar">✕</button></div>'
     + '<div id="cg-prog" class="cg-prog">' + _cgProgHtml() + '</div>'
     + '<div class="cg-tabs">' + tab('todas', 'Todas') + tab('pend', 'Por revisar') + tab('ok', '✅ Aceptadas') + tab('no', '❌ Rechazadas')
@@ -34214,6 +34229,35 @@ function cgSoloDecisivas() { _cg.soloDecisivas = !_cg.soloDecisivas; _cgRenderYa
 function cgSoloArg() { _cg.soloArg = !_cg.soloArg; _cgRenderYa(); }
 function cgSoloUnica() { _cg.soloUnica = !_cg.soloUnica; _cgRenderYa(); }
 function _cgBuscarItem(id) { var its = _cgItems(_cg.tour, _cg.rk); for (var i = 0; i < its.length; i++) if (its[i].id === id) return its[i]; return null; }
+// 🧹 Pedido del autor (23/09): las "por revisar" y las rechazadas sólo ocupan lugar (la Olimpiada
+// juntó 5.260, 3.638 sin tocar). Se quedan las aceptadas y las pasadas a Entrenar, en TODOS los
+// torneos y rondas. Si después se vuelve a buscar en una ronda, las borradas reaparecen como nuevas.
+async function cgPodar() {
+  if (_ondemand || _cg.corriendo) return;
+  var m = _cgMan(), sacar = 0, quedan = 0;
+  var sirve = function(it){ return it.estado === 'ok' || !!it.exp; };
+  Object.keys(m).forEach(function(t){ Object.keys(m[t] || {}).forEach(function(rk){
+    ((m[t][rk] || {}).items || []).forEach(function(it){ if (sirve(it)) quedan++; else sacar++; });
+  }); });
+  if (!sacar) { await window.aaAsk({ icono: '👍', titulo: 'No hay nada para borrar', texto: 'Todas las colgadas guardadas están aceptadas.', ok: 'Entendido', cancelar: 'Cerrar' }); return; }
+  var ok = await window.aaAsk({ icono: '🧹', titulo: 'Borrar las no aceptadas',
+    texto: 'Se borran ' + sacar.toLocaleString('es-AR') + ' colgadas (por revisar y rechazadas) de todos los torneos. '
+      + 'Quedan las ' + quedan.toLocaleString('es-AR') + ' aceptadas o pasadas a Entrenar. '
+      + 'Si volvés a buscar en una ronda, las borradas vuelven a aparecer. Después, 💾 Guardar datos en mi carpeta.',
+    ok: 'Borrar' });
+  if (!ok) return;
+  Object.keys(m).forEach(function(t){
+    Object.keys(m[t] || {}).forEach(function(rk){
+      var slot = m[t][rk] || {};
+      slot.items = (slot.items || []).filter(sirve);
+      if (!slot.items.length) delete m[t][rk];
+    });
+    if (!Object.keys(m[t] || {}).length) delete m[t];
+  });
+  _cgSave(m);
+  _cgRenderYa();
+  if (typeof thrFlash === 'function') thrFlash('🧹 Listo: se borraron ' + sacar.toLocaleString('es-AR') + ' colgadas. Acordate de 💾 Guardar datos en mi carpeta.');
+}
 function cgMarcar(id, est) {
   var m = _cgMan(), slot = m[_cg.tour] && m[_cg.tour][_cg.rk]; if (!slot) return;
   slot.items.forEach(function(it){ if (it.id === id) it.estado = (it.estado === est ? 'pend' : est); });
