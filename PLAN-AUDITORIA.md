@@ -1,3 +1,87 @@
+# Segunda auditoría — 23/09/2026
+
+> # ✅ TERMINADA — 23/09/2026
+>
+> **Las cuatro fases están hechas, publicadas y comprobadas en vivo el mismo día.** Fueron 21 hallazgos
+> (2 críticos, 8 importantes, 11 menores) sobre lo que se sumó desde agosto: jugar contra gente de
+> Lichess, los arenas, el arbitrito que reparte las colgadas y la Olimpiada. Al arreglar aparecieron
+> dos bugs más que no estaban en el informe (ver la Fase 1).
+>
+> Informe completo: https://claude.ai/artifact/8VrJeX5BHimc4KY3UjaoXz
+
+## Qué se arregló, fase por fase
+
+Mismo criterio que en agosto: **una fase = una publicación**, y el orden lo dio cómo se publica cada cosa.
+
+| Fase | Qué | Dónde | Publicado |
+|---|---|---|---|
+| 1 | Las puertas abiertas del Worker de cuentas | `cr-proxy-worker.js` (a mano, desde el panel) | 23/09 |
+| 2 | Topes del tiempo real, invitados y colgadas | `vivo-worker` (`npm run deploy`) | 23/09 |
+| 3 | Seguridad y Lichess en la web | `index.html`, `_headers` | 23/09 |
+| 4 | Accesibilidad y prolijidad | `index.html`, `editar.html` | 23/09 |
+
+**Fase 1 — Worker de cuentas.**
+- Las estadísticas de ejercicios (`/puzhit`) sólo cuentan ejercicios publicados (la lista sale de
+  `data/puzzles.json`), una vez por visitante y ejercicio, con freno por IP. Antes aceptaba cualquier
+  cosa y cualquiera podía torcer la dificultad de los ejercicios o inflar la tabla.
+- `/puzstats` queda guardada 10 minutos en la caché de Cloudflare: antes leía la tabla entera en cada
+  visita a Entrenar.
+- Los proxys (`/libc`, `/crpgn`, `/sipgn`, Chess-Results) arman la llave de la caché sólo con los datos
+  ya validados: agregarle cosas a la dirección ya no obliga al Worker a volver a pedirle a Lichess o a
+  Chess-Results. `/libc` acepta sólo las formas de dirección que usa la app, recuerda un minuto las
+  rondas que no existen y frena por IP lo que va afuera (lo guardado se sirve sin límite).
+- `/crpgn` controla el `host` como corresponde (antes se lo podía mandar a otro sitio).
+- El progreso de ejercicios tiene topes creíbles, así la columna de Táctica del ranking no se infla.
+- El rating se guarda como diferencia: dos partidas que terminan a la vez ya no se pisan.
+- **Bugs de yapa:** (a) los ids de ejercicio se cortaban a 80 letras y 329 de los 1.400 nunca mostraban
+  su estadística — se recuperaron 165 filas; (b) al fusionar el progreso de dos aparatos, los
+  "resueltos por nivel" quedaban en cero (le pasó a 25 de 30 cuentas y no se puede recuperar; el
+  arreglo evita que siga pasando).
+
+**Fase 2 — Worker de tiempo real.**
+- Tope de conexiones por red (lobby 12, chat del torneo 30, salas 8, partidas 6); al que se pasa se lo
+  corta con el código 4008. Mensajes de más de 16 KB o que no son texto cortan la conexión, y en una
+  partida sólo los mensajes válidos cuentan como actividad.
+- Los invitados reciben un nombre fijo que pone el servidor ("Invitado 4821"), el mismo en el lobby y en
+  la partida; a lo sumo 2 desafíos de invitado abiertos por red; un moderador puede sacar un desafío.
+- Los avisos de colgadas sólo los reparten moderadores mientras estén en prueba (`COL_AVISO_SOLO_MODS`).
+- Lo que **no** se puede eliminar del todo con el plan gratis es que alguien decidido se coma la cuota
+  diaria del tiempo real; los topes le encarecen mucho el trabajo.
+
+**Fase 3 — La web: seguridad y Lichess.**
+- El caño de avisos de Lichess espera más entre reintentos (y un minuto entero ante un 429). Antes
+  reintentaba cada 3 s para siempre.
+- El cartel del permiso para jugar dice la verdad (cerrar la pestaña NO lo devuelve) y hay botón
+  "Devolver el permiso" en Jugar.
+- La lista de gente de ChessArgentino en Lichess no pregunta con la pestaña oculta o fuera de Jugar.
+- Jugar entiende lo nuevo del Worker: sin campo de nombre para invitados, botón "🛡️ Sacar" para
+  moderadores, carteles para el tope de desafíos y para el 4008 (sin reintentar).
+- Un aviso de colgada que tu motor no confirmó sale "sin confirmar" y sin sonido.
+- `_headers`: nadie puede meter la web dentro de un marco, y siempre https.
+- `localStorage.lv_server` sólo acepta la PC propia o la red de casa.
+
+**Fase 4 — La web: accesibilidad y prolijidad.**
+- Entrenar: las tarjetas se alcanzan con Tab, se abren con Enter o Espacio y tienen nombre para el
+  lector; la miniatura se esconde del lector (antes leía cada pieza). **Describir los tableros NO se
+  hizo:** es la Fase 2 del plan de accesibilidad.
+- Contraste: cinco colores apenas más oscuros (dorado y verde del modo claro, chapitas IM y FM, etiqueta
+  Mate). Medido en Torneos, Jugadores, Jugar y Entrenar: ninguna falla real en ninguno de los dos modos.
+- Los carteles del navegador que podía ver el visitante pasaron al cartel de la app (`_avisoApp`,
+  `_preguntaApp`).
+- La caché del motor en el navegador tiene tope (5.000 posiciones).
+- Se borraron dos funciones sin uso, y el tablerito de carga avisa en los dos archivos que está duplicado.
+
+## Lo que quedó a propósito sin tocar
+- Las claves `lv_tok_*` de las partidas por link: 33 claves ≈ 1 KB en el Chrome del autor. No valía la
+  pena tocar la reconexión por eso.
+- Los `alert/confirm` de las herramientas del MODO AUTOR (importar, ranking FIDE, etc.): sólo los ve el autor.
+
+## Bancos de pruebas al terminar
+Nueve bancos, todos en verde. El de la web corre 1.499 de 1.499 comprobaciones y el de cuentas creció a
+169. Se sumaron pruebas de cada arreglo (varias corren el código de verdad contra un Lichess de mentira).
+
+---
+
 # Plan de arreglos — Auditoría del 26/08/2026
 
 > # ✅ TERMINADO — 27/08/2026

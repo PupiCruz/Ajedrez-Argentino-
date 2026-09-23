@@ -92,14 +92,16 @@ como tarjetas. Al tocar uno se abre la ficha de siempre.
   con una sola condición: **citar la fuente** → cada torneo lleva en "Sitio web del torneo" el link a su
   página de OlimpBase (sale como "📚 Fuente de los datos: OlimpBase").
 
-## ✅ Auditoría 2026: TERMINADA
+## ✅ Auditorías 2026: TERMINADAS
 La auditoría de seguridad y código del **26/08/2026** (27 hallazgos) se arregló entera en
-**8 fases**, todas publicadas y andando al **27/08/2026**. El registro completo de qué se
-cambió y por qué está en **`PLAN-AUDITORIA.md`** (en esta misma carpeta): conviene leerlo
-antes de tocar cuentas, moderación, chats o el arranque de la página.
+**8 fases**, todas publicadas y andando al **27/08/2026**. La **segunda, del 23/09/2026**
+(21 hallazgos, sobre Lichess, arenas, colgadas y la Olimpiada), se arregló en **4 fases** el mismo
+día. El registro completo de qué se cambió y por qué está en **`PLAN-AUDITORIA.md`** (en esta
+misma carpeta, la más nueva arriba): conviene leerlo antes de tocar cuentas, moderación, chats,
+los proxys del Worker o el arranque de la página.
 
 ## 🧪 Bancos de pruebas — correrlos antes y después de tocar esas partes
-Son ocho y no necesitan instalar nada (Node y listo). **Cuántas comprobaciones tiene cada uno lo
+Son nueve y no necesitan instalar nada (Node y listo). **Cuántas comprobaciones tiene cada uno lo
 dice el propio banco al terminar**, y por eso no está copiado acá: un número escrito a mano en dos
 lugares se pudre solo. (Pasó: este archivo decía 394 cuando el banco de la web ya iba por 542.)
 
@@ -113,6 +115,7 @@ lugares se pudre solo. (Pasó: este archivo decía 394 cuando el banco de la web
 | `vivo-worker/test-lobby.mjs` | lobby, los tres chats, desafíos, sanciones, bloqueo | `cd vivo-worker` y `node test-lobby.mjs` |
 | `vivo-worker/test-presencia.mjs` | presencia: salón, punto verde, contador del chat | `cd vivo-worker` y `node test-presencia.mjs` |
 | `vivo-worker/test-desafio-invitados.mjs` | no aceptar desafíos de invitados | `cd vivo-worker` y `node test-desafio-invitados.mjs` |
+| `vivo-worker/test-colgadas.mjs` | el arbitrito que reparte los avisos de colgadas | `cd vivo-worker` y `node test-colgadas.mjs` |
 
 Ya cazaron varios bugs antes de que llegaran al sitio. Si uno falla, **no publicar**.
 
