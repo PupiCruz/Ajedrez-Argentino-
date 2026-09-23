@@ -142,8 +142,8 @@ export default {
     const reqUrl = new URL(request.url);
 
     // ── Stats de ejercicios (D1) ──
-    if (reqUrl.pathname === '/puzstats') return puzStats(env);
-    if (reqUrl.pathname === '/puzhit')   return puzHit(reqUrl, env);
+    if (reqUrl.pathname === '/puzstats') return puzStats(env, reqUrl, ctx);
+    if (reqUrl.pathname === '/puzhit')   return puzHit(reqUrl, env, request);
 
     // ── Cuentas de usuario: login con Lichess (OAuth2 + PKCE) ──
     if (reqUrl.pathname === '/auth/lichess') return authLichess(request, env);
@@ -197,16 +197,16 @@ export default {
     if (reqUrl.pathname === '/i64xls') return i64Xls(reqUrl, ctx);
 
     // ── Descarga de las PARTIDAS (PGN) de un torneo de Chess-Results ──
-    if (reqUrl.pathname === '/crpgn') return crPgn(reqUrl, ctx);
+    if (reqUrl.pathname === '/crpgn') return crPgn(reqUrl, ctx, request);
 
     // ── Proxy CORS de sichess.com (PGN en vivo por ronda + su config.js) ──
-    if (reqUrl.pathname === '/sipgn') return siPgn(reqUrl, ctx);
+    if (reqUrl.pathname === '/sipgn') return siPgn(reqUrl, ctx, request);
 
     // ── Tablas de vesus.org (clasificación + emparejamientos en JSON) ──
     if (reqUrl.pathname === '/vspgn') return vsPgn(reqUrl, ctx);
 
     // ── Proxy con caché para el broadcast de Lichess (mata el 429 del vivo) ──
-    if (reqUrl.pathname === '/libc') return liBc(reqUrl, ctx);
+    if (reqUrl.pathname === '/libc') return liBc(reqUrl, ctx, request);
 
     // ── Redacción de noticias con IA (Workers AI) ──
     if (reqUrl.pathname === '/noticia') return noticiaAI(request, env);
@@ -225,10 +225,13 @@ export default {
     }
 
     // Caché: si ya bajamos esto hace poco, devolverlo sin volver a chess-results.
+    // La llave es SÓLO la dirección de Chess-Results (auditoría 23/09): antes era el pedido entero, y
+    // agregándole cualquier cosa al final (&x=1, &x=2…) cada pedido salía "nuevo" y le pegaba a CR.
     const cache = caches.default;
-    const cacheKey = new Request(reqUrl.toString());
+    const cacheKey = llaveCache(reqUrl, '/', { url: t.toString() });
     const hit = await cache.match(cacheKey);
     if (hit) return hit;
+    if (!rlAllow('crmiss:' + ipDe(request), 120)) return tooMany();
 
     let upstream;
     try {
@@ -269,7 +272,7 @@ async function i64Xls(reqUrl, ctx) {
 
   // Caché: la respuesta final (el .xlsx) la guardamos ~2 min, igual que el proxy de CR.
   const cache = caches.default;
-  const cacheKey = new Request(reqUrl.toString());
+  const cacheKey = llaveCache(reqUrl, '/i64xls', { url: t.toString() });
   const hit = await cache.match(cacheKey);
   if (hit) return hit;
 
@@ -344,14 +347,18 @@ async function i64Xls(reqUrl, ctx) {
 //     filtro hay que pedírselo a Chess-Results, no hacerlo acá.
 // ─────────────────────────────────────────────────────────────────────────────
 const CR_PGN_MAX_FIDE = 20;   // tope de jugadores por pedido (cada uno = 2 subrequests; el Worker permite 50)
+// El host llega como TEXTO (no como dirección ya armada), así que no alcanza con mirar cómo termina:
+// "otrositio.com?.chess-results.com" terminaba bien y la dirección que se armaba iba a otrositio.com
+// (auditoría 23/09, comprobado contra el Worker publicado). Sólo letras, números, guiones y puntos.
+const CR_HOST_TEXTO = /^([a-z0-9-]+\.)*chess-results\.com$/i;
 
-async function crPgn(reqUrl, ctx) {
+async function crPgn(reqUrl, ctx, request) {
   const tnr = (reqUrl.searchParams.get('tnr') || '').trim();
   if (!/^\d{1,9}$/.test(tnr)) return errJson('Parámetro tnr inválido (debe ser el número del torneo)', 400);
 
   // Host opcional (el crUrl del torneo puede ser s1/s2/s3). Siempre dentro de chess-results.com.
-  let host = (reqUrl.searchParams.get('host') || 'chess-results.com').trim();
-  if (!ALLOWED_HOST.test(host)) return errJson('Host no permitido (sólo chess-results.com)', 403);
+  let host = (reqUrl.searchParams.get('host') || 'chess-results.com').trim().toLowerCase();
+  if (!CR_HOST_TEXTO.test(host)) return errJson('Host no permitido (sólo chess-results.com)', 403);
 
   const fideList = (reqUrl.searchParams.get('fide') || '')
     .split(',').map(s => s.trim()).filter(s => /^\d{1,9}$/.test(s)).slice(0, CR_PGN_MAX_FIDE);
@@ -369,10 +376,16 @@ async function crPgn(reqUrl, ctx) {
   //   · SIN partidas: se guarda media hora (CR_PGN_EMPTY). Una respuesta vacía guardada una semana
   //     escondería las partidas que el organizador suba después; media hora alcanza (nadie se queda
   //     una hora refrescando esperando partidas de Chess-Results) y ahorra la mayoría de los pedidos.
+  // La llave se arma con los parámetros YA VALIDADOS (auditoría 23/09): así "&x=1" no crea una copia
+  // nueva, y cada copia nueva le cuesta a Chess-Results dos pedidos.
   const cache = caches.default;
-  const cacheKey = new Request(reqUrl.toString());
-  const cacheKeyStr = reqUrl.toString();
+  const params = { tnr, host };
+  if (fideList.length) params.fide = fideList.join(',');
+  if (rd) params.rd = rd;
+  const cacheKey = llaveCache(reqUrl, '/crpgn', params);
+  const cacheKeyStr = cacheKey.url;
   const hit = await cache.match(cacheKey);
+  if (!hit && !rlAllow('crpgnmiss:' + ipDe(request), 30)) return tooMany();
   if (hit) {
     const fetchedAt = Number(hit.headers.get('x-fa-fetched') || 0);
     if (!fetchedAt) return hit;   // copia corta (sin partidas, o del formato anterior): tal cual
@@ -513,7 +526,7 @@ const CR_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHT
 //     (no es un proxy abierto). Caché corta (SI_CACHE_SECONDS) porque es en vivo: muchos
 //     visitantes comparten la respuesta y sichess recibe ~1 pedido por ronda cada 15s.
 // ─────────────────────────────────────────────────────────────────────────────
-async function siPgn(reqUrl, ctx) {
+async function siPgn(reqUrl, ctx, request) {
   const target = reqUrl.searchParams.get('url');
   if (!target) return errJson('Falta el parámetro ?url=', 400);
   let t;
@@ -523,15 +536,18 @@ async function siPgn(reqUrl, ctx) {
     return errJson('Host no permitido (sólo sichess.com)', 403);
   }
   if (!/\.(pgn|js)$/i.test(t.pathname)) return errJson('Sólo se permiten archivos .pgn o .js', 403);
+  // Sólo el archivo, sin parámetros (la app nunca los manda): así no se puede esquivar la caché.
+  const limpia = 'https://' + t.hostname.toLowerCase() + t.pathname;
 
   const cache = caches.default;
-  const cacheKey = new Request(reqUrl.toString());
+  const cacheKey = llaveCache(reqUrl, '/sipgn', { url: limpia });
   const hit = await cache.match(cacheKey);
   if (hit) return hit;
+  if (!rlAllow('simiss:' + ipDe(request), 120)) return tooMany();
 
   let upstream;
   try {
-    upstream = await fetch(t.toString(), { headers: { 'User-Agent': CR_UA }, redirect: 'follow' });
+    upstream = await fetch(limpia, { headers: { 'User-Agent': CR_UA }, redirect: 'follow' });
   } catch (e) {
     return errJson('No se pudo bajar de sichess: ' + e.message, 502);
   }
@@ -556,15 +572,24 @@ async function siPgn(reqUrl, ctx) {
 //   cada LI_LIVE_CACHE s EN TOTAL (no uno por visita), así el 429 desaparece.
 //   Sólo deja pasar lichess.org/api/broadcast/ (no es un proxy abierto).
 // ─────────────────────────────────────────────────────────────────────────────
-async function liBc(reqUrl, ctx) {
+// Las TRES formas de dirección que pide la app (_liApi en index.html): el PGN de una ronda, la ficha de
+// un torneo y la resolución slug/slug/ronda. Nada de parámetros: Lichess no los necesita para esto.
+// Por qué tan estricto (auditoría 23/09): la llave de la caché era el pedido entero, así que con
+// "&x=1", "&x=2"… cada pedido salía nuevo y el Worker le pegaba a Lichess; eso armaba la pausa del 429
+// para TODOS y se metía en el turno de las transmisiones de verdad.
+const LI_RUTA_OK = /^\/api\/broadcast\/(round\/[A-Za-z0-9]{1,20}\.pgn|[A-Za-z0-9]{1,20}|[A-Za-z0-9-]{1,140}\/[A-Za-z0-9-]{1,140}\/[A-Za-z0-9]{1,20})$/;
+const LI_NO_EXISTE_SEG = 60;   // un 404 de Lichess se recuerda un minuto (si no, los inventados le pegan siempre)
+
+async function liBc(reqUrl, ctx, request) {
   const target = reqUrl.searchParams.get('url');
   if (!target) return errJson('Falta el parámetro ?url=', 400);
   let t;
   try { t = new URL(target); }
   catch (e) { return errJson('URL inválida', 400); }
-  if (t.protocol !== 'https:' || !ALLOWED_HOST_LI.test(t.hostname) || !t.pathname.startsWith('/api/broadcast/')) {
+  if (t.protocol !== 'https:' || !ALLOWED_HOST_LI.test(t.hostname) || !LI_RUTA_OK.test(t.pathname)) {
     return errJson('Host/ruta no permitida (sólo lichess.org/api/broadcast)', 403);
   }
+  const limpia = 'https://lichess.org' + t.pathname;
 
   // El PGN de ronda y la metadata cambian jugada a jugada → "frescura" corta. La resolución
   // del id de torneo (/api/broadcast/<slug>/<roundSlug>/<roundId>, 5 segmentos, sin /round/
@@ -577,10 +602,14 @@ async function liBc(reqUrl, ctx) {
   const contentType = isPgn ? 'application/x-chess-pgn; charset=utf-8' : 'application/json; charset=utf-8';
 
   const cache = caches.default;
-  const cacheKey = new Request(reqUrl.toString());
-  const cacheKeyStr = reqUrl.toString();
+  const cacheKey = llaveCache(reqUrl, '/libc', { url: limpia });
+  const cacheKeyStr = cacheKey.url;
 
   const hit = await cache.match(cacheKey);
+  if (hit && hit.headers.get('x-fa-no-existe')) {
+    const h = corsHeaders(); h.set('Content-Type', contentType); h.set('Cache-Control', 'no-store');
+    return new Response('{"error":"Not found"}', { status: 404, headers: h });
+  }
   if (hit) {
     const fetchedAt = Number(hit.headers.get('x-fa-fetched') || 0);
     const ageMs = Date.now() - fetchedAt;
@@ -604,17 +633,23 @@ async function liBc(reqUrl, ctx) {
     if (ocupado) estado = 'vieja-ocupado';
     else if (await liIsPaused(cache, reqUrl)) estado = 'vieja-pausa';
     else if (isPgn && !(await liEsSuTurno(cache, reqUrl, cacheKeyStr, vence))) estado = 'vieja-turno';
-    else ctx.waitUntil(liRevalidate(cache, cacheKey, cacheKeyStr, t.toString(), isPgn, contentType, storeTtl, reqUrl, freshTtl));
+    else ctx.waitUntil(liRevalidate(cache, cacheKey, cacheKeyStr, limpia, isPgn, contentType, storeTtl, reqUrl, freshTtl));
     return await liClientResp(hit, contentType, freshTtl, estado, ageMs);
   }
 
   // No hay NADA cacheado (primer visitante del torneo, o expiró toda la ventana de gracia):
   // hay que bajar ahora, con dedup para que muchos misses simultáneos compartan una sola bajada.
+  // Freno por IP SÓLO para esto (lo que va a Lichess): lo guardado se sirve siempre sin límite.
+  if (!_liInflight.has(cacheKeyStr) && !rlAllow('limiss:' + ipDe(request), 60)) return tooMany();
   let r;
   try {
-    r = await liFetchBuffered(cacheKeyStr, t.toString(), isPgn, cache, reqUrl);
+    r = await liFetchBuffered(cacheKeyStr, limpia, isPgn, cache, reqUrl);
   } catch (e) {
     return errJson('No se pudo bajar de Lichess: ' + e.message, 502);
+  }
+  if (r.status === 404) {
+    ctx.waitUntil(cache.put(cacheKey, new Response('', { headers: {
+      'Cache-Control': 'public, max-age=' + LI_NO_EXISTE_SEG, 'x-fa-no-existe': '1' } })));
   }
   if (!r.ok) {
     // Sin copia previa que servir (el primer pedido y Lichess frenando). Si el 429 fue por chocar con
@@ -1234,6 +1269,18 @@ function rlAllow(key, maxPorMinuto) {
 }
 function tooMany() { return errJson('Estás yendo demasiado rápido. Esperá un momento.', 429); }
 
+// Quién pide (para los frenos por dirección). Cloudflare la pone siempre; sin ella, un balde común.
+function ipDe(request) { return (request && request.headers && request.headers.get('CF-Connecting-IP')) || 'sin-ip'; }
+
+// Llave de la caché armada SÓLO con los parámetros ya validados, en un orden fijo (auditoría 23/09).
+// Antes la llave era el pedido tal cual llegaba: sumándole cualquier cosa al final cada pedido salía
+// "nuevo", y el Worker iba a buscarlo afuera (a Lichess, a Chess-Results) aunque ya lo tuviera.
+function llaveCache(reqUrl, ruta, params) {
+  const u = new URL(reqUrl.origin + ruta);
+  for (const k of Object.keys(params)) u.searchParams.set(k, params[k]);
+  return new Request(u.toString());
+}
+
 function errJson(msg, status) {
   const h = corsHeaders();
   h.set('Content-Type', 'application/json; charset=utf-8');
@@ -1252,29 +1299,104 @@ function jsonResp(obj, status, cacheSeconds) {
 function puzK(nb) { if (nb < 50) return 24; if (nb < 200) return 12; if (nb < 1000) return 6; return 3; }
 function clampRating(r) { return Math.max(400, Math.min(3000, r)); }
 
+// ── ¿Ese ejercicio existe? (auditoría 23/09) ─────────────────────────────────────────────────────
+// /puzhit no pide cuenta (lo usa cualquier visitante) y aceptaba CUALQUIER id: con un script se podía
+// mover la dificultad de los ejercicios para todos, o inventar miles de ids — y como /puzstats lee la
+// tabla entera en cada visita, con 50.000 filas basura cien visitas agotaban el cupo diario de la base
+// y se caía todo lo que la usa (login, rating, chats). Ahora sólo cuentan los ejercicios publicados.
+// La lista sale de la propia web (data/puzzles.json, ~1 MB) y se guarda media hora en el isolate. Se
+// sacan los ids con una expresión y no con JSON.parse: medido, 1,4 ms contra 12 ms (el plan gratis da
+// 10 ms de CPU por pedido). Si no se puede bajar, NO se crean filas nuevas: sólo se suman las que ya están.
+const PUZ_LISTA_URL = 'https://chessargentino.ar/data/puzzles.json';
+const PUZ_LISTA_MS = 30 * 60 * 1000;
+const PUZ_ID_VIEJO = 80;   // antes el id se cortaba acá; 329 de los 1.400 son más largos (ver puzRenombrar)
+let _puzLista = null, _puzListaAt = 0, _puzListaPend = null;
+function puzLista() {
+  if (_puzLista && Date.now() - _puzListaAt < PUZ_LISTA_MS) return Promise.resolve(_puzLista);
+  if (_puzListaPend) return _puzListaPend;
+  _puzListaPend = (async () => {
+    try {
+      const r = await fetch(PUZ_LISTA_URL, { cf: { cacheTtl: 600, cacheEverything: true } });
+      if (r.ok) {
+        const txt = await r.text();
+        const ids = new Set(), pref = new Map();
+        for (const m of txt.matchAll(/"id"\s*:\s*"([^"]{1,200})"/g)) ids.add(m[1]);
+        for (const id of ids) if (id.length > PUZ_ID_VIEJO) { const k = id.slice(0, PUZ_ID_VIEJO); pref.set(k, pref.has(k) ? null : id); }
+        if (ids.size) { _puzLista = { ids, pref }; _puzListaAt = Date.now(); }
+      }
+    } catch (e) { /* sin lista: se sigue con la anterior, o sin crear filas */ }
+    _puzListaPend = null;
+    return _puzLista;
+  })();
+  return _puzListaPend;
+}
+
+// Un mismo visitante cuenta UNA vez por ejercicio cada 12 horas. El navegador ya manda uno solo por
+// ejercicio; esto frena al que llama a mano. Vive en memoria (como rlAllow): no es a prueba de balas,
+// pero junto con el freno por minuto le sube mucho el costo al que quiera torcer una dificultad.
+const _puzVisto = new Map();
+function puzUnaVez(ip, id) {
+  const k = ip + '|' + id, ahora = Date.now(), t = _puzVisto.get(k);
+  if (t && ahora - t < 12 * 3600 * 1000) return false;
+  _puzVisto.set(k, ahora);
+  if (_puzVisto.size > 20000) {
+    for (const [kk, tt] of _puzVisto) if (ahora - tt >= 12 * 3600 * 1000) _puzVisto.delete(kk);
+    if (_puzVisto.size > 20000) _puzVisto.clear();
+  }
+  return true;
+}
+
+// Los ids de más de 80 letras se guardaban CORTADOS y la web los busca enteros: esos ejercicios nunca
+// mostraban su estadística. La fila vieja se renombra al id entero la primera vez que llega, siempre que
+// ese corte sea de un solo ejercicio (medido 23/09: los 329 cortes son únicos).
+async function puzRenombrar(env, id, lista) {
+  if (id.length <= PUZ_ID_VIEJO || !lista) return;
+  const corto = id.slice(0, PUZ_ID_VIEJO);
+  if (lista.pref.get(corto) !== id) return;
+  try {
+    await env.DB.prepare('UPDATE puz_stats SET id = ?1 WHERE id = ?2 AND NOT EXISTS (SELECT 1 FROM puz_stats WHERE id = ?1)')
+      .bind(id, corto).run();
+  } catch (e) { /* si falla, se suma igual en una fila nueva */ }
+}
+
 // GET /puzhit?id=<id>&r=ok|fail[&vr=<rating visitante>&pr=<semilla autor>]
 //   1) Suma 1 al contador de aciertos/errores (upsert atómico; nunca rompe).
 //   2) Si llega `vr`, recalibra el rating del ejercicio con un paso de Elo.
-async function puzHit(reqUrl, env) {
-  const id = (reqUrl.searchParams.get('id') || '').slice(0, 80);
+// Lo que se descarta (ejercicio que no existe, repetido) contesta ok igual: el navegador no tiene
+// nada que hacer con eso, y al que prueba a mano no le decimos qué pasó.
+async function puzHit(reqUrl, env, request) {
+  const id = reqUrl.searchParams.get('id') || '';
   const r = reqUrl.searchParams.get('r');
-  if (!id || (r !== 'ok' && r !== 'fail')) return errJson('Parámetros inválidos (id, r=ok|fail)', 400);
+  if (!id || id.length > 200 || (r !== 'ok' && r !== 'fail')) return errJson('Parámetros inválidos (id, r=ok|fail)', 400);
   if (!env.DB) return errJson('Falta el binding D1 (DB)', 500);
+  const ip = ipDe(request);
+  if (!rlAllow('puzhit:' + ip, 30)) return tooMany();
+  if (!puzUnaVez(ip, id)) return jsonResp({ ok: true });
+  const lista = await puzLista();
+  if (lista && !lista.ids.has(id)) return jsonResp({ ok: true });
+  await puzRenombrar(env, id, lista);
   const ok = r === 'ok' ? 1 : 0, fail = r === 'fail' ? 1 : 0;
-  // (1) Contador — upsert atómico, así dos personas a la vez no pisan el conteo.
+  // (1) Contador — upsert atómico, así dos personas a la vez no pisan el conteo. Sin lista (no se pudo
+  //     bajar), sólo se suma a filas que ya existen: nunca se crean filas de ids sin comprobar.
   try {
-    await env.DB.prepare(
-      'INSERT INTO puz_stats (id, ok, fail) VALUES (?1, ?2, ?3) ' +
-      'ON CONFLICT(id) DO UPDATE SET ok = ok + ?2, fail = fail + ?3'
-    ).bind(id, ok, fail).run();
+    if (lista) {
+      await env.DB.prepare(
+        'INSERT INTO puz_stats (id, ok, fail) VALUES (?1, ?2, ?3) ' +
+        'ON CONFLICT(id) DO UPDATE SET ok = ok + ?2, fail = fail + ?3'
+      ).bind(id, ok, fail).run();
+    } else {
+      const u = await env.DB.prepare('UPDATE puz_stats SET ok = ok + ?2, fail = fail + ?3 WHERE id = ?1').bind(id, ok, fail).run();
+      if (!(u && u.meta && u.meta.changes)) return jsonResp({ ok: true });
+    }
   } catch (e) {
     return errJson('D1 error: ' + e.message, 500);
   }
   // (2) Calibración Elo. Necesita las columnas rating/nb (ver ALTER TABLE en el encabezado).
   //     Si no existen todavía, el try/catch lo absorbe y seguimos sin calibrar.
+  //     Un rating de visitante fuera de lo posible (el navegador lo tiene entre 100 y 3200) no calibra.
   const vr = parseFloat(reqUrl.searchParams.get('vr'));   // rating del visitante (de su navegador)
   const pr = parseFloat(reqUrl.searchParams.get('pr'));   // semilla del autor (solo si el ejercicio es nuevo)
-  if (isFinite(vr)) {
+  if (isFinite(vr) && vr >= 100 && vr <= 3200) {
     try {
       const row = await env.DB.prepare('SELECT rating, nb FROM puz_stats WHERE id = ?1').bind(id).first();
       let R = (row && row.rating != null) ? row.rating : (isFinite(pr) ? pr : 1500);
@@ -1294,8 +1416,23 @@ async function puzHit(reqUrl, env) {
 
 // GET /puzstats → { "<id>": {ok, fail, rating, nb}, ... } con TODOS los ejercicios que tienen datos.
 // Si no hay binding D1, devuelve {} (la web sigue andando, solo sin estadísticas).
-async function puzStats(env) {
+// Guardada 10 minutos en la caché del borde (auditoría 23/09): antes CADA visita a Entrenar leía la
+// tabla entera. Así se lee a lo sumo seis veces por hora por zona, sea cual sea el público. Los números
+// de un ejercicio recién resuelto igual se ven al instante: el navegador los suma solo.
+const PUZSTATS_BORDE_SEG = 600;
+async function puzStats(env, reqUrl, ctx) {
   if (!env.DB) return jsonResp({}, 200, STATS_CACHE_SECONDS);
+  const cache = (typeof caches !== 'undefined' && caches.default) ? caches.default : null;
+  const llave = reqUrl ? new Request(reqUrl.origin + '/__puzstats') : null;
+  if (cache && llave) {
+    try {
+      const hit = await cache.match(llave);
+      if (hit) {
+        const h = new Headers(hit.headers); h.set('Cache-Control', 'public, max-age=' + STATS_CACHE_SECONDS);
+        return new Response(hit.body, { status: 200, headers: h });
+      }
+    } catch (e) {}
+  }
   let results;
   try {
     ({ results } = await env.DB.prepare('SELECT id, ok, fail, rating, nb FROM puz_stats').all());
@@ -1305,13 +1442,25 @@ async function puzStats(env) {
     catch (e2) { return jsonResp({}, 200, STATS_CACHE_SECONDS); }
   }
   const out = {};
+  const lista = await puzLista();
   for (const row of (results || [])) {
     const o = { ok: row.ok || 0, fail: row.fail || 0 };
     if (row.rating != null) o.rating = Math.round(row.rating);
     if (row.nb != null) o.nb = row.nb || 0;
-    out[row.id] = o;
+    // Fila vieja con el id cortado (ver puzRenombrar): se entrega con el id ENTERO, que es el que busca
+    // la web. Si ya existe la fila entera, manda ésa.
+    let id = row.id;
+    if (lista && id.length === PUZ_ID_VIEJO && lista.pref.get(id)) id = lista.pref.get(id);
+    if (id !== row.id && out[id]) continue;
+    out[id] = o;
   }
-  return jsonResp(out, 200, STATS_CACHE_SECONDS);
+  const resp = jsonResp(out, 200, STATS_CACHE_SECONDS);
+  if (ctx && cache && llave) {
+    const guardar = resp.clone();
+    const h = new Headers(guardar.headers); h.set('Cache-Control', 'public, max-age=' + PUZSTATS_BORDE_SEG);
+    ctx.waitUntil(cache.put(llave, new Response(guardar.body, { status: 200, headers: h })));
+  }
+  return resp;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2750,15 +2899,16 @@ async function ratingReport(request, env) {
 
   // Persistir ambos ratings (+1 partida) y dejar el log de la partida, en una sola tanda.
   // Si la partida no ratea, se guarda igual en el log pero no se toca la tabla de ratings.
+  // Se guarda la DIFERENCIA (rating = rating + delta) y no el número final (auditoría 23/09): si dos
+  // partidas del mismo jugador terminaban en el mismo instante, las dos partían del mismo número y la
+  // segunda pisaba a la primera. Así cada partida suma lo suyo aunque lleguen juntas.
   const guardar = [];
   if (!sinRating) {
+    const sumar = 'INSERT INTO ratings (user_id, category, rating, games, updated) VALUES (?1,?2,?3,1,?4) ' +
+      'ON CONFLICT(user_id, category) DO UPDATE SET rating=MAX(100, MIN(3200, rating + ?5)), games=games+1, updated=?4';
     guardar.push(
-      env.DB.prepare('INSERT INTO ratings (user_id, category, rating, games, updated) VALUES (?1,?2,?3,1,?4) ' +
-        'ON CONFLICT(user_id, category) DO UPDATE SET rating=?3, games=games+1, updated=?4')
-        .bind(white, category, newW, now),
-      env.DB.prepare('INSERT INTO ratings (user_id, category, rating, games, updated) VALUES (?1,?2,?3,1,?4) ' +
-        'ON CONFLICT(user_id, category) DO UPDATE SET rating=?3, games=games+1, updated=?4')
-        .bind(black, category, newB, now),
+      env.DB.prepare(sumar).bind(white, category, newW, now, newW - rw.rating),
+      env.DB.prepare(sumar).bind(black, category, newB, now, newB - rb.rating),
     );
   }
   guardar.push(
@@ -2898,14 +3048,65 @@ function puzMerge(viejo, nuevo) {
     }
     out.days = days;
   }
-  // Resueltos por nivel: mismo criterio (el mayor de cada nivel).
+  // Resueltos por nivel: mismo criterio (el mayor de cada nivel). OJO (auditoría 23/09): el navegador
+  // los guarda como { ok, n } y esto los trataba como números sueltos — `+{ok,n}` da NaN — así que al
+  // fusionar dos aparatos los niveles quedaban EN CERO. Ahora entiende las dos formas.
   if (base.byLevel || otro.byLevel) {
     const lv = Object.assign({}, otro.byLevel || {});
     for (const k in (base.byLevel || {})) {
-      const a = +base.byLevel[k] || 0, b = +lv[k] || 0;
-      lv[k] = Math.max(a, b);
+      const a = base.byLevel[k], b = lv[k];
+      if ((a && typeof a === 'object') || (b && typeof b === 'object')) {
+        const x = (a && typeof a === 'object') ? a : {}, y = (b && typeof b === 'object') ? b : {};
+        lv[k] = { n: Math.max(+x.n || 0, +y.n || 0), ok: Math.max(+x.ok || 0, +y.ok || 0) };
+      } else {
+        lv[k] = Math.max(+a || 0, +b || 0);
+      }
     }
     out.byLevel = lv;
+  }
+  return out;
+}
+
+// Topes de sentido común para el progreso que manda el navegador (auditoría 23/09). Desde que existen la
+// columna pública de Táctica y las medallas, el blob dejó de ser "progreso personal": con mandar
+// {"solved": 99999} alguien quedaba primero para siempre (la fusión se queda con el máximo). Los topes
+// están muy por encima de lo que hace una persona, así nadie de verdad los toca:
+//   · resueltos: no más que los ejercicios publicados (+ margen), y no más de PUZ_MAX_DIA por día desde
+//     la última vez que se guardó (el navegador cuenta cada ejercicio una sola vez);
+//   · rating entre 100 y 3200 (lo mismo que el navegador); rachas y niveles, no más que los resueltos;
+//   · días de práctica: fechas de verdad, entre el alta de la cuenta y mañana, y no más de PUZ_MAX_DIA cada uno.
+const PUZ_MAX_DIA = 400;
+function puzSanear(o, prev, prevUpdated, alta, maxPuz, ahora) {
+  const ent = (v) => { v = Math.floor(+v || 0); return v > 0 ? v : 0; };
+  const prevSolved = prev ? ent(prev.solved || prev.n) : 0;
+  const dias = prevUpdated ? Math.max(0, Math.ceil((ahora - prevUpdated) / 86400)) : 0;
+  let tope = prev ? prevSolved + PUZ_MAX_DIA * (dias + 1) : PUZ_MAX_DIA * 30;
+  if (maxPuz) tope = Math.min(tope, maxPuz);
+  tope = Math.max(tope, Math.min(prevSolved, maxPuz || prevSolved));   // nunca se le saca lo que ya tenía legítimo
+  const out = Object.assign({}, o);
+  for (const k of ['solved', 'n']) if (k in out) out[k] = Math.min(ent(out[k]), tope);
+  const hechos = ent(out.solved != null ? out.solved : out.n);
+  for (const k of ['ok', 'fail', 'bestStreak', 'streak', 'dailyCount']) if (k in out) out[k] = Math.min(ent(out[k]), hechos);
+  for (const k of ['rating', 'best']) if (k in out) { const v = +out[k]; out[k] = isFinite(v) ? Math.max(100, Math.min(3200, v)) : 1200; }
+  if (out.byLevel && typeof out.byLevel === 'object') {
+    const lv = {};
+    for (const k of Object.keys(out.byLevel).slice(0, 12)) {
+      const x = out.byLevel[k];
+      if (x && typeof x === 'object') { const n = Math.min(ent(x.n), hechos); lv[String(k).slice(0, 20)] = { n, ok: Math.min(ent(x.ok), n) }; }
+      else lv[String(k).slice(0, 20)] = Math.min(ent(x), hechos);   // forma vieja: un número suelto
+    }
+    out.byLevel = lv;
+  }
+  if (out.days && typeof out.days === 'object') {
+    const desde = alta ? new Date((alta - 86400) * 1000).toISOString().slice(0, 10) : '2026-01-01';
+    const hasta = new Date((ahora + 2 * 86400) * 1000).toISOString().slice(0, 10);
+    const d = {};
+    for (const k of Object.keys(out.days)) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(k) || k < desde || k > hasta) continue;
+      const v = Math.min(ent(out.days[k]), PUZ_MAX_DIA);
+      if (v) d[k] = v;
+    }
+    out.days = d;
   }
   return out;
 }
@@ -2933,19 +3134,23 @@ async function puzProgress(request, env) {
     if (!obj || typeof obj !== 'object') return errJson('Blob inválido', 400);
     // Fusionar con lo que ya está guardado, en vez de pisarlo (ver puzMerge). Antes un dispositivo
     // con una copia vieja borraba el progreso hecho en otro.
-    let final = obj;
+    let final = obj, viejo = null, prevUpdated = 0;
     try {
-      const prev = await env.DB.prepare('SELECT data FROM user_puzzle WHERE user_id=?1').bind(u.id).first();
+      const prev = await env.DB.prepare('SELECT data, updated FROM user_puzzle WHERE user_id=?1').bind(u.id).first();
       if (prev && prev.data) {
-        let viejo = null;
         try { viejo = JSON.parse(prev.data); } catch (e) { viejo = null; }
+        prevUpdated = Number(prev.updated || 0) || 0;
         if (viejo) final = puzMerge(viejo, obj);
       }
     } catch (e) { /* si no se pudo leer lo anterior, se guarda lo que llegó */ }
+    const now = Math.floor(Date.now() / 1000);
+    let alta = 0;
+    try { const a = await env.DB.prepare('SELECT created_at FROM usuarios WHERE id=?1').bind(u.id).first(); alta = (a && a.created_at) || 0; } catch (e) {}
+    const lista = await puzLista();
+    final = puzSanear(final, viejo, prevUpdated, alta, lista ? lista.ids.size + 50 : 0, now);
     const cuerpo = JSON.stringify(final);
     if (cuerpo.length > PUZ_PROGRESS_MAX) return errJson('Blob inválido o demasiado grande', 400);
     const solved = Math.max(0, Math.floor(+final.solved || +final.n || 0));
-    const now = Math.floor(Date.now() / 1000);
     try {
       await env.DB.prepare(
         'INSERT INTO user_puzzle (user_id, data, solved, updated) VALUES (?1,?2,?3,?4) ' +

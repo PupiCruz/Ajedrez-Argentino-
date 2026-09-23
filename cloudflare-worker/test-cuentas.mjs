@@ -17,15 +17,19 @@ function mkDB() {
       { id: 'u_mod', provider: 'lichess', prov_id: '3', username: 'ElPupiCruz', rating: 2000, title: null, banned: 0, chat_muted_until: 0, dnd: 0 },
       // Moderador por la COLUMNA is_mod, con un nombre que NO está escrito en el código (Fase 8).
       { id: 'u_ayud', provider: 'lichess', prov_id: '4', username: 'Ayudante', rating: 1700, title: null, banned: 0, chat_muted_until: 0, dnd: 0, is_mod: 1 },
+      { id: 'u_eva', provider: 'lichess', prov_id: '5', username: 'Eva', rating: 1600, title: null, banned: 0, chat_muted_until: 0, dnd: 0, created_at: 1788000000 },
     ],
     sessions: [
       { token: 'sess-ana', user_id: 'u_ana', created_at: 1, expires: 9e9 },
       { token: 'sess-beto', user_id: 'u_beto', created_at: 1, expires: 9e9 },
       { token: 'sess-mod', user_id: 'u_mod', created_at: 1, expires: 9e9 },
       { token: 'sess-ayud', user_id: 'u_ayud', created_at: 1, expires: 9e9 },
+      { token: 'sess-eva', user_id: 'u_eva', created_at: 1, expires: 9e9 },
       { token: 'sess-vieja', user_id: 'u_ana', created_at: 1, expires: 100 },
     ],
     ratings: [], rated_games: [], reports: [], admin_rl: [], follows: [], blocks: [], user_puzzle: [],
+    // Una fila vieja con el id CORTADO a 80 letras, como las que dejó el Worker anterior.
+    puz_stats: [{ id: EJ_LARGO.slice(0, 80), ok: 7, fail: 3, rating: 1650, nb: 10 }],
   };
   // Contadores para poder comprobar la Fase 6: cuántas CREATE/ALTER se mandaron, cuántas consultas
   // sueltas (una ida y vuelta cada una) y cuántos lotes.
@@ -42,6 +46,25 @@ function mkDB() {
     const S = sql.replace(/\s+/g, ' ');
     if (/^CREATE|^ALTER|^PRAGMA/i.test(S)) { st.creates++; return modo === 'all' ? [] : (modo === 'first' ? null : {}); }
     if (_enLote) st.enLote++; else st.sueltas++;
+    // ── Estadísticas de ejercicios (auditoría 23/09) ──
+    if (S.startsWith('INSERT INTO puz_stats')) {
+      const ex = t.puz_stats.find((x) => x.id === a[0]);
+      if (ex) { ex.ok += a[1]; ex.fail += a[2]; } else t.puz_stats.push({ id: a[0], ok: a[1], fail: a[2], rating: null, nb: 0 });
+      return { meta: { changes: 1 } };
+    }
+    if (S.startsWith('UPDATE puz_stats SET ok = ok')) {
+      const ex = t.puz_stats.find((x) => x.id === a[0]); if (!ex) return { meta: { changes: 0 } };
+      ex.ok += a[1]; ex.fail += a[2]; return { meta: { changes: 1 } };
+    }
+    if (S.startsWith('UPDATE puz_stats SET id =')) {
+      const ex = t.puz_stats.find((x) => x.id === a[1]);
+      if (!ex || t.puz_stats.some((x) => x.id === a[0])) return { meta: { changes: 0 } };
+      ex.id = a[0]; return { meta: { changes: 1 } };
+    }
+    if (S.startsWith('SELECT rating, nb FROM puz_stats')) return t.puz_stats.find((x) => x.id === a[0]) || null;
+    if (S.startsWith('UPDATE puz_stats SET rating')) { const ex = t.puz_stats.find((x) => x.id === a[0]); if (ex) { ex.rating = a[1]; ex.nb = a[2]; } return {}; }
+    if (S.startsWith('SELECT id, ok, fail, rating, nb FROM puz_stats')) { st.lecturasPuz = (st.lecturasPuz || 0) + 1; return t.puz_stats.map((x) => Object.assign({}, x)); }
+    if (S.startsWith('SELECT created_at FROM usuarios')) { const u = t.usuarios.find((x) => x.id === a[0]); return u ? { created_at: u.created_at || 0 } : null; }
     if (S.includes('FROM sessions s JOIN usuarios')) {
       const se = t.sessions.find((x) => x.token === a[0]); if (!se) return null;
       const u = t.usuarios.find((x) => x.id === se.user_id); if (!u) return null;
@@ -78,9 +101,11 @@ function mkDB() {
     if (S.startsWith('SELECT * FROM rated_games WHERE game_id=')) return t.rated_games.find((g) => g.game_id === a[0]) || null;
     if (S.includes('SELECT rating, games FROM ratings')) { const r = t.ratings.find((x) => x.user_id === a[0] && x.category === a[1]) || null; return modo === 'all' ? (r ? [r] : []) : r; }
     if (S.startsWith('INSERT INTO ratings')) {
-      const [uid, cat, rat, upd] = a;
+      // Igual que el SQL de verdad: si la fila ya existe se SUMA la diferencia (?5), con tope 100-3200.
+      const [uid, cat, rat, upd, delta] = a;
       const ex = t.ratings.find((r) => r.user_id === uid && r.category === cat);
-      if (ex) { ex.rating = rat; ex.games++; ex.updated = upd; } else t.ratings.push({ user_id: uid, category: cat, rating: rat, games: 1, updated: upd });
+      if (ex) { ex.rating = S.includes('rating + ?5') ? Math.max(100, Math.min(3200, ex.rating + delta)) : rat; ex.games++; ex.updated = upd; }
+      else t.ratings.push({ user_id: uid, category: cat, rating: rat, games: 1, updated: upd });
       return {};
     }
     if (S.startsWith('INSERT INTO rated_games')) {
@@ -116,6 +141,23 @@ function mkDB() {
       try { for (const s of arr) out.push(await s.all()); } finally { _enLote = false; }
       return out;
     },
+  };
+}
+
+// La lista de ejercicios publicados (auditoría 23/09): el Worker la baja de la web para saber qué ids
+// existen. En el banco NUNCA se sale a internet: esa dirección se contesta acá con una lista chica.
+const EJ_LARGO = 'ejercicio-con-un-nombre-larguisimo-de-mas-de-ochenta-letras-como-los-de-los-abiertos_mate_uno';
+const EJ_LISTA = { puzzles: [{ id: 'ej-uno' }, { id: 'ej-dos' }, { id: EJ_LARGO }] };
+let listaEjCaida = false, pedidosLista = 0;
+{
+  const fetchReal = globalThis.fetch;
+  globalThis.fetch = async (url, opt) => {
+    if (String(url).endsWith('/data/puzzles.json')) {
+      pedidosLista++;
+      if (listaEjCaida) throw new Error('sin red');
+      return new Response(JSON.stringify(EJ_LISTA), { status: 200 });
+    }
+    return fetchReal(url, opt);
   };
 }
 
@@ -843,7 +885,7 @@ console.log('\n=== 10. La IA sabe redactar torneos POR EQUIPOS (Olimpiadas, liga
     // 1) Sin partidas: caché corta, como siempre.
     pgnEnCR = '';
     let v = await crpgn('tnr=111&rd=1');
-    const copiaVacia = guardado.get('https://cr-proxy.test/crpgn?tnr=111&rd=1');
+    const copiaVacia = guardado.get('https://cr-proxy.test/crpgn?tnr=111&host=chess-results.com&rd=1');
     chk(v.status === 200 && v.cuerpo === '' && copiaVacia && copiaVacia.headers.get('Cache-Control') === 'public, max-age=1800',
         'sin partidas: la respuesta vacía se guarda media hora (no una semana)', copiaVacia && copiaVacia.headers.get('Cache-Control'));
 
@@ -851,7 +893,7 @@ console.log('\n=== 10. La IA sabe redactar torneos POR EQUIPOS (Olimpiadas, liga
     pgnEnCR = partidas(3);
     visitasCR = 0;
     v = await crpgn('tnr=222&rd=1');
-    const copia = guardado.get('https://cr-proxy.test/crpgn?tnr=222&rd=1');
+    const copia = guardado.get('https://cr-proxy.test/crpgn?tnr=222&host=chess-results.com&rd=1');
     chk(v.status === 200 && (v.cuerpo.match(/\[Event /g) || []).length === 3 && visitasCR === 2,
         'con partidas: la primera visita baja de Chess-Results (formulario + descarga)', visitasCR);
     chk(copia && copia.headers.get('Cache-Control') === 'public, max-age=604800' && v.cc === 'public, max-age=120',
@@ -893,6 +935,182 @@ console.log('\n=== 10. La IA sabe redactar torneos POR EQUIPOS (Olimpiadas, liga
   } finally {
     globalThis.caches = cachesAntes; globalThis.fetch = fetchAntes; Date.now = nowAntes;
   }
+}
+
+// ── Auditoría del 23/09/2026 — Fase 1: las puertas abiertas del Worker de cuentas ─────────────────
+console.log('\n=== 14. /puzhit: sólo cuentan los ejercicios que existen, con freno ===');
+{
+  const hit = (id, r, ip, extra) => pedir('/puzhit?id=' + encodeURIComponent(id) + '&r=' + r + (extra || ''), { ip });
+  const fila = (id) => DB.tablas.puz_stats.find((x) => x.id === id);
+  chk(EJ_LARGO.length > 80, 'el ejercicio de prueba tiene un id de más de 80 letras', EJ_LARGO.length);
+
+  let r = await hit('inventado-por-un-script', 'ok', '9.0.0.1');
+  chk(r.status === 200 && !fila('inventado-por-un-script'), '🔒 un id que no existe NO crea fila (antes sí: la tabla crecía sin tope)');
+  r = await hit('ej-uno', 'ok', '9.0.0.1', '&vr=1500');
+  chk(r.status === 200 && fila('ej-uno') && fila('ej-uno').ok === 1, 'un ejercicio que existe suma normal');
+  await hit('ej-uno', 'ok', '9.0.0.1', '&vr=1500');
+  chk(fila('ej-uno').ok === 1, '🔒 el mismo visitante no cuenta dos veces el mismo ejercicio', fila('ej-uno').ok);
+  await hit('ej-uno', 'fail', '9.0.0.2', '&vr=1500');
+  chk(fila('ej-uno').fail === 1, 'otro visitante sí cuenta');
+  const antes = fila('ej-uno').rating;
+  await hit('ej-uno', 'fail', '9.0.0.3', '&vr=999999');
+  chk(fila('ej-uno').fail === 2 && fila('ej-uno').rating === antes, '🔒 un rating de visitante imposible suma el intento pero NO mueve la dificultad');
+
+  let frenados = 0;
+  for (let i = 0; i < 35; i++) { const x = await hit('ej-dos', 'ok', '9.0.0.9', '&n=' + i); if (x.status === 429) frenados++; }
+  chk(frenados > 0, '🔒 una misma IP que machaca recibe 429', frenados);
+
+  chk(pedidosLista === 1, 'la lista de ejercicios se bajó UNA sola vez (queda en memoria media hora)', pedidosLista);
+
+  // El id largo: la fila vieja estaba cortada a 80 y la web nunca la encontraba.
+  await hit(EJ_LARGO, 'ok', '9.0.0.4', '&vr=1500');
+  chk(!fila(EJ_LARGO.slice(0, 80)) && fila(EJ_LARGO) && fila(EJ_LARGO).ok === 8,
+      '🔒 la fila cortada se renombra al id entero y conserva lo que tenía (7 + 1)', fila(EJ_LARGO) && fila(EJ_LARGO).ok);
+}
+
+console.log('\n=== 15. /puzstats: guardada en el borde y con los ids enteros ===');
+{
+  const guardado = new Map();
+  const cacheFalsa = {
+    async match(k) { const r = guardado.get(typeof k === 'string' ? k : k.url); return r ? r.clone() : undefined; },
+    async put(k, r) { guardado.set(typeof k === 'string' ? k : k.url, r.clone()); },
+  };
+  const cachesAntes = globalThis.caches;
+  globalThis.caches = { default: cacheFalsa };
+  try {
+    // Otra fila cortada que todavía no se renombró: igual tiene que salir con el id entero.
+    DB.tablas.puz_stats.find((x) => x.id === EJ_LARGO).id = EJ_LARGO.slice(0, 80);
+    const pend = [];
+    const c = { waitUntil(p) { pend.push(p); } };
+    const leer = async () => { const x = await worker.fetch(req('/puzstats'), env, c); await Promise.all(pend.splice(0)); return json(x); };
+    const l0 = DB.stats.lecturasPuz || 0;
+    const d1 = await leer();
+    chk(d1[EJ_LARGO] && d1[EJ_LARGO].ok === 8 && !d1[EJ_LARGO.slice(0, 80)],
+        '🔒 la estadística de un ejercicio de id largo sale con el id que busca la web (329 de 1.400 no la mostraban)');
+    await leer(); await leer();
+    chk((DB.stats.lecturasPuz || 0) - l0 === 1, '🔒 tres visitas seguidas leen la tabla UNA sola vez (antes, una por visita)', (DB.stats.lecturasPuz || 0) - l0);
+  } finally { globalThis.caches = cachesAntes; }
+}
+
+console.log('\n=== 16. /puzhit sin la lista de ejercicios: no se crean filas ===');
+{
+  listaEjCaida = true;
+  const w2 = (await import('./cr-proxy-worker.js?sin-lista')).default;   // un Worker "recién arrancado", sin lista en memoria
+  const hit2 = (id, ip) => w2.fetch(req('/puzhit?id=' + encodeURIComponent(id) + '&r=ok', { ip }), env, ctx);
+  const n0 = DB.tablas.puz_stats.length;
+  await hit2('otro-inventado', '9.1.0.1');
+  chk(DB.tablas.puz_stats.length === n0, '🔒 sin poder comprobar la lista, un id nuevo no crea fila');
+  const okAntes = DB.tablas.puz_stats.find((x) => x.id === 'ej-dos').ok;
+  await hit2('ej-dos', '9.1.0.2');
+  chk(DB.tablas.puz_stats.find((x) => x.id === 'ej-dos').ok === okAntes + 1, 'pero un ejercicio que ya tenía fila sigue sumando');
+  listaEjCaida = false;
+}
+
+console.log('\n=== 17. El progreso de ejercicios no se puede inflar (ranking de Táctica) ===');
+{
+  const H = { Authorization: 'Bearer sess-eva', 'Content-Type': 'application/json' };
+  const guardar = async (o) => json(await pedir('/puz/progress', { method: 'POST', headers: H, body: JSON.stringify(o) }));
+  let d = await guardar({ solved: 99999, n: 99999, ok: 99999, fail: 0, rating: 9999, best: 9999, bestStreak: 99999,
+    days: { '2026-09-01': 5000, 'basura': 3, '1999-01-01': 2 },
+    byLevel: { inicial: { ok: 80000, n: 90000 }, avanzado: { ok: 1, n: 2 } } });
+  const p = d.progress || {};
+  chk(p.solved <= EJ_LISTA.puzzles.length + 50, '🔒 los resueltos no pueden superar los ejercicios publicados', p.solved);
+  chk(p.rating === 3200 && p.best === 3200, '🔒 el rating de táctica queda entre 100 y 3200', p.rating);
+  chk(p.bestStreak <= p.solved && p.ok <= p.solved, '🔒 la racha y los aciertos no superan los resueltos', p.bestStreak + '/' + p.ok);
+  chk(p.days['2026-09-01'] === 400 && !('basura' in p.days) && !('1999-01-01' in p.days), '🔒 el calendario sólo acepta fechas de verdad y hasta 400 por día', JSON.stringify(p.days));
+  chk(p.byLevel.inicial.n <= p.solved && p.byLevel.avanzado.n === 2, 'los niveles tampoco superan los resueltos, y lo chico queda igual');
+  const fila = DB.tablas.user_puzzle.find((x) => x.user_id === 'u_eva');
+  chk(fila && fila.solved === p.solved, 'y la columna que usa el ranking guarda el número ya recortado', fila && fila.solved);
+}
+
+console.log('\n=== 18. La fusión entre aparatos ya no borra los resueltos por nivel ===');
+{
+  const H = { Authorization: 'Bearer sess-mod', 'Content-Type': 'application/json' };
+  const guardar = async (o) => json(await pedir('/puz/progress', { method: 'POST', headers: H, body: JSON.stringify(o) }));
+  // Lo que manda el navegador de verdad: los niveles son { ok, n }.
+  await guardar({ solved: 30, n: 30, ok: 25, fail: 5, rating: 1400, byLevel: { inicial: { ok: 20, n: 22 }, aficionado: { ok: 5, n: 8 } } });
+  const d = await guardar({ solved: 12, n: 12, ok: 10, fail: 2, rating: 1300, byLevel: { inicial: { ok: 9, n: 10 }, avanzado: { ok: 1, n: 2 } } });
+  const lv = (d.progress || {}).byLevel || {};
+  chk(lv.inicial && lv.inicial.n === 22 && lv.inicial.ok === 20, '🔒 cada nivel se queda con lo mejor de los dos aparatos (antes quedaba en 0)', JSON.stringify(lv.inicial));
+  chk(lv.aficionado && lv.aficionado.n === 8 && lv.avanzado && lv.avanzado.n === 2, 'y no se pierde ningún nivel de ninguno de los dos');
+  // Una cuenta que ya quedó con ceros (el bug viejo) se recupera sola con lo que traiga el navegador.
+  const fila = DB.tablas.user_puzzle.find((x) => x.user_id === 'u_mod');
+  const blob = JSON.parse(fila.data); blob.byLevel = { inicial: 0, aficionado: 0 }; fila.data = JSON.stringify(blob);
+  const d2 = await guardar({ solved: 31, n: 31, ok: 26, fail: 5, rating: 1410, byLevel: { inicial: { ok: 21, n: 23 } } });
+  chk(d2.progress.byLevel.inicial.n === 23, 'un nivel que quedó en 0 por el bug vuelve a tomar el valor que manda el navegador', JSON.stringify(d2.progress.byLevel.inicial));
+}
+
+console.log('\n=== 19. Proxys: la caché no se puede esquivar (y /crpgn no va a cualquier sitio) ===');
+{
+  const guardado = new Map();
+  const cacheFalsa = {
+    async match(k) { const r = guardado.get(typeof k === 'string' ? k : k.url); return r ? r.clone() : undefined; },
+    async put(k, r) { guardado.set(typeof k === 'string' ? k : k.url, r.clone()); },
+  };
+  const cachesAntes = globalThis.caches, fetchAntes = globalThis.fetch;
+  globalThis.caches = { default: cacheFalsa };
+  const afuera = [];
+  globalThis.fetch = async (url) => {
+    const u = String(url); afuera.push(u);
+    if (u.includes('/round/noexiste.pgn')) return new Response('{"error":"Not found"}', { status: 404 });
+    if (u.includes('lichess.org')) return new Response('[Event "X"]\n[Result "*"]\n\n1. e4 *', { status: 200 });
+    if (u.includes('sichess.com')) return new Response('[Event "S"]', { status: 200 });
+    return new Response('<html></html>', { status: 200 });
+  };
+  const pend = [];
+  const c = { waitUntil(p) { pend.push(p); } };
+  const ir = async (path, ip) => { const r = await worker.fetch(req(path, { ip: ip || '8.8.0.1' }), env, c); await Promise.all(pend.splice(0)); return r; };
+  const ronda = 'https://lichess.org/api/broadcast/round/abcd1234.pgn';
+  try {
+    await ir('/libc?url=' + encodeURIComponent(ronda));
+    await ir('/libc?url=' + encodeURIComponent(ronda + '?x=1'));
+    await ir('/libc?url=' + encodeURIComponent(ronda) + '&z=2');
+    await ir('/libc?url=' + encodeURIComponent(ronda + '#y'));
+    chk(afuera.filter((u) => u.includes('abcd1234')).length === 1, '🔒 /libc: agregarle cosas a la dirección ya no crea copias nuevas (un solo pedido a Lichess)', afuera.filter((u) => u.includes('abcd1234')).length);
+    chk(!afuera.some((u) => u.includes('?x=1')), 'y a Lichess le llega la dirección limpia, sin lo agregado');
+    let r = await ir('/libc?url=' + encodeURIComponent('https://lichess.org/api/broadcast/top'));
+    chk(r.status === 200 || r.status === 403, 'una ficha de torneo (una sola palabra) sigue pasando', r.status);
+    r = await ir('/libc?url=' + encodeURIComponent('https://lichess.org/api/broadcast/by/alguien/page/2'));
+    chk(r.status === 403, '🔒 /libc: una ruta que la app no usa se rechaza', r.status);
+    const n0 = afuera.length;
+    r = await ir('/libc?url=' + encodeURIComponent('https://lichess.org/api/broadcast/round/noexiste.pgn'));
+    const r2 = await ir('/libc?url=' + encodeURIComponent('https://lichess.org/api/broadcast/round/noexiste.pgn'));
+    chk(r.status === 404 && r2.status === 404 && afuera.length - n0 === 1, '🔒 una ronda que no existe se recuerda un minuto: no se le vuelve a preguntar a Lichess', afuera.length - n0);
+    let frenados = 0;
+    for (let i = 0; i < 70; i++) { const x = await ir('/libc?url=' + encodeURIComponent('https://lichess.org/api/broadcast/round/zz' + i + '.pgn'), '8.8.0.66'); if (x.status === 429) frenados++; }
+    chk(frenados > 0, '🔒 una IP que pide rondas nuevas sin parar recibe 429 (lo guardado se sigue sirviendo sin límite)', frenados);
+
+    const si = 'https://sichess.com/games/evento/01/games.pgn';
+    const s0 = afuera.filter((u) => u.includes('sichess')).length;
+    await ir('/sipgn?url=' + encodeURIComponent(si)); await ir('/sipgn?url=' + encodeURIComponent(si + '?r=1')); await ir('/sipgn?url=' + encodeURIComponent(si) + '&q=2');
+    chk(afuera.filter((u) => u.includes('sichess')).length - s0 === 1, '🔒 /sipgn: tampoco se puede esquivar la caché');
+
+    const cr = 'https://chess-results.com/tnr1.aspx?lan=2&art=1';
+    const c0 = afuera.filter((u) => u.includes('chess-results')).length;
+    await ir('/?url=' + encodeURIComponent(cr)); await ir('/?url=' + encodeURIComponent(cr) + '&basura=1');
+    chk(afuera.filter((u) => u.includes('chess-results')).length - c0 === 1, '🔒 proxy de Chess-Results: lo agregado afuera de la dirección no crea copias');
+
+    r = await ir('/crpgn?tnr=1&host=' + encodeURIComponent('example.com?.chess-results.com'));
+    chk(r.status === 403 && !afuera.some((u) => u.includes('example.com')), '🔒 /crpgn: "otrositio.com?.chess-results.com" se rechaza (antes el Worker iba a otrositio.com)', r.status);
+    r = await ir('/crpgn?tnr=1&host=' + encodeURIComponent('example.com#.chess-results.com'));
+    chk(r.status === 403, '🔒 lo mismo con "#"', r.status);
+    r = await ir('/crpgn?tnr=1&host=s2.chess-results.com');
+    chk(r.status === 200 && afuera.some((u) => u.startsWith('https://s2.chess-results.com/')), 'un nodo de verdad (s2.chess-results.com) sigue andando', r.status);
+  } finally { globalThis.caches = cachesAntes; globalThis.fetch = fetchAntes; }
+}
+
+console.log('\n=== 20. Rating: dos partidas que terminan juntas suman las dos ===');
+{
+  const H = { 'X-Vivo-Secret': 'secreto-vivo', 'Content-Type': 'application/json' };
+  const fila = () => DB.tablas.ratings.find((r) => r.user_id === 'u_dani' && r.category === 'rapid');
+  const rep = (id, rival) => pedir('/rating/report', { method: 'POST', headers: H,
+    body: JSON.stringify({ gameId: id, white: 'u_dani', black: rival, result: 'w', base: 900, inc: 0, moves: 'e4 e5 Nf3 Nc6 Bb5 a6' }) });
+  await rep('carrera0', 'u_x1');
+  const base = fila().rating;
+  // Las dos llegan "a la vez": las dos leen el mismo rating de partida antes de que la otra guarde.
+  const [a, b] = await Promise.all([json(await rep('carrera1', 'u_x2')), json(await rep('carrera2', 'u_x3'))]);
+  const esperado = Math.max(100, Math.min(3200, base + a.white.delta + b.white.delta));
+  chk(fila().rating === esperado, '🔒 el rating final suma las dos variaciones', fila().rating + ' = ' + base + ' + ' + a.white.delta + ' + ' + b.white.delta);
 }
 
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.') + '\n');

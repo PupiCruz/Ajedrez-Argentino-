@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1477;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1489;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -5826,7 +5826,8 @@ console.log('\n=== 53h. Colgadas de la ronda: barrido, revisión y tablero de ej
       '🔒 viajan con 💾 Guardar datos (y en el respaldo completo)');
   chk(/tFiles\[id\]\.colgadas = pub/.test(extraerFuncion('buildSplitData')) && /_cgPub\[String\(id\)\] = \(j && j\.colgadas\)/.test(extraerFuncion('fetchTournamentGames')),
       'se publican dentro del archivo del torneo y la web las lee al abrirlo (no engordan la carga inicial)');
-  chk(/aa_colgadas/.test(extraerFuncion('_estadoActualFp')), 'aceptar o rechazar enciende el aviso de "cambios sin guardar"');
+  // Desde el 23/09 las colgadas del autor viven EN MEMORIA (_cgMan) y no en localStorage: el aviso las lee de ahí.
+  chk(/_cgMan\(\)/.test(extraerFuncion('_estadoActualFp')), 'aceptar o rechazar enciende el aviso de "cambios sin guardar"');
   const exp = extraerFuncion('cgExportar');
   chk(/schemaVersion: 1/.test(exp) && /difficulty: rat/.test(exp) && /themes: temas/.test(exp) && /acceptedAlts: \[it\.alts\.slice\(\)\]/.test(exp),
       '"A Entrenar": mismo formato que los ejercicios de siempre, con el rating y los temas que pone el autor');
@@ -6037,6 +6038,71 @@ console.log('\n=== 90. La tabla de cruces se rehace cuando llegan las partidas d
 
 
 
+
+console.log('\n=== Auditoría 23/09 — Fase 3: seguridad y Lichess en la web ===');
+{
+  // 1) El caño de avisos de Lichess: se corre el idleOn DE VERDAD contra un Lichess de mentira.
+  const src = extraerFuncion('idleOn');
+  const armar = new Function('ctx',
+    'var evIdle = null, evEspera = 3000, busca = null, LI = "https://lichess.org";' +
+    'var activo = function(){ return true; }, usuario = function(){ return { username: "yo" }; };' +
+    'var noMolestar = function(){ return false; }, enLaPestanaJugar = function(){ return true; }, pintar = function(){}, onAviso = function(){};' +
+    'var window = ctx.window, caño = ctx.cano, setTimeout = ctx.setTimeout;' +
+    src + '; return idleOn;');
+  const esperas = [], abiertos = [];
+  const ctx = {
+    window: { aaLi: { tiene: () => true, olvidar() {} } },
+    cano: (url, opts, c, onObj, onFin) => { abiertos.push({ opts, onFin }); },
+    setTimeout: (f, ms) => { esperas.push(ms); },
+  };
+  const idleOn = armar(ctx);
+  idleOn();
+  for (let i = 0; i < 4; i++) { abiertos[abiertos.length - 1].onFin({ status: 500 }); idleOn(); }
+  chk(esperas.join() === '3000,6000,12000,24000',
+      '🔒 caño de avisos: con cortes seguidos la espera CRECE (antes quedaba clavada en 3 s: 189 pedidos en 10 min)', esperas.join());
+  abiertos[abiertos.length - 1].onFin({ status: 429 });
+  chk(esperas[esperas.length - 1] >= 60000, '🔒 con un 429 se espera como mínimo el minuto que pide Lichess', esperas[esperas.length - 1]);
+  idleOn();
+  const ult = abiertos[abiertos.length - 1];
+  ult.opts.alLatir();                 // la conexión anduvo: llegó el primer latido
+  ult.onFin(null); idleOn();
+  chk(esperas[esperas.length - 1] === 3000, 'cuando la conexión anduvo de verdad, la espera vuelve a 3 s', esperas[esperas.length - 1]);
+
+  // 2) La lista de gente de Lichess no se refresca con la pestaña oculta ni fuera de Jugar.
+  chk(/document\.hidden \|\| !enLaPestanaJugar\(\)/.test(extraerFuncion('refrescarGente')),
+      '🔒 la lista "gente de ChessArgentino en Lichess" no le pregunta a Lichess con la pestaña oculta o fuera de Jugar');
+
+  // 3) El rating de la tarjeta de desafío va como número.
+  const rc = extraerFuncion('renderChallenges');
+  chk(/Math\.round\(\+c\.rating\)/.test(rc) && !/'<span class="lv-chal-rat">'\+c\.rating/.test(rc),
+      '🔒 el rating de la tarjeta de desafío se pinta como número (era el único campo del lobby sin escapar)');
+  chk(/data-modx="'\+lvEsc\(c\.id\)/.test(rc), 'el moderador ve el botón "🛡️ Sacar" en cada desafío ajeno');
+
+  // 4) El interruptor de desarrollo sólo apunta a la PC propia o a la red de casa.
+  const devIni = SRC.indexOf('var DEV_BASE = (function(){'), dev = SRC.slice(devIni, SRC.indexOf('})();', devIni));
+  const reDev = new RegExp(dev.match(/\.test\(m\)\)/) ? dev.match(/if\(m && (\/.+\/)\.test\(m\)\)/)[1].slice(1, -1) : 'x');
+  chk(reDev.test('http://localhost:8787') && reDev.test('http://192.168.0.10:8787') && !reDev.test('https://servidor-ajeno.com'),
+      '🔒 localStorage.lv_server acepta la PC propia y la red de casa, pero no un servidor de internet');
+
+  // 5) El cierre 4008 (demasiadas conexiones desde la red) no se reintenta en ninguno de los tres lugares.
+  chk((SRC.match(/ev\.code===4008/g) || []).length === 3, '🔒 lobby, chat del torneo y partida: ante el cierre 4008 no se insiste', (SRC.match(/ev\.code===4008/g) || []).length);
+
+  // 6) Permiso de Lichess: el cartel ya no promete devolverlo al cerrar la pestaña, y hay botón.
+  chk(!/Al cerrarla, o al salir de tu cuenta, se lo devolvemos/.test(SRC) && /id="lv-li-devolver"/.test(SRC),
+      '🔒 el cartel del permiso dice la verdad (cerrar la pestaña NO lo devuelve) y hay botón "Devolver el permiso"');
+
+  // 7) Avisos de colgadas que el motor propio no confirmó: sin sonido.
+  const cm = extraerFuncion('_colMostrar');
+  chk(/if \(!sinConfirmar\) _colSonido\(\)/.test(cm) && /x\.red && x\.sinMotor/.test(cm),
+      '🔒 un aviso de colgada que tu motor no confirmó sale "sin confirmar" y sin sonido');
+
+  // 8) Las cabeceras de protección del sitio.
+  const HD = fs.readFileSync(new URL('./_headers', import.meta.url), 'utf8').split(String.fromCharCode(13)).join('');
+  const bloque = HD.slice(HD.indexOf('\n/*\n'), HD.indexOf('\n/assets/*'));
+  chk(/Content-Security-Policy: frame-ancestors 'self'/.test(bloque) && /X-Frame-Options: SAMEORIGIN/.test(bloque) && /Strict-Transport-Security: max-age=/.test(bloque),
+      '🔒 _headers: ningún otro sitio puede meter la web en un marco, y el navegador usa siempre https');
+  chk(!/^[ \t]+#/m.test(bloque),'y no hay comentarios adentro del bloque (Cloudflare los leería como cabeceras)');
+}
 
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
 console.log('   Corrieron ' + corridas + ' de ' + ESPERADAS + ' comprobaciones.'

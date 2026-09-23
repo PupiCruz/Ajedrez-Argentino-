@@ -3192,6 +3192,8 @@
       .lv-chal-item.lv-chal-mine { cursor:default; opacity:.72; }
       .lv-chal-item.lv-chal-mine:hover { filter:none; border-color:var(--border); }
       .lv-chal-mine .lv-chal-go { background:var(--bg2); border-color:var(--border); color:var(--text3); }
+      .lv-chal-modx { flex:0 0 auto; font:inherit; font-size:11.5px; font-weight:700; padding:6px 9px; margin-right:6px; border-radius:var(--r-sm); background:transparent; border:1px solid var(--border); color:var(--text2); cursor:pointer; }
+      .lv-chal-modx:hover, .lv-chal-modx:focus-visible { border-color:#c0392b; color:#c0392b; }
       .lv-chal-empty { color:var(--text3); font-size:13px; padding:22px 8px; text-align:center; line-height:1.6; }
       .lv-chal-conn { font-size:11.5px; color:var(--text3); margin-top:10px; text-align:center; min-height:14px; }
       .lv-chal-you { color:var(--text3); }
@@ -3255,6 +3257,7 @@
         padding:11px 13px 13px; border-radius:14px; background:#2a2023; border:1.5px solid #d03030;
         box-shadow:0 10px 28px rgba(0,0,0,.45); animation:lvPop .3s cubic-bezier(.2,1.2,.5,1); transition:opacity .3s, transform .3s; }
       .col-cartel.col-fuera { opacity:0; transform:translateY(-8px); }
+      .col-cartel .col-sinconf { display:block; margin-top:3px; font-size:11px; font-style:italic; color:#d9c7a8; }
       .col-top { display:flex; gap:9px; align-items:flex-start; }
       .col-nb { width:26px; height:26px; border-radius:50%; background:#d03030; color:#fff; display:flex; align-items:center;
         justify-content:center; font-size:12.5px; font-weight:800; flex-shrink:0; letter-spacing:-.5px; box-shadow:0 1px 3px rgba(0,0,0,.5); }
@@ -4143,6 +4146,7 @@
             <button type="button" class="lv-btn-sec" id="lv-li-cancel">Cancelar</button>
           </div>
           <p class="lv-li-note" id="lv-li-note"><b>Jugás acá</b>, en el tablero del sitio: la partida queda en tu cuenta de Lichess y suma tu rating de allá. Para rival al azar, Lichess sólo permite <b>rápidas y clásicas</b> desde otras apps: <b>5+5 es lo más rápido que se puede</b>. Si querés bala o blitz, te esperan las <b>salas</b> de acá arriba.</p>
+          <p class="lv-li-note lv-li-perm" id="lv-li-perm" style="display:none">🔌 Esta pestaña tiene tu permiso para jugar en Lichess (mover, ofrecer tablas, abandonar). Dura mientras la tengas abierta, y también se corta al salir de tu cuenta. <button type="button" class="lv-btn-sec" id="lv-li-devolver" style="margin-left:4px;padding:3px 10px;font-size:11.5px">Devolver el permiso</button></p>
         </div>
 
         <!-- DESAFIAR A ALGUIEN DE LA COMUNIDAD que está conectado en Lichess.
@@ -33712,6 +33716,11 @@ function _colMostrar(items) {
     : '<b>' + (items.every(function(x){ return x.c && x.c.tipo === 'M'; }) ? 'Hay mate en ' + items.length + ' tableros' : 'Hubo colgadas en ' + items.length + ' tableros') + '</b>' + items.map(function(x){
         return '<button type="button" class="col-fila" data-gk="' + escHtml(x.gk) + '" data-ply="' + _colPlyColgada(x) + '"><span class="col-fila-j">' + _colJugadoresHtml(x) + '</span><span>' + _colDetalleHtml(x) + '</span></button>';
       }).join('');
+  // Avisos que llegaron de OTRO navegador y que el motor de éste no llegó a confirmar a tiempo (lo normal
+  // en un teléfono): salen igual, pero marcados "sin confirmar" y SIN sonido (auditoría 23/09). Si una
+  // sola de la tanda está confirmada, suena como siempre.
+  var sinConfirmar = items.every(function(x){ return x.red && x.sinMotor; });
+  if (sinConfirmar) cuerpo += '<span class="col-sinconf">Sin confirmar por tu motor todavía</span>';
   d.innerHTML = '<div class="col-top"><span class="col-nb" aria-hidden="true">' + (soloMate ? '#' : '??') + '</span><div class="col-txt">' + cuerpo + '</div></div>'
     + '<div class="col-btns"><button type="button" class="col-no">Descartar</button>'
     + (uno ? '<button type="button" class="col-si">Ver partida</button>' : '') + '</div>'
@@ -33722,7 +33731,7 @@ function _colMostrar(items) {
   d.querySelector('.col-nomas').onclick = _colNoMas;
   if (uno) d.querySelector('.col-si').onclick = function(){ _colAbrir(it.gk, _colPlyColgada(it)); };
   Array.prototype.forEach.call(d.querySelectorAll('.col-fila'), function(b){ b.onclick = function(){ _colAbrir(b.getAttribute('data-gk'), parseInt(b.getAttribute('data-ply'), 10)); }; });
-  _colSonido();
+  if (!sinConfirmar) _colSonido();
   _colCartelTimer = setTimeout(_colCerrar, _COL_CARTEL_MS);
 }
 /* ══ 📣 EL ARBITRITO REPARTE LAS COLGADAS (20/09/2026, pedido del autor) ══════════════════════════
@@ -40891,7 +40900,10 @@ function cvUpdateNagBadge() {
       if(qs.get('vivolocal')==='1') return 'http://localhost:8787';
       var m=localStorage.getItem('lv_server');
       if(m==='local') return 'http://localhost:8787';
-      if(m && /^https?:\/\//.test(m)) return m.replace(/\/$/,'');
+      // Sólo la PC propia o la red de casa (JUGAR-CON-OTRO-DISPOSITIVO usa 192.168…), nunca un servidor
+      // de internet: la conexión lleva la sesión del visitante (?auth=), y antes cualquier dirección
+      // quedaba guardada acá para siempre (auditoría 23/09).
+      if(m && /^https?:\/\/(localhost|127\.\d+\.\d+\.\d+|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?\/?$/.test(m)) return m.replace(/\/$/,'');
     } catch(e){}
     return '';
   })();
@@ -41879,6 +41891,8 @@ function cvUpdateNagBadge() {
         try { lvToast('La sala se cerró porque no llegó nadie a jugar. Creá el desafío de nuevo cuando quieras.'); } catch(e){}
         return;
       }
+      // 4008 = demasiadas conexiones desde la misma red (tope del servidor, auditoría 23/09): no insistir.
+      if(ev && ev.code===4008){ setStatus('Hay demasiadas pestañas o aparatos conectados desde tu red. Cerrá alguna y volvé a entrar.'); return; }
       // Reintento con backoff: el token nos devuelve al mismo asiento.
       if(lvReconnectTries<8){
         lvReconnectTries++;
@@ -42711,8 +42725,10 @@ function cvUpdateNagBadge() {
       if(nameField) nameField.style.display='none';
       if(anon) anon.style.display='none';
     } else {
-      if(chip) chip.style.display='none';
-      if(nameField) nameField.style.display='';
+      // Sin cuenta ya no se elige nombre: desde el 23/09 el servidor le pone a cada invitado uno fijo
+      // ("Invitado 4821"), el mismo en el lobby y en la partida (antes se podía poner cualquier cosa).
+      if(chip){ chip.style.display=''; chip.innerHTML='<div class="lv-id-line">Jugás como <b>invitado</b>: el nombre te lo pone el sitio (por ejemplo, «Invitado 4821»).</div>'; }
+      if(nameField) nameField.style.display='none';
       if(anon) anon.style.display='';
     }
   }
@@ -42844,6 +42860,9 @@ function cvUpdateNagBadge() {
         setChalConn('Tu cuenta está suspendida. Si creés que es un error, escribinos.');
         return;
       }
+      // 4008 = demasiadas conexiones desde la misma red (tope del servidor, auditoría 23/09). Insistir no
+      // arregla nada: se avisa y no se reintenta.
+      if(ev && ev.code===4008){ setChalConn('Hay demasiadas pestañas o aparatos conectados desde tu red. Cerrá alguna y recargá la página.'); return; }
       if(lvLobbyIntentional || !lvKeepLobby()) return;   // ya no hace falta → no reconectar
       if(lvLobbyTries<10){ lvLobbyTries++; setChalConn('Reconectando al lobby…'); lvLobbyTimer=setTimeout(lobbyConnect, Math.min(1200*lvLobbyTries,6000)); }
       else setChalConn('Sin conexión al lobby.');
@@ -42881,7 +42900,17 @@ function cvUpdateNagBadge() {
     else if(m.type==='challenge-declined'){                                      // el rival rechazó
       lvChallengeWaiting=null; lvToast((m.by||'Tu rival')+' rechazó el desafío.'); exit();
     }
-    else if(m.type==='challenge-error'){ lvChallengeWaiting=null; lvToast('No se pudo enviar el desafío.'); exit(); }
+    else if(m.type==='challenge-error'){
+      lvChallengeWaiting=null;
+      // Desde el 23/09 el servidor deja a lo sumo 2 desafíos de INVITADO abiertos por conexión de internet.
+      if(m.reason==='guest-limit') lvToast('Desde tu conexión ya hay 2 desafíos de invitado abiertos. Esperá a que los tomen, o entrá con tu cuenta de Lichess (arriba a la derecha).');
+      else lvToast('No se pudo enviar el desafío.');
+      exit();
+    }
+    else if(m.type==='challenge-removed-mod'){                                   // un moderador lo sacó de la lista
+      lvToast('🛡️ Un moderador sacó tu desafío de la lista.');
+      if(lvMyChallenge && lvMyChallenge.id===m.id){ lvMyChallenge=null; exit(); }
+    }
     // ── Presencia: CONECTADO (botón verde de seguidos) + DISPONIBLE (lista de jugadores en Jugar) ──
     else if(m.type==='presence-init'){
       lvOnlineSet={}; lvOnlineNames={}; lvAvailSet={}; lvDndSet={};
@@ -43385,12 +43414,19 @@ function cvUpdateNagBadge() {
     for(var i=0;i<arr.length;i++){
       var c=arr[i], mine=!!(lvMyChallenge && c.id===lvMyChallenge.id);
       var youIcon=(c.seat==='b')?'⚪':'⚫';   // el creador juega c.seat → vos jugás el otro
-      var ratTxt=(c.rating!=null)?(' <span class="lv-chal-rat">'+c.rating+(c.prov?'?':'')+'</span>'):'';
+      // El rating va como NÚMERO (auditoría 23/09): hoy lo pone siempre el servidor, pero esta pantalla
+      // lo pegaba tal cual llegaba, y era el único campo del lobby que no se escapaba.
+      var ratN=Math.round(+c.rating)||0;
+      var ratTxt=(c.rating!=null && ratN>0)?(' <span class="lv-chal-rat">'+ratN+(c.prov?'?':'')+'</span>'):'';
       var friTxt=(c.rated===false)?' <span class="lv-chal-friendly">🤝 Amistosa</span>':'';
+      // 🛡️ Un moderador puede sacar un desafío de la lista (auditoría 23/09). Quien decide es el
+      // SERVIDOR: este botón sólo se dibuja para que el moderador no tenga que escribir comandos.
+      var modX=(!mine && window.aaMod && window.aaMod.isMod && window.aaMod.isMod())
+        ? '<button type="button" class="lv-chal-modx" data-modx="'+lvEsc(c.id)+'" title="Sacar este desafío de la lista (moderador)" aria-label="Sacar de la lista el desafío de '+lvEsc(c.name||'Anónimo')+'">🛡️ Sacar</button>' : '';
       html+='<div class="lv-chal-item'+(mine?' lv-chal-mine':'')+'" data-id="'+lvEsc(c.id)+'">'
         +'<div class="lv-chal-info"><span class="lv-chal-name">'+lvEsc(c.name||'Anónimo')+ratTxt+'</span>'
         +'<span class="lv-chal-tc">'+tcLabel(c.base,c.inc)+friTxt+' <span class="lv-chal-you">· jugás '+youIcon+'</span></span></div>'
-        +'<span class="lv-chal-go">'+(mine?'Tu desafío':'Entrar')+'</span></div>';
+        +modX+'<span class="lv-chal-go">'+(mine?'Tu desafío':'Entrar')+'</span></div>';
     }
     list.innerHTML=html;
   }
@@ -43458,6 +43494,8 @@ function cvUpdateNagBadge() {
     lvLcWireActs(LV_CHAT_SALA);    // …y en el de una sala (mismo código, otra caja)
     // Aceptar un desafío del lobby (delegación en la lista)
     var chalEl=$('lv-chal-list'); if(chalEl && !chalEl._lvWired){ chalEl._lvWired=true; chalEl.addEventListener('click', function(e){
+      var mx=e.target.closest?e.target.closest('[data-modx]'):null;
+      if(mx){ e.stopPropagation(); lobbySend({ type:'challenge-mod-remove', id: mx.getAttribute('data-modx') }); return; }
       var it=e.target.closest?e.target.closest('.lv-chal-item'):null; if(!it || it.classList.contains('lv-chal-mine')) return;
       var id=it.getAttribute('data-id'); if(id) acceptChallenge(id);
     }); }
@@ -43651,6 +43689,7 @@ function cvUpdateNagBadge() {
     };
     tcWs.onclose=function(ev){ tcWs=null;
       if(ev && ev.code===4003) return;   // cuenta suspendida: no reconectar (ver el lobby)
+      if(ev && ev.code===4008) return;   // demasiadas conexiones desde la misma red: insistir no sirve (23/09)
       if(tcIntentional || !tcRoom) return;
       if(tcTries<10){ tcTries++; tcTimer=setTimeout(tcConnect, Math.min(1200*tcTries,6000)); } };
     tcWs.onerror=function(){};
@@ -45547,7 +45586,7 @@ function cvUpdateNagBadge() {
           '<li>🔒 No vemos tu contraseña ni tu e-mail.</li>' +
           '<li>♟️ Sirve para jugar: mover, ofrecer tablas y abandonar en las partidas que empieces desde acá.</li>' +
           (scopeActual() === SCOPE ? '<li>🏟️ También te deja anotarte y salir de los torneos arena de la cartelera.</li>' : '') +
-          '<li>🚪 Dura lo que dure esta pestaña. Al cerrarla, o al salir de tu cuenta, se lo devolvemos a Lichess.</li>' +
+          '<li>🚪 Vale mientras tengas esta pestaña abierta. Lo podés devolver cuando quieras con el botón «Devolver el permiso» de Jugar, y se devuelve solo al salir de tu cuenta. (Si sólo cerrás la pestaña, en Lichess queda vigente: lo ves y lo cortás en lichess.org → Preferencias → Seguridad.)</li>' +
         '</ul>' +
         '<div class="aa-modal-btns">' +
           '<button class="aa-modal-cancel" type="button">Cancelar</button>' +
@@ -45722,6 +45761,26 @@ function cvUpdateNagBadge() {
     }
     var panel = $('lv-li-panel'); if (panel) panel.style.display = invitado ? 'none' : '';
     var lid = $('lv-lid-card'); if (lid) lid.style.display = (invitado || busca) ? 'none' : '';
+    /* 🔌 Devolver el permiso (auditoría 23/09): el cartel prometía devolverlo "al cerrar la pestaña",
+       y eso no pasaba — el permiso seguía vigente en Lichess. Ahora el texto dice la verdad y se puede
+       cortar a mano. No se ofrece con una partida en curso ni buscando rival: lo cortaría en el medio. */
+    var perm = $('lv-li-perm');
+    if (perm) {
+      var enJuego = false; try { enJuego = !!(window.aaLiPartida && window.aaLiPartida.enCurso()); } catch (e) {}
+      perm.style.display = (!invitado && window.aaLi.tiene() && !busca && !enJuego) ? '' : 'none';
+      var dv = $('lv-li-devolver');
+      if (dv && !dv._li) {
+        dv._li = true;
+        dv.addEventListener('click', function () {
+          dv.disabled = true;
+          idleOff();
+          window.aaLi.olvidar().then(function () {
+            dv.disabled = false; pintar();
+            window.aaLi.avisar('Listo: le devolvimos el permiso a Lichess. Si querés volver a jugar, te lo va a pedir de nuevo.');
+          });
+        });
+      }
+    }
     /* La lista de gente conectada se refresca sola mientras el panel esté a la vista. */
     if (invitado) { if (lidTimer) { clearInterval(lidTimer); lidTimer = 0; } idleOff(); }
     else if (!lidTimer) { pintarTcDesafio(); refrescarGente(); lidTimer = setInterval(latido, 15000); }
@@ -45979,6 +46038,10 @@ function cvUpdateNagBadge() {
      llamar cada 5 segundos; acá se hace cada 15, que alcanza y sobra. */
   function refrescarGente() {
     if (!activo() || !usuario() || busca) return;
+    /* Sólo con la pestaña a la vista y estando en Jugar (auditoría 23/09): antes, una vez abierto
+       Jugar, se le preguntaba a Lichess cada 15 s para siempre, aunque estuvieras en Torneos o con el
+       navegador minimizado. Al volver, el latido siguiente (15 s) la pone al día. */
+    if (document.hidden || !enLaPestanaJugar()) return;
     traerComunidad().then(function (nombres) {
       var yo = String((usuario() || {}).username || '').toLowerCase();
       var ids = (nombres || []).filter(function (n) { return String(n).toLowerCase() !== yo; }).slice(0, 100);
@@ -46189,16 +46252,21 @@ function cvUpdateNagBadge() {
     if (noMolestar() || !enLaPestanaJugar()) return;
     try { if (window.aaLiPartida && window.aaLiPartida.enCurso()) return; } catch (e) {}
     var c = new AbortController(); evIdle = c;
-    caño(LI + '/api/stream/event', {}, c, onAviso, function (e) {
+    /* La espera vuelve a 3 s recién cuando la conexión ANDUVO (llegó el primer latido de Lichess).
+       🐛 Antes se volvía a 3 s apenas se abría, antes de saber si andaba: la espera nunca crecía y,
+       con Lichess contestando 429, se reintentaba cada 3 s para siempre (auditoría 23/09: simulado,
+       189 pedidos en 10 minutos). */
+    caño(LI + '/api/stream/event', { alLatir: function () { evEspera = 3000; } }, c, onAviso, function (e) {
       if (e && e.name === 'AbortError') { evIdle = null; return; }
       evIdle = null;
       if (e && e.status === 401) { window.aaLi.olvidar(); pintar(); return; }
       /* Espera creciente: sin esto, un corte de red se convierte en cientos de pedidos por
-         minuto y Lichess contesta 429. Es el único riesgo real de 429 que tenemos. */
-      setTimeout(function () { idleOn(); }, evEspera);
+         minuto y Lichess contesta 429. Y con un 429, Lichess pide esperar un minuto entero. */
+      var espera = evEspera;
+      if (e && e.status === 429) espera = Math.max(espera, 60000);
+      setTimeout(function () { idleOn(); }, espera);
       evEspera = Math.min(evEspera * 2, 60000);
     });
-    evEspera = 3000;
   }
   function idleOff() { if (evIdle) { try { evIdle.abort(); } catch (e) {} evIdle = null; } }
   /* Decide en el momento: abre si corresponde y CIERRA si no. Hace falta el cierre —no
