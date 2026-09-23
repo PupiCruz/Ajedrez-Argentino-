@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1489;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1499;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -6102,6 +6102,51 @@ console.log('\n=== Auditoría 23/09 — Fase 3: seguridad y Lichess en la web ==
   chk(/Content-Security-Policy: frame-ancestors 'self'/.test(bloque) && /X-Frame-Options: SAMEORIGIN/.test(bloque) && /Strict-Transport-Security: max-age=/.test(bloque),
       '🔒 _headers: ningún otro sitio puede meter la web en un marco, y el navegador usa siempre https');
   chk(!/^[ \t]+#/m.test(bloque),'y no hay comentarios adentro del bloque (Cloudflare los leería como cabeceras)');
+}
+
+console.log('\n=== Auditoría 23/09 — Fase 4: accesibilidad y prolijidad ===');
+{
+  // 1) Entrenar: las tarjetas son botones con nombre y la miniatura no se lee.
+  const pl = extraerFuncion('puzRenderList'), pr = extraerFuncion('pracRenderList');
+  chk(/class="puz-card" role="button" tabindex="0" aria-label="/.test(pl) && /class="puz-card" role="button" tabindex="0" aria-label="/.test(pr),
+      '🔒 Entrenar: cada tarjeta (ejercicios y práctica) se alcanza con Tab y tiene nombre para el lector');
+  chk(/class="puz-card-bd" aria-hidden="true"/.test(pl) && /class="puz-card-bd" aria-hidden="true"/.test(pr),
+      '🔒 la miniatura se esconde del lector (antes leía las piezas una por una: 461 en la primera página)');
+  chk(/escHtml\(aria\)/.test(pl) && /escHtml\(ariaP\)/.test(pr), 'el nombre que se arma va escapado (en la práctica lleva nombres de jugadores)');
+  // Enter y Espacio abren la tarjeta; otras teclas y otros elementos no.
+  const tecla = new Function(extraerFuncion('_puzCardTecla') + '; return _puzCardTecla;')();
+  let clics = 0, prev = 0;
+  const tarjeta = { classList: { contains: (c) => c === 'puz-card' }, getAttribute: (a) => (a === 'role' ? 'button' : null), click() { clics++; } };
+  const ev = (key, target) => ({ key, target, preventDefault() { prev++; } });
+  tecla(ev('Enter', tarjeta)); tecla(ev(' ', tarjeta)); tecla(ev('a', tarjeta));
+  tecla(ev('Enter', { classList: { contains: () => false }, getAttribute: () => null, click() { clics += 100; } }));
+  chk(clics === 2 && prev === 2, '🔒 Enter y Espacio abren la tarjeta; otra tecla, u otra cosa de la página, no', clics + '/' + prev);
+
+  // 2) El dorado del modo claro se lee (≥ 4,5:1 sobre los fondos crema).
+  const claro = SRC.slice(SRC.indexOf('body.light {'), SRC.indexOf('}', SRC.indexOf('body.light {')));
+  const oro = (claro.match(/--gold:\s*(#[0-9a-fA-F]{6})/) || [])[1] || '';
+  const lum = (h) => [1, 3, 5].map((i) => parseInt(h.substr(i, 2), 16) / 255).map((v) => (v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4))).reduce((s, v, i) => s + v * [0.2126, 0.7152, 0.0722][i], 0);
+  const contraste = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+  const peor = Math.min(...['#fffdf6', '#f8f1e0', '#f3ead4'].map((f) => contraste(oro, f)));
+  chk(oro && peor >= 4.5, '🔒 modo claro: el dorado de los botones activos y los números se lee (era 3:1)', oro + ' → ' + peor.toFixed(2) + ':1');
+
+  // 3) Carteles del navegador en caminos que ve el visitante: ya no quedan.
+  const visibles = ['_openVivoGameDeepLink', 'ensureChessLib', 'openBroadcastTournament', '_bcLoad', '_tdDownloadPgn', '_tdBajarPgn'];
+  const conNativo = visibles.filter((n) => /(^|[^.\w])(alert|confirm|prompt)\(/.test(extraerFuncion(n)));
+  chk(conNativo.length === 0, '🔒 esos caminos usan el cartel de la app, nunca alert/confirm del navegador', conNativo.join(', ') || 'ninguno');
+
+  // 4) La caché del motor tiene tope: se corre el recorte de verdad.
+  const recortar = new Function(extraerFuncion('_faRecortarCache') + '; return _faRecortarCache;')();
+  const c = {}; for (let i = 0; i < 12; i++) c['fen' + i] = i;
+  recortar(c, 5);
+  chk(Object.keys(c).join() === 'fen7,fen8,fen9,fen10,fen11', '🔒 caché del motor: al pasarse del tope se van las posiciones MÁS VIEJAS', Object.keys(c).join());
+  chk(/_faRecortarCache\(_faLiveCache, _FA_CACHE_MAX\)/.test(extraerFuncion('_faSaveLiveCache')) && /var _FA_CACHE_MAX = 5000;/.test(SRC),
+      'y se recorta cada vez que se guarda (tope: 5.000 posiciones)');
+
+  // 5) Código muerto: las dos funciones sin uso ya no están.
+  chk(!/function crParseLeaders\(/.test(SRC) && !/function filaPropia\(/.test(SRC), 'se borraron las funciones que no usaba nadie (crParseLeaders, filaPropia)');
+  const ED = fs.readFileSync(new URL('./editar.html', import.meta.url), 'utf8');
+  chk(/DUPLICADO en editar\.html/.test(SRC) && /DUPLICADO en index\.html/.test(ED), 'el tablerito de carga avisa, en los dos archivos, que está duplicado en el otro');
 }
 
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));

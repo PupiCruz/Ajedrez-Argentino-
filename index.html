@@ -219,10 +219,10 @@
       --text:      #2b2722;
       --text2:     #4a4434;   /* secundario oscurecido para que se lea bien sobre el crema */
       --text3:     #6a6250;   /* terciario oscurecido (antes costaba leerse) */
-      --gold:      #b07d0a;
+      --gold:      #835a00;   /* era #b07d0a: daba 3:1 sobre el crema y costaba leerse (auditoría 23/09). Ahora 5:1 o más */
       --gold-dim:  #946a08;
       --gold-bg:   #f2e7c6;
-      --green:     #2f8f63;
+      --green:     #24774f;   /* era #2f8f63 (3,4-3,9:1, ej. el rating de blitz de la ficha). Auditoría 23/09 */
       --red:       #c0492f;
       --blue:      #4f6fc0;
       --bg-img:    url('assets/fondo-claro.jpg');
@@ -1876,6 +1876,7 @@
       transition: border-color .15s, transform .1s, box-shadow .15s; position: relative;
     }
     .puz-card:hover { border-color: var(--gold-dim); transform: translateY(-2px); box-shadow: var(--shadow-hover); }
+    .puz-card:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; border-color: var(--gold-dim); }
     .puz-card-bd { position: relative; border-radius: 7px; overflow: hidden; }
     .puz-card-mark {
       position: absolute; top: 5px; right: 5px; z-index: 3; width: 22px; height: 22px; border-radius: 50%;
@@ -1902,6 +1903,7 @@
     /* En claro, los tags con texto claro hardcodeado se oscurecen para leerse sobre el tinte pálido. */
     body.light .puz-tag.s-sacrificio { color: #8b3fbf; }
     body.light .puz-tag.s-defensa { color: #2c5aa8; }
+    body.light .puz-tag.s-mates { color: #a33a22; }   /* el rojo general daba 4,2:1 sobre su tinte (auditoría 23/09) */
     .puz-tag.s-ventaja { background: rgba(82,183,136,.14); color: var(--green); border-color: rgba(82,183,136,.32); }
     .puz-tag.s-finales { background: rgba(160,160,160,.14); color: var(--text2); border-color: var(--border); }
 
@@ -2300,8 +2302,8 @@
     /* Pastillas SÓLIDAS (mismo look en claro y oscuro). Tiers: dorado GM · azul IM · verde FM ·
        oliva CM; los femeninos en familia rosa/violeta. */
     .p-title-gm  { background: #c9a227; color: #231a05; }   /* dorado de la página */
-    .p-title-im  { background: #5878bf; }                    /* azul */
-    .p-title-fm  { background: #3f9061; }                    /* verde */
+    .p-title-im  { background: #4f6db3; }                    /* azul (era #5878bf: la letra blanca quedaba en 4,3:1) */
+    .p-title-fm  { background: #347a52; }                    /* verde (era #3f9061: la letra blanca quedaba en 3,9:1) */
     .p-title-cm  { background: #9a863c; }                    /* oliva/dorado apagado */
     .p-title-wgm { background: #c25b86; }                    /* rosa */
     .p-title-wim { background: #8f63bd; }                    /* violeta */
@@ -6649,6 +6651,14 @@ function histImportarElegir() {
 }
 function _histAviso(icono, titulo, texto) {
   try { return window.aaAsk({ icono: icono, titulo: titulo, texto: texto, ok: 'Entendido', cancelar: 'Cerrar' }); } catch (e) {}
+}
+// Aviso con el cartel de la APP, para cualquier parte de la web (auditoría 23/09: quedaban alert() y
+// confirm() del navegador en caminos que ve el visitante). _avisoApp informa; _preguntaApp devuelve una
+// promesa con true/false. Si el cartel no estuviera (no debería pasar), no se muestra nada.
+function _avisoApp(icono, titulo, texto) { return _histAviso(icono, titulo, texto); }
+function _preguntaApp(icono, titulo, texto, ok) {
+  try { return window.aaAsk({ icono: icono, titulo: titulo, texto: texto, ok: ok || 'Sí', cancelar: 'Cancelar' }); }
+  catch (e) { return Promise.resolve(false); }
 }
 // ¿Es un paquete sano? Devuelve el problema (texto) o '' si está bien.
 function _histPaqueteError(p) {
@@ -16045,32 +16055,6 @@ async function exportGithubData() {
    CHESS RESULTS IMPORT
 ═══════════════════════════════════════════════════════ */
 
-function crParseLeaders(doc) {
-  var leaders = [];
-  var allRows = doc.querySelectorAll('table tr');
-  var nameIdx = -1, ptsIdx = -1, headerFound = false;
-  for (var i = 0; i < allRows.length; i++) {
-    var cells = allRows[i].querySelectorAll('td');
-    if (!cells.length) continue;
-    if (!headerFound) {
-      for (var j = 0; j < cells.length; j++) {
-        var t = cells[j].textContent.trim().toLowerCase();
-        if (t === 'pts.' || t === 'pts' || t === 'puntos' || t === 'points') ptsIdx = j;
-        if (t === 'name' || t === 'nombre' || t === 'player' || t === 'jugador') nameIdx = j;
-      }
-      if (ptsIdx >= 0 && nameIdx >= 0) { headerFound = true; }
-      continue;
-    }
-    if (cells.length <= Math.max(nameIdx, ptsIdx)) continue;
-    var playerName = cells[nameIdx].textContent.trim();
-    var ptsText = cells[ptsIdx].textContent.trim().replace(',', '.');
-    var pts = parseFloat(ptsText);
-    if (!playerName || isNaN(pts)) continue;
-    leaders.push({ name: playerName, score: pts });
-    if (leaders.length >= 5) break;
-  }
-  return leaders;
-}
 
 var _crPgnContent = null;
 
@@ -19711,9 +19695,9 @@ function cvSetResult(res) {
 function ensureChessLib() {
   if (typeof Chess !== 'undefined') return true;
   if (window.__chessLibFailed) {
-    alert('No se pudo cargar la librería de ajedrez (chess.js).\n\nRecargá la página y volvé a intentarlo.');
+    _avisoApp('⚠️', 'No se pudo cargar el ajedrez', 'Recargá la página y volvé a intentarlo.');
   } else {
-    alert('La librería de ajedrez todavía se está cargando.\n\nEsperá unos segundos y volvé a intentarlo.');
+    _avisoApp('⏳', 'Todavía está cargando', 'Esperá unos segundos y volvé a intentarlo.');
   }
   return false;
 }
@@ -19842,9 +19826,9 @@ function _openVivoGameDeepLink(gameId, fromNick) {
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return r.json();
   }).then(function (g) {
-    if (g && g.__nf) { _removeDeepLinkCover(); alert('No se encontró esa partida.'); return; }
+    if (g && g.__nf) { _removeDeepLinkCover(); _avisoApp('🔍', 'No se encontró esa partida', 'Puede que el link esté incompleto o que la partida ya no esté en el sitio.'); return; }
     _openVivoGame(g, fromNick || null);
-  }).catch(function () { _removeDeepLinkCover(); alert('No se pudo cargar la partida. Probá de nuevo.'); });
+  }).catch(function () { _removeDeepLinkCover(); _avisoApp('⚠️', 'No se pudo cargar la partida', 'Probá de nuevo en un momento.'); });
 }
 
 // Almacena los torneos del último jugador abierto para navegación
@@ -20786,6 +20770,9 @@ function _bdIsPromo(pc, to) {
   return (pc.color === 'w' && tr === 8) || (pc.color === 'b' && tr === 1);
 }
 
+// ⚠️ OJO: este bloque del tablerito de carga (_bd* y gc*) está DUPLICADO en editar.html (el editor del
+// teléfono). Medido el 23/09: 48 funciones en común, 24 idénticas y 24 que ya son distintas a propósito.
+// Si arreglás algo acá, fijate si el mismo arreglo hace falta allá.
 // Pinta las 64 casillas. Rebuild completo solo si o.full (tablero nuevo o cambió la
 // orientación); si no, actualiza SOLO las casillas que cambian (diff por clase y pieza).
 // o = { flipped, sel, dests, lf, lt, full }. El llamador se encarga de la orientación,
@@ -29144,7 +29131,8 @@ function openBroadcastTournament(broadcastId, name, sub, pageUrl) {
   if (m) {
     bcResolveTourId(m[1], m[2], m[3], function(tourId) {
       if (tourId) bcOpenLiveGrid(tourId, name, sub, pageUrl);
-      else if (confirm('No se pudo conectar con Lichess (requiere servidor, no funciona desde archivo local).\n\n¿Abrís el broadcast en Lichess?')) window.open(pageUrl || ('https://lichess.org/broadcast/' + raw), '_blank');
+      else _preguntaApp('📡', 'No se pudo conectar con Lichess', '¿Abrís la transmisión directamente en lichess.org?', 'Abrir en Lichess')
+        .then(function (si) { if (si) window.open(pageUrl || ('https://lichess.org/broadcast/' + raw), '_blank'); });
     });
     return;
   }
@@ -29865,10 +29853,11 @@ function _bcLoad(isRefresh) {
   _bcFetchAll(ctx.broadcastId, function(res) {
     if (!_liveCtx || _liveCtx.broadcastId !== ctx.broadcastId) return;   // cambió de torneo mientras tanto
     if (!res) {
-      if (!isRefresh && confirm('No se pudo conectar con Lichess (requiere servidor, no funciona desde archivo local).\n\n¿Abrís el broadcast en Lichess?')) window.open(ctx.pageUrl || ('https://lichess.org/broadcast/' + ctx.broadcastId), '_blank');
+      if (!isRefresh) _preguntaApp('📡', 'No se pudo conectar con Lichess', '¿Abrís la transmisión directamente en lichess.org?', 'Abrir en Lichess')
+        .then(function (si) { if (si) window.open(ctx.pageUrl || ('https://lichess.org/broadcast/' + ctx.broadcastId), '_blank'); });
       return;
     }
-    if (!isRefresh && !res.allGames.length) { alert('El torneo aún no tiene rondas disponibles.'); return; }
+    if (!isRefresh && !res.allGames.length) { _avisoApp('🕑', 'Todavía no hay rondas', 'El torneo aún no tiene rondas disponibles.'); return; }
 
     var liveKey = '_bc_' + ctx.broadcastId;
     var bcUrl = _isLccId(ctx.broadcastId) ? _lccExtUrl(ctx.broadcastId) : (ctx.pageUrl || 'https://lichess.org/broadcast/' + ctx.broadcastId);
@@ -30442,6 +30431,7 @@ function _tdDlProgress(done, total) {
   if (!d) { d = document.createElement('div'); d.id = 'td-dl-progress'; d.style.cssText = 'position:fixed;left:50%;top:18px;transform:translateX(-50%);z-index:100000;background:var(--card90);border:1px solid var(--bd22);border-radius:10px;padding:10px 16px;color:var(--white-ink);font-size:13px;font-weight:600;box-shadow:0 8px 26px rgba(0,0,0,.5)'; document.body.appendChild(d); }
   d.textContent = '⏳ Bajando rondas para el .pgn… ' + Math.min(done + 1, total) + '/' + total;
 }
+// Las preguntas y avisos van con el cartel de la APP (auditoría 23/09: eran confirm/alert del navegador).
 function _tdDownloadPgn(scope) {
   if (!_tdCtx) return;
   // ON-DEMAND: "bajar torneo" necesita TODAS las rondas. Si faltan (no se abrieron), bajarlas primero
@@ -30449,9 +30439,12 @@ function _tdDownloadPgn(scope) {
   if (scope === 'all' && _tdLiveCtx && _tdLiveCtx.onDemand) {
     var faltan = (_tdLiveCtx.roundsMeta || []).some(function(rm){ return !(_tdCtx.byRound[rm.num] && _tdCtx.byRound[rm.num].length) && rm.roundIds && rm.roundIds.length; });
     if (faltan) {
-      if (!confirm('Para bajar el torneo completo hay que traer de Lichess las rondas que todavía no abriste. Puede tardar unos segundos. ¿Seguir?')) return;
-      _tdDlProgress(0, (_tdLiveCtx.roundsMeta || []).length);
-      _tdEnsureAllLoaded(function(){ _tdDlProgress(-1); _tdDownloadPgn('all'); }, function(done, total){ _tdDlProgress(done, total); });
+      _preguntaApp('📥', 'Bajar el torneo completo', 'Hay que traer de Lichess las rondas que todavía no abriste. Puede tardar unos segundos.', 'Seguir')
+        .then(function (si) {
+          if (!si) return;
+          _tdDlProgress(0, (_tdLiveCtx.roundsMeta || []).length);
+          _tdEnsureAllLoaded(function(){ _tdDlProgress(-1); _tdDownloadPgn('all'); }, function(done, total){ _tdDlProgress(done, total); });
+        });
       return;
     }
   }
@@ -30478,7 +30471,7 @@ function _tdDownloadPgn(scope) {
     var porQue = [];
     if (_tdArgOnly) porQue.push('el filtro de argentinos');
     if (terms.length) porQue.push('el buscador ("' + _tdSearch + '")');
-    alert('No hay partidas para descargar' + (porQue.length ? ' con ' + porQue.join(' y ') + ' puesto.' : '.'));
+    _avisoApp('📭', 'No hay partidas para descargar', porQue.length ? 'Con ' + porQue.join(' y ') + ' puesto no queda ninguna.' : '');
     return;
   }
   // Confirmar ANTES de bajar. En el teléfono estos botones quedan pegados a las pestañas de ronda
@@ -30488,8 +30481,12 @@ function _tdDownloadPgn(scope) {
   var filtros = [];
   if (_tdArgOnly) filtros.push('solo argentinos');
   if (terms.length) filtros.push('solo "' + _tdSearch + '"');
-  if (!confirm('¿Descargar ' + list.length + ' partida' + (list.length !== 1 ? 's' : '') + ' ' + qué +
-               (filtros.length ? ' (' + filtros.join(' · ') + ')' : '') + ' en un archivo .pgn?')) return;
+  _preguntaApp('📥', 'Descargar partidas', '¿Bajar ' + list.length + ' partida' + (list.length !== 1 ? 's' : '') + ' ' + qué +
+               (filtros.length ? ' (' + filtros.join(' · ') + ')' : '') + ' en un archivo .pgn?', 'Descargar')
+    .then(function (si) { if (si) _tdBajarPgn(list, scope, terms); });
+}
+// La bajada en sí (separada de _tdDownloadPgn para poder esperar la respuesta del cartel).
+function _tdBajarPgn(list, scope, terms) {
   // Estampar el evento con el nombre del torneo que muestra la web: las partidas llegan de fuentes
   // distintas (Lichess y Chess-Results escriben el [Event] a su manera) y así el .pgn queda con un
   // único nombre de torneo, que es lo que espera cualquier base al importarlo.
@@ -36950,8 +36947,14 @@ function puzRenderList() {
     var mark = r === 'ok' ? '<div class="puz-card-mark ok">✓</div>' : r === 'fail' ? '<div class="puz-card-mark fail">✗</div>' : '';
     var st = puzStatPct(p.id);
     var pop = st ? '<div class="puz-pop" title="' + st.tot + ' intento' + (st.tot !== 1 ? 's' : '') + '">👥 ' + st.pct + '%</div>' : '';
-    h += '<div class="puz-card" onclick="puzOpenById(\'' + p.id + '\')">'
-       + '<div class="puz-card-bd" data-flip="' + (flip?1:0) + '">' + mark + pop + tdMiniFen(p.fen, null, flip) + '</div>'
+    // Accesibilidad (auditoría 23/09): la tarjeta es un BOTÓN con nombre (se llega con Tab y se abre con
+    // Enter o Espacio, ver _puzCardTecla) y la miniatura se ESCONDE del lector: si no, leía las piezas una
+    // por una ("gráfico, gráfico…", 461 en la primera página). Describir el tablero es otra etapa.
+    var aria = 'Ejercicio: juegan las ' + (p.sideToMove === 'w' ? 'blancas' : 'negras') + ', ' + lbl
+      + (r === 'ok' ? ', ya lo resolviste' : r === 'fail' ? ', lo intentaste y fallaste' : '')
+      + (st ? ', lo resuelve el ' + st.pct + '% de la gente' : '');
+    h += '<div class="puz-card" role="button" tabindex="0" aria-label="' + escHtml(aria) + '" onclick="puzOpenById(\'' + p.id + '\')">'
+       + '<div class="puz-card-bd" aria-hidden="true" data-flip="' + (flip?1:0) + '">' + mark + pop + tdMiniFen(p.fen, null, flip) + '</div>'
        + '<div class="puz-card-meta"><span class="puz-turn"><span class="dot ' + p.sideToMove + '"></span>'
        + (p.sideToMove === 'w' ? 'Blancas' : 'Negras') + '</span>'
        + '<span class="puz-tag s-' + sec + '">' + lbl + '</span></div></div>';
@@ -36959,6 +36962,16 @@ function puzRenderList() {
   h += '</div>' + _puzPager();
   el.innerHTML = h;
 }
+// Las tarjetas de Entrenar (ejercicios y práctica) se abren con Enter o Espacio, como un botón de verdad
+// (auditoría 23/09: antes sólo con el mouse). Uno solo para toda la página: las grillas se redibujan.
+function _puzCardTecla(e) {
+  var t = e.target;
+  if (!t || !t.classList || !t.classList.contains('puz-card') || t.getAttribute('role') !== 'button') return;
+  if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+  e.preventDefault();
+  t.click();
+}
+try { document.addEventListener('keydown', _puzCardTecla); } catch (e) {}
 function puzGoPage(p) {
   puz._page = p;
   puzRenderList();
@@ -38094,8 +38107,10 @@ function pracRenderList() {
   for (var i=0;i<pageList.length;i++) {
     var p = pageList[i], flip = (p.sideToMove === 'b');
     var s = p.source || {}, names = _pracSurname(s.white) + ' vs ' + _pracSurname(s.black), yr = _pracYear(s.date);
-    h += '<div class="puz-card" onclick="pracOpenById(\'' + p.id + '\')" title="' + (p.sideToMove === 'w' ? 'Juegan las blancas' : 'Juegan las negras') + '">'
-       + '<div class="puz-card-bd" data-flip="' + (flip?1:0) + '">' + tdMiniFen(p.fen, null, flip) + '</div>'
+    // Mismo arreglo de accesibilidad que la grilla de ejercicios (ver puzRenderList, auditoría 23/09).
+    var ariaP = 'Posición de ' + names + (yr ? ' (' + yr + ')' : '') + ': juegan las ' + (p.sideToMove === 'w' ? 'blancas' : 'negras');
+    h += '<div class="puz-card" role="button" tabindex="0" aria-label="' + escHtml(ariaP) + '" onclick="pracOpenById(\'' + p.id + '\')" title="' + (p.sideToMove === 'w' ? 'Juegan las blancas' : 'Juegan las negras') + '">'
+       + '<div class="puz-card-bd" aria-hidden="true" data-flip="' + (flip?1:0) + '">' + tdMiniFen(p.fen, null, flip) + '</div>'
        + '<div class="puz-card-meta" style="flex-direction:column;align-items:flex-start;gap:3px">'
        + '<span class="puz-turn"><span class="dot ' + p.sideToMove + '" style="margin-top:1px"></span>'
        + '<span style="font-weight:600;color:var(--text2);min-width:0;word-break:break-word;line-height:1.3">' + escHtml(names) + '</span></span>'
@@ -39589,10 +39604,20 @@ var _faLiveCache = (function(){
   try { return JSON.parse(localStorage.getItem('fa_eval_cache3')) || {}; } catch(e){ return {}; }
 })();
 var _faCacheSaveTimer = null;
+// Tope de posiciones guardadas (auditoría 23/09): la caché crecía sin límite. Medido en el Chrome del
+// autor: 261 KB, lo único que crecía solo en la web publicada. 5.000 posiciones son ~450 KB y alcanzan
+// para cientos de partidas; al pasarse, se van las más viejas (las primeras que entraron).
+var _FA_CACHE_MAX = 5000;
+function _faRecortarCache(c, max) {
+  var ks = Object.keys(c);
+  for (var i = 0; i < ks.length - max; i++) delete c[ks[i]];
+  return c;
+}
 function _faSaveLiveCache() {   // debounce: guarda 2s después de la última eval (evita escribir en cada jugada)
   if (_faCacheSaveTimer) clearTimeout(_faCacheSaveTimer);
   _faCacheSaveTimer = setTimeout(function(){
     _faCacheSaveTimer = null;
+    _faRecortarCache(_faLiveCache, _FA_CACHE_MAX);
     try { localStorage.setItem('fa_eval_cache3', JSON.stringify(_faLiveCache)); } catch(e){ /* quota llena: se ignora */ }
   }, 2000);
 }
@@ -47203,7 +47228,6 @@ function cvUpdateNagBadge() {
     ((d && d.standing && d.standing.players) || []).forEach(function (p) { if (nlc && String(p.name || '').toLowerCase() === nlc) f = p; });
     return f;
   }
-  function filaPropia(d) { return filaDe(d, yo()); }
   /* De quién es la tarjeta: la tuya, o la del jugador que tocaste en la tabla. */
   function verNombre() { return S.ver || yo(); }
   /* La performance oficial, cuando el torneo terminó y Lichess la manda en el podio. */
