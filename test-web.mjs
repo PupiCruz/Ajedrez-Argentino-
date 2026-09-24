@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1500;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1543;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -809,7 +809,7 @@ console.log('\n=== 23. El ojito nunca se queda mudo ===');
       'el aviso queda al final, como red que atrapa cualquier camino');
 
   // Y el ojito se sigue mostrando SIEMPRE (no volver a esconderlo: fue una decisión, no un descuido).
-  chk(/var _verMesa = !_fantasma && \(!!b\.res \|\|/.test(SRC),
+  chk(/!_fantasma && \(!!b\.res \|\|/.test(SRC),
       'las mesas con resultado siguen mostrando el ojito aunque la partida todavía no esté cargada');
 }
 
@@ -842,7 +842,7 @@ console.log('\n=== 24. Enganchar la partida cuando el nombre viene escrito disti
   // La mesa con jugador fantasma no lleva ojito: ahí no se jugó nada.
   chk(/var _fantasma = _teamIsPlaceholder\(b\.nW\) \|\| _teamIsPlaceholder\(b\.nB\);/.test(SRC),
       'la mesa con "Sin jugador asignado" no muestra ojito');
-  chk(/var _verMesa = !_fantasma && \(!!b\.res \|\|/.test(SRC),
+  chk(/!_fantasma && \(!!b\.res \|\|/.test(SRC),
       'y el resto de las mesas lo siguen mostrando igual que antes');
 }
 
@@ -2844,6 +2844,8 @@ console.log('\n=== 26. Filtro por TEMA de los ejercicios (chips que se cuentan s
   const TDF = new Function('Chess',
       extraerFuncion('_pgnStartFen') + extraerFuncion('_pgnIs960') + extraerFuncion('_pgn960Origins')
     + extraerFuncion('_castle960') + extraerFuncion('_replay960') + extraerFuncion('tdFinalFen')
+    + extraerFuncion('_tdMovTokens') + extraerFuncion('_tdIncrKey') + extraerFuncion('_tdIncrSave') + extraerFuncion('_capCache')
+    + 'var _tdFenIncr = {};'
     + 'function parseMoveClocks(){ return []; } function parseMoveEvals(){ return []; }'
     + ' return tdFinalFen;')(Chess);
   const R960 = new Function('Chess',
@@ -2866,6 +2868,46 @@ console.log('\n=== 26. Filtro por TEMA de los ejercicios (chips que se cuentan s
   const normal = TDF('[White "A"]\n[Black "B"]\n\n1. e4 e5 2. Nf3 Nc6 *');
   chk(normal.fen === 'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3',
       'y una partida normal sigue dando exactamente lo mismo que antes', normal.fen);
+
+  // ── De a poco (24/09, Olimpiada R8): la misma partida con jugadas nuevas no se reproduce entera ──
+  // Cada vuelta usa un tdFinalFen NUEVO (caché vacío) como vara: "lo que daba antes, reproduciendo todo".
+  const TDFnuevo = () => new Function('Chess',
+      extraerFuncion('_pgnStartFen') + extraerFuncion('_pgnIs960') + extraerFuncion('_pgn960Origins')
+    + extraerFuncion('_castle960') + extraerFuncion('_replay960') + extraerFuncion('tdFinalFen')
+    + extraerFuncion('_tdMovTokens') + extraerFuncion('_tdIncrKey') + extraerFuncion('_tdIncrSave') + extraerFuncion('_capCache')
+    + 'var _tdFenIncr = {}, JUGADAS = 0; var _Ch = Chess; Chess = function(f){ var c = f ? new _Ch(f) : new _Ch(); var m = c.move; c.move = function(){ JUGADAS++; return m.apply(c, arguments); }; return c; };'
+    + 'function parseMoveClocks(){ return []; } function parseMoveEvals(){ return []; }'
+    + ' return { fen: tdFinalFen, cache: _tdFenIncr, jugadas: function(){ return JUGADAS; } };')(Chess);
+  const cab = '[Event "Olimpiada"]\n[Site "https://lichess.org/broadcast/-/-/abc/xyz"]\n[Round "8.1"]\n[White "Flores, Diego"]\n[Black "Huh, Isaak"]\n[Result "*"]\n\n';
+  const larga = '1. e4 { [%clk 1:30:00] } 1... c5 { [%eval 0.3] } 2. Nf3 d6 3. d4 cxd4 4. Nxd4 Nf6 5. Nc3 a6 6. Be3 e5 7. Nb3 Be6 8. f3 Be7 9. Qd2 O-O 10. O-O-O Nbd7 11. g4 b5 12. g5 b4 13. Ne2 Ne8 14. f4 a5 15. f5 a4 16. Nbd4 exd4 17. Nxd4 b3 18. Kb1 bxc2+ 19. Nxc2 Bb3 20. axb3 axb3 21. Na3 Ra4';
+  const tok = larga.replace(/\{[^}]*\}/g, ' ').replace(/\d+\.(\.\.)?/g, ' ').split(/\s+/).filter(Boolean);
+  const hasta = (n) => { let out = [], k = 0; for (let i = 0; i < n; i++) { if (i % 2 === 0) out.push((i / 2 + 1) + '.'); out.push(tok[i]); } return out.join(' '); };
+  const T = TDFnuevo();
+  let iguales = 0, total = 0, jugadasDeAPoco = 0;
+  for (let n = 1; n <= tok.length; n++) {
+    const p = cab + hasta(n) + ' *';
+    const antes = T.jugadas(); const r = T.fen(p); if (n > 1) jugadasDeAPoco += T.jugadas() - antes;
+    const vara = TDFnuevo().fen(p);
+    total++; if (r.fen === vara.fen && JSON.stringify(r.last) === JSON.stringify(vara.last)) iguales++;
+  }
+  chk(iguales === total, '🔒 jugada por jugada, de a poco da EXACTAMENTE la misma posición y última jugada que reproducir todo', iguales + '/' + total);
+  chk(jugadasDeAPoco === tok.length - 1, '🔒 y aplica sólo la jugada nueva (antes reproducía la partida entera en cada jugada)', jugadasDeAPoco + ' jugadas aplicadas para ' + (tok.length - 1) + ' nuevas');
+  // Llegan dos jugadas juntas (el PGN del Worker viene atrasado): también de a poco.
+  const T2 = TDFnuevo(); T2.fen(cab + hasta(20) + ' *'); const a2 = T2.jugadas(); const r2 = T2.fen(cab + hasta(23) + ' *');
+  chk(T2.jugadas() - a2 === 3 && r2.fen === TDFnuevo().fen(cab + hasta(23) + ' *').fen, 'con tres jugadas nuevas juntas, aplica esas tres y da lo mismo');
+  // Una jugada corregida (la transmisión se equivocó y la arregló): el principio no coincide → entera.
+  const T3 = TDFnuevo(); T3.fen(cab + '1. e4 c5 2. Nf3 d6 *');
+  const corregida = cab + '1. e4 c5 2. Nc3 d6 3. f4 *';
+  chk(T3.fen(corregida).fen === TDFnuevo().fen(corregida).fen, '🔒 si cambió una jugada de antes, se reproduce entera (no se arrastra la vieja)');
+  // Otra partida con las mismas jugadas no se confunde con la primera.
+  const T4 = TDFnuevo(); T4.fen(cab + '1. e4 c5 *');
+  const otra = cab.replace('Flores, Diego', 'Otro, Jugador') + '1. e4 c5 2. Nf3 *';
+  chk(T4.fen(otra).fen === TDFnuevo().fen(otra).fen && Object.keys(T4.cache).length === 2, 'cada partida se sigue por separado (jugadores, ronda, sitio)');
+  // Sin encabezados no hay cómo saber que es la misma partida: se reproduce entera, como siempre.
+  const T5 = TDFnuevo(); T5.fen('1. e4 e5 *'); chk(Object.keys(T5.cache).length === 0, 'sin encabezados no se sigue (se reproduce entera)');
+  // El 960 va por su camino y no se toca.
+  const T6 = TDFnuevo(); chk(T6.fen(pgn960).fen === r960.fen && Object.keys(T6.cache).length === 0, 'el 960 sigue por su camino aparte, sin cambios');
+  chk(/_capCache\(_tdFenIncr, 600\)/.test(SRC) && /delete _tdFenIncr\[k\];/.test(SRC), 'el caché de partidas seguidas tiene tope (600) y saca primero las que no se movieron');
 
   // ── El ENROQUE de 960, que es lo que chess.js no sabe hacer ──
   // Regla fija: corto → rey a la columna g y torre a la f; largo → rey a c y torre a d, vengan de
@@ -3376,7 +3418,7 @@ console.log('\n=== 46. Accesibilidad Fase 1: las tablas de torneo ===');
       'con el código pegado, como en la Olimpiada grande, anda igual que antes');
   chk(T({ aName: 'Argentinos Juniors', bName: 'Racing Club' }, null) === false,
       'un club con "Argentin…" en el nombre no pasa por la selección');
-  chk(extraerFuncion('_teamRenderRound').includes('return _teamMatchIsArg(m,_dArg);')
+  chk(extraerFuncion('_teamRoundMatches').includes('return _teamMatchIsArg(m,_dArg);')
    && SRC.includes('(rounds[r]||[]).some(function(m){ return _teamMatchIsArg(m,data); })'),
       'el panel de la formación y el que decide si va el botón le pasan los datos del torneo');
   chk(extraerFuncion('_teamRefresh').includes('_teamRenderSection(crk,crDataLoad(crk),tab)')
@@ -4156,7 +4198,7 @@ console.log('\n=== 53. Vivo: los tableros que se miran, sueltos y al instante (1
   const N = ['parsePgnHeaders', '_bcGameIds', '_pgnPlies', '_pgnAhead', '_tdFocusPreferNewer', '_tdFocusApply'];
   const F = new Function('var _tdFocusNew = {}, _tdCtx = null, _tdCurrentRound = null, _tdLiveCtx = null, llamadas = [];'
     + 'function _tdRebuildFlatGames(){ llamadas.push("flat"); var g=[]; Object.keys(_tdCtx.byRound).forEach(function(k){ _tdCtx.byRound[k].forEach(function(x){ g.push(x.pgn); }); }); _tdCtx.games = g; }'
-    + 'function _tdPatchRoundBoards(){ llamadas.push("patch"); } function _tdApplyViewerRefresh(){ llamadas.push("visor"); } function mevTick(){} function _teamLiveRefresh(){}'
+    + 'function _tdPatchRoundBoards(){ llamadas.push("patch"); } function _tdApplyViewerRefresh(){ llamadas.push("visor"); } function mevTick(){} function _teamLiveRefresh(){} function _teamLiveRefreshPronto(){}'
     + 'var document = { getElementById: function(){ return {}; } };'
     + N.map(extraerFuncion).join('\n')
     + '; return { ' + N.join(',') + ', set ctx(c){ _tdCtx = c; _tdCurrentRound = 1; }, get nuevos(){ return _tdFocusNew; }, llamadas: llamadas };')();
@@ -4218,7 +4260,7 @@ console.log('\n=== 53b. Vivo: miniaturas con la ficha liviana de Lichess (17/09)
   const N = ['parsePgnHeaders', '_bcGameIds', '_fenPlies', '_csToClk', '_tdJsonRes', '_tdJsonAhead', '_tdFichaSirve', '_tdBoardState', '_tdGameRes', '_tdJsonApply', '_tdTeamMatches'];
   const F = new Function('var _tdJsonNew = {}, _tdCtx = null, _tdCurrentRound = 2, _tdLiveCtx = { currentNum: 2 }, llamadas = [];'
     + 'var FENS = {}; function tdFinalFenCached(p){ return FENS[p]; } function _pgnPlies(p){ return FENS[p] ? _fenPlies(FENS[p].fen) : 0; }'
-    + 'function _tdPatchRoundBoards(r){ llamadas.push("patch" + r); } function _teamLiveRefresh(){} function _colOn(){ return false; } function mevTick(){}'
+    + 'function _tdPatchRoundBoards(r){ llamadas.push("patch" + r); } function _teamLiveRefresh(){} function _teamLiveRefreshPronto(){} function _colOn(){ return false; } function mevTick(){}'
     + 'var document = { getElementById: function(){ return {}; } };'
     + N.map(extraerFuncion).join('\n')
     + '; return { ' + N.join(',') + ', FENS: FENS, set ctx(c){ _tdCtx = c; }, get nuevos(){ return _tdJsonNew; }, llamadas: llamadas };')();
@@ -4331,13 +4373,13 @@ console.log('\n=== 53c. Por equipos: marcadores parciales con lo que terminó en
   chk(F._teamLiveBoardRes(2, 'Perez Ponsa, Federico', 'Lee, Junhyeok') === '½-½', 'las tablas salen como las escribe Chess-Results (½-½)');
   chk(F._teamLiveBoardRes(2, 'Mekhitarian, Krikor', 'Kim, Ho') === '' && F._teamLiveBoardRes(2, 'Nadie', 'Tampoco') === '', 'una partida en juego o que no está no pone nada');
 
-  const cruces = extraerFuncion('_teamRenderCrosses'), forma = extraerFuncion('_teamRenderRound');
+  const cruces = extraerFuncion('_teamRenderCrosses'), forma = ['_teamRoundLive', '_teamRoundBlock', '_teamRenderRound'].map(extraerFuncion).join('\n');
   chk(cruces.includes('if(_lp && _lp.a+_lp.b > _teamCrTotal(m.aRes, m.bRes)){'),
       '🔒 en los cruces, manda la transmisión sólo si cuenta MÁS mesas terminadas que Chess-Results (vacío o "0 : 0")');
   chk(/if\(b\.res\) return b;/.test(forma) && /var c=\{\}; for\(var k in b\) c\[k\]=b\[k\];/.test(forma) && forma.includes('if(_pa+_pb > _teamCrTotal(_sc0[0], _sc0[1])){'),
       '🔒 en la formación: mesas sin resultado sobre una COPIA, y el marcador "0 : 0" de Chess-Results no tapa las mesas terminadas');
   chk(cruces.includes('(parcial?_teamLiveDot(final):\'\')') && forma.includes('(_parcial?_teamLiveDot(_final):\'\')')
-      && cruces.includes('inner+=_teamLiveLegend();') && forma.includes('inner+=_teamLiveLegend();'),
+      && cruces.includes('inner+=_teamLiveLegend();') && forma.includes('inner+=_teamLiveLegend()'),
       'el marcador de la transmisión lleva el punto y la aclaración arriba (cruces y formación)');
   // Rumania 4 : 0 Costa Rica ya había terminado y el punto decía "sigue en juego" (autor, 17/09).
   const G = new Function('function _a11yNum(s){ var t=String(s==null?"":s).trim(); if(!t) return null; var m=/½/.test(t), v=parseFloat(t.replace("½","")); if(isNaN(v)){ if(!m) return null; v=0; } return m?v+0.5:v; }'
@@ -4349,10 +4391,114 @@ console.log('\n=== 53c. Por equipos: marcadores parciales con lo que terminó en
   chk(G._teamCrTotal('0', '0') === 0 && G._teamCrTotal('', '') === 0 && G._teamCrTotal('2½', '1½') === 4, 'el marcador de Chess-Results se cuenta en puntos repartidos ("0 : 0" = 0)');
   chk(cruces.includes('final=_lp.dec>=_mesas;') && forma.includes('_final=_boards.every('), 'terminado = todas las mesas con resultado (las de la formación, si Chess-Results ya la publicó)');
   chk(!/_teamLiveScore|_teamLiveBoardRes/.test(extraerFuncion('_teamRenderStandings')), '🔒 la TABLA de posiciones no usa parciales (un match a medio jugar no reparte puntos)');
-  chk(/try \{ _teamLiveRefresh\(\); \} catch\(e\) \{\}/.test(extraerFuncion('_tdLiveRefreshOnDemand')) && /_teamLiveRefresh\(\);/.test(extraerFuncion('_tdJsonApply')) && /_teamLiveRefresh\(\);/.test(extraerFuncion('_tdFocusApply')),
+  chk(/try \{ _teamLiveRefreshPronto\(\); \} catch\(e\) \{\}/.test(extraerFuncion('_tdLiveRefreshOnDemand')) && /_teamLiveRefreshPronto\(\);/.test(extraerFuncion('_tdJsonApply')) && /_teamLiveRefreshPronto\(\);/.test(extraerFuncion('_tdFocusApply')),
       'se redibuja al llegar resultados nuevos (ronda, ficha liviana o tablero suelto)');
   chk(/ap\.contains\(document\.activeElement\)\)\{ listo=false; return; \}/.test(extraerFuncion('_teamLiveRefresh')),
       'con el foco adentro (lector de pantalla) no se redibuja debajo del usuario');
+}
+
+// ── 53j. Dorado de LETRA y dorado de FONDO (24/09) ──
+// El 23/09 el dorado del modo claro se oscureció (#835a00) para que se lean los textos dorados; pero donde
+// el dorado es el FONDO y la letra es oscura (el número del globito del chat, botones, chapitas) quedó 3:1.
+console.log('\n=== 53j. Dorado de letra y dorado de fondo (24/09) ===');
+{
+  chk(/--gold-fill: #ffc940;/.test(SRC) && /--gold-fill: #b07d0a;/.test(SRC),
+      'hay un dorado aparte para los FONDOS con letra oscura (oscuro: el de siempre; claro: el de antes, 5:1)');
+  const malos = (SRC.match(/background: *var\(--gold\)[;"' ][^}"]{0,120}/g) || []).filter((x) => /color: *#[01][0-9a-f]{2,5}\b/i.test(x));
+  chk(malos.length === 0, '🔒 ninguna letra oscura sobre el dorado de LETRA (se leía mal en modo claro)', malos.slice(0, 2).join(' | '));
+  chk(/\.cv-chat-n \{[^}]*background:var\(--gold-fill\)/.test(SRC), 'el número de gente en el globito del chat usa el dorado de fondo');
+}
+
+// ── 53i. La formación se parchea, no se rehace (24/09, Olimpiada R8) ──
+// Medido en la web publicada: la formación de la ronda en vivo (106 matches, 1,3 MB, 10.000 nodos) se
+// rehacía entera con cada resultado nuevo: ~400 ms trabada, hasta 5 veces por vuelta de fichas.
+console.log('\n=== 53i. La formación se parchea match por match (24/09) ===');
+{
+  const N = ['_teamNorm', '_teamPairKey', '_teamRoundLive', '_teamRoundMatches', '_teamRoundHeadSig', '_teamHash', '_teamRoundPatch', '_teamResPts', '_fmtHalf'];
+  const F = new Function('var _teamArgOnly = false, document = { activeElement: null }, RES = {}, EN_RONDA = {}, CX = { rdata: null, hasGm: true, rondaEnMemoria: true }, HEAD = "";'
+    + 'var _TEAM_SIN_JUGADOR = /^sin jugador/i; function _teamIsPlaceholder(n){ return _TEAM_SIN_JUGADOR.test(String(n||"").trim()); }'
+    + 'function _teamCrTotal(a, b){ return (parseFloat(a)||0) + (parseFloat(b)||0); }'
+    + 'function _teamLiveBoardRes(r, w, b){ return RES[w + "|" + b] || ""; }'
+    + 'function crFindGameIdx(r, w, b){ return EN_RONDA[w + "|" + b] ? 1 : -1; }'
+    + 'function _teamRoundCx(){ return CX; } function _teamRoundHead(){ return HEAD; }'
+    + 'function _teamRoundBlock(m, mi, r, crk, cx, lv){ return "<div id=\\"tm-" + crk + "-" + r + "-" + lv.pk + "\\" data-lsig=\\"" + lv.sig + "\\">"; }'
+    + 'function _teamMatchIsArg(){ return true; } function crDataLoad(){ return null; }'
+    + N.map(extraerFuncion).join('\n')
+    + '; return { ' + N.join(',') + ', RES: RES, EN_RONDA: EN_RONDA, CX: CX, doc: document, setHead: function(h){ HEAD = h; } };')();
+  const mesa = (w, b) => ({ nW: w, nB: b, res: '' });
+  const matches = [
+    { aName: 'Argentina', bName: 'Chile', score: '', boards: [mesa('A1', 'C1'), mesa('C2', 'A2'), mesa('A3', 'C3'), mesa('C4', 'A4')] },
+    { aName: 'India', bName: 'Peru', score: '', boards: [mesa('I1', 'P1'), mesa('P2', 'I2'), mesa('I3', 'P3'), mesa('P4', 'I4')] },
+    { aName: 'Spain', bName: 'Italy', score: '', boards: [mesa('S1', 'T1'), mesa('T2', 'S2'), mesa('S3', 'T3'), mesa('T4', 'S4')] },
+  ];
+  ['A1|C1', 'C2|A2', 'A3|C3', 'C4|A4', 'I1|P1', 'P2|I2', 'I3|P3', 'P4|I4', 'S1|T1', 'T2|S2', 'S3|T3', 'T4|S4'].forEach((k) => { F.EN_RONDA[k] = true; });
+  F.RES['A1|C1'] = '1-0';   // ya hay un match con parcial: la aclaración de los puntos está puesta
+  // Un DOM de juguete: el panel, su recuadro y un bloque por match.
+  function armar() {
+    const reemplazados = [];
+    const bloques = matches.map((m) => {
+      const lv = F._teamRoundLive(m, 8, F.CX);
+      const b = { id: 'tm-K-8-' + lv.pk, a: { 'data-lsig': lv.sig }, foco: null,
+        hasAttribute(k) { return k in this.a; }, getAttribute(k) { return this.a[k]; },
+        contains(x) { return !!x && x === this.foco; },
+        set outerHTML(h) { reemplazados.push(this.id); const m2 = /data-lsig="([^"]*)"/.exec(h); this.a['data-lsig'] = m2 ? m2[1] : ''; } };
+      return b;
+    });
+    const root = { a: { 'data-tround': '8', 'data-lhead': F._teamRoundHeadSig(matches, '', F.CX) }, children: bloques, leyenda: true,
+      getAttribute(k) { return this.a[k]; }, querySelector(s) { return s === '[data-lleg]' && this.leyenda ? {} : null; } };
+    const ap = { querySelector(s) { return s === '[data-tround]' ? root : null; } };
+    return { ap, root, bloques, reemplazados };
+  }
+  const datos = { teamRounds: { 8: matches } };
+  let d = armar();
+  chk(F._teamRoundPatch(d.ap, 'K', datos, 8) === true && d.reemplazados.length === 0,
+      'sin resultados nuevos no se toca nada', d.reemplazados.join(','));
+  F.RES['I3|P3'] = '½-½';
+  chk(F._teamRoundPatch(d.ap, 'K', datos, 8) === true && d.reemplazados.join(',') === d.bloques[1].id,
+      '🔒 un resultado nuevo redibuja SÓLO su match (antes: los 106)', d.reemplazados.join(','));
+  chk(F._teamRoundPatch(d.ap, 'K', datos, 8) === true && d.reemplazados.length === 1,
+      'y la vuelta siguiente, sin cambios, ya no redibuja nada', d.reemplazados.join(','));
+  const lv0 = F._teamRoundLive(matches[2], 8, F.CX).sig;
+  delete F.EN_RONDA['S3|T3'];
+  chk(F._teamRoundLive(matches[2], 8, F.CX).sig !== lv0,
+      '🔒 el ojito de la mesa va en la firma (aparece cuando la partida entra a la ronda)');
+  F.EN_RONDA['S3|T3'] = true;
+  chk(F._teamRoundLive(matches[2], 8, F.CX).sig === lv0, 'y la firma no depende de nada más que lo que se ve');
+  // El primer parcial: la aclaración de los puntos va arriba de todo → se rehace entero (una vez por ronda).
+  d = armar(); d.root.leyenda = false;
+  chk(F._teamRoundPatch(d.ap, 'K', datos, 8) === false, '🔒 si falta la aclaración de los puntos (primer parcial), se rehace entera');
+  d = armar();
+  F.setHead('<div>Se juega: mañana 10:00</div>');
+  chk(F._teamRoundPatch(d.ap, 'K', datos, 8) === false, '🔒 si cambia lo de arriba (horario, próxima ronda), se rehace entera como antes');
+  F.setHead('');
+  d = armar(); d.root.children = d.bloques.slice(0, 2);
+  chk(F._teamRoundPatch(d.ap, 'K', datos, 8) === false, 'si la cantidad de matches no coincide, se rehace entera');
+  d = armar(); d.bloques[0].id = 'tm-K-8-otro';
+  chk(F._teamRoundPatch(d.ap, 'K', datos, 8) === false, 'si el orden de los matches no coincide, se rehace entera');
+  chk(F._teamRoundPatch(d.ap, 'K', datos, 7) === false, 'otra ronda que la dibujada: se rehace entera');
+  d = armar();
+  F.RES['T4|S4'] = '0-1';
+  const enfoque = {}; d.bloques[2].foco = enfoque; F.doc.activeElement = enfoque;
+  chk(F._teamRoundPatch(d.ap, 'K', datos, 8) === 'foco' && d.reemplazados.length === 0,
+      '🔒 con el foco adentro del match que cambió (lector, teclado), espera al próximo cambio');
+  F.doc.activeElement = null;
+  chk(F._teamRoundPatch(d.ap, 'K', datos, 8) === true && d.reemplazados.join(',') === d.bloques[2].id, 'y al salir el foco, se redibuja');
+  const lv1 = F._teamRoundLive(matches[0], 8, F.CX);
+  chk(lv1.parcial && !lv1.final && lv1.score === '1 : 0' && lv1.boards[0].res === '1-0' && matches[0].boards[0].res === '',
+      'el marcador parcial sale de las mesas terminadas, sobre una COPIA de la mesa');
+
+  const refresco = extraerFuncion('_teamLiveRefresh');
+  chk(/pr=_teamRoundPatch\(ap, crk,/.test(refresco) && refresco.indexOf('_teamRoundPatch') < refresco.indexOf('ap.innerHTML=_teamPanelContent'),
+      '_teamLiveRefresh prueba primero el parche y si no puede, la rehace entera como antes');
+  chk(/if\(tab\.charAt\(0\)!=='x'\)\{/.test(refresco), 'el parche es para la formación (los cruces se arman recién al abrirlos)');
+  const pronto = extraerFuncion('_teamLiveRefreshPronto');
+  chk(/if\(_teamLiveT\) return;/.test(pronto) && /_TEAM_LIVE_JUNTAR_MS/.test(pronto) && /_TEAM_LIVE_JUNTAR_MS=3000/.test(SRC),
+      '🔒 los avisos de las 5 transmisiones se juntan en un redibujo cada 3 s como mucho');
+  const bloque = extraerFuncion('_teamRoundBlock'), todo = extraerFuncion('_teamRenderRound');
+  chk(/data-lsig="'\+escHtml\(lv\.sig\)\+'"/.test(bloque) && /data-tround="/.test(todo) && /data-lhead="'\+_hs\+'"/.test(todo) && /data-lleg="1"/.test(todo),
+      'cada match guarda su firma y el panel la suya');
+  chk(/var _verMesa = lv\.ver\[bi\];/.test(bloque) && !/crFindGameIdx/.test(bloque),
+      'el bloque usa el ojito ya calculado (no busca la partida dos veces)');
 }
 
 // ── 53d. Vivo de varias transmisiones: menos pedidos al Worker (17/09) ──
@@ -5243,7 +5389,7 @@ console.log('\n=== 53g. Aviso de colgadas graves (19/09) ===');
     + 'var window = { aaTourChat: { avisarColgada: function(cs){ lotes.push(cs); cs.forEach(function(c){ repartidos.push(c); }); return true; } } };'
     + 'function setTimeout(fn, ms){ timers.push({ fn: fn, ms: ms }); return timers.length; }'
     + 'function _colOn(){ return true; } function _capCache(){} function mevTick(){} function _bcGameIds(p){ return { game: p }; }'
-    + 'function _cgBarRefrescar(){}'
+    + 'function _cgBarRefrescar(){} var _colVisto = {};'
     // El chequeo de verdad (pedirle a Lichess el PGN otra vez) es asincrónico: se prueba aparte, más abajo.
     + 'function _colChequear(items, cb){ items.sort(function(a, b){ return (b.arg ? 1 : 0) - (a.arg ? 1 : 0); }); cb(items); }'
     + 'function _tdEvKey(h){ return h.k; } function _tdIsArgGame(h){ return !!h.arg; } function _colMostrar(items){ mostrados.push(items.map(function(i){ return i.gk; })); }'
@@ -5338,6 +5484,52 @@ console.log('\n=== 53g. Aviso de colgadas graves (19/09) ===');
   chk(extraerFuncion('_colMasTrabajos').includes('!_colOn() || !_colBarreRonda()')
       && extraerFuncion('_colFichaHace').includes('!_colOn() || !_colBarreRonda()'),
       '…y eso decide las DOS cosas caras: el barrido de las otras páginas y la ficha de Lichess');
+  // Barrido POR TURNO (Olimpiada R8, 24/09): las de abajo de la lista esperaban 7 a 13 minutos.
+  {
+    const T = new Function('var _colVisto = {}, _mevEvals = {}, _mev = { avgMs: 100 }, _COL_MAX_JOBS = 80, _COL_PRESUPUESTO_MS = 300;'
+      + 'var _tdJsonNew = {}, games = [];'
+      + 'function _colOn(){ return true; } function _colBarreRonda(){ return true; } function _colRonda(){ return games; }'
+      + 'function _bcGameIds(p){ return { game: p }; } function _tdEvKey(h){ return h.k; } function _tdIsArgGame(h){ return !!h.arg; }'
+      + extraerFuncion('_colMasTrabajos')
+      + '; return { f: _colMasTrabajos, visto: _colVisto, json: _tdJsonNew, games: games };')();
+    ['a', 'b', 'c', 'd', 'e'].forEach(function(k){
+      T.games.push({ pgn: k, h: { k: k, arg: k === 'e' } });
+      T.json[k] = { fen: 'pos-' + k + ' w - - 0 20', res: '*' };
+    });
+    T.visto.a = 3000; T.visto.b = 1000; T.visto.c = 2000; T.visto.e = 5000;   // la d nunca se miró
+    const jobs = []; T.f(jobs, {});
+    chk(jobs.map(j => j.fen.slice(4, 5)).join('') === 'e' + 'db',
+        '🔒 el barrido va POR TURNO: argentinos primero y después la que hace más que no se mira (d nunca, b, …), no en el orden de la lista; con el presupuesto de 3 no llega a la a', jobs.map(j => j.fen).join());
+  }
+  // Teléfono que entra desde un aviso: el "??" de la colgada sin esperar al gráfico (24/09).
+  {
+    const Nn = new Function('var _colFoco = null, _cvMobileOn = true, _cvAnalysisStarted = false, cv = null, pint = 0, mirando = "g1";'
+      + 'function _colMirandoGk(){ return mirando; } function faApplyNags(){ pint++; } function cvUpdateNagBadge(){}'
+      + extraerFuncion('_colNagAviso')
+      + '; return { f: _colNagAviso, set: function(o){ if ("foco" in o) _colFoco = o.foco; if ("movil" in o) _cvMobileOn = o.movil; if ("stats" in o) _cvAnalysisStarted = o.stats; if ("cv" in o) cv = o.cv; if ("mira" in o) mirando = o.mira; }, pint: function(){ return pint; } };')();
+    const arbol = (n) => { const root = { children: [] }; let x = root; for (let i = 1; i <= n; i++) { const c = { move: { san: 'j' + i, nag: '' }, children: [] }; x.children.push(c); x = c; } return root; };
+    const nodo = (root, ply) => { let x = root; for (let i = 0; i < ply; i++) x = x.children[0]; return x; };
+    let r = arbol(20); Nn.set({ cv: { root: r }, foco: { gk: 'g1', ply: 15 } }); Nn.f();
+    chk(nodo(r, 15).move.nag === '??' && Nn.pint() === 1 && nodo(r, 14).move.nag === '' && nodo(r, 16).move.nag === '',
+        '🔒 teléfono que entra desde un aviso: la jugada de la colgada lleva su "??" sin dibujar el gráfico, y SÓLO esa');
+    Nn.f(); chk(Nn.pint() === 1, 'en los refrescos siguientes no se vuelve a redibujar la notación (ya estaba puesto)');
+    r = arbol(10); Nn.set({ cv: { root: r } }); Nn.f();
+    chk(Nn.pint() === 1, 'si la partida todavía no llegó a la colgada (PGN atrasado), espera…');
+    r = arbol(20); Nn.set({ cv: { root: r } }); Nn.f();
+    chk(nodo(r, 15).move.nag === '??', '…y lo pone cuando llega (o cuando el vivo rearma la partida)');
+    r = arbol(20); nodo(r, 15).move.nag = '?'; Nn.set({ cv: { root: r } }); Nn.f();
+    chk(nodo(r, 15).move.nag === '?', 'si esa jugada ya tiene un símbolo (el del gráfico o el del PGN) no se lo pisa');
+    r = arbol(20); Nn.set({ cv: { root: r }, stats: true }); Nn.f();
+    chk(nodo(r, 15).move.nag === '', 'con "Estadísticas" abierta manda el gráfico: no se toca nada');
+    r = arbol(20); Nn.set({ cv: { root: r }, stats: false, movil: false }); Nn.f();
+    chk(nodo(r, 15).move.nag === '', 'en la PC no hace falta (el gráfico arranca solo y salta a la colgada)');
+    r = arbol(20); Nn.set({ cv: { root: r }, movil: true, mira: 'otra' }); Nn.f();
+    chk(nodo(r, 15).move.nag === '', 'en OTRA partida no se marca nada');
+  }
+  chk(/^\s*_colNagAviso\(\);/m.test(extraerFuncion('faMaybeAutoLive')),
+      '…y se engancha en faMaybeAutoLive, que corre al abrir la partida y en cada refresco del vivo');
+  chk(/_colVisto\[gk\] = ahora/.test(extraerFuncion('_colScan')),
+      '…y el turno se anota cuando se evalúa una posición NUEVA de esa partida');
   chk(/data-fen|enPantalla/.test(extraerFuncion('_colScan')),
       'lo de siempre no cambia: todos vigilan los tableros que tienen en pantalla (esas evals ya se calculan para la barrita)');
   const mg = extraerFuncion('_colMirandoGk');
@@ -5571,37 +5763,59 @@ console.log('\n=== 53g-bis. La colgada se verifica contra el PGN antes de avisar
       + 'function _colMirar(fen, cb){ pedidas.push(fen); cb(evs[fen]); }'
       + 'function _colFenEnPly(pgn, ply){ return "f" + ply; }'
       + 'function _colJugadaEnPly(pgn, ply){ return { from: "a1", to: "a2" }; }'
+      + 'function _colSanEnPly(pgn, ply){ return "S" + ply; }'
       + SRC.match(/var _COL_PAR[^\n]*/)[0] + '\n' + SRC.match(/var _COL_CAND_A[^\n]*/)[0] + '\n' + SRC.match(/var _COL_CAND_B[^\n]*/)[0] + '\n'
       + SRC.match(/var _COL_C_ANTES[^\n]*/)[0] + '\n' + SRC.match(/var _COL_MATE_ANTES[^\n]*/)[0] + '\n'
       + SRC.match(/var _COL_AFINA_MIN[^\n]*/)[0] + '\n'
-      + extraerFuncion('_colClasifica') + extraerFuncion('_colAfinar')
+      + extraerFuncion('_colChances') + extraerFuncion('_colClasifica') + extraerFuncion('_colAfinar')
       + '; return { afinar: _colAfinar, pedidas: pedidas, evs: evs };')();
-    // Llegaron 6 medias jugadas de una (44 → 50). La colgada de las blancas fue la 47: de +0,2 a −5,0.
-    A.evs['f45'] = 20; A.evs['f46'] = 10; A.evs['f47'] = -500; A.evs['f48'] = -520; A.evs['f49'] = -540;
+    // Llegaron 6 medias jugadas de una (44 → 50). La colgada de las blancas fue la 47: con la respuesta
+    // de las negras hecha, de +0,1 a −5,2. Sólo se miran las posiciones en las que mueven las blancas.
+    A.evs['f42'] = 25; A.evs['f44'] = 20; A.evs['f46'] = 10; A.evs['f48'] = -520;
     const it = { c: { lado: 'w', tipo: 'A' },
       prev: { fen: 'f44', cp: 20, plies: 44, last: null },
       now:  { fen: 'f50', cp: -560, plies: 50, last: { from: 'h1', to: 'h2' } } };
     let listo = false; A.afinar(it, 'PGN', function(){ listo = true; });
-    chk(listo && it.now.plies === 47 && it.prev.plies === 46,
-        '🔒 con VARIAS jugadas juntas se mira cada una y se elige la del salto más grande: la 47, no la 50 (caso "entra en la 26 y la colgada es la 24")', it.now.plies);
-    chk(it.now.cp === -500 && it.prev.cp === 10 && it.now.last.from === 'a1',
-        '…y se queda con las evals y la jugada de ESA, así el cartel la puede nombrar y el visor abre ahí');
-    chk(A.pedidas.length === 5, 'el motor mira sólo las intermedias (las dos puntas ya estaban evaluadas)', A.pedidas.length);
-    // Tres colgadas seguidas: se queda con la más grande.
+    chk(listo && it.prev.plies === 46 && it.now.plies === 48 && it.now.sanPly === 47 && it.now.san === 'S47',
+        '🔒 con VARIAS jugadas juntas se elige la del salto más grande: la 47, no la 50 (caso "entra en la 26 y la colgada es la 24")', JSON.stringify(it.now));
+    chk(it.now.cp === -520 && it.prev.cp === 10 && it.now.last.from === 'a1',
+        '…medida de ANTES de moverla a DESPUÉS de la respuesta del rival (así el cartel la nombra y el que la recibe por el arbitrito ve la refutación)');
+    chk(A.pedidas.join() === 'f42,f44,f46,f48', 'el motor mira sólo las posiciones en las que le toca al que se colgó (desde una jugada antes)', A.pedidas.join());
+    // Tres colgadas seguidas de las negras: se queda con la que más chances de ganar le costó.
     const it3 = { c: { lado: 'b', tipo: 'A' },
       prev: { fen: 'f44', cp: -20, plies: 44, last: null },
       now:  { fen: 'f50', cp: 900, plies: 50, last: null } };
-    A.evs['f45'] = -10; A.evs['f46'] = 250; A.evs['f47'] = 240; A.evs['f48'] = 820; A.evs['f49'] = 830;
+    A.evs['f43'] = -30; A.evs['f45'] = -10; A.evs['f47'] = 240; A.evs['f49'] = 830;
     A.afinar(it3, 'PGN', function(){});
-    chk(it3.now.plies === 48 && it3.prev.plies === 47,
-        '🔒 con TRES COLGADAS SEGUIDAS ninguna entra sola en la franja (la partida ya venía mal): igual se queda con la más grande, no con la última (el otro caso del autor)', it3.now.plies);
+    chk(it3.now.sanPly === 48 && it3.prev.plies === 47 && it3.now.plies === 49,
+        '🔒 con TRES COLGADAS SEGUIDAS ninguna entra sola en la franja (la partida ya venía mal): igual se queda con la más grande, no con la última (el otro caso del autor)', JSON.stringify(it3.now));
     chk(it3.c.tipo === 'A' && it3.c.lado === 'b', '…y en ese caso se respeta la clasificación original del aviso');
     // Un salto chico no mueve el aviso: si no hay una jugada clara, se deja como estaba.
     const itCh = { c: { lado: 'w', tipo: 'A' }, prev: { fen: 'f44', cp: -300, plies: 44, last: null },
       now: { fen: 'f50', cp: -560, plies: 50, last: null } };
-    A.evs['f45'] = -340; A.evs['f46'] = -380; A.evs['f47'] = -420; A.evs['f48'] = -470; A.evs['f49'] = -520;
+    A.evs['f42'] = -260; A.evs['f44'] = -300; A.evs['f46'] = -380; A.evs['f48'] = -470;
     A.afinar(itCh, 'PGN', function(){});
-    chk(itCh.now.plies === 50, 'si ninguna jugada tiene un salto claro (todas chiquitas), no se mueve nada');
+    chk(itCh.now.plies === 50 && itCh.prev.plies === 44, 'si ninguna jugada tiene un salto claro (todas chiquitas), no se mueve nada');
+    // Caso REAL Olimpiada R8 (24/09), Delrieu–Fyfield-Jones: 18 medias jugadas juntas (62 → 80) en un
+    // final de peones, con DOS colgadas de las negras confirmadas a prof. 24: 36...Ce7 (+2,3 → +7,1) y,
+    // después de que las blancas tiraran la ganada con 39.a4, 40...Re5 (+2,0 → +14,5). Se queda con la
+    // que más chances de ganar costó, la 40...Re5 (antes, con el tope de 10, ni se miraba).
+    const evD = { 61: 16, 63: 61, 65: 65, 67: 153, 69: 210, 71: 227, 73: 714, 75: 808, 77: 45, 79: 197 };
+    for (const k in evD) A.evs['f' + k] = evD[k];
+    const itD = { c: { lado: 'b', tipo: 'A' }, prev: { fen: 'f62', cp: 53, plies: 62, last: null },
+      now: { fen: 'f80', cp: 1448, plies: 80, last: { from: 'd6', to: 'e5' } } };
+    A.afinar(itD, 'PGN', function(){});
+    chk(itD.prev.plies === 79 && itD.now.plies === 80 && itD.now.last.from === 'd6',
+        '🔒 caso real Delrieu–Fyfield-Jones (R8): 18 jugadas juntas y dos colgadas de las negras → la más cara, 40...Re5 (la última, así que el cartel la nombra con la jugada que llegó)', JSON.stringify(itD.now));
+    // Caso REAL Shetty–Weber (R8): el detector había anotado como "antes" la posición de DESPUÉS de
+    // 28.Ch2 (a prof. 12 no se veía) y en peones 30.g4 (−6,2 → −11,9) "caía más" que 28.Ch2 (−1,7 → −5,7).
+    const evS = { 54: -172, 56: -573, 58: -620 };
+    for (const k in evS) A.evs['f' + k] = evS[k];
+    const itS = { c: { lado: 'w', tipo: 'A' }, prev: { fen: 'f55', cp: -80, plies: 55, last: null },
+      now: { fen: 'f59', cp: -1190, plies: 59, last: null } };
+    A.afinar(itS, 'PGN', function(){});
+    chk(itS.now.sanPly === 55 && itS.prev.plies === 54 && itS.now.plies === 56,
+        '🔒 caso real Shetty–Weber (R8): la colgada fue 28.Ch2 aunque ya estaba ANTES de lo anotado, y pesa más que 30.g4 con la partida perdida (chances de ganar, como Lichess)', JSON.stringify(itS.now));
     // "Se dejó mate": la última jugada ES el mate, no se afina.
     const itM = { c: { lado: 'w', tipo: 'M' }, prev: { fen: 'f44', cp: 0, plies: 44, last: null },
       now: { fen: 'f50', cp: -10000, plies: 50, last: null } };
@@ -5610,13 +5824,18 @@ console.log('\n=== 53g-bis. La colgada se verifica contra el PGN antes de avisar
     chk(itM.now.plies === 50 && A.pedidas.length === nM, 'el aviso de MATE no se afina: la última jugada es el mate y ahí hay que abrir');
     // Hueco enorme: no se afina (no vale la pena gastar motor), y el aviso NO se pierde.
     const itG = { c: { lado: 'w', tipo: 'A' }, prev: { fen: 'f10', cp: 0, plies: 10, last: null },
-      now: { fen: 'f40', cp: -600, plies: 40, last: null } };
+      now: { fen: 'f50', cp: -600, plies: 50, last: null } };
     let ok2 = false; A.afinar(itG, 'PGN', function(){ ok2 = true; });
-    chk(ok2 && itG.now.plies === 40, 'con un hueco enorme no se afina, pero el aviso sale igual');
+    chk(ok2 && itG.now.plies === 50, 'con un hueco enorme (más de 30 medias jugadas) no se afina, pero el aviso sale igual');
     // Una sola jugada: ni se mira.
     const n0 = A.pedidas.length;
     A.afinar({ c: { lado: 'w' }, prev: { fen: 'f44', cp: 0, plies: 44 }, now: { fen: 'f45', cp: -600, plies: 45 } }, 'PGN', function(){});
     chk(A.pedidas.length === n0, 'si llegó una sola jugada no se gasta ni un pedido de motor');
+    // El cartel nombra la jugada afinada aunque entre las dos posiciones esté la respuesta del rival.
+    const J = new Function('function cvFan(s){ return s; }' + extraerFuncion('_colJugada') + '; return _colJugada;')();
+    chk(J({ fen: 'x w - - 0 28' }, { plies: 56, san: 'Nh2', sanPly: 55 }, 55) === '28.Nh2??'
+        && J({ fen: 'x b - - 0 36' }, { plies: 73, san: 'Ne7', sanPly: 72 }, 72) === '36...Ne7??',
+        'el cartel dice "28.♘h2??" / "36...♞e7??" con la jugada afinada (antes decía "jugada 40")');
   }
   chk(extraerFuncion('_colVerificar').includes('_colAfinar(it, txt, function(){ cb(true); })'),
       'se afina con el MISMO PGN que ya se pidió para el chequeo (no hay un pedido de más)');
