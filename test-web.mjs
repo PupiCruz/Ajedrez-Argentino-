@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1543;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1567;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -4395,6 +4395,82 @@ console.log('\n=== 53c. Por equipos: marcadores parciales con lo que terminó en
       'se redibuja al llegar resultados nuevos (ronda, ficha liviana o tablero suelto)');
   chk(/ap\.contains\(document\.activeElement\)\)\{ listo=false; return; \}/.test(extraerFuncion('_teamLiveRefresh')),
       'con el foco adentro (lector de pantalla) no se redibuja debajo del usuario');
+}
+
+// ── 53k. Abrir el torneo sin trabones (24/09, Olimpiada R8) ──
+// Medido en la web publicada: al abrir la Olimpiada la página se trababa ~2,4 s en 13 tirones. Cuatro arreglos.
+console.log('\n=== 53k. Abrir el torneo sin trabones (24/09) ===');
+{
+  // 1) La formación: el navegador no acomoda los matches que no se ven.
+  chk(/\[data-tround\] > \[data-lsig\] \{ content-visibility:auto; contain-intrinsic-size:auto 207px; \}/.test(SRC),
+      'los matches de la formación que no se ven no se acomodan en pantalla (150-200 ms → ~8 ms)');
+  // El salto del cruce al match: en dos pasos (el suave dentro del recuadro recién armado se quedaba corto).
+  const ir = extraerFuncion('_teamGotoFormation');
+  chk(/var box=el\.parentElement;/.test(ir) && /box\.scrollTop\+=/.test(ir) && /box\.scrollIntoView\(\{behavior:'smooth', block:'nearest'\}\)/.test(ir),
+      '🔒 tocar un cruce lleva al match: primero dentro del recuadro, después la página');
+
+  // 2) Las miniaturas esperan la ficha en vez de reproducir la partida.
+  const N = ['_tdFichaEspera', '_tdFichaLlego'];
+  const F = new Function('var _tdLiveCtx = null, _tdJsonNew = {}, _tdFenCache = {}, _tdCurrentRound = 8, AHORRA = true, PINTADAS = [], AHORA = 1000, TIMERS = [];'
+    + 'var Date = { now: function(){ return AHORA; } }; function setTimeout(f, ms){ TIMERS.push({ f: f, ms: ms }); }'
+    + 'var document = { getElementById: function(){ return {}; } }; function tdFillBoards(r){ PINTADAS.push(r); }'
+    + 'function _tdLiveAhorra(){ return AHORRA; } function _colFichaHace(){ return false; } function _pgnKey(p){ return "k:" + p; }'
+    + 'function _bcGameIds(p){ var m = /lichess\\.org\\/broadcast\\/[^"]*\\/(\\w{8})\\/(\\w{8})/.exec(p); return m ? { round: m[1], game: m[2] } : null; }'
+    + 'var _TD_FICHA_ESPERA_MS = 5000;' + N.map(extraerFuncion).join('\n')
+    + '; return { ' + N.join(',') + ', set ctx(c){ _tdLiveCtx = c; }, get ctx(){ return _tdLiveCtx; }, set ahora(t){ AHORA = t; }, set ahorra(v){ AHORRA = v; }, pintadas: PINTADAS, timers: TIMERS, json: _tdJsonNew, cache: _tdFenCache };')();
+  const pg = (g) => '[Site "https://lichess.org/broadcast/olimpiada/r8/aBkh1Bv5/' + g + '"]\n\n1. e4 *';
+  const nuevo = () => ({ onDemand: true, currentNum: 8, tourIds: ['a', 'b'], roundsMeta: [{ num: 8, roundIds: ['aBkh1Bv5'], finished: false }, { num: 7, roundIds: ['x'], finished: true }] });
+  F.ctx = nuevo();
+  chk(F._tdFichaEspera(8, pg('Game0001')) === true, 'una miniatura de la ronda en vivo espera la ficha (no reproduce su partida)');
+  chk(F.timers.length === 1 && F.timers[0].ms === 5000, 'y se arma un tope de espera de 5 s');
+  chk(F._tdFichaEspera(7, pg('Game0001')) === false, 'una ronda que no es la en vivo no espera (la ficha es de la ronda en vivo)');
+  chk(F._tdFichaEspera(8, '[White "A"]\n\n1. e4 *') === false, 'una partida que no es de Lichess no espera (nunca va a venir en la ficha)');
+  F.json.Game0002 = { fen: 'x' };
+  chk(F._tdFichaEspera(8, pg('Game0002')) === false, 'si la ficha ya la trajo, se pinta en el acto');
+  F.cache['k:' + pg('Game0003')] = { fen: 'y' };
+  chk(F._tdFichaEspera(8, pg('Game0003')) === false, 'si ya estaba calculada, no espera (no cuesta nada)');
+  F.ahorra = false;
+  chk(F._tdFichaEspera(8, pg('Game0001')) === false, 'una transmisión sola con poca gente (no se pide ficha) no espera');
+  F.ahorra = true;
+  F.ahora = 1000 + 5001;
+  chk(F._tdFichaEspera(8, pg('Game0001')) === false, '🔒 pasados 5 s sin ficha (429, sin internet) no espera más: se reproduce como siempre');
+  F.ahora = 1000;
+  F._tdFichaLlego(8, false);
+  chk(F.pintadas.join(',') === '8', 'cuando llega la ficha de una transmisión se pintan las que esperaban');
+  F._tdFichaLlego(8, true);
+  chk(F.ctx._ficha.lista === true && F.pintadas.join(',') === '8,8' && F._tdFichaEspera(8, pg('Game0001')) === false,
+      '🔒 terminada la vuelta de fichas, las que no vinieron en ella se pintan reproduciendo (ninguna queda vacía)');
+  F._tdFichaLlego(8, true);
+  chk(F.pintadas.length === 2, 'y el aviso de fin no repinta dos veces');
+  F.ctx = nuevo(); F.ctx.roundsMeta[0].finished = true;
+  chk(F._tdFichaEspera(8, pg('Game0001')) === false, 'una ronda terminada no espera');
+  F.ctx = nuevo(); F.timers.length = 0; F._tdFichaEspera(8, pg('Game0009')); F.timers[0].f();
+  chk(F.ctx._ficha.lista === true && F.pintadas[F.pintadas.length - 1] === 8, '🔒 si la ficha nunca llega, el tope de 5 s pinta las que esperaban');
+
+  const fill = extraerFuncion('tdFillBoards');
+  chk(/if \(el\.hasAttribute\('data-filled'\)\) continue;/.test(fill) && fill.indexOf('_tdFichaEspera(rInt, pgn)') > 0
+      && fill.indexOf('_tdFichaEspera(rInt, pgn)') < fill.indexOf("el.setAttribute('data-filled', '1');"),
+      'tdFillBoards deja sin pintar (y sin marcar) las que esperan, y no pinta dos veces');
+  chk(/if \(!el\.hasAttribute\('data-filled'\)\) continue;/.test(extraerFuncion('_tdPatchRoundBoards')),
+      '🔒 el parche no reproduce las miniaturas que todavía no se pintaron');
+  chk(/setTimeout\(_tdJsonTick, 0\);/.test(extraerFuncion('_tdJsonStart')), 'la primera ficha se pide en el acto (antes esperaba 4 s)');
+  const tick = extraerFuncion('_tdJsonTick');
+  chk(/_tdFichaLlego\(cur, true\);/.test(tick) && /_tdFichaLlego\(cur, false\);/.test(tick), 'cada ficha que llega, y el fin de la vuelta, avisan a las miniaturas');
+
+  // 3) La grilla de partidas no se arma dos veces.
+  chk(/var _yaMuestra = rnum && _tdCurrentRound === parseInt\(rnum\)/.test(extraerFuncion('_teamShowTab')) && /!_yaMuestra && document\.getElementById\('td-rtab-'\+rnum\)/.test(extraerFuncion('_teamShowTab')),
+      'si Partidas ya muestra esa ronda, la formación no la vuelve a armar (~120 ms)');
+
+  // 4) Chess-Results: si sólo cambió el contenido, se parchea el panel que se ve.
+  const sec = extraerFuncion('_teamRenderSection'), suave = extraerFuncion('_teamRefreshSuave'), refr = extraerFuncion('_teamRefresh');
+  chk(/function _teamRenderSection\(crk,data,wantTab,cascara\)/.test(sec) && /if\(cascara\) return '';/.test(sec) && /_teamCascaraSig\[crk\]=_teamHash\(_teamRenderSection\(crk,data,null,true\)\)/.test(sec),
+      'la sección sabe armar su cáscara (sin paneles ni pestaña prendida) y guarda su firma');
+  chk(/_teamCascaraSig\[crk\]!==_teamHash\(_teamRenderSection\(crk,data,null,true\)\)\) return false;/.test(suave) && /if\(tab!=null && String\(tab\)!==t\) return false;/.test(suave),
+      '🔒 si cambió la cáscara (rondas nuevas, botones) o hay que cambiar de pestaña, se rehace entera como antes');
+  chk(/p\.innerHTML=''; p\.setAttribute\('data-lazy','1'\);/.test(suave) && /pr=_teamRoundPatch\(abierto, crk, data, t\)/.test(suave),
+      'si no, el panel que se ve se parchea y los otros ya armados vuelven a perezosos (se rearman con lo nuevo al abrirlos)');
+  chk(/_suave=_teamRefreshSuave\(sec, crk, _d, tab\)/.test(refr) && /if\(sec && !_suave\)\{ sec\.outerHTML=_teamRenderSection\(crk,crDataLoad\(crk\),tab\); \}/.test(refr),
+      '_teamRefresh prueba el camino suave primero');
 }
 
 // ── 53j. Dorado de LETRA y dorado de FONDO (24/09) ──

@@ -3768,6 +3768,11 @@
       .lv-li-dots::after { content:'…'; animation:lvLiDots 1.2s steps(4,end) infinite; }
       @keyframes lvLiDots { 0%{content:''} 25%{content:'.'} 50%{content:'..'} 75%{content:'…'} }
       .lv-li-note { font-size:12.5px; color:var(--text2); margin:12px 0 0; line-height:1.55; }   /* 24/09: era 11,5 px en --text3 y costaba leerse (pedido del autor) */
+      /* FORMACIÓN POR EQUIPOS (24/09, Olimpiada R8): de los 103 matches se ven ~3 a la vez en el recuadro con
+         scroll. Con esto el navegador no acomoda en pantalla los que no se ven hasta que llegás a ellos:
+         armar la formación pasaba 150-200 ms sólo en eso; ahora ~8 ms. Se ve y se lee igual (el lector de
+         pantalla y el buscar del navegador siguen encontrando todo). 207 px = lo que mide un match de 4 mesas. */
+      [data-tround] > [data-lsig] { content-visibility:auto; contain-intrinsic-size:auto 207px; }
       .lv-li-guest { font-size:12.5px; color:var(--text2); background:var(--bg2); border:1px dashed var(--border);
         border-radius:var(--r-sm); padding:10px 12px; margin:0 0 12px; line-height:1.5; }
 
@@ -9825,7 +9830,15 @@ function _teamGotoFormation(crk, round, fedKey){
   setTimeout(function(){
     var el=fedKey?document.getElementById('tm-'+crk+'-'+round+'-'+fedKey):null;
     if(!el) return;
-    el.scrollIntoView({behavior:'smooth', block:'center'});
+    // En dos pasos (24/09/2026): el deslizamiento suave dentro del recuadro de la formación, recién armada, se
+    // quedaba corto (medido: a ~1.200 px del match, en la web publicada también). Primero el match al medio
+    // del recuadro, al instante; después la página se desliza hasta el recuadro.
+    var box=el.parentElement;
+    if(box && box.scrollHeight>box.clientHeight+2){
+      var a=el.getBoundingClientRect(), b=box.getBoundingClientRect();
+      box.scrollTop+=(a.top-b.top)-Math.max(0,(box.clientHeight-a.height)/2);
+      box.scrollIntoView({behavior:'smooth', block:'nearest'});
+    } else el.scrollIntoView({behavior:'smooth', block:'center'});
     var prev=el.style.boxShadow; el.style.transition='box-shadow .25s'; el.style.boxShadow='0 0 0 2px var(--gold)';
     setTimeout(function(){ el.style.boxShadow=prev||''; }, 1700);
   }, 90);
@@ -10306,7 +10319,9 @@ function _teamOpenBoardGame(round, wName, bName){
   }
   _tdToast('Esta partida no se transmitió.');
 }
-function _teamRenderSection(crk,data,wantTab){
+// cascara=true: la sección SIN el contenido de los paneles y sin ninguna pestaña prendida. Sirve para saber si
+// cambió algo más que el contenido (rondas nuevas, botones, tabla): ver _teamRefreshSuave.
+function _teamRenderSection(crk,data,wantTab,cascara){
   var ks=crk.replace(/'/g,"\\'");
   data=data||{};
   var rounds=data.teamRounds||{};
@@ -10332,6 +10347,7 @@ function _teamRenderSection(crk,data,wantTab){
   // Tabla, se veía un instante la formación ("Argentina no juega en esta ronda") y volvía la tabla.
   if(wantTab!=null){ var _wt=String(wantTab);
     if((_wt==='tabla'&&hasStand) || (_wt==='stats'&&_stStatsAvailable(crk,data)) || (_wt.charAt(0)==='x'&&crossNums.indexOf(Number(_wt.slice(1)))>=0) || roundNums.indexOf(Number(_wt))>=0) defaultTab=_wt; }
+  if(cascara) defaultTab='(ninguna)';   // ninguna pestaña prendida: la cáscara no depende de cuál se mira
   var delBtn=function(label,onclick){ return _ondemand?'':'<div style="display:flex;justify-content:flex-end;margin-bottom:8px"><button onclick="'+onclick+'" style="padding:5px 11px;border-radius:8px;border:1px solid rgba(200,70,70,.35);background:rgba(200,60,60,.1);color:#e07070;font-size:11.5px;font-weight:600;cursor:pointer;font-family:inherit">✕ '+label+'</button></div>'; };
   var h='<div id="cr-section-'+crk+'" style="margin-bottom:20px">';
   h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px">';
@@ -10391,6 +10407,7 @@ function _teamRenderSection(crk,data,wantTab){
   // 700 ms de freeze al abrir el torneo y un teléfono con la memoria llena para mostrar UNA ronda.
   // (Los torneos individuales ya se habían arreglado así; la sección por equipos había quedado.)
   var panel=function(tab, contenido){
+    if(cascara) return '';
     var abierto=(String(defaultTab)===String(tab));
     return '<div id="cr-panel-'+crk+'-'+tab+'"'+(abierto?'':' data-lazy="1"')+' style="display:'+(abierto?'block':'none')+'">'
          + (abierto?contenido():'') + '</div>';
@@ -10400,8 +10417,10 @@ function _teamRenderSection(crk,data,wantTab){
   if(hasStand){ h+=panel('tabla', function(){ return _teamPanelContent(crk,data,'tabla'); }); }
   if(_stStatsAvailable(crk,data)) h+='<div id="cr-panel-'+crk+'-stats" data-lazy="1" style="display:none"></div>';
   h+='</div>';
+  if(!cascara){ try { _teamCascaraSig[crk]=_teamHash(_teamRenderSection(crk,data,null,true)); } catch(e){ delete _teamCascaraSig[crk]; } }
   return h;
 }
+var _teamCascaraSig={};
 // Arma el contenido de UN panel de la sección por equipos. Está separado para poder construirlo
 // tarde, cuando el visitante toca la pestaña (ver los paneles perezosos de _teamRenderSection).
 function _teamPanelContent(crk,data,tab){
@@ -10454,15 +10473,40 @@ function _teamShowTab(crk,tab){
   // Sentido inverso: al cambiar de ronda (CRUCES "x<r>" o FORMACIÓN "<r>"), mover también la ronda de
   // la sección de PARTIDAS si está cargada. La tabla no sincroniza. Guard _crSyncing evita el rebote.
   var rnum = /^x?(\d+)$/.test(tab) ? tab.replace(/^x/,'') : null;
-  if(!_crSyncing && rnum && document.getElementById('td-rtab-'+rnum)){
+  // Si PARTIDAS ya muestra esa ronda, no se vuelve a armar (24/09/2026): al abrir la Olimpiada la grilla
+  // de la ronda en vivo se armaba dos veces seguidas (~120 ms de más), y encima volvía a la página 1.
+  var _yaMuestra = rnum && _tdCurrentRound === parseInt(rnum) && (function(){ var p=document.getElementById('td-round-'+rnum); return !!(p && p.style.display!=='none' && p.children.length); })();
+  if(!_crSyncing && rnum && !_yaMuestra && document.getElementById('td-rtab-'+rnum)){
     _crSyncing=true;
     try { tdShowRound(parseInt(rnum), (typeof _tdCtx!=='undefined'&&_tdCtx)?_tdCtx.pgnKey:''); } catch(e){}
     _crSyncing=false;
   }
 }
+/* REDIBUJO SUAVE (24/09/2026, Olimpiada R8). Cada vez que llegaban los datos de Chess-Results (o las partidas
+   del vivo), se rehacía la sección ENTERA: botones, y sobre todo la formación de 103 matches (~160 ms
+   trabada). Si la cáscara es la misma (mismas rondas, mismos botones, misma tabla: ver cascara en
+   _teamRenderSection), sólo cambia el contenido: se actualiza el panel que se está viendo (la formación,
+   match por match con _teamRoundPatch) y los otros paneles ya armados vuelven a "perezosos", así se
+   rearman con lo nuevo recién al abrirlos. Si algo no coincide, se rehace entera como siempre. */
+function _teamRefreshSuave(sec, crk, data, tab){
+  if(!_teamCascaraSig[crk] || _teamCascaraSig[crk]!==_teamHash(_teamRenderSection(crk,data,null,true))) return false;
+  var pre='cr-panel-'+crk+'-', paneles=sec.querySelectorAll('div[id^="'+pre+'"]'), abierto=null;
+  for(var i=0;i<paneles.length;i++) if(paneles[i].style.display!=='none'){ abierto=paneles[i]; break; }
+  if(!abierto || abierto.getAttribute('data-lazy')) return false;
+  var t=abierto.id.slice(pre.length);
+  if(tab!=null && String(tab)!==t) return false;   // hay que cambiar de pestaña: eso lo hace el redibujo entero
+  for(var j=0;j<paneles.length;j++){ var p=paneles[j];
+    if(p!==abierto && !p.getAttribute('data-lazy')){ p.innerHTML=''; p.setAttribute('data-lazy','1'); } }
+  if(/^\d+$/.test(t)){ var pr=false; try { pr=_teamRoundPatch(abierto, crk, data, t); } catch(e){ pr=false; } if(pr) return true; }
+  var sc=abierto.querySelector('div[style*="overflow-y:auto"]'), arriba=sc?sc.scrollTop:0;
+  abierto.innerHTML=_teamPanelContent(crk, data, t);
+  var sc2=abierto.querySelector('div[style*="overflow-y:auto"]'); if(sc2) sc2.scrollTop=arriba;   // que no salte al principio
+  return true;
+}
 function _teamRefresh(crk,tab,quiet){
-  var sec=document.getElementById('cr-section-'+crk);
-  if(sec){ sec.outerHTML=_teamRenderSection(crk,crDataLoad(crk),tab); }   // ya abierta en `tab`: sin parpadeo
+  var sec=document.getElementById('cr-section-'+crk), _suave=false;
+  if(sec){ var _d=crDataLoad(crk); try { _suave=_teamRefreshSuave(sec, crk, _d, tab); } catch(e){ _suave=false; } }
+  if(sec && !_suave){ sec.outerHTML=_teamRenderSection(crk,crDataLoad(crk),tab); }   // ya abierta en `tab`: sin parpadeo
   if(tab!=null) setTimeout(function(){
     var prev=_crSyncing; if(quiet) _crSyncing=true;   // ver crRefreshSection: no arrastrar las partidas
     try { _teamShowTab(crk,tab); } finally { _crSyncing=prev; }
@@ -32965,9 +33009,11 @@ function tdFillBoards(rInt) {
     do {
       var el = els[i++];
       if (!el) break;
-      el.setAttribute('data-filled', '1');
+      if (el.hasAttribute('data-filled')) continue;   // la pintó otra tanda (la que se larga al llegar la ficha)
       var gidx = parseInt(el.getAttribute('data-gidx'));
       var pgn = _tdCtx.games[gidx];
+      if (pgn && _tdFichaEspera(rInt, pgn)) continue;   // la ficha está por llegar: se pinta con ella, sin reproducir
+      el.setAttribute('data-filled', '1');
       var st = _tdBoardState(pgn), rr = st.rr;   // la ficha liviana de Lichess, si va más adelante que el PGN
       if (st.ficha) el.setAttribute('data-res', st.res);
       var fen = rr.fen;
@@ -35452,6 +35498,9 @@ function _tdPatchRoundBoards(curR, games) {
   var needFull = 0;
   for (var i = 0; i < bds.length; i++) {
     var el = bds[i];
+    // Una miniatura que todavía no se pintó (la tanda de tdFillBoards no llegó a ella, o está esperando la
+    // ficha: ver _tdFichaEspera) la pinta su tanda con lo último; acá se reproducía su partida al pedo.
+    if (!el.hasAttribute('data-filled')) continue;
     var gidx = parseInt(el.getAttribute('data-gidx'));
     var newPgn = games[gidx];
     if (newPgn === undefined) continue;
@@ -35770,19 +35819,62 @@ function _tdJsonTick() {
   _tdJsonBusy = true;
   var key = _tdLiveCtx.key, ids = rm.roundIds.slice(), i = 0;
   (function uno(){   // de a una transmisión: con la Olimpiada son 9 pedidos chicos, no 9 a la vez
-    if (!_tdLiveCtx || _tdLiveCtx.key !== key || i >= ids.length || Date.now() < _tdJsonHold) { _tdJsonBusy = false; return; }
+    if (!_tdLiveCtx || _tdLiveCtx.key !== key || i >= ids.length || Date.now() < _tdJsonHold) {
+      _tdJsonBusy = false;
+      // Primera vuelta entera de la ronda: las miniaturas que esperaban la ficha ya no esperan más (las que
+      // no vinieron en ella se reproducen ahora, como siempre). Ver _tdFichaEspera.
+      if (_tdLiveCtx && _tdLiveCtx.key === key) _tdFichaLlego(cur, true);
+      return;
+    }
     _fetchTO('https://lichess.org/api/broadcast/-/-/' + ids[i++], 8000)
       .then(function(r){
         if (r.status === 429) _tdJsonHold = Date.now() + _TD_JSON_429_MS;
         if (!r.ok) throw new Error('HTTP ' + r.status);
         return r.json();
       })
-      .then(function(d){ if (_tdLiveCtx && _tdLiveCtx.key === key) { try { _tdJsonApply(d && d.games); } catch (e) {} } })
+      .then(function(d){ if (_tdLiveCtx && _tdLiveCtx.key === key) { try { _tdJsonApply(d && d.games); } catch (e) {} _tdFichaLlego(cur, false); } })
       .catch(function(){})
       .then(uno);
   })();
 }
-function _tdJsonStart() { if (!_tdJsonTimer) _tdJsonTimer = setInterval(_tdJsonTick, _TD_JSON_TICK_MS); }
+// La primera, en el acto (24/09/2026): antes esperaba la vuelta del intervalo (4 s) y las miniaturas ya se
+// habían armado reproduciendo partidas con chess.js. Mismos pedidos: sólo se adelanta el primero.
+function _tdJsonStart() { if (!_tdJsonTimer) { _tdJsonTimer = setInterval(_tdJsonTick, _TD_JSON_TICK_MS); setTimeout(_tdJsonTick, 0); } }
+/* LAS MINIATURAS ESPERAN LA FICHA (24/09/2026, Olimpiada R8). Al abrir un torneo en vivo, las miniaturas se
+   armaban antes de que llegara la ficha de Lichess y cada una reproducía su partida con chess.js (40-80 ms
+   cada una en una PC): la página se trababa ~0,5 s en total, a los tirones, durante 5 segundos. La ficha
+   trae la posición de TODAS las partidas de la ronda (en juego y terminadas) en ~0,5 s por transmisión.
+   Ahora una miniatura de la ronda en vivo que costaría reproducir espera a la ficha (queda el tablero vacío
+   un momento) y se pinta con ella. Sólo espera si hay ficha en camino y como mucho _TD_FICHA_ESPERA_MS: si
+   la ficha no llega (429, sin internet), se reproducen como siempre. */
+var _TD_FICHA_ESPERA_MS = 5000;
+function _tdFichaEspera(rInt, pgn) {
+  var c = _tdLiveCtx;
+  if (!c || !c.onDemand || rInt !== c.currentNum) return false;
+  var f = c._ficha;
+  if (f && f.r === rInt && f.lista) return false;
+  if (!_tdLiveAhorra(c.tourIds) && !_colFichaHace()) return false;   // una transmisión con poca gente: no se pide ficha
+  var rm = (c.roundsMeta || []).filter(function(r){ return r.num === rInt; })[0];
+  if (!rm || rm.finished || !rm.roundIds || !rm.roundIds.length) return false;
+  var id = _bcGameIds(pgn);
+  if (!id || _tdJsonNew[id.game]) return false;               // no es de Lichess, o la ficha ya la trajo
+  if (_tdFenCache[_pgnKey(pgn)] !== undefined) return false;   // ya calculada: no cuesta nada
+  if (!f || f.r !== rInt) {
+    f = c._ficha = { r: rInt, desde: Date.now(), lista: false };
+    setTimeout(function(){ if (_tdLiveCtx === c && c._ficha === f && !f.lista) _tdFichaLlego(rInt, true); }, _TD_FICHA_ESPERA_MS);
+  }
+  return Date.now() - f.desde < _TD_FICHA_ESPERA_MS;
+}
+// Llegó la ficha de una transmisión (fin=false) o terminó la vuelta / se acabó la espera (fin=true):
+// se pintan las miniaturas que esperaban (tdFillBoards sólo toca las que faltan).
+function _tdFichaLlego(rInt, fin) {
+  var c = _tdLiveCtx;
+  if (!c || rInt !== c.currentNum) return;
+  var f = c._ficha;
+  if (fin) { if (f && f.r === rInt) { if (f.lista) return; f.lista = true; } else c._ficha = { r: rInt, desde: Date.now(), lista: true }; }
+  else if (!f || f.r !== rInt || f.lista) return;   // nadie esperaba
+  if (_tdCurrentRound === rInt && document.getElementById('td-round-' + rInt)) { try { tdFillBoards(rInt); } catch (e) {} }
+}
 function _tdJsonStop() { if (_tdJsonTimer) { clearInterval(_tdJsonTimer); _tdJsonTimer = null; } _tdJsonBusy = false; _tdJsonNew = {}; _tdJsonLast = 0; }
 // Al volver a la pestaña, en el acto (si la última fue hace más de 10 s: ir y venir rápido no suma pedidos).
 function _tdJsonWake() { if (document.hidden || !_tdJsonTimer) return; if (Date.now() - _tdJsonLast > 10000) _tdJsonLast = 0; _tdJsonTick(); }
