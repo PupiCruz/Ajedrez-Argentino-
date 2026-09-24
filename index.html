@@ -35762,7 +35762,18 @@ function _tdBoardState(pgn) {
   var res = parsePgnHeaders(pgn).Result || '*';
   var id = _bcGameIds(pgn), o = id && _tdJsonNew[id.game];
   if (o) {
-    if (_tdFichaSirve(o, _pgnPlies(pgn), res)) return { rr: o, res: o.res !== '*' ? o.res : res, ficha: true };
+    var pp = _pgnPlies(pgn);
+    if (_tdFichaSirve(o, pp, res)) {
+      // La ficha no trae evaluación. Si va en la MISMA jugada que el PGN, la barrita sale del [%eval] del PGN
+      // (Lichess lo agrega al terminar la ronda): leerlo es barato, no reproduce la partida. Si la ficha va
+      // más adelante, esa eval es de otra posición y no sirve (la pone el motor local, como siempre).
+      if (o.plies === pp && o._evLen !== pgn.length) {
+        o._evLen = pgn.length;
+        var evs = parseMoveEvals(pgn); o.ev = null;
+        for (var ei = evs.length - 1; ei >= 0; ei--) { if (evs[ei]) { o.ev = evs[ei]; break; } }
+      }
+      return { rr: o, res: o.res !== '*' ? o.res : res, ficha: true };
+    }
     delete _tdJsonNew[id.game];    // el PGN la pasó: vuelve a mandar el PGN
   }
   return { rr: tdFinalFenCached(pgn), res: res, ficha: false };
@@ -35781,8 +35792,18 @@ function _tdGameRes(g) {
 // Anota lo que trajo la ficha de UNA transmisión y parchea los tableros si algo avanzó.
 function _tdJsonApply(games) {
   if (!_tdCtx || !_tdLiveCtx || !games || !games.length) return;
-  var cur = _tdLiveCtx.currentNum, byId = {}, changed = false;
-  (_tdCtx.byRound[cur] || []).forEach(function(g){ var id = _bcGameIds(g.pgn); if (id) byId[id.game] = g; });
+  var cur = _tdLiveCtx.currentNum;
+  if (!_tdJsonGuardar(cur, games)) return;
+  if (_tdCurrentRound === cur && document.getElementById('td-round-' + cur)) _tdPatchRoundBoards(cur, _tdCtx.games);
+  _teamLiveRefreshPronto();   // un abandono que llegó por la ficha también suma en el marcador parcial del cruce
+  if (_colOn()) setTimeout(mevTick, 900);   // aviso de colgadas: evaluar también lo que cambió en OTRAS páginas
+}
+// Anota lo que trajo la ficha para las partidas de la ronda rNum. true = algo cambió (hay que repintar).
+// La usan la ficha de la ronda en vivo (_tdJsonApply) y la de una ronda terminada o vieja (_tdFichaRonda).
+function _tdJsonGuardar(rNum, games) {
+  if (!_tdCtx || !games || !games.length) return false;
+  var byId = {}, changed = false;
+  (_tdCtx.byRound[rNum] || []).forEach(function(g){ var id = _bcGameIds(g.pgn); if (id) byId[id.game] = g; });
   games.forEach(function(j){
     var g = j && j.id && j.fen && byId[j.id];
     if (!g) return;
@@ -35797,10 +35818,7 @@ function _tdJsonApply(games) {
     _tdJsonNew[j.id] = o;
     if (!prev || _tdJsonAhead(o, g._pl, pres) || prev.res !== o.res) changed = true;   // primera vez (deja de usar el motor), va más adelante o le corrigieron el resultado
   });
-  if (!changed) return;
-  if (_tdCurrentRound === cur && document.getElementById('td-round-' + cur)) _tdPatchRoundBoards(cur, _tdCtx.games);
-  _teamLiveRefreshPronto();   // un abandono que llegó por la ficha también suma en el marcador parcial del cruce
-  if (_colOn()) setTimeout(mevTick, 900);   // aviso de colgadas: evaluar también lo que cambió en OTRAS páginas
+  return changed;
 }
 function _tdJsonTick() {
   if (_tdJsonBusy || !_tdCtx || !_tdLiveCtx || !_tdLiveCtx.onDemand || !_tdLivePolling || document.hidden || Date.now() < _tdJsonHold) return;
@@ -35844,24 +35862,30 @@ function _tdJsonStart() { if (!_tdJsonTimer) { _tdJsonTimer = setInterval(_tdJso
    armaban antes de que llegara la ficha de Lichess y cada una reproducía su partida con chess.js (40-80 ms
    cada una en una PC): la página se trababa ~0,5 s en total, a los tirones, durante 5 segundos. La ficha
    trae la posición de TODAS las partidas de la ronda (en juego y terminadas) en ~0,5 s por transmisión.
-   Ahora una miniatura de la ronda en vivo que costaría reproducir espera a la ficha (queda el tablero vacío
-   un momento) y se pinta con ella. Sólo espera si hay ficha en camino y como mucho _TD_FICHA_ESPERA_MS: si
-   la ficha no llega (429, sin internet), se reproducen como siempre. */
+   Ahora una miniatura que costaría reproducir espera a la ficha (queda el tablero vacío un momento) y se
+   pinta con ella. Como mucho _TD_FICHA_ESPERA_MS: si la ficha no llega (429, sin internet), se reproducen
+   como siempre.
+   También entre rondas y en las rondas viejas (mismo día, pedido del autor): ahí la copia del Worker llega
+   rápido, pero lo que traba es reproducir las partidas, y en una ronda terminada son TODAS las de la página.
+   La ronda en vivo la trae la vuelta de siempre (_tdJsonTick); cualquier otra, _tdFichaRonda, UNA vez por
+   ronda (un pedido chico por transmisión). Sólo en torneos grandes o con mucha gente (_tdLiveAhorra), como
+   la ficha de siempre: los de una transmisión con poca gente siguen como antes. */
 var _TD_FICHA_ESPERA_MS = 5000;
 function _tdFichaEspera(rInt, pgn) {
   var c = _tdLiveCtx;
-  if (!c || !c.onDemand || rInt !== c.currentNum) return false;
-  var f = c._ficha;
-  if (f && f.r === rInt && f.lista) return false;
+  if (!c || !c.onDemand) return false;
+  var fs = c._fichas || (c._fichas = {}), f = fs[rInt];
+  if (f && f.lista) return false;
   if (!_tdLiveAhorra(c.tourIds) && !_colFichaHace()) return false;   // una transmisión con poca gente: no se pide ficha
   var rm = (c.roundsMeta || []).filter(function(r){ return r.num === rInt; })[0];
-  if (!rm || rm.finished || !rm.roundIds || !rm.roundIds.length) return false;
+  if (!rm || !rm.roundIds || !rm.roundIds.length) return false;
   var id = _bcGameIds(pgn);
   if (!id || _tdJsonNew[id.game]) return false;               // no es de Lichess, o la ficha ya la trajo
   if (_tdFenCache[_pgnKey(pgn)] !== undefined) return false;   // ya calculada: no cuesta nada
-  if (!f || f.r !== rInt) {
-    f = c._ficha = { r: rInt, desde: Date.now(), lista: false };
-    setTimeout(function(){ if (_tdLiveCtx === c && c._ficha === f && !f.lista) _tdFichaLlego(rInt, true); }, _TD_FICHA_ESPERA_MS);
+  if (!f) {
+    f = fs[rInt] = { desde: Date.now(), lista: false };
+    setTimeout(function(){ if (_tdLiveCtx === c && fs[rInt] === f && !f.lista) _tdFichaLlego(rInt, true); }, _TD_FICHA_ESPERA_MS);
+    if (!(rInt === c.currentNum && !rm.finished)) _tdFichaRonda(rInt);   // la en vivo ya la pide _tdJsonTick
   }
   return Date.now() - f.desde < _TD_FICHA_ESPERA_MS;
 }
@@ -35869,11 +35893,36 @@ function _tdFichaEspera(rInt, pgn) {
 // se pintan las miniaturas que esperaban (tdFillBoards sólo toca las que faltan).
 function _tdFichaLlego(rInt, fin) {
   var c = _tdLiveCtx;
-  if (!c || rInt !== c.currentNum) return;
-  var f = c._ficha;
-  if (fin) { if (f && f.r === rInt) { if (f.lista) return; f.lista = true; } else c._ficha = { r: rInt, desde: Date.now(), lista: true }; }
-  else if (!f || f.r !== rInt || f.lista) return;   // nadie esperaba
+  if (!c) return;
+  var fs = c._fichas || (c._fichas = {}), f = fs[rInt];
+  if (fin) { if (f) { if (f.lista) return; f.lista = true; } else fs[rInt] = { desde: Date.now(), lista: true }; }
+  else if (!f || f.lista) return;   // nadie esperaba
   if (_tdCurrentRound === rInt && document.getElementById('td-round-' + rInt)) { try { tdFillBoards(rInt); } catch (e) {} }
+}
+// La ficha de una ronda que NO es la en vivo (terminada, o una vieja que se abrió): una sola vez por ronda,
+// de a una transmisión, respetando la pausa del 429.
+function _tdFichaRonda(rInt) {
+  var c = _tdLiveCtx;
+  if (!c || !c.onDemand || !_tdCtx) return;
+  var rm = (c.roundsMeta || []).filter(function(r){ return r.num === rInt; })[0];
+  if (!rm || !rm.roundIds || !rm.roundIds.length) return;
+  var pedidas = c._fichaPedida || (c._fichaPedida = {});
+  if (pedidas[rInt]) return;
+  pedidas[rInt] = true;
+  var key = c.key, ids = rm.roundIds.slice(), i = 0;
+  (function uno(){
+    if (!_tdLiveCtx || _tdLiveCtx.key !== key) return;
+    if (i >= ids.length || Date.now() < _tdJsonHold) { _tdFichaLlego(rInt, true); return; }
+    _fetchTO('https://lichess.org/api/broadcast/-/-/' + ids[i++], 8000)
+      .then(function(r){
+        if (r.status === 429) _tdJsonHold = Date.now() + _TD_JSON_429_MS;
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function(d){ if (_tdLiveCtx && _tdLiveCtx.key === key) { try { _tdJsonGuardar(rInt, d && d.games); } catch (e) {} _tdFichaLlego(rInt, false); } })
+      .catch(function(){})
+      .then(uno);
+  })();
 }
 function _tdJsonStop() { if (_tdJsonTimer) { clearInterval(_tdJsonTimer); _tdJsonTimer = null; } _tdJsonBusy = false; _tdJsonNew = {}; _tdJsonLast = 0; }
 // Al volver a la pestaña, en el acto (si la última fue hace más de 10 s: ir y venir rápido no suma pedidos).

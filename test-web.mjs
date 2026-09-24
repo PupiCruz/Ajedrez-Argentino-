@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1567;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1576;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -4257,13 +4257,14 @@ console.log('\n=== 53. Vivo: los tableros que se miran, sueltos y al instante (1
 // ronda sale en ~1 s y trae posición, última jugada, relojes y resultado de cada partida.
 console.log('\n=== 53b. Vivo: miniaturas con la ficha liviana de Lichess (17/09) ===');
 {
-  const N = ['parsePgnHeaders', '_bcGameIds', '_fenPlies', '_csToClk', '_tdJsonRes', '_tdJsonAhead', '_tdFichaSirve', '_tdBoardState', '_tdGameRes', '_tdJsonApply', '_tdTeamMatches'];
+  const N = ['parsePgnHeaders', '_bcGameIds', '_fenPlies', '_csToClk', '_tdJsonRes', '_tdJsonAhead', '_tdFichaSirve', '_tdBoardState', '_tdGameRes', '_tdJsonApply', '_tdJsonGuardar', '_tdTeamMatches'];
   const F = new Function('var _tdJsonNew = {}, _tdCtx = null, _tdCurrentRound = 2, _tdLiveCtx = { currentNum: 2 }, llamadas = [];'
     + 'var FENS = {}; function tdFinalFenCached(p){ return FENS[p]; } function _pgnPlies(p){ return FENS[p] ? _fenPlies(FENS[p].fen) : 0; }'
     + 'function _tdPatchRoundBoards(r){ llamadas.push("patch" + r); } function _teamLiveRefresh(){} function _teamLiveRefreshPronto(){} function _colOn(){ return false; } function mevTick(){}'
+    + 'var EVALS = {}; function parseMoveEvals(p){ return EVALS[p] || []; }'
     + 'var document = { getElementById: function(){ return {}; } };'
     + N.map(extraerFuncion).join('\n')
-    + '; return { ' + N.join(',') + ', FENS: FENS, set ctx(c){ _tdCtx = c; }, get nuevos(){ return _tdJsonNew; }, llamadas: llamadas };')();
+    + '; return { ' + N.join(',') + ', FENS: FENS, EVALS: EVALS, set ctx(c){ _tdCtx = c; }, get nuevos(){ return _tdJsonNew; }, llamadas: llamadas };')();
   const pg = (g, res, eq) => '[Event "Olymp"]\n[Site "https://lichess.org/broadcast/olimpiada/round-2/HnCuRMmB/' + g + '"]\n[White "A"]\n[Black "B"]\n'
     + (eq ? '[WhiteTeam "Argentina"]\n[BlackTeam "Peru"]\n' : '') + '[Result "' + res + '"]\n\n1. e4 ' + res;
   const viejo = pg('EQVqQ7iM', '*', true), otra = pg('zzzzzzzz', '*', true);
@@ -4282,6 +4283,16 @@ console.log('\n=== 53b. Vivo: miniaturas con la ficha liviana de Lichess (17/09)
   chk(F.llamadas.join(',') === 'patch2' && st.ficha && st.rr.fen === ficha.fen && st.rr.last.from === 'a7' && st.rr.wc === '0:33:01' && st.rr.bc === '0:33:44',
       'la ficha que va más adelante pone su posición, última jugada y relojes en la miniatura', F.llamadas.join(',') + ' ' + JSON.stringify(st.rr));
   chk(!F._tdBoardState(otra).ficha, 'una partida que la ficha no nombra sigue con su PGN');
+  // 24/09: la barrita. La ficha no trae evaluación: si va en la MISMA jugada que el PGN, sale del [%eval] del PGN.
+  const igual = pg('IGUAL001', '1-0', false), adelante = pg('ADELA001', '*', false);
+  F.FENS[igual] = { fen: 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1', ev: null }; F.FENS[adelante] = F.FENS[igual];
+  F.EVALS[igual] = [{ cp: 35 }]; F.EVALS[adelante] = [{ cp: 35 }];
+  F.ctx = { byRound: { 2: [{ pgn: igual, h: F.parsePgnHeaders(igual) }, { pgn: adelante, h: F.parsePgnHeaders(adelante) }] }, games: [igual, adelante] };
+  F._tdJsonGuardar(2, [{ id: 'IGUAL001', fen: F.FENS[igual].fen, status: '1-0' }, { id: 'ADELA001', fen: 'rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2', status: '*' }]);
+  const stI = F._tdBoardState(igual), stA = F._tdBoardState(adelante);
+  chk(stI.ficha && stI.rr.ev && stI.rr.ev.cp === 35, '🔒 con la ficha en la misma jugada que el PGN, la barrita sale del [%eval] del PGN (no desaparece)', JSON.stringify(stI.rr.ev));
+  chk(stA.ficha && stA.rr.ev == null, 'y si la ficha va más adelante, esa eval es de otra posición: no se usa', JSON.stringify(stA.rr.ev));
+  F.ctx = ctx2;
   F.llamadas.length = 0;
   F._tdJsonApply([ficha]);
   chk(F.llamadas.length === 0, 'la misma ficha otra vez no vuelve a parchear los tableros');
@@ -4334,8 +4345,8 @@ console.log('\n=== 53b. Vivo: miniaturas con la ficha liviana de Lichess (17/09)
       '🔒 las miniaturas (dibujo entero y parche) pasan por la ficha');
   // Olimpiada 17/09, ya publicado: comparar con tdFinalFenCached reproducía cada partida con el motor
   // (~66 ms c/u, caché de 200) → con 408 partidas, ~27 s de pantalla congelada en cada vuelta de la ficha.
-  chk(!/tdFinalFenCached/.test(extraerFuncion('_tdJsonApply')) && !/tdFinalFenCached/.test(extraerFuncion('_tdJsonAhead'))
-      && extraerFuncion('_tdJsonApply').includes('g._pl = _pgnPlies(g.pgn)'),
+  chk(!/tdFinalFenCached/.test(extraerFuncion('_tdJsonApply') + extraerFuncion('_tdJsonGuardar')) && !/tdFinalFenCached/.test(extraerFuncion('_tdJsonAhead'))
+      && extraerFuncion('_tdJsonGuardar').includes('g._pl = _pgnPlies(g.pgn)'),
       '🔒 la ficha compara contando jugadas en el TEXTO del PGN, sin reproducir partidas con el motor (congelaba la página)');
   const bs = extraerFuncion('_tdBoardState');
   chk(bs.indexOf('_pgnPlies(pgn)') > 0 && bs.indexOf('_pgnPlies(pgn)') < bs.indexOf('tdFinalFenCached(pgn)'),
@@ -4411,19 +4422,20 @@ console.log('\n=== 53k. Abrir el torneo sin trabones (24/09) ===');
 
   // 2) Las miniaturas esperan la ficha en vez de reproducir la partida.
   const N = ['_tdFichaEspera', '_tdFichaLlego'];
-  const F = new Function('var _tdLiveCtx = null, _tdJsonNew = {}, _tdFenCache = {}, _tdCurrentRound = 8, AHORRA = true, PINTADAS = [], AHORA = 1000, TIMERS = [];'
+  const F = new Function('var _tdLiveCtx = null, _tdJsonNew = {}, _tdFenCache = {}, _tdCurrentRound = 8, AHORRA = true, PINTADAS = [], AHORA = 1000, TIMERS = [], PEDIDAS = [];'
     + 'var Date = { now: function(){ return AHORA; } }; function setTimeout(f, ms){ TIMERS.push({ f: f, ms: ms }); }'
     + 'var document = { getElementById: function(){ return {}; } }; function tdFillBoards(r){ PINTADAS.push(r); }'
     + 'function _tdLiveAhorra(){ return AHORRA; } function _colFichaHace(){ return false; } function _pgnKey(p){ return "k:" + p; }'
+    + 'function _tdFichaRonda(r){ PEDIDAS.push(r); }'
     + 'function _bcGameIds(p){ var m = /lichess\\.org\\/broadcast\\/[^"]*\\/(\\w{8})\\/(\\w{8})/.exec(p); return m ? { round: m[1], game: m[2] } : null; }'
     + 'var _TD_FICHA_ESPERA_MS = 5000;' + N.map(extraerFuncion).join('\n')
-    + '; return { ' + N.join(',') + ', set ctx(c){ _tdLiveCtx = c; }, get ctx(){ return _tdLiveCtx; }, set ahora(t){ AHORA = t; }, set ahorra(v){ AHORRA = v; }, pintadas: PINTADAS, timers: TIMERS, json: _tdJsonNew, cache: _tdFenCache };')();
+    + '; return { ' + N.join(',') + ', set ctx(c){ _tdLiveCtx = c; }, get ctx(){ return _tdLiveCtx; }, set ahora(t){ AHORA = t; }, set ahorra(v){ AHORRA = v; }, set ronda(r){ _tdCurrentRound = r; }, pintadas: PINTADAS, timers: TIMERS, pedidas: PEDIDAS, json: _tdJsonNew, cache: _tdFenCache };')();
   const pg = (g) => '[Site "https://lichess.org/broadcast/olimpiada/r8/aBkh1Bv5/' + g + '"]\n\n1. e4 *';
   const nuevo = () => ({ onDemand: true, currentNum: 8, tourIds: ['a', 'b'], roundsMeta: [{ num: 8, roundIds: ['aBkh1Bv5'], finished: false }, { num: 7, roundIds: ['x'], finished: true }] });
   F.ctx = nuevo();
   chk(F._tdFichaEspera(8, pg('Game0001')) === true, 'una miniatura de la ronda en vivo espera la ficha (no reproduce su partida)');
   chk(F.timers.length === 1 && F.timers[0].ms === 5000, 'y se arma un tope de espera de 5 s');
-  chk(F._tdFichaEspera(7, pg('Game0001')) === false, 'una ronda que no es la en vivo no espera (la ficha es de la ronda en vivo)');
+  chk(F.pedidas.length === 0, '🔒 la ronda en vivo no se pide aparte: la trae la vuelta de siempre (no se duplican pedidos)');
   chk(F._tdFichaEspera(8, '[White "A"]\n\n1. e4 *') === false, 'una partida que no es de Lichess no espera (nunca va a venir en la ficha)');
   F.json.Game0002 = { fen: 'x' };
   chk(F._tdFichaEspera(8, pg('Game0002')) === false, 'si la ficha ya la trajo, se pinta en el acto');
@@ -4438,15 +4450,44 @@ console.log('\n=== 53k. Abrir el torneo sin trabones (24/09) ===');
   F._tdFichaLlego(8, false);
   chk(F.pintadas.join(',') === '8', 'cuando llega la ficha de una transmisión se pintan las que esperaban');
   F._tdFichaLlego(8, true);
-  chk(F.ctx._ficha.lista === true && F.pintadas.join(',') === '8,8' && F._tdFichaEspera(8, pg('Game0001')) === false,
+  chk(F.ctx._fichas[8].lista === true && F.pintadas.join(',') === '8,8' && F._tdFichaEspera(8, pg('Game0001')) === false,
       '🔒 terminada la vuelta de fichas, las que no vinieron en ella se pintan reproduciendo (ninguna queda vacía)');
   F._tdFichaLlego(8, true);
   chk(F.pintadas.length === 2, 'y el aviso de fin no repinta dos veces');
-  F.ctx = nuevo(); F.ctx.roundsMeta[0].finished = true;
-  chk(F._tdFichaEspera(8, pg('Game0001')) === false, 'una ronda terminada no espera');
   F.ctx = nuevo(); F.timers.length = 0; F._tdFichaEspera(8, pg('Game0009')); F.timers[0].f();
-  chk(F.ctx._ficha.lista === true && F.pintadas[F.pintadas.length - 1] === 8, '🔒 si la ficha nunca llega, el tope de 5 s pinta las que esperaban');
+  chk(F.ctx._fichas[8].lista === true && F.pintadas[F.pintadas.length - 1] === 8, '🔒 si la ficha nunca llega, el tope de 5 s pinta las que esperaban');
+  // Entre rondas y rondas viejas (pedido del autor, mismo día): también esperan, y su ficha se pide UNA vez.
+  F.ctx = nuevo(); F.ctx.roundsMeta[0].finished = true; F.pedidas.length = 0;
+  chk(F._tdFichaEspera(8, pg('Game0001')) === true && F.pedidas.join(',') === '8',
+      '🔒 con la ronda TERMINADA (entre rondas) también espera, y pide la ficha de esa ronda');
+  F._tdFichaEspera(8, pg('Game0004')); F._tdFichaEspera(8, pg('Game0005'));
+  chk(F.pedidas.length === 1, 'una sola vez por ronda, aunque la esperen muchas miniaturas');
+  F.ronda = 7;
+  chk(F._tdFichaEspera(7, pg('Game0006')) === true && F.pedidas.join(',') === '8,7', 'una ronda vieja que se abre también pide la suya');
+  F._tdFichaLlego(7, true);
+  chk(F.pintadas[F.pintadas.length - 1] === 7 && F._tdFichaEspera(7, pg('Game0006')) === false, 'y al llegar se pinta la ronda que se mira');
+  F.ronda = 8;
+  F.ctx = nuevo(); F.ctx.roundsMeta[0].finished = true; F.pedidas.length = 0; F.ahorra = false;
+  chk(F._tdFichaEspera(8, pg('Game0001')) === false && F.pedidas.length === 0, '🔒 un torneo de una transmisión con poca gente sigue como antes (sin pedidos de más)');
+  F.ahorra = true;
 
+  // La ficha de una ronda que no es la en vivo: de a una transmisión, una vez, respetando la pausa del 429.
+  const R = new Function('var _tdLiveCtx = null, _tdCtx = { byRound: {} }, _tdJsonHold = 0, _TD_JSON_429_MS = 60000, PEDIDOS = [], GUARDADAS = [], AVISOS = [], RESP = {};'
+    + 'function _fetchTO(u){ PEDIDOS.push(u); var st = RESP[u] || 200; return Promise.resolve({ status: st, ok: st === 200, json: function(){ return Promise.resolve({ games: [{ id: u.slice(-8) }] }); } }); }'
+    + 'function _tdJsonGuardar(r, g){ GUARDADAS.push(r + ":" + g.length); return true; } function _tdFichaLlego(r, fin){ AVISOS.push(r + (fin ? "fin" : "")); }'
+    + extraerFuncion('_tdFichaRonda')
+    + '; return { f: _tdFichaRonda, set ctx(c){ _tdLiveCtx = c; }, pedidos: PEDIDOS, guardadas: GUARDADAS, avisos: AVISOS, resp: RESP, get hold(){ return _tdJsonHold; } };')();
+  R.ctx = { onDemand: true, key: 'k', roundsMeta: [{ num: 7, roundIds: ['Uno00001', 'Dos00002', 'Tre00003'] }] };
+  R.f(7); R.f(7);
+  await new Promise((z) => setTimeout(z, 20));
+  chk(R.pedidos.length === 3 && R.pedidos.every((u, i) => u === 'https://lichess.org/api/broadcast/-/-/' + ['Uno00001', 'Dos00002', 'Tre00003'][i]),
+      'pide la ficha de cada transmisión de la ronda, de a una y una sola vez', R.pedidos.length);
+  chk(R.guardadas.join(',') === '7:1,7:1,7:1' && R.avisos.join(',') === '7,7,7,7fin', 'guarda cada una, avisa al llegar y al terminar la vuelta', R.avisos.join(','));
+  R.ctx = { onDemand: true, key: 'k2', roundsMeta: [{ num: 6, roundIds: ['Cua00004', 'Cin00005'] }] };
+  R.resp['https://lichess.org/api/broadcast/-/-/Cua00004'] = 429;
+  R.pedidos.length = 0; R.avisos.length = 0; R.f(6);
+  await new Promise((z) => setTimeout(z, 20));
+  chk(R.pedidos.length === 1 && R.hold > 0 && R.avisos.join(',') === '6fin', '🔒 ante un 429 se corta la vuelta (pausa de 1 min) y las miniaturas se pintan igual');
   const fill = extraerFuncion('tdFillBoards');
   chk(/if \(el\.hasAttribute\('data-filled'\)\) continue;/.test(fill) && fill.indexOf('_tdFichaEspera(rInt, pgn)') > 0
       && fill.indexOf('_tdFichaEspera(rInt, pgn)') < fill.indexOf("el.setAttribute('data-filled', '1');"),
