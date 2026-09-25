@@ -5555,13 +5555,14 @@ console.log('\n=== 53g. Aviso de colgadas graves (19/09) ===');
     + '  set cat(v){ _tdActiveCat = v; } };')();
 
   const ls = (() => { const m = {}; return { getItem: k => (k in m ? m[k] : null), setItem: (k, v) => { m[k] = String(v); }, removeItem: k => { delete m[k]; } }; })();
-  chk(C._colActivo('', ls) === false, 'la llave arranca APAGADA: el público no lo ve mientras se prueba');
+  chk(C._colActivo('', ls) === true, 'la llave arranca PRENDIDA: desde el 25/09 el aviso es para todos');
   chk(C._colActivo('?colgadas=1', ls) === true && C._colActivo('', ls) === true, 'con ?colgadas=1 se prende y queda guardado en ese navegador');
   ls.setItem('aa_pref_col_off', '1');
   C._colActivo('?colgadas=1', ls);
   chk(ls.getItem('aa_pref_col_off') === null,
       '🔒 y PRENDE de verdad: borra el "No avisarme más". Es la única vuelta atrás para el que no tiene cuenta (⚙️ Preferencias pide cuenta)');
-  chk(C._colActivo('?torneo=x&colgadas=0', ls) === false, 'con ?colgadas=0 se apaga');
+  chk(C._colActivo('?torneo=x&colgadas=0', ls) === false && C._colActivo('', ls) === false && C._colActivo('?colgadas=1', ls) === true,
+      'con ?colgadas=0 se apaga y queda guardado; ?colgadas=1 lo vuelve a prender');
 
   const K = C._colClasifica;
   chk(JSON.stringify(K(-170, -440, false)) === '{"lado":"w","tipo":"A"}', '🔒 caso real Campos R4: −1,7 → −4,4 a prof. 12 es candidata (de pareja a perdida)');
