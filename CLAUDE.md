@@ -111,7 +111,7 @@ misma carpeta, la más nueva arriba): conviene leerlo antes de tocar cuentas, mo
 los proxys del Worker o el arranque de la página.
 
 ## 🧪 Bancos de pruebas — correrlos antes y después de tocar esas partes
-Son nueve y no necesitan instalar nada (Node y listo). **Cuántas comprobaciones tiene cada uno lo
+Son diez y no necesitan instalar nada (Node y listo). **Cuántas comprobaciones tiene cada uno lo
 dice el propio banco al terminar**, y por eso no está copiado acá: un número escrito a mano en dos
 lugares se pudre solo. (Pasó: este archivo decía 394 cuando el banco de la web ya iba por 542.)
 
@@ -126,6 +126,7 @@ lugares se pudre solo. (Pasó: este archivo decía 394 cuando el banco de la web
 | `vivo-worker/test-presencia.mjs` | presencia: salón, punto verde, contador del chat | `cd vivo-worker` y `node test-presencia.mjs` |
 | `vivo-worker/test-desafio-invitados.mjs` | no aceptar desafíos de invitados | `cd vivo-worker` y `node test-desafio-invitados.mjs` |
 | `vivo-worker/test-colgadas.mjs` | el arbitrito que reparte los avisos de colgadas | `cd vivo-worker` y `node test-colgadas.mjs` |
+| `vivo-worker/test-reparto.mjs` | el motor repartido (las PC se reparten los tableros de la ronda) | `cd vivo-worker` y `node test-reparto.mjs` |
 
 Ya cazaron varios bugs antes de que llegaran al sitio. Si uno falla, **no publicar**.
 

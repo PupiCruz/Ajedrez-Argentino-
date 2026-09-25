@@ -33493,6 +33493,7 @@ var _mevReadyPoll = null;
 function _liveEvalFor(fen, pgnEv) {
   if (pgnEv != null) return pgnEv;
   var m = _mevEvals[fen];
+  if (m === undefined && _repTomar(fen)) m = _mevEvals[fen];   // la calculó otro que mira la ronda (motor repartido)
   return (m !== undefined) ? m : null;
 }
 
@@ -33540,6 +33541,7 @@ function mevCollect() {
   jobs.forEach(function(j){ seen[j.fen] = 1; });
   var panel = document.getElementById('td-round-' + _tdCurrentRound);
   if (!panel) return jobs;
+  _repContar();   // motor repartido: cuántas quedan en juego y cuántas me tocan
   var bds = panel.querySelectorAll('.td-bd');
   var START = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR';
   for (var i = 0; i < bds.length; i++) {
@@ -33547,9 +33549,12 @@ function mevCollect() {
     if ((el.getAttribute('data-res') || '*') !== '*') continue;   // solo partidas en curso
     var fen = el.getAttribute('data-fen');
     if (!fen || fen.split(' ')[0] === START) continue;            // sin posición o sin jugadas todavía
-    if (_mevEvals[fen] !== undefined || seen[fen]) continue;      // ya evaluada (o duplicada en la grilla)
+    if (seen[fen]) continue;                                      // duplicada en la grilla
+    // Ya evaluada, calculada por otro que mira la ronda, o le toca a otro (motor repartido): sin trabajo.
+    var job = _repJob(fen, el.getAttribute('data-gk'));
+    if (!job) { if (_repDe[fen] && _mevEvals[fen]) _tdSetEvalBar(el, _mevEvals[fen]); continue; }
     seen[fen] = 1;
-    jobs.push({ fen: fen });
+    jobs.push(job);
     if (jobs.length >= _MEV_MAX_JOBS) break;
   }
   _colMasTrabajos(jobs, seen);   // aviso de colgadas: partidas de OTRAS páginas, si alcanza el presupuesto
@@ -33559,6 +33564,7 @@ function mevCollect() {
 // Dispara un ciclo de evaluación. Lo llaman el refresco del vivo y la apertura/cambio de ronda.
 function mevTick() {
   if (!_tdLiveCtx && !_mevExtra.length) { mevAbort(); return; }   // no hay transmisión activa (ni barrido de colgadas)
+  _repSync();   // motor repartido: qué ronda miro y si ayudo (sólo manda algo cuando cambia)
   if (_mev.running) return;
   if (_fa.running) { _mev.want = true; return; }      // el pase del gráfico es corto: al terminar, reintenta
   // Con el motor del VISOR prendido las miniaturas antes no se evaluaban NUNCA (y la barrita quedaba
@@ -33609,6 +33615,7 @@ function mevNext() {
     if (sf.engine) sf.engine.postMessage('setoption name MultiPV value 3');   // restaurar para el visor
     _mevResumeViewer();
     setTimeout(_colScan, 0);   // tanda terminada: ¿alguna partida se colgó?
+    _repControlar();           // motor repartido: de vez en cuando, controlar lo que calculó otro
     // Lo que se encoló MIENTRAS corría la tanda (el barrido de colgadas agrega verificaciones sobre la
     // marcha) arranca otra tanda. Sin esto quedaba esperando un refresco del vivo: con la ronda
     // terminada y nada en vivo, el barrido se quedaba clavado (lo vio el autor: "motor 140 / 255").
@@ -33648,8 +33655,9 @@ function mevHandleMsg(line) {
     var mtM = line.match(/\bscore mate (-?\d+)\b/);
     // Trabajos con varias líneas (barrido de colgadas: la mejor y las alternativas del castigo).
     if ((cpM || mtM) && _mev.jobs[_mev.i] && _mev.jobs[_mev.i].multipv && !/\b(lower|upper)bound\b/.test(line)) {
-      var pvM = line.match(/ pv ([a-h][1-8][a-h][1-8][qrbn]?)/);
-      if (pvM) _mev.lines[(mm ? parseInt(mm[1]) : 1) - 1] = { mv: pvM[1], sc: mtM ? { mate: parseInt(mtM[1]) } : { cp: parseInt(cpM[1]) } };
+      // (la 2ª jugada de la línea es la respuesta del rival: los jugadones miran si acepta la entrega)
+      var pvM = line.match(/ pv ([a-h][1-8][a-h][1-8][qrbn]?)(?: ([a-h][1-8][a-h][1-8][qrbn]?))?/);
+      if (pvM) _mev.lines[(mm ? parseInt(mm[1]) : 1) - 1] = { mv: pvM[1], re: pvM[2] || '', sc: mtM ? { mate: parseInt(mtM[1]) } : { cp: parseInt(cpM[1]) } };
     }
     if (mm && mm[1] !== '1') return;
     if (cpM || mtM) _mev.last = mtM ? { mate: parseInt(mtM[1]) } : { cp: parseInt(cpM[1]) };
@@ -33664,6 +33672,8 @@ function mevHandleMsg(line) {
         : { cp:   turn === 'b' ? -raw.cp   : raw.cp   };
       _mevEvals[job.fen] = score;
       _capCache(_mevEvals, 2000);
+      delete _repDe[job.fen];                                  // ahora es propia
+      if (job.rep) _repEncolar(job.fen, score, job.depth || _MEV_DEPTH);   // motor repartido: a los demás
       mevApply(job.fen, score);
       if (!job.depth && _mev.t0) {   // promedio móvil de lo que tarda una posición a prof. 12
         var _ms = Date.now() - _mev.t0;
@@ -33672,7 +33682,7 @@ function mevHandleMsg(line) {
       if (job.depth) _colDeep[job.fen] = job.depth;
       var _ln = null;
       if (job.multipv) _ln = (_mev.lines || []).filter(Boolean).map(function(l){   // también desde las blancas
-        return { mv: l.mv, sc: l.sc.mate !== undefined ? { mate: turn === 'b' ? -l.sc.mate : l.sc.mate } : { cp: turn === 'b' ? -l.sc.cp : l.sc.cp } };
+        return { mv: l.mv, re: l.re || '', sc: l.sc.mate !== undefined ? { mate: turn === 'b' ? -l.sc.mate : l.sc.mate } : { cp: turn === 'b' ? -l.sc.cp : l.sc.cp } };
       });
       if (job.cb) { try { job.cb(score, _ln); } catch (e) {} }
     }
@@ -33709,9 +33719,223 @@ function _tdMiniFromDeep(fen, ws, depth) {
     if ((bds[i].getAttribute('data-res') || '*') !== '*') continue;   // terminada: manda el [%eval] de Lichess
     _mevEvals[mf] = sc; _capCache(_mevEvals, 2000);   // un redibujo posterior conserva la eval honda
     _colDeep[mf] = depth;
+    delete _repDe[mf];   // ahora es propia (del visor)
     _tdSetEvalBar(bds[i], sc);
   }
 }
+
+/* ══ 🤝 MOTOR REPARTIDO (25/09/2026, idea del autor) ═══════════════════════════════════════════════
+   Antes cada PC que miraba la ronda calculaba TODOS los tableros por su cuenta: con 20 mirando, la misma
+   posición se calculaba 20 veces. Ahora las PC de los logueados (con el aviso de colgadas prendido) se
+   REPARTEN los tableros por el arbitrito del chat del torneo (vivo-worker, TourChat.repHola):
+   · cada una calcula los suyos y los manda en tandas; el arbitrito se los pasa a todos los de la ronda;
+   · con pocos tableros por cabeza se va más hondo (_repProfMia), y si sobra gente (el doble de ayudantes
+     que tableros en juego) cada tablero tiene además un segundo que lo calcula a prof. 18;
+   · los que no ayudan (teléfonos, sin cuenta) esperan lo de los demás y, si no llega en _REP_ESPERA_MS,
+     lo calculan ellos como antes;
+   · las colgadas de un tablero las vigila su dueño, y a los demás les llegan por el aviso repartido;
+   · cada tanto, cada ayudante recalcula una evaluación ajena a la MISMA profundidad (mismo motor: tiene
+     que dar casi igual). Si dos no le cierran, lo desmiente ante el arbitrito, que con dos cuentas
+     distintas deja de repartir lo de ése.
+   Qué tablero es de quién no lo decide el servidor: lo calcula cada navegador con la lista de ayudantes
+   (hash "rendezvous": si alguien llega o se va, sólo se mueven SUS tableros). Sin lista (servidor viejo,
+   sin conexión, ?rep=0) todo funciona como antes. Sin ningún cartel, a propósito (lo pidió el autor). */
+var _REP_ESPERA_MS = 45000;   // lo que espera el que no es dueño antes de calcular él ese tablero
+var _REP_FLUSH_MS = 8000;     // una tanda cada 8 s como mucho (el arbitrito acepta 4 cada 10 s)
+var _REP_JUNTA_MS = 1500;     // después de la primera posición, un ratito para juntar las de la misma tanda del motor
+var _REP_LOTE = 60;
+var _REP_PROF_HONDA = 18;     // el segundo de cada tablero, cuando sobra gente (y el techo que acepta el arbitrito)
+var _REP_CONTROL_MS = 60000;  // un control de lo ajeno por minuto, como mucho
+var _REP_CONTROL_DIF = 300;   // a la misma profundidad, 3 peones de diferencia o más = no cierra
+var _rep = { c: '', ids: [], yo: null, enviado: null, envio: [], flushT: null, ultFlush: 0, espera: {}, vista: {},
+             dueno: {}, duenoVer: '', nJuego: 0, misN: 0, veto: {}, strikes: {}, quejados: {}, recibidas: [],
+             ultControl: 0, scanPend: false };
+var _repEv = {};   // "tablero turno enroques" → { sc, d, de }: lo que calcularon otros
+var _repDe = {};   // FEN → quién calculó la eval que está en _mevEvals, si no fue este navegador
+var _repLlaveVal = null;
+
+// ?rep=0 lo apaga en ese navegador (queda guardado) y ?rep=1 lo vuelve a prender. Para probar y comparar.
+function _repLlave() {
+  if (_repLlaveVal === null) {
+    try {
+      if (/[?&]rep=0(?!\w)/.test(_colQ0)) localStorage.setItem('aa_rep', '0');
+      if (/[?&]rep=1(?!\w)/.test(_colQ0)) localStorage.removeItem('aa_rep');
+      _repLlaveVal = localStorage.getItem('aa_rep') !== '0';
+    } catch (e) { _repLlaveVal = true; }
+  }
+  return _repLlaveVal;
+}
+// La posición sin al-paso ni contadores (cambian según de dónde salió la miniatura; la eval no).
+function _repK(fen) { return String(fen || '').split(' ').slice(0, 3).join(' '); }
+function _repHash(s) { var h = 2166136261; for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+// Nombre corto de la ronda en vivo que se está mirando ('' = ninguna: no se recibe ni se ayuda).
+function _repCanal() {
+  if (!_repLlave() || !_tdLiveCtx || !_tdLiveCtx.key || _tdLiveCtx.key === '__seed__' || !_colRonda()) return '';
+  return _repHash(_tdLiveCtx.key + '|' + _tdLiveCtx.currentNum).toString(36);
+}
+function _repHay() { return !!(_rep.c && _rep.ids.length); }
+function _repYoAyudo() { return !!(_rep.yo && _rep.ids.indexOf(_rep.yo) >= 0); }
+// Recibe lo de los demás pero no ayuda: no le hace falta la ficha de toda la ronda (_colFichaHace).
+function _repSoloRecibo() { return _repHay() && !_repYoAyudo(); }
+function _repQuieroAyudar() {
+  try {
+    return !!(window.aaTourChat && window.aaTourChat.logueado && window.aaTourChat.logueado())
+      && _colOn() && _colBarreRonda() && !document.hidden;
+  } catch (e) { return false; }
+}
+// Le cuenta al arbitrito qué ronda mira y si ayuda. Sólo cuando cambia (al reconectar se repite).
+function _repSync() {
+  if (!window.aaTourChat || !window.aaTourChat.repHola) return;
+  var c = _repCanal(), ayuda = !!c && _repQuieroAyudar();
+  var firma = c + '|' + (ayuda ? 1 : 0);
+  if (firma === _rep.enviado) return;
+  var anotado = !!_rep.enviado && _rep.enviado.charAt(0) !== '|';   // el arbitrito lo tiene en alguna ronda
+  if (c !== _rep.c) { _repDesconectado(); _rep.espera = {}; _rep.vista = {}; }
+  _rep.c = c;
+  if (!c && !anotado) { _rep.enviado = firma; return; }   // no mira la ronda en vivo y nunca dijo que la miraba: nada que avisar
+  if (window.aaTourChat.repHola(c, ayuda)) _rep.enviado = firma;
+}
+function _repConectado() { _rep.enviado = null; _repSync(); }
+function _repDesconectado() { _rep.ids = []; _rep.yo = null; _rep.enviado = null; _rep.dueno = {}; _rep.duenoVer = ''; }
+
+// ¿De quién es este tablero? 'p' = mío (lo calculo yo), 'h' = soy el segundo (lo calculo a prof. 18),
+// '' = de otro. Todos los navegadores sacan la misma cuenta con la misma lista.
+function _repDueno(gk) {
+  if (!_rep.yo || !_rep.ids.length) return '';
+  var dos = _rep.nJuego > 0 && _rep.ids.length >= 2 * _rep.nJuego;
+  var ver = _rep.ids.join(',') + '|' + _rep.yo + '|' + (dos ? 2 : 1);
+  if (ver !== _rep.duenoVer) { _rep.dueno = {}; _rep.duenoVer = ver; }
+  if (_rep.dueno[gk] !== undefined) return _rep.dueno[gk];
+  var p = null, s = null, ph = -1, sh = -1;
+  for (var i = 0; i < _rep.ids.length; i++) {
+    var h = _repHash(gk + '#' + _rep.ids[i]);
+    if (h > ph) { s = p; sh = ph; p = _rep.ids[i]; ph = h; } else if (h > sh) { s = _rep.ids[i]; sh = h; }
+  }
+  var r = p === _rep.yo ? 'p' : ((dos && s === _rep.yo) ? 'h' : '');
+  _rep.dueno[gk] = r;
+  return r;
+}
+// Cuántas partidas siguen en juego y cuántas me tocan (decide la profundidad y si hay segundo).
+function _repContar() {
+  _rep.nJuego = 0; _rep.misN = 0;
+  var games = _repHay() ? _colRonda() : null;
+  if (!games) return;
+  var enJuego = games.filter(function(g){ var p = _colPos(g, null); return (p ? p.res : ((g.h && g.h.Result) || '*')) === '*'; });
+  _rep.nJuego = enJuego.length;
+  enJuego.forEach(function(g){ if (_repDueno(_tdEvKey(g.h)) === 'p') _rep.misN++; });
+}
+// Con pocos tableros por cabeza, cada uno se calcula más hondo (el motor se desocupa igual).
+function _repProfMia() { return _rep.misN <= 3 ? 16 : (_rep.misN <= 10 ? 14 : _MEV_DEPTH); }
+// Si otro ya calculó esta posición, se la usa (queda anotado de quién es).
+function _repTomar(fen) {
+  var x = _repEv[_repK(fen)];
+  if (!x || _rep.veto[x.de]) return false;
+  _mevEvals[fen] = x.sc; _capCache(_mevEvals, 2000);
+  _repDe[fen] = x.de; _capCache(_repDe, 2000);
+  return true;
+}
+// Qué hacer con un tablero en juego: el trabajo para la tanda del motor, o null si no hay que calcularlo
+// ahora (ya hay eval, la calculó otro, o le toca a otro y todavía se lo espera).
+function _repJob(fen, gk) {
+  var hay = _repHay(), d = hay ? _repDueno(gk) : '';
+  if (d === 'h') return (_colDeep[fen] || 0) >= _REP_PROF_HONDA ? null : { fen: fen, depth: _REP_PROF_HONDA, rep: 1 };
+  if (_mevEvals[fen] !== undefined || _repTomar(fen)) return null;
+  if (!hay) return { fen: fen };                                   // sin reparto: como siempre
+  if (d === 'p') { var pr = _repProfMia(); return pr > _MEV_DEPTH ? { fen: fen, depth: pr, rep: 1 } : { fen: fen, rep: 1 }; }
+  // La posición que tenía cada tablero al llegar se calcula acá, como siempre: su dueño manda recién con
+  // la jugada siguiente, y el arbitrito sólo guarda en memoria (si se durmió, no tiene nada para dar).
+  // Sin esto, el que entra veía las barritas vacías hasta la próxima jugada. Se espera lo de otro sólo
+  // para las posiciones NUEVAS.
+  if (!_rep.vista[gk]) { _rep.vista[gk] = fen; _capCache(_rep.vista, 1500); }
+  if (_rep.vista[gk] === fen) return _repYoAyudo() ? { fen: fen, rep: 1 } : { fen: fen };
+  var t0 = _rep.espera[fen];
+  if (!t0) { _rep.espera[fen] = t0 = Date.now(); _capCache(_rep.espera, 1500); }
+  if (Date.now() - t0 < _REP_ESPERA_MS) return null;               // le toca a otro: esperar lo suyo
+  return _repYoAyudo() ? { fen: fen, rep: 1 } : { fen: fen };      // no llegó: se calcula acá
+}
+// Lo que calculé yo (de la ronda) sale en la próxima tanda.
+function _repEncolar(fen, score, depth) {
+  if (!_repYoAyudo() || !score || depth < 10 || depth > _REP_PROF_HONDA) return;
+  var mate = score.mate !== undefined;
+  _rep.envio.push([_repK(fen), mate ? null : score.cp, mate ? score.mate : null, depth]);
+  if (_rep.flushT) return;
+  _rep.flushT = setTimeout(_repEnviar, Math.max(_REP_JUNTA_MS, _rep.ultFlush + _REP_FLUSH_MS - Date.now()));
+}
+function _repEnviar() {
+  _rep.flushT = null;
+  if (!_rep.envio.length) return;
+  if (!_repYoAyudo() || !window.aaTourChat || !window.aaTourChat.repEv) { _rep.envio = []; return; }
+  var lote = _rep.envio.splice(0, _REP_LOTE);
+  if (window.aaTourChat.repEv(_rep.c, lote)) _rep.ultFlush = Date.now();
+  if (_rep.envio.length) _rep.flushT = setTimeout(_repEnviar, _REP_FLUSH_MS);
+}
+// Mensajes del arbitrito: la lista de ayudantes, evaluaciones de otros y los vetos.
+function _repDeRed(m) {
+  if (!m) return;
+  if (m.type === 'rep') {
+    if (m.c !== _rep.c) return;
+    _rep.ids = Array.isArray(m.ids) ? m.ids.filter(function(x){ return typeof x === 'string'; }) : [];
+    _rep.yo = typeof m.yo === 'string' ? m.yo : null;
+    setTimeout(mevTick, 0);   // se reacomodaron los tableros: puede que ahora me toque alguno
+  } else if (m.type === 'ev') _repRecibir(m);
+  else if (m.type === 'ev-veto') _repVeto(m.ids);
+}
+function _repRecibir(m) {
+  if (m.c !== _rep.c || !Array.isArray(m.e)) return;
+  var nuevas = {}, hay = false;
+  m.e.forEach(function(x){
+    if (!Array.isArray(x) || x.length < 5 || typeof x[0] !== 'string' || _rep.veto[x[4]] || x[4] === _rep.yo) return;
+    var vieja = _repEv[x[0]];
+    if (vieja && vieja.d >= x[3]) return;
+    var sc = x[2] != null ? { mate: x[2] } : { cp: x[1] };
+    _repEv[x[0]] = { sc: sc, d: x[3], de: x[4] }; nuevas[x[0]] = 1; hay = true;
+    if (!m.foto) _rep.recibidas.push({ k: x[0], sc: sc, d: x[3], de: x[4] });   // candidatas al control
+  });
+  _capCache(_repEv, 3000);
+  if (_rep.recibidas.length > 60) _rep.recibidas.splice(0, _rep.recibidas.length - 60);
+  if (!hay) return;
+  // Pintar los tableros en pantalla con esas posiciones (sin pisar una eval propia igual de honda o más).
+  var bds = document.querySelectorAll('#td-round-' + _tdCurrentRound + ' .td-bd, #cv-round-minis .td-bd');
+  for (var i = 0; i < bds.length; i++) {
+    var f = bds[i].getAttribute('data-fen');
+    if (!f || !nuevas[_repK(f)] || (bds[i].getAttribute('data-res') || '*') !== '*') continue;
+    var x = _repEv[_repK(f)];
+    if (_mevEvals[f] !== undefined && !_repDe[f] && (_colDeep[f] || _MEV_DEPTH) >= x.d) continue;
+    _mevEvals[f] = x.sc; _repDe[f] = x.de;
+    _tdSetEvalBar(bds[i], x.sc);
+  }
+  if (!_rep.scanPend) { _rep.scanPend = true; setTimeout(function(){ _rep.scanPend = false; _colScan(); }, 300); }
+}
+function _repVeto(ids) {
+  (Array.isArray(ids) ? ids : []).forEach(function(de){ _rep.veto[de] = 1; });
+  Object.keys(_repEv).forEach(function(k){ if (_rep.veto[_repEv[k].de]) delete _repEv[k]; });
+  Object.keys(_repDe).forEach(function(f){ if (_rep.veto[_repDe[f]]) { delete _mevEvals[f]; delete _repDe[f]; } });
+  _rep.recibidas = _rep.recibidas.filter(function(x){ return !_rep.veto[x.de]; });
+}
+// Control: una evaluación ajena se recalcula acá a la MISMA profundidad. Dos que no cierran del mismo
+// ayudante → acá deja de creérsele y se lo desmiente ante el arbitrito.
+function _repControlar() {
+  if (!_repYoAyudo() || !_rep.recibidas.length || Date.now() - _rep.ultControl < _REP_CONTROL_MS) return;
+  _rep.ultControl = Date.now();
+  var x = _rep.recibidas.splice(Math.floor(Math.random() * _rep.recibidas.length), 1)[0];
+  if (!x || _rep.veto[x.de] || _rep.quejados[x.de]) return;
+  var fen = x.k + ' - 0 1';
+  _mevExtra.push({ fen: fen, depth: x.d, cb: function(score){
+    if (!_repNoCierra(x.sc, score, fen)) return;
+    _rep.strikes[x.de] = (_rep.strikes[x.de] || 0) + 1;
+    if (_rep.strikes[x.de] < 2 || _rep.quejados[x.de]) return;
+    _rep.quejados[x.de] = 1;
+    _repVeto([x.de]);
+    try { if (window.aaTourChat && window.aaTourChat.repQueja) window.aaTourChat.repQueja(x.de); } catch (e) {}
+  } });
+  setTimeout(mevTick, 0);
+}
+// Dos evals de la misma posición a la misma profundidad: ¿difieren de verdad? (el mate cuenta como ±15)
+function _repNoCierra(a, b, fen) {
+  var t = function(sc){ return Math.max(-1500, Math.min(1500, _colCp(sc, fen))); };
+  return Math.abs(t(a) - t(b)) >= _REP_CONTROL_DIF;
+}
+try { document.addEventListener('visibilitychange', function(){ try { _repSync(); } catch (e) {} }); } catch (e) {}
 
 /* ══ AVISO DE COLGADAS GRAVES (19/09/2026, EN PRUEBA) ══════════════════════════════════════════
    Plan acordado con el autor. Mientras se prueba, sólo en el navegador que entró con ?colgadas=1
@@ -33835,6 +34059,7 @@ function _colBarreRonda() {
 // pedido cada 30 s directo a Lichess, así que no toca el cupo de Cloudflare.
 function _colFichaHace() {
   if (!_colOn() || !_colBarreRonda() || !_tdCtx || !_tdLiveCtx) return false;   // el que no barre no la necesita
+  if (_repSoloRecibo()) return false;   // motor repartido: la ronda la vigilan los que ayudan; a éste le llega hecha
   var r = _tdCtx.byRound[_tdLiveCtx.currentNum];
   return !!(r && r.length > _TD_PER_PAGE);
 }
@@ -33873,12 +34098,15 @@ function _colMasTrabajos(jobs, seen) {
   games.forEach(function(g, i){
     var id = _bcGameIds(g.pgn), o = id && _tdJsonNew[id.game];
     if (!o || !o.fen || (o.res || '*') !== '*' || o.fen.split(' ')[0] === START) return;
-    if (_mevEvals[o.fen] !== undefined || seen[o.fen]) return;
-    (_tdIsArgGame(g.h) ? arg : resto).push({ fen: o.fen, t: _colVisto[_tdEvKey(g.h)] || 0, i: i });
+    if (seen[o.fen]) return;
+    // Motor repartido: sólo las que me tocan (o las ajenas que nadie calculó a tiempo). Sin reparto, todas.
+    var job = _repJob(o.fen, _tdEvKey(g.h));
+    if (!job) return;
+    (_tdIsArgGame(g.h) ? arg : resto).push({ job: job, t: _colVisto[_tdEvKey(g.h)] || 0, i: i });
   });
   function porTurno(a, b) { return (a.t - b.t) || (a.i - b.i); }   // empate (nunca miradas): orden de la lista
   arg.sort(porTurno); resto.sort(porTurno);
-  arg.concat(resto).some(function(x){ seen[x.fen] = 1; jobs.push({ fen: x.fen }); return jobs.length >= tope; });
+  arg.concat(resto).some(function(x){ seen[x.job.fen] = 1; jobs.push(x.job); return jobs.length >= tope; });
 }
 
 // Recorre la ronda en vivo: compara la eval de cada partida con la anterior que se le conocía.
@@ -33895,6 +34123,7 @@ function _colScan() {
     var gk = _tdEvKey(g.h), p = _colPos(g, enPantalla[gk]);
     if (!p || p.res !== '*') return;
     var ev = _mevEvals[p.fen];
+    if (ev === undefined && _repTomar(p.fen)) ev = _mevEvals[p.fen];   // la calculó otro (motor repartido)
     if (ev === undefined) return;
     var prev = _colEst[gk];
     if (prev && prev.fen === p.fen) return;
@@ -33903,6 +34132,8 @@ function _colScan() {
     _colVisto[gk] = ahora; _capCache(_colVisto, 1500);   // el turno del barrido (_colMasTrabajos)
     if (!prev || now.plies <= prev.plies) return;             // la primera vez sólo se anota
     if (ahora < (_colMesaHasta[gk] || 0)) return;             // esta mesa ya avisó hace poco
+    // Motor repartido: con la eval de otro, una mesa ajena la vigila su dueño (y el aviso llega repartido).
+    if (_repDe[p.fen] && _repDueno(gk) !== 'p') return;
     if (gk === _colMirandoGk()) return;                       // la está mirando: no hace falta avisarle
     var honda = (_colDeep[p.fen] || 0) >= _COL_CONFIRM_DEPTH;
     var c = _colClasifica(prev.cp, now.cp, honda, true);   // los 3 tipos, también "se dio vuelta" (pedido del autor)
@@ -35028,11 +35259,17 @@ function _cgMeter(it) {
    Medido con la R8 de la Olimpiada (412 partidas): con el criterio de antes salían ~250 por ronda, casi
    todas ruido. Dos filtros nuevos (desesperados, y jugadas de rey / enroque) quedaron ADENTRO de
    _faIsBrilliant, así valen también para el "!!" del visor (pedido del autor). Lo único propio de la
-   lista es exigir "la única": en el visor el pase del gráfico mira una sola línea. */
+   lista es exigir "la única": en el visor el pase del gráfico mira una sola línea.
+   Con la R9 revisada por el autor (25/09: 33 aceptados, 50 rechazados) entraron 5 patrones más, que
+   sacan 17 rechazados sin perder ningún aceptado: coronar, otra pieza colgada que no es la dama y
+   posición repetida (en _faIsBrilliant, valen también para el visor); retomar y entregar la calidad
+   que el rival acepta (sólo en la lista). */
 var _CG_BRI_DEPTH = 16;
 var _CG_BRI_MARGEN = 30;   // centipeones: la jugada del partido puede quedar a 0,3 de la mejor del motor
 function _cgDetectarBri(P, evCp) {
-  var out = [];
+  var out = [], cadena = [];
+  // Las posiciones encadenadas como en el árbol del visor, para que _faIsBrilliant vea las repeticiones.
+  for (var k = 0; k < P.fens.length; k++) cadena.push({ fen: P.fens[k], parent: k ? cadena[k - 1] : null });
   for (var i = _CG_DESDE_PLY; i < P.uci.length; i++) {
     var a = evCp[i], d = evCp[i + 1], blancas = P.fens[i].split(' ')[1] === 'w';
     var rB = { cp: a == null ? 0 : a }, rA = { cp: d == null ? 0 : d };
@@ -35041,7 +35278,10 @@ function _cgDetectarBri(P, evCp) {
       if ((blancas ? wpB - wpA : wpA - wpB) >= 5) continue;   // perdió chances: no es la mejor
     }
     var u = P.uci[i];   // (rey, enroque y desesperados los descarta _faIsBrilliant: el mismo filtro que el visor)
-    var node = { fen: P.fens[i + 1], move: { from: u.slice(0, 2), to: u.slice(2, 4) }, parent: { fen: P.fens[i] } };
+    // RETOMAR no es jugadón: el rival acaba de comer en esa casilla y se come de vuelta. R9 de la
+    // Olimpiada: 4 rechazados por el autor y ningún aceptado (23.♖xh4, 29.♖xd8+, 13.♘xb5, 11.♘xe4).
+    if (i > 0 && P.cap && P.cap[i - 1] && P.uci[i - 1].slice(2, 4) === u.slice(2, 4)) continue;
+    var node = { fen: P.fens[i + 1], move: { from: u.slice(0, 2), to: u.slice(2, 4) }, parent: cadena[i] };
     try { if (_faIsBrilliant(node, rB, rA, blancas, _faWinP(rB))) out.push({ i: i }); } catch (e) {}
   }
   return out;
@@ -35059,8 +35299,13 @@ function _cgVerificarBri(g, P, c) {
       if (suya) {
         var bestSol = _colCp(lines[0].sc, f) * s, suyaSol = _colCp(suya.sc, f) * s;
         var alts = lines.filter(function(l){ return l.mv !== jug && _cgOtraOk(_colCp(l.sc, f) * s, suyaSol); }).map(function(l){ return l.mv; });
+        // Entregar la CALIDAD y que el rival la tome (torre por caballo o alfil) es un cambio, no un jugadón.
+        // R9 de la Olimpiada: 10 rechazados por el autor y ningún aceptado; las 2 calidades que sí aceptó
+        // (34.♖xf6, 35.♖xh6) el rival NO las podía tomar. La respuesta sale de la línea del motor.
+        var calidad = /^[nb]$/.test(P.cap[c.i] || '') && /^[rR]$/.test(_fenGrid(f)[(parseInt(jug[1], 10) - 1) * 8 + jug.charCodeAt(0) - 97] || '')
+          && !!suya.re && suya.re.slice(2, 4) === jug.slice(2, 4);
         // La mejor (o casi), sana, y la ÚNICA: con una sola línea (jugada forzada) no hay nada que encontrar.
-        if (suyaSol >= bestSol - _CG_BRI_MARGEN && suyaSol > -200 && lines.length >= 2 && !alts.length) {
+        if (!calidad && suyaSol >= bestSol - _CG_BRI_MARGEN && suyaSol > -200 && lines.length >= 2 && !alts.length) {
           _cgMeter({
             id: _cgGameKeyId(P.h) + '#!' + (c.i + 1), bri: 1,
             w: P.h.White || '?', b: P.h.Black || '?', r: P.h.Round || '', ply: c.i, tipo: 'BR',
@@ -41516,20 +41761,29 @@ function _faIsBrilliant(node, rBefore, rAfter, whiteMoved, wpB) {
   //  · el DESESPERADO: la pieza que se mueve ya estaba perdida donde estaba y, antes de caer, se lleva algo
   //    (el caballo e5 atacado por el peón d6 que toma en f7; tres capturas seguidas así en una partida caótica).
   //    No entrega nada nuevo: ya estaba perdida.
-  var from = node.move && node.move.from;
+  var from = node.move && node.move.from, pz = null;
   if (from && from.length >= 2) {
-    var ff = from.charCodeAt(0) - 97, fr = parseInt(from[1], 10) - 1, pz = parentG[fr * 8 + ff];
+    var ff = from.charCodeAt(0) - 97, fr = parseInt(from[1], 10) - 1;
+    pz = parentG[fr * 8 + ff];
     if (pz && pz.toLowerCase() === 'k') return false;
     if (pz && _seeGain(parentG, ff, fr, opp) > 0) return false;
   }
   var capturedByMove = _pieceValAtFen(node.parent.fen, node.move.to);
-  // Escanear TODAS las piezas propias de valor ≥ caballo (peones/rey no cuentan): también califica
-  // dejar colgada OTRA pieza (desviación, despeje de línea), no solo la que se movió.
-  for (var sq = 0; sq < 64; sq++) {
+  var to = node.move.to, toSq = (to && to.length >= 2) ? (parseInt(to[1], 10) - 1) * 8 + (to.charCodeAt(0) - 97) : -1;
+  // CORONAR no es entregar una dama: si la pieza recién coronada queda colgada, lo que se pierde es un
+  // peón (36...d1=D de la R9 de la Olimpiada, 25/09).
+  var corona = !!(pz && pz.toLowerCase() === 'p' && g[toSq] && g[toSq].toLowerCase() !== 'p');
+  // Escanear las piezas propias de valor ≥ caballo (peones/rey no cuentan). Cuenta la que se movió, y de
+  // las OTRAS sólo la dama (desviación tipo Légal). Dejar colgado un caballo, un alfil o una torre que no
+  // se tocó casi siempre es "no defenderla", no entregarla: en la R9 de la Olimpiada fueron 4 jugadones
+  // rechazados por el autor y ninguno aceptado (19.exd6 con el alfil b2 suelto, 36...Rc3, 36...Bd6, 26...Nd5).
+  var hay = false;
+  for (var sq = 0; sq < 64 && !hay; sq++) {
     var p = g[sq];
     if (!p || _pval(p) < 3 || _pval(p) >= 100) continue;
     var ours = (mover === 'w') ? (p === p.toUpperCase()) : (p === p.toLowerCase());
     if (!ours) continue;
+    if (sq === toSq ? corona : _pval(p) < 9) continue;
     var f = sq % 8, r = (sq - f) / 8;
     var gain = _seeGain(g, f, r, opp);           // material que gana el rival capturando acá
     if (gain > 0 && gain - capturedByMove >= _FA_BRILL_MIN_NET) {
@@ -41542,8 +41796,21 @@ function _faIsBrilliant(node, rBefore, rAfter, whiteMoved, wpB) {
       // OJO CLAVADAS AL REY: el SEE cuenta atacantes clavados que no pueden capturar. Confirmar con
       // chess.js que el rival tiene una captura LEGAL de esta casilla; si no, no es sacrificio real.
       var sqName = 'abcdefgh'.charAt(f) + (r + 1);
-      if (_oppHasLegalCaptureOf(node.fen, sqName)) return true;
+      if (_oppHasLegalCaptureOf(node.fen, sqName)) hay = true;
     }
+  }
+  return hay && !_faRepetida(node);
+}
+// ¿La posición de antes o la de después de la jugada ya se había dado en la partida? Es una repetición
+// (los jaques de Gurevich, 35. y 37.♖h8+, salían dos veces como jugadón en la R9 de la Olimpiada).
+// Sube por los padres del árbol; va al final de _faIsBrilliant para recorrer sólo las candidatas.
+function _faRepetida(node) {
+  function clave(f) { return String(f || '').split(' ').slice(0, 4).join(' '); }
+  var kAntes = clave(node.parent.fen), kDesp = clave(node.fen);
+  for (var q = node.parent.parent; q; q = q.parent) {
+    if (!q.fen) continue;
+    var k = clave(q.fen);
+    if (k === kAntes || k === kDesp) return true;
   }
   return false;
 }
@@ -44826,7 +45093,8 @@ function cvUpdateNagBadge() {
     // de tcWs y abría una tercera. Quedaban dos conexiones vivas y cada mensaje se veía dos veces
     // (al recargar se arreglaba). Además inflaba el "👁 X mirando". (25/09)
     var sock; try{ sock=tcWs=new WebSocket(url); }catch(e){ return; }
-    sock.onopen=function(){ if(sock!==tcWs) return; tcTries=0; tcChatPend=null; tcChatRetried=false; };
+    sock.onopen=function(){ if(sock!==tcWs) return; tcTries=0; tcChatPend=null; tcChatRetried=false;
+      try{ if(typeof _repConectado==='function') _repConectado(); }catch(e){} };   // motor repartido: decir qué ronda miro
     sock.onmessage=function(e){ if(sock!==tcWs){ try{ sock.close(); }catch(_){ } return; } var m; try{ m=JSON.parse(e.data); }catch(_){ return; }
       if(m.type==='chat-history'){ tcMsgs=Array.isArray(m.msgs)?m.msgs.slice(-40):[]; tcRenderAll(); }
       else if(m.type==='tour-chat'){
@@ -44837,14 +45105,18 @@ function cvUpdateNagBadge() {
       else if(m.type==='presence'){ tcSeeing=Number(m.n)||0; tcRenderPresence(); }
       // 🚨 Aviso de colgada repartido por el arbitrito (no es un mensaje del chat: no se guarda ni se ve).
       else if(m.type==='colgada'){ try{ if(typeof _colDeRedLote==='function') _colDeRedLote(m.cs); }catch(e){} }
+      // 🤝 Motor repartido: quiénes ayudan, lo que calcularon y a quién ya no se le cree.
+      else if(m.type==='rep' || m.type==='ev' || m.type==='ev-veto'){ try{ if(typeof _repDeRed==='function') _repDeRed(m); }catch(e){} }
       else if(m.type==='reaction'){ tcApplyReaction(m.id, m.emoji, m.userId, !!m.on); }
       else if(m.type==='msg-deleted'){ tcMsgs=tcMsgs.filter(function(x){ return x.id!==m.id; }); tcRemoveNode(m.id); }
       else if(m.type==='muted'){ tcMutedNotice(m.until); }
-      else if(m.type==='ready'){ if(tcChatPend){ var _tp=tcChatPend; tcChatPend=null; tcChatRetried=true; tcRawSend(_tp); } }
+      else if(m.type==='ready'){ if(tcChatPend){ var _tp=tcChatPend; tcChatPend=null; tcChatRetried=true; tcRawSend(_tp); }
+        try{ if(typeof _repConectado==='function') _repConectado(); }catch(e){} }   // ya sabe quién soy: ahora puedo ayudar
       else if(m.type==='not-ready'){ if(tcChatLast && !tcChatRetried) tcChatPend=tcChatLast; }
       else if(m.type==='need-login'){ try{ lvToast('Entrá con tu cuenta de Lichess para escribir en el chat.'); }catch(e){} }
     };
     sock.onclose=function(ev){ if(sock!==tcWs) return; tcWs=null;
+      try{ if(typeof _repDesconectado==='function') _repDesconectado(); }catch(e){}   // sin arbitrito, cada uno calcula todo
       if(ev && ev.code===4003) return;   // cuenta suspendida: no reconectar (ver el lobby)
       if(ev && ev.code===4008) return;   // demasiadas conexiones desde la misma red: insistir no sirve (23/09)
       if(tcIntentional || !tcRoom) return;
@@ -45060,8 +45332,14 @@ function cvUpdateNagBadge() {
       tcIntentional=true; if(tcTimer){ clearTimeout(tcTimer); tcTimer=null; }
       try{ if(tcWs) tcWs.close(); }catch(e){} tcWs=null;
       tcRoom=null; tcMsgs=[]; tcSeeing=0; tcRenderPresence(); tcViews={};
+      try{ if(typeof _repDesconectado==='function') _repDesconectado(); }catch(e){}
     },
     hasRoom:function(){ return !!tcRoom; },
+    // 🤝 Motor repartido (ver _repSync): qué ronda miro y si ayudo; lo que calculé; y desmentir a otro.
+    logueado:function(){ return !!lvAuthUser(); },
+    repHola:function(c, ayuda){ if(!tcRoom || !tcWs || tcWs.readyState!==1) return false; tcRawSend({ type:'rep-hola', c:c, ayuda:!!ayuda }); return true; },
+    repEv:function(c, e){ if(!tcRoom || !tcWs || tcWs.readyState!==1 || !lvAuthUser()) return false; tcRawSend({ type:'ev', c:c, e:e }); return true; },
+    repQueja:function(de){ if(!tcRoom || !lvAuthUser()) return false; tcRawSend({ type:'ev-mal', de:de }); return true; },
     // 🚨 Avisar una colgada al arbitrito para que se la reparta a todo el torneo (ver _colRepartir).
     // Sólo los logueados avisan, igual que para escribir: así hay a quién silenciar si alguien abusa.
     avisarColgada:function(cs){ if(!tcRoom || !lvAuthUser() || !(cs && cs.length)) return false; tcRawSend({ type:'colgada', cs:cs }); return true; },

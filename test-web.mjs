@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1686;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1742;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -5488,7 +5488,7 @@ console.log('\n=== 53f. Visor en el teléfono: tocar piezas y gráfico al cambia
   chk(M.llam.join() === 'toggle', 'sin gráfico, la pestaña lo arranca como siempre');
 
   // 3) La eval honda del visor pinta la miniatura de la misma posición (19/09).
-  const D = new Function('var _SF_BAR_MINDEPTH = 14, _tdCurrentRound = 4, _mevEvals = {}, _colDeep = {}, pint = [];'
+  const D = new Function('var _SF_BAR_MINDEPTH = 14, _tdCurrentRound = 4, _mevEvals = {}, _colDeep = {}, _repDe = {}, pint = [];'
     + 'function _capCache(){} function _tdSetEvalBar(el, sc){ pint.push(el.id + ":" + JSON.stringify(sc)); }'
     + 'var bd = function(id, fen, res){ return { id: id, getAttribute: function(a){ return a === "data-fen" ? fen : a === "data-res" ? res : null; } }; };'
     + 'var BDS = [bd("vivo", "8/8/8/8/8/8/8/K6k b - e3 0 49", "*"), bd("otra", "8/8/8/8/8/8/8/K6k w - - 0 49", "*"), bd("fin", "8/8/8/8/8/8/8/K6k b - - 0 49", "1-0")];'
@@ -5507,7 +5507,7 @@ console.log('\n=== 53f. Visor en el teléfono: tocar piezas y gráfico al cambia
   // 4) Con el motor del visor prendido, las miniaturas le piden una pausa (19/09).
   const T = new Function('var _tdLiveCtx = {}, _MEV_YIELD_DEPTH = 20, Chess = function(){}, env = [], JOBS = [1];'
     + 'var _fa = { running: false }, _mev = {}, sf = {};'
-    + 'function mevAbort(){} function sfStart(){} function mevCollect(){ return JOBS; }'
+    + 'function mevAbort(){} function sfStart(){} function mevCollect(){ return JOBS; } function _repSync(){}'
     + extraerFuncion('mevTick')
     + '; return { tick: function(s, fa){ sf = s; sf.ready = true; sf.engine = { postMessage: function(m){ env.push(m); } }; _fa.running = !!fa; _mev = {}; env.length = 0; mevTick(); return { corre: !!_mev.running, espera: !!_mev.want, pausa: !!_mev.resume, env: env.slice() }; } };')();
   let t = T.tick({ on: false });
@@ -5544,6 +5544,7 @@ console.log('\n=== 53g. Aviso de colgadas graves (19/09) ===');
     + 'function setTimeout(fn, ms){ timers.push({ fn: fn, ms: ms }); return timers.length; }'
     + 'function _colOn(){ return true; } function _capCache(){} function mevTick(){} function _bcGameIds(p){ return { game: p }; }'
     + 'function _cgBarRefrescar(){} var _colVisto = {}; function _ejvIntentar(){ return false; }'
+    + 'var _repDe = {}; function _repTomar(){ return false; } function _repDueno(){ return ""; }'
     // El chequeo de verdad (pedirle a Lichess el PGN otra vez) es asincrónico: se prueba aparte, más abajo.
     + 'function _colChequear(items, cb){ items.sort(function(a, b){ return (b.arg ? 1 : 0) - (a.arg ? 1 : 0); }); cb(items); }'
     + 'function _tdEvKey(h){ return h.k; } function _tdIsArgGame(h){ return !!h.arg; } function _colMostrar(items){ mostrados.push(items.map(function(i){ return i.gk; })); }'
@@ -5617,7 +5618,7 @@ console.log('\n=== 53g. Aviso de colgadas graves (19/09) ===');
       'el cartel dice "Hay mate en 3 en el tablero 7" en vez de "Hubo colgada"');
   // La ficha de Lichess también en torneos de UNA transmisión, si la ronda no entra en una página.
   const FH = new Function('var _TD_PER_PAGE = 24, ON = true, _tdCtx = { byRound: { 4: [] } }, _tdLiveCtx = { currentNum: 4 };'
-    + 'function _colOn(){ return ON; } function _colBarreRonda(){ return true; }'
+    + 'function _colOn(){ return ON; } function _colBarreRonda(){ return true; } function _repSoloRecibo(){ return false; }'
     + extraerFuncion('_colFichaHace')
     + '; return { f: _colFichaHace, set n(v){ _tdCtx.byRound[4] = new Array(v); }, set on(v){ ON = v; } };')();
   FH.n = 6;  chk(FH.f() === false, 'torneo chico (6 partidas, entran en una página): sigue sin pedir la ficha');
@@ -5645,6 +5646,7 @@ console.log('\n=== 53g. Aviso de colgadas graves (19/09) ===');
       + 'var _tdJsonNew = {}, games = [];'
       + 'function _colOn(){ return true; } function _colBarreRonda(){ return true; } function _colRonda(){ return games; }'
       + 'function _bcGameIds(p){ return { game: p }; } function _tdEvKey(h){ return h.k; } function _tdIsArgGame(h){ return !!h.arg; }'
+      + 'function _repJob(f){ return _mevEvals[f] !== undefined ? null : { fen: f }; }'
       + extraerFuncion('_colMasTrabajos')
       + '; return { f: _colMasTrabajos, visto: _colVisto, json: _tdJsonNew, games: games };')();
     ['a', 'b', 'c', 'd', 'e'].forEach(function(k){
@@ -5772,6 +5774,195 @@ console.log('\n=== 53g. Aviso de colgadas graves (19/09) ===');
       '🔒 cada cartel se manda en UN mensaje con todas sus colgadas juntas: de a una, el tope por persona del arbitrito se comía las últimas', C.lotes.length);
   chk(/cs\.slice\(0, _COL_RED_LOTE\)/.test(extraerFuncion('_colRepartir')) && /var _COL_RED_LOTE = 20/.test(SRC),
       'y no más de 20 por tanda (lo mismo que acepta el arbitrito)');
+}
+
+// ── 53g-rep. 🤝 Motor repartido: las PC se reparten los tableros de la ronda (25/09, idea del autor) ──
+console.log('\n=== 53g-rep. Motor repartido: cada posición se calcula una vez y le llega a todos (25/09) ===');
+{
+  const decl = SRC.slice(SRC.indexOf('var _REP_ESPERA_MS'), SRC.indexOf('// ?rep=0 lo apaga'));
+  const N = ['_repLlave', '_repK', '_repHash', '_repCanal', '_repHay', '_repYoAyudo', '_repSoloRecibo', '_repQuieroAyudar',
+    '_repSync', '_repConectado', '_repDesconectado', '_repDueno', '_repContar', '_repProfMia', '_repTomar', '_repJob',
+    '_repEncolar', '_repEnviar', '_repDeRed', '_repRecibir', '_repVeto', '_repControlar', '_repNoCierra', '_colCp'];
+  const mk = () => new Function('var AHORA = 1e9, Date = { now: function(){ return AHORA; } }, timers = [], enviados = [], holas = [], quejas = [];'
+    + 'var _MEV_DEPTH = 12, _mevEvals = {}, _colDeep = {}, _mevExtra = [], _tdCurrentRound = 5, _tdLiveCtx = { key: "t1,t2", currentNum: 5 }, _colQ0 = "";'
+    + 'var RONDA = [], FICHA = {}, VIVA = true, LOG = true, OCULTA = false, CONECTADO = true, PINT = [], BDS = [];'
+    + 'var localStorage = { getItem: function(){ return null; }, setItem: function(){}, removeItem: function(){} };'
+    + 'var document = { get hidden(){ return OCULTA; }, querySelectorAll: function(){ return BDS; } };'
+    + 'var window = { aaTourChat: { logueado: function(){ return LOG; },'
+    + '  repHola: function(c, a){ if (!CONECTADO) return false; holas.push(c + "|" + a); return true; },'
+    + '  repEv: function(c, e){ enviados.push({ c: c, e: e }); return true; }, repQueja: function(de){ quejas.push(de); return true; } } };'
+    + 'function setTimeout(fn, ms){ timers.push({ fn: fn, ms: ms }); return timers.length; }'
+    + 'function _capCache(){} function mevTick(){} function _colScan(){} function _tdSetEvalBar(el, sc){ PINT.push(el.id + ":" + JSON.stringify(sc)); }'
+    + 'function _colOn(){ return true; } function _colBarreRonda(){ return true; }'
+    + 'function _colRonda(){ return VIVA ? RONDA : null; } function _colPos(g){ return FICHA[g.h.k] || null; } function _tdEvKey(h){ return h.k; }'
+    + decl + '\n' + N.map(extraerFuncion).join('\n')
+    + '; return { rep: _rep, ev: _repEv, de: _repDe, mev: _mevEvals, deep: _colDeep, extra: _mevExtra, timers: timers, enviados: enviados, holas: holas, quejas: quejas, pint: PINT,'
+    + '  sync: _repSync, conectado: _repConectado, desconectado: _repDesconectado, dueno: _repDueno, contar: _repContar, job: _repJob, tomar: _repTomar,'
+    + '  encolar: _repEncolar, enviar: _repEnviar, red: _repDeRed, controlar: _repControlar, noCierra: _repNoCierra, soloRecibo: _repSoloRecibo, canal: _repCanal,'
+    + '  espera: _REP_ESPERA_MS, set ahora(v){ AHORA = v; }, get ahora(){ return AHORA; }, set log(v){ LOG = v; }, set oculta(v){ OCULTA = v; }, set viva(v){ VIVA = v; },'
+    + '  set conectado_(v){ CONECTADO = v; }, ronda: RONDA, ficha: FICHA, bds: BDS, set ctx(v){ _tdLiveCtx = v; } };')();
+  const F = (k) => 'pos-' + k + ' w KQkq - 0 20';                       // FEN de la partida k
+  const K = (k) => 'pos-' + k + ' w KQkq';                              // la misma posición, sin al-paso ni contadores
+  const armar = (W, n) => { for (let i = 0; i < n; i++) { const k = 'g' + i; W.ronda.push({ h: { k } }); W.ficha[k] = { fen: F(k), res: '*' }; } };
+  const lista = (W, ids, yo) => { W.red({ type: 'rep', c: W.rep.c, ids, yo }); W.contar(); };
+
+  // Sin lista de ayudantes (servidor viejo, sin conexión, ?rep=0): todo como antes.
+  let W = mk();
+  chk(W.job(F('a'), 'a').fen === F('a') && !W.job(F('a'), 'a').rep, 'sin reparto, cada tablero se calcula acá como siempre (y no se manda a nadie)');
+  W.mev[F('a')] = { cp: 5 };
+  chk(W.job(F('a'), 'a') === null, '…y lo ya evaluado no se repite');
+
+  // Qué ronda mira y si ayuda: se le cuenta al arbitrito sólo cuando cambia.
+  W = mk(); W.viva = false; W.sync();
+  chk(W.holas.length === 0, 'en un torneo sin ronda en vivo no se le manda nada al arbitrito (ni un mensaje de más)');
+  W = mk(); W.sync(); W.sync();
+  chk(W.holas.length === 1 && /\|true$/.test(W.holas[0]) && W.rep.c === W.holas[0].split('|')[0] && /^[a-z0-9]{1,16}$/.test(W.rep.c),
+      'al mirar la ronda en vivo le dice al arbitrito qué ronda (un nombre corto) y que ayuda; repetirlo no manda nada', W.holas.join());
+  W.oculta = true; W.sync();
+  chk(W.holas[1] === W.rep.c + '|false', '🔒 con la pestaña de fondo deja de ayudar (no le llegan jugadas: sus tableros los toma otro)');
+  W.oculta = false; W.sync(); W.log = false; W.sync();
+  chk(W.holas[2] === W.rep.c + '|true' && W.holas[3] === W.rep.c + '|false', '🔒 al volver a la pestaña vuelve a ayudar; sin cuenta mira y recibe, pero no ayuda');
+  W.log = true; W.viva = false; W.sync();
+  chk(W.holas[4] === '|false', 'mirando una ronda vieja (no la que se juega) sale del canal: no recibe nada');
+  W.viva = true; W.conectado_ = false; W.desconectado(); W.sync();
+  chk(W.holas.length === 5, 'sin conexión no se manda nada…');
+  W.conectado_ = true; W.conectado();
+  chk(W.holas.length === 6 && /\|true$/.test(W.holas[5]), '…y al reconectar se repite (el arbitrito pudo olvidarlo)');
+  const c1 = W.canal(); W.ctx = { key: 't1,t2', currentNum: 6 };
+  chk(W.canal() !== c1, 'cada ronda (y cada categoría, que es otra transmisión) tiene su canal');
+
+  // El reparto: cada tablero tiene UN dueño, y todos sacan la misma cuenta.
+  const ids = ['ha', 'hb', 'hc'];
+  const mundos = ids.map((yo) => { const X = mk(); armar(X, 30); X.sync(); lista(X, ids, yo); return X; });
+  const duenos = Array.from({ length: 30 }, (_, i) => mundos.map((X) => X.dueno('g' + i)));
+  chk(duenos.every((d) => d.filter((x) => x === 'p').length === 1),
+      '🔒 con 3 ayudantes y 30 tableros, cada tablero es de UNO solo (los tres navegadores sacan la misma cuenta sin preguntarle a nadie)');
+  const cuantos = mundos.map((X, j) => duenos.filter((d) => d[j] === 'p').length);
+  chk(cuantos.every((n) => n >= 4), 'y se reparten: a nadie le tocan todos ni ninguno', cuantos.join('/'));
+  chk(duenos.every((d) => d.indexOf('h') < 0), 'con menos del doble de ayudantes que tableros no hay "segundo" (sería trabajo de más)');
+  // Se va uno: sólo se mueven SUS tableros.
+  const quedan = mundos.slice(0, 2); quedan.forEach((X) => lista(X, ['ha', 'hb'], X.rep.yo));
+  const movidos = Array.from({ length: 30 }, (_, i) => i).filter((i) => {
+    const antes = duenos[i].indexOf('p'), ahora = quedan.map((X) => X.dueno('g' + i)).indexOf('p');
+    return antes !== ahora;
+  });
+  chk(movidos.every((i) => duenos[i][2] === 'p') && movidos.length === cuantos[2],
+      '🔒 si uno se va, sólo se reparten SUS tableros; los de los demás no se mueven (nadie pierde lo que venía calculando)', movidos.length);
+  chk(Array.from({ length: 30 }, (_, i) => quedan.map((X) => X.dueno('g' + i)).filter((d) => d === 'p').length).every((n) => n === 1),
+      '…y los que quedan se cubren todo entre los dos');
+
+  // Pocos tableros por cabeza → más hondo; mucha gente → un segundo a prof. 18.
+  W = mk(); armar(W, 30); W.sync(); lista(W, ['ha'], 'ha');
+  chk(W.rep.misN === 30 && W.job(F('g1'), 'g1').depth === undefined && W.job(F('g1'), 'g1').rep === 1,
+      'solo, con 30 tableros: prof. 12 como hoy (pero lo que calcula se reparte)');
+  const Fb = (k) => 'pos-' + k + '-b b KQkq - 1 20';   // la jugada siguiente de la partida k
+  const llegar = (X, n) => { for (let i = 0; i < n; i++) { X.job(F('g' + i), 'g' + i); X.mev[F('g' + i)] = { cp: 0 }; } };   // lo que había al llegar
+  W = mk(); armar(W, 30); W.sync(); lista(W, ['ha', 'hb', 'hc', 'hd', 'he', 'hf', 'hg', 'hh', 'hi', 'hj'], 'ha');
+  llegar(W, 30);
+  const j1 = Array.from({ length: 30 }, (_, i) => W.job(Fb('g' + i), 'g' + i)).filter(Boolean);
+  chk(j1.length === W.rep.misN && j1.length > 0 && j1.every((j) => j.depth === (W.rep.misN <= 3 ? 16 : 14)),
+      '🔒 con 10 ayudantes para 30 tableros, cada uno calcula sólo los suyos y más hondo', W.rep.misN + ' a prof. ' + (j1[0] && j1[0].depth));
+  const idsM = Array.from({ length: 10 }, (_, i) => 'h' + i);
+  const muchos = idsM.map((yo) => { const X = mk(); armar(X, 5); X.sync(); lista(X, idsM, yo); return X; });
+  const d5 = Array.from({ length: 5 }, (_, i) => muchos.map((X) => X.dueno('g' + i)));
+  chk(d5.every((d) => d.filter((x) => x === 'p').length === 1 && d.filter((x) => x === 'h').length === 1 && d.indexOf('p') !== d.indexOf('h')),
+      '🔒 con 10 ayudantes para 5 tableros, cada tablero tiene uno rápido y OTRO que lo calcula más hondo; el resto descansa');
+  const seg = muchos[d5[0].indexOf('h')];
+  chk(seg.job(F('g0'), 'g0').depth === 18, '…el segundo, a prof. 18');
+  seg.deep[F('g0')] = 18; seg.mev[F('g0')] = { cp: 30 };
+  chk(seg.job(F('g0'), 'g0') === null, '…una sola vez por posición');
+  const ocioso = muchos.find((X, j) => d5.every((d) => d[j] === ''));
+  if (ocioso) llegar(ocioso, 5);
+  chk(!!ocioso && Array.from({ length: 5 }, (_, i) => ocioso.job(Fb('g' + i), 'g' + i)).every((j) => j === null),
+      'al que no le toca ningún tablero no calcula nada (después de lo que había al llegar): su PC descansa');
+
+  // El que no es dueño espera lo de otro; si no llega, lo calcula él.
+  W = mk(); armar(W, 4); W.sync(); lista(W, ['hz'], null);
+  const G0b = 'pos-g0-b b KQkq - 1 20';   // la jugada siguiente de la misma partida
+  chk(W.job(F('g0'), 'g0').fen === F('g0'), '🔒 la posición que tenía el tablero al llegar se calcula acá (el arbitrito pudo dormirse y no tener nada): sin barritas vacías');
+  W.mev[F('g0')] = { cp: 0 };
+  chk(W.job(G0b, 'g0') === null, '🔒 pero con la jugada siguiente, un tablero de otro ya no se calcula acá: se espera lo suyo');
+  W.ahora = W.ahora + W.espera - 1000;
+  chk(W.job(G0b, 'g0') === null, '…mientras no pase la espera…');
+  W.ahora = W.ahora + 2000;
+  const tarde = W.job(G0b, 'g0');
+  chk(tarde && tarde.fen === G0b && !tarde.rep, '🔒 …y si no llegó a tiempo (el dueño se colgó), se calcula acá como antes');
+  chk(W.soloRecibo() === true, 'el que sólo recibe no pide la ficha de toda la ronda (_colFichaHace)');
+
+  // Lo que llega de otro.
+  W = mk(); armar(W, 4); W.sync(); lista(W, ['hz'], null);
+  W.bds.push({ id: 'mini', getAttribute: (a) => a === 'data-fen' ? 'pos-g1 w KQkq e3 0 20' : (a === 'data-res' ? '*' : null) });
+  W.red({ type: 'ev', c: W.rep.c, e: [[K('g1'), 45, null, 14, 'hz'], [K('g2'), null, 3, 12, 'hz']] });
+  chk(W.pint.join() === 'mini:{"cp":45}', '🔒 la eval que calculó otro pinta la barrita del tablero en pantalla (aunque su FEN difiera en el al-paso)', W.pint.join());
+  chk(W.job(F('g2'), 'g2') === null && W.mev[F('g2')].mate === 3 && W.de[F('g2')] === 'hz', '…y ese tablero ya no se calcula acá (queda anotado de quién es)');
+  W.red({ type: 'ev', c: W.rep.c, e: [[K('g1'), -300, null, 12, 'hy']] });
+  chk(W.ev[K('g1')].sc.cp === 45, 'una más corta que la que ya había no la pisa');
+  W.red({ type: 'ev', c: 'otracosa', e: [[K('g3'), 1, null, 12, 'hz']] });
+  chk(!W.ev[K('g3')], 'lo de otra ronda se ignora');
+  W.mev[F('g0')] = { cp: 10 }; W.deep[F('g0')] = 16;
+  W.bds.length = 0; W.bds.push({ id: 'propia', getAttribute: (a) => a === 'data-fen' ? F('g0') : (a === 'data-res' ? '*' : null) });
+  W.red({ type: 'ev', c: W.rep.c, e: [[K('g0'), 900, null, 14, 'hz']] });
+  chk(W.mev[F('g0')].cp === 10, 'una eval propia más honda no se pisa con la de otro');
+
+  // Lo que calculo yo sale en tandas.
+  W = mk(); armar(W, 4); W.sync(); lista(W, ['ha'], 'ha');
+  const t0 = W.timers.length;
+  W.encolar(F('g0'), { cp: 20 }, 12); W.encolar(F('g1'), { mate: -2 }, 14); W.encolar(F('g2'), { cp: 5 }, 16);
+  chk(W.timers.length === t0 + 1 && W.enviados.length === 0, 'lo calculado no sale de a uno: se junta la tanda');
+  W.timers[t0].fn();
+  chk(W.enviados.length === 1 && W.enviados[0].e.length === 3 && W.enviados[0].c === W.rep.c
+      && JSON.stringify(W.enviados[0].e[1]) === JSON.stringify([K('g1'), null, -2, 14]),
+      '🔒 sale en UN mensaje, con la posición sin al-paso ni contadores, cp o mate, y la profundidad', JSON.stringify(W.enviados[0].e[1]));
+  W.encolar(F('g3'), { cp: 1 }, 12);
+  chk(W.timers[t0 + 1].ms >= 8000 - 5, 'la próxima tanda espera 8 s (el arbitrito acepta 4 cada 10)', W.timers[t0 + 1].ms);
+  W.encolar(F('g3'), { cp: 1 }, 22);
+  chk(W.rep.envio.length === 1, 'más hondo que 18 no se manda (no se puede controlar)');
+  W = mk(); armar(W, 4); W.sync(); lista(W, ['hz'], null);
+  W.encolar(F('g0'), { cp: 20 }, 12);
+  chk(W.rep.envio.length === 0, '🔒 el que no está en la lista no manda nada');
+
+  // El control: recalcular lo ajeno a la misma profundidad.
+  chk(W.noCierra({ cp: 40 }, { cp: 90 }, F('x')) === false && W.noCierra({ cp: 40 }, { cp: 400 }, F('x')) === true
+      && W.noCierra({ mate: 3 }, { cp: 1600 }, F('x')) === false && W.noCierra({ mate: 3 }, { cp: 200 }, F('x')) === true,
+      'a la misma profundidad se toleran diferencias chicas; 3 peones o más no cierran (el mate cuenta como +15)');
+  W = mk(); armar(W, 4); W.sync(); lista(W, ['ha', 'hm'], 'ha');
+  const miente = () => W.red({ type: 'ev', c: W.rep.c, e: [[K('m' + W.ahora), 900, null, 12, 'hm']] });
+  miente(); W.controlar();
+  chk(W.extra.length === 1 && W.extra[0].depth === 12 && W.extra[0].fen === K('m' + W.ahora) + ' - 0 1',
+      'cada tanto, el que ayuda recalcula una eval ajena a la MISMA profundidad (mismo motor: tiene que dar casi igual)');
+  W.extra[0].cb({ cp: 0 });
+  chk(W.quejas.length === 0 && !W.rep.veto.hm, 'una sola que no cierra no alcanza (puede ser una posición rara)');
+  miente(); W.controlar();
+  chk(W.extra.length === 1, 'un control por minuto, como mucho');
+  W.ahora = W.ahora + 61000; miente(); W.controlar(); W.extra[1].cb({ cp: -20 });
+  chk(W.quejas.join() === 'hm' && W.rep.veto.hm === 1, '🔒 dos que no cierran: se lo desmiente ante el arbitrito y acá ya no se le cree');
+  W.red({ type: 'ev', c: W.rep.c, e: [[K('g9'), 1, null, 12, 'hm']] });
+  chk(!W.ev[K('g9')], '…lo que mande después se ignora');
+  // El veto del arbitrito borra lo que ya había llegado.
+  W = mk(); armar(W, 4); W.sync(); lista(W, ['hz'], null);
+  W.red({ type: 'ev', c: W.rep.c, e: [[K('g1'), 700, null, 12, 'hm'], [K('g2'), 10, null, 12, 'hz']] });
+  W.tomar(F('g1')); W.tomar(F('g2'));
+  W.red({ type: 'ev-veto', ids: ['hm'] });
+  chk(!W.ev[K('g1')] && W.mev[F('g1')] === undefined && W.mev[F('g2')].cp === 10,
+      '🔒 cuando el arbitrito veta a alguien, se borra lo suyo (esos tableros se vuelven a calcular) y lo de los demás queda');
+  chk(!W.tomar(F('g1')), '…y no vuelve por la ventana');
+
+  // Enganches con lo que ya existía.
+  const col = extraerFuncion('_colScan');
+  chk(/_repDe\[p\.fen\] && _repDueno\(gk\) !== 'p'\) return;/.test(col) && col.indexOf('_repDueno(gk)') < col.indexOf('_colClasifica('),
+      '🔒 las colgadas de una mesa ajena las vigila su dueño: con la eval de otro no se clasifica acá (llega por el aviso repartido)');
+  chk(/_repSoloRecibo\(\)\) return false;/.test(extraerFuncion('_colFichaHace')), 'el que sólo recibe no pide la ficha de toda la ronda');
+  chk(/_repJob\(fen, el\.getAttribute\('data-gk'\)\)/.test(extraerFuncion('mevCollect')) && /_repJob\(o\.fen, _tdEvKey\(g\.h\)\)/.test(extraerFuncion('_colMasTrabajos')),
+      'los dos lugares que arman la tanda del motor (la página en pantalla y el resto de la ronda) preguntan de quién es cada tablero');
+  const hm = extraerFuncion('mevHandleMsg');
+  chk(/delete _repDe\[job\.fen\];/.test(hm) && /if \(job\.rep\) _repEncolar\(job\.fen, score, job\.depth \|\| _MEV_DEPTH\);/.test(hm),
+      'lo que se calcula acá se anota como propio y, si es de la ronda repartida, sale para los demás');
+  chk(/_repSync\(\);/.test(extraerFuncion('mevTick')) && /_repControlar\(\);/.test(extraerFuncion('mevNext')), 'se sincroniza en cada vuelta del motor y controla al terminar una tanda');
+  const tc = SRC.slice(SRC.indexOf('function tcConnect()'), SRC.indexOf('function tcConnect()') + 4500);
+  chk(/sock\.onopen=[\s\S]*?_repConectado\(\)/.test(tc) && /m\.type==='ready'[\s\S]*?_repConectado\(\)/.test(tc) && /sock\.onclose=[\s\S]*?_repDesconectado\(\)/.test(tc)
+      && /m\.type==='rep' \|\| m\.type==='ev' \|\| m\.type==='ev-veto'/.test(tc),
+      'el chat del torneo: al conectarse (y cuando sabe quién sos) dice qué ronda mirás; sin conexión, cada uno vuelve a calcular todo');
+  chk(!/aaToast|lvToast|aaAsk/.test(N.slice(0, -1).map(extraerFuncion).join('\n')), 'sin ningún cartel (lo pidió el autor: por un torneo chico asustaría por nada)');
 }
 
 // ── 53g-ter. El aviso que llega del arbitrito lo confirma MI motor (20/09) ──
@@ -6217,12 +6408,13 @@ console.log('\n=== 53h. Colgadas de la ronda: barrido, revisión y tablero de ej
 
   // Detección (sin motor): el SEE del "!!" del visor + los filtros de la lista de la ronda.
   const B = new Function('Chess', 'var _CG_DESDE_PLY = 10; ' + SRC.match(/var _FA_BRILL_MIN_NET[^\n]*/)[0] + '\n'
-    + ['faNum', '_fenGrid', '_pval', '_pieceValAtFen', '_pinDir', '_attackersOf', '_seeGain', '_faIsBrilliant', '_oppHasLegalCaptureOf', '_faWinP', '_cgDetectarBri'].map(extraerFuncion).join('\n')
+    + ['faNum', '_fenGrid', '_pval', '_pieceValAtFen', '_pinDir', '_attackersOf', '_seeGain', '_faIsBrilliant', '_faRepetida', '_oppHasLegalCaptureOf', '_faWinP', '_cgDetectarBri'].map(extraerFuncion).join('\n')
     + '; return { det: _cgDetectarBri, vis: _faIsBrilliant, winp: _faWinP };')(ChessB);
   const mk = (fen, uci, a, d) => {
     const ch = new ChessB(fen); ch.move({ from: uci.slice(0, 2), to: uci.slice(2, 4) });
     const fens = [], ucis = [];
-    for (let i = 0; i < 11; i++) { fens.push(fen); ucis.push('a1a1'); }
+    // (relleno: posiciones distintas, si no la partida inventada sería una repetición y _faRepetida la descarta)
+    for (let i = 0; i < 11; i++) { fens.push(i < 10 ? 'relleno' + i + ' w - - 0 1' : fen); ucis.push('a1a1'); }
     fens.push(ch.fen()); ucis[10] = uci;
     const ev = []; ev[10] = a; ev[11] = d;
     return { P: { fens, uci: ucis }, ev };
@@ -6255,6 +6447,22 @@ console.log('\n=== 53h. Colgadas de la ronda: barrido, revisión y tablero de ej
   const RB0 = 'r4rk1/p4pbp/2p3p1/q1p5/2B1p1b1/2P1PN2/P2BQPPP/1R3RK1 w - - 0 15', RB1 = 'r4rk1/pR3pbp/2p3p1/q1p5/2B1p1b1/2P1PN2/P2BQPPP/5RK1 b - - 1 15';
   chk(!bri(SB, 49) && !B.vis({ fen: RB1, parent: { fen: RB0 }, move: { from: 'b1', to: 'b7' } }, { cp: 100 }, { cp: 120 }, true, 55),
       '…y siguen sin serlo las falsas: 25.♗b5 (el alfil d7 está clavado) y 15.♖b7 de Ocampos–Moldovan (el caballo ya estaba colgado)');
+  // Patrones nuevos sacados de la R9 de la Olimpiada que revisó el autor (33 aceptados / 50 rechazados, 25/09).
+  const visN = (fen, uci, padre) => { const c = new ChessB(fen); c.move({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci[4] || 'q' });
+    return B.vis({ fen: c.fen(), move: { from: uci.slice(0, 2), to: uci.slice(2, 4) }, parent: Object.assign({ fen }, padre ? { parent: padre } : {}) }, { cp: 0 }, { cp: 0 }, fen.split(' ')[1] === 'w', 50); };
+  chk(visN('5k2/3R3p/4PBp1/b7/8/pP4P1/P2p1PKP/2r5 b - - 0 36', 'd2d1q') === false,
+      '🔒 coronar no es entregar una dama: 36...d1=D colgada cuesta un peón (Kate–Cottle)');
+  chk(visN('3rk2r/4qpbp/p2pb1pn/1pp1P3/5P2/PP3B1P/1BP1N1P1/R3QK1R w k - 3 19', 'e5d6') === false,
+      '🔒 dejar colgada OTRA pieza que no es la dama no es jugadón: 19.exd6 con el alfil b2 suelto (Pillay–Gumbs)');
+  const GUR = '3rb1R1/ppb1q2k/8/4Npp1/3p4/P3Q1PP/BP3P2/6K1 w - - 2 35';
+  chk(visN(GUR, 'g8h8') === true && visN(GUR.replace(' 2 35', ' 6 37'), 'g8h8', { fen: '3rb2R/ppb1q1k1/8/4Npp1/3p4/P3Q1PP/BP3P2/6K1 w - - 5 37', parent: { fen: GUR } }) === false,
+      '🔒 una posición repetida no vuelve a ser jugadón: 37.♖h8+ de Gurevich era el mismo jaque de la jugada 35');
+  { const x2 = mk(LEGAL, 'f3e5', 30, 250); x2.P.cap = []; x2.P.uci[9] = 'd6e5'; x2.P.cap[9] = 'p';
+    chk(B.det(x2.P, x2.ev).length === 0, '🔒 retomar no es jugadón: el rival acaba de comer en esa casilla (23.♖xh4, 29.♖xd8+, 13.♘xb5, 11.♘xe4 de la R9)'); }
+  const vb0 = extraerFuncion('_cgVerificarBri');
+  chk(vb0.includes("var calidad = /^[nb]$/.test(P.cap[c.i] || '')") && vb0.includes('suya.re.slice(2, 4) === jug.slice(2, 4)') && vb0.includes('!calidad && suyaSol')
+      && extraerFuncion('mevHandleMsg').includes("re: pvM[2] || ''") && /return \{ mv: l\.mv, re: l\.re \|\| ''/.test(extraerFuncion('mevHandleMsg')),
+      '🔒 entregar la calidad y que el rival la tome es un cambio, no un jugadón (10 rechazados en la R9, ningún aceptado): la respuesta sale de la línea del motor');
   const vb = extraerFuncion('_cgVerificarBri');
   chk(/multipv: 3/.test(vb) && /lines\.length >= 2 && !alts\.length/.test(vb) && /suyaSol >= bestSol - _CG_BRI_MARGEN/.test(vb),
       '🔒 el motor la confirma: la mejor (o a 0,3) y la ÚNICA que sirve (R8 de la Olimpiada: con el criterio del visor salían ~250)');
