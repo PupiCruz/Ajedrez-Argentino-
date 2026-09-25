@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1647;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1654;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -1700,7 +1700,7 @@ console.log('\n=== 34. La vitrina de trofeos del perfil ===');
       '📖 las aperturas se reconocen también con el número pegado a la jugada ("1.d4", como en OlimpBase/ChessBase)');
   // Chennai 2022, R11: Lichess mandó 1 partida con país y 366 sin → un match gigante sin nombre.
   const ORD = new Function('crDataLoad', 'crNormTokens', '_crNombreContenido', '_tdCtx',
-    extraerFuncion('_tdTeamOrden') + '; return _tdTeamOrden;');
+    extraerFuncion('_teamNorm') + extraerFuncion('_tdTeamOrden') + '; return _tdTeamOrden;');
   const _norm = s => String(s).toLowerCase().replace(/[^a-z ]/g, ' ').split(/\s+/).filter(Boolean).sort().join(' ');
   const _cont = (a, b) => { const A = a.split(' '), B = b.split(' '); const c = A.length <= B.length ? A : B, l = A.length <= B.length ? B : A; return c.length >= 2 && c.every(x => l.includes(x)); };
   const _crTR = { teamRounds: { 11: [
@@ -4294,7 +4294,7 @@ console.log('\n=== 53. Vivo: los tableros que se miran, sueltos y al instante (1
 // ronda sale en ~1 s y trae posición, última jugada, relojes y resultado de cada partida.
 console.log('\n=== 53b. Vivo: miniaturas con la ficha liviana de Lichess (17/09) ===');
 {
-  const N = ['parsePgnHeaders', '_bcGameIds', '_fenPlies', '_csToClk', '_tdJsonRes', '_tdJsonAhead', '_tdFichaSirve', '_tdBoardState', '_tdGameRes', '_tdJsonApply', '_tdJsonGuardar', '_tdTeamMatches'];
+  const N = ['parsePgnHeaders', '_bcGameIds', '_fenPlies', '_csToClk', '_tdJsonRes', '_tdJsonAhead', '_tdFichaSirve', '_tdBoardState', '_tdGameRes', '_tdJsonApply', '_tdJsonGuardar', '_teamNorm', '_tdTeamMatches'];
   const F = new Function('var _tdJsonNew = {}, _tdCtx = null, _tdCurrentRound = 2, _tdLiveCtx = { currentNum: 2 }, llamadas = [];'
     + 'var FENS = {}; function tdFinalFenCached(p){ return FENS[p]; } function _pgnPlies(p){ return FENS[p] ? _fenPlies(FENS[p].fen) : 0; }'
     + 'function _tdPatchRoundBoards(r){ llamadas.push("patch" + r); } function _teamLiveRefresh(){} function _teamLiveRefreshPronto(){} function _colOn(){ return false; } function mevTick(){}'
@@ -6617,7 +6617,7 @@ console.log('\n=== Auditoría 23/09 — Fase 4: accesibilidad y prolijidad ===')
   console.log('\n=== 58. Ojito del match: mismo orden, match entero y nombres parecidos (24/09) ===');
   const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
   const tokens = (n) => norm(n).split(' ').filter(Boolean).sort().join(' ');
-  const matches = new Function('_tdGameRes', extraerFuncion('_tdTeamMatches') + '; return _tdTeamMatches;')((g) => g.h.Result);
+  const matches = new Function('_tdGameRes', extraerFuncion('_teamNorm') + extraerFuncion('_tdTeamMatches') + '; return _tdTeamMatches;')((g) => g.h.Result);
   const G = (w, b, wt, bt, res) => ({ h: { White: w, Black: b, WhiteTeam: wt, BlackTeam: bt, Result: res || '1/2-1/2' } });
   const ms = matches([ G('Sosa, Tomas', 'Svane, Frederik', 'Argentina (ARG)', 'Germany (GER)'),
                        G('Otro, A', 'Otro, B', 'India (IND)', 'Chile (CHI)'),
@@ -6629,7 +6629,7 @@ console.log('\n=== Auditoría 23/09 — Fase 4: accesibilidad y prolijidad ===')
       { nW: 'Mammadzada, Gunay', nB: 'Francisco Guecamburu, Candela Be' }, { nW: 'Mammadova, Gulnar', nB: 'Amura, Claudia' } ] },
     { aName: 'Germany (GER)', bName: 'Chile (CHI)', boards: [ { nW: 'Heinemann, Josefine', nB: 'Perez, Ana' } ] } ] };
   const orden = new Function('_tdCtx', 'crDataLoad', 'crNormTokens', '_crNombreContenido', 'normStr',
-    extraerFuncion('_tdTeamOrden') + '; return _tdTeamOrden;')({ crKey: 'x' }, () => ({ teamRounds: formacion }), tokens, () => false, norm);
+    extraerFuncion('_teamNorm') + extraerFuncion('_tdTeamOrden') + '; return _tdTeamOrden;')({ crKey: 'x' }, () => ({ teamRounds: formacion }), tokens, () => false, norm);
   const H = (w, b, wt, bt) => ({ h: { White: w, Black: b, WhiteTeam: wt, BlackTeam: bt } });
   const out = orden([ H('Amura, Claudia', 'Mammadova, Gulay'), H('Safarli, Josefine', 'Perez, Ana'), H('Fulano, X', 'Mengano, Y') ], 3);
   chk(out[0].h.WhiteTeam === 'Argentina (ARG)' && out[0].h.BlackTeam === 'Azerbaijan (AZE)',
@@ -6655,18 +6655,57 @@ console.log('\n=== Auditoría 23/09 — Fase 4: accesibilidad y prolijidad ===')
   // Lo dibujado: POR-ARG en el lugar 0 e IND-CHI en el 1 (el de la izquierda en data-team).
   const el = (id, par, izq) => ({ id, par, textContent: '', getAttribute(k) { return k === 'data-mpar' ? par : null; },
     previousElementSibling: { getAttribute: (k) => (k === 'data-team' ? izq : null) } });
-  const e0 = el('td-mscore-9-0', 'Argentina (ARG)|Portugal (POR)', 'Portugal (POR)');
-  const e1 = el('td-mscore-9-1', 'Chile (CHI)|India (IND)', 'Chile (CHI)');   // Chile a la izquierda en pantalla
+  const e0 = el('td-mscore-9-0', 'argentina|portugal', 'Portugal (POR)');
+  const e1 = el('td-mscore-9-1', 'chile|india', 'Chile (CHI)');   // Chile a la izquierda en pantalla
   const ctx = { isTeam: true, byRound: { 9: [ronda[2], ronda[3], ronda[0], ronda[1]] } };   // vuelve en OTRO orden
   const upd = new Function('_tdCtx', 'document', '_tdGameRes', '_tdTeamOrden',
     'function _fmtHalf(n) { var w = Math.floor(n); return ((n - w) >= 0.5) ? ((w > 0 ? w : "") + "½") : String(w); }'
-    + extraerFuncion('_tdTeamMatches') + extraerFuncion('_tdMatchPar') + extraerFuncion('_tdUpdateMatchScores') + '; return _tdUpdateMatchScores;')(
+    + extraerFuncion('_teamNorm') + extraerFuncion('_tdTeamMatches') + extraerFuncion('_tdMatchPar') + extraerFuncion('_tdUpdateMatchScores') + '; return _tdUpdateMatchScores;')(
     ctx, { querySelectorAll: (q) => (q === '[id^="td-mscore-9-"]' ? [e0, e1] : []) }, (g) => g.h.Result, (g) => g);
   upd(9);
   chk(e0.textContent === '½ : ½', '🔒 Portugal-Argentina sigue ½:½ aunque la ronda llegue en otro orden (antes le tocaba el de India-Chile)', e0.textContent);
   chk(e1.textContent === '0 : 2', 'y si el de la izquierda en pantalla es el otro país, el marcador se da vuelta', e1.textContent);
   const src = extraerFuncion('tdBuildRoundTeams');
   chk(src.indexOf('data-mpar="') > 0 && src.indexOf('data-team="') > 0, 'el dibujo del match deja anotada la pareja y el país de la izquierda');
+}
+
+// ── El match partido en dos con "Solo argentinos" (25/09, Olimpiada R9) ─────────────────────────────
+// _tdTeamOrden le ponía el nombre de Chess-Results ("Portugal (POR)") a TODAS las partidas; la de Oro ya había
+// terminado y se lo quedó, y las otras tres volvían de Lichess como "Portugal" en cada refresco. Se agrupaba por
+// el texto exacto → "Portugal ½:½ Argentina" con Oro solo y "Argentina ½:½ Portugal" con los otros tres.
+{
+  console.log('\n=== 58c. Match partido en dos: "Portugal" de Lichess y "Portugal (POR)" de Chess-Results (25/09) ===');
+  const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+  const tokens = (n) => norm(n).split(' ').filter(Boolean).sort().join(' ');
+  const G = (w, b, wt, bt, res) => ({ h: { White: w, Black: b, WhiteTeam: wt, BlackTeam: bt, Result: res } });
+  const F = new Function('_tdGameRes', '_tdCtx', 'crDataLoad', 'crNormTokens', '_crNombreContenido', 'normStr', '_tdLiveCtx',
+    'function _fmtHalf(n) { var w = Math.floor(n); return ((n - w) >= 0.5) ? ((w > 0 ? w : "") + "½") : String(w); }'
+    + extraerFuncion('_teamNorm') + extraerFuncion('_tdTeamOrden') + extraerFuncion('_tdTeamMatches') + extraerFuncion('_tdMatchPar')
+    + '; return { orden: _tdTeamOrden, matches: _tdTeamMatches, par: _tdMatchPar };')(
+    (g) => g.h.Result, { crKey: 'k' }, () => ({ teamRounds: { 9: [ { aName: 'Portugal (POR)', bName: 'Argentina (ARG)', boards: [
+      { nW: 'Ferreira, Jorge Viterbo', nB: 'Oro, Faustino' }, { nW: 'Sousa, Andre Ventura', nB: 'Mareco, Sandro' },
+      { nW: 'Veiga, Jose Francisco R P Neves', nB: 'Peralta, Fernando' }, { nW: 'Martins, Bruno Andre Leite', nB: 'Perez Ponsa, Federico' } ] } ] } }),
+    tokens, () => false, norm, null);
+  // Lo que había en la pantalla del autor: Oro con el nombre de CR, los otros tres con el de Lichess.
+  const mezcla = [ G('Ferreira, Jorge Viterbo', 'Oro, Faustino', 'Portugal (POR)', 'Argentina (ARG)', '1/2-1/2'),
+                   G('Mareco, Sandro', 'Sousa, Andre Ventura', 'Argentina', 'Portugal', '*'),
+                   G('Veiga, Jose Francisco R P Neves', 'Peralta, Fernando', 'Portugal', 'Argentina', '*'),
+                   G('Perez Ponsa, Federico', 'Martins, Bruno Andre Leite', 'Argentina', 'Portugal', '1/2-1/2') ];
+  const ms = F.matches(mezcla);
+  chk(ms.length === 1 && ms[0].boards.length === 4, '🔒 "Portugal" y "Portugal (POR)" son el mismo match: sale UNO con los 4 tableros', ms.length + ' matches');
+  chk(ms[0].a === 1 && ms[0].b === 1, 'y el marcador cuenta bien las dos tablas', ms[0].a + ' : ' + ms[0].b);
+  chk(F.par({ teamA: 'Portugal (POR)', teamB: 'Argentina (ARG)' }) === F.par({ teamA: 'Argentina', teamB: 'Portugal' }),
+      'la pareja del marcador en vivo es la misma escriba como se escriba el país');
+  // La causa: al ordenar por la formación ya no se pisa el nombre si es el mismo país.
+  const lichess = mezcla.map((g) => G(g.h.White, g.h.Black, g.h.WhiteTeam.replace(/ \(\w+\)$/, ''), g.h.BlackTeam.replace(/ \(\w+\)$/, ''), g.h.Result));
+  const o = F.orden(lichess, 9);
+  chk(o.every((g) => g.h.WhiteTeam === 'Portugal' || g.h.WhiteTeam === 'Argentina'), 'ordenar por la formación ya no le cambia "Portugal" por "Portugal (POR)"',
+      o.map((g) => g.h.WhiteTeam).join(','));
+  chk(F.matches(o)[0].teamA === 'Portugal', 'y Portugal sigue a la izquierda, como en Chess-Results', F.matches(o)[0].teamA);
+  const sin = F.orden([ G('Ferreira, Jorge Viterbo', 'Oro, Faustino') ], 9);
+  chk(sin[0].h.WhiteTeam === 'Portugal (POR)' && sin[0].h.BlackTeam === 'Argentina (ARG)', 'a la que viene SIN país se le sigue poniendo el de Chess-Results');
+  chk(/var flip = _teamNorm\(g\.h\.BlackTeam\) === _teamNorm\(m\.teamA\)/.test(extraerFuncion('tdBuildRoundTeams')),
+      'el tablero se da vuelta por país, no por cómo viene escrito');
 }
 
 // ── Chennai 2022: cruces con DOS columnas "Equipo" por lado, "(IND2)" y el rival "Hamza" a secas (24/09) ─
@@ -6734,7 +6773,7 @@ console.log('\n=== Auditoría 23/09 — Fase 4: accesibilidad y prolijidad ===')
       { nW: 'Francisco Guecamburu, Candela Be', nB: 'Mendoza, Shania Mae' }, { nW: 'Campos, Maria Jose', nB: 'Frayna, Janelle Mae' },
       { nW: 'Borda Rodas, Anapaola S.', nB: 'Fronda, Jan Jodilyn' }, { nW: 'Amura, Claudia', nB: 'Canino, Ruelle' } ] } ] };
   const hacer = (vivo) => new Function('_tdCtx', 'crDataLoad', 'crNormTokens', '_crNombreContenido', 'normStr', '_tdLiveCtx', '_tdGameRes',
-    extraerFuncion('_tdTeamOrden') + extraerFuncion('_tdTeamMatches') + '; return { orden: _tdTeamOrden, matches: _tdTeamMatches };')(
+    extraerFuncion('_teamNorm') + extraerFuncion('_tdTeamOrden') + extraerFuncion('_tdTeamMatches') + '; return { orden: _tdTeamOrden, matches: _tdTeamMatches };')(
     { crKey: 'x' }, () => ({ teamRounds: formacion }), tokens, () => false, norm, vivo ? {} : null, (g) => g.h.Result);
   const G = (w, b, wt, bt, res) => ({ h: { White: w, Black: b, WhiteTeam: wt, BlackTeam: bt, Result: res } });
   // Como vino del archivo: todas con país, juntas, pero la mesa 2 primero (Filipinas de blancas).
@@ -6776,7 +6815,7 @@ console.log('\n=== Auditoría 23/09 — Fase 4: accesibilidad y prolijidad ===')
   const tokens = (n) => norm(n).split(' ').filter(Boolean).sort().join(' ');
   const form = { 2: [ { aName: 'IBCA', bName: 'Argentina', boards: [ { nW: 'Zarubinskaya Irina', nB: 'Zuriel Marisa' } ] } ] };
   const orden = new Function('_tdCtx', 'crDataLoad', 'crNormTokens', '_crNombreContenido', 'normStr', '_tdLiveCtx',
-    extraerFuncion('_tdTeamOrden') + '; return _tdTeamOrden;')({ crKey: 'z' }, () => ({ teamRounds: form }), tokens, () => false, norm, null);
+    extraerFuncion('_teamNorm') + extraerFuncion('_tdTeamOrden') + '; return _tdTeamOrden;')({ crKey: 'z' }, () => ({ teamRounds: form }), tokens, () => false, norm, null);
   const oz = orden([ { h: { White: 'Zuriel, Marisa', Black: 'Zarubynska, Iryna' } } ], 2);
   chk(oz[0].h.WhiteTeam === 'Argentina' && oz[0].h.BlackTeam === 'IBCA', '🔒 "Zarubynska, Iryna" es la "Zarubinskaya Irina" de la formación: la partida de Zuriel entra a su match', oz[0].h.WhiteTeam + '/' + oz[0].h.BlackTeam);
   const oy = orden([ { h: { White: 'Zuriel, Marisa', Black: 'Zapata, Irma' } } ], 2);

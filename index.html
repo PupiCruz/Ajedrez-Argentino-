@@ -32857,7 +32857,10 @@ function _tdTeamOrden(games, r) {
     if (w && !b && w.rival && seParecen(g.h.Black, w.rival)) b = { team: w.rivalTeam, mi: w.mi, bi: w.bi };
     if (b && !w && b.rival && seParecen(g.h.White, b.rival)) w = { team: b.rivalTeam, mi: b.mi, bi: b.bi };
     if (w && b && w.mi === b.mi && w.team && b.team) {
-      if (g.h.WhiteTeam !== w.team || g.h.BlackTeam !== b.team) { g.h.WhiteTeam = w.team; g.h.BlackTeam = b.team; cambio = true; }
+      // Sólo si el país es OTRO (o falta). Si es el mismo escrito distinto ("Portugal" de Lichess y "Portugal (POR)"
+      // de Chess-Results) se deja como vino: en vivo, la partida ya terminada se quedaba con el nombre de CR y las
+      // que siguen en juego volvían con el de Lichess en cada refresco → el match salía partido en dos (25/09/2026).
+      if (_teamNorm(g.h.WhiteTeam) !== _teamNorm(w.team) || _teamNorm(g.h.BlackTeam) !== _teamNorm(b.team)) { g.h.WhiteTeam = w.team; g.h.BlackTeam = b.team; cambio = true; }
       return { g: g, mi: w.mi, bi: w.bi, k: k };
     }
     return { g: g, mi: 1e9, bi: 0, k: k };   // no está en la formación: va al final, como venía
@@ -32867,7 +32870,7 @@ function _tdTeamOrden(games, r) {
   // Qué equipo va a la IZQUIERDA en cada match: el de Chess-Results (lo lee _tdTeamMatches). Sin esto
   // quedaba el de blancas de la primera partida.
   out._eqA = Object.create(null);
-  ms.forEach(function (m) { if (m.aName && m.bName) out._eqA[[m.aName.trim(), m.bName.trim()].sort().join('|')] = m.aName.trim(); });
+  ms.forEach(function (m) { if (m.aName && m.bName) out._eqA[[_teamNorm(m.aName), _teamNorm(m.bName)].sort().join(' «» ')] = m.aName.trim(); });
   _tdTeamOrden._memo = { g: games, k: _mk, out: out };
   return out;
 }
@@ -32879,15 +32882,16 @@ function _tdTeamMatches(games) {
   var matches = [], porPar = Object.create(null), eqA = games && games._eqA;   // _eqA: ver _tdTeamOrden
   (games || []).forEach(function(g) {
     var wt = (g.h.WhiteTeam || '').trim(), bt = (g.h.BlackTeam || '').trim();
-    var key = [wt, bt].sort().join(' «» ');
+    // Por el PAÍS, no por cómo viene escrito: "Portugal" y "Portugal (POR)" son el mismo equipo (25/09/2026).
+    var key = [_teamNorm(wt), _teamNorm(bt)].sort().join(' «» ');
     var cur = porPar[key];
     if (!cur) {
-      var izq = eqA ? eqA[[wt, bt].sort().join('|')] : null;
-      cur = porPar[key] = (izq === bt) ? { teamA: bt, teamB: wt, boards: [], a: 0, b: 0 } : { teamA: wt, teamB: bt, boards: [], a: 0, b: 0 };
+      var izq = eqA ? eqA[key] : null;
+      cur = porPar[key] = (izq && _teamNorm(izq) === _teamNorm(bt)) ? { teamA: bt, teamB: wt, boards: [], a: 0, b: 0 } : { teamA: wt, teamB: bt, boards: [], a: 0, b: 0 };
       matches.push(cur);
     }
     cur.boards.push(g);
-    var res = _tdGameRes(g), aWhite = (wt === cur.teamA);
+    var res = _tdGameRes(g), aWhite = (_teamNorm(wt) === _teamNorm(cur.teamA));
     if (res === '1-0') { aWhite ? cur.a++ : cur.b++; }
     else if (res === '0-1') { aWhite ? cur.b++ : cur.a++; }
     else if (res === '1/2-1/2') { cur.a += 0.5; cur.b += 0.5; }
@@ -32952,7 +32956,7 @@ function tdBuildRoundTeams(rInt, panel, roundGames) {
     // Voltear el tablero cuando el equipo de la izquierda (teamA) juega con NEGRAS en esa mesa, así
     // ese equipo queda SIEMPRE abajo (en equipos los colores alternan mesa a mesa). Usa los tags
     // WhiteTeam/BlackTeam del PGN de Lichess (más confiable que par/impar).
-    m.boards.forEach(function(g) { var flip = (g.h.BlackTeam||'').trim() === (m.teamA||'').trim(); h += _tdCardHtml(g, flip); });
+    m.boards.forEach(function(g) { var flip = _teamNorm(g.h.BlackTeam) === _teamNorm(m.teamA); h += _tdCardHtml(g, flip); });
     h += '</div>';
     h += '</div>';
   });
@@ -32963,7 +32967,7 @@ function tdBuildRoundTeams(rInt, panel, roundGames) {
 }
 // Refresca solo los marcadores de cada match (sin reconstruir) cuando llegan resultados en vivo.
 // La pareja de países del match, sin importar quién va a la izquierda: con esto se encuentra el marcador.
-function _tdMatchPar(m) { return [(m.teamA || '').trim(), (m.teamB || '').trim()].sort().join('|'); }
+function _tdMatchPar(m) { return [_teamNorm(m.teamA), _teamNorm(m.teamB)].sort().join('|'); }
 function _tdUpdateMatchScores(rInt) {
   if (!_tdCtx) return;
   var _rg = _tdCtx.byRound[rInt] || [];
@@ -32980,7 +32984,8 @@ function _tdUpdateMatchScores(rInt) {
     if (!m) continue;   // ese match no está en la lista de ahora: se deja lo que había
     // El de la izquierda en pantalla puede no ser el teamA de ahora (otro orden): se da vuelta si hace falta.
     var izq = (els[i].previousElementSibling && els[i].previousElementSibling.getAttribute('data-team')) || m.teamA;
-    var a = (izq === m.teamB) ? m.b : m.a, b = (izq === m.teamB) ? m.a : m.b;
+    var vuelta = _teamNorm(izq) === _teamNorm(m.teamB);
+    var a = vuelta ? m.b : m.a, b = vuelta ? m.a : m.b;
     els[i].textContent = _fmtHalf(a) + ' : ' + _fmtHalf(b);
   }
 }
