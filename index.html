@@ -3307,6 +3307,30 @@
       body.light .cg-pub:hover { background:#f6dedc; }
       .cg-autor { padding:8px 14px; border-radius:20px; cursor:pointer; font-family:inherit; font-size:12.5px; font-weight:600;
         color:var(--text2); background:var(--bg3); border:1px dashed var(--border); }
+      /* ✨ BRILLANTES DE LA RONDA (25/09): verde agua, el color del "!!" del visor (#26c2a3). */
+      .cg-pub.cg-pub-bri { background:#16302b; border-color:#26c2a3; color:#dff7f1; }
+      .cg-pub.cg-pub-bri span { color:#8fe0cf; }
+      .cg-pub.cg-pub-bri:hover { background:#1d3d36; }
+      body.light .cg-pub.cg-pub-bri { background:#e6f7f3; color:#15665a; border-color:#8fd9c9; }
+      body.light .cg-pub.cg-pub-bri span { color:#2a8f7e; }
+      body.light .cg-pub.cg-pub-bri:hover { background:#d6f1eb; }
+      .cg-vistas { display:flex; gap:8px; margin-top:10px; }
+      .cg-vista { flex:1; padding:9px 12px; border-radius:11px; font-size:13.5px; font-weight:700; cursor:pointer; font-family:inherit;
+        background:var(--bg3); border:1.5px solid var(--border); color:var(--text2); }
+      .cg-vista span { font-weight:600; opacity:.8; }
+      .cg-vista.on { border-color:#d03030; color:var(--text); background:var(--bg2); }
+      .cg-vista.cg-vista-bri.on { border-color:#26c2a3; }
+      .cg-card.cg-card-bri { border-left:3px solid #26c2a3; }
+      .cg-bri-j { color:#26c2a3; font-weight:700; }
+      /* 🧩 EJERCICIO EN VIVO (25/09, en prueba con ?ejvivo=1): el cartel de la colgada, pero violeta. */
+      .col-cartel.ejv-cartel { background:#231f2e; border-color:#8b6cf0; }
+      .ejv-cartel .col-nb { background:#8b6cf0; font-size:14px; letter-spacing:0; }
+      .ejv-cartel .col-barra { background:#8b6cf0; }
+      .ejv-cartel .col-txt b { color:#ece6ff; }
+      .ejv-cartel .col-txt > span { color:#c4bbdd; }
+      .ejv-cartel .col-no { background:#1b1824; color:#c4bbdd; border-color:#3d3552; }
+      .ejv-cartel .col-si { background:linear-gradient(135deg,#8b6cf0,#6a4fd6); }
+      .ejv-estado { display:block; margin-top:5px; font-size:12.5px; font-weight:600; color:var(--text2); }
       /* 🕑 ÚLTIMAS COLGADAS (20/09): el cartel del aviso se va a los 15 s y, si cayeron varias juntas, las
          otras se perdían. Este botón las deja a mano al lado de "🎯 Colgadas de la ronda". */
       .cg-ult { display:inline-flex; align-items:center; gap:6px; padding:8px 14px; border-radius:20px; cursor:pointer; font-family:inherit;
@@ -33912,6 +33936,7 @@ function _colConfirmar(info) {
 function _colAvisar(info) {
   _colMesaHasta[info.gk] = Date.now() + _COL_MESA_MS;
   try { info.arg = _tdIsArgGame(info.g.h); } catch (e) { info.arg = false; }
+  if (_ejvIntentar(info)) return;   // 🧩 en prueba (?ejvivo=1): si sirve de ejercicio en vivo, sale ése; si no, vuelve acá
   _colCola.push(info);
   _colDespachar();
 }
@@ -34485,6 +34510,281 @@ function _colUltPanelHtml(rInt) {
 }
 window.aaCol = { llave: _colLlave, probar: _colProbar };
 
+/* ══ 🧩 ¿LO VES ANTES QUE ÉL? — EJERCICIO EN VIVO (25/09/2026, EN PRUEBA: sólo con ?ejvivo=1) ══════
+   Idea del autor, montada sobre el aviso de colgadas. Cuando el aviso confirma una colgada y el que
+   castiga TODAVÍA NO MOVIÓ, en vez del cartel rojo sale uno violeta: "¿Lo ves antes que él?". Abre el
+   tablero de las Colgadas de la ronda (sin rating) en esa posición y, mientras el visitante piensa, se
+   vigila la partida: cuando el jugador mueve, "ya movió: resolvelo y te contamos" (sin decir qué jugó);
+   al resolverlo, "Campos jugó 38.Dxh5: ¡lo encontró!" o "no lo vio".
+   · Llave: ?ejvivo=1 la prende en ESE navegador (queda guardada), ?ejvivo=0 la apaga. Sin la llave no
+     cambia nada: el aviso de colgadas sigue igual para todos.
+   · Candados: la colgada ya viene confirmada a prof. 16. Unos segundos después se mira el PGN de esa
+     partida en Lichess (por si la transmisión corrige una jugada mal cargada, y para ver que el jugador
+     no haya movido) y el motor busca el golpe con 3 líneas a prof. 16. Si el golpe no deja al que castiga
+     con +2,5 o más, si ya movió, o si algo no contesta en 25 s, sale el cartel rojo de siempre.
+   · "Tiró la ganada" no va: ahí el rival sólo empata, no hay golpe que buscar.
+   · La colgada se reparte por el arbitrito igual que siempre y queda en 🕑 Últimas colgadas.
+   · Para probarlo sin esperar una colgada: aaEjv.probar() en la consola, con una ronda en vivo abierta.
+   Pendiente (fase 2): "el 34% de los que miraban lo encontró", contado en la sala del torneo.
+   ════════════════════════════════════════════════════════════════════════════════════════════════ */
+var _EJV_MIN = 250;                  // el golpe tiene que dejar al que castiga con +2,5 o más (o mate)
+var _EJV_ESPERA = 4000;              // antes de mirar el PGN: por si la transmisión corrige la jugada
+var _EJV_TOPE_MS = 25000;            // si el motor o Lichess no contestan, sale el cartel de siempre
+var _EJV_CARTEL_MS = 30000;
+var _EJV_VIGILA_MS = 3000, _EJV_PGN_MS = 15000, _EJV_VIGILA_MAX = 40 * 60000;
+var _ejvLlaveVal = null, _ejvVigia = null, _ejvCartelTimer = null, _ejvVigilados = [];
+function _ejvActivo(q, ls) {
+  try {
+    if (/[?&]ejvivo=1(?!\w)/.test(q)) ls.setItem('aa_ejv_on', '1');
+    if (/[?&]ejvivo=0(?!\w)/.test(q)) ls.removeItem('aa_ejv_on');
+    return ls.getItem('aa_ejv_on') === '1';
+  } catch (e) { return false; }
+}
+function _ejvOn() {
+  if (_ejvLlaveVal === null) { try { _ejvLlaveVal = _ejvActivo(_colQ0, localStorage); } catch (e) { _ejvLlaveVal = false; } }
+  return !!_ejvLlaveVal && _colOn();
+}
+// ¿Sigue siendo el turno del que castiga? (nadie movió desde la colgada y la partida sigue en juego)
+function _ejvSigue(info, pgn) {
+  var n = info.now.plies;
+  if (pgn && /^\[Event /.test(String(pgn).trim()) && _pgnPlies(pgn) > n) return false;
+  var g = _colBuscar(info.gk); if (!g) return false;
+  var p = _colPos(g, null);
+  if (!p) {
+    var bds = document.querySelectorAll('.td-bd');
+    for (var i = 0; i < bds.length; i++) if (bds[i].getAttribute('data-gk') === info.gk) { p = { fen: bds[i].getAttribute('data-fen'), res: bds[i].getAttribute('data-res') || '*' }; break; }
+  }
+  if (!p || !p.fen) return (g.h.Result || '*') === '*' && _pgnPlies(g.pgn) <= n;
+  if ((p.res || '*') !== '*') return false;
+  var pl = _fenPlies(p.fen);
+  if (pl > n) return false;
+  if (pl === n) return p.fen.split(' ')[0] === String(info.now.fen).split(' ')[0];
+  return true;   // la ficha viene atrasada: no se puede saber más
+}
+// Devuelve true si se hace cargo de la colgada (el cartel sale después, o vuelve a la cola de siempre).
+function _ejvIntentar(info) {
+  if (!_ejvOn() || !info || info.ejvNo || info.prueba || !info.c || !info.now || !info.g) return false;   // (info.prueba = aaCol.probar: ése prueba el cartel rojo)
+  if (!/^[AMC]$/.test(info.c.tipo)) return false;
+  var f = String(info.now.fen || '');
+  if (!f || f.split(' ')[1] === info.c.lado) return false;   // le toca al que se colgó: el otro ya contestó
+  if (!info.ejvPrueba && !_ejvSigue(info)) return false;
+  info.ejvNo = true;                                           // una sola vez por colgada
+  var res = {}, falta = 2, cerrado = false;
+  function volver() {
+    if (info.ejvPrueba) { try { console.log('🧩 aaEjv: la prueba no armó ejercicio (¿la partida siguió?)'); } catch (e) {} return; }
+    _colCola.push(info); _colDespachar();
+  }
+  function fin() {
+    if (cerrado) return;
+    cerrado = true; clearTimeout(tope);
+    var it = (res.pgnOk && res.lines && _ejvSigue(info, res.pgn)) ? _ejvItem(info, res.lines, res.pgn) : null;
+    if (!it) { volver(); return; }
+    if (!info.ejvPrueba) { _colHistGuardar([info]); _colRepartir([info]); }   // para los demás sigue siendo una colgada
+    _ejvMostrar(it);
+  }
+  function listo() { if (--falta <= 0) fin(); }
+  var tope = setTimeout(function(){ if (!cerrado) { cerrado = true; volver(); } }, _EJV_TOPE_MS);
+  _mevExtra.push({ fen: f, depth: _CG_OTRA_DEPTH, multipv: 3, cb: function(sc, lines){ res.lines = lines || []; listo(); } });
+  setTimeout(mevTick, 0);
+  setTimeout(function(){
+    var id = _bcGameIds(info.g.pgn);
+    if (!id) { res.pgnOk = true; listo(); return; }
+    _fetchTO('https://lichess.org/api/study/' + id.round + '/' + id.game + '.pgn', _COL_VERIF_TO)
+      .then(function(r){ return r.ok ? r.text() : ''; })
+      .then(function(txt){ res.pgnOk = _colPgnTiene(txt, info); res.pgn = txt; listo(); })
+      .catch(function(){ res.pgnOk = true; listo(); });
+  }, _EJV_ESPERA);
+  return true;
+}
+// La jugada de índice k del PGN (la nº k+1), con la posición de antes. null si no está (o 960).
+function _ejvJugadaPgn(pgn, k) {
+  try {
+    var ch = new Chess();
+    if (!ch.load_pgn(String(pgn))) return null;
+    var hv = ch.history({ verbose: true });
+    if (k < 0 || k >= hv.length) return null;
+    for (var q = hv.length; q > k; q--) ch.undo();
+    var m = hv[k];
+    return { uci: m.from + m.to + (m.promotion || ''), san: m.san, pc: m.captured || '', antes: ch.fen() };
+  } catch (e) { return null; }
+}
+// El ítem del ejercicio, con la misma forma que el de una colgada de la ronda (lo usa el mismo tablero).
+function _ejvItem(info, lines, pgn) {
+  var f = info.now.fen, s = f.split(' ')[1] === 'w' ? 1 : -1;
+  if (!lines || !lines.length) return null;
+  var best = lines[0], bestCp = _colCp(best.sc, f), bestSol = bestCp * s;
+  if (!info.ejvPrueba && bestSol < _EJV_MIN) return null;
+  var mm = null;
+  try { mm = new Chess(f).move({ from: best.mv.slice(0, 2), to: best.mv.slice(2, 4), promotion: best.mv[4] || 'q' }); } catch (e) {}
+  if (!mm) return null;
+  var alts = lines.slice(1).filter(function(l){ return _cgOtraOk(_colCp(l.sc, f) * s, bestSol); }).map(function(l){ return l.mv; });
+  // La jugada que llevó a la posición (la colgada): para la animación de entrada del tablero.
+  var ult = (pgn && /^\[Event /.test(String(pgn).trim())) ? _ejvJugadaPgn(pgn, info.now.plies - 1) : null;
+  if (!ult && info.now.last && info.now.last.from && info.now.plies === info.prev.plies + 1) {
+    try {
+      var mv = new Chess(info.prev.fen).move({ from: info.now.last.from, to: info.now.last.to, promotion: 'q' });
+      if (mv) ult = { uci: mv.from + mv.to + (mv.promotion || ''), san: mv.san, pc: mv.captured || '' };
+    } catch (e) {}
+  }
+  var h = info.g.h || {};
+  return {
+    id: 'ejv:' + info.gk + '#' + info.now.plies, vivo: { gk: info.gk, info: info, t0: Date.now(), pgnT: Date.now() },
+    w: h.White || '?', b: h.Black || '?', r: h.Round || '', ply: info.now.plies, tipo: info.c.tipo,
+    fenAntes: info.prev.fen, fen: f, jug: ult ? ult.uci : '', jugSan: ult ? ult.san : '', pc: ult ? ult.pc : '',
+    antes: info.prev.cp, despues: bestCp, sol: [best.mv], solSan: [mm.san], alts: alts, unico: !alts.length,
+    castigo: null, respSan: '', wElo: h.WhiteElo || '', bElo: h.BlackElo || '', fecha: h.Date || '', res: '*',
+    arg: info.arg ? 1 : 0, prof: _CG_OTRA_DEPTH, clara: true, estado: 'ok'
+  };
+}
+function _ejvLugar(info) {
+  var h = info.g.h || {};
+  if (h.WhiteTeam && h.BlackTeam) return escHtml(_paisES(h.WhiteTeam)) + ' – ' + escHtml(_paisES(h.BlackTeam));
+  var m = /^\d+\.(\d+)$/.exec(String(h.Round || ''));
+  return m ? 'tablero ' + m[1] : '';
+}
+function _ejvCerrar() {
+  if (_ejvCartelTimer) { clearTimeout(_ejvCartelTimer); _ejvCartelTimer = null; }
+  var c = document.getElementById('ejv-cartel'); if (!c) return;
+  c.classList.add('col-fuera');
+  setTimeout(function(){ if (c.parentNode) c.parentNode.removeChild(c); }, 350);
+}
+function _ejvMostrar(it) {
+  var info = it.vivo.info;
+  var host = document.getElementById('lv-notices');
+  if (!host) { host = document.createElement('div'); host.id = 'lv-notices'; document.body.appendChild(host); }
+  var viejo = document.getElementById('ejv-cartel'); if (viejo && viejo.parentNode) viejo.parentNode.removeChild(viejo);
+  if (_ejvCartelTimer) clearTimeout(_ejvCartelTimer);
+  var quien = _cgApellido(it.fen.split(' ')[1] === 'w' ? it.w : it.b), lugar = _ejvLugar(info);
+  var d = document.createElement('div');
+  d.id = 'ejv-cartel'; d.className = 'col-cartel ejv-cartel'; d.setAttribute('role', 'status');
+  d.innerHTML = '<div class="col-top"><span class="col-nb" aria-hidden="true">🧩</span><div class="col-txt">'
+    + '<b>¿Lo ves antes que él?' + (lugar ? ' · ' + lugar : '') + '</b>'
+    + '<span>' + _colJugadoresHtml(info) + '</span>'
+    + '<span>Le toca a ' + escHtml(quien) + ' y le dejaron un golpe.</span></div></div>'
+    + '<div class="col-btns"><button type="button" class="col-no">Descartar</button><button type="button" class="col-si">🧩 Resolver</button></div>'
+    + '<div class="col-barra" style="animation-duration:' + _EJV_CARTEL_MS + 'ms"></div>';
+  host.appendChild(d);
+  d.querySelector('.col-no').onclick = _ejvCerrar;
+  d.querySelector('.col-si').onclick = function(){ it.vivo.abierto = true; _ejvCerrar(); _cgAbrirEnTablero([it]); _ejvPintar(); };
+  _colSonido();
+  _ejvCartelTimer = setTimeout(_ejvCerrar, _EJV_CARTEL_MS);
+  _ejvVigilados.push(it);
+  if (!_ejvVigia) _ejvVigia = setInterval(_ejvTick, _EJV_VIGILA_MS);
+}
+// ¿Ya movió el jugador? Primero lo que ya tenemos (el PGN de la ronda, que refresca el vivo); cada 15 s,
+// un pedido chico a Lichess con el PGN de ESA partida (el mismo del chequeo del aviso).
+function _ejvTick() {
+  var ahora = Date.now();
+  // Se deja de vigilar al saber la jugada, a los 40 min, o si el cartel se fue sin que lo abrieran.
+  _ejvVigilados = _ejvVigilados.filter(function(it){ var v = it.vivo; return !v.listo && ahora - v.t0 < _EJV_VIGILA_MAX && (v.abierto || ahora - v.t0 < _EJV_CARTEL_MS + 2000); });
+  _ejvVigilados.forEach(function(it){
+    var v = it.vivo, g = _colBuscar(v.gk);
+    if (!g) return;
+    // La ficha de Lichess suele ir más adelante que el PGN de la ronda: si ya movió, se pide el PGN enseguida.
+    var fi = _colPos(g, null);
+    if (fi && fi.fen && _fenPlies(fi.fen) > it.ply) v.movio = true;
+    if (_pgnPlies(g.pgn) > it.ply) { _ejvLeer(it, g.pgn); return; }
+    if ((g.h.Result || '*') !== '*') { v.listo = true; v.fin = g.h.Result; return; }   // abandonó (o tablas) sin mover
+    if (v.pidiendo || ahora - v.pgnT < (v.movio ? 4000 : _EJV_PGN_MS)) return;
+    var id = _bcGameIds(g.pgn); if (!id) return;
+    v.pgnT = ahora; v.pidiendo = true;
+    _fetchTO('https://lichess.org/api/study/' + id.round + '/' + id.game + '.pgn', _COL_VERIF_TO)
+      .then(function(r){ return r.ok ? r.text() : ''; })
+      .then(function(txt){
+        v.pidiendo = false;
+        if (!/^\[Event /.test(String(txt).trim())) return;
+        if (_pgnPlies(txt) > it.ply) _ejvLeer(it, txt);
+        else if ((parsePgnHeaders(txt).Result || '*') !== '*') { v.listo = true; v.fin = parsePgnHeaders(txt).Result; }
+      })
+      .catch(function(){ v.pidiendo = false; });
+  });
+  _ejvPintar();
+  if (!_ejvVigilados.length && !_ejvAbierto()) { clearInterval(_ejvVigia); _ejvVigia = null; }
+}
+function _ejvLeer(it, pgn) {
+  var v = it.vivo; if (v.listo) return;
+  var m = _ejvJugadaPgn(pgn, it.ply);   // la jugada que sigue a la del ejercicio
+  if (!m) return;
+  v.listo = true;
+  if (m.antes.split(' ')[0] !== it.fen.split(' ')[0]) { v.otraLinea = true; _ejvPintar(); return; }   // la transmisión rehízo la partida
+  var fp = it.fen.split(' '), n = parseInt(fp[5], 10) || 1, s = fp[1] === 'w' ? 1 : -1;
+  it.respSan = m.san;
+  it.respTxt = n + (fp[1] === 'w' ? '.' : '...') + (typeof cvFan === 'function' ? cvFan(m.san) : m.san);
+  if (m.uci === it.sol[0] || it.alts.indexOf(m.uci) >= 0) { it.castigo = true; _ejvPintar(); return; }
+  // Jugó otra: que el motor diga si también castiga (el mismo margen que el tablero para las del visitante).
+  var ch = new Chess(it.fen), mv = null;
+  try { mv = ch.move({ from: m.uci.slice(0, 2), to: m.uci.slice(2, 4), promotion: m.uci[4] || 'q' }); } catch (e) {}
+  if (!mv) { it.castigo = false; _ejvPintar(); return; }
+  _colMirar(ch.fen(), function(cp){ it.castigo = _cgOtraOk(cp * s, it.despues * s); _ejvPintar(); });
+  _ejvPintar();
+}
+function _ejvAbierto() {
+  var po = document.getElementById('puz-overlay');
+  return !!(po && po.classList.contains('open') && puz.cur && puz.cur.colgada && puz.cur.cg && puz.cur.cg.vivo);
+}
+// Lo que se sabe de la partida real, para después de resolverlo (texto plano).
+function _ejvTexto(it) {
+  var v = it.vivo || {}, quien = _cgApellido(it.fen.split(' ')[1] === 'w' ? it.w : it.b);
+  if (v.otraLinea) return 'La transmisión corrigió esta partida: fijate en el tablero.';
+  if (v.fin) return 'La partida terminó ahí (' + v.fin + ').';
+  if (!v.listo) return v.movio ? quien + ' ya movió: en unos segundos te contamos qué jugó.' : quien + ' todavía no movió: quedate acá, te avisamos qué juega.';
+  if (it.castigo === true) return quien + ' jugó ' + it.respTxt + ': ¡lo encontró!';
+  if (it.castigo === false) return quien + ' jugó ' + it.respTxt + ': no lo vio.';
+  return quien + ' jugó ' + it.respTxt + ' (el motor la está mirando…)';
+}
+// El renglón de estado debajo del desafío: mientras no lo resolvió, NO se dice qué jugó.
+function _ejvEstadoTxt(it) {
+  var v = it.vivo || {}, quien = escHtml(_cgApellido(it.fen.split(' ')[1] === 'w' ? it.w : it.b));
+  var resuelto = typeof puz !== 'undefined' && puz.cur && puz.cur.cg === it && (puz.solved || puz.revealed);
+  if (resuelto || v.otraLinea || v.fin) return escHtml(_ejvTexto(it));
+  if (!v.listo && !v.movio) return '⏳ ' + quien + ' está pensando…';
+  return '✅ ' + quien + ' ya movió: resolvelo y te contamos qué jugó.';
+}
+function _ejvPintar() {
+  if (!_ejvAbierto()) return;
+  var el = document.getElementById('ejv-estado');
+  var it = puz.cur.cg, v = it.vivo || {}, h = _ejvEstadoTxt(it);
+  if (el && el._t !== h) { el._t = h; el.innerHTML = h; }
+  // Ya lo resolvió y la jugada de verdad llega DESPUÉS: el renglón de arriba ya no se ve (el tablero pasa a
+  // "Solución"), así que se cuenta en el mensaje de abajo, donde está mirando.
+  if (puz.solved || puz.revealed) {
+    var t = _ejvTexto(it);
+    if (v.fbT !== t) {   // (v.fbT = lo que ya dijo el mensaje al resolverlo: lo anota _cgTextoPartida)
+      v.fbT = t;
+      puzSetFb(puz.solved ? 'ok' : 'hint', '🧩', (puz.revealed ? 'Solución: ' + escHtml(typeof cvFan === 'function' ? cvFan(it.solSan[0]) : it.solSan[0]) + '. ' : '') + escHtml(t));
+    }
+  }
+  if (!_ejvVigia) _ejvVigia = setInterval(_ejvTick, _EJV_VIGILA_MS);   // el renglón se sigue pintando mientras esté abierto
+}
+// 🧪 Prueba sin esperar una colgada: la posición ACTUAL de una partida en juego (argentina si hay) como si
+// el que mueve tuviera un golpe. El "golpe" es la mejor del motor, aunque la posición sea pareja.
+function _ejvProbar() {
+  if (!_ejvOn()) return 'Falta la llave: entrá una vez con ?ejvivo=1 (y con el aviso de colgadas prendido).';
+  var games = _colRonda();
+  if (!games || !games.length) return 'Abrí primero un torneo con la ronda EN VIVO.';
+  var g = null;
+  games.forEach(function(x){
+    if ((x.h.Result || '*') !== '*' || _pgnPlies(x.pgn) <= 12) return;
+    if (!g || (_tdIsArgGame(x.h) && !_tdIsArgGame(g.h))) g = x;
+  });
+  if (!g) return 'Ninguna partida en juego tiene jugadas suficientes todavía.';
+  // El PGN de la ronda suele venir atrasado (medido 25/09: 5 medias jugadas en un final rápido), así que la
+  // posición se toma del PGN de ESA partida en Lichess, que es lo más nuevo que hay.
+  var id = _bcGameIds(g.pgn);
+  var pedir = id ? _fetchTO('https://lichess.org/api/study/' + id.round + '/' + id.game + '.pgn', _COL_VERIF_TO).then(function(r){ return r.ok ? r.text() : ''; }).catch(function(){ return ''; })
+                 : Promise.resolve('');
+  pedir.then(function(txt){
+    var pgn = /^\[Event /.test(String(txt).trim()) ? txt : g.pgn;
+    var n = _pgnPlies(pgn), fd = _colFenEnPly(pgn, n), fa = _colFenEnPly(pgn, n - 1);
+    if (!fa || !fd) { console.log('🧩 aaEjv: no se pudo reproducir esa partida (¿960?).'); return; }
+    var info = { gk: _tdEvKey(g.h), g: g, ejvPrueba: true, c: { lado: fd.split(' ')[1] === 'w' ? 'b' : 'w', tipo: 'A' },
+      prev: { fen: fa, cp: 0, plies: n - 1, last: null }, now: { fen: fd, cp: 0, plies: n, last: null } };
+    console.log('🧩 aaEjv: ' + (_ejvIntentar(info) ? 'ejercicio de prueba en ' + (g.h.White || '?') + ' – ' + (g.h.Black || '?') + ', jugada ' + n + '. En unos 5 segundos sale el cartel violeta.' : 'no arrancó.'));
+  });
+  return 'Buscando la posición en Lichess… (el resultado sale en la consola)';
+}
+window.aaEjv = { probar: _ejvProbar };
+
 /* ══ COLGADAS DE LA RONDA (19/09/2026, idea del autor) ═══════════════════════════════════════════
    Al terminar una ronda, el autor toca "🔎 Buscar colgadas": se barren las partidas con los MISMOS
    criterios del aviso en vivo (_colClasifica). Con transmisión de Lichess no hace falta motor: al
@@ -34618,6 +34918,7 @@ function cgBarrer(rInt) {
         var evCp = [20];
         for (var k = 0; k < P.uci.length; k++) evCp.push(P.ev[k] ? _colCp(P.ev[k], P.fens[k + 1]) : null);
         _cgDetectar(P, evCp, true).forEach(function(c){ _cgVerificar(g, P, c, true); });   // (prof. _CG_VERIF_DEPTH_LI)
+        _cgDetectarBri(P, evCp).forEach(function(c){ _cgVerificarBri(g, P, c); });       // ✨ y las brillantes
       } else {
         _cgPasadaRapida(g, P);
       }
@@ -34629,7 +34930,10 @@ function cgBarrer(rInt) {
 // Sin eval de Lichess: prof. 12 en cada posición (las que ya tengan eval guardada no se repiten).
 function _cgPasadaRapida(g, P) {
   var evCp = [], faltan = 0;
-  function listo() { _cgDetectar(P, evCp, false).forEach(function(c){ _cgVerificar(g, P, c, false); }); }
+  function listo() {
+    _cgDetectar(P, evCp, false).forEach(function(c){ _cgVerificar(g, P, c, false); });
+    _cgDetectarBri(P, evCp).forEach(function(c){ _cgVerificarBri(g, P, c); });
+  }
   for (var k = Math.max(0, _CG_DESDE_PLY); k < P.fens.length; k++) {
     (function(k){
       var f = P.fens[k];
@@ -34693,15 +34997,93 @@ function _cgAgregar(g, P, c, dCp, mejor, alts, unico, deLichess, clara) {
     arg: _tdIsArgGame(g.h) ? 1 : 0, prof: deLichess ? _CG_VERIF_DEPTH_LI : _CG_VERIF_DEPTH, clara: clara !== false,
     estado: 'pend'
   };
-  var v = _cg.viejo && _cg.viejo[id];
+  _cgMeter(it);
+}
+// A la lista de la ronda que se está barriendo (colgadas y brillantes van juntas; lo ya decidido se conserva).
+function _cgMeter(it) {
+  var v = _cg.viejo && _cg.viejo[it.id];
   if (v) { it.estado = v.estado; if (v.exp) it.exp = v.exp; }
   var m = _cgMan(), slot = m[_cg.tour] && m[_cg.tour][_cg.rk];
   if (!slot) return;
-  if (slot.items.some(function(x){ return x.id === id; })) return;
+  if (slot.items.some(function(x){ return x.id === it.id; })) return;
   slot.items.push(it);
   slot.items.sort(function(a, b){ return (b.arg || 0) - (a.arg || 0) || _cgRoundCmp(a.r, b.r) || a.ply - b.ply; });
   _cgSave(m);
 }
+
+/* ══ ✨ JUGADONES DE LA RONDA (25/09/2026, pedido del autor) ════════════════════════════════════
+   (Se muestran como "Jugadones", igual que el contador del visor; en el código siguen siendo `bri`.)
+   Van en el MISMO barrido que las colgadas ("🔎 Buscar colgadas y brillantes") y en la misma revisión,
+   con su propia pestaña. Antes de avisarlas en vivo, el autor las quiere probar al final de la ronda.
+   · Qué es brillante: lo mismo que el "!!" del gráfico del visor (_faIsBrilliant), para que los dos
+     digan lo mismo: la mejor jugada del motor que además deja colgada una pieza propia (caballo o más,
+     sacrificio neto de 2 puntos o más, que no estuviera ya suelta antes) y es sana (no queda perdido,
+     y no ganaba ya de sobra).
+   · Filtro sin motor (casi gratis): el sacrificio se mira con el SEE sobre la grilla, y con las evals
+     que ya hay (las de Lichess, o la pasada a prof. 12) la jugada tiene que ser buena: menos de 5 puntos
+     de chances perdidos, como el ★ del gráfico.
+   · Las que pasan: el motor mira la posición de ANTES a prof. 16 con 3 líneas. La jugada tiene que ser
+     la mejor (o quedar a 0,3) y la ÚNICA que sirve: si otra queda cerca, no entra.
+   · El ejercicio: la posición de antes, "X encontró acá una jugada brillante, ¿la ves?".
+   Medido con la R8 de la Olimpiada (412 partidas): con el criterio de antes salían ~250 por ronda, casi
+   todas ruido. Dos filtros nuevos (desesperados, y jugadas de rey / enroque) quedaron ADENTRO de
+   _faIsBrilliant, así valen también para el "!!" del visor (pedido del autor). Lo único propio de la
+   lista es exigir "la única": en el visor el pase del gráfico mira una sola línea. */
+var _CG_BRI_DEPTH = 16;
+var _CG_BRI_MARGEN = 30;   // centipeones: la jugada del partido puede quedar a 0,3 de la mejor del motor
+function _cgDetectarBri(P, evCp) {
+  var out = [];
+  for (var i = _CG_DESDE_PLY; i < P.uci.length; i++) {
+    var a = evCp[i], d = evCp[i + 1], blancas = P.fens[i].split(' ')[1] === 'w';
+    var rB = { cp: a == null ? 0 : a }, rA = { cp: d == null ? 0 : d };
+    if (a != null && d != null) {
+      var wpB = _faWinP(rB), wpA = _faWinP(rA);
+      if ((blancas ? wpB - wpA : wpA - wpB) >= 5) continue;   // perdió chances: no es la mejor
+    }
+    var u = P.uci[i];   // (rey, enroque y desesperados los descarta _faIsBrilliant: el mismo filtro que el visor)
+    var node = { fen: P.fens[i + 1], move: { from: u.slice(0, 2), to: u.slice(2, 4) }, parent: { fen: P.fens[i] } };
+    try { if (_faIsBrilliant(node, rB, rA, blancas, _faWinP(rB))) out.push({ i: i }); } catch (e) {}
+  }
+  return out;
+}
+function _cgVerificarBri(g, P, c) {
+  var f = P.fens[c.i], s = f.split(' ')[1] === 'w' ? 1 : -1, jug = P.uci[c.i];
+  _cg.total++;
+  _mevExtra.push({ fen: f, depth: _CG_BRI_DEPTH, multipv: 3, cb: function(sc, lines){
+    _cg.hechas++;
+    if (!_cg.corriendo) return;
+    try {
+      lines = lines || [];
+      var suya = null;
+      lines.forEach(function(l){ if (!suya && l.mv === jug) suya = l; });
+      if (suya) {
+        var bestSol = _colCp(lines[0].sc, f) * s, suyaSol = _colCp(suya.sc, f) * s;
+        var alts = lines.filter(function(l){ return l.mv !== jug && _cgOtraOk(_colCp(l.sc, f) * s, suyaSol); }).map(function(l){ return l.mv; });
+        // La mejor (o casi), sana, y la ÚNICA: con una sola línea (jugada forzada) no hay nada que encontrar.
+        if (suyaSol >= bestSol - _CG_BRI_MARGEN && suyaSol > -200 && lines.length >= 2 && !alts.length) {
+          _cgMeter({
+            id: _cgGameKeyId(P.h) + '#!' + (c.i + 1), bri: 1,
+            w: P.h.White || '?', b: P.h.Black || '?', r: P.h.Round || '', ply: c.i, tipo: 'BR',
+            fenAntes: c.i > 0 ? P.fens[c.i - 1] : '', fen: f, jug: c.i > 0 ? P.uci[c.i - 1] : '', jugSan: c.i > 0 ? P.san[c.i - 1] : '', pc: c.i > 0 ? (P.cap[c.i - 1] || '') : '',
+            antes: _colCp(lines[0].sc, f), despues: _colCp(suya.sc, f), sol: [jug], solSan: [P.san[c.i]], alts: alts, unico: !alts.length,
+            castigo: true, respSan: P.san[c.i],
+            wElo: P.h.WhiteElo || '', bElo: P.h.BlackElo || '', fecha: P.h.Date || '', res: P.h.Result || '',
+            arg: _tdIsArgGame(g.h) ? 1 : 0, prof: _CG_BRI_DEPTH, clara: true, estado: 'pend'
+          });
+        }
+      }
+    } catch (e) {}
+    _cgQuizasTermino(); _cgRender();
+  } });
+  setTimeout(mevTick, 0);
+}
+// "24.♖xf7!!" (la brillante, con su número de jugada).
+function _cgBriJugadaTxt(it) {
+  var fp = it.fen.split(' '), n = parseInt(fp[5], 10) || 1;
+  return n + (fp[1] === 'w' ? '.' : '...') + (typeof cvFan === 'function' ? cvFan(it.solSan[0]) : it.solSan[0]) + '!!';
+}
+// Qué es cada ítem de la lista, para los textos: 'bri' (brillante), 'vivo' (ejercicio en vivo) o 'col' (colgada).
+function _cgClase(it) { return !it ? 'col' : it.vivo ? 'vivo' : it.bri ? 'bri' : 'col'; }
 function _cgRoundCmp(a, b) {   // "3.12" antes que "3.101"
   var x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
   return (x[0] - y[0]) || ((x[1] || 0) - (y[1] || 0));
@@ -34747,6 +35129,8 @@ function _cgProgHtml() {
 function _cgEvTxt(cp) { return _colEvTxt(cp); }
 function _cgTextoPartida(it) {
   var quien = _cgApellido(it.fen.split(' ')[1] === 'w' ? it.w : it.b);
+  if (it.bri) return 'Es la que jugó ' + quien + ': ' + _cgBriJugadaTxt(it);
+  if (it.vivo) { var tv = _ejvTexto(it); it.vivo.fbT = tv; return tv; }   // (anotado: _ejvPintar lo actualiza si cambia)
   if (it.castigo === true) return quien + ' lo castigó con ' + (typeof cvFan === 'function' ? cvFan(it.respSan) : it.respSan) + '.';
   if (it.castigo === false) return quien + ' no lo castigó: jugó ' + (typeof cvFan === 'function' ? cvFan(it.respSan) : it.respSan) + '.';
   return 'La partida terminó ahí.';
@@ -34762,35 +35146,40 @@ function _cgRender() {
 }
 function _cgRenderYa() {
   var ov = document.getElementById('cg-ov'); if (!ov || !ov.classList.contains('open')) return;
-  var todas = _cgItems(_cg.tour, _cg.rk);
+  var todo = _cgItems(_cg.tour, _cg.rk), bri = _cg.vista === 'bri';
+  var nBri = todo.filter(function(it){ return it.bri; }).length;
+  var todas = todo.filter(function(it){ return !!it.bri === bri; });   // la pestaña: colgadas o ✨ brillantes
   // Caída mínima (pedido del autor): con 200 colgadas en una ronda grande, quedarse sólo con las más fuleras.
-  // Filtra la lista y los contadores; lo ya aceptado/rechazado no se toca.
+  // Filtra la lista y los contadores; lo ya aceptado/rechazado no se toca. (Las brillantes no caen: no aplica.)
   if (_cg.caidaMin == null) { try { _cg.caidaMin = parseInt(localStorage.getItem('aa_cg_caida'), 10) || 0; } catch (e) { _cg.caidaMin = 0; } }
-  var its = todas.filter(function(it){ return _cgCaida(it) >= _cg.caidaMin; });
+  var its = bri ? todas : todas.filter(function(it){ return _cgCaida(it) >= _cg.caidaMin; });
   var n = { todas: its.length, pend: 0, ok: 0, no: 0 };
   its.forEach(function(it){ n[it.estado]++; });
   var caidaBtn = function(v, t){
     var k = todas.filter(function(it){ return _cgCaida(it) >= v; }).length;
     return '<button class="cg-tab' + (_cg.caidaMin === v ? ' on' : '') + '" onclick="cgCaida(' + v + ')">' + t + ' (' + k + ')</button>';
   };
-  var vis = its.filter(function(it){ return (_cg.filtro === 'todas' || it.estado === _cg.filtro) && (!_cg.soloArg || it.arg) && (!_cg.soloUnica || it.unico) && (!_cg.soloDecisivas || it.tipo !== 'C'); });
+  var vis = its.filter(function(it){ return (_cg.filtro === 'todas' || it.estado === _cg.filtro) && (!_cg.soloArg || it.arg) && (!_cg.soloUnica || it.unico) && (bri || !_cg.soloDecisivas || it.tipo !== 'C'); });
   var tab = function(k, t){ return '<button class="cg-tab' + (_cg.filtro === k ? ' on' : '') + '" onclick="cgFiltro(\'' + k + '\')">' + t + ' (' + n[k] + ')</button>'; };
   var h = '<div class="cg-box">'
-    + '<div class="cg-head"><b>🎯 Colgadas de la ronda ' + escHtml(String(_cg.ronda)) + '</b>'
+    + '<div class="cg-head"><b>' + (bri ? '✨ Jugadones' : '🎯 Colgadas') + ' de la ronda ' + escHtml(String(_cg.ronda)) + '</b>'
     + '<span style="flex:1"></span>'
     + (!_cg.corriendo ? '<button class="cg-mini" onclick="cgBarrer(' + _cg.ronda + ')">🔎 Volver a buscar</button>'
                       + '<button class="cg-mini" onclick="cgPodar()" title="Borra de todos los torneos las que no aceptaste (quedan las aceptadas y las pasadas a Entrenar)">🧹 Borrar las no aceptadas</button>' : '')
     + '<button class="cg-x" onclick="cgCerrarRevision()" aria-label="Cerrar">✕</button></div>'
     + '<div id="cg-prog" class="cg-prog">' + _cgProgHtml() + '</div>'
+    + '<div class="cg-vistas"><button class="cg-vista' + (bri ? '' : ' on') + '" onclick="cgVista(\'col\')">🎯 Colgadas <span>(' + (todo.length - nBri) + ')</span></button>'
+    + '<button class="cg-vista cg-vista-bri' + (bri ? ' on' : '') + '" onclick="cgVista(\'bri\')">✨ Jugadones <span>(' + nBri + ')</span></button></div>'
     + '<div class="cg-tabs">' + tab('todas', 'Todas') + tab('pend', 'Por revisar') + tab('ok', '✅ Aceptadas') + tab('no', '❌ Rechazadas')
     + '<span style="flex:1"></span>'
     + '<button class="cg-tab' + (_cg.soloArg ? ' on' : '') + '" onclick="cgSoloArg()">' + _flagImg('ARG') + ' Solo argentinos</button>'
-    + '<button class="cg-tab' + (_cg.soloUnica ? ' on' : '') + '" onclick="cgSoloUnica()">Castigo único</button>'
-    + '<button class="cg-tab' + (_cg.soloDecisivas ? ' on' : '') + '" onclick="cgSoloDecisivas()" title="Oculta las que se dieron vuelta sin quedar decididas">Sólo decisivas</button></div>'
-    + '<div class="cg-tabs cg-caida"><span class="cg-caida-t">Caída mínima:</span>' + caidaBtn(0, 'Todas') + caidaBtn(300, '3 peones') + caidaBtn(400, '4 peones') + caidaBtn(500, '5 peones') + '</div>'
+    + '<button class="cg-tab' + (_cg.soloUnica ? ' on' : '') + '" onclick="cgSoloUnica()">' + (bri ? 'Única solución' : 'Castigo único') + '</button>'
+    + (bri ? '' : '<button class="cg-tab' + (_cg.soloDecisivas ? ' on' : '') + '" onclick="cgSoloDecisivas()" title="Oculta las que se dieron vuelta sin quedar decididas">Sólo decisivas</button>') + '</div>'
+    + (bri ? '' : '<div class="cg-tabs cg-caida"><span class="cg-caida-t">Caída mínima:</span>' + caidaBtn(0, 'Todas') + caidaBtn(300, '3 peones') + caidaBtn(400, '4 peones') + caidaBtn(500, '5 peones') + '</div>')
     + '<div class="cg-lista">';
-  if (!vis.length) h += '<div class="cg-vacio">' + (_cg.corriendo ? 'Buscando…' : (todas.length ? 'Nada en este filtro.' : 'No se encontraron colgadas en esta ronda.')) + '</div>';
+  if (!vis.length) h += '<div class="cg-vacio">' + (_cg.corriendo ? 'Buscando…' : (todas.length ? 'Nada en este filtro.' : (bri ? 'No se encontraron jugadones en esta ronda.' + (todo.length && !nBri ? ' (Si esta ronda se barrió antes del 25/09, tocá 🔎 Volver a buscar.)' : '') : 'No se encontraron colgadas en esta ronda.'))) + '</div>';
   vis.forEach(function(it){
+    if (it.bri) { h += _cgBriCardHtml(it); return; }
     var solver = it.fen.split(' ')[1], last = { from: it.jug.slice(0, 2), to: it.jug.slice(2, 4) };
     h += '<div class="cg-card cg-' + it.estado + '" data-cgid="' + escHtml(it.id) + '">'
       + '<div class="cg-bd" onclick="cgProbar(\'' + escJs(it.id) + '\')" title="Probarla">' + tdMiniFen(it.fen, last, solver === 'b') + '</div>'
@@ -34822,6 +35211,29 @@ function _cgEvSolverHtml(it) {
 }
 function _cgTipoTxt(t) { return t === 'M' ? 'se dejó mate' : t === 'B' ? 'tiró la ganada' : t === 'C' ? 'se dio vuelta' : 'perdió una pareja'; }
 function cgFiltro(k) { _cg.filtro = k; _cgRenderYa(); }
+function cgVista(v) { _cg.vista = (v === 'bri') ? 'bri' : 'col'; _cg.abiertaExp = null; _cgRenderYa(); }
+// Tarjeta de una brillante en la revisión: el tablero es la posición de ANTES (le toca al que la jugó).
+function _cgBriCardHtml(it) {
+  var solver = it.fen.split(' ')[1], sg = solver === 'w' ? 1 : -1, id = escJs(it.id);
+  var last = it.jug ? { from: it.jug.slice(0, 2), to: it.jug.slice(2, 4) } : null;
+  var quien = _cgApellido(solver === 'w' ? it.w : it.b);
+  return '<div class="cg-card cg-' + it.estado + ' cg-card-bri" data-cgid="' + escHtml(it.id) + '">'
+    + '<div class="cg-bd" onclick="cgProbar(\'' + id + '\')" title="Probarla">' + tdMiniFen(it.fen, last, solver === 'b') + '</div>'
+    + '<div class="cg-info">'
+    + '<b>' + escHtml(_cgApellido(it.w)) + ' – ' + escHtml(_cgApellido(it.b)) + '</b>'
+    + '<span><span class="cg-bri-j">' + escHtml(_cgBriJugadaTxt(it)) + '</span> · la jugó ' + escHtml(quien) + '</span>'
+    + '<span>para ' + escHtml(quien) + ': <span class="col-ch cg-ch-bien">' + _cgEvTxt(it.despues * sg) + '</span>'
+    + (it.antes !== it.despues ? ' (la mejor del motor: ' + _cgEvTxt(it.antes * sg) + ')' : ' (la mejor del motor)') + ' · prof. ' + (it.prof || _CG_BRI_DEPTH) + '</span>'
+    + '<span>' + (it.unico ? 'Única jugada que sirve.' : '+' + it.alts.length + (it.alts.length === 1 ? ' que también sirve.' : ' que también sirven.')) + '</span>'
+    + '<div class="cg-acc">'
+    + '<button class="cg-si' + (it.estado === 'ok' ? ' on' : '') + '" onclick="cgMarcar(\'' + id + '\',\'ok\')">✅ Aceptar</button>'
+    + '<button class="cg-no' + (it.estado === 'no' ? ' on' : '') + '" onclick="cgMarcar(\'' + id + '\',\'no\')">❌ Rechazar</button>'
+    + '<button class="cg-mini" onclick="cgProbar(\'' + id + '\')">▶ Probar</button>'
+    + '<button class="cg-mini" onclick="cgExpAbrir(\'' + id + '\')">' + (it.exp ? '🏋️ Ya en Entrenar' : '🏋️ A Entrenar') + '</button>'
+    + '</div>'
+    + (_cg.abiertaExp === it.id ? _cgExpHtml(it) : '')
+    + '</div></div>';
+}
 // Cuánto empeoró el que se colgó, en centipeones (los mates cuentan como ±100 peones).
 function _cgCaida(it) {
   var s = it.fen.split(' ')[1] === 'w' ? -1 : 1;   // el que movió es el contrario del que castiga
@@ -34881,7 +35293,7 @@ function _cgTemasConocidos() {
 }
 function _cgExpHtml(it) {
   var mate = it.despues >= 10000 || it.despues <= -10000;
-  var sec = (it.tipo === 'M' || mate) ? 'mates' : it.tipo === 'B' ? 'defensa' : it.tipo === 'C' ? 'ventaja' : 'tactics';
+  var sec = it.bri ? 'sacrificio' : (it.tipo === 'M' || mate) ? 'mates' : it.tipo === 'B' ? 'defensa' : it.tipo === 'C' ? 'ventaja' : 'tactics';
   var temas = _cgTemasConocidos();
   return '<div class="cg-exp" id="cg-exp">'
     + '<label>Rating <input type="number" id="cg-exp-rat" min="400" max="3000" step="25" value="1500"></label>'
@@ -34889,7 +35301,7 @@ function _cgExpHtml(it) {
     + '<div class="cg-exp-temas">' + (temas.length ? temas.map(function(t){
         return '<label class="cg-tema"><input type="checkbox" value="' + escHtml(t) + '">' + escHtml(typeof puzTemaLabel === 'function' ? puzTemaLabel(t) : t) + '</label>';
       }).join('') : '<span class="cg-vacio">Cargando temas… (volvé a tocar "A Entrenar")</span>') + '</div>'
-    + (it.unico ? '' : '<div class="cg-aviso">Ojo: hay ' + it.alts.length + ' jugada(s) más que castigan. Se aceptan todas como correctas.</div>')
+    + (it.unico ? '' : '<div class="cg-aviso">Ojo: hay ' + it.alts.length + ' jugada(s) más que ' + (it.bri ? 'también sirven' : 'castigan') + '. Se aceptan todas como correctas.</div>')
     + '<button class="cg-si" onclick="cgExportar(\'' + escJs(it.id) + '\')">Agregar a Entrenar</button>'
     + '<span id="cg-exp-msg" class="cg-exp-msg"></span></div>';
 }
@@ -34904,7 +35316,7 @@ function cgExportar(id) {
   var sec = (document.getElementById('cg-exp-sec') || {}).value || 'tactics';
   var temas = Array.prototype.map.call(document.querySelectorAll('#cg-exp .cg-tema input:checked'), function(x){ return x.value; });
   var nombre = String((_tdCtx && _tdCtx.name) || '');
-  var pid = 'colg-' + nombre.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').slice(0, 40)
+  var pid = (it.bri ? 'brill-' : 'colg-') + nombre.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').slice(0, 40)
     + '_r' + String(it.r).replace(/[^0-9.]/g, '') + '_p' + it.ply + '_' + _cgApellido(it.w).toLowerCase().replace(/[^a-z]/g, '').slice(0, 12) + '-' + _cgApellido(it.b).toLowerCase().replace(/[^a-z]/g, '').slice(0, 12);
   var p = {
     id: pid, schemaVersion: 1, section: sec, fen: it.fen, sideToMove: it.fen.split(' ')[1],
@@ -34932,14 +35344,17 @@ function _cgBarHtml(rInt) {
     try { Promise.resolve(fetchTournamentGames(_tdTourKey)).then(_cgBarRefrescar); } catch (e) {}
   }
   var h = '';
-  if (ok.length) h += '<button class="cg-pub" onclick="cgJugar(' + rInt + ')">🎯 Colgadas de la ronda ' + rInt + ' <span>(' + ok.length + ')</span></button>';
+  var okCol = ok.filter(function(it){ return !it.bri; }), okBri = ok.filter(function(it){ return it.bri; });
+  if (okCol.length) h += '<button class="cg-pub" onclick="cgJugar(' + rInt + ')">🎯 Colgadas de la ronda ' + rInt + ' <span>(' + okCol.length + ')</span></button>';
+  // ✨ Brillantes de la ronda (25/09): mismo tablero, la posición de antes de la jugada brillante.
+  if (okBri.length) h += '<button class="cg-pub cg-pub-bri" onclick="cgJugar(' + rInt + ', null, true)">✨ Jugadones de la ronda ' + rInt + ' <span>(' + okBri.length + ')</span></button>';
   // 🕑 Las que avisó el cartel en esta ronda (pedido del autor 20/09: cuando caen varias juntas se perdían).
   var _ult = _colHistDe(rInt);
   if (_ult.length) h += '<button class="cg-ult' + (_colUltAbierto ? ' on' : '') + '" onclick="colUltimas()">🕑 Últimas colgadas <span>(' + _ult.length + ')</span></button>';
   if (!_ondemand) {
     var fin = (_tdCtx.byRound[rInt] || []).some(function(g){ return (g.h.Result || '*') !== '*'; });
     if (fin) h += '<button class="cg-autor" onclick="' + (its.length ? 'cgAbrirRevision(' + rInt + ')' : 'cgBarrer(' + rInt + ')') + '">🔎 '
-      + (its.length ? 'Revisar colgadas (' + its.filter(function(i){ return i.estado === 'ok'; }).length + ' aceptadas de ' + its.length + ')' : 'Buscar colgadas') + '</button>';
+      + (its.length ? 'Revisar colgadas y jugadones (' + its.filter(function(i){ return i.estado === 'ok'; }).length + ' aceptadas de ' + its.length + ')' : 'Buscar colgadas y jugadones') + '</button>';
   }
   h += _colUltPanelHtml(rInt);   // el desplegable, debajo de los botones (ocupa todo el ancho)
   return h ? '<div class="cg-bar" id="cg-bar-' + rInt + '">' + h + '</div>' : '';
@@ -34964,8 +35379,8 @@ function _cgPuzzle(it) {
   if (it.pc) p.pc = it.pc;
   return p;
 }
-function cgJugar(rInt, desdeId) {
-  var tour = String(_tdTourKey), its = _cgItems(tour, _cgRk(rInt)).filter(function(it){ return _ondemand || it.estado === 'ok'; });
+function cgJugar(rInt, desdeId, bri) {
+  var tour = String(_tdTourKey), its = _cgItems(tour, _cgRk(rInt)).filter(function(it){ return (_ondemand || it.estado === 'ok') && !!it.bri === !!bri; });
   if (!its.length) return;
   // Las de partidas de más nivel primero (pedido del autor 20/09: en la R1 de la Olimpiada, la colgada de un
   // indio top salía por la mitad). Promedio de Elo de la partida; con uno solo, ése; sin Elo, al final.
@@ -34979,7 +35394,8 @@ function _cgEloProm(it) {
   return e.length ? Math.round((e[0] + (e[1] || e[0])) / 2) : 0;
 }
 function cgProbar(id) {   // modo autor: probarla desde la revisión (esté aceptada o no)
-  var its = _cgItems(_cg.tour, _cg.rk); if (!its.length) return;
+  var el = _cgBuscarItem(id), bri = !!(el && el.bri);
+  var its = _cgItems(_cg.tour, _cg.rk).filter(function(it){ return !!it.bri === bri; }); if (!its.length) return;   // colgadas o brillantes, no mezcladas
   var ov = document.getElementById('cg-ov'); if (ov) ov.classList.remove('open');
   _cg.desdeRevision = true; _cg.volverA = id;
   _cgVigilarVuelta();
@@ -35044,7 +35460,7 @@ function _cgOtraOk(userSol, bestSol) {
 }
 function _cgAceptarOtra(from, to, promo, txt) {
   var san = puzPlay(from, to, promo);
-  puz._cgOtra = txt || ('Tu jugada también castiga (la marcada era ' + escHtml(typeof cvFan === 'function' ? cvFan(puz.cur.cg.solSan[0]) : puz.cur.cg.solSan[0]) + '). ');
+  puz._cgOtra = txt || ('Tu jugada también ' + (puz.cur.cg.bri ? 'sirve' : 'castiga') + ' (la marcada era ' + escHtml(typeof cvFan === 'function' ? cvFan(puz.cur.cg.solSan[0]) : puz.cur.cg.solSan[0]) + '). ');
   puz.step++; puzRenderBoard(); puzOnSolved();
 }
 function _cgRechazar(msg) {
@@ -35071,7 +35487,7 @@ function _cgValidarJugada(from, to, promo) {
     puz.busy = false;
     var us = res.u * s, bs = res.b * s;
     if (_cgOtraOk(us, bs)) {
-      _cgAceptarOtra(from, to, promo, 'Tu jugada también castiga: el motor le da ' + _colEvTxt(us) + ' (a la marcada, '
+      _cgAceptarOtra(from, to, promo, 'Tu jugada también ' + (p.cg.bri ? 'sirve' : 'castiga') + ': el motor le da ' + _colEvTxt(us) + ' (a la marcada, '
         + escHtml(typeof cvFan === 'function' ? cvFan(p.cg.solSan[0]) : p.cg.solSan[0]) + ', ' + _colEvTxt(bs) + '). ');
     } else {
       _cgRechazar('No alcanza: con esa jugada el motor da ' + _colEvTxt(us) + ', y hay una que da ' + _colEvTxt(bs) + '. Probá de nuevo, o mirá la solución.');
@@ -35093,6 +35509,8 @@ function _cgDesafio(it) {
   var dot = '<span class="dot ' + solver + '"></span> ';
   // Todo el texto en UN span: el renglón es flex y, con el nombre en negrita suelto, en pantallas angostas
   // "Lopez Maffia" y "lo castigó bien…" quedaban en dos columnas.
+  if (it.bri) return dot + '<span><b>' + quien + '</b> encontró acá un jugadón (!!). ¿Lo ves?</span>';
+  if (it.vivo) return dot + '<span><b>' + quien + '</b> tiene que mover y le dejaron un golpe. ¿Lo encontrás antes que él? <span id="ejv-estado" class="ejv-estado">' + _ejvEstadoTxt(it) + '</span></span>';
   if (it.castigo === true) return dot + '<span><b>' + quien + '</b> lo castigó bien, ¿probás si vos también?</span>';
   if (it.castigo === false) return dot + '<span><b>' + quien + '</b> no lo castigó, ¿vos podés?</span>';
   return dot + '<span>Juegan ' + (solver === 'w' ? 'Blancas' : 'Negras') + ' — la partida terminó ahí, ¿encontrás el castigo?</span>';
@@ -37719,7 +38137,8 @@ function puzLoad() {
   puzSetFb('aim', '🎯', 'Es tu turno. Mové la pieza que resuelve la posición.');
   if (p.colgada) {   // Colgadas de la ronda: el desafío según lo que pasó en la partida
     document.getElementById('puz-prompt').innerHTML = _cgDesafio(p.cg);
-    document.getElementById('puz-lvl-badge').textContent = 'Colgada ' + (puz.idx + 1) + ' de ' + puz.list.length;
+    var _cgK = _cgClase(p.cg);
+    document.getElementById('puz-lvl-badge').textContent = _cgK === 'vivo' ? '🧩 En vivo' : (_cgK === 'bri' ? 'Jugadón ' : 'Colgada ') + (puz.idx + 1) + ' de ' + puz.list.length;
   }
   puzRenderSource();
   document.getElementById('puz-motifs').innerHTML = puzMotifsHtml(p);
@@ -37807,21 +38226,21 @@ function puzRenderActions() {
   if (srcSlot) srcSlot.innerHTML = ((puz.solved || puz.revealed) && (puz._srcGame || puz._srcGameMaybe))
     ? '<button class="puz-btn" onclick="puzOpenSourceGame()">♟ Ver la partida original</button>' : '';
   // Colgadas de la ronda: los botones lo dicen, así el visitante sabe que sigue en las colgadas (no en Entrenar).
-  var _cg1 = puz.cur && puz.cur.colgada, _cgUlt = _cg1 && puz.idx + 1 >= puz.list.length;
+  var _cg1 = puz.cur && puz.cur.colgada, _cgUlt = _cg1 && puz.idx + 1 >= puz.list.length, _cgK = _cg1 ? _cgClase(puz.cur.cg) : '';
   if (_cg1 && !_ondemand && _cg.desdeRevision) {   // revisión del autor: decidirla acá mismo
     var _ce = puz.cur.cg.estado;
     h += '<button class="cg-si' + (_ce === 'ok' ? ' on' : '') + '" onclick="cgMarcarPuz(\'ok\')">' + (_ce === 'ok' ? '✅ Aceptada' : '✅ Aceptar') + '</button>'
        + '<button class="cg-no' + (_ce === 'no' ? ' on' : '') + '" onclick="cgMarcarPuz(\'no\')">' + (_ce === 'no' ? '❌ Rechazada' : '❌ Rechazar') + '</button>';
   }
   if (puz.solved || puz.revealed) {
-    h += '<button class="puz-btn primary" onclick="puzNext()">' + (_cg1 ? (_cgUlt ? 'Volver a la ronda' : 'Próxima colgada →') : 'Próximo ejercicio →') + '</button>';
+    h += '<button class="puz-btn primary" onclick="puzNext()">' + (_cg1 ? (_cgK === 'vivo' ? 'Cerrar' : _cgUlt ? 'Volver a la ronda' : _cgK === 'bri' ? 'Próximo jugadón →' : 'Próxima colgada →') : 'Próximo ejercicio →') + '</button>';
     if (!(puz.cur && puz.cur.colgada)) h += '<button class="puz-btn" id="puz-share" onclick="puzShare()">🔗 Compartir</button>';
     // El módulo (Análisis) va último: al encenderlo, el panel se despliega debajo en el hueco de la columna derecha.
     h += '<button class="puz-btn" id="puz-an-btn" onclick="puzSfToggle()">🔬 Análisis</button>';
   } else {
     h += '<button class="puz-btn" onclick="puzHint()"' + (puz.hinted ? ' disabled style="opacity:.45"' : '') + '>💡 Pista' + (puz.hinted ? ' (usada)' : '') + '</button>';
     h += '<button class="puz-btn" onclick="puzReveal()">👁 Ver solución</button>';
-    if (!_cgUlt) h += '<button class="puz-btn" onclick="puzNext()">' + (_cg1 ? 'Saltar a la próxima colgada →' : 'Otro ejercicio →') + '</button>';
+    if (!_cgUlt) h += '<button class="puz-btn" onclick="puzNext()">' + (_cg1 ? (_cgK === 'bri' ? 'Saltar al próximo jugadón →' : 'Saltar a la próxima colgada →') : 'Otro ejercicio →') + '</button>';
     if (!(puz.cur && puz.cur.colgada)) h += '<button class="puz-btn" id="puz-share" onclick="puzShare()">🔗 Compartir</button>';
   }
   el.innerHTML = h;
@@ -41091,6 +41510,18 @@ function _faIsBrilliant(node, rBefore, rAfter, whiteMoved, wpB) {
   var g = _fenGrid(node.fen);
   var parentG = _fenGrid(node.parent.fen);   // posición ANTES de la jugada (para descartar piezas ya colgadas)
   var mover = whiteMoved ? 'w' : 'b', opp = whiteMoved ? 'b' : 'w';
+  // Dos casos que NO son sacrificios (25/09, al barrer la R8 de la Olimpiada salían a montones):
+  //  · jugadas de REY y el enroque: dejan de defender una pieza, pero no la entregan (58.Rh2 dejando el
+  //    alfil f1 a tiro de la torre);
+  //  · el DESESPERADO: la pieza que se mueve ya estaba perdida donde estaba y, antes de caer, se lleva algo
+  //    (el caballo e5 atacado por el peón d6 que toma en f7; tres capturas seguidas así en una partida caótica).
+  //    No entrega nada nuevo: ya estaba perdida.
+  var from = node.move && node.move.from;
+  if (from && from.length >= 2) {
+    var ff = from.charCodeAt(0) - 97, fr = parseInt(from[1], 10) - 1, pz = parentG[fr * 8 + ff];
+    if (pz && pz.toLowerCase() === 'k') return false;
+    if (pz && _seeGain(parentG, ff, fr, opp) > 0) return false;
+  }
   var capturedByMove = _pieceValAtFen(node.parent.fen, node.move.to);
   // Escanear TODAS las piezas propias de valor ≥ caballo (peones/rey no cuentan): también califica
   // dejar colgada OTRA pieza (desviación, despeje de línea), no solo la que se movió.
@@ -43557,9 +43988,11 @@ function cvUpdateNagBadge() {
     lvLobbyIntentional=false;
     var tok=lvAuthToken();
     var url=serverBase().replace(/^http/,'ws')+'/lobby/ws'+(tok?('?auth='+encodeURIComponent(tok)):'');
-    try{ lobbyWs=new WebSocket(url); }catch(e){ setChalConn('No pude conectar al lobby.'); return; }
+    // Igual que en La hinchada: una conexión vieja que avisa "me cerré" tarde no debe pisar a la nueva. (25/09)
+    var sock; try{ sock=lobbyWs=new WebSocket(url); }catch(e){ setChalConn('No pude conectar al lobby.'); return; }
     setChalConn('Conectando…');
-    lobbyWs.onopen=function(){
+    sock.onopen=function(){
+      if(sock!==lobbyWs) return;
       lvLobbyTries=0; setChalConn('');
       // Si soy anfitrión esperando, re-publico mi desafío (el DO lo perdió al caerse el ws).
       if(lvMyChallenge && lvStatus==='waiting'){
@@ -43568,8 +44001,9 @@ function cvUpdateNagBadge() {
       }
       lvSetAvailable();   // al (re)conectar, informar mi disponibilidad
     };
-    lobbyWs.onmessage=function(e){ var m; try{ m=JSON.parse(e.data); }catch(_){ return; } handleLobby(m); };
-    lobbyWs.onclose=function(ev){
+    sock.onmessage=function(e){ if(sock!==lobbyWs){ try{ sock.close(); }catch(_){ } return; } var m; try{ m=JSON.parse(e.data); }catch(_){ return; } handleLobby(m); };
+    sock.onclose=function(ev){
+      if(sock!==lobbyWs) return;
       lobbyWs=null;
       // 4003 = el servidor cortó porque la cuenta está suspendida. NO reconectar: si no, el navegador
       // vuelve solo como invitado y el botón de desafiar sigue andando con el mismo nombre.
@@ -43585,7 +44019,7 @@ function cvUpdateNagBadge() {
       if(lvLobbyTries<10){ lvLobbyTries++; setChalConn('Reconectando al lobby…'); lvLobbyTimer=setTimeout(lobbyConnect, Math.min(1200*lvLobbyTries,6000)); }
       else setChalConn('Sin conexión al lobby.');
     };
-    lobbyWs.onerror=function(){};
+    sock.onerror=function(){};
   }
   function lobbyClose(){
     lvLobbyIntentional=true; if(lvLobbyTimer){ clearTimeout(lvLobbyTimer); lvLobbyTimer=null; }
@@ -44387,12 +44821,17 @@ function cvUpdateNagBadge() {
     tcIntentional=false;
     var tok=lvAuthToken(); tcConnTok=tok;
     var url=serverBase().replace(/^http/,'ws')+'/tour/'+encodeURIComponent(tcRoom)+'/ws'+(tok?('?auth='+encodeURIComponent(tok)):'');
-    try{ tcWs=new WebSocket(url); }catch(e){ return; }
-    tcWs.onopen=function(){ tcTries=0; tcChatPend=null; tcChatRetried=false; };
-    tcWs.onmessage=function(e){ var m; try{ m=JSON.parse(e.data); }catch(_){ return; }
+    // Cada conexión mira si TODAVÍA es la actual (sock===tcWs). Antes, al cambiar de torneo o de login
+    // se cerraba la vieja y se abría otra; el "se cerró" de la vieja llegaba DESPUÉS, borraba la nueva
+    // de tcWs y abría una tercera. Quedaban dos conexiones vivas y cada mensaje se veía dos veces
+    // (al recargar se arreglaba). Además inflaba el "👁 X mirando". (25/09)
+    var sock; try{ sock=tcWs=new WebSocket(url); }catch(e){ return; }
+    sock.onopen=function(){ if(sock!==tcWs) return; tcTries=0; tcChatPend=null; tcChatRetried=false; };
+    sock.onmessage=function(e){ if(sock!==tcWs){ try{ sock.close(); }catch(_){ } return; } var m; try{ m=JSON.parse(e.data); }catch(_){ return; }
       if(m.type==='chat-history'){ tcMsgs=Array.isArray(m.msgs)?m.msgs.slice(-40):[]; tcRenderAll(); }
       else if(m.type==='tour-chat'){
         if(m.system){ tcAppendAll(m); }   // mensaje de sistema (no se guarda en el buffer)
+        else if(m.id && tcMsgs.some(function(x){ return x.id===m.id; })){ }   // ya está (otra vía): no repetirlo
         else { tcMsgs.push({id:m.id,name:m.name,userId:m.userId,text:m.text,ts:m.ts,reply:m.reply}); if(tcMsgs.length>40) tcMsgs=tcMsgs.slice(-40); tcAppendAll(m); }
       }
       else if(m.type==='presence'){ tcSeeing=Number(m.n)||0; tcRenderPresence(); }
@@ -44405,12 +44844,12 @@ function cvUpdateNagBadge() {
       else if(m.type==='not-ready'){ if(tcChatLast && !tcChatRetried) tcChatPend=tcChatLast; }
       else if(m.type==='need-login'){ try{ lvToast('Entrá con tu cuenta de Lichess para escribir en el chat.'); }catch(e){} }
     };
-    tcWs.onclose=function(ev){ tcWs=null;
+    sock.onclose=function(ev){ if(sock!==tcWs) return; tcWs=null;
       if(ev && ev.code===4003) return;   // cuenta suspendida: no reconectar (ver el lobby)
       if(ev && ev.code===4008) return;   // demasiadas conexiones desde la misma red: insistir no sirve (23/09)
       if(tcIntentional || !tcRoom) return;
       if(tcTries<10){ tcTries++; tcTimer=setTimeout(tcConnect, Math.min(1200*tcTries,6000)); } };
-    tcWs.onerror=function(){};
+    sock.onerror=function(){};
   }
   function tcMine(m){ var u=lvAuthUser(); return !!(u && m.userId && u.id===m.userId); }
   function tcMsgNode(m){

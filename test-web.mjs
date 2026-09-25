@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1654;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1686;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -5543,7 +5543,7 @@ console.log('\n=== 53g. Aviso de colgadas graves (19/09) ===');
     + 'var window = { aaTourChat: { avisarColgada: function(cs){ lotes.push(cs); cs.forEach(function(c){ repartidos.push(c); }); return true; } } };'
     + 'function setTimeout(fn, ms){ timers.push({ fn: fn, ms: ms }); return timers.length; }'
     + 'function _colOn(){ return true; } function _capCache(){} function mevTick(){} function _bcGameIds(p){ return { game: p }; }'
-    + 'function _cgBarRefrescar(){} var _colVisto = {};'
+    + 'function _cgBarRefrescar(){} var _colVisto = {}; function _ejvIntentar(){ return false; }'
     // El chequeo de verdad (pedirle a Lichess el PGN otra vez) es asincrónico: se prueba aparte, más abajo.
     + 'function _colChequear(items, cb){ items.sort(function(a, b){ return (b.arg ? 1 : 0) - (a.arg ? 1 : 0); }); cb(items); }'
     + 'function _tdEvKey(h){ return h.k; } function _tdIsArgGame(h){ return !!h.arg; } function _colMostrar(items){ mostrados.push(items.map(function(i){ return i.gk; })); }'
@@ -6205,6 +6205,141 @@ console.log('\n=== 53h. Colgadas de la ronda: barrido, revisión y tablero de ej
   const exp = extraerFuncion('cgExportar');
   chk(/schemaVersion: 1/.test(exp) && /difficulty: rat/.test(exp) && /themes: temas/.test(exp) && /acceptedAlts: \[it\.alts\.slice\(\)\]/.test(exp),
       '"A Entrenar": mismo formato que los ejercicios de siempre, con el rating y los temas que pone el autor');
+}
+
+// ── 53i. ✨ Brillantes de la ronda + 🧩 ejercicio en vivo (25/09, pedidos del autor) ──
+{
+  console.log('\n✨ Brillantes de la ronda y 🧩 ejercicio en vivo');
+  const chessSrcB = fs.readFileSync(new URL('./assets/chess.min.js', import.meta.url), 'utf8');
+  const _mB = { exports: {} };
+  new Function('module', 'exports', 'window', chessSrcB)(_mB, _mB.exports, {});
+  const ChessB = _mB.exports.Chess || _mB.exports;
+
+  // Detección (sin motor): el SEE del "!!" del visor + los filtros de la lista de la ronda.
+  const B = new Function('Chess', 'var _CG_DESDE_PLY = 10; ' + SRC.match(/var _FA_BRILL_MIN_NET[^\n]*/)[0] + '\n'
+    + ['faNum', '_fenGrid', '_pval', '_pieceValAtFen', '_pinDir', '_attackersOf', '_seeGain', '_faIsBrilliant', '_oppHasLegalCaptureOf', '_faWinP', '_cgDetectarBri'].map(extraerFuncion).join('\n')
+    + '; return { det: _cgDetectarBri, vis: _faIsBrilliant, winp: _faWinP };')(ChessB);
+  const mk = (fen, uci, a, d) => {
+    const ch = new ChessB(fen); ch.move({ from: uci.slice(0, 2), to: uci.slice(2, 4) });
+    const fens = [], ucis = [];
+    for (let i = 0; i < 11; i++) { fens.push(fen); ucis.push('a1a1'); }
+    fens.push(ch.fen()); ucis[10] = uci;
+    const ev = []; ev[10] = a; ev[11] = d;
+    return { P: { fens, uci: ucis }, ev };
+  };
+  const LEGAL = 'rn1qkbnr/ppp2p1p/3p2p1/4p3/2B1P1b1/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 0 5';
+  const PETROV = 'rnbqkb1r/ppp2ppp/3p1n2/4N3/4P3/8/PPPP1PPP/RNBQKB1R w KQkq - 0 4';
+  let x = mk(LEGAL, 'f3e5', 30, 250);
+  chk(JSON.stringify(B.det(x.P, x.ev)) === '[{"i":10}]', '🔒 el sacrificio de Legal (5.♘xe5, la dama queda colgada) es candidata a brillante');
+  x = mk(LEGAL, 'h2h3', 30, 20);
+  chk(B.det(x.P, x.ev).length === 0, 'una jugada tranquila no');
+  x = mk(LEGAL, 'f3e5', 30, -400);
+  chk(B.det(x.P, x.ev).length === 0, 'el mismo sacrificio, si pierde chances (eval de −4), no');
+  x = mk(PETROV, 'e5f7', 30, 20);
+  chk(B.vis({ fen: x.P.fens[11], move: { from: 'e5', to: 'f7' }, parent: { fen: PETROV } }, { cp: 30 }, { cp: 20 }, true, B.winp({ cp: 30 })) === false
+      && B.det(x.P, x.ev).length === 0,
+      '🔒 un DESESPERADO (el caballo ya estaba atacado y se lleva un peón antes de caer) no es jugadón: ni en la lista de la ronda ni en el visor');
+  // Jugada de rey: 58.Rh2 deja el alfil f1 sin defensa ante la torre a1 (caso real de la R8). No es sacrificio.
+  const KH = '8/P2R4/6p1/4p2p/5n1P/4k3/6P1/r4BK1 w - - 1 58', khA = new ChessB(KH); khA.move({ from: 'g1', to: 'h2' });
+  chk(B.vis({ fen: khA.fen(), move: { from: 'g1', to: 'h2' }, parent: { fen: KH } }, { cp: 20 }, { cp: 20 }, true, B.winp({ cp: 20 })) === false,
+      'las jugadas de rey (y el enroque) no son jugadón en el visor: dejar de defender una pieza no es sacrificarla');
+  // Las partidas de referencia del ajuste de julio (memoria "plan_brillantes_amenaza"): no perder las buenas
+  // ni volver a meter las falsas con los filtros nuevos.
+  const repB = (sans) => { const c = new ChessB(), p = [{ fen: c.fen() }]; for (const m of sans.split(' ')) { const mv = c.move(m.replace(/^\d+\./, ''), { sloppy: true }); p.push({ fen: c.fen(), from: mv.from, to: mv.to, color: mv.color }); } return p; };
+  const bri = (p, i) => B.vis({ fen: p[i].fen, parent: { fen: p[i - 1].fen }, move: { from: p[i].from, to: p[i].to } }, { cp: 100 }, { cp: 120 }, p[i].color === 'w', 55);
+  const GS = repB('1.e4 c5 2.Nf3 d6 3.d4 cxd4 4.Nxd4 Nf6 5.Nc3 a6 6.Rg1 e5 7.Nb3 h5 8.h3 Be6 9.Be3 Nbd7 10.Qd2 b5 11.O-O-O Be7 12.f4 Qc7 13.Kb1 Nb6 14.Qf2 Na4 15.Nd5 Bxd5 16.exd5 Ne4 17.Qe1 Rc8 18.Rc1 Qd7 19.g4 Nf6 20.gxh5 Nxd5 21.fxe5 dxe5 22.Rxg7 b4 23.h6 Nac3+ 24.Ka1 Qa4 25.a3 Ne4 26.Nd2 Rc3');
+  const SB = repB('1.e4 c6 2.d4 d5 3.exd5 cxd5 4.Bd3 Nc6 5.c3 e6 6.Bf4 Bd6 7.Bg3 Nf6 8.Nf3 O-O 9.Nbd2 Re8 10.Ne5 Qc7 11.Qe2 Nd7 12.Bxh7+ Kf8 13.f4 Ndxe5 14.fxe5 Be7 15.Bd3 Bg5 16.O-O Ke7 17.Bf4 Bxf4 18.Rxf4 Bd7 19.Rxf7+ Kd8 20.Rxg7 Qb6 21.Nb3 Kc7 22.Rf1 Rad8 23.Rff7 a5 24.Nc5 Nb8 25.Bb5');
+  chk(bri(SB, 23) && bri(SB, 37) && bri(GS, 46) && bri(GS, 52),
+      '🔒 siguen siendo jugadón los de referencia: 12.♗xh7+ y 19.♖xf7+ (Schveide–Barcaya), 23...♘ac3+ y 26...♖c3 (Garmendia–Schnaider)',
+      [bri(SB, 23), bri(SB, 37), bri(GS, 46), bri(GS, 52)].join(','));
+  const RB0 = 'r4rk1/p4pbp/2p3p1/q1p5/2B1p1b1/2P1PN2/P2BQPPP/1R3RK1 w - - 0 15', RB1 = 'r4rk1/pR3pbp/2p3p1/q1p5/2B1p1b1/2P1PN2/P2BQPPP/5RK1 b - - 1 15';
+  chk(!bri(SB, 49) && !B.vis({ fen: RB1, parent: { fen: RB0 }, move: { from: 'b1', to: 'b7' } }, { cp: 100 }, { cp: 120 }, true, 55),
+      '…y siguen sin serlo las falsas: 25.♗b5 (el alfil d7 está clavado) y 15.♖b7 de Ocampos–Moldovan (el caballo ya estaba colgado)');
+  const vb = extraerFuncion('_cgVerificarBri');
+  chk(/multipv: 3/.test(vb) && /lines\.length >= 2 && !alts\.length/.test(vb) && /suyaSol >= bestSol - _CG_BRI_MARGEN/.test(vb),
+      '🔒 el motor la confirma: la mejor (o a 0,3) y la ÚNICA que sirve (R8 de la Olimpiada: con el criterio del visor salían ~250)');
+  chk(/_cgDetectarBri\(P, evCp\)\.forEach\(function\(c\)\{ _cgVerificarBri\(g, P, c\); \}\)/.test(extraerFuncion('cgBarrer'))
+      && /_cgDetectarBri\(P, evCp\)\.forEach\(function\(c\)\{ _cgVerificarBri\(g, P, c\); \}\)/.test(extraerFuncion('_cgPasadaRapida')),
+      'van en el MISMO barrido que las colgadas, con y sin eval de Lichess');
+  const bh2 = extraerFuncion('_cgBarHtml'), cj = extraerFuncion('cgJugar'), cr2 = extraerFuncion('_cgRenderYa');
+  chk(/cgJugar\(' \+ rInt \+ ', null, true\)/.test(bh2) && /okCol\.length/.test(bh2) && /!!it\.bri === !!bri/.test(cj),
+      'en la web: botón "✨ Brillantes de la ronda" aparte, y cada botón abre sólo las suyas (no se mezclan con las colgadas)');
+  chk(/cgVista\(/.test(cr2) && /_cgBriCardHtml\(it\)/.test(cr2) && /!!it\.bri === bri/.test(cr2) && /!!it\.bri === bri/.test(extraerFuncion('cgProbar')),
+      'en la revisión del autor: pestañas 🎯 Colgadas / ✨ Brillantes, y "Probar" recorre sólo las de la pestaña');
+  const G2 = new Function(extraerFuncion('_cgPublicable') + '; return _cgPublicable;')();
+  chk(JSON.stringify(G2({ '|8': { items: [{ id: 'a#!24', bri: 1, estado: 'ok', exp: 'x' }, { id: 'b#!30', bri: 1, estado: 'pend' }] } })) === '{"|8":{"items":[{"id":"a#!24","bri":1}]}}',
+      'las brillantes aceptadas viajan a la web por el mismo camino que las colgadas');
+
+  // 🧩 Ejercicio en vivo: la llave arranca APAGADA (al revés que el aviso de colgadas).
+  const E = new Function(extraerFuncion('_ejvActivo') + '; return _ejvActivo;')();
+  const mem = {}, lsE = { getItem: k => (k in mem ? mem[k] : null), setItem: (k, v) => { mem[k] = String(v); }, removeItem: k => { delete mem[k]; } };
+  chk(E('', lsE) === false, '🔒 el ejercicio en vivo arranca APAGADO para todos');
+  chk(E('?ejvivo=1', lsE) === true && E('', lsE) === true, 'con ?ejvivo=1 se prende y queda guardado en ese navegador');
+  chk(E('?torneo=x&ejvivo=0', lsE) === false && E('', lsE) === false, 'con ?ejvivo=0 se apaga');
+  chk(/if \(_ejvIntentar\(info\)\) return;[^\n]*\n\s*_colCola\.push\(info\);/.test(extraerFuncion('_colAvisar')),
+      'se engancha en el aviso de colgadas: si sirve de ejercicio sale ése; si no, sigue el cartel rojo de siempre');
+
+  // _ejvIntentar con todo lo de afuera de mentira.
+  const I = new Function('var ON = true, SIGUE = true, ITEM = {}, jobs = [], timers = [], cola = [], mostrados = [], hist = [], rep = [], desp = 0;'
+    + 'var _mevExtra = jobs, _colCola = cola, _EJV_TOPE_MS = 25000, _EJV_ESPERA = 4000, _CG_OTRA_DEPTH = 16, _COL_VERIF_TO = 7000;'
+    + 'function _ejvOn(){ return ON; } function _ejvSigue(){ return SIGUE; } function _ejvItem(){ return ITEM; }'
+    + 'function setTimeout(fn, ms){ timers.push({ fn: fn, ms: ms }); return timers.length; } function clearTimeout(){}'
+    + 'function mevTick(){} function _bcGameIds(){ return null; } function _colDespachar(){ desp++; }'
+    + 'function _colHistGuardar(a){ hist.push(a); } function _colRepartir(a){ rep.push(a); } function _ejvMostrar(it){ mostrados.push(it); }'
+    + extraerFuncion('_ejvIntentar')
+    + '; return { f: _ejvIntentar, jobs: jobs, timers: timers, cola: cola, mostrados: mostrados, hist: hist, rep: rep, desp: function(){ return desp; },'
+    + ' set on(v){ ON = v; }, set sigue(v){ SIGUE = v; }, set item(v){ ITEM = v; } };')();
+  const inf = (tipo, turno, extra) => Object.assign({ gk: 'g1', g: { pgn: 'x', h: {} }, c: { lado: 'w', tipo },
+    prev: { fen: 'x w', cp: 0, plies: 40 }, now: { fen: '8/8/8/8/8/8/8/8 ' + turno + ' - - 0 21', cp: -500, plies: 41 } }, extra || {});
+  chk(I.f(inf('B', 'b')) === false, '"tiró la ganada" no es ejercicio: el rival sólo empata, no hay golpe');
+  chk(I.f(inf('A', 'w')) === false, 'si le toca otra vez al que se colgó (el rival ya contestó), no');
+  chk(I.f(inf('A', 'b', { prueba: true })) === false, 'aaCol.probar() (la prueba del cartel rojo) no se desvía al ejercicio');
+  I.on = false; chk(I.f(inf('A', 'b')) === false, 'sin la llave, nada cambia'); I.on = true;
+  I.sigue = false; chk(I.f(inf('A', 'b')) === false, 'si el que castiga ya movió, no'); I.sigue = true;
+  const a1 = inf('A', 'b');
+  chk(I.f(a1) === true && I.jobs.length === 1 && I.jobs[0].multipv === 3 && I.jobs[0].depth === 16,
+      'la colgada A (o M, o C) con el turno del que castiga: el motor busca el golpe con 3 líneas a prof. 16');
+  I.jobs[0].cb({ cp: -500 }, [{ mv: 'e2e4', sc: { cp: -500 } }]);
+  I.timers.filter(t => t.ms === 4000).forEach(t => t.fn());
+  chk(I.mostrados.length === 1 && I.cola.length === 0 && I.hist.length === 1 && I.rep.length === 1,
+      '🔒 sale el cartel violeta EN VEZ del rojo, pero la colgada igual queda en 🕑 Últimas colgadas y se reparte a los demás');
+  chk(I.f(a1) === false, 'una sola vez por colgada');
+  I.item = null;
+  const a2 = inf('M', 'b'); I.f(a2);
+  I.jobs[1].cb({ cp: -500 }, [{ mv: 'e2e4', sc: { cp: -500 } }]);
+  I.timers.filter(t => t.ms === 4000).slice(-1).forEach(t => t.fn());
+  chk(I.cola.length === 1 && I.cola[0] === a2 && I.desp() === 1 && I.mostrados.length === 1,
+      '🔒 si no sirve de ejercicio (golpe chico, PGN corregido), vuelve al cartel rojo: la colgada no se pierde');
+  I.item = {}; const a3 = inf('C', 'b'); I.f(a3);
+  I.timers.filter(t => t.ms === 25000).slice(-1).forEach(t => t.fn());
+  chk(I.cola.length === 2 && I.cola[1] === a3, 'si el motor o Lichess no contestan en 25 s, también vuelve al cartel rojo');
+
+  // El ítem: con +2,5 o más para el que castiga, y las que quedan cerca también valen.
+  const IT = new Function('Chess', SRC.match(/var _CG_ALT_MARGEN_MIN[^\n]*/)[0] + '\n' + SRC.match(/var _CG_ALT_MARGEN_FRAC[^\n]*/)[0] + '\n'
+    + 'var _EJV_MIN = 250, _CG_OTRA_DEPTH = 16;'
+    + ['_colCp', '_cgOtraOk', '_ejvJugadaPgn', '_ejvItem'].map(extraerFuncion).join('\n') + '; return _ejvItem;')(ChessB);
+  const FEN_B = 'r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5Q2/PPPP1PPP/RNB1K1NR w KQkq - 2 3';   // 3.Df3?? … le toca a las blancas
+  const infoI = { gk: 'g', g: { h: { White: 'Blanco, A', Black: 'Negro, B', Round: '5.7' } }, c: { lado: 'b', tipo: 'A' },
+    prev: { fen: FEN_B, cp: 0, plies: 3 }, now: { fen: FEN_B, cp: 400, plies: 4, last: null } };
+  chk(IT(infoI, [{ mv: 'f3f7', sc: { cp: 150 } }], '') === null, 'un golpe chico (+1,5) no es ejercicio');
+  const itI = IT(infoI, [{ mv: 'f3f7', sc: { mate: 1 } }, { mv: 'c4f7', sc: { cp: 300 } }, { mv: 'd2d3', sc: { cp: 20 } }], '');
+  chk(itI && itI.sol[0] === 'f3f7' && itI.solSan[0] === 'Qxf7#' && itI.alts.length === 0 && itI.unico === true && itI.vivo && itI.castigo === null,
+      'con mate: el golpe es la solución, y el ítem tiene la misma forma que una colgada de la ronda (lo abre el mismo tablero)', JSON.stringify(itI && { sol: itI.sol, san: itI.solSan, alts: itI.alts }));
+
+  // El renglón de estado NO cuenta qué jugó hasta que el visitante lo resuelve.
+  const ES = new Function('var puz = { cur: null, solved: false, revealed: false };'
+    + 'function escHtml(s){ return String(s); } function _colApellido(n){ return String(n).split(",")[0]; } function _cgApellido(n){ return _colApellido(n); }'
+    + extraerFuncion('_ejvTexto') + extraerFuncion('_ejvEstadoTxt')
+    + '; return { f: _ejvEstadoTxt, puz: puz };')();
+  const itE = { fen: FEN_B, w: 'Campos, J', b: 'Otro, X', vivo: { listo: false }, castigo: null };
+  ES.puz.cur = { cg: itE };
+  chk(/Campos está pensando/.test(ES.f(itE)), 'mientras el jugador piensa: "⏳ Campos está pensando…"');
+  itE.vivo.listo = true; itE.respTxt = '38.Dxh5'; itE.castigo = true;
+  chk(/ya movió/.test(ES.f(itE)) && !/Dxh5/.test(ES.f(itE)), '🔒 cuando mueve, "ya movió: resolvelo y te contamos" SIN decir qué jugó');
+  ES.puz.solved = true;
+  chk(/Campos jugó 38\.Dxh5: ¡lo encontró!/.test(ES.f(itE)), 'al resolverlo: "Campos jugó 38.Dxh5: ¡lo encontró!"');
+  chk(/window\.aaEjv = \{ probar: _ejvProbar \}/.test(SRC) && /ejvPrueba: true/.test(extraerFuncion('_ejvProbar')),
+      'aaEjv.probar() para probarlo sin esperar una colgada de verdad');
 }
 
 // ── Pool + transmisión que arranca a mitad del torneo (19/09, Liga Nacional Superior 2026) ─────────
