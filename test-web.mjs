@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1644;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1647;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -6642,6 +6642,31 @@ console.log('\n=== Auditoría 23/09 — Fase 4: accesibilidad y prolijidad ===')
   const salto = extraerFuncion('_tdRunPendingMatchJump');
   chk(salto.indexOf('games=_tdTeamOrden(games, j.round)') > 0 && salto.indexOf('games=_tdTeamOrden(games, j.round)') < salto.indexOf('_tdTeamMatches(games)'),
       'el salto del ojito arma la lista IGUAL que al dibujar (antes caía una página corrida)');
+}
+
+// ── El marcador del match saltaba al volver a la pestaña (25/09, Olimpiada R9) ──────────────────────
+// Portugal-Argentina con sólo Oro en tablas mostraba 0:0, 0:1 o ½:1½: el refresco buscaba el marcador por
+// su LUGAR en la lista y, si la ronda llegaba en otro orden, le escribía el de otro match.
+{
+  console.log('\n=== 58b. Marcador del match por pareja de países, no por lugar en la lista (25/09) ===');
+  const G = (wt, bt, res) => ({ h: { WhiteTeam: wt, BlackTeam: bt, Result: res } });
+  const ronda = [ G('Portugal (POR)', 'Argentina (ARG)', '1/2-1/2'), G('Argentina (ARG)', 'Portugal (POR)', '*'),
+                  G('India (IND)', 'Chile (CHI)', '1-0'), G('Chile (CHI)', 'India (IND)', '0-1') ];
+  // Lo dibujado: POR-ARG en el lugar 0 e IND-CHI en el 1 (el de la izquierda en data-team).
+  const el = (id, par, izq) => ({ id, par, textContent: '', getAttribute(k) { return k === 'data-mpar' ? par : null; },
+    previousElementSibling: { getAttribute: (k) => (k === 'data-team' ? izq : null) } });
+  const e0 = el('td-mscore-9-0', 'Argentina (ARG)|Portugal (POR)', 'Portugal (POR)');
+  const e1 = el('td-mscore-9-1', 'Chile (CHI)|India (IND)', 'Chile (CHI)');   // Chile a la izquierda en pantalla
+  const ctx = { isTeam: true, byRound: { 9: [ronda[2], ronda[3], ronda[0], ronda[1]] } };   // vuelve en OTRO orden
+  const upd = new Function('_tdCtx', 'document', '_tdGameRes', '_tdTeamOrden',
+    'function _fmtHalf(n) { var w = Math.floor(n); return ((n - w) >= 0.5) ? ((w > 0 ? w : "") + "½") : String(w); }'
+    + extraerFuncion('_tdTeamMatches') + extraerFuncion('_tdMatchPar') + extraerFuncion('_tdUpdateMatchScores') + '; return _tdUpdateMatchScores;')(
+    ctx, { querySelectorAll: (q) => (q === '[id^="td-mscore-9-"]' ? [e0, e1] : []) }, (g) => g.h.Result, (g) => g);
+  upd(9);
+  chk(e0.textContent === '½ : ½', '🔒 Portugal-Argentina sigue ½:½ aunque la ronda llegue en otro orden (antes le tocaba el de India-Chile)', e0.textContent);
+  chk(e1.textContent === '0 : 2', 'y si el de la izquierda en pantalla es el otro país, el marcador se da vuelta', e1.textContent);
+  const src = extraerFuncion('tdBuildRoundTeams');
+  chk(src.indexOf('data-mpar="') > 0 && src.indexOf('data-team="') > 0, 'el dibujo del match deja anotada la pareja y el país de la izquierda');
 }
 
 // ── Chennai 2022: cruces con DOS columnas "Equipo" por lado, "(IND2)" y el rival "Hamza" a secas (24/09) ─

@@ -32939,8 +32939,8 @@ function tdBuildRoundTeams(rInt, panel, roundGames) {
     // grilla de tableros. Así no pelea con el grid de 4 columnas del panel de la ronda.
     h += '<div'+(_mfk?' id="tdm-'+rInt+'-'+_mfk+'"':'')+' style="grid-column:1/-1;margin-top:' + (k ? '18' : '2') + 'px">';
     h += '<div style="display:flex;align-items:center;gap:10px;padding:9px 14px;background:var(--bg2);border:1px solid var(--border);border-radius:10px;margin-bottom:9px;font-weight:700">';
-    h += '<span style="flex:1;min-width:0;text-align:right;color:var(--text);font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + _tdTeamName(m.teamA) + '</span>';
-    h += '<span id="td-mscore-' + rInt + '-' + mi + '" style="flex-shrink:0;color:var(--gold);background:var(--bg3);border-radius:6px;padding:3px 12px;font-variant-numeric:tabular-nums">' + _fmtHalf(m.a) + ' : ' + _fmtHalf(m.b) + '</span>';
+    h += '<span data-team="' + escHtml(m.teamA || '') + '" style="flex:1;min-width:0;text-align:right;color:var(--text);font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + _tdTeamName(m.teamA) + '</span>';
+    h += '<span id="td-mscore-' + rInt + '-' + mi + '" data-mpar="' + escHtml(_tdMatchPar(m)) + '" style="flex-shrink:0;color:var(--gold);background:var(--bg3);border-radius:6px;padding:3px 12px;font-variant-numeric:tabular-nums">' + _fmtHalf(m.a) + ' : ' + _fmtHalf(m.b) + '</span>';
     h += '<span style="flex:1;min-width:0;color:var(--text);font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + _tdTeamName(m.teamB) + '</span>';
     h += '</div>';
     // Todos los tableros del enfrentamiento en UNA fila (N columnas iguales). max-width topea el tamaño
@@ -32962,15 +32962,27 @@ function tdBuildRoundTeams(rInt, panel, roundGames) {
   _tdRenderPager(rInt, totalPages, view.length, 'enfrentamientos');
 }
 // Refresca solo los marcadores de cada match (sin reconstruir) cuando llegan resultados en vivo.
+// La pareja de países del match, sin importar quién va a la izquierda: con esto se encuentra el marcador.
+function _tdMatchPar(m) { return [(m.teamA || '').trim(), (m.teamB || '').trim()].sort().join('|'); }
 function _tdUpdateMatchScores(rInt) {
   if (!_tdCtx) return;
-  // Mismo orden (y mismos países) que al dibujar, si no los ids de los marcadores no coinciden.
   var _rg = _tdCtx.byRound[rInt] || [];
   if (_tdCtx.isTeam) { try { _rg = _tdTeamOrden(_rg, rInt); } catch (e) {} }
-  _tdTeamMatches(_rg).forEach(function(m, mi) {
-    var el = document.getElementById('td-mscore-' + rInt + '-' + mi);
-    if (el) el.textContent = _fmtHalf(m.a) + ' : ' + _fmtHalf(m.b);
-  });
+  // Se busca cada marcador por la PAREJA DE PAÍSES (data-mpar), no por su lugar en la lista. Antes era por
+  // el lugar (td-mscore-<ronda>-<n>) y, si la lista de la ronda llegaba en otro orden (al volver a la
+  // pestaña se piden de nuevo las transmisiones), el marcador de un match mostraba el de OTRO: Portugal-
+  // Argentina de la R9 saltaba entre 0:0, 0:1 y ½:1½ con sólo Oro en tablas (25/09/2026).
+  var porPar = Object.create(null);
+  _tdTeamMatches(_rg).forEach(function(m) { porPar[_tdMatchPar(m)] = m; });
+  var els = document.querySelectorAll('[id^="td-mscore-' + rInt + '-"]');
+  for (var i = 0; i < els.length; i++) {
+    var m = porPar[els[i].getAttribute('data-mpar')];
+    if (!m) continue;   // ese match no está en la lista de ahora: se deja lo que había
+    // El de la izquierda en pantalla puede no ser el teamA de ahora (otro orden): se da vuelta si hace falta.
+    var izq = (els[i].previousElementSibling && els[i].previousElementSibling.getAttribute('data-team')) || m.teamA;
+    var a = (izq === m.teamB) ? m.b : m.a, b = (izq === m.teamB) ? m.a : m.b;
+    els[i].textContent = _fmtHalf(a) + ' : ' + _fmtHalf(b);
+  }
 }
 
 // Navegación de páginas de miniaturas (◀ Página X/Y ▶). Usa el contenedor #td-pager.
