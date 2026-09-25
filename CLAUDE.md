@@ -85,6 +85,16 @@ como tarjetas. Al tocar uno se abre la ficha de siempre.
   partidas viven sólo en la pestaña) **y publicar.** Los paquetes los arma Claude desde OlimpBase con los
   programitas de `.claude/olimpbase/` (`convert.mjs` → `limpiar-pgn.mjs` → `paquete.mjs`) y quedan en
   `Escritorio\Torneos historicos\`.
+- **El árbol de aperturas sigue siendo de argentinos** (24/09/2026): de los torneos de una colección
+  se ven TODAS las partidas al entrar (y el buscador las encuentra), pero al árbol (Partidas → 🌳)
+  sólo suman las que juega algún argentino. En una Olimpiada manda el **equipo** del PGN
+  (`WhiteTeam`/`BlackTeam`): Eliskases jugó 1939 por Alemania. Sin equipos, se reconoce al argentino
+  por país/FIDE id/nombre conocido o por la formación de Chess-Results. Al guardar, el índice publicado
+  marca `na:1` las que no van. Código: `_arbolHistEventos`, `_arbolTieneArg`, `_arbolFuera`.
+- **📥 Subir partidas** (modo autor, arriba a la derecha de la ficha, junto a "Marcar finalizado"):
+  sube un PGN directo a ESE torneo y a la categoría que se está mirando. Sirve para los históricos,
+  que no aparecen en la lista de "Subir partidas a la base de datos" (ofrece sólo los últimos 10
+  finalizados). En un histórico avisa cuántas suman al árbol. **Después: 💾 Guardar en mi carpeta.**
 - Por categoría, dos marcas que respeta la ficha: `inicial: true` (abre en esa pestaña, ej. la Final A) y
   `sinPodio: true` (sin podio, ej. los grupos preliminares de una Olimpiada vieja).
 - En la web publicada el botón y cada colección aparecen **recién cuando tienen algún torneo**.

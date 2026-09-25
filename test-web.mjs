@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1576;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1644;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -724,9 +724,12 @@ console.log('\n=== 21. Los países, en castellano ===');
     return { clean: s0.replace(new RegExp('[ ]*[(][A-Za-z]{3}[)][ ]*$'), '').trim() || s0,
              fed: m ? m[1].toUpperCase() : '' };
   };
-  const _paisES = new Function('_FED_ES', '_FED_EN', 'normStr', '_teamCountryParts',
+  const DE = JSON.parse(SRC.match(new RegExp('var _FED_DE = ([{].*?[}]);'))[1]);
+  const HIST = JSON.parse(SRC.match(new RegExp('var _FED_HIST = ([{].*?[}]);'))[1]);
+  const HISTN = JSON.parse(SRC.match(new RegExp('var _FED_HIST_NOMBRES = ([{].*?[}]);'))[1]);
+  const _paisES = new Function('_FED_ES', '_FED_EN', '_FED_DE', '_FED_HIST', '_FED_HIST_NOMBRES', 'normStr', '_teamCountryParts',
     'var _NOMBRE_FED = null;' + extraerFuncion('_nombreFedIx') + extraerFuncion('_paisES') + '; return _paisES;')(
-      ES, EN, new Function('return (' + extraerFuncion('normStr') + ')')(), parts);
+      ES, EN, DE, HIST, HISTN, new Function('return (' + extraerFuncion('normStr') + ')')(), parts);
 
   // Un Europeo por equipos tiene England 1, 2 y 3: el número NO se puede perder.
   chk(_paisES('England 1', 'ENG') === 'Inglaterra 1' && _paisES('England 3', 'ENG') === 'Inglaterra 3',
@@ -752,6 +755,34 @@ console.log('\n=== 21. Los países, en castellano ===');
       'a un CLUB no le toca nada (una liga no es un torneo de países)');
   chk(_paisES('Chess Team XYZ', 'ZZZ') === 'Chess Team XYZ', 'y un código desconocido tampoco rompe nada');
   chk(_paisES('') === '' && _paisES(null) === '', 'sin nombre, no devuelve basura');
+
+  // 34ª Olimpiada (Estambul 2000): los equipos vienen EN ALEMÁN y sin la sigla FED, con faltas de ortografía.
+  chk(_paisES('Argentinien') === 'Argentina' && _paisES('Rußland') === 'Rusia' && _paisES('Deutschland') === 'Alemania',
+      'los países en alemán de las Olimpiadas viejas (Argentinien, Rußland, Deutschland)', _paisES('Rußland'));
+  chk(_paisES('Littauen') === 'Lituania' && _paisES('Aserbaitschan') === 'Azerbaiyán' && _paisES('Bosnien & Herzigowina') === 'Bosnia y Herzegovina',
+      'también con las faltas de ortografía que trae Chess-Results');
+  chk(_paisES('Türkei A') === 'Turquía A' && _paisES('Türkei B') === 'Turquía B', 'y con la letra del equipo local (Türkei A/B)');
+  chk(_paisES('Jugoslawien') === 'Yugoslavia' && _paisES('Holland Antillen') === 'Antillas Neerlandesas',
+      'los países que ya no existen se traducen igual (Yugoslavia, Antillas Neerlandesas)');
+  chk(_paisES('IBSA') === 'IBSA', 'y lo que no es un país (IBSA, la asociación de ciegos) queda como está');
+  // Podio por equipos: bandera en el círculo sólo si el equipo es un PAÍS.
+  const _paisFed = new Function('_FED_ES', '_FED_EN', '_FED_DE', '_FED_HIST', '_FED_HIST_NOMBRES', '_FED_ISO', 'normStr', '_teamCountryParts',
+    'var _NOMBRE_FED = null;' + extraerFuncion('_nombreFedIx') + extraerFuncion('_paisFed') + '; return _paisFed;')(
+      ES, EN, DE, HIST, HISTN, ISO, new Function('return (' + extraerFuncion('normStr') + ')')(), parts);
+  chk(_paisFed('Argentinien') === 'ARG' && _paisFed('Germany') === 'GER' && _paisFed('Türkei B') === 'TUR' && _paisFed('USA') === 'USA',
+      'podio por equipos: un país lleva su bandera (en castellano, inglés o alemán)');
+  chk(_paisFed('SG Riehen Switzerland') === '' && _paisFed('Racing Club B') === '' && _paisFed('Jugoslawien') === '' && _paisFed('IBSA') === '',
+      'y un club, un país que ya no existe o la IBSA siguen con la inicial');
+  // Mallorca 2004 (24/09/2026): "United States" a secas quedaba en inglés y sin bandera en el podio.
+  chk(_paisES('United States') === 'Estados Unidos' && _paisFed('United States') === 'USA',
+      '"United States" → Estados Unidos, con bandera en el podio');
+  chk(_paisES('Czech Rep.') === 'Chequia' && _paisES('Dominican Rep.') === 'República Dominicana'
+      && _paisES('Kyrgystan') === 'Kirguistán' && _paisES('Neth. Antilles') === 'Antillas Neerlandesas',
+      'y las abreviaturas de las Olimpiadas viejas (Czech Rep., Dominican Rep., Kyrgystan, Neth. Antilles)');
+  chk(SRC.includes('flagFed: _paisFed(') && extraerFuncion('_podioDibujo').includes("assets/flags/' + iso"),
+      'el podio usa la bandera en el círculo');
+  const deSinBandera = Object.keys(DE).filter(k => !ISO[k]);
+  chk(deSinBandera.length === 0, 'cada país en alemán apunta a una federación con bandera', deSinBandera.join(',') || Object.keys(DE).length + ' federaciones');
 
   // Los lugares donde se muestran: tabla de equipos, formaciones, cruces y ficha de país.
   chk(/escHtml\(_paisES\(t\.name,_fed\)\)/.test(SRC), 'la tabla de equipos lo usa');
@@ -3399,7 +3430,7 @@ console.log('\n=== 46. Accesibilidad Fase 1: las tablas de torneo ===');
   const ISO = JSON.parse(SRC.match(/var _FED_ISO = (\{.*?\});/)[1]);
   const T = new Function('_FED_ISO', '_NAME_FED',
       'function crFlagEmoji(){ return ""; } function _teamFlag(){ return ""; }'
-    + extraerFuncion('_teamCountryParts') + extraerFuncion('_teamResolveFed')
+    + extraerFuncion('_teamCountryParts') + extraerFuncion('_teamResolveFed') + extraerFuncion('_nameFedLookup')
     + extraerFuncion('_teamSideIsArg') + extraerFuncion('_teamMatchIsArg')
     + ' return _teamMatchIsArg;')(ISO, { argentina: 'ARG', egypt: 'EGY' });
   const datos = { teamCrosses: { 1: [ { aName: 'Egypt', aFed: 'EGY', bName: 'Argentina', bFed: 'ARG' },
@@ -3410,12 +3441,18 @@ console.log('\n=== 46. Accesibilidad Fase 1: las tablas de torneo ===');
       'y un cruce donde no juega Argentina sigue afuera');
   // Olimpiada 17/09: Chess-Results "Trinidad & Tobago", Lichess "Trinidad and Tobago".
   const R = new Function('_FED_ISO', '_NAME_FED', 'function crFlagEmoji(){ return ""; } function _teamFlag(){ return ""; }'
-    + extraerFuncion('_teamCountryParts') + extraerFuncion('_teamResolveFed') + ' return _teamResolveFed;')(ISO, {});
+    + extraerFuncion('_teamCountryParts') + extraerFuncion('_teamResolveFed') + extraerFuncion('_nameFedLookup') + ' return _teamResolveFed;')(ISO, {});
   const datosTT = { teamCrosses: { 2: [ { aName: 'Brazil', aFed: 'BRA', bName: 'Trinidad & Tobago', bFed: 'TTO' } ] } };
   chk(R('Trinidad and Tobago', datosTT) === 'TTO' && R('trinidad & tobago', datosTT) === 'TTO' && R('Trinidad Tobago', datosTT) === '',
       '🔒 "Trinidad and Tobago" (Lichess) es el mismo país que "Trinidad & Tobago" (Chess-Results)');
   chk(T({ aName: 'Argentina (ARG)', bName: 'India (IND)' }, null) === true,
       'con el código pegado, como en la Olimpiada grande, anda igual que antes');
+  // 34ª Olimpiada (Estambul 2000): los equipos en alemán y sin la sigla FED.
+  const TDE = new Function('_FED_ISO', '_NAME_FED', 'function crFlagEmoji(){ return ""; } function _teamFlag(){ return ""; }'
+    + extraerFuncion('_teamCountryParts') + extraerFuncion('_teamResolveFed') + extraerFuncion('_nameFedLookup')
+    + extraerFuncion('_teamSideIsArg') + extraerFuncion('_teamMatchIsArg') + ' return [_teamMatchIsArg,_teamResolveFed];')(ISO, { argentinien: 'ARG', 'türkei': 'TUR', marokko: 'MAR' });
+  chk(TDE[0]({ aName: 'Marokko', bName: 'Argentinien' }, null) === true && TDE[1]('Türkei B', null) === 'TUR',
+      '"Argentinien" (Olimpiada en alemán) entra en Solo argentinos, y "Türkei B" es Turquía');
   chk(T({ aName: 'Argentinos Juniors', bName: 'Racing Club' }, null) === false,
       'un club con "Argentin…" en el nombre no pasa por la selección');
   chk(extraerFuncion('_teamRoundMatches').includes('return _teamMatchIsArg(m,_dArg);')
@@ -6490,6 +6527,235 @@ console.log('\n=== Auditoría 23/09 — Fase 4: accesibilidad y prolijidad ===')
   chk(/DUPLICADO en editar\.html/.test(SRC) && /DUPLICADO en index\.html/.test(ED), 'el tablerito de carga avisa, en los dos archivos, que está duplicado en el otro');
 }
 
+
+// ── Torneos históricos: el árbol de aperturas sigue siendo de argentinos (24/09) ─────────────────
+// Las Olimpiadas traen todas las partidas (Rusia-Marruecos): se ven al entrar al torneo, pero al árbol
+// sólo suman las que juega un argentino. Y en una Olimpiada manda el EQUIPO: Eliskases jugó 1939 por
+// Alemania aunque después se quedó en la Argentina.
+{
+  console.log('\n=== 56. Torneos históricos: al árbol sólo las partidas de argentinos (24/09) ===');
+  const ISO = JSON.parse(SRC.match(/var _FED_ISO = (\{.*?\});/)[1]);
+  const HIST = JSON.parse(SRC.match(new RegExp('var _FED_HIST = ([{].*?[}]);'))[1]);
+  const paises = { argentina: 'ARG', germany: 'GER', sweden: 'SWE', rusland: 'RUS' };
+  const tokens = (n) => String(n || '').toLowerCase().replace(/,/g, ' ').split(/\s+/).filter(Boolean).sort().join(' ');
+  const tieneArg = new Function('_FED_ISO', '_FED_HIST', '_nameFedLookup', '_isArgGame', '_arbolArgDeTorneo', 'crNormTokens',
+    extraerFuncion('_arbolTieneArg') + '; return _arbolTieneArg;')(
+      ISO, HIST, (n) => paises[String(n || '').toLowerCase()] || '',
+      (h) => /Eliskases|Najdorf/.test((h.White || '') + (h.Black || '')),          // "nombre conocido" del sitio
+      () => ({ nom: { [tokens('Giaccio Alfredo')]: true }, fid: { '100': true } }), // formación de Chess-Results
+      tokens);
+  chk(tieneArg({ White: 'Eliskases, Erich', Black: 'Opocensky, Karel', WhiteTeam: 'Germany', BlackTeam: 'Bohemia y Moravia' }, ['x']) === false,
+      'Eliskases jugando para Alemania en 1939 NO suma (manda el equipo, aunque el país del rival sea de época)');
+  chk(tieneArg({ White: 'Grau, Roberto', Black: 'Keres, Paul', WhiteTeam: 'Argentina', BlackTeam: 'Estonia' }, ['x']) === true,
+      'una partida de Argentina sí suma');
+  chk(tieneArg({ White: 'Hansen, Curt', Black: 'Giaccio, Alfredo' }, ['x']) === true,
+      'sin equipos en el PGN, al argentino lo reconoce la formación de Chess-Results (Estambul 2000)');
+  chk(tieneArg({ White: 'Fulano', Black: 'Mengano', BlackFideId: '100' }, ['x']) === true, 'o su FIDE id en la formación');
+  chk(tieneArg({ White: 'Svidler, Peter', Black: 'Tissir, Mohamed' }, ['x']) === false, 'y Rusia-Marruecos queda afuera del árbol');
+  chk(tieneArg({ White: 'Najdorf, Miguel', Black: 'Reshevsky, Samuel' }, []) === true,
+      'en un torneo individual (Mar del Plata) alcanza con que el nombre sea de un argentino conocido');
+
+  const ob = extraerFuncion('_buildObIndex');
+  chk(/if \(e\.na\) return false;/.test(ob) && /_arbolFuera\(e\.pgn, _hist\)/.test(ob),
+      'el árbol descarta las marcadas (web publicada) y las mira en el momento (modo autor)');
+  chk(/if \(_arbolFuera\(pgn, _histArb, h\)\) gameEntries\[gameEntries\.length - 1\]\.na = 1;/.test(SRC) && /na: g\.na \|\| 0/.test(extraerFuncion('_dbIdxEntry')),
+      'el guardado marca en el índice publicado las que no van al árbol, y la web lee la marca');
+  chk(!/_arbolFuera|\.na\b/.test(extraerFuncion('_dbSearch')), 'el buscador de partidas NO filtra: se siguen encontrando todas');
+  const hist = extraerFuncion('_arbolHistEventos');
+  chk(/d\.coleccion/.test(hist) && /_colDef\(d\.coleccion\)/.test(hist), 'son históricos los torneos de una colección (Olimpíadas, Mar del Plata, Clarín, Najdorf)');
+
+  // El botón de subir partidas adentro del torneo: sólo en modo autor, con destino fijo.
+  const td = extraerFuncion('openTournamentDetail');
+  const iBtn = td.indexOf('_tdSubirPartidas()'), iAutor = td.lastIndexOf('if (!_ondemand) {', iBtn);
+  chk(iBtn > 0 && iAutor > 0 && td.slice(iAutor, iBtn).split('}').length <= 3, 'el botón 📥 Subir partidas está en la ficha del torneo, sólo en modo autor');
+  chk(/_catEventName\(name, _cat\.name\)/.test(td.slice(iAutor, iBtn + 200)), 'y sube a la categoría que se está mirando');
+  chk(/forzado \? \(forzado\.target/.test(extraerFuncion('dbPoolImport')), 'la subida usa ese destino fijo en vez del de la lista');
+  chk(!/(^|[^.\w])(alert|confirm|prompt)\(/.test(extraerFuncion('_tdSubirPartidas')), 'con el cartel de la app, no el del navegador');
+}
+
+// ── Subir un torneo entero: las partidas que YA estaban pasan al torneo (24/09) ──────────────────
+// Budapest 2024: las de los argentinos estaban en la base desde antes, bajo cuatro eventos en inglés.
+// Al subir la Olimpiada entera no se duplicaban (bien), pero tampoco aparecían en la ficha del torneo.
+{
+  console.log('\n=== 57. Subir un torneo entero: las repetidas también pasan al torneo (24/09) ===');
+  const cab = (g, k) => { const i = String(g).indexOf("[" + k + " \""); return i < 0 ? "" : String(g).slice(i + k.length + 3, String(g).indexOf("\"", i + k.length + 3)); };
+  const cuerpo = (g) => String(g).split('\n\n').slice(1).join(' ').trim();
+  const est = { pool: [] };
+  const reasignar = new Function('_dedupKey', '_moveBody', '_eventosDeTorneos', '_stampEvent', '_normEvName', 'dedupGamesByMoves', 'est',
+    'var _memTournaments = est.pool;' + extraerFuncion('_poolReasignar') + '; return function(a, t){ _memTournaments = est.pool; var n = _poolReasignar(a, t); est.pool = _memTournaments; return n; };')(
+      (g) => ({ pk: [cab(g, 'White'), cab(g, 'Black')].sort().join('|'), body: cuerpo(g) }), cuerpo, () => ({ 'torneo del sitio': true }),
+      (g, ev) => g.replace(/\[Event "[^"]*"\]/, '[Event "' + ev + '"]'), (s) => String(s || '').trim().toLowerCase(),
+      (arr, f) => arr.filter((w, i) => arr.findIndex((x) => f(x) === f(w)) === i), est);
+  const P = (ev, d, w, b, mv) => '[Event "' + ev + '"]\n[Date "' + d + '"]\n[White "' + w + '"]\n[Black "' + b + '"]\n\n' + mv;
+  const mareco = P('45th Olympiad Budapest 2024', '2024.09.12', 'Mareco, Sandro', 'So, Wesley', '1. e4 c5 2. Nf3 d6 3. d4 cxd4');
+  const corta  = P('45. Olympiad 2024', '2024.09.13', 'Flores, Diego', 'Leko, Peter', '1. d4 Nf6 2. c4');             // la del vivo, cortada
+  const ajena  = P('Abierto 2019', '2019.03.01', 'Mareco, Sandro', 'So, Wesley', '1. e4 c5 2. Nf3 d6 3. d4 cxd4 4. Nxd4'); // otro año
+  const delSitio = P('Torneo del sitio', '2024.09.12', 'Otro, Uno', 'Otro, Dos', '1. c4 e5 2. Nc3 Nf6');
+  est.pool = [ { name: '45th Olympiad Budapest 2024', dbPool: true, playerOnly: true, games: [mareco] },
+               { name: '45. Olympiad 2024', dbPool: true, playerOnly: true, games: [corta] },
+               { name: 'Abierto 2019', dbPool: true, playerOnly: true, games: [ajena] },
+               { name: 'Torneo del sitio', dbPool: true, games: [delSitio] } ];
+  const subidas = [ P('x', '2024.09.12', 'Mareco, Sandro', 'So, Wesley', '1. e4 c5 2. Nf3 d6 3. d4 cxd4'),
+                    P('x', '2024.09.13', 'Flores, Diego', 'Leko, Peter', '1. d4 Nf6 2. c4 e6 3. Nc3 Bb4'),
+                    P('x', '2024.09.12', 'Otro, Uno', 'Otro, Dos', '1. c4 e5 2. Nc3 Nf6') ];
+  const n = reasignar(subidas, 'Budapest · Absoluto');
+  const dest = est.pool.find((t) => t.name === 'Budapest · Absoluto');
+  chk(n === 2 && dest && dest.games.length === 2, 'pasan al torneo la idéntica y la del vivo cortada, aunque estuvieran bajo otro nombre de evento', n + ' movidas');
+  chk(dest.games.every((g) => /\[Event "Budapest · Absoluto"\]/.test(g)), 'y quedan con el evento del torneo');
+  chk(!est.pool.some((t) => t.name === '45th Olympiad Budapest 2024' || t.name === '45. Olympiad 2024'), 'los contenedores viejos que quedaron vacíos se borran');
+  chk(est.pool.find((t) => t.name === 'Abierto 2019').games.length === 1, 'la de OTRO año no se toca aunque sean los mismos jugadores (atajo por fecha)');
+  chk(est.pool.find((t) => t.name === 'Torneo del sitio').games.length === 1, 'y a otro torneo del sitio no se le saca ninguna');
+  chk(/var movidas = \(target && skipped\) \? _poolReasignar\(allGames, target\) : 0;/.test(extraerFuncion('dbPoolImport')),
+      'también cuando el archivo trae partidas nuevas y repetidas mezcladas (antes sólo si TODAS eran repetidas)');
+}
+
+// ── Ojito del match en torneos por equipos: "Este match no se transmitió" teniéndolo (24/09) ─────
+// Budapest 2024: (1) el salto calculaba la página sobre OTRA lista que la dibujada; (2) partidas de dos
+// subidas distintas partían un match en dos; (3) una rival con otro nombre dejaba la partida suelta.
+{
+  console.log('\n=== 58. Ojito del match: mismo orden, match entero y nombres parecidos (24/09) ===');
+  const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+  const tokens = (n) => norm(n).split(' ').filter(Boolean).sort().join(' ');
+  const matches = new Function('_tdGameRes', extraerFuncion('_tdTeamMatches') + '; return _tdTeamMatches;')((g) => g.h.Result);
+  const G = (w, b, wt, bt, res) => ({ h: { White: w, Black: b, WhiteTeam: wt, BlackTeam: bt, Result: res || '1/2-1/2' } });
+  const ms = matches([ G('Sosa, Tomas', 'Svane, Frederik', 'Argentina (ARG)', 'Germany (GER)'),
+                       G('Otro, A', 'Otro, B', 'India (IND)', 'Chile (CHI)'),
+                       G('Keymer, Vincent', 'Peralta, Fernando', 'Germany (GER)', 'Argentina (ARG)', '1-0') ]);
+  chk(ms.length === 2 && ms[0].boards.length === 2, 'los tableros del mismo match se juntan aunque no vengan seguidos (Argentina-Alemania no sale partido en dos)', ms.length + ' matches');
+  chk(ms[0].a === 0.5 && ms[0].b === 1.5, 'y el marcador suma los dos', ms[0].a + ' : ' + ms[0].b);
+
+  const formacion = { 3: [ { aName: 'Azerbaijan (AZE)', bName: 'Argentina (ARG)', boards: [
+      { nW: 'Mammadzada, Gunay', nB: 'Francisco Guecamburu, Candela Be' }, { nW: 'Mammadova, Gulnar', nB: 'Amura, Claudia' } ] },
+    { aName: 'Germany (GER)', bName: 'Chile (CHI)', boards: [ { nW: 'Heinemann, Josefine', nB: 'Perez, Ana' } ] } ] };
+  const orden = new Function('_tdCtx', 'crDataLoad', 'crNormTokens', '_crNombreContenido', 'normStr',
+    extraerFuncion('_tdTeamOrden') + '; return _tdTeamOrden;')({ crKey: 'x' }, () => ({ teamRounds: formacion }), tokens, () => false, norm);
+  const H = (w, b, wt, bt) => ({ h: { White: w, Black: b, WhiteTeam: wt, BlackTeam: bt } });
+  const out = orden([ H('Amura, Claudia', 'Mammadova, Gulay'), H('Safarli, Josefine', 'Perez, Ana'), H('Fulano, X', 'Mengano, Y') ], 3);
+  chk(out[0].h.WhiteTeam === 'Argentina (ARG)' && out[0].h.BlackTeam === 'Azerbaijan (AZE)',
+      'Amura contra "Mammadova, Gulay" entra al match aunque Chess-Results diga "Gulnar"', out[0].h.WhiteTeam + ' / ' + out[0].h.BlackTeam);
+  chk(out[1].h.WhiteTeam === 'Germany (GER)', 'y "Safarli, Josefine" es la "Heinemann, Josefine" de la formación (apellido de casada)');
+  chk(!out[2].h.WhiteTeam, 'a dos desconocidos no se les inventa equipo');
+  const juntas = [ H('Sosa, Tomas', 'Svane, F', 'Argentina (ARG)', 'Germany (GER)'), H('A', 'B', 'India (IND)', 'Chile (CHI)'), H('K', 'P', 'Germany (GER)', 'Argentina (ARG)') ];
+  chk(orden(juntas, 99) === juntas, 'sin formación de esa ronda no se toca nada');
+  chk(/_juntas = false/.test(extraerFuncion('_tdTeamOrden')), 'si todas traen país pero el mismo match viene separado, se ordena igual');
+  const salto = extraerFuncion('_tdRunPendingMatchJump');
+  chk(salto.indexOf('games=_tdTeamOrden(games, j.round)') > 0 && salto.indexOf('games=_tdTeamOrden(games, j.round)') < salto.indexOf('_tdTeamMatches(games)'),
+      'el salto del ojito arma la lista IGUAL que al dibujar (antes caía una página corrida)');
+}
+
+// ── Chennai 2022: cruces con DOS columnas "Equipo" por lado, "(IND2)" y el rival "Hamza" a secas (24/09) ─
+{
+  console.log('\n=== 59. Chennai 2022: cruces sigla+nombre, equipos "(IND2)" y rival de una palabra (24/09) ===');
+  const cruces = new Function(extraerFuncion('_teamParseCrosses') + '; return _teamParseCrosses;')();
+  const tit = [['Emparejamientos de los equipos - Open'], ['11. Ronda el 2022/08/09 a las 1000']];
+  const ch = cruces(tit.concat([
+    ['No.', 'No.Ini.', '', 'FED', 'Equipo', 'Equipo', 'Pts.', 'PM', 'Res.', ':', 'Res.', 'PM', 'Pts.', 'Equipo', 'FED', 'Equipo', '', 'No.Ini.'],
+    ['1', '9', '', 'GER', 'GER', 'Germany', '25½', '15', '1', ':', '3', '16', '29½', 'India 2 *)', 'IND', 'IND2', '', '11'],
+    ['4', '2', '', 'IND', 'IND', 'India', '27', '16', '2', ':', '2', '16', '24½', 'United States of America', 'USA', 'USA', '', '1'] ]));
+  const x = (ch[11] || [])[0] || {};
+  chk(x.aName === 'Germany' && x.bName === 'India 2', 'Chennai: se toma el NOMBRE y no la sigla (antes "GER" contra "Germany")', x.aName + ' / ' + x.bName);
+  chk(x.aFed === 'GER' && x.bFed === 'IND' && x.aRes === '1' && x.bRes === '3' && x.aPts === '25½' && x.bPts === '29½',
+      'y cada lado se queda con su FED, su resultado y sus puntos', JSON.stringify(x));
+  chk((ch[11] || [])[1] && ch[11][1].bName === 'United States of America', 'el nombre largo gana aunque la sigla sea "USA"');
+  const vieja = cruces(tit.concat([
+    ['No.', 'No.Ini.', 'FED', 'Equipo', 'Pts.', 'PM', 'Res.', ':', 'Res.', 'PM', 'Pts.', 'Equipo', 'FED', 'No.Ini.'],
+    ['1', '3', 'ARG', 'Argentina', '10', '5', '2½', ':', '1½', '4', '9', 'Chile', 'CHI', '7'] ]));
+  const v = (vieja[11] || [])[0] || {};
+  chk(v.aName === 'Argentina' && v.bName === 'Chile' && v.aFed === 'ARG' && v.bFed === 'CHI', 'la Olimpiada de siempre (un "Equipo" por lado) sigue igual', JSON.stringify(v));
+  const clubes = cruces(tit.concat([
+    ['No.', 'Equipo', 'Equipo', 'Res.', ':', 'Res.'],
+    ['1', 'Club Argentino', 'USA', '3', ':', '1'] ]));
+  const c = (clubes[11] || [])[0] || {};
+  chk(c.aName === 'Club Argentino' && c.bName === 'USA', 'y los clubes (los dos "Equipo" antes del ":") también, aunque uno se llame "USA"', JSON.stringify(c));
+
+  const partes = new Function('crFlagEmoji', '_teamFlag', extraerFuncion('_teamCountryParts') + '; return _teamCountryParts;')((f) => f, () => '');
+  const p2 = partes('India 2 (IND2)');
+  chk(p2.clean === 'India 2' && p2.fed === 'IND', '"India 2 (IND2)" → "India 2", de India (antes quedaba con la sigla pegada y sin bandera)', JSON.stringify(p2));
+  chk(partes('Argentina (ARG)').fed === 'ARG', 'y "(ARG)" sigue igual');
+  const pk = new Function(extraerFuncion('_teamNorm') + extraerFuncion('_teamPairKey') + '; return _teamPairKey;')();
+  chk(pk('Wales (WLS)', 'India 2 (IND2)') === pk('Wales', 'India 2'), 'el cruce "Wales - India 2" encuentra su formación "Wales (WLS) - India 2 (IND2)"');
+  // Mallorca 2004: la formación escribe "Spain A (ESP A)" y quedaba en inglés, con la sigla pegada.
+  const pA = partes('Spain A (ESP A)');
+  chk(pA.clean === 'Spain A' && pA.fed === 'ESP', '"Spain A (ESP A)" → "Spain A", de España (se muestra "España A")', JSON.stringify(pA));
+  chk(pk('Spain A (ESP A)', 'IPCA (IPCA)') === pk('Spain A', 'IPCA'), 'y su cruce encuentra la formación (también "IPCA (IPCA)")');
+  const pI = partes('IPCA (IPCA)');
+  chk(pI.clean === 'IPCA' && pI.fed === '', '"IPCA (IPCA)" → "IPCA" una sola vez y sin bandera', JSON.stringify(pI));
+  chk(partes('Yang, Jingyun (Ryan)').clean === 'Yang, Jingyun (Ryan)', 'y un "(Ryan)" que es parte del nombre no se toca');
+
+  const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+  const mk = (games) => new Function('normStr',
+    'var PGN_DB = { k: { games: ' + JSON.stringify(games) + ' } };\n var _crGameIdxCache = {};\n var _tdCtx = { pgnKey: "k" };\n'
+    + extraerFuncion('crNormTokens') + '\n' + extraerFuncion('parsePgnHeaders') + '\n' + extraerFuncion('_capCache') + '\n'
+    + extraerFuncion('_crNombreContenido') + '\n' + extraerFuncion('_crGameIndex') + '\n' + extraerFuncion('crFindGameIdx') + '\n return crFindGameIdx;')(norm);
+  const P = (w, b) => '[Event "x"]\n[Round "8"]\n[White "' + w + '"]\n[Black "' + b + '"]\n[Result "1-0"]\n\n1. e4 e5 1-0';
+  const B1 = mk([P('Otra, Persona', 'Alguien, Mas'), P('Sarquis, Maria Belen', 'Hamza')]);
+  chk(B1(8, 'Hamza Amira', 'Sarquis Maria Belen') === 1, '🔒 el ojito de Hamza, Amira - Sarquis encuentra la partida aunque el PGN diga "Hamza" a secas', B1(8, 'Hamza Amira', 'Sarquis Maria Belen'));
+  const B2 = mk([P('Sarquis, Maria Belen', 'Hamza'), P('Sarquis, Maria', 'Hamza')]);
+  chk(B2(8, 'Hamza Amira', 'Sarquis Maria Belen') === -1, 'si hay dos que podrían ser, no se adivina');
+  const B4 = mk([P('Diaz Hollemaert, Nahuel', 'Sanal V A'), P('Diaz Hollemaert, Nahuel', 'Isaly, Sultan').replace('"8"', '"11"')]);
+  chk(B4(8, 'Sanal Vahap', 'Diaz Hollemaert Nahuel') === 0, '"Sanal V A" del PGN es el "Sanal Vahap" de Chess-Results (colores al revés, también)');
+  chk(B4(11, 'Diaz Hollemaert Nahuel', 'Sultan Ibrahim') === 1, 'e "Isaly, Sultan" es "Sultan Ibrahim" (y de la otra ronda no se toma)');
+  const B3 = mk([P('Perez', 'Hamza')]);
+  chk(B3(8, 'Hamza Amira', 'Perez Juan') === -1, 'con los DOS de una sola palabra tampoco (un apellido suelto no alcanza)');
+}
+
+// ── Argentina-Filipinas (Budapest 2024 fem. R7): equipos dados vuelta y mesas desordenadas (24/09) ─────
+{
+  console.log('\n=== 60. Partidas por equipos: el lado y el orden de mesas de Chess-Results (24/09) ===');
+  const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+  const tokens = (n) => norm(n).split(' ').filter(Boolean).sort().join(' ');
+  const formacion = { 7: [ { aName: 'Argentina (ARG)', bName: 'Philippines (PHI)', boards: [
+      { nW: 'Francisco Guecamburu, Candela Be', nB: 'Mendoza, Shania Mae' }, { nW: 'Campos, Maria Jose', nB: 'Frayna, Janelle Mae' },
+      { nW: 'Borda Rodas, Anapaola S.', nB: 'Fronda, Jan Jodilyn' }, { nW: 'Amura, Claudia', nB: 'Canino, Ruelle' } ] } ] };
+  const hacer = (vivo) => new Function('_tdCtx', 'crDataLoad', 'crNormTokens', '_crNombreContenido', 'normStr', '_tdLiveCtx', '_tdGameRes',
+    extraerFuncion('_tdTeamOrden') + extraerFuncion('_tdTeamMatches') + '; return { orden: _tdTeamOrden, matches: _tdTeamMatches };')(
+    { crKey: 'x' }, () => ({ teamRounds: formacion }), tokens, () => false, norm, vivo ? {} : null, (g) => g.h.Result);
+  const G = (w, b, wt, bt, res) => ({ h: { White: w, Black: b, WhiteTeam: wt, BlackTeam: bt, Result: res } });
+  // Como vino del archivo: todas con país, juntas, pero la mesa 2 primero (Filipinas de blancas).
+  const partidas = () => [ G('Frayna, Janelle Mae', 'Campos, Maria Jose', 'Philippines (PHI)', 'Argentina (ARG)', '1-0'),
+    G('Francisco Guecamburu, Candela Be', 'Mendoza, Shania Mae', 'Argentina (ARG)', 'Philippines (PHI)', '1-0'),
+    G('Borda Rodas, Anapaola S.', 'Fronda, Jan Jodilyn', 'Argentina (ARG)', 'Philippines (PHI)', '1/2-1/2'),
+    G('Canino, Ruelle', 'Amura, Claudia', 'Philippines (PHI)', 'Argentina (ARG)', '1-0') ];
+  const T = hacer(false);
+  const lista = T.orden(partidas(), 7);
+  chk(lista[0].h.White === 'Francisco Guecamburu, Candela Be' && lista[1].h.Black === 'Campos, Maria Jose' && lista[3].h.Black === 'Amura, Claudia',
+      '🔒 torneo ya jugado: las mesas van en el orden de la formación aunque todas traigan país', lista.map((g) => g.h.White).join(' / '));
+  const m = T.matches(lista)[0];
+  chk(m.teamA === 'Argentina (ARG)' && m.a === 1.5 && m.b === 2.5, '🔒 y sale "Argentina 1½ : 2½ Filipinas", como en Chess-Results (antes "Filipinas 2½ : 1½ Argentina")', m.teamA + ' ' + m.a + ':' + m.b);
+  chk(T.orden(lista, 7) === lista || T.orden(lista, 7)[0] === lista[0], 'pedirlo otra vez da lo mismo');
+  const V = hacer(true), crudas = partidas();
+  chk(V.orden(crudas, 7) === crudas, 'EN VIVO no se toca (Lichess ya manda mesa por mesa y esto corre en cada refresco)');
+  const sinForm = partidas();
+  chk(T.orden(sinForm, 99) === sinForm && !T.matches(sinForm)._eqA && T.matches(sinForm)[0].teamA === 'Philippines (PHI)',
+      'sin formación de esa ronda queda como venía');
+}
+// ── Batumi 2018: cruces SIN sigla y nombres viejos de Chess-Results (24/09) ─────────────────────
+{
+  console.log('\n=== 61. Batumi 2018: "Turkey", "Swaziland", "Ivory Coast"… sin sigla, con bandera (24/09) ===');
+  const J = (re) => JSON.parse(SRC.match(re)[1]);
+  const ISO = J(/var _FED_ISO = (\{.*?\});/), ES = J(/var _FED_ES = (\{.*?\});/), EN = J(/var _FED_EN = (\{.*?\});/);
+  const DE = J(/var _FED_DE = (\{.*?\});/), HIST = J(/var _FED_HIST = (\{.*?\});/), HISTN = J(/var _FED_HIST_NOMBRES = (\{.*?\});/);
+  const busca = new Function('_FED_ISO', '_FED_ES', '_FED_EN', '_FED_DE', '_FED_HIST', '_FED_HIST_NOMBRES', 'normStr',
+    'var _NAME_FED = {}; var _NOMBRE_FED = null;' + extraerFuncion('_nombreFedIx') + extraerFuncion('_nameFedLookup') + '; return _nameFedLookup;')(
+    ISO, ES, EN, DE, HIST, HISTN, new Function('return (' + extraerFuncion('normStr') + ')')());
+  const casos = { 'Turkey': 'TUR', 'Czech Republic': 'CZE', 'United States of America': 'USA', 'Chinese Taipei': 'TPE', 'FYR Macedonia': 'MKD',
+    'Swaziland': 'SWZ', 'Ivory Coast': 'CIV', 'Timor Leste': 'TLS', 'Sao Tome & Principe': 'STP', 'Antigua and Barbuda': 'ANT', 'US Virgin Islands': 'ISV', 'Nauru': 'NRU' };
+  const mal = Object.keys(casos).filter((n) => busca(n) !== casos[n]);
+  chk(mal.length === 0, '🔒 los 12 países de Batumi que quedaban sin bandera se reconocen por el nombre', mal.map((n) => n + '→' + busca(n)).join(', '));
+  chk(busca('Turkey 2') === 'TUR', 'también con el número del equipo ("Turkey 2")');
+  chk(busca('IBCA') === '' && busca('Racing Club') === '', 'y una asociación o un club no se convierten en país');
+  chk(ISO.NRU === 'nr' && ES.NRU === 'Nauru', 'Nauru tiene bandera y nombre');
+  // Batumi fem. R2: "Zarubynska, Iryna" en el PGN, "Zarubinskaya, Irina" en Chess-Results (rival de Zuriel).
+  const norm = (x) => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+  const tokens = (n) => norm(n).split(' ').filter(Boolean).sort().join(' ');
+  const form = { 2: [ { aName: 'IBCA', bName: 'Argentina', boards: [ { nW: 'Zarubinskaya Irina', nB: 'Zuriel Marisa' } ] } ] };
+  const orden = new Function('_tdCtx', 'crDataLoad', 'crNormTokens', '_crNombreContenido', 'normStr', '_tdLiveCtx',
+    extraerFuncion('_tdTeamOrden') + '; return _tdTeamOrden;')({ crKey: 'z' }, () => ({ teamRounds: form }), tokens, () => false, norm, null);
+  const oz = orden([ { h: { White: 'Zuriel, Marisa', Black: 'Zarubynska, Iryna' } } ], 2);
+  chk(oz[0].h.WhiteTeam === 'Argentina' && oz[0].h.BlackTeam === 'IBCA', '🔒 "Zarubynska, Iryna" es la "Zarubinskaya Irina" de la formación: la partida de Zuriel entra a su match', oz[0].h.WhiteTeam + '/' + oz[0].h.BlackTeam);
+  const oy = orden([ { h: { White: 'Zuriel, Marisa', Black: 'Zapata, Irma' } } ], 2);
+  chk(!oy[0].h.WhiteTeam, 'pero una rival con otro apellido no');
+}
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
 console.log('   Corrieron ' + corridas + ' de ' + ESPERADAS + ' comprobaciones.'
           + (corridas < ESPERADAS ? '   ⚠️  FALTAN ' + (ESPERADAS - corridas) + ': algo se está salteando.' : '') + '\n');
