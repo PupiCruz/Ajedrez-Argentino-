@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1750;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1809;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -963,6 +963,25 @@ console.log('\n=== 25. El arranque en frío de una ronda con varias transmisione
 
   chk(/if\(!r\.ok\) throw new Error\('HTTP ' \+ r\.status\);/.test(fuente),
       'se mira el estado de la respuesta antes de leerla');
+
+  // Caso 5 (26/09/2026): una parte colgada en el Worker (la R10 de Samarcanda, Open V). Tres intentos por el
+  // mismo camino = ~50 s y la ronda sin esa parte. El primer reintento va directo a Lichess.
+  {
+    const pedidos = [];
+    const _fetchTO = (url) => {
+      pedidos.push(url);
+      if (url.startsWith('https://w/') && url.includes('/e.pgn')) return Promise.reject(new Error('AbortError'));
+      const id = url.split('round/')[1].split('.pgn')[0];
+      return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(ronda(id === 'a' ? 1 : 5)) });
+    };
+    const fn = new Function('_fetchTO', '_liApi', '_bcIsPlaceholderGame', 'setTimeout',
+      fuente + '; return _bcFetchRoundPgns;')(_fetchTO, (p) => 'https://w/' + p, () => false, (cb) => cb());
+    const { g, i } = await correr(fn, ['a', 'e']);
+    chk(g.length === 4 && i.faltan === 0, '🔒 la parte colgada en el Worker entra al primer reintento', g.length + ' partidas');
+    chk(pedidos[2] === 'https://lichess.org/api/broadcast/round/e.pgn',
+        'y ese reintento fue directo a Lichess, sin el Worker', pedidos[2]);
+    chk(pedidos.length === 3, 'con un solo pedido de más', pedidos.length);
+  }
 }
 
 
@@ -5566,7 +5585,7 @@ console.log('\n=== 53f. Visor en el teléfono: tocar piezas y gráfico al cambia
   const dp = extraerFuncion('sfDeepen');
   chk(/mevAbort\(\)[\s\S]*sfRestart\(sf\.curFen, sf\.curSide\)[\s\S]*pending\.deep = true/.test(dp) && /_p\.deep/.test(extraerFuncion('_sfStartPending')),
       '🔒 "Seguir analizando" después de las miniaturas pasa por la barrera: darle la posición con una búsqueda en curso tumbaba al motor');
-  chk(/_mevResumeViewer\(\)/.test(extraerFuncion('mevNext')) && /_SF_LIVE_MAXMS - \(Date\.now\(\) - /.test(extraerFuncion('_mevResumeViewer')),
+  chk(/_mevResumeViewer\(\)/.test(extraerFuncion('mevNext')) && /_sfReanudarVisor\(r\)/.test(extraerFuncion('_mevResumeViewer')) && /_SF_LIVE_MAXMS - \(Date\.now\(\) - /.test(extraerFuncion('_sfReanudarVisor')),
       'al terminar la pausa el visor retoma su posición, y su tope de tiempo sigue contando desde el arranque');
 }
 
@@ -5820,7 +5839,7 @@ console.log('\n=== 53g. Aviso de colgadas graves (19/09) ===');
 console.log('\n=== 53g-rep. Motor repartido: cada posición se calcula una vez y le llega a todos (25/09) ===');
 {
   const decl = SRC.slice(SRC.indexOf('var _REP_ESPERA_MS'), SRC.indexOf('// ?rep=0 lo apaga'));
-  const N = ['_repLlave', '_repK', '_repHash', '_repCanal', '_repHay', '_repYoAyudo', '_repSoloRecibo', '_repQuieroAyudar',
+  const N = ['_repLlave', '_repK', '_repHash', '_repMezcla', '_repCanal', '_repHay', '_repYoAyudo', '_repSoloRecibo', '_repQuieroAyudar',
     '_repSync', '_repConectado', '_repDesconectado', '_repDueno', '_repContar', '_repProfMia', '_repTomar', '_repJob',
     '_repEncolar', '_repEnviar', '_repDeRed', '_repRecibir', '_repVeto', '_repControlar', '_repNoCierra', '_colCp'];
   const mk = () => new Function('var AHORA = 1e9, Date = { now: function(){ return AHORA; } }, timers = [], enviados = [], holas = [], quejas = [];'
@@ -5844,7 +5863,7 @@ console.log('\n=== 53g-rep. Motor repartido: cada posición se calcula una vez y
   const F = (k) => 'pos-' + k + ' w KQkq - 0 20';                       // FEN de la partida k
   const K = (k) => 'pos-' + k + ' w KQkq';                              // la misma posición, sin al-paso ni contadores
   const armar = (W, n) => { for (let i = 0; i < n; i++) { const k = 'g' + i; W.ronda.push({ h: { k } }); W.ficha[k] = { fen: F(k), res: '*' }; } };
-  const lista = (W, ids, yo) => { W.red({ type: 'rep', c: W.rep.c, ids, yo }); W.contar(); };
+  const lista = (W, ids, yo, inv) => { W.red({ type: 'rep', c: W.rep.c, ids, yo, inv: inv || [] }); W.contar(); };
 
   // Sin lista de ayudantes (servidor viejo, sin conexión, ?rep=0): todo como antes.
   let W = mk();
@@ -5861,13 +5880,13 @@ console.log('\n=== 53g-rep. Motor repartido: cada posición se calcula una vez y
   W.oculta = true; W.sync();
   chk(W.holas[1] === W.rep.c + '|false', '🔒 con la pestaña de fondo deja de ayudar (no le llegan jugadas: sus tableros los toma otro)');
   W.oculta = false; W.sync(); W.log = false; W.sync();
-  chk(W.holas[2] === W.rep.c + '|true' && W.holas[3] === W.rep.c + '|false', '🔒 al volver a la pestaña vuelve a ayudar; sin cuenta mira y recibe, pero no ayuda');
+  chk(W.holas[2] === W.rep.c + '|true' && W.holas.length === 3, '🔒 al volver a la pestaña vuelve a ayudar; sin cuenta también se ofrece (26/09: el arbitrito decide si le toca)');
   W.log = true; W.viva = false; W.sync();
-  chk(W.holas[4] === '|false', 'mirando una ronda vieja (no la que se juega) sale del canal: no recibe nada');
+  chk(W.holas[3] === '|false', 'mirando una ronda vieja (no la que se juega) sale del canal: no recibe nada');
   W.viva = true; W.conectado_ = false; W.desconectado(); W.sync();
-  chk(W.holas.length === 5, 'sin conexión no se manda nada…');
+  chk(W.holas.length === 4, 'sin conexión no se manda nada…');
   W.conectado_ = true; W.conectado();
-  chk(W.holas.length === 6 && /\|true$/.test(W.holas[5]), '…y al reconectar se repite (el arbitrito pudo olvidarlo)');
+  chk(W.holas.length === 5 && /\|true$/.test(W.holas[4]), '…y al reconectar se repite (el arbitrito pudo olvidarlo)');
   const c1 = W.canal(); W.ctx = { key: 't1,t2', currentNum: 6 };
   chk(W.canal() !== c1, 'cada ronda (y cada categoría, que es otra transmisión) tiene su canal');
 
@@ -5987,10 +6006,43 @@ console.log('\n=== 53g-rep. Motor repartido: cada posición se calcula una vez y
       '🔒 cuando el arbitrito veta a alguien, se borra lo suyo (esos tableros se vuelven a calcular) y lo de los demás queda');
   chk(!W.tomar(F('g1')), '…y no vuelve por la ventana');
 
+  // 26/09: invitados que ayudan, con menos tableros y más controlados.
+  {
+    const idsI = ['ha', 'hb', 'hc'];
+    const mundosI = idsI.map((yo) => { const X = mk(); armar(X, 300); X.sync(); lista(X, idsI, yo, ['hc']); return X; });
+    const dI = Array.from({ length: 300 }, (_, i) => mundosI.map((X) => X.dueno('g' + i)));
+    chk(dI.every((d) => d.filter((x) => x === 'p').length === 1), '🔒 con un invitado en la lista, cada tablero sigue teniendo UN dueño (todos sacan la misma cuenta)');
+    const nI = mundosI.map((X, j) => dI.filter((d) => d[j] === 'p').length);
+    chk(nI[2] > 0 && nI[2] < 0.6 * Math.min(nI[0], nI[1]), '🔒 al invitado le tocan bastantes menos tableros que a un logueado (~40%)', nI.join('/'));
+    // Sin invitados, parejo: antes (sin mezclar el hash) con nombres parecidos daba 151/74/75.
+    const mundosP = idsI.map((yo) => { const X = mk(); armar(X, 300); X.sync(); lista(X, idsI, yo); return X; });
+    const nP = mundosP.map((X) => Array.from({ length: 300 }, (_, i) => X.dueno('g' + i)).filter((d) => d === 'p').length);
+    chk(nP.every((n) => n >= 80 && n <= 120), '🔒 entre logueados el reparto sale parejo (el hash va mezclado: con nombres parecidos salía 151/74/75)', nP.join('/'));
+    const X0 = mk(); armar(X0, 30); X0.sync(); lista(X0, idsI, 'ha');
+    lista(X0, idsI, 'ha', ['hc']);
+    chk(X0.rep.inv.hc === 1 && !X0.rep.inv.ha, 'la lista del arbitrito dice quién es invitado');
+    X0.desconectado();
+    chk(Object.keys(X0.rep.inv).length === 0, '…y se olvida al desconectarse');
+    // El control: lo de los invitados primero y cada 20 s.
+    const Wc = mk(); armar(Wc, 4); Wc.sync(); lista(Wc, ['ha', 'hl', 'hi'], 'ha', ['hi']);
+    Wc.red({ type: 'ev', c: Wc.rep.c, e: [[K('l1'), 10, null, 12, 'hl'], [K('l2'), 10, null, 12, 'hl'], [K('i1'), 10, null, 14, 'hi']] });
+    Wc.controlar();
+    chk(Wc.extra.length === 1 && Wc.extra[0].fen.indexOf(K('i1')) === 0 && Wc.extra[0].depth === 14, '🔒 si hay evaluaciones de un invitado, se controla primero una de ésas');
+    Wc.red({ type: 'ev', c: Wc.rep.c, e: [[K('i2'), 10, null, 12, 'hi']] });
+    Wc.ahora = Wc.ahora + 21000; Wc.controlar();
+    chk(Wc.extra.length === 2, '🔒 …y cada 20 s (no cada minuto) mientras haya de invitados para controlar');
+    Wc.ahora = Wc.ahora + 21000; Wc.controlar();
+    chk(Wc.extra.length === 2, 'sin nada de invitados, vuelve a un control por minuto');
+  }
+
   // Enganches con lo que ya existía.
   const col = extraerFuncion('_colScan');
-  chk(/_repDe\[p\.fen\] && _repDueno\(gk\) !== 'p'\) return;/.test(col) && col.indexOf('_repDueno(gk)') < col.indexOf('_colClasifica('),
-      '🔒 las colgadas de una mesa ajena las vigila su dueño: con la eval de otro no se clasifica acá (llega por el aviso repartido)');
+  chk(/_repDe\[p\.fen\] && _repDueno\(gk\) !== 'p' && !_rep\.inv\[_repDe\[p\.fen\]\]\) return;/.test(col) && col.indexOf('_repDueno(gk)') < col.indexOf('_colClasifica('),
+      '🔒 las colgadas de una mesa ajena las vigila su dueño (llega por el aviso repartido), salvo que la eval sea de un INVITADO: él no puede repartir avisos, así que se busca acá (26/09)');
+  const tcApi = SRC.slice(SRC.indexOf('window.aaTourChat={'), SRC.indexOf('window.aaTourChat={') + 6000);
+  chk(/repEv:function\(c, e\)\{ if\(!tcRoom \|\| !tcWs \|\| tcWs\.readyState!==1\) return false;/.test(tcApi)
+      && /avisarColgada:function\(cs\)\{ if\(!tcRoom \|\| !lvAuthUser\(\)/.test(tcApi),
+      '🔒 el invitado puede mandar sus evaluaciones, pero los avisos de colgadas siguen siendo sólo de cuentas');
   chk(/_repSoloRecibo\(\)\) return false;/.test(extraerFuncion('_colFichaHace')), 'el que sólo recibe no pide la ficha de toda la ronda');
   chk(/_repJob\(fen, el\.getAttribute\('data-gk'\)\)/.test(extraerFuncion('mevCollect')) && /_repJob\(o\.fen, _tdEvKey\(g\.h\)\)/.test(extraerFuncion('_colMasTrabajos')),
       'los dos lugares que arman la tanda del motor (la página en pantalla y el resto de la ronda) preguntan de quién es cada tablero');
@@ -6289,7 +6341,7 @@ console.log('\n=== 53g-quater. Al entrar desde un aviso: parar en la colgada y g
   FI.foco = { gk: 'mesa7', ply: 1 };   chk(FI.i() === 0, 'una colgada en la jugada 1 no se va de rango');
   FI.foco = { gk: 'mesa7', ply: 61 };
   chk(FI.i() === 0, '🔒 si la partida TODAVÍA no llegó a la colgada (PGN atrasado), el gráfico va como siempre: quedarse en el final y volver al principio hacía que el "?? " saliera último', FI.i());
-  chk(/if \(_fa\.running && !_faSaltoPendiente\(\)\) return;/.test(extraerFuncion('faMaybeAutoLive'))
+  chk(/if \(_faOcupado\(\) && !_faSaltoPendiente\(\)\) return;/.test(extraerFuncion('faMaybeAutoLive'))
       && /faGetNodes\(\)\.length >= _colFoco\.ply && _fa\.ply < _colFoco\.ply - 2/.test(extraerFuncion('_faSaltoPendiente')),
       '🔒 y el "ya está calculando" deja pasar ESE caso: si no, el pase seguía dibujando el principio y el arreglo no corría nunca');
   const fh = extraerFuncion('faHandleMsg');
@@ -6297,7 +6349,7 @@ console.log('\n=== 53g-quater. Al entrar desde un aviso: parar en la colgada y g
       && /if \(sig === _faNagSig\) return;/.test(extraerFuncion('_faReclassifyIfChanged')),
       '🔒 el "??" sale apenas el motor evalúa esa jugada, sin esperar a que el gráfico termine (y la notación se repinta sólo si algún símbolo cambió)');
   const lb = extraerFuncion('faLiveBuild');
-  chk(/_fa\.running && _ini > 0 && _fa\.ply < _ini && !_colFoco\.saltado && _faNeedsPassEval\(_ini\)/.test(lb)
+  chk(/_fa\.running && !_fa\.relleno && _ini > 0 && _fa\.ply < _ini && !_colFoco\.saltado && _faNeedsPassEval\(_ini\)/.test(lb)
       && /_colFoco\.saltado = true;/.test(lb) && /_fa\.running = false; _fa\.armed = false;/.test(lb),
       '🔒 …y cuando las jugadas llegan, se corta el pase en curso y se arranca POR la colgada (una sola vez por aviso)');
 
@@ -6311,6 +6363,7 @@ console.log('\n=== 53g-quater. Al entrar desde un aviso: parar en la colgada y g
     + 'function sfAnalyze(){} function setTimeout(){} function clearTimeout(){} var _faNagSig = "";'
     + 'var document = { getElementById: function(){ return { style: {}, textContent: "", classList: { add: function(){}, remove: function(){} } }; } };'
     + 'Object.defineProperty(_fa.nodes, "fen", { value: "" });'
+    + 'function _faInicio(){ return 0; }' + extraerFuncion('_faSaltea')
     + extraerFuncion('faNext')
     + '; return { next: faNext, fa: _fa, get fin(){ return terminado; } };')();
   // Falta evaluar la 46 (índice 45, la colgada) y la 3 (índice 2, del principio).
@@ -6325,6 +6378,155 @@ console.log('\n=== 53g-quater. Al entrar desde un aviso: parar en la colgada y g
   NX.fa.results[2] = 1; NX.fa.ply = 3;
   NX.next();
   chk(NX.fin === 1, 'recién ahí termina el pase', NX.fin);
+}
+
+// ── 53g-quinquies. Gráfico en vivo SALTEADO: grueso + afinar + relleno (26/09, idea del autor) ──
+console.log('\n=== 53g-quinquies. Gráfico en vivo: una sí y una no, afinar la colgada y rellenar después (26/09) ===');
+{
+  // Simulador del pase: faNext elige la posición; el "motor" le pone la eval del guion y sigue como
+  // faHandleMsg (_faSiguiente + faNext). Devuelve el orden en que se evaluaron.
+  const armar = (n, guion, opc) => {
+    opc = opc || {};
+    const S = new Function('guion', 'opc', 'var terminado = 0, orden = [];'
+      + 'var _faBase = { n: opc.base || Infinity };'
+      + 'var _fa = { running: true, nodes: [], results: [], ply: 0, desde: 0, live: opc.live !== false, relleno: false, cola: null, volver: null, forzar: -1, _capTimer: null },'
+      + '    sf = { on: false, ready: false, engine: { postMessage: function(){} } }, _FA_LIVE_DEEP_N = 2, _FA_LIVE_DEPTH = 18, _FA_LIVE_DEEP_DEPTH = 22, _FA_MANUAL_DEPTH = 18, _FA_LIVE_CAP_MS = 450, _FA_LIVE_DEEP_CAP_MS = 3000, _FA_MANUAL_CAP_MS = 450, _FA_LIVE_MIN = 12, _FA_LIVE_DEEP_MIN = 13, _FA_AFINAR_WP = 8;'
+      + 'function _faNeedsPassEval(i){ return _fa.results[i] == null; }'
+      + 'function _faInicio(){ return opc.ini || 0; }'
+      + 'function faFinish(){ terminado++; _fa.running = false; } function faClassify(){} function faRender(){} function faRenderStats(){}'
+      + 'function faApplyNags(){} function cvUpdateNagBadge(){} function faUpdateBar(){} function faGetNodes(){ return _fa.nodes; }'
+      + 'function _faRellenarSiLibre(){} ' + 'function _faLiveEligible(){ return false; } var _faLiveHidden = false; function _faInterp(r){ return r; }'
+      + 'function sfAnalyze(){} function setTimeout(){} function clearTimeout(){} var _faNagSig = "";'
+      + 'var document = { getElementById: function(){ return { style: {}, textContent: "", classList: { add: function(){}, remove: function(){} } }; } };'
+      + ['_faWinP', '_faSaltea', '_faAfinar', '_faSiguiente', 'faNext'].map(extraerFuncion).join('\n')
+      + '; for (var i = 0; i < ' + n + '; i++) { _fa.nodes.push({ fen: "f" + i }); _fa.results.push(null); }'
+      + '  _fa.ply = _fa.desde = _faInicio();'
+      + '  function correr(){ var vueltas = 0; faNext(); while (_fa.running && vueltas++ < 1000) {'
+      + '    orden.push(_fa.ply); _fa.results[_fa.ply] = { cp: guion(_fa.ply) }; _faSiguiente(); faNext(); } }'
+      + '  return { correr: correr, fa: _fa, orden: orden, get fin(){ return terminado; } };')(guion, opc);
+    return S;
+  };
+  // 1) Partida quieta de 60 medias jugadas: se evalúa una sí y una no (+ la cola).
+  const A = armar(60, () => 20); A.correr();
+  const pares = A.orden.filter(i => i % 2 === 0);
+  chk(A.fin === 1 && A.orden.length === 31 && pares.length === 1 && pares[0] === 58,
+      '🔒 en vivo, 60 medias jugadas sin sobresaltos: el motor mira 31 (la mitad + la cola), no 60', A.orden.length);
+  chk(A.fa.results.filter(r => r == null).length === 29 && A.fa.results[58] && A.fa.results[59],
+      'lo salteado queda como hueco (la curva lo interpola y el relleno lo completa después); las 2 últimas, siempre');
+  // 2) Colgada de las blancas en la media jugada 21 (índice 20): el salto 19→21 obliga a mirar la 20 EN EL ACTO.
+  const B = armar(60, i => i >= 20 ? -500 : 20); B.correr();
+  const i19 = B.orden.indexOf(19), i20 = B.orden.indexOf(20), i21 = B.orden.indexOf(21), i23 = B.orden.indexOf(23);
+  chk(i20 > i21 && i21 > i19 && i23 === i20 + 1,
+      '🔒 salto grande entre dos puntos → se evalúa la del medio ahí mismo (el "retroceder una" del autor) y se sigue donde iba', B.orden.slice(8, 14).join(','));
+  chk(B.fa.results[20] && B.fa.results[20].cp === -500 && B.fa.results[18] == null,
+      '…así el ?? de la colgada sale con la pasada rápida, sin esperar al relleno');
+  // 3) Colgada MUTUA (una la cuelga y el otro no la ve): 19 y 21 dan igual, el grueso no la ve.
+  const C = armar(60, i => i === 20 ? -500 : 20); C.correr();
+  chk(C.fa.results[20] == null && C.orden.indexOf(20) < 0,
+      'la colgada MUTUA se tapa en el grueso (por eso existe el relleno: la encuentra después)');
+  // 4) Aviso de colgada: la jugada de antes, la colgada y la respuesta NUNCA se saltean.
+  const D = armar(60, () => 20, { ini: 30 }); D.correr();
+  chk(D.orden[0] === 30 && D.orden[1] === 31 && D.orden[2] === 32,
+      '🔒 entrando desde un aviso, arranca por la colgada y mira las tres (antes, ella y la respuesta) aunque toque saltear', D.orden.slice(0, 3).join(','));
+  // 5) El análisis MANUAL (📊 del pool, partidas terminadas) sigue mirando TODAS, en orden.
+  const E = armar(30, () => 20, { live: false }); E.correr();
+  chk(E.orden.length === 30 && E.orden.every((v, k) => v === k),
+      '🔒 fuera del vivo (pool, rondas terminadas) no cambia nada: todas las jugadas, en orden', E.orden.length);
+
+  // 6) El RELLENO: sólo con el motor quieto, primero entre puntos dispares, de a tandas.
+  const REL = (o) => new Function('o', 'var posts = [];'
+    + 'var _fa = { live: true, running: false, _preluding: false, nodes: o.nodes, results: o.results, relleno: false },'
+    + '    sf = { engine: { postMessage: function(m){ posts.push(m); } }, ready: true, searching: !!o.searching, pending: null, rokWaiting: false, on: o.on, capped: o.capped, deepened: false, armed: o.armed !== false, depth: o.depth || 0, _searchT0: o.t0 || 0, curFen: "MOD", _capTimer: 7 },'
+    + '    _MEV_YIELD_DEPTH = 20, _FA_RELLENO_RESPIRO_MS = 3000, _FA_RELLENO_MADURO_MS = 10000,'
+    + '    _mev = { running: false, want: !!o.want, used: false }, _mevExtra = [], _thr = { running: false }, prac = { running: false }, puz = { anOn: false },'
+    + '    _cvMobileOn = false, _cvAnalysisStarted = false, _faLiveHidden = false, document = { hidden: false },'
+    + '    _FA_RELLENO_TANDA = 6, _FA_RELLENO_MAXMS = 20000, _FA_RELLENO_INTENTOS = 2, _faRellIntentos = {};'
+    + 'function _faLiveEligible(){ return true; } function faGetNodes(){ return o.ahora || _fa.nodes; }'
+    + 'function _faNeedsPassEval(i){ return _fa.results[i] == null; } function setTimeout(){ return 1; } function clearTimeout(){}'
+    + ['_faWinP', '_faCederRelleno', '_faRellenarSiLibre'].map(extraerFuncion).join('\n')
+    + '; _faRellenarSiLibre(); return { fa: _fa, mev: _mev, posts: posts, sf: sf };')(o);
+  const nodos = Array.from({ length: 40 }, (_, k) => ({ fen: 'g' + k }));
+  const huecos = () => Array.from({ length: 40 }, (_, k) => (k % 2 === 0 && k < 38) ? null : { cp: (k > 24 ? -600 : 20) });
+  const R1 = REL({ nodes: nodos, results: huecos(), on: true, capped: true });
+  chk(R1.fa.running && R1.fa.relleno && R1.fa.cola.length === 6 && R1.fa.cola[0] === 24 && R1.posts.indexOf('isready') >= 0,
+      '🔒 módulo en su tope y huecos → arranca una tanda de 6, primero el hueco entre los puntos más dispares', R1.fa.cola && R1.fa.cola.join(','));
+  chk(R1.mev.used === true, '…y deja avisado que el motor quedó en otra posición ("Seguir analizando" relanza por la barrera)');
+  chk(!REL({ nodes: nodos, results: huecos(), on: true, capped: false }).fa.running,
+      '🔒 con el módulo todavía pensando NO arranca: el visitante ve el análisis primero');
+  chk(!REL({ nodes: nodos, results: huecos(), on: false, capped: false, want: true }).fa.running,
+      '🔒 si las barritas o el detector de colgadas están esperando el motor, ellos van primero');
+  chk(REL({ nodes: nodos, results: huecos(), on: false, capped: false }).fa.running,
+      'con el módulo apagado, arranca apenas el motor queda libre');
+  chk(!REL({ nodes: nodos, results: huecos(), on: true, capped: true, ahora: nodos.concat([{ fen: 'nueva' }]) }).fa.running,
+      'si llegaron jugadas nuevas no rellena: primero el pase de las nuevas');
+
+  // 7) Ceder: cualquiera que pide el motor corta el relleno.
+  const sa = extraerFuncion('sfAnalyze'), mt = extraerFuncion('mevTick');
+  chk(/_faCederRelleno\(\);\s*\n\s*if \(_fa\.running\) return;/.test(sa) && /_faCederRelleno\(\);[^]*?if \(_fa\.running\) return;/.test(extraerFuncion('sfAnalyzeNow')),
+      '🔒 navegar / el módulo: el relleno se corta y el análisis de la posición arranca al instante');
+  chk(/if \(!jobs\.length\) \{ _colScan\(\); return; \}[^]*?if \(_rell\) \{ _fa\.resume = null; _faCederRelleno\(\); \}/.test(mt) && /var _idle = \(_rell && !_rellR\) \|\|/.test(mt),
+      '🔒 barritas y colgadas: cortan el relleno sólo si de verdad hay tableros para evaluar');
+  chk(extraerFuncion('sfDeepen').includes('_faCederRelleno();') && extraerFuncion('thrProbe').includes('_faCederRelleno();')
+      && extraerFuncion('pracEngineMove').includes('_faCederRelleno();'),
+      '"Seguir analizando", "¿Qué amenaza?" y Practicar también le sacan el motor al relleno');
+  // 8) Las jugadas que LLEGAN mientras se mira se evalúan enteras (aunque lleguen varias juntas).
+  const F = armar(60, () => 20, { base: 50 }); F.correr();
+  chk([50, 51, 52, 53, 54, 55, 56, 57, 58, 59].every(i => F.orden.indexOf(i) >= 0) && F.orden.indexOf(48) < 0,
+      '🔒 la transmisión se pone al día con 10 jugadas juntas: se evalúan TODAS (lo salteable es sólo lo que ya estaba al abrir)', F.orden.length);
+  const AB = new Function('var _faBase = { key: "", n: Infinity }, K = "A";'
+    + 'function _colMirandoGk(){ return K; } var cv = {}; function parsePgnHeaders(){ return {}; }'
+    + extraerFuncion('_faAnotarBase')
+    + '; return { anotar: function(n, nueva){ _faAnotarBase(new Array(n), nueva); return _faBase.n; }, set k(v){ K = v; } };')();
+  const b1 = AB.anotar(80, true), b2 = AB.anotar(84, false); AB.k = 'B'; const b3 = AB.anotar(30, false);
+  chk(b1 === 80 && b2 === 80 && b3 === 30,
+      'la "historia" se anota al abrir la partida, no se mueve con los refrescos, y otra partida anota la suya', [b1, b2, b3].join(','));
+  // 9) El relleno aprovecha al módulo MADURO: pausa, tanda, y lo reanuda en su posición.
+  const viejo = Date.now() - 10000, nuevo = Date.now() - 500;
+  const M1 = REL({ nodes: nodos, results: huecos(), on: true, capped: false, searching: true, depth: 22, t0: viejo });
+  chk(M1.fa.running && M1.fa.resume && M1.fa.resume.fen === 'MOD' && M1.sf._capTimer === null && !M1.mev.used,
+      '🔒 módulo pensando a prof. 22 hace rato → el relleno le pide una pausa, anota su posición y le frena el reloj del tope');
+  chk(!REL({ nodes: nodos, results: huecos(), on: true, capped: false, searching: true, depth: 22, t0: nuevo }).fa.running,
+      '🔒 …pero no antes de que el módulo piense sus primeros segundos (el módulo primero)');
+  const medio = Date.now() - 5000, largo = Date.now() - 12000;
+  chk(!REL({ nodes: nodos, results: huecos(), on: true, capped: false, searching: true, depth: 15, t0: medio }).fa.running,
+      '…ni antes de que llegue a una profundidad firme');
+  chk(REL({ nodes: nodos, results: huecos(), on: true, capped: false, searching: true, depth: 15, t0: largo }).fa.running,
+      '🔒 …salvo que ya lleve 10 s pensando (posición aguda o compu lenta: si no, esperaba el tope de 60 s)');
+  const fn = extraerFuncion('faNext'), ced = extraerFuncion('_faCederRelleno');
+  chk(/var _r = _fa\.resume; _fa\.resume = null;[^]*?if \(_r\) \{ _sfReanudarVisor\(_r\); return; \}/.test(fn),
+      '🔒 al terminar la tanda el módulo se reanuda en la MISMA posición (vuelve a su profundidad al instante)');
+  chk(/if \(_r\) \{[^]*?sf\.armed = false;[^]*?sfAnalyze\(\);/.test(ced) && /_fa\.resume = null; _faCederRelleno\(\);/.test(extraerFuncion('mevTick'))
+      && /_mev\.resume = _yield \? \(_rellR \|\|/.test(extraerFuncion('mevTick')),
+      '🔒 si algo corta la pausa, el módulo no queda colgado: se relanza, o las miniaturas se quedan con la pausa y lo reanudan ellas');
+  chk(/depth >= _MEV_YIELD_DEPTH \|\| Date\.now\(\) - \(sf\._searchT0 \|\| 0\) >= _FA_RELLENO_MADURO_MS\)\s*&& sf\.armed && !sf\.deepened && _fa\.live && !_fa\.running[^]*?setTimeout\(_faRellenarSiLibre, 0\)/.test(extraerFuncion('sfOnMsg')),
+      'el módulo, al llegar a prof. firme, avisa al relleno (una vez por segundo como mucho)');
+  // 10) Entrar por LINK a una partida en vivo: el gráfico arranca cuando arranca el seguimiento del torneo.
+  const VT = (o) => new Function('o', 'var llamado = 0, _fa = { live: !!o.live, running: !!o.running }, _tdLivePolling = !!o.polling;'
+    + 'var document = { getElementById: function(){ return { classList: { contains: function(){ return !!o.abierto; } } }; } };'
+    + 'function faMaybeAutoLive(){ llamado++; }'
+    + extraerFuncion('_faVivoTardio')
+    + '; _faVivoTardio(); return llamado;')(o);
+  chk(VT({ polling: true, abierto: true }) === 1,
+      '🔒 visor abierto por link y el seguimiento en vivo recién arrancó → el gráfico en vivo arranca ya (antes: "Tocá ▶ Analizar" hasta la próxima jugada)');
+  chk(VT({ polling: true, abierto: true, live: true }) === 0 && VT({ polling: true, abierto: true, running: true }) === 0
+      && VT({ polling: false, abierto: true }) === 0 && VT({ polling: true, abierto: false }) === 0,
+      '…y no hace nada si el gráfico ya está en vivo o calculando, si el torneo no sigue en vivo o si el visor está cerrado');
+  chk((SRC.match(/_tdLivePolling = !!\(keep && document\.getElementById\('td-games-section'\)\);[^\n]*\n\s*_faVivoTardio\(\);/g) || []).length === 2
+      && (SRC.match(/_tdLivePolling = _tdKeepPolling\(res\);[^\n]*\n\s*_faVivoTardio\(\);/g) || []).length === 2,
+      '🔒 lo llaman los DOS arranques del seguimiento (el de la entrada por link) y los dos refrescos del torneo');
+  chk(/else setTimeout\(_faRellenarSiLibre, 0\);/.test(extraerFuncion('sfOnMsg')) && /else setTimeout\(_faRellenarSiLibre, 0\);/.test(extraerFuncion('mevNext')),
+      'el relleno arranca solo cuando el módulo llega a su tope o terminan las barritas');
+  // 11) Motor todavía cargando cuando el gráfico en vivo quiere arrancar: arranca solo al quedar listo.
+  const ES = new Function('var ivs = [], llamado = 0, sf = { engine: null, ready: false }, _fa = { running: false, live: true };'
+    + 'function sfStart(){} function faMaybeAutoLive(){ llamado++; } function setInterval(fn){ ivs.push(fn); return ivs.length; } function clearInterval(){}'
+    + 'function mevAbort(){}'
+    + extraerFuncion('faLiveEngineStart')
+    + '; return { start: faLiveEngineStart, tick: function(){ ivs.forEach(function(f){ f(); }); }, sf: sf, get n(){ return llamado; }, get esperas(){ return ivs.length; } };')();
+  ES.start(); ES.start();   // dos intentos mientras carga: una sola espera
+  ES.tick(); const antes = ES.n;
+  ES.sf.engine = {}; ES.sf.ready = true; ES.tick();
+  chk(ES.esperas === 1 && antes === 0 && ES.n === 1,
+      '🔒 el motor se estaba cargando (entrada por link): el gráfico en vivo arranca apenas queda listo, sin esperar a que alguien mueva');
 }
 
 // ── 53h. Colgadas de la ronda (19/09, idea del autor) ──
@@ -7203,6 +7405,91 @@ console.log('\n=== Auditoría 23/09 — Fase 4: accesibilidad y prolijidad ===')
   chk(oz[0].h.WhiteTeam === 'Argentina' && oz[0].h.BlackTeam === 'IBCA', '🔒 "Zarubynska, Iryna" es la "Zarubinskaya Irina" de la formación: la partida de Zuriel entra a su match', oz[0].h.WhiteTeam + '/' + oz[0].h.BlackTeam);
   const oy = orden([ { h: { White: 'Zuriel, Marisa', Black: 'Zapata, Irma' } } ], 2);
   chk(!oy[0].h.WhiteTeam, 'pero una rival con otro apellido no');
+}
+// ── Barrita de valoración ACOSTADA en las tablas de cruces (26/09, pedido del autor) ─────────────────
+// Como en el listado en vivo de Lichess/Chess.com: la mesa EN JUEGO muestra una barrita horizontal en el
+// lugar del resultado (el ojito sigue al lado) y al terminar el resultado la pisa. Reusa lo de las
+// miniaturas: no calcula ni pide nada.
+{
+  console.log('\n=== 62. Barrita acostada en las tablas de cruces (26/09) ===');
+  const N = ['parsePgnHeaders', 'normStr', 'crNormTokens', '_crNombreContenido', '_a11yResInvertido', '_tdEvKey',
+    '_crEvhEstado', '_crEvhBarra', '_crEvhRes', '_crEvhCelda', '_crEvhSync'];
+  const F = new Function('var _tdCtx = { games: [] }, _tdJsonNew = {}, _tdEvMemo = {}, _crEvhH = {}, EVS = {}, IDX = {}, ELS = [];'
+    + 'function _capCache(){} function escHtml(s){ return String(s).replace(/"/g, "&quot;"); }'
+    + 'function sfBarPct(ev){ return ev.mate != null ? (ev.mate > 0 ? 100 : 0) : Math.max(0, Math.min(100, 50 + ev.cp / 10)); }'
+    + 'function _liveEvalFor(fen){ return EVS[fen] !== undefined ? EVS[fen] : null; }'
+    + 'function _bcGameIds(pgn){ var m = /\\[Site "([^"]*)"\\]/.exec(pgn); return m ? { game: m[1] } : null; }'
+    + 'function _tdGameRes(g){ var id = _bcGameIds(g.pgn), o = id && _tdJsonNew[id.game]; return (o && o.res && o.res !== "*") ? o.res : (g.h.Result || "*"); }'
+    + 'function crFindGameIdx(r, a, b){ var k = r + "|" + a + "|" + b; return IDX[k] !== undefined ? IDX[k] : -1; }'
+    + 'var document = { querySelectorAll: function(){ return ELS; } };'
+    + N.map(extraerFuncion).join('\n')
+    + '; return { E: _crEvhEstado, C: _crEvhCelda, S: _crEvhSync, ctx: _tdCtx, ficha: _tdJsonNew, memo: _tdEvMemo, EVS: EVS, IDX: IDX, ELS: ELS };')();
+  const pgn = (w, b, res, site) => '[Site "' + site + '"]\n[Round "10.1"]\n[White "' + w + '"]\n[Black "' + b + '"]\n[Result "' + res + '"]\n\n1. e4 *';
+  F.ctx.games = [
+    pgn('Kovalenko, Igor', 'Ding, Liren', '*', 'g1'),
+    pgn('Wei, Yi', 'Ivanchuk, Vasyl', '*', 'g2'),
+    pgn('Samunenkov, Ihor', 'Xu, Xiangyu', '1/2-1/2', 'g3'),
+    pgn('Kong, Xiangrui', 'Dehtiarov, Roman', '1-0', 'g4'),
+    pgn('Martirosyan, Haik M.', 'Abdusattorov, Nodirbek', '*', 'g5'),
+  ];
+  F.IDX['10|Kovalenko, Igor|Ding, Liren'] = 0;
+  F.IDX['10|Wei, Yi|Ivanchuk, Vasyl'] = 1;           // la tabla lo pone a la DERECHA: se busca dado vuelta
+  F.IDX['10|Samunenkov, Ihor|Xu, Xiangyu'] = 2;
+  F.IDX['10|Kong, Xiangrui|Dehtiarov, Roman'] = 3;
+  F.IDX['10|Martirosyan H|Abdusattorov N'] = 4;       // nombres que no se reconocen: manda la pista
+  F.ficha.g1 = { fen: 'F1', res: '*' }; F.EVS.F1 = { cp: 200 };
+  F.ficha.g2 = { fen: 'F2', res: '*' }; F.EVS.F2 = { cp: -100 };
+
+  const c1 = F.C(10, 'Kovalenko, Igor', 'Ding, Liren', true);
+  chk(/class="cr-evc"/.test(c1) && /left:0;width:70%/.test(c1) && !/display:none/.test(c1),
+      'mesa en juego: barrita con la valoración de la miniatura (+2 → 70% blanco), creciendo desde la izquierda', c1);
+  const c2 = F.C(10, 'Ivanchuk, Vasyl', 'Wei, Yi', true);
+  chk(/right:0;width:40%/.test(c2), '🔒 si el de la IZQUIERDA lleva negras de verdad, lo blanco crece desde la derecha (equipos: los colores se alternan)', c2);
+  chk(F.E(10, 'Ivanchuk, Vasyl', 'Wei, Yi', true).izqBlancas === false, 'el lado lo deciden los NOMBRES de la partida, no lo que supone la tabla');
+  chk(F.E(10, 'Martirosyan H', 'Abdusattorov N', false).izqBlancas === false && F.E(10, 'Martirosyan H', 'Abdusattorov N', true).izqBlancas === true,
+      'si los nombres de Chess-Results y Lichess no se reconocen, se usa lo que supone la tabla');
+  const c5 = F.C(10, 'Martirosyan H', 'Abdusattorov N', true);
+  chk(/class="cr-evc"/.test(c5) && /style="display:none"/.test(c5), '🔒 sin valoración la barrita nace escondida: no se inventa nada (queda el ojito solo)', c5);
+  F.memo['10.1|Martirosyan, Haik M.|Abdusattorov, Nodirbek'] = { cp: 0 };
+  chk(/width:50%/.test(F.C(10, 'Martirosyan H', 'Abdusattorov N', true)) && !/display:none/.test(F.C(10, 'Martirosyan H', 'Abdusattorov N', true)),
+      'si la posición nueva todavía no se calculó, va la última valoración conocida de esa partida (como la miniatura)');
+  chk(F.C(10, 'Samunenkov, Ihor', 'Xu, Xiangyu', true) === '<span style="border-bottom:1px dashed currentColor">½-½</span> ',
+      'terminada: en vez de la barrita va el resultado, con el subrayado de siempre');
+  chk(/>0-1</.test(F.C(10, 'Dehtiarov, Roman', 'Kong, Xiangrui', false)), 'el resultado se ve desde el jugador de la IZQUIERDA (ganó el de la derecha → 0-1)');
+  chk(F.C(10, 'Nadie, Fulano', 'Otro, Mengano', true) === '', 'mesa que no se transmite: nada (ni barrita ni resultado)');
+
+  // La pasada que las pone al día (cada vez que llega una valoración o una jugada).
+  const el = (a, b, p) => {
+    const f = { style: { width: '0%' } }, bar = { style: { display: 'none' }, firstElementChild: f };
+    const o = { outerHTML: null, firstElementChild: bar, f, bar, getAttribute: (k) => ({ 'data-evr': '10', 'data-evi': a, 'data-evd': b, 'data-evp': p ? '1' : '0' })[k] };
+    return o;
+  };
+  const e1 = el('Kovalenko, Igor', 'Ding, Liren', true), e2 = el('Ivanchuk, Vasyl', 'Wei, Yi', true), e3 = el('Martirosyan H', 'Abdusattorov N', true);
+  delete F.memo['10.1|Martirosyan, Haik M.|Abdusattorov, Nodirbek'];
+  F.ELS.push(e1, e2, e3);
+  F.EVS.F1 = { cp: -300 };
+  F.ficha.g2 = { fen: 'F2', res: '0-1' };   // Ivanchuk ganó con negras: la ficha lo trajo
+  F.S();
+  chk(e1.f.style.width === '20%' && e1.bar.style.display === '', 'la pasada mueve la barrita con la valoración nueva', e1.f.style.width);
+  chk(e2.outerHTML === '<span style="border-bottom:1px dashed currentColor">1-0</span> ',
+      '🔒 al terminar, el resultado PISA la barrita (Ivanchuk, a la izquierda, ganó con negras → 1-0)', String(e2.outerHTML));
+  chk(e3.bar.style.display === 'none' && e3.outerHTML === null, 'y la que sigue sin valoración queda escondida');
+
+  // Dónde se engancha (lo que se ve), y que no pida nada nuevo.
+  const rnd = extraerFuncion('crBuildRoundPanel'), blq = extraerFuncion('_teamRoundBlock');
+  chk(/\(p\.res\?'<span style="border-bottom:1px dashed currentColor">'\+escHtml\(p\.res\)\+'<\/span>':_crEvhCelda\(roundNum, p\.w, p\.b, true\)\)/.test(rnd),
+      'tabla individual: la barrita sólo cuando Chess-Results todavía no tiene el resultado');
+  chk(/var _resTxt = b\.res \? .*: _crEvhCelda\(roundNum, b\.nW, b\.nB, leftIsWhite\);/.test(blq),
+      'formación por equipos (países y clubes): lo mismo, con el color que le toca a cada mesa');
+  chk(/_crEvhPronto\(\);/.test(extraerFuncion('_teamLiveRefreshPronto'))
+   && /typeof _crEvhPronto === 'function'\) _crEvhPronto\(\)/.test(extraerFuncion('mevApply'))
+   && /typeof _crEvhPronto === 'function'\) _crEvhPronto\(\)/.test(extraerFuncion('_repRecibir'))
+   && /typeof _crEvhPronto === 'function'\) _crEvhPronto\(\)/.test(extraerFuncion('_tdSetEvalBar')),
+      'se pone al día con la jugada nueva, el motor local, el repartido y las miniaturas');
+  const todo = ['_crEvhEstado', '_crEvhBarra', '_crEvhRes', '_crEvhCelda', '_crEvhPronto', '_crEvhSync'].map(extraerFuncion).join('\n');
+  chk(!/fetch\(|tdFinalFen|new Chess|mevTick|sfStart/.test(todo) && /setTimeout\(function\(\)\{ _crEvhT=null;.*\}, 500\);/.test(todo),
+      '🔒 no pide nada a la red ni prende el motor ni reproduce partidas; y se junta en una pasada cada medio segundo');
+  chk(/\.cr-evh \{[^}]*width: 34px/.test(SRC), 'entra en la celda del resultado de la tabla individual (58 px) sin correr los nombres');
 }
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
 console.log('   Corrieron ' + corridas + ' de ' + ESPERADAS + ' comprobaciones.'

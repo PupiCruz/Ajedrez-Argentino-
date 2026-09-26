@@ -85,6 +85,15 @@ const LI_STALE_WINDOW = 1800;  // 30 min de gracia (eran 10: en la Olimpiada de 
 const LI_UA = 'AjedrezArgentinoBot/1.0 (+https://chessargentino.pages.dev)';
 // Dedup de bajadas concurrentes DENTRO de un mismo isolate (single-flight): si llegan muchos
 // pedidos del mismo torneo a la vez, UNA sola va a Lichess y las demás esperan esa respuesta.
+// Cada entrada: { p: la promesa, desde: cuándo arrancó, soltar(): la borra y libera su lugar }.
+// LA BAJADA COMPARTIDA QUE NO TERMINA NUNCA (26/09/2026, Olimpiada de Samarcanda, R10): la 5ª parte de
+// la ronda (Open V, 64 partidas) quedó colgada PARA SIEMPRE en el colo de Buenos Aires — por São Paulo
+// salía en 7 s — y la categoría Absoluta mostraba 87 cruces de 102 después de ~50 s de espera. La app
+// corta a los 15 s; Cloudflare cancela entonces la bajada de ESE pedido, su promesa no se resuelve más
+// (ni con el tiempo límite de 45 s: el timer era del pedido cancelado) y queda en `_liInflight`: todos
+// los pedidos siguientes del isolate se sentaban a esperarla sin fin. Ahora (1) la bajada va con
+// `ctx.waitUntil` y guarda la copia ella misma, así sigue aunque el primero se vaya; (2) quien espera
+// una ajena tiene su PROPIO plazo; (3) una entrada más vieja que LI_INFLIGHT_MAX_MS se da por muerta.
 const _liInflight = new Map();
 // Pausa después de un 429. Lichess pide que, cuando responde 429, se espere UN MINUTO ENTERO antes de
 // volver a pedirle nada; el refresco de fondo reintentaba a los 10 s y el panel llegó a 10% de 429
@@ -114,6 +123,7 @@ let _liPgnEnCurso = 0;
 // volvía a correr. Ahora: toda bajada se corta a los 45 s (una ronda de Olimpiada en frío tarda ~40 s), y
 // "hay otra exportación andando" sólo frena el refresco mientras la copia tenga menos de 30 s.
 const LI_FETCH_TIMEOUT_MS = 45000;
+const LI_INFLIGHT_MAX_MS = LI_FETCH_TIMEOUT_MS + 5000;   // más que esto, la bajada compartida está muerta
 const LI_BUSY_MAX_STALE = 30;
 // LA FILA ES DE TODO EL COLO, NO DE CADA ISOLATE (16/09/2026, Olimpiada de Samarcanda: 9 transmisiones,
 // 776 partidas). Lichess exporta ~10 partidas por segundo y de a UNA por vez: 100 partidas = 10 s.
@@ -628,7 +638,7 @@ async function liBc(reqUrl, ctx, request) {
     // colgada dejaba la copia congelada en la jugada que tenía.
     const vence = fetchedAt + hitFresh * 1000;   // desde cuándo está vieja (una ronda terminada, 1 h después)
     if (isPgn) await liTurnoAnotar(cache, reqUrl, cacheKeyStr, vence);
-    const ocupado = isPgn && !_liInflight.has(cacheKeyStr) && (await liExportDesde(cache, reqUrl)) > Date.now() - LI_BUSY_MAX_STALE * 1000;
+    const ocupado = isPgn && !liInflightVivo(cacheKeyStr) && (await liExportDesde(cache, reqUrl)) > Date.now() - LI_BUSY_MAX_STALE * 1000;
     let estado = 'vieja-refrescando';
     if (ocupado) estado = 'vieja-ocupado';
     else if (await liIsPaused(cache, reqUrl)) estado = 'vieja-pausa';
@@ -640,10 +650,12 @@ async function liBc(reqUrl, ctx, request) {
   // No hay NADA cacheado (primer visitante del torneo, o expiró toda la ventana de gracia):
   // hay que bajar ahora, con dedup para que muchos misses simultáneos compartan una sola bajada.
   // Freno por IP SÓLO para esto (lo que va a Lichess): lo guardado se sirve siempre sin límite.
-  if (!_liInflight.has(cacheKeyStr) && !rlAllow('limiss:' + ipDe(request), 60)) return tooMany();
+  if (!liInflightVivo(cacheKeyStr) && !rlAllow('limiss:' + ipDe(request), 60)) return tooMany();
   let r;
   try {
-    r = await liFetchBuffered(cacheKeyStr, limpia, isPgn, cache, reqUrl);
+    // La copia la guarda la bajada misma (bajo ctx.waitUntil): si el visitante se va antes, igual queda.
+    r = await liFetchBuffered(cacheKeyStr, limpia, isPgn, cache, reqUrl, ctx,
+      (buf) => cache.put(cacheKey, liStoredCopy(buf, contentType, isPgn, freshTtl, storeTtl)));
   } catch (e) {
     return errJson('No se pudo bajar de Lichess: ' + e.message, 502);
   }
@@ -661,7 +673,6 @@ async function liBc(reqUrl, ctx, request) {
     h.set('Cache-Control', 'no-store');
     return new Response(r.buf, { status: r.status, headers: h });
   }
-  ctx.waitUntil(cache.put(cacheKey, liStoredCopy(r.buf, contentType, isPgn, freshTtl, storeTtl)));
   const h = corsHeaders();
   h.set('Content-Type', contentType);
   h.set('Cache-Control', 'public, max-age=' + freshTtl);
@@ -673,9 +684,11 @@ async function liBc(reqUrl, ctx, request) {
 // Baja de Lichess a memoria (ArrayBuffer) con dedup por isolate: si ya hay una bajada en curso
 // para la misma URL, todos esperan esa. Devuelve { ok, status, buf, choque } — `choque`: cuando
 // arrancó había OTRA exportación de PGN andando (un 429 así es por eso, no un freno de verdad).
-function liFetchBuffered(cacheKeyStr, targetUrl, isPgn, cache, reqUrl) {
-  const existing = _liInflight.get(cacheKeyStr);
-  if (existing) return existing;
+// `ctx` + `guardar(buf)` (opcionales): la bajada sigue viva aunque el visitante se vaya, y al terminar
+// bien guarda la copia (ver _liInflight).
+function liFetchBuffered(cacheKeyStr, targetUrl, isPgn, cache, reqUrl, ctx, guardar) {
+  const existing = liInflightVivo(cacheKeyStr);
+  if (existing) return liConPlazo(existing);
   let choque = isPgn && _liPgnEnCurso > 0;
   const desde = Date.now();
   if (isPgn) { _liPgnEnCurso++; _liPgnDesde.set(cacheKeyStr, desde); }
@@ -701,9 +714,34 @@ function liFetchBuffered(cacheKeyStr, targetUrl, isPgn, cache, reqUrl) {
       if (isPgn && cache && reqUrl) await liExportLiberar(cache, reqUrl, desde);
     }
   })();
-  const wrapped = p.finally(() => { _liInflight.delete(cacheKeyStr); if (isPgn) { _liPgnEnCurso--; _liPgnDesde.delete(cacheKeyStr); } });
-  _liInflight.set(cacheKeyStr, wrapped);
-  return wrapped;
+  let suelta = false;
+  const entrada = { desde, soltar() {
+    if (suelta) return;   // una sola vez: al terminar, o antes si se la da por muerta
+    suelta = true;
+    if (_liInflight.get(cacheKeyStr) === entrada) _liInflight.delete(cacheKeyStr);
+    if (isPgn) { _liPgnEnCurso--; if (_liPgnDesde.get(cacheKeyStr) === desde) _liPgnDesde.delete(cacheKeyStr); }
+  } };
+  entrada.p = p.finally(() => entrada.soltar());
+  _liInflight.set(cacheKeyStr, entrada);
+  if (ctx) ctx.waitUntil(entrada.p.then((x) => (x.ok && guardar) ? guardar(x.buf) : null).catch(() => {}));
+  return entrada.p;
+}
+// La bajada compartida en curso, o null si no hay (o si lleva tanto que está muerta: se olvida).
+function liInflightVivo(clave) {
+  const e = _liInflight.get(clave);
+  if (!e) return null;
+  if (Date.now() - e.desde < LI_INFLIGHT_MAX_MS) return e;
+  e.soltar();
+  return null;
+}
+// Esperar una bajada AJENA con plazo propio: si la de otro pedido quedó colgada, no esperarla para siempre.
+function liConPlazo(e) {
+  let corte;
+  const plazo = new Promise((_, no) => {
+    corte = setTimeout(() => { e.soltar(); no(new Error('la bajada compartida no terminó')); },
+      Math.max(0, e.desde + LI_INFLIGHT_MAX_MS - Date.now()));
+  });
+  return Promise.race([e.p, plazo]).finally(() => clearTimeout(corte));
 }
 
 // Refresco en segundo plano. CLAVE: si Lichess devuelve 429/5xx o se cae, NO tocamos la caché

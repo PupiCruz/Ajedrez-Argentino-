@@ -962,6 +962,11 @@
        no tapa la columna 'a'. Con box-sizing:border-box el tablero se achica y se corre a la derecha.
        Sin barra no se aplica el padding → el tablero queda centrado como antes. */
     .td-bd.has-ev { padding-left: 8px; }
+    /* Barrita ACOSTADA en las tablas de cruces (_crEvhCelda): va donde después sale el resultado, con el
+       ojito al lado. Mismos colores que la de las miniaturas (fijos: se leen igual en el modo claro). */
+    .cr-evh { display: inline-block; position: relative; width: 34px; height: 7px; border-radius: 4px; background: #33312e; overflow: hidden; vertical-align: middle; box-shadow: 0 0 0 1px var(--bd20); margin-right: 3px; }
+    .cr-evh-f { position: absolute; top: 0; bottom: 0; background: #f2f2f0; transition: width .35s ease; }
+    body.light .cr-evh { box-shadow: 0 0 0 1px rgba(0,0,0,.45); }   /* sin esto lo blanco se perdía en el fondo crema */
     /* Agarradera para redimensionar el tablero (esquina inferior derecha). Solo en modo página. */
     #cv-resize {
       /* Área de clic chica y pegada al vértice: si es grande, tomar una pieza en h1/a8 se computa como
@@ -1925,7 +1930,10 @@
 
     /* Solver overlay — wallpaper de la web de fondo (tapa la lista), panel oscuro sobre el contenido */
     body.puz-page header, body.puz-page nav { z-index: 311; }
-    .puz-overlay { position: fixed; inset: 0; z-index: 300; background: var(--bg) var(--bg-img) center center / cover fixed no-repeat;
+    /* z 301: un pelito ARRIBA del visor (300). El 🧩 del ejercicio en vivo se puede abrir con una partida
+       en pantalla y quedaba DEBAJO (26/09). Sigue debajo de la barra de arriba (311). Atrás ya cerraba
+       primero el ejercicio y después el visor (popstate), así que ahora lo que se ve coincide. */
+    .puz-overlay { position: fixed; inset: 0; z-index: 301; background: var(--bg) var(--bg-img) center center / cover fixed no-repeat;
       display: none; overflow-y: auto; }
     .puz-overlay.open { display: block; }
     .puz-modal { position: relative; max-width: 1180px; margin: 20px auto; padding: 14px 22px 22px;
@@ -8333,7 +8341,7 @@ function crBuildRoundPanel(key,pairings,data,roundNum){
     var gIdx=crFindGameIdx(roundNum,p.w,p.b);
     var resCell;
     if(gIdx>=0){
-      resCell='<span style="cursor:pointer;font-weight:700;color:'+resColor+';font-size:15px;text-shadow:var(--txt-out)" title="Ver partida"'+_a11yClic(_a11yMesaCorto(p.w, p.b, p.res)+'. Ver la partida')+' onclick="crOpenGame('+(roundNum==null?'null':roundNum)+','+nsW+','+nsB+')"><span style="border-bottom:1px dashed currentColor">'+escHtml(p.res)+'</span> <span style="font-size:12px;color:var(--blue)">👁</span></span>';
+      resCell='<span style="cursor:pointer;font-weight:700;color:'+resColor+';font-size:15px;text-shadow:var(--txt-out)" title="Ver partida"'+_a11yClic(_a11yMesaCorto(p.w, p.b, p.res)+'. Ver la partida')+' onclick="crOpenGame('+(roundNum==null?'null':roundNum)+','+nsW+','+nsB+')">'+(p.res?'<span style="border-bottom:1px dashed currentColor">'+escHtml(p.res)+'</span>':_crEvhCelda(roundNum, p.w, p.b, true))+' <span style="font-size:12px;color:var(--blue)">👁</span></span>';
     } else if(_ondemand){
       // Visitante: el resultado es de LECTURA (sin mano, sin "clic para cambiar").
       // Sin partida cargada no hay nada que abrir, así que no es un botón; pero el resultado tiene
@@ -10305,7 +10313,7 @@ function _teamRoundBlock(m, mi, roundNum, crk, cx, lv){
       // (La cuenta se hace en _teamRoundLive, porque también va en la firma del match.)
       var _verMesa = lv.ver[bi];
       if(_verMesa){
-        var _resTxt = b.res ? '<span style="border-bottom:1px dashed currentColor">'+escHtml(b.res)+'</span> ' : '';
+        var _resTxt = b.res ? '<span style="border-bottom:1px dashed currentColor">'+escHtml(b.res)+'</span> ' : _crEvhCelda(roundNum, b.nW, b.nB, leftIsWhite);
         inner+='<span role="cell" style="display:contents"><span onclick="_teamOpenBoardGame('+(roundNum!=null?roundNum:'null')+','+crArg(b.nW)+','+crArg(b.nB)+')" title="'+(b.res?'Ver la partida':'Ver la partida en vivo')+'"'+_a11yClic(_a11yMesaCorto(leftIsWhite?(b.nW||''):(b.nB||''), leftIsWhite?(b.nB||''):(b.nW||''), _resBl)+(b.res?'. Ver la partida':'. Ver la partida en vivo'))+' style="flex-shrink:0;width:66px;text-align:center;font-weight:700;color:var(--text);cursor:pointer;border-radius:5px" onmouseover="this.style.background=\'var(--bg3)\';this.style.color=\'var(--gold)\'" onmouseout="this.style.background=\'\';this.style.color=\'var(--text)\'">'+_resTxt+'<span style="font-size:12px;color:var(--blue)">👁</span></span>';
         inner+='</span>';
       } else {
@@ -10402,6 +10410,80 @@ function _teamLiveBoardRes(round, nW, nB){
   if(!izqBlancas) res=_a11yResInvertido(res);
   return res==='1/2-1/2' ? '½-½' : res;
 }
+/* ── Barrita de valoración ACOSTADA en las tablas de cruces (26/09/2026, pedido del autor) ──────────────
+   Como en el listado en vivo de Lichess y Chess.com: en la celda del resultado de una mesa EN JUEGO va una
+   barrita horizontal (lo blanco = lo que tienen las blancas) y el ojito sigue al lado. Cuando la partida
+   termina, el resultado ocupa ese lugar (la barrita queda "pisada"). Sirve para las tres tablas: la de
+   cada ronda (individual), la formación por equipos (países y clubes).
+   No calcula NADA: reusa lo de las miniaturas. La posición sale de la ficha de Lichess (_tdJsonNew) y la
+   valoración, de lo que ya tienen el motor local, el repartido o el [%eval] del PGN (_liveEvalFor); si esa
+   posición todavía no se calculó, la última conocida de esa partida (_tdEvMemo), igual que la miniatura.
+   Sin valoración la barrita no se muestra y queda el ojito solo, como antes: no se inventa nada.
+   La parte blanca crece desde el lado del que lleva las blancas DE VERDAD (por nombre, como
+   _teamLiveBoardRes): en los equipos los colores se alternan mesa por mesa. `pista` = lo que supone la
+   tabla (izquierda = blancas), por si los nombres de Chess-Results y Lichess no se reconocen. */
+var _crEvhH = {};   // índice de la partida → { pgn, h }: no volver a leer los encabezados en cada pasada
+function _crEvhEstado(round, nIzq, nDer, pista){
+  if(typeof _tdCtx==='undefined'||!_tdCtx||!_tdCtx.games||!nIzq||!nDer) return null;
+  var idx=crFindGameIdx(round, nIzq, nDer);
+  if(idx<0) idx=crFindGameIdx(round, nDer, nIzq);
+  var pgn=idx>=0?_tdCtx.games[idx]:null;
+  if(!pgn) return null;
+  var c=_crEvhH[idx];
+  if(!c||c.pgn!==pgn){ c=_crEvhH[idx]={ pgn:pgn, h:parsePgnHeaders(pgn) }; _capCache(_crEvhH, 1500); }
+  var h=c.h, ti=crNormTokens(nIzq), td=crNormTokens(nDer), hw=crNormTokens(h.White), hb=crNormTokens(h.Black);
+  var izqBlancas;
+  if(ti===hw || _crNombreContenido(ti, hw) || td===hb || _crNombreContenido(td, hb)) izqBlancas=true;
+  else if(ti===hb || _crNombreContenido(ti, hb) || td===hw || _crNombreContenido(td, hw)) izqBlancas=false;
+  else izqBlancas=!!pista;
+  var res=_tdGameRes({ pgn:pgn, h:h }), ev=null;
+  if(res==='*'){
+    var id=_bcGameIds(pgn), o=id&&_tdJsonNew[id.game];
+    if(o&&o.fen) ev=_liveEvalFor(o.fen, null);
+    if(ev==null && _tdEvMemo[_tdEvKey(h)]!=null) ev=_tdEvMemo[_tdEvKey(h)];
+  }
+  return { res:res, ev:ev, izqBlancas:izqBlancas };
+}
+// La barrita sola. Sin valoración nace escondida (el lugar es de la celda: el renglón no se mueve).
+function _crEvhBarra(ev, izqBlancas){
+  var pct=ev!=null?sfBarPct(ev, false):50;
+  return '<span class="cr-evh" aria-hidden="true"'+(ev==null?' style="display:none"':'')+'><span class="cr-evh-f" style="'+(izqBlancas?'left':'right')+':0;width:'+pct+'%"></span></span>';
+}
+// El resultado de Lichess visto desde el jugador de la IZQUIERDA, con el mismo subrayado de siempre.
+function _crEvhRes(e){
+  var r=e.izqBlancas ? e.res : _a11yResInvertido(e.res);
+  if(r==='1/2-1/2') r='½-½';
+  return '<span style="border-bottom:1px dashed currentColor">'+escHtml(r)+'</span> ';
+}
+// Lo que va en el lugar del resultado cuando la tabla todavía NO lo tiene: la barrita si se está jugando,
+// el resultado de Lichess si ya terminó, '' si esa mesa no se transmite.
+function _crEvhCelda(round, nIzq, nDer, pista){
+  var e=_crEvhEstado(round, nIzq, nDer, pista);
+  if(!e) return '';
+  if(e.res!=='*') return _crEvhRes(e);
+  return '<span class="cr-evc" data-evr="'+(round==null?'':escHtml(String(round)))+'" data-evi="'+escHtml(nIzq)+'" data-evd="'+escHtml(nDer)+'" data-evp="'+(pista?1:0)+'">'+_crEvhBarra(e.ev, e.izqBlancas)+'</span>';
+}
+// Pone al día las barritas que están en pantalla. La llaman los que traen valoraciones o posiciones nuevas
+// (miniaturas, motor, repartido, ficha de Lichess), juntadas en una pasada cada medio segundo como mucho.
+var _crEvhT=null;
+function _crEvhPronto(){
+  if(_crEvhT) return;
+  _crEvhT=setTimeout(function(){ _crEvhT=null; try { _crEvhSync(); } catch(e) {} }, 500);
+}
+function _crEvhSync(){
+  var els=document.querySelectorAll('.cr-evc');
+  for(var i=0;i<els.length;i++){
+    var el=els[i], r=el.getAttribute('data-evr');
+    var e=_crEvhEstado(r===''?null:r, el.getAttribute('data-evi'), el.getAttribute('data-evd'), el.getAttribute('data-evp')==='1');
+    if(!e) continue;
+    if(e.res!=='*'){ el.outerHTML=_crEvhRes(e); continue; }   // terminó: el resultado pisa la barrita
+    var bar=el.firstElementChild, f=bar&&bar.firstElementChild;
+    if(!f) continue;
+    if(e.ev==null){ bar.style.display='none'; continue; }
+    bar.style.display='';
+    f.style.width=sfBarPct(e.ev, false)+'%';
+  }
+}
 // Vuelve a dibujar los cruces y la formación de la ronda en vivo cuando cambia algún resultado de Lichess.
 // Sólo los paneles ya armados (los perezosos se arman al abrirlos, con lo último). Si el foco está adentro
 // (lector de pantalla, teclado), se espera al próximo cambio para no sacarle el lugar.
@@ -10411,6 +10493,7 @@ var _teamLiveSig={};
 // aparece hasta 3 s después, a cambio de no redibujar cinco veces seguidas.
 var _TEAM_LIVE_JUNTAR_MS=3000, _teamLiveT=null;
 function _teamLiveRefreshPronto(){
+  _crEvhPronto();   // barrita acostada de las tablas de cruces (también las individuales): posición o resultado nuevo
   if(_teamLiveT) return;
   _teamLiveT=setTimeout(function(){ _teamLiveT=null; try { _teamLiveRefresh(); } catch(e) {} }, _TEAM_LIVE_JUNTAR_MS);
 }
@@ -26260,7 +26343,7 @@ function cvSetNode(node) {
     // del módulo aparecen del otro bando apenas avanzás la jugada, como en lichess. Solo en pasos
     // deliberados (acá no hay ráfaga), con delay corto; el trabajo pesado sigue diferido al settle.
     var _animMid0 = _cvAnimStepping && node.children && node.children.length > 0;
-    if (sf.on && sf.ready && !_fa.running && !_animMid0) { sfAnalyze(true); _cvSfNode = node; }
+    if (sf.on && sf.ready && !_faOcupado() && !_animMid0) { sfAnalyze(true); _cvSfNode = node; }
   }
   cvHighlight();
   cvUpdateMaterial();   // fichitas de material (barato: sólo recorre el FEN)
@@ -26312,7 +26395,7 @@ function _cvSettleNode() {
   // Si ya se arrancó el motor en el acto (paso deliberado), no re-analizar acá (reiniciaría la
   // búsqueda que ya viene corriendo). Solo analiza el settle en el resto de los casos (atrás, saltos,
   // navegación rápida que recién frena, jugada propia).
-  if (sf.on && sf.ready && !_fa.running && !_animMid && _cvSfNode !== cv.node) { sfAnalyze(); _cvSfNode = cv.node; }
+  if (sf.on && sf.ready && !_faOcupado() && !_animMid && _cvSfNode !== cv.node) { sfAnalyze(); _cvSfNode = cv.node; }
 }
 
 /* Número y color de la jugada que lleva a ESTE nodo, leídos de la posición ANTERIOR (turno y número
@@ -27678,7 +27761,7 @@ window.addEventListener('popstate', function() {
     _newsReaderCurrentId = null;
     return;
   }
-  // Solver de ejercicios (z-index 320): se cierra antes que el visor de partidas.
+  // Solver de ejercicios (z-index 301, arriba del visor): se cierra antes que el visor de partidas.
   var puzo = document.getElementById('puz-overlay');
   if (puzo && puzo.classList.contains('open')) {
     _puzHistoryPushed = false; _puzDoClose();
@@ -27783,6 +27866,8 @@ window.addEventListener('popstate', function() {
 
 document.addEventListener('keydown',function(e){
   if(!document.getElementById('chess-overlay').classList.contains('open')) return;
+  // Un ejercicio abierto ENCIMA del visor (el 🧩 en vivo): las flechas son suyas, no de la partida de abajo.
+  if (document.querySelector('.puz-overlay.open')) return;
   // Escribiendo (el chat del torneo, un buscador…): las flechas mueven el cursor del texto, no la partida.
   var _tg = e.target;
   if (_tg && (/^(INPUT|TEXTAREA|SELECT)$/.test(_tg.tagName || '') || _tg.isContentEditable)) return;
@@ -28238,6 +28323,7 @@ function _sfStartSF18() {
       sf.lines = [null, null, null]; sf.depth = 0; sf.pending = null; sf.armed = true;
       sf.searching = false; sf.rokWaiting = false;    // el motor muerto no va a mandar su bestmove
       _fa.running = false; _fa.armed = false; _fa.rokSeen = false;   // que el gráfico no quede esperando un motor muerto
+      _fa.relleno = false; _fa.cola = null; _fa.volver = null; _fa.forzar = -1;
       if (typeof _mev !== 'undefined') { _mev.running = false; _mev.armed = false; }
       if (_sfCrashes++ < 2) {
         document.getElementById('sf-depth').textContent = 'Reiniciando el motor…';
@@ -28341,6 +28427,7 @@ function sfOnMsg(line) {
     sf.capped = true;
     _sfDeepenBtn(true);
     if (_mev.want) setTimeout(mevTick, 0);   // motor quieto: las miniaturas que esperaban, ahora
+    else setTimeout(_faRellenarSiLibre, 0);  // …y si no hay, completar lo salteado del gráfico en vivo
     return;
   }
   if (line === 'uciok') {
@@ -28406,6 +28493,12 @@ function sfOnMsg(line) {
   // Miniaturas esperando (llegó un refresco mientras el visor arrancaba): al llegar a prof. firme, pausa.
   if (_mev.want && mpv === 0 && depth >= _MEV_YIELD_DEPTH && sf.armed && !sf.deepened) {
     _mev.want = false; setTimeout(mevTick, 0);
+  } else if (mpv === 0 && (depth >= _MEV_YIELD_DEPTH || Date.now() - (sf._searchT0 || 0) >= _FA_RELLENO_MADURO_MS)
+             && sf.armed && !sf.deepened && _fa.live && !_fa.running
+             && Date.now() - (_fa._rellTryT || 0) > 1000) {
+    // Módulo MADURO: ¿le quedan huecos al gráfico en vivo? (una vez por segundo como mucho; el resto
+    // de las condiciones —respiro incluido— las mira _faRellenarSiLibre)
+    _fa._rellTryT = Date.now(); setTimeout(_faRellenarSiLibre, 0);
   }
   if (mpv === 0) sfUpdateUI();
   cvUpdateSfArrows();
@@ -28417,6 +28510,8 @@ function sfAnalyze() {
   // Si el gráfico (pase completo/vivo) está usando el motor, NO mandarle 'stop': cortaba su
   // búsqueda a mitad de camino y el gráfico guardaba una eval de profundidad 1-5 (ruido, muchas
   // veces con el signo dado vuelta). Al terminar, el pase relanza este análisis solo (faNext).
+  // El RELLENO del gráfico en vivo (lo salteado, con el motor quieto) sí cede: se corta y listo.
+  _faCederRelleno();
   if (_fa.running) return;
   mevAbort();   // el análisis del visor (lo pidió el usuario) tiene prioridad sobre la eval de miniaturas
   // DESARMAR ya, antes del stop: el 'bestmove' que provoca este stop llega con armed=true y sin
@@ -28434,6 +28529,7 @@ function sfAnalyze() {
 }
 function sfAnalyzeNow() {
   if (!sf.engine || !sf.ready || !sf.on || !cv.chess) return;
+  _faCederRelleno();         // el relleno del gráfico en vivo cede siempre
   if (_fa.running) return;   // no interrumpir el análisis completo en curso
   _sfArrowsHold = false;   // arranca el análisis de la posición nueva: ya se pueden dibujar sus flechas
   sf.capped = false; _sfDeepenBtn(false);   // esconder "Seguir analizando" ni bien se pasa de jugada
@@ -28516,6 +28612,7 @@ function _sfStartPending() {
 // El motor está quieto (capped) → basta relanzar. El tope vuelve solo al cambiar de jugada.
 function sfDeepen() {
   if (!sf.engine || !sf.ready || !sf.on || !sf.capped) return;
+  _faCederRelleno();   // el relleno del gráfico dejó el motor en otra posición: _mev.used relanza abajo
   if (sf._capTimer) { clearTimeout(sf._capTimer); sf._capTimer = null; }
   if (_mev.running || _mev.used) {
     // Las miniaturas aprovecharon el motor quieto: quedó en la posición de OTRA partida (o todavía
@@ -30308,8 +30405,12 @@ function _bcFetchRoundPgns(roundIds, cb, opts){
   var esperaMs = (opts.esperaMs != null) ? opts.esperaMs : 1200;
   var parts = new Array(roundIds.length);
 
-  function bajar(id, listo, falló){
-    _fetchTO(_liApi('round/' + id + '.pgn'), 15000)
+  // `directo`: a Lichess desde el navegador del visitante (CORS abierto), sin pasar por el Worker. Lo usa
+  // el PRIMER reintento: el 26/09/2026 una parte de la R10 de la Olimpiada quedó colgada en el Worker de
+  // Buenos Aires, y los tres intentos por el mismo camino costaban ~50 s para terminar sin ella (87 cruces
+  // de 102). Directo salía al instante. Un solo pedido por visitante, y con su propia IP.
+  function bajar(id, listo, falló, directo){
+    _fetchTO(directo ? 'https://lichess.org/api/broadcast/round/' + id + '.pgn' : _liApi('round/' + id + '.pgn'), 15000)
       // El 429 traía un cuerpo de error que se colaba como si fuera una partida: ahora se mira el
       // estado antes de leerlo.
       .then(function(r){ if(!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
@@ -30336,7 +30437,7 @@ function _bcFetchRoundPgns(roundIds, cb, opts){
         if(k >= quedan.length){ setTimeout(siguiente, esperaMs); return; }
         var i = quedan[k];
         bajar(roundIds[i], function(gs){ parts[i] = gs; uno(k + 1); },
-                           function(){ fallaron.push(i); uno(k + 1); });
+                           function(){ fallaron.push(i); uno(k + 1); }, vuelta === 1);
       })(0);
     })();
   }
@@ -33561,6 +33662,7 @@ function _tdEvRemember(gk, ev) { if (!gk || ev == null) return; _tdEvMemo[gk] = 
 function _tdSetEvalBar(el, ev, flip) {
   if (flip === undefined) flip = !!(el.getAttribute && el.getAttribute('data-flip') === '1');
   if (ev && el.getAttribute) _tdEvRemember(el.getAttribute('data-gk'), ev);
+  if (ev && typeof _crEvhPronto === 'function') _crEvhPronto();   // la barrita acostada de las tablas de cruces
   var bar = el.querySelector(':scope > .td-evbar');
   if (!ev) { if (bar) bar.parentNode.removeChild(bar); if (el.classList) el.classList.remove('has-ev'); return; }
   if (el.classList) el.classList.add('has-ev');   // reserva la franja izquierda para la barra
@@ -33618,16 +33720,7 @@ function mevAbort() {
 // profundidad casi al instante) y su tope de tiempo sigue contando desde el arranque original.
 function _mevResumeViewer() {
   var r = _mev.resume; _mev.resume = null;
-  if (!r || !sf.engine || !sf.on || !sf.armed || sf.pending || sf.curFen !== r.fen) return;
-  sf.engine.postMessage('position fen ' + r.fen);
-  sf.engine.postMessage('go depth ' + (sf.extended ? _SF_LIVE_EXTDEPTH : _SF_LIVE_MAXDEPTH));
-  sf.searching = true;
-  var left = Math.max(3000, _SF_LIVE_MAXMS - (Date.now() - (r.t0 || Date.now())));
-  if (sf._capTimer) clearTimeout(sf._capTimer);
-  sf._capTimer = setTimeout(function() {
-    sf._capTimer = null;
-    if (sf.engine && sf.searching && sf.armed && !sf.deepened) sf.engine.postMessage('stop');
-  }, left);
+  _sfReanudarVisor(r);
 }
 
 // Recolecta los tableros EN CURSO de la ronda visible cuya posición aún no fue evaluada.
@@ -33663,7 +33756,11 @@ function mevTick() {
   if (!_tdLiveCtx && !_mevExtra.length) { mevAbort(); return; }   // no hay transmisión activa (ni barrido de colgadas)
   _repSync();   // motor repartido: qué ronda miro y si ayudo (sólo manda algo cuando cambia)
   if (_mev.running) return;
-  if (_fa.running) { _mev.want = true; return; }      // el pase del gráfico es corto: al terminar, reintenta
+  // El pase del gráfico es corto: al terminar, reintenta. El RELLENO (lo salteado del gráfico en vivo,
+  // con el motor quieto) no se espera: si hay tableros para evaluar, se corta más abajo.
+  var _rell = !!(_fa.running && _fa.relleno);
+  var _rellR = _rell ? _fa.resume : null;   // el relleno tenía al módulo en PAUSA: la pausa pasa a las miniaturas
+  if (_fa.running && !_rell) { _mev.want = true; return; }
   // Con el motor del VISOR prendido las miniaturas antes no se evaluaban NUNCA (y la barrita quedaba
   // con la eval vieja: una colgada en el apuro se veía "un poco peor"). Ahora le piden el motor un
   // momento: si el visor ya terminó (tope de prof./tiempo, motor quieto) o si ya va por prof.
@@ -33671,8 +33768,8 @@ function mevTick() {
   // reintentan cuando llegue a esa profundidad o termine. "Seguir analizando" no se interrumpe.
   var _yield = false;
   if (sf.on) {
-    var _idle = sf.capped && !sf.searching && !sf.deepened && !sf.pending;
-    var _ripe = sf.armed && sf.searching && !sf.deepened && !sf.pending && sf.depth >= _MEV_YIELD_DEPTH;
+    var _idle = (_rell && !_rellR) || (!_rell && sf.capped && !sf.searching && !sf.deepened && !sf.pending);
+    var _ripe = !!_rellR || (!_rell && sf.armed && sf.searching && !sf.deepened && !sf.pending && sf.depth >= _MEV_YIELD_DEPTH);
     if (!_idle && !_ripe) { _mev.want = true; return; }
     _yield = _ripe;
   }
@@ -33691,10 +33788,11 @@ function mevTick() {
   var jobs = mevCollect();
   _mev.want = false;
   if (!jobs.length) { _colScan(); return; }   // nada nuevo que evaluar: igual mirar si hubo colgadas (evals ya guardadas)
+  if (_rell) { _fa.resume = null; _faCederRelleno(); }   // barritas y colgadas antes que el relleno del gráfico
   _mev.running = true; _mev.armed = false; _mev.rokSeen = false; _mev.jobs = jobs; _mev.i = 0; _mev.last = null; _mev.mpvPrev = false;
   // Pausa del visor: anotar su posición y el arranque de SU búsqueda (el tope de 60 s sigue contando
   // desde ahí, no se estira con cada pausa). Su reloj de tope se frena: no debe cortar una miniatura.
-  _mev.resume = _yield ? { fen: sf.curFen, t0: sf._searchT0 } : null;
+  _mev.resume = _yield ? (_rellR || { fen: sf.curFen, t0: sf._searchT0 }) : null;
   if (sf.on && !_yield) _mev.used = true;   // visor quieto: el motor queda en otra posición (ver sfDeepen)
   if (_yield && sf._capTimer) { clearTimeout(sf._capTimer); sf._capTimer = null; }
   // Barrera readyok: descarta el 'bestmove' fantasma de una búsqueda anterior (igual que el _fa).
@@ -33717,6 +33815,7 @@ function mevNext() {
     // marcha) arranca otra tanda. Sin esto quedaba esperando un refresco del vivo: con la ronda
     // terminada y nada en vivo, el barrido se quedaba clavado (lo vio el autor: "motor 140 / 255").
     if (_mevExtra.length) setTimeout(mevTick, 0);
+    else setTimeout(_faRellenarSiLibre, 0);   // motor libre: completar lo salteado del gráfico en vivo
     return;
   }
   _mev.last = null; _mev.lines = [];
@@ -33794,6 +33893,7 @@ function mevApply(fen, score) {
   for (var i = 0; i < bds.length; i++) {
     if (bds[i].getAttribute('data-fen') === fen) _tdSetEvalBar(bds[i], score);
   }
+  if (typeof _crEvhPronto === 'function') _crEvhPronto();   // y la barrita acostada de las tablas de cruces
 }
 
 // La partida abierta en el VISOR se analiza mucho más hondo (módulo: prof. 14-30; gráfico: su pase)
@@ -33836,7 +33936,11 @@ function _tdMiniFromDeep(fen, ws, depth) {
      distintas deja de repartir lo de ése.
    Qué tablero es de quién no lo decide el servidor: lo calcula cada navegador con la lista de ayudantes
    (hash "rendezvous": si alguien llega o se va, sólo se mueven SUS tableros). Sin lista (servidor viejo,
-   sin conexión, ?rep=0) todo funciona como antes. Sin ningún cartel, a propósito (lo pidió el autor). */
+   sin conexión, ?rep=0) todo funciona como antes. Sin ningún cartel, a propósito (lo pidió el autor).
+   26/09 (Olimpiada R10: 14 mirando y 1 logueado): ayudan también las PC de los INVITADOS, con menos
+   confianza. El arbitrito admite uno por red y los marca aparte (`inv`); acá les tocan menos tableros
+   (_REP_PESO_INV), se los controla más seguido (_REP_CONTROL_INV_MS) y sus mesas no pierden el aviso de
+   colgadas: como el invitado no puede repartir avisos, las colgadas de sus mesas las busca cada uno. */
 var _REP_ESPERA_MS = 45000;   // lo que espera el que no es dueño antes de calcular él ese tablero
 var _REP_FLUSH_MS = 8000;     // una tanda cada 8 s como mucho (el arbitrito acepta 4 cada 10 s)
 var _REP_JUNTA_MS = 1500;     // después de la primera posición, un ratito para juntar las de la misma tanda del motor
@@ -33844,7 +33948,9 @@ var _REP_LOTE = 60;
 var _REP_PROF_HONDA = 18;     // el segundo de cada tablero, cuando sobra gente (y el techo que acepta el arbitrito)
 var _REP_CONTROL_MS = 60000;  // un control de lo ajeno por minuto, como mucho
 var _REP_CONTROL_DIF = 300;   // a la misma profundidad, 3 peones de diferencia o más = no cierra
-var _rep = { c: '', ids: [], yo: null, enviado: null, envio: [], flushT: null, ultFlush: 0, espera: {}, vista: {},
+var _REP_PESO_INV = 0.4;      // un invitado se lleva ~40% de los tableros que un logueado
+var _REP_CONTROL_INV_MS = 20000;   // si hay evals de invitados para controlar, un control cada 20 s
+var _rep = { c: '', ids: [], inv: {}, yo: null, enviado: null, envio: [], flushT: null, ultFlush: 0, espera: {}, vista: {},
              dueno: {}, duenoVer: '', nJuego: 0, misN: 0, veto: {}, strikes: {}, quejados: {}, recibidas: [],
              ultControl: 0, scanPend: false };
 var _repEv = {};   // "tablero turno enroques" → { sc, d, de }: lo que calcularon otros
@@ -33874,11 +33980,9 @@ function _repHay() { return !!(_rep.c && _rep.ids.length); }
 function _repYoAyudo() { return !!(_rep.yo && _rep.ids.indexOf(_rep.yo) >= 0); }
 // Recibe lo de los demás pero no ayuda: no le hace falta la ficha de toda la ronda (_colFichaHace).
 function _repSoloRecibo() { return _repHay() && !_repYoAyudo(); }
+// Con cuenta o sin ella (26/09): si el invitado no queda en la lista (otro de su red ya ayuda), sólo recibe.
 function _repQuieroAyudar() {
-  try {
-    return !!(window.aaTourChat && window.aaTourChat.logueado && window.aaTourChat.logueado())
-      && _colOn() && _colBarreRonda() && !document.hidden;
-  } catch (e) { return false; }
+  try { return _colOn() && _colBarreRonda() && !document.hidden; } catch (e) { return false; }
 }
 // Le cuenta al arbitrito qué ronda mira y si ayuda. Sólo cuando cambia (al reconectar se repite).
 function _repSync() {
@@ -33893,19 +33997,23 @@ function _repSync() {
   if (window.aaTourChat.repHola(c, ayuda)) _rep.enviado = firma;
 }
 function _repConectado() { _rep.enviado = null; _repSync(); }
-function _repDesconectado() { _rep.ids = []; _rep.yo = null; _rep.enviado = null; _rep.dueno = {}; _rep.duenoVer = ''; }
+function _repDesconectado() { _rep.ids = []; _rep.inv = {}; _rep.yo = null; _rep.enviado = null; _rep.dueno = {}; _rep.duenoVer = ''; }
 
 // ¿De quién es este tablero? 'p' = mío (lo calculo yo), 'h' = soy el segundo (lo calculo a prof. 18),
 // '' = de otro. Todos los navegadores sacan la misma cuenta con la misma lista.
+// Con peso (26/09): el puntaje -peso/ln(u) es el rendezvous "pesado"; un invitado (_REP_PESO_INV) gana
+// menos tableros. El hash va MEZCLADO (_repMezcla): solo, con nombres parecidos daba números casi iguales
+// y el reparto salía torcido (con 3 ayudantes, 151/74/75 en 300 tableros).
+function _repMezcla(h) { h ^= h >>> 16; h = Math.imul(h, 0x85ebca6b); h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35); h ^= h >>> 16; return h >>> 0; }
 function _repDueno(gk) {
   if (!_rep.yo || !_rep.ids.length) return '';
   var dos = _rep.nJuego > 0 && _rep.ids.length >= 2 * _rep.nJuego;
-  var ver = _rep.ids.join(',') + '|' + _rep.yo + '|' + (dos ? 2 : 1);
+  var ver = _rep.ids.join(',') + '|' + Object.keys(_rep.inv).sort().join(',') + '|' + _rep.yo + '|' + (dos ? 2 : 1);
   if (ver !== _rep.duenoVer) { _rep.dueno = {}; _rep.duenoVer = ver; }
   if (_rep.dueno[gk] !== undefined) return _rep.dueno[gk];
   var p = null, s = null, ph = -1, sh = -1;
   for (var i = 0; i < _rep.ids.length; i++) {
-    var h = _repHash(gk + '#' + _rep.ids[i]);
+    var h = -(_rep.inv[_rep.ids[i]] ? _REP_PESO_INV : 1) / Math.log((_repMezcla(_repHash(gk + '#' + _rep.ids[i])) + 0.5) / 4294967296);
     if (h > ph) { s = p; sh = ph; p = _rep.ids[i]; ph = h; } else if (h > sh) { s = _rep.ids[i]; sh = h; }
   }
   var r = p === _rep.yo ? 'p' : ((dos && s === _rep.yo) ? 'h' : '');
@@ -33972,6 +34080,8 @@ function _repDeRed(m) {
   if (m.type === 'rep') {
     if (m.c !== _rep.c) return;
     _rep.ids = Array.isArray(m.ids) ? m.ids.filter(function(x){ return typeof x === 'string'; }) : [];
+    _rep.inv = {};
+    (Array.isArray(m.inv) ? m.inv : []).forEach(function(x){ if (typeof x === 'string') _rep.inv[x] = 1; });
     _rep.yo = typeof m.yo === 'string' ? m.yo : null;
     setTimeout(mevTick, 0);   // se reacomodaron los tableros: puede que ahora me toque alguno
   } else if (m.type === 'ev') _repRecibir(m);
@@ -34002,6 +34112,7 @@ function _repRecibir(m) {
     _tdSetEvalBar(bds[i], x.sc);
   }
   if (!_rep.scanPend) { _rep.scanPend = true; setTimeout(function(){ _rep.scanPend = false; _colScan(); }, 300); }
+  if (typeof _crEvhPronto === 'function') _crEvhPronto();   // la barrita acostada de las tablas de cruces
 }
 function _repVeto(ids) {
   (Array.isArray(ids) ? ids : []).forEach(function(de){ _rep.veto[de] = 1; });
@@ -34011,10 +34122,15 @@ function _repVeto(ids) {
 }
 // Control: una evaluación ajena se recalcula acá a la MISMA profundidad. Dos que no cierran del mismo
 // ayudante → acá deja de creérsele y se lo desmiente ante el arbitrito.
+// Lo de los invitados va primero y más seguido (26/09): no tienen cuenta que responda por ellos.
 function _repControlar() {
-  if (!_repYoAyudo() || !_rep.recibidas.length || Date.now() - _rep.ultControl < _REP_CONTROL_MS) return;
+  if (!_repYoAyudo() || !_rep.recibidas.length) return;
+  var deInv = [];
+  _rep.recibidas.forEach(function(x, i){ if (_rep.inv[x.de]) deInv.push(i); });
+  if (Date.now() - _rep.ultControl < (deInv.length ? _REP_CONTROL_INV_MS : _REP_CONTROL_MS)) return;
   _rep.ultControl = Date.now();
-  var x = _rep.recibidas.splice(Math.floor(Math.random() * _rep.recibidas.length), 1)[0];
+  var cual = deInv.length ? deInv[Math.floor(Math.random() * deInv.length)] : Math.floor(Math.random() * _rep.recibidas.length);
+  var x = _rep.recibidas.splice(cual, 1)[0];
   if (!x || _rep.veto[x.de] || _rep.quejados[x.de]) return;
   var fen = x.k + ' - 0 1';
   _mevExtra.push({ fen: fen, depth: x.d, cb: function(score){
@@ -34230,7 +34346,8 @@ function _colScan() {
     if (!prev || now.plies <= prev.plies) return;             // la primera vez sólo se anota
     if (ahora < (_colMesaHasta[gk] || 0)) return;             // esta mesa ya avisó hace poco
     // Motor repartido: con la eval de otro, una mesa ajena la vigila su dueño (y el aviso llega repartido).
-    if (_repDe[p.fen] && _repDueno(gk) !== 'p') return;
+    // Salvo que la eval sea de un invitado: él no puede repartir avisos, así que la colgada se busca acá.
+    if (_repDe[p.fen] && _repDueno(gk) !== 'p' && !_rep.inv[_repDe[p.fen]]) return;
     if (gk === _colMirandoGk()) return;                       // la está mirando: no hace falta avisarle
     var honda = (_colDeep[p.fen] || 0) >= _COL_CONFIRM_DEPTH;
     var c = _colClasifica(prev.cp, now.cp, honda, true);   // los 3 tipos, también "se dio vuelta" (pedido del autor)
@@ -34838,9 +34955,9 @@ function _colUltPanelHtml(rInt) {
 }
 window.aaCol = { llave: _colLlave, probar: _colProbar };
 
-/* ══ 🧩 ¿LO VES ANTES QUE ÉL? — EJERCICIO EN VIVO (25/09/2026, EN PRUEBA: sólo con ?ejvivo=1) ══════
+/* ══ 🧩 ¿PODÉS CASTIGARLO ANTES? — EJERCICIO EN VIVO (25/09/2026, EN PRUEBA: sólo con ?ejvivo=1) ══════
    Idea del autor, montada sobre el aviso de colgadas. Cuando el aviso confirma una colgada y el que
-   castiga TODAVÍA NO MOVIÓ, en vez del cartel rojo sale uno violeta: "¿Lo ves antes que él?". Abre el
+   castiga TODAVÍA NO MOVIÓ, en vez del cartel rojo sale uno violeta: "¿Podés castigarlo antes?". Abre el
    tablero de las Colgadas de la ronda (sin rating) en esa posición y, mientras el visitante piensa, se
    vigila la partida: cuando el jugador mueve, "ya movió: resolvelo y te contamos" (sin decir qué jugó);
    al resolverlo, "Campos jugó 38.Dxh5: ¡lo encontró!" o "no lo vio".
@@ -34986,7 +35103,7 @@ function _ejvMostrar(it) {
   var d = document.createElement('div');
   d.id = 'ejv-cartel'; d.className = 'col-cartel ejv-cartel'; d.setAttribute('role', 'status');
   d.innerHTML = '<div class="col-top"><span class="col-nb" aria-hidden="true">🧩</span><div class="col-txt">'
-    + '<b>¿Lo ves antes que él?' + (lugar ? ' · ' + lugar : '') + '</b>'
+    + '<b>¿Podés castigarlo antes?' + (lugar ? ' · ' + lugar : '') + '</b>'   // sin "que él": puede ser una jugadora (pedido del autor 26/09)
     + '<span>' + _colJugadoresHtml(info) + '</span>'
     + '<span>Le toca a ' + escHtml(quien) + ' y le dejaron un golpe.</span></div></div>'
     + '<div class="col-btns"><button type="button" class="col-no">Descartar</button><button type="button" class="col-si">🧩 Resolver</button></div>'
@@ -35785,6 +35902,10 @@ function cgMarcarPuz(est) {
 function _cgAbrirEnTablero(its, desdeId) {
   if (typeof puzOpenOverlay !== 'function') return;
   if (typeof sfStart === 'function' && !sf.engine) sfStart();   // precargar: se usa para verificar otras jugadas
+  // Se abre ENCIMA de una partida (el 🧩 en vivo llega con el visor abierto): el análisis del visor se
+  // apaga. Si no, seguía pensando la partida de abajo, que no se ve, y le demoraba el motor al ejercicio.
+  var _cvo = document.getElementById('chess-overlay');
+  if (_cvo && _cvo.classList.contains('open') && sf.on && typeof sfTurnOff === 'function') sfTurnOff();
   puz.tema = null;
   puz.list = its.map(_cgPuzzle);
   puz.idx = 0;
@@ -35852,7 +35973,7 @@ function _cgDesafio(it) {
   // Todo el texto en UN span: el renglón es flex y, con el nombre en negrita suelto, en pantallas angostas
   // "Lopez Maffia" y "lo castigó bien…" quedaban en dos columnas.
   if (it.bri) return dot + '<span><b>' + quien + '</b> encontró acá un jugadón (!!). ¿Lo ves?</span>';
-  if (it.vivo) return dot + '<span><b>' + quien + '</b> tiene que mover y le dejaron un golpe. ¿Lo encontrás antes que él? <span id="ejv-estado" class="ejv-estado">' + _ejvEstadoTxt(it) + '</span></span>';
+  if (it.vivo) return dot + '<span><b>' + quien + '</b> tiene que mover y le dejaron un golpe. ¿Podés castigarlo antes? <span id="ejv-estado" class="ejv-estado">' + _ejvEstadoTxt(it) + '</span></span>';
   if (it.castigo === true) return dot + '<span><b>' + quien + '</b> lo castigó bien, ¿probás si vos también?</span>';
   if (it.castigo === false) return dot + '<span><b>' + quien + '</b> no lo castigó, ¿vos podés?</span>';
   return dot + '<span>Juegan ' + (solver === 'w' ? 'Blancas' : 'Negras') + ' — la partida terminó ahí, ¿encontrás el castigo?</span>';
@@ -36209,6 +36330,7 @@ function _tdLiveFetchMulti(tourIds, name, location, pgnKey, typ, hasFallback) {
     _tdLastGood = Date.now(); _tdFetchFails = 0;
     if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; }
     _tdLivePolling = _tdKeepPolling(res);   // si el torneo ya no está en vivo, salir de modo vivo (gráfico → análisis normal)
+    _faVivoTardio();   // entró por LINK a una partida en vivo: el gráfico arranca ahora
     if (_tdLivePolling) { _tdLiveTimer = setTimeout(_tdLiveRefresh, _liveRefreshMs(_tdLiveCtx && _tdLiveCtx.tourId)); _tdStartWatchdog(); _tdFocusStart(); }
   });
 }
@@ -36229,6 +36351,7 @@ function _tdLiveFetchMultiEager(tourIds, key, hasFallback) {
     _tdLastGood = Date.now(); _tdFetchFails = 0;
     if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; }
     _tdLivePolling = _tdKeepPolling(res);   // si el torneo ya no está en vivo, salir de modo vivo (gráfico → análisis normal)
+    _faVivoTardio();   // entró por LINK a una partida en vivo: el gráfico arranca ahora
     if (_tdLivePolling) { _tdLiveTimer = setTimeout(_tdLiveRefresh, _liveRefreshMs(_tdLiveCtx && _tdLiveCtx.tourId)); _tdStartWatchdog(); }
   });
 }
@@ -37091,6 +37214,7 @@ function _tdLiveRefresh() {
       keep = (++_tdFetchFails <= _TD_MAX_FETCH_FAILS);
     }
     _tdLivePolling = !!(keep && document.getElementById('td-games-section'));   // ¿seguimos en vivo?
+    _faVivoTardio();   // entró por LINK a una partida en vivo: el gráfico arranca ahora (ver ahí)
     if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; }
     if (keep && document.getElementById('td-games-section')) {
       _tdLiveTimer = setTimeout(_tdLiveRefresh, _liveRefreshMs(_tdLiveCtx && _tdLiveCtx.tourId));
@@ -37213,6 +37337,7 @@ function _tdLiveRefreshOnDemand(gen, key, tourIds) {
       keep = (++_tdFetchFails <= _TD_MAX_FETCH_FAILS);
     }
     _tdLivePolling = !!(keep && document.getElementById('td-games-section'));   // ¿seguimos en vivo?
+    _faVivoTardio();   // entró por LINK a una partida en vivo: el gráfico arranca ahora (ver ahí)
     if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; }
     if (keep && document.getElementById('td-games-section')) {
       _tdLiveTimer = setTimeout(_tdLiveRefresh, _liveRefreshMs(_tdLiveCtx && _tdLiveCtx.tourId));
@@ -39825,6 +39950,7 @@ function pracEngineMove() {
   prac.busy = true; pracRenderActions();
   pracSetStatus('think', '⏳', 'El módulo está pensando…');
   if (typeof mevAbort === 'function') mevAbort();   // la práctica se queda con el motor
+  if (typeof _faCederRelleno === 'function') _faCederRelleno();   // también el relleno del gráfico en vivo
   if (typeof sfStart !== 'function') return;
   if (!sf.engine || !sf.ready) { prac.wantMove = true; sfStart(); return; }
   prac.wantMove = false; prac.running = true; prac.armed = false;
@@ -40656,7 +40782,7 @@ function thrUpdateBtn() {
   var b = document.getElementById('sf-threat-btn');
   if (!b) return;
   var inChk = !!(cv.chess && cv.chess.in_check());
-  var busy  = (typeof _fa !== 'undefined' && _fa.running);
+  var busy  = _faOcupado();   // el relleno del gráfico en vivo no cuenta: cede al tocar el botón
   b.disabled = inChk || busy || _thr.running || !cv.chess;
   b.title = inChk ? 'La amenaza es el jaque'
           : busy  ? 'El análisis de la partida está usando el motor'
@@ -40689,7 +40815,7 @@ function thrReset() {
 function thrProbe() {
   if (_thr.running) return;                                    // ya hay un probe en curso
   if (!cv.chess) return;
-  if (typeof _fa !== 'undefined' && _fa.running) { thrFlash('El análisis de la partida está usando el motor…'); return; }
+  if (_faOcupado()) { thrFlash('El análisis de la partida está usando el motor…'); return; }
   if (!sf.ready) { if (!sf.on) sfToggle(); thrFlash('El motor se está cargando…'); return; }
   if (cv.chess.in_check()) { thrFlash('La amenaza es el jaque.'); return; }
   var fen = cv.chess.fen();
@@ -40699,6 +40825,7 @@ function thrProbe() {
   if (!tf) { thrFlash('No se puede calcular acá.'); return; }
   // ¿El rival tendría jugadas en la posición invertida? (ahogado/sin movidas → sin amenaza)
   try { if (new Chess(tf).moves().length === 0) { _thrCache[fen] = 'none'; thrShow('none', fen); return; } } catch (e) {}
+  _faCederRelleno();   // el relleno del gráfico en vivo le deja el motor
   _thr.running = true; _thr.armed = false; _thr.rokSeen = false; _thr.fen = fen; _thr.tfen = tf;
   thrUpdateBtn();
   var t = document.getElementById('sf-threat-txt'); if (t) t.textContent = 'pensando…';
@@ -41107,6 +41234,182 @@ var _FA_LIVE_DEEP_MIN    = 13;    // prof. mínima para aceptar una eval de la c
 // y eficientes en máquinas rápidas); las agudas se cortan en el tope. (Antes: tiempo fijo 350ms.)
 var _FA_MANUAL_DEPTH = 18;
 var _FA_MANUAL_CAP_MS = 450;
+// GRÁFICO EN VIVO "SALTEADO" (pedido del autor 26/09): una partida en curso de 50 jugadas eran 100
+// posiciones a ~0,45 s = ~45 s con el motor tomado por el gráfico, y mientras tanto el módulo, las
+// barritas y el detector de colgadas esperaban en fila. Ahora el pase del vivo va en dos tiempos:
+//  1) GRUESO: una posición sí y una no (las de índice par —después de la jugada blanca— se saltean;
+//     la curva las interpola). Si entre dos puntos la valoración salta ≥ _FA_AFINAR_WP puntos de
+//     win%, se evalúa la del medio en el acto ("¿quién se colgó?"): el ?? sale con el grueso.
+//     La cola (_FA_LIVE_DEEP_N) y las jugadas de la colgada del aviso se evalúan siempre.
+//  2) RELLENO: lo salteado se completa DESPUÉS, sólo con el motor quieto (módulo en su tope o apagado,
+//     sin miniaturas ni barrido de colgadas en espera), de a _FA_RELLENO_TANDA posiciones, primero las
+//     que están entre puntos más dispares. Cualquiera que pida el motor (navegar, el módulo, las
+//     miniaturas, "¿Qué amenaza?", Practicar) corta el relleno al instante (_faCederRelleno).
+// Así aparecen al final también las colgadas MUTUAS (una la cuelga y el otro no la ve), que en el
+// grueso se tapan entre sí. El análisis MANUAL (📊 del pool, partidas terminadas) no cambia nada.
+var _FA_AFINAR_WP = 8;            // salto de win% entre dos puntos del grueso que obliga a mirar el medio
+var _FA_RELLENO_TANDA = 6;        // posiciones por tanda de relleno (~2,7 s con el presupuesto liviano)
+var _FA_RELLENO_MAXMS = 20000;    // seguro: una tanda que no termina en este tiempo se da por cortada
+var _FA_RELLENO_INTENTOS = 2;     // una posición que no llega a prof. confiable no se reintenta más en el relleno
+// El relleno también aprovecha al módulo MADURO (pedido del autor 26/09: con jugadas llegando seguido
+// el módulo nunca llega a su tope). Igual que las miniaturas: le pide una PAUSA recién cuando el módulo
+// va por prof. _MEV_YIELD_DEPTH y lleva al menos _FA_RELLENO_RESPIRO_MS pensando (desde que arrancó o
+// desde la tanda anterior); rellena una tanda y lo reanuda en la MISMA posición (con la memoria del
+// motor intacta vuelve a su profundidad casi al instante). Módulo y relleno se turnan, el módulo primero.
+var _FA_RELLENO_RESPIRO_MS = 3000;
+// …o, si la posición es tan aguda (o la compu tan lenta) que no llega a esa profundidad, cuando ya lleva
+// este tiempo pensando (si no, el relleno esperaba el tope de 60 s del módulo).
+var _FA_RELLENO_MADURO_MS = 10000;
+var _faRellIntentos = {};         // fen → intentos del relleno
+// Cuántas jugadas tenía la partida cuando el visitante la ABRIÓ (clave = la partida). Sólo esas son
+// "historia" que el grueso puede saltear: TODA jugada que llega mientras se mira se evalúa entera
+// (pedido del autor: las que llegan tienen prioridad; importa cuando la transmisión se pone al día de
+// golpe con varias juntas, que no son sólo las 2 de la cola).
+var _faBase = { key: '', n: Infinity };
+function _faAnotarBase(nodes, nueva) {
+  var key = '';
+  try { key = _colMirandoGk() || ''; } catch (e) {}
+  if (!key) {   // sin clave de torneo (broadcast directo): los jugadores y la ronda del PGN
+    try { var h = parsePgnHeaders(cv.rawPgn || ''); key = [h.White, h.Black, h.Round, h.Event].join('|'); } catch (e) {}
+  }
+  if (nueva || key !== _faBase.key || nodes.length < _faBase.n) _faBase = { key: key, n: nodes.length };
+}
+
+// ¿El pase GRUESO del vivo saltea la posición i? (ver arriba)
+function _faSaltea(i) {
+  if (!_fa.live || _fa.relleno || i === _fa.forzar) return false;
+  if (i % 2 === 1) return false;                               // una sí…
+  if (i >= _faBase.n) return false;                            // llegó mientras se miraba: entera
+  if (i >= _fa.nodes.length - _FA_LIVE_DEEP_N) return false;   // la cola, siempre
+  var ini = _faInicio();                                       // la colgada del aviso (antes, ella y la respuesta)
+  if (ini > 0 && i >= ini && i <= ini + 2) return false;
+  return true;                                                 // …y una no
+}
+// ¿Cuántas posiciones evaluaría HOY un pase del vivo? (las que faltan menos las salteadas)
+function _faCuantasPase() {
+  var c = 0;
+  for (var i = 0; i < _fa.nodes.length; i++) if (_faNeedsPassEval(i) && !_faSaltea(i)) c++;
+  return c;
+}
+// Recién evaluada la posición i en el grueso: si con su vecino evaluado (i±2) hay un salto grande y la
+// del medio falta, devuelve el índice del medio (para evaluarla ya); si no, -1.
+function _faAfinar(i) {
+  if (!_fa.live || _fa.relleno) return -1;
+  var R = _fa.results, n = _fa.nodes.length, pares = [[i - 2, i], [i, i + 2]];
+  for (var k = 0; k < 2; k++) {
+    var a = pares[k][0], b = pares[k][1], m = a + 1;
+    if (a < 0 || b >= n || !R[a] || !R[b] || !_faNeedsPassEval(m)) continue;
+    if (Math.abs(_faWinP(R[a]) - _faWinP(R[b])) >= _FA_AFINAR_WP) return m;
+  }
+  return -1;
+}
+// Después de evaluar (o descartar) _fa.ply: ¿cuál sigue? Si se estaba afinando, volver adonde iba;
+// si la recién evaluada abre un salto grande, ir al medio primero; si no, la siguiente.
+function _faSiguiente() {
+  var i = _fa.ply;
+  if (_fa.volver != null) { _fa.ply = _fa.volver; _fa.volver = null; _fa.forzar = -1; return; }
+  var m = _faAfinar(i);
+  if (m >= 0) { _fa.volver = i + 1; _fa.forzar = m; _fa.ply = m; return; }
+  _fa.ply = i + 1;
+}
+// ¿El gráfico tiene el motor tomado de verdad? El RELLENO no cuenta: cede ante cualquiera.
+function _faOcupado() {
+  return typeof _fa !== 'undefined' && _fa.running && !_fa.relleno;
+}
+// Corta el relleno en curso (si hay) y deja el motor para quien lo pide. Devuelve true si cortó.
+// conStop=false: otro ya tomó el motor (no mandarle 'stop', le cortaría SU búsqueda).
+function _faCederRelleno(conStop) {
+  if (typeof _fa === 'undefined' || !_fa.running || !_fa.relleno) return false;
+  var _r = _fa.resume; _fa.resume = null;
+  _fa.running = false; _fa.armed = false; _fa.relleno = false; _fa.cola = null;
+  _fa._rellFinT = Date.now();
+  if (_fa._capTimer) { clearTimeout(_fa._capTimer); _fa._capTimer = null; }
+  if (_fa._rellT) { clearTimeout(_fa._rellT); _fa._rellT = null; }
+  if (sf.engine && conStop !== false) { sf.engine.postMessage('stop'); sf.engine.postMessage('setoption name MultiPV value 3'); }
+  if (_r) {
+    // Se cortó a mitad de una PAUSA del módulo (igual que mevAbort): el 'bestmove' del relleno que
+    // llega ahora no debe tomarse como "el módulo terminó solo" (desarmar), y el módulo se relanza si
+    // nadie más tomó el motor (sfAnalyze ya lo hace solo; el pase lo relanza al terminar).
+    sf.armed = false;
+    setTimeout(function() {
+      if (sf.on && !sf.armed && !sf.pending && !_fa.running && !_mev.running && !_thr.running
+          && (typeof prac === 'undefined' || !prac.running)) sfAnalyze();
+    }, 0);
+  }
+  return true;
+}
+// Reanuda el módulo en la MISMA posición después de una pausa (relleno o miniaturas): con la memoria del
+// motor intacta vuelve a su profundidad casi al instante; su tope de tiempo sigue contando desde el
+// arranque original (no se estira con cada pausa).
+function _sfReanudarVisor(r) {
+  if (!r || !sf.engine || !sf.on || !sf.armed || sf.pending || sf.curFen !== r.fen) return;
+  sf.engine.postMessage('position fen ' + r.fen);
+  sf.engine.postMessage('go depth ' + (sf.extended ? _SF_LIVE_EXTDEPTH : _SF_LIVE_MAXDEPTH));
+  sf.searching = true;
+  var left = Math.max(3000, _SF_LIVE_MAXMS - (Date.now() - (r.t0 || Date.now())));
+  if (sf._capTimer) clearTimeout(sf._capTimer);
+  sf._capTimer = setTimeout(function() {
+    sf._capTimer = null;
+    if (sf.engine && sf.searching && sf.armed && !sf.deepened) sf.engine.postMessage('stop');
+  }, left);
+}
+// Si el motor está QUIETO y al gráfico del vivo le quedan huecos, arranca una tanda de relleno.
+// Lo llaman: el tope del módulo, el fin de las miniaturas, el fin del pase y el fin de cada tanda.
+function _faRellenarSiLibre() {
+  try {
+    if (typeof _fa === 'undefined' || !_fa.live || _fa.running || _fa._preluding || !_fa.nodes.length) return;
+    if (!_faLiveEligible() || _faLiveHidden || document.hidden) return;
+    if (_cvMobileOn && !_cvAnalysisStarted) return;                 // teléfono sin "Estadísticas" abierta
+    if (!sf.engine || !sf.ready || sf.pending || sf.rokWaiting) return;
+    if (_mev.running || _mev.want || _mevExtra.length) return;      // barritas y colgadas primero
+    if (_thr.running || (typeof prac !== 'undefined' && (prac.running || prac.anOn || prac.wantMove))) return;
+    if (typeof puz !== 'undefined' && puz.anOn) return;
+    // Motor QUIETO (módulo apagado o en su tope) o módulo MADURO (va por prof. firme y ya pensó un rato:
+    // se le pide una pausa y se lo reanuda al terminar la tanda). "Seguir analizando" no se interrumpe.
+    var quieto = !sf.searching && (!sf.on || (sf.capped && !sf.deepened));
+    var maduro = sf.on && sf.armed && sf.searching && !sf.capped && !sf.deepened
+              && (sf.depth >= _MEV_YIELD_DEPTH || (Date.now() - (sf._searchT0 || 0)) >= _FA_RELLENO_MADURO_MS)
+              && (Date.now() - Math.max(_fa._rellFinT || 0, sf._searchT0 || 0)) >= _FA_RELLENO_RESPIRO_MS;
+    if (!quieto && !maduro) return;
+    var nodes = faGetNodes();                                       // ¿misma partida y sin jugadas nuevas?
+    if (nodes.length !== _fa.nodes.length || nodes[nodes.length - 1] !== _fa.nodes[_fa.nodes.length - 1]) return;
+    var R = _fa.results, n = nodes.length, cola = [], salto = {};
+    for (var i = 0; i < n; i++) {
+      if (!_faNeedsPassEval(i) || (_faRellIntentos[nodes[i].fen] || 0) >= _FA_RELLENO_INTENTOS) continue;
+      var a = null, b = null, j;
+      for (j = i - 1; j >= 0; j--) if (R[j]) { a = R[j]; break; }
+      for (j = i + 1; j < n; j++) if (R[j]) { b = R[j]; break; }
+      salto[i] = (a && b) ? Math.abs(_faWinP(a) - _faWinP(b)) : 0;
+      cola.push(i);
+    }
+    if (!cola.length) return;
+    cola.sort(function(x, y) { return (salto[y] - salto[x]) || (x - y); });   // primero entre puntos dispares
+    cola = cola.slice(0, _FA_RELLENO_TANDA);
+    cola.forEach(function(k) { var f = nodes[k].fen; _faRellIntentos[f] = (_faRellIntentos[f] || 0) + 1; });
+    _fa.running = true; _fa.armed = false; _fa.rokSeen = false;
+    _fa.relleno = true; _fa.cola = cola; _fa.volver = null; _fa.forzar = -1; _fa._buildCount = 0;
+    _fa.resume = null;
+    if (maduro) {
+      // PAUSA del módulo: anotar su posición y el arranque de SU búsqueda; su reloj de tope se frena
+      // (no debe cortar una posición del relleno) y se rearma al reanudarlo (_sfReanudarVisor).
+      _fa.resume = { fen: sf.curFen, t0: sf._searchT0 };
+      if (sf._capTimer) { clearTimeout(sf._capTimer); sf._capTimer = null; }
+    } else if (sf.on) {
+      // Con el módulo en su tope, el motor queda en OTRA posición: "Seguir analizando" relanza por la
+      // barrera (el mismo aviso que dejan las miniaturas, ver sfDeepen).
+      _mev.used = true;
+    }
+    if (_fa._rellT) clearTimeout(_fa._rellT);
+    _fa._rellT = setTimeout(function() {
+      _fa._rellT = null;
+      var otro = _mev.running || _thr.running || (typeof prac !== 'undefined' && prac.running);
+      _faCederRelleno(!otro);
+    }, _FA_RELLENO_MAXMS);
+    sf.engine.postMessage('stop');
+    sf.engine.postMessage('setoption name MultiPV value 1');
+    sf.engine.postMessage('isready');   // faHandleMsg arranca faNext() al recibir 'readyok'
+  } catch (e) {}
+}
 var _faLiveHidden = false;
 try { _faLiveHidden = (localStorage.getItem('fa_live_hidden') === '1'); } catch(e) {}
 
@@ -41151,9 +41454,24 @@ function faMaybeAutoLive() {
   // "Ya está calculando" → normalmente no se toca. La excepción: acaban de llegar las jugadas que
   // faltaban para la colgada por la que se entró, y el pase anda dibujando el principio. Ahí sí se
   // entra a faLiveBuild, que lo corta y lo manda a la colgada (si no, el "??" salía último).
-  if (_fa.running && !_faSaltoPendiente()) return;
+  // (Una tanda de RELLENO no cuenta como "calculando": faLiveBuild la corta si llegaron jugadas.)
+  if (_faOcupado() && !_faSaltoPendiente()) return;
   _fa.live = true;
   faLiveBuild();
+}
+
+// ENTRAR POR LINK A UNA PARTIDA EN VIVO (arreglo 26/09): el visor se abre ANTES de que arranque el
+// seguimiento en vivo del torneo (_tdLivePolling), así que al abrir la partida no contaba como "en vivo"
+// y quedaba el cartel "Tocá ▶ Analizar" hasta que llegaba una jugada nueva (en el apuro, enseguida; con
+// un jugador pensando, minutos). Lo llama el refresco del torneo cada vez que decide si sigue en vivo:
+// si el visor está abierto y el gráfico en vivo todavía no arrancó, arrancarlo ya (faMaybeAutoLive
+// respeta todo lo de siempre: gráfico cerrado por el visitante, teléfono sin "Estadísticas", etc.).
+function _faVivoTardio() {
+  try {
+    if (typeof _fa === 'undefined' || _fa.live || _fa.running || !_tdLivePolling) return;
+    if (!document.getElementById('chess-overlay').classList.contains('open')) return;
+    faMaybeAutoLive();
+  } catch (e) {}
 }
 
 // ¿Hay que abandonar el pase en curso para ir a la colgada? Mira el árbol de AHORA (no `_fa.nodes`,
@@ -41170,10 +41488,15 @@ function faLiveBuild() {
   if (!document.getElementById('chess-overlay').classList.contains('open')) return;
   var nodes = faGetNodes();
   if (!nodes.length) return;
+  // Tanda de relleno corriendo y cambió la partida (jugadas nuevas u otra partida): cortarla, que los
+  // índices de su cola ya no valen y el pase de las jugadas nuevas va primero. Sin cambios, sigue.
+  if (_fa.running && _fa.relleno && (nodes.length !== _fa.nodes.length
+      || nodes[nodes.length - 1] !== _fa.nodes[_fa.nodes.length - 1])) _faCederRelleno();
   _fa.live = true;
   _fa.nodes = nodes;
   var _newGame = !!_fa._freshGame;   // "partida recién abierta" (lo pone cvOpenOverlay); consumir SIEMPRE
   _fa._freshGame = false;            // (aunque este build no tenga jugadas por evaluar) para no preludiar en un refresco
+  _faAnotarBase(nodes, _newGame);    // lo que ya estaba al abrir = historia (salteable); lo que llegue, entero
   _fa.results = nodes.map(function(nd, i) {
     var mine = _faLiveCache[nd.fen];                   // NUESTRA eval (módulo/pase, con .d)
     // Las últimas jugadas (las que llegan) prefieren NUESTRA eval con profundidad para poder
@@ -41198,13 +41521,16 @@ function faLiveBuild() {
   // ahí. Pasa siempre que se entra desde un aviso con el PGN atrasado: el pase ya estaba dibujando
   // desde el principio y el "??" aparecía recién al final. Se hace UNA vez por aviso.
   var _ini = _faInicio();
-  if (_fa.running && _ini > 0 && _fa.ply < _ini && !_colFoco.saltado && _faNeedsPassEval(_ini)) {
+  if (_fa.running && !_fa.relleno && _ini > 0 && _fa.ply < _ini && !_colFoco.saltado && _faNeedsPassEval(_ini)) {
     _colFoco.saltado = true;
     _fa.running = false; _fa.armed = false;
     if (sf.engine) sf.engine.postMessage('stop');
   }
-  // ¿Falta (re)evaluar alguna? Lanzar el pase del motor (incremental) que solo calcula esas.
-  if (_fa.nodes.some(function(nd, i) { return _faNeedsPassEval(i); })) {
+  // ¿Falta (re)evaluar alguna? Lanzar el pase del motor (incremental) que solo calcula esas. Las
+  // salteadas del grueso no cuentan: esas las completa el relleno con el motor quieto (si hay una
+  // tanda corriendo, llegó hasta acá porque no hubo jugadas nuevas: se la deja seguir).
+  if (_fa.running && _fa.relleno) { /* sigue la tanda de relleno */ }
+  else if (_faCuantasPase() > 0) {
     // PARTIDA NUEVA con el módulo prendido: antes de que el pase del gráfico le saque el motor,
     // dejar que el módulo analice la POSICIÓN ACTUAL (prof. ~18) y la muestre. Así el visitante ve
     // ya la valoración + líneas de la posición final (no las de la partida anterior) mientras el
@@ -41216,6 +41542,8 @@ function faLiveBuild() {
     } else {
       faLiveEngineStart();
     }
+  } else {
+    setTimeout(_faRellenarSiLibre, 0);   // nada para el pase: si el motor está quieto, completar lo salteado
   }
   faUpdateBuildBtn();
 }
@@ -41241,12 +41569,23 @@ function _faPreludeThenPass() {
 // Arranca el pase del motor para el modo en vivo (solo las jugadas sin eval). Reusa faNext/faHandleMsg.
 function faLiveEngineStart() {
   if (!sf.engine || !sf.ready) {
-    if (typeof sfStart === 'function') sfStart();   // cargar el motor; al estar listo, el próximo refresco reintenta
+    if (typeof sfStart === 'function') sfStart();   // cargar el motor…
+    // …y arrancar el gráfico apenas esté listo. Antes esperaba "el próximo refresco", pero el refresco
+    // sólo rearma el gráfico cuando LLEGA UNA JUGADA: entrando por link (el motor es lo primero que se
+    // carga) el gráfico quedaba plano hasta que alguien movía (visto 26/09: minutos con 0 puntos).
+    if (!_fa._esperaMotor) {
+      _fa._esperaMotor = true;
+      var _n = 0, _iv = setInterval(function() {
+        if (sf.ready) { clearInterval(_iv); _fa._esperaMotor = false; if (!_fa.running && _fa.live) faMaybeAutoLive(); }
+        else if (++_n > 40) { clearInterval(_iv); _fa._esperaMotor = false; }   // ~20 s y desisto (lo retoma el refresco)
+      }, 500);
+    }
     return;
   }
   if (_fa.running) return;
   mevAbort();
   _fa._preluding = false;   // el pase arranca: cancelar cualquier "prelude" del módulo en curso
+  _fa.relleno = false; _fa.cola = null; _fa.volver = null; _fa.forzar = -1;   // pase GRUESO (ver _faSaltea)
   // El pase le saca el motor al módulo: matar el timer del tope del módulo. Si no, un timer viejo
   // (de una búsqueda del módulo que no llegó a capear) podía disparar un 'stop' EN MEDIO del pase.
   if (sf._capTimer) { clearTimeout(sf._capTimer); sf._capTimer = null; }
@@ -41255,8 +41594,7 @@ function faLiveEngineStart() {
   _fa.ply = _fa.desde = _faInicio();   // si vino de un aviso de colgada, empieza por ahí
   // Cuántas jugadas va a (re)evaluar este pase: el cartel "armando gráfico…" solo sale si son ≥ N
   // (ver faSetBuilding). Así los refrescos de 1-2 jugadas no reacomodan la columna a cada rato.
-  var _bc = 0; for (var _i = 0; _i < _fa.nodes.length; _i++) if (_faNeedsPassEval(_i)) _bc++;
-  _fa._buildCount = _bc;
+  _fa._buildCount = _faCuantasPase();
   faSetBuilding();
   sf.engine.postMessage('stop');
   // OJO: acá NO va 'ucinewgame' (el pase manual sí lo manda): borraba la tabla hash con todo lo que
@@ -41276,7 +41614,8 @@ function faGetNodes() {
 }
 
 function faToggle() {
-  if (_fa.running) { cancelFA(); return; }
+  if (_faOcupado()) { cancelFA(); return; }
+  _faCederRelleno();   // el relleno de lo salteado no es "un análisis corriendo": se corta y se sigue
   var _rb = document.getElementById('fa-reopen'); if (_rb) _rb.style.display = 'none';   // se está (re)abriendo
   // El botón 📊 vuelve a habilitar el gráfico si el visitante lo había cerrado.
   _faLiveHidden = false;
@@ -41358,6 +41697,7 @@ function startFA() {
   if (!nodes.length) return;
   mevAbort();   // el análisis completo (lo pidió el usuario) tiene prioridad sobre la eval de miniaturas
   _fa.running = true; _fa.armed = false; _fa.rokSeen = false; _fa.live = false; _fa.nodes = nodes;
+  _fa.relleno = false; _fa.cola = null; _fa.volver = null; _fa.forzar = -1;   // manual: todas, en orden
   faSetBuilding();
   // Sembrar las jugadas que ya traen [%eval] del PGN o que están en el caché del motor: el motor se
   // saltea esas y solo calcula el resto.
@@ -41380,6 +41720,8 @@ function startFA() {
 
 function faFinish() {
   _fa.running = false; _fa.armed = false;
+  _fa.relleno = false; _fa.cola = null; _fa.volver = null; _fa.forzar = -1; _fa.resume = null;
+  if (_fa._rellT) { clearTimeout(_fa._rellT); _fa._rellT = null; }
   if (_fa._capTimer) { clearTimeout(_fa._capTimer); _fa._capTimer = null; }
   // restaurar MultiPV para el análisis en vivo
   if (sf.engine) sf.engine.postMessage('setoption name MultiPV value 3');
@@ -41421,12 +41763,36 @@ function faNext() {
   // Saltar las jugadas que ya no necesitan (re)evaluación. Manual: las que tienen valor. Vivo: además
   // re-evalúa las últimas que solo traen [%eval] de Lichess, para tener NUESTRA profundidad y poder
   // calificarlas sin parpadeo (ver _faNeedsPassEval).
-  while (_fa.ply < _fa.nodes.length && !_faNeedsPassEval(_fa.ply)) _fa.ply++;
-  // Se empezó por el medio (aviso de colgada) y se llegó al final: volver al principio por las que
-  // quedaron. El gráfico sale entero igual, sólo que la parte que interesa se dibuja primero.
-  if (_fa.ply >= _fa.nodes.length && _fa.desde > 0) {
-    _fa.desde = 0; _fa.ply = 0;
-    while (_fa.ply < _fa.nodes.length && !_faNeedsPassEval(_fa.ply)) _fa.ply++;
+  // En vivo el pase es GRUESO: además saltea una posición sí y una no (_faSaltea); esas las completa
+  // después el relleno. La tanda de RELLENO no recorre en orden: toma las de su cola.
+  if (_fa.relleno) {
+    while (_fa.cola && _fa.cola.length && !_faNeedsPassEval(_fa.cola[0])) _fa.cola.shift();
+    _fa.ply = (_fa.cola && _fa.cola.length) ? _fa.cola.shift() : _fa.nodes.length;
+  } else {
+    while (_fa.ply < _fa.nodes.length && (!_faNeedsPassEval(_fa.ply) || _faSaltea(_fa.ply))) _fa.ply++;
+    // Se empezó por el medio (aviso de colgada) y se llegó al final: volver al principio por las que
+    // quedaron. El gráfico sale entero igual, sólo que la parte que interesa se dibuja primero.
+    if (_fa.ply >= _fa.nodes.length && _fa.desde > 0) {
+      _fa.desde = 0; _fa.ply = 0;
+      while (_fa.ply < _fa.nodes.length && (!_faNeedsPassEval(_fa.ply) || _faSaltea(_fa.ply))) _fa.ply++;
+    }
+  }
+  if (_fa.ply >= _fa.nodes.length && _fa.relleno) {
+    // Fin de una tanda de RELLENO: redibujar con lo nuevo y, si el motor sigue quieto, otra tanda.
+    // Si el módulo estaba en su tope (o apagado) no se relanza: sus líneas siguen en pantalla. Si era
+    // una PAUSA del módulo maduro, se lo reanuda en su posición y la próxima tanda espera su respiro.
+    var _r = _fa.resume; _fa.resume = null;
+    faFinish();
+    _fa._rellFinT = Date.now();
+    faClassify(); faRender(_faInterp(_fa.results)); faRenderStats(); faApplyNags(); cvUpdateNagBadge(); faUpdateBar();
+    _faNagSig = '';
+    if (_faLiveEligible() && !_faLiveHidden && faGetNodes().length > _fa.nodes.length) {
+      faLiveBuild();                          // llegaron jugadas: primero el pase de las nuevas
+      if (_fa.running) return;                // (al terminar relanza el módulo solo)
+    }
+    if (_r) { _sfReanudarVisor(_r); return; }
+    setTimeout(_faRellenarSiLibre, 0);
+    return;
   }
   if (_fa.ply >= _fa.nodes.length) {
     faFinish();
@@ -41447,6 +41813,9 @@ function faNext() {
       if (_fa.running) return;   // se relanzó el pase para las jugadas nuevas
     }
     if (sf.on && sf.ready) sfAnalyze();
+    // Vivo con el módulo apagado: el motor queda libre ya → completar lo salteado (con el módulo
+    // prendido esto no hace nada: arranca solo cuando el módulo llega a su tope).
+    if (_fa.live) setTimeout(_faRellenarSiLibre, 0);
     return;
   }
   _fa.lastScore = null;
@@ -41519,7 +41888,7 @@ function faHandleMsg(line) {
     // En la cola del vivo la vara es más alta (_FA_LIVE_DEEP_MIN, via _fa.minD): mejor un hueco
     // interpolado que dibujar una eval poco profunda — al reintentar, la hash precalentada llega más lejos.
     if (!_fa.lastScore || (_fa.lastScore.mate === undefined && (_fa.lastDepth || 0) < (_fa.minD || 8))) {
-      _fa.ply++;
+      _faSiguiente();   // (en vivo puede volver a afinar o seguir donde iba)
       faNext();
       return;
     }
@@ -41551,7 +41920,7 @@ function faHandleMsg(line) {
       // Una jugada queda sin símbolo hasta que ella y la anterior están confirmadas: eso no cambia.
       _faReclassifyIfChanged();
     }
-    _fa.ply++;
+    _faSiguiente();   // la siguiente; o, si abrió un salto grande, la del medio (ver _faAfinar)
     faNext();
   }
 }
@@ -41659,7 +42028,7 @@ function faHoverEnd() {
 /* Mover solo la rayita de la posición actual (sin reconstruir todo el gráfico).
    Esto evita el tilde al navegar una vez hecho el análisis. */
 function faUpdateMarker() {
-  if (typeof _fa === 'undefined' || !_fa.results.length || _fa.running) return;
+  if (typeof _fa === 'undefined' || !_fa.results.length || _faOcupado()) return;   // (el relleno no frena la rayita)
   var line = document.getElementById('fa-marker');
   if (!line) { faRender(); return; }   // todavía no hay gráfico → armarlo
   var n = _fa.results.length, W = 500;
@@ -41687,9 +42056,10 @@ function faUpdateBar() {
   var scoreEl = document.getElementById('sf-score');
   // Pase EN VIVO corriendo: conservar lo que se muestra (antes la barra se OCULTABA unos segundos
   // en cada jugada nueva, hasta que el pase evaluaba). Al terminar, faNext llama de nuevo acá.
-  if (_fa.running && _fa.live && _fa.results.length) return;
+  // (El RELLENO de lo salteado no cuenta: la barra sigue a la jugada como con el gráfico terminado.)
+  if (_faOcupado() && _fa.live && _fa.results.length) return;
   // Sin análisis: barra oculta, tablero limpio.
-  if (_fa.running || !_fa.results.length) {
+  if (_faOcupado() || !_fa.results.length) {
     vbar.classList.remove('show');
     fill.style.height = '50%';
     return;
@@ -42106,9 +42476,12 @@ function faRenderStats() {
 
 function faReset() {
   if (typeof _fa === 'undefined') return;
+  _faCederRelleno();   // relleno en curso (quizá con el módulo en pausa): cortarlo por la vía que lo reanuda
   if (_fa._capTimer) { clearTimeout(_fa._capTimer); _fa._capTimer = null; }
   if (_fa.running) { _fa.running = false; if (sf.engine) { sf.engine.postMessage('stop'); sf.engine.postMessage('setoption name MultiPV value 3'); } }
   _fa.armed = false;
+  _fa.relleno = false; _fa.cola = null; _fa.volver = null; _fa.forzar = -1;
+  if (_fa._rellT) { clearTimeout(_fa._rellT); _fa._rellT = null; }
   _fa.results = []; _fa.nodes = []; _fa.ply = 0; _fa.desde = 0; _fa.stats = null;
   // En modo en vivo NO ocultamos el gráfico NI la barra (faLiveBuild los repuebla enseguida con la
   // partida nueva, sin parpadeo): ocultar la barra acá hacía que, con el motor apagado, DESAPARECIERA
@@ -45435,7 +45808,7 @@ function cvUpdateNagBadge() {
     // 🤝 Motor repartido (ver _repSync): qué ronda miro y si ayudo; lo que calculé; y desmentir a otro.
     logueado:function(){ return !!lvAuthUser(); },
     repHola:function(c, ayuda){ if(!tcRoom || !tcWs || tcWs.readyState!==1) return false; tcRawSend({ type:'rep-hola', c:c, ayuda:!!ayuda }); return true; },
-    repEv:function(c, e){ if(!tcRoom || !tcWs || tcWs.readyState!==1 || !lvAuthUser()) return false; tcRawSend({ type:'ev', c:c, e:e }); return true; },
+    repEv:function(c, e){ if(!tcRoom || !tcWs || tcWs.readyState!==1) return false; tcRawSend({ type:'ev', c:c, e:e }); return true; },
     repQueja:function(de){ if(!tcRoom || !lvAuthUser()) return false; tcRawSend({ type:'ev-mal', de:de }); return true; },
     // 🚨 Avisar una colgada al arbitrito para que se la reparta a todo el torneo (ver _colRepartir).
     // Sólo los logueados avisan, igual que para escribir: así hay a quién silenciar si alguien abusa.

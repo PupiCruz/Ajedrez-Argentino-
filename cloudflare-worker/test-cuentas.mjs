@@ -643,11 +643,12 @@ console.log('\n=== 10. La IA sabe redactar torneos POR EQUIPOS (Olimpiadas, liga
   globalThis.fetch = async (url, opts) => { pedidos.push(String(url)); if (opts && opts.signal) conSenal++; return responder(String(url), opts); };
   const pendientes = [];
   const ctxLi = { waitUntil(p) { pendientes.push(p); } };
-  const pedirLibc = (url) => worker.fetch(req('/libc?url=' + encodeURIComponent(url)), env, ctxLi);
+  const pedirLibc = (url, ctx) => worker.fetch(req('/libc?url=' + encodeURIComponent(url)), env, ctx || ctxLi);
   const ronda = (id) => 'https://lichess.org/api/broadcast/round/' + id + '.pgn';
   const vivo = (j) => '[Event "X"]\n[White "A"]\n[Black "B"]\n[Result "*"]\n\n1. e4 * jugada-' + j;
   try {
     let jugada = 2;
+    const ctxColgada = { waitUntil() {} };   // el visitante de la colgada: lo suyo no se espera acá
     responder = (url, opts) => url.includes('colgada')
       ? new Promise((_, no) => opts.signal.addEventListener('abort', () => no(new Error('timeout'))))
       : new Response(vivo(jugada), { status: 200 });
@@ -660,7 +661,7 @@ console.log('\n=== 10. La IA sabe redactar torneos POR EQUIPOS (Olimpiadas, liga
     const timers = [];
     globalThis.setTimeout = (fn, ms) => { timers.push({ fn, ms }); return timers.length; };
     globalThis.clearTimeout = () => {};
-    const pColgada = pedirLibc(ronda('colgada'));
+    const pColgada = pedirLibc(ronda('colgada'), ctxColgada);
     for (let i = 0; i < 200 && !pedidos.some((u) => u.includes('colgada')); i++) await Promise.resolve();
     globalThis.setTimeout = stAntes; globalThis.clearTimeout = ctAntes;
     chk(timers.some((t) => t.ms === 45000), 'la bajada colgada tiene su tiempo límite de 45 s');
@@ -691,6 +692,88 @@ console.log('\n=== 10. La IA sabe redactar torneos POR EQUIPOS (Olimpiadas, liga
         'cortada la colgada, el refresco de fondo vuelve a andar con la copia recién vencida', r.headers.get('x-fa-estado'));
     chk(/x-fa-estado/.test(r.headers.get('Access-Control-Expose-Headers') || ''),
         'el navegador puede leer el diagnóstico (edad y estado de la copia)');
+  } finally {
+    globalThis.caches = cachesAntes; globalThis.fetch = fetchAntes; Date.now = nowAntes;
+    globalThis.setTimeout = stAntes; globalThis.clearTimeout = ctAntes;
+  }
+}
+
+// ── La bajada compartida que no termina nunca (26/09/2026) ─────────────────────────────────────────────
+// Olimpiada de Samarcanda, R10: la parte Open V quedó colgada PARA SIEMPRE en el colo de Buenos Aires (por
+// São Paulo salía en 7 s). La app corta a los 15 s, Cloudflare cancela la bajada de ese pedido y su promesa
+// no se resuelve más — ni con el tiempo límite, cuyo timer era del pedido cancelado. Los pedidos siguientes
+// la esperaban sin fin. Acá: un Lichess de mentira que nunca contesta y NO hace caso a la señal de corte.
+{
+  console.log('\n=== 12e. Lichess: una bajada compartida muerta no cuelga a los que vienen atrás ===');
+  const guardado = new Map();
+  const cacheFalsa = {
+    async match(k) { const r = guardado.get(typeof k === 'string' ? k : k.url); return r ? r.clone() : undefined; },
+    async put(k, r) { guardado.set(typeof k === 'string' ? k : k.url, r.clone()); },
+  };
+  const cachesAntes = globalThis.caches, fetchAntes = globalThis.fetch, nowAntes = Date.now;
+  const stAntes = globalThis.setTimeout, ctAntes = globalThis.clearTimeout;
+  globalThis.caches = { default: cacheFalsa };
+  let reloj = 3_500_000_000_000;
+  Date.now = () => reloj;
+  const timers = [];
+  globalThis.setTimeout = (fn, ms) => { timers.push({ fn, ms }); return timers.length; };
+  globalThis.clearTimeout = () => {};
+  const pedidos = [];
+  const muertas = new Set();   // ids que no contestan nunca
+  let soltarLenta = null;
+  globalThis.fetch = async (url) => {
+    url = String(url); pedidos.push(url);
+    const id = (url.match(/round\/(\w+)\.pgn/) || [])[1];
+    if (muertas.has(id)) return new Promise(() => {});
+    if (id === 'lenta') await new Promise((ok) => { soltarLenta = ok; });
+    return new Response('[Event "X"]\n[Result "*"]\n\n1. e4 * ' + id, { status: 200 });
+  };
+  const ronda = (id) => 'https://lichess.org/api/broadcast/round/' + id + '.pgn';
+  const clave = (id) => 'https://cr-proxy.test/libc?url=' + encodeURIComponent('https://lichess.org/api/broadcast/round/' + id + '.pgn');
+  const pedir = (id, ctx) => worker.fetch(req('/libc?url=' + encodeURIComponent(ronda(id))), env, ctx || { waitUntil() {} });
+  const esperarA = async (cond) => { for (let i = 0; i < 300 && !cond(); i++) await Promise.resolve(); };
+  const veces = (id) => pedidos.filter((u) => u.includes('/' + id + '.pgn')).length;
+  try {
+    // El primer visitante arranca la bajada de Open V y se va: queda colgada para siempre.
+    muertas.add('openV');
+    pedir('openV');
+    await esperarA(() => veces('openV') === 1);
+    chk(veces('openV') === 1, 'el primer visitante arranca la bajada de Open V (y queda colgada)');
+
+    // El segundo, en el mismo isolate, la espera… pero con plazo propio. ANTES: esperaba para siempre.
+    const n = timers.length;
+    const pB = pedir('openV');
+    await esperarA(() => timers.slice(n).some((t) => t.ms >= 45000));
+    const plazo = timers.slice(n).find((t) => t.ms >= 45000);
+    chk(!!plazo && plazo.ms <= 50000, '🔒 el que espera una bajada ajena tiene su propio plazo (≤ 50 s)', plazo && plazo.ms);
+    chk(veces('openV') === 1, 'y mientras tanto no larga otra bajada encima', veces('openV'));
+    reloj += 50_000; plazo.fn();
+    const rB = await pB;
+    chk(rB.status === 502, '🔒 vencido el plazo contesta con error (la app reintenta) en vez de colgarse', rB.status);
+
+    // La muerta ya se olvidó: el siguiente baja de nuevo y, con Lichess andando, la trae.
+    muertas.delete('openV');
+    const rC = await pedir('openV');
+    chk(rC.status === 200 && rC.headers.get('x-fa-estado') === 'nueva' && veces('openV') === 2,
+        '🔒 el pedido siguiente baja de nuevo y trae la ronda', rC.status + ' ' + rC.headers.get('x-fa-estado'));
+
+    // Una muerta que nadie esperó: pasado el plazo se da por muerta al llegar el pedido siguiente.
+    muertas.add('womenIV');
+    pedir('womenIV');
+    await esperarA(() => veces('womenIV') === 1);
+    muertas.delete('womenIV');
+    reloj += 51_000;
+    const rD = await pedir('womenIV');
+    chk(rD.status === 200 && veces('womenIV') === 2, '🔒 una bajada de hace más de 50 s se da por muerta y se baja de nuevo',
+        rD.status + ' ' + veces('womenIV'));
+
+    // La copia la guarda la bajada misma, anotada en waitUntil ANTES de terminar: si el visitante se va, igual queda.
+    const pend = [];
+    const pF = pedir('lenta', { waitUntil(p) { pend.push(p); } });
+    await esperarA(() => !!soltarLenta);
+    chk(pend.length >= 1, '🔒 la bajada queda anotada en waitUntil antes de terminar (sigue aunque el visitante se vaya)', pend.length);
+    soltarLenta(); await pF; await Promise.all(pend);
+    chk(guardado.has(clave('lenta')), 'y al terminar guarda la copia para los que vienen');
   } finally {
     globalThis.caches = cachesAntes; globalThis.fetch = fetchAntes; Date.now = nowAntes;
     globalThis.setTimeout = stAntes; globalThis.clearTimeout = ctAntes;
