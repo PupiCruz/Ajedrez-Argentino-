@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1834;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1835;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -633,6 +633,11 @@ console.log('\n=== 18. La pestaña de los torneos por equipos ===');
       'en la carrera por la punta de equipos, los nombres no son clickeables (y dice si va por match o por tablero)');
   chk(/porPct \? 'por porcentaje de puntos \(no había Elo\)/.test(SRC),
       'sin Elo, las medallas avisan que van por porcentaje');
+  // Olimpiadas viejas de Chess-Results (Elistá 1998 … Batumi 2018): la tabla no trae federación, sólo
+  // el nombre. Sin esto no se reconocía a Argentina y no salía su actuación (26 categorías).
+  chk(/return t\.fed \|\| \(typeof _paisFed === 'function' \? _paisFed\(_stTeamName\(t\.name\)\) : ''\)/.test(SRC)
+      && /String\(fedT\(t\)\)\.toUpperCase\(\) === 'ARG'/.test(SRC),
+      'sin columna de federación, a Argentina se la reconoce por el nombre');
 
   // Contra las tablas OFICIALES de OlimpBase (26/09/2026).
   const H = new Function(extraerFuncion('_stOlimpSinTableros') + extraerFuncion('_stPodioEmpates')
@@ -652,7 +657,8 @@ console.log('\n=== 18. La pestaña de los torneos por equipos ===');
   chk(t1.length === 4 && t1[3].puesto === 3, 'empate en el bronce: entran los dos', t1.map(p => p.puesto + p.n).join(' '));
 
   // La actuación argentina sólo cuando los equipos son PAÍSES (en una liga de clubes no va).
-  chk(/var esPaises = teams\.some\(function\(t\)\{ return t\.fed && String\(t\.fed\)\.length === 3; \}\);/.test(SRC),
+  // (La sigla sale de la tabla o, si falta, del nombre SÓLO si es un país: _paisFed da '' para un club.)
+  chk(/var esPaises = teams\.some\(function\(t\)\{ var f = fedT\(t\); return f && String\(f\)\.length === 3; \}\);/.test(SRC),
       'la actuación argentina se muestra sólo si los equipos son países');
 }
 

@@ -12385,14 +12385,20 @@ function _stTeamBuild(crk, data, meta){
 
   var regla = _stTeamMatchRule(teams);
   // nombre del cuadro → federación, para poder mostrar los países en castellano (los clubes, tal cual)
+  // Las tablas de las Olimpiadas viejas de Chess-Results (Bled 2002, etc.) NO traen la columna de
+  // federación: sólo el nombre ("Argentina", "Russia"). Sin sigla no se reconocía a Argentina y no
+  // salía su actuación. Si falta, se saca del nombre (sólo si el nombre ES un país: un club, no).
+  var fedT = function(t){
+    return t.fed || (typeof _paisFed === 'function' ? _paisFed(_stTeamName(t.name)) : '') || '';
+  };
   var fedDe = {};
-  teams.forEach(function(t){ var n = _stTeamName(t.name); if (n && t.fed) fedDe[n] = t.fed; });
+  teams.forEach(function(t){ var n = _stTeamName(t.name), f = fedT(t); if (n && f) fedDe[n] = f; });
   var esNom = function(n){ return _paisES(n, fedDe[n] || ''); };
   var equipoInfo = function(t){
     var n = _stTeamName(t.name);
     // La tabla de un todos-contra-todos (grilla) no trae ganados/empatados/perdidos: van los contados.
     var c = (t.w == null && P.gpe[n]) ? P.gpe[n] : null;
-    return { nombre:esNom(n), fed:t.fed || '', puesto:t.rk || null,
+    return { nombre:esNom(n), fed:fedT(t), puesto:t.rk || null,
              g: c ? c.g : (parseInt(t.w, 10) || 0), e: c ? c.e : (parseInt(t.d, 10) || 0), p: c ? c.p : (parseInt(t.l, 10) || 0),
              match: (P.mp[n] != null ? P.mp[n] : null), tablero: (P.bp[n] != null ? P.bp[n] : null) };
   };
@@ -12482,10 +12488,10 @@ function _stTeamBuild(crk, data, meta){
 
   // La actuación argentina: solo si los equipos son PAÍSES y Argentina jugó.
   var argentina = null;
-  var esPaises = teams.some(function(t){ return t.fed && String(t.fed).length === 3; });
+  var esPaises = teams.some(function(t){ var f = fedT(t); return f && String(f).length === 3; });
   if (esPaises){
     var tArg = null;
-    teams.forEach(function(t){ if (!tArg && String(t.fed).toUpperCase() === 'ARG') tArg = t; });
+    teams.forEach(function(t){ if (!tArg && String(fedT(t)).toUpperCase() === 'ARG') tArg = t; });
     if (tArg){
       var nArg = _stTeamName(tArg.name);
       argentina = equipoInfo(tArg);
