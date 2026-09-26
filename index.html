@@ -6669,6 +6669,42 @@ function _histUi(on) {
    al POOL, un contenedor por categoría (no al navegador: pesan ~1 MB y el navegador tiene ~5 MB). Al
    publicar, las del pool se hornean solas en el archivo del torneo. Volver a importar el mismo torneo
    lo REEMPLAZA entero (sirve para corregir). Queda en memoria hasta "💾 Guardar datos en mi carpeta". */
+/* 🔖 COPIAR DE OLIMPBASE (modo autor, 25/09). Para que el autor cargue Olimpiadas SOLO, sin Claude:
+   un FAVORITO del navegador (bookmarklet) con el lector de herramientas/olimpbase-lector.js adentro.
+   Se usa parado en olimpbase.org —su filtro anti-robots sólo deja leer desde una pestaña de su propio
+   sitio—: lee el torneo página por página y baja el paquete .json que carga "📥 Importar torneo
+   histórico". El favorito lleva el código ENTERO (no lo baja de ningún lado): anda aunque la web no esté
+   publicada. Si cambia el lector, hay que volver a arrastrarlo. */
+async function histFavoritoOlimpbase() {
+  var code = '';
+  try { var r = await fetch('herramientas/olimpbase-lector.js', { cache: 'no-store' }); if (r.ok) code = await r.text(); } catch (e) {}
+  if (!code) { _histAviso('❌', 'No encontré el lector', 'Falta el archivo herramientas\\olimpbase-lector.js en la carpeta de la app.'); return; }
+  var back = document.createElement('div'); back.className = 'aa-modal-back';
+  back.innerHTML = '<div class="aa-modal" role="dialog" aria-modal="true" aria-label="Copiar de OlimpBase" style="max-width:540px">'
+    + '<div class="aa-modal-ic">🔖</div><h3 class="aa-modal-h">Copiar Olimpiadas de OlimpBase</h3>'
+    + '<ol class="aa-modal-p" style="text-align:left;padding-left:22px;margin:0 0 10px;display:flex;flex-direction:column;gap:8px">'
+    + '<li><b>Arrastrá</b> este botón a la barra de favoritos del navegador (si no la ves: <b>Ctrl+Mayús+B</b>):'
+    + '<div style="margin:8px 0 2px"><a class="hist-btn hist-fav" draggable="true" style="display:inline-block;text-decoration:none;cursor:grab">📥 Copiar a ChessArgentino</a></div>'
+    + '<span class="hist-fav-nota" style="font-size:12px;opacity:.8"></span></li>'
+    + '<li>Entrá a <b>olimpbase.org</b>, abrí la Olimpiada que quieras (cualquier página de ella sirve) y tocá el favorito.</li>'
+    + '<li>Esperá a que termine: lee página por página, sin apurar a OlimpBase (1 a 3 minutos). Al final te <b>baja un archivo .json</b>.</li>'
+    + '<li>Volvé acá y cargalo con <b>📥 Importar torneo histórico</b>: antes de cargar te muestra qué cerró y qué conviene revisar.</li></ol>'
+    + '<p class="aa-modal-p" style="font-size:12px;opacity:.8;text-align:left">Hoy sabe leer las Olimpiadas de todos contra todos (1927 a 1939 y 1950). Si Claude mejora el lector, volvé a arrastrar el botón y borrá el favorito viejo.</p>'
+    + '<div class="aa-modal-btns"><button class="aa-modal-go" type="button">Entendido</button></div></div>';
+  var a = back.querySelector('.hist-fav');
+  a.href = 'javascript:' + encodeURIComponent(code);
+  a.addEventListener('click', function (e) {
+    e.preventDefault();
+    back.querySelector('.hist-fav-nota').textContent = 'Tocarlo acá no hace nada: arrastralo (mantené apretado y soltalo en la barra de favoritos).';
+  });
+  function cerrar() { back.remove(); document.removeEventListener('keydown', onKey); }
+  function onKey(e) { if (e.key === 'Escape') cerrar(); }
+  back.addEventListener('click', function (e) { if (e.target === back) cerrar(); });
+  back.querySelector('.aa-modal-go').addEventListener('click', cerrar);
+  document.addEventListener('keydown', onKey);
+  document.body.appendChild(back);
+  setTimeout(function () { back.classList.add('open'); }, 10);
+}
 function histImportarElegir() {
   var i = document.getElementById('hist-imp-file');
   if (!i) {
@@ -6714,6 +6750,38 @@ function _histPaqueteError(p) {
   }
   return '';
 }
+// El INFORME del paquete, en renglones para el cartel de Importar (25/09). Lo arma el lector de
+// OlimpBase (herramientas/olimpbase-lector.js): cuántas mesas encontraron su partida, cuáles no, nombres
+// que eligió "por orden de tablero", resultados que no coinciden… Acá se suma lo que sólo la app sabe:
+// qué equipos quedarían SIN BANDERA o con el nombre SIN TRADUCIR. Así el autor ve de una si el torneo
+// cerró o si conviene pedir una revisión. Paquete sin informe (los armados a mano) → sin renglones.
+function _histInformeLineas(p) {
+  var I = p && p.informe;
+  if (!I || typeof I !== 'object') return [];
+  var L = [], n = function (k) { return +I['n_' + k] || 0; };
+  var muestra = function (k) { var a = Array.isArray(I[k]) ? I[k] : []; return a.slice(0, 3).join(' · ') + (n(k) > 3 ? ' …' : ''); };
+  var jug = (+I.mesas || 0) - (+I.wo || 0), con = +I.conPartida || 0;
+  L.push((con >= jug ? '✅ ' : '⚠️ ') + con + ' de ' + jug + ' mesas con su partida (ojito)' + (I.wo ? ' · ' + I.wo + ' perdidas por incomparecencia' : ''));
+  if (n('sinPartida')) L.push('⚠️ ' + n('sinPartida') + ' mesas sin partida en el PGN: ' + muestra('sinPartida'));
+  if (n('sueltas')) L.push('⚠️ ' + n('sueltas') + ' partidas del PGN que no encontraron su mesa: ' + muestra('sueltas'));
+  if (n('resultados')) L.push('⚠️ ' + n('resultados') + ' resultados distintos entre la tabla y el PGN: ' + muestra('resultados'));
+  if (n('nombres')) L.push('⚠️ ' + n('nombres') + ' nombres dudosos: ' + muestra('nombres'));
+  if (n('sinJugar')) L.push('ℹ️ ' + n('sinJugar') + ' matches que no se jugaron: ' + muestra('sinJugar'));
+  if (n('corregidos')) L.push('🔧 ' + n('corregidos') + ' errores de la fuente que se corrigieron solos: ' + muestra('corregidos'));
+  var sinBandera = [], sinTraducir = [];
+  (Array.isArray(I.equipos) ? I.equipos : []).forEach(function (e) {
+    if (!e || !e.name) return;
+    if (!e.fed || !_FED_ISO[String(e.fed).toUpperCase()]) sinBandera.push(e.name);
+    // Sin traducir = el nombre no es ningún país que la app conozca ("Argentina" sí lo es, aunque
+    // en castellano se escriba igual). Los que el lector ya puso en castellano vienen con es:true.
+    var conocido = false; try { conocido = !!_nombreFedIx()[normStr(e.name)]; } catch (x) {}
+    if (!e.es && !conocido) sinTraducir.push(e.name);
+  });
+  if (sinTraducir.length) L.push('⚠️ ' + sinTraducir.length + ' países que la app no sabe decir en castellano: ' + sinTraducir.join(', '));
+  if (sinBandera.length) L.push('ℹ️ Sin bandera: ' + sinBandera.join(', ') + ' (está bien si el país ya no existe)');
+  if (L.length === 1 && con >= jug) L.push('✅ Nombres, resultados y países: todo cerró.');
+  return L;
+}
 async function histImportarTexto(txt) {
   var p = null;
   try { p = JSON.parse(txt); } catch (e) {}
@@ -6723,15 +6791,24 @@ async function histImportarTexto(txt) {
   var evs = Object.keys(p.partidas || {}), nPart = 0;
   evs.forEach(function (e) { nPart += p.partidas[e].length; });
   var nCats = (p.cfg.categories || []).length, col = p.cfg.coleccion ? _colDef(p.cfg.coleccion) : null;
+  var inf = _histInformeLineas(p);
   var ok = await window.aaAsk({
     icono: '📥', titulo: (ya ? 'Reemplazar ' : 'Importar ') + p.cfg.name,
-    texto: (nCats ? nCats + ' categorías, ' : '') + nPart + ' partidas' + (col ? ', en la colección ' + col.nombre : '') + '.'
-      + (ya ? ' Ya estaba cargado: se reemplaza entero por el del archivo.' : ''),
+    texto: (nCats ? nCats + (nCats === 1 ? ' categoría, ' : ' categorías, ') : '') + nPart + ' partidas' + (col ? ', en la colección ' + col.nombre : '') + '.'
+      + (ya ? ' Ya estaba cargado: se reemplaza entero por el del archivo (el flyer que le hayas puesto se conserva).' : '')
+      + (inf.length ? '\n\n' + inf.join('\n') : ''),
+    lineas: true,
     ok: ya ? 'Reemplazar' : 'Importar'
   });
   if (!ok) return;
-  // 1) La ficha.
-  cfg[p.id] = p.cfg;
+  // 1) La ficha. Lo que el autor le agregó a mano en Editar torneo (el flyer y su crédito, la rama, si
+  // va también en la lista general) no viene en el paquete: al reimportar se conserva.
+  var nuevo = Object.assign({}, p.cfg), viejo = ya ? cfg[p.id] : null;
+  if (viejo) {
+    ['flyerUrl', 'flyerPos', 'flyerCredit', 'flyerCreditUrl', 'rama'].forEach(function (k) { if (viejo[k] && !nuevo[k]) nuevo[k] = viejo[k]; });
+    if ('coleccionSolo' in viejo) nuevo.coleccionSolo = viejo.coleccionSolo;
+  }
+  cfg[p.id] = nuevo;
   saveTzConfig(cfg);
   if (!getTzConfig()[p.id]) { _histAviso('❌', 'No hubo lugar en el navegador', 'Liberá espacio (🔧 Mantenimiento) y probá de nuevo.'); return; }
   // 2) Los cuadros de cada categoría (primero se borran los viejos de este torneo, por si cambió cuántas hay).
@@ -6761,7 +6838,9 @@ function _histRender(items, tzCfg) {
     + (def ? '<button type="button" onclick="histAbrir(\'\')">Torneos históricos</button><span aria-hidden="true">›</span><b>' + escHtml(def.nombre) + '</b>'
            : '<b>Torneos históricos</b>') + '</div>'
     // Modo autor: meter un torneo armado afuera (el "paquete" que prepara Claude desde OlimpBase).
-    + (_ondemand ? '' : '<button type="button" class="hist-btn" style="font-size:12px;padding:6px 12px" onclick="histImportarElegir()" title="Cargar un torneo histórico desde su archivo (ficha, cuadros y partidas de una vez)">📥 Importar torneo histórico</button>')
+    + (_ondemand ? '' : '<div style="display:flex;gap:8px;flex-wrap:wrap">'
+      + '<button type="button" class="hist-btn" style="font-size:12px;padding:6px 12px" onclick="histFavoritoOlimpbase()" title="Instalar el favorito que copia una Olimpiada de OlimpBase y te baja su archivo">🔖 Copiar de OlimpBase</button>'
+      + '<button type="button" class="hist-btn" style="font-size:12px;padding:6px 12px" onclick="histImportarElegir()" title="Cargar un torneo histórico desde su archivo (ficha, cuadros y partidas de una vez)">📥 Importar torneo histórico</button></div>')
     + '</div>';
   if (!def) {
     // LAS COLECCIONES. En la web, sólo las que ya tienen torneos.
@@ -46587,7 +46666,8 @@ function cvUpdateNagBadge() {
         '<div class="aa-modal" role="dialog" aria-modal="true" aria-label="' + esc(o.titulo || 'Confirmar') + '">' +
           (o.icono ? '<div class="aa-modal-ic">' + esc(o.icono) + '</div>' : '') +
           '<h3 class="aa-modal-h">' + esc(o.titulo || '') + '</h3>' +
-          (o.texto ? '<p class="aa-modal-p">' + esc(o.texto) + '</p>' : '') +
+          // lineas: el texto respeta los renglones (el informe de 📥 Importar torneo histórico).
+          (o.texto ? '<p class="aa-modal-p"' + (o.lineas ? ' style="white-space:pre-line;text-align:left;max-height:55vh;overflow:auto"' : '') + '>' + esc(o.texto) + '</p>' : '') +
           (o.campo ? '<input class="aa-modal-in" maxlength="' + (o.max || 300) + '" placeholder="' +
                      esc(o.campo === true ? '' : o.campo) + '">' : '') +
           '<div class="aa-modal-btns">' +

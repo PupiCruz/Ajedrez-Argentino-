@@ -82,9 +82,18 @@ como tarjetas. Al tocar uno se abre la ficha de siempre.
 - **📥 Importar torneo histórico** (modo autor, dentro de la sección): carga un **paquete** `.json` con la
   ficha, los cuadros de cada categoría y las partidas (van al pool, una por categoría). Volver a importar
   el mismo torneo lo **reemplaza**. **Después: 💾 Guardar datos en mi carpeta** (hasta entonces las
-  partidas viven sólo en la pestaña) **y publicar.** Los paquetes los arma Claude desde OlimpBase con los
-  programitas de `.claude/olimpbase/` (`convert.mjs` → `limpiar-pgn.mjs` → `paquete.mjs`) y quedan en
-  `Escritorio\Torneos historicos\`.
+  partidas viven sólo en la pestaña) **y publicar.** Antes de cargar, el cartel muestra el **informe**:
+  cuántas mesas encontraron su partida (ojito), mesas sin partida, nombres dudosos, resultados que no
+  coinciden, países sin traducir o sin bandera. Reimportar **conserva el flyer** que le hayas puesto.
+- **🔖 Copiar de OlimpBase** (modo autor, al lado de Importar, 25/09/2026): el autor carga Olimpiadas
+  **solo, sin Claude**. El botón arma un **favorito** del navegador (bookmarklet) con el lector entero
+  (`herramientas/olimpbase-lector.js`): se arrastra a la barra de favoritos, se abre la Olimpiada en
+  olimpbase.org y se toca. Lee página por página (una cada ~1,2 s, para no cargar a OlimpBase; su filtro
+  anti-robots no se esquiva: se lee desde su propia pestaña) y **baja el paquete .json** →
+  📥 Importar. Si se cambia el lector, hay que **volver a arrastrar** el favorito. Hoy lee las Olimpiadas
+  de todos contra todos (1927–1939 y 1950); las de grupos (1952–1974) y las suizas (1976+) todavía no.
+  El número de cada partida en el PGN (`show_game_ob('37olm.pgn', '9')`) lo da OlimpBase: el ojito
+  engancha exacto. Para 1939 los programitas viejos de `.claude/olimpbase/` quedaron de historia.
 - **El árbol de aperturas sigue siendo de argentinos** (24/09/2026): de los torneos de una colección
   se ven TODAS las partidas al entrar (y el buscador las encuentra), pero al árbol (Partidas → 🌳)
   sólo suman las que juega algún argentino. En una Olimpiada manda el **equipo** del PGN

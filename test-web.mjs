@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1742;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1744;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -1676,6 +1676,25 @@ console.log('\n=== 34. La vitrina de trofeos del perfil ===');
       && /identificador/.test(PAQ(Object.assign({}, paqOk, { id: 'hc_1' })))
       && /vienen mal/.test(PAQ(Object.assign({}, paqOk, { partidas: { 'X · A': [3] } }))),
       '📥 el importador rechaza lo que no es un paquete sano (otro torneo, colección inventada, partidas rotas) antes de tocar nada');
+  // 🔖 El informe del lector de OlimpBase (25/09): lo que cerró y lo que hay que mirar, antes de importar.
+  const INF = new Function("var _FED_ISO = { ARG: 'ar', GER: 'de' };"
+    + "function normStr(s){ return String(s||'').toLowerCase(); }"
+    + "function _nombreFedIx(){ return { argentina: 'ARG', germany: 'GER', czechoslovakia: 'TCH' }; }\n"
+    + extraerFuncion('_histInformeLineas') + '; return _histInformeLineas;')();
+  const infOk = INF({ informe: { mesas: 10, wo: 1, conPartida: 9, n_sinPartida: 0, n_sueltas: 0, n_resultados: 0, n_nombres: 0, n_sinJugar: 0,
+    equipos: [{ name: 'Argentina', fed: 'ARG' }, { name: 'Germany', fed: 'GER' }] } });
+  const infMal = INF({ informe: { mesas: 10, wo: 0, conPartida: 8, n_sinPartida: 2, sinPartida: ['R1: A – B', 'R2: C – D'], n_nombres: 1, nombres: ['R3 mesa 2: "X" → Y'],
+    n_corregidos: 1, corregidos: ['R13 mesa 4: la página repite a K; según la planilla jugó C'],
+    equipos: [{ name: 'Czechoslovakia', fed: 'TCH' }, { name: 'Ruritania', fed: 'RUR' }, { name: 'Bohemia y Moravia', fed: '', es: true }] } });
+  chk(INF({}).length === 0 && /^✅ 9 de 9 mesas/.test(infOk[0]) && /incomparecencia/.test(infOk[0]) && /todo cerró/.test(infOk[1]) && infOk.length === 2
+      && /^⚠️ 8 de 10/.test(infMal[0]) && infMal.some(l => /^⚠️ 2 mesas sin partida: R1: A – B · R2: C – D$|^⚠️ 2 mesas sin partida en el PGN/.test(l))
+      && infMal.some(l => /nombres dudosos/.test(l)) && infMal.some(l => /^🔧 1 errores de la fuente que se corrigieron solos: R13 mesa 4/.test(l))
+      && infMal.some(l => /castellano: Ruritania$/.test(l))
+      && infMal.some(l => /Sin bandera: Czechoslovakia, Ruritania, Bohemia y Moravia/.test(l)),
+      '🔖 el informe del lector dice qué cerró y qué revisar (mesas sin partida, nombres dudosos, países sin traducir o sin bandera)');
+  chk(/\['flyerUrl', 'flyerPos', 'flyerCredit', 'flyerCreditUrl', 'rama'\]\.forEach\(function \(k\) \{ if \(viejo\[k\] && !nuevo\[k\]\) nuevo\[k\] = viejo\[k\]; \}\);/.test(extraerFuncion('histImportarTexto'))
+      && /a\.href = 'javascript:' \+ encodeURIComponent\(code\);/.test(extraerFuncion('histFavoritoOlimpbase')),
+      '🔖 reimportar un histórico conserva el flyer que le puso el autor, y el favorito lleva el lector entero');
   chk(/if \(categories\[_ci0\] && categories\[_ci0\]\.inicial\) \{ _catIni = _ci0; break; \}/.test(SRC)
       && /var c = _tdPodiumCtx; if \(!c \|\| c\.sinPodio\) return '';/.test(SRC)
       && /name: _paisES\(t\.name \|\| '', t\.fed\) \|\| t\.name/.test(extraerFuncion('_tdPodiumHtml')),
