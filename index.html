@@ -8956,7 +8956,8 @@ function _stRaceHtml(key, s, opts){
   var W = 340, H = 124, L = 19, R = 7, T = 7, B = 17;
   var px = function(i){ return L + (n === 1 ? 0 : i * (W - L - R) / (n - 1)); };
   var py = function(v){ return T + (1 - v / maxP) * (H - T - B); };
-  var paso = maxP > 7 ? 2 : 1;
+  // Con puntos de tablero (Olimpiadas viejas) se llega a 40: de a 2 serían 20 rayas.
+  var paso = maxP > 24 ? 5 : (maxP > 7 ? 2 : 1);
 
   var g = '';
   for (var v = 0; v <= maxP; v += paso){
@@ -9012,6 +9013,9 @@ function _stTeamPanelHtml(key, s){
   // Nombre de jugador clickeable (abre su performance en el torneo). Los equipos NO son clickeables.
   var jug = function(p){ return p ? _stNm(key, p.raw, p.nombre, p.titulo) : ''; };
   var puntaje = function(p){ return crPtsStr(p.pts) + '/' + p.partidas; };
+  // Sin Elo (Olimpiadas viejas) las medallas van por porcentaje: "87,5%" en vez del Rp.
+  var porPct = s.medallasPor === 'pct';
+  var pctStr = function(p){ return p && p.pct != null ? (String(p.pct).replace('.', ',') + '%') : ''; };
 
   // ── El torneo en números ──
   var tiles = [];
@@ -9023,7 +9027,8 @@ function _stTeamPanelHtml(key, s){
   if (t.elo && t.elo.prom) tiles.push({ n:t.elo.prom, l:'ELO PROMEDIO' });
   if (tiles.length){
     h += '<div class="st-sec"><div class="st-h"><b role="heading" aria-level="3"><span aria-hidden="true">🔢</span> El torneo en números</b>'
-       + '<span>' + (s.reglaMatch === '2-1-0' ? 'puntos de match: 2 por ganar, 1 por empatar' : '') + '</span></div><div class="st-tiles">';
+       + '<span>' + (s.criterio === 'tablero' ? 'la tabla se definía por puntos de tablero'
+                    : (s.reglaMatch === '2-1-0' ? 'puntos de match: 2 por ganar, 1 por empatar' : '')) + '</span></div><div class="st-tiles">';
     tiles.forEach(function(x){ h += '<div class="st-tile">' + _a11yEnVezDe('<b>' + x.n + '</b><span>' + x.l + '</span>', x.n + ' ' + String(x.l).toLowerCase()) + '</div>'; });
     h += '</div></div>';
   }
@@ -9032,23 +9037,29 @@ function _stTeamPanelHtml(key, s){
   var aw = '';
   if (s.campeon){
     var det = [s.campeon.g + 'G ' + s.campeon.e + 'E ' + s.campeon.p + 'P'];
-    if (s.campeon.match != null) det.push(s.campeon.match + ' pts de match');
-    if (s.campeon.tablero != null) det.push(crPtsStr(s.campeon.tablero) + ' de tablero');
+    // Primero lo que define la tabla: en las Olimpiadas viejas, los puntos de tablero.
+    var dM = s.campeon.match != null ? (s.campeon.match + ' pts de match') : null;
+    var dT = s.campeon.tablero != null ? (crPtsStr(s.campeon.tablero) + ' de tablero') : null;
+    (s.criterio === 'tablero' ? [dT, dM] : [dM, dT]).forEach(function(x){ if (x) det.push(x); });
     aw += _stAward('🏆', 'Campeón', nm(s.campeon.nombre), escHtml(det.join(' · ')), true);
   }
+  var ptsPodio = function(p){
+    if (s.criterio === 'tablero') return p.tablero != null ? (' · ' + crPtsStr(p.tablero) + ' pts') : '';
+    return p.match != null ? (' · ' + p.match + ' pts') : '';
+  };
   if (s.podio && s.podio[1])
     aw += _stAward('🥈', 'Escolta', nm(s.podio[1].nombre),
-      s.podio[1].g + 'G ' + s.podio[1].e + 'E ' + s.podio[1].p + 'P' + (s.podio[1].match != null ? (' · ' + s.podio[1].match + ' pts') : ''));
+      s.podio[1].g + 'G ' + s.podio[1].e + 'E ' + s.podio[1].p + 'P' + ptsPodio(s.podio[1]));
   if (s.podio && s.podio[2])
     aw += _stAward('🥉', 'Tercero', nm(s.podio[2].nombre),
-      s.podio[2].g + 'G ' + s.podio[2].e + 'E ' + s.podio[2].p + 'P' + (s.podio[2].match != null ? (' · ' + s.podio[2].match + ' pts') : ''));
+      s.podio[2].g + 'G ' + s.podio[2].e + 'E ' + s.podio[2].p + 'P' + ptsPodio(s.podio[2]));
   var gol = s.equipos && s.equipos.goleador;
   if (gol && (!s.campeon || gol.nombre !== s.campeon.nombre || gol.tablero !== s.campeon.tablero))
     aw += _stAward('🎯', 'El más goleador', nm(gol.nombre), crPtsStr(gol.tablero) + ' puntos de tablero');
   if (aw) h += '<div class="st-sec"><div class="st-h"><b role="heading" aria-level="3"><span aria-hidden="true">🏅</span> Los equipos</b></div><div class="st-awards">' + aw + '</div></div>';
 
   // ── La carrera por la punta (en puntos de match) ──
-  h += _stRaceHtml(key, s, { sub:'puntos de match, ronda a ronda', sinClic:true });
+  h += _stRaceHtml(key, s, { sub:(s.criterio === 'tablero' ? 'puntos de tablero, ronda a ronda' : 'puntos de match, ronda a ronda'), sinClic:true });
 
   // ── La actuación argentina ──
   var a = s.argentina;
@@ -9063,10 +9074,11 @@ function _stTeamPanelHtml(key, s){
     if (a.jugadores && a.jugadores.length){
       h += '<div class="st-arg">';
       a.jugadores.forEach(function(p){
-        h += '<div class="st-argrow"><b>' + (p.mesa ? ('Tablero ' + p.mesa) : '') + '</b>'
+        h += '<div class="st-argrow"><b>' + (p.mesa && !s.sinTableros ? ('Tablero ' + p.mesa) : '') + '</b>'
           + '<div>' + jug(p) + '</div>'
           + '<div class="pts">' + puntaje(p) + '</div>'
-          + '<div class="rp">' + (p.rp ? _a11yEnVezDe('Rp ' + p.rp, 'performance ' + p.rp) : '') + '</div></div>';
+          + '<div class="rp">' + (p.rp ? _a11yEnVezDe('Rp ' + p.rp, 'performance ' + p.rp)
+                                  : (porPct && p.partidas ? pctStr({ pct: Math.round(p.pts / p.partidas * 1000) / 10 }) : '')) + '</div></div>';
       });
       h += '</div>';
     }
@@ -9077,17 +9089,34 @@ function _stTeamPanelHtml(key, s){
   if (s.premios && s.premios.porMesa && s.premios.porMesa.length){
     var MED = ['🥇','🥈','🥉'];
     h += '<div class="st-sec"><div class="st-h"><b role="heading" aria-level="3"><span aria-hidden="true">🥇</span> Las medallas por tablero</b>'
-       + '<span>por performance, en el tablero que cada uno ocupa en su equipo</span></div><div class="st-mesas">';
+       + '<span>' + (porPct ? 'por porcentaje de puntos (no había Elo), en el tablero que cada uno ocupa en su equipo'
+                            : 'por performance, en el tablero que cada uno ocupa en su equipo') + '</span></div><div class="st-mesas">';
     s.premios.porMesa.forEach(function(x){
       h += '<div class="st-mesa"><b>Tablero ' + x.mesa + '</b>';
       (x.podio || []).forEach(function(p, i){
-        h += '<div class="st-medal"><em>' + MED[i] + '</em>'
+        // Con empate, la medalla se comparte (`puesto`): dos oros y el que sigue es bronce.
+        h += '<div class="st-medal"><em>' + MED[(p.puesto || (i + 1)) - 1] + '</em>'
           + '<div>' + jug(p) + '<i>' + escHtml(p.equipo || '') + ' · ' + puntaje(p) + '</i></div>'
-          + '<span>' + p.rp + '</span></div>';
+          + '<span>' + (porPct ? pctStr(p) : p.rp) + '</span></div>';
       });
       h += '</div>';
     });
     h += '</div></div>';
+  }
+
+  // ── 1927 y 1928: los 6 mejores del torneo (no había orden de tableros) ──
+  if (s.premios && s.premios.mejores6 && s.premios.mejores6.length){
+    var MED6 = ['🥇','🥈','🥉'];
+    h += '<div class="st-sec"><div class="st-h"><b role="heading" aria-level="3"><span aria-hidden="true">🥇</span> Los premios individuales</b>'
+       + '<span>no había orden de tableros: se premiaban los 6 mejores porcentajes del torneo</span></div>'
+       + '<div class="st-mesas"><div class="st-mesa"><b>Los 6 mejores</b>';
+    s.premios.mejores6.forEach(function(p){
+      var pu = p.puesto || 1;
+      h += '<div class="st-medal"><em>' + (MED6[pu - 1] || _a11yEnVezDe(pu + 'º', 'puesto ' + pu)) + '</em>'
+        + '<div>' + jug(p) + '<i>' + escHtml(p.equipo || '') + ' · ' + puntaje(p) + '</i></div>'
+        + '<span>' + pctStr(p) + '</span></div>';
+    });
+    h += '</div></div></div>';
   }
 
   // ── Los jugadores ──
@@ -9095,6 +9124,9 @@ function _stTeamPanelHtml(key, s){
   if (pj.mejorRp)
     aw2 += _stAward('🎯', 'Mejor performance', jug(pj.mejorRp),
       'Rp ' + pj.mejorRp.rp + ' · ' + puntaje(pj.mejorRp) + ' · ' + escHtml(pj.mejorRp.equipo || ''), true);
+  else if (pj.mejorPct)
+    aw2 += _stAward('🎯', 'El mejor porcentaje', jug(pj.mejorPct),
+      pctStr(pj.mejorPct) + ' · ' + puntaje(pj.mejorPct) + ' · ' + escHtml(pj.mejorPct.equipo || ''), true);
   if (pj.masPuntos)
     aw2 += _stAward('♟️', 'El que más puntos hizo', jug(pj.masPuntos),
       puntaje(pj.masPuntos) + ' · ' + escHtml(pj.masPuntos.equipo || ''));
@@ -9141,6 +9173,11 @@ function _stTeamPanelHtml(key, s){
     h += '<div class="st-sec"><div class="st-h"><b role="heading" aria-level="3"><span aria-hidden="true">🎯</span> Top performances</b><span>Rp calculado de los tableros</span></div>'
        + _stRankList(key, s.topRp.map(function(p){ return { raw:p.raw, nombre:p.nombre, titulo:p.titulo, valor:p.rp }; }),
                      function(f){ return String(f.valor); })
+       + '</div>';
+  } else if (s.topPct && s.topPct.length){
+    h += '<div class="st-sec"><div class="st-h"><b role="heading" aria-level="3"><span aria-hidden="true">🎯</span> Los mejores porcentajes</b><span>entre los que jugaron el mínimo de partidas</span></div>'
+       + _stRankList(key, s.topPct.map(function(p){ return { raw:p.raw, nombre:p.nombre, titulo:p.titulo, valor:p.pct, txt:pctStr(p) + ' (' + puntaje(p) + ')' }; }),
+                     function(f){ return f.txt; })
        + '</div>';
   }
 
@@ -11494,7 +11531,7 @@ function _noticiaTeamDraft(data, m){
   if (pr.porMesa && pr.porMesa.length){
     var oros = pr.porMesa.map(function(x){
       var o = x.podio[0];
-      return neg(o.nombre) + ' (' + escHtml(o.equipo || '') + ', ' + o.rp + ') en el ' + x.mesa;
+      return neg(o.nombre) + ' (' + escHtml(o.equipo || '') + ', ' + (o.rp || (String(o.pct).replace('.', ',') + '%')) + ') en el ' + x.mesa;
     });
     P.push('<p><strong>El oro por tablero</strong> fue para ' + _ncLista(oros) + '.</p>');
   }
@@ -11545,7 +11582,8 @@ function _noticiaGatherDataTeam(data, m){
   var eq = function(x){ return x ? { nombre:x.nombre, ganados:x.g, empatados:x.e, perdidos:x.p,
                                      puntosMatch:x.match, puntosTablero:(x.tablero != null ? crPtsStr(x.tablero) : null) } : null; };
   var pl = function(p){ return p ? { nombre:p.nombre, titulo:p.titulo || '', equipo:p.equipo || '',
-                                     puntos:crPtsStr(p.pts), partidas:p.partidas, rp:p.rp || null } : null; };
+                                     puntos:crPtsStr(p.pts), partidas:p.partidas, rp:p.rp || null,
+                                     porcentaje:(!p.rp && p.pct != null) ? p.pct : undefined } : null; };
   // La lucha por la punta, en tramos ("India de la 6ª a la 11ª") en vez de once líneas.
   var tramos = [];
   ((s.carrera && s.carrera.lideres) || []).forEach(function(l){
@@ -11732,7 +11770,10 @@ function _stSig(data){
   var eq = (data.teamStandings && data.teamStandings.teams) ? data.teamStandings.teams.length : 0;
   return _ST_V + '|' + rs.length + '|' + n + '|' + ((data.standings || []).length)
        + '|' + (data.standingsRound || '') + '|' + (data.standingsFinal ? 'f' : '')
-       + '|' + tk.length + '|' + tn + '|' + eq + '|' + ((data.teamStandings && data.teamStandings.kind) || '');
+       + '|' + tk.length + '|' + tn + '|' + eq + '|' + ((data.teamStandings && data.teamStandings.kind) || '')
+       // Versión del formato POR EQUIPOS (así los individuales horneados siguen valiendo). 'e2' =
+       // jugadores sin Elo, medallas por porcentaje, carrera por puntos de tablero (26/09/2026).
+       + (tk.length ? '|e2' : '');
 }
 
 // ── Rp (performance) calculado desde los cruces ─────────────────────────────────────────────
@@ -12071,7 +12112,14 @@ function _stTeamBoardsAsRounds(data){
 function _stTeamPoints(data){
   var tr = (data && data.teamRounds) || {};
   var rondas = Object.keys(tr).map(Number).filter(function(n){ return !isNaN(n); }).sort(function(a,b){ return a-b; });
-  var mp = {}, bp = {}, gpe = {}, serie = {}, matches = 0, partidas = 0;
+  var mp = {}, bp = {}, gpe = {}, serie = {}, serieBp = {}, matches = 0, partidas = 0;
+  // Todos los equipos desde el arranque: en un todos-contra-todos con número impar, el que descansa en
+  // la 1ª ronda recién aparecía en la 2ª y su serie quedaba corrida una ronda.
+  rondas.forEach(function(r){
+    (tr[r] || []).forEach(function(mt){
+      [_stTeamName(mt.aName), _stTeamName(mt.bName)].forEach(function(eq){ if (eq && !(eq in mp)){ mp[eq] = 0; bp[eq] = 0; } });
+    });
+  });
   rondas.forEach(function(r){
     (tr[r] || []).forEach(function(mt){
       var A = _stTeamName(mt.aName), B = _stTeamName(mt.bName);
@@ -12085,17 +12133,75 @@ function _stTeamPoints(data){
         sa += s; sb += 1 - s; jugados++;
         if (_stJugada(b.res)) partidas++;
       });
-      if (!jugados) return;   // match sin jugar (ronda emparejada pero no disputada)
-      matches++;
+      if (!jugados){
+        // Match que NO se jugó pero se dio por resultado (Olimpiada 1939: al empezar la guerra varios
+        // se dieron 2-2 sin partidas). Suma a la tabla igual que en la oficial —sin eso Alemania, la
+        // campeona, quedaba con 30 en vez de 36—, pero no cuenta como match jugado.
+        if (mt.boards && mt.boards.length) return;
+        var sc = String(mt.score || '').split(/\s*[:–-]\s*/);
+        var xa = sc.length === 2 ? _stPts(sc[0]) : null, xb = sc.length === 2 ? _stPts(sc[1]) : null;
+        if (xa == null || xb == null || !(xa + xb)) return;   // ronda emparejada pero no disputada
+        sa = xa; sb = xb;
+      } else matches++;
       bp[A] = (bp[A] || 0) + sa;  bp[B] = (bp[B] || 0) + sb;
       mp[A] = (mp[A] || 0) + (sa > sb ? 2 : (sa === sb ? 1 : 0));
       mp[B] = (mp[B] || 0) + (sb > sa ? 2 : (sa === sb ? 1 : 0));
       var ga = gpe[A] || (gpe[A] = { g:0, e:0, p:0 }), gb = gpe[B] || (gpe[B] = { g:0, e:0, p:0 });
       if (sa > sb){ ga.g++; gb.p++; } else if (sa < sb){ ga.p++; gb.g++; } else { ga.e++; gb.e++; }
     });
-    Object.keys(mp).forEach(function(eq){ (serie[eq] || (serie[eq] = [])).push(mp[eq]); });
+    Object.keys(mp).forEach(function(eq){
+      (serie[eq] || (serie[eq] = [])).push(mp[eq]);
+      (serieBp[eq] || (serieBp[eq] = [])).push(bp[eq]);
+    });
   });
-  return { mp:mp, bp:bp, gpe:gpe, serie:serie, rondas:rondas, matches:matches, partidas:partidas };
+  // Los equipos que nunca jugaron (sólo figuraban en rondas sin disputar) no van.
+  Object.keys(mp).forEach(function(eq){ if (!gpe[eq]){ delete mp[eq]; delete bp[eq]; delete serie[eq]; delete serieBp[eq]; } });
+  return { mp:mp, bp:bp, gpe:gpe, serie:serie, serieBp:serieBp, rondas:rondas, matches:matches, partidas:partidas };
+}
+
+// Las Olimpiadas de 1927 y 1928 NO tenían orden de tableros: se premiaban los 6 mejores resultados
+// individuales del torneo, sin importar dónde jugó cada uno (lo dice OlimpBase: "No board order was
+// applied and only top 6 individual results were awarded"). Desde 1930/31, premios por tablero.
+// Se reconoce por la clave que arma el lector de OlimpBase (tz_ob1927) o por el nombre del torneo.
+function _stOlimpSinTableros(crk, meta){
+  var m = /_ob(\d{4})(?:_|$)/.exec(String(crk || ''));
+  var anio = m ? +m[1] : 0;
+  if (!anio && meta && /ol[ií]mp/i.test(meta.name || '')){
+    var y = /\b(19\d\d)\b/.exec((meta.name || '') + ' ' + (meta.dates || ''));
+    anio = y ? +y[1] : 0;
+  }
+  return anio === 1927 || anio === 1928;
+}
+
+// Los primeros `n` de una lista YA ORDENADA, con los EMPATES compartiendo puesto, como en las tablas
+// oficiales de OlimpBase (1939, tablero 2: Najdorf y Foerder, los dos oro con 75%; el siguiente es
+// 3º). Si hay empate en el último puesto, entran todos los empatados. Marca `puesto` en cada uno.
+function _stPodioEmpates(lista, n, val){
+  var out = [];
+  for (var i = 0; i < lista.length; i++){
+    var p = lista[i];
+    if (out.length >= n && val(p) !== val(out[out.length - 1])) break;
+    p.puesto = (i && val(p) === val(lista[i - 1])) ? out[i - 1].puesto : i + 1;
+    out.push(p);
+  }
+  return out;
+}
+
+// ¿La tabla se ordenó por puntos de TABLERO o de MATCH? Las Olimpiadas hasta 2004 se definían por
+// puntos de tablero (Londres 1927: Hungría campeona con 40, aunque Dinamarca sumaba más matches); desde
+// 2006, por matches. Se deduce de la propia tabla: el criterio que respeta el orden de la clasificación.
+function _stTeamCriterio(teams, P){
+  var inv = function(m){
+    var n = 0, prev = null;
+    teams.forEach(function(t){
+      var v = m[_stTeamName(t.name)];
+      if (v == null) return;
+      if (prev != null && v > prev) n++;
+      prev = v;
+    });
+    return n;
+  };
+  return inv(P.bp) < inv(P.mp) ? 'tablero' : 'match';
 }
 
 // ¿Cuál de las columnas "des" de la tabla son los puntos de match? Chess-Results las ordena distinto
@@ -12199,12 +12305,16 @@ function _stTeamRegisteredBoards(porEquipo){
 // Los jugadores del torneo, sacados de los tableros: equipo, tablero de inscripción, puntos y Rp.
 function _stTeamPlayers(data, rondas){
   var tr = (data && data.teamRounds) || {}, ag = {}, porEquipo = {};
+  // Se cuentan TODAS las partidas jugadas (puntos y porcentaje), tengan Elo o no: las Olimpiadas
+  // viejas de OlimpBase no traen Elo y si no, no quedaba ni un jugador. El Rp sale sólo de las
+  // partidas con los dos Elo (`nr`, `ptsR`, `o`), igual que antes.
   function ver(nombre, titulo, elo, equipo, mesa, punt, eloRival){
     var a = ag[nombre] || (ag[nombre] = { nombre:nombre, titulo:titulo || '', elo:elo || 0, equipo:equipo,
-                                          n:0, pts:0, o:0, mesas:{} });
+                                          n:0, pts:0, nr:0, ptsR:0, o:0, mesas:{} });
     if (!a.elo && elo) a.elo = elo;
     if (!a.titulo && titulo) a.titulo = titulo;
-    a.n++; a.pts += punt; a.o += eloRival;
+    a.n++; a.pts += punt;
+    if (elo && eloRival){ a.nr++; a.ptsR += punt; a.o += eloRival; }
     a.mesas[mesa] = (a.mesas[mesa] || 0) + 1;
     var E = porEquipo[equipo] || (porEquipo[equipo] = { ply:{}, pares:[] });
     (E.ply[nombre] || (E.ply[nombre] = { mesas:{} })).mesas[mesa] = (E.ply[nombre].mesas[mesa] || 0) + 1;
@@ -12220,7 +12330,7 @@ function _stTeamPlayers(data, rondas){
         // saldrían mal. (Caso real: Laos, en la Olimpiada 2024, con 5 jugadores y un fantasma.)
         if (b.nW && !_teamIsPlaceholder(b.nW)) filaA.push(b.nW);
         if (b.nB && !_teamIsPlaceholder(b.nB)) filaB.push(b.nB);
-        if (!_stJugada(b.res) || !b.eW || !b.eB) return;
+        if (!_stJugada(b.res)) return;
         if (_teamIsPlaceholder(b.nW) || _teamIsPlaceholder(b.nB)) return;
         var s = b.res === '1-0' ? 1 : (b.res === '0-1' ? 0 : 0.5);
         ver(b.nW, b.tW, b.eW, A, i + 1, s, b.eB);
@@ -12234,15 +12344,29 @@ function _stTeamPlayers(data, rondas){
     });
   });
   var orden = _stTeamRegisteredBoards(porEquipo);
+  // Si el cuadro trae el PLANTEL de cada equipo (la planilla de OlimpBase o la lista de Chess-Results),
+  // el tablero de inscripción está escrito ahí y manda sobre lo deducido. Sólo para los equipos cuyo
+  // plantel nombra a TODOS los que jugaron (si falta alguno, se queda con lo deducido).
+  (data && data.teamRoster || []).forEach(function(eq){
+    var nom = _stTeamName(eq && eq.name), E = porEquipo[nom];
+    if (!E || !eq.players || !eq.players.length) return;
+    var bo = {};
+    eq.players.forEach(function(p, i){ if (p && p.nm) bo[p.nm] = parseInt(p.bo, 10) || (i + 1); });
+    var jugaron = Object.keys(E.ply);
+    if (!jugaron.length || !jugaron.every(function(n){ return bo[n]; })) return;
+    var lista = jugaron.slice().sort(function(a, b){ return bo[a] - bo[b]; });
+    lista.forEach(function(n, i){ orden[nom + '::' + n] = i + 1; });
+  });
   // Mínimo de partidas para entrar en las medallas: la FIDE pide 8 en una Olimpiada de 11 rondas.
   // En torneos cortos (una liga de 6 rondas) se pide algo proporcional.
   var minP = (rondas >= 10) ? 8 : Math.max(3, Math.ceil((rondas || 9) * 0.6));
   return Object.keys(ag).map(function(n){
     var a = ag[n];
-    var rivalProm = Math.round(a.o / a.n);
+    var rivalProm = a.nr ? Math.round(a.o / a.nr) : 0;
     return { raw:a.nombre, nombre:pgnNameToNatural(a.nombre), titulo:_normTitle(a.titulo), elo:a.elo,
              equipo:a.equipo, mesa:(orden[a.equipo + '::' + a.nombre] || 0), partidas:a.n, pts:a.pts,
-             rp: a.n >= minP ? Math.round(rivalProm + _stDp(a.pts / a.n)) : null };
+             pct: a.n >= minP ? Math.round(a.pts / a.n * 1000) / 10 : null,
+             rp: a.nr >= minP ? Math.round(rivalProm + _stDp(a.ptsR / a.nr)) : null };
   });
 }
 
@@ -12266,18 +12390,23 @@ function _stTeamBuild(crk, data, meta){
   var esNom = function(n){ return _paisES(n, fedDe[n] || ''); };
   var equipoInfo = function(t){
     var n = _stTeamName(t.name);
+    // La tabla de un todos-contra-todos (grilla) no trae ganados/empatados/perdidos: van los contados.
+    var c = (t.w == null && P.gpe[n]) ? P.gpe[n] : null;
     return { nombre:esNom(n), fed:t.fed || '', puesto:t.rk || null,
-             g:parseInt(t.w, 10) || 0, e:parseInt(t.d, 10) || 0, p:parseInt(t.l, 10) || 0,
+             g: c ? c.g : (parseInt(t.w, 10) || 0), e: c ? c.e : (parseInt(t.d, 10) || 0), p: c ? c.p : (parseInt(t.l, 10) || 0),
              match: (P.mp[n] != null ? P.mp[n] : null), tablero: (P.bp[n] != null ? P.bp[n] : null) };
   };
   var podio = teams.slice(0, 3).map(equipoInfo);
 
-  // La carrera por la punta, en puntos de match.
+  // La carrera por la punta, en lo que define la tabla: puntos de match (Olimpiadas desde 2006, ligas)
+  // o de tablero (las Olimpiadas viejas).
+  var criterio = _stTeamCriterio(teams, P);
+  var SERIE = criterio === 'tablero' ? P.serieBp : P.serie;
   var lideres = [], prev = null, top3 = teams.slice(0, 3).map(function(t){ return _stTeamName(t.name); });
   for (var i = 0; i < rondas; i++){
     var max = -1, quien = [];
-    Object.keys(P.serie).forEach(function(eq){
-      var v = P.serie[eq][i];
+    Object.keys(SERIE).forEach(function(eq){
+      var v = SERIE[eq][i];
       if (v == null) return;
       if (v > max){ max = v; quien = [eq]; } else if (v === max) quien.push(eq);
     });
@@ -12290,8 +12419,8 @@ function _stTeamBuild(crk, data, meta){
   var cambios = 0;
   for (var j = 1; j < lideres.length; j++) if (lideres[j].raw !== lideres[j-1].raw) cambios++;
   var carrera = lideres.length ? {
-    lideres: lideres, cambios: cambios,
-    series: top3.map(function(eq){ return { raw:eq, nombre:esNom(eq), pts:(P.serie[eq] || []).slice(0, rondas) }; })
+    lideres: lideres, cambios: cambios, criterio: criterio,
+    series: top3.map(function(eq){ return { raw:eq, nombre:esNom(eq), pts:(SERIE[eq] || []).slice(0, rondas) }; })
   } : null;
 
   // Equipo más goleador (puntos de tablero) y la racha más larga de matches ganados.
@@ -12302,13 +12431,24 @@ function _stTeamBuild(crk, data, meta){
   var jug = _stTeamPlayers(data, rondas);
   var conRp = jug.filter(function(p){ return p.rp; }).sort(function(a,b){ return b.rp - a.rp; });
   var porPuntos = jug.slice().sort(function(a,b){ return (b.pts - a.pts) || (b.partidas - a.partidas); });
+  // Sin Elo (las Olimpiadas viejas) no hay Rp: las medallas van por PORCENTAJE de puntos, que es como
+  // se daban antes de que existiera el Elo. A igual porcentaje, el que jugó más partidas.
+  var conPct = jug.filter(function(p){ return p.pct != null; })
+                  .sort(function(a,b){ return (b.pct - a.pct) || (b.partidas - a.partidas); });
+  var medallasPor = (conRp.length >= 3 || !conPct.length) ? 'rp' : 'pct';
+  var ranking = medallasPor === 'rp' ? conRp : conPct;
   // Medallas por mesa, como en las Olimpiadas: oro, plata y bronce en el tablero 1, ídem en el 2, etc.
   // Se ordenan por performance (Rp), que es el criterio de la FIDE, entre los que jugaron el mínimo.
+  // Por porcentaje (las Olimpiadas viejas) los empates comparten medalla, como en la tabla oficial.
+  var pctDe = function(p){ return p.pct; };
+  var sinTableros = medallasPor === 'pct' && _stOlimpSinTableros(crk, meta);
   var mesas = [];
-  [1,2,3,4,5,6,7,8].forEach(function(m){
-    var enMesa = conRp.filter(function(p){ return p.mesa === m; });
-    if (enMesa.length >= 3) mesas.push({ mesa:m, podio:enMesa.slice(0, 3) });
+  if (!sinTableros) [1,2,3,4,5,6,7,8].forEach(function(m){
+    var enMesa = ranking.filter(function(p){ return p.mesa === m; });
+    if (enMesa.length >= 3) mesas.push({ mesa:m, podio: medallasPor === 'pct' ? _stPodioEmpates(enMesa, 3, pctDe) : enMesa.slice(0, 3) });
   });
+  // 1927 y 1928: sin orden de tableros, los premios eran para los 6 mejores del torneo.
+  var mejores6 = sinTableros ? _stPodioEmpates(conPct, 6, pctDe) : null;
 
   // Batacazos individuales: le ganó a alguien de mucho más Elo (mismo criterio que los individuales).
   var TIT = /^(GM|IM|FM|WGM|WIM|WFM|CM|WCM)$/;
@@ -12374,6 +12514,9 @@ function _stTeamBuild(crk, data, meta){
       paises: esPaises ? teams.length : null
     },
     reglaMatch: regla ? regla.regla : null,
+    criterio: criterio,          // 'match' | 'tablero': lo que ordena la tabla
+    medallasPor: medallasPor,    // 'rp' | 'pct': con Elo, performance; sin Elo, porcentaje
+    sinTableros: sinTableros,    // 1927/1928: no había orden de tableros
     campeon: podio[0] || null,
     podio: podio,
     argentina: argentina,
@@ -12383,12 +12526,15 @@ function _stTeamBuild(crk, data, meta){
     }) },
     premios: {
       mejorRp: conRp[0] || null,
+      mejorPct: medallasPor === 'pct' ? (conPct[0] || null) : null,
       masPuntos: porPuntos[0] || null,
       porMesa: mesas,
+      mejores6: mejores6,        // sólo 1927/1928: los premios individuales del torneo entero
       racha: (function(){ var s = _stStreak(falso); if (s) s.nombre = pgnNameToNatural(s.raw); return s; })()
     },
     batacazos: bata.slice(0, 5),
     topRp: conRp.slice(0, 5),
+    topPct: medallasPor === 'pct' ? conPct.slice(0, 5) : [],
     pulso: pulso
   };
 }
@@ -17215,20 +17361,23 @@ function _eloChartHoverOut() {
   var t = document.getElementById('elo-chart-tip'); if (t) t.style.display = 'none';
   var g = document.getElementById('elo-chart-guide'); if (g) g.style.visibility = 'hidden';
 }
-// Card del gráfico de evolución. Si el jugador todavía no tiene historial, muestra el mes actual
-// como único punto + una nota (se va llenando con cada padrón mensual que se sube).
+// Card del gráfico de evolución. Se dibuja SÓLO si hay historia de verdad: al menos 2 meses con
+// algún Elo (>0). Sin eso (no se le trajo el historial de Lichess, o es un histórico sin Elo) no
+// sale nada; en modo autor queda sólo el botón para traerlo.
 function _eloChartCard(p) {
-  var hist = (Array.isArray(p.hist) && p.hist.length) ? p.hist : null;
-  var multi = hist && hist.length > 1;
-  if (!hist) hist = [{ d: (typeof _selectedMonth !== 'undefined' && _selectedMonth) ? _selectedMonth : '', s: p.elo || 0, r: p.rapid || 0, b: p.blitz || 0 }];
+  var hist = (Array.isArray(p.hist) ? p.hist : []).filter(function (pt) { return pt && (pt.s > 0 || pt.r > 0 || pt.b > 0); });
+  var multi = hist.length > 1;
+  var autor = typeof _ondemand !== 'undefined' && !_ondemand;
+  if (!multi && !(autor && p.fide_id)) return '';
   var h = '<div class="prof-chart"><div class="prof-chart-lbl">📈 Evolución de Elo</div>';
-  h += '<div id="elo-chart-tip"></div>';
-  h += _eloChartSvg(hist);
-  // El cartel "se completa a medida que cargás los padrones…" es una nota de AUTOR: solo tiene
-  // sentido para quien carga los padrones. Al visitante (modo publicado) no se le muestra nada.
-  if (!multi && !_ondemand) h += '<div style="font-size:11px;color:var(--text3);margin-top:8px;text-align:center;line-height:1.4">El gráfico se completa a medida que cargás los padrones FIDE mes a mes.</div>';
+  if (multi) {
+    h += '<div id="elo-chart-tip"></div>';
+    h += _eloChartSvg(hist);
+  } else {
+    h += '<div style="font-size:12px;color:var(--text3);margin-top:8px;text-align:center;line-height:1.4">Todavía no tiene historial cargado. Sólo lo ves vos: el visitante no ve esta tarjeta.</div>';
+  }
   // Modo autor: botón para traer el historial completo (desde ~2000) de Lichess de una.
-  if (typeof _ondemand !== 'undefined' && !_ondemand && p.fide_id) {
+  if (autor && p.fide_id) {
     h += '<div style="text-align:center;margin-top:10px"><button id="hist-fetch-btn" onclick="traerHistorialJugador(' + p.id + ')" style="font-size:12px;background:var(--gl40);border:1px solid var(--bd22);color:var(--fg-d0);border-radius:var(--r-sm);padding:6px 14px;cursor:pointer;font-family:inherit;font-weight:600">📈 ' + (multi ? 'Actualizar' : 'Traer') + ' historial de Lichess</button></div>';
   }
   h += '</div>';

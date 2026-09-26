@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1809;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1834;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -492,8 +492,8 @@ console.log('\n=== 16. La radiografía horneada viaja con el torneo ===');
 
 console.log('\n=== 17. Radiografía POR EQUIPOS (Olimpiadas, ligas) ===');
 {
-  const piezas = ['_stJugada','_stRounds','_stSig','_stTeamName','_stTeamBoardsAsRounds','_stTeamPoints',
-                  '_stTeamMatchRule','_stTeamUpsets'];
+  const piezas = ['_stJugada','_stPts','_stRounds','_stSig','_stTeamName','_stTeamBoardsAsRounds','_stTeamPoints',
+                  '_stTeamCriterio','_stTeamMatchRule','_stTeamUpsets'];
   const stV = SRC.match(/var _ST_V = (\d+);/)[1];
   const M = new Function('crPtsStr', 'var ' + SRC.match(new RegExp('_TEAM_SIN_JUGADOR=[^;]+;'))[0] + extraerFuncion('_teamIsPlaceholder') + 'var _ST_V = ' + stV + ';' + piezas.map(extraerFuncion).join('\n')
                          + ' return {' + piezas.join(',') + '};')(
@@ -518,6 +518,35 @@ console.log('\n=== 17. Radiografía POR EQUIPOS (Olimpiadas, ligas) ===');
   chk(P.mp['Gris'] === 3 && P.bp['Gris'] === 3, 'y los de Gris: 2 de ganar + 1 de empatar, con 3 de tablero');
   chk(P.gpe['Rojo'].g === 1 && P.gpe['Rojo'].e === 1 && P.gpe['Rojo'].p === 0, 'ganados/empatados/perdidos de Rojo');
   chk(JSON.stringify(P.serie['Rojo']) === '[2,3]', 'la carrera guarda los puntos ronda a ronda', JSON.stringify(P.serie['Rojo']));
+  chk(JSON.stringify(P.serieBp['Rojo']) === '[1.5,2.5]', 'y también los de TABLERO, para las Olimpiadas viejas', JSON.stringify(P.serieBp['Rojo']));
+  const descanso = { teamRounds: {
+    1: [{ aName:'Rojo', bName:'Azul', boards:[{ nW:'A', nB:'B', res:'1-0' }] }],
+    2: [{ aName:'Negro', bName:'Azul', boards:[{ nW:'N', nB:'B', res:'1-0' }] }] } };
+  chk(JSON.stringify(M._stTeamPoints(descanso).serie['Negro']) === '[0,2]',
+      'el que descansa en la 1ª no queda con la serie corrida una ronda', JSON.stringify(M._stTeamPoints(descanso).serie['Negro']));
+
+  // Olimpiada 1939: al empezar la guerra varios matches se dieron 2-2 SIN partidas. Suman a la tabla
+  // (si no, Alemania, campeona con 36, quedaba con 30) pero no cuentan como matches jugados.
+  const guerra = JSON.parse(JSON.stringify(liga));
+  guerra.teamRounds['2'].push({ aNo:'2', aName:'Verde', bNo:'4', bName:'Azul', score:'1 : 1', boards:[],
+                                nota:'No se jugó: el match se dio empatado' });
+  const PG = M._stTeamPoints(guerra);
+  chk(PG.bp['Verde'] === 1 && PG.mp['Verde'] === 1 && PG.gpe['Verde'].e === 1,
+      'match dado empatado sin jugarse: suma sus puntos y el empate', PG.bp['Verde'] + ' / ' + PG.mp['Verde']);
+  chk(PG.matches === 3 && PG.partidas === 6, 'pero no cuenta como match jugado ni trae partidas', PG.matches + ' / ' + PG.partidas);
+  const pendiente = JSON.parse(JSON.stringify(liga));
+  pendiente.teamRounds['2'].push({ aNo:'2', aName:'Verde', bNo:'4', bName:'Azul', score:'', boards:[] });
+  chk(M._stTeamPoints(pendiente).bp['Verde'] === 0, 'y un match emparejado sin resultado no suma nada');
+
+  // ¿La tabla se ordenó por matches o por tablero? Londres 1927: Hungría campeona con 40 de tablero
+  // aunque Dinamarca tenía más puntos de match.
+  const P27 = { bp:{ Hungria:40, Dinamarca:38.5, GB:36.5 }, mp:{ Hungria:22, Dinamarca:23, GB:20 } };
+  const tabla27 = [{ name:'Hungria' }, { name:'Dinamarca' }, { name:'GB' }];
+  chk(M._stTeamCriterio(tabla27, P27) === 'tablero', 'Olimpiada vieja: la tabla va por puntos de TABLERO');
+  const P24 = { bp:{ India:35, USA:29.5, UZB:29.5, ARM:30 }, mp:{ India:21, USA:17, UZB:17, ARM:16 } };
+  chk(M._stTeamCriterio([{ name:'India' }, { name:'USA' }, { name:'UZB' }, { name:'ARM' }], P24) === 'match',
+      'Olimpiada moderna: va por puntos de MATCH');
+  chk(/\+ \(tk\.length \? '\|e2' : ''\)/.test(SRC), 'la firma de los cuadros por equipos cambió de versión (lo horneado viejo se recalcula)');
 
   const boards = M._stTeamBoardsAsRounds(liga);
   chk(Object.keys(boards).length === 2 && boards['1'].length === 4,
@@ -595,12 +624,32 @@ console.log('\n=== 18. La pestaña de los torneos por equipos ===');
       'y el panel sabe cuándo dibujar la versión por equipos');
 
   // Medallas: oro, plata y bronce en CADA tablero (no sólo el mejor de cada mesa).
-  chk(/podio:\s*enMesa\.slice\(0, 3\)/.test(SRC), 'cada tablero se lleva su oro, su plata y su bronce');
+  chk(/podio: medallasPor === 'pct' \? _stPodioEmpates\(enMesa, 3, pctDe\) : enMesa\.slice\(0, 3\)/.test(SRC),
+      'cada tablero se lleva su oro, su plata y su bronce (por porcentaje, con los empates compartidos)');
   chk(/var MED = \['🥇','🥈','🥉'\]/.test(SRC), 'y se dibujan con las tres medallas');
 
   // La leyenda del gráfico son EQUIPOS: no tienen ficha de jugador que abrir.
-  chk(/_stRaceHtml\(key, s, \{ sub:'puntos de match, ronda a ronda', sinClic:true \}\)/.test(SRC),
-      'en la carrera por la punta de equipos, los nombres no son clickeables');
+  chk(/_stRaceHtml\(key, s, \{ sub:\(s\.criterio === 'tablero' \? 'puntos de tablero, ronda a ronda' : 'puntos de match, ronda a ronda'\), sinClic:true \}\)/.test(SRC),
+      'en la carrera por la punta de equipos, los nombres no son clickeables (y dice si va por match o por tablero)');
+  chk(/porPct \? 'por porcentaje de puntos \(no había Elo\)/.test(SRC),
+      'sin Elo, las medallas avisan que van por porcentaje');
+
+  // Contra las tablas OFICIALES de OlimpBase (26/09/2026).
+  const H = new Function(extraerFuncion('_stOlimpSinTableros') + extraerFuncion('_stPodioEmpates')
+                         + ' return { _stOlimpSinTableros, _stPodioEmpates };')();
+  chk(H._stOlimpSinTableros('cr2_tz_tz_ob1927_c0', {}) && H._stOlimpSinTableros('cr2_tz_tz_ob1928_c0', {}),
+      '1927 y 1928 no tenían orden de tableros (se premiaban los 6 mejores del torneo)');
+  chk(!H._stOlimpSinTableros('cr2_tz_tz_ob1939_c4', {}) && !H._stOlimpSinTableros('cr2_tz_tz_1785939130392_c0', { name:'Olimpiada Budapest 2024' }),
+      'desde 1930 sí: 1939 y Budapest siguen con medallas por tablero');
+  chk(H._stOlimpSinTableros('cr2_tz_tz_123', { name:'1.ª Olimpíada de Ajedrez · Londres 1927' }),
+      'y si la clave no lo dice, lo reconoce por el nombre');
+  // 1939, tablero 2 (oficial): 1. Foerder 75 · 1. Najdorf 75 · 3. Lundin 65,4
+  const t2 = H._stPodioEmpates([{ n:'Najdorf', pct:75 }, { n:'Foerder', pct:75 }, { n:'Lundin', pct:65.4 }, { n:'Otro', pct:60 }], 3, p => p.pct);
+  chk(t2.map(p => p.puesto + p.n).join(' ') === '1Najdorf 1Foerder 3Lundin',
+      'los empates comparten medalla y el que sigue es 3º, como en OlimpBase', t2.map(p => p.puesto + p.n).join(' '));
+  // 1933, tablero 1 (oficial): Tartakower y Flohr, los dos bronce → entran cuatro.
+  const t1 = H._stPodioEmpates([{ n:'Alekhine', pct:79.2 }, { n:'Kashdan', pct:71.4 }, { n:'Tartakower', pct:64.3 }, { n:'Flohr', pct:64.3 }, { n:'X', pct:60 }], 3, p => p.pct);
+  chk(t1.length === 4 && t1[3].puesto === 3, 'empate en el bronce: entran los dos', t1.map(p => p.puesto + p.n).join(' '));
 
   // La actuación argentina sólo cuando los equipos son PAÍSES (en una liga de clubes no va).
   chk(/var esPaises = teams\.some\(function\(t\)\{ return t\.fed && String\(t\.fed\)\.length === 3; \}\);/.test(SRC),
@@ -642,6 +691,30 @@ console.log('\n=== 19. El tablero de INSCRIPCIÓN (medallas de la Olimpiada) ===
   // El mínimo de partidas para las medallas: la FIDE pide 8 en una Olimpiada de 11 rondas.
   chk(/var minP = \(rondas >= 10\) \? 8 :/.test(SRC), 'en torneos de 10 rondas o más se piden 8 partidas, como la FIDE');
 
+  // Olimpiadas viejas (OlimpBase): nadie tiene Elo. Antes se descartaban TODAS las partidas y la
+  // radiografía quedaba sin jugadores ni medallas. Ahora cuentan; sin Rp, pero con porcentaje.
+  const sinElo = { teamRounds: {} };
+  for (let r = 1; r <= 4; r++) sinElo.teamRounds[r] = [{ aName:'Argentina', bName:'Polonia', boards:[
+    { nW:'Grau', eW:0, nB:'Tartakower', eB:0, res: r === 1 ? '1-0' : '½-½' },
+    { nW:'Pleci', eW:0, nB:'Najdorf', eB:0, res:'0-1' }] }];
+  const js = M._stTeamPlayers(sinElo, 4);
+  const grau = js.find(p => p.raw === 'Grau');
+  chk(js.length === 4 && grau && grau.partidas === 4 && grau.pts === 2.5,
+      'sin Elo, las partidas igual cuentan (puntos y partidas)', grau ? (grau.pts + '/' + grau.partidas) : 'no está');
+  chk(grau.rp === null && grau.pct === 62.5, 'no inventa un Rp, pero da el porcentaje', 'rp ' + grau.rp + ' · ' + grau.pct + '%');
+  chk(js.find(p => p.raw === 'Pleci').mesa === 2, 'y el tablero de cada uno se deduce igual');
+
+  // Si el cuadro trae el PLANTEL (planilla de OlimpBase / lista de Chess-Results), su orden manda.
+  const conPlantel = JSON.parse(JSON.stringify(d));
+  conPlantel.teamRoster = [{ name:'España', players:[{ bo:1, nm:'Uno' }, { bo:2, nm:'Tres' }, { bo:3, nm:'Dos' }, { bo:4, nm:'Pichot' }] }];
+  const jp = M._stTeamPlayers(conPlantel, 3).filter(p => p.equipo === 'España');
+  chk(jp.find(p => p.raw === 'Tres').mesa === 2 && jp.find(p => p.raw === 'Dos').mesa === 3,
+      'con plantel, el tablero sale de la planilla y no de lo deducido');
+  conPlantel.teamRoster[0].players.pop();   // falta Pichot → no se confía en ese plantel
+  const jp2 = M._stTeamPlayers(conPlantel, 3).filter(p => p.equipo === 'España');
+  chk(jp2.find(p => p.raw === 'Dos').mesa === 2 && jp2.find(p => p.raw === 'Pichot').mesa === 4,
+      'y si al plantel le falta alguno de los que jugaron, se queda con lo deducido');
+
   // ── Contra la tabla OFICIAL de la Olimpiada 2024 (art=21 de Chess-Results) ──
   const olimp = 'data/cr/cr2_tz_tz_1785939130392_c0.json';
   if (fs.existsSync(olimp)) {
@@ -667,6 +740,32 @@ console.log('\n=== 19. El tablero de INSCRIPCIÓN (medallas de la Olimpiada) ===
         pichot ? ('tablero ' + pichot.mesa + ' Rp ' + pichot.rp + ' ' + pichot.partidas + ' partidas') : 'no está');
   } else {
     console.log('  --   | (el cuadro de la Olimpiada no está: me salteo la comparación con la oficial)');
+  }
+
+  // ── Contra las medallas OFICIALES de OlimpBase (sin Elo: por porcentaje) ──
+  const ob39 = 'data/cr/cr2_tz_tz_ob1939_c4.json', ob27 = 'data/cr/cr2_tz_tz_ob1927_c0.json';
+  if (fs.existsSync(ob39) && fs.existsSync(ob27)) {
+    const pctOrden = (a, b) => (b.pct - a.pct) || (b.partidas - a.partidas);
+    const j39 = M._stTeamPlayers(JSON.parse(fs.readFileSync(ob39, 'utf8')), 15).filter(p => p.pct != null);
+    // 1939 Final A (1939in.html): los premios de ese año NO contaron los grupos.
+    const OF39 = {
+      1: ['Capablanca 77.3', 'Alekhine 75', 'Petrovs 73.1'],
+      2: ['Najdorf 75', 'Foerder 75', 'Lundin 65.4'],
+      3: ['Engels 86.4', 'Frydman 75', 'Bolbochán 73.1'],
+      4: ['Friedemann 76.9', 'Prins 68.2', 'Regedziński 60'],
+      5: ['Pleci 73.1', 'Zíta 68.2', 'Reed Valenzuela 62.5']
+    };
+    for (const t of [1, 2, 3, 4, 5]) {
+      const mio = j39.filter(p => p.mesa === t).sort(pctOrden).slice(0, 3).map(p => p.raw.split(',')[0] + ' ' + p.pct);
+      chk(JSON.stringify(mio) === JSON.stringify(OF39[t]), 'Olimpiada 1939 (Final A), tablero ' + t + ': = OlimpBase', mio.join(' | '));
+    }
+    // 1927 (1927in.html): sin tableros, los 6 mejores del torneo.
+    const j27 = M._stTeamPlayers(JSON.parse(fs.readFileSync(ob27, 'utf8')), 15).filter(p => p.pct != null).sort(pctOrden)
+                 .slice(0, 6).map(p => p.raw.split(',')[0]);
+    chk(j27.join(',') === 'Thomas,Norman-Hansen,Reti,Maróczy,Gruenfeld,Euwe',
+        'Olimpiada 1927: los 6 premiados = OlimpBase', j27.join(','));
+  } else {
+    console.log('  --   | (no están los cuadros de 1927/1939: me salteo la comparación con OlimpBase)');
   }
 }
 
