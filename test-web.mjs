@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1744;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1750;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -766,9 +766,10 @@ console.log('\n=== 21. Los países, en castellano ===');
       'los países que ya no existen se traducen igual (Yugoslavia, Antillas Neerlandesas)');
   chk(_paisES('IBSA') === 'IBSA', 'y lo que no es un país (IBSA, la asociación de ciegos) queda como está');
   // Podio por equipos: bandera en el círculo sólo si el equipo es un PAÍS.
-  const _paisFed = new Function('_FED_ES', '_FED_EN', '_FED_DE', '_FED_HIST', '_FED_HIST_NOMBRES', '_FED_ISO', 'normStr', '_teamCountryParts',
+  const HFLAG = JSON.parse(SRC.match(new RegExp('var _FED_HIST_FLAG = ([{].*?[}]);'))[1]);
+  const _paisFed = new Function('_FED_ES', '_FED_EN', '_FED_DE', '_FED_HIST', '_FED_HIST_NOMBRES', '_FED_ISO', 'normStr', '_teamCountryParts', '_FED_HIST_FLAG',
     'var _NOMBRE_FED = null;' + extraerFuncion('_nombreFedIx') + extraerFuncion('_paisFed') + '; return _paisFed;')(
-      ES, EN, DE, HIST, HISTN, ISO, new Function('return (' + extraerFuncion('normStr') + ')')(), parts);
+      ES, EN, DE, HIST, HISTN, ISO, new Function('return (' + extraerFuncion('normStr') + ')')(), parts, HFLAG);
   chk(_paisFed('Argentinien') === 'ARG' && _paisFed('Germany') === 'GER' && _paisFed('Türkei B') === 'TUR' && _paisFed('USA') === 'USA',
       'podio por equipos: un país lleva su bandera (en castellano, inglés o alemán)');
   chk(_paisFed('SG Riehen Switzerland') === '' && _paisFed('Racing Club B') === '' && _paisFed('Jugoslawien') === '' && _paisFed('IBSA') === '',
@@ -781,6 +782,26 @@ console.log('\n=== 21. Los países, en castellano ===');
       'y las abreviaturas de las Olimpiadas viejas (Czech Rep., Dominican Rep., Kyrgystan, Neth. Antilles)');
   chk(SRC.includes('flagFed: _paisFed(') && extraerFuncion('_podioDibujo').includes("assets/flags/' + iso"),
       'el podio usa la bandera en el círculo');
+  // Londres 1927 (25/09/2026): "Great Britain" quedaba en inglés y con la bandera INGLESA; Checoslovaquia
+  // y el Reino de los Serbios, Croatas y Eslovenos, sin bandera (la suya es segura). Yugoslavia sigue sin.
+  chk(_paisES('Great Britain') === 'Gran Bretaña' && _paisES('United Kingdom') === 'Gran Bretaña' && ISO.GBR === 'gb' && _paisFed('Great Britain') === 'GBR',
+      '🇬🇧 "Great Britain" → Gran Bretaña, con la bandera británica (no la inglesa)', _paisES('Great Britain'));
+  chk(_paisES('England') === 'Inglaterra' && _paisFed('England') === 'ENG', 'y England sigue siendo Inglaterra');
+  chk(_paisES('Czechoslovakia') === 'Checoslovaquia' && _paisFed('Czechoslovakia') === 'TCH' && HFLAG.TCH === 'cz'
+      && _paisES('Reino de los Serbios, Croatas y Eslovenos') === 'Reino de los Serbios, Croatas y Eslovenos' && _paisFed('Kingdom of Serbs, Croats and Slovenes') === 'SCS'
+      && fs.existsSync(new URL('./assets/flags/' + HFLAG.SCS + '.svg', import.meta.url)),
+      'Checoslovaquia (la misma de Chequia) y el Reino SCS (tricolor lisa) llevan su bandera');
+  chk(!HFLAG.YUG && !HFLAG.URS && _paisFed('Jugoslawien') === '' && extraerFuncion('_flagImg').includes('_FED_ISO[fed] || _FED_HIST_FLAG[fed]')
+      && extraerFuncion('_fedName').includes('_FED_HIST[fed]) return _FED_HIST[fed];'),
+      'Yugoslavia no (según el año cambia), y la banderita dice "Checoslovaquia", no "Chequia"');
+  // Londres 1927: la columna de puntos de OlimpBase ("38½") quedaba "Des 1" porque parseFloat daba 38.
+  { const rr = extraerFuncion('_teamRenderRR');
+    chk(rr.includes("var v=/½/.test(_r)?(parseFloat(_r)||0)+0.5:parseFloat(_r.replace(',','.'));")
+        && rr.includes('var conWDL=n>0&&teams.every(') && rr.includes("[_s.w,_s.d,_s.l].forEach("),
+        '🏛️ cuadro cruzado por equipos: "38½" se reconoce como Partida, y van las columnas + = − (cruces ganados/empatados/perdidos)'); }
+  { const i = SRC.indexOf('// Barra de categorías (si el torneo tiene varias)');
+    chk(i > 0 && SRC.slice(i, i + 400).includes('if (categories && categories.length > 1) {'),
+      '🏛️ con UNA sola categoría no sale el botón de categoría (no cambiaba nada: Londres 1927)'); }
   const deSinBandera = Object.keys(DE).filter(k => !ISO[k]);
   chk(deSinBandera.length === 0, 'cada país en alemán apunta a una federación con bandera', deSinBandera.join(',') || Object.keys(DE).length + ' federaciones');
 
@@ -1677,7 +1698,7 @@ console.log('\n=== 34. La vitrina de trofeos del perfil ===');
       && /vienen mal/.test(PAQ(Object.assign({}, paqOk, { partidas: { 'X · A': [3] } }))),
       '📥 el importador rechaza lo que no es un paquete sano (otro torneo, colección inventada, partidas rotas) antes de tocar nada');
   // 🔖 El informe del lector de OlimpBase (25/09): lo que cerró y lo que hay que mirar, antes de importar.
-  const INF = new Function("var _FED_ISO = { ARG: 'ar', GER: 'de' };"
+  const INF = new Function("var _FED_ISO = { ARG: 'ar', GER: 'de' }; var _FED_HIST_FLAG = { TCH: 'cz' };"
     + "function normStr(s){ return String(s||'').toLowerCase(); }"
     + "function _nombreFedIx(){ return { argentina: 'ARG', germany: 'GER', czechoslovakia: 'TCH' }; }\n"
     + extraerFuncion('_histInformeLineas') + '; return _histInformeLineas;')();
@@ -1690,7 +1711,7 @@ console.log('\n=== 34. La vitrina de trofeos del perfil ===');
       && /^⚠️ 8 de 10/.test(infMal[0]) && infMal.some(l => /^⚠️ 2 mesas sin partida: R1: A – B · R2: C – D$|^⚠️ 2 mesas sin partida en el PGN/.test(l))
       && infMal.some(l => /nombres dudosos/.test(l)) && infMal.some(l => /^🔧 1 errores de la fuente que se corrigieron solos: R13 mesa 4/.test(l))
       && infMal.some(l => /castellano: Ruritania$/.test(l))
-      && infMal.some(l => /Sin bandera: Czechoslovakia, Ruritania, Bohemia y Moravia/.test(l)),
+      && infMal.some(l => l.startsWith('ℹ️ Sin bandera: Ruritania, Bohemia y Moravia (')),
       '🔖 el informe del lector dice qué cerró y qué revisar (mesas sin partida, nombres dudosos, países sin traducir o sin bandera)');
   chk(/\['flyerUrl', 'flyerPos', 'flyerCredit', 'flyerCreditUrl', 'rama'\]\.forEach\(function \(k\) \{ if \(viejo\[k\] && !nuevo\[k\]\) nuevo\[k\] = viejo\[k\]; \}\);/.test(extraerFuncion('histImportarTexto'))
       && /a\.href = 'javascript:' \+ encodeURIComponent\(code\);/.test(extraerFuncion('histFavoritoOlimpbase')),

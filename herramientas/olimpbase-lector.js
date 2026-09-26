@@ -367,7 +367,9 @@
     function fedDe(c) {
       var n = nombreEq[c] || '';
       if (/Bohemia/i.test(n) || (/^Palestine$/i.test(n) && +Y < 1948)) return '';
-      if (c === 'CSR') return 'TCH';   // Checoslovaquia (la app la conoce como TCH: nombre, sin bandera)
+      if (/Serbs, Croats and Slovenes/i.test(n)) return 'SCS';   // su tricolor lisa (la app la tiene)
+      if (/^Great Britain$/i.test(n)) return 'GBR';               // bandera británica, no la inglesa
+      if (c === 'CSR') return 'TCH';   // Checoslovaquia (la app la conoce como TCH; su bandera = la de Chequia)
       if (c === 'ROM') return 'ROU';   // Rumania: OlimpBase usa el código viejo
       return c;
     }
