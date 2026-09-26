@@ -546,7 +546,7 @@ console.log('\n=== 17. Radiografía POR EQUIPOS (Olimpiadas, ligas) ===');
   const P24 = { bp:{ India:35, USA:29.5, UZB:29.5, ARM:30 }, mp:{ India:21, USA:17, UZB:17, ARM:16 } };
   chk(M._stTeamCriterio([{ name:'India' }, { name:'USA' }, { name:'UZB' }, { name:'ARM' }], P24) === 'match',
       'Olimpiada moderna: va por puntos de MATCH');
-  chk(/\+ \(tk\.length \? '\|e2' : ''\)/.test(SRC), 'la firma de los cuadros por equipos cambió de versión (lo horneado viejo se recalcula)');
+  chk(/\+ \(tk\.length \? '\|e3' : ''\)/.test(SRC), 'la firma de los cuadros por equipos cambió de versión (lo horneado viejo se recalcula)');
 
   const boards = M._stTeamBoardsAsRounds(liga);
   chk(Object.keys(boards).length === 2 && boards['1'].length === 4,
