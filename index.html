@@ -16880,7 +16880,9 @@ function _estadoActualFp() {
   try { troFp = _fpStr(localStorage.getItem('player_trophies') || ''); } catch(e){}
   var cgFp = '';   // Colgadas de la ronda: aceptar o rechazar también es un cambio para guardar
   try { var cgS = JSON.stringify(_cgMan()); if (cgS !== '{}') cgFp = _fpStr(cgS); } catch(e){}   // de la memoria: el navegador ya no siempre tiene copia
-  return _combinedFp(all, getTzConfig()) + '~' + _fpStr(photoKeys) + '~' + newsFp + '~' + rankFp + '~' + flyerFp + '~' + troFp + (cgFp ? '~' + cgFp : '');
+  var evjN = 0;   // evaluaciones del barrido escritas en el pool: el pool sólo cuenta partidas, no su texto
+  try { evjN = _evjContar(); } catch(e){}
+  return _combinedFp(all, getTzConfig()) + '~' + _fpStr(photoKeys) + '~' + newsFp + '~' + rankFp + '~' + flyerFp + '~' + troFp + (cgFp ? '~' + cgFp : '') + (evjN ? '~evj' + evjN : '');
 }
 // ¿Hay torneos cambiados que todavía no se exportaron al archivo?
 function _hayCambiosSinExportar() {
@@ -33962,6 +33964,18 @@ function mevTick() {
   sf.engine.postMessage('isready');
 }
 
+// Tope de tiempo de los trabajos hondos (barrido de colgadas, confirmaciones): el motor para en la
+// profundidad pedida o al tope, lo que llegue primero. Caso real 26/09 (La Banda R1, Nallar–Gaite,
+// 56.Ae1): una posición que suele salir en 0,8 s, con la memoria de las anteriores, se fue a 106 s
+// (89 millones de nodos) a prof. 16, y el autor vio el barrido "colgado" dos veces en el mismo lugar.
+// Mediana de esa partida: 0,18 s; la peor después de ésa, 5,3 s. Con el tope, esa sale a prof. 15.
+var _MEV_TOPE_MS = 10000;      // una línea
+var _MEV_TOPE_MPV_MS = 30000;  // 3 líneas a prof. 18 (verificación): ~2,9 s en promedio
+function _mevTope(job) {
+  if (!job || !job.depth) return '';   // las miniaturas (prof. 12) no lo necesitan
+  return ' movetime ' + (job.multipv ? _MEV_TOPE_MPV_MS : _MEV_TOPE_MS);
+}
+
 function mevNext() {
   if (!_mev.running) return;
   if (_mev.i >= _mev.jobs.length) {
@@ -33986,7 +34000,7 @@ function mevNext() {
     _mev.mpvPrev = !!_mev.jobs[_mev.i].multipv;
   }
   sf.engine.postMessage('position fen ' + _mev.jobs[_mev.i].fen);
-  sf.engine.postMessage('go depth ' + (_mev.jobs[_mev.i].depth || _MEV_DEPTH));
+  sf.engine.postMessage('go depth ' + (_mev.jobs[_mev.i].depth || _MEV_DEPTH) + _mevTope(_mev.jobs[_mev.i]));
   sf.searching = true;
 }
 
@@ -34010,12 +34024,14 @@ function mevHandleMsg(line) {
     var mtM = line.match(/\bscore mate (-?\d+)\b/);
     // Trabajos con varias líneas (barrido de colgadas: la mejor y las alternativas del castigo).
     if ((cpM || mtM) && _mev.jobs[_mev.i] && _mev.jobs[_mev.i].multipv && !/\b(lower|upper)bound\b/.test(line)) {
-      // (la 2ª jugada de la línea es la respuesta del rival: los jugadones miran si acepta la entrega)
-      var pvM = line.match(/ pv ([a-h][1-8][a-h][1-8][qrbn]?)(?: ([a-h][1-8][a-h][1-8][qrbn]?))?/);
-      if (pvM) _mev.lines[(mm ? parseInt(mm[1]) : 1) - 1] = { mv: pvM[1], re: pvM[2] || '', sc: mtM ? { mate: parseInt(mtM[1]) } : { cp: parseInt(cpM[1]) } };
+      // (la 2ª jugada de la línea es la respuesta del rival: los jugadones miran si acepta la entrega;
+      //  la 3ª, qué hace después el que se entregó: si come la pieza que el rival acababa de mover)
+      var pvM = line.match(/ pv ([a-h][1-8][a-h][1-8][qrbn]?)(?: ([a-h][1-8][a-h][1-8][qrbn]?))?(?: ([a-h][1-8][a-h][1-8][qrbn]?))?/);
+      if (pvM) _mev.lines[(mm ? parseInt(mm[1]) : 1) - 1] = { mv: pvM[1], re: pvM[2] || '', r3: pvM[3] || '', sc: mtM ? { mate: parseInt(mtM[1]) } : { cp: parseInt(cpM[1]) } };
     }
     if (mm && mm[1] !== '1') return;
-    if (cpM || mtM) _mev.last = mtM ? { mate: parseInt(mtM[1]) } : { cp: parseInt(cpM[1]) };
+    // Una cota (lower/upperbound) es a medio calcular: sólo sirve si no hay nada mejor (cortado por el tope).
+    if ((cpM || mtM) && !(_mev.last && /\b(lower|upper)bound\b/.test(line))) _mev.last = mtM ? { mate: parseInt(mtM[1]) } : { cp: parseInt(cpM[1]) };
   }
   if (line.indexOf('bestmove') === 0) {
     var job = _mev.jobs[_mev.i];
@@ -34037,7 +34053,7 @@ function mevHandleMsg(line) {
       if (job.depth) _colDeep[job.fen] = job.depth;
       var _ln = null;
       if (job.multipv) _ln = (_mev.lines || []).filter(Boolean).map(function(l){   // también desde las blancas
-        return { mv: l.mv, re: l.re || '', sc: l.sc.mate !== undefined ? { mate: turn === 'b' ? -l.sc.mate : l.sc.mate } : { cp: turn === 'b' ? -l.sc.cp : l.sc.cp } };
+        return { mv: l.mv, re: l.re || '', r3: l.r3 || '', sc: l.sc.mate !== undefined ? { mate: turn === 'b' ? -l.sc.mate : l.sc.mate } : { cp: turn === 'b' ? -l.sc.cp : l.sc.cp } };
       });
       if (job.cb) { try { job.cb(score, _ln); } catch (e) {} }
     }
@@ -35404,6 +35420,12 @@ window.aaEjv = { probar: _ejvProbar };
    ════════════════════════════════════════════════════════════════════════════════════════════════ */
 var _CG_DESDE_PLY = 10;          // la apertura no cuenta (desde la jugada 6)
 var _CG_VERIF_DEPTH = 18;        // la vara del gráfico (_FA_MANUAL_DEPTH): confirma las candidatas del motor
+var _CG_PASADA_DEPTH = 16;       // pasada de TODAS las posiciones (sin eval de Lichess). Era 12 (la de las miniaturas).
+                                 // Medido 26/09 en la PC del autor, 232 posiciones reales, ms por posición: prof. 12 = 55,
+                                 // 14 = 146, 15 = 247, 16 = 383, 17 = 731, 18 = 1100. Confirmar (3 líneas): 18 = 2,9 s, 16 = 1,4 s.
+                                 // Ronda de 20 partidas de ~40 jugadas (1600 posiciones): a 15 son ~8 min; a 16, ~11. El autor
+                                 // eligió 16 ("si se hace eterno lo bajamos"): volver a 15 es cambiar sólo este número.
+                                 // Estas evals son las que quedan guardadas en el PGN (gráfico de la web).
 var _CG_VERIF_DEPTH_LI = 14;     // con eval de Lichess la gravedad ya está confirmada: sólo hace falta el castigo
                                  // (Olimpiada R3: 289 candidatas; a prof. 18 eran ~2,5 s cada una = 12 min)
 var _CG_ALT_MARGEN_MIN = 80;     // otra jugada vale como castigo si queda cerca de la mejor: 0,8 peones…
@@ -35470,7 +35492,7 @@ function _cgPosiciones(pgn) {
   var h = parsePgnHeaders(pgn);
   if (/960|fischer|freestyle/i.test(h.Variant || '')) return null;
   var ch; try { ch = h.FEN ? new Chess(h.FEN) : new Chess(); } catch (e) { return null; }
-  var sans = _sanMoves(pgn), P = { h: h, fens: [ch.fen()], uci: [], san: [], cap: [], ev: parseMoveEvals(pgn) };
+  var sans = _sanMoves(pgn), P = { h: h, fens: [ch.fen()], uci: [], san: [], cap: [], ev: parseMoveEvals(pgn), propias: _evjEsPropia(h), evProf: _evjProf(h) };
   for (var i = 0; i < sans.length; i++) {
     var m = null; try { m = ch.move(sans[i], { sloppy: true }); } catch (e) {}
     if (!m) break;
@@ -35497,7 +35519,7 @@ function cgBarrer(rInt) {
   // Argentinos primero: con 400 partidas, sus colgadas quedan listas para revisar en el primer minuto.
   games = games.filter(function(g){ return _tdIsArgGame(g.h); }).concat(games.filter(function(g){ return !_tdIsArgGame(g.h); }));
   _cg.tour = String(_tdTourKey); _cg.rk = _cgRk(rInt); _cg.ronda = rInt;
-  _cg.corriendo = true; _cg.hechas = 0; _cg.total = 0; _cg.partidas = games.length; _cg.vistas = 0;
+  _cg.corriendo = true; _cg.hechas = 0; _cg.total = 0; _cg.partidas = games.length; _cg.vistas = 0; _cg.evjOk = 0; _cg.evjNo = 0; _cg.evjIdx = null;
   var m = _cgMan(); m[_cg.tour] = m[_cg.tour] || {};
   var viejo = {};   // lo ya decidido se conserva si vuelve a salir la misma colgada
   ((m[_cg.tour][_cg.rk] || {}).items || []).forEach(function(it){ viejo[it.id] = it; });
@@ -35518,7 +35540,7 @@ function cgBarrer(rInt) {
     _cg.vistas = i;
     if (P) {
       var conEv = P.ev.filter(function(e){ return e != null; }).length >= P.uci.length * 0.8;
-      if (conEv) {
+      if (conEv && !P.propias) {   // las guardadas por nosotros (prof. 12) no son de Lichess: van por el otro camino
         var evCp = [20];
         for (var k = 0; k < P.uci.length; k++) evCp.push(P.ev[k] ? _colCp(P.ev[k], P.fens[k + 1]) : null);
         _cgDetectar(P, evCp, true).forEach(function(c){ _cgVerificar(g, P, c, true); });   // (prof. _CG_VERIF_DEPTH_LI)
@@ -35531,21 +35553,33 @@ function cgBarrer(rInt) {
     setTimeout(una, 0);
   })();
 }
-// Sin eval de Lichess: prof. 12 en cada posición (las que ya tengan eval guardada no se repiten).
+// Sin eval de Lichess: prof. _CG_PASADA_DEPTH en cada posición.
+// Si la partida está en el POOL, se evalúa desde la primera jugada y, apenas termina ESA partida, las
+// evaluaciones se escriben en su PGN (ver _evjEscribir): cortar el barrido no pierde lo ya hecho, y
+// volver a barrer la ronda no repite el motor en las que ya las tienen (a esta profundidad o más).
+// Las evals de las miniaturas (_mevEvals, prof. 12) ya NO se reusan: el barrido quiere las suyas, más hondas.
 function _cgPasadaRapida(g, P) {
-  var evCp = [], faltan = 0;
+  var evCp = [], sc = [], faltan = 0, u = _evjUbicar(g.pgn), reusa = false;
+  if (P.propias && P.evProf >= _CG_PASADA_DEPTH) reusa = true;   // ya las tiene, a esta profundidad o más
+  else if (u && u.propia && u.prof >= _CG_PASADA_DEPTH) {        // en pantalla la copia de CR; la del pool ya las tiene
+    var pp = u.t.games[u.i];
+    P.ev = parseMoveEvals(pp); P.propias = true; P.evProf = u.prof; reusa = true;
+    _evjReemplazarEnPantalla(g, g.pgn, pp);
+  }
+  var enPool = !!u && !reusa;   // se escribe (o se reescribe, si las guardadas eran menos hondas)
   function listo() {
+    if (enPool) _evjEscribir(g, P, sc);
     _cgDetectar(P, evCp, false).forEach(function(c){ _cgVerificar(g, P, c, false); });
     _cgDetectarBri(P, evCp).forEach(function(c){ _cgVerificarBri(g, P, c); });
   }
-  for (var k = Math.max(0, _CG_DESDE_PLY); k < P.fens.length; k++) {
+  for (var k = enPool ? 1 : Math.max(0, _CG_DESDE_PLY); k < P.fens.length; k++) {
     (function(k){
       var f = P.fens[k];
-      if (_mevEvals[f] !== undefined) { evCp[k] = _colCp(_mevEvals[f], f); return; }
+      if (reusa && P.ev[k - 1]) { sc[k] = P.ev[k - 1]; evCp[k] = _colCp(sc[k], f); return; }   // ya guardada en el PGN
       faltan++; _cg.total++;
-      _mevExtra.push({ fen: f, cb: function(sc){
+      _mevExtra.push({ fen: f, depth: _CG_PASADA_DEPTH, cb: function(s){
         if (!_cg.corriendo) return;
-        evCp[k] = _colCp(sc, f); _cg.hechas++;
+        sc[k] = s; evCp[k] = _colCp(s, f); _cg.hechas++;
         if (--faltan === 0) listo();
         _cgQuizasTermino(); _cgRenderProg();
       } });
@@ -35553,6 +35587,132 @@ function _cgPasadaRapida(g, P) {
   }
   if (!faltan) listo(); else setTimeout(mevTick, 0);
 }
+/* ══ 💾 Evaluaciones del barrido guardadas en el PGN (26/09/2026, pedido del autor) ══════════════
+   Las partidas SIN eval de Lichess (Chess-Results subidas al pool) se evalúan en el barrido. Antes esas
+   evals se tiraban; ahora, al terminar cada partida, se escriben en su PGN del pool como [%eval …],
+   igual que las de Lichess → la web dibuja el gráfico y los ?? al instante (faFromEmbedded) y la
+   barrita de la miniatura, sin prender el motor del visitante.
+   · Se escriben de a UNA partida, apenas termina: si el barrido se corta, lo ya hecho queda (en
+     memoria; al disco va con 💾 Guardar datos, como cualquier cambio del pool).
+   · Marca [EvalSource "aa-sf15"] (el número es la profundidad): son NUESTRAS, no de Lichess. El barrido
+     no las toma por evals de Lichess (ese camino está afinado para los números de Lichess): las reusa
+     como su propia pasada, sin motor, si son tan hondas como _CG_PASADA_DEPTH; si son menos hondas
+     (las primeras se guardaron a prof. 12), las recalcula y las reescribe.
+   · Sólo en el pool y sólo si la partida no traía eval de Lichess. Los torneos con transmisión de
+     Lichess, y las partidas del pool que ya traen eval de Lichess, no cambian.
+   Peso medido: ~+6 KB comprimido por ronda de 30 partidas.
+   ════════════════════════════════════════════════════════════════════════════════════════════════ */
+function _evjMarca() { return 'aa-sf' + _CG_PASADA_DEPTH; }
+function _evjEsPropia(h) { return !!(h && /^aa-sf\d+$/.test(h.EvalSource || '')); }
+function _evjProf(h) { return _evjEsPropia(h) ? parseInt(h.EvalSource.slice(5), 10) : 0; }
+// ¿Dónde está esta partida en el pool? { t, i, propia, prof } o null. Primero el MISMO texto de PGN; si
+// no, por huella de jugadas: cuando el torneo además baja las de Chess-Results, en pantalla puede quedar
+// la copia de CR (_tdMergeSlots) y no la del pool, aunque sea la misma partida. Las que traen eval de
+// Lichess no se devuelven nunca (no se tocan).
+function _evjUbicar(pgn) {
+  function info(t, i) {
+    var p = t.games[i];
+    if (p.indexOf('%eval') < 0) return { t: t, i: i, propia: false, prof: 0 };
+    var h = parsePgnHeaders(p);
+    return _evjEsPropia(h) ? { t: t, i: i, propia: true, prof: _evjProf(h) } : null;
+  }
+  if (!pgn) return null;
+  for (var ti = 0; ti < _memTournaments.length; ti++) {
+    var t = _memTournaments[ti];
+    if (!t || !t.dbPool || !t.games) continue;
+    var i = t.games.indexOf(pgn);
+    if (i >= 0) return info(t, i);
+  }
+  if (!_cg.evjIdx) {   // una vez por barrido
+    _cg.evjIdx = Object.create(null);
+    _memTournaments.forEach(function(t){
+      if (!t || !t.dbPool || !t.games) return;
+      t.games.forEach(function(p, i){
+        if (p.indexOf('%eval') >= 0 && !_evjEsPropia(parsePgnHeaders(p))) return;   // las de Lichess no se tocan
+        var b = _moveBody(p); if (b && !_cg.evjIdx[b]) _cg.evjIdx[b] = { t: t, i: i };
+      });
+    });
+  }
+  var u = _cg.evjIdx[_moveBody(pgn)];
+  return (u && u.t.games[u.i]) ? info(u.t, u.i) : null;
+}
+// Cambia el texto de una partida en la pantalla del torneo (la copia de CR por la del pool, o la del pool
+// sin evals por la con evals).
+function _evjReemplazarEnPantalla(g, viejo, nuevo) {
+  g.pgn = nuevo;
+  if (!_tdCtx) return;
+  var gi = (_tdCtx.games || []).indexOf(viejo); if (gi >= 0) _tdCtx.games[gi] = nuevo;
+  var db = PGN_DB[_tdCtx.pgnKey]; if (db && db.games && db.games !== _tdCtx.games) { gi = db.games.indexOf(viejo); if (gi >= 0) db.games[gi] = nuevo; }
+}
+function _evjTok(s) {
+  if (!s) return null;
+  if (s.mate !== undefined) return s.mate ? '#' + s.mate : null;   // mate 0 = ya es mate: Lichess tampoco lo anota
+  return typeof s.cp === 'number' ? (s.cp / 100).toFixed(2) : null;
+}
+// Saca las evals NUESTRAS de un PGN (para reescribirlas más hondas). Sólo lo que escribe _evjInsertar.
+function _evjLimpiar(pgn) {
+  return pgn.replace(/\r?\n\[EvalSource "aa-sf\d+"\]/, '').replace(/ \{\[%eval [^\]\}]*\]\}/g, '');
+}
+// Mete {[%eval x]} después de cada jugada de la línea principal (sc[k] = eval de la posición después
+// de la jugada k, desde las blancas). Respeta comentarios, variantes y NAG que ya hubiera. null si las
+// jugadas del texto no coinciden con las reproducidas (no se toca nada).
+var _EVJ_SAN = /^(?:[KQRBN][a-h]?[1-8]?x?[a-h][1-8]|[a-h](?:x[a-h])?[1-8](?:=?[QRBN])?|O-O-O|O-O)[+#]?[!?]*$/;
+function _evjInsertar(pgn, sc, nPlies) {
+  var m = /\r?\n\r?\n/.exec(pgn);
+  if (!m) return null;
+  var head = pgn.slice(0, m.index), body = pgn.slice(m.index);
+  var out = '', i = 0, depth = 0, n = 0;
+  while (i < body.length) {
+    var c = body[i];
+    if (c === '{') { var j = body.indexOf('}', i); if (j < 0) return null; out += body.slice(i, j + 1); i = j + 1; continue; }
+    if (c === ';') { var e = body.indexOf('\n', i); if (e < 0) e = body.length; out += body.slice(i, e); i = e; continue; }
+    if (c === '(') { depth++; out += c; i++; continue; }
+    if (c === ')') { depth--; out += c; i++; continue; }
+    if (/\s/.test(c)) { out += c; i++; continue; }
+    var k = i; while (k < body.length && !/[\s{}();]/.test(body[k])) k++;
+    var tok = body.slice(i, k); out += tok; i = k;
+    if (depth) continue;
+    var san = tok.replace(/^\d+\.+/, '');
+    if (/^0-0/.test(san)) return null;          // enroque con ceros: parseMoveEvals no lo cuenta → quedarían corridas
+    if (!_EVJ_SAN.test(san)) continue;
+    n++;
+    var t = _evjTok(sc[n]);
+    if (t) out += ' {[%eval ' + t + ']}';
+  }
+  if (n !== nPlies) return null;
+  return head + '\n[EvalSource "' + _evjMarca() + '"]' + out;
+}
+function _evjEscribir(g, P, sc) {
+  try {
+    var u = _evjUbicar(g.pgn);
+    if (!u || (u.propia && u.prof >= _CG_PASADA_DEPTH)) return false;
+    // Se escribe sobre el texto del POOL (puede no ser el que está en pantalla, ver _evjUbicar). Si ya
+    // tenía evals nuestras menos hondas, se sacan antes.
+    var base = u.t.games[u.i];
+    if (u.propia) base = _evjLimpiar(base);
+    var viejo = g.pgn, nuevo = _evjInsertar(base, sc, P.uci.length);
+    if (!nuevo) { _cg.evjNo = (_cg.evjNo || 0) + 1; return false; }
+    // Comprobación: lo que leería el visor tiene que ser lo mismo que calculamos, jugada por jugada.
+    var ev = parseMoveEvals(nuevo);
+    for (var k = 1; k <= P.uci.length; k++) {
+      var t = _evjTok(sc[k]);
+      if (t && !(ev[k - 1] && _evjTok(ev[k - 1]) === t)) { _cg.evjNo = (_cg.evjNo || 0) + 1; return false; }
+    }
+    u.t.games[u.i] = nuevo;
+    _evjReemplazarEnPantalla(g, viejo, nuevo);
+    _cg.evjOk = (_cg.evjOk || 0) + 1;
+    return true;
+  } catch (e) { return false; }
+}
+// Para el aviso de "cambios sin guardar": cuántas partidas del pool tienen evals nuestras, y a qué profundidad.
+function _evjContar() {
+  var n = 0, marca = 'EvalSource "aa-sf';
+  _memTournaments.forEach(function(t){ if (t && t.dbPool) (t.games || []).forEach(function(p){
+    var i = p.indexOf(marca); if (i >= 0) n += parseInt(p.slice(i + marca.length), 10) || 1;
+  }); });
+  return n;
+}
+
 // Candidata → prof. 18 con 3 líneas en la posición de DESPUÉS: confirma, y da el castigo y sus alternativas.
 function _cgVerificar(g, P, c, deLichess) {
   var f = P.fens[c.i + 1], mover = P.fens[c.i].split(' ')[1];
@@ -35636,7 +35796,12 @@ function _cgMeter(it) {
    Con la R9 revisada por el autor (25/09: 33 aceptados, 50 rechazados) entraron 5 patrones más, que
    sacan 17 rechazados sin perder ningún aceptado: coronar, otra pieza colgada que no es la dama y
    posición repetida (en _faIsBrilliant, valen también para el visor); retomar y entregar la calidad
-   que el rival acepta (sólo en la lista). */
+   que el rival acepta (sólo en la lista).
+   Con la R10 (26/09: 11 aceptados, 36 rechazados) entraron 3 más, en _faIsBrilliant: tapar un jaque,
+   dar una pieza por el peón que iba a coronar, y la pieza "colgada" de un atacante clavado a la dama
+   (_faTomarDestapa). Sacan 7 rechazados de la R10 y 9 de la R9, sin perder ningún aceptado.
+   Con la R10 femenina (26/09: 7 aceptados, 15 rechazados), sólo en la lista: el JAQUE INTERMEDIO que
+   después come la pieza que el rival acaba de mover (_cgJaqueIntermedio, con la 3ª jugada de la línea). */
 var _CG_BRI_DEPTH = 16;
 var _CG_BRI_MARGEN = 30;   // centipeones: la jugada del partido puede quedar a 0,3 de la mejor del motor
 function _cgDetectarBri(P, evCp) {
@@ -35678,7 +35843,8 @@ function _cgVerificarBri(g, P, c) {
         var calidad = /^[nb]$/.test(P.cap[c.i] || '') && /^[rR]$/.test(_fenGrid(f)[(parseInt(jug[1], 10) - 1) * 8 + jug.charCodeAt(0) - 97] || '')
           && !!suya.re && suya.re.slice(2, 4) === jug.slice(2, 4);
         // La mejor (o casi), sana, y la ÚNICA: con una sola línea (jugada forzada) no hay nada que encontrar.
-        if (!calidad && suyaSol >= bestSol - _CG_BRI_MARGEN && suyaSol > -200 && lines.length >= 2 && !alts.length) {
+        var intermedio = _cgJaqueIntermedio(f, jug, suya.re, suya.r3, c.i > 0 ? P.uci[c.i - 1] : '');
+        if (!calidad && !intermedio && suyaSol >= bestSol - _CG_BRI_MARGEN && suyaSol > -200 && lines.length >= 2 && !alts.length) {
           _cgMeter({
             id: _cgGameKeyId(P.h) + '#!' + (c.i + 1), bri: 1,
             w: P.h.White || '?', b: P.h.Black || '?', r: P.h.Round || '', ply: c.i, tipo: 'BR',
@@ -35694,6 +35860,25 @@ function _cgVerificarBri(g, P, c) {
     _cgQuizasTermino(); _cgRender();
   } });
   setTimeout(mevTick, 0);
+}
+// JAQUE INTERMEDIO: se entrega una pieza dando jaque y, en la jugada siguiente, se come la pieza que el
+// rival ACABA de mover (donde quedó, o adonde fue después), que vale lo mismo o más que la entregada.
+// Para el autor es "más colgada fulera del rival que jugadón propio" (26/09, R10 femenina: 45.♗h7+ y
+// ♕xd2, 61.♖xg6+ y ♕xa2, 33...♖xf2+ y ♖xc6, 28.♖c8+ y ♕xe5; más 43.♗xf5+ y 26...♗xh2+ de antes: 6
+// rechazados; se pierde un aceptado de la R9, 30.♗h7+ ♔h8 ♕xd7, que es el mismo mecanismo).
+// `re` y `r3` son la 2ª y la 3ª jugada de la línea del motor; `prev` la jugada anterior del rival.
+function _cgJaqueIntermedio(fen, jug, re, r3, prev) {
+  if (!re || !r3 || !prev || typeof Chess === 'undefined') return false;
+  try {
+    var ch = new Chess(fen), uno = function (u) { return ch.move({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u[4] || 'q' }); };
+    var m1 = uno(jug);
+    if (!m1 || !/[+#]/.test(m1.san)) return false;
+    var m2 = uno(re), m3 = m2 && uno(r3);
+    if (!m3 || !m3.captured || m3.to === m1.to) return false;   // retomar en la casilla de la entrega es otra cosa
+    var suya = prev.slice(2, 4);
+    if (m3.to !== suya && !(m2.from === suya && m2.to === m3.to)) return false;
+    return _pval(m3.captured) >= _pval(m1.piece);
+  } catch (e) { return false; }
 }
 // "24.♖xf7!!" (la brillante, con su número de jugada).
 function _cgBriJugadaTxt(it) {
@@ -35740,7 +35925,8 @@ function _cgRenderProg() {
 function _cgProgHtml() {
   if (!_cg.corriendo) return '';
   var pct = _cg.total ? Math.round(100 * _cg.hechas / _cg.total) : 0;
-  return '<div class="cg-prog-t">Revisando partida ' + _cg.vistas + ' de ' + _cg.partidas + (_cg.total ? ' · motor ' + _cg.hechas + ' / ' + _cg.total : '') + '</div>'
+  return '<div class="cg-prog-t">Revisando partida ' + _cg.vistas + ' de ' + _cg.partidas + (_cg.total ? ' · motor ' + _cg.hechas + ' / ' + _cg.total : '')
+    + (_cg.evjOk ? ' · 💾 evaluaciones guardadas en ' + _cg.evjOk + ' partida' + (_cg.evjOk !== 1 ? 's' : '') : '') + '</div>'
     + '<div class="cg-prog-b"><div style="width:' + pct + '%"></div></div>'
     + '<button class="cg-mini" onclick="cgCancelar()">Cancelar</button>';
 }
@@ -42399,6 +42585,9 @@ function _faIsBrilliant(node, rBefore, rAfter, whiteMoved, wpB) {
   // CORONAR no es entregar una dama: si la pieza recién coronada queda colgada, lo que se pierde es un
   // peón (36...d1=D de la R9 de la Olimpiada, 25/09).
   var corona = !!(pz && pz.toLowerCase() === 'p' && g[toSq] && g[toSq].toLowerCase() !== 'p');
+  // FRENAR UNA CORONACIÓN no es jugadón: el peón rival estaba por coronar y se entrega la pieza para
+  // comérselo (75.♗xa2 de Waldhausen–Grandelius, R10 de la Olimpiada: si no, el rival hace dama).
+  if (_faFrenaCoronacion(parentG, toSq, opp)) return false;
   // Escanear las piezas propias de valor ≥ caballo (peones/rey no cuentan). Cuenta la que se movió, y de
   // las OTRAS sólo la dama (desviación tipo Légal). Dejar colgado un caballo, un alfil o una torre que no
   // se tocó casi siempre es "no defenderla", no entregarla: en la R9 de la Olimpiada fueron 4 jugadones
@@ -42422,10 +42611,68 @@ function _faIsBrilliant(node, rBefore, rAfter, whiteMoved, wpB) {
       // OJO CLAVADAS AL REY: el SEE cuenta atacantes clavados que no pueden capturar. Confirmar con
       // chess.js que el rival tiene una captura LEGAL de esta casilla; si no, no es sacrificio real.
       var sqName = 'abcdefgh'.charAt(f) + (r + 1);
-      if (_oppHasLegalCaptureOf(node.fen, sqName)) hay = true;
+      if (_oppHasLegalCaptureOf(node.fen, sqName) && !_faTomarDestapa(node.fen, sqName, mover, _pval(p))) hay = true;
     }
   }
-  return hay && !_faRepetida(node);
+  return hay && !_faTapaJaque(node) && !_faRepetida(node);
+}
+// ¿El que movió estaba en JAQUE y lo TAPÓ (sin comer y sin mover el rey)? Poner la dama en el medio para
+// que no den mate es una jugada obligada, no un jugadón (26.♕f1 de Delrieu–Cottle y 32...♖d8 en la
+// Olimpiada: dos rechazados por el autor, ningún aceptado). Va al final: sólo corre en las candidatas.
+function _faTapaJaque(node) {
+  if (typeof Chess === 'undefined' || !node.move) return false;
+  var pg = _fenGrid(node.parent.fen), t = node.move.to, fr = node.move.from;
+  if (!t || !fr || pg[(parseInt(t[1], 10) - 1) * 8 + t.charCodeAt(0) - 97]) return false;   // comió algo: no es tapar
+  var pz = pg[(parseInt(fr[1], 10) - 1) * 8 + fr.charCodeAt(0) - 97];
+  if (!pz || pz.toLowerCase() === 'k') return false;
+  try { var c = new Chess(node.parent.fen); return !!(c.in_check ? c.in_check() : c.inCheck()); } catch (e) { return false; }
+}
+// ¿En la casilla `toSq` había un peón del rival (`opp`) a un paso de coronar, y podía hacerlo (la casilla
+// de adelante libre, o una pieza nuestra para comer en la fila de coronar)? Grilla de ANTES de la jugada.
+function _faFrenaCoronacion(pg, toSq, opp) {
+  var pc = toSq >= 0 ? pg[toSq] : null;
+  if (!pc || pc !== (opp === 'w' ? 'P' : 'p')) return false;
+  var f = toSq % 8, r = (toSq - f) / 8, dr = opp === 'w' ? 1 : -1;
+  if (r !== (opp === 'w' ? 6 : 1)) return false;
+  var r2 = r + dr;
+  if (!pg[r2 * 8 + f]) return true;
+  for (var d = -1; d <= 1; d += 2) {
+    var q = f + d < 0 || f + d > 7 ? null : pg[r2 * 8 + f + d];
+    if (q && (opp === 'w' ? q === q.toLowerCase() : q === q.toUpperCase())) return true;
+  }
+  return false;
+}
+// ¿TOMAR la pieza entregada en `sqName` le cuesta al rival otra pieza que vale lo mismo o más? Pasa con la
+// CLAVADA RELATIVA: el que la toma estaba en una línea entre una torre/alfil/dama nuestra y una pieza suya
+// (dama, torre…), y al comer sale de la línea y la destapa. Así, el caballo que salta a e5 "colgado" del
+// peón d4 no se entrega: si dxe5, la torre d8 se come la dama d3 (35...♘e5, 29...♘e5, 8.♘c3, 16.♗xd5 y
+// 30.♗c5 de la R10 de la Olimpiada, más 5 de la R9: 14 rechazados por el autor, ningún aceptado).
+// Tiene que pasar con TODAS las capturas legales; si una sola la toma sin perder nada, sí es una entrega.
+function _faTomarDestapa(fen, sqName, mover, sv) {
+  if (typeof Chess === 'undefined') return false;
+  var mv;
+  try { mv = new Chess(fen).moves({ verbose: true }).filter(function (m) { return m.to === sqName && m.flags && m.flags.indexOf('c') >= 0; }); } catch (e) { return false; }
+  if (!mv.length) return false;
+  var g = _fenGrid(fen), tf = sqName.charCodeAt(0) - 97, tr = parseInt(sqName[1], 10) - 1;
+  function nuestra(p) { return p && (mover === 'w' ? p === p.toUpperCase() : p === p.toLowerCase()); }
+  var dirs = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
+  for (var i = 0; i < mv.length; i++) {
+    var af = mv[i].from.charCodeAt(0) - 97, ar = parseInt(mv[i].from[1], 10) - 1, cuesta = false;
+    var g2 = g.slice(); g2[tr * 8 + tf] = g2[ar * 8 + af]; g2[ar * 8 + af] = null;
+    for (var d = 0; d < 8 && !cuesta; d++) {
+      var dx = dirs[d][0], dy = dirs[d][1];
+      if ((tf - af) * dy === (tr - ar) * dx) continue;          // come a lo largo de la línea: la sigue tapando
+      var s, f, r, p, tira = false;
+      for (s = 1; s < 8; s++) { f = af + dx * s; r = ar + dy * s; if (f < 0 || f > 7 || r < 0 || r > 7) break; p = g[r * 8 + f]; if (!p) continue;
+        var t = p.toLowerCase(); tira = nuestra(p) && ((dx && dy) ? (t === 'b' || t === 'q') : (t === 'r' || t === 'q')); break; }
+      if (!tira) continue;
+      for (s = 1; s < 8; s++) { f = af - dx * s; r = ar - dy * s; if (f < 0 || f > 7 || r < 0 || r > 7) break; p = g[r * 8 + f]; if (!p) continue;
+        if (!nuestra(p) && p.toLowerCase() !== 'k' && _seeGain(g2, f, r, mover) >= sv) cuesta = true;
+        break; }
+    }
+    if (!cuesta) return false;
+  }
+  return true;
 }
 // ¿La posición de antes o la de después de la jugada ya se había dado en la partida? Es una repetición
 // (los jaques de Gurevich, 35. y 37.♖h8+, salían dos veces como jugadón en la R9 de la Olimpiada).

@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1835;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1860;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -6676,6 +6676,14 @@ console.log('\n=== 53h. Colgadas de la ronda: barrido, revisión y tablero de ej
       '🔒 la verificación da el castigo con 3 líneas, y marca las que Lichess ve pero el motor no ve claras (no son "únicas")');
   chk(/if \(_mevExtra\.length\) setTimeout\(mevTick, 0\);/.test(extraerFuncion('mevNext')) && /_cg\.vigia = setInterval/.test(barrer),
       '🔒 lo que se encola mientras el motor trabaja arranca otra tanda (sin nada en vivo el barrido se quedaba clavado en "motor 140 / 255")');
+  {
+    const TP = new Function('var _MEV_TOPE_MS = 10000, _MEV_TOPE_MPV_MS = 30000; ' + extraerFuncion('_mevTope') + '; return _mevTope;')();
+    chk(TP({ fen: 'x', depth: 16 }) === ' movetime 10000' && TP({ fen: 'x', depth: 18, multipv: 3 }) === ' movetime 30000' && TP({ fen: 'x' }) === ''
+        && /'go depth ' \+ \(_mev\.jobs\[_mev\.i\]\.depth \|\| _MEV_DEPTH\) \+ _mevTope\(_mev\.jobs\[_mev\.i\]\)/.test(extraerFuncion('mevNext')),
+        '🔒 los trabajos hondos llevan tope de tiempo (La Banda R1: una posición de 0,8 s se fue a 106 s y el barrido parecía colgado); las miniaturas no');
+    chk(/!\(_mev\.last && \/\\b\(lower\|upper\)bound\\b\/\.test\(line\)\)/.test(extraerFuncion('mevHandleMsg')),
+        'cortado por el tope, una cota a medio calcular no pisa la eval de la profundidad anterior');
+  }
   chk(/var clara = deLichess \? \(bestSol - c\.a \* solSign\) >= _CG_CLARA_MIN : true;/.test(verif)
       && /Math\.max\(_CG_ALT_MARGEN_MIN, Math\.round\(Math\.min\(bestSol, 1000\) \* _CG_ALT_MARGEN_FRAC\)\)/.test(verif),
       '🔒 "no clara" = el castigo no le mejora ni un peón al que castiga (medido R1: 53% → 22%; "tiró la ganada" ya no sale toda como no clara); alternativas con margen que crece con la ventaja');
@@ -6755,7 +6763,7 @@ console.log('\n=== 53h. Colgadas de la ronda: barrido, revisión y tablero de ej
 
   // Detección (sin motor): el SEE del "!!" del visor + los filtros de la lista de la ronda.
   const B = new Function('Chess', 'var _CG_DESDE_PLY = 10; ' + SRC.match(/var _FA_BRILL_MIN_NET[^\n]*/)[0] + '\n'
-    + ['faNum', '_fenGrid', '_pval', '_pieceValAtFen', '_pinDir', '_attackersOf', '_seeGain', '_faIsBrilliant', '_faRepetida', '_oppHasLegalCaptureOf', '_faWinP', '_cgDetectarBri'].map(extraerFuncion).join('\n')
+    + ['faNum', '_fenGrid', '_pval', '_pieceValAtFen', '_pinDir', '_attackersOf', '_seeGain', '_faIsBrilliant', '_faTapaJaque', '_faFrenaCoronacion', '_faTomarDestapa', '_faRepetida', '_oppHasLegalCaptureOf', '_faWinP', '_cgDetectarBri'].map(extraerFuncion).join('\n')
     + '; return { det: _cgDetectarBri, vis: _faIsBrilliant, winp: _faWinP };')(ChessB);
   const mk = (fen, uci, a, d) => {
     const ch = new ChessB(fen); ch.move({ from: uci.slice(0, 2), to: uci.slice(2, 4) });
@@ -6806,8 +6814,31 @@ console.log('\n=== 53h. Colgadas de la ronda: barrido, revisión y tablero de ej
       '🔒 una posición repetida no vuelve a ser jugadón: 37.♖h8+ de Gurevich era el mismo jaque de la jugada 35');
   { const x2 = mk(LEGAL, 'f3e5', 30, 250); x2.P.cap = []; x2.P.uci[9] = 'd6e5'; x2.P.cap[9] = 'p';
     chk(B.det(x2.P, x2.ev).length === 0, '🔒 retomar no es jugadón: el rival acaba de comer en esa casilla (23.♖xh4, 29.♖xd8+, 13.♘xb5, 11.♘xe4 de la R9)'); }
+  // Patrones de la R10 revisada por el autor (26/09: 11 aceptados / 36 rechazados).
+  chk(visN('1r4k1/3n1ppp/4p3/R7/3P4/3QPN2/5PPP/1r4K1 w - - 1 26', 'd3f1') === false,
+      '🔒 tapar un jaque con la dama no es jugadón: es obligado (26.♕f1 de Delrieu–Cottle, si no es mate)');
+  chk(visN('8/8/4B3/8/8/4K3/pk6/8 w - - 0 75', 'e6a2') === false
+      && visN('n1r4k/1r5P/4pN2/3pP1N1/3P4/6R1/2p2PK1/8 b - - 0 48', 'b7h7') === true,
+      '🔒 dar una pieza por el peón que iba a coronar no es jugadón (75.♗xa2); si el peón no podía coronar, sí cuenta (48...♖xh7, aceptado en la R9)');
+  chk(visN('3r2k1/p4q2/1pR3np/5pp1/3P4/3Q1BPP/PP3P2/6K1 b - - 0 35', 'g6e5') === false
+      && visN('r1b1kb1r/ppp2ppp/2n5/3q4/3pn3/5N2/PPP2PPP/RNBQR1K1 w kq - 0 8', 'b1c3') === false,
+      '🔒 la pieza "colgada" de un peón CLAVADO a la dama no se entrega: si la toma, pierde la dama (35...♘e5 y 8.♘c3 de la R10)');
+  chk(visN('r3r1k1/3nbppp/p1p1b3/4R1B1/2P5/2N1N3/PP3PPP/2KR4 w - - 3 20', 'd1d7') === true,
+      '…pero si lo que se destapa vale menos que lo entregado, sigue siendo jugadón (20.♖xd7 de Mesa Cruz–Laylo, aceptado)');
+  // R10 femenina (26/09): el jaque intermedio que después come la pieza que el rival acaba de mover.
+  const JI = new Function('Chess', extraerFuncion('_pval') + extraerFuncion('_cgJaqueIntermedio') + '; return _cgJaqueIntermedio;')(ChessB);
+  const R61 = '8/5bk1/6p1/8/8/6RP/q5QK/8 w - - 0 61';
+  chk(JI(R61, 'g3g6', 'g7h7', 'g2a2', 'a6a2') === true && JI(R61, 'g3g6', 'g7h7', 'g2a2', 'f7e8') === false
+      && JI('6k1/1b3p2/p5qp/1p2rp2/8/1P4QP/P3N1P1/2R4K w - - 0 28', 'c1c8', 'b7c8', 'g3e5', 'e8e5') === true,
+      '🔒 entregar dando jaque para después comer la pieza que el rival acaba de mover es una colgada del rival, no un jugadón (61.♖xg6+ y ♕xa2, 28.♖c8+ y ♕xe5); si come otra cosa, no se descarta');
+  chk(JI('r1bqkb1r/pppp1ppp/2n5/4p3/2B1n3/5N2/PPPP1PPP/RNBQ1RK1 w kq - 0 5', 'c4f7', 'e8f7', 'f3e5', 'd7d5') === false
+      && JI(R61, 'g2a2', 'f7a2', 'g3g6', 'a6a2') === false,
+      '…y sin jaque, o si lo que come es la pieza que tomó la entregada, no aplica');
+  chk(/r3: pvM\[3\] \|\| ''/.test(extraerFuncion('mevHandleMsg')) && /r3: l\.r3 \|\| ''/.test(extraerFuncion('mevHandleMsg'))
+      && /!calidad && !intermedio && suyaSol/.test(extraerFuncion('_cgVerificarBri')),
+      'la lista guarda la 3ª jugada de la línea del motor y descarta el jaque intermedio');
   const vb0 = extraerFuncion('_cgVerificarBri');
-  chk(vb0.includes("var calidad = /^[nb]$/.test(P.cap[c.i] || '')") && vb0.includes('suya.re.slice(2, 4) === jug.slice(2, 4)') && vb0.includes('!calidad && suyaSol')
+  chk(vb0.includes("var calidad = /^[nb]$/.test(P.cap[c.i] || '')") && vb0.includes('suya.re.slice(2, 4) === jug.slice(2, 4)') && vb0.includes('!calidad && !intermedio && suyaSol')
       && extraerFuncion('mevHandleMsg').includes("re: pvM[2] || ''") && /return \{ mv: l\.mv, re: l\.re \|\| ''/.test(extraerFuncion('mevHandleMsg')),
       '🔒 entregar la calidad y que el rival la tome es un cambio, no un jugadón (10 rechazados en la R9, ningún aceptado): la respuesta sale de la línea del motor');
   const vb = extraerFuncion('_cgVerificarBri');
@@ -7595,6 +7626,94 @@ console.log('\n=== Auditoría 23/09 — Fase 4: accesibilidad y prolijidad ===')
   chk(!/fetch\(|tdFinalFen|new Chess|mevTick|sfStart/.test(todo) && /setTimeout\(function\(\)\{ _crEvhT=null;.*\}, 500\);/.test(todo),
       '🔒 no pide nada a la red ni prende el motor ni reproduce partidas; y se junta en una pasada cada medio segundo');
   chk(/\.cr-evh \{[^}]*width: 34px/.test(SRC), 'entra en la celda del resultado de la tabla individual (58 px) sin correr los nombres');
+}
+// ── 63. 💾 Evaluaciones del barrido guardadas en el PGN del pool (26/09, pedido del autor) ──
+{
+  console.log('\n💾 Evaluaciones del barrido guardadas en el PGN del pool');
+  const chessSrcE = fs.readFileSync(new URL('./assets/chess.min.js', import.meta.url), 'utf8');
+  const _mE = { exports: {} };
+  new Function('module', 'exports', 'window', chessSrcE)(_mE, _mE.exports, {});
+  const ChessE = _mE.exports.Chess || _mE.exports;
+  // Las que tienen expresiones con llaves no se pueden recortar contando llaves: van enteras hasta la
+  // función que les sigue en el archivo.
+  const hasta = (nombre) => { const i = SRC.indexOf('function ' + nombre + '('); const j = SRC.indexOf('\nfunction ', i + 10); return SRC.slice(i, j); };
+  const E = new Function('Chess', '_memTournaments', 'var _cg = {}, _tdCtx = null, PGN_DB = {}; var _r960 = { moves: [] };'
+    + SRC.match(/var _CG_PASADA_DEPTH = \d+;/)[0] + '\n' + SRC.match(/var _EVJ_SAN = [^\n]*/)[0] + '\n'
+    + ['parseEvalToken', 'parseMoveEvals', '_sanMoves', '_moveBody', '_evjInsertar', '_evjLimpiar'].map(hasta).join('\n') + '\n'
+    + ['parsePgnHeaders', '_cgPosiciones', '_evjMarca', '_evjEsPropia', '_evjProf', '_evjTok', '_evjUbicar',
+       '_evjReemplazarEnPantalla', '_evjEscribir', '_evjContar'].map(extraerFuncion).join('\n')
+    + '; return { ins: _evjInsertar, esc: _evjEscribir, pos: _cgPosiciones, ev: parseMoveEvals, body: _moveBody, sans: _sanMoves, tok: _evjTok, cuenta: _evjContar, cg: _cg, ubic: _evjUbicar, limpiar: _evjLimpiar, D: _CG_PASADA_DEPTH };');
+  const falsas = (n) => { const sc = []; for (let k = 1; k <= n; k++) sc[k] = (k % 17 === 0) ? { mate: (k % 2 ? 3 : -2) } : { cp: ((k * 37) % 900) - 450 }; return sc; };
+
+  // Partidas REALES del sitio sin eval (Chess-Results y subidas a mano): escribir y volver a leer.
+  const pool = [], W = E(ChessE, pool);
+  let probadas = 0, iguales = 0, rechazadas = 0, malas = [];
+  const dirT = new URL('./data/t/', import.meta.url);
+  for (const fn of fs.readdirSync(dirT).filter(f => f.endsWith('.json')).slice(0, 60)) {
+    let j; try { j = JSON.parse(fs.readFileSync(new URL(fn, dirT), 'utf8')); } catch (e) { continue; }
+    for (const pgn of (j.games || [])) {
+      if (pgn.indexOf('%eval') >= 0 || probadas >= 1500) continue;
+      const P = W.pos(pgn); if (!P) continue;
+      probadas++;
+      const sc = falsas(P.uci.length), nuevo = W.ins(pgn, sc, P.uci.length);
+      if (!nuevo) { rechazadas++; continue; }
+      const ev = W.ev(nuevo);
+      let ok = W.body(nuevo) === W.body(pgn) && W.sans(nuevo).join(' ') === W.sans(pgn).join(' ');
+      for (let k = 1; ok && k <= P.uci.length; k++) ok = W.tok(ev[k - 1]) === W.tok(sc[k]);
+      if (ok) iguales++; else if (malas.length < 2) malas.push(fn + ' ' + (W.pos(pgn).h.White || ''));
+    }
+  }
+  chk(probadas > 300 && iguales === probadas - rechazadas,
+      '🔒 partidas reales: lo que lee el visor ([%eval] jugada por jugada) es EXACTAMENTE lo calculado, y las jugadas no cambian', probadas + ' probadas, ' + iguales + ' iguales, ' + rechazadas + ' rechazadas ' + malas.join(' | '));
+  chk(rechazadas <= probadas * 0.02, 'casi ninguna partida real queda sin poder guardarse (rechazadas ≤ 2%)', rechazadas + ' de ' + probadas);
+
+  // Casos a mano: comentarios, variantes, NAG, jugada pegada al número, enroque con ceros.
+  const raro = '[Event "X"]\n[White "A"]\n[Black "B"]\n\n1.e4 {buena} e5 2. Nf3!? (2. f4 exf4) Nc6 $1 3. Bb5 a6 1-0';
+  const Pr = W.pos(raro), nr = W.ins(raro, falsas(6), 6), evr = W.ev(nr);
+  chk(Pr.uci.length === 6 && nr && /\{buena\}/.test(nr) && /\(2\. f4 exf4\)/.test(nr) && /Nf3!\? \{\[%eval/.test(nr)
+      && [1, 2, 3, 4, 5, 6].every(k => W.tok(evr[k - 1]) === W.tok(falsas(6)[k])),
+      'respeta comentarios, variantes y NAG que ya tenía; la variante no se cuenta como jugada', nr);
+  chk(W.ins('[Event "X"]\n\n1. e4 e5 2. Nf3 Nf6 3. Bc4 Bc5 4. 0-0 0-0 *', falsas(8), 8) === null,
+      'enroque escrito con ceros (0-0): no se toca (el lector del visor lo saltearía y quedarían corridas)');
+  chk(W.ins(raro, falsas(7), 7) === null, 'si las jugadas del texto no coinciden con las reproducidas, no se toca nada');
+  chk(W.tok({ mate: 0 }) === null && W.tok({ mate: -3 }) === '#-3' && W.tok({ cp: 35 }) === '0.35',
+      'formato de Lichess: 0.35 y #-3; la posición de mate no se anota (Lichess tampoco)');
+  chk(W.pos(nr).propias === true && W.pos(raro).propias === false, '🔒 marcadas como NUESTRAS ([EvalSource]): el barrido no las toma por evals de Lichess');
+
+  // En el pool: la copia en pantalla puede ser la de Chess-Results (otro texto, mismas jugadas).
+  const enPool = '[Event "Torneo"]\n[Round "3"]\n[White "Perez, Juan"]\n[Black "Gomez, Ana"]\n[Result "1-0"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 1-0';
+  const deCr = '[Event "Torneo CR"]\n[Round "3.1"]\n[White "Perez,Juan"]\n[Black "Gomez,Ana"]\n[Result "1-0"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 1-0';
+  const lich = '[Event "Otro"]\n\n1. d4 {[%eval 0.2]} d5 {[%eval 0.3]} *';
+  pool.length = 0; pool.push({ dbPool: true, games: [lich, enPool] }, { dbPool: false, games: [deCr] });
+  const g = { pgn: deCr }, Pg = W.pos(deCr);
+  chk(W.esc(g, Pg, falsas(6)) === true && pool[0].games[1] !== enPool && /EvalSource/.test(pool[0].games[1])
+      && /Event "Torneo"\]/.test(pool[0].games[1]) && g.pgn === pool[0].games[1] && pool[1].games[0] === deCr,
+      '🔒 se escribe en la partida del POOL aunque en pantalla esté la copia de Chess-Results (y la pantalla pasa a la del pool)');
+  chk(pool[0].games[0] === lich && W.cuenta() > 0 && pool[0].games[1].indexOf('[EvalSource "aa-sf' + W.D + '"]') >= 0,
+      'las de Lichess del pool no se tocan; la marca lleva la profundidad del barrido; y cuenta para el aviso de "cambios sin guardar"');
+  W.cg.evjIdx = null;
+  const u2 = W.ubic(deCr);
+  chk(u2 && u2.propia === true && u2.prof === W.D && W.esc({ pgn: deCr }, Pg, falsas(6)) === false,
+      '🔒 volver a barrer: encuentra la del pool ya guardada y la reusa (no la escribe dos veces ni prende el motor)');
+  // Las guardadas a prof. 12 (las primeras, antes de subir la profundidad) se recalculan y se reescriben.
+  const conD = pool[0].games[1];
+  chk(W.limpiar(conD) === enPool, 'sacar nuestras evals deja la partida exactamente como estaba', W.limpiar(conD));
+  pool[0].games[1] = conD.replace('aa-sf' + W.D, 'aa-sf12'); W.cg.evjIdx = null;
+  const u12 = W.ubic(deCr), otras = []; for (let k = 1; k <= 6; k++) otras[k] = { cp: 100 + k };
+  chk(u12 && u12.propia && u12.prof === 12 && W.esc({ pgn: deCr }, Pg, otras) === true
+      && pool[0].games[1].indexOf('aa-sf' + W.D) >= 0 && (pool[0].games[1].match(/%eval/g) || []).length === 6
+      && W.ev(pool[0].games[1]).every((e, i) => e.cp === 101 + i),
+      '🔒 las guardadas a prof. 12 se REESCRIBEN a la profundidad nueva (sin quedar dos evals por jugada)', pool[0].games[1]);
+
+  // Enganches (lo que no se puede correr acá).
+  const pr = extraerFuncion('_cgPasadaRapida'), br = extraerFuncion('cgBarrer');
+  chk(/if \(conEv && !P\.propias\)/.test(br), '🔒 con evals NUESTRAS no toma el camino de Lichess (afinado para sus números)');
+  chk(/if \(enPool\) _evjEscribir\(g, P, sc\);/.test(pr) && /for \(var k = enPool \? 1 : Math\.max\(0, _CG_DESDE_PLY\)/.test(pr)
+      && /if \(reusa && P\.ev\[k - 1\]\) \{ sc\[k\] = P\.ev\[k - 1\];/.test(pr) && /P\.evProf >= _CG_PASADA_DEPTH/.test(pr),
+      '🔒 cada partida se guarda APENAS termina (cortar el barrido no pierde lo hecho), desde la jugada 1 para el gráfico entero, y lo guardado se reusa');
+  chk(/_evjContar\(\)/.test(extraerFuncion('_estadoActualFp')), 'guardar evaluaciones enciende el aviso de "cambios sin guardar"');
+  chk(/depth: _CG_PASADA_DEPTH, cb:/.test(pr) && !/_mevEvals/.test(pr) && /var _CG_PASADA_DEPTH = 16;/.test(SRC),
+      '🔒 el barrido evalúa a prof. 16 (medido: ronda de 20 partidas de 40 jugadas ≈ 11 min; lo eligió el autor) y no reusa las de prof. 12 de las miniaturas');
 }
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
 console.log('   Corrieron ' + corridas + ' de ' + ESPERADAS + ' comprobaciones.'
