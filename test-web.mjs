@@ -10,7 +10,9 @@
 
 import fs from 'node:fs';
 
-const SRC = fs.readFileSync(new URL('./index.html', import.meta.url), 'utf8');
+// 27/09: git en Windows (core.autocrlf=true) puede dejar la copia de trabajo con saltos CRLF, y varias
+// pruebas recortan funciones buscando "\n  }\n". Se pasan a LF acá (lo publicado va siempre en LF).
+const SRC = fs.readFileSync(new URL('./index.html', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 
 let fallos = 0;
 let corridas = 0;
@@ -24,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1863;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1864;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -215,7 +217,7 @@ console.log('\n=== 10. Las quince funciones muertas ya no están (8.2) ===');
   const MUERTAS = ['_vsBase', 'pgnDetectTourName', 'pgnShowResult', '_fsClearHandle', 'crShowStatus',
     'crParseHtml', 'crShowPreview', '_lookupOpeningByEpds', 'openMasterGame', '_card3Heading',
     '_openWithArgFilter', 'flyerImgHtml', 'lvRatTxt', 'whoWins', 'copyLink'];
-  const EDITAR = fs.readFileSync(new URL('./editar.html', import.meta.url), 'utf8');
+  const EDITAR = fs.readFileSync(new URL('./editar.html', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
   var vivas = MUERTAS.filter(function (n) {
     var re = new RegExp('\\b' + n + '\\b');
     return re.test(SRC) || re.test(EDITAR);
@@ -225,7 +227,7 @@ console.log('\n=== 10. Las quince funciones muertas ya no están (8.2) ===');
 
 console.log('\n=== 11. El bloque duplicado entre index.html y editar.html (8.3) ===');
 {
-  const EDITAR = fs.readFileSync(new URL('./editar.html', import.meta.url), 'utf8');
+  const EDITAR = fs.readFileSync(new URL('./editar.html', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
   chk(SRC.includes('ESTE BLOQUE ESTÁ DUPLICADO'), 'index.html avisa que el bloque está duplicado');
   chk(EDITAR.includes('ESTE BLOQUE ESTÁ DUPLICADO'), 'editar.html también');
 
@@ -6869,12 +6871,14 @@ console.log('\n=== 53h. Colgadas de la ronda: barrido, revisión y tablero de ej
   chk(JSON.stringify(G2({ '|8': { items: [{ id: 'a#!24', bri: 1, estado: 'ok', exp: 'x' }, { id: 'b#!30', bri: 1, estado: 'pend' }] } })) === '{"|8":{"items":[{"id":"a#!24","bri":1}]}}',
       'las brillantes aceptadas viajan a la web por el mismo camino que las colgadas');
 
-  // 🧩 Ejercicio en vivo: la llave arranca APAGADA (al revés que el aviso de colgadas).
+  // 🧩 Ejercicio en vivo: desde el 27/09 arranca PRENDIDO para todos (igual que el aviso de colgadas).
   const E = new Function(extraerFuncion('_ejvActivo') + '; return _ejvActivo;')();
   const mem = {}, lsE = { getItem: k => (k in mem ? mem[k] : null), setItem: (k, v) => { mem[k] = String(v); }, removeItem: k => { delete mem[k]; } };
-  chk(E('', lsE) === false, '🔒 el ejercicio en vivo arranca APAGADO para todos');
-  chk(E('?ejvivo=1', lsE) === true && E('', lsE) === true, 'con ?ejvivo=1 se prende y queda guardado en ese navegador');
-  chk(E('?torneo=x&ejvivo=0', lsE) === false && E('', lsE) === false, 'con ?ejvivo=0 se apaga');
+  chk(E('', lsE) === true, '🔓 el ejercicio en vivo arranca PRENDIDO para todos (27/09)');
+  chk(E('?torneo=x&ejvivo=0', lsE) === false && E('', lsE) === false, 'con ?ejvivo=0 se apaga y queda guardado en ese navegador');
+  chk(E('?ejvivo=1', lsE) === true && E('', lsE) === true, 'con ?ejvivo=1 se vuelve a prender');
+  mem['aa_ejv_on'] = '1';
+  chk(E('', lsE) === true, 'el que ya lo tenía prendido con la llave vieja (?ejvivo=1) lo sigue viendo');
   chk(/if \(_ejvIntentar\(info\)\) return;[^\n]*\n\s*_colCola\.push\(info\);/.test(extraerFuncion('_colAvisar')),
       'se engancha en el aviso de colgadas: si sirve de ejercicio sale ése; si no, sigue el cartel rojo de siempre');
 
