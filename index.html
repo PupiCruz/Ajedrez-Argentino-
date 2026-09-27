@@ -30319,11 +30319,16 @@ function _siFixPgn(pgn) {
   try { var p = new Chess(); okStrict = p.load_pgn(pgn) && p.history().length >= moveTokens.length; } catch (e) {}
   if (okStrict) return pgn;
   var headers = (pgn.match(/^\s*(?:\[[^\]]*\]\s*)+/) || [''])[0].trim();
-  var tokens = body.replace(/\d+\.(\.\.)?/g, ' ').match(/\{[^}]*\}|[^\s]+/g) || [];
+  // Los números de jugada se sacan token por token, NUNCA adentro de los comentarios: antes un replace
+  // sobre todo el texto convertía {[%eval 0.14]} en {[%eval  14]} (= +14) y el gráfico salía roto
+  // (La Banda R4, Vergara–Nallar: 35...N6d7 con el caballo de f8 clavado hacía fallar la carga estricta).
+  var tokens = body.match(/\{[^}]*\}|[^\s{}]+/g) || [];
   var moves = [];
   for (var i = 0; i < tokens.length; i++) {
     var tk = tokens[i];
     if (tk[0] === '{') { if (moves.length) moves[moves.length - 1].cmt = tk; continue; }
+    tk = tk.replace(/^\d+\.+/, '');
+    if (!tk) continue;
     if (/^(1-0|0-1|1\/2-1\/2|\*)$/.test(tk)) continue;
     moves.push({ san: tk, cmt: '' });
   }

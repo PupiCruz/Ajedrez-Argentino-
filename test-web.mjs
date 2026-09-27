@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1876;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1878;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -3215,6 +3215,18 @@ console.log('\n=== 26. Filtro por TEMA de los ejercicios (chips que se cuentan s
       'una partida normal con ruido ilegal al final se sigue cortando ahí', arreglado);
   const limpio = '[White "A"]\n[Black "B"]\n[Result "*"]\n\n1. e4 e5 2. Nf3 Nc6 *';
   chk(FIX(limpio) === limpio, 'y una partida normal limpia no se toca');
+
+  // 27/09: el arreglo borraba los números de jugada TAMBIÉN adentro de los comentarios, y
+  // {[%eval 0.14]} quedaba {[%eval  14]} = +14 (La Banda R4, Vergara–Nallar: gráfico roto desde 1.d4).
+  // Lo disparaba una jugada con desambiguación de más (35...N6d7 con el caballo de f8 clavado).
+  const conEvals = '[White "A"]\n[Black "B"]\n[Result "*"]\n[EvalSource "aa-sf16"]\n\n'
+                 + '1. e4 {[%eval 0.14]} e5 {[%eval 0.20]} 2. Ng1f3 {[%eval 2.79]}\nNc6 {[%eval -1.05]} 3.Bb5 {[%eval #3]} *';
+  const fx2 = FIX(conEvals);
+  chk(fx2 !== conEvals && /2\. Nf3 \{\[%eval 2\.79\]\}/.test(fx2),
+      'una jugada con desambiguación de más se reescribe (Ng1f3 → Nf3) con su eval', fx2);
+  chk(/1\. e4 \{\[%eval 0\.14\]\} e5 \{\[%eval 0\.20\]\}/.test(fx2) && /Nc6 \{\[%eval -1\.05\]\}/.test(fx2)
+      && /3\. Bb5 \{\[%eval #3\]\}/.test(fx2),
+      'y las evals de los comentarios salen INTACTAS (0.14 no se vuelve 14)', fx2);
 
   // El tercer camino que arma el árbol (el del VIVO, que extiende sin reconstruir) también sabe 960:
   // si no, cada refresco de la transmisión reconstruía todo y el visitante perdía dónde miraba.
