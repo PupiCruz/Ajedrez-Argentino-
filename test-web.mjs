@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1864;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1876;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -6778,7 +6778,7 @@ console.log('\n=== 53h. Colgadas de la ronda: barrido, revisión y tablero de ej
 
   // Detección (sin motor): el SEE del "!!" del visor + los filtros de la lista de la ronda.
   const B = new Function('Chess', 'var _CG_DESDE_PLY = 10; ' + SRC.match(/var _FA_BRILL_MIN_NET[^\n]*/)[0] + '\n'
-    + ['faNum', '_fenGrid', '_pval', '_pieceValAtFen', '_pinDir', '_attackersOf', '_seeGain', '_faIsBrilliant', '_faTapaJaque', '_faFrenaCoronacion', '_faTomarDestapa', '_faRepetida', '_oppHasLegalCaptureOf', '_faWinP', '_cgDetectarBri'].map(extraerFuncion).join('\n')
+    + ['faNum', '_fenGrid', '_pval', '_pieceValAtFen', '_pinDir', '_attackersOf', '_seeGain', '_faIsBrilliant', '_faTapaJaque', '_faFrenaCoronacion', '_faTomarDestapa', '_faRepetida', '_faForzada', '_oppHasLegalCaptureOf', '_faWinP', '_cgDetectarBri'].map(extraerFuncion).join('\n')
     + '; return { det: _cgDetectarBri, vis: _faIsBrilliant, winp: _faWinP };')(ChessB);
   const mk = (fen, uci, a, d) => {
     const ch = new ChessB(fen); ch.move({ from: uci.slice(0, 2), to: uci.slice(2, 4) });
@@ -6840,6 +6840,8 @@ console.log('\n=== 53h. Colgadas de la ronda: barrido, revisión y tablero de ej
       '🔒 la pieza "colgada" de un peón CLAVADO a la dama no se entrega: si la toma, pierde la dama (35...♘e5 y 8.♘c3 de la R10)');
   chk(visN('r3r1k1/3nbppp/p1p1b3/4R1B1/2P5/2N1N3/PP3PPP/2KR4 w - - 3 20', 'd1d7') === true,
       '…pero si lo que se destapa vale menos que lo entregado, sigue siendo jugadón (20.♖xd7 de Mesa Cruz–Laylo, aceptado)');
+  chk(visN('6R1/r3kp2/1NpP1r2/P1P5/3P1q1p/5n2/Q7/1K6 b - - 0 45', 'f6d6') === false,
+      '🔒 jugada FORZADA (3 legales o menos) no es jugadón: 45...♖xd6 de Subelj–Burovic, en jaque sólo había ♖xd6 o ♕xd6');
   // R10 femenina (26/09): el jaque intermedio que después come la pieza que el rival acaba de mover.
   const JI = new Function('Chess', extraerFuncion('_pval') + extraerFuncion('_cgJaqueIntermedio') + '; return _cgJaqueIntermedio;')(ChessB);
   const R61 = '8/5bk1/6p1/8/8/6RP/q5QK/8 w - - 0 61';
@@ -6850,10 +6852,54 @@ console.log('\n=== 53h. Colgadas de la ronda: barrido, revisión y tablero de ej
       && JI(R61, 'g2a2', 'f7a2', 'g3g6', 'a6a2') === false,
       '…y sin jaque, o si lo que come es la pieza que tomó la entregada, no aplica');
   chk(/r3: pvM\[3\] \|\| ''/.test(extraerFuncion('mevHandleMsg')) && /r3: l\.r3 \|\| ''/.test(extraerFuncion('mevHandleMsg'))
-      && /!calidad && !intermedio && suyaSol/.test(extraerFuncion('_cgVerificarBri')),
+      && /!calidad && !intermedio && !pareja && suyaSol/.test(extraerFuncion('_cgVerificarBri')),
       'la lista guarda la 3ª jugada de la línea del motor y descarta el jaque intermedio');
+  // R11 (27/09): la entrega FALSA (tomarla cuesta otra pieza igual o mayor) que sólo empata.
+  const EF = new Function('Chess', ['_fenGrid', '_pval', '_pinDir', '_attackersOf', '_seeGain', '_cgEntregaFalsa'].map(extraerFuncion).join(';') + '; return _cgEntregaFalsa;')(ChessB);
+  chk(EF('r7/5p1k/6p1/PQ5p/4q3/7P/5PP1/1R4K1 b - - 0 48', 'a8a5') === true
+      && EF('r2qrk2/pp1n1p2/2p1bp2/5Bp1/3PQP2/2P3P1/PP1B2p1/R3R1K1 b - - 2 18', 'd7c5') === true,
+      '🔒 la torre "colgada" que no se puede tomar porque se pierde la de b1 es una entrega falsa (48...♖xa5 de Carbonell–Baizar, 18...♘c5)');
+  chk(EF('r1b2rk1/pp2ppbp/5np1/q2pNn2/8/2N1P1P1/PP1B1PBP/R2Q1RK1 w - - 1 14', 'c3d5') === true,
+      '🔒 también la del ATAQUE A LA DESCUBIERTA: 14.♘xd5 de Cahen–Sonhy (si ♘xd5 ♗xa5; si ♕xd5, ♗xd5 en la misma casilla)');
+  chk(EF('r2n2k1/pp5p/4p1q1/1Q4p1/4p3/6P1/PP4BP/5RK1 w - - 2 23', 'g2e4') === false
+      && EF('r4rk1/p1pn1pp1/1p2p3/3q2Pp/3PN2P/3Q4/PP2PP2/R3K1R1 w Q - 2 18', 'e4f6') === false,
+      '…y las entregas de verdad no lo son (23.♗xe4 y 18.♘f6+, aceptados)');
+  chk(EF('7r/1p1k1pp1/4p3/3p3p/5n1P/1q6/5PPK/QR6 b - - 1 39', 'h8a8') === true
+      && extraerFuncion('_cgVerificarBri').includes('var pareja = (Math.abs(suyaSol) <= _CG_BRI_PAREJA && _cgEntregaFalsa(f, jug))')
+      && /var _CG_BRI_PAREJA = 50;/.test(SRC),
+      '🔒 la lista sólo la descarta si además queda PAREJA (±0,5): 39...♖a8 también es falsa, pero gana (+4,8) y el autor la aceptó');
+  // 27/09: la entrega falsa que sólo gana un peón (pieza sobrecargada), con o sin eval pareja.
+  const PF = new Function('Chess', ['_fenGrid', '_pval', '_pinDir', '_attackersOf', '_seeGain', '_cgEntregaFalsa', '_cgPeonFalso'].map(extraerFuncion).join(';') + '; return _cgPeonFalso;')(ChessB);
+  chk(PF('2r1r1k1/1b1n1pp1/pb4qp/3pp3/RP5P/1NP1P1B1/1Q3PP1/2R2BK1 b - - 0 24', 'b6e3') === true,
+      '🔒 24...♗xe3 de Banda–Garcia: el peón f2 está sobrecargado (si fxe3, ♕xg3); sólo gana un peón, no es jugadón');
+  chk(PF('1k1r2nr/pb1qp3/1pnp1pp1/2p4p/Q1PPP3/2P1BNP1/P4PBP/R4RK1 b - - 0 14', 'c6d4') === false
+      && PF('2r1k3/pp3r2/3R1Bpb/8/1n2PNp1/2P5/PP5P/2K2R2 b - - 0 23', 'b4d3') === false
+      && PF('r7/5p1k/6p1/PQ5p/4q3/7P/5PP1/1R4K1 b - - 0 48', 'a8a5') === true,
+      '…pero si tomarla cuesta mucho más que la pieza (♘xd4 de Gil Garrote, aceptado) o no come un peón (23...♘d3+), sigue');
+  chk(extraerFuncion('_cgVerificarBri').includes('|| (suyaSol >= -_CG_BRI_PAREJA && _cgPeonFalso(f, jug))')
+      && extraerFuncion('_faDescarteLista').includes('if (moverAfter >= -_CG_BRI_PAREJA && _cgPeonFalso(fen, uci)) return true;'),
+      'la lista y el "!!" del visor la descartan, salvo que el que juega quede perdiendo (51...♖xc2 salva una posición a -0,85, aceptado)');
+  // 27/09: los filtros de la lista también en el "!!" del visor (con las 3 líneas del módulo en vivo).
+  const DL = new Function('Chess', 'var _CG_BRI_PAREJA = 50, _CG_BRI_MARGEN = 30, _CG_ALT_MARGEN_MIN = 80, _CG_ALT_MARGEN_FRAC = 0.35;'
+    + ['_fenGrid', '_pval', '_pinDir', '_attackersOf', '_seeGain', '_cgEntregaFalsa', '_cgPeonFalso', '_cgOtraOk', '_cgJaqueIntermedio', 'faNum', '_faDescarteLista'].map(extraerFuncion).join(';')
+    + '; return _faDescarteLista;')(ChessB);
+  const BZ = 'r7/5p1k/6p1/PQ5p/4q3/7P/5PP1/1R4K1 b - - 0 48';
+  const nBZ = (abuelo) => ({ fen: '', move: { from: 'a8', to: 'a5' }, parent: { fen: BZ, move: { from: 'a4', to: 'a5' }, parent: { fen: abuelo || 'r7/5p1k/6p1/1Q5p/P3q3/7P/5PP1/1R4K1 w - - 0 48' } } });
+  const lnBZ = (sc2) => ({ cp: 0, ln: [{ mv: 'a8a5', re: 'b5b7', r3: 'e4b7', sc: 0 }, { mv: 'e4d4', re: '', r3: '', sc: sc2 }, { mv: 'e4e6', re: '', r3: '', sc: -99 }] });
+  chk(DL(nBZ(), { cp: 0 }, { cp: 0 }, false) === true && DL(nBZ(), { cp: 0 }, { cp: 300 }, false) === false,
+      '🔒 visor: la entrega falsa que termina pareja no lleva "!!" (48...♖xa5), sin necesidad del módulo; si no queda pareja, sí');
+  chk(DL(nBZ(), lnBZ(-92), { cp: 300 }, false) === false && DL(nBZ(), lnBZ(-50), { cp: 300 }, false) === true
+      && DL(nBZ(), { cp: 0, ln: [{ mv: 'e4d4', re: '', r3: '', sc: 0 }, { mv: 'e4e6', re: '', r3: '', sc: -99 }] }, { cp: 300 }, false) === true
+      && DL(nBZ(), { cp: 0, ln: [{ mv: 'a8a5', re: '', r3: '', sc: 0 }] }, { cp: 300 }, false) === true,
+      '🔒 visor con las 3 líneas del módulo: tiene que ser la ÚNICA (otra a menos de 0,8 → no), estar entre las del módulo, y no ser forzada');
+  chk(DL(nBZ(BZ), { cp: 0 }, { cp: 300 }, false) === true,
+      '🔒 visor: RETOMAR en la casilla donde el rival acaba de comer no es jugadón');
+  chk(extraerFuncion('faClassify').includes('&& !_faDescarteLista(node, rBefore, rAfter, whiteMoved)')
+      && /ws.ln = ln/.test(extraerFuncion('_faFeedModuleEval')) && /score.ln = _prevC.ln/.test(SRC)
+      && /l.depth < _FA_NAG_MINDEPTH/.test(extraerFuncion('_faModLineas')),
+      'el módulo guarda sus 3 líneas (a prof. firme) junto a la eval, el pase no las borra, y el "!!" del visor las usa');
   const vb0 = extraerFuncion('_cgVerificarBri');
-  chk(vb0.includes("var calidad = /^[nb]$/.test(P.cap[c.i] || '')") && vb0.includes('suya.re.slice(2, 4) === jug.slice(2, 4)') && vb0.includes('!calidad && !intermedio && suyaSol')
+  chk(vb0.includes("var calidad = /^[nb]$/.test(P.cap[c.i] || '')") && vb0.includes('suya.re.slice(2, 4) === jug.slice(2, 4)') && vb0.includes('!calidad && !intermedio && !pareja && suyaSol')
       && extraerFuncion('mevHandleMsg').includes("re: pvM[2] || ''") && /return \{ mv: l\.mv, re: l\.re \|\| ''/.test(extraerFuncion('mevHandleMsg')),
       '🔒 entregar la calidad y que el rival la tome es un cambio, no un jugadón (10 rechazados en la R9, ningún aceptado): la respuesta sale de la línea del motor');
   const vb = extraerFuncion('_cgVerificarBri');

@@ -35854,7 +35854,9 @@ function _cgVerificarBri(g, P, c) {
           && !!suya.re && suya.re.slice(2, 4) === jug.slice(2, 4);
         // La mejor (o casi), sana, y la ÚNICA: con una sola línea (jugada forzada) no hay nada que encontrar.
         var intermedio = _cgJaqueIntermedio(f, jug, suya.re, suya.r3, c.i > 0 ? P.uci[c.i - 1] : '');
-        if (!calidad && !intermedio && suyaSol >= bestSol - _CG_BRI_MARGEN && suyaSol > -200 && lines.length >= 2 && !alts.length) {
+        var pareja = (Math.abs(suyaSol) <= _CG_BRI_PAREJA && _cgEntregaFalsa(f, jug))
+          || (suyaSol >= -_CG_BRI_PAREJA && _cgPeonFalso(f, jug));
+        if (!calidad && !intermedio && !pareja && suyaSol >= bestSol - _CG_BRI_MARGEN && suyaSol > -200 && lines.length >= 2 && !alts.length) {
           _cgMeter({
             id: _cgGameKeyId(P.h) + '#!' + (c.i + 1), bri: 1,
             w: P.h.White || '?', b: P.h.Black || '?', r: P.h.Round || '', ply: c.i, tipo: 'BR',
@@ -35888,6 +35890,58 @@ function _cgJaqueIntermedio(fen, jug, re, r3, prev) {
     var suya = prev.slice(2, 4);
     if (m3.to !== suya && !(m2.from === suya && m2.to === m3.to)) return false;
     return _pval(m3.captured) >= _pval(m1.piece);
+  } catch (e) { return false; }
+}
+// ENTREGA FALSA QUE TERMINA PAREJA: la pieza "colgada" no se puede tomar, porque cualquier captura le
+// cuesta al rival lo mismo o más, y encima la jugada sólo empata: el motor la da entre -0,5 y +0,5. Es
+// recuperar un peón con un truco, lindo para los que empiezan pero no un jugadón. Dos formas (27/09,
+// R11 de la Olimpiada):
+//  · DESVÍO del defensor: 48...♖xa5 de Carbonell–Baizar, si 49.♕xa5 ♕xb1+.
+//  · ATAQUE A LA DESCUBIERTA que crea la propia jugada: 14.♘xd5 de Cahen–Sonhy destapa el ♗d2 contra la
+//    ♕a5; si 14...♘xd5 ♗xa5, y si 14...♕xd5 ♗xd5 (en la MISMA casilla: por eso cuenta también).
+//    Por eso lo que se gana después se compara con la posición de ANTES de la jugada.
+// Medido sobre R9 y R10 revisadas: 12 rechazados y 1 aceptado, 19...♗xe4 de Mammadzada–Beber (mismo
+// mecanismo: si ♕xe4, ♖xd1+; el autor dijo que lo había dejado por gusto y que se borre). Las entregas
+// falsas que al autor SÍ le gustan (39...♖a8, 30.♗h7+, 51...♘f4) ganan de verdad; 51...♖xc2 salva una
+// posición a -0,85.
+var _CG_BRI_PAREJA = 50;   // centipeones, para cualquiera de los dos lados
+// `sobraMax` (opcional): además, lo que se recupera no pasa de lo entregado por más que eso.
+function _cgEntregaFalsa(fen, jug, sobraMax) {
+  if (typeof Chess === 'undefined') return false;
+  try {
+    var ch = new Chess(fen), m1 = ch.move({ from: jug.slice(0, 2), to: jug.slice(2, 4), promotion: jug[4] || 'q' });
+    if (!m1) return false;
+    var mover = m1.color, sq = m1.to, sv = _pval(m1.piece), despues = ch.fen(), g = _fenGrid(fen);
+    var tomas = ch.moves({ verbose: true }).filter(function (m) { return m.to === sq && m.captured; });
+    if (!tomas.length) return false;
+    var sobra = 1e9;
+    for (var i = 0; i < tomas.length; i++) {
+      var c3 = new Chess(despues); c3.move(tomas[i]);
+      var g3 = _fenGrid(c3.fen()), mejor = 0;
+      for (var k = 0; k < 64; k++) {
+        var p = g3[k];
+        if (!p || p.toLowerCase() === 'k' || (mover === 'w') === (p === p.toUpperCase())) continue;   // sólo piezas del rival
+        var f = k % 8, r = (k - f) / 8;
+        var enSq = 'abcdefgh'.charAt(f) + (r + 1) === sq;   // la pieza que tomó: antes ahí no había nada suyo que ganar
+        mejor = Math.max(mejor, _seeGain(g3, f, r, mover) - (enSq ? 0 : _seeGain(g, f, r, mover)));
+      }
+      if (mejor < sv) return false;   // una captura que no le cuesta nada: la entrega es de verdad
+      sobra = Math.min(sobra, mejor - sv);
+    }
+    return sobraMax == null || sobra <= sobraMax;
+  } catch (e) { return false; }
+}
+// LA ENTREGA FALSA QUE SÓLO GANA UN PEÓN: come un peón sin dar jaque, y si el rival toma la pieza se
+// recupera JUSTO lo entregado (sobra 0). Es explotar una pieza sobrecargada, no un jugadón. 24...♗xe3 de
+// Banda–Garcia (R11 femenina, 27/09): si fxe3, ♕xg3 (el peón f2 defendía e3 y el ♗g3); el autor dice
+// que el detector lo trae seguido. En R9 y R10 revisadas: 12 rechazados, ningún aceptado. Sólo si el que
+// juega no queda perdiendo: 51...♖xc2 (aceptado) salva una posición a -0,85. ♘xd4 de Gil Garrote–
+// Bentancor (aceptado) come un peón pero si lo toman gana mucho más que la pieza (sobra 6).
+function _cgPeonFalso(fen, jug) {
+  if (typeof Chess === 'undefined') return false;
+  try {
+    var m1 = new Chess(fen).move({ from: jug.slice(0, 2), to: jug.slice(2, 4), promotion: jug[4] || 'q' });
+    return !!m1 && m1.captured === 'p' && !/[+#]/.test(m1.san) && _cgEntregaFalsa(fen, jug, 0);
   } catch (e) { return false; }
 }
 // "24.♖xf7!!" (la brillante, con su número de jugada).
@@ -42260,6 +42314,8 @@ function faHandleMsg(line) {
     if (bmM) score.bm = bmM[1];
     score.d = _fa.lastDepth || 0;   // profundidad a la que se calculó (para diferir la calificación)
     score = _faFixMate0(score, node.fen);   // jaque mate: firmar el {mate:0} según el turno (si no, cae como derrota)
+    var _prevC = _faLiveCache[node.fen];
+    if (_prevC && _prevC.ln) score.ln = _prevC.ln;   // las 3 líneas del módulo (filtros del "!!") no se pierden
     _fa.results[_fa.ply] = score;
     // Cachear SIEMPRE (vivo y manual) por FEN y persistir: así, al cerrar el gráfico con la ✕ y
     // reabrirlo (o abrir la partida en otra pestaña), se dibuja al instante sin recalcular nada.
@@ -42300,6 +42356,8 @@ function _faFeedModuleEval(rawScore, flip) {
   var prev = _faLiveCache[fen];
   if (prev && prev.bm) ws.bm = prev.bm;   // conservar la mejor jugada ya cacheada (para el ★)
   ws.d = sf.depth;                        // profundidad del módulo (para diferir la calificación)
+  var ln = _faModLineas();                // sus 3 líneas: con ellas el "!!" usa los filtros de la lista
+  if (ln) ws.ln = ln; else if (prev && prev.ln) ws.ln = prev.ln;
   _faLiveCache[fen] = ws;
   _faSaveLiveCache();
   // Ubicar la jugada en la línea principal del gráfico y actualizar su punto (redibujo acelerado).
@@ -42312,6 +42370,20 @@ function _faFeedModuleEval(rawScore, flip) {
   // Al asentar esta jugada en profundidad puede aparecer/corregirse su símbolo (y el de la
   // siguiente): recalcular la calificación, re-renderizando solo si algún símbolo cambió.
   _faReclassifyIfChanged();
+}
+
+// Las líneas del módulo (MultiPV 3) en forma corta: jugada, respuesta, 3ª jugada y puntaje del que mueve
+// (centipeones; el mate cuenta ±10000, como _colCp). Sólo a profundidad firme; si no, null.
+function _faModLineas() {
+  var out = [];
+  for (var i = 0; i < 3; i++) {
+    var l = sf.lines && sf.lines[i];
+    if (!l || !l.pv || !l.pv.length) break;
+    if (l.depth < _FA_NAG_MINDEPTH) return null;
+    var s = l.score;
+    out.push({ mv: l.pv[0], re: l.pv[1] || '', r3: l.pv[2] || '', sc: s.mate !== undefined ? (s.mate > 0 ? 10000 : -10000) : s.cp });
+  }
+  return out.length ? out : null;
 }
 
 function faScoreToY(score, midY, cap) {
@@ -42624,7 +42696,43 @@ function _faIsBrilliant(node, rBefore, rAfter, whiteMoved, wpB) {
       if (_oppHasLegalCaptureOf(node.fen, sqName) && !_faTomarDestapa(node.fen, sqName, mover, _pval(p))) hay = true;
     }
   }
-  return hay && !_faTapaJaque(node) && !_faRepetida(node);
+  return hay && !_faTapaJaque(node) && !_faRepetida(node) && !_faForzada(node);
+}
+// JUGADA FORZADA: con 3 jugadas legales o menos no hay nada que encontrar. 45...♖xd6 de Subelj–Burovic
+// (R11 de la Olimpiada, 27/09): en jaque del peón d6, las únicas eran ♖xd6 y ♕xd6, y entre dar la torre
+// o la dama no hay jugadón. En R9 y R10 revisadas: 1 rechazado más (32...♖d8), ningún aceptado.
+function _faForzada(node) {
+  if (typeof Chess === 'undefined') return false;
+  try { return new Chess(node.parent.fen).moves().length <= 3; } catch (e) { return false; }
+}
+// Los filtros que antes eran SÓLO de la lista de jugadones, ahora también para el "!!" del visor
+// (27/09, pedido del autor). Dos no necesitan motor y valen siempre: RETOMAR, y la ENTREGA FALSA que
+// termina pareja. Los otros usan las 3 líneas del módulo en la posición de ANTES (`rBefore.ln`, que se
+// guardan en vivo con el módulo prendido): la ÚNICA que sirve, la CALIDAD que el rival acepta y el
+// JAQUE INTERMEDIO. Sin esas líneas (partida terminada, módulo apagado) esos tres no se miran.
+// true = no es jugadón. Sólo corre sobre las candidatas a "!!" (pocas por partida).
+function _faDescarteLista(node, rBefore, rAfter, whiteMoved) {
+  try {
+    var mv = node.move, par = node.parent, pm = par && par.move;
+    var fen = par.fen, uci = mv.from + mv.to + (mv.promotion || '');
+    function idx(s) { return (parseInt(s[1], 10) - 1) * 8 + s.charCodeAt(0) - 97; }
+    // RETOMAR: el rival acaba de comer en esa casilla (mismo criterio que _cgDetectarBri).
+    if (pm && pm.to === mv.to && par.parent && par.parent.fen && _fenGrid(par.parent.fen)[idx(pm.to)]) return true;
+    var moverAfter = whiteMoved ? faNum(rAfter) : -faNum(rAfter);
+    if (Math.abs(moverAfter) <= _CG_BRI_PAREJA && _cgEntregaFalsa(fen, uci)) return true;
+    if (moverAfter >= -_CG_BRI_PAREJA && _cgPeonFalso(fen, uci)) return true;   // sólo gana un peón
+    var ln = rBefore && rBefore.ln;
+    if (!ln || !ln.length) return false;
+    if (ln.length < 2) return true;   // jugada forzada: no hay nada que encontrar
+    var suya = null;
+    for (var i = 0; i < ln.length; i++) if (ln[i].mv === uci) { suya = ln[i]; break; }
+    if (!suya || suya.sc < ln[0].sc - _CG_BRI_MARGEN) return true;   // el módulo no la ve entre las mejores
+    for (var j = 0; j < ln.length; j++) if (ln[j].mv !== uci && _cgOtraOk(ln[j].sc, suya.sc)) return true;   // no es la única
+    var pg = _fenGrid(fen), comida = pg[idx(mv.to)], pieza = pg[idx(mv.from)];
+    if (comida && /^[nb]$/i.test(comida) && pieza && /^r$/i.test(pieza) && suya.re && suya.re.slice(2, 4) === mv.to) return true;   // calidad
+    if (_cgJaqueIntermedio(fen, uci, suya.re, suya.r3, pm ? pm.from + pm.to : '')) return true;
+    return false;
+  } catch (e) { return false; }
 }
 // ¿El que movió estaba en JAQUE y lo TAPÓ (sin comer y sin mover el rey)? Poner la dama en el medio para
 // que no den mate es una jugada obligada, no un jugadón (26.♕f1 de Delrieu–Cottle y 32...♖d8 en la
@@ -42784,7 +42892,7 @@ function faClassify() {
     else if (dwin >= 5)  { sym = '?!'; side.inacc++; }
     else if (bm && uci === bm) {
       // La mejor jugada del motor ASCIENDE a brillante (!!) si además es un sacrificio genuino y sano.
-      if (_faIsBrilliant(node, rBefore, rAfter, whiteMoved, wpB)) { sym = '!!'; side.brill++; }
+      if (_faIsBrilliant(node, rBefore, rAfter, whiteMoved, wpB) && !_faDescarteLista(node, rBefore, rAfter, whiteMoved)) { sym = '!!'; side.brill++; }
       else { sym = '★'; side.best++; }
     }
     else if (dwin <= 2)  side.exc++;
