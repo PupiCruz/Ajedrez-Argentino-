@@ -14767,7 +14767,8 @@ function pgnReadFile(file) {
 // Divide un texto PGN en partidas individuales
 function pgnSplitGames(text) {
   // Cada partida empieza con [Event
-  var games = text.split(/(?=\[Event\s+")/).map(function(s){ return s.trim(); }).filter(function(s){ return s.length > 10; });
+  // Sin \r\n (PGN guardados en Windows): el resto de la app busca la línea en blanco como "\n\n".
+  var games = String(text || '').replace(/\r\n?/g, '\n').split(/(?=\[Event\s+")/).map(function(s){ return s.trim(); }).filter(function(s){ return s.length > 10; });
   return games;
 }
 
@@ -33502,8 +33503,8 @@ function _replay960(pgn) {
   if (!sf) return null;
   try {
     var origins = _pgn960Origins(sf);
-    var sep = pgn.indexOf('\n\n');
-    var mvTxt = sep >= 0 ? pgn.slice(sep + 2) : pgn;
+    var _m = /\r?\n\r?\n/.exec(pgn);
+    var mvTxt = _m ? pgn.slice(_m.index + _m[0].length) : pgn;
     mvTxt = mvTxt.replace(/\{[^{}]*\}/g, ' ').replace(/;[^\n]*/g, ' ');
     var out = '', depth = 0;                       // fuera las variantes
     for (var i = 0; i < mvTxt.length; i++) {
@@ -33535,6 +33536,11 @@ function _replay960(pgn) {
   } catch (e) { return null; }
 }
 function tdFinalFen(pgn) {
+  // Finales de línea de Windows (\r\n): sin esto no aparece la línea en blanco "\n\n" que separa los
+  // encabezados de las jugadas. Pasó el 26/09 con la R4 del Provincial de Buenos Aires: el PGN venía con
+  // \r\n y, al barrerla, las evals {[%eval x]} hicieron que el respaldo cortara en el último "]" (el de
+  // la última eval) → miniaturas en la posición inicial.
+  pgn = String(pgn || '').replace(/\r\n?/g, '\n');
   // Sin posición propia, la de siempre. Con posición propia (960), ESA es la del tablero vacío:
   // si la partida todavía no tiene jugadas, la miniatura tiene que mostrar la formación sorteada.
   var _sf = _pgnStartFen(pgn);
@@ -33571,7 +33577,7 @@ function tdFinalFen(pgn) {
     var mv;
     var sep = pgn.indexOf('\n\n');
     if (sep >= 0) mv = pgn.slice(sep + 2);
-    else { var lb = pgn.lastIndexOf(']'); mv = lb >= 0 ? pgn.slice(lb + 1) : pgn; }
+    else mv = pgn.replace(/^(?:\s*\[[A-Za-z0-9_]+\s+"(?:[^"\\]|\\.)*"\])+/, '');   // NO lastIndexOf(']'): [%eval] también cierra con ']'
 
     // 2) Quitar comentarios {..} y de línea ;
     mv = mv.replace(/\{[^{}]*\}/g, ' ').replace(/;[^\n]*/g, ' ');
@@ -33652,7 +33658,7 @@ function _tdMovTokens(clean) {
 // Sin jugadores no se sigue (no hay cómo saber que es la misma).
 var _tdFenIncr = {};
 function _tdIncrKey(pgn, sf) {
-  var s = String(pgn || ''), sep = s.indexOf('\n\n');
+  var s = String(pgn || '').replace(/\r\n?/g, '\n'), sep = s.indexOf('\n\n');
   if (sep < 0) return '';
   var hd = s.slice(0, sep);
   function h(n) { var m = new RegExp('\\[' + n + ' "([^"]*)"\\]').exec(hd); return m ? m[1] : ''; }
@@ -33671,7 +33677,8 @@ function _tdIncrSave(k, toks, fen, last) {
 var _tdFenCache = {};
 // ¿El PGN tiene jugadas reales (no solo resultado)? Mira el movetext tras los headers.
 function _pgnHasMoves(pgn) {
-  var sep = String(pgn||'').indexOf('\n\n');
+  pgn = String(pgn || '').replace(/\r\n?/g, '\n');
+  var sep = pgn.indexOf('\n\n');
   var mv = sep >= 0 ? pgn.slice(sep + 2) : String(pgn||'').replace(/\[[^\]]*\]/g, '');
   return /[a-hKQRBNO]/.test(mv);   // un movimiento SAN siempre tiene una letra de columna/pieza/enroque
 }
@@ -35680,7 +35687,7 @@ function _evjInsertar(pgn, sc, nPlies) {
     if (t) out += ' {[%eval ' + t + ']}';
   }
   if (n !== nPlies) return null;
-  return head + '\n[EvalSource "' + _evjMarca() + '"]' + out;
+  return head + (m[0].charAt(0) === '\r' ? '\r\n' : '\n') + '[EvalSource "' + _evjMarca() + '"]' + out;
 }
 function _evjEscribir(g, P, sc) {
   try {

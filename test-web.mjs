@@ -24,7 +24,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1860;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1863;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -3063,6 +3063,19 @@ console.log('\n=== 26. Filtro por TEMA de los ejercicios (chips que se cuentan s
   const normal = TDF('[White "A"]\n[Black "B"]\n\n1. e4 e5 2. Nf3 Nc6 *');
   chk(normal.fen === 'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3',
       'y una partida normal sigue dando exactamente lo mismo que antes', normal.fen);
+
+  // 26/09, Provincial de Buenos Aires R4: PGN con \r\n (Windows) + el [EvalSource] que mete el barrido con
+  // \n + evals {[%eval x]}. No había "\n\n" y el respaldo cortaba en el último "]" (el de la última eval):
+  // las 16 miniaturas salían en la posición inicial.
+  const FEN_R4 = 'rnb2rk1/pp4bp/2pp2p1/4pP1n/2P1P2q/2NP3P/PP2NPB1/R1BQ1RK1 w - - 1 12';
+  const crlf = TDF('[White "Bentancor, Franco"]\r\n[Black "Deichmann, Esteban Horacio"]\r\n[EventCountry "ARG"]\n[EvalSource "aa-sf16"]\r\n\r\n'
+    + '1. g3 {[%eval 0.18]} f5 {[%eval 0.64]} 2. Bg2 {[%eval 0.55]} Nf6 {[%eval 0.59]} 3. c4 {[%eval 0.36]} g6 {[%eval 0.61]} 4. Nc3 {[%eval 0.60]} Bg7 {[%eval 0.65]} 5. d3 {[%eval 0.38]} d6 {[%eval 0.42]} 6. e4 {[%eval 0.31]} c6 {[%eval 0.49]} 7. Nge2 {[%eval 0.35]} O-O {[%eval 0.30]} 8. O-O {[%eval 0.28]} e5 {[%eval 0.29]} 9.\r\n'
+    + 'h3 {[%eval -0.02]} f4 {[%eval 0.00]} 10. gxf4 {[%eval 0.01]} Nh5 {[%eval -0.01]} 11. f5 {[%eval -0.02]} Qh4 {[%eval 0.19]}  1/2-1/2');
+  chk(crlf.fen === FEN_R4, 'miniatura de un PGN con \\r\\n y evals: la posición final, no la inicial', crlf.fen);
+  // Sin ninguna línea en blanco entre encabezados y jugadas: igual se saltean SÓLO los encabezados.
+  const pegado = TDF('[White "A"]\n[Black "B"]\n1. e4 {[%eval 0.3]} e5 {[%eval 0.2]} 2. Nf3 {[%eval 0.3]} Nc6 {[%eval 0.2]} *');
+  chk(pegado.fen === 'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3',
+      'sin línea en blanco y con evals: no corta en el "]" de la última eval', pegado.fen);
 
   // ── De a poco (24/09, Olimpiada R8): la misma partida con jugadas nuevas no se reproduce entera ──
   // Cada vuelta usa un tdFinalFen NUEVO (caché vacío) como vara: "lo que daba antes, reproduciendo todo".
@@ -7676,6 +7689,10 @@ console.log('\n=== Auditoría 23/09 — Fase 4: accesibilidad y prolijidad ===')
   chk(W.ins('[Event "X"]\n\n1. e4 e5 2. Nf3 Nf6 3. Bc4 Bc5 4. 0-0 0-0 *', falsas(8), 8) === null,
       'enroque escrito con ceros (0-0): no se toca (el lector del visor lo saltearía y quedarían corridas)');
   chk(W.ins(raro, falsas(7), 7) === null, 'si las jugadas del texto no coinciden con las reproducidas, no se toca nada');
+  // 26/09, Provincial de Bs. As. R4: el PGN venía con \r\n y el [EvalSource] entraba con \n a secas.
+  const nCr = W.ins(raro.replace(/\n/g, '\r\n'), falsas(6), 6);
+  chk(nCr && /\[Black "B"\]\r\n\[EvalSource "aa-sf\d+"\]\r\n\r\n1\.e4/.test(nCr) && !/[^\r]\n/.test(nCr),
+      'PGN con \\r\\n: el [EvalSource] entra con el mismo salto de línea (no deja saltos mezclados)', JSON.stringify(nCr && nCr.slice(0, 80)));
   chk(W.tok({ mate: 0 }) === null && W.tok({ mate: -3 }) === '#-3' && W.tok({ cp: 35 }) === '0.35',
       'formato de Lichess: 0.35 y #-3; la posición de mate no se anota (Lichess tampoco)');
   chk(W.pos(nr).propias === true && W.pos(raro).propias === false, '🔒 marcadas como NUESTRAS ([EvalSource]): el barrido no las toma por evals de Lichess');
