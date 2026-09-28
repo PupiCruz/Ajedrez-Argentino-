@@ -30520,7 +30520,12 @@ function _siFixPgn(pgn) {
   // _replay960 en el visor, que ya corta el ruido del final por su cuenta: acá no se tocan.
   if (typeof _pgnIs960 === 'function' && _pgnIs960(pgn)) return pgn;
   var body = pgn.replace(/^\s*(?:\[[^\]]*\]\s*)+/, '');
-  var clean = body.replace(/\{[^}]*\}/g, ' ').replace(/\d+\.(\.\.)?/g, ' ');
+  // Sólo la línea PRINCIPAL: las variantes del comentarista "( 7...Nxd5 8.d4 … )" (PGN de OlimpBase,
+  // ChessBase) se contaban como jugadas, la cuenta nunca cerraba y la partida se reescribía cortada
+  // en el primer "(" (Timman–Yermolinsky, Elistá 1998: quedaba en 7...exd5).
+  var clean = body.replace(/\{[^}]*\}/g, ' ').replace(/;[^\n]*/g, ' ');
+  while (clean.indexOf('(') >= 0) { var _b = clean; clean = clean.replace(/\([^()]*\)/g, ' '); if (clean === _b) { clean = clean.replace(/[()]/g, ' '); break; } }
+  clean = clean.replace(/\$\d+/g, ' ').replace(/\d+\.(\.\.)?/g, ' ');
   var moveTokens = clean.match(/[a-hKQRBNO][^\s{}]+|O-O(?:-O)?/g) || [];
   var okStrict = false;
   try { var p = new Chess(); okStrict = p.load_pgn(pgn) && p.history().length >= moveTokens.length; } catch (e) {}
@@ -30529,22 +30534,40 @@ function _siFixPgn(pgn) {
   // Los números de jugada se sacan token por token, NUNCA adentro de los comentarios: antes un replace
   // sobre todo el texto convertía {[%eval 0.14]} en {[%eval  14]} (= +14) y el gráfico salía roto
   // (La Banda R4, Vergara–Nallar: 35...N6d7 con el caballo de f8 clavado hacía fallar la carga estricta).
-  var tokens = body.match(/\{[^}]*\}|[^\s{}]+/g) || [];
-  var moves = [];
+  var tokens = body.match(/\{[^}]*\}|[()]|[^\s{}()]+/g) || [];
+  // Evaluaciones escritas a mano (ChessBase/OlimpBase: "18.Bf3 +/- c4") → su código estándar; chess.js
+  // no las entiende y cortaba la partida ahí (Svidler–Tissir, Estambul 2000: quedaba en 18.Bf3).
+  var EVAL_NAG = { '=': 10, '~': 13, '∞': 13, '+=': 14, '=+': 15, '+/-': 16, '-/+': 17, '+-': 18, '-+': 19,
+                   '⩲': 14, '⩱': 15, '±': 16, '∓': 17 };
+  var moves = [], depth = 0;
   for (var i = 0; i < tokens.length; i++) {
     var tk = tokens[i];
+    // Variantes del comentarista afuera, con sus comentarios: no son jugadas de la partida.
+    if (tk === '(') { depth++; continue; }
+    if (tk === ')') { if (depth > 0) depth--; continue; }
+    if (depth > 0) {
+      // Comentarista que abre una sub-variante ADENTRO del comentario y la cierra afuera:
+      // "{Zapata ( 23...Rxf8 24.Qxa5 $16 })" (Illescas–Zapata, Elistá 1998). Ese "(" cuenta.
+      if (tk[0] === '{') { var dif = (tk.match(/\(/g) || []).length - (tk.match(/\)/g) || []).length; if (dif > 0) depth += dif; }
+      continue;
+    }
     if (tk[0] === '{') { if (moves.length) moves[moves.length - 1].cmt = tk; continue; }
+    if (/^\$\d+$/.test(tk) || EVAL_NAG[tk]) { if (moves.length) moves[moves.length - 1].nag += ' ' + (EVAL_NAG[tk] ? '$' + EVAL_NAG[tk] : tk); continue; }
     tk = tk.replace(/^\d+\.+/, '');
     if (!tk) continue;
     if (/^(1-0|0-1|1\/2-1\/2|\*)$/.test(tk)) continue;
-    moves.push({ san: tk, cmt: '' });
+    // Otras marcas sueltas ("D" de diagrama, "N" de novedad, "RR"…): sólo pasa lo que tiene forma de jugada.
+    if (!/^([KQRBNP]?[a-h]?[1-8]?x?[a-h][1-8]|[O0]-[O0])/.test(tk)) continue;
+    var gl = tk.match(/[!?]+$/);                 // el "!" / "?" pegado a la jugada se conserva
+    moves.push({ san: tk, cmt: '', nag: gl ? gl[0] : '' });
   }
   var ch = new Chess(), mv = '';
   for (var j = 0; j < moves.length; j++) {
     var r = null; try { r = ch.move(moves[j].san, { sloppy: true }); } catch (e) {}
     if (!r) break;   // jugada ilegal (ruido post-partida del eboard) → cortar acá
     if (j % 2 === 0) mv += (j / 2 + 1) + '. ';
-    mv += r.san + (moves[j].cmt ? ' ' + moves[j].cmt : '') + ' ';
+    var ng = moves[j].nag, gl2 = (ng.match(/^[!?]+/) || [''])[0];
+    mv += r.san + gl2 + ng.slice(gl2.length) + (moves[j].cmt ? ' ' + moves[j].cmt : '') + ' ';
   }
   var result = (pgn.match(/\[Result\s+"([^"]*)"\]/) || [null, '*'])[1];
   return headers + '\n\n' + (mv + result).trim();

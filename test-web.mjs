@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1910;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1916;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -3335,6 +3335,42 @@ console.log('\n=== 26. Filtro por TEMA de los ejercicios (chips que se cuentan s
   chk(/1\. e4 \{\[%eval 0\.14\]\} e5 \{\[%eval 0\.20\]\}/.test(fx2) && /Nc6 \{\[%eval -1\.05\]\}/.test(fx2)
       && /3\. Bb5 \{\[%eval #3\]\}/.test(fx2),
       'y las evals de los comentarios salen INTACTAS (0.14 no se vuelve 14)', fx2);
+
+  // 28/09: PGN COMENTADOS de OlimpBase/ChessBase salían cortados. Las jugadas de las variantes
+  // "( 7...Nxd5 8.d4 … )" se contaban como de la partida → la cuenta nunca cerraba → se reescribía y
+  // el "(" cortaba (Timman–Yermolinsky, Elistá 1998: quedaba en 7...exd5).
+  const conVar = '[White "Timman"]\n[Black "Yermolinsky"]\n[Result "0-1"]\n\n'
+               + '1.e4 c5 2.Nf3 Nc6 3.Bb5 e6 4.O-O Nge7 5.c3 a6 6.Be2 d5 7.exd5 exd5 \n'
+               + '    ( 7...Nxd5 8.d4 cxd4 \n        ( 8...Be7 9.c4 Nf6 18.Rd1 $14 {\n'
+               + '        Kasparov,G-Kramnik,V/Paris PCA-Intel GP 1995/0-1 (63)} )\n    9.Nxd4 Bd7 )\n'
+               + '8.d4 cxd4 9.Nxd4 Nxd4 10.cxd4 $6 ( 10.Qxd4 $5 Nc6 $8 ) 10...g6 $11 11.Nc3 Bg7 0-1';
+  chk(FIX(conVar) === conVar, 'una partida con VARIANTES del comentarista sale intacta (no se reescribe)', FIX(conVar));
+  const c46 = new Chess45(); c46.load_pgn(FIX(conVar));
+  chk(c46.history().length === 22, 'y se lee ENTERA: 22 jugadas, no cortada en 7...exd5', c46.history().length);
+  // Evaluaciones escritas a mano ("+/-", "+-", "+=") en la línea principal: chess.js no las entiende,
+  // así que la reescritura tiene que saltarlas, no cortar ahí (Svidler–Tissir, Estambul 2000).
+  const conSimb = '[White "Svidler"]\n[Black "Tissir"]\n[Result "1-0"]\n\n'
+                + '1.e4 c5 2.Nf3 Nc6 3.d4 cxd4 4.Nxd4 e6 5.Nc3 Qc7 6.Be2 Nf6 7.O-O a6 8.Be3 Bb4 9.Na4 Be7 '
+                + '10.Nxc6 bxc6 11.Nb6 Rb8 12.Nxc8 Qxc8 13.Bd4! {This move.} 13...c5 14.Be5 Rb6 15.b3 O-O 16.Qd3 d5? '
+                + '( 16...d6 17.Bb2 Nd7 21.Qh3! += {Shirov-Atakisi/Batumi/1999/} ) '
+                + '17.exd5 exd5 18.Bf3 +/- c4 19.Qd2 Qf5 D 20.Rae1 cxb3 21.axb3 Bb4 22.c3 Bd6 23.Qd4 Rc6 24.c4 +- Bc5 '
+                + '25.Qb2 Ng4 26.Bg3 Rg6 27.cxd5 Qg5 28.Qc1 1-0';
+  const fx3 = FIX(conSimb), c46b = new Chess45();
+  chk(c46b.load_pgn(fx3) && c46b.history().length === 55,
+      'con "+/-" y "+-" en la línea principal se lee ENTERA (55 jugadas, no 35)', c46b.history().length + ' · ' + fx3);
+  chk(/13\. Bd4! \{This move\.\}/.test(fx3) && /16\. Qd3 d5\?/.test(fx3) && /18\. Bf3 \$16 c4/.test(fx3)
+      && /24\. c4 \$18 Bc5/.test(fx3) && !/Shirov/.test(fx3),
+      'y conserva los "!"/"?", pasa "+/-" a $16 y "+-" a $18, y deja afuera la variante', fx3);
+  // "N" suelta = novedad (no un caballo): cortaba Vaganian–Lodhi (Estambul 2000) en 7...O-O.
+  const conN = '[White "Vaganian"]\n[Black "Lodhi"]\n[Result "*"]\n\n'
+             + '1.Nf3 d5 2.d4 c6 3.c4 e6 4.e3 f5 5.Bd3 Nf6 6.O-O Bd6 7.b3 O-O N {The correct move is 7...Qe7} 8.Ba3 Bxa3 *';
+  const c46c = new Chess45(); c46c.load_pgn(FIX(conN));
+  chk(c46c.history().length === 16, 'la "N" de novedad no se toma por jugada (16 jugadas, no 14)', c46c.history().length);
+  // Sub-variante abierta ADENTRO de un comentario y cerrada afuera (Illescas–Zapata, Elistá 1998).
+  const conCom = '[White "A"]\n[Black "B"]\n[Result "*"]\n\n'
+               + '1.e4 e5 ( 1...c5 2.Nf3 ( 2.c3 d5 {Zapata ( 2...Nf6 3.e5 $16 }) 2...d6 ) 2.Nf3 Nc6 3.Bb5 *';
+  const c46d = new Chess45(); c46d.load_pgn(FIX(conCom));
+  chk(c46d.history().length === 5, 'un "(" abierto dentro de un comentario no hace perder la línea principal', c46d.history().length);
 
   // El tercer camino que arma el árbol (el del VIVO, que extiende sin reconstruir) también sabe 960:
   // si no, cada refresco de la transmisión reconstruía todo y el visitante perdía dónde miraba.
