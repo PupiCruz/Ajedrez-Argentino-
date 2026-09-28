@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1916;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1918;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -996,6 +996,14 @@ console.log('\n=== 21. Los países, en castellano ===');
         'y por el NOMBRE: Yugoslavia sigue sin bandera (no se sabe el año) y las Antillas llevan la de 1986-2010', _paisFed('Yugoslavia'));
     chk(LECT.includes("if (c === 'YUG') return (+Y >= 1946 && +Y <= 1991) ? 'YGE' : 'YGL';") && LECT.includes("if (c === 'AHO' && +Y < 1986) return 'AHX';"),
         'el lector de OlimpBase elige la de la época por el año de la Olimpiada');
+    // Calviá 2004 (28/09/2026): la planilla dice "Nguku, Namale Ben" y el PGN "Namale, Ben Nguku" → 12 mesas sin ojito.
+    const corte = (n) => { const i = LECT.indexOf('  function ' + n + '('); let d = 0; for (let k = LECT.indexOf('{', i); ; k++) { if (LECT[k] === '{') d++; if (LECT[k] === '}' && !--d) return LECT.slice(i, k + 1); } };
+    const parecido = new Function(['plegar', 'apellido', 'distancia', 'parecido'].map(corte).join('\n') + '\nreturn parecido;')();
+    chk(parecido('Nguku, Namale Ben', 'Namale, Ben Nguku') >= 4 && parecido('Namale, Ben Nguku', 'Nguku, Namale Ben') >= 4
+        && parecido('Ben, Ali', 'Salem, Ben') < 4 && parecido('Hāzenfuss', 'Hasenfuss') === 60 && parecido('Molander, Riku', 'Nguku, Namale Ben') < 4,
+        '🏛️ lector: el nombre dado vuelta en el PGN ("Namale, Ben Nguku") encuentra su mesa; palabras cortas ("Ben") no alcanzan');
+    chk(LECT.includes("return 'IPCA (ajedrecistas con discapacidad física)';") && LECT.includes("if (/^(IBCA|IPCA|ICSC)$/i.test(n)) return '';"),
+        '🏛️ lector: IPCA/ICSC se dicen en castellano y van sin bandera (como IBCA)');
   }
   // Olimpiadas suizas de OlimpBase 1976-1990 (28/09/2026): OlimpBase le dice GER a Alemania Occidental.
   chk(_paisES('West Germany') === 'Alemania Occidental' && _paisFed('West Germany') === 'FRG' && HFLAG.FRG === 'de'

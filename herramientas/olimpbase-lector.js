@@ -125,11 +125,18 @@
     return p[b.length];
   }
   function parecido(a, b) {
+    var a0 = a, b0 = b;
     a = apellido(a); b = apellido(b);
     if (!a || !b) return 0;
     if (a === b) return 100;
     if (Math.min(a.length, b.length) >= 5 && distancia(a, b) <= Math.max(1, Math.floor(Math.max(a.length, b.length) / 6))) return 60;
     var i = 0; while (i < a.length && a[i] === b[i]) i++;
+    if (i < 4) {
+      // Nombre dado vuelta: la planilla dice "Nguku, Namale Ben" y el PGN "Namale, Ben Nguku" (2004).
+      // Vale si el apellido de uno es una palabra ENTERA (de 4 letras o más) del nombre del otro.
+      var palabras = function (s) { return String(s || '').split(/[\s,]+/).map(plegar).filter(function (w) { return w.length >= 4; }); };
+      if (palabras(b0).indexOf(a) >= 0 || palabras(a0).indexOf(b) >= 0) return 50;
+    }
     return i;
   }
   var MES_EN = { january: 1, february: 2, march: 3, april: 4, may: 5, june: 6, july: 7, august: 8, september: 9, october: 10, november: 11, december: 12 };
@@ -444,6 +451,8 @@
         'Guernsey-Jersey': 'Guernsey y Jersey' };   // (1982: un solo equipo de las dos islas; sin bandera)
       if (COMO_CR[n]) return COMO_CR[n];
       if (/^IBCA$/i.test(n)) return 'IBCA (ajedrecistas ciegos)';
+      if (/^IPCA$/i.test(n)) return 'IPCA (ajedrecistas con discapacidad física)';
+      if (/^ICSC$/i.test(n)) return 'ICSC (ajedrecistas sordos)';
       if (/^Palestine$/i.test(n) && +Y < 1948) return 'Palestina (mandato británico)';
       if (/Bohemia/i.test(n)) return 'Bohemia y Moravia';
       if (/Serbs, Croats and Slovenes/i.test(n)) return 'Reino de los Serbios, Croatas y Eslovenos';   // Yugoslavia antes de 1929
@@ -455,7 +464,7 @@
       if (/Serbs, Croats and Slovenes/i.test(n)) return 'SCS';   // su tricolor lisa (la app la tiene)
       if (/^Great Britain$/i.test(n)) return 'GBR';               // bandera británica, no la inglesa
       if (/^West Germany$/i.test(n)) return 'FRG';                // OlimpBase le dice GER; la app: "Alemania Occidental"
-      if (/^IBCA$/i.test(n)) return '';                           // no es un país: sin bandera
+      if (/^(IBCA|IPCA|ICSC)$/i.test(n)) return '';                // no son países: sin bandera
       c = c.replace(/\d$/, '');        // ARG2 = Argentina "B": la misma bandera
       if (c === 'CSR') return 'TCH';   // Checoslovaquia (la app la conoce como TCH; su bandera = la de Chequia)
       if (c === 'ROM') return 'ROU';   // Rumania: OlimpBase usa el código viejo
