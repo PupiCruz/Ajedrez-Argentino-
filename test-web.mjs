@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1887;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1910;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -548,7 +548,7 @@ console.log('\n=== 17. Radiografía POR EQUIPOS (Olimpiadas, ligas) ===');
   const P24 = { bp:{ India:35, USA:29.5, UZB:29.5, ARM:30 }, mp:{ India:21, USA:17, UZB:17, ARM:16 } };
   chk(M._stTeamCriterio([{ name:'India' }, { name:'USA' }, { name:'UZB' }, { name:'ARM' }], P24) === 'match',
       'Olimpiada moderna: va por puntos de MATCH');
-  chk(/\+ \(tk\.length \? '\|e3' : ''\)/.test(SRC), 'la firma de los cuadros por equipos cambió de versión (lo horneado viejo se recalcula)');
+  chk(/\+ \(tk\.length \? '\|e8' : ''\)/.test(SRC),'la firma de los cuadros por equipos cambió de versión (lo horneado viejo se recalcula)');
 
   const boards = M._stTeamBoardsAsRounds(liga);
   chk(Object.keys(boards).length === 2 && boards['1'].length === 4,
@@ -642,7 +642,7 @@ console.log('\n=== 18. La pestaña de los torneos por equipos ===');
       'sin columna de federación, a Argentina se la reconoce por el nombre');
 
   // Contra las tablas OFICIALES de OlimpBase (26/09/2026).
-  const H = new Function(extraerFuncion('_stOlimpSinTableros') + extraerFuncion('_stPodioEmpates')
+  const H = new Function(extraerFuncion('_stOlimpSinTableros') + extraerFuncion('_stOlimpAnio') + extraerFuncion('_stPodioEmpates')
                          + ' return { _stOlimpSinTableros, _stPodioEmpates };')();
   chk(H._stOlimpSinTableros('cr2_tz_tz_ob1927_c0', {}) && H._stOlimpSinTableros('cr2_tz_tz_ob1928_c0', {}),
       '1927 y 1928 no tenían orden de tableros (se premiaban los 6 mejores del torneo)');
@@ -658,6 +658,42 @@ console.log('\n=== 18. La pestaña de los torneos por equipos ===');
   const t1 = H._stPodioEmpates([{ n:'Alekhine', pct:79.2 }, { n:'Kashdan', pct:71.4 }, { n:'Tartakower', pct:64.3 }, { n:'Flohr', pct:64.3 }, { n:'X', pct:60 }], 3, p => p.pct);
   chk(t1.length === 4 && t1[3].puesto === 3, 'empate en el bronce: entran los dos', t1.map(p => p.puesto + p.n).join(' '));
 
+  // Hasta 2006 las medallas por tablero iban por PORCENTAJE aunque hubiera Elo (28/09/2026: Moscú 1994
+  // mostraba a Cámpora y Zarnicki plata y bronce; en OlimpBase son oro y plata). Desde 2008, performance.
+  const A = new Function(extraerFuncion('_stOlimpAnio') + extraerFuncion('_stEsNN') + ' return { _stOlimpAnio, _stEsNN };')();
+  chk(A._stOlimpAnio('cr2_tz_tz_ob1994_c0', {}) === 1994, 'el año sale de la clave del lector de OlimpBase');
+  chk(A._stOlimpAnio('cr2_tz_tz_1790279814587_c0', { name:'37° Olimpiada en Turín', dates:'21 May – 4 Jun 2006' }) === 2006,
+      'o del nombre + las fechas (las Olimpiadas de Chess-Results no dicen el año en el nombre)');
+  chk(A._stOlimpAnio('x', { name:'46th Chess Olympiad Samarkand 2026' }) === 2026, 'también "Olympiad" en inglés');
+  chk(A._stOlimpAnio('x', { name:'2° Olimpiada de Ajedrez Escolar Pre-Mundial', dates:'2004' }) === 0
+      && A._stOlimpAnio('x', { name:'Campeonato Argentino', dates:'2004' }) === 0,
+      'una escolar o un torneo cualquiera no son Olimpiadas de la FIDE');
+  chk(/var olimpPct = anioOlimp > 0 && anioOlimp <= 2006;/.test(SRC)
+      && /var medallasPor = \(olimpPct && conPct\.length\) \? 'pct'/.test(SRC),
+      'hasta 2006 las medallas van por porcentaje aunque haya Elo');
+  chk(/var min = p\.mesa > titulares \? 7 : minTit;/.test(SRC), 'suizo 1976-2006: a los suplentes les alcanza con 7 partidas');
+  // Titulares, según el año (contado en las fichas de equipo de OlimpBase). Bled 2002: Mecking 6½/8
+  // salía plata en el tablero 3; con 14 rondas se pedían 9 → plata Khalifman, bronce Romero Holmes.
+  const minTit = new Function('anioOlimp', 'olimpFem', 'rondas', 'return ' + SRC.match(/var minTit = ([^;]+);/)[1]);
+  chk(minTit(2002, false, 14) === 9 && minTit(1994, false, 14) === 9 && minTit(1998, false, 13) === 8 && minTit(2006, false, 13) === 8
+      && minTit(1978, false, 14) === 7 && minTit(1982, false, 14) === 9 && minTit(1982, true, 14) === 7 && minTit(1986, true, 14) === 8
+      && minTit(1988, true, 14) === 9 && minTit(2006, true, 13) === 8,
+      'titulares 1976-2006: 7 hasta 1980 (fem. 1982); después 9 con 14 rondas y 8 con 13 (fem. 1986: 8)');
+  // 1984-2006: además, oro/plata/bronce a las mejores performances (Cámpora 1994: oro en el tablero 1
+  // y plata por performance). Con COPIAS: si no, el puesto de performance pisaba el de su tablero.
+  chk(/anioOlimp >= 1984 && anioOlimp <= 2006 && conRp\.length >= 3/.test(SRC)
+      && /_stPodioEmpates\(conRp\.map\(function\(p\)\{ var c = \{\}; for \(var k in p\) c\[k\] = p\[k\]; return c; \}\)/.test(SRC),
+      'medallas a la mejor performance 1984-2006, sin pisar la medalla de tablero');
+  chk(/if \(s\.premios\.medallasRp && s\.premios\.medallasRp\.length\)\{/.test(SRC), 'y se dibujan como una tarjeta más, al lado de los tableros');
+  // El rival sin Elo vale el piso de la lista FIDE de ese año, como calcula OlimpBase (1994 femenina:
+  // Chiburdanidze 2549, no 2612 → el bronce por performance es de Zsuzsa Polgár).
+  const Piso = new Function(extraerFuncion('_stOlimpPisoElo') + ' return _stOlimpPisoElo;')();
+  chk(Piso(1990, false) === 2200 && Piso(1994, false) === 2000 && Piso(1994, true) === 2000 && Piso(1986, true) === 1900
+      && Piso(2002, false) === 1800 && Piso(2006, true) === 1400 && Piso(2008, false) === 0 && Piso(0, false) === 0,
+      'piso del rival sin Elo por año y rama (1984-2006; después, no se cuenta)');
+  chk(A._stEsNN('NN') && A._stEsNN('N.N.') && !A._stEsNN('Nunn, John') && !A._stEsNN(''),
+      '"NN" (jugador sin nombre de OlimpBase) no es un jugador: no corre al suplente a un tablero que no existe');
+
   // La actuación argentina sólo cuando los equipos son PAÍSES (en una liga de clubes no va).
   // (La sigla sale de la tabla o, si falta, del nombre SÓLO si es un país: _paisFed da '' para un club.)
   chk(/var esPaises = teams\.some\(function\(t\)\{ var f = fedT\(t\); return f && String\(f\)\.length === 3; \}\);/.test(SRC),
@@ -670,7 +706,7 @@ console.log('\n=== 19. El tablero de INSCRIPCIÓN (medallas de la Olimpiada) ===
   // Las medallas por tablero no van por la mesa donde el jugador se sentó, sino por su puesto en la
   // lista del equipo. Caso real: Alan Pichot es el 4 de España, jugó 8 de 9 partidas en la mesa 3, y
   // su bronce es del tablero 4. El orden del equipo se deduce de quién juega arriba de quién.
-  const piezas = ['_stJugada','_stDp','_stTeamName','_stTeamRegisteredBoards','_stTeamPlayers'];
+  const piezas = ['_stJugada','_stDp','_stTeamName','_stTeamRegisteredBoards','_stEsNN','_stTeamPlayers'];
   const dpArr = SRC.match(/var _ST_DP = \[[\s\S]*?\];/)[0];
   const M = new Function('pgnNameToNatural', '_normTitle', 'var ' + SRC.match(new RegExp('_TEAM_SIN_JUGADOR=[^;]+;'))[0] + extraerFuncion('_teamIsPlaceholder') + dpArr + piezas.map(extraerFuncion).join('\n')
                          + ' return {' + piezas.join(',') + '};')((n) => n, (t) => t || '');
@@ -711,6 +747,25 @@ console.log('\n=== 19. El tablero de INSCRIPCIÓN (medallas de la Olimpiada) ===
       'sin Elo, las partidas igual cuentan (puntos y partidas)', grau ? (grau.pts + '/' + grau.partidas) : 'no está');
   chk(grau.rp === null && grau.pct === 62.5, 'no inventa un Rp, pero da el porcentaje', 'rp ' + grau.rp + ' · ' + grau.pct + '%');
   chk(js.find(p => p.raw === 'Pleci').mesa === 2, 'y el tablero de cada uno se deduce igual');
+
+  // Incomparecencias (+--): en las Olimpiadas de 1998 a 2006 contaban en el porcentaje de la medalla,
+  // pero no en la performance. Elista 1998: Hillarp Persson 7½/10 (con un +-- en la ronda 1), no 6½/9.
+  const wo = { teamRounds: {} };
+  for (let r = 1; r <= 3; r++) wo.teamRounds[r] = [{ aName:'Suecia', bName:'Emiratos', boards:[
+    { nW:'Tiger', eW:2410, nB:'Riv' + r, eB:2200, res: r === 1 ? '+--' : (r === 2 ? '½-½' : '1-0') }] }];
+  const tSin = M._stTeamPlayers(wo, 3).find(p => p.raw === 'Tiger');
+  const tCon = M._stTeamPlayers(wo, 3, 0, 0, true).find(p => p.raw === 'Tiger');
+  chk(tSin.partidas === 2 && tSin.pts === 1.5, 'sin la marca, la incomparecencia no cuenta (1994)', tSin.pts + '/' + tSin.partidas);
+  chk(tCon.partidas === 3 && tCon.pts === 2.5 && tCon.rpDes === tSin.rpDes && tSin.rpDes > 0,
+      'con la marca, suma partida y punto, pero el Rp no cambia (1998-2006)', tCon.pts + '/' + tCon.partidas + ' Rp ' + tCon.rpDes + ' vs ' + tSin.rpDes);
+  chk(M._stTeamPlayers(wo, 3, 0, 0, true).find(p => p.raw === 'Riv1').pts === 0, 'y el que no se presentó suma la partida perdida');
+  // Sin Elo propio no hay Rp, pero SÍ la performance para desempatar (OlimpBase, Bled 2002: Singh 7/8
+  // plata y El-Arbi 7/8 bronce entre los primeros suplentes, los dos sin Elo).
+  const sinEloPropio = { teamRounds: { 1: [{ aName:'Trinidad', bName:'Otro', boards:[{ nW:'Singh', eW:0, nB:'Riv', eB:2000, res:'1-0' }] }],
+                                       2: [{ aName:'Trinidad', bName:'Otro', boards:[{ nW:'Singh', eW:0, nB:'Riv2', eB:0, res:'½-½' }] }] } };
+  const singh = M._stTeamPlayers(sinEloPropio, 2, 1800).find(p => p.raw === 'Singh');
+  chk(singh.rp === null && singh.rpDes === 1900 + 193, 'sin Elo propio: sin Rp, pero con performance para desempatar (rivales 1900, 75%)', 'rp ' + singh.rp + ' · rpDes ' + singh.rpDes);
+  chk(/anioOlimp >= 1998 && anioOlimp <= 2006\);/.test(SRC), 'la marca se prende sólo en las Olimpiadas de 1998 a 2006');
 
   // Si el cuadro trae el PLANTEL (planilla de OlimpBase / lista de Chess-Results), su orden manda.
   const conPlantel = JSON.parse(JSON.stringify(d));
@@ -775,6 +830,35 @@ console.log('\n=== 19. El tablero de INSCRIPCIÓN (medallas de la Olimpiada) ===
   } else {
     console.log('  --   | (no están los cuadros de 1927/1939: me salteo la comparación con OlimpBase)');
   }
+}
+
+console.log('\n=== Editar torneo: al cambiar el nombre, las partidas del pool se mudan (28/09) ===');
+{
+  // Elista 1998 (OlimpBase) renombrado en Editar torneo → quedaba sin partidas: el pool se engancha por nombre.
+  const R = new Function('_memTournaments', extraerFuncion('_normEvName') + extraerFuncion('_catEventName') + extraerFuncion('_stampEvent')
+                         + extraerFuncion('_poolRenombrarTorneo') + ' return _poolRenombrarTorneo;');
+  const mem = () => [
+    { dbPool:true, name:'33.ª Olimpíada · Elista 1998 · Absoluto', games:['[Event "33.ª Olimpíada · Elista 1998 · Absoluto"]\n\n1. e4 *'] },
+    { dbPool:true, name:'33.ª Olimpíada · Elista 1998 · Femenino', games:['[Event "33.ª Olimpíada · Elista 1998 · Femenino"]\n\n1. d4 *', 'x'] },
+    { dbPool:true, name:'Otro torneo · Absoluto', games:['[Event "Otro torneo · Absoluto"]\n\n1. c4 *'] }];
+  const cats = [{ name:'Absoluto' }, { name:'Femenino' }];
+  let m = mem();
+  const n = R(m)('33.ª Olimpíada · Elista 1998', cats, '33° Olimpiada en Elistá', cats);
+  chk(n === 3 && m[0].name === '33° Olimpiada en Elistá · Absoluto' && m[1].name === '33° Olimpiada en Elistá · Femenino',
+      'las dos categorías se mudan al nombre nuevo', n + ' · ' + m[0].name);
+  chk(m[0].games[0].indexOf('[Event "33° Olimpiada en Elistá · Absoluto"]') === 0 && m[1].gameCount === 2,
+      'y el [Event] de cada partida también');
+  chk(m[2].name === 'Otro torneo · Absoluto' && m[2].games[0].indexOf('Otro torneo') > 0, 'otro torneo no se toca');
+  m = mem();
+  R(m)('33.ª Olimpíada · Elista 1998', cats, '33.ª Olimpíada · Elista 1998', [{ name:'Abierto' }, { name:'Femenino' }]);
+  chk(m[0].name === '33.ª Olimpíada · Elista 1998 · Abierto' && m[1].name === '33.ª Olimpíada · Elista 1998 · Femenino',
+      'renombrar sólo una categoría muda sólo esa');
+  m = mem();
+  chk(R(m)('33.ª Olimpíada · Elista 1998', cats, '33.ª Olimpíada · Elista 1998', cats) === 0 && m[0].name.indexOf('33.ª') === 0,
+      'sin cambios de nombre no se toca nada');
+  chk(/Object\.assign\(\{\}, _antes \|\| \{\}, \{ name:name/.test(SRC) && /_poolRenombrarTorneo\(_antes\.name, _antes\.categories, name, categories\)/.test(SRC),
+      'Editar torneo muda las partidas y conserva lo que el formulario no edita (el "Finalizado" a mano)');
+  chk(/_tzNombreRepetido\(name, _tzeKey\)/.test(SRC), 'y avisa si el nombre nuevo ya lo usa otro torneo (se mezclarían las partidas)');
 }
 
 
@@ -950,7 +1034,7 @@ console.log('\n=== 22. Auditoría de la Olimpiada: el jugador fantasma y el colo
   chk(/_teamIsPlaceholder\(b\.nW\) \|\| _teamIsPlaceholder\(b\.nB\)/.test(boards),
       'los tableros con jugador fantasma no entran como partidas');
   const players = extraerFuncion('_stTeamPlayers');
-  chk(/if \(b\.nW && !_teamIsPlaceholder\(b\.nW\)\) filaA\.push/.test(players),
+  chk(/if \(b\.nW && !nnW && !_teamIsPlaceholder\(b\.nW\)\) filaA\.push/.test(players),
       'y el fantasma no ocupa un lugar en la lista del equipo (si no, corre un puesto a los de abajo)');
 
   // En un torneo POR EQUIPOS el color no se sabe: no hay que inventarlo.
