@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1878;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1887;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -835,7 +835,7 @@ console.log('\n=== 21. Los países, en castellano ===');
   const HIST = JSON.parse(SRC.match(new RegExp('var _FED_HIST = ([{].*?[}]);'))[1]);
   const HISTN = JSON.parse(SRC.match(new RegExp('var _FED_HIST_NOMBRES = ([{].*?[}]);'))[1]);
   const _paisES = new Function('_FED_ES', '_FED_EN', '_FED_DE', '_FED_HIST', '_FED_HIST_NOMBRES', 'normStr', '_teamCountryParts',
-    'var _NOMBRE_FED = null;' + extraerFuncion('_nombreFedIx') + extraerFuncion('_paisES') + '; return _paisES;')(
+    'var _NOMBRE_FED = null; var _FED_ERA = ' + SRC.match(/var _FED_ERA = ({.*?});/)[1] + ';' + extraerFuncion('_nombreFedIx') + extraerFuncion('_paisES') + '; return _paisES;')(
       ES, EN, DE, HIST, HISTN, new Function('return (' + extraerFuncion('normStr') + ')')(), parts);
 
   // Un Europeo por equipos tiene England 1, 2 y 3: el número NO se puede perder.
@@ -875,7 +875,7 @@ console.log('\n=== 21. Los países, en castellano ===');
   // Podio por equipos: bandera en el círculo sólo si el equipo es un PAÍS.
   const HFLAG = JSON.parse(SRC.match(new RegExp('var _FED_HIST_FLAG = ([{].*?[}]);'))[1]);
   const _paisFed = new Function('_FED_ES', '_FED_EN', '_FED_DE', '_FED_HIST', '_FED_HIST_NOMBRES', '_FED_ISO', 'normStr', '_teamCountryParts', '_FED_HIST_FLAG',
-    'var _NOMBRE_FED = null;' + extraerFuncion('_nombreFedIx') + extraerFuncion('_paisFed') + '; return _paisFed;')(
+    'var _NOMBRE_FED = null; var _FED_ERA = ' + SRC.match(/var _FED_ERA = ({.*?});/)[1] + ';' + extraerFuncion('_nombreFedIx') + extraerFuncion('_paisFed') + '; return _paisFed;')(
       ES, EN, DE, HIST, HISTN, ISO, new Function('return (' + extraerFuncion('normStr') + ')')(), parts, HFLAG);
   chk(_paisFed('Argentinien') === 'ARG' && _paisFed('Germany') === 'GER' && _paisFed('Türkei B') === 'TUR' && _paisFed('USA') === 'USA',
       'podio por equipos: un país lleva su bandera (en castellano, inglés o alemán)');
@@ -901,6 +901,23 @@ console.log('\n=== 21. Los países, en castellano ===');
   chk(!HFLAG.YUG && !HFLAG.URS && _paisFed('Jugoslawien') === '' && extraerFuncion('_flagImg').includes('_FED_ISO[fed] || _FED_HIST_FLAG[fed]')
       && extraerFuncion('_fedName').includes('_FED_HIST[fed]) return _FED_HIST[fed];'),
       'Yugoslavia no (según el año cambia), y la banderita dice "Checoslovaquia", no "Chequia"');
+  // Por época (28/09/2026): el lector de OlimpBase sabe el año y pone YGE/YGL/AHX; el nombre sigue siendo YUG/AHO.
+  {
+    const LECT = fs.readFileSync(new URL('./herramientas/olimpbase-lector.js', import.meta.url), 'utf8');
+    const existe = (k) => fs.existsSync(new URL('./assets/flags/' + HFLAG[k] + '.svg', import.meta.url));
+    chk(HFLAG.YGE === 'hist-yug' && HFLAG.YGL === 'hist-scs' && HFLAG.SCG === 'hist-scs' && HFLAG.AHO === 'hist-aho' && HFLAG.AHX === 'hist-aho-1959'
+        && ['YGE', 'YGL', 'AHO', 'AHX'].every(existe) && HIST.YGL === 'Yugoslavia' && HIST.AHX === 'Antillas Neerlandesas',
+        '🏳️ banderas por época: Yugoslavia con estrella (1946-91) o lisa (reino y 1992-2003), Antillas de 6 o 5 estrellas');
+    chk(_paisFed('Yugoslavia') === '' && _paisES('Yugoslavia') === 'Yugoslavia' && _paisFed('Netherlands Antilles') === 'AHO',
+        'y por el NOMBRE: Yugoslavia sigue sin bandera (no se sabe el año) y las Antillas llevan la de 1986-2010', _paisFed('Yugoslavia'));
+    chk(LECT.includes("if (c === 'YUG') return (+Y >= 1946 && +Y <= 1991) ? 'YGE' : 'YGL';") && LECT.includes("if (c === 'AHO' && +Y < 1986) return 'AHX';"),
+        'el lector de OlimpBase elige la de la época por el año de la Olimpiada');
+  }
+  // Olimpiadas suizas de OlimpBase 1976-1990 (28/09/2026): OlimpBase le dice GER a Alemania Occidental.
+  chk(_paisES('West Germany') === 'Alemania Occidental' && _paisFed('West Germany') === 'FRG' && HFLAG.FRG === 'de'
+      && _paisES('Zaire') === 'Zaire' && !HFLAG.ZAI && _paisES('North Yemen') === 'Yemen del Norte' && _paisES('South Yemen') === 'Yemen del Sur'
+      && _paisES('Argentina B') === 'Argentina B' && _paisFed('Argentina B') === 'ARG',
+      '🇩🇪 "West Germany" → Alemania Occidental con la tricolor de hoy; Zaire y los dos Yemen traducidos, sin bandera; "Argentina B" conserva la letra');
   // Londres 1927: la columna de puntos de OlimpBase ("38½") quedaba "Des 1" porque parseFloat daba 38.
   { const rr = extraerFuncion('_teamRenderRR');
     chk(rr.includes("var v=/½/.test(_r)?(parseFloat(_r)||0)+0.5:parseFloat(_r.replace(',','.'));")
@@ -1839,6 +1856,13 @@ console.log('\n=== 34. La vitrina de trofeos del perfil ===');
       && infMal.some(l => /castellano: Ruritania$/.test(l))
       && infMal.some(l => l.startsWith('ℹ️ Sin bandera: Ruritania, Bohemia y Moravia (')),
       '🔖 el informe del lector dice qué cerró y qué revisar (mesas sin partida, nombres dudosos, países sin traducir o sin bandera)');
+  const infSuizo = INF({ informe: { mesas: 8, wo: 0, conPartida: 8, n_descansos: 2, descansos: ['R2: Yemen (2 puntos)', 'R3: Bermuda (2 puntos)'],
+    desempates: ['puntos de partida', 'Buchholz', 'puntos de match'], femenina: true, equipos: [{ name: 'Argentina', fed: 'ARG' }] } });
+  chk(/todo cerró/.test(infSuizo[1]) && infSuizo.some(l => /^ℹ️ 2 rondas libres \(BYE.*R2: Yemen \(2 puntos\) · R3: Bermuda/.test(l))
+      && infSuizo.some(l => l === 'ℹ️ Orden de la tabla: puntos de partida, Buchholz, puntos de match.')
+      && infSuizo.some(l => /Olimpiada femenina, como segunda categoría/.test(l))
+      && INF({ informe: { mesas: 1, conPartida: 1, femeninaNo: 'La Olimpiada femenina de ese año se jugó con grupos y finales.' } }).some(l => /^ℹ️ La Olimpiada femenina de ese año/.test(l)),
+      '🔖 Olimpiadas suizas: el informe cuenta las rondas libres (BYE) y el orden de desempate, sin tapar el "todo cerró", y si trae (o no pudo traer) la femenina');
   chk(/\['flyerUrl', 'flyerPos', 'flyerCredit', 'flyerCreditUrl', 'rama'\]\.forEach\(function \(k\) \{ if \(viejo\[k\] && !nuevo\[k\]\) nuevo\[k\] = viejo\[k\]; \}\);/.test(extraerFuncion('histImportarTexto'))
       && /a\.href = 'javascript:' \+ encodeURIComponent\(code\);/.test(extraerFuncion('histFavoritoOlimpbase')),
       '🔖 reimportar un histórico conserva el flyer que le puso el autor, y el favorito lleva el lector entero');
@@ -7597,7 +7621,7 @@ console.log('\n=== Auditoría 23/09 — Fase 4: accesibilidad y prolijidad ===')
   const ISO = J(/var _FED_ISO = (\{.*?\});/), ES = J(/var _FED_ES = (\{.*?\});/), EN = J(/var _FED_EN = (\{.*?\});/);
   const DE = J(/var _FED_DE = (\{.*?\});/), HIST = J(/var _FED_HIST = (\{.*?\});/), HISTN = J(/var _FED_HIST_NOMBRES = (\{.*?\});/);
   const busca = new Function('_FED_ISO', '_FED_ES', '_FED_EN', '_FED_DE', '_FED_HIST', '_FED_HIST_NOMBRES', 'normStr',
-    'var _NAME_FED = {}; var _NOMBRE_FED = null;' + extraerFuncion('_nombreFedIx') + extraerFuncion('_nameFedLookup') + '; return _nameFedLookup;')(
+    'var _NAME_FED = {}; var _NOMBRE_FED = null; var _FED_ERA = ' + SRC.match(/var _FED_ERA = ({.*?});/)[1] + ';' + extraerFuncion('_nombreFedIx') + extraerFuncion('_nameFedLookup') + '; return _nameFedLookup;')(
     ISO, ES, EN, DE, HIST, HISTN, new Function('return (' + extraerFuncion('normStr') + ')')());
   const casos = { 'Turkey': 'TUR', 'Czech Republic': 'CZE', 'United States of America': 'USA', 'Chinese Taipei': 'TPE', 'FYR Macedonia': 'MKD',
     'Swaziland': 'SWZ', 'Ivory Coast': 'CIV', 'Timor Leste': 'TLS', 'Sao Tome & Principe': 'STP', 'Antigua and Barbuda': 'ANT', 'US Virgin Islands': 'ISV', 'Nauru': 'NRU' };
@@ -7793,6 +7817,31 @@ console.log('\n=== Auditoría 23/09 — Fase 4: accesibilidad y prolijidad ===')
   chk(/_evjContar\(\)/.test(extraerFuncion('_estadoActualFp')), 'guardar evaluaciones enciende el aviso de "cambios sin guardar"');
   chk(/depth: _CG_PASADA_DEPTH, cb:/.test(pr) && !/_mevEvals/.test(pr) && /var _CG_PASADA_DEPTH = 16;/.test(SRC),
       '🔒 el barrido evalúa a prof. 16 (medido: ronda de 20 partidas de 40 jugadas ≈ 11 min; lo eligió el autor) y no reusa las de prof. 12 de las miniaturas');
+}
+// ── Visor de un torneo POR EQUIPOS: bandera y título desde el plantel (28/09/2026, Moscú 1994) ──
+{
+  console.log('\n=== Visor por equipos: bandera y título salen del PLANTEL y de las mesas (28/09) ===');
+  const datos = {
+    teamRoster: [
+      { name: 'Argentina', players: [{ bo: 1, ti: 'GM', nm: 'Cámpora, Daniel Hugo', elo: 2560, fed: 'ARG' }, { bo: 2, ti: '', nm: 'NN', elo: 0, fed: 'ARG' }] },
+      { name: 'Russia B', players: [{ bo: 1, ti: 'IM', nm: 'Morozevich, Alexander', elo: 2575, fed: 'RUS' }] },
+      { name: 'Wales', players: [{ bo: 1, ti: '', nm: 'Jones, Iolo', elo: 2235, fed: 'WLS' }, { bo: 2, ti: '', nm: 'NN', elo: 0, fed: 'WLS' }] },
+      { name: 'England', players: [{ bo: 1, ti: '', nm: 'Jones, Iolo', elo: 2100, fed: 'ENG' }] }
+    ],
+    teamRounds: { 6: [{ aName: 'Argentina', bName: 'Wales', boards: [{ tW: 'GM', nW: 'Cámpora, Daniel Hugo', eW: 2560, tB: 'FM', nB: 'James, David', eB: 2260, res: '1-0' }] }] }
+  };
+  const M = new Function('crDataLoad', 'crNormTokens', '_normTitle',
+    'var _stdFedCache = {};' + extraerFuncion('_tourFedMap') + '; return _tourFedMap;')(
+      () => datos, (n) => String(n).toLowerCase().replace(/[^a-záéíóúñ ]/g, ' ').split(/\s+/).filter(Boolean).sort().join(' '), (t) => t);
+  const m = M('cr2_prueba');
+  chk(m['cámpora daniel hugo'] && m['cámpora daniel hugo'].fed === 'ARG' && m['cámpora daniel hugo'].title === 'GM'
+      && m['alexander morozevich'].fed === 'RUS' && m['alexander morozevich'].title === 'IM',
+      '🏳️ del plantel: Cámpora GM 🇦🇷, Morozevich IM 🇷🇺 (antes el visor de las Olimpiadas salía sin bandera ni título)', JSON.stringify(m));
+  chk(m['david james'] && m['david james'].title === 'FM', 'y el título de las mesas del match, aunque el jugador no esté en el plantel');
+  chk(!m['nn'] && m['iolo jones'] && m['iolo jones'].fed === '',
+      '"NN" no se anota, y el mismo nombre en dos países queda SIN bandera (no la de otro)', JSON.stringify(m['iolo jones']));
+  chk(/var stdFlag = _flagByName\(name, _crK, fideId\) \|\| _teamFlag\(team\);/.test(extraerFuncion('cvPlayerHtml')),
+      'el visor grande, sin tabla que lo nombre, cae al país del EQUIPO del PGN (como las miniaturas)');
 }
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
 console.log('   Corrieron ' + corridas + ' de ' + ESPERADAS + ' comprobaciones.'

@@ -91,7 +91,13 @@ como tarjetas. Al tocar uno se abre la ficha de siempre.
   olimpbase.org y se toca. Lee página por página (una cada ~1,2 s, para no cargar a OlimpBase; su filtro
   anti-robots no se esquiva: se lee desde su propia pestaña) y **baja el paquete .json** →
   📥 Importar. Si se cambia el lector, hay que **volver a arrastrar** el favorito. Hoy lee las Olimpiadas
-  de todos contra todos (1927–1939 y 1950); las de grupos (1952–1974) y las suizas (1976+) todavía no.
+  de todos contra todos (1927–1939 y 1950) y, desde el 28/09/2026, las **suizas de 1976 a 1996** (las de
+  1998 en adelante vienen de Chess-Results); las de grupos (1952–1974) todavía no. En las suizas la tabla sale
+  como la de Chess-Results (`kind:'final'`: matches +/=/− y desempates en el orden oficial de ese año), los
+  BYE no se guardan como cruce (van al informe), la **Olimpiada femenina** (carpeta `/AAAAw/`, misma sede)
+  entra sola como 2.ª categoría "Femenino" desde 1980 (1976 y 1978 fueron con grupos y finales: el informe
+  avisa que va sólo la abierta) (`rama:'fem'`; la abierta queda "Absoluto", `rama:'abs'`) y el PGN se toma de `/ob-games/AAolm.pgn` aunque la ficha
+  enlace un .zip. Alemania Occidental = `FRG` (bandera de hoy); Zaire/Yemen del Norte/del Sur sin bandera. **Banderas por época** (28/09/2026): el lector sabe el año y le pone a Yugoslavia `YGE` (con estrella, 1946-1991) o `YGL` (tricolor lisa: el reino y 1992-2003), y a las Antillas Neerlandesas antes de 1986 `AHX` (seis estrellas); `AHO` a secas = cinco estrellas (1986-2010) y Serbia y Montenegro (`SCG`) la lisa. `YUG` a secas sigue sin bandera. Tabla `_FED_HIST_FLAG` / `_FED_ERA`.
   El número de cada partida en el PGN (`show_game_ob('37olm.pgn', '9')`) lo da OlimpBase: el ojito
   engancha exacto. Para 1939 los programitas viejos de `.claude/olimpbase/` quedaron de historia.
 - **El árbol de aperturas sigue siendo de argentinos** (24/09/2026): de los torneos de una colección
