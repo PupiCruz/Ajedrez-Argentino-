@@ -16702,9 +16702,8 @@ function _fsCollectSaveEntries(authorFiles, split, photos, flyers, manifestJs) {
   authorFiles.forEach(function (f) { E.push({ rel: f.name, str: f.content }); });   // copia de autor (raíz)
   E.push({ rel: 'manifest.js', str: manifestJs, ignoreTs: true });                  // lo que lee la web
   // Índice de partidas + libro de aperturas del visor publicado.
-  var ge = split.gameEntries, half = Math.ceil(ge.length / 2);
-  E.push({ rel: 'games_0.json', str: JSON.stringify(ge.slice(0, half)) });
-  E.push({ rel: 'games_1.json', str: JSON.stringify(ge.slice(half)) });
+  var ge = split.gameEntries;
+  _gamesParts(ge).forEach(function (s, i) { E.push({ rel: 'games_' + i + '.json', str: s }); });
   var bookRows = ge.map(function (g) { return { moves: (g.m || '').split(' ').filter(Boolean), r: g.r }; });
   E.push({ rel: 'book.json', str: JSON.stringify(_buildOpeningBook(bookRows)) });
   // Un archivo por torneo (data/t) y por perfil (data/p).
@@ -16718,12 +16717,26 @@ function _fsCollectSaveEntries(authorFiles, split, photos, flyers, manifestJs) {
   return E;
 }
 
+// Índice de partidas publicado, repartido en data/games_0.json, games_1.json, … Cloudflare Pages
+// RECHAZA el deploy entero si un archivo pasa de 25 MiB (pasó el 28/09/2026: games_1 llegó a 25,2).
+// Se parte por CANTIDAD de partidas (barato, no hay que serializar dos veces): cada entrada pesa
+// ~280 bytes y la más pesada ~415 → 50.000 partidas ≈ 14 MB, peor caso ~21 MB. Cuántas partes hay
+// viaja en el manifest (window.__GAMES_PARTS__) para que _loadGamesIndexAsync sepa cuántas bajar.
+var _GAMES_PER_PART = 50000;
+function _gamesPartCount(ge) { return Math.max(1, Math.ceil((ge || []).length / _GAMES_PER_PART)); }
+function _gamesParts(ge) {
+  var out = [], n = _gamesPartCount(ge);
+  for (var i = 0; i < n; i++) out.push(JSON.stringify(ge.slice(i * _GAMES_PER_PART, (i + 1) * _GAMES_PER_PART)));
+  return out;
+}
+
 // Arma el contenido de data/manifest.js (índice liviano + tz + noticias + cuadros CR + jugadores)
 // a partir de un split ya calculado. Centralizado para que los 3 exports generen el MISMO manifest.
 function _manifestJsFromSplit(split, ts, photoIndex) {
   ts = ts || Date.now();
   if (!photoIndex) photoIndex = _photoIndexFromPhotos();
   return 'var __DATA_TS__=' + ts + ';\n'
+       + 'window.__GAMES_PARTS__=' + _gamesPartCount(split.gameEntries) + ';\n'
        + 'window.__MANIFEST__=' + JSON.stringify(split.manifest).replace(/</g, '\\u003c') + ';\n'
        + 'window.__EMBEDDED_TZ__='   + JSON.stringify(getTzConfig()) + ';\n'
        + 'window.__EMBEDDED_TROPHIES__=' + JSON.stringify(_troMan()) + ';\n'
@@ -16768,9 +16781,8 @@ async function exportGithubData() {
     // embedded-flyers.js completo NO va al ZIP (es solo-autor); el mapa de redirección va
     // en el manifest y acá van los archivos de imagen sueltos.
     _collectExportFlyerFiles().forEach(function(f) { zipEntries.push(f); });
-    var _ge2 = split.gameEntries, _half2 = Math.ceil(_ge2.length / 2);
-    zipEntries.push({ name: 'data/games_0.json', data: enc.encode(JSON.stringify(_ge2.slice(0, _half2))) });
-    zipEntries.push({ name: 'data/games_1.json', data: enc.encode(JSON.stringify(_ge2.slice(_half2))) });
+    var _ge2 = split.gameEntries;
+    _gamesParts(_ge2).forEach(function(s, i) { zipEntries.push({ name: 'data/games_' + i + '.json', data: enc.encode(s) }); });
     // Libro de aperturas compacto (~0.5MB) para el visor publicado (reemplaza a Lichess).
     var _bookRows2 = _ge2.map(function(g) { return { moves: (g.m || '').split(' ').filter(Boolean), r: g.r }; });
     zipEntries.push({ name: 'data/book.json', data: enc.encode(JSON.stringify(_buildOpeningBook(_bookRows2))) });
@@ -17708,11 +17720,13 @@ function _loadGamesIndexAsync(cb) {
   _gamesIdxCbs.push(cb);
   if (_gamesIdxLoading) return;
   _gamesIdxLoading = true;
-  Promise.all([
-    fetch('data/games_0.json' + _dataV()).then(function(r) { return r.json(); }),
-    fetch('data/games_1.json' + _dataV()).then(function(r) { return r.json(); })
-  ]).then(function(parts) {
-    window.__GAMES_INDEX__ = parts[0].concat(parts[1]);
+  // Cuántas partes hay lo dice el manifest (_gamesParts); los manifests viejos no lo traen → 2.
+  var nParts = window.__GAMES_PARTS__ || 2, reqs = [];
+  for (var pi = 0; pi < nParts; pi++) {
+    reqs.push(fetch('data/games_' + pi + '.json' + _dataV()).then(function(r) { return r.json(); }));
+  }
+  Promise.all(reqs).then(function(parts) {
+    window.__GAMES_INDEX__ = [].concat.apply([], parts);
     _gamesIdxLoading = false;
     // El índice de búsqueda se arma ACÁ, en tandas cortas y con el cartel de carga aún
     // visible, en vez de todo junto en la primera búsqueda (127k partidas ≈ 1,5s congelado).

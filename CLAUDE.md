@@ -282,7 +282,7 @@ El Worker del teléfono (editar.html) también pushea a `main`: si el push de la
 rebota, hacer `git fetch` + `git rebase origin/main` y pushear de nuevo.
 **Qué SÍ se commitea:** el código (`index.html`, `editar.html`, assets, scripts) **y los datos
 ya publicados** que consume la web: `data/manifest.js`, `data/t/`, `data/p/`, `data/ph/`,
-`data/fl/`, `data/cr/`, `data/games_0.json`, `data/games_1.json`, `data/book.json`, `data/datos.json`,
+`data/fl/`, `data/cr/`, `data/games_0.json`, `data/games_1.json`… (de a 50.000 partidas, hoy 4 archivos: Cloudflare no acepta ninguno de más de 25 MiB), `data/book.json`, `data/datos.json`,
 `data/puzzles.json`, `data/practice.json`, `data/hardcoded.js`, `data/live-*.json`.
 **Qué NO se commitea** (archivos gigantes de autor, van a Drive; están en `.gitignore`):
 `data/embedded-data.js`, `data/embedded-photos.js`, `data/embedded-flyers.js`,
