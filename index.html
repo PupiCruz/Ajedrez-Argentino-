@@ -32540,6 +32540,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     catSuffix = '_c' + activeCat;
   }
   _tdActiveCat = activeCat;   // recordar la categoría mostrada para los links de partidas (&cat=<C>)
+  _tdRoundsTotal = parseInt(rounds) || 0;   // total de rondas (del torneo o de la categoría): tope para las rondas subidas (_tdMergeUploadedRounds)
 
   // ── Estado EFECTIVO de la vista (categoría activa o torneo sin categorías) ──────────────────────
   // "Finalizado" MANUAL manda: corta el sondeo (no re-pedir partidas al worker) y muestra el podio, aunque
@@ -37091,10 +37092,15 @@ function _tdMergeSlots(byRound, roundOrder, srcByRound, nuevasRondas) {
 // Lichess arranca a mitad del torneo (Liga Nacional Superior 2026: sólo transmitieron la R4, y la R1 y
 // la R2 cargadas al pool desaparecían al empezar el vivo). La ronda fantasma de Pichot era POSTERIOR
 // (R9-R12 en un torneo de 7), así que sigue bloqueada.
+// Y si el torneo dice cuántas rondas tiene, también entran las POSTERIORES hasta ese total: la Liga
+// Nacional Superior 2026 dejó de transmitir después de la R4 y la R5 subida a mano no aparecía
+// (29/09/2026). Pichot (R9-R12 en un torneo de 7) sigue afuera; sin total cargado, como antes.
+var _tdRoundsTotal = 0;
 function _tdMergeUploadedRounds(byRound, roundOrder) {
   var bcMax = 0;
   roundOrder.forEach(function(r){ if (typeof r === 'number' && r > bcMax) bcMax = r; });
-  _tdMergeSlots(byRound, roundOrder, _tdUploadedByRound || {}, bcMax || false);
+  var tope = Math.max(bcMax, _tdRoundsTotal + 1);   // _tdMergeSlots acepta rondas nuevas < tope
+  _tdMergeSlots(byRound, roundOrder, _tdUploadedByRound || {}, tope > 1 ? tope : false);
   _tdMergeSlots(byRound, roundOrder, _tdCrByRound || {}, true);
   roundOrder.sort(function(a,b){ return (parseInt(a)||0) - (parseInt(b)||0); });
   var games = [];

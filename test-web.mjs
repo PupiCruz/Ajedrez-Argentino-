@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1918;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1920;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -7163,9 +7163,9 @@ console.log('\n=== 53h. Colgadas de la ronda: barrido, revisión y tablero de ej
     'function _tdSlotKey(g){ return g.h.White + "|" + g.h.Black; }\n'
     + 'function _tdSlotBeats(){ return false; }\n'
     + 'function dedupGamesByMoves(a){ return a; }\n'
-    + 'var _tdUploadedByRound = {}, _tdCrByRound = {};\n'
+    + 'var _tdUploadedByRound = {}, _tdCrByRound = {}, _tdRoundsTotal = 0;\n'
     + extraerFuncion('_tdMergeSlots') + '\n' + extraerFuncion('_tdMergeUploadedRounds')
-    + '\nreturn function(bc, up, cr){ _tdUploadedByRound = up; _tdCrByRound = cr || {};'
+    + '\nreturn function(bc, up, cr, total){ _tdUploadedByRound = up; _tdCrByRound = cr || {}; _tdRoundsTotal = total || 0;'
     + ' var byRound = {}, ord = []; Object.keys(bc).forEach(function(k){ byRound[+k] = bc[k].slice(); ord.push(+k); });'
     + ' var games = _tdMergeUploadedRounds(byRound, ord); return { byRound: byRound, ord: ord, games: games }; };');
   const merge = mk();
@@ -7181,6 +7181,12 @@ console.log('\n=== 53h. Colgadas de la ronda: barrido, revisión y tablero de ej
   chk(q.ord.join(',') === '4', 'rondas sin número ("?") o ronda 0 del pool no crean pestañas');
   const c = merge({ 4: [g('A', 'B')] }, {}, { 6: [g('M', 'N')] });
   chk(c.ord.join(',') === '4,6', 'Chess-Results sigue pudiendo agregar cualquier ronda (sale del tnr de este torneo)');
+  // 29/09: la transmisión se cortó en la R4 y la R5 subida a mano no aparecía (torneo de 7 rondas).
+  const t = merge({ 4: [g('A', 'B')] }, { 5: [g('C', 'D')], 7: [g('E', 'F')] }, {}, 7);
+  chk(t.ord.join(',') === '4,5,7' && t.byRound[5].length === 1,
+      '🔒 torneo de 7 rondas con transmisión hasta la R4: la R5 y la R7 subidas aparecen', t.ord.join(','));
+  const u = merge({ 1: [g('A', 'B')], 7: [g('C', 'D')] }, { 9: [g('X', 'Y')], 12: [g('Z', 'W')] }, {}, 7);
+  chk(u.ord.join(',') === '1,7', '🔒 caso Pichot con el total cargado (7): R9-R12 del pool siguen afuera', u.ord.join(','));
 }
 
 console.log('\n=== 88. Las variantes del 🔬 Análisis entran en el recorrido ◀ ▶ del ejercicio ===');
