@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1921;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1927;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -7986,6 +7986,27 @@ console.log('\n=== Auditoría 23/09 — Fase 4: accesibilidad y prolijidad ===')
       '"NN" no se anota, y el mismo nombre en dos países queda SIN bandera (no la de otro)', JSON.stringify(m['iolo jones']));
   chk(/var stdFlag = _flagByName\(name, _crK, fideId\) \|\| _teamFlag\(team\);/.test(extraerFuncion('cvPlayerHtml')),
       'el visor grande, sin tabla que lo nombre, cae al país del EQUIPO del PGN (como las miniaturas)');
+}
+// ── Archivos de torneo de más de 25 MiB: se parten en pedazos (30/09/2026, 46ª Olimpiada) ──
+{
+  console.log('\n=== Torneos enormes: data/t/<id>.json en pedazos (Cloudflare no acepta > 25 MiB, 30/09) ===');
+  const i = SRC.indexOf('var _TOUR_PART_CHARS'), j = SRC.indexOf('\n}\n', i) + 3;
+  const F = new Function(SRC.slice(i, j) + '; _TOUR_PART_CHARS = 5000; return _tourFileEntries;')();
+  const pgns = []; for (let k = 0; k < 40; k++) pgns.push('[Event "Olimpiada"]\n[Round "' + k + '"]\n\n1. e4 { [%eval 0.3] [%clk 1:30:00] } e5 ' + 'x'.repeat(200 + k * 7) + ' 1-0');
+  const tf = { id: 'tz_1', name: 'Olimpiada', location: 'Samarcanda', games: pgns, colgadas: { r1: [1, 2] } };
+  const out = F('tz_1', tf), main = JSON.parse(out[0].str);
+  const juntas = out.reduce((a, o) => a.concat(JSON.parse(o.str).games), []);
+  chk(out.length > 2 && main.parts === out.length && out[0].name === 'tz_1.json' && out[1].name === 'tz_1.p2.json' && out[2].name === 'tz_1.p3.json',
+      'un torneo que se pasa del tope sale en pedazos: tz_1.json (con parts) + tz_1.p2.json, .p3.json…', out.map(o => o.name).join(' '));
+  chk(JSON.stringify(juntas) === JSON.stringify(pgns), '🔒 juntando los pedazos EN ORDEN vuelven las mismas partidas (el índice apunta por posición)');
+  chk(out.every(o => o.str.length <= 5000) && main.name === 'Olimpiada' && main.location === 'Samarcanda' && main.colgadas.r1.length === 2,
+      'ningún pedazo pasa del tope, y el principal conserva nombre, sede y colgadas', out.map(o => o.str.length).join(','));
+  const chico = F('t9', { id: 't9', name: 'Chico', games: pgns.slice(0, 2) });
+  chk(chico.length === 1 && chico[0].name === 't9.json' && JSON.parse(chico[0].str).parts === undefined, 'un torneo común sigue siendo UN solo archivo, igual que antes');
+  const lee = extraerFuncion('fetchTournamentGames');
+  chk(/j\.parts > 1/.test(lee) && /'\.p' \+ _k \+ '\.json'/.test(lee) && /Promise\.all/.test(lee) && /_tourLoadFailed\[id\] = true/.test(lee),
+      'la web baja los pedazos y los junta; si falta uno, cuenta como carga fallida (no muestra un torneo a medias)');
+  chk((SRC.match(/_tourFileEntries\(id, split\.tFiles\[id\]\)/g) || []).length === 2, 'los DOS caminos que escriben data/t (guardar en la carpeta y el ZIP) parten igual');
 }
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
 console.log('   Corrieron ' + corridas + ' de ' + ESPERADAS + ' comprobaciones.'

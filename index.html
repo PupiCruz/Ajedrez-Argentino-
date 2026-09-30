@@ -15168,6 +15168,19 @@ async function fetchTournamentGames(id) {
     if (!r.ok) { _tourLoadFailed[id] = true; return []; }
     var j = await r.json();
     var games = (j && j.games) ? j.games : [];
+    // Torneo partido en pedazos (ver _tourFileEntries): el principal trae `parts` y la 1.ª tanda;
+    // el resto está en <id>.p2.json, .p3.json… Si falta alguno, se trata como carga fallida (los
+    // punteros gi del índice de partidas cuentan sobre la lista ENTERA: a medias abrirían otra partida).
+    if (j && j.parts > 1) {
+      var _base = _tourFileName(id).replace(/\.json$/, ''), _pedidos = [];
+      for (var _k = 2; _k <= j.parts; _k++) {
+        _pedidos.push(fetch('data/t/' + _base + '.p' + _k + '.json' + _dataV()).then(function (rp) {
+          if (!rp.ok) throw new Error('parte ' + rp.url); return rp.json();
+        }));
+      }
+      var _resto = await Promise.all(_pedidos);
+      _resto.forEach(function (p) { games = games.concat((p && p.games) || []); });
+    }
     _tourGamesCache[id] = games;
     if (_ondemand) _cgPub[String(id)] = (j && j.colgadas) || null;   // Colgadas de la ronda publicadas
     // Nombre/ubicación del archivo del torneo: los usa openTournamentDetail cuando el id NO está
@@ -16715,8 +16728,8 @@ function _fsCollectSaveEntries(authorFiles, split, photos, flyers, manifestJs) {
   _gamesParts(ge).forEach(function (s, i) { E.push({ rel: 'games_' + i + '.json', str: s }); });
   var bookRows = ge.map(function (g) { return { moves: (g.m || '').split(' ').filter(Boolean), r: g.r }; });
   E.push({ rel: 'book.json', str: JSON.stringify(_buildOpeningBook(bookRows)) });
-  // Un archivo por torneo (data/t) y por perfil (data/p).
-  Object.keys(split.tFiles).forEach(function (id) { E.push({ rel: 't/' + tfn(id), str: JSON.stringify(split.tFiles[id]) }); });
+  // Un archivo por torneo (data/t; los enormes, en pedazos) y por perfil (data/p).
+  Object.keys(split.tFiles).forEach(function (id) { _tourFileEntries(id, split.tFiles[id]).forEach(function (f) { E.push({ rel: 't/' + f.name, str: f.str }); }); });
   Object.keys(split.pFiles).forEach(function (id) { E.push({ rel: 'p/' + tfn(id), str: JSON.stringify(split.pFiles[id]) }); });
   // Cuadros de cruces por demanda (data/cr/<key>.json). La clave ya está saneada (cr2_ + alfanum/_).
   Object.keys(split.crFiles || {}).forEach(function (k) { E.push({ rel: 'cr/' + k + '.json', str: JSON.stringify(split.crFiles[k]) }); });
@@ -16736,6 +16749,27 @@ function _gamesPartCount(ge) { return Math.max(1, Math.ceil((ge || []).length / 
 function _gamesParts(ge) {
   var out = [], n = _gamesPartCount(ge);
   for (var i = 0; i < n; i++) out.push(JSON.stringify(ge.slice(i * _GAMES_PER_PART, (i + 1) * _GAMES_PER_PART)));
+  return out;
+}
+
+// Lo mismo para el archivo de UN torneo (data/t/<id>.json): la 46ª Olimpiada (8.559 partidas con
+// [%eval] y [%clk]) llegó a 28,4 MiB el 30/09/2026 y Cloudflare rechazó el deploy. Si el archivo
+// pasa de _TOUR_PART_CHARS, las partidas se reparten: el principal lleva todo lo demás (nombre,
+// colgadas…) + la 1.ª tanda + `parts: N`, y el resto va en <id>.p2.json … <id>.pN.json ({games}).
+// fetchTournamentGames los vuelve a juntar EN ORDEN (el índice de partidas apunta por posición).
+// Se mide en caracteres, no en bytes: 12 M deja margen de sobra aunque haya acentos (máx. 25 MiB).
+var _TOUR_PART_CHARS = 12000000;
+function _tourFileEntries(id, tf) {
+  var base = String(id).replace(/[^a-z0-9_-]/gi, '_'), entero = JSON.stringify(tf);
+  if (entero.length <= _TOUR_PART_CHARS) return [{ name: base + '.json', str: entero }];
+  var tandas = [[]], largo = JSON.stringify(Object.assign({}, tf, { games: [], parts: 99 })).length;
+  (tf.games || []).forEach(function (pgn) {
+    var l = JSON.stringify(pgn).length + 1;
+    if (largo + l > _TOUR_PART_CHARS && tandas[tandas.length - 1].length) { tandas.push([]); largo = 40; }
+    tandas[tandas.length - 1].push(pgn); largo += l;
+  });
+  var out = [{ name: base + '.json', str: JSON.stringify(Object.assign({}, tf, { games: tandas[0], parts: tandas.length })) }];
+  for (var k = 1; k < tandas.length; k++) out.push({ name: base + '.p' + (k + 1) + '.json', str: JSON.stringify({ id: tf.id, part: k + 1, games: tandas[k] }) });
   return out;
 }
 
@@ -16795,7 +16829,7 @@ async function exportGithubData() {
     // Libro de aperturas compacto (~0.5MB) para el visor publicado (reemplaza a Lichess).
     var _bookRows2 = _ge2.map(function(g) { return { moves: (g.m || '').split(' ').filter(Boolean), r: g.r }; });
     zipEntries.push({ name: 'data/book.json', data: enc.encode(JSON.stringify(_buildOpeningBook(_bookRows2))) });
-    Object.keys(split.tFiles).forEach(function(id) { zipEntries.push({ name: 'data/t/' + _tfn(id), data: enc.encode(JSON.stringify(split.tFiles[id])) }); });
+    Object.keys(split.tFiles).forEach(function(id) { _tourFileEntries(id, split.tFiles[id]).forEach(function(f) { zipEntries.push({ name: 'data/t/' + f.name, data: enc.encode(f.str) }); }); });
     Object.keys(split.pFiles).forEach(function(id) { zipEntries.push({ name: 'data/p/' + _tfn(id), data: enc.encode(JSON.stringify(split.pFiles[id])) }); });
     // Cuadros de cruces por demanda (data/cr/<key>.json). La clave ya viene saneada.
     Object.keys(split.crFiles || {}).forEach(function(k) { zipEntries.push({ name: 'data/cr/' + k + '.json', data: enc.encode(JSON.stringify(split.crFiles[k])) }); });
