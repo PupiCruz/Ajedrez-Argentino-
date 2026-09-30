@@ -6794,6 +6794,7 @@ function _histInformeLineas(p) {
   if (Array.isArray(I.desempates) && I.desempates.length) L.push('ℹ️ Orden de la tabla: ' + I.desempates.join(', ') + '.');
   if (I.femenina) L.push('♛ Trae también la Olimpiada femenina, como segunda categoría ("Femenino").');
   if (I.femeninaNo) L.push('ℹ️ ' + I.femeninaNo);
+  if (I.fechas) L.push('🔧 ' + I.fechas);   // la ficha de OlimpBase traía mal las fechas (1933)
   return L;
 }
 async function histImportarTexto(txt) {
@@ -6802,14 +6803,19 @@ async function histImportarTexto(txt) {
   var err = _histPaqueteError(p);
   if (err) { _histAviso('❌', 'No se puede importar', err); return; }
   var cfg = getTzConfig(), ya = !!cfg[p.id];
+  // Si el autor le cambió el NOMBRE en Editar torneo ("31° Olimpiada de Ajedrez - Moscú 1994"), reimportar lo
+  // conserva: si no, el torneo volvía al nombre del paquete y las partidas viejas quedaban repetidas en el
+  // pool bajo el nombre anterior (30/09/2026: reimportar 1992-2002 por la bandera de Georgia).
+  var nomViejo = (ya && cfg[p.id].name && cfg[p.id].name !== p.cfg.name) ? cfg[p.id].name : '';
+  var evDe = function (ev) { return nomViejo && ev.indexOf(p.cfg.name) === 0 ? nomViejo + ev.slice(p.cfg.name.length) : ev; };
   var evs = Object.keys(p.partidas || {}), nPart = 0;
   evs.forEach(function (e) { nPart += p.partidas[e].length; });
   var nCats = (p.cfg.categories || []).length, col = p.cfg.coleccion ? _colDef(p.cfg.coleccion) : null;
   var inf = _histInformeLineas(p);
   var ok = await window.aaAsk({
-    icono: '📥', titulo: (ya ? 'Reemplazar ' : 'Importar ') + p.cfg.name,
+    icono: '📥', titulo: (ya ? 'Reemplazar ' : 'Importar ') + (nomViejo || p.cfg.name),
     texto: (nCats ? nCats + (nCats === 1 ? ' categoría, ' : ' categorías, ') : '') + nPart + ' partidas' + (col ? ', en la colección ' + col.nombre : '') + '.'
-      + (ya ? ' Ya estaba cargado: se reemplaza entero por el del archivo (el flyer que le hayas puesto se conserva).' : '')
+      + (ya ? ' Ya estaba cargado: se reemplaza entero por el del archivo (el flyer' + (nomViejo ? ' y el nombre' : '') + ' que le hayas puesto se conserva' + (nomViejo ? 'n' : '') + ').' : '')
       + (inf.length ? '\n\n' + inf.join('\n') : ''),
     lineas: true,
     ok: ya ? 'Reemplazar' : 'Importar'
@@ -6821,6 +6827,7 @@ async function histImportarTexto(txt) {
   if (viejo) {
     ['flyerUrl', 'flyerPos', 'flyerCredit', 'flyerCreditUrl', 'rama'].forEach(function (k) { if (viejo[k] && !nuevo[k]) nuevo[k] = viejo[k]; });
     if ('coleccionSolo' in viejo) nuevo.coleccionSolo = viejo.coleccionSolo;
+    if (nomViejo) nuevo.name = nomViejo;
   }
   cfg[p.id] = nuevo;
   saveTzConfig(cfg);
@@ -6830,15 +6837,16 @@ async function histImportarTexto(txt) {
   for (var i = localStorage.length - 1; i >= 0; i--) { var lk = localStorage.key(i); if (lk && (lk === pre || lk.indexOf(pre + '_c') === 0)) localStorage.removeItem(lk); }
   Object.keys(p.cr || {}).forEach(function (k) { crDataSave(k, p.cr[k]); });
   // 3) Las partidas, al pool: un contenedor por categoría, REEMPLAZANDO lo que hubiera con ese nombre.
-  evs.forEach(function (ev, n) {
-    var t = null;
+  evs.forEach(function (evP, n) {
+    var ev = evDe(evP), t = null;
     _memTournaments.forEach(function (x) { if (!t && x.dbPool && x.name === ev) t = x; });
     if (!t) { t = { id: Date.now() + n, name: ev, location: p.cfg.location || '', games: [], gameCount: 0, playerOnly: true, source: 'pgn', dbPool: true, loadedAt: Date.now() }; _memTournaments.push(t); }
-    t.games = p.partidas[ev].slice(); t.gameCount = t.games.length;
+    t.games = ev === evP ? p.partidas[evP].slice() : p.partidas[evP].map(function (g) { return _stampEvent(g, ev); });
+    t.gameCount = t.games.length;
   });
   try { if (nPart) pgnMergeToPlayerGames(); } catch (e) {}
   histAbrir(p.cfg.coleccion || '');
-  _histAviso('✅', 'Listo: ' + p.cfg.name,
+  _histAviso('✅', 'Listo: ' + nuevo.name,
     'Ya está en ' + (col ? col.nombre : 'Torneos históricos') + '. Revisalo y, si está bien, tocá 💾 "Guardar datos en mi carpeta": hasta entonces las partidas viven sólo en esta pestaña.');
 }
 
@@ -7530,7 +7538,7 @@ function _esRegFlag(name, fideId, crKey, dice) {
 var _FED_DE = {"AFG":["Afghanistan"],"ALB":["Albanien"],"ALG":["Algerien"],"AND":["Andorra"],"ANG":["Angola"],"ARG":["Argentinien"],"ARM":["Armenien"],"AUS":["Australien"],"AUT":["Österreich"],"AZE":["Aserbaidschan","Aserbaitschan"],"BAN":["Bangladesch"],"BAR":["Barbados"],"BEL":["Belgien"],"BER":["Bermuda"],"BIH":["Bosnien-Herzegowina","Bosnien & Herzegowina","Bosnien & Herzigowina","Bosnien und Herzegowina"],"BLR":["Weißrussland","Weißrußland","Belarus"],"BOL":["Bolivien"],"BOT":["Botswana","Botsuana"],"BRA":["Brasilien"],"BRN":["Bahrain"],"BRU":["Brunei"],"BUL":["Bulgarien"],"CAN":["Kanada"],"CHI":["Chile"],"CHN":["China"],"COL":["Kolumbien"],"CRC":["Costa Rica"],"CRO":["Kroatien"],"CUB":["Kuba"],"CYP":["Zypern"],"CZE":["Tschechien","Tschechische Republik","Tschechische Rep."],"DEN":["Dänemark"],"DJI":["Dschibuti"],"DOM":["Dominikanische Republik"],"ECU":["Ecuador","Ekuador"],"EGY":["Ägypten"],"ENG":["England"],"ESA":["El Salvador"],"ESP":["Spanien"],"EST":["Estland"],"ETH":["Äthiopien"],"FAI":["Färöer","Färöer Inseln","Ferör Inseln"],"FIN":["Finnland"],"FRA":["Frankreich"],"GEO":["Georgien"],"GER":["Deutschland"],"GRE":["Griechenland"],"GUA":["Guatemala"],"HKG":["Hongkong"],"HON":["Honduras"],"HUN":["Ungarn"],"INA":["Indonesien"],"IND":["Indien"],"IRI":["Iran"],"IRL":["Irland"],"IRQ":["Irak"],"ISL":["Island"],"ISR":["Israel"],"ISV":["Amerikanische Jungferninseln","Amerika. Jungferninseln"],"ITA":["Italien"],"JAM":["Jamaika"],"JOR":["Jordanien"],"JPN":["Japan"],"KAZ":["Kasachstan","Kasakchstan"],"KEN":["Kenia"],"KGZ":["Kirgisistan","Kirgistan","Kirgisien"],"KOR":["Südkorea"],"KSA":["Saudi-Arabien"],"LAT":["Lettland"],"LBN":["Libanon"],"LBA":["Libyen"],"LIE":["Liechtenstein"],"LTU":["Litauen","Littauen"],"LUX":["Luxemburg"],"MAC":["Macau"],"MAR":["Marokko"],"MAS":["Malaysia"],"MDA":["Moldawien","Moldau","Moldova"],"MEX":["Mexiko"],"MGL":["Mongolei"],"MKD":["Mazedonien","Nordmazedonien","Frühere Rep. Mazedonien","Ehemalige jugoslawische Republik Mazedonien"],"MLT":["Malta"],"MNC":["Monaco"],"MRI":["Mauritius"],"MTN":["Mauretanien"],"MYA":["Myanmar"],"NAM":["Namibia"],"NED":["Niederlande","Holland"],"NGR":["Nigeria"],"NOR":["Norwegen"],"NZL":["Neuseeland"],"PAK":["Pakistan"],"PAN":["Panama"],"PAR":["Paraguay"],"PER":["Peru"],"PHI":["Philippinen"],"PLE":["Palästina"],"PNG":["Papua-Neuguinea","Papua Neuguinea"],"POL":["Polen"],"POR":["Portugal"],"PUR":["Puerto Rico"],"QAT":["Katar","Qatar"],"ROU":["Rumänien"],"RSA":["Südafrika"],"RUS":["Russland","Rußland"],"SCO":["Schottland"],"SEY":["Seychellen"],"SGP":["Singapur"],"SLO":["Slowenien"],"SMR":["San Marino"],"SRB":["Serbien"],"SRI":["Sri Lanka"],"SUI":["Schweiz"],"SUR":["Surinam","Suriname"],"SVK":["Slowakei"],"SWE":["Schweden"],"SYR":["Syrien"],"THA":["Thailand"],"TJK":["Tadschikistan"],"TKM":["Turkmenistan"],"TTO":["Trinidad & Tobago","Trinidad und Tobago"],"TUN":["Tunesien"],"TUR":["Türkei"],"UAE":["Vereinigte Arabische Emirate","Vereinigte Arab. Emirate"],"UGA":["Uganda"],"UKR":["Ukraine"],"URU":["Uruguay"],"USA":["Amerika","Vereinigte Staaten","Vereinigte Staaten von Amerika"],"UZB":["Usbekistan"],"VEN":["Venezuela"],"VIE":["Vietnam"],"WLS":["Wales"],"YEM":["Jemen"],"ZAM":["Sambia"],"ZIM":["Simbabwe"]};
 // Países que YA NO EXISTEN y siguen en los cuadros viejos. No tienen bandera (no hay una que sea
 // la de ellos y no se inventa; ver _FED_HIST_FLAG), pero el nombre sí se traduce y se reconoce en alemán e inglés.
-var _FED_HIST = {"YUG":"Yugoslavia","YGE":"Yugoslavia","YGL":"Yugoslavia","AHO":"Antillas Neerlandesas","AHX":"Antillas Neerlandesas","URS":"Unión Soviética","TCH":"Checoslovaquia","GDR":"Alemania Oriental","FRG":"Alemania Occidental","SCG":"Serbia y Montenegro","SCS":"Reino de los Serbios, Croatas y Eslovenos","ZAI":"Zaire","NYE":"Yemen del Norte","SYE":"Yemen del Sur"};
+var _FED_HIST = {"YUG":"Yugoslavia","GEX":"Georgia","YGE":"Yugoslavia","YGL":"Yugoslavia","AHO":"Antillas Neerlandesas","AHX":"Antillas Neerlandesas","URS":"Unión Soviética","TCH":"Checoslovaquia","GDR":"Alemania Oriental","FRG":"Alemania Occidental","SCG":"Serbia y Montenegro","SCS":"Reino de los Serbios, Croatas y Eslovenos","ZAI":"Zaire","NYE":"Yemen del Norte","SYE":"Yemen del Sur"};
 // Bandera de los que ya no existen, SÓLO cuando no hay duda de cuál era (25/09/2026): Checoslovaquia
 // usó desde 1920 la misma que hoy usa Chequia, y el Reino de los Serbios, Croatas y Eslovenos, la
 // tricolor azul-blanca-roja lisa. Yugoslavia NO: según el año fue la lisa (reino, 1992-2003) o la de
@@ -7542,6 +7550,9 @@ var _FED_HIST = {"YUG":"Yugoslavia","YGE":"Yugoslavia","YGL":"Yugoslavia","AHO":
 //   YGE = Yugoslavia socialista 1946-1992, tricolor con la estrella roja.
 //   YGL = Yugoslavia con la tricolor LISA: el reino (1929-1941) y la RF de Yugoslavia (1992-2003).
 //   AHX = Antillas Neerlandesas 1959-1985, seis estrellas (con Aruba).
+//   GEX = Georgia 1990-2003, granate con el cantón negro y blanco (la de las cinco cruces es de enero
+//         de 2004): Olimpiadas 1992-2002. GEO a secas = la de hoy.
+// URS = Unión Soviética, hoz y martillo con la estrella (30/09/2026, como la muestra la FIDE).
 // AHO a secas = la de cinco estrellas (1986-2010), que es la de TODAS las Olimpiadas de Chess-Results
 // y de las listas FIDE en que aparece. Serbia y Montenegro (SCG, 2003-2006) siguió con la tricolor lisa.
 // YUG a secas sigue SIN bandera (no se sabe de qué época es). Estos internos NO entran en el
@@ -7549,8 +7560,8 @@ var _FED_HIST = {"YUG":"Yugoslavia","YGE":"Yugoslavia","YGL":"Yugoslavia","AHO":
 // Siglas VIEJAS o raras que Chess-Results pone en las Olimpiadas ("Singapore (SIN)", "Lebanon (LIB)",
 // "Malawi (MAL)", "Curacao (CUR)"…): sin esto salía la sigla en letras en vez de la bandera (28/09/2026).
 // SIN/LIB/MAL/CAR son hoy SGP/LBN/MAW/CAF; CUR/GRL/KIR/MHL/NCL no están en la lista FIDE de hoy.
-var _FED_HIST_FLAG = {"TCH":"cz","SCS":"hist-scs","FRG":"de","YGE":"hist-yug","YGL":"hist-scs","SCG":"hist-scs","AHO":"hist-aho","AHX":"hist-aho-1959","SIN":"sg","LIB":"lb","MAL":"mw","CAR":"cf","CUR":"cw","GRL":"gl","KIR":"ki","MHL":"mh","NCL":"nc"};
-var _FED_ERA = {"YGE":"YUG","YGL":"YUG","AHX":"AHO"};
+var _FED_HIST_FLAG = {"TCH":"cz","SCS":"hist-scs","FRG":"de","YGE":"hist-yug","YGL":"hist-scs","SCG":"hist-scs","AHO":"hist-aho","AHX":"hist-aho-1959","URS":"hist-urs","GEX":"hist-geo-1990","SIN":"sg","LIB":"lb","MAL":"mw","CAR":"cf","CUR":"cw","GRL":"gl","KIR":"ki","MHL":"mh","NCL":"nc"};
+var _FED_ERA = {"YGE":"YUG","YGL":"YUG","AHX":"AHO","GEX":"GEO"};
 var _FED_HIST_NOMBRES = {"YUG":["Yugoslavia","Jugoslawien"],"AHO":["Netherlands Antilles","Neth. Antilles","Holland Antillen","Niederländische Antillen"],"URS":["USSR","Soviet Union","UdSSR","Sowjetunion"],"TCH":["Czechoslovakia","Tschechoslowakei"],"GDR":["East Germany","DDR"],"FRG":["West Germany","BRD","Westdeutschland","Bundesrepublik Deutschland"],"ZAI":["Zaire"],"NYE":["North Yemen","Nordjemen"],"SYE":["South Yemen","Südjemen"],"SCG":["Serbia and Montenegro","Serbia & Montenegro","Serbien und Montenegro"],"SCS":["Kingdom of Serbs, Croats and Slovenes","Serbs, Croats and Slovenes"]};
 // Bandera de un "equipo" del PGN (header WhiteTeam/BlackTeam). En las Olimpiadas y torneos por
 // equipos eso trae el país — a veces como código FIDE ("ARG") y a veces como nombre ("Argentina").
@@ -10021,7 +10032,7 @@ var _FED_ES = {"AFG":"Afganistán","ALB":"Albania","ALG":"Argelia","AND":"Andorr
 // Cómo escribe Chess-Results el nombre de cada federación EN INGLÉS, con sus variantes reales (los
 // nombres salieron de los propios cuadros ya cargados): "USA" y "United States of America",
 // "Turkey" y "Turkiye", "Eswatini" y el "Eswaitini" mal escrito de origen.
-var _FED_EN = {"USA":["USA","United States of America","United States","U.S.A."],"IND":["India"],"UZB":["Uzbekistan"],"CHN":["China"],"GER":["Germany"],"NED":["Netherlands"],"AZE":["Azerbaijan"],"HUN":["Hungary"],"ARM":["Armenia"],"FRA":["France"],"UKR":["Ukraine"],"ESP":["Spain"],"ENG":["England"],"GBR":["Great Britain","United Kingdom"],"POL":["Poland"],"TUR":["Turkey","Turkiye"],"SRB":["Serbia"],"CRO":["Croatia"],"CZE":["Czech Republic","Czech Rep.","Czech Republik"],"GRE":["Greece"],"IRI":["Iran"],"NOR":["Norway"],"SLO":["Slovenia"],"ROU":["Romania"],"ISR":["Israel"],"DEN":["Denmark"],"ARG":["Argentina"],"ITA":["Italy"],"AUT":["Austria"],"BUL":["Bulgaria"],"GEO":["Georgia"],"BRA":["Brazil"],"AUS":["Australia"],"KAZ":["Kazakhstan"],"SWE":["Sweden"],"SUI":["Switzerland"],"LTU":["Lithuania"],"SVK":["Slovakia"],"MNE":["Montenegro"],"BLR":["Belarus"],"CAN":["Canada"],"FIN":["Finland"],"CUB":["Cuba"],"LAT":["Latvia"],"BEL":["Belgium"],"SGP":["Singapore"],"VIE":["Vietnam"],"PER":["Peru"],"ISL":["Iceland"],"POR":["Portugal"],"MDA":["Moldova"],"MGL":["Mongolia"],"INA":["Indonesia"],"CHI":["Chile"],"BIH":["Bosnia & Herzegovina","Bosnia and Herzegovina"],"COL":["Colombia"],"PHI":["Philippines"],"MKD":["North Macedonia","FYR Macedonia","Macedonia","FYROM"],"EST":["Estonia"],"TJK":["Tajikistan"],"URU":["Uruguay"],"SCO":["Scotland"],"TKM":["Turkmenistan"],"BAN":["Bangladesh"],"EGY":["Egypt"],"IRL":["Ireland"],"BOL":["Bolivia"],"MAS":["Malaysia"],"PAR":["Paraguay"],"UAE":["United Arab Emirates"],"ALB":["Albania"],"NZL":["New Zealand"],"CRC":["Costa Rica"],"JPN":["Japan"],"CYP":["Cyprus"],"VEN":["Venezuela"],"RSA":["South Africa"],"KGZ":["Kyrgyzstan","Kyrgystan"],"KOS":["Kosovo *"],"ALG":["Algeria"],"MEX":["Mexico"],"KOR":["South Korea"],"TPE":["Chinese Taipei"],"DOM":["Dominican Republic","Dominican Rep."],"NGR":["Nigeria"],"AND":["Andorra"],"ECU":["Ecuador"],"ZAM":["Zambia"],"PAN":["Panama"],"LBN":["Lebanon"],"ANG":["Angola"],"SRI":["Sri Lanka"],"ESA":["El Salvador"],"GUA":["Guatemala"],"YEM":["Yemen"],"LUX":["Luxembourg"],"WLS":["Wales"],"TTO":["Trinidad & Tobago"],"SUD":["Sudan"],"IRQ":["Iraq"],"MAD":["Madagascar"],"SYR":["Syria"],"JAM":["Jamaica"],"THA":["Thailand"],"FAI":["Faroe Islands"],"MAR":["Morocco"],"HKG":["Hong Kong, China"],"UGA":["Uganda"],"TUN":["Tunisia"],"MLT":["Malta"],"BAR":["Barbados"],"LBA":["Libya"],"MNC":["Monaco"],"SSD":["South Sudan"],"ZIM":["Zimbabwe"],"PUR":["Puerto Rico"],"MAW":["Malawi"],"JOR":["Jordan"],"CPV":["Cape Verde"],"MOZ":["Mozambique"],"HON":["Honduras"],"NCA":["Nicaragua"],"KEN":["Kenya"],"PAK":["Pakistan"],"ETH":["Ethiopia"],"PLE":["Palestine"],"NEP":["Nepal"],"LIE":["Liechtenstein"],"AFG":["Afghanistan"],"NAM":["Namibia"],"MYA":["Myanmar"],"BOT":["Botswana"],"CIV":["Cote d’Ivoire","Ivory Coast"],"SEN":["Senegal"],"GUY":["Guyana"],"HAI":["Haiti"],"MTN":["Mauritania"],"KSA":["Saudi Arabia"],"CMR":["Cameroon"],"PLW":["Palau"],"NRU":["Nauru"],"BDI":["Burundi"],"GUM":["Guam"],"BRN":["Bahrain"],"IOM":["Isle of Man"],"SUR":["Suriname"],"SOM":["Somalia"],"STP":["Sao Tome and Principe","Sao Tome & Principe"],"LES":["Lesotho"],"BRU":["Brunei Darussalam"],"ARU":["Aruba"],"KUW":["Kuwait"],"MDV":["Maldives"],"GHA":["Ghana"],"MRI":["Mauritius"],"LBR":["Liberia"],"MLI":["Mali"],"CAY":["Cayman Islands"],"OMA":["Oman"],"TOG":["Togo"],"JCI":["Jersey"],"SMR":["San Marino"],"GAM":["Gambia"],"BAH":["Bahamas"],"LCA":["Saint Lucia"],"GEQ":["Equatorial Guinea"],"TLS":["Timor-Leste","Timor Leste"],"FIJ":["Fiji"],"GCI":["Guernsey"],"SLE":["Sierra Leone"],"GAB":["Gabon"],"BER":["Bermuda"],"QAT":["Qatar"],"TAN":["Tanzania"],"SEY":["Seychelles"],"MAC":["Macau, China"],"COD":["Democratic Republic of the Congo"],"COM":["Comoros Islands"],"SWZ":["Eswatini","Eswaitini","Swaziland"],"DJI":["Djibouti"],"ISV":["US Virgin Islands","US Virgin Isllands","US Vergin Islands"],"SOL":["Solomon Islands"],"ANT":["Antigua and Barbuda"],"BHU":["Bhutan"],"CAF":["Central African Republic"],"DMA":["Dominica"],"CHA":["Chad"],"VAN":["Vanuatu"],"BUR":["Burkina Faso"],"CAM":["Cambodia"],"PNG":["Papua New Guinea"],"BIZ":["Belize"],"GRN":["Grenada"],"IVB":["British Virgin Islands"],"NIG":["Niger"],"ERI":["Eritrea"],"VIN":["Saint Vincent and the Grenadines"],"GUI":["Guinea"],"LAO":["Laos"],"SKN":["Saint Kitts and Nevis"],"TGA":["Tonga"],"BEN":["Benin"],"CGO":["Congo"],"SLV":["El Salvador"],"GBS":["Guinea-Bissau","Guinea Bissau"],"ROM":["Romania"],"RUS":["Russia","Russian Federation"],"RWA":["Rwanda"],"SAM":["Samoa"],"PRK":["North Korea","Korea DPR","DPR Korea"],"TRI":["Trinidad & Tobago","Trinidad and Tobago","Trinidad & Tobogo"],"WAL":["Wales"]};
+var _FED_EN = {"USA":["USA","United States of America","United States","U.S.A."],"IND":["India"],"UZB":["Uzbekistan"],"CHN":["China"],"GER":["Germany"],"NED":["Netherlands"],"AZE":["Azerbaijan"],"HUN":["Hungary"],"ARM":["Armenia"],"FRA":["France"],"UKR":["Ukraine"],"ESP":["Spain"],"ENG":["England"],"GBR":["Great Britain","United Kingdom"],"POL":["Poland"],"TUR":["Turkey","Turkiye"],"SRB":["Serbia"],"CRO":["Croatia"],"CZE":["Czech Republic","Czech Rep.","Czech Republik","Czechia"],"GRE":["Greece"],"IRI":["Iran"],"NOR":["Norway"],"SLO":["Slovenia"],"ROU":["Romania"],"ISR":["Israel"],"DEN":["Denmark"],"ARG":["Argentina"],"ITA":["Italy"],"AUT":["Austria"],"BUL":["Bulgaria"],"GEO":["Georgia"],"BRA":["Brazil"],"AUS":["Australia"],"KAZ":["Kazakhstan"],"SWE":["Sweden"],"SUI":["Switzerland"],"LTU":["Lithuania"],"SVK":["Slovakia"],"MNE":["Montenegro"],"BLR":["Belarus"],"CAN":["Canada"],"FIN":["Finland"],"CUB":["Cuba"],"LAT":["Latvia"],"BEL":["Belgium"],"SGP":["Singapore"],"VIE":["Vietnam"],"PER":["Peru"],"ISL":["Iceland"],"POR":["Portugal"],"MDA":["Moldova"],"MGL":["Mongolia"],"INA":["Indonesia"],"CHI":["Chile"],"BIH":["Bosnia & Herzegovina","Bosnia and Herzegovina"],"COL":["Colombia"],"PHI":["Philippines"],"MKD":["North Macedonia","FYR Macedonia","Macedonia","FYROM"],"EST":["Estonia"],"TJK":["Tajikistan"],"URU":["Uruguay"],"SCO":["Scotland"],"TKM":["Turkmenistan"],"BAN":["Bangladesh"],"EGY":["Egypt"],"IRL":["Ireland"],"BOL":["Bolivia"],"MAS":["Malaysia"],"PAR":["Paraguay"],"UAE":["United Arab Emirates"],"ALB":["Albania"],"NZL":["New Zealand"],"CRC":["Costa Rica"],"JPN":["Japan"],"CYP":["Cyprus"],"VEN":["Venezuela"],"RSA":["South Africa"],"KGZ":["Kyrgyzstan","Kyrgystan"],"KOS":["Kosovo *"],"ALG":["Algeria"],"MEX":["Mexico"],"KOR":["South Korea"],"TPE":["Chinese Taipei"],"DOM":["Dominican Republic","Dominican Rep."],"NGR":["Nigeria"],"AND":["Andorra"],"ECU":["Ecuador"],"ZAM":["Zambia"],"PAN":["Panama"],"LBN":["Lebanon"],"ANG":["Angola"],"SRI":["Sri Lanka"],"ESA":["El Salvador"],"GUA":["Guatemala"],"YEM":["Yemen"],"LUX":["Luxembourg"],"WLS":["Wales"],"TTO":["Trinidad & Tobago"],"SUD":["Sudan"],"IRQ":["Iraq"],"MAD":["Madagascar"],"SYR":["Syria"],"JAM":["Jamaica"],"THA":["Thailand"],"FAI":["Faroe Islands"],"MAR":["Morocco"],"HKG":["Hong Kong, China"],"UGA":["Uganda"],"TUN":["Tunisia"],"MLT":["Malta"],"BAR":["Barbados"],"LBA":["Libya"],"MNC":["Monaco"],"SSD":["South Sudan"],"ZIM":["Zimbabwe"],"PUR":["Puerto Rico"],"MAW":["Malawi"],"JOR":["Jordan"],"CPV":["Cape Verde"],"MOZ":["Mozambique"],"HON":["Honduras"],"NCA":["Nicaragua"],"KEN":["Kenya"],"PAK":["Pakistan"],"ETH":["Ethiopia"],"PLE":["Palestine"],"NEP":["Nepal"],"LIE":["Liechtenstein"],"AFG":["Afghanistan"],"NAM":["Namibia"],"MYA":["Myanmar"],"BOT":["Botswana"],"CIV":["Cote d’Ivoire","Ivory Coast"],"SEN":["Senegal"],"GUY":["Guyana"],"HAI":["Haiti"],"MTN":["Mauritania"],"KSA":["Saudi Arabia"],"CMR":["Cameroon"],"PLW":["Palau"],"NRU":["Nauru"],"BDI":["Burundi"],"GUM":["Guam"],"BRN":["Bahrain"],"IOM":["Isle of Man"],"SUR":["Suriname"],"SOM":["Somalia"],"STP":["Sao Tome and Principe","Sao Tome & Principe","Sao Tome e Principe"],"LES":["Lesotho"],"BRU":["Brunei Darussalam"],"ARU":["Aruba"],"KUW":["Kuwait"],"MDV":["Maldives"],"GHA":["Ghana"],"MRI":["Mauritius"],"LBR":["Liberia"],"MLI":["Mali"],"CAY":["Cayman Islands"],"OMA":["Oman"],"TOG":["Togo"],"JCI":["Jersey"],"SMR":["San Marino"],"GAM":["Gambia"],"BAH":["Bahamas"],"LCA":["Saint Lucia"],"GEQ":["Equatorial Guinea"],"TLS":["Timor-Leste","Timor Leste"],"FIJ":["Fiji"],"GCI":["Guernsey"],"SLE":["Sierra Leone"],"GAB":["Gabon"],"BER":["Bermuda"],"QAT":["Qatar"],"TAN":["Tanzania"],"SEY":["Seychelles"],"MAC":["Macau, China"],"COD":["Democratic Republic of the Congo"],"COM":["Comoros Islands"],"SWZ":["Eswatini","Eswaitini","Swaziland"],"DJI":["Djibouti"],"ISV":["US Virgin Islands","US Virgin Isllands","US Vergin Islands"],"SOL":["Solomon Islands"],"ANT":["Antigua and Barbuda"],"BHU":["Bhutan"],"CAF":["Central African Republic"],"DMA":["Dominica"],"CHA":["Chad"],"VAN":["Vanuatu"],"BUR":["Burkina Faso"],"CAM":["Cambodia"],"PNG":["Papua New Guinea"],"BIZ":["Belize"],"GRN":["Grenada"],"IVB":["British Virgin Islands"],"NIG":["Niger"],"ERI":["Eritrea"],"VIN":["Saint Vincent and the Grenadines"],"GUI":["Guinea"],"LAO":["Laos"],"SKN":["Saint Kitts and Nevis"],"TGA":["Tonga"],"BEN":["Benin"],"CGO":["Congo"],"SLV":["El Salvador"],"GBS":["Guinea-Bissau","Guinea Bissau"],"ROM":["Romania"],"RUS":["Russia","Russian Federation"],"RWA":["Rwanda"],"SAM":["Samoa"],"PRK":["North Korea","Korea DPR","DPR Korea"],"TRI":["Trinidad & Tobago","Trinidad and Tobago","Trinidad & Tobogo"],"WAL":["Wales"]};
 // Índice nombre (normalizado) → federación. Se arma una sola vez, con los nombres en castellano y
 // en inglés.
 var _NOMBRE_FED = null;
@@ -10043,6 +10054,9 @@ function _paisES(nombre, fed){
   var partes = _teamCountryParts(nombre);
   var limpio = partes.clean || String(nombre == null ? "" : nombre);
   if (!limpio) return "";
+  // Los equipos de ajedrecistas con discapacidad de las Olimpiadas (no son países): con su aclaración.
+  var _disc = { IBCA: "ciegos", IPCA: "con discapacidad física", ICSC: "sordos", ICCD: "sordos" }[limpio.toUpperCase()];
+  if (_disc) return limpio.toUpperCase() + " (ajedrecistas " + _disc + ")";
   // "England 1", "Hungary B", "Sweden 2": el número (o la letra) del equipo se conserva, si no en un
   // Europeo por equipos quedaban tres "Inglaterra" iguales.
   var base = limpio, suf = "";
@@ -10066,6 +10080,36 @@ function _paisFed(nombre){
   if (!code && /^[A-Za-z]{3}$/.test(base) && _FED_ISO[base.toUpperCase()]) code = base.toUpperCase();
   // Checoslovaquia y el Reino SCS también (su bandera es segura: _FED_HIST_FLAG); Yugoslavia no.
   return (code && (_FED_ISO[code] || (typeof _FED_HIST_FLAG === 'object' && _FED_HIST_FLAG[code]))) ? code : '';
+}
+// Bandera de ÉPOCA de un equipo (30/09/2026). Por el nombre solo no se sabe el año: "Georgia" da la
+// bandera de hoy y "Yugoslavia" ninguna. Pero el cuadro de una Olimpiada de OlimpBase guarda la sigla
+// de la época (GEX = Georgia 1990-2003, YGE/YGL = Yugoslavia con estrella / lisa, AHX = Antillas de 6
+// estrellas). Se usa SÓLO si el nombre es justamente ese país (un club con esa sigla sigue sin bandera).
+function _paisFedEra(nombre, fed){
+  var f = String(fed || '').toUpperCase();
+  if (f && _FED_ERA[f]) {
+    var limpio = _teamCountryParts(nombre).clean;
+    var m = String(limpio || '').match(/^(.+?)(?:[ ]+|-)([0-9]{1,2}|[A-DIVX]{1,3})$/);
+    if (_nombreFedIx()[normStr(m ? m[1] : limpio)] === _FED_ERA[f]) return f;
+  }
+  return _paisFed(nombre);
+}
+// Lo mismo para el encabezado de cada match (formaciones), que sólo tiene los NOMBRES: la sigla de época
+// se busca en los cruces y en la tabla del mismo cuadro. Mapa {nombre normalizado → sigla}, 1 por cuadro.
+var _eraFedCache = {};
+function _teamEraFlag(crk, nombre){
+  if (!crk || !nombre) return '';
+  var mp = _eraFedCache[crk];
+  if (!mp) {
+    mp = _eraFedCache[crk] = {};
+    var d = null; try { d = crDataLoad(crk); } catch (e) {}
+    var put = function (nm, fd) { fd = String(fd || '').toUpperCase(); if (nm && _FED_ERA[fd]) mp[normStr(nm)] = fd; };
+    var xr = (d && d.teamCrosses) || {};
+    Object.keys(xr).forEach(function (r) { (xr[r] || []).forEach(function (m) { put(m.aName, m.aFed); put(m.bName, m.bFed); }); });
+    (((d && d.teamStandings) || {}).teams || []).forEach(function (t) { put(t.name, t.fed); });
+  }
+  var f = mp[normStr(nombre)];
+  return f && _paisFedEra(nombre, f) === f ? crFlagEmoji(f) : '';
 }
 function _teamCountryParts(name){
   var s=String(name||'');
@@ -10343,6 +10387,9 @@ function _teamRoundBlock(m, mi, roundNum, crk, cx, lv){
     var inner='';
     var _boards=lv.boards, _score=lv.score, _parcial=lv.parcial, _final=lv.final, _pa=lv.pa, _pb=lv.pb;
     var _ca=_teamCountryParts(m.aName), _cb=_teamCountryParts(m.bName);
+    // Sin sigla en el nombre: la bandera de ÉPOCA que guarda el cuadro (Georgia 1992-2002, Yugoslavia…).
+    var _eA=_ca.fed?'':_teamEraFlag(crk,_ca.clean), _eB=_cb.fed?'':_teamEraFlag(crk,_cb.clean);
+    if(_eA) _ca=Object.assign({},_ca,{flag:_eA}); if(_eB) _cb=Object.assign({},_cb,{flag:_eB});
     var _pk=lv.pk;  // id por NOMBRE para vincular cruce↔formación (países y clubes)
     // clave por FED para el salto a Partidas: resolvemos el nombre→fed (aunque no traiga "(FED)", ej.
     // "Bulgaria"), para que coincida con el id del match en la grilla de partidas (que también resuelve).
@@ -11093,7 +11140,7 @@ function _tdPodiumHtml(crk, isTeam) {
       // Si el equipo es un PAÍS, en el círculo va su bandera en vez de la inicial. Un club no lleva
       // bandera aunque esté inscripto con la federación de su país ("SG Riehen" no es Suiza).
       return { name: _paisES(t.name || '', t.fed) || t.name || '', title: '', score: (t.des && t.des[0] != null) ? String(t.des[0]) : '', sub: '',
-               flagFed: _paisFed(t.name || '') };
+               flagFed: _paisFedEra(t.name || '', t.fed) };
     });
   } else {
     if (data.standingsKind === 'initial' || !data.standings || !data.standings.length) return '';
@@ -19563,10 +19610,30 @@ function dedupGamesByMoves(items, getPgn, withFen) {
 // huella de 40 jugadas dejaba pasar). Lo usan los dos caminos de "todo el sitio": el filtro al
 // importar y la limpieza global. Las partidas SIN jugadas se indexan aparte por
 // jugadores#Date#Round#Event (no se mezclan con las que sí tienen jugadas).
-// byBody: además del índice por apellido (byPair, para prefijos/truncadas), un set por cuerpo EXACTO
-// de jugadas. Atrapa el MISMO juego con el apellido escrito distinto entre fuentes (typo), donde la
-// clave por apellido falla. 100% seguro (jugadas idénticas = misma partida).
+// byBody: además del índice por apellido (byPair, para prefijos/truncadas), cuerpo EXACTO de jugadas
+// → claves de jugadores que lo tienen. Atrapa el MISMO juego con el apellido escrito distinto entre
+// fuentes (typo), donde la clave por apellido falla. OJO: jugadas idénticas NO siempre son la misma
+// partida (tablas cortas de teoría: "Lorenzini-Liascovich 2014" = "Milos-Barbero 1984" jugada por
+// jugada). Por eso además exige que al menos UN apellido se parezca (ver _pkShareSurname, 30/09/2026).
 function newDedupIndex() { return { byPair: Object.create(null), empty: Object.create(null), byBody: Object.create(null) }; }
+
+// ¿Dos claves de par de jugadores (_pairKey: "apellido|apellido") comparten algún apellido? Tolerante:
+// alcanza con las 4 primeras letras (Hoffman/Hoffmann, Sabas/Shabsh no, pero el rival sí coincide) y en
+// cualquier color (Flohr-Ståhlberg = Ståhlberg-Flohr). Sin nombres de un lado → se acepta (como antes).
+function _pkShareSurname(a, b) {
+  var A = String(a || '').split('|'), B = String(b || '').split('|');
+  if (!A.join('') || !B.join('')) return true;
+  for (var i = 0; i < A.length; i++) for (var j = 0; j < B.length; j++) {
+    if (A[i] && B[j] && A[i].slice(0, 4) === B[j].slice(0, 4)) return true;
+  }
+  return false;
+}
+function _byBodyHas(idx, k) {
+  var arr = idx.byBody[k.body];
+  if (!arr) return false;
+  for (var i = 0; i < arr.length; i++) if (_pkShareSurname(arr[i], k.pk)) return true;
+  return false;
+}
 
 // Clave de una partida en el índice: {pk: jugadores, body: jugadas, ek: clave sin-jugadas}.
 function _dedupKey(pgn) {
@@ -19581,7 +19648,7 @@ function _dedupKey(pgn) {
 function dedupIndexHas(idx, pgn) {
   var k = _dedupKey(pgn);
   if (k.body.length < 4) return !!idx.empty[k.ek];
-  if (idx.byBody[k.body]) return true;   // cuerpo exacto ya presente (mismo juego, nombre distinto)
+  if (_byBodyHas(idx, k)) return true;   // cuerpo exacto ya presente (mismo juego, nombre distinto)
   var arr = idx.byPair[k.pk];
   if (arr) for (var i = 0; i < arr.length; i++) {
     if (arr[i].indexOf(k.body) === 0 || k.body.indexOf(arr[i]) === 0) return true;
@@ -19596,7 +19663,7 @@ function dedupIndexHas(idx, pgn) {
 function dedupIndexCovered(idx, pgn) {
   var k = _dedupKey(pgn);
   if (k.body.length < 4) return !!idx.empty[k.ek];
-  if (idx.byBody[k.body]) return true;   // cuerpo exacto ya presente → idéntica (cubierta, nombre distinto)
+  if (_byBodyHas(idx, k)) return true;   // cuerpo exacto ya presente → idéntica (cubierta, nombre distinto)
   var arr = idx.byPair[k.pk];
   if (arr) for (var i = 0; i < arr.length; i++) {
     if (arr[i].indexOf(k.body) === 0) return true;   // existente empieza con la nueva → existente ≥ nueva
@@ -19610,7 +19677,7 @@ function dedupIndexAdd(idx, pgn) {
   var k = _dedupKey(pgn);
   if (k.body.length < 4) { idx.empty[k.ek] = true; return; }
   (idx.byPair[k.pk] = idx.byPair[k.pk] || []).push(k.body);
-  idx.byBody[k.body] = true;
+  (idx.byBody[k.body] = idx.byBody[k.body] || []).push(k.pk);
 }
 
 // Índice poblado con TODAS las partidas del sitio: torneos públicos (localStorage) + todos los

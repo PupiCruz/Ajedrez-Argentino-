@@ -454,6 +454,7 @@
       if (/^IBCA$/i.test(n)) return 'IBCA (ajedrecistas ciegos)';
       if (/^IPCA$/i.test(n)) return 'IPCA (ajedrecistas con discapacidad física)';
       if (/^ICSC$/i.test(n)) return 'ICSC (ajedrecistas sordos)';
+      if (/^ICCD$/i.test(n)) return 'ICCD (ajedrecistas sordos)';   // el ICSC con su nombre nuevo (2016)
       if (/^Palestine$/i.test(n) && +Y < 1948) return 'Palestina (mandato británico)';
       if (/Bohemia/i.test(n)) return 'Bohemia y Moravia';
       if (/Serbs, Croats and Slovenes/i.test(n)) return 'Reino de los Serbios, Croatas y Eslovenos';   // Yugoslavia antes de 1929
@@ -465,7 +466,7 @@
       if (/Serbs, Croats and Slovenes/i.test(n)) return 'SCS';   // su tricolor lisa (la app la tiene)
       if (/^Great Britain$/i.test(n)) return 'GBR';               // bandera británica, no la inglesa
       if (/^West Germany$/i.test(n)) return 'FRG';                // OlimpBase le dice GER; la app: "Alemania Occidental"
-      if (/^(IBCA|IPCA|ICSC)$/i.test(n)) return '';                // no son países: sin bandera
+      if (/^(IBCA|IPCA|ICSC|ICCD)$/i.test(n)) return '';                // no son países: sin bandera
       c = c.replace(/\d$/, '');        // ARG2 = Argentina "B": la misma bandera
       if (c === 'CSR') return 'TCH';   // Checoslovaquia (la app la conoce como TCH; su bandera = la de Chequia)
       if (c === 'ROM') return 'ROU';   // Rumania: OlimpBase usa el código viejo
@@ -473,7 +474,9 @@
       // estrella la socialista (1946-1991). Antillas: seis estrellas hasta 1985; AHO a secas = cinco.
       if (c === 'YUG') return (+Y >= 1946 && +Y <= 1991) ? 'YGE' : 'YGL';
       if (c === 'AHO' && +Y < 1986) return 'AHX';
-      var FIDE = { MAU: 'MTN', LIB: 'LBN', SIN: 'SGP', GBG: '' };   // Mauritania, Líbano, Singapur (siglas viejas); Guernsey-Jersey
+      if (c === 'GEO' && +Y < 2004) return 'GEX';   // Georgia: la granate con el cantón negro y blanco hasta enero de 2004
+      var FIDE = { MAU: 'MTN', LIB: 'LBN', SIN: 'SGP', GBG: '',   // Mauritania, Líbano, Singapur (siglas viejas); Guernsey-Jersey
+        COG: 'CGO', SIL: 'SLE', TGO: 'TOG', BTN: 'BHU' };   // siglas OLÍMPICAS (2010+) → las de la FIDE: Congo, Sierra Leona, Togo, Bután
       if (c in FIDE) return FIDE[c];
       return c;
     }
@@ -682,6 +685,24 @@
     if (Dw) { armar(Dw, 'fem'); informe.femenina = true; }
     if (femNo) informe.femeninaNo = femNo;
     ['sinPartida', 'sueltas', 'resultados', 'nombres', 'sinJugar', 'corregidos', 'descansos'].forEach(function (k) { informe['n_' + k] = informe[k].length; informe[k] = informe[k].slice(0, 60); });
+    // Fechas: la app engancha las partidas con su torneo sólo si su [Date] cae entre las fechas del
+    // torneo (±3 días). OlimpBase a veces se equivoca en la ficha: 1933 dice "12th - 23rd July" y se
+    // jugó en JUNIO (la reseña de la misma página y el PGN lo confirman) → el torneo quedaba sin
+    // partidas. Si las partidas no entran en la ficha, mandan las fechas de las partidas.
+    var dMin = '', dMax = '';
+    partidasPorCat.forEach(function (x) { x.lista.forEach(function (p) {
+      var m = p.match(/\[Date "(\d{4})\.(\d\d)\.(\d\d)"\]/); if (!m) return;
+      var d = m[1] + '-' + m[2] + '-' + m[3]; if (!dMin || d < dMin) dMin = d; if (!dMax || d > dMax) dMax = d;
+    }); });
+    if (dMin) {
+      var dia = function (iso, k) { var t = new Date(iso + 'T12:00:00Z'); t.setUTCDate(t.getUTCDate() + k); return t.toISOString().slice(0, 10); };
+      if (!f || dMin < dia(f.ini, -3) || dMax > dia(f.fin, 3)) {
+        var txtDe = function (iso) { return +iso.slice(8) + ' ' + MES_ES[+iso.slice(5, 7)]; };
+        var fPgn = { ini: dMin, fin: dMax, txt: txtDe(dMin) + (dMin.slice(0, 4) !== dMax.slice(0, 4) ? ' ' + dMin.slice(0, 4) : '') + ' – ' + txtDe(dMax) + ' ' + dMax.slice(0, 4) };
+        informe.fechas = 'OlimpBase da como fechas "' + (ficha['Date'] || ficha['Dates'] || '—') + '", pero las partidas son del ' + fPgn.txt + ': se usan las de las partidas.';
+        f = fPgn;
+      }
+    }
 
     var director = limpiarPersona(ficha['Tournament Director']) || limpiarPersona(ficha['Chief Arbiter']);
     var cfg = {

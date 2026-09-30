@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1927;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1933;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -548,7 +548,7 @@ console.log('\n=== 17. Radiografía POR EQUIPOS (Olimpiadas, ligas) ===');
   const P24 = { bp:{ India:35, USA:29.5, UZB:29.5, ARM:30 }, mp:{ India:21, USA:17, UZB:17, ARM:16 } };
   chk(M._stTeamCriterio([{ name:'India' }, { name:'USA' }, { name:'UZB' }, { name:'ARM' }], P24) === 'match',
       'Olimpiada moderna: va por puntos de MATCH');
-  chk(/\+ \(tk\.length \? '\|e10' : ''\)/.test(SRC),'la firma de los cuadros por equipos cambió de versión (lo horneado viejo se recalcula)');
+  chk(/\+ \(tk\.length \? '\|e11' : ''\)/.test(SRC),'la firma de los cuadros por equipos cambió de versión (lo horneado viejo se recalcula)');
 
   const boards = M._stTeamBoardsAsRounds(liga);
   chk(Object.keys(boards).length === 2 && boards['1'].length === 4,
@@ -689,8 +689,8 @@ console.log('\n=== 18. La pestaña de los torneos por equipos ===');
   // Chiburdanidze 2549, no 2612 → el bronce por performance es de Zsuzsa Polgár).
   const Piso = new Function(extraerFuncion('_stOlimpPisoElo') + ' return _stOlimpPisoElo;')();
   chk(Piso(1990, false) === 2200 && Piso(1994, false) === 2000 && Piso(1994, true) === 2000 && Piso(1986, true) === 1900
-      && Piso(2002, false) === 1800 && Piso(2006, true) === 1400 && Piso(2008, false) === 0 && Piso(0, false) === 0,
-      'piso del rival sin Elo por año y rama (1984-2006; después, no se cuenta)');
+      && Piso(2002, false) === 1800 && Piso(2006, true) === 1400 && Piso(2008, true) === 1400 && Piso(2010, false) === 0 && Piso(0, false) === 0,
+      'piso del rival sin Elo por año y rama (1984-2008, Fierro Baquero 2008; después, no se cuenta)');
   chk(A._stEsNN('NN') && A._stEsNN('N.N.') && !A._stEsNN('Nunn, John') && !A._stEsNN(''),
       '"NN" (jugador sin nombre de OlimpBase) no es un jugador: no corre al suplente a un tablero que no existe');
 
@@ -981,7 +981,7 @@ console.log('\n=== 21. Los países, en castellano ===');
   chk(_paisES('Czech Rep.') === 'Chequia' && _paisES('Dominican Rep.') === 'República Dominicana'
       && _paisES('Kyrgystan') === 'Kirguistán' && _paisES('Neth. Antilles') === 'Antillas Neerlandesas',
       'y las abreviaturas de las Olimpiadas viejas (Czech Rep., Dominican Rep., Kyrgystan, Neth. Antilles)');
-  chk(SRC.includes('flagFed: _paisFed(') && extraerFuncion('_podioDibujo').includes("assets/flags/' + iso"),
+  chk(SRC.includes('flagFed: _paisFedEra(') && extraerFuncion('_podioDibujo').includes("assets/flags/' + iso"),
       'el podio usa la bandera en el círculo');
   // Londres 1927 (25/09/2026): "Great Britain" quedaba en inglés y con la bandera INGLESA; Checoslovaquia
   // y el Reino de los Serbios, Croatas y Eslovenos, sin bandera (la suya es segura). Yugoslavia sigue sin.
@@ -992,7 +992,10 @@ console.log('\n=== 21. Los países, en castellano ===');
       && _paisES('Reino de los Serbios, Croatas y Eslovenos') === 'Reino de los Serbios, Croatas y Eslovenos' && _paisFed('Kingdom of Serbs, Croats and Slovenes') === 'SCS'
       && fs.existsSync(new URL('./assets/flags/' + HFLAG.SCS + '.svg', import.meta.url)),
       'Checoslovaquia (la misma de Chequia) y el Reino SCS (tricolor lisa) llevan su bandera');
-  chk(!HFLAG.YUG && !HFLAG.URS && _paisFed('Jugoslawien') === '' && extraerFuncion('_flagImg').includes('_FED_ISO[fed] || _FED_HIST_FLAG[fed]')
+  // La URSS SÍ lleva bandera desde el 30/09/2026 (hoz y martillo; una sola en toda su historia de Olimpiadas).
+  chk(HFLAG.URS === 'hist-urs' && _paisFed('Soviet Union') === 'URS' && _paisES('USSR') === 'Unión Soviética' && fs.existsSync(new URL('./assets/flags/hist-urs.svg', import.meta.url)),
+      '🏳️ la Unión Soviética lleva su bandera (hoz y martillo)');
+  chk(!HFLAG.YUG && _paisFed('Jugoslawien') === '' && extraerFuncion('_flagImg').includes('_FED_ISO[fed] || _FED_HIST_FLAG[fed]')
       && extraerFuncion('_fedName').includes('_FED_HIST[fed]) return _FED_HIST[fed];'),
       'Yugoslavia no (según el año cambia), y la banderita dice "Checoslovaquia", no "Chequia"');
   // Por época (28/09/2026): el lector de OlimpBase sabe el año y pone YGE/YGL/AHX; el nombre sigue siendo YUG/AHO.
@@ -1012,8 +1015,22 @@ console.log('\n=== 21. Los países, en castellano ===');
     chk(parecido('Nguku, Namale Ben', 'Namale, Ben Nguku') >= 4 && parecido('Namale, Ben Nguku', 'Nguku, Namale Ben') >= 4
         && parecido('Ben, Ali', 'Salem, Ben') < 4 && parecido('Hāzenfuss', 'Hasenfuss') === 60 && parecido('Molander, Riku', 'Nguku, Namale Ben') < 4,
         '🏛️ lector: el nombre dado vuelta en el PGN ("Namale, Ben Nguku") encuentra su mesa; palabras cortas ("Ben") no alcanzan');
-    chk(LECT.includes("return 'IPCA (ajedrecistas con discapacidad física)';") && LECT.includes("if (/^(IBCA|IPCA|ICSC)$/i.test(n)) return '';"),
-        '🏛️ lector: IPCA/ICSC se dicen en castellano y van sin bandera (como IBCA)');
+    chk(LECT.includes("return 'IPCA (ajedrecistas con discapacidad física)';") && LECT.includes("if (/^(IBCA|IPCA|ICSC|ICCD)$/i.test(n)) return '';") && LECT.includes("return 'ICCD (ajedrecistas sordos)';"),
+        '🏛️ lector: IPCA/ICSC/ICCD se dicen en castellano y van sin bandera (como IBCA)');
+    // Bakú 2016 (30/09/2026): OlimpBase usa siglas OLÍMPICAS (COG, SIL, TGO, BTN) → sin bandera; y "Czechia" / "São Tomé e Principe" sin castellano.
+    chk(LECT.includes("COG: 'CGO', SIL: 'SLE', TGO: 'TOG', BTN: 'BHU'") && _paisES('Czechia') === 'Chequia' && _paisES('São Tomé e Principe') === 'Santo Tomé y Príncipe',
+        '🏛️ lector: siglas olímpicas → FIDE (Congo, Sierra Leona, Togo, Bután); "Czechia" y "São Tomé e Principe" en castellano', _paisES('Czechia') + ' / ' + _paisES('São Tomé e Principe'));
+    // Georgia (30/09/2026): la de las cinco cruces es de enero de 2004; antes, la granate con el cantón negro y blanco.
+    chk(LECT.includes("if (c === 'GEO' && +Y < 2004) return 'GEX';") && HFLAG.GEX === 'hist-geo-1990' && _paisFed('Georgia') === 'GEO' && SRC.includes('"GEX":"Georgia"') && SRC.includes('"GEX":"GEO"')
+        && fs.existsSync(new URL('./assets/flags/hist-geo-1990.svg', import.meta.url)),
+        '🏳️ Georgia en las Olimpiadas 1992-2002 lleva la bandera de esa época (GEX); por el nombre, la de hoy');
+    chk(_paisES('ICSC') === 'ICSC (ajedrecistas sordos)' && _paisES('IPCA') === 'IPCA (ajedrecistas con discapacidad física)' && _paisES('IBCA (ajedrecistas ciegos)') === 'IBCA (ajedrecistas ciegos)',
+        '🏛️ los equipos IBCA/IPCA/ICSC/ICCD a secas salen con su aclaración (2002 y las de Chess-Results)', _paisES('IPCA') + ' | ' + _paisES('IBCA (ajedrecistas ciegos)'));
+    chk(SRC.includes("if (nomViejo) nuevo.name = nomViejo;") && SRC.includes("var ev = evDe(evP), t = null;") && SRC.includes("_stampEvent(g, ev)"),
+        '📥 reimportar un histórico conserva el nombre que le puso el autor (y sus partidas van con ese nombre, sin repetirse en el pool)');
+    // El PODIO y el encabezado de cada match sacaban la bandera del NOMBRE ("Georgia" = la de hoy, "Yugoslavia" = ninguna): ahora usan la sigla de época del cuadro (30/09/2026).
+    chk(SRC.includes("flagFed: _paisFedEra(t.name || '', t.fed)") && SRC.includes("_teamEraFlag(crk,_ca.clean)") && SRC.includes("if (f && _FED_ERA[f]) {"),
+        '🏳️ podio y formaciones usan la bandera de época del cuadro (Georgia 1992, Yugoslavia 1988), sólo si el nombre es ese país');
   }
   // Olimpiadas suizas de OlimpBase 1976-1990 (28/09/2026): OlimpBase le dice GER a Alemania Occidental.
   chk(_paisES('West Germany') === 'Alemania Occidental' && _paisFed('West Germany') === 'FRG' && HFLAG.FRG === 'de'
