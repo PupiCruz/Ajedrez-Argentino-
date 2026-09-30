@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1920;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1921;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -548,7 +548,7 @@ console.log('\n=== 17. Radiografía POR EQUIPOS (Olimpiadas, ligas) ===');
   const P24 = { bp:{ India:35, USA:29.5, UZB:29.5, ARM:30 }, mp:{ India:21, USA:17, UZB:17, ARM:16 } };
   chk(M._stTeamCriterio([{ name:'India' }, { name:'USA' }, { name:'UZB' }, { name:'ARM' }], P24) === 'match',
       'Olimpiada moderna: va por puntos de MATCH');
-  chk(/\+ \(tk\.length \? '\|e8' : ''\)/.test(SRC),'la firma de los cuadros por equipos cambió de versión (lo horneado viejo se recalcula)');
+  chk(/\+ \(tk\.length \? '\|e10' : ''\)/.test(SRC),'la firma de los cuadros por equipos cambió de versión (lo horneado viejo se recalcula)');
 
   const boards = M._stTeamBoardsAsRounds(liga);
   chk(Object.keys(boards).length === 2 && boards['1'].length === 4,
@@ -765,7 +765,7 @@ console.log('\n=== 19. El tablero de INSCRIPCIÓN (medallas de la Olimpiada) ===
                                        2: [{ aName:'Trinidad', bName:'Otro', boards:[{ nW:'Singh', eW:0, nB:'Riv2', eB:0, res:'½-½' }] }] } };
   const singh = M._stTeamPlayers(sinEloPropio, 2, 1800).find(p => p.raw === 'Singh');
   chk(singh.rp === null && singh.rpDes === 1900 + 193, 'sin Elo propio: sin Rp, pero con performance para desempatar (rivales 1900, 75%)', 'rp ' + singh.rp + ' · rpDes ' + singh.rpDes);
-  chk(/anioOlimp >= 1998 && anioOlimp <= 2006\);/.test(SRC), 'la marca se prende sólo en las Olimpiadas de 1998 a 2006');
+  chk(/anioOlimp >= 1998 && anioOlimp <= 2004, anioOlimp > 0\);/.test(SRC), 'la marca se prende sólo en las Olimpiadas de 1998 a 2004 (en 2006 ya no: Mawadda)');
 
   // Si el cuadro trae el PLANTEL (planilla de OlimpBase / lista de Chess-Results), su orden manda.
   const conPlantel = JSON.parse(JSON.stringify(d));
@@ -777,6 +777,16 @@ console.log('\n=== 19. El tablero de INSCRIPCIÓN (medallas de la Olimpiada) ===
   const jp2 = M._stTeamPlayers(conPlantel, 3).filter(p => p.equipo === 'España');
   chk(jp2.find(p => p.raw === 'Dos').mesa === 2 && jp2.find(p => p.raw === 'Pichot').mesa === 4,
       'y si al plantel le falta alguno de los que jugaron, se queda con lo deducido');
+  // Olimpiadas: el número de la planilla TAL CUAL aunque el 1 no haya jugado nunca (Zambia, Turín 2006:
+  // Simutowe inscripto en el 1 sin jugar; Phiri, 2.º suplente, quedaba 1.er suplente y sin medalla).
+  const ausente = JSON.parse(JSON.stringify(d));
+  ausente.teamRoster = [{ name:'España', players:[{ bo:1, nm:'Faltó' }, { bo:2, nm:'Uno' }, { bo:3, nm:'Dos' }, { bo:4, nm:'Tres' }, { bo:5, nm:'Pichot' }] }];
+  const ja = M._stTeamPlayers(ausente, 3, 0, 0, false, true).filter(p => p.equipo === 'España');
+  const jl = M._stTeamPlayers(ausente, 3).filter(p => p.equipo === 'España');
+  chk(ja.find(p => p.raw === 'Uno').mesa === 2 && ja.find(p => p.raw === 'Pichot').mesa === 5
+      && jl.find(p => p.raw === 'Uno').mesa === 1 && jl.find(p => p.raw === 'Pichot').mesa === 4,
+      'Olimpiada: el tablero es el de la planilla aunque el 1 no juegue (en una liga se corren)',
+      'olimp ' + ja.map(p => p.raw + ':' + p.mesa).join(',') + ' · liga ' + jl.map(p => p.raw + ':' + p.mesa).join(','));
 
   // ── Contra la tabla OFICIAL de la Olimpiada 2024 (art=21 de Chess-Results) ──
   const olimp = 'data/cr/cr2_tz_tz_1785939130392_c0.json';

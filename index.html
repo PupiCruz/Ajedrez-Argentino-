@@ -11834,7 +11834,10 @@ function _stSig(data){
        // 'e7' = incomparecencias en el porcentaje de las medallas de 1998-2006 (Hillarp Persson 1998).
        // 'e8' = mínimo de partidas de los titulares por año en 1976-2006 (Mecking 6½/8, Bled 2002) y
        // desempate por performance también sin Elo propio (Singh / El-Arbi, 1.er suplente 2002).
-       + (tk.length ? '|e8' : '');
+       // 'e9' = en las Olimpiadas, el tablero es el número de la planilla aunque alguien de arriba no
+       // haya jugado (Phiri 2.º suplente de Zambia, Turín 2006), 29/09/2026.
+       // 'e10' = en Turín 2006 la incomparecencia ya NO cuenta en el % (Mawadda, suplente femenina).
+       + (tk.length ? '|e10' : '');
 }
 
 // ── Rp (performance) calculado desde los cruces ─────────────────────────────────────────────
@@ -12388,7 +12391,7 @@ function _stOlimpPisoElo(anio, fem){
 function _stEsNN(n){ return /^N\.?\s?N\.?$/i.test(String(n || '').trim()); }
 
 // Los jugadores del torneo, sacados de los tableros: equipo, tablero de inscripción, puntos y Rp.
-function _stTeamPlayers(data, rondas, pisoElo, tope100, conWO){
+function _stTeamPlayers(data, rondas, pisoElo, tope100, conWO, boInscripto){
   var tr = (data && data.teamRounds) || {}, ag = {}, porEquipo = {};
   // Se cuentan TODAS las partidas jugadas (puntos y porcentaje), tengan Elo o no: las Olimpiadas
   // viejas de OlimpBase no traen Elo y si no, no quedaba ni un jugador. El Rp sale sólo de las
@@ -12453,7 +12456,11 @@ function _stTeamPlayers(data, rondas, pisoElo, tope100, conWO){
     var jugaron = Object.keys(E.ply);
     if (!jugaron.length || !jugaron.every(function(n){ return bo[n]; })) return;
     var lista = jugaron.slice().sort(function(a, b){ return bo[a] - bo[b]; });
-    lista.forEach(function(n, i){ orden[nom + '::' + n] = i + 1; });
+    // `boInscripto` (las Olimpiadas): el número de la planilla TAL CUAL, aunque alguien de arriba no
+    // haya jugado nunca. Turín 2006: Zambia inscribió a Simutowe en el 1 y no vino; corriendo a todos un
+    // lugar, Phiri (6½/7, 2.º suplente) quedaba 1.er suplente y no aparecía en su tablero (OlimpBase: oro).
+    // En las ligas se siguen corriendo (planteles de 20 inscriptos: el 23 que jugó en la mesa 3).
+    lista.forEach(function(n, i){ orden[nom + '::' + n] = boInscripto ? bo[n] : i + 1; });
   });
   // Mínimo de partidas para entrar en las medallas: la FIDE pide 8 en una Olimpiada de 11 rondas.
   // En torneos cortos (una liga de 6 rondas) se pide algo proporcional.
@@ -12550,12 +12557,14 @@ function _stTeamBuild(crk, data, meta){
   });
   // Bled 2002: el 100% sumaba +470 (lo de un 95%), no +800. Gwaze 9/9 → 2690 (OlimpBase), afuera del podio
   // por performance (Kasparov, Akopian, Khalifman). Los otros 100% que hay (1986, 1990, 2006) suman +800.
-  // De 1998 a 2006 la partida ganada o perdida por incomparecencia CONTABA en el porcentaje de la medalla
+  // De 1998 a 2004 la partida ganada o perdida por incomparecencia CONTABA en el porcentaje de la medalla
   // (no en la performance). Elista 1998, 2.º suplente: Hillarp Persson 7½/10 (con el +-- de la ronda 1)
   // bronce solo; sin contarla, 6½/9 empataba con Sakaev y Chang. Calvià 2004, tablero 3: Vaganian 9½/12.
-  // En Moscú 1994 NO contaba (tablero 3: González Acosta 9/11 plata). Todo según OlimpBase.
+  // En Moscú 1994 NO contaba (tablero 3: González Acosta 9/11 plata), y en Turín 2006 tampoco: suplente
+  // femenina, Abdulsalam (YEM) 6½/8 con un +w/o y más Rp (1688) que Mawadda (LBA) 6½/8 jugadas (1651);
+  // OlimpBase le da el bronce a Mawadda. Todo según OlimpBase.
   var jug = _stTeamPlayers(data, rondas, _stOlimpPisoElo(anioOlimp, titulares === 3), anioOlimp === 2002 ? 470 : 0,
-                           anioOlimp >= 1998 && anioOlimp <= 2006);
+                           anioOlimp >= 1998 && anioOlimp <= 2004, anioOlimp > 0);
   // Suizo (1976-2006): a los suplentes les alcanzaba con 7 partidas. Suplente = el que viene después de
   // los tableros de cada match (abierta: 4 + los tableros 5 y 6; femenina: 3 + el 4). A los titulares,
   // según el año (contado en las fichas de TODOS los equipos de OlimpBase, que dejan sin puesto al que

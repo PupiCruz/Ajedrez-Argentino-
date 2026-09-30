@@ -51,7 +51,7 @@
     fallar('Este botón se usa en olimpbase.org: entrá a la página de una Olimpiada y tocalo ahí.');
     return;
   }
-  var mY = window.__aaOlimpAnio ? [0, String(window.__aaOlimpAnio)] : location.pathname.match(/^\/(\d{4})\//);   // (__aaOlimpAnio: para probar)
+  var mY = window.__aaOlimpAnio ? [0, String(window.__aaOlimpAnio)] : location.pathname.match(/^\/(\d{4})w?\//);   // (__aaOlimpAnio: para probar; desde /2008w/ también: se lee la abierta + la femenina)
   if (!mY) {
     fallar('Abrí primero la página de una Olimpiada (por ejemplo la de Estocolmo 1937) y tocá el botón ahí.');
     return;
@@ -407,7 +407,8 @@
     var nTab = 0;
     Object.keys(rondas).forEach(function (k) { rondas[k].forEach(function (m) { nTab = Math.max(nTab, m.boards.length); }); });
     return { dIn: dIn, titulo: titulo, mOrd: mOrd, ficha: ficha, etapas: etapas, rondas: rondas, equipos: equipos, pgn: pgn, pgnRonda: pgnRonda, nTab: nTab || 4,
-      suizo: etapas.length === 1 && etapas[0].cab.indexOf('Buch') >= 0 };
+      // (Hasta 2006 la tabla trae Buchholz; desde Dresde 2008, "MP | dSB | dSMP | pts" y la ficha dice "Swiss".)
+      suizo: etapas.length === 1 && (etapas[0].cab.indexOf('Buch') >= 0 || etapas[0].cab.indexOf('dSB') >= 0 || /swiss/i.test(ficha['Competition format'] || '')) };
   }
 
   try {
@@ -542,7 +543,8 @@
       var jugaron = {};
       for (var r = 1; r <= E.nR; r++) (rondas[E.st + r] || []).forEach(function (m) { jugaron[m.a] = 1; jugaron[m.b] = 1; });
       var orden = [], rkAnt = 0;
-      var iMatch = E.cab.indexOf('matches'), iBuch = E.cab.indexOf('Buch');
+      var iMatch = E.cab.indexOf('matches'), iBuch = E.cab.indexOf('Buch'), iDSB = E.cab.indexOf('dSB'), iDSMP = E.cab.indexOf('dSMP');
+      var iDes = [iPts, iBuch, iMP, iDSB, iDSMP].filter(function (i) { return i >= 0; }).sort(function (x, y) { return x - y; });
       var dec = function (s) { return String(s || '').replace(/\s+/g, '').replace(/^½$/, '0.5').replace(/½$/, '.5'); };
       var teams = E.filas.filter(function (fl) { return fl[iCode] && jugaron[fl[iCode]]; }).map(function (fl) {
         var rk = parseInt(fl[iRk], 10) || rkAnt; rkAnt = rk; orden.push(fl[iCode]);
@@ -550,12 +552,12 @@
           // Como la tabla final de Chess-Results: matches jugados/ganados/empatados/perdidos y los desempates
           // en el orden en que OlimpBase los pone (que es el oficial de ese año).
           var w = +fl[iMatch] || 0, d = +fl[iMatch + 1] || 0, l = +fl[iMatch + 2] || 0;
-          var des = [iPts, iBuch, iMP].filter(function (i) { return i >= 0; }).sort(function (x, y) { return x - y; }).map(function (i) { return dec(fl[i]); });
+          var des = iDes.map(function (i) { return dec(fl[i]); });
           return { rk: rk, name: nombreDe(fl[iCode]), fed: fedDe(fl[iCode]), played: String(w + d + l), w: String(w), d: String(d), l: String(l), des: des };
         }
         return { rk: rk, name: nombreDe(fl[iCode]), fed: fedDe(fl[iCode]), grid: colsGrid.map(function (i) { return fl[i] === '●' ? '*' : fl[i]; }), des: [fl[iPts], fl[iMP]] };
       });
-      if (suizo) informe.desempates = [iPts, iBuch, iMP].filter(function (i) { return i >= 0; }).sort(function (x, y) { return x - y; }).map(function (i) { return { pts: 'puntos de partida', Buch: 'Buchholz', MP: 'puntos de match' }[E.cab[i]]; });
+      if (suizo) informe.desempates = iDes.map(function (i) { return { pts: 'puntos de partida', Buch: 'Buchholz', MP: 'puntos de match', dSB: 'Berger (sin el peor rival)', dSMP: 'suma de puntos de match de los rivales (sin el peor)' }[E.cab[i]]; });
       var noDe = function (c) { return String(orden.indexOf(c) + 1); };
       var teamRounds = {}, teamCrosses = {}, partidas = [];
       for (r = 1; r <= E.nR; r++) {
