@@ -1,5 +1,6 @@
 # ============================================================================
-#  Chequeo silencioso: ya salio el Stockfish 19 para navegador?
+#  Chequeo silencioso: ya salio el Stockfish 20 para navegador?
+#  (El 19 lite se puso en la web el 30/09/2026; desde ahi se espera el 20.)
 # ============================================================================
 #  Lo llama iniciar-servidor.cmd cada vez que se abre la app. La idea es NO
 #  tener que acordarse de nada: el dia que el build exista, avisa solo.
@@ -8,7 +9,7 @@
 #  nmrugg/stockfish.js (el build que usa Chess.com, el mismo de assets/).
 #  Busca por NOMBRE EXACTO el archivo que iria a assets/:
 #
-#        stockfish-19-lite-single.wasm    (o 20, 21... el regex sube solo)
+#        stockfish-20-lite-single.wasm    (o 21, 22... el regex sube solo)
 #
 #  Por que por nombre y no por numero de version: Stockfish 19 retiro la red
 #  neuronal chica en la que se apoyaba el sabor "lite". Puede pasar que salga
@@ -34,7 +35,7 @@ try {
 
     # El que buscamos: lite + single, version 19 o mayor.
     $lite = $assets | Where-Object {
-        $_.name -match '^stockfish-(\d+)(\.\d+)?-lite-single\.wasm$' -and [int]$Matches[1] -ge 19
+        $_.name -match '^stockfish-(\d+)(\.\d+)?-lite-single\.wasm$' -and [int]$Matches[1] -ge 20
     } | Select-Object -First 1
 
     if ($lite) {
@@ -45,7 +46,7 @@ try {
         Write-Host '  ============================================================'
         Write-Host ''
         Write-Host "     Archivo:  $($lite.name)   ($mb MB)"
-        Write-Host "     Reemplaza a:  assets/stockfish-18-lite-single.wasm"
+        Write-Host "     Reemplaza a:  assets/stockfish-19-lite-single.wasm"
         Write-Host ''
         Write-Host '     Decile a Claude:  "salio el motor nuevo, actualizalo"' -ForegroundColor Yellow
         Write-Host ''
@@ -58,7 +59,7 @@ try {
     # riesgo de la red chica. Conviene saberlo, porque significa que hay que
     # decidir por otro lado (el build de Lichess) y no seguir esperando.
     $grande = $assets | Where-Object {
-        $_.name -match '^stockfish-(\d+)(\.\d+)?-single\.wasm$' -and [int]$Matches[1] -ge 19
+        $_.name -match '^stockfish-(\d+)(\.\d+)?-single\.wasm$' -and [int]$Matches[1] -ge 20
     } | Select-Object -First 1
 
     if ($grande) {

@@ -92,11 +92,19 @@ como tarjetas. Al tocar uno se abre la ficha de siempre.
   anti-robots no se esquiva: se lee desde su propia pestaña) y **baja el paquete .json** →
   📥 Importar. Si se cambia el lector, hay que **volver a arrastrar** el favorito. Hoy lee las Olimpiadas
   de todos contra todos (1927–1939 y 1950) y, desde el 28/09/2026, las **suizas de 1976 a 1996** (las de
-  1998 en adelante vienen de Chess-Results); las de grupos (1952–1974) todavía no. En las suizas la tabla sale
+  1998 en adelante vienen de Chess-Results) y, desde el 30/09/2026, las de **grupos y finales (1952–1974)**: cada
+  etapa decide sola si es suiza o todos contra todos (la Final C de Leipzig 1960 y Varna 1962 fue suiza → esa
+  categoría lleva `format:'swiss'` y sus `rounds`). **Femeninas:** las que se jugaron **junto** con la abierta
+  (1972 Skopie, 1976 Haifa, 1978 Buenos Aires) van en el mismo torneo; si alguna de las dos tiene grupos, las
+  categorías se llaman "Absoluto · Final A", "Femenino · Grupo 1"… con el campo **`grupo`** ("Absoluto" /
+  "Femenino") y la ficha las muestra en **dos pisos** (arriba Absoluto | Femenino, abajo las etapas). Las que se
+  jugaron **aparte** (1957 Emmen, 1963 Split, 1966 Oberhausen, 1969 Lublin, 1974 Medellín) son un torneo propio
+  (`tz_ob1957w`, "1.ª Olimpíada Femenina de Ajedrez · Emmen 1957", `rama:'fem'`): el favorito se toca parado en
+  su página (/1957w/…). Si unas pocas partidas del PGN traen mal el AÑO (Helsinki 1952: "1951"), se corrigen
+  (`informe.fechasPgn`). En las suizas la tabla sale
   como la de Chess-Results (`kind:'final'`: matches +/=/− y desempates en el orden oficial de ese año), los
   BYE no se guardan como cruce (van al informe), la **Olimpiada femenina** (carpeta `/AAAAw/`, misma sede)
-  entra sola como 2.ª categoría "Femenino" desde 1980 (1976 y 1978 fueron con grupos y finales: el informe
-  avisa que va sólo la abierta) (`rama:'fem'`; la abierta queda "Absoluto", `rama:'abs'`) y el PGN se toma de `/ob-games/AAolm.pgn` aunque la ficha
+  entra sola como 2.ª categoría "Femenino" desde 1980 (`rama:'fem'`; la abierta queda "Absoluto", `rama:'abs'`) y el PGN se toma de `/ob-games/AAolm.pgn` aunque la ficha
   enlace un .zip. Alemania Occidental = `FRG` (bandera de hoy); Zaire/Yemen del Norte/del Sur sin bandera. **Banderas por época** (28/09/2026): el lector sabe el año y le pone a Yugoslavia `YGE` (con estrella, 1946-1991) o `YGL` (tricolor lisa: el reino y 1992-2003), y a las Antillas Neerlandesas antes de 1986 `AHX` (seis estrellas); `AHO` a secas = cinco estrellas (1986-2010) y Serbia y Montenegro (`SCG`) la lisa. `YUG` a secas sigue sin bandera. Tabla `_FED_HIST_FLAG` / `_FED_ERA`.
   El número de cada partida en el PGN (`show_game_ob('37olm.pgn', '9')`) lo da OlimpBase: el ojito
   engancha exacto. Para 1939 los programitas viejos de `.claude/olimpbase/` quedaron de historia.
@@ -196,8 +204,8 @@ El autor **no es programador** y trabaja en español. El objetivo es eventualmen
   estuvieran, la web saldría sin torneos ni fotos.
 - `assets/` — motores Stockfish (self-host), librería de ajedrez, piezas SVG, sonidos.
   **La app no tiene ninguna dependencia externa en runtime** (anda sin internet).
-  Motor principal: `stockfish-18-lite-single.{js,wasm}` (SF18 con red neuronal NNUE,
-  un solo hilo, el mismo build que usa Chess.com). Plan B y modo `file://` (doble clic):
+  Motor principal: `stockfish-19-lite-single.{js,wasm}` (SF19 con red neuronal NNUE, 1,8 MB,
+  un solo hilo, el mismo build que usa Chess.com; reemplazó al SF18 el 30/09/2026). Plan B y modo `file://` (doble clic):
   `stockfish-embedded.js` (SF16 en base64, sin red). La lógica está en `sfStart()`.
 - `iniciar-servidor.cmd` / `serve.ps1` — levantan un servidor local para abrir la app.
 

@@ -654,6 +654,8 @@
     .cat-btn.on { border-color:rgba(140,100,200,.7); background:rgba(140,100,200,.25); color:#c8b0f5; }
     body.light .cat-btn    { background:#efe7f7; border-color:#b49ad8; color:#5b3f86; }
     body.light .cat-btn.on { background:#dcc9f2; border-color:#8a5fc0; color:#4a2f78; }
+    /* Segundo piso (subcategorías de un grupo: los grupos y finales de la femenina de 1976). */
+    .cat-btn.cat-sub { padding:5px 13px; font-size:12.5px; border-width:1px; }
     /* Pastilla de jugador argentino: fondo celeste-blanco-celeste (bandera) para distinguir a cada uno. */
     .arg-chip { display:inline-flex; align-items:center; gap:5px; padding:5px 12px; border-radius:20px;
       font-size:13.5px; font-weight:600; white-space:nowrap; text-shadow:var(--txt-out); color:var(--fg-e0);
@@ -6792,9 +6794,12 @@ function _histInformeLineas(p) {
   // Olimpiadas suizas (1976-1996, lector 2): rondas libres por número impar de equipos y el orden de desempate.
   if (n('descansos')) L.push('ℹ️ ' + n('descansos') + (n('descansos') === 1 ? ' ronda libre' : ' rondas libres') + ' (BYE, número impar de equipos; no van como cruce): ' + muestra('descansos'));
   if (Array.isArray(I.desempates) && I.desempates.length) L.push('ℹ️ Orden de la tabla: ' + I.desempates.join(', ') + '.');
-  if (I.femenina) L.push('♛ Trae también la Olimpiada femenina, como segunda categoría ("Femenino").');
+  if (I.femenina) L.push(I.femeninaGrupos ? '♛ Trae también la Olimpiada femenina, con sus grupos y finales: en la ficha van en dos pisos (arriba Absoluto | Femenino, abajo las etapas).'
+    : '♛ Trae también la Olimpiada femenina, como segunda categoría ("Femenino").');
+  if (I.soloFemenina) L.push('♛ Olimpiada femenina que se jugó APARTE de la abierta (otra sede): va como torneo propio, con Rama = Femenino.');
   if (I.femeninaNo) L.push('ℹ️ ' + I.femeninaNo);
   if (I.fechas) L.push('🔧 ' + I.fechas);   // la ficha de OlimpBase traía mal las fechas (1933)
+  if (I.fechasPgn) L.push('🔧 ' + I.fechasPgn);   // unas partidas del PGN con el año mal (1952: "1951")
   return L;
 }
 async function histImportarTexto(txt) {
@@ -16183,7 +16188,7 @@ async function _buildZip(files) {
 var _EXPORT_ASSET_PATHS = [
   'data/hardcoded.js',   // PLAYER_GAMES + PGN_DB (datos curados, ya no inline en el HTML)
   'assets/chess.min.js', // librería de ajedrez local (antes venía de jsDelivr)
-  'assets/stockfish-18-lite-single.js','assets/stockfish-18-lite-single.wasm', // motor principal SF18 + red NNUE (por servidor)
+  'assets/stockfish-19-lite-single.js','assets/stockfish-19-lite-single.wasm', // motor principal SF19 + red NNUE (por servidor)
   'assets/stockfish-embedded.js', // SF16 + wasm en base64 (plan B y modo file:// con doble clic)
   'assets/stockfish-nnue-16-single.js','assets/stockfish-nnue-16-single.wasm', // motor local (antes jsDelivr)
   'assets/aperturas.js', // índice de nombres de aperturas por EPD (lichess CC0, traducido)
@@ -28733,21 +28738,22 @@ function sfStart() {
   if (sf.loading) return;
   sf.loading = true;
   document.getElementById('sf-depth').textContent = 'Cargando el motor…';
-  // Por servidor (la web publicada y el servidor local): Stockfish 18 lite con red neuronal
-  // (NNUE, ~7MB, un solo hilo — no necesita headers especiales). Es el mismo build que usa
+  // Por servidor (la web publicada y el servidor local): Stockfish 19 lite con red neuronal
+  // (NNUE, ~1,8MB, un solo hilo — no necesita headers especiales). Reemplazó al 18 el 30/09/2026:
+  // pesa 5,5MB menos y en el match del 17/09 le sacó ~54 Elo a igual velocidad. Es el mismo build que usa
   // Chess.com (stockfish.js de nmrugg). Con doble clic (file://) los Workers no pueden cargar
-  // archivos → se usa el SF16 embebido en base64 de siempre (también es el plan B si el 18
+  // archivos → se usa el SF16 embebido en base64 de siempre (también es el plan B si el 19
   // no llegara a cargar).
-  if (location.protocol !== 'file:') _sfStartSF18(); else _sfStartEmbedded();
+  if (location.protocol !== 'file:') _sfStartLite(); else _sfStartEmbedded();
 }
 
-// Motor principal: SF18 lite single-thread. El worker se crea directo desde assets/ y él solo
+// Motor principal: SF19 lite single-thread (antes SF18). El worker se crea directo desde assets/ y él solo
 // baja su .wasm (mismo nombre, misma carpeta). Si algo falla ANTES de que el motor esté listo
 // (archivo que falta, wasm que no compila en un navegador viejo), caemos al SF16 embebido.
 var _sfCrashes = 0;   // reinicios automáticos del motor en esta pestaña (tope 2, contra loops de error)
-function _sfStartSF18() {
+function _sfStartLite() {
   var worker;
-  try { worker = new Worker('assets/stockfish-18-lite-single.js'); }
+  try { worker = new Worker('assets/stockfish-19-lite-single.js'); }
   catch (err) { _sfStartEmbedded(); return; }
   var fellBack = false;
   worker.onmessage = function(e) { sfOnMsg(e.data); };
@@ -32865,16 +32871,51 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   // todos contra todos importada como torneo de categorías). Los datos siguen en la categoría.
   if (categories && categories.length > 1) {
     var _idJs = (typeof id === 'number') ? id : ("'" + escJs(String(id)) + "'");
-    h += '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:14px;justify-content:center">';
-    categories.forEach(function(c, ci) {
-      var on = ci === activeCat;
-      // El 🏆 se canta "trofeo" y no aporta; y sin aria-label no se entiende que el botón CAMBIA
-      // de categoría. aria-pressed dice cuál está puesta, que a la vista se ve por el color.
-      var _catNom = c.name || ('Categoría ' + (ci + 1));
-      h += '<button onclick="openTournamentDetail(\'' + type + '\',' + _idJs + ',false,' + ci + ')" class="cat-btn' + (on ? ' on' : '')
+    // El 🏆 se canta "trofeo" y no aporta; y sin aria-label no se entiende que el botón CAMBIA
+    // de categoría. aria-pressed dice cuál está puesta, que a la vista se ve por el color.
+    var _catBtn = function(ci, rotulo, on, sub) {
+      var _catNom = categories[ci].name || ('Categoría ' + (ci + 1));
+      return '<button onclick="openTournamentDetail(\'' + type + '\',' + _idJs + ',false,' + ci + ')" class="cat-btn' + (sub ? ' cat-sub' : '') + (on ? ' on' : '')
          + '" aria-pressed="' + (on ? 'true' : 'false') + '" aria-label="' + escHtml('Ver la categoría ' + _catNom) + '">'
-         + (on ? '🏆 ' : '') + escHtml(_catNom) + '</button>';
-    });
+         + (on ? '🏆 ' : '') + escHtml(rotulo || _catNom) + '</button>';
+    };
+    // SUBCATEGORÍAS (30/09/2026): una Olimpiada de 1972-1978 trae la abierta y la femenina, cada una con
+    // sus grupos y sus finales. Las categorías con `grupo` ("Absoluto" / "Femenino") van en DOS pisos:
+    // arriba un botón por grupo; abajo, las etapas del grupo que se está mirando (sin repetir el prefijo
+    // "Femenino · " del nombre). Sin `grupo`, la barra de siempre.
+    var _grupos = [];
+    categories.forEach(function(c) { if (c && c.grupo && _grupos.indexOf(c.grupo) < 0) _grupos.push(c.grupo); });
+    h += '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:14px;justify-content:center">';
+    if (_grupos.length > 1) {
+      var _gAct = (categories[activeCat] && categories[activeCat].grupo) || '', _gHechos = {};
+      categories.forEach(function(c, ci) {
+        if (!c || !c.grupo) { h += _catBtn(ci, '', ci === activeCat, false); return; }
+        if (_gHechos[c.grupo]) return;
+        _gHechos[c.grupo] = 1;
+        // Al tocar el grupo se abre su etapa principal: la marcada inicial, o la primera con podio (la
+        // Final A: los grupos preliminares van sin podio), o la primera.
+        var _deG = [];
+        categories.forEach(function(x, xi) { if (x && x.grupo === c.grupo) _deG.push(xi); });
+        var _dest = _deG.filter(function(xi) { return categories[xi].inicial; })[0];
+        if (_dest == null) _dest = _deG.filter(function(xi) { return !categories[xi].sinPodio; })[0];
+        if (_dest == null) _dest = _deG[0];
+        var _gOn = c.grupo === _gAct;
+        h += '<button onclick="openTournamentDetail(\'' + type + '\',' + _idJs + ',false,' + (_gOn ? activeCat : _dest) + ')" class="cat-btn' + (_gOn ? ' on' : '')
+           + '" aria-pressed="' + (_gOn ? 'true' : 'false') + '" aria-label="' + escHtml('Ver ' + c.grupo) + '">'
+           + (_gOn ? '🏆 ' : '') + escHtml(c.grupo) + '</button>';
+      });
+      var _subs = [];
+      categories.forEach(function(c, ci) { if (c && c.grupo && c.grupo === _gAct) _subs.push(ci); });
+      if (_subs.length > 1) {
+        h += '</div><div role="group" aria-label="' + escHtml('Etapas de ' + _gAct) + '" style="display:flex;flex-wrap:wrap;gap:5px;margin-top:8px;justify-content:center">';
+        _subs.forEach(function(ci) {
+          var _nom = String(categories[ci].name || ''), _pre = _gAct + ' · ';
+          h += _catBtn(ci, _nom.indexOf(_pre) === 0 ? _nom.slice(_pre.length) : _nom, ci === activeCat, true);
+        });
+      }
+    } else {
+      categories.forEach(function(c, ci) { h += _catBtn(ci, '', ci === activeCat, false); });
+    }
     h += '</div>';
   }
   h += '</div>';   // /columna del medio (info)
@@ -34205,7 +34246,7 @@ function _tdSetEvalBar(el, ev, flip) {
 /* ── Evaluación EN VIVO de las miniaturas con Stockfish local ─────────────────────────────────
    Lichess NO incluye [%eval] en el PGN de las partidas mientras se están jugando (solo lo agrega
    al TERMINAR la ronda). Para que el visitante igual vea cómo va cada partida, cuando hay una
-   TRANSMISIÓN en vivo evaluamos con el Stockfish self-host (assets/stockfish-embedded.js) las
+   TRANSMISIÓN en vivo evaluamos con el Stockfish self-host (el mismo motor del visor, sfStart) las
    posiciones de los tableros EN CURSO, a baja profundidad (orientativo, no exacto). Se dispara
    junto con el refresco del vivo (cada ~30s) y solo evalúa las posiciones que CAMBIARON (la clave
    es el FEN: las ya evaluadas se saltean). NO corre en torneos cargados a mano (sin broadcast):
@@ -36554,7 +36595,7 @@ function cgExportar(id) {
     solution: it.sol.slice(), solutionSan: it.solSan.slice(), acceptedAlts: [it.alts.slice()], acceptedLines: [],
     pm: it.jug, themes: temas, phase: _cgFase(it.fen), difficulty: rat, quality: null,
     source: { tournamentName: nombre, round: String(it.r).split('.')[0], white: it.w, black: it.b, whiteElo: it.wElo, blackElo: it.bElo, date: it.fecha, result: it.res, ply: it.ply },
-    engine: 'Stockfish 18 NNUE', genDepth: _CG_VERIF_DEPTH
+    engine: 'Stockfish 19 NNUE', genDepth: _CG_VERIF_DEPTH
   };
   if (it.pc) p.pc = it.pc;
   var ya = -1; for (var i = 0; i < PUZZLES.length; i++) if (PUZZLES[i].id === pid) ya = i;

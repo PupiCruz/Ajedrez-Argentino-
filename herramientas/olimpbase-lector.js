@@ -13,7 +13,15 @@
    importador de la app le muestra al autor antes de cargar.
    Sabe leer las Olimpiadas de todos contra todos (1927-1939 y 1950, con etapas o no) y, desde el
    28/09/2026, las SUIZAS de una sola etapa (1976-1996; las de 1998 en adelante el autor las tiene de
-   Chess-Results). Las de grupos y finales (1952-1974) todavía no.
+   Chess-Results). Desde el 30/09/2026 también las de GRUPOS Y FINALES (1952-1974; en 1960 y 1962 la
+   Final C fue suiza: cada etapa decide sola si es suiza o todos contra todos) y las FEMENINAS:
+   · las que se jugaron junto con la abierta (1972 Skopie, 1976 Haifa, 1978 Buenos Aires, 1980+): van en
+     el mismo torneo. Si alguna de las dos tiene grupos y finales, las categorías se llaman
+     "Absoluto · Final A", "Femenino · Grupo 1"… con `grupo` = Absoluto / Femenino (la app las muestra en
+     dos pisos: arriba Absoluto | Femenino, abajo las etapas).
+   · las que se jugaron APARTE (1957 Emmen, 1963 Split, 1966 Oberhausen, 1969 Lublin, 1974 Medellín):
+     torneo propio (tz_ob1957w, "1.ª Olimpíada Femenina de Ajedrez · Emmen 1957", rama fem). Se toca el
+     favorito parado en su página (/1957w/…).
    Formato de cada etapa (convert.mjs): cuadro 'rr' con grid + des [pts, MP]; mesas con nW = jugador
    del equipo de la IZQUIERDA (el de arriba del cruce) y res desde su lado.
    En las suizas la tabla es 'final' (como la de Chess-Results): played/w/d/l de los matches y des con
@@ -57,11 +65,20 @@
     return;
   }
   var Y = mY[1], BASE = location.origin + '/' + Y + '/';
+  // Parado en una femenina (/1957w/…). (Para probar: window.__aaOlimpFem = true junto con __aaOlimpAnio.)
+  var esFem = window.__aaOlimpAnio ? !!window.__aaOlimpFem : /^\/\d{4}w\//.test(location.pathname);
+  var BASE_W = location.origin + '/' + Y + 'w/';
 
   // ───────── Traer páginas, de a una y con pausa ─────────
-  var ultimo = 0, hechas = 0, total = 1;
+  var ultimo = 0, hechas = 0, total = 1, yaLeidas = {};
   function dormir(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   async function traer(url, binario, que) {
+    if (!binario && url in yaLeidas) { hechas++; return yaLeidas[url]; }   // (la ficha de la femenina se mira dos veces)
+    var t = await traer0(url, binario, que);
+    if (!binario) yaLeidas[url] = t;
+    return t;
+  }
+  async function traer0(url, binario, que) {
     var espera = ultimo + PAUSA - Date.now();
     if (espera > 0) await dormir(espera);
     ultimo = Date.now();
@@ -238,9 +255,6 @@
       etapas.push({ st: m[1], ob: txt(a) });
     });
     if (!etapas.length) throw new Error('No encontré las tablas del torneo en la ficha.');
-    // La femenina sólo si es suiza de una etapa (1978: grupos y Final A-D, que todavía no se leen): se
-    // decide acá, antes de bajar sus páginas.
-    if (que && etapas.length !== 1) return { conGrupos: true, ficha: ficha };
     var pgnUrls = [];
     dIn.querySelectorAll('a[href]').forEach(function (a) {
       var h = a.getAttribute('href') || '';
@@ -272,6 +286,15 @@
       var G = grilla(tabla);
       E.cab = G[0].map(function (g) { return txt(g.td); });
       E.filas = G.slice(1).map(function (fila) { return fila.map(function (g) { return g ? txt(g.td) : ''; }); });
+      // ¿Suiza o todos contra todos? Lo dicen las columnas de las rondas: en la suiza cada celda es rival +
+      // puntos ("FRA3"); en el cuadro cruzado, puntos a secas y "●" en la diagonal. (Leipzig 1960 y Varna
+      // 1962: grupos y Finales A-B todos contra todos, pero la Final C fue una suiza de 11 rondas.)
+      var conSigla = 0, conBola = 0;
+      E.cab.forEach(function (h, i) {
+        if (!/^\d+$/.test(h)) return;
+        E.filas.forEach(function (fl) { var v = String(fl[i] || '').replace(/\s+/g, ''); if (v === '●') conBola++; else if (/^[A-Z]{2,5}\d?[\d½]+$/.test(v)) conSigla++; });
+      });
+      E.suizo = conSigla > conBola;
       E.nR = 0;
       dSt.querySelectorAll('a[href]').forEach(function (a) {
         var h = a.getAttribute('href') || '', m = h.match(new RegExp('^' + Y + E.st + '(\\d{2})\\.html$'));
@@ -408,26 +431,37 @@
     Object.keys(rondas).forEach(function (k) { rondas[k].forEach(function (m) { nTab = Math.max(nTab, m.boards.length); }); });
     return { dIn: dIn, titulo: titulo, mOrd: mOrd, ficha: ficha, etapas: etapas, rondas: rondas, equipos: equipos, pgn: pgn, pgnRonda: pgnRonda, nTab: nTab || 4,
       // (Hasta 2006 la tabla trae Buchholz; desde Dresde 2008, "MP | dSB | dSMP | pts" y la ficha dice "Swiss".)
-      suizo: etapas.length === 1 && (etapas[0].cab.indexOf('Buch') >= 0 || etapas[0].cab.indexOf('dSB') >= 0 || /swiss/i.test(ficha['Competition format'] || '')) };
+      suizo: etapas.length === 1 && (etapas[0].suizo || etapas[0].cab.indexOf('Buch') >= 0 || etapas[0].cab.indexOf('dSB') >= 0 || /swiss/i.test(ficha['Competition format'] || '')) };
   }
 
   try {
     barra(0, 1, 'Leyendo la ficha del torneo');
+    // Parado en una femenina: ¿se jugó junto con la abierta (su ficha enlaza la de la abierta: 1972, 1976,
+    // 1978…) o aparte (1957, 1963, 1966, 1969, 1974: otra sede, otro año)? Junto → se lee todo como si se
+    // hubiera tocado desde la abierta. Aparte → torneo propio, sólo la femenina.
+    var soloFem = false;
+    if (esFem) {
+      var dWin = html(await traer(BASE_W + Y + 'in.html', false, 'La ficha del torneo'));
+      soloFem = !dWin.querySelector('a[href="../' + Y + '/' + Y + 'in.html"]');
+      if (soloFem) BASE = BASE_W;
+    }
     var D0 = await leer(BASE, '');
     // ───────── 6) Armar el torneo ─────────
     // Suiza (1976+): una sola etapa y la tabla con Buchholz. Las de todos contra todos no lo tienen.
     var suizo = D0.suizo, ficha = D0.ficha, mOrd = D0.mOrd;
-    // La femenina, si se jugó a la par (desde 1976: misma sede, carpeta /1976w/): va como 2.ª categoría.
-    var Dw = null, femNo = '';
-    if (suizo && D0.dIn.querySelector('a[href="../' + Y + 'w/' + Y + 'in.html"]')) {
-      Dw = await leer(location.origin + '/' + Y + 'w/', 'Femenina · ');
-      if (Dw.conGrupos) femNo = 'La Olimpiada femenina de ese año se jugó con grupos y finales: el lector todavía no la sabe leer (va sólo la abierta).';
-      if (Dw.conGrupos || !Dw.suizo || String(Dw.ficha['City'] || '').split(/[,(]/)[0].trim() !== String(ficha['City'] || '').split(/[,(]/)[0].trim()) Dw = null;
+    // La femenina, si se jugó a la par (misma sede, carpeta /1972w/): va en el mismo torneo.
+    var Dw = null;
+    var ciudadDe = function (fc) { return String(fc['City'] || '').split(/[,(]/)[0].trim(); };
+    if (!soloFem && D0.dIn.querySelector('a[href="../' + Y + 'w/' + Y + 'in.html"]')) {
+      Dw = await leer(BASE_W, 'Femenina · ');
+      if (ciudadDe(Dw.ficha) !== ciudadDe(ficha)) Dw = null;
     }
+    // Con grupos y finales en alguna de las dos, las categorías van en dos pisos (grupo Absoluto / Femenino).
+    var conGrupo = !!Dw && (D0.etapas.length > 1 || Dw.etapas.length > 1);
     barra(total, total, 'Armando el archivo…');
     var f = fechas(ficha['Date'] || ficha['Dates']), L = lugarES(ficha['City']);
-    var nombreTorneo = mOrd[1] + '.ª Olimpíada de Ajedrez · ' + L.ciudad + ' ' + Y;
-    var ID = 'tz_ob' + Y;
+    var nombreTorneo = mOrd[1] + '.ª Olimpíada ' + (soloFem ? 'Femenina ' : '') + 'de Ajedrez · ' + L.ciudad + ' ' + Y;
+    var ID = 'tz_ob' + Y + (soloFem ? 'w' : '');
     var informe = { anio: Y, fuente: BASE + Y + 'in.html', mesas: 0, conPartida: 0, wo: 0, sinPartida: [], partidasPGN: 0, sueltas: [],
       resultados: [], nombres: [], sinJugar: [], corregidos: [], descansos: [], equipos: [] };
     var cfgCats = [], cr = {}, partidasPorCat = [];
@@ -512,7 +546,10 @@
 
     etapas.forEach(function (E) {
       var catIdx = cfgCats.length;
-      var etiqueta = suizo ? (rama === 'fem' ? 'Femenino' : 'Absoluto') : etapaES(E.ob, etapas.length === 1);
+      var suizo = E.suizo || D.suizo;   // (esta etapa: la Final C de 1960 es suiza y el resto no)
+      var grupo = conGrupo ? (rama === 'fem' ? 'Femenino' : 'Absoluto') : '';
+      var etiqueta = grupo ? (etapas.length === 1 ? grupo : grupo + ' · ' + etapaES(E.ob, false))
+        : (D.suizo ? (rama === 'fem' ? 'Femenino' : 'Absoluto') : etapaES(E.ob, etapas.length === 1));
       var iCode = E.cab.indexOf('code'), iPts = E.cab.indexOf('pts'), iMP = E.cab.indexOf('MP'), iRk = E.cab.indexOf('no.');
       if (iRk < 0) iRk = E.cab.indexOf('pos.');
       var colsGrid = E.cab.map(function (h, i) { return /^\d+$/.test(h) ? i : -1; }).filter(function (i) { return i >= 0; });
@@ -560,7 +597,7 @@
         }
         return { rk: rk, name: nombreDe(fl[iCode]), fed: fedDe(fl[iCode]), grid: colsGrid.map(function (i) { return fl[i] === '●' ? '*' : fl[i]; }), des: [fl[iPts], fl[iMP]] };
       });
-      if (suizo) informe.desempates = iDes.map(function (i) { return { pts: 'puntos de partida', Buch: 'Buchholz', MP: 'puntos de match', dSB: 'Berger (sin el peor rival)', dSMP: 'suma de puntos de match de los rivales (sin el peor)' }[E.cab[i]]; });
+      if (suizo && etapas.length === 1) informe.desempates = iDes.map(function (i) { return { pts: 'puntos de partida', Buch: 'Buchholz', MP: 'puntos de match', dSB: 'Berger (sin el peor rival)', dSMP: 'suma de puntos de match de los rivales (sin el peor)' }[E.cab[i]]; });
       var noDe = function (c) { return String(orden.indexOf(c) + 1); };
       var teamRounds = {}, teamCrosses = {}, partidas = [];
       for (r = 1; r <= E.nR; r++) {
@@ -620,19 +657,30 @@
             }
             // La partida: primero por su número en el PGN; se comprueba que sea de esa ronda y de esos dos.
             var g = null;
+            // ¿El resultado de esa partida coincide con el de la mesa? (Emmen 1957: Finlandia y Francia se
+            // cruzaron en el Grupo 1 y otra vez en la Final C, las dos veces en la "ronda 4": hay dos partidas
+            // Vuorenpää–Chaudé de Silans con Round 4 y la que va es la del resultado de la tabla.)
+            var acuerda = function (x) {
+              var bA = parecido(x.w, nA) + parecido(x.b, nB) >= parecido(x.w, nB) + parecido(x.b, nA);
+              var rA = String(x.res || '').replace('1/2-1/2', '½-½');
+              if (!bA) rA = rA === '1-0' ? '0-1' : rA === '0-1' ? '1-0' : rA;
+              return rA === b.res;
+            };
             if (b.ref && pgn[b.ref.f]) {
               var cand = pgn[b.ref.f][b.ref.n - 1];
               if (cand && !cand.usada && (!cand.r || cand.r === r) && Math.max(parecido(cand.w, nA) + parecido(cand.b, nB), parecido(cand.w, nB) + parecido(cand.b, nA)) >= 8) g = cand;
             }
-            if (!g) {
+            if (!g || !acuerda(g)) {
               var mejor = null, ms = -1;
               (pgnRonda[r] || []).forEach(function (x) {
                 if (x.usada) return;
                 if (x.ev && evEtapa[x.ev] && evEtapa[x.ev] !== E.st) return;
                 var s = Math.max(Math.min(parecido(x.w, nA), parecido(x.b, nB)), Math.min(parecido(x.w, nB), parecido(x.b, nA)));
+                if (s >= 4 && acuerda(x)) s += 0.5;   // a igual nombre, la del mismo resultado
                 if (s > ms) { ms = s; mejor = x; }
               });
-              if (mejor && ms >= 4) g = mejor;
+              // (Con número de partida, se cambia sólo por otra de los mismos dos con el resultado justo.)
+              if (mejor && ms >= 4 && (!g || acuerda(mejor))) g = mejor;
             }
             if (!g) { informe.sinPartida.push(etiqueta + ' R' + r + ': ' + A.j.name + ' – ' + B.j.name + ' (' + b.res + ')'); return; }
             g.usada = true;
@@ -669,8 +717,13 @@
       });
       cr['cr2_tz_' + ID + '_c' + catIdx] = { teamRounds: teamRounds, teamCrosses: teamCrosses, teamStandings: { kind: suizo ? 'final' : 'rr', teams: teams }, teamRoster: teamRoster };
       // Con la femenina adentro, cada categoría lleva su Rama (la Radiografía no reparte "mejor femenina" en ella).
-      cfgCats.push(Object.assign({ name: etiqueta, broadcast: null, crurl: null }, rama ? { rama: rama } : {},
-        E.st[0] === 'e' ? { sinPodio: true } : {}, (etapas.length > 1 && E.st === 'fa') ? { inicial: true } : {}));
+      // La que abre al entrar: la Final A de la abierta (la de la femenina se abre al tocar "Femenino").
+      // Sistema y rondas por categoría cuando no son los del torneo (Final C suiza de 1960; los grupos de
+      // la femenina de 1976 dentro de una Olimpiada suiza).
+      cfgCats.push(Object.assign({ name: etiqueta, broadcast: null, crurl: null }, rama ? { rama: rama } : {}, grupo ? { grupo: grupo } : {},
+        E.st[0] === 'e' ? { sinPodio: true } : {}, (etapas.length > 1 && E.st === 'fa' && !(grupo && rama === 'fem')) ? { inicial: true } : {},
+        (suizo ? 'swiss' : 'rr') !== formatoTorneo ? { format: suizo ? 'swiss' : 'rr' } : {},
+        (suizo && etapas.length > 1) || (grupo && E.nR !== D0.etapas[0].nR) ? { rounds: E.nR } : {}));
       partidas.sort(function (x, y) { return x.r - y.r || x.mi - y.mi || x.bi - y.bi; });
       partidasPorCat.push({ ev: nombreTorneo + ' · ' + etiqueta, lista: partidas.map(function (x) { return x.pgn; }) });
     });
@@ -681,21 +734,41 @@
       informe.equipos.push({ code: c, name: nombreDe(c), fed: fedDe(c), es: nombreDe(c) !== (nombreEq[c] || c) });
     });
   }
+    var formatoTorneo = suizo ? 'swiss' : 'rr';
     armar(D0, Dw ? 'abs' : '');
-    if (Dw) { armar(Dw, 'fem'); informe.femenina = true; }
-    if (femNo) informe.femeninaNo = femNo;
+    if (Dw) { armar(Dw, 'fem'); informe.femenina = true; if (conGrupo) informe.femeninaGrupos = true; }
+    if (soloFem) informe.soloFemenina = true;
     ['sinPartida', 'sueltas', 'resultados', 'nombres', 'sinJugar', 'corregidos', 'descansos'].forEach(function (k) { informe['n_' + k] = informe[k].length; informe[k] = informe[k].slice(0, 60); });
     // Fechas: la app engancha las partidas con su torneo sólo si su [Date] cae entre las fechas del
     // torneo (±3 días). OlimpBase a veces se equivoca en la ficha: 1933 dice "12th - 23rd July" y se
     // jugó en JUNIO (la reseña de la misma página y el PGN lo confirman) → el torneo quedaba sin
     // partidas. Si las partidas no entran en la ficha, mandan las fechas de las partidas.
+    var dia = function (iso, k) { var t = new Date(iso + 'T12:00:00Z'); t.setUTCDate(t.getUTCDate() + k); return t.toISOString().slice(0, 10); };
+    var isoDe = function (p) { var m = p.match(/\[Date "(\d{4})\.(\d\d)\.(\d\d)"\]/); return m ? m[1] + '-' + m[2] + '-' + m[3] : ''; };
+    // Pero si casi todas entran y unas pocas traen mal el AÑO (Helsinki 1952: 80 partidas dicen "1951.08.12"
+    // en vez de 1952), manda la ficha y a esas se les corrige el año.
+    if (f) {
+      var nCon = 0, nDentro = 0, nArre = 0, nMal = 0;
+      var entra = function (d) { return d >= dia(f.ini, -3) && d <= dia(f.fin, 3); };
+      partidasPorCat.forEach(function (x) { x.lista.forEach(function (p) { var d = isoDe(p); if (d) { nCon++; if (entra(d)) nDentro++; } }); });
+      if (nCon && nDentro < nCon && nDentro >= 0.8 * nCon) {
+        partidasPorCat.forEach(function (x) { x.lista = x.lista.map(function (p) {
+          var d = isoDe(p); if (!d || entra(d)) return p;
+          var d2 = [f.ini.slice(0, 4), f.fin.slice(0, 4)].map(function (a) { return a + d.slice(4); }).filter(entra)[0];
+          if (!d2) { nMal++; return p; }
+          nArre++;
+          return p.replace(/\[Date "[^"]*"\]/, '[Date "' + d2.replace(/-/g, '.') + '"]');
+        }); });
+        if (nArre) informe.fechasPgn = nArre + (nArre === 1 ? ' partida del PGN traía' : ' partidas del PGN traían') + ' mal el año (el día y el mes sí caen en el torneo): corregido.';
+        if (nMal) informe.fechasPgn = (informe.fechasPgn ? informe.fechasPgn + ' ' : '') + nMal + ' con una fecha fuera del torneo que no se pudo arreglar sola.';
+      }
+    }
     var dMin = '', dMax = '';
     partidasPorCat.forEach(function (x) { x.lista.forEach(function (p) {
-      var m = p.match(/\[Date "(\d{4})\.(\d\d)\.(\d\d)"\]/); if (!m) return;
-      var d = m[1] + '-' + m[2] + '-' + m[3]; if (!dMin || d < dMin) dMin = d; if (!dMax || d > dMax) dMax = d;
+      var d = isoDe(p); if (!d) return;
+      if (!dMin || d < dMin) dMin = d; if (!dMax || d > dMax) dMax = d;
     }); });
     if (dMin) {
-      var dia = function (iso, k) { var t = new Date(iso + 'T12:00:00Z'); t.setUTCDate(t.getUTCDate() + k); return t.toISOString().slice(0, 10); };
       if (!f || dMin < dia(f.ini, -3) || dMax > dia(f.fin, 3)) {
         var txtDe = function (iso) { return +iso.slice(8) + ' ' + MES_ES[+iso.slice(5, 7)]; };
         var fPgn = { ini: dMin, fin: dMax, txt: txtDe(dMin) + (dMin.slice(0, 4) !== dMax.slice(0, 4) ? ' ' + dMin.slice(0, 4) : '') + ' – ' + txtDe(dMax) + ' ' + dMax.slice(0, 4) };
@@ -713,6 +786,7 @@
       status: 'done', finished: true, format: suizo ? 'swiss' : 'rr', rounds: suizo ? D0.etapas[0].nR : undefined, pace: 'standard', isTeam: true, categories: cfgCats,
       weburl: BASE + Y + 'in.html',
       coleccion: 'olimpiadas', coleccionSolo: true,
+      rama: soloFem ? 'fem' : undefined,
       about: 'Datos: OlimpBase (olimpbase.org), de Wojciech Bartelski.'
     };
     var partidasObj = {};
@@ -722,7 +796,7 @@
     window.__aaOlimpPaquete = paquete;
 
     // ───────── 7) Bajar el archivo ─────────
-    var nombreArchivo = 'Olimpiada ' + Y + ' - ' + L.ciudad + '.json';
+    var nombreArchivo = 'Olimpiada ' + (soloFem ? 'femenina ' : '') + Y + ' - ' + L.ciudad + '.json';
     var blob = new Blob([JSON.stringify(paquete)], { type: 'application/json' });
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob); a.download = nombreArchivo;
@@ -732,7 +806,7 @@
     var avisos = informe.n_sinPartida + informe.n_resultados + informe.n_nombres;
     mostrar('¡Listo! ' + nombreTorneo,
       'Se bajó <b>' + esc(nombreArchivo) + '</b> (' + Math.round(blob.size / 1024) + ' KB)'
-      + (Dw ? ', con la <b>abierta y la femenina</b> (dos categorías)' : '') + '.<br>'
+      + (Dw ? ', con la <b>abierta y la femenina</b>' + (conGrupo ? ' (cada una con sus grupos y finales)' : ' (dos categorías)') : '') + '.<br>'
       + informe.conPartida + ' de ' + (informe.mesas - informe.wo) + ' mesas con su partida'
       + (informe.wo ? ' (y ' + informe.wo + ' por incomparecencia)' : '')
       + (avisos ? ' · <span style="color:#ffd27a">⚠️ ' + avisos + ' cosas para revisar</span>' : ' · ✅ todo cerró') + '.<br>'
