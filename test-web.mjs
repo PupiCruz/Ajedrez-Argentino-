@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1933;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1945;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -548,7 +548,7 @@ console.log('\n=== 17. Radiografía POR EQUIPOS (Olimpiadas, ligas) ===');
   const P24 = { bp:{ India:35, USA:29.5, UZB:29.5, ARM:30 }, mp:{ India:21, USA:17, UZB:17, ARM:16 } };
   chk(M._stTeamCriterio([{ name:'India' }, { name:'USA' }, { name:'UZB' }, { name:'ARM' }], P24) === 'match',
       'Olimpiada moderna: va por puntos de MATCH');
-  chk(/\+ \(tk\.length \? '\|e11' : ''\)/.test(SRC),'la firma de los cuadros por equipos cambió de versión (lo horneado viejo se recalcula)');
+  chk(/\+ \(tk\.length \? '\|e14' : ''\)/.test(SRC),'la firma de los cuadros por equipos cambió de versión (lo horneado viejo se recalcula)');
 
   const boards = M._stTeamBoardsAsRounds(liga);
   chk(Object.keys(boards).length === 2 && boards['1'].length === 4,
@@ -765,7 +765,8 @@ console.log('\n=== 19. El tablero de INSCRIPCIÓN (medallas de la Olimpiada) ===
                                        2: [{ aName:'Trinidad', bName:'Otro', boards:[{ nW:'Singh', eW:0, nB:'Riv2', eB:0, res:'½-½' }] }] } };
   const singh = M._stTeamPlayers(sinEloPropio, 2, 1800).find(p => p.raw === 'Singh');
   chk(singh.rp === null && singh.rpDes === 1900 + 193, 'sin Elo propio: sin Rp, pero con performance para desempatar (rivales 1900, 75%)', 'rp ' + singh.rp + ' · rpDes ' + singh.rpDes);
-  chk(/anioOlimp >= 1998 && anioOlimp <= 2004, anioOlimp > 0\);/.test(SRC), 'la marca se prende sólo en las Olimpiadas de 1998 a 2004 (en 2006 ya no: Mawadda)');
+  chk(/\(anioOlimp >= 1998 && anioOlimp <= 2004\) \|\| anioOlimp === 1930, anioOlimp > 0\);/.test(SRC),
+      'la marca se prende en las Olimpiadas de 1998 a 2004 (en 2006 ya no: Mawadda) y en Hamburgo 1930 (Rubinstein 15/17)');
 
   // Si el cuadro trae el PLANTEL (planilla de OlimpBase / lista de Chess-Results), su orden manda.
   const conPlantel = JSON.parse(JSON.stringify(d));
@@ -1034,9 +1035,14 @@ console.log('\n=== 21. Los países, en castellano ===');
   }
   // Olimpiadas suizas de OlimpBase 1976-1990 (28/09/2026): OlimpBase le dice GER a Alemania Occidental.
   chk(_paisES('West Germany') === 'Alemania Occidental' && _paisFed('West Germany') === 'FRG' && HFLAG.FRG === 'de'
-      && _paisES('Zaire') === 'Zaire' && !HFLAG.ZAI && _paisES('North Yemen') === 'Yemen del Norte' && _paisES('South Yemen') === 'Yemen del Sur'
+      && _paisES('Zaire') === 'Zaire' && HFLAG.ZAI === 'hist-zai' && HFLAG.NYE === 'hist-nye' && HFLAG.SYE === 'hist-sye' && _paisES('North Yemen') === 'Yemen del Norte' && _paisES('South Yemen') === 'Yemen del Sur'
       && _paisES('Argentina B') === 'Argentina B' && _paisFed('Argentina B') === 'ARG',
-      '🇩🇪 "West Germany" → Alemania Occidental con la tricolor de hoy; Zaire y los dos Yemen traducidos, sin bandera; "Argentina B" conserva la letra');
+      '🇩🇪 "West Germany" → Alemania Occidental con la tricolor de hoy; Zaire y los dos Yemen traducidos, con su bandera de época; "Argentina B" conserva la letra');
+  // Olimpiadas de grupos 1952-1974 (01/10/2026): Sarre, Rodesia (OlimpBase le pone ZIM) e "Islas Vírgenes" a secas (las de EE. UU.).
+  chk(_paisES('Saar') === 'Sarre' && _paisES('Rhodesia') === 'Rodesia' && _paisFed('Rhodesia') === 'RHO' && _paisFed('Saar') === 'SAA' && HFLAG.RHO === 'hist-rho' && HFLAG.SAA === 'hist-saa'
+      && _paisES('Virgin Islands') === 'Islas Vírgenes de EE.UU.' && _paisFed('Virgin Islands') === 'ISV'
+      && _paisFed('East Germany') === 'GDR' && HFLAG.GDR === 'hist-gdr' && HFLAG.GDX === 'de' && SRC.match(/var _FED_ERA = ({.*?});/)[1].includes('"GDX":"GDR"'),
+      '🏳️ Sarre y Rodesia en castellano y con su bandera (no la de Zimbabue); "Virgin Islands" = Islas Vírgenes de EE.UU.; Alemania Oriental con emblema (GDR) o lisa antes de 1959 (GDX)');
   // Londres 1927: la columna de puntos de OlimpBase ("38½") quedaba "Des 1" porque parseFloat daba 38.
   { const rr = extraerFuncion('_teamRenderRR');
     chk(rr.includes("var v=/½/.test(_r)?(parseFloat(_r)||0)+0.5:parseFloat(_r.replace(',','.'));")
@@ -8004,6 +8010,42 @@ console.log('\n=== Auditoría 23/09 — Fase 4: accesibilidad y prolijidad ===')
   chk(/var stdFlag = _flagByName\(name, _crK, fideId\) \|\| _teamFlag\(team\);/.test(extraerFuncion('cvPlayerHtml')),
       'el visor grande, sin tabla que lo nombre, cae al país del EQUIPO del PGN (como las miniaturas)');
 }
+// ── Partidas premiadas de las Olimpiadas (OlimpBase) y premios especiales de 1930 (01/10/2026) ──
+{
+  console.log('\n=== Olimpiadas: partidas premiadas y premios especiales de Hamburgo 1930 (01/10) ===');
+  const i = SRC.indexOf('var _OLIMP_PARTIDAS_PREMIADAS'), j = SRC.indexOf('\n}\n', SRC.indexOf('function _stPartidasPremiadas')) + 3;
+  const F = new Function('pgnNameToNatural', SRC.slice(i, j) + '; return _stPartidasPremiadas;')((n) => n);
+  const mesa = (a, b, res) => ({ nW:a, nB:b, res:res });
+  const d = { teamRounds: {
+    3: [{ aName:'Suecia', bName:'Francia', boards:[mesa('Ståhlberg, Gideon', 'Alekhine, Alexander', '0-1')] }],
+    // en el cuadro por equipos la columna de la izquierda no es siempre la de blancas
+    6: [{ aName:'Holanda', bName:'Francia', boards:[mesa('Noteboom, Daniël', 'Voisin, André', '1-0')] }]
+  }};
+  const r = F(1930, d);
+  chk(r && r[0].ronda === 3 && r[0].nW === 'Ståhlberg, Gideon' && r[0].nB === 'Alekhine, Alexander',
+      'encuentra la premiada en su ronda, con los nombres del cuadro (para el ojito)', r && r[0].ronda);
+  chk(r && r[2].ronda === 6 && r[2].nW === 'Voisin, André' && r[2].nB === 'Noteboom, Daniël',
+      'aunque el cuadro la tenga al revés, y "Voisin, A." = "Voisin, André"', r && (r[2].nW + ' - ' + r[2].nB));
+  chk(r && r.length === 4 && r[3].ronda === null, 'las que no se jugaron en este cuadro se nombran igual, sin ronda (sin ojito)');
+  chk(F(1930, { teamRounds: { 1: [{ boards:[mesa('Otro, Uno', 'Otro, Dos', '1-0')] }] } }) === null, 'si ninguna se jugó acá, nada');
+  chk(F(2006, d) === null && F(0, d) === null, 'una Olimpiada sin premios a la mejor partida no muestra nada');
+  const g27 = F(1927, { teamRounds: { 2: [{ boards:[mesa('Gruenfeld, Ernst', 'Euwe, Machgielis', '1-0')] }] } });
+  chk(g27 && g27[1].ronda === 2, '"Gruenfeld" del cuadro = "Grünfeld" de OlimpBase (1927)');
+  const g56 = F(1956, { teamRounds: { 2: [{ boards:[mesa('Dückstein, Andreas', 'Kramer, Haije', '1-0')] }],
+                                      11: [{ boards:[mesa('Dückstein, Andreas', 'Kramer, Haije', '1-0')] }] } });
+  chk(g56 && g56[0].ronda === 11, 'Dückstein–Kramer 1956: se cruzaron dos veces, la premiada es la de la ronda 11 (Final B)', g56 && g56[0].ronda);
+  const g74 = F(1974, { teamRounds: { 9: [{ boards:[mesa('Stean, Michael Francis', 'Browne, Walter Shawn', '1-0')] }] } });
+  chk(g74 && g74.length === 1, 'en el Grupo 2 de 1974 sólo la ganadora, no las ocho candidatas de la Final A', g74 && g74.length);
+  chk(/var especiales = null;\s*\n\s*if \(anioOlimp === 1930 && medallasPor === 'pct'\)/.test(SRC) && /if \(!sinTableros && !especiales\)/.test(SRC),
+      'Hamburgo 1930: tres premios especiales y SIN medallas por tablero');
+  // Praga 1931, 1.er suplente: König 6/8 salía oro compartido; OlimpBase pide la mitad de los matches (9 de 18).
+  chk(/var matchesEq = teams\.length - 1;/.test(SRC) && /anioOlimp >= 1931 && anioOlimp <= 1950 && anioOlimp !== 1939 && matchesEq > 0/.test(SRC)
+      && /var minMitad = Math\.ceil\(matchesEq \/ 2\);/.test(SRC),
+      '1931-1950 (menos 1939): mínimo de partidas = la mitad de los matches de cada equipo (König 6/8 afuera, 1931)');
+  chk(/if \(enMesa\.length >= \(minMitad \? 1 : 3\)\) mesas\.push\(/.test(SRC),
+      'Dubrovnik 1950, 2.º suplente: con sólo dos en el mínimo igual hay medallas (Evans oro, Donner plata); fuera de 1931-1950, tres o más');
+}
+
 // ── Archivos de torneo de más de 25 MiB: se parten en pedazos (30/09/2026, 46ª Olimpiada) ──
 {
   console.log('\n=== Torneos enormes: data/t/<id>.json en pedazos (Cloudflare no acepta > 25 MiB, 30/09) ===');

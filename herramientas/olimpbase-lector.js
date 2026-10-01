@@ -273,6 +273,7 @@
     // ───────── 2) Tabla de cada etapa ─────────
     total += etapas.length + pgnUrls.length;
     var equiposHref = {};   // código → página del equipo
+    var playoff = '';       // 'gold' | 'silver' | 'bronze' si hubo desempate por una medalla
     for (var ei = 0; ei < etapas.length; ei++) {
       var E = etapas[ei];
       var dSt = html(await traer(BASE + Y + E.st + '.html', false, que + 'La tabla: ' + E.ob));
@@ -295,6 +296,10 @@
         E.filas.forEach(function (fl) { var v = String(fl[i] || '').replace(/\s+/g, ''); if (v === '●') conBola++; else if (/^[A-Z]{2,5}\d?[\d½]+$/.test(v)) conSigla++; });
       });
       E.suizo = conSigla > conBola;
+      // Desempate por una medalla, anotado debajo de la tabla (Medellín 1974, Final A femenina: "Play-off for
+      // gold: Soviet Union-Romania 3-1 (2-0, 1-1)"). Sus partidas vienen en el PGN con [Event "… play-off"].
+      var mPo = txt(dSt.body).match(/Play-?off for (gold|silver|bronze)/i);
+      if (mPo) playoff = mPo[1].toLowerCase();
       E.nR = 0;
       dSt.querySelectorAll('a[href]').forEach(function (a) {
         var h = a.getAttribute('href') || '', m = h.match(new RegExp('^' + Y + E.st + '(\\d{2})\\.html$'));
@@ -420,7 +425,10 @@
       var lista = texto.replace(/^\ufeff/, '').replace(/\r\n?/g, '\n').split(/\n(?=\[Event )/).map(function (s) { return s.trim(); }).filter(function (s) { return /^\[Event /.test(s); });
       pgn[pgnUrls[pi].split('/').pop().toLowerCase()] = lista.map(function (s) {
         var h = function (k) { var m = s.match(new RegExp('\\[' + k + ' "([^"]*)"\\]')); return m ? m[1] : ''; };
-        return { txt: s, ev: h('Event'), r: parseInt(h('Round'), 10) || 0, w: h('White').replace(/\s+[A-Z]{3,4}\d?$/, ''), b: h('Black').replace(/\s+[A-Z]{3,4}\d?$/, ''), res: h('Result'), usada: false };
+        // (wc/bc: la sigla del equipo pegada al nombre, "Gaprindashvili, Nona URS"; d: la fecha.)
+        var sig = function (k) { var m = h(k).match(/\s([A-Z]{3,4}\d?)$/); return m ? m[1] : ''; };
+        return { txt: s, ev: h('Event'), r: parseInt(h('Round'), 10) || 0, w: h('White').replace(/\s+[A-Z]{3,4}\d?$/, ''), b: h('Black').replace(/\s+[A-Z]{3,4}\d?$/, ''), res: h('Result'),
+          wc: sig('White'), bc: sig('Black'), d: h('Date'), usada: false };
       });
     }
     // Las partidas de cada ronda, para no recorrer las ~3000 de una suiza en cada mesa.
@@ -429,7 +437,7 @@
     // Tableros por match: 4 en la abierta, 3 en la femenina (para los puntos del rival que no se presentó).
     var nTab = 0;
     Object.keys(rondas).forEach(function (k) { rondas[k].forEach(function (m) { nTab = Math.max(nTab, m.boards.length); }); });
-    return { dIn: dIn, titulo: titulo, mOrd: mOrd, ficha: ficha, etapas: etapas, rondas: rondas, equipos: equipos, pgn: pgn, pgnRonda: pgnRonda, nTab: nTab || 4,
+    return { dIn: dIn, titulo: titulo, mOrd: mOrd, ficha: ficha, etapas: etapas, rondas: rondas, equipos: equipos, pgn: pgn, pgnRonda: pgnRonda, nTab: nTab || 4, playoff: playoff,
       // (Hasta 2006 la tabla trae Buchholz; desde Dresde 2008, "MP | dSB | dSMP | pts" y la ficha dice "Swiss".)
       suizo: etapas.length === 1 && (etapas[0].suizo || etapas[0].cab.indexOf('Buch') >= 0 || etapas[0].cab.indexOf('dSB') >= 0 || /swiss/i.test(ficha['Competition format'] || '')) };
   }
@@ -483,7 +491,8 @@
       if (/^Czecho-Slovakia$/i.test(n)) return 'Czechoslovakia';   // (1992)
       // Como los escribe Chess-Results (así la app los dice en castellano).
       var COMO_CR = { 'U.S. Virgin Islands': 'US Virgin Islands', 'Antigua': 'Antigua and Barbuda', 'Republic of South Africa': 'South Africa',
-        'Guernsey-Jersey': 'Guernsey y Jersey' };   // (1982: un solo equipo de las dos islas; sin bandera)
+        'Guernsey-Jersey': 'Guernsey y Jersey',   // (1982: un solo equipo de las dos islas; sin bandera)
+        'Virgin Islands': 'US Virgin Islands' };   // (1968-1972, sigla VIR: las de EE. UU.; las británicas llegan mucho después)
       if (COMO_CR[n]) return COMO_CR[n];
       if (/^IBCA$/i.test(n)) return 'IBCA (ajedrecistas ciegos)';
       if (/^IPCA$/i.test(n)) return 'IPCA (ajedrecistas con discapacidad física)';
@@ -500,6 +509,7 @@
       if (/Serbs, Croats and Slovenes/i.test(n)) return 'SCS';   // su tricolor lisa (la app la tiene)
       if (/^Great Britain$/i.test(n)) return 'GBR';               // bandera británica, no la inglesa
       if (/^West Germany$/i.test(n)) return 'FRG';                // OlimpBase le dice GER; la app: "Alemania Occidental"
+      if (/Rhodesia/i.test(n)) return 'RHO';                      // OlimpBase le pone ZIM: sin la bandera de Zimbabue (1970, 1974)
       if (/^(IBCA|IPCA|ICSC|ICCD)$/i.test(n)) return '';                // no son países: sin bandera
       c = c.replace(/\d$/, '');        // ARG2 = Argentina "B": la misma bandera
       if (c === 'CSR') return 'TCH';   // Checoslovaquia (la app la conoce como TCH; su bandera = la de Chequia)
@@ -509,8 +519,10 @@
       if (c === 'YUG') return (+Y >= 1946 && +Y <= 1991) ? 'YGE' : 'YGL';
       if (c === 'AHO' && +Y < 1986) return 'AHX';
       if (c === 'GEO' && +Y < 2004) return 'GEX';   // Georgia: la granate con el cantón negro y blanco hasta enero de 2004
+      if (c === 'GDR' && +Y < 1960) return 'GDX';   // Alemania Oriental: tricolor lisa hasta octubre de 1959 (después, con el emblema)
       var FIDE = { MAU: 'MTN', LIB: 'LBN', SIN: 'SGP', GBG: '',   // Mauritania, Líbano, Singapur (siglas viejas); Guernsey-Jersey
-        COG: 'CGO', SIL: 'SLE', TGO: 'TOG', BTN: 'BHU' };   // siglas OLÍMPICAS (2010+) → las de la FIDE: Congo, Sierra Leona, Togo, Bután
+        COG: 'CGO', SIL: 'SLE', TGO: 'TOG', BTN: 'BHU',   // siglas OLÍMPICAS (2010+) → las de la FIDE: Congo, Sierra Leona, Togo, Bután
+        VIR: 'ISV' };   // Islas Vírgenes de EE. UU. (1968-1972). Sarre (SAA, 1952-56) queda SAA: la app lo conoce, sin bandera
       if (c in FIDE) return FIDE[c];
       return c;
     }
@@ -672,15 +684,42 @@
             }
             if (!g || !acuerda(g)) {
               var mejor = null, ms = -1;
-              (pgnRonda[r] || []).forEach(function (x) {
-                if (x.usada) return;
-                if (x.ev && evEtapa[x.ev] && evEtapa[x.ev] !== E.st) return;
-                var s = Math.max(Math.min(parecido(x.w, nA), parecido(x.b, nB)), Math.min(parecido(x.w, nB), parecido(x.b, nA)));
-                if (s >= 4 && acuerda(x)) s += 0.5;   // a igual nombre, la del mismo resultado
-                if (s > ms) { ms = s; mejor = x; }
+              // Primero entre las partidas cuyo [Event] es de esta etapa; si no aparece ninguna, entre todas las de
+              // la ronda. (Buenos Aires 1978, femenina: las finales A-D comparten el mismo [Event], la Final A se lo
+              // quedaba por votos y 3 mesas de las Finales C y D sin número de partida no encontraban la suya.)
+              [true, false].forEach(function (porEvento) {
+                if (mejor && ms >= 4) return;
+                (pgnRonda[r] || []).forEach(function (x) {
+                  if (x.usada || /play-?off/i.test(x.ev)) return;   // (las del desempate van aparte, más abajo)
+                  if (porEvento && x.ev && evEtapa[x.ev] && evEtapa[x.ev] !== E.st) return;
+                  var s = Math.max(Math.min(parecido(x.w, nA), parecido(x.b, nB)), Math.min(parecido(x.w, nB), parecido(x.b, nA)));
+                  if (s >= 4 && acuerda(x)) s += 0.5;   // a igual nombre, la del mismo resultado
+                  if (s > ms) { ms = s; mejor = x; }
+                });
               });
               // (Con número de partida, se cambia sólo por otra de los mismos dos con el resultado justo.)
               if (mejor && ms >= 4 && (!g || acuerda(mejor))) g = mejor;
+            }
+            // El PGN con el número de RONDA mal (Lublin 1969: Eretová–Kärner dice "Round 1" y se jugó en la 9.ª;
+            // la fecha, 17/09, es la de la 9.ª): si en OTRA ronda queda UNA sola partida sin usar de estos dos,
+            // con el mismo resultado y del mismo día que las de esta ronda, es esa. Sin fechas no se adivina.
+            var rondaMal = 0;
+            if (!g) {
+              var diasR = {};
+              (pgnRonda[r] || []).forEach(function (x) { if (x.d && /^\d{4}\.\d\d\.\d\d$/.test(x.d)) diasR[x.d] = 1; });
+              var otras = [];
+              Object.keys(pgnRonda).forEach(function (rr) {
+                if (+rr === r) return;
+                pgnRonda[rr].forEach(function (x) {
+                  if (x.usada || /play-?off/i.test(x.ev) || !x.d || !diasR[x.d]) return;
+                  if (Math.max(Math.min(parecido(x.w, nA), parecido(x.b, nB)), Math.min(parecido(x.w, nB), parecido(x.b, nA))) >= 4 && acuerda(x)) otras.push(x);
+                });
+              });
+              if (otras.length === 1) {
+                g = otras[0]; rondaMal = g.r || -1;
+                var dm = g.d.split('.');
+                informe.corregidos.push(etiqueta + ' R' + r + ': ' + A.j.name + ' – ' + B.j.name + ': el PGN la trae como ronda ' + (g.r || '?') + ', pero es del ' + (+dm[2]) + '/' + dm[1] + ', el día de la ronda ' + r);
+              }
             }
             if (!g) { informe.sinPartida.push(etiqueta + ' R' + r + ': ' + A.j.name + ' – ' + B.j.name + ' (' + b.res + ')'); return; }
             g.usada = true;
@@ -699,6 +738,7 @@
               .replace(/\[Black "[^"]*"\]/, '[Black "' + N + '"]\n[WhiteTeam "' + WT + '"]\n[BlackTeam "' + BT + '"]')
               .replace(/\[Event "[^"]*"\]/, '[Event "' + nombreTorneo + ' · ' + etiqueta + '"]')
               .replace(/\[Site "[^"]*"\]/, '[Site "' + L.lugar + '"]');
+            if (rondaMal) limpio = limpio.replace(/\[Round "[^"]*"\]/, '[Round "' + r + '"]');
             partidas.push({ r: r, mi: mi, bi: bi, pgn: limpio });
           });
           if (!m.boards.length) informe.sinJugar.push(etiqueta + ' R' + r + ': ' + nombreDe(m.a) + ' ' + m.score + ' ' + nombreDe(m.b) + (m.sintetico ? ' (sólo figura en la tabla: el rival no se presentó)' : ''));
@@ -727,6 +767,86 @@
       partidas.sort(function (x, y) { return x.r - y.r || x.mi - y.mi || x.bi - y.bi; });
       partidasPorCat.push({ ev: nombreTorneo + ' · ' + etiqueta, lista: partidas.map(function (x) { return x.pgn; }) });
     });
+    // ───── Desempate por una medalla ─────
+    // Medellín 1974: la Unión Soviética y Rumania empataron la Final A y jugaron un match a dos rondas por
+    // el oro (3-1). No tiene páginas de ronda ni columna en la tabla: se arma con las partidas del PGN
+    // ([Event "6th olw play-off"], con la sigla del equipo pegada al nombre) y la planilla de cada equipo.
+    // Va como categoría aparte y sin podio (el orden final ya lo da la Final A).
+    var po = [];
+    Object.keys(pgn).forEach(function (fk) { pgn[fk].forEach(function (x) { if (!x.usada && /play-?off/i.test(x.ev) && x.wc && x.bc && x.r) po.push(x); }); });
+    var poEq = [];
+    po.forEach(function (x) { [x.wc, x.bc].forEach(function (c) { if (poEq.indexOf(c) < 0) poEq.push(c); }); });
+    if (po.length && poEq.length === 2 && poEq.every(function (c) { return equipos[c]; })) (function () {
+      var grupoPo = conGrupo ? (rama === 'fem' ? 'Femenino' : 'Absoluto') : '';
+      var nomPo = { gold: 'Desempate por el oro', silver: 'Desempate por la plata', bronze: 'Desempate por el bronce' }[D.playoff] || 'Desempate';
+      var etqPo = grupoPo ? grupoPo + ' · ' + nomPo : nomPo;
+      var jugPo = function (code, nm) {
+        var mejor = null, ms = 3;
+        equipos[code].jugadores.forEach(function (j) { var s = parecido(j.name, nm); if (s > ms) { ms = s; mejor = j; } });
+        return mejor || { bo: '9', name: nm, ti: '', elo: 0 };
+      };
+      var medio = function (v) { return (Math.floor(v) || (v % 1 ? '' : '0')) + (v % 1 ? '½' : ''); };
+      var pts = {}, mp = {}, hizo = {}, cuenta = {};   // hizo[code][nombre] = {pts, gm}
+      poEq.forEach(function (c) { pts[c] = 0; mp[c] = 0; hizo[c] = {}; });
+      var nroR = [];
+      po.forEach(function (x) { if (nroR.indexOf(x.r) < 0) nroR.push(x.r); });
+      nroR.sort(function (a, b) { return a - b; });
+      var teamRounds = {}, teamCrosses = {}, partidas = [];
+      nroR.forEach(function (r0, ri) {
+        var r = ri + 1;
+        var gs = po.filter(function (x) { return x.r === r0; }).map(function (x) {
+          var jw = jugPo(x.wc, x.w), jb = jugPo(x.bc, x.b);
+          return { x: x, jw: jw, jb: jb, bo: Math.min(tablero(jw.bo), tablero(jb.bo)) };
+        }).sort(function (a, b) { return a.bo - b.bo; });
+        // A la izquierda, el equipo que lleva blancas en el tablero 1 (así la app alterna bien los colores).
+        var izq = gs[0].x.wc, der = izq === poEq[0] ? poEq[1] : poEq[0];
+        var sI = 0, sD = 0, boards = [];
+        gs.forEach(function (G, bi) {
+          var x = G.x, blancasIzq = x.wc === izq;
+          var A = blancasIzq ? G.jw : G.jb, B = blancasIzq ? G.jb : G.jw;
+          var res = x.res.replace('1/2-1/2', '½-½');
+          var resA = blancasIzq ? res : (res === '1-0' ? '0-1' : res === '0-1' ? '1-0' : res);
+          var pA = resA === '1-0' ? 1 : resA === '0-1' ? 0 : 0.5;
+          sI += pA; sD += 1 - pA;
+          [[izq, A, pA], [der, B, 1 - pA]].forEach(function (q) { var h0 = hizo[q[0]][q[1].name] = hizo[q[0]][q[1].name] || { j: q[1], pts: 0, gm: 0 }; h0.pts += q[2]; h0.gm++; });
+          boards.push({ tW: A.ti || '', nW: A.name, eW: A.elo || 0, tB: B.ti || '', nB: B.name, eB: B.elo || 0, res: resA });
+          informe.mesas++; informe.conPartida++;
+          x.usada = true;
+          var W = blancasIzq ? A.name : B.name, N = blancasIzq ? B.name : A.name;
+          partidas.push({ r: r, bi: bi, pgn: x.txt.replace(/\[White "[^"]*"\]/, '[White "' + W + '"]')
+            .replace(/\[Black "[^"]*"\]/, '[Black "' + N + '"]\n[WhiteTeam "' + nombreDe(x.wc) + '"]\n[BlackTeam "' + nombreDe(x.bc) + '"]')
+            .replace(/\[Event "[^"]*"\]/, '[Event "' + nombreTorneo + ' · ' + etqPo + '"]')
+            .replace(/\[Site "[^"]*"\]/, '[Site "' + L.lugar + '"]')
+            .replace(/\[Round "[^"]*"\]/, '[Round "' + r + '"]') });
+        });
+        pts[izq] += sI; pts[der] += sD;
+        mp[izq] += sI > sD ? 2 : sI === sD ? 1 : 0; mp[der] += sD > sI ? 2 : sI === sD ? 1 : 0;
+        teamRounds[r] = [{ _a: izq, _b: der, aName: nombreDe(izq), bName: nombreDe(der), score: medio(sI) + ' : ' + medio(sD), boards: boards }];
+        teamCrosses[r] = [{ no: '1', aFed: fedDe(izq), aName: nombreDe(izq), aPts: '', aRes: medio(sI), bRes: medio(sD), bPts: '', bName: nombreDe(der), bFed: fedDe(der) }];
+      });
+      // El ganador arriba (más puntos de partida; a igualdad, de match).
+      if (pts[poEq[1]] > pts[poEq[0]] || (pts[poEq[1]] === pts[poEq[0]] && mp[poEq[1]] > mp[poEq[0]])) poEq.reverse();
+      Object.keys(teamRounds).forEach(function (k) { teamRounds[k].forEach(function (m) {
+        m.aNo = String(poEq.indexOf(m._a) + 1); m.bNo = String(poEq.indexOf(m._b) + 1); delete m._a; delete m._b;
+      }); });
+      var empate = pts[poEq[0]] === pts[poEq[1]] && mp[poEq[0]] === mp[poEq[1]];
+      var teams = poEq.map(function (c, i) {
+        return { rk: empate ? 1 : i + 1, name: nombreDe(c), fed: fedDe(c), grid: i === 0 ? ['*', medio(pts[c])] : [medio(pts[c]), '*'], des: [medio(pts[c]), String(mp[c])] };
+      });
+      var teamRoster = poEq.map(function (c, i) {
+        return { no: i + 1, name: nombreDe(c), capt: '', eloAvg: '', players: Object.keys(hizo[c]).map(function (k) {
+          var h0 = hizo[c][k], j = h0.j;
+          return { bo: /res/i.test(j.bo) ? D.nTab + (parseInt(j.bo, 10) || 1) : tablero(j.bo), ti: j.ti || '', nm: j.name, elo: j.elo || 0, fed: fedDe(c), fid: '', pts: String(h0.pts), gm: String(h0.gm), rp: '' };
+        }).sort(function (a, b) { return a.bo - b.bo; }) };
+      });
+      cr['cr2_tz_' + ID + '_c' + cfgCats.length] = { teamRounds: teamRounds, teamCrosses: teamCrosses, teamStandings: { kind: 'rr', teams: teams }, teamRoster: teamRoster };
+      cfgCats.push(Object.assign({ name: etqPo, broadcast: null, crurl: null, sinPodio: true }, rama ? { rama: rama } : {}, grupoPo ? { grupo: grupoPo } : {},
+        formatoTorneo !== 'rr' ? { format: 'rr' } : {}, { rounds: nroR.length }));
+      partidas.sort(function (x, y) { return x.r - y.r || x.bi - y.bi; });
+      partidasPorCat.push({ ev: nombreTorneo + ' · ' + etqPo, lista: partidas.map(function (x) { return x.pgn; }) });
+      informe.playoff = (informe.playoff ? informe.playoff + ' ' : '') + (grupoPo ? grupoPo + ': ' : '') + nomPo + ' entre ' + paisES(nombreDe(poEq[0])) + ' y ' + paisES(nombreDe(poEq[1]))
+        + ' (' + medio(pts[poEq[0]]) + '-' + medio(pts[poEq[1]]) + ', ' + po.length + ' partidas): va como categoría aparte, sin podio.';
+    })();
     var pre = rama === 'fem' ? 'Femenino ' : '';
     Object.keys(pgn).forEach(function (fk) { pgn[fk].forEach(function (x) { if (!x.usada) informe.sueltas.push(pre + 'R' + x.r + ': ' + x.w + ' – ' + x.b + ' (' + x.res + ')'); }); });
     Object.keys(nombreEq).sort().forEach(function (c) {
