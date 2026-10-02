@@ -1785,6 +1785,7 @@
       border-radius: 9px; background: var(--mc); color: #fff; font-size: 11px; font-weight: 800; box-shadow: 0 1px 3px rgba(0,0,0,.35); }
     .cv-mcom-t { font-weight: 700; }
     .cv-mcom-best b { font-weight: 700; }
+    .cv-mcom-best b.cv-mcom-tbj { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
     .cv-mcom-calc { color: var(--text3); font-style: italic; }
     .cv-mcom-ev { margin-left: auto; font-size: 11.5px; color: var(--text3); font-variant-numeric: tabular-nums; white-space: nowrap; }
     .cv-mcom-why { margin-top: 2px; color: var(--text); font-size: 12.5px; }
@@ -2163,6 +2164,13 @@
     /* stockfish analysis */
     .sf-wrap { margin-top: 16px; }
     .sf-top { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+    /* 📚 Resultado de la tabla de finales en la posición que se mira (≤7 piezas): azul gana, gris tablas, ámbar 50 jugadas */
+    .cv-tbline { margin: -4px 0 8px; padding: 5px 10px; border-radius: 8px; font-size: 12.5px; line-height: 1.3;
+                 display: flex; gap: 6px; align-items: center; color: var(--text);
+                 background: rgba(120,170,255,.10); border: 1px solid rgba(120,170,255,.28); }
+    .cv-tbline.tb-tablas { background: rgba(160,160,160,.10); border-color: rgba(160,160,160,.30); }
+    .cv-tbline.tb-50 { background: rgba(240,180,60,.12); border-color: rgba(240,180,60,.35); }
+    .cv-tbline .tb-det { opacity: .7; }
     .sf-btn {
       display: flex; align-items: center; gap: 7px;
       background: var(--gl42); border: 1px solid var(--bd26);
@@ -4924,6 +4932,7 @@
         <span class="sf-depth" id="sf-depth"></span>
         <button class="sf-deepen" id="sf-deepen" onclick="sfDeepen()" title="El motor llegó al tope. Tocá para que siga analizando más hondo (usa más CPU)." style="display:none">⏱ Seguir analizando</button>
       </div>
+      <div id="cv-tbline" class="cv-tbline" title="Tabla de finales de Lichess: el resultado con juego perfecto" style="display:none"></div>
     </div>
 
     <!-- JUGADAS (notaciones, estiradas hasta el borde inferior del tablero) -->
@@ -43149,6 +43158,7 @@ function faUpdateMarker() {
    NO sugiere mejores jugadas: eso sigue siendo exclusivo del módulo en vivo. */
 function faUpdateBar() {
   if (typeof _fa === 'undefined') return;
+  _tbRenglon();   // 📚 el resultado del final (≤7 piezas), con o sin módulo prendido
   var vbar = document.getElementById('sf-vbar');
   var fill = document.getElementById('sf-vbar-fill');
   if (!vbar || !fill) return;
@@ -43718,7 +43728,7 @@ function faApplyNags() {
 var _TB_URL = 'https://tablebase.lichess.ovh/standard';
 var _TB_PIEZAS = 7, _TB_ESPERA = 350;
 var _TB_NOMBRE = { '1': 'Ganada', '0': 'Tablas', '-1': 'Perdida' };
-var _tb = { cat: {}, mov: {}, cola: [], pend: {}, corriendo: false, off: false, llave: null, redT: null };
+var _tb = { cat: {}, mov: {}, dtm: {}, mdtm: {}, cola: [], pend: {}, corriendo: false, off: false, llave: null, redT: null };
 function _tbClave(fen) { return String(fen || '').split(' ').slice(0, 4).join(' '); }
 function _tbEnRango(fen) { return (String(fen || '').split(' ')[0].match(/[pnbrqk]/gi) || []).length <= _TB_PIEZAS; }
 // Categoría de la tabla → +1 gana / 0 tablas / −1 pierde, desde el que mueve en esa posición (null = no sabe).
@@ -43740,6 +43750,66 @@ function _tbOn() {
   return _tb.llave;
 }
 function _tbUci(node) { return node.move.from + node.move.to + (node.move.promotion || ''); }
+// Distancia a mate (en medias jugadas, desde el que mueve) de la posición de `node`: la suya o la que trajo el
+// padre. Lichess sólo la da con 5 piezas o menos; si no, undefined/null.
+function _tbDtmDe(node) {
+  var d = _tb.dtm[_tbClave(node.fen)];
+  if ((d === undefined || d === null) && node.move && node.parent) { var m = _tb.mdtm[_tbClave(node.parent.fen)]; if (m) d = m[_tbUci(node)]; }
+  return d;
+}
+// 📚 Punto 3 (01/10/2026): el resultado del final en la posición que se mira, en un renglón debajo de "Análisis".
+// Sólo con ≤7 piezas y si la tabla ya lo sabe (lo trajeron las consultas del análisis: CERO pedidos de más).
+// No toca el módulo ni sus líneas: es un renglón aparte. Devuelve { cls, html } o null (testeable sin DOM).
+function _tbRenglonDe(node, fin) {
+  if (!node || !_tbOn() || !_tbEnRango(node.fen) || fin) return null;
+  var c = _tbCatDe(node);
+  if (!c || c === 'unknown') return null;
+  var mueve = node.fen.split(' ')[1] === 'w' ? 'blancas' : 'negras', otro = mueve === 'blancas' ? 'negras' : 'blancas';
+  if (c === 'draw') return { cls: 'tb-tablas', html: '<b>Tablas teóricas</b> <span class="tb-det">· final resuelto</span>' };
+  if (c === 'cursed-win' || c === 'blessed-loss')
+    return { cls: 'tb-50', html: '<b>Ganada para las ' + (c === 'cursed-win' ? mueve : otro) + ', pero tablas</b> por la regla de las 50 jugadas' };
+  var v = _tbValor(c);
+  if (v === null || v === 0) return null;
+  var dtm = _tbDtmDe(node), mate = (typeof dtm === 'number' && dtm !== 0) ? Math.ceil(Math.abs(dtm) / 2) : 0;
+  return { cls: '', html: '<b>Ganan las ' + (v > 0 ? mueve : otro) + '</b> con juego perfecto'
+    + (mate ? ' <span class="tb-det">· mate en ' + mate + '</span>' : '') };
+}
+function _tbRenglon() {
+  var el = document.getElementById('cv-tbline');
+  if (!el) return;
+  var fin = false;
+  try { fin = !!(cv.chess && cv.chess.game_over && cv.chess.game_over()); } catch (e) {}
+  var r = (typeof cv !== 'undefined') ? _tbRenglonDe(cv.node, fin) : null;
+  if (!r) { el.style.display = 'none'; return; }
+  el.className = 'cv-tbline' + (r.cls ? ' ' + r.cls : '');
+  el.innerHTML = '<span>📚</span><span>' + r.html + '</span>';
+  el.style.display = '';
+}
+// La mejor jugada de la tabla que conserva el resultado `antes` (+1 gana / 0 tablas) en una posición cuya lista de
+// jugadas es `mov` ({uci: categoría desde el rival}). Lichess las manda ordenadas, la mejor primero; '' si no hay.
+function _tbMejor(mov, antes) {
+  for (var u in mov) { var v = _tbValor(mov[u]); if (v !== null && -v >= antes) return u; }
+  return '';
+}
+// Tocar la jugada de la tabla en el comentario: entra como variante y el tablero va hasta ahí.
+function cvTbJugar(pid, uci) {
+  _nodeMap = {}; buildNodeMap(cv.root);
+  var par = _nodeMap[pid];
+  if (!par || typeof Chess === 'undefined') return;
+  var tmp = new Chess(par.fen), mv = null;
+  try { mv = tmp.move({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci[4] || 'q' }); } catch (e) {}
+  if (!mv) return;
+  var ex = null;
+  for (var c = 0; c < par.children.length; c++) if (par.children[c].move.san === mv.san) { ex = par.children[c]; break; }
+  if (!ex) {
+    ex = makeNode(tmp.fen(), { san: mv.san, from: mv.from, to: mv.to, nag: '' }, par);
+    ex.own = true;   // análisis, no partida real
+    par.children.push(ex);
+  }
+  cvBuildMoveList();
+  _cvUserMove = true;
+  cvSetNode(ex);
+}
 // Categoría de la posición de `node` (desde el que mueve ahí): la suya, o la que trajo la consulta del padre.
 function _tbCatDe(node) {
   var c = _tb.cat[_tbClave(node.fen)];
@@ -43789,13 +43859,13 @@ function _tbSiguiente() {
     })
     .then(function(j) {
       delete _tb.pend[k];
-      var m = {};
-      if (j) (j.moves || []).forEach(function(x) { m[x.uci] = x.category; });
+      var m = {}, md = {};
+      if (j) (j.moves || []).forEach(function(x) { m[x.uci] = x.category; md[x.uci] = x.dtm; });
       _tb.cat[k] = (j && j.category) || '';
-      _tb.mov[k] = m;
-      _capCache(_tb.cat, 3000); _capCache(_tb.mov, 3000);
+      _tb.mov[k] = m; _tb.dtm[k] = j ? j.dtm : null; _tb.mdtm[k] = md;
+      _capCache(_tb.cat, 3000); _capCache(_tb.mov, 3000); _capCache(_tb.dtm, 3000); _capCache(_tb.mdtm, 3000);
       // Recalificar UNA vez por tanda (el sig de los símbolos solo no alcanza: puede cambiar sólo la frase).
-      if (!_tb.redT) _tb.redT = setTimeout(function() { _tb.redT = null; _faNagSig = ''; _faReclassifyIfChanged(); }, 300);
+      if (!_tb.redT) _tb.redT = setTimeout(function() { _tb.redT = null; _faNagSig = ''; _faReclassifyIfChanged(); _tbRenglon(); }, 300);
       setTimeout(_tbSiguiente, _TB_ESPERA);
     })
     .catch(function() { _tb.off = true; _tb.cola = []; _tb.pend = {}; _tb.corriendo = false; });
@@ -43878,12 +43948,17 @@ function _faComHtml(i) {
   // La mejor línea, desde la posición ANTERIOR a la jugada.
   var par = node.parent, pfen = par.fen, pv = _faPvMemo[pfen];
   if (pv === undefined) _faComPedir(pfen);
-  // Si la tabla marcó el error, la jugada del motor tiene que conservar el resultado; si no, no se sugiere.
-  var tbBien = true;
-  if (tbMal && pv && pv.length) {
+  // Si la tabla marcó el error, la jugada del motor tiene que conservar el resultado. Si no lo conserva (el
+  // motor tampoco encontró cómo ganar) o todavía no hay línea del motor, va LA jugada de la tabla, sola:
+  // ya vino en la misma consulta (cero pedidos de más a Lichess).
+  var tbBien = true, tbJug = '';
+  if (tbMal) {
     var tbMov = _tb.mov[_tbClave(pfen)];
     if (!tbMov) { _tbEncolar(par, true); tbBien = false; }
-    else { var vb = _tbValor(tbMov[pv[0]]); tbBien = vb !== null && -vb >= tbj.antes; }
+    else {
+      if (pv && pv.length) { var vb = _tbValor(tbMov[pv[0]]); tbBien = vb !== null && -vb >= tbj.antes; }
+      if (!tbBien || !pv || !pv.length) { tbBien = false; tbJug = _tbMejor(tbMov, tbj.antes); }
+    }
   }
   var best = '', line = '';
   if (tbBien && pv && pv.length && pv[0].slice(0, 4) !== node.move.from + node.move.to && typeof Chess !== 'undefined') {
@@ -43915,6 +43990,13 @@ function _faComHtml(i) {
   var bestLbl = tbMal ? 'Mejor era' : wpB <= _FA_COM_PERDIDO ? 'Resistía un poco más con' : (cls === 'dubious' ? 'Preferible era' : 'Mejor era');
   var extra = best ? '<span class="cv-mcom-best">' + bestLbl + ' <b>' + cvFanHtml(best) + '</b></span>'
             : (pv === undefined ? '<span class="cv-mcom-calc">buscando la mejor…</span>' : '');
+  if (tbJug && typeof Chess !== 'undefined') {   // 📚 la de la tabla: "Ganaba con ♘e5" (se toca y se juega)
+    var tbSan = null;
+    try { tbSan = new Chess(pfen).move({ from: tbJug.slice(0, 2), to: tbJug.slice(2, 4), promotion: tbJug[4] || 'q' }); } catch (e) {}
+    if (tbSan) extra = '<span class="cv-mcom-best">' + (tbj.antes === 1 ? 'Ganaba con' : 'Hacía tablas con')
+      + ' <b class="cv-mcom-tbj" title="La jugada de la tabla de finales (juego perfecto). Tocala para verla en el tablero"'
+      + ' onclick="cvTbJugar(' + par._id + ',\'' + tbJug + '\')">' + cvFanHtml(tbSan.san) + '</b></span>';
+  }
   var why = cls !== 'dubious' ? _faMotivo(i) : '';   // 💡 el por qué (paso 2), sólo en ? y ??
   // En el final de la tabla, en vez de "+1.5 → +1.4" (que confunde: el motor no lo ve) va el resultado real.
   var ev = tbMal

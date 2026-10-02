@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1983;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1991;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -8139,6 +8139,33 @@ console.log('\n=== Auditoría 23/09 — Fase 4: accesibilidad y prolijidad ===')
   chk(ch.includes("'Dejó escapar la victoria.'") && ch.includes("'Pierde un final que era tablas.'") && /if \(tbMal\) txt =/.test(ch),
       'frases de la tabla: "Dejó escapar la victoria." / "Pierde un final que era tablas."');
   chk(/tbBien = vb !== null && -vb >= tbj\.antes/.test(ch), 'el "Mejor era" del motor se muestra sólo si según la tabla conserva el resultado');
+  const mejor = new Function(['_tbValor', '_tbMejor'].map(extraerFuncion).join('\n') + '; return _tbMejor;')();
+  chk(mejor({ e6f7: 'draw', e6d6: 'loss', e6e7: 'loss' }, 1) === 'e6d6' && mejor({ e6f7: 'draw' }, 1) === '',
+      '🔒 la jugada de la tabla: la PRIMERA que conserva la victoria (Lichess las manda de mejor a peor); si no hay, nada');
+  chk(mejor({ a1a2: 'win', a1b1: 'draw', a1b2: 'cursed-win' }, 0) === 'a1b1', 'en tablas → perdida: la primera que hace tablas');
+  chk(/if \(!tbBien \|\| !pv \|\| !pv\.length\) \{ tbBien = false; tbJug = _tbMejor\(tbMov, tbj\.antes\); \}/.test(ch)
+      && ch.includes("'Ganaba con'") && ch.includes("'Hacía tablas con'") && /cvTbJugar\(/.test(ch),
+      'si el motor no encontró cómo ganar, "Ganaba con ♘e5" con la jugada de la tabla (se toca y se juega)');
+  // Punto 3: el renglón con el resultado de la posición que se mira.
+  const R = new Function(SRC.match(/var _TB_PIEZAS = [^\n]*/)[0] + '\n'
+    + 'var _tb = { cat: {}, mov: {}, dtm: {}, mdtm: {}, llave: true };\n'
+    + ['_tbClave', '_tbEnRango', '_tbValor', '_tbOn', '_tbUci', '_tbCatDe', '_tbDtmDe', '_tbRenglonDe'].map(extraerFuncion).join('\n')
+    + '; return { tb: _tb, clave: _tbClave, de: _tbRenglonDe };')();
+  const txt = r => r ? r.html.replace(/<[^>]+>/g, '') + (r.cls ? ' [' + r.cls + ']' : '') : null;
+  const PB = { fen: '3k4/8/3K4/3P4/8/8/8/8 w - - 2 2' };
+  R.tb.cat[R.clave(PB.fen)] = 'win'; R.tb.dtm[R.clave(PB.fen)] = 25;
+  chk(txt(R.de(PB, false)) === 'Ganan las blancas con juego perfecto · mate en 13', '🔒 mueven blancas y ganan: "Ganan las blancas … mate en 13" (25 medias jugadas → 13)');
+  const NB = { fen: '3k4/8/8/3PK3/8/8/8/8 b - - 3 2', parent: PB, move: { from: 'd6', to: 'e5' } };
+  R.tb.mov[R.clave(PB.fen)] = { d6e5: 'draw', d6c7: 'loss' };
+  chk(txt(R.de(NB, false)) === 'Tablas teóricas · final resuelto [tb-tablas]', 'la posición de después sale de la consulta del padre: "Tablas teóricas" en gris');
+  const NN = { fen: '3k4/2K5/8/3P4/8/8/8/8 b - - 3 2', parent: PB, move: { from: 'd6', to: 'c7' } };
+  R.tb.mdtm[R.clave(PB.fen)] = { d6c7: -24 };
+  chk(txt(R.de(NN, false)) === 'Ganan las blancas con juego perfecto · mate en 12', 'mueven negras y pierden: el ganador es el OTRO (blancas), mate en 12');
+  const CW = { fen: '8/8/8/8/8/2k5/8/K1N5 b - - 0 1' };
+  R.tb.cat[R.clave(CW.fen)] = 'blessed-loss';
+  chk(txt(R.de(CW, false)) === 'Ganada para las blancas, pero tablas por la regla de las 50 jugadas [tb-50]', 'regla de las 50 jugadas en ámbar, con el bando que "ganaba"');
+  chk(R.de(PB, true) === null && R.de({ fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1' }, false) === null && R.de({ fen: '8/8/8/8/8/2k5/8/K1N5 w - - 0 1' }, false) === null,
+      'no sale con la partida terminada (mate/ahogado), con más de 7 piezas, ni si la tabla todavía no sabe');
   const sg = extraerFuncion('_tbSiguiente');
   chk(/_TB_ESPERA/.test(sg) && /r\.status === 429/.test(sg) && /_tb\.off = true/.test(sg) && /_tbCatDe\(it\.node\) !== undefined/.test(sg),
       'buen vecino con Lichess: de a una, con espera, se apaga ante 429/error y saltea lo que ya se sabe');
