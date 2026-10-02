@@ -19,6 +19,12 @@ git --version >nul 2>&1 && (
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0chequear-motor.ps1" 2>nul
 if errorlevel 9 pause
 
+:: Chequeo silencioso de Lichess: avisa el dia que la Board API deje buscar
+:: rival AL AZAR en blitz (hoy solo rapida y clasica). Ver chequear-blitz.ps1.
+:: Mismo criterio: sin internet no dice nada y sigue.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0chequear-blitz.ps1" 2>nul
+if errorlevel 9 pause
+
 echo ===============================================
 echo    Ajedrez Argentino - servidor local
 echo ===============================================
