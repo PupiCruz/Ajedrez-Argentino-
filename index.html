@@ -9974,8 +9974,11 @@ function _teamRenderRR(standings, crk){
     return algo;   // si TODO da 0 no prueba nada (torneo sin empezar): mejor no rotular
   }
   var _mpIdx=-1;   // qué columna Des son los puntos de match (para poder decirlos en la frase)
+  // Si la fuente ya dice qué es cada columna (la liga alemana: MP, BP y su desempate), manda eso.
+  var _dn=standings.desNames||[];
   for(var d=0;d<nDes;d++){
-    if(!usada.mp&&coincide(d,'mp')){ lbl[d]='Match'; usada.mp=1; _mpIdx=d; }
+    if(_dn[d]){ lbl[d]=_dn[d]; if(_dn[d]==='Match'){ usada.mp=1; _mpIdx=d; } else if(_dn[d]==='Partida') usada.gp=1; }
+    else if(!usada.mp&&coincide(d,'mp')){ lbl[d]='Match'; usada.mp=1; _mpIdx=d; }
     else if(!usada.gp&&coincide(d,'gp')){ lbl[d]='Partida'; usada.gp=1; }
     else lbl[d]='Des '+(d+1);
   }
@@ -10040,6 +10043,7 @@ function _teamRenderRR(standings, crk){
    + (usada.mp?' <b>Match</b>: 2 por ganar el cruce, 1 por empatarlo.':'')
    + (usada.gp?' <b>Partida</b>: los puntos sumados en los tableros.':'')
    + (conWDL?' <b>+ = −</b>: cruces ganados, empatados y perdidos.':'')
+   + (standings.desNote?' '+escHtml(standings.desNote):'')
    + '</div>';
   // ── La lista (teléfono) ──
   h+='<div class="tstd-tel" style="max-width:520px;margin:0 auto;border:1px solid var(--border);border-radius:12px;overflow:hidden">';
@@ -10283,10 +10287,32 @@ function _teamToggleArg(crk){ _teamArgOnly=!_teamArgOnly; _teamRefresh(crk, _tea
 // encontraba nunca a Argentina y decía "Argentina no juega en esta ronda". Ahora, si no viene el código,
 // se resuelve por el nombre con los cruces y la tabla del torneo (_teamResolveFed), como el salto a partidas.
 function _teamSideIsArg(name, data){ var f=_teamCountryParts(name).fed || _teamResolveFed(name, data); return String(f||'').toUpperCase()==='ARG'; }
-function _teamMatchIsArg(m, data){ return _teamSideIsArg(m.aName, data) || _teamSideIsArg(m.bName, data); }
+// En la liga alemana los equipos son clubes (no son de ningún país), pero cada mesa trae la bandera del
+// jugador (fW/fB): el match cuenta si se sienta un argentino (Faustino Oro en el Werder Bremen).
+function _teamMatchIsArg(m, data){ return _teamSideIsArg(m.aName, data) || _teamSideIsArg(m.bName, data)
+  || (m.boards||[]).some(function(b){ return !!b && (_teamFedPersonArg(b.nW, b.fW) || _teamFedPersonArg(b.nB, b.fB)); }); }
+// Un jugador de la liga alemana, con la bandera que trae la página: argentino si es ARG, o si es uno de los
+// argentinos que juegan con OTRA bandera y el sitio tiene cargados como adicionales (Alan Pichot, ESP, en el
+// Bayern). Sin bandera (Chess-Results no la trae en la formación) no se adivina por el nombre.
+function _teamFedPersonArg(name, fed){
+  fed=String(fed||'').toUpperCase(); if(!fed) return false;
+  if(fed==='ARG') return true;
+  return typeof _isArgAdicionalName==='function' && !!name && _isArgAdicionalName(name);
+}
 // Las Olimpiadas viejas traen el cruce SIN la sigla ("Argentinien" a secas): entonces se mira el nombre.
-function _teamCrossIsArg(m){ return (m.aFed||'').toUpperCase()==='ARG' || (m.bFed||'').toUpperCase()==='ARG'
-  || (!m.aFed && _nameFedLookup(m.aName)==='ARG') || (!m.bFed && _nameFedLookup(m.bName)==='ARG'); }
+// data (opcional): en la liga alemana, un cruce de clubes cuenta si alguno de los dos tiene un argentino en
+// el plantel (el cruce no dice quién se sienta; eso lo dice la formación). OJO: no pasarla directo a
+// .filter()/.some(), que meten el ÍNDICE como segundo argumento.
+function _teamCrossIsArg(m, data){ return (m.aFed||'').toUpperCase()==='ARG' || (m.bFed||'').toUpperCase()==='ARG'
+  || (!m.aFed && _nameFedLookup(m.aName)==='ARG') || (!m.bFed && _nameFedLookup(m.bName)==='ARG')
+  || _teamClubHasArg(m.aName, data) || _teamClubHasArg(m.bName, data); }
+// ¿El club tiene algún argentino en el plantel? Sólo en la liga alemana: en una liga argentina de clubes
+// todos los tendrían y el filtro no filtraría nada.
+function _teamClubHasArg(name, data){
+  if(!data || typeof data!=='object' || data.source!=='dsb' || !data.teamRoster || !data.teamRoster.length) return false;
+  var k=_teamNorm(name); if(!k) return false;
+  return data.teamRoster.some(function(t){ return t && _teamNorm(t.name)===k && (t.players||[]).some(function(p){ return p && _teamFedPersonArg(p.nm, p.fed); }); });
+}
 // ¿Se puede llegar a las partidas de esta ronda? Sí si ya está cargada O si es on-demand y hay metadata
 // para bajarla (aunque el visitante todavía no la haya abierto). Para mostrar el ojito en TODAS las rondas.
 function _tdRoundReachable(round){
@@ -10362,7 +10388,9 @@ function _teamBoardClick(ev, crk){
 
 // Nombre clickeable → abre las estadísticas del jugador en el torneo (crOpenPlayer lee teamRounds).
 function _teamRoundNameClk(n){ return n ? '<span title="Ver estadísticas del jugador"'+_a11yClic()+' style="cursor:pointer;border-bottom:1px dotted transparent" onmouseover="this.style.borderBottomColor=\'var(--gold)\';this.style.color=\'var(--gold)\'" onmouseout="this.style.borderBottomColor=\'transparent\';this.style.color=\'\'">'+escHtml(n)+'</span>' : ''; }
-function _teamRoundSide(t,n,e,right){ return '<span style="flex:1;min-width:0;text-align:'+(right?'right':'left')+';color:var(--text2);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(t?'<b style="color:var(--gold);font-size:11px">'+escHtml(t)+'</b> ':'')+_teamRoundNameClk(n)+(e?' <span style="color:var(--text3);font-size:12px">'+escHtml(String(e))+'</span>':'')+'</span>'; }
+// fed (opcional) = la bandera del jugador. Chess-Results no la trae en la formación; la liga alemana sí,
+// y ahí suma: en un club de la Bundesliga juegan de todos los países.
+function _teamRoundSide(t,n,e,right,fed){ return '<span style="flex:1;min-width:0;text-align:'+(right?'right':'left')+';color:var(--text2);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(fed?crFlagEmoji(fed)+' ':'')+(t?'<b style="color:var(--gold);font-size:11px">'+escHtml(t)+'</b> ':'')+_teamRoundNameClk(n)+(e?' <span style="color:var(--text3);font-size:12px">'+escHtml(String(e))+'</span>':'')+'</span>'; }
 /* LA FORMACIÓN SE PARCHEA, NO SE REHACE (24/09/2026, Olimpiada R8). La formación de la ronda en vivo es
    lo primero que se ve al abrir la Olimpiada: 106 matches, 1,3 MB de HTML y 10.000 nodos. Cada resultado
    nuevo de Lichess la rehacía entera (~400 ms en una PC, varias veces por vuelta de fichas: la página se
@@ -10518,7 +10546,9 @@ function _teamRoundBlock(m, mi, roundNum, crk, cx, lv){
     _boards.forEach(function(b,bi){
       // El color ALTERNA por mesa: mesa 1 (impar) el equipo de la izquierda va con blancas; mesa 2
       // (par) con negras; etc. (nW = columna izquierda/equipo A, nB = derecha/equipo B; NO son colores).
-      var leftIsWhite = (bi % 2 === 0);
+      // La liga alemana dice el color de cada mesa (`lw`), y ahí es al revés: el LOCAL (izquierda) lleva
+      // negras en la mesa 1. Si lo dice, manda eso.
+      var leftIsWhite = (b.lw === true || b.lw === false) ? b.lw : (bi % 2 === 0);
       // El resultado guardado es el del jugador de la IZQUIERDA; para contarlo en blancas/negras
       // hay que darlo vuelta cuando la izquierda lleva las negras (mesas pares).
       var _resBl = leftIsWhite ? b.res : _a11yResInvertido(b.res);
@@ -10528,7 +10558,7 @@ function _teamRoundBlock(m, mi, roundNum, crk, cx, lv){
         _resBl);
       inner+='<div role="row" style="display:flex;align-items:center;gap:6px;padding:9px 16px;'+(bi?'border-top:1px solid var(--bd14);':'')+'font-size:15px">';
       inner+='<span role="rowheader" style="display:contents">'+_a11yDice(_mesaFrase)+'</span>';
-      inner+='<span role="cell"'+(b.nW?' data-jug="'+escHtml(b.nW)+'"':'')+' style="display:contents">'+side(b.tW,b.nW,b.eW,true)+'</span>';
+      inner+='<span role="cell"'+(b.nW?' data-jug="'+escHtml(b.nW)+'"':'')+' style="display:contents">'+side(b.tW,b.nW,b.eW,true,b.fW)+'</span>';
       inner+='<span role="cell" style="display:inline-flex;flex-shrink:0">'+_teamColorDot(leftIsWhite)+_a11yDice(leftIsWhite?'blancas':'negras')+'</span>';
       // Resultado clickeable: abre la partida del broadcast que coincide con ese tablero (por ronda
       // + nombres). El ojito NO depende de que haya resultado: una mesa EN JUEGO es justo la que más
@@ -10551,7 +10581,7 @@ function _teamRoundBlock(m, mi, roundNum, crk, cx, lv){
         inner+='<span role="cell" style="flex-shrink:0;width:66px;text-align:center;font-weight:700;color:var(--text)">'+_a11yEnVezDe(escHtml(b.res||''), _a11yMesaCorto(leftIsWhite?(b.nW||''):(b.nB||''), leftIsWhite?(b.nB||''):(b.nW||''), _resBl))+'</span>';
       }
       inner+='<span role="cell" style="display:inline-flex;flex-shrink:0">'+_teamColorDot(!leftIsWhite)+_a11yDice(!leftIsWhite?'blancas':'negras')+'</span>';
-      inner+='<span role="cell"'+(b.nB?' data-jug="'+escHtml(b.nB)+'"':'')+' style="display:contents">'+side(b.tB,b.nB,b.eB,false)+'</span>';
+      inner+='<span role="cell"'+(b.nB?' data-jug="'+escHtml(b.nB)+'"':'')+' style="display:contents">'+side(b.tB,b.nB,b.eB,false,b.fB)+'</span>';
       inner+='</div>';
     });
     inner+='</div>';   // /tabla de mesas de este cruce
@@ -10757,7 +10787,7 @@ function _teamLiveRefresh(){
 function _teamRenderCrosses(crosses, roundNum, crk, hasFormation){
   // Sin sigla (Olimpiadas viejas, países en alemán): se saca del nombre, para la bandera y el filtro. Copia: lo guardado no se toca.
   crosses=(crosses||[]).map(function(m){ return (m.aFed&&m.bFed)?m:Object.assign({},m,{aFed:m.aFed||_nameFedLookup(m.aName),bFed:m.bFed||_nameFedLookup(m.bName)}); });
-  if(_teamArgOnly) crosses=(crosses||[]).filter(_teamCrossIsArg);
+  if(_teamArgOnly){ var _xdArg=crk?crDataLoad(crk):null; crosses=(crosses||[]).filter(function(m){ return _teamCrossIsArg(m,_xdArg); }); }
   if(!crosses||!crosses.length) return '<div style="color:var(--text3);font-size:12px;padding:10px">'+(_teamArgOnly?'' + _flagImg('ARG') + ' Argentina no juega en esta ronda.':'Sin cruces cargados.')+'</div>';
   var ks=(crk||'').replace(/'/g,"\\'");
   var inner='';
@@ -10859,6 +10889,9 @@ function _teamRenderSection(crk,data,wantTab,cascara){
   var _crucesLbl=_areCountries?'🌍 Cruces por países':'🤝 Cruces por equipos';
   // Landing: última ronda con FORMACIÓN; si no hay, última con CRUCES; si no, la tabla.
   var defaultTab=roundNums.length?roundNums[roundNums.length-1]:(crossNums.length?('x'+crossNums[crossNums.length-1]):(hasStand?'tabla':null));
+  // Liga alemana: trae los cruces de TODA la temporada desde el día uno y juega las rondas desordenadas,
+  // así que "la de número más alto" no sirve: manda el calendario (ver _dsbLandingTab).
+  if(data.source==='dsb'){ var _dl=_dsbLandingTab(data); if(_dl!=null) defaultTab=_dl; }
   // Al REDIBUJAR (tocar "Solo argentinos", actualizar) se arma ya abierta en la pestaña que se estaba
   // mirando. Antes salía en la de siempre y 30 ms después _teamRefresh saltaba a la buena: parado en la
   // Tabla, se veía un instante la formación ("Argentina no juega en esta ronda") y volvía la tabla.
@@ -10876,6 +10909,9 @@ function _teamRenderSection(crk,data,wantTab,cascara){
     if(_crUrlByKey[crk] && /tnr\d+/i.test(_crUrlByKey[crk])){
       h+='<button onclick="_crAutoUpdateTeamBtn(\''+ks+'\')" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:rgba(60,130,200,.15);border:1px solid rgba(70,150,220,.4);color:#7ab8e6;font-size:11px;font-weight:600;border-radius:8px;cursor:pointer;font-family:inherit" title="Baja solo todas las rondas + la clasificación desde Chess-Results">🔄 Actualizar desde Chess-Results</button>';
     }
+    if(_dsbUrlByKey[crk] && _dsbBase(_dsbUrlByKey[crk])){
+      h+='<button onclick="_dsbAutoUpdateBtn(\''+ks+'\')" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:rgba(60,130,200,.15);border:1px solid rgba(70,150,220,.4);color:#7ab8e6;font-size:11px;font-weight:600;border-radius:8px;cursor:pointer;font-family:inherit" title="Baja la tabla, los planteles y todas las rondas desde la página de resultados de la federación alemana (ergebnisdienst.schachbund.de)">🔄 Actualizar desde la liga alemana</button>';
+    }
     h+='</div>';
   }
   h+='</div>';
@@ -10888,7 +10924,7 @@ function _teamRenderSection(crk,data,wantTab,cascara){
   }
   // Filtro visitante "Solo argentinos" (mismo botón que la sección de partidas): solo si el torneo
   // tiene a Argentina. Filtra los cruces y la formación al match de ARG en cada ronda.
-  var _hasArg = crossNums.some(function(r){ return (crosses[r]||[]).some(_teamCrossIsArg); }) || roundNums.some(function(r){ return (rounds[r]||[]).some(function(m){ return _teamMatchIsArg(m,data); }); });
+  var _hasArg = crossNums.some(function(r){ return (crosses[r]||[]).some(function(m){ return _teamCrossIsArg(m,data); }); }) || roundNums.some(function(r){ return (rounds[r]||[]).some(function(m){ return _teamMatchIsArg(m,data); }); });
   if(!_hasArg) _teamArgOnly=false;   // sin ARG no hay botón para apagarlo → que un filtro pegado de otro torneo no deje todo vacío
   if(_hasArg){ h+='<div style="margin-bottom:12px"><button onclick="_teamToggleArg(\''+ks+'\')" class="arg-toggle'+(_teamArgOnly?' on':'')+'">' + _flagImg('ARG') + ' Solo argentinos</button></div>'; }
   // Botón de ronda/tabla. Mismo diseño que los botones de rondas de PARTIDAS (borde 2px + fondo glass,
@@ -12308,6 +12344,14 @@ function _stTeamBoardsAsRounds(data){
         // "Sin jugador asignado": el relleno que pone Chess-Results cuando un equipo no completó la
         // formación. No es una persona (el resultado es una incomparecencia), así que no cuenta.
         if (_teamIsPlaceholder(b.nW) || _teamIsPlaceholder(b.nB)) return;
+        // La liga alemana dice el color de verdad (lw) y el local lleva negras en las mesas impares: ahí
+        // se da vuelta la mesa para que "w" sea de verdad el de blancas.
+        if (b.lw === false) {
+          arr.push({ m: String(i + 1), w: b.nB, b: b.nW, ew: b.eB || 0, eb: b.eW || 0,
+                     tw: b.tB || '', tb: b.tW || '', res: _a11yResInvertido(b.res),
+                     eqA: _stTeamName(mt.bName), eqB: _stTeamName(mt.aName) });
+          return;
+        }
         arr.push({ m: String(i + 1), w: b.nW, b: b.nB, ew: b.eW || 0, eb: b.eB || 0,
                    tw: b.tW || '', tb: b.tB || '', res: b.res,
                    eqA: _stTeamName(mt.aName), eqB: _stTeamName(mt.bName) });
@@ -13200,6 +13244,297 @@ async function _i64ProxyFetch(exportUrl) {
   if (!res.ok) throw new Error('proxy HTTP ' + res.status);
   return new Uint8Array(await res.arrayBuffer());
 }
+
+// ── Ergebnisdienst de la federación alemana (Bundesliga) ──
+// La Bundesliga alemana (y las demás ligas del Deutscher Schachbund) NO sube las tablas a Chess-Results:
+// las publica en su propia página, ergebnisdienst.schachbund.de, en HTML prolijo. Acá se lee esa página
+// y se arma EXACTAMENTE lo mismo que sale de los Excel de Chess-Results (teamStandings, teamCrosses,
+// teamRounds, teamRoster, roundDates), así la sección por equipos la dibuja sin saber de dónde vino.
+//   bedh.php?liga=bl           → la tabla: cuadro cruzado con los puntos de tablero contra cada rival + MP, BP, BW
+//   bede.php?liga=bl&runde=N   → la ronda N. Antes de jugarse: "Ansetzungen" (quién juega con quién, día y
+//                                hora). Jugada: "Ergebnisse", mesa por mesa (título, Elo, bandera, resultado y
+//                                el COLOR de cada uno: en la Bundesliga el local lleva negras en la mesa 1)
+//   bedm.php?liga=bl&nummer=K  → el plantel del equipo K (con la bandera de cada jugador)
+// La temporada en curso vive en la raíz del sitio; las viejas, en /saison2025-26/…
+// Devuelve { dir, liga } o null si la dirección no es del Ergebnisdienst.
+function _dsbBase(url) {
+  var m = String(url || '').match(/^https?:\/\/ergebnisdienst\.schachbund\.de\/((?:saison[\w-]+\/)?)bed[a-z]?\.php\?(?:[^#]*&)?liga=([\w-]+)/i);
+  return m ? { dir: 'https://ergebnisdienst.schachbund.de/' + m[1], liga: m[2] } : null;
+}
+function _dsbPageUrl(base, page, extra) { return base.dir + page + '.php?liga=' + encodeURIComponent(base.liga) + (extra || ''); }
+// La página no manda permiso CORS: va por el mismo Worker que Chess-Results (que la tiene habilitada).
+async function _dsbFetch(url) {
+  var res = await fetch(CR_PROXY + '/?url=' + encodeURIComponent(url));
+  if (!res.ok) throw new Error('proxy HTTP ' + res.status);
+  return await res.text();
+}
+// Texto limpio de un pedazo de HTML ("4&frac12;" → "4½", "&minus;" → "-").
+function _dsbTxt(s) {
+  return String(s == null ? '' : s).replace(/<[^>]*>/g, '')
+    .replace(/&nbsp;/g, ' ').replace(/&frac12;/g, '½').replace(/&minus;/g, '-').replace(/&plus;/g, '+')
+    .replace(/&#(\d+);/g, function(_, n){ return String.fromCharCode(+n); })
+    .replace(/&#x([0-9a-f]+);/gi, function(_, n){ return String.fromCharCode(parseInt(n, 16)); })
+    .replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ').trim();
+}
+// Todas las tablas con esa clase, como filas: { c: clases del <tr>, cells: [{ th, c, a, h, t }] }
+// (th = es encabezado, c = clases, a = atributos, h = HTML de adentro, t = texto). Sin DOM a propósito:
+// así el banco de pruebas las corre en Node con las páginas de verdad.
+function _dsbTable(html, cls) {
+  var rows = [], re = new RegExp('<table[^>]*class="[^"]*\\b' + cls + '\\b[^"]*"[^>]*>([\\s\\S]*?)</table>', 'gi'), mt;
+  while ((mt = re.exec(String(html || ''))) !== null) {
+    var rr = /<tr([^>]*)>([\s\S]*?)<\/tr>/gi, mr;
+    while ((mr = rr.exec(mt[1])) !== null) {
+      var cells = [], rc = /<t([dh])([^>]*)>([\s\S]*?)<\/t\1>/gi, mc;
+      while ((mc = rc.exec(mr[2])) !== null) {
+        cells.push({ th: mc[1].toLowerCase() === 'h', c: ((mc[2].match(/class="([^"]*)"/i) || [])[1] || ''), a: mc[2], h: mc[3], t: _dsbTxt(mc[3]) });
+      }
+      rows.push({ c: ((mr[1].match(/class="([^"]*)"/i) || [])[1] || ''), cells: cells });
+    }
+  }
+  return rows;
+}
+// La primera celda de DATOS (no de encabezado) que tenga esa clase.
+function _dsbCell(cells, cls) {
+  var re = new RegExp('(^|\\s)' + cls + '(\\s|$)');
+  for (var i = 0; i < (cells || []).length; i++) if (!cells[i].th && re.test(cells[i].c)) return cells[i];
+  return null;
+}
+// "27.09.25" + "14:00" (hora de Alemania) → "2025-09-27 09:00" en hora ARGENTINA, que es como se guardan
+// los horarios de ronda (roundDates) y como los lee el visitante. Alemania: UTC+1 en invierno y UTC+2 en
+// verano (del último domingo de marzo al último de octubre, a la 1:00 UTC). Sin hora, sólo la fecha.
+function _dsbDateART(d, t) {
+  var md = String(d || '').match(/(\d{1,2})\.(\d{1,2})\.(\d{2,4})/); if (!md) return '';
+  var y = +md[3]; if (y < 100) y += 2000;
+  function p2(n){ return (n < 10 ? '0' : '') + n; }
+  var mt = String(t || '').match(/(\d{1,2}):(\d{2})/);
+  if (!mt) return y + '-' + p2(+md[2]) + '-' + p2(+md[1]);
+  function ultDomingo(yy, mes) { var u = new Date(Date.UTC(yy, mes + 1, 0)); return Date.UTC(yy, mes, u.getUTCDate() - u.getUTCDay(), 1); }
+  var local = Date.UTC(y, +md[2] - 1, +md[1], +mt[1], +mt[2]);
+  var verano = (local - 2 * 3600e3 >= ultDomingo(y, 2) && local - 2 * 3600e3 < ultDomingo(y, 9));
+  var ar = new Date(local - (verano ? 2 : 1) * 3600e3 - 3 * 3600e3);
+  return ar.getUTCFullYear() + '-' + p2(ar.getUTCMonth() + 1) + '-' + p2(ar.getUTCDate()) + ' ' + p2(ar.getUTCHours()) + ':' + p2(ar.getUTCMinutes());
+}
+// Nombre de un JUGADOR como lo escriben FIDE y Lichess: la página alemana pone "Schäfer" / "Köllner" y la
+// transmisión "Schaefer" / "Koellner", y así el ojito de la mesa no encontraba la partida. Los nombres de
+// los CLUBES no se tocan: ahí Lichess sí escribe "Düsseldorfer SK".
+function _dsbNombre(n) {
+  var M = { 'ä':'ae', 'ö':'oe', 'ü':'ue', 'Ä':'Ae', 'Ö':'Oe', 'Ü':'Ue', 'ß':'ss' };
+  return String(n || '').replace(/[äöüÄÖÜß]/g, function(c){ return M[c]; });
+}
+// Resultado de una mesa con los puntos de cada lado ("1"/"0", "½"/"½", "+"/"-" = ganó por no presentación
+// del rival) → como lo guarda el sitio, siempre visto desde el jugador de la IZQUIERDA (el local).
+function _dsbRes(a, b) {
+  a = String(a || '').trim(); b = String(b || '').trim();
+  if (a === '+' && b === '-') return '+--';
+  if (a === '-' && b === '+') return '--+';
+  if (a === '-' && b === '-') return '---';
+  var pa = a === '½' ? 0.5 : parseFloat(a), pb = b === '½' ? 0.5 : parseFloat(b);
+  if (pa === 1 && pb === 0) return '1-0';
+  if (pa === 0 && pb === 1) return '0-1';
+  if (pa === 0.5 && pb === 0.5) return '½-½';
+  if (pa === 0 && pb === 0) return '0-0';
+  return '';
+}
+// La TABLA (bedh). Es un cuadro cruzado: en cada casilla, los puntos de tablero que el equipo de la fila
+// le hizo al de la columna (las columnas van en el orden de la tabla, la diagonal es "+"). Al final,
+// Sp (matches jugados), MP (puntos de match), BP (puntos de tablero) y BW (Berliner Wertung: el desempate
+// alemán, que pondera los tableros de arriba). Sale con el formato del cuadro cruzado de Chess-Results
+// (kind 'rr'), con los desempates YA rotulados. También devuelve cuántas rondas tiene la liga (el menú
+// "Runden") y el número de cada equipo (para bajar su plantel).
+function _dsbParseStandings(html) {
+  var rows = _dsbTable(html, 'kreuztab');
+  var teams = [], clubs = [];
+  rows.forEach(function(r) {
+    var pl = _dsbCell(r.cells, 'platz'), ve = _dsbCell(r.cells, 'verein');
+    if (!pl || !ve || !ve.t) return;
+    var g = function(k){ var c = _dsbCell(r.cells, k); return c ? c.t : ''; };
+    var grid = r.cells.filter(function(c){ return !c.th && /(^|\s)(runde|spielfrei)(\s|$)/.test(c.c); })
+                      .map(function(c){ return /(^|\s)spielfrei(\s|$)/.test(c.c) ? '*' : c.t; });
+    teams.push({ rk: parseInt(pl.t) || teams.length + 1, name: ve.t, fed: '', grid: grid, des: [g('mp'), g('bp'), g('bw')] });
+    var nr = (ve.h.match(/nummer=(\d+)/) || [])[1];
+    if (nr) clubs.push({ nr: nr, name: ve.t });
+  });
+  if (!teams.length) return null;
+  var maxR = 0, rr = /bede\.php\?liga=[\w-]+&(?:amp;)?runde=(\d+)/g, m;
+  while ((m = rr.exec(String(html))) !== null) maxR = Math.max(maxR, +m[1]);
+  return {
+    standings: { kind: 'rr', teams: teams, desNames: ['Match', 'Partida', 'Berliner'],
+                 desNote: 'Berliner: el desempate de la liga alemana, que premia los puntos hechos en los tableros de arriba.' },
+    rounds: maxR, clubs: clubs
+  };
+}
+// Una RONDA (bede). Devuelve { num, matches, crosses, date }:
+//   · matches = la formación mesa por mesa (sólo de los matches ya jugados), con el formato de
+//     _teamParseRounds + lo que Chess-Results no trae: lw (¿el de la izquierda lleva blancas?) y fW/fB
+//     (la bandera de cada jugador).
+//   · crosses = equipo contra equipo con el marcador, como _teamParseCrosses; los que todavía no se
+//     jugaron van sin resultado ("Ansetzungen", con día y hora).
+//   · date = cuándo arranca la ronda, en hora argentina (el primer match), si la página lo dice.
+function _dsbParseRound(html) {
+  var h = String(html || ''), num = 0, mh, rh = /<h2[^>]*>([\s\S]*?)<\/h2>/gi;
+  while ((mh = rh.exec(h)) !== null) { var mn = _dsbTxt(mh[1]).match(/(\d+)\.\s*Runde/i); if (mn) { num = +mn[1]; break; } }
+  var out = { num: num, matches: [], crosses: [], date: '' }, cur = null;
+  function lado(cs) {
+    var nm = _dsbCell(cs, 'name'), ti = _dsbCell(cs, 'titel'), el = _dsbCell(cs, 'elo'), fl = _dsbCell(cs, 'flag'), res = null;
+    cs.forEach(function(c){ if (!c.th && /(^|\s)erg(\s|$)/.test(c.c) && /(^|\s)(white|black)(\s|$)/.test(c.c)) res = c; });
+    var t = _normTitle(ti ? ti.t : ''); if (!_TEAM_TITLES.test(t)) t = '';
+    return { n: nm ? _dsbNombre(nm.t) : '', t: t, e: el ? (parseInt(el.t) || '') : '', f: fl ? (((fl.h.match(/alt="([A-Za-z]{3})"/) || [])[1]) || '').toUpperCase() : '',
+             r: res ? res.t : '', w: res ? /(^|\s)white(\s|$)/.test(res.c) : null };
+  }
+  _dsbTable(h, 'paarungen').forEach(function(r) {
+    var cs = r.cells;
+    if (/(^|\s)paarung(\s|$)/.test(r.c)) {
+      var nms = cs.filter(function(c){ return !c.th && /(^|\s)name(\s|$)/.test(c.c); });
+      var pts = cs.filter(function(c){ return !c.th && /(^|\s)erg(\s|$)/.test(c.c) && c.t; });
+      cur = { aNo: nms[0] ? ((nms[0].a.match(/id="(\d+)"/) || [])[1] || '') : '', aName: nms[0] ? nms[0].t : '',
+              bNo: nms[1] ? ((nms[1].a.match(/id="(\d+)"/) || [])[1] || '') : '', bName: nms[1] ? nms[1].t : '',
+              score: pts.length >= 2 ? pts[0].t + ' : ' + pts[1].t : '', boards: [] };
+      if (cur.aName || cur.bName) out.matches.push(cur); else cur = null;
+      return;
+    }
+    if (!cur) return;
+    var k = -1; for (var i = 0; i < cs.length; i++) if (/(^|\s)trenner(\s|$)/.test(cs[i].c)) { k = i; break; }
+    if (k < 0) return;
+    var L = lado(cs.slice(0, k)), R = lado(cs.slice(k + 1));
+    if (!L.n && !R.n) return;
+    var b = { tW: L.t, nW: L.n, eW: L.e, tB: R.t, nB: R.n, eB: R.e, res: _dsbRes(L.r, R.r) };
+    if (L.w !== null) b.lw = L.w; else if (R.w !== null) b.lw = !R.w;
+    if (L.f) b.fW = L.f;
+    if (R.f) b.fB = R.f;
+    cur.boards.push(b);
+  });
+  out.matches.forEach(function(m) {
+    var sc = String(m.score || '').split(':');
+    out.crosses.push({ no: String(out.crosses.length + 1), aFed: '', aName: m.aName, aPts: '', aRes: (sc[0] || '').trim(),
+                       bRes: (sc[1] || '').trim(), bPts: '', bName: m.bName, bFed: '' });
+  });
+  var vistos = {}; out.matches.forEach(function(m){ vistos[_teamPairKey(m.aName, m.bName)] = 1; });
+  _dsbTable(h, 'termine').forEach(function(r) {
+    var he = _dsbCell(r.cells, 'heim'), ga = _dsbCell(r.cells, 'gast');
+    if (!he || !ga || !he.t || !ga.t) return;
+    var dt = _dsbDateART((_dsbCell(r.cells, 'datum') || {}).t, (_dsbCell(r.cells, 'uhrzeit') || {}).t);
+    if (dt && (!out.date || dt < out.date)) out.date = dt;
+    if (vistos[_teamPairKey(he.t, ga.t)]) return;
+    out.crosses.push({ no: String(out.crosses.length + 1), aFed: '', aName: he.t, aPts: '', aRes: '', bRes: '', bPts: '', bName: ga.t, bFed: '' });
+  });
+  return (out.matches.length || out.crosses.length) ? out : null;
+}
+// El PLANTEL de un equipo (bedm), con el formato de _teamParseRoster.
+function _dsbParseRoster(html, nr) {
+  // El nombre es el ÚLTIMO título antes de la tabla (arriba, en el costado, hay otros: "Ligen: 2026/27").
+  var _h = String(html || ''), _i = _h.search(/<table[^>]*class="[^"]*\bmannschaft\b/i);
+  var _hs = (_i >= 0 ? _h.slice(0, _i) : '').match(/<h2[^>]*>[\s\S]*?<\/h2>/gi) || [];
+  var name = _hs.length ? _dsbTxt(_hs[_hs.length - 1]) : '';
+  var players = [];
+  _dsbTable(html, 'mannschaft').forEach(function(r) {
+    var sp = _dsbCell(r.cells, 'spieler'); if (!sp || !sp.t) return;
+    var g = function(k){ var c = _dsbCell(r.cells, k); return c ? c.t : ''; };
+    var ti = _normTitle(g('tit')); if (!_TEAM_TITLES.test(ti)) ti = '';
+    players.push({ bo: parseInt(g('nr')) || players.length + 1, ti: ti, nm: _dsbNombre(sp.t), elo: parseInt(g('elo')) || 0,
+                   fed: g('nat').toUpperCase(), fid: '', pts: g('punkte'), gm: g('partien'), rp: '' });
+  });
+  return (name && players.length) ? { no: parseInt(nr) || 0, name: name, capt: '', eloAvg: '', players: players } : null;
+}
+// Corre fn sobre cada elemento, de a `k` por vez (para no tirarle 30 pedidos juntos a la página).
+async function _dsbPool(items, k, fn) {
+  var out = new Array(items.length), i = 0;
+  async function uno() { while (i < items.length) { var j = i++; try { out[j] = await fn(items[j]); } catch (e) { out[j] = null; } } }
+  var ws = []; for (var w = 0; w < Math.min(k, items.length); w++) ws.push(uno());
+  await Promise.all(ws);
+  return out;
+}
+// En qué pestaña abre la sección. En la Bundesliga hay cruces de TODA la temporada desde el primer día
+// y las rondas se juegan desordenadas (la 11 y la 12 antes que la 5), así que no sirve "la de número más
+// alto" como en Chess-Results: manda el CALENDARIO. La ronda que se está jugando o se jugó hace menos de
+// dos días (su formación); si no, la próxima que se juega (sus cruces); si no, la última jugada.
+function _dsbLandingTab(data, ahora) {
+  ahora = ahora || Date.now();
+  var fechas = (data && data.roundDates) || {}, rondas = (data && data.teamRounds) || {}, cruces = (data && data.teamCrosses) || {};
+  function t(r) { var d = _crRoundDate(data, r); return d ? d.getTime() : null; }
+  var conForm = Object.keys(rondas).filter(function(r){ return _teamRoundHasBoards(rondas[r]); });
+  var reciente = null, proxima = null, ultima = null;
+  conForm.forEach(function(r) {
+    var x = t(r);
+    if (x != null && ahora - x < 2 * 864e5 && ahora - x > -864e5 && (reciente == null || x > t(reciente))) reciente = r;
+    // La última jugada: por fecha si se sabe; si no, la de número más alto.
+    var xu = (ultima == null) ? null : t(ultima);
+    if (ultima == null) ultima = r;
+    else if (x != null && (xu == null || x > xu)) ultima = r;
+    else if (x == null && xu == null && +r > +ultima) ultima = r;
+  });
+  if (reciente != null) return String(reciente);
+  Object.keys(cruces).forEach(function(r) {
+    if (conForm.indexOf(r) >= 0) return;
+    var x = t(r); if (x == null || x < ahora - 12 * 3600e3) return;
+    if (proxima == null || x < t(proxima)) proxima = r;
+  });
+  if (proxima != null) return 'x' + proxima;
+  if (ultima != null) return String(ultima);
+  return null;
+}
+var _dsbUrlByKey = {};   // crk -> URL del Ergebnisdienst (lo setea openTournamentDetail)
+// Baja la tabla, los planteles y las rondas de la liga, y lo guarda como si viniera de Chess-Results.
+// silent=true → la visita (sin mensajes): no vuelve a pedir lo que ya tiene (rondas completas que no son
+// de estos días, rondas que todavía no se juegan y cuyos cruces ya están, planteles ya bajados).
+async function _dsbAutoFetchTeam(crk, url, opts) {
+  opts = opts || {};
+  var st = document.getElementById('cr-status-' + crk);
+  function setS(m){ if (st && !opts.silent) st.textContent = m; }
+  var base = _dsbBase(url);
+  if (!base) { setS('❌ La dirección no es de la página de resultados de la liga alemana (ergebnisdienst.schachbund.de/…?liga=…).'); return false; }
+  if (_crAutoBusy[crk]) return false; _crAutoBusy[crk] = true;
+  try {
+    var data = crDataLoad(crk) || {};
+    if (!data.teamRounds) data.teamRounds = {};
+    if (!data.teamCrosses) data.teamCrosses = {};
+    if (!data.roundDates) data.roundDates = {};
+    var visita = !!opts.silent;
+    setS('⏳ Bajando la tabla…');
+    var tab = _dsbParseStandings(await _dsbFetch(_dsbPageUrl(base, 'bedh')));
+    if (!tab) throw new Error('no se reconoció la tabla de la liga');
+    data.teamStandings = tab.standings;
+    data.source = 'dsb';
+    if (!(visita && data.teamRoster && data.teamRoster.length) && tab.clubs.length) {
+      setS('⏳ Bajando los planteles…');
+      var ros = await _dsbPool(tab.clubs, 4, function(c) {
+        return _dsbFetch(_dsbPageUrl(base, 'bedm', '&nummer=' + c.nr)).then(function(x){ return _dsbParseRoster(x, c.nr); });
+      });
+      ros = ros.filter(Boolean);
+      if (ros.length) data.teamRoster = ros;
+    }
+    var ahora = Date.now(), lista = [];
+    for (var r = 1; r <= (tab.rounds || 0); r++) {
+      if (visita) {
+        var d = _crRoundDate(data, r), x = d ? d.getTime() : null;
+        var reciente = x != null && Math.abs(ahora - x) < 3 * 864e5;
+        if (_teamRoundComplete(data, r) && !reciente) continue;
+        if (data.teamCrosses[r] && data.teamCrosses[r].length && x != null && x - ahora > 36 * 3600e3) continue;
+      }
+      lista.push(r);
+    }
+    var okR = 0, hechas = 0;
+    await _dsbPool(lista, 4, function(r) {
+      return _dsbFetch(_dsbPageUrl(base, 'bede', '&runde=' + r)).then(function(x) {
+        hechas++; setS('⏳ Bajando rondas… ' + hechas + '/' + lista.length);
+        var p = _dsbParseRound(x); if (!p) return;
+        var n = p.num || r;
+        if (p.crosses.length) data.teamCrosses[n] = p.crosses;
+        if (_teamRoundHasBoards(p.matches)) data.teamRounds[n] = p.matches;
+        if (p.date) data.roundDates[n] = p.date;
+        okR++;
+      });
+    });
+    crDataSave(crk, data);
+    if (!opts.silent) setS('✓ Actualizado desde la página de la liga — ' + okR + ' ronda(s) + tabla' + (data.teamRoster ? ' + planteles' : '') + (_ondemand ? '' : '. Acordate de "Guardar datos en mi carpeta" y publicar.'));
+    var _tKeep = (opts.keepTab && _teamCurTab[crk] != null) ? _teamCurTab[crk] : null;
+    _teamRefresh(crk, _tKeep != null ? _tKeep : (_dsbLandingTab(data) || 'tabla'), !!opts.keepTab);
+    try { _tdRefreshPodium(crk); } catch(e){}
+    return true;
+  } catch(e) { setS('❌ ' + e.message); return false; }
+  finally { _crAutoBusy[crk] = false; }
+}
+function _dsbAutoUpdateBtn(crk) { _dsbAutoFetchTeam(crk, _dsbUrlByKey[crk], {}); }
 
 // Descubre cuántas rondas hay leyendo los links "Emparejamientos por mesas" de la página del torneo.
 // pairArt = el art de esos links (3 = equipos, 2 = individual). Devuelve el nº máximo de ronda, o null.
@@ -14785,8 +15120,10 @@ function crOpenPlayer(key,name){
           // OJO: en los cuadros por equipos, nW/nB son "equipo A / equipo B", NO blancas y negras
           // (el color real no viene en los Excel). Por eso va sinColor:true y la columna del color
           // muestra un guioncito en vez de inventar un ⬜ o un ⬛ que acierta la mitad de las veces.
-          if(bd.nW===name){ history.push({round:r,color:'Blancas',sinColor:true,opp:bd.nB,oppTitle:bd.tB,oppElo:bd.eB,oppTeam:mt.bName,res:bd.res,myRes:myResult(bd.res,true)}); }
-          else if(bd.nB===name){ history.push({round:r,color:'Negras',sinColor:true,opp:bd.nW,oppTitle:bd.tW,oppElo:bd.eW,oppTeam:mt.aName,res:bd.res,myRes:myResult(bd.res,false)}); }
+          // La liga alemana SÍ trae el color (bd.lw = el de la izquierda lleva blancas): ahí se muestra.
+          var _lw=(bd.lw===true||bd.lw===false)?bd.lw:null;
+          if(bd.nW===name){ history.push({round:r,color:(_lw===false?'Negras':'Blancas'),sinColor:_lw===null,opp:bd.nB,oppTitle:bd.tB,oppElo:bd.eB,oppTeam:mt.bName,res:bd.res,myRes:myResult(bd.res,true)}); }
+          else if(bd.nB===name){ history.push({round:r,color:(_lw===false?'Blancas':'Negras'),sinColor:_lw===null,opp:bd.nW,oppTitle:bd.tW,oppElo:bd.eW,oppTeam:mt.aName,res:bd.res,myRes:myResult(bd.res,false)}); }
         });
       });
     });
@@ -20170,7 +20507,10 @@ function parseDateFromText(text) {
   ];
   var s = (text || '').toLowerCase();
   var year = new Date().getFullYear();
-  var ym = s.match(/\b(20\d\d|19\d\d)\b/);
+  // El ÚLTIMO año del texto: el mes que se toma es el del final del rango, y en uno que cruza de año
+  // ("27 Sep 2025 – 26 Abr 2026", la Bundesliga) el primero daba abril de 2025 → torneo terminado.
+  var _ys = s.match(/\b(?:20\d\d|19\d\d)\b/g);
+  var ym = _ys ? [null, _ys[_ys.length - 1]] : null;
   if (ym) year = parseInt(ym[1]);
   var DIA_ANTES = /(?:^|\D)\d{1,2}\s*(?:de\s+)?$/;
   var mejor = null;   // el mes que aparece MÁS A LA DERECHA del texto = el final del rango
@@ -31173,14 +31513,23 @@ function _bcMergeMeta(metas){
     var mm = (r.name || '').match(/(\d+)/), num = mm ? parseInt(mm[1]) : null; if(num == null) return;
     if(!byNum[num]) byNum[num] = { num: num, name: r.name, live: false, finished: true, roundIds: [] };
     byNum[num].roundIds.push(r.id);
+    if(r.startsAt && !(byNum[num]._at >= r.startsAt)) byNum[num]._at = r.startsAt;
     if(r.ongoing) byNum[num].live = true;
     byNum[num].finished = byNum[num].finished && !!r.finished;
   }); });
   var nums = Object.keys(byNum).map(Number).sort(function(a,b){return a-b;});
   if(!nums.length) return null;
+  // La hora de arranque sólo sirve para elegir abajo: no viaja en la metadata.
+  var _at = {}; nums.forEach(function(n){ _at[n] = byNum[n]._at || 0; delete byNum[n]._at; });
   var roundsMeta = nums.map(function(n){ return byNum[n]; });
   var liveNums = roundsMeta.filter(function(r){ return r.live; }).map(function(r){ return r.num; });
-  var currentNum = liveNums.length ? Math.max.apply(null, liveNums) : nums[nums.length - 1];
+  // Sin ronda en vivo, la ÚLTIMA QUE SE JUGÓ por fecha, no la de número más alto. Son lo mismo salvo en
+  // las ligas que juegan rondas desordenadas: en la Bundesliga 2025/26 la 11 y la 12 se jugaron en enero
+  // y la 5 y la 6 en febrero; pasado ese fin de semana se abría en la 12, un mes vieja. Sin fechas
+  // (o empatadas), como antes: la de número más alto.
+  var currentNum = nums[nums.length - 1];
+  nums.forEach(function(n){ if(_at[n] > _at[currentNum] || (_at[n] === _at[currentNum] && n > currentNum)) currentNum = n; });
+  if(liveNums.length) currentNum = Math.max.apply(null, liveNums);
   return { roundsMeta: roundsMeta, currentNum: currentNum, pending: pending, lastFinishedAt: lastFinishedAt };
 }
 // Baja los PGN de UNA ronda (varios roundIds = esa ronda en cada sub-transmisión) → array de PGNs.
@@ -32927,6 +33276,12 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   }
   _tdActiveCat = activeCat;   // recordar la categoría mostrada para los links de partidas (&cat=<C>)
   _tdRoundsTotal = parseInt(rounds) || 0;   // total de rondas (del torneo o de la categoría): tope para las rondas subidas (_tdMergeUploadedRounds)
+  // Bundesliga alemana (y demás ligas de la federación alemana): no van a Chess-Results, publican en su
+  // propio Ergebnisdienst. El link puede venir en el campo de Chess-Results o en el del sitio web del
+  // torneo; en los dos casos se usa para bajar las tablas (sólo por equipos) y se muestra como sitio web.
+  var dsbUrl = '';
+  if (_dsbBase(crUrl)) { dsbUrl = crUrl; if (!weburl) weburl = crUrl; crUrl = ''; }
+  else if (_dsbBase(weburl)) dsbUrl = weburl;
 
   // ── Estado EFECTIVO de la vista (categoría activa o torneo sin categorías) ──────────────────────
   // "Finalizado" MANUAL manda: corta el sondeo (no re-pedir partidas al worker) y muestra el podio, aunque
@@ -33242,6 +33597,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   _crUrlByKey[crk] = crUrl; // que la sección de equipos sepa el crUrl (botón + auto-fetch)
   _i64UrlByKey[crk] = info64url || ''; // ídem para info64 (botón + auto-fetch)
   _vsUrlByKey[crk] = vesusurl || ''; // ídem para vesus (botón + auto-fetch)
+  _dsbUrlByKey[crk] = isTeam ? dsbUrl : ''; // ídem para la liga alemana (sólo torneos por equipos)
   _crFormat[crk] = format || ''; // sistema elegido a mano (override de la heurística suizo/round robin)
   // (los horarios de ronda a mano ya se registraron arriba, junto a crk)
   if (_tdCtx) { _tdCtx.crKey = crk; _tdCtx.isTeam = isTeam; }
@@ -33356,6 +33712,10 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   // link de vesus, bajar la tabla fresca al abrir (aunque el autor todavía no la haya actualizado).
   if (_ondemand && _crAutoOk && !isTeam && _vsKey(vesusurl)) {
     _vsAutoFetchIndiv(crk, vesusurl, { silent: true });
+  }
+  // Ídem para la liga alemana (Bundesliga): tabla, planteles y rondas desde su propia página.
+  if (_ondemand && _crAutoOk && isTeam && dsbUrl) {
+    _dsbAutoFetchTeam(crk, dsbUrl, { silent: true });
   }
   // Si se pidió, bajar directo al apartado de partidas
   if (scrollToGames && m) {

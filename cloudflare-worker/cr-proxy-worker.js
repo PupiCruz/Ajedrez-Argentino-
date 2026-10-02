@@ -68,6 +68,9 @@ const ALLOWED_HOST = /(^|\.)chess-results\.com$/i;
 const ALLOWED_HOST_I64 = /(^|\.)info64\.org$/i;
 const ALLOWED_HOST_SI = /(^|\.)sichess\.com$/i;
 const ALLOWED_HOST_LI = /(^|\.)lichess\.org$/i;
+// Ergebnisdienst del Deutscher Schachbund: la Bundesliga alemana (y las demás ligas de la federación)
+// NO publica en Chess-Results sino en su propia página. Sólo ese subdominio, no todo schachbund.de.
+const ALLOWED_HOST_DSB = /^ergebnisdienst\.schachbund\.de$/i;
 const CACHE_SECONDS = 120;
 const STATS_CACHE_SECONDS = 30;
 const SI_CACHE_SECONDS = 15;   // vivo: caché corta para que las jugadas nuevas lleguen rápido
@@ -229,9 +232,10 @@ export default {
     try { t = new URL(target); }
     catch (e) { return errJson('URL inválida', 400); }
 
-    // Sólo chess-results.com por HTTPS — evita que el Worker sea un proxy abierto.
-    if (t.protocol !== 'https:' || !ALLOWED_HOST.test(t.hostname)) {
-      return errJson('Host no permitido (sólo chess-results.com)', 403);
+    // Sólo chess-results.com (y el Ergebnisdienst de la Bundesliga alemana) por HTTPS — evita que el
+    // Worker sea un proxy abierto.
+    if (t.protocol !== 'https:' || !(ALLOWED_HOST.test(t.hostname) || ALLOWED_HOST_DSB.test(t.hostname))) {
+      return errJson('Host no permitido (sólo chess-results.com y ergebnisdienst.schachbund.de)', 403);
     }
 
     // Caché: si ya bajamos esto hace poco, devolverlo sin volver a chess-results.

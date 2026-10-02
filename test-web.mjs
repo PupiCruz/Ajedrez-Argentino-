@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1993;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2033;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -8231,6 +8231,144 @@ console.log('\n=== Auditoría 23/09 — Fase 4: accesibilidad y prolijidad ===')
   chk(o.r[1].cp === -300 && o.reclas === 0, 'parado en una variante (no está en el gráfico): no toca nada');
   o = F(mkFa({ cp: -300, d: 12 }, true), { curFen: 'B', depth: 15 }, { cp: 40 });
   chk(o.r[1].cp === 40 && o.r[1].d === 15, 'en vivo sigue como antes (la profundidad la mira _faSettled al calificar)');
+}
+// ── 🇩🇪 Bundesliga: las tablas de la liga alemana, desde su propia página (02/10) ──
+// No sube nada a Chess-Results: publica en ergebnisdienst.schachbund.de. Los pedacitos de HTML de acá
+// abajo son recortes de las páginas reales (temporadas 2025/26 y 2026/27).
+{
+  console.log('\n🇩🇪 Bundesliga: tablas desde la página de la federación alemana');
+  const N = ['_dsbBase', '_dsbPageUrl', '_dsbTxt', '_dsbTable', '_dsbCell', '_dsbDateART', '_dsbRes', '_dsbNombre',
+             '_dsbParseStandings', '_dsbParseRound', '_dsbParseRoster', '_dsbLandingTab', '_normTitle', '_teamPairKey',
+             '_teamNorm', '_teamRoundHasBoards', '_teamIsPlaceholder', '_crRoundDate', 'parseDateFromText',
+             '_teamMatchIsArg', '_teamSideIsArg', '_teamFedPersonArg', '_teamCrossIsArg', '_teamClubHasArg',
+             '_stTeamBoardsAsRounds', '_stTeamName', '_a11yResInvertido'];
+  const pre = SRC.match(/var _TITLE_ES\s*=[^;]+;/)[0] + SRC.match(/var _TEAM_TITLES\s*=[^;]+;/)[0]
+            + SRC.match(/var _TEAM_SIN_JUGADOR\s*=[^;]+;/)[0];
+  const D = new Function('_crRoundDTByKey', '_isArgAdicionalName', '_teamCountryParts', '_teamResolveFed', '_nameFedLookup',
+                         pre + N.map(extraerFuncion).join('\n') + '; return {' + N.join(',') + '};')(
+    {}, (n) => /pichot/i.test(n), (n) => ({ fed: (String(n).match(/\(([A-Z]{3})\)\s*$/) || [])[1] || '' }), () => '', () => '');
+
+  // La dirección: la temporada en curso vive en la raíz y las viejas en /saison…/
+  const b1 = D._dsbBase('https://ergebnisdienst.schachbund.de/bedh.php?liga=bl');
+  chk(b1 && b1.dir === 'https://ergebnisdienst.schachbund.de/' && b1.liga === 'bl', 'reconoce la página de la liga (temporada en curso)', JSON.stringify(b1));
+  const b2 = D._dsbBase('https://ergebnisdienst.schachbund.de/saison2025-26/bede.php?liga=bl&runde=3');
+  chk(b2 && b2.dir === 'https://ergebnisdienst.schachbund.de/saison2025-26/' && b2.liga === 'bl', '…y la de una temporada vieja, desde cualquier página', JSON.stringify(b2));
+  chk(D._dsbBase('https://chess-results.com/tnr1.aspx?lan=2') === null && D._dsbBase('https://otra.schachbund.de/bedh.php?liga=bl') === null
+      && D._dsbBase('https://ergebnisdienst.schachbund.de/') === null, 'Chess-Results, otro sitio o sin liga → no es de la liga alemana');
+  chk(D._dsbPageUrl(b2, 'bedm', '&nummer=6') === 'https://ergebnisdienst.schachbund.de/saison2025-26/bedm.php?liga=bl&nummer=6', 'arma las direcciones de cada página');
+
+  // La tabla: cuadro cruzado con MP, BP y BW.
+  const tabla = `<div class="runden"><ul><li><a href="bede.php?liga=bl&amp;runde=1">1</a></li><li><a href="bede.php?liga=bl&amp;runde=15">15</a></li></ul></div>
+  <h2>Tabelle</h2><table class="kreuztab"><thead><tr><th class="platz" title="Platz"></th><th class="verein">Mannschaft</th><th class="runde">1</th><th class="runde">2</th>
+  <th class="sp">Sp</th><th class="mp">MP</th><th class="bp">BP</th><th class="bw">BW</th></tr></thead><tbody>
+  <tr><td class="platz auf">1.</td><td class="verein"><a href="bedm.php?liga=bl&amp;nummer=5">SC Viernheim</a></td><td class="spielfrei">&nbsp;+&nbsp;</td>
+  <td class="runde"><a href="bede.php?liga=bl&amp;runde=14#5">4&frac12;</a></td><td class="sp">15</td><td class="mp">30</td><td class="bp">81&frac12;</td><td class="bw">358&frac12;</td></tr>
+  <tr><td class="platz">2.</td><td class="verein"><a href="bedm.php?liga=bl&amp;nummer=10">OSG Baden-Baden</a></td><td class="runde"><a href="#">3&frac12;</a></td>
+  <td class="spielfrei">&nbsp;+&nbsp;</td><td class="sp">15</td><td class="mp">23</td><td class="bp">72</td><td class="bw">317</td></tr></tbody></table>`;
+  const st = D._dsbParseStandings(tabla);
+  chk(st && st.standings.kind === 'rr' && st.standings.teams.length === 2, 'la tabla sale como cuadro cruzado (el formato que ya dibuja el sitio), sin colar el encabezado como equipo', st && st.standings.teams.length);
+  chk(JSON.stringify(st.standings.teams[0].grid) === '["*","4½"]' && JSON.stringify(st.standings.teams[1].grid) === '["3½","*"]', 'la diagonal es "*" y las casillas los puntos de tablero (con el ½)', JSON.stringify(st.standings.teams[0].grid));
+  chk(JSON.stringify(st.standings.teams[0].des) === '["30","81½","358½"]' && st.standings.desNames.join() === 'Match,Partida,Berliner',
+      'los desempates salen ya rotulados: puntos de match, de tablero y la Berliner Wertung');
+  chk(st.rounds === 15 && st.clubs.length === 2 && st.clubs[1].nr === '10', 'saca cuántas rondas hay (el menú) y el número de cada club (para su plantel)', st.rounds + ' / ' + JSON.stringify(st.clubs[1]));
+
+  // Una ronda jugada: mesa por mesa, con el color de verdad y la bandera.
+  const jugada = `<h2>Ligen: 2025/26</h2><h2>Ergebnisse 3. Runde</h2><table class="paarungen"><tbody>
+  <tr class="paarung"><td></td><td class="name" colspan="4" id="16"><a href="#">SV Deggendorf</a></td><td class="erg"></td><td class="erg">3&frac12;</td><td class="trenner">&minus;</td><td class="erg">4&frac12;</td><td class="erg"></td><td class="name" colspan="4" id="2"><a href="#">Düsseldorfer SK</a></td><td></td></tr>
+  <tr><td class="nr">6</td><td class="titel">GM</td><td class="elo">2553</td><td class="flag"><img class="flag flag-in" alt="IND" /></td><td class="name flags"><a href="#">Gupta Sankalp</a></td><td class="erg"></td>
+  <td class="erg black">0</td><td class="trenner">:</td><td class="erg white">1</td><td class="erg"></td><td class="name"><a href="#">Volodar Murzin</a></td><td class="flag"><img class="flag flag-fide" alt="FID" /></td><td class="elo flags">2650</td><td class="titel">GM</td><td class="nr">1</td></tr>
+  <tr><td class="nr">8</td><td class="titel">IM</td><td class="elo">2420</td><td class="flag"><img alt="GER" /></td><td class="name flags"><a href="#">Markus Schäfer</a></td><td class="erg"></td>
+  <td class="erg white">&plus;</td><td class="trenner">:</td><td class="erg black">&minus;</td><td class="erg"></td><td class="name"><a href="#">Alan Pichot</a></td><td class="flag"><img alt="ESP" /></td><td class="elo flags">2581</td><td class="titel">GM</td><td class="nr">4</td></tr>
+  </tbody></table>`;
+  const r3 = D._dsbParseRound(jugada);
+  const m0 = r3 && r3.matches[0];
+  chk(r3 && r3.num === 3 && m0 && m0.aName === 'SV Deggendorf' && m0.bName === 'Düsseldorfer SK' && m0.score === '3½ : 4½',
+      'lee la ronda, los dos equipos y el marcador del match (el título del costado no confunde)', r3 && (r3.num + ' ' + (m0 && m0.score)));
+  const bd = m0.boards;
+  chk(bd.length === 2 && bd[0].nW === 'Gupta Sankalp' && bd[0].nB === 'Volodar Murzin' && bd[0].tW === 'GM' && bd[0].eB === 2650 && bd[0].res === '0-1',
+      'cada mesa con título, Elo y el resultado visto desde el local (izquierda)', JSON.stringify(bd[0]));
+  chk(bd[0].lw === false && bd[1].lw === true, 'el COLOR de verdad: en la Bundesliga el local lleva negras en la mesa 1', bd[0].lw + '/' + bd[1].lw);
+  chk(bd[0].fW === 'IND' && bd[0].fB === 'FID' && bd[1].fB === 'ESP', 'y la bandera de cada jugador');
+  chk(bd[1].res === '+--' && D._dsbRes('-', '+') === '--+' && D._dsbRes('½', '½') === '½-½', 'las incomparecencias (+ / −) quedan como en Chess-Results');
+  chk(bd[1].nW === 'Markus Schaefer', 'las diéresis de los JUGADORES como en FIDE y Lichess ("Schäfer" → "Schaefer"), si no el ojito no encuentra la partida', bd[1].nW);
+  chk(m0.aName === 'SV Deggendorf' && r3.crosses[0].bName === 'Düsseldorfer SK', '…pero los CLUBES quedan tal cual (Lichess escribe "Düsseldorfer SK")');
+  chk(r3.crosses.length === 1 && r3.crosses[0].aRes === '3½' && r3.crosses[0].bRes === '4½', 'de la ronda jugada también salen los cruces equipo contra equipo con el marcador');
+
+  // Una ronda por jugar: los cruces, con día y hora pasados a la hora argentina.
+  const porJugar = `<h2><a href="#"><img alt="PDF" /></a>Ansetzungen 1. Runde</h2><table class="termine"><thead><tr><th>Tag</th><th class="datum">Datum</th><th class="uhrzeit">Uhrzeit</th><th class="heim">Heim</th><th>&minus;</th><th class="gast">Gast</th></tr></thead><tbody>
+  <tr><td colspan="6" class="ausrichter">Ausrichter: <span class="ausrichter">MSA Zugzwang</span></td></tr>
+  <tr><td >Fr</td><td class="datum">09.10.26</td><td class="uhrzeit">16:00</td><td class="heim"><a href="#">FC Bayern München</a></td><td>&minus;</td><td class="gast"><a href="#">Hamburger SK</a></td></tr>
+  <tr><td >Fr</td><td class="datum">09.10.26</td><td class="uhrzeit">16:00</td><td class="heim"><a href="#">SV Werder Bremen</a></td><td>&minus;</td><td class="gast"><a href="#">SC Heimbach-Weis-Neuwied</a></td></tr></tbody></table>`;
+  const r1 = D._dsbParseRound(porJugar);
+  chk(r1 && r1.num === 1 && r1.matches.length === 0 && r1.crosses.length === 2 && r1.crosses[1].aName === 'SV Werder Bremen' && r1.crosses[1].aRes === '',
+      'una ronda por jugar trae los cruces sin resultado (y sin colar el encabezado ni el renglón del organizador)', r1 && r1.crosses.length);
+  chk(r1.date === '2026-10-09 11:00', 'y cuándo arranca, en hora argentina (16:00 de Alemania en verano = 11:00)', r1.date);
+  chk(D._dsbDateART('06.12.25', '14:00') === '2025-12-06 10:00' && D._dsbDateART('28.03.26', '14:00') === '2026-03-28 10:00'
+      && D._dsbDateART('29.03.26', '10:00') === '2026-03-29 05:00' && D._dsbDateART('24.10.26', '14:00') === '2026-10-24 09:00'
+      && D._dsbDateART('25.10.26', '14:00') === '2026-10-25 10:00',
+      'el horario de verano de Alemania cambia el último domingo de marzo y de octubre', D._dsbDateART('29.03.26', '10:00'));
+
+  // El plantel: el nombre es el último título antes de la tabla (arriba está "Ligen: 2026/27").
+  const plantel = `<aside><h2>Ligen: 2026/27</h2></aside><main><h2>SV Werder Bremen</h2><table class="mannschaft"><thead><tr><th class="nr"></th><th class="spieler">Spieler</th><th class="nat">Nat</th><th class="elo">Elo</th><th class="tit">Tit</th></tr></thead><tbody>
+  <tr><td class="nr">1</td><td class="spieler"><a href="#">Haik M. Martirosyan</a></td><td class="sv">SV</td><td class="nat">ARM</td><td class="elo">2664</td><td class="tit">GM</td><td class="dwz">2686</td><td class="punkte"></td><td class="partien"></td></tr>
+  <tr><td class="nr">6</td><td class="spieler"><a href="#">Faustino Oro</a></td><td class="sv">SV</td><td class="nat">ARG</td><td class="elo">2537</td><td class="tit">GM</td><td class="dwz"></td><td class="punkte"></td><td class="partien"></td></tr></tbody></table></main>`;
+  const ros = D._dsbParseRoster(plantel, 6);
+  chk(ros && ros.name === 'SV Werder Bremen' && ros.players.length === 2, 'el plantel con el nombre del club (no el título del costado)', ros && ros.name);
+  chk(ros.players[1].nm === 'Faustino Oro' && ros.players[1].fed === 'ARG' && ros.players[1].bo === 6 && ros.players[1].ti === 'GM' && ros.players[1].elo === 2537,
+      'Faustino Oro, tablero 6 del Werder Bremen, con su bandera', JSON.stringify(ros.players[1]));
+
+  // "Solo argentinos" en una liga de clubes.
+  const dsb = { source: 'dsb', teamRoster: [ros] };
+  chk(D._teamMatchIsArg({ aName: m0.aName, bName: m0.bName, boards: [bd[0]] }, {}) === false, 'un match sin argentinos no pasa el filtro');
+  chk(D._teamMatchIsArg({ aName: 'SV Werder Bremen', bName: 'X', boards: [{ nW: 'Faustino Oro', fW: 'ARG', nB: 'Y', fB: 'GER' }] }, {}) === true,
+      'un match donde se sienta un argentino (bandera ARG en la mesa) sí, aunque el club sea alemán');
+  chk(D._teamMatchIsArg({ aName: 'FC Bayern München', bName: 'X', boards: [{ nW: 'Alan Pichot', fW: 'ESP', nB: 'Y', fB: 'GER' }] }, {}) === true,
+      '…y también el argentino que juega con otra bandera y el sitio tiene como adicional (Pichot, ESP)');
+  chk(D._teamCrossIsArg(r1.crosses[1], dsb) === true && D._teamCrossIsArg(r1.crosses[0], dsb) === false,
+      'en los cruces cuenta el plantel: el del Werder Bremen (Oro) pasa, el del Bayern sin Pichot cargado no');
+  chk(D._teamCrossIsArg(r1.crosses[1], { teamRoster: [ros] }) === false && D._teamCrossIsArg(r1.crosses[1], 1) === false,
+      'eso sólo en la liga alemana (en una liga argentina de clubes no filtraría nada) y sin romperse si .some() le pasa el índice');
+
+  // En qué pestaña abre: manda el calendario, no el número de ronda.
+  const ahora = Date.UTC(2026, 9, 2, 15);
+  chk(D._dsbLandingTab({ teamCrosses: { 1: r1.crosses, 2: r1.crosses }, teamRounds: {}, roundDates: { 1: '2026-10-09 11:00', 2: '2026-10-10 09:00' } }, ahora) === 'x1',
+      'antes de empezar abre en los cruces de la ronda 1 (no en la 15, que también tiene cruces)');
+  chk(D._dsbLandingTab({ teamCrosses: { 1: r3.crosses, 2: r1.crosses }, teamRounds: { 1: r3.matches }, roundDates: { 1: '2026-10-01 11:00', 2: '2026-10-10 09:00' } }, ahora) === '1',
+      'recién jugada una ronda, abre en su formación');
+  chk(D._dsbLandingTab({ teamCrosses: { 11: r3.crosses, 5: r3.crosses }, teamRounds: { 11: r3.matches, 5: r3.matches }, roundDates: { 11: '2026-01-10 09:00', 5: '2026-02-07 09:00' } }, ahora) === '5',
+      'con rondas jugadas desordenadas (la 11 antes que la 5), la última es la última POR FECHA');
+
+  // El color de verdad también en la Radiografía.
+  const sb = D._stTeamBoardsAsRounds({ teamRounds: { 3: r3.matches } })[3];
+  chk(sb[0].w === 'Volodar Murzin' && sb[0].b === 'Gupta Sankalp' && sb[0].res === '1-0' && sb[0].eqA === 'Düsseldorfer SK',
+      'la Radiografía da vuelta la mesa cuando el local llevaba negras (blancas = el de blancas)', JSON.stringify(sb[0]));
+  chk(sb[1].w === 'Markus Schaefer' && sb[1].res === '+--', 'y deja igual la que el local llevaba blancas');
+  chk(/var leftIsWhite = \(b\.lw === true \|\| b\.lw === false\) \? b\.lw : \(bi % 2 === 0\);/.test(extraerFuncion('_teamRoundBlock')),
+      'la formación pinta el color de la página alemana; en Chess-Results sigue alternando como siempre');
+
+  // Lichess: rondas jugadas desordenadas. Calendario real de la transmisión 2025/26 (Y9YjcDKG).
+  const MM = new Function('var _TD_PENDING_WINDOW_MS = 3 * 3600 * 1000;' + extraerFuncion('_bcMergeMeta') + ' return _bcMergeMeta;')();
+  const cal = [[1,'2025-09-27'],[2,'2025-09-28'],[3,'2025-12-06'],[4,'2025-12-07'],[11,'2026-01-10'],[12,'2026-01-11'],
+               [5,'2026-02-07'],[6,'2026-02-08'],[7,'2026-02-28'],[8,'2026-03-01']];
+  const meta = (hasta, enVivo) => [{ rounds: cal.filter(c => c[1] <= hasta).map(c => ({ id: 'r' + c[0], name: 'Round ' + c[0],
+    startsAt: Date.parse(c[1] + 'T12:00:00Z'), finished: c[0] !== enVivo, ongoing: c[0] === enVivo })) }];
+  chk(MM(meta('2026-01-20')).currentNum === 12, 'con la 11 y la 12 jugadas antes que la 5, abre en la 12 (la última jugada)');
+  chk(MM(meta('2026-02-07', 5)).currentNum === 5, 'con la 5 EN VIVO abre en la 5, aunque la 12 tenga número más alto');
+  chk(MM(meta('2026-02-15')).currentNum === 6, 'y pasado ese fin de semana, en la 6 (antes abría en la 12, un mes vieja)', MM(meta('2026-02-15')).currentNum);
+  chk(MM(meta('2026-02-15')).roundsMeta.map(r => r.num).join() === '1,2,3,4,5,6,11,12' && !('_at' in MM(meta('2026-02-15')).roundsMeta[0]),
+      'las pestañas siguen en orden de número y la metadata no se ensucia');
+  chk(MM([{ rounds: [{ id: 'a', name: 'Round 1', finished: true }, { id: 'b', name: 'Round 2', finished: true }] }]).currentNum === 2,
+      'sin fechas, como siempre: la de número más alto');
+
+  // Fechas que cruzan de año (la temporada de la Bundesliga va de septiembre a abril).
+  chk(D.parseDateFromText('27 Sep 2025 – 26 Abr 2026') === 20260426, 'un rango que cruza de año termina en el año del final', D.parseDateFromText('27 Sep 2025 – 26 Abr 2026'));
+
+  // El Worker deja pasar la página alemana, y sólo esa.
+  const WK = fs.readFileSync(new URL('./cloudflare-worker/cr-proxy-worker.js', import.meta.url), 'utf8');
+  const hostRe = new Function('return ' + WK.match(/const ALLOWED_HOST_DSB = (\/[^\n;]+\/i);/)[1])();
+  chk(hostRe.test('ergebnisdienst.schachbund.de') && !hostRe.test('www.schachbund.de') && !hostRe.test('ergebnisdienst.schachbund.de.malo.com'),
+      'el Worker deja pasar ergebnisdienst.schachbund.de y nada más de ese lado');
+  chk(/ALLOWED_HOST\.test\(t\.hostname\) \|\| ALLOWED_HOST_DSB\.test\(t\.hostname\)/.test(WK), 'y lo usa en el proxy de /?url=');
 }
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
 console.log('   Corrieron ' + corridas + ' de ' + ESPERADAS + ' comprobaciones.'
