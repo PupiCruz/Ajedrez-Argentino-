@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2040;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2054;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -8392,6 +8392,60 @@ console.log('\n=== Auditoría 23/09 — Fase 4: accesibilidad y prolijidad ===')
   chk(hostRe.test('ergebnisdienst.schachbund.de') && !hostRe.test('www.schachbund.de') && !hostRe.test('ergebnisdienst.schachbund.de.malo.com'),
       'el Worker deja pasar ergebnisdienst.schachbund.de y nada más de ese lado');
   chk(/ALLOWED_HOST\.test\(t\.hostname\) \|\| ALLOWED_HOST_DSB\.test\(t\.hostname\)/.test(WK), 'y lo usa en el proxy de /?url=');
+}
+
+// ── 🧭 Etapas de la partida: apertura / medio juego / final, como Lichess (02/10, pedido del autor) ──
+// Franjas en el gráfico + pestaña "Por etapa" en las tarjetas del análisis. El criterio es el Divider
+// de scalachess; se comparó contra una copia del original con 28 partidas reales (Chile 2026): iguales.
+{
+  const E = new Function(['_fenGrid', '_faMixScore', '_faMixedness', '_faEtapasDeFens', '_faEtapaDe', '_faEtFrase'].map(extraerFuncion).join('\n')
+    + '; return { div: _faEtapasDeFens, de: _faEtapaDe, frase: _faEtFrase, mix: _faMixScore };')();
+  const INI = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+  const ITA = 'r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4';   // italiana: todavía apertura
+  const MJ10 = 'r4rk1/pp3ppp/2n1b3/3p4/3P4/2N1B3/PP3PPP/R4RK1 w - - 0 15';              // 10 piezas (sin reyes ni peones)
+  const FIN = 'r5k1/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 40';                                  // dos torres: final
+  const ENR = 'r1bq1rk1/pppp1ppp/2n2n2/2b1p3/2B1P3/2NPBN2/PPPQ1PPP/R4RK1 b - - 0 7';    // 1ª fila blanca con 3 piezas
+  chk(JSON.stringify(E.div([INI, ITA])) === '{"mid":null,"end":null}', 'la italiana todavía es apertura (sin medio juego ni final)');
+  chk(JSON.stringify(E.div([INI, ITA, MJ10, FIN])) === '{"mid":2,"end":3}', '🔒 medio juego con 10 piezas o menos; final con 6 o menos (sin reyes ni peones)');
+  chk(E.div([INI, ENR]).mid === 1, 'también empieza el medio juego cuando la 1ª fila de alguno quedó con menos de 4 piezas (ya desarrolló)');
+  chk(JSON.stringify(E.div([INI, FIN])) === '{"mid":null,"end":1}', 'de la apertura derecho al final: sin medio juego (igual que Lichess)');
+  chk(E.mix(1, 0, 1) === 2 && E.mix(4, 1, 1) === 5 && E.mix(3, 2, 0) === 3 && E.mix(2, 4, 0) === 4 && E.mix(1, 4, 0) === 0 && E.mix(7, 0, 2) === 0,
+      'la tabla de "mezcla" de los cuadraditos 2×2 es la de scalachess');
+  const et = { mid: 21, end: 87 };
+  chk(E.de(et, 20) === 0 && E.de(et, 21) === 1 && E.de(et, 86) === 1 && E.de(et, 87) === 2 && E.de({ mid: null, end: null }, 50) === 0,
+      'la jugada que LLEGA a la posición del corte queda en la etapa anterior (como Lichess)');
+  chk(E.frase([97, 85, 69], [{}, { blun: 1 }, { blun: 2 }], [0, 1, 2]) === 'Se le complicó en el final: 2 colgadas.'
+      && E.frase([96, 80], [{}, { mist: 1 }], [0, 1]) === 'Lo más flojo, en el medio juego: 1 error.'
+      && E.frase([95, 80], [{}, { inacc: 3 }], [0, 1]) === 'Su mejor etapa: la apertura.'
+      && E.frase([95, 93], [{}, {}], [0, 1]) === 'Parejo en toda la partida.' && E.frase([90], [{}], [0]) === '',
+      'la frase al pie: la etapa más floja con sus colgadas/errores, o la mejor; pareja si hay menos de 6 puntos; nada con una sola etapa');
+
+  // La precisión por etapa sale de la MISMA cuenta que la general (sin etapas, la apertura = el total).
+  const mk = (etapas) => new Function('var _fa = { nodes: [], results: [], live: false };'
+    + 'function _cvMoveNo(n) { return { white: n.w }; } function _faEtapas() { return ' + JSON.stringify(etapas) + '; }'
+    + ['_faWinP', '_faSettled', '_faEtapaDe', '_faGameAccuracy'].map(extraerFuncion).join('\n') + '; return { fa: _fa, acc: _faGameAccuracy };')();
+  const evs = [30, 25, 40, -20, 60, 55, 300, 280, 250, 900];
+  const A = mk({ mid: null, end: null }), B = mk({ mid: 4, end: 8 });
+  for (const M of [A, B]) { evs.forEach((cp, i) => { M.fa.nodes.push({ move: {}, w: i % 2 === 0 }); M.fa.results.push({ cp }); }); }
+  const a = A.acc(), b = B.acc();
+  chk(a.ew[0] === a.w && a.eb[0] === a.b && a.ew[1] === null && a.ew[2] === null, 'sin etapas, la "apertura" es la partida entera y da lo mismo que el total', JSON.stringify(a));
+  chk(b.w === a.w && b.ew.every(x => x !== null) && b.ew[2] < b.ew[0], 'con etapas, el total no cambia y cada etapa tiene la suya (acá el final, con la colgada, es la peor)', JSON.stringify(b));
+
+  // Pantalla: las dos vistas apiladas en la misma celda (no se corre nada) y las pestañas se recuerdan.
+  const RS = extraerFuncion('faRenderStats');
+  chk(/\.fa-sv > div \{ grid-area:1\/1;/.test(SRC) && /#fa-stats\.fa-tab-e \.fa-sv-g \{ visibility:hidden; \}/.test(SRC)
+      && RS.includes("'<div class=\"fa-sv\"><div class=\"fa-sv-g\">'") && RS.includes('_faTabsSync();'),
+      '🔒 General y Por etapa ocupan la misma celda: cambiar de pestaña no empuja nada para abajo');
+  chk(/localStorage\.getItem\('aa_fa_tab'\) === 'e'/.test(SRC) && /try \{ localStorage\.setItem\('aa_fa_tab', _faTab\); \} catch/.test(extraerFuncion('faSetTab')),
+      'la pestaña elegida se recuerda en el navegador (y sin localStorage no se rompe)');
+  const FR = extraerFuncion('faRender');
+  chk(FR.includes('+bands') && FR.includes('+lbls') && /class="fa-et-lbls" aria-hidden="true"/.test(FR),
+      'franjas en el gráfico y los nombres de las etapas en HTML encima (un <text> saldría estirado)');
+  chk(/@container \(max-width: 420px\) \{ \.eval-graph-wrap\.fa-con-tabs \.fa-lbl-de \{ display:none; \} \}/.test(SRC),
+      'con las pestañas, en un recuadro angosto el título se acorta a "Análisis"');
+  chk(/var on = !!st\.innerHTML && typeof _fa !== 'undefined' && !!_fa\.stats && _faHayEtapas\(_faEtapas\(\)\);/.test(extraerFuncion('_faTabsSync'))
+      && extraerFuncion('faRenderEmpty').includes('_faTabsSync();'),
+      'las pestañas se ven sólo con tarjetas y si la partida tiene etapas (una miniatura de 7 jugadas no las muestra)');
 }
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
 console.log('   Corrieron ' + corridas + ' de ' + ESPERADAS + ' comprobaciones.'
