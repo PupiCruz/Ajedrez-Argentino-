@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1991;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1993;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -8166,6 +8166,11 @@ console.log('\n=== Auditoría 23/09 — Fase 4: accesibilidad y prolijidad ===')
   chk(txt(R.de(CW, false)) === 'Ganada para las blancas, pero tablas por la regla de las 50 jugadas [tb-50]', 'regla de las 50 jugadas en ámbar, con el bando que "ganaba"');
   chk(R.de(PB, true) === null && R.de({ fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1' }, false) === null && R.de({ fen: '8/8/8/8/8/2k5/8/K1N5 w - - 0 1' }, false) === null,
       'no sale con la partida terminada (mate/ahogado), con más de 7 piezas, ni si la tabla todavía no sabe');
+  const expl = new Function(extraerFuncion('_tbExplicacion') + '; return _tbExplicacion;')();
+  chk(/tabla de finales/.test(expl('')) && /exacto/.test(expl('')) && !/50 jugadas/.test(expl('')) && /Regla de las 50 jugadas/.test(expl('tb-50')),
+      'globito ⓘ: explica que es la tabla de finales (resultado exacto, no el motor); la regla de las 50 sólo cuando aplica');
+  chk(/position: absolute/.test((SRC.match(/\.cv-tbline \.tb-exp \{[^}]*\}/) || [''])[0]) && /el\.contains\(e\.target\)/.test(SRC),
+      'es un globito flotante (no empuja nada) y tocar afuera lo cierra');
   const sg = extraerFuncion('_tbSiguiente');
   chk(/_TB_ESPERA/.test(sg) && /r\.status === 429/.test(sg) && /_tb\.off = true/.test(sg) && /_tbCatDe\(it\.node\) !== undefined/.test(sg),
       'buen vecino con Lichess: de a una, con espera, se apaga ante 429/error y saltea lo que ya se sabe');

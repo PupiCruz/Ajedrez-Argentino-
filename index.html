@@ -2171,6 +2171,19 @@
     .cv-tbline.tb-tablas { background: rgba(160,160,160,.10); border-color: rgba(160,160,160,.30); }
     .cv-tbline.tb-50 { background: rgba(240,180,60,.12); border-color: rgba(240,180,60,.35); }
     .cv-tbline .tb-det { opacity: .7; }
+    /* La explicación: GLOBITO flotante (pedido del autor) con el mouse encima (PC) o tocando el renglón (teléfono). */
+    .cv-tbline { display: block; cursor: pointer; position: relative; }
+    .cv-tbline .tb-fila { display: flex; gap: 6px; align-items: center; }
+    .cv-tbline .tb-i { margin-left: auto; opacity: .55; font-size: 13px; flex-shrink: 0; }
+    .cv-tbline .tb-exp { display: none; position: absolute; left: 0; right: 0; top: calc(100% + 9px); z-index: 60;
+                         padding: 9px 12px; border-radius: 10px; font-size: 12px; line-height: 1.45; color: var(--text2);
+                         background: var(--card90); border: 1px solid var(--bd22); box-shadow: 0 10px 28px rgba(0,0,0,.40);
+                         -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); cursor: default; }
+    .cv-tbline .tb-exp::before { content: ''; position: absolute; top: -6px; right: 14px; width: 10px; height: 10px;
+                         background: inherit; border-left: 1px solid var(--bd22); border-top: 1px solid var(--bd22); transform: rotate(45deg); }
+    .cv-tbline .tb-exp b { color: var(--text); }
+    .cv-tbline.abierto .tb-exp { display: block; }
+    @media (hover: hover) { .cv-tbline:hover .tb-exp { display: block; } .cv-tbline:hover .tb-i { opacity: .9; } }
     .sf-btn {
       display: flex; align-items: center; gap: 7px;
       background: var(--gl42); border: 1px solid var(--bd26);
@@ -4932,7 +4945,7 @@
         <span class="sf-depth" id="sf-depth"></span>
         <button class="sf-deepen" id="sf-deepen" onclick="sfDeepen()" title="El motor llegó al tope. Tocá para que siga analizando más hondo (usa más CPU)." style="display:none">⏱ Seguir analizando</button>
       </div>
-      <div id="cv-tbline" class="cv-tbline" title="Tabla de finales de Lichess: el resultado con juego perfecto" style="display:none"></div>
+      <div id="cv-tbline" class="cv-tbline" onclick="_tbExpToggle()" style="display:none"></div>
     </div>
 
     <!-- JUGADAS (notaciones, estiradas hasta el borde inferior del tablero) -->
@@ -43781,9 +43794,34 @@ function _tbRenglon() {
   try { fin = !!(cv.chess && cv.chess.game_over && cv.chess.game_over()); } catch (e) {}
   var r = (typeof cv !== 'undefined') ? _tbRenglonDe(cv.node, fin) : null;
   if (!r) { el.style.display = 'none'; return; }
-  el.className = 'cv-tbline' + (r.cls ? ' ' + r.cls : '');
-  el.innerHTML = '<span>📚</span><span>' + r.html + '</span>';
+  el.className = 'cv-tbline' + (r.cls ? ' ' + r.cls : '') + (_tbExpAbierto ? ' abierto' : '');
+  el.innerHTML = '<div class="tb-fila"><span>📚</span><span>' + r.html + '</span><span class="tb-i" aria-hidden="true">ⓘ</span></div>'
+    + '<div class="tb-exp">' + _tbExplicacion(r.cls) + '</div>';
   el.style.display = '';
+}
+// Qué es el renglón (pedido del autor, 01/10): sale con el mouse encima o tocándolo (en el teléfono queda abierto
+// hasta volver a tocar, también al pasar de jugada).
+var _tbExpAbierto = false;
+function _tbExpToggle() {
+  _tbExpAbierto = !_tbExpAbierto;
+  var el = document.getElementById('cv-tbline');
+  if (el) el.classList.toggle('abierto', _tbExpAbierto);
+}
+// Tocar en cualquier otro lado cierra el globito (en el teléfono no hay "sacar el mouse").
+document.addEventListener('click', function(e) {
+  if (!_tbExpAbierto) return;
+  var el = document.getElementById('cv-tbline');
+  if (el && el.contains(e.target)) return;
+  _tbExpAbierto = false;
+  if (el) el.classList.remove('abierto');
+}, true);
+function _tbExplicacion(cls) {
+  var t = 'Con 7 piezas o menos, el ajedrez ya está resuelto: la <b>tabla de finales</b> de Lichess tiene calculadas '
+    + 'todas las posiciones posibles. Esto no es una estimación del motor: es el resultado <b>exacto</b> si los dos '
+    + 'juegan perfecto. Si dice mate, es el más corto posible.';
+  if (cls === 'tb-50') t += ' <b>Regla de las 50 jugadas:</b> si pasan 50 jugadas de cada lado sin capturas ni '
+    + 'movimientos de peón, la partida es tablas. Acá el mate existe, pero tarda más que eso.';
+  return t;
 }
 // La mejor jugada de la tabla que conserva el resultado `antes` (+1 gana / 0 tablas) en una posición cuya lista de
 // jugadas es `mov` ({uci: categoría desde el rival}). Lichess las manda ordenadas, la mejor primero; '' si no hay.
