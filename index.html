@@ -2274,6 +2274,31 @@
     body.light .sf-threat-btn:hover:not(:disabled) { background: #f6dede; border-color: #d18a8a; color: #a33; }
     .sf-threat-btn:disabled { opacity: .4; cursor: default; }
     .sf-threat-txt { font-size: 12px; color: var(--text3); font-weight: 600; font-variant-numeric: tabular-nums; }
+    /* 🧭 "Buscar planes": rutas de piezas (flechas punteadas numeradas) y casillas clave (círculos). */
+    .pla-btn:hover:not(:disabled) { background: #10322f; border-color: #2f7f78; color: #9fe3db; }
+    body.light .pla-btn:hover:not(:disabled) { background: #dff3f0; border-color: #7cc1b9; color: #0f5f58; }
+    .pla-box { margin-top: 8px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg3); padding: 8px; }
+    .pla-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; font-weight: 700; color: var(--fg0); margin-bottom: 6px; }
+    body.light .pla-head { color: var(--text); }
+    .pla-x { background: none; border: none; color: var(--text3); cursor: pointer; font-size: 13px; padding: 0 4px; }
+    .pla-x:hover { color: var(--text); }
+    .pla-list { display: flex; flex-direction: column; gap: 5px; max-height: 260px; overflow-y: auto; }
+    .pla-card { border: 1px solid var(--border); border-left: 3px solid transparent; border-radius: 7px; padding: 6px 8px; cursor: pointer; background: var(--bg2); }
+    .pla-card:hover, .pla-card:focus-visible { border-color: #2f7f78; outline: none; }
+    .pla-card.sel { border-left-color: #0f766e; background: rgba(15,118,110,.14); }
+    .pla-t { font-size: 12.5px; font-weight: 700; color: var(--text); overflow-wrap: anywhere; }
+    .pla-d { font-size: 11.5px; color: var(--text2); margin-top: 2px; overflow-wrap: anywhere; }
+    .pla-n { font-size: 11px; color: var(--text3); margin-top: 2px; font-style: italic; }
+    .pla-msg { font-size: 11.5px; color: var(--text3); }
+    .pla-foot { margin-top: 6px; }
+    .pla-pasos { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 7px; }
+    .pla-pasos:empty { display: none; }
+    .pla-pbtn { background: var(--bg2); border: 1px solid var(--border); color: var(--text); font-family: inherit; font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 6px; cursor: pointer; }
+    .pla-pbtn:hover:not(:disabled) { border-color: #2f7f78; }
+    .pla-pbtn:disabled { opacity: .4; cursor: default; }
+    .pla-pl { font-size: 12px; font-weight: 700; color: var(--text); }
+    .pla-ph { font-size: 11px; color: var(--text3); }
+    .pla-ph2 { flex-basis: 100%; font-size: 11px; color: var(--text3); }
     /* ── Modal torneos ── */
     .tz-modal-overlay{display:none;position:fixed;inset:0;z-index:2000;background:rgba(0,0,0,.75);align-items:center;justify-content:center;padding:16px}
     .tz-modal-overlay.open{display:flex}
@@ -4996,8 +5021,10 @@
       </div>
       <div class="sf-threat-row">
         <button class="sf-threat-btn" id="sf-threat-btn" onclick="thrProbe()" title="¿Qué haría el rival si le tocara mover?">⚠️ ¿Qué amenaza?</button>
+        <button class="sf-threat-btn pla-btn" id="pla-btn" onclick="plaProbe()" title="Ideas de plan: adónde llevar las piezas">🧭 Buscar planes</button>
         <span class="sf-threat-txt" id="sf-threat-txt"></span>
       </div>
+      <div id="pla-box" class="pla-box" style="display:none"></div>
     </div>
     <!-- Aviso: el operador de la transmisión está corrigiendo la partida a mano (mandó variantes y la
          línea principal todavía no avanzó). Evita que parezca que el visor se colgó. -->
@@ -27477,6 +27504,7 @@ function cvSetNode(node) {
   if (depth > 0) cvClearUserArrows();
   sfClearArrows();
   if (typeof thrReset === 'function') thrReset();   // borrar la flecha roja de "¿Qué amenaza?" al navegar
+  if (typeof plaReset === 'function') plaReset();   // y el plan dibujado (si la posición cambió)
   _sfArrowsHold = true;   // congelar flechas del motor hasta que arranque el análisis de la posición nueva
 
   // El trabajo PESADO (barra/marcador de eval, relojes, badge NAG, sonido, libro y motor) se DIFIERE ~140ms:
@@ -28380,6 +28408,8 @@ function cvRenderBoard() {
       }
     }
   }
+  // 🧭 Paso a paso de un plan: si algo redibuja en el medio (misma posición), las piezas del plan siguen a la vista
+  if (typeof _plaPaso !== 'undefined' && _plaPaso && _plaFenVista && cv.chess.fen() === _plaFenVista) _plaPintarTablero(_plaPaso.grids[_plaPaso.k]);
   cvDrawArrows();
 }
 
@@ -29391,6 +29421,7 @@ function sfTurnOff() {
   document.getElementById('sf-vbar-fill').style.height = '50%';
   sfClearArrows();
   thrReset();   // por si quedaba una flecha/rótulo de "¿Qué amenaza?"
+  plaReset(true);   // y los planes (si se estaban buscando, se cancelan)
   // Detiene el análisis (el worker queda ocioso, sin consumir CPU) — salvo que el motor lo esté
   // usando el gráfico en este momento: su búsqueda no es nuestra y no hay que cortársela.
   if (sf.engine && !_fa.running) sf.engine.postMessage('stop');
@@ -29528,6 +29559,7 @@ function sfOnMsg(line) {
   if (_fa.running) { faHandleMsg(line); return; }
   if (_mev.running) { mevHandleMsg(line); return; }
   if (typeof _thr !== 'undefined' && _thr.running) { thrHandleMsg(line); return; }
+  if (typeof _pla !== 'undefined' && _pla.running) { plaHandleMsg(line); return; }
   // Barrera del módulo que estaba esperando el fin de la búsqueda vieja (ver 'readyok' más abajo):
   // recién con este bestmove el motor terminó de hablar de la posición anterior. Arrancar la nueva.
   if (line.indexOf('bestmove') === 0 && sf.rokWaiting && !sf.armed && sf.pending) {
@@ -35000,7 +35032,7 @@ function mevAbort() {
     // (sfAnalyze ya lo hace solo; el gráfico lo relanza al terminar; la práctica se queda con el motor).
     sf.armed = false;
     setTimeout(function() {
-      if (sf.on && !sf.armed && !sf.pending && !_fa.running && !_mev.running
+      if (sf.on && !sf.armed && !sf.pending && !_fa.running && !_mev.running && !_pla.running
           && (typeof prac === 'undefined' || !prac.running)) sfAnalyze();
     }, 0);
   }
@@ -35046,6 +35078,9 @@ function mevTick() {
   if (!_tdLiveCtx && !_mevExtra.length) { mevAbort(); return; }   // no hay transmisión activa (ni barrido de colgadas)
   _repSync();   // motor repartido: qué ronda miro y si ayudo (sólo manda algo cuando cambia)
   if (_mev.running) return;
+  // ¿Qué amenaza? / Buscar planes tienen el motor: las miniaturas esperan (al terminar, el módulo se
+  // relanza y las vuelve a llamar). Si no, se quedaban con los mensajes del motor a mitad de la búsqueda.
+  if (_thr.running || _pla.running) { _mev.want = true; return; }
   // El pase del gráfico es corto: al terminar, reintenta. El RELLENO (lo salteado del gráfico en vivo,
   // con el motor quieto) no se espera: si hay tableros para evaluar, se corta más abajo.
   var _rell = !!(_fa.running && _fa.relleno);
@@ -42331,7 +42366,8 @@ function sfDrawArrows() {
     return { x: g.ox + (f + 0.5) * g.sqW, y: g.oy + (r + 0.5) * g.sqH };
   }
   // dibujar de la más débil a la más fuerte para que la principal quede arriba
-  for (var i = _sfArrows.length - 1; i >= 0; i--) {
+  // (con un plan de "Buscar planes" a la vista, las del motor se esconden para no ensuciar)
+  for (var i = (typeof _plaDibujo !== 'undefined' && _plaDibujo) ? -1 : _sfArrows.length - 1; i >= 0; i--) {
     var a = _sfArrows[i];
     var from = center(a.from), to = center(a.to);
     drawArrow(ctx, from.x, from.y, to.x, to.y, sqW, a.w, 'rgba(74,74,80,' + a.a + ')');
@@ -42343,6 +42379,7 @@ function sfDrawArrows() {
     // Mismo estilo tenue que la flecha principal del motor (ancho 0.16, alfa ~0.55), pero en rojo.
     drawArrow(ctx, tf.x, tf.y, tt.x, tt.y, sqW, 0.16, 'rgba(198,58,58,0.52)');
   }
+  if (typeof _plaDibujo !== 'undefined' && _plaDibujo) _plaPintar(ctx, center, sqW);   // 🧭 plan elegido
 }
 
 function sfClearArrows() {
@@ -42380,10 +42417,11 @@ function thrUpdateBtn() {
   if (!b) return;
   var inChk = !!(cv.chess && cv.chess.in_check());
   var busy  = _faOcupado();   // el relleno del gráfico en vivo no cuenta: cede al tocar el botón
-  b.disabled = inChk || busy || _thr.running || !cv.chess;
+  b.disabled = inChk || busy || _thr.running || _pla.running || !cv.chess;
   b.title = inChk ? 'La amenaza es el jaque'
           : busy  ? 'El análisis de la partida está usando el motor'
           : '¿Qué haría el rival si le tocara mover?';
+  plaUpdateBtn();
 }
 
 // Mensaje efímero en el rótulo del botón (motivo por el que no se calculó, o "pensando…").
@@ -42410,7 +42448,7 @@ function thrReset() {
 }
 
 function thrProbe() {
-  if (_thr.running) return;                                    // ya hay un probe en curso
+  if (_thr.running || _pla.running) return;                   // ya hay un probe (o una búsqueda de planes) en curso
   if (!cv.chess) return;
   if (_faOcupado()) { thrFlash('El análisis de la partida está usando el motor…'); return; }
   if (!sf.ready) { if (!sf.on) sfToggle(); thrFlash('El motor se está cargando…'); return; }
@@ -42483,6 +42521,856 @@ function thrShow(res, fen) {
   sfDrawArrows();
   _thrTimer = setTimeout(function(){ _thrArrow = null; sfDrawArrows(); if (t) t.textContent = ''; }, 6000);
 }
+
+// ── 🧭 "Buscar planes" (02/10, idea del autor) ─────────────────────────────────────────────────
+// En vez de UNA jugada, ideas para varias: adónde llevar las piezas. Tres fuentes, todas en la PC
+// del visitante (sin IA ni Worker → no hay cuota que agotar):
+//  1) "Si pudieras jugar varias seguidas": el truco de ¿Qué amenaza? pero para el que mueve. El rival
+//     pasa el turno hasta 8 veces y el motor muestra adónde lleva las piezas sin que lo molesten.
+//  2) Las 3 líneas del motor: qué pieza propia MANIOBRA (2+ jugadas la misma pieza) y qué palanca de
+//     peón se repite.
+//  3) A ojo, por código: casillas fuertes (ningún peón rival las puede echar nunca) con la ruta del
+//     caballo, columnas abiertas para las torres y diagonales para los alfiles. Éstas salen SÓLO si el
+//     motor no las refuta: su 1ª jugada, buscada sola (searchmoves), queda cerca de la mejor.
+// Sólo en el visor/análisis. En las partidas contra personas (tablero de jugar) NO va: sería trampa.
+// El motor es el COMPARTIDO: entra por la misma barrera que ¿Qué amenaza? (stop → isready → esperar el
+// bestmove viejo) y al terminar relanza el análisis del visor.
+var _pla = { running:false, armed:false, rokSeen:false, cancel:false, fen:null, side:null,
+             jobs:[], job:null, info:{}, lineas:[], cadena:[], cands:[], hechos:0 };
+// Profundidad alta a propósito (pedido del autor): quien pide un plan quiere entender la posición y
+// puede esperar unos segundos (en el teléfono, hasta medio minuto). Los topes de tiempo evitan colgarse.
+var _PLA_DEPTH = 20, _PLA_MS = 12000;    // las 3 líneas del motor
+var _PLA_DEPTH2 = 16, _PLA_MS2 = 4000;   // cada jugada "seguida" y cada verificación
+// Cuántas jugadas seguidas como mucho. Medido el 02/10 con tope 10 en 6 posiciones (siciliana, India de
+// Rey, Carlsbad, Francesa avance, final de torres, Krysa–Pérez): el plan termina solo entre la 5ª y la 8ª
+// (aparece una ganancia de material que sólo existe porque el rival pasa); cada paso tarda menos de 1 s.
+var _PLA_SEGUIDAS = 8;
+var _PLA_SALTO_TOMA = 150;               // centipeones: una toma/jaque que gana más que esto de golpe = "regalo" del rival que pasa
+var _PLA_SALTO_FIN = 300;                // una jugada que mejora tanto (♜d2 invadiendo) cierra el plan
+var _PLA_TOLERA = 8;                     // puntos de win% que puede perder la 1ª jugada de una idea "a ojo"
+var _PLA_COLOR = '#0f766e';              // verde petróleo: no choca con los 4 colores del usuario ni con el gris del motor
+var _plaCache = {};                      // fen → planes (se calcula una vez por posición)
+var _plaPlanes = null, _plaSel = -1, _plaDibujo = null, _plaFenVista = null;
+
+function _plaSq(f, r) { return 'abcdefgh'[f] + (r + 1); }
+function _plaFR(sq) { return { f: 'abcdefgh'.indexOf(sq[0]), r: parseInt(sq[1], 10) - 1 }; }
+function _plaMia(p, side) { return !!p && (side === 'w' ? p === p.toUpperCase() : p === p.toLowerCase()); }
+function _plaFig(t) { return ({ K:'♚', Q:'♛', R:'♜', B:'♝', N:'♞', P:'' })[t] || ''; }
+function _plaDel(t) { return ({ K:'del rey', Q:'de la dama', R:'de la torre', B:'del alfil', N:'del caballo', P:'del peón' })[t] || ''; }
+function _plaWin(s) {
+  if (!s) return null;
+  if (s.mate !== undefined) return s.mate > 0 ? 100 : 0;
+  return 50 + 50 * (2 / (1 + Math.exp(-0.00368208 * s.cp)) - 1);
+}
+// ¿La idea aguanta? Su eval (mismo lado que la mejor) pierde a lo sumo `tol` puntos de win%.
+function _plaAceptable(best, s, tol) {
+  var a = _plaWin(best), b = _plaWin(s);
+  if (a === null || b === null) return false;
+  return a - b <= tol;
+}
+// ¿Un peón rival ataca (f,r)? Desde el punto de vista de `side`: los peones negros atacan hacia abajo.
+function _plaPateada(g, f, r, side) {
+  var E = side === 'w' ? 'p' : 'P', rr = r + (side === 'w' ? 1 : -1);
+  if (rr < 0 || rr > 7) return false;
+  return (f > 0 && g[rr * 8 + f - 1] === E) || (f < 7 && g[rr * 8 + f + 1] === E);
+}
+
+// Casillas FUERTES de `side` en campo rival (filas 5-6 para las blancas, 4-3 para las negras), columnas
+// b a g: apoyadas por un peón propio y que NINGÚN peón rival puede atacar nunca (no hay peón rival en
+// las columnas vecinas que todavía pueda llegar). Sin las que ya ocupa un peón o una pieza propia.
+function _plaCasillasFuertes(g, side) {
+  var w = side === 'w', P = w ? 'P' : 'p', E = w ? 'p' : 'P', res = [];
+  var filas = w ? [4, 5] : [3, 2];
+  for (var i = 0; i < filas.length; i++) {
+    var r = filas[i];
+    for (var f = 1; f <= 6; f++) {
+      var occ = g[r * 8 + f];
+      if (occ && (occ.toLowerCase() === 'p' || _plaMia(occ, side))) continue;
+      var ra = w ? r - 1 : r + 1;
+      if (g[ra * 8 + f - 1] !== P && g[ra * 8 + f + 1] !== P) continue;   // sin peón propio que la apoye
+      var echable = false;
+      for (var df = -1; df <= 1 && !echable; df += 2) {
+        for (var rr = 0; rr < 8; rr++) {
+          if (g[rr * 8 + f + df] === E && (w ? rr > r : rr < r)) { echable = true; break; }
+        }
+      }
+      if (!echable) res.push({ sq: _plaSq(f, r), f: f, r: r });
+    }
+  }
+  return res;
+}
+
+// Camino más corto del caballo de `from` a `to` (hasta `maxN` saltos), por casillas libres que no
+// controle un peón rival (que no lo echen en el camino). La de llegada puede tener una pieza rival.
+// Devuelve las casillas [from, …, to] o null.
+function _plaRutaCaballo(g, from, to, side, maxN) {
+  var K = [[1,2],[2,1],[2,-1],[1,-2],[-1,-2],[-2,-1],[-2,1],[-1,2]];
+  var cola = [[from]], visto = {}; visto[from] = 1;
+  while (cola.length) {
+    var ruta = cola.shift();
+    if (ruta.length - 1 >= maxN) continue;
+    var a = _plaFR(ruta[ruta.length - 1]);
+    for (var i = 0; i < 8; i++) {
+      var f = a.f + K[i][0], r = a.r + K[i][1];
+      if (f < 0 || f > 7 || r < 0 || r > 7) continue;
+      var sq = _plaSq(f, r), p = g[r * 8 + f];
+      if (visto[sq]) continue;
+      visto[sq] = 1;
+      if (sq === to) {
+        if (p && (_plaMia(p, side) || p.toLowerCase() === 'k')) return null;
+        return ruta.concat([sq]);
+      }
+      if (p || _plaPateada(g, f, r, side)) continue;
+      cola.push(ruta.concat([sq]));
+    }
+  }
+  return null;
+}
+
+// Columnas para las torres: abiertas (sin peones) o semiabiertas (sin peón propio) donde todavía no hay
+// torre ni dama propia. Para cada torre que llega en UNA jugada por su fila (camino libre):
+// {col, abierta, desde, hasta, peon (el peón rival de esa columna, si es semiabierta), entrada}.
+function _plaColumnas(g, side) {
+  var res = [], w = side === 'w';
+  for (var f = 0; f < 8; f++) {
+    var propio = false, peonRival = null, mayor = false;
+    for (var r = 0; r < 8; r++) {
+      var p = g[r * 8 + f]; if (!p) continue;
+      var t = p.toLowerCase();
+      if (t === 'p') { if (_plaMia(p, side)) propio = true; else if (!peonRival || (w ? r < _plaFR(peonRival).r : r > _plaFR(peonRival).r)) peonRival = _plaSq(f, r); }
+      else if (_plaMia(p, side) && (t === 'r' || t === 'q')) mayor = true;
+    }
+    if (propio || mayor) continue;
+    for (var i = 0; i < 64; i++) {
+      var q = g[i];
+      if (!q || q.toLowerCase() !== 'r' || !_plaMia(q, side)) continue;
+      var rf = i % 8, rr = i >> 3;
+      if (rf === f || g[rr * 8 + f]) continue;
+      var libre = true, paso = rf < f ? 1 : -1;
+      for (var x = rf + paso; x !== f; x += paso) if (g[rr * 8 + x]) { libre = false; break; }
+      if (!libre) continue;
+      // casilla de entrada: la 7ª fila del rival (si la columna está abierta y esa casilla no es propia)
+      var r7 = w ? 6 : 1, e = g[r7 * 8 + f];
+      res.push({ col: 'abcdefgh'[f], abierta: !peonRival, desde: _plaSq(rf, rr), hasta: _plaSq(f, rr),
+                 peon: peonRival, entrada: (!peonRival && (!e || !_plaMia(e, side))) ? _plaSq(f, r7) : null });
+    }
+  }
+  // primero las abiertas y las del centro
+  res.sort(function(a, b) {
+    return (b.abierta - a.abierta) || (Math.abs('abcdefgh'.indexOf(a.col) - 3.5) - Math.abs('abcdefgh'.indexOf(b.col) - 3.5));
+  });
+  return res;
+}
+
+// Cuántas casillas ve un alfil en (f,r) (cuenta la de una pieza rival que puede tomar).
+function _plaVeAlfil(g, f, r, side) {
+  var n = 0, D = [[1,1],[1,-1],[-1,1],[-1,-1]];
+  for (var d = 0; d < 4; d++) {
+    for (var s = 1; s < 8; s++) {
+      var x = f + D[d][0] * s, y = r + D[d][1] * s;
+      if (x < 0 || x > 7 || y < 0 || y > 7) break;
+      var p = g[y * 8 + x];
+      if (!p) { n++; continue; }
+      if (!_plaMia(p, side)) n++;
+      break;
+    }
+  }
+  return n;
+}
+// Diagonales para los alfiles: casilla a UNA jugada donde el alfil ve al menos 7 casillas y 3 más que
+// ahora, sin que lo pueda echar un peón rival. Devuelve [{desde, hasta, antes, despues, diag}] (mejor primero).
+function _plaDiagonales(g, side) {
+  var res = [], D = [[1,1],[1,-1],[-1,1],[-1,-1]];
+  for (var i = 0; i < 64; i++) {
+    var b = g[i];
+    if (!b || b.toLowerCase() !== 'b' || !_plaMia(b, side)) continue;
+    var bf = i % 8, br = i >> 3, antes = _plaVeAlfil(g, bf, br, side), mejor = null;
+    for (var d = 0; d < 4; d++) {
+      for (var s = 1; s < 8; s++) {
+        var x = bf + D[d][0] * s, y = br + D[d][1] * s;
+        if (x < 0 || x > 7 || y < 0 || y > 7 || g[y * 8 + x]) break;
+        if (_plaPateada(g, x, y, side)) continue;
+        var h = g.slice(); h[i] = null; h[y * 8 + x] = b;
+        var desp = _plaVeAlfil(h, x, y, side);
+        if (desp >= 7 && desp - antes >= 3 && (!mejor || desp > mejor.despues)) mejor = { x: x, y: y, despues: desp };
+      }
+    }
+    if (!mejor) continue;
+    // nombre de la diagonal: la más larga de las dos que pasan por la casilla nueva (de punta a punta del tablero)
+    var nom = null, largo = -1;
+    [[1,1],[1,-1]].forEach(function(dd) {
+      var x0 = mejor.x, y0 = mejor.y, x1 = mejor.x, y1 = mejor.y;
+      while (x0 - dd[0] >= 0 && x0 - dd[0] <= 7 && y0 - dd[1] >= 0 && y0 - dd[1] <= 7) { x0 -= dd[0]; y0 -= dd[1]; }
+      while (x1 + dd[0] >= 0 && x1 + dd[0] <= 7 && y1 + dd[1] >= 0 && y1 + dd[1] <= 7) { x1 += dd[0]; y1 += dd[1]; }
+      if (Math.abs(x1 - x0) > largo) { largo = Math.abs(x1 - x0); nom = _plaSq(x0, y0) + '–' + _plaSq(x1, y1); }
+    });
+    res.push({ desde: _plaSq(bf, br), hasta: _plaSq(mejor.x, mejor.y), antes: antes, despues: mejor.despues, diag: nom });
+  }
+  res.sort(function(a, b) { return (b.despues - b.antes) - (a.despues - a.antes); });
+  return res;
+}
+
+// Recorridos de las piezas de `side` en una línea del motor (UCI, la arranca `side`), mirando las primeras
+// `plies` medias jugadas. Devuelve { casillaInicial: { p:'N', ruta:[sq0, sq1, …] } } sólo de las piezas que
+// se movieron. Sigue a cada pieza por su casilla (con enroque y al paso); si el rival la toma, su ruta queda ahí.
+// Si se pasa `ev` (lista), anota ahí cada jugada propia en orden: {k (media jugada), o (casilla inicial), from, to, p}.
+function _plaRecorridos(g0, pv, side, plies, ev) {
+  var g = g0.slice(), id = {}, rutas = {}, cerrada = {};
+  for (var i = 0; i < 64; i++) if (_plaMia(g[i], side)) { var s0 = _plaSq(i % 8, i >> 3); id[s0] = s0; }
+  for (var k = 0; k < (pv || []).length && k < plies; k++) {
+    var u = pv[k];
+    if (!u || u.length < 4) break;
+    var from = u.slice(0, 2), to = u.slice(2, 4), a = _plaFR(from), b = _plaFR(to);
+    if (a.f < 0 || b.f < 0) break;
+    var pc = g[a.r * 8 + a.f];
+    if (!pc) break;                                       // la línea no corresponde a esta posición
+    var mia = (k % 2 === 0), dest = g[b.r * 8 + b.f];
+    // enroque (también el de 960, rey "toma" su torre)
+    if (pc.toLowerCase() === 'k' && (Math.abs(b.f - a.f) === 2 || (dest && dest.toLowerCase() === 'r' && _plaMia(dest, mia ? side : (side === 'w' ? 'b' : 'w'))))) {
+      var corto = b.f > a.f, rf = (dest && dest.toLowerCase() === 'r') ? b.f : (corto ? 7 : 0);
+      var kf = corto ? 6 : 2, tf = corto ? 5 : 3, torre = g[a.r * 8 + rf];
+      g[a.r * 8 + a.f] = null; g[a.r * 8 + rf] = null;
+      g[a.r * 8 + kf] = pc; g[a.r * 8 + tf] = torre;
+      if (mia) {
+        [[from, _plaSq(kf, a.r), 'K'], [_plaSq(rf, a.r), _plaSq(tf, a.r), 'R']].forEach(function(m) {
+          var o = id[m[0]]; if (!o) return;
+          delete id[m[0]]; id[m[1]] = o;
+          if (ev) ev.push({ k: k, o: o, from: m[0], to: m[1], p: m[2] });
+          (rutas[o] = rutas[o] || { p: m[2], ruta: [m[0]] }).ruta.push(m[1]);
+        });
+      }
+      continue;
+    }
+    if (pc.toLowerCase() === 'p' && a.f !== b.f && !dest) {   // al paso: el peón tomado está al costado
+      g[a.r * 8 + b.f] = null;
+      if (!mia) delete id[_plaSq(b.f, a.r)];
+    }
+    if (!mia) delete id[to];                                  // el rival toma una pieza nuestra
+    g[b.r * 8 + b.f] = u[4] ? (pc === pc.toUpperCase() ? u[4].toUpperCase() : u[4].toLowerCase()) : pc;
+    g[a.r * 8 + a.f] = null;
+    if (mia && id[from]) {
+      var o2 = id[from]; delete id[from]; id[to] = o2;
+      if (ev) ev.push({ k: k, o: o2, from: from, to: to, p: pc.toUpperCase() });
+      // Tomar algo ya es táctica, no parte del plan: la ruta de esa pieza se corta ANTES del cambio
+      // (si no, salía "c3 → d5 → b4", con el b4 de un cambio de caballos al final de la línea).
+      if (dest) cerrada[o2] = 1;
+      else if (!cerrada[o2]) (rutas[o2] = rutas[o2] || { p: pc.toUpperCase(), ruta: [from] }).ruta.push(to);
+    }
+  }
+  return rutas;
+}
+
+function _plaQuien(t, sq) { return (({ K:'el rey', Q:'la dama', R:'la torre', B:'el alfil', N:'el caballo', P:'el peón' })[t] || 'la pieza') + ' de ' + sq; }
+// Una maniobra puede pasar por (o caer en) una casilla que HOY ocupa otra pieza propia, que en la línea del
+// motor se corrió antes (caso del autor, 02/10: "♜ d8 → f8 → f5" con la otra torre todavía en f8: parecía que
+// una torre se subía encima de la otra). Devuelve los pasos de la maniobra y las jugadas propias de la línea
+// que le hacen lugar (cada una con su k, para numerarlas en orden). m = { ruta, ev } de _plaArmar.
+function _plaDespeje(g, side, m) {
+  var o = m.ruta[0], ev = m.ev || [];
+  var pasos = ev.filter(function(e) { return e.o === o; }).slice(0, m.ruta.length - 1);
+  var pre = [], visto = {};
+  pasos.forEach(function(e) {
+    var a = _plaFR(e.from), b = _plaFR(e.to), sqs = [];
+    if ('RBQ'.indexOf(e.p) >= 0) {   // las que se deslizan necesitan libre todo el camino
+      var dx = Math.sign(b.f - a.f), dy = Math.sign(b.r - a.r), x = a.f + dx, y = a.r + dy;
+      while ((x !== b.f || y !== b.r) && x >= 0 && x <= 7 && y >= 0 && y <= 7) { sqs.push(_plaSq(x, y)); x += dx; y += dy; }
+    }
+    sqs.push(e.to);
+    sqs.forEach(function(sq) {
+      if (visto[sq] || sq === o) return;
+      var c = _plaFR(sq), p = g[c.r * 8 + c.f];
+      if (!p || !_plaMia(p, side)) return;
+      var lib = ev.filter(function(x) { return x.o === sq && x.k < e.k; })[0];   // la jugada con que esa pieza se va
+      if (lib) { visto[sq] = 1; pre.push(lib); }
+    });
+  });
+  // Enroque (02/10, caso del autor: ♜ a1 → d1 → h1 con 0-0-0): rey y torre se mueven en la MISMA jugada.
+  // El compañero va siempre con la maniobra (marcado `socio`), aunque no estorbe: si no, la torre "enrocaba sola".
+  pasos.forEach(function(e) {
+    ev.forEach(function(x) {
+      if (x.k !== e.k || x.o === o) return;
+      for (var i = 0; i < pre.length; i++) if (pre[i].k === x.k && pre[i].o === x.o) { pre[i] = Object.assign({}, pre[i], { socio: true }); return; }
+      pre.push(Object.assign({}, x, { socio: true }));
+    });
+  });
+  return { pasos: pasos, pre: pre };
+}
+// ¿Esta jugada es un enroque del rey? → 'corto' / 'largo' (o '').
+function _plaEnroque(e) {
+  if (!e || e.p !== 'K') return '';
+  var a = _plaFR(e.from), b = _plaFR(e.to);
+  return Math.abs(b.f - a.f) === 2 ? (b.f > a.f ? 'corto' : 'largo') : '';
+}
+// Ideas "a ojo" (sin motor) para `side`, cada una con su 1ª jugada (uci0) para que el motor la verifique.
+function _plaCandidatos(g, side) {
+  var res = [];
+  // casillas fuertes → ruta del caballo más cercano (hasta 3 saltos); las 2 mejores casillas
+  var fuertes = _plaCasillasFuertes(g, side), porCasilla = [];
+  fuertes.forEach(function(c) {
+    var mejor = null;
+    for (var i = 0; i < 64; i++) {
+      var p = g[i];
+      if (!p || p.toLowerCase() !== 'n' || !_plaMia(p, side)) continue;
+      var r = _plaRutaCaballo(g, _plaSq(i % 8, i >> 3), c.sq, side, 3);
+      if (r && (!mejor || r.length < mejor.length)) mejor = r;
+    }
+    if (mejor) porCasilla.push({ tipo: 'casilla', sq: c.sq, p: 'N', ruta: mejor, uci0: mejor[0] + mejor[1],
+                                 avance: side === 'w' ? c.r : 7 - c.r, centro: Math.abs(c.f - 3.5) });
+  });
+  porCasilla.sort(function(a, b) { return (a.ruta.length - b.ruta.length) || (b.avance - a.avance) || (a.centro - b.centro); });
+  res = res.concat(porCasilla.slice(0, 2));
+  var col = _plaColumnas(g, side)[0];
+  if (col) res.push({ tipo: 'columna', col: col.col, abierta: col.abierta, peon: col.peon, entrada: col.entrada,
+                      ruta: [col.desde, col.hasta], uci0: col.desde + col.hasta });
+  var dg = _plaDiagonales(g, side)[0];
+  if (dg) res.push({ tipo: 'diagonal', diag: dg.diag, antes: dg.antes, despues: dg.despues,
+                     ruta: [dg.desde, dg.hasta], uci0: dg.desde + dg.hasta });
+  return res;
+}
+
+// Arma las tarjetas de planes (sin DOM: se prueba en el banco). d = { side, g, lineas:[{pv,score}],
+// cadena:[{uci,san}], cands:[… con .score si se verificó], plies }.
+function _plaArmar(d) {
+  var side = d.side, g = d.g, lineas = d.lineas || [], planes = [];
+  var rival = side === 'w' ? 'negro' : 'blanco', best = lineas[0] ? lineas[0].score : null;
+  function flechas(ruta) { var f = []; for (var i = 1; i < ruta.length; i++) f.push({ from: ruta[i - 1], to: ruta[i], n: i }); return f; }
+  function fan(san) { return String(san || '').replace(/[KQRBN]/g, function(c) { return _plaFig(c); }); }
+  var fuerteSet = {};
+  _plaCasillasFuertes(g, side).forEach(function(c) { fuerteSet[c.sq] = 1; });
+
+  // 1) Si pudieras jugar varias seguidas
+  var cad = d.cadena || [];
+  if (cad.length >= 2) {
+    var circ = [];
+    cad.forEach(function(c) { var t = c.uci.slice(2, 4); if (fuerteSet[t] && circ.indexOf(t) < 0) circ.push(t); });
+    planes.push({ tipo: 'cadena', titulo: 'Si pudieras jugar ' + cad.length + ' seguidas',
+      detalle: cad.map(function(c, i) { return (i + 1) + '. ' + fan(c.san); }).join('   '),
+      nota: 'Como si el rival pasara: muestra adónde quiere llevar las piezas.',
+      flechas: cad.map(function(c, i) { return { from: c.uci.slice(0, 2), to: c.uci.slice(2, 4), n: i + 1 }; }),
+      circulos: circ });
+  }
+
+  // 2) Maniobras y palancas en las líneas del motor
+  var man = {}, pal = {};
+  lineas.forEach(function(L, li) {
+    var evs = [], rec = _plaRecorridos(g, L.pv, side, d.plies || 10, evs);
+    Object.keys(rec).forEach(function(o) {
+      var R = rec[o];
+      // 2 jugadas o más, y sin volver sobre sus pasos (la dama d1 → d2 → d1 no es un plan)
+      if (R.p === 'P' || R.ruta.length < 3 || new Set(R.ruta).size < R.ruta.length) return;
+      var k = o + '>' + R.ruta[R.ruta.length - 1];
+      if (!man[k]) man[k] = { p: R.p, ruta: R.ruta, lineas: [], li: li, ev: evs };
+      if (man[k].lineas.indexOf(li) < 0) man[k].lineas.push(li);
+    });
+    // palanca: un peón propio (en las primeras 3 jugadas propias) que llega a atacar un peón rival
+    var h = g.slice();
+    for (var k2 = 0; k2 < Math.min(6, (L.pv || []).length); k2++) {
+      var u = L.pv[k2], a = _plaFR(u.slice(0, 2)), b = _plaFR(u.slice(2, 4)), pc = h[a.r * 8 + a.f];
+      if (!pc) break;
+      if (k2 % 2 === 0 && pc.toLowerCase() === 'p' && a.f === b.f) {
+        var E = side === 'w' ? 'p' : 'P', fr = b.r + (side === 'w' ? 1 : -1), objetivo = null;
+        if (fr >= 0 && fr <= 7) {
+          if (b.f > 0 && h[fr * 8 + b.f - 1] === E) objetivo = _plaSq(b.f - 1, fr);
+          else if (b.f < 7 && h[fr * 8 + b.f + 1] === E) objetivo = _plaSq(b.f + 1, fr);
+        }
+        if (objetivo) {
+          var kp = u.slice(0, 4);
+          if (!pal[kp]) pal[kp] = { u: kp, obj: objetivo, lineas: [], li: li };
+          if (pal[kp].lineas.indexOf(li) < 0) pal[kp].lineas.push(li);
+        }
+      }
+      h[b.r * 8 + b.f] = pc; h[a.r * 8 + a.f] = null;
+    }
+  });
+  function cuantas(m) {
+    return m.lineas.length >= 2 ? 'La busca el módulo en ' + m.lineas.length + ' de sus ' + lineas.length + ' líneas.'
+         : m.li === 0 ? 'Está en la línea principal del módulo.' : 'Aparece en una de las líneas del módulo.';
+  }
+  var mans = Object.keys(man).map(function(k) { return man[k]; });
+  // La misma pieza con una ruta que es el comienzo de otra (g1 → f2 → e3 y g1 → f2 → e3 → d2): una sola
+  // tarjeta, la más larga, sumando las líneas de las dos.
+  mans.sort(function(a, b) { return b.ruta.length - a.ruta.length; });
+  mans = mans.filter(function(m, i) {
+    for (var j = 0; j < i; j++) {
+      var L = mans[j];
+      if (L.ruta.slice(0, m.ruta.length).join() !== m.ruta.join()) continue;
+      m.lineas.forEach(function(x) { if (L.lineas.indexOf(x) < 0) L.lineas.push(x); });
+      L.li = Math.min(L.li, m.li);
+      return false;
+    }
+    return true;
+  });
+  mans.sort(function(a, b) { return (b.lineas.length - a.lineas.length) || (a.li - b.li) || (a.ruta.length - b.ruta.length); });
+  // una sola maniobra por pieza (la más repetida): en un final salían dos del rey casi iguales
+  var usadas = {};
+  mans = mans.filter(function(m) { if (usadas[m.ruta[0]]) return false; usadas[m.ruta[0]] = 1; return true; });
+  var destinos = {};
+  mans.slice(0, 2).forEach(function(m) {
+    var dest = m.ruta[m.ruta.length - 1], fuerte = !!fuerteSet[dest];
+    destinos[dest] = 1;
+    var dsp = _plaDespeje(g, side, m);
+    // misma media jugada (el enroque) = mismo número; dentro de ella, el rey primero
+    var todas = dsp.pre.concat(dsp.pasos).sort(function(a, b) { return (a.k - b.k) || ((b.p === 'K') - (a.p === 'K')); });
+    var nro = 0, kAnt = null;
+    var flEnOrden = todas.map(function(e) { if (e.k !== kAnt) { nro++; kAnt = e.k; } return { from: e.from, to: e.to, n: nro }; });
+    var enr = todas.filter(function(e) { return _plaEnroque(e); })[0];
+    var otros = dsp.pre.filter(function(e) { return !(enr && e.k === enr.k); });
+    planes.push({ tipo: 'maniobra', titulo: _plaFig(m.p) + ' Maniobra ' + _plaDel(m.p) + ': ' + m.ruta.join(' → '),
+      detalle: cuantas(m)
+             + (enr ? ' Arranca con el enroque ' + _plaEnroque(enr) + '.' : '')
+             + (otros.length ? ' Antes, ' + otros.map(function(e) { return _plaQuien(e.p, e.from) + ' le hace lugar (' + e.from + ' → ' + e.to + ')'; }).join(' y ') + '.' : '')
+             + (fuerte ? ' ' + dest + ' es una casilla fuerte: ningún peón ' + rival + ' la puede echar.' : ''),
+      flechas: dsp.pasos.length === m.ruta.length - 1 ? flEnOrden : flechas(m.ruta),
+      circulos: fuerte ? [dest] : [] });
+  });
+
+  // 3) Ideas a ojo que el motor no refuta
+  (d.cands || []).forEach(function(c) {
+    if (!_plaAceptable(best, c.score, _PLA_TOLERA)) return;
+    if (c.tipo === 'casilla') {
+      if (destinos[c.sq]) return;   // ya la muestra una maniobra del motor
+      planes.push({ tipo: 'casilla', titulo: '◯ ' + c.sq + ': casilla fuerte para el caballo',
+        detalle: 'Ningún peón ' + rival + ' la puede echar. Ruta: ' + c.ruta.join(' → '),
+        flechas: flechas(c.ruta), circulos: [c.sq] });
+    } else if (c.tipo === 'columna') {
+      planes.push({ tipo: 'columna', titulo: '♜ Columna ' + c.col + (c.abierta ? ' abierta' : ' semiabierta') + ': ' + c.ruta.join(' → '),
+        detalle: c.abierta ? 'No tiene peones: la torre entra por ahí' + (c.entrada ? ' (mirá ' + c.entrada + ').' : '.')
+                           : 'Sin peón propio: la torre presiona el peón ' + rival + ' de ' + c.peon + '.',
+        flechas: flechas(c.ruta), circulos: c.abierta ? (c.entrada ? [c.entrada] : []) : [c.peon] });
+    } else if (c.tipo === 'diagonal') {
+      planes.push({ tipo: 'diagonal', titulo: '♝ Diagonal ' + c.diag + ' para el alfil: ' + c.ruta.join(' → '),
+        detalle: 'Pasa de ver ' + c.antes + ' casillas a ' + c.despues + '.',
+        flechas: flechas(c.ruta), circulos: [] });
+    }
+  });
+
+  // 4) Palanca de peón (la que más se repite; en 2 líneas o en la principal)
+  var pals = Object.keys(pal).map(function(k) { return pal[k]; })
+    .filter(function(p) { return p.lineas.length >= 2 || p.li === 0; })
+    .sort(function(a, b) { return (b.lineas.length - a.lineas.length) || (a.li - b.li); });
+  if (pals[0]) {
+    var P0 = pals[0];
+    planes.push({ tipo: 'palanca', titulo: 'Palanca ' + P0.u.slice(2, 4) + ': ataca el peón de ' + P0.obj,
+      detalle: 'Abre juego. ' + cuantas(P0), flechas: [{ from: P0.u.slice(0, 2), to: P0.u.slice(2, 4), n: 1 }], circulos: [P0.obj] });
+  }
+  return planes.slice(0, 5);
+}
+
+// ── Motor ──
+function plaUpdateBtn() {
+  var b = document.getElementById('pla-btn');
+  if (!b) return;
+  var inChk = !!(cv.chess && cv.chess.in_check()), fin = !!(cv.chess && cv.chess.game_over());
+  var busy = _faOcupado();
+  b.disabled = !cv.chess || inChk || fin || busy || _pla.running || _thr.running;
+  b.title = inChk ? 'Primero hay que salir del jaque'
+          : fin   ? 'La partida terminó en esta posición'
+          : busy  ? 'El análisis de la partida está usando el motor'
+          : 'Ideas de plan: adónde llevar las piezas';
+}
+
+function plaProbe() {
+  if (_pla.running || _thr.running || !cv.chess) return;
+  if (_faOcupado()) { _plaCaja('<div class="pla-msg">El análisis de la partida está usando el motor…</div>'); return; }
+  if (!sf.ready) { if (!sf.on) sfToggle(); _plaCaja('<div class="pla-msg">El motor se está cargando… probá de nuevo en un ratito.</div>'); return; }
+  if (cv.chess.in_check() || cv.chess.game_over()) return;
+  var fen = cv.chess.fen();
+  if (_plaCache[fen]) { plaMostrar(_plaCache[fen], fen); return; }
+  _faCederRelleno();   // el relleno del gráfico en vivo le deja el motor
+  mevAbort();          // las miniaturas también (si no, se quedarían con los mensajes del motor)
+  _pla = { running:true, armed:false, rokSeen:false, cancel:false, fen:fen, side:fen.split(' ')[1],
+           jobs:[{ tipo:'lineas', fen:fen, mpv:3, depth:_PLA_DEPTH, ms:_PLA_MS }], job:null, info:{},
+           lineas:[], cadena:[], cands:[], hechos:0, cadEv:null };
+  plaReset(true, true);
+  _plaFenVista = fen;
+  _plaCaja('<div class="pla-msg" id="pla-prog" aria-live="polite">🧭 Pensando a fondo… (puede tardar un ratito)</div>');
+  plaUpdateBtn(); thrUpdateBtn();
+  sf.engine.postMessage('stop');
+  sf.engine.postMessage('isready');
+}
+
+function plaHandleMsg(line) {
+  if (!_pla.armed) {   // barrera, igual que ¿Qué amenaza?
+    if (line.indexOf('bestmove') === 0) {
+      if (_pla.rokSeen) { _pla.rokSeen = false; _pla.armed = true; plaSiguiente(); }
+      return;
+    }
+    if (line.indexOf('readyok') === 0) {
+      if (sf.searching) { _pla.rokSeen = true; return; }
+      _pla.armed = true; plaSiguiente();
+    }
+    return;
+  }
+  if (line.indexOf('bestmove') === 0) { plaTermino(line.split(/\s+/)[1]); return; }
+  if (line.indexOf('info') !== 0 || /\b(lower|upper)bound\b/.test(line)) return;
+  var mm = line.match(/\bmultipv (\d+)\b/), pm = line.match(/ pv (.+)/);
+  var cp = line.match(/\bscore cp (-?\d+)\b/), mt = line.match(/\bscore mate (-?\d+)\b/);
+  if (!pm || (!cp && !mt)) return;
+  _pla.info[mm ? parseInt(mm[1], 10) - 1 : 0] = { score: mt ? { mate: parseInt(mt[1], 10) } : { cp: parseInt(cp[1], 10) },
+                                                  pv: pm[1].trim().split(/\s+/) };
+}
+
+function plaSiguiente() {
+  if (_pla.cancel) { plaCerrar(); return; }
+  var j = _pla.jobs.shift();
+  if (!j) { plaFinal(); return; }
+  _pla.job = j; _pla.info = {}; _pla.hechos++;
+  var pr = document.getElementById('pla-prog');
+  if (pr) pr.textContent = '🧭 Pensando a fondo… paso ' + _pla.hechos + ' (puede tardar un ratito)';
+  sf.engine.postMessage('setoption name MultiPV value ' + j.mpv);
+  sf.engine.postMessage('position fen ' + j.fen);
+  sf.engine.postMessage('go depth ' + j.depth + ' movetime ' + j.ms + (j.sm ? ' searchmoves ' + j.sm : ''));
+  sf.searching = true;
+}
+
+function _plaCp(sc) { return !sc ? null : sc.mate !== undefined ? (sc.mate > 0 ? 10000 : -10000) : sc.cp; }
+// ¿Qué hacer con la jugada nº n (0 = la 1ª, la jugada de verdad) de "si pudieras jugar seguidas"? sc = eval de
+// la posición donde se elige (siempre del lado del que juega), prev = la del paso anterior (en cp).
+// Lo medido (02/10): con el rival pasando, en algún momento aparece una toma que gana mucho de golpe (gxf6 con
+// +4,5): eso no es plan, es un regalo; y de ahí en más la cadena se come todo (fxe7, exd8=D…). Un cambio
+// parejo (fxe5, cxd6) sí es parte del plan, y lo que sigue después tiene sentido (♞b8-c6-d4, ♜d7, ♜fd8…).
+function _plaPasoCadena(n, prev, sc, toma, jaque) {
+  var cp = _plaCp(sc), salto = (n === 0 || prev === null || cp === null) ? 0 : cp - prev;
+  if (n > 0 && ((sc && sc.mate > 0) || ((toma || jaque) && salto >= _PLA_SALTO_TOMA))) return { incluir: false, seguir: false };
+  return { incluir: true, seguir: !jaque && salto < _PLA_SALTO_FIN && n + 1 < _PLA_SEGUIDAS };
+}
+// Una jugada más "seguida": la juega en `fen` y, si corresponde (_plaPasoCadena), le devuelve el turno al
+// mismo bando (el rival pasa) y encola la siguiente búsqueda.
+function _plaCadenaAvanza(fen, uci, sc) {
+  if (!uci || uci.length < 4 || uci === '(none)') return;
+  var c = new Chess(fen), m = c.move({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci[4] || undefined });
+  if (!m) return;
+  var d = _plaPasoCadena(_pla.cadena.length, _pla.cadEv, sc, !!m.captured, c.in_check());
+  if (!d.incluir) return;
+  _pla.cadena.push({ uci: uci, san: m.san });
+  _pla.cadEv = _plaCp(sc);
+  if (!d.seguir || c.game_over()) return;
+  var nf = _threatFen(c.fen());
+  if (!nf || !c.validate_fen(nf).valid) return;
+  if (new Chess(nf).moves().length === 0) return;
+  _pla.jobs.unshift({ tipo:'cadena', fen:nf, mpv:1, depth:_PLA_DEPTH2, ms:_PLA_MS2 });
+}
+
+function plaTermino(bm) {
+  var j = _pla.job; _pla.job = null;
+  if (_pla.cancel || !j) { plaCerrar(); return; }
+  try {
+    if (j.tipo === 'lineas') {
+      _pla.lineas = [0, 1, 2].map(function(i) { return _pla.info[i]; }).filter(function(x) { return x && x.pv && x.pv.length; });
+      if (_pla.lineas.length) {
+        _plaCadenaAvanza(_pla.fen, bm || _pla.lineas[0].pv[0], _pla.lineas[0].score);
+        var primeras = {};
+        _pla.lineas.forEach(function(l) { primeras[l.pv[0].slice(0, 4)] = l.score; });
+        var nver = 0;
+        _pla.cands = _plaCandidatos(_fenGrid(_pla.fen), _pla.side).filter(function(c) {
+          try { return !!new Chess(_pla.fen).move({ from: c.uci0.slice(0, 2), to: c.uci0.slice(2, 4) }); } catch (e) { return false; }
+        });
+        _pla.cands.forEach(function(c) {
+          if (primeras[c.uci0]) c.score = primeras[c.uci0];
+          else if (nver < 4) { nver++; _pla.jobs.push({ tipo:'verif', fen:_pla.fen, mpv:1, depth:_PLA_DEPTH2, ms:_PLA_MS2, sm:c.uci0, cand:c }); }
+        });
+      }
+    } else if (j.tipo === 'cadena') {
+      _plaCadenaAvanza(j.fen, bm, _pla.info[0] && _pla.info[0].score);
+    } else if (j.tipo === 'verif') {
+      if (_pla.info[0] && _pla.info[0].pv[0] && _pla.info[0].pv[0].slice(0, 4) === j.sm) j.cand.score = _pla.info[0].score;
+    }
+  } catch (e) {}
+  plaSiguiente();
+}
+
+function plaFinal() {
+  var fen = _pla.fen, planes = [];
+  try {
+    planes = _plaArmar({ side:_pla.side, g:_fenGrid(fen), lineas:_pla.lineas, cadena:_pla.cadena, cands:_pla.cands, plies:10 });
+  } catch (e) {}
+  _plaCache[fen] = planes;
+  plaCerrar();
+  if (cv.chess && cv.chess.fen() === fen) plaMostrar(planes, fen);
+}
+
+// Devuelve el motor al visor (MultiPV 3 y su análisis), haya terminado o se haya cancelado.
+function plaCerrar() {
+  _pla.running = false; _pla.armed = false; _pla.rokSeen = false; _pla.job = null; _pla.jobs = [];
+  if (sf.engine) sf.engine.postMessage('setoption name MultiPV value 3');
+  plaUpdateBtn(); thrUpdateBtn();
+  if (sf.on && sf.ready) sfAnalyze();
+}
+
+// ── Pantalla ──
+function _plaCaja(html) {
+  var b = document.getElementById('pla-box');
+  if (!b) return;
+  b.innerHTML = html;
+  b.style.display = html ? 'block' : 'none';
+  // El panel del módulo tiene su propio scroll (en pantallas bajas): que la caja quede a la vista.
+  if (html) try { b.scrollIntoView({ block: 'nearest' }); } catch (e) {}
+}
+function plaMostrar(planes, fen) {
+  _plaPlanes = planes; _plaFenVista = fen; _plaSel = -1; _plaDibujo = null;
+  var lado = fen.split(' ')[1] === 'w' ? 'las blancas' : 'las negras';
+  function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
+  var h = '<div class="pla-head"><span>🧭 Planes para ' + lado + '</span>'
+        + '<button class="pla-x" onclick="plaCerrarCaja()" title="Cerrar" aria-label="Cerrar los planes">✕</button></div>';
+  if (!planes.length) {
+    h += '<div class="pla-msg">No encontré un plan claro: la posición pide jugadas concretas. Mirá las líneas del módulo.</div>';
+  } else {
+    h += '<div class="pla-list">';
+    planes.forEach(function(p, i) {
+      h += '<div class="pla-card" id="pla-c' + i + '" role="button" tabindex="0" aria-pressed="false" onclick="plaElegir(' + i + ')"'
+         + ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();plaElegir(' + i + ')}">'
+         + '<div class="pla-t">' + esc(p.titulo) + '</div><div class="pla-d">' + esc(p.detalle) + '</div>'
+         + (p.nota ? '<div class="pla-n">' + esc(p.nota) + '</div>' : '') + '</div>';
+    });
+    h += '</div><div class="pla-pasos" id="pla-pasos"></div>'
+       + '<div class="pla-msg pla-foot">Tocá un plan para verlo en el tablero. Son ideas para guiarte, no jugadas obligadas.</div>';
+  }
+  _plaCaja(h);
+  if (planes.length) plaElegir(0, true);
+}
+function plaElegir(i, auto) {
+  if (!_plaPlanes || !_plaPlanes[i]) return;
+  if (_plaPaso) plaPasoSalir();
+  _plaSel = (_plaSel === i) ? -1 : i;   // tocar el elegido otra vez lo apaga (vuelven las flechas del motor)
+  _plaDibujo = _plaSel >= 0 ? _plaPlanes[_plaSel] : null;
+  for (var k = 0; k < _plaPlanes.length; k++) {
+    var c = document.getElementById('pla-c' + k);
+    if (c) { c.classList.toggle('sel', k === _plaSel); c.setAttribute('aria-pressed', k === _plaSel ? 'true' : 'false'); }
+  }
+  sfDrawArrows();
+  _plaPasosUI();
+  // En el teléfono los planes quedan DEBAJO del tablero (fuera de la pantalla): al tocar uno, subir a verlo.
+  if (!auto && _plaSel >= 0) _plaVerTablero();
+}
+// En el teléfono, subir al tablero. El desplazamiento suave a veces no arranca (se vio en la prueba con el
+// teléfono emulado): si a los 0,7 s el tablero sigue fuera de la pantalla, salto directo.
+function _plaVerTablero() {
+  if (typeof _cvMobileOn === 'undefined' || !_cvMobileOn) return;
+  var bd = document.getElementById('cv-board');
+  if (!bd) return;
+  try { bd.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {}
+  setTimeout(function() {
+    var r = bd.getBoundingClientRect();
+    if (r.top < 0 || r.bottom > (window.innerHeight || 0)) bd.scrollIntoView({ block: 'center' });
+  }, 700);
+}
+function plaCerrarCaja() { plaReset(true); sfDrawArrows(); }
+// Al navegar (o apagar el módulo): borra el plan dibujado y, si se estaba buscando en OTRA posición, lo
+// cancela. `forzar` borra igual aunque la posición sea la misma; `sinCancelar` no toca la búsqueda.
+function plaReset(forzar, sinCancelar) {
+  var misma = !!(cv.chess && _plaFenVista && cv.chess.fen() === _plaFenVista);
+  if (!forzar && misma) return;
+  if (_plaPaso) { _plaPaso = null; if (cv.chess) cvRenderBoard(); }
+  _plaDibujo = null; _plaSel = -1; _plaPlanes = null; _plaFenVista = null;
+  _plaCaja('');
+  if (!sinCancelar && _pla.running && !_pla.cancel) {
+    _pla.cancel = true;
+    if (_pla.armed && sf.engine) sf.engine.postMessage('stop');
+  }
+}
+
+// Flecha PUNTEADA con halo claro (se ve sobre cualquier casilla) y cabeza llena.
+function _plaFlecha(ctx, x1, y1, x2, y2, sqW, color) {
+  var a = _arrowShape(x1, y1, x2, y2, sqW, 0.13, 3);
+  if (!a) return;
+  var bx = (a.bL[0] + a.bR[0]) / 2, by = (a.bL[1] + a.bR[1]) / 2;
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.setLineDash([sqW * 0.17, sqW * 0.14]);
+  [['rgba(255,255,255,0.8)', a.r * 2 + Math.max(2, sqW * 0.045)], [color, a.r * 2]].forEach(function(t) {
+    ctx.strokeStyle = t[0]; ctx.lineWidth = t[1];
+    ctx.beginPath(); ctx.moveTo(a.s[0], a.s[1]); ctx.lineTo(bx, by); ctx.stroke();
+  });
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  ctx.moveTo(a.tip[0], a.tip[1]); ctx.lineTo(a.hL[0], a.hL[1]); ctx.lineTo(a.hR[0], a.hR[1]); ctx.closePath();
+  ctx.strokeStyle = 'rgba(255,255,255,0.8)'; ctx.lineWidth = Math.max(2, sqW * 0.045); ctx.lineJoin = 'round'; ctx.stroke();
+  ctx.fillStyle = color; ctx.fill();
+  ctx.restore();
+}
+// Dibuja el plan elegido: círculos en las casillas clave, flechas punteadas y el número de cada paso.
+function _plaPintar(ctx, center, sqW) {
+  var d = _plaDibujo;
+  if (!d) return;
+  ctx.save();
+  (d.circulos || []).forEach(function(sq) {
+    var c = center(sq);
+    [['rgba(255,255,255,0.8)', sqW * 0.11], [_PLA_COLOR, sqW * 0.07]].forEach(function(t) {
+      ctx.strokeStyle = t[0]; ctx.lineWidth = t[1];
+      ctx.beginPath(); ctx.arc(c.x, c.y, sqW * 0.42, 0, 2 * Math.PI); ctx.stroke();
+    });
+  });
+  var fl = d.flechas || [], P = (_plaPaso && _plaPaso.plan === d) ? _plaPaso : null;
+  // Paso a paso: las ya jugadas quedan tenues (el rastro), la que viene va fuerte y las demás no se ven.
+  function op(i) { var q = P ? P.gi[i] : 0; return !P ? 1 : q > P.k ? 0 : q < P.k ? (P.k === P.n ? 0.75 : 0.35) : 1; }
+  fl.forEach(function(f, i) {
+    if (!op(i)) return;
+    var a = center(f.from), b = center(f.to);
+    ctx.globalAlpha = op(i); _plaFlecha(ctx, a.x, a.y, b.x, b.y, sqW, _PLA_COLOR); ctx.globalAlpha = 1;
+  });
+  if (fl.length > 1) {
+    var rad = Math.max(7, sqW * 0.15);
+    ctx.font = '700 ' + Math.round(rad * 1.25) + 'px system-ui, sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    fl.forEach(function(f, i) {
+      if (!op(i)) return;
+      if (i > 0 && f.n != null && fl[i - 1].n === f.n) return;   // enroque: un solo número para rey y torre
+      ctx.globalAlpha = op(i);
+      var a = center(f.from), b = center(f.to), x = (a.x + b.x) / 2, y = (a.y + b.y) / 2;
+      ctx.beginPath(); ctx.arc(x, y, rad, 0, 2 * Math.PI);
+      ctx.fillStyle = _PLA_COLOR; ctx.fill();
+      ctx.lineWidth = Math.max(1.5, sqW * 0.03); ctx.strokeStyle = '#fff'; ctx.stroke();
+      ctx.fillStyle = '#fff'; ctx.fillText(String(f.n), x, y + 0.5);
+      ctx.globalAlpha = 1;
+    });
+  }
+  ctx.restore();
+}
+
+// ── Paso a paso (02/10, pedido del autor) ──────────────────────────────────────────────────────────
+// Con muchas flechas un aficionado se pierde. La barra espaciadora (como en Lichess, donde juega la del
+// módulo), los botones ◀ ▶ o un toque en el tablero van MOVIENDO las piezas del plan de a una, deslizándose.
+// Es SÓLO dibujo: no toca cv.chess, la partida ni el motor; al salir, el tablero vuelve a la partida.
+var _plaPaso = null;            // { plan, k (pasos ya hechos), n, grupos, gi (flecha → paso), grids: [posición 0 … n] }
+var _plaEspacioTomado = false;  // la barra la usó el paso a paso: que su keyup no "apriete" un botón enfocado
+
+// Los pasos del plan: flechas seguidas con el MISMO número van juntas (el enroque: rey + torre = un paso).
+// Devuelve una lista de listas de índices de flechas.
+function _plaGrupos(flechas) {
+  var res = [];
+  (flechas || []).forEach(function(fl, i) {
+    var ult = res[res.length - 1];
+    if (ult && fl.n != null && flechas[ult[0]].n === fl.n) ult.push(i); else res.push([i]);
+  });
+  return res;
+}
+// Las posiciones del plan, una por PASO (grilla de _fenGrid). El rival no mueve (como en el plan).
+function _plaGrillas(fen, flechas) {
+  var g = _fenGrid(fen), res = [g];
+  _plaGrupos(flechas).forEach(function(grupo) {
+    g = g.slice();
+    grupo.forEach(function(idx) {
+      var fl = flechas[idx], a = _plaFR(fl.from), b = _plaFR(fl.to), p = g[a.r * 8 + a.f];
+      if (!p) return;   // la torre del enroque: ya la movió el rey (va antes en el mismo paso)
+      var t = p.toLowerCase();
+      if (t === 'k' && Math.abs(b.f - a.f) === 2) {   // enroque: la torre también (si sigue en su rincón)
+        var rf = b.f > a.f ? 7 : 0, tf = b.f > a.f ? 5 : 3, tr = g[a.r * 8 + rf];
+        if (tr && tr.toLowerCase() === 'r' && _plaMia(tr, p === 'K' ? 'w' : 'b')) { g[a.r * 8 + tf] = tr; g[a.r * 8 + rf] = null; }
+      }
+      if (t === 'p' && a.f !== b.f && !g[b.r * 8 + b.f]) g[a.r * 8 + b.f] = null;   // al paso
+      if (t === 'p' && (b.r === 7 || b.r === 0)) p = (p === 'p') ? 'q' : 'Q';         // corona dama
+      g[b.r * 8 + b.f] = p; g[a.r * 8 + a.f] = null;
+    });
+    res.push(g);
+  });
+  return res;
+}
+// "♞c6": la pieza (de la posición ANTES de la jugada) y adónde va. El enroque: "O-O" / "O-O-O".
+function _plaEtiquetaPaso(g, fl) {
+  var a = _plaFR(fl.from), b = _plaFR(fl.to), p = g[a.r * 8 + a.f];
+  if (p && p.toLowerCase() === 'k' && Math.abs(b.f - a.f) === 2) return b.f > a.f ? 'O-O' : 'O-O-O';
+  return (p ? _plaFig(p.toUpperCase()) : '') + fl.to;
+}
+// Pinta una grilla en el tablero del visor (mismo camino rápido que cvRenderBoard: sólo las casillas que cambian).
+function _plaPintarTablero(g) {
+  var boardEl = document.getElementById('cv-board');
+  if (!boardEl || boardEl.children.length !== 64) return;
+  var FL = ['a','b','c','d','e','f','g','h'], cells = boardEl.children, idx = 0;
+  for (var r = 0; r < 8; r++) {
+    for (var f = 0; f < 8; f++) {
+      var cell = cells[idx++], rr = cv.flipped ? 7 - r : r, ff = cv.flipped ? 7 - f : f;
+      var p = g[(7 - rr) * 8 + ff], pk = p ? ((p === p.toUpperCase() ? 'w' : 'b') + p.toLowerCase()) : '';
+      if (cell._pk !== pk) { cell._pk = pk; cell.innerHTML = cvCellInner(r, f, rr, ff, FL[ff] + (8 - rr), pk, FL); }
+    }
+  }
+}
+// dir = +1 / −1. La primera vez arranca; pasada la última jugada, sale (vuelve a la partida con el plan entero).
+function plaPaso(dir) {
+  var d = _plaDibujo;
+  if (!d || !d.flechas || !d.flechas.length || !_plaFenVista || !cv.chess || cv.chess.fen() !== _plaFenVista) return;
+  if (!_plaPaso || _plaPaso.plan !== d) {
+    if (dir < 0) return;
+    var grupos = _plaGrupos(d.flechas), gi = [];
+    grupos.forEach(function(gr, q) { gr.forEach(function(i) { gi[i] = q; }); });
+    _plaPaso = { plan: d, k: 0, n: grupos.length, grupos: grupos, gi: gi, grids: _plaGrillas(_plaFenVista, d.flechas) };
+    _plaVerTablero();   // en el teléfono el tablero quedó arriba
+  }
+  var P = _plaPaso, k = P.k + dir;
+  if (k > P.n) { plaPasoSalir(); return; }
+  if (k < 0) k = 0;
+  P.k = k;
+  _plaPintarTablero(P.grids[k]);
+  if (dir > 0 && k > 0) {   // deslizar todo lo que se mueve en este paso (en el enroque, rey y torre)
+    P.grupos[k - 1].forEach(function(i) { var fl = d.flechas[i]; _cvSlidePiece(document.getElementById('cv-board'), fl.from, fl.to); });
+  }
+  sfDrawArrows();
+  _plaPasosUI();
+}
+function plaPasoSalir() {
+  if (!_plaPaso) return;
+  _plaPaso = null;
+  if (cv.chess) cvRenderBoard();   // la partida (cv.chess nunca se tocó)
+  sfDrawArrows();
+  _plaPasosUI();
+}
+// La barrita debajo de las tarjetas: "▶ Ver paso a paso" o, andando, ◀ Paso 3 de 7: ♞c6 ▶ Salir.
+function _plaPasosUI() {
+  var el = document.getElementById('pla-pasos');
+  if (!el) return;
+  var d = _plaDibujo;
+  if (!d || !d.flechas || !d.flechas.length) { el.innerHTML = ''; return; }
+  var P = (_plaPaso && _plaPaso.plan === d) ? _plaPaso : null;
+  var movil = typeof _cvMobileOn !== 'undefined' && _cvMobileOn;
+  if (!P) {
+    el.innerHTML = '<button class="pla-pbtn" onclick="plaPaso(1)">▶ Ver paso a paso</button>'
+      + (movil ? '' : '<span class="pla-ph">o con la barra espaciadora</span>');
+    return;
+  }
+  var lbl = P.k === 0 ? 'Posición de la partida' : 'Paso ' + P.k + ' de ' + P.n + ': ' + _plaEtiquetaPaso(P.grids[P.k - 1], d.flechas[P.grupos[P.k - 1][0]]);
+  el.innerHTML = '<button class="pla-pbtn" onclick="plaPaso(-1)" aria-label="Paso anterior"' + (P.k === 0 ? ' disabled' : '') + '>◀</button>'
+    + '<span class="pla-pl" aria-live="polite">' + lbl + '</span>'
+    + '<button class="pla-pbtn" onclick="plaPaso(1)" aria-label="' + (P.k >= P.n ? 'Terminar' : 'Paso siguiente') + '">' + (P.k >= P.n ? '✓' : '▶') + '</button>'
+    + '<button class="pla-pbtn" onclick="plaPasoSalir()">Salir</button>'
+    + '<div class="pla-ph2">' + (movil ? 'Tocá el tablero para seguir.' : 'Espacio o clic en el tablero: sigue · Shift+espacio: atrás · Esc: sale') + '</div>';
+}
+// Teclado: sólo con un plan dibujado y el visor abierto (y sin estar escribiendo). Va en la fase de
+// CAPTURA para ganarle al visor: así Esc sale del paso a paso en vez de cerrar la partida.
+document.addEventListener('keydown', function(e) {
+  if (!_plaDibujo) return;
+  var ov = document.getElementById('chess-overlay');
+  if (!ov || !ov.classList.contains('open') || document.querySelector('.puz-overlay.open')) return;
+  var tg = e.target;
+  if (tg && (/^(INPUT|TEXTAREA|SELECT)$/.test(tg.tagName || '') || tg.isContentEditable)) return;
+  if (e.key === ' ' || e.code === 'Space') {
+    // con el teclado sobre OTRA tarjeta, el espacio la elige (como siempre)
+    if (tg && tg.classList && tg.classList.contains('pla-card') && tg.id !== 'pla-c' + _plaSel) return;
+    e.preventDefault(); e.stopPropagation(); _plaEspacioTomado = true;
+    plaPaso(e.shiftKey ? -1 : 1);
+  } else if (_plaPaso && e.key === 'Escape') {
+    e.preventDefault(); e.stopPropagation(); plaPasoSalir();
+  } else if (_plaPaso && e.key === 'Backspace') {
+    e.preventDefault(); e.stopPropagation(); plaPaso(-1);
+  }
+}, true);
+document.addEventListener('keyup', function(e) {
+  if (_plaEspacioTomado && (e.key === ' ' || e.code === 'Space')) { _plaEspacioTomado = false; e.preventDefault(); e.stopPropagation(); }
+}, true);
+// Tablero: durante el paso a paso, un clic/toque AVANZA (y no agarra piezas de la partida de abajo).
+// El clic derecho sigue dibujando flechas como siempre.
+function _plaTableroToque(e) {
+  if (!_plaPaso) return;
+  var b = document.getElementById('cv-board');
+  if (!b || !b.contains(e.target)) return;
+  if (e.type === 'mousedown' && e.button !== 0) return;
+  if (e.type === 'click' && e.button !== 0) return;
+  e.stopPropagation();
+  if (e.type === 'mousedown') return;
+  if (e.type === 'touchend') e.preventDefault();   // sin el clic sintético (avanzaría dos veces)
+  plaPaso(1);
+}
+['mousedown', 'click', 'touchend'].forEach(function(t) {
+  document.addEventListener(t, _plaTableroToque, { capture: true, passive: false });
+});
 
 // Los colores de las flechas/resaltados del usuario viven en _UA_COLORS (arriba, junto a drawArrow).
 // Geometría de la GRILLA (las 8×8 casillas viven DENTRO del borde de 4px del tablero) en coordenadas
@@ -42924,7 +43812,7 @@ function _faCederRelleno(conStop) {
     // nadie más tomó el motor (sfAnalyze ya lo hace solo; el pase lo relanza al terminar).
     sf.armed = false;
     setTimeout(function() {
-      if (sf.on && !sf.armed && !sf.pending && !_fa.running && !_mev.running && !_thr.running
+      if (sf.on && !sf.armed && !sf.pending && !_fa.running && !_mev.running && !_thr.running && !_pla.running
           && (typeof prac === 'undefined' || !prac.running)) sfAnalyze();
     }, 0);
   }
@@ -42954,7 +43842,7 @@ function _faRellenarSiLibre() {
     if (_cvMobileOn && !_cvAnalysisStarted) return;                 // teléfono sin "Estadísticas" abierta
     if (!sf.engine || !sf.ready || sf.pending || sf.rokWaiting) return;
     if (_mev.running || _mev.want || _mevExtra.length) return;      // barritas y colgadas primero
-    if (_thr.running || (typeof prac !== 'undefined' && (prac.running || prac.anOn || prac.wantMove))) return;
+    if (_thr.running || _pla.running || (typeof prac !== 'undefined' && (prac.running || prac.anOn || prac.wantMove))) return;
     if (typeof puz !== 'undefined' && puz.anOn) return;
     // Motor QUIETO (módulo apagado o en su tope) o módulo MADURO (va por prof. firme y ya pensó un rato:
     // se le pide una pausa y se lo reanuda al terminar la tanda). "Seguir analizando" no se interrumpe.
@@ -42994,7 +43882,7 @@ function _faRellenarSiLibre() {
     if (_fa._rellT) clearTimeout(_fa._rellT);
     _fa._rellT = setTimeout(function() {
       _fa._rellT = null;
-      var otro = _mev.running || _thr.running || (typeof prac !== 'undefined' && prac.running);
+      var otro = _mev.running || _thr.running || _pla.running || (typeof prac !== 'undefined' && prac.running);
       _faCederRelleno(!otro);
     }, _FA_RELLENO_MAXMS);
     sf.engine.postMessage('stop');

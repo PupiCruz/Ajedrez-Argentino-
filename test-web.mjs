@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2054;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2100;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -5884,7 +5884,7 @@ console.log('\n=== 53f. Visor en el teléfono: tocar piezas y gráfico al cambia
 
   // 4) Con el motor del visor prendido, las miniaturas le piden una pausa (19/09).
   const T = new Function('var _tdLiveCtx = {}, _MEV_YIELD_DEPTH = 20, Chess = function(){}, env = [], JOBS = [1];'
-    + 'var _fa = { running: false }, _mev = {}, sf = {};'
+    + 'var _fa = { running: false }, _mev = {}, sf = {}, _thr = { running: false }, _pla = { running: false };'
     + 'function mevAbort(){} function sfStart(){} function mevCollect(){ return JOBS; } function _repSync(){}'
     + extraerFuncion('mevTick')
     + '; return { tick: function(s, fa){ sf = s; sf.ready = true; sf.engine = { postMessage: function(m){ env.push(m); } }; _fa.running = !!fa; _mev = {}; env.length = 0; mevTick(); return { corre: !!_mev.running, espera: !!_mev.want, pausa: !!_mev.resume, env: env.slice() }; } };')();
@@ -6757,7 +6757,7 @@ console.log('\n=== 53g-quinquies. Gráfico en vivo: una sí y una no, afinar la 
     + 'var _fa = { live: true, running: false, _preluding: false, nodes: o.nodes, results: o.results, relleno: false },'
     + '    sf = { engine: { postMessage: function(m){ posts.push(m); } }, ready: true, searching: !!o.searching, pending: null, rokWaiting: false, on: o.on, capped: o.capped, deepened: false, armed: o.armed !== false, depth: o.depth || 0, _searchT0: o.t0 || 0, curFen: "MOD", _capTimer: 7 },'
     + '    _MEV_YIELD_DEPTH = 20, _FA_RELLENO_RESPIRO_MS = 3000, _FA_RELLENO_MADURO_MS = 10000,'
-    + '    _mev = { running: false, want: !!o.want, used: false }, _mevExtra = [], _thr = { running: false }, prac = { running: false }, puz = { anOn: false },'
+    + '    _mev = { running: false, want: !!o.want, used: false }, _mevExtra = [], _thr = { running: false }, _pla = { running: false }, prac = { running: false }, puz = { anOn: false },'
     + '    _cvMobileOn = false, _cvAnalysisStarted = false, _faLiveHidden = false, document = { hidden: false },'
     + '    _FA_RELLENO_TANDA = 6, _FA_RELLENO_MAXMS = 20000, _FA_RELLENO_INTENTOS = 2, _faRellIntentos = {};'
     + 'function _faLiveEligible(){ return true; } function faGetNodes(){ return o.ahora || _fa.nodes; }'
@@ -8446,6 +8446,140 @@ console.log('\n=== Auditoría 23/09 — Fase 4: accesibilidad y prolijidad ===')
   chk(/var on = !!st\.innerHTML && typeof _fa !== 'undefined' && !!_fa\.stats && _faHayEtapas\(_faEtapas\(\)\);/.test(extraerFuncion('_faTabsSync'))
       && extraerFuncion('faRenderEmpty').includes('_faTabsSync();'),
       'las pestañas se ven sólo con tarjetas y si la partida tiene etapas (una miniatura de 7 jugadas no las muestra)');
+}
+// ── 🧭 Buscar planes (02/10, idea del autor): rutas de piezas, casillas fuertes, columnas y diagonales ──
+// Lo que no necesita el motor: las ideas "a ojo", los recorridos dentro de las líneas y el armado de las
+// tarjetas. La parte del motor (barrera, jugadas seguidas, verificación) se prueba en el navegador.
+console.log('\n=== Buscar planes ===');
+{
+  const tol = /var _PLA_TOLERA = (\d+);/.exec(SRC);
+  const P = new Function('var _PLA_TOLERA = ' + (tol ? tol[1] : 'NaN') + ';\n' + ['_fenGrid', '_plaSq', '_plaFR', '_plaMia', '_plaFig', '_plaDel',
+    '_plaWin', '_plaAceptable', '_plaPateada', '_plaCasillasFuertes', '_plaRutaCaballo', '_plaColumnas', '_plaVeAlfil',
+    '_plaDiagonales', '_plaRecorridos', '_plaQuien', '_plaDespeje', '_plaEnroque', '_plaCandidatos', '_plaArmar', '_plaGrupos', '_plaGrillas', '_plaEtiquetaPaso'].map(extraerFuncion).join('\n')
+    + '; return { g: _fenGrid, fuertes: _plaCasillasFuertes, ruta: _plaRutaCaballo, cols: _plaColumnas, diags: _plaDiagonales,'
+    + ' rec: _plaRecorridos, cands: _plaCandidatos, armar: _plaArmar, ok: _plaAceptable, grillas: _plaGrillas, etq: _plaEtiquetaPaso };')();
+  // Estructura con el agujero de d5 (peones c4/e4 blancos contra c5/d6/e5 negros)
+  const A = 'r1bqkb1r/pp3ppp/3p1n2/2p1p3/2P1P3/2N5/PP1P1PPP/R1BQKBNR w KQkq - 0 1';
+  const gA = P.g(A);
+  chk(JSON.stringify(P.fuertes(gA, 'w').map(c => c.sq)) === '["d5"]', 'd5 es casilla fuerte para las blancas: la apoyan c4/e4 y ningún peón negro la puede echar');
+  chk(JSON.stringify(P.fuertes(gA, 'b').map(c => c.sq)) === '["d4"]', 'y d4 para las negras (b4 y f4 no: los echan a2 y g2)');
+  chk(P.fuertes(P.g('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'), 'w').length === 0, 'en la posición inicial no hay casillas fuertes');
+  chk(JSON.stringify(P.ruta(gA, 'c3', 'd5', 'w', 3)) === '["c3","d5"]', 'el caballo de c3 salta directo a d5');
+  const gB = P.g('4k3/8/8/8/1p6/8/8/1N2K3 w - - 0 1');
+  const rB = P.ruta(gB, 'b1', 'd5', 'w', 3);
+  chk(!rB || (rB.indexOf('c3') < 0 && rB.indexOf('a3') < 0), 'la ruta esquiva las casillas que controla un peón rival (b4 pega en a3 y c3)', JSON.stringify(rB));
+  chk(JSON.stringify(P.ruta(P.g('4k3/8/8/8/8/8/8/1N2K3 w - - 0 1'), 'b1', 'd5', 'w', 3)) === '["b1","c3","d5"]', 'sin peones en el medio: b1 → c3 → d5');
+  const c1 = P.cols(P.g('4k3/pp3ppp/8/8/8/8/PP3PPP/R3K3 w - - 0 1'), 'w');
+  chk(c1[0] && c1[0].col === 'd' && c1[0].abierta && c1[0].desde === 'a1' && c1[0].hasta === 'd1' && c1[0].entrada === 'd7',
+      'columna abierta para la torre: la del centro primero (d), con la entrada en la 7ª', JSON.stringify(c1[0]));
+  chk(!c1.some(c => c.col === 'e'), 'no propone ir a una casilla ocupada (e1 tiene al rey)');
+  const c2 = P.cols(P.g('4k3/pp1p1ppp/8/8/8/8/PP3PPP/R3K3 w - - 0 1'), 'w');
+  chk(c2[0].col === 'c' && c2[0].abierta && c2.some(c => c.col === 'd' && !c.abierta && c.peon === 'd7'),
+      'las abiertas antes que las semiabiertas; en la semiabierta anota el peón rival (d7)');
+  const d1 = P.diags(P.g('4k3/8/8/8/8/8/3P4/2B1K3 w - - 0 1'), 'w');
+  chk(d1[0] && d1[0].hasta === 'b2' && d1[0].diag === 'a1–h8' && d1[0].antes === 2 && d1[0].despues === 9,
+      'el alfil encerrado en c1 sale a b2 y toma la diagonal larga a1–h8 (de 2 casillas a 9)', JSON.stringify(d1[0]));
+  const INI = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+  const r1 = P.rec(P.g(INI), ['g1f3', 'e7e5', 'f3g5', 'd7d5', 'g5f3'], 'w', 10);
+  chk(JSON.stringify(r1.g1) === '{"p":"N","ruta":["g1","f3","g5","f3"]}' && Object.keys(r1).length === 1,
+      'sigue al caballo por la línea (y no mezcla las jugadas del rival)', JSON.stringify(r1));
+  const r2 = P.rec(P.g('r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1'), ['e1g1', 'a8b8', 'f1f5'], 'w', 10);
+  chk(JSON.stringify(r2.h1) === '{"p":"R","ruta":["h1","f1","f5"]}', 'con el enroque, la torre de h1 sigue siendo la misma pieza', JSON.stringify(r2));
+  const r3 = P.rec(P.g(INI), ['b1c3', 'd7d5', 'c3d5', 'd8d5', 'e2e4', 'd5e4'], 'w', 10);
+  chk(JSON.stringify(r3.b1.ruta) === '["b1","c3"]' && r3.e2.ruta.join() === 'e2,e4', 'si toma algo, la ruta se corta ANTES del cambio (c3xd5 ya es táctica, no plan)', JSON.stringify(r3));
+  const r4 = P.rec(P.g(INI), ['g1f3', 'e7e5', 'f3g5', 'd8g5', 'd2d4'], 'w', 10);
+  chk(JSON.stringify(r4.g1.ruta) === '["g1","f3","g5"]' && r4.d2.ruta.join() === 'd2,d4', 'si el rival la toma, su ruta termina ahí (y las demás siguen)', JSON.stringify(r4));
+  chk(P.armar({ side: 'w', g: P.g('rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2'), lineas: [{ pv: ['d1e2', 'b8c6', 'e2d1', 'g8f6'], score: { cp: 20 } }], cadena: [], cands: [] }).length === 0,
+      'ir y volver (♛ d1 → e2 → d1) no es una maniobra');
+  const pk = P.armar({ side: 'w', g: P.g('2r3k1/pp2nppp/4p3/3pP3/3P1P2/P2B4/1P4PP/5RK1 w - - 0 22'), lineas: [
+      { pv: ['g1f2', 'h7h5', 'f2e3', 'g7g6', 'e3d2', 'g8g7'], score: { cp: 4 } }, { pv: ['g1f2', 'h7h5', 'f2e3', 'e7f5', 'd3f5', 'e6f5'], score: { cp: -3 } }], cadena: [], cands: [] });
+  chk(pk.length === 1 && pk[0].titulo === '♚ Maniobra del rey: g1 → f2 → e3 → d2' && pk[0].detalle === 'La busca el módulo en 2 de sus 2 líneas.',
+      'el rey g1 → f2 → e3 y g1 → f2 → e3 → d2 van en UNA tarjeta (la más larga, con las líneas de las dos)', JSON.stringify(pk.map(p => p.titulo + ' | ' + p.detalle)));
+  // 02/10, caso del autor: "♜ d8 → f8 → f5" con la OTRA torre todavía en f8. La ruta era bien de la torre de d8
+  // (comprobado contra chess.js en 495 secuencias al azar con torres y caballos: 0 diferencias), pero faltaba
+  // dibujar la jugada con que la otra torre le hace lugar.
+  const pd = P.armar({ side: 'w', g: P.g('6k1/5ppp/8/8/8/8/6PP/R4RK1 w - - 0 1'), plies: 10,
+    lineas: [{ pv: ['f1f4', 'g8f8', 'a1f1', 'f8e8', 'f1f3'], score: { cp: 0 } }], cadena: [], cands: [] });
+  chk(pd.length === 1 && pd[0].titulo === '♜ Maniobra de la torre: a1 → f1 → f3'
+      && pd[0].detalle === 'Está en la línea principal del módulo. Antes, la torre de f1 le hace lugar (f1 → f4).'
+      && pd[0].flechas.map(f => f.from + f.to + f.n).join() === 'f1f41,a1f12,f1f33',
+      '🔒 si la ruta pasa por donde HOY está otra pieza propia, se dibuja (numerada en orden) la jugada que le hace lugar', JSON.stringify(pd));
+  const pc = P.armar({ side: 'w', g: P.g('4k3/8/8/8/8/8/8/1N2K3 w - - 0 1'), plies: 10,
+    lineas: [{ pv: ['b1c3', 'e8e7', 'c3d5'], score: { cp: 0 } }], cadena: [], cands: [] });
+  chk(pc[0].detalle === 'Está en la línea principal del módulo.' && pc[0].flechas.length === 2, 'sin nada en el camino, la maniobra queda como antes');
+  // Cuántas "seguidas" (medido 02/10 con tope 10 en 6 posiciones: el plan termina solo entre la 5ª y la 8ª)
+  const pasoSrc = SRC.match(/var _PLA_SEGUIDAS = (\d+);[^]*?var _PLA_SALTO_TOMA = (\d+);[^]*?var _PLA_SALTO_FIN = (\d+);/);
+  const PC = new Function('var _PLA_SEGUIDAS = ' + pasoSrc[1] + ', _PLA_SALTO_TOMA = ' + pasoSrc[2] + ', _PLA_SALTO_FIN = ' + pasoSrc[3] + ';\n'
+    + ['_plaCp', '_plaPasoCadena'].map(extraerFuncion).join('\n') + '; return _plaPasoCadena;')();
+  const p1 = P.armar({ side: 'w', g: P.g('2r3k1/pp2nppp/4p3/3pP3/3P1P2/P2B4/1P4PP/5RK1 w - - 0 22'), lineas: [
+      { pv: ['g1f2', 'h7h5', 'f2e3', 'g7g6', 'e3d2', 'g8g7'], score: { cp: 4 } }, { pv: ['g1f2', 'h7h5', 'f2f3', 'g7g6', 'f3e3', 'g8g7'], score: { cp: -3 } }], cadena: [], cands: [] });
+  chk(p1.length === 1 && p1[0].titulo === '♚ Maniobra del rey: g1 → f2 → e3 → d2', 'una sola maniobra por pieza (dos caminos del rey = una tarjeta)', JSON.stringify(p1.map(p => p.titulo)));
+  // Paso a paso (02/10): las posiciones del plan, una por jugada, sin tocar la partida
+  const fg = (g) => { let o = ''; for (let r = 7; r >= 0; r--) { let e = 0; for (let f = 0; f < 8; f++) { const p = g[r * 8 + f]; if (!p) e++; else { if (e) o += e; e = 0; o += p; } } if (e) o += e; if (r) o += '/'; } return o; };
+  const gs = P.grillas('r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1', [{ from: 'e1', to: 'g1' }, { from: 'a1', to: 'a8' }]);
+  chk(gs.length === 3 && fg(gs[1]) === 'r3k2r/8/8/8/8/8/8/R4RK1' && fg(gs[2]) === 'R3k2r/8/8/8/8/8/8/5RK1',
+      'una posición por jugada: con el enroque mueve también la torre, y una toma pisa la pieza', gs.map(fg).join(' | '));
+  const ge = P.grillas('4k3/3P4/8/3pP3/8/8/8/4K3 w - d6 0 1', [{ from: 'e5', to: 'd6' }, { from: 'd7', to: 'd8' }]);
+  chk(fg(ge[1]) === '4k3/3P4/3P4/8/8/8/8/4K3' && fg(ge[2]) === '3Qk3/8/3P4/8/8/8/8/4K3', 'al paso saca el peón de al lado; el peón que llega a la 8ª corona dama', ge.map(fg).join(' | '));
+  chk(P.etq(P.g('r1bq1rk1/pp2bppp/2np1n2/2p1p3/2B1P3/2NP4/PPP2PPP/R1BQKN1R w KQ - 5 8'), { from: 'f1', to: 'e3' }) === '♞e3'
+      && P.etq(gs[0], { from: 'b1', to: 'c3' }) === 'c3', 'el rótulo del paso: "♞e3"');
+  chk(SRC.includes("document.addEventListener('keydown', function(e) {\n  if (!_plaDibujo) return;")
+      && SRC.includes("}, true);\ndocument.addEventListener('keyup', function(e) {\n  if (_plaEspacioTomado"),
+      '🔒 la barra espaciadora sólo actúa con un plan dibujado, y en fase de captura (Esc sale del paso a paso en vez de cerrar la partida)');
+  chk(extraerFuncion('plaPasoSalir').includes('cvRenderBoard()') && !extraerFuncion('plaPaso').includes('cv.chess ='),
+      '🔒 el paso a paso es sólo dibujo: nunca cambia cv.chess, y al salir el tablero vuelve a la partida');
+  // 02/10, caso del autor (Pérez Novoa–Airando): ♜ a1 → d1 → h1 arrancando con 0-0-0. Rey y torre = UN paso.
+  const pe = P.armar({ side: 'w', g: P.g('4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1'), plies: 10,
+    lineas: [{ pv: ['e1c1', 'e8e7', 'h1h4', 'e7e6', 'd1h1'], score: { cp: 0 } }], cadena: [], cands: [] });
+  chk(pe.length === 1 && pe[0].titulo === '♜ Maniobra de la torre: a1 → d1 → h1' && pe[0].flechas.map(f => f.from + f.to + f.n).join() === 'e1c11,a1d11,h1h42,d1h13'
+      && pe[0].detalle === 'Está en la línea principal del módulo. Arranca con el enroque largo. Antes, la torre de h1 le hace lugar (h1 → h4).',
+      '🔒 el enroque es UN paso: rey y torre con el mismo número (y el texto dice "arranca con el enroque largo")', JSON.stringify(pe));
+  const ge2 = P.grillas('4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1', pe[0].flechas);
+  chk(ge2.length === 4 && fg(ge2[1]) === '4k3/8/8/8/8/8/8/2KR3R' && fg(ge2[2]) === '4k3/8/8/8/7R/8/8/2KR4' && fg(ge2[3]) === '4k3/8/8/8/7R/8/8/2K4R',
+      '🔒 paso a paso: 1) enroque (rey y torre juntos), 2) Th4, 3) la torre de d1 a h1 — sin repetir la torre a1 → d1', ge2.map(fg).join(' | '));
+  chk(P.etq(P.g('4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1'), { from: 'e1', to: 'c1' }) === 'O-O-O' && P.etq(P.g('4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1'), { from: 'e1', to: 'g1' }) === 'O-O',
+      'el rótulo del enroque: O-O / O-O-O');
+  const pk2 = P.armar({ side: 'w', g: P.g('4k3/8/8/8/8/8/8/4K2R w K - 0 1'), plies: 10,
+    lineas: [{ pv: ['e1g1', 'e8e7', 'f1f5', 'e7e6'], score: { cp: 0 } }], cadena: [], cands: [] });
+  const gk2 = pk2[0] && P.grillas('4k3/8/8/8/8/8/8/4K2R w K - 0 1', pk2[0].flechas);
+  chk(pk2.length === 1 && pk2[0].flechas.map(f => f.from + f.to + f.n).join() === 'e1g11,h1f11,f1f52' && / Arranca con el enroque corto.$/.test(pk2[0].detalle)
+      && gk2.length === 3 && fg(gk2[1]) === '4k3/8/8/8/8/8/8/5RK1' && fg(gk2[2]) === '4k3/8/8/5R2/8/8/8/6K1',
+      '🔒 lo mismo con el enroque CORTO: rey y torre en un paso, después la torre sigue sola', JSON.stringify(pk2));
+  chk(pasoSrc[1] === '8', 'hasta 8 jugadas seguidas');
+  chk(JSON.stringify(PC(4, 148, { cp: 601 }, true, false)) === '{"incluir":false,"seguir":false}', '🔒 gxf6 ganando +4,5 de golpe (porque el rival pasa) NO se muestra y la cadena se corta');
+  chk(JSON.stringify(PC(1, -22, { cp: -1 }, true, false)) === '{"incluir":true,"seguir":true}', 'un cambio parejo (fxe5) se muestra y el plan sigue');
+  chk(JSON.stringify(PC(6, 163, { cp: 532 }, false, false)) === '{"incluir":true,"seguir":false}', 'una jugada que mejora muchísimo sin tomar (♜d2) se muestra y cierra el plan');
+  chk(!PC(3, 50, { mate: 5 }, false, false).incluir && PC(0, null, { mate: 3 }, true, true).incluir && !PC(0, null, { mate: 3 }, true, true).seguir,
+      'un mate que aparece sólo porque el rival pasa no va; la 1ª jugada (la de verdad) va siempre, y con jaque se corta');
+  chk(!PC(7, 100, { cp: 120 }, false, false).seguir && PC(6, 100, { cp: 120 }, false, false).seguir, 'en la 8ª se para');
+  const ca = P.cands(gA, 'w');
+  chk(ca.some(c => c.tipo === 'casilla' && c.sq === 'd5' && c.uci0 === 'c3d5'), 'ideas a ojo: llevar el caballo a d5, con su 1ª jugada para que la verifique el motor');
+  chk(P.ok({ cp: 0 }, { cp: -50 }, 8) && !P.ok({ cp: 0 }, { cp: -150 }, 8) && !P.ok({ cp: 0 }, undefined, 8) && P.ok({ cp: -900 }, { cp: -1200 }, 8),
+      'el motor deja pasar una idea que pierde poco (y cuando ya estás perdido, casi todo da igual)');
+  // Armado de las tarjetas
+  const pl = P.armar({ side: 'w', g: gA, plies: 10,
+    lineas: [{ pv: ['g1e2', 'f8e7', 'e2g3', 'e8g8', 'g3f5'], score: { cp: 30 } }, { pv: ['g1e2', 'c8e6', 'e2g3', 'f8e7', 'g3f5'], score: { cp: 20 } }],
+    cadena: [{ uci: 'c3d5', san: 'Nd5' }, { uci: 'g1e2', san: 'Ne2' }, { uci: 'e2c3', san: 'Nc3' }],
+    cands: [{ tipo: 'casilla', sq: 'd5', p: 'N', ruta: ['c3', 'd5'], uci0: 'c3d5', score: { cp: 10 } },
+            { tipo: 'columna', col: 'd', abierta: true, ruta: ['a1', 'd1'], uci0: 'a1d1', score: { cp: -300 } }] });
+  chk(JSON.stringify(pl.map(p => p.tipo)) === '["cadena","maniobra","casilla"]', 'tarjetas: jugadas seguidas, maniobra del motor y casilla fuerte (la columna que el motor refuta, no)', JSON.stringify(pl.map(p => p.tipo)));
+  chk(pl[0].titulo === 'Si pudieras jugar 3 seguidas' && pl[0].detalle === '1. ♞d5   2. ♞e2   3. ♞c3' && pl[0].circulos.join() === 'd5'
+      && pl[0].flechas.map(f => f.n).join() === '1,2,3', 'las jugadas seguidas, numeradas y con el círculo en la casilla fuerte', JSON.stringify(pl[0]));
+  chk(pl[1].titulo === '♞ Maniobra del caballo: g1 → e2 → g3 → f5' && pl[1].detalle === 'La busca el módulo en 2 de sus 2 líneas.',
+      'la maniobra dice en cuántas líneas del módulo aparece', pl[1].titulo + ' | ' + pl[1].detalle);
+  chk(pl[2].titulo === '◯ d5: casilla fuerte para el caballo' && /ningún peón negro/i.test(pl[2].detalle), 'la casilla fuerte, en castellano', pl[2].detalle);
+  const pl2 = P.armar({ side: 'w', g: gA, plies: 10, lineas: [{ pv: ['f2f4', 'e5f4'], score: { cp: 20 } }], cadena: [], cands: [] });
+  chk(pl2.length === 1 && pl2[0].tipo === 'palanca' && pl2[0].titulo === 'Palanca f4: ataca el peón de e5' && pl2[0].circulos.join() === 'e5',
+      'palanca de peón: f4 contra e5', JSON.stringify(pl2));
+  chk(P.armar({ side: 'w', g: gA, lineas: [], cadena: [], cands: [] }).length === 0, 'sin datos, ninguna tarjeta (la caja dice "no encontré un plan claro")');
+  // Enganches con el resto del motor
+  chk(/if \(typeof _pla !== 'undefined' && _pla\.running\) \{ plaHandleMsg\(line\); return; \}/.test(extraerFuncion('sfOnMsg')),
+      'los mensajes del motor van a la búsqueda de planes mientras corre');
+  chk(/if \(_thr\.running \|\| _pla\.running\) \{ _mev\.want = true; return; \}/.test(extraerFuncion('mevTick')),
+      'las miniaturas no le roban el motor a ¿Qué amenaza? ni a Buscar planes');
+  chk(extraerFuncion('plaCerrar').includes("setoption name MultiPV value 3") && extraerFuncion('plaCerrar').includes('sfAnalyze()'),
+      'al terminar (o cancelar), el módulo vuelve a sus 3 líneas y retoma su análisis');
+  chk((SRC.match(/onclick="plaProbe\(\)"/g) || []).length === 1, 'el botón está una sola vez (en el visor; en el tablero de jugar NO: sería trampa)');
 }
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
 console.log('   Corrieron ' + corridas + ' de ' + ESPERADAS + ' comprobaciones.'
