@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1956;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1975;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -8100,6 +8100,78 @@ console.log('\n=== Auditoría 23/09 — Fase 4: accesibilidad y prolijidad ===')
   chk(M.activo('', ls) === true && M.activo('?motivos=0', ls) === false && M.activo('', ls) === false && M.activo('?motivos=1', ls) === true,
       '?motivos=0 apaga el por qué en ese navegador (queda guardado) y ?motivos=1 lo vuelve a prender');
   chk(/var why = cls !== 'dubious' \? _faMotivo\(i\) : '';/.test(extraerFuncion('_faComHtml')), 'sólo en la ? y la ?? (en la ?! no se gasta otra posición de motor)');
+}
+
+// ── 📚 La tabla de finales manda en los errores con ≤7 piezas (01/10) ──
+{
+  console.log('\n📚 Tabla de finales en el análisis');
+  const T = new Function(SRC.match(/var _TB_PIEZAS = [^\n]*/)[0] + '\n'
+    + 'var _tb = { cat: {}, mov: {}, cola: [], pend: {}, corriendo: false, off: false, llave: true, redT: null };\n'
+    + ['_tbClave', '_tbEnRango', '_tbValor', '_tbActivo', '_tbOn', '_tbUci', '_tbCatDe', '_tbJuicio'].map(extraerFuncion).join('\n')
+    + '; return { tb: _tb, clave: _tbClave, rango: _tbEnRango, valor: _tbValor, activo: _tbActivo, juicio: _tbJuicio };')();
+  chk(T.rango('4k3/8/3K4/3P4/8/8/8/8 w - - 0 1') && !T.rango('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1')
+      && T.rango('4k3/pp6/8/8/8/8/PP6/1R2K3 w - - 0 1') && !T.rango('4k3/ppp5/8/8/8/8/PP6/1R2K3 w - - 0 1'), 'entran las posiciones de 7 piezas o menos, reyes incluidos');
+  chk(T.valor('win') === 1 && T.valor('maybe-win') === 1 && T.valor('loss') === -1 && T.valor('draw') === 0
+      && T.valor('cursed-win') === 0 && T.valor('blessed-loss') === 0 && T.valor('unknown') === null && T.valor(undefined) === null,
+      '🔒 ganada/perdida "por la regla de las 50 jugadas" cuenta como TABLAS (es el resultado real)');
+  // 4.♔e5 en 3k4/8/4K3/3P4: ganada → tablas. El resultado de la posición de después sale de la consulta del padre.
+  const P = { fen: '3k4/8/4K3/3P4/8/8/8/8 w - - 2 4' };
+  const mov = (to, fen) => ({ fen, parent: P, move: { from: 'e6', to } });
+  T.tb.cat[T.clave(P.fen)] = 'win';
+  T.tb.mov[T.clave(P.fen)] = { e6e5: 'draw', e6d6: 'loss', e6f7: 'draw' };
+  const j1 = T.juicio(mov('e5', '3k4/8/8/3PK3/8/8/8/8 b - - 3 4'));
+  chk(j1 && j1.antes === 1 && j1.despues === 0, '🔒 ♔e5 deja la ganada en tablas (desde el que movió: +1 → 0)');
+  const j2 = T.juicio(mov('d6', '3k4/8/3K4/3P4/8/8/8/8 b - - 3 4'));
+  chk(j2 && j2.antes === 1 && j2.despues === 1, 'la jugada que gana conserva el resultado (+1 → +1): no es error aunque el motor marque caída');
+  chk(T.juicio(mov('d7', 'x')) === null, 'si la tabla no sabe una de las dos posiciones, no opina (queda el motor)');
+  T.tb.cat[T.clave(P.fen)] = 'draw'; T.tb.mov[T.clave(P.fen)] = { e6e5: 'win' };
+  const j3 = T.juicio(mov('e5', '3k4/8/8/3PK3/8/8/8/8 b - - 3 4'));
+  chk(j3 && j3.antes === 0 && j3.despues === -1, 'tablas → perdida, desde el que movió (0 → −1)');
+  T.tb.llave = false;
+  chk(T.juicio(mov('e5', '3k4/8/8/3PK3/8/8/8/8 b - - 3 4')) === null, 'apagada, no opina');
+  const ls = { v: {}, getItem(k) { return k in this.v ? this.v[k] : null; }, setItem(k, x) { this.v[k] = x; }, removeItem(k) { delete this.v[k]; } };
+  chk(T.activo('', ls) === true && T.activo('?tb=0', ls) === false && T.activo('', ls) === false && T.activo('?tb=1', ls) === true,
+      '?tb=0 apaga la tabla en ese navegador (queda guardado) y ?tb=1 la vuelve a prender');
+  const fc = extraerFuncion('faClassify');
+  chk(/if \(tbj && tbj\.despues < tbj\.antes\) \{ sym = '\?\?'/.test(fc) && /else if \(!tbj && dwin >= 15\)/.test(fc) && /else if \(!tbj && dwin >= 5\)/.test(fc),
+      '🔒 con la tabla, ?? sólo si cambió el resultado; los umbrales del motor sólo cuando la tabla no sabe');
+  const ch = extraerFuncion('_faComHtml');
+  chk(ch.includes("'Dejó escapar la victoria.'") && ch.includes("'Pierde un final que era tablas.'") && /if \(tbMal\) txt =/.test(ch),
+      'frases de la tabla: "Dejó escapar la victoria." / "Pierde un final que era tablas."');
+  chk(/tbBien = vb !== null && -vb >= tbj\.antes/.test(ch), 'el "Mejor era" del motor se muestra sólo si según la tabla conserva el resultado');
+  const sg = extraerFuncion('_tbSiguiente');
+  chk(/_TB_ESPERA/.test(sg) && /r\.status === 429/.test(sg) && /_tb\.off = true/.test(sg) && /_tbCatDe\(it\.node\) !== undefined/.test(sg),
+      'buen vecino con Lichess: de a una, con espera, se apaga ante 429/error y saltea lo que ya se sabe');
+}
+
+// ── 📊 La barra en las VARIANTES muestra la valoración de la variante, no la de la partida (01/10) ──
+{
+  console.log('\n📊 Barra de evaluación en las variantes');
+  const V = new Function(['nodeDepth', '_faEnLinea', '_faVarScore'].map(extraerFuncion).join('\n')
+    + '; var _faVarEv = {}, _faPvMemo = {}, _fa = { nodes: [], results: [] };'
+    + ' return { score: _faVarScore, enLinea: _faEnLinea, fa: _fa, pv: _faPvMemo };')();
+  const root = { fen: 'r0', children: [] };
+  const mk = (par, fen, from, to) => { const n = { fen, parent: par, children: [], move: { from, to } }; par.children.push(n); return n; };
+  const m1 = mk(root, 'p1', 'e2', 'e4'), m2 = mk(m1, 'p2', 'e7', 'e5'), m3 = mk(m2, 'p3', 'd1', 'h5');   // 3.♕h5?? de la partida
+  V.fa.nodes = [m1, m2, m3]; V.fa.results = [{ cp: 30 }, { cp: -80 }, { cp: -500 }];
+  V.pv['p2'] = ['g1f3', 'b8c6', 'f1c4'];
+  const v1 = mk(m2, 'v1', 'g1', 'f3'), v2 = mk(v1, 'v2', 'b8', 'c6');
+  chk(V.enLinea(m3) && V.enLinea(root) && !V.enLinea(v1), 'distingue la línea de la partida de una variante');
+  const s1 = V.score(v1), s2 = V.score(v2);
+  chk(s1 && s1.cp === -80 && s2 && s2.cp === -80, '🔒 la variante del "Mejor era" vale lo que la posición donde se separó (−0.8), no la colgada (−5)');
+  chk(extraerFuncion('faUpdateBar').includes('if (!_faEnLinea(cv.node))'), 'la barra pregunta primero si está parada en una variante');
+}
+
+// ── ⏳ En vivo, los comentarios de los errores esperan a que termine la partida (01/10) ──
+{
+  console.log('\n⏳ Comentarios en vivo: al terminar la partida');
+  const E = new Function('cv', '_fa', extraerFuncion('_faComEsperaFinal') + '; return _faComEsperaFinal();');
+  chk(E({ games: [{ res: '*' }], gIdx: 0 }, { live: true }) === true, '🔒 transmisión en vivo con la partida en juego → sin comentarios');
+  chk(E({ games: [{ res: '1-0' }], gIdx: 0 }, { live: true }) === false, 'en vivo pero ya terminada → comentarios');
+  chk(E({ games: [{ res: '*' }], gIdx: 0 }, { live: false }) === false, 'fuera del vivo (análisis común) → comentarios, como siempre');
+  chk(/if \(_faComEsperaFinal\(\)\) \{ _faComOculto = true; return ''; \}/.test(extraerFuncion('_faComHtml'))
+      && /if \(_faComOculto && meta\.res && meta\.res !== '\*'\) \{ _faComOculto = false; faApplyNags\(\); \}/.test(extraerFuncion('_cvLiveExtendInPlace')),
+      'al llegar el resultado, el refresco del vivo redibuja la notación y aparecen');
 }
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
 console.log('   Corrieron ' + corridas + ' de ' + ESPERADAS + ' comprobaciones.'

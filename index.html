@@ -27796,6 +27796,8 @@ function _cvLiveExtendInPlace(newPgn, meta) {
   cv.rawPgn = newPgn;                                   // el árbol ya refleja el PGN nuevo
   if (meta) {
     cvSetResult(meta.res);
+    // Terminó la partida: aparecen los comentarios de los errores que se escondían mientras se jugaba.
+    if (_faComOculto && meta.res && meta.res !== '*') { _faComOculto = false; faApplyNags(); }
     var opEl = document.getElementById('cv-opening');
     if (opEl) opEl.textContent = meta.eco && meta.op ? meta.eco + ' · ' + meta.op : '';
   }
@@ -43145,6 +43147,18 @@ function faUpdateBar() {
   vbar.classList.add('show');
   if (cv.flipped) vbar.classList.add('flipped'); else vbar.classList.remove('flipped');
   var depth = nodeDepth(cv.node);
+  // Parado en una VARIANTE: su propia valoración (antes mostraba la de la partida en esa misma jugada).
+  if (!_faEnLinea(cv.node)) {
+    var vs = _faVarScore(cv.node);
+    if (!vs) {   // el motor la está calculando: la barra queda donde estaba, sin número viejo
+      if (scoreEl) { scoreEl.textContent = '…'; scoreEl.className = 'sf-score sf-neu'; }
+      return;
+    }
+    var vpct = sfBarPct(vs, false);
+    fill.style.height = (cv.flipped ? 100 - vpct : vpct) + '%';
+    if (scoreEl) { scoreEl.textContent = sfScoreStr(vs, false); scoreEl.className = 'sf-score ' + sfScoreCls(vs, false); }
+    return;
+  }
   var score = (depth > 0 && depth <= _fa.results.length) ? _fa.results[depth - 1] : null;
   // Hueco (típico: la jugada del vivo recién llegada, aún sin evaluar — p. ej. con el motor sin
   // cargar): usar el valor INTERPOLADO, el mismo que dibuja el gráfico, en vez de borrar barra y
@@ -43162,6 +43176,46 @@ function faUpdateBar() {
     scoreEl.textContent = sfScoreStr(score, false);
     scoreEl.className = 'sf-score ' + sfScoreCls(score, false);
   }
+}
+
+/* Valoración de las VARIANTES en la barra (01/10/2026). Antes, parado en una variante, la barra mostraba la
+   de la PARTIDA en esa misma jugada: tocabas el "Mejor era ♞f6" de una colgada (−1 → −5) y seguía diciendo
+   −5, como si la buena también fuera mala, hasta prender el motor.
+    · La variante del comentario (la línea del motor desde una posición de la partida) vale lo mismo que esa
+      posición: es el "antes" del comentario. No se calcula nada.
+    · Cualquier otra (jugada a mano, o con mate de por medio): se le pide al motor (prof. 16, menos de 1 s)
+      cuando te quedás parado ahí ~⅓ s; pasar rápido con las flechas no encola nada. Caché en memoria. */
+var _faVarEv = {}, _faVarPend = {}, _faVarT = null;
+var _FA_VAR_DEPTH = 16;
+// ¿El nodo es de la línea de la partida (la que tiene el gráfico)?
+function _faEnLinea(n) {
+  var d = nodeDepth(n);
+  return d === 0 || _fa.nodes[d - 1] === n;
+}
+// Valoración (desde las blancas) de una posición de variante, o null si todavía no se sabe.
+function _faVarScore(node) {
+  var fen = node.fen;
+  if (_faVarEv[fen]) return _faVarEv[fen];
+  // ¿Es la línea del motor desde la posición de la partida donde se separa? (el "Mejor era" del comentario)
+  var camino = [], b = node;
+  while (b.parent && !_faEnLinea(b)) { camino.unshift(b.move.from + b.move.to); b = b.parent; }
+  var dB = nodeDepth(b), pv = _faPvMemo[b.fen], rB = dB > 0 ? _fa.results[dB - 1] : null;
+  if (pv && rB && rB.mate === undefined && camino.length <= pv.length
+      && camino.every(function(u, k) { return pv[k].slice(0, 4) === u; })) return { cp: rB.cp };
+  if (typeof _mevExtra === 'undefined' || typeof _mev === 'undefined' || typeof Chess === 'undefined') return null;
+  clearTimeout(_faVarT);
+  _faVarT = setTimeout(function() {
+    if (cv.node !== node || _faVarEv[fen] || _faVarPend[fen]) return;
+    _faVarPend[fen] = 1;
+    _mevExtra.push({ fen: fen, depth: _FA_VAR_DEPTH, cb: function(sc) {
+      delete _faVarPend[fen];
+      _faVarEv[fen] = _faFixMate0(sc, fen);
+      _capCache(_faVarEv, 500);
+      if (cv.node && cv.node.fen === fen) faUpdateBar();
+    }});
+    if (!_mev.running) mevTick();
+  }, 350);
+  return null;
 }
 
 // Convierte un score a centipawns (perspectiva blancas), recortado a ±1000
@@ -43522,6 +43576,7 @@ function faClassify() {
              b:{best:0,brill:0,exc:0,good:0,inacc:0,mist:0,blun:0,lossSum:0,acc:null,n:0} };
   var anyBm = false;
   var R = _fa.results;
+  _tbPedirPartida();
   for (var i = 0; i < _fa.nodes.length; i++) {
     var node = _fa.nodes[i];
     if (!node.move) continue;
@@ -43538,9 +43593,12 @@ function faClassify() {
     if (bm) anyBm = true;
     var sym = '';
     var side = whiteMoved ? st.w : st.b;
-    if (dwin >= 15)      { sym = '??'; side.blun++; }
-    else if (dwin >= 10) { sym = '?';  side.mist++; }
-    else if (dwin >= 5)  { sym = '?!'; side.inacc++; }
+    // 📚 Con 7 piezas o menos manda la tabla de finales: ?? sólo si la jugada cambió el resultado; si no, sin error.
+    var tbj = _tbJuicio(node);
+    if (tbj && tbj.despues < tbj.antes) { sym = '??'; side.blun++; }
+    else if (!tbj && dwin >= 15) { sym = '??'; side.blun++; }
+    else if (!tbj && dwin >= 10) { sym = '?';  side.mist++; }
+    else if (!tbj && dwin >= 5)  { sym = '?!'; side.inacc++; }
     else if (bm && uci === bm) {
       // La mejor jugada del motor ASCIENDE a brillante (!!) si además es un sacrificio genuino y sano.
       if (_faIsBrilliant(node, rBefore, rAfter, whiteMoved, wpB) && !_faDescarteLista(node, rBefore, rAfter, whiteMoved)) { sym = '!!'; side.brill++; }
@@ -43621,6 +43679,107 @@ function faApplyNags() {
   cvHighlight();
 }
 
+/* ── 📚 Tabla de finales de Lichess en el análisis (01/10/2026) ─────────────────────────────────────
+   Con 7 piezas o menos (reyes incluidos) el resultado ya no se evalúa: se SABE. La tabla de finales
+   (tablebase.lichess.ovh, gratis y sin cuenta; la misma que usa el generador de ejercicios) dice si la
+   posición es ganada, tablas o perdida con juego perfecto, y a qué lleva CADA jugada. Ahí la tabla MANDA
+   sobre el motor para calificar (faClassify):
+    · la jugada cambia el resultado → ?? con su frase: "Dejó escapar la victoria." (ganada → tablas),
+      "¡Uff, qué colgada!" (ganada → perdida), "Pierde un final que era tablas." (tablas → perdida);
+    · no lo cambia → sin ?!/?/??, aunque el motor marque una caída: a prof. 16 se equivoca bastante en los
+      finales ("+2,5" en un final de torres que es tablas, o "+1,5" en uno ganado que ya se escapó).
+   Ganada/perdida "por la regla de las 50 jugadas" (cursed-win / blessed-loss) cuenta como TABLAS: es el
+   resultado real en el tablero.
+   Buen vecino con Lichess: una consulta por vez, 350 ms entre una y otra, y como cada respuesta trae el
+   resultado de todas las jugadas, alcanza con preguntar una posición sí y otra no. Caché en memoria. Sin
+   internet, error del servidor o 429 → se apaga hasta recargar y el análisis queda como antes.
+   ?tb=0 en la dirección lo apaga en ese navegador (queda guardado); ?tb=1 lo vuelve a prender. */
+var _TB_URL = 'https://tablebase.lichess.ovh/standard';
+var _TB_PIEZAS = 7, _TB_ESPERA = 350;
+var _TB_NOMBRE = { '1': 'Ganada', '0': 'Tablas', '-1': 'Perdida' };
+var _tb = { cat: {}, mov: {}, cola: [], pend: {}, corriendo: false, off: false, llave: null, redT: null };
+function _tbClave(fen) { return String(fen || '').split(' ').slice(0, 4).join(' '); }
+function _tbEnRango(fen) { return (String(fen || '').split(' ')[0].match(/[pnbrqk]/gi) || []).length <= _TB_PIEZAS; }
+// Categoría de la tabla → +1 gana / 0 tablas / −1 pierde, desde el que mueve en esa posición (null = no sabe).
+function _tbValor(c) {
+  if (c === 'win' || c === 'maybe-win') return 1;
+  if (c === 'loss' || c === 'maybe-loss') return -1;
+  if (c === 'draw' || c === 'cursed-win' || c === 'blessed-loss') return 0;
+  return null;
+}
+function _tbActivo(q, ls) {
+  try {
+    if (/[?&]tb=1(?!\w)/.test(q)) ls.removeItem('aa_tb_on');
+    if (/[?&]tb=0(?!\w)/.test(q)) ls.setItem('aa_tb_on', '0');
+    return ls.getItem('aa_tb_on') !== '0';
+  } catch (e) { return true; }
+}
+function _tbOn() {
+  if (_tb.llave === null) { try { _tb.llave = _tbActivo(location.search || '', localStorage); } catch (e) { _tb.llave = true; } }
+  return _tb.llave;
+}
+function _tbUci(node) { return node.move.from + node.move.to + (node.move.promotion || ''); }
+// Categoría de la posición de `node` (desde el que mueve ahí): la suya, o la que trajo la consulta del padre.
+function _tbCatDe(node) {
+  var c = _tb.cat[_tbClave(node.fen)];
+  if (c === undefined && node.move && node.parent) { var m = _tb.mov[_tbClave(node.parent.fen)]; if (m) c = m[_tbUci(node)]; }
+  return c;
+}
+// Lo que la jugada `node` hizo con el resultado, desde el que movió: { antes, despues } (−1/0/+1), o null si la
+// tabla no sabe alguno de los dos (más de 7 piezas, todavía no llegó, se cayó, o está apagada).
+function _tbJuicio(node) {
+  if (!node || !node.move || !node.parent || !_tbOn()) return null;
+  var antes = _tbValor(_tbCatDe(node.parent)), despues = _tbValor(_tbCatDe(node));
+  if (antes === null || despues === null) return null;
+  return { antes: antes, despues: -despues };
+}
+// Encola las posiciones de la partida que entran en la tabla, en orden (las que ya se saben se saltean al
+// llegarles el turno: así sale una consulta sí y otra no).
+function _tbPedirPartida() {
+  if (_tb.off || !_tbOn() || !_fa || !_fa.nodes || !_fa.nodes.length) return;
+  var n = _fa.nodes, ult = n[n.length - 1];
+  if (!ult || !_tbEnRango(ult.fen)) return;   // las piezas no aumentan: si la última no entra, ninguna
+  if (n[0].parent && _tbEnRango(n[0].parent.fen)) _tbEncolar(n[0].parent, false);
+  for (var i = 0; i < n.length; i++) if (_tbEnRango(n[i].fen)) _tbEncolar(n[i], false);
+}
+// `todas` = hace falta la lista de jugadas de esa posición (para controlar el "Mejor era"), no sólo su resultado.
+function _tbEncolar(node, todas) {
+  if (_tb.off || !node || !node.fen || !_tbEnRango(node.fen)) return;
+  var k = _tbClave(node.fen);
+  if (_tb.pend[k] || _tb.cat[k] !== undefined) return;
+  _tb.pend[k] = 1;
+  _tb.cola.push({ node: node, todas: !!todas, raiz: typeof cv !== 'undefined' ? cv.root : null });
+  if (!_tb.corriendo) _tbSiguiente();
+}
+function _tbSiguiente() {
+  var it;
+  while ((it = _tb.cola.shift())) {
+    var k = _tbClave(it.node.fen);
+    // Otra partida en pantalla, o ya se sabe por la consulta de la posición anterior: no se pregunta.
+    if (_tb.off || (typeof cv !== 'undefined' && it.raiz !== cv.root) || (!it.todas && _tbCatDe(it.node) !== undefined)) { delete _tb.pend[k]; continue; }
+    break;
+  }
+  if (!it) { _tb.corriendo = false; return; }
+  _tb.corriendo = true;
+  fetch(_TB_URL + '?fen=' + encodeURIComponent(it.node.fen))
+    .then(function(r) {
+      if (r.status === 429 || r.status >= 500) throw new Error('tabla ' + r.status);   // pide frenar o se cayó: apagar
+      return r.ok ? r.json() : null;                                                   // posición que no acepta (400): no se insiste
+    })
+    .then(function(j) {
+      delete _tb.pend[k];
+      var m = {};
+      if (j) (j.moves || []).forEach(function(x) { m[x.uci] = x.category; });
+      _tb.cat[k] = (j && j.category) || '';
+      _tb.mov[k] = m;
+      _capCache(_tb.cat, 3000); _capCache(_tb.mov, 3000);
+      // Recalificar UNA vez por tanda (el sig de los símbolos solo no alcanza: puede cambiar sólo la frase).
+      if (!_tb.redT) _tb.redT = setTimeout(function() { _tb.redT = null; _faNagSig = ''; _faReclassifyIfChanged(); }, 300);
+      setTimeout(_tbSiguiente, _TB_ESPERA);
+    })
+    .catch(function() { _tb.off = true; _tb.cola = []; _tb.pend = {}; _tb.corriendo = false; });
+}
+
 /* ── 💬 Comentario de los errores, estilo Lichess (01/10/2026) ──────────────────────────────────────
    Lichess NO usa IA para el "Error. Mejor era Cf3": es una plantilla (lila, modules/tree/Advice.scala)
    que pega el juicio, la 1ª jugada de la línea del motor en la posición ANTERIOR y esa línea como
@@ -43663,7 +43822,17 @@ function _faComEv(s) {   // valoración desde las blancas, como el gráfico: "+0
   return (s.cp >= 0 ? '+' : '−') + (Math.abs(s.cp) / 100).toFixed(1);
 }
 // Franja del comentario para la jugada i del análisis ('' si no es un error calificado).
+// En una transmisión EN VIVO los comentarios esperan a que termine la partida (pedido del autor, 01/10: mientras
+// se juega molestan). Los símbolos ?!/?/?? siguen como siempre. Cuando llega el resultado, el camino rápido del
+// vivo (_cvLiveExtendInPlace) redibuja la notación si había alguno escondido (_faComOculto).
+var _faComOculto = false;
+function _faComEsperaFinal() {
+  if (typeof _fa === 'undefined' || !_fa.live || !cv.games) return false;
+  var g = cv.games[cv.gIdx];
+  return !!g && (g.res || '*') === '*';
+}
 function _faComHtml(i) {
+  if (_faComEsperaFinal()) { _faComOculto = true; return ''; }
   var node = _fa.nodes[i], nag = node && node.move && node.move.nag;
   var cls = { '?!': 'dubious', '?': 'mistake', '??': 'blunder' }[nag];
   if (!cls || !node.parent) return '';
@@ -43682,11 +43851,21 @@ function _faComHtml(i) {
   else if (pB.mate !== undefined && pB.mate > 0 && (pA.mate === undefined || pA.mate < 0))
     // Se le fue el mate: si igual sigue ganando, "todavía sirve"; si encima quedó mal, no.
     txt = wpA >= _FA_COM_GANADO ? '¡Todavía sirve, no vio el mate!' : 'Dejó escapar un mate forzado.';
+  // 📚 Final de la tabla (≤7 piezas) que cambió de resultado: la frase la da la tabla, no el motor.
+  var tbj = _tbJuicio(node), tbMal = !!(tbj && tbj.despues < tbj.antes);
+  if (tbMal) txt = tbj.antes === 1 ? (tbj.despues === 0 ? 'Dejó escapar la victoria.' : '¡Uff, qué colgada!') : 'Pierde un final que era tablas.';
   // La mejor línea, desde la posición ANTERIOR a la jugada.
   var par = node.parent, pfen = par.fen, pv = _faPvMemo[pfen];
   if (pv === undefined) _faComPedir(pfen);
+  // Si la tabla marcó el error, la jugada del motor tiene que conservar el resultado; si no, no se sugiere.
+  var tbBien = true;
+  if (tbMal && pv && pv.length) {
+    var tbMov = _tb.mov[_tbClave(pfen)];
+    if (!tbMov) { _tbEncolar(par, true); tbBien = false; }
+    else { var vb = _tbValor(tbMov[pv[0]]); tbBien = vb !== null && -vb >= tbj.antes; }
+  }
   var best = '', line = '';
-  if (pv && pv.length && pv[0].slice(0, 4) !== node.move.from + node.move.to && typeof Chess !== 'undefined') {
+  if (tbBien && pv && pv.length && pv[0].slice(0, 4) !== node.move.from + node.move.to && typeof Chess !== 'undefined') {
     var comp = null;   // ¿ya se jugó en el tablero? Entonces son nodos de verdad (resaltado, ◀ ▶)
     for (var c = 1; c < par.children.length; c++) if (par.children[c].comp) { comp = par.children[c]; break; }
     if (comp) { best = comp.move.san; line = renderVariantLine(comp); }
@@ -43711,13 +43890,19 @@ function _faComHtml(i) {
   //    (la expresión de Shirov: la mejor no salva, sólo estira la defensa);
   //  · imprecisión → "Preferible era": no le tira abajo el plan al que revisa su partida;
   //  · jugada floja o colgada → "Mejor era".
-  var bestLbl = wpB <= _FA_COM_PERDIDO ? 'Resistía un poco más con' : (cls === 'dubious' ? 'Preferible era' : 'Mejor era');
+  //  · (con la tabla: el que movió no estaba perdido, aunque el motor creyera que sí → "Mejor era").
+  var bestLbl = tbMal ? 'Mejor era' : wpB <= _FA_COM_PERDIDO ? 'Resistía un poco más con' : (cls === 'dubious' ? 'Preferible era' : 'Mejor era');
   var extra = best ? '<span class="cv-mcom-best">' + bestLbl + ' <b>' + cvFanHtml(best) + '</b></span>'
             : (pv === undefined ? '<span class="cv-mcom-calc">buscando la mejor…</span>' : '');
   var why = cls !== 'dubious' ? _faMotivo(i) : '';   // 💡 el por qué (paso 2), sólo en ? y ??
+  // En el final de la tabla, en vez de "+1.5 → +1.4" (que confunde: el motor no lo ve) va el resultado real.
+  var ev = tbMal
+    ? '<span class="cv-mcom-ev" title="Tabla de finales de Lichess: el resultado con juego perfecto, para el que movió">📚 '
+      + _TB_NOMBRE[tbj.antes] + ' → ' + _TB_NOMBRE[tbj.despues].toLowerCase() + '</span>'
+    : '<span class="cv-mcom-ev" title="Valoración antes → después (desde las blancas)">' + _faComEv(rB) + ' → ' + _faComEv(rA) + '</span>';
   return '<div class="cv-mcom cv-mcom-' + cls + '">'
     + '<div class="cv-mcom-h"><span class="cv-mcom-sym">' + nag + '</span><span class="cv-mcom-t">' + txt + '</span>' + extra
-    + '<span class="cv-mcom-ev" title="Valoración antes → después (desde las blancas)">' + _faComEv(rB) + ' → ' + _faComEv(rA) + '</span></div>'
+    + ev + '</div>'
     + (why ? '<div class="cv-mcom-why">' + why + '</div>' : '')
     + (line ? '<div class="cv-mcom-line">' + line + '</div>' : '')
     + '</div>';
