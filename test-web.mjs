@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2038;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2039;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -8367,6 +8367,10 @@ console.log('\n=== Auditoría 23/09 — Fase 4: accesibilidad y prolijidad ===')
       && WL('https://olimpbase.org/1939/') === '📚 Fuente de los datos: OlimpBase' && WL('https://ejemplo.com') === '🌐 Sitio oficial',
       'el botón cita la fuente de las tablas (la Bundesliga por su nombre, las otras ligas a la federación)');
   chk(/📚 Fuente de las tablas: <a href="'\+escHtml\(_dsbUrlByKey\[crk\]\)/.test(extraerFuncion('_teamRenderSection')), 'y arriba de las tablas por equipos va la línea con el link a la fuente');
+
+  const CC = extraerFuncion('crOpenCountry');
+  chk(/var _plFlags=!cfed && /.test(CC) && /'<span class="crp-fl" aria-hidden="true">'\+_fl\+'<\/span>'/.test(CC) && /<span class="crp-fl2" aria-hidden="true">/.test(CC),
+      'el plantel de un club lleva la bandera a la izquierda (columna fija), y en el teléfono al lado del Elo, como los rivales en la ficha del jugador');
 
   // Grilla de tableros de cada cruce: filas parejas, 5 por fila como mucho en la PC.
   const TC = new Function(extraerFuncion('_tdTeamCols') + extraerFuncion('_tdTeamColsMaxFor') + ' return { c: _tdTeamCols, m: _tdTeamColsMaxFor };')();
