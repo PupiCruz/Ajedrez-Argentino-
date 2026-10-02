@@ -7170,7 +7170,7 @@ function crArgPlayers(type, id, games, crkOverride) {
   var result = [];
   try {
     var names = [], seen = {};
-    function add(n) { n = (n || '').trim(); if (!n) return; var k = normStr(n); if (!seen[k]) { seen[k] = 1; names.push(n); } }
+    function add(n) { n = (n || '').trim(); if (!n) return; var k = crNormTokens(n); if (!seen[k]) { seen[k] = 1; names.push(n); } }
     // 1) Escritos a mano (uno por renglón o separados por ';')
     var manual = [];
     if (data.argManual) data.argManual.split(/[\n;]+/).forEach(function(s) { s = s.trim(); if (s) manual.push(s); });
@@ -7180,9 +7180,12 @@ function crArgPlayers(type, id, games, crkOverride) {
     // FED/fide_id mandan; el nombre solo decide cuando no hay ninguno de los dos (evita falsos
     // positivos de extranjeros con apellido parecido, ej. "Naranjo Diaz"/"Payares Diaz").
     var argSet = {};
-    function note(name, fed, fideId) {
-      var k = normStr(name || ''); if (!k) return;
-      if (_argPersonInTour(name, fed, fideId, ck)) argSet[k] = name;   // sin fed/fide en el PGN → lo busca en la tabla
+    // La clave ignora el ORDEN de las palabras: el plantel de la liga alemana dice "Faustino Oro" y la
+    // transmisión de Lichess "Oro, Faustino", y salían dos chips del mismo jugador. Gana el primero que
+    // se anotó (la tabla o el plantel, que van antes que las partidas).
+    function note(name, fed, fideId, esArg) {
+      var k = crNormTokens(name || ''); if (!k || argSet[k]) return;
+      if (esArg || _argPersonInTour(name, fed, fideId, ck)) argSet[k] = name;   // sin fed/fide en el PGN → lo busca en la tabla
     }
     var st = (data.standings && data.standings.length) ? data.standings : null;
     if (st) {
@@ -7203,7 +7206,9 @@ function crArgPlayers(type, id, games, crkOverride) {
     // Discapacidad, no aparecía porque no jugó la primera ronda.
     if (data.teamRoster && data.teamRoster.forEach) {
       data.teamRoster.forEach(function(t) {
-        ((t && t.players) || []).forEach(function(p) { if (p && p.nm) note(p.nm, p.fed, p.fid); });
+        // Sin fide_id (la liga alemana no lo trae), el argentino que juega con OTRA bandera y el sitio tiene
+        // como adicional se reconoce por el nombre: Alan Pichot, inscripto por España en el Bayern.
+        ((t && t.players) || []).forEach(function(p) { if (p && p.nm) note(p.nm, p.fed, p.fid, !p.fid && _teamFedPersonArg(p.nm, p.fed)); });
       });
     }
     // Partidas (PGN): FED/FideId/nombre del header. Acotamos el parseo a los primeros 600 chars.

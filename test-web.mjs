@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2039;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2040;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -2798,8 +2798,10 @@ console.log('\n=== 37. El id del torneo viaja con las partidas del perfil ===');
       'en un individual, la bandera de la CLASIFICACIÓN también cuenta cuando el PGN sólo trae fide_id');
   chk(ARG('Diego Flores', '', '108049', 'cr2_ls_indiv') === true && ARG('Anton Guijarro, David', '', '2222222', 'cr2_ls_indiv') === false,
       'y el fide_id del ranking sigue alcanzando, sin colar a los que no están en ningún lado');
-  chk(/data\.teamRoster\.forEach\(function\(t\) \{\s*\(\(t && t\.players\) \|\| \[\]\)\.forEach\(function\(p\) \{ if \(p && p\.nm\) note\(p\.nm, p\.fed, p\.fid\); \}\);/.test(extraerFuncion('crArgPlayers')),
-      'los chips "Argentinos que compiten" leen el plantel por equipos (sale también el que no jugó)');
+  chk(/data\.teamRoster\.forEach\(function\(t\) \{[\s\S]*?\(\(t && t\.players\) \|\| \[\]\)\.forEach\(function\(p\) \{ if \(p && p\.nm\) note\(p\.nm, p\.fed, p\.fid, !p\.fid && _teamFedPersonArg\(p\.nm, p\.fed\)\); \}\);/.test(extraerFuncion('crArgPlayers')),
+      'los chips "Argentinos que compiten" leen el plantel por equipos (sale también el que no jugó), y el adicional con otra bandera (Pichot, ESP)');
+  chk(extraerFuncion('crArgPlayers').includes("var k = crNormTokens(name || ''); if (!k || argSet[k]) return;") && extraerFuncion('crArgPlayers').includes('var k = crNormTokens(n);'),
+      'y no duplica al mismo jugador escrito distinto ("Faustino Oro" en el plantel, "Oro, Faustino" en Lichess)');
   // Partidas · Lichess: el encabezado de cada enfrentamiento, en castellano; el clic, con el original.
   const _rt = extraerFuncion('tdBuildRoundTeams');
   chk(_rt.includes("var e = escHtml(_paisES(n||''));") && _rt.includes("crOpenCountry('+crArg(_ck)+','+crArg(n)+')"),
