@@ -7503,8 +7503,12 @@ function _crCarryOverFeds(oldStd, newStd) {
   });
   newStd.forEach(function(s) {
     if (!s || s.fed) return;
-    if (s.fideId && byFide[String(s.fideId)]) { s.fed = byFide[String(s.fideId)]; return; }
+    // Primero la federación FIDE que ya se conoce por el id (los jugadores del sitio la traen de la
+    // tabla FIDE del mes; el resto, de Lichess): es la de HOY. La tabla vieja va después, porque si
+    // tenía una bandera equivocada, copiarla la perpetuaba en cada re-bajada: Pichot quedó ARG en
+    // Temuco aunque se reimportara (02/10/2026).
     if (s.fideId && _fideCountryCache[String(s.fideId)]) { s.fed = _fideCountryCache[String(s.fideId)]; return; }
+    if (s.fideId && byFide[String(s.fideId)]) { s.fed = byFide[String(s.fideId)]; return; }
     var k = crNormTokens(s.name); if (k && byName[k]) s.fed = byName[k];
   });
   return newStd;
@@ -7579,6 +7583,10 @@ function _esRegFlag(name, fideId, crKey, dice) {
   var m = _crCfedMap(crKey);
   var f = (fideId && m.byId[String(fideId)]) || m.byName[crNormTokens(name)] || '';
   if (f) return _flagImg(f, dice);
+  // Argentino conocido con bandera de otro país (adicional: Iermito ITA, Glavina ESP…): su federación
+  // FIDE, que _fideCountryCache trae de PLAYERS, no la 🇦🇷.
+  var kf = fideId && typeof _fideCountryCache !== 'undefined' && _fideCountryCache[String(fideId)];
+  if (kf && kf !== 'ARG' && _isKnownArgPlayer(name, fideId)) return _flagImg(kf, dice);
   return _isKnownArgPlayer(name, fideId) ? _flagImg('ARG', dice) : '';
 }
 
@@ -26831,12 +26839,15 @@ function _cvReopenViewer(s) {
 }
 
 // Caché de federación por FideId (se llena async).
-// Precargado con los jugadores argentinos conocidos para respuesta instantánea.
+// Precargado con los jugadores conocidos para respuesta instantánea.
 var _fideCountryCache = (function() {
   var cache = {};
-  // Pre-fill: todos los jugadores en PLAYERS son argentinos
+  // Pre-fill: los de PLAYERS son argentinos, pero NO todos juegan con la bandera argentina: los
+  // adicionales traen su federación FIDE en `fed` (Pichot ESP, Iermito ITA, Hungaski USA…), que se
+  // refresca cada mes con la tabla. Antes se les ponía ARG a todos, y el rellenado de banderas de un
+  // torneo (crBakeFedsFromLichess) se lo GUARDABA en la tabla: Pichot salió argentino en Temuco (02/10/2026).
   if (typeof PLAYERS !== 'undefined') {
-    PLAYERS.forEach(function(p) { if (p.fide_id) cache[p.fide_id] = 'ARG'; });
+    PLAYERS.forEach(function(p) { if (p.fide_id) cache[p.fide_id] = String(p.fed || 'ARG').toUpperCase(); });
   }
   return cache;
 })();
