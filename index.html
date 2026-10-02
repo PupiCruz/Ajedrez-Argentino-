@@ -42993,21 +42993,40 @@ function faHandleMsg(line) {
 // última jugada). Es la eval más profunda disponible (prof. 20-30) → la cola del gráfico queda idéntica
 // al número del módulo, sin transitorios ni depender del pase. rawScore viene en perspectiva del que
 // mueve (sf.curSide); flip lo normaliza a blancas.
+//
+// Partida TERMINADA (01/10/2026, lo notó el autor en el teléfono): antes esto era sólo para el vivo, y un
+// análisis flojo dejaba un "?" que el módulo desmentía pensando más, sin corregirse nunca. Ahora también
+// corrige, pero SÓLO cuando el módulo ya fue más hondo que la eval que había: fuera del vivo toda eval
+// cuenta para calificar (_faSettled), así que sin este freno las lecturas de prof. 14-15 del arranque
+// harían bailar los símbolos. Contra una eval nuestra (con .d): prof. ≥ _FA_MOD_FIN_MIN y mayor que la suya.
+// Contra la de Lichess (sin .d, del PGN): prof. ≥ _FA_MOD_FIN_LICHESS.
+var _FA_MOD_FIN_MIN = 18, _FA_MOD_FIN_LICHESS = 22;
 var _faFeedT = 0;
 function _faFeedModuleEval(rawScore, flip) {
-  if (typeof _fa === 'undefined' || !_fa.live || _fa.running) return;   // solo en vivo, sin pase corriendo
+  if (typeof _fa === 'undefined' || _fa.running) return;   // sin pase corriendo
   if (!rawScore) return;
+  if (!_fa.live && !_fa.results.length) return;            // terminada y sin análisis hecho: nada que corregir
   // El punto se estampa en la posición que el motor ANALIZA (sf.curFen), NO en la del tablero:
   // cuando llega una tanda de jugadas, el tablero las reproduce de a una mientras el módulo sigue
   // en una posición anterior (a propósito no se reinicia en los pasos intermedios) → la eval de una
   // jugada se guardaba como si fuera de otra, con prof. alta, y el pase nunca la corregía.
   var fen = sf.curFen;
   if (!fen) return;
+  if (!_fa.live) {
+    var i0 = -1;
+    for (var j = _fa.nodes.length - 1; j >= 0; j--) { if (_fa.nodes[j] && _fa.nodes[j].fen === fen) { i0 = j; break; } }
+    if (i0 < 0) return;                                     // variante: no es del gráfico
+    var r0 = _fa.results[i0];
+    if (r0 && r0.mate !== undefined && r0.d === undefined) return;   // un mate del PGN no se discute
+    var minD = (r0 && r0.d) ? Math.max(_FA_MOD_FIN_MIN, r0.d + 1) : _FA_MOD_FIN_LICHESS;
+    if (sf.depth < minD) return;
+  }
   var ws = rawScore.mate !== undefined
     ? { mate: flip ? -rawScore.mate : rawScore.mate }
     : { cp:   flip ? -rawScore.cp   : rawScore.cp };
   var prev = _faLiveCache[fen];
   if (prev && prev.bm) ws.bm = prev.bm;   // conservar la mejor jugada ya cacheada (para el ★)
+  else if (r0 && r0.bm) ws.bm = r0.bm;    // (terminada: la que había dejado el pase)
   ws.d = sf.depth;                        // profundidad del módulo (para diferir la calificación)
   var ln = _faModLineas();                // sus 3 líneas: con ellas el "!!" usa los filtros de la lista
   if (ln) ws.ln = ln; else if (prev && prev.ln) ws.ln = prev.ln;
@@ -43022,6 +43041,8 @@ function _faFeedModuleEval(rawScore, flip) {
   if (_now - _faFeedT >= 400) { _faFeedT = _now; faRender(_faInterp(_fa.results)); }
   // Al asentar esta jugada en profundidad puede aparecer/corregirse su símbolo (y el de la
   // siguiente): recalcular la calificación, re-renderizando solo si algún símbolo cambió.
+  // Terminada: también si cambió el número (los comentarios muestran "antes → después").
+  if (!_fa.live && (!r0 || r0.cp !== ws.cp || r0.mate !== ws.mate)) _faNagSig = '';
   _faReclassifyIfChanged();
 }
 

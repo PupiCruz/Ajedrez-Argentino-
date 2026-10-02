@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1975;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1983;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -8172,6 +8172,33 @@ console.log('\n=== Auditoría 23/09 — Fase 4: accesibilidad y prolijidad ===')
   chk(/if \(_faComEsperaFinal\(\)\) \{ _faComOculto = true; return ''; \}/.test(extraerFuncion('_faComHtml'))
       && /if \(_faComOculto && meta\.res && meta\.res !== '\*'\) \{ _faComOculto = false; faApplyNags\(\); \}/.test(extraerFuncion('_cvLiveExtendInPlace')),
       'al llegar el resultado, el refresco del vivo redibuja la notación y aparecen');
+}
+
+// ── 🔁 El módulo corrige el análisis también en partidas TERMINADAS, sólo si piensa más hondo (01/10) ──
+{
+  console.log('\n🔁 El módulo corrige el análisis de partidas terminadas');
+  const F = new Function(SRC.match(/var _FA_MOD_FIN_MIN = [^\n]*/)[0] + '\n'
+    + 'var _faFeedT = 0, _faNagSig = "x", _faLiveCache = {}, reclas = 0;'
+    + 'function _faSaveLiveCache(){} function _faModLineas(){ return null; } function faRender(){} function _faInterp(r){ return r; }'
+    + 'function _faReclassifyIfChanged(){ reclas++; }\n' + extraerFuncion('_faFeedModuleEval')
+    + '; return function(fa, sf, raw){ _fa = fa; globalThis.sf = sf; reclas = 0; _faFeedModuleEval(raw, false); return { r: fa.results, reclas: reclas, sig: _faNagSig }; };')();
+  const mkFa = (r, live) => ({ live, running: false, nodes: [{ fen: 'A' }, { fen: 'B' }], results: [{ cp: 20, d: 16 }, r] });
+  let o = F(mkFa({ cp: -300, d: 12 }, false), { curFen: 'B', depth: 15 }, { cp: 40 });
+  chk(o.r[1].cp === -300 && o.reclas === 0, '🔒 terminada: con el módulo todavía a prof. 15 no toca nada (no bailan los símbolos)');
+  o = F(mkFa({ cp: -300, d: 12 }, false), { curFen: 'B', depth: 18 }, { cp: 40 });
+  chk(o.r[1].cp === 40 && o.r[1].d === 18 && o.reclas === 1 && o.sig === '', '🔒 terminada: a prof. 18, más hondo que el análisis (12) → corrige y recalifica');
+  o = F(mkFa({ cp: -300, d: 20 }, false), { curFen: 'B', depth: 20 }, { cp: 40 });
+  chk(o.r[1].cp === -300, 'no pisa una eval igual de honda (prof. 20 contra 20)');
+  o = F(mkFa({ cp: -300 }, false), { curFen: 'B', depth: 21 }, { cp: 40 });
+  chk(o.r[1].cp === -300, 'la eval de Lichess (sin prof.) sólo se corrige desde prof. 22');
+  o = F(mkFa({ cp: -300 }, false), { curFen: 'B', depth: 22 }, { cp: 40 });
+  chk(o.r[1].cp === 40, '…y a prof. 22 sí');
+  o = F(mkFa({ mate: -3 }, false), { curFen: 'B', depth: 30 }, { cp: 40 });
+  chk(o.r[1].mate === -3, 'un mate que vino en el PGN no se discute');
+  o = F(mkFa({ cp: -300, d: 12 }, false), { curFen: 'Z', depth: 25 }, { cp: 40 });
+  chk(o.r[1].cp === -300 && o.reclas === 0, 'parado en una variante (no está en el gráfico): no toca nada');
+  o = F(mkFa({ cp: -300, d: 12 }, true), { curFen: 'B', depth: 15 }, { cp: 40 });
+  chk(o.r[1].cp === 40 && o.r[1].d === 15, 'en vivo sigue como antes (la profundidad la mira _faSettled al calificar)');
 }
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
 console.log('   Corrieron ' + corridas + ' de ' + ESPERADAS + ' comprobaciones.'
