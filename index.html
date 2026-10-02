@@ -491,8 +491,13 @@
          cuatro tableritos de ~80px donde no se leía ningún nombre. Acá también 2 por fila. El
          max-width inline (215px × mesas) no molesta: con 2 mesas o más ya supera el ancho del
          teléfono; solo se nota en un cruce de UNA mesa, que es justo cuando conviene topearlo. */
-      .td-team-boards { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+      .td-team-boards { --tbc: 2 !important; }
     }
+    /* Los tableros de cada cruce por equipos: --tbc columnas (la elige _tdTeamCols para que las filas
+       salgan parejas), todos del mismo ancho (hasta 250px) y la fila corta centrada. */
+    .td-team-boards { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin: 0 auto;
+                      max-width: calc(var(--tbc, 5) * 250px + (var(--tbc, 5) - 1) * 8px); }
+    .td-team-boards > .td-card { flex: 0 0 calc((100% - (var(--tbc, 5) - 1) * 8px) / var(--tbc, 5)); min-width: 0; box-sizing: border-box; }
     /* CUADRO CRUZADO por equipos (todos contra todos): la grilla completa —una columna por rival—
        sólo entra en pantalla grande. Con 4 equipos va justa y con 8 no entra. Por eso se dibujan las
        DOS versiones y acá se conmuta: en el teléfono queda una fila por equipo con los puntos, y el
@@ -10915,6 +10920,11 @@ function _teamRenderSection(crk,data,wantTab,cascara){
     h+='</div>';
   }
   h+='</div>';
+  // De dónde salen las tablas, cuando no es Chess-Results: la página oficial de la liga alemana. Se
+  // cita como con OlimpBase, con el link a la fuente.
+  if(_dsbUrlByKey[crk] && _dsbBase(_dsbUrlByKey[crk]) && (roundNums.length||crossNums.length||hasStand)){
+    h+='<div style="font-size:12px;color:var(--text2);margin:-4px 0 8px">📚 Fuente de las tablas: <a href="'+escHtml(_dsbUrlByKey[crk])+'" target="_blank" rel="noopener" style="color:var(--blue)">'+escHtml(_dsbFuente(_dsbUrlByKey[crk]))+' ↗</a></div>';
+  }
   h+='<div id="cr-status-'+crk+'" style="font-size:11px;color:var(--text3);min-height:14px;margin-bottom:6px"></div>';
   if(!roundNums.length&&!crossNums.length&&!hasStand){
     h+='<div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center;color:var(--text3);font-size:12px;line-height:1.6">';
@@ -13261,6 +13271,11 @@ function _dsbBase(url) {
   var m = String(url || '').match(/^https?:\/\/ergebnisdienst\.schachbund\.de\/((?:saison[\w-]+\/)?)bed[a-z]?\.php\?(?:[^#]*&)?liga=([\w-]+)/i);
   return m ? { dir: 'https://ergebnisdienst.schachbund.de/' + m[1], liga: m[2] } : null;
 }
+// Cómo se cita la fuente: la Bundesliga por su nombre; las demás ligas, la federación alemana (DSB).
+function _dsbFuente(url) {
+  var b = _dsbBase(url);
+  return (b && b.liga === 'bl') ? 'Bundesliga alemana (DSB)' : 'Federación Alemana (DSB)';
+}
 function _dsbPageUrl(base, page, extra) { return base.dir + page + '.php?liga=' + encodeURIComponent(base.liga) + (extra || ''); }
 // La página no manda permiso CORS: va por el mismo Worker que Chess-Results (que la tiene habilitada).
 async function _dsbFetch(url) {
@@ -14867,7 +14882,7 @@ function crOpenCountry(key, who){
       (m.boards||[]).forEach(function(b){ var nm=meA?b.nW:b.nB;
         if(!nm||_teamIsPlaceholder(nm)) return;   // "Sin jugador asignado" es relleno, no un jugador
         var rp=_teamResPts(b.res);
-        if(!roster[nm]){ roster[nm]={score:0,games:0,title:meA?b.tW:b.tB,elo:meA?b.eW:b.eB}; rorder.push(nm); }
+        if(!roster[nm]){ roster[nm]={score:0,games:0,title:meA?b.tW:b.tB,elo:meA?b.eW:b.eB,fed:(meA?b.fW:b.fB)||''}; rorder.push(nm); }
         if(rp){ roster[nm].score+=meA?rp[0]:rp[1]; roster[nm].games++; } });
     });
   });
@@ -14999,9 +15014,12 @@ function crOpenCountry(key, who){
       }
       var jugo=games>0;
       var _elo=elo||(c?c.elo:0);
-      var nameHtml=crTitleBadge(ti||(c?c.title:''))+escHtml(nm)
+      // En un CLUB (no es de ningún país: Bundesliga, ligas) cada jugador lleva su banderita, porque los
+      // hay de todos lados. En una SELECCIÓN no hace falta: sólo se marca, con la sigla, el que tiene otra.
+      var _fl=(!cfed&&fed)?crFlagEmoji(fed):'';
+      var nameHtml=crTitleBadge(ti||(c?c.title:''))+escHtml(nm)+(_fl?' '+_fl:'')
         +(_elo?' <span style="color:var(--text3);font-size:12.5px">'+escHtml(String(_elo))+'</span>':'')
-        +((fed&&fed!==_ofFed)?' <span style="color:var(--text3);font-size:11.5px">'+escHtml(fed)+'</span>':'');
+        +((fed&&fed!==_ofFed&&!_fl)?' <span style="color:var(--text3);font-size:11.5px">'+escHtml(fed)+'</span>':'');
       // Clickeable sólo si jugó: el panel del jugador se arma con sus partidas y sin ellas sale vacío.
       var cell=jugo
         ? '<span onclick="crOpenPlayer('+crArg(key)+','+crArg(nm)+')" title="Ver la performance del jugador"'+_a11yClic()+' style="cursor:pointer;color:var(--text);font-weight:500" onmouseover="this.style.color=\'var(--gold)\'" onmouseout="this.style.color=\'var(--text)\'">'+nameHtml+'</span>'
@@ -15026,7 +15044,7 @@ function crOpenCountry(key, who){
     h+='<caption class="sr-only">'+(_ofPl.length?'Plantel oficial de ':'Plantel de ')+escHtml(cname)+': tablero, jugador y puntos de cada uno.</caption>';
     _ofPl.forEach(function(p){ h+=_plRow(p.bo,p.ti,p.nm,p.elo,p.fed,p.pts,p.gm,p.rp); });
     if(_ofPl.length&&_extraPl.length) h+='<tr><td colspan="3" style="padding:10px 6px 2px;font-size:11px;color:var(--text3);border-top:1px solid var(--bd14)">También jugaron</td></tr>';
-    _extraPl.forEach(function(nm){ var p=roster[nm]; h+=_plRow('',p.title,nm,p.elo,'','','',''); });
+    _extraPl.forEach(function(nm){ var p=roster[nm]; h+=_plRow('',p.title,nm,p.elo,p.fed||'','','',''); });   // fed: sólo la trae la liga alemana
     h+='</table></div>';
   }
   h+='</div>';
@@ -31742,6 +31760,8 @@ function webUrlLabel(url) {
   if (host === 'fide.com' || host.endsWith('.fide.com')) return '🌐 Ver en FIDE';
   // Torneos históricos (Olimpiadas) armados con los datos de OlimpBase: se le da el crédito.
   if (host === 'olimpbase.org' || host.endsWith('.olimpbase.org')) return '📚 Fuente de los datos: OlimpBase';
+  // Ligas alemanas: las tablas salen de la página oficial de la federación (ver _dsbAutoFetchTeam).
+  if (host === 'ergebnisdienst.schachbund.de') return '📚 Fuente de las tablas: ' + _dsbFuente(url);
   return '🌐 Sitio oficial';
 }
 
@@ -34317,7 +34337,22 @@ function _tdTeamMatches(games) {
 function _fmtHalf(n) { var w = Math.floor(n); return ((n - w) >= 0.5) ? ((w > 0 ? w : '') + '½') : String(w); }
 
 var _TD_TEAM_PER_PAGE = 6;   // enfrentamientos por página en la vista por equipos
+// Cuántas columnas usa un cruce de `n` mesas con `max` por fila como mucho: primero cuántas filas hacen
+// falta, y después se reparten parejas (8 con 5 por fila → 2 filas de 4; 7 → 4 y 3; 6 → 3 y 3).
+function _tdTeamCols(n, max) {
+  n = Math.max(1, n | 0); max = Math.max(1, max | 0);
+  return Math.ceil(n / Math.ceil(n / max));
+}
+// Cuántos tableros entran por fila en este ancho: cada uno pide ~200px (lo justo para que se lean los
+// nombres), y nunca más de 5. El teléfono lo pisa el CSS (2 por fila).
+function _tdTeamColsMaxFor(ancho) {
+  return Math.max(2, Math.min(5, Math.floor(((ancho || 1200) + 10) / 210)));
+}
+var _tdColsMax = 5;
 function tdBuildRoundTeams(rInt, panel, roundGames) {
+  // El panel puede estar escondido mientras se arma (otra ronda a la vista): entonces se mide la sección.
+  var _anchoP = (panel && panel.clientWidth) || ((document.getElementById('td-games-section') || {}).clientWidth) || (window.innerWidth - 80);
+  _tdColsMax = _tdTeamColsMaxFor(_anchoP);
   var allMatches = _tdTeamMatches(roundGames);
   // Vista: cada item conserva su índice en la lista COMPLETA. Así el id del marcador (td-mscore-…)
   // es estable aunque el filtro "Solo argentinos" muestre un subconjunto, y _tdUpdateMatchScores
@@ -34367,7 +34402,12 @@ function tdBuildRoundTeams(rInt, panel, roundGames) {
     // La clase td-team-boards existe SOLO para que el teléfono pueda pasarlos a 2 por fila (las
     // columnas van inline porque dependen de cuántos tableros tiene el cruce, así que el CSS del
     // teléfono las pisa con !important). En la PC no cambia nada.
-    h += '<div class="td-team-boards" style="display:grid;grid-template-columns:repeat(' + m.boards.length + ',minmax(0,1fr));gap:8px;max-width:' + (m.boards.length * 215) + 'px">';
+    // FILAS PAREJAS (03/10/2026). Antes iban TODAS las mesas en una fila: con los 8 tableros de la
+    // Bundesliga quedaban tableritos de ~150px donde no se leía ningún nombre. Ahora entran como mucho
+    // _tdTeamColsMax por fila (según el ancho; 5 en una PC) y las filas se reparten parejas: 8 → 4 y 4,
+    // 7 → 4 y 3, 6 → 3 y 3, 4 → una fila de 4. Cada tablero mide lo mismo en todos los cruces y la
+    // fila corta queda centrada. Sirve igual para cualquier torneo por equipos, tenga las mesas que tenga.
+    h += '<div class="td-team-boards" style="--tbc:' + _tdTeamCols(m.boards.length, _tdColsMax) + '">';
     // Voltear el tablero cuando el equipo de la izquierda (teamA) juega con NEGRAS en esa mesa, así
     // ese equipo queda SIEMPRE abajo (en equipos los colores alternan mesa a mesa). Usa los tags
     // WhiteTeam/BlackTeam del PGN de Lichess (más confiable que par/impar).

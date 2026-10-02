@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2033;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2038;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -8359,6 +8359,23 @@ console.log('\n=== Auditoría 23/09 — Fase 4: accesibilidad y prolijidad ===')
       'las pestañas siguen en orden de número y la metadata no se ensucia');
   chk(MM([{ rounds: [{ id: 'a', name: 'Round 1', finished: true }, { id: 'b', name: 'Round 2', finished: true }] }]).currentNum === 2,
       'sin fechas, como siempre: la de número más alto');
+
+  // Se cita la fuente, como con OlimpBase.
+  const WL = new Function(extraerFuncion('_dsbBase') + extraerFuncion('_dsbFuente') + extraerFuncion('webUrlLabel') + ' return webUrlLabel;')();
+  chk(WL('https://ergebnisdienst.schachbund.de/bedh.php?liga=bl') === '📚 Fuente de las tablas: Bundesliga alemana (DSB)'
+      && WL('https://ergebnisdienst.schachbund.de/saison2025-26/bedh.php?liga=fb1') === '📚 Fuente de las tablas: Federación Alemana (DSB)'
+      && WL('https://olimpbase.org/1939/') === '📚 Fuente de los datos: OlimpBase' && WL('https://ejemplo.com') === '🌐 Sitio oficial',
+      'el botón cita la fuente de las tablas (la Bundesliga por su nombre, las otras ligas a la federación)');
+  chk(/📚 Fuente de las tablas: <a href="'\+escHtml\(_dsbUrlByKey\[crk\]\)/.test(extraerFuncion('_teamRenderSection')), 'y arriba de las tablas por equipos va la línea con el link a la fuente');
+
+  // Grilla de tableros de cada cruce: filas parejas, 5 por fila como mucho en la PC.
+  const TC = new Function(extraerFuncion('_tdTeamCols') + extraerFuncion('_tdTeamColsMaxFor') + ' return { c: _tdTeamCols, m: _tdTeamColsMaxFor };')();
+  const filas = (n) => { const c = TC.c(n, 5), f = []; for (let q = n; q > 0; q -= c) f.push(Math.min(c, q)); return f.join('+'); };
+  chk(filas(8) === '4+4' && filas(7) === '4+3' && filas(6) === '3+3' && filas(4) === '4' && filas(1) === '1' && filas(10) === '5+5',
+      'los tableros de un cruce van en filas parejas: 8 → 4+4, 7 → 4+3, 6 → 3+3, 4 → una fila', [8, 7, 6, 4].map(filas).join(' · '));
+  chk(TC.m(1290) === 5 && TC.m(900) === 4 && TC.m(500) === 2 && TC.m(0) === 5, 'entran hasta 5 por fila según el ancho (cada tablero pide ~200px)');
+  chk(/\.td-team-boards \{ --tbc: 2 !important; \}/.test(SRC) && /\.td-team-boards > \.td-card \{ flex: 0 0 calc/.test(SRC),
+      'en el teléfono, 2 por fila; y todos del mismo ancho con la fila corta centrada');
 
   // Fechas que cruzan de año (la temporada de la Bundesliga va de septiembre a abril).
   chk(D.parseDateFromText('27 Sep 2025 – 26 Abr 2026') === 20260426, 'un rango que cruza de año termina en el año del final', D.parseDateFromText('27 Sep 2025 – 26 Abr 2026'));
