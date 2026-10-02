@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 1945;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 1956;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -3027,7 +3027,7 @@ console.log('\n=== 26. Filtro por TEMA de los ejercicios (chips que se cuentan s
   chk(F.puzForTema('horquilla').length === 31, 'filtrar por tema devuelve exactamente los de ese tema');
   chk(F.puzForTema('mate4+').every((p) => p.themes.some((x) => /^mateIn(\d+)$/.test(x) && +x.slice(6) >= 4)),
       'y en el chip de 4 o más no se cuela ningún mate corto');
-  chk(F.puzTemaLabel('mate4+') === 'Mate en 4 o más' && F.puzTemaLabel('horquilla') === 'Horquilla',
+  chk(F.puzTemaLabel('mate4+') === 'Mate en 4 o más' && F.puzTemaLabel('horquilla') === 'Ataque doble',
       'las etiquetas salen bien para las dos familias');
   chk(F.puzTemaLabel('tema-nuevo-inventado') === 'Tema nuevo inventado',
       'un tema que todavía no tiene etiqueta se muestra prolijo igual');
@@ -8066,6 +8066,40 @@ console.log('\n=== Auditoría 23/09 — Fase 4: accesibilidad y prolijidad ===')
   chk(/j\.parts > 1/.test(lee) && /'\.p' \+ _k \+ '\.json'/.test(lee) && /Promise\.all/.test(lee) && /_tourLoadFailed\[id\] = true/.test(lee),
       'la web baja los pedazos y los junta; si falta uno, cuenta como carga fallida (no muestra un torneo a medias)');
   chk((SRC.match(/_tourFileEntries\(id, split\.tFiles\[id\]\)/g) || []).length === 2, 'los DOS caminos que escriben data/t (guardar en la carpeta y el ZIP) parten igual');
+}
+
+// ── 💡 El POR QUÉ del error en los comentarios (paso 2, 01/10): colgada, doblete, mate del pasillo ──
+{
+  console.log('\n💡 El por qué de los errores (colgada, doblete, mate del pasillo)');
+  const chessSrcM = fs.readFileSync(new URL('./assets/chess.min.js', import.meta.url), 'utf8');
+  const _mM = { exports: {} };
+  new Function('module', 'exports', 'window', chessSrcM)(_mM, _mM.exports, {});
+  const ChessM = _mM.exports.Chess || _mM.exports;
+  const M = new Function('Chess', SRC.match(/var _FA_MOT = [^\n]*/)[0] + '\n' + SRC.match(/var _MOT_PIEZA = [^\n]*/)[0] + '\n'
+    + ['_fenGrid', '_pval', '_pieceValAtFen', '_pinDir', '_attackersOf', '_motMaterial', '_motAtacadas', '_motDefendida',
+       '_motMalParada', '_motPasillo', '_motivoDe', '_motActivo'].map(extraerFuncion).join('\n')
+    + '; return { de: _motivoDe, activo: _motActivo, temas: _FA_MOT };')(ChessM);
+  const N = (fen, to, parentFen) => ({ fen, move: { to, from: 'a1', san: 'x' }, parent: { fen: parentFen || fen } });
+  // 3.♘g5?? (1.e4 e5 2.♘f3 d6): el caballo queda sin defensa y la dama lo come.
+  const G5 = N('rnbqkbnr/ppp2ppp/3p4/4p1N1/4P3/8/PPPP1PPP/RNBQKB1R b KQkq - 1 3', 'g5', 'rnbqkbnr/ppp2ppp/3p4/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 0 3');
+  chk(M.de(G5, ['d8g5', 'd2d4', 'g5g6', 'b1c3'], { cp: -350 }) === 'Deja colgado el caballo de g5.', '🔒 pieza sin defensa que el rival come gratis → "Deja colgado el caballo de g5."');
+  const G5d = N('rnbqkbnr/ppp2ppp/3p4/4p1N1/3PP3/8/PPP2PPP/RNBQKB1R b KQkq - 0 3', 'g5', 'rnbqkbnr/ppp2ppp/3p4/4p3/3PP3/5N2/PPP2PPP/RNBQKB1R w KQkq - 0 3');
+  chk(M.de(G5d, ['d8g5', 'c1g5', 'f7f6', 'g5e3'], { cp: -300 }) === '', 'la misma, con el alfil c1 defendiéndolo, no es colgada');
+  const CAMBIO = N('rnbqkb1r/pppp1ppp/5B2/4p3/4P3/8/PPPP1PPP/RN1QKBNR b KQkq - 0 3', 'f6', 'rnbqkb1r/pppp1ppp/5n2/4p3/4P1B1/8/PPPP1PPP/RN1QKBNR w KQkq - 0 3');
+  chk(M.de(CAMBIO, ['d8f6', 'b1c3', 'f8c5', 'g1f3'], { cp: -50 }) === '', 'un cambio parejo (♗xf6 ♛xf6) no es "dejar colgado"');
+  const FORK = N('r3kbnr/pp3ppp/8/1N6/8/8/PPP2PPP/R1B1KBNR w KQkq - 0 1', 'e8');
+  chk(M.de(FORK, ['b5c7', 'e8d8', 'c7a8', 'f8d6', 'c1e3', 'g8f6', 'e1c1'], { cp: 600 }) === 'Permite un doblete de caballo en c7.', '🔒 ♘c7+ ataca rey y torre y gana material → doblete');
+  chk(M.de(FORK, ['b5c7', 'e8d8', 'c7b5', 'a8c8', 'c1e3'], { cp: 60 }) === '', 'si la línea no termina ganando material, no se habla de doblete');
+  const BR = N('6k1/5ppp/8/8/8/8/5PPP/4R1K1 w - - 0 1', 'g8');
+  chk(M.de(BR, ['e1e8'], { mate: 1 }) === 'Permite el mate del pasillo.', '🔒 rey encerrado por sus peones y jaque por la 1ª fila → mate del pasillo');
+  chk(M.de(N('6k1/5p1p/6p1/8/8/8/5PPP/3QR1K1 w - - 0 1', 'g8'), ['d1d8', 'g8g7', 'e1e7'], { mate: 3 }) === 'Permite mate en 3.', 'otro mate (corto) → "Permite mate en N."');
+  chk(M.de(N('rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2', 'f3'), ['b8c6', 'f1b5', 'g8f6'], { cp: 40 }) === '', 'una jugada normal: ningún por qué (ante la duda, nada)');
+  M.temas.colgada = false;
+  chk(M.de(G5, ['d8g5', 'd2d4', 'g5g6', 'b1c3'], { cp: -350 }) === '', 'cada tema se apaga por separado (_FA_MOT)');
+  const ls = { v: {}, getItem(k) { return k in this.v ? this.v[k] : null; }, setItem(k, x) { this.v[k] = x; }, removeItem(k) { delete this.v[k]; } };
+  chk(M.activo('', ls) === true && M.activo('?motivos=0', ls) === false && M.activo('', ls) === false && M.activo('?motivos=1', ls) === true,
+      '?motivos=0 apaga el por qué en ese navegador (queda guardado) y ?motivos=1 lo vuelve a prender');
+  chk(/var why = cls !== 'dubious' \? _faMotivo\(i\) : '';/.test(extraerFuncion('_faComHtml')), 'sólo en la ? y la ?? (en la ?! no se gasta otra posición de motor)');
 }
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
 console.log('   Corrieron ' + corridas + ' de ' + ESPERADAS + ' comprobaciones.'

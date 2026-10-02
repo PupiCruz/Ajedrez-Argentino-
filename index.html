@@ -1773,6 +1773,22 @@
     .cv-mnum { color: var(--fg-c0); text-align: right; font-size: 14px; text-shadow:var(--txt-out); }
     .cv-mw, .cv-mb { padding: 2px 2px; white-space: nowrap; min-width: 0; display: flex; align-items: baseline; }
     .cv-mvar { font-size: 13px; color: var(--fg-c8); padding: 2px 0 4px 30px; line-height: 1.5; text-shadow:var(--txt-out); }
+    /* 💬 Comentario de los errores (estilo Lichess): franja del color del símbolo, con los mismos
+       colores que la pastilla del tablero (#cv-nag-badge). --mc = color, --mc-bg = tinte de fondo. */
+    .cv-mcom { margin: 2px 2px 6px 30px; padding: 5px 9px 6px; border-left: 3px solid var(--mc); border-radius: 0 7px 7px 0;
+      background: var(--mc-bg); font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; font-size: 13px; line-height: 1.45; }
+    .cv-mcom-dubious { --mc: #d4a12b; --mc-bg: rgba(212,161,43,.12); }
+    .cv-mcom-mistake { --mc: #e07020; --mc-bg: rgba(224,112,32,.12); }
+    .cv-mcom-blunder { --mc: #d03030; --mc-bg: rgba(208,48,48,.13); }
+    .cv-mcom-h { display: flex; flex-wrap: wrap; align-items: center; column-gap: 7px; row-gap: 2px; color: var(--text); }
+    .cv-mcom-sym { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 4px; box-sizing: border-box;
+      border-radius: 9px; background: var(--mc); color: #fff; font-size: 11px; font-weight: 800; box-shadow: 0 1px 3px rgba(0,0,0,.35); }
+    .cv-mcom-t { font-weight: 700; }
+    .cv-mcom-best b { font-weight: 700; }
+    .cv-mcom-calc { color: var(--text3); font-style: italic; }
+    .cv-mcom-ev { margin-left: auto; font-size: 11.5px; color: var(--text3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .cv-mcom-why { margin-top: 2px; color: var(--text); font-size: 12.5px; }
+    .cv-mcom-line { margin-top: 3px; font-family: 'Courier New', monospace; font-size: 12.5px; color: var(--fg-c8); }
     .cmv { cursor: pointer; padding: 1px 4px; border-radius: 3px; transition: background-color .1s, border-color .1s, color .1s, box-shadow .1s, transform .1s; }
     .cmv:hover { background: var(--border); color: var(--text); }
     .cmv.on { background: var(--gold-fill); color: #111; font-weight: 700; border-radius: 4px; padding: 1px 5px; box-shadow: 0 0 0 2px rgba(201,162,39,.35); text-shadow: none; }
@@ -27419,6 +27435,9 @@ function _cvMoveTimeHtml(node) {
 function renderMoveTable(root) {
   if (!root || !root.children.length) return '';
   var out = '', node = root, row = null;
+  // Comentarios de los errores (💬 _faComHtml): jugada → su lugar en el análisis de ESTA partida.
+  var faIdx = (typeof _fa !== 'undefined' && _fa.nodes && _fa.nodes.length) ? new Map() : null;
+  if (faIdx) for (var fi = 0; fi < _fa.nodes.length; fi++) faIdx.set(_fa.nodes[fi], fi);
   function flush() {
     if (!row) return;
     out += '<div class="cv-mrow"><span class="cv-mnum">' + row.num + '.</span>'
@@ -27452,14 +27471,18 @@ function renderMoveTable(root) {
       else row.black = mv;
       flush();
     }
-    // variantes (hermanos de la jugada principal) → fila aparte a lo ancho
+    // Error calificado por el análisis → su comentario debajo (corta la fila, como en Lichess).
+    var com = (faIdx && faIdx.has(mc)) ? _faComHtml(faIdx.get(mc)) : '';
+    if (com) { flush(); out += com; }
+    // variantes (hermanos de la jugada principal) → fila aparte a lo ancho. La del motor que se
+    // jugó desde un comentario (`comp`) no: ya se ve dentro del comentario.
     if (node.children.length > 1) {
-      flush();
       var vh = '';
       for (var vi = 1; vi < node.children.length; vi++) {
+        if (node.children[vi].comp) continue;
         vh += '<span class="cvar-open">(</span>' + renderVariantLine(node.children[vi]) + '<span class="cvar-close">)</span> ';
       }
-      out += '<div class="cv-mvar">' + vh + '</div>';
+      if (vh) { flush(); out += '<div class="cv-mvar">' + vh + '</div>'; }
     }
     node = mc;
   }
@@ -27570,14 +27593,15 @@ function cvHighlight() {
       el.classList.add('on');
       var _cell = el.closest('.cv-mw, .cv-mb');
       if (_cell) { _cell.classList.add('cell-on'); _cvHlCell = _cell; }
+      // La jugada marcada queda a MEDIA ALTURA de la lista, como en Lichess: al avanzar se ve lo que
+      // viene (antes quedaba pegada al borde de abajo y no se veía ni la jugada siguiente ni el
+      // comentario del error). Se mide con getBoundingClientRect: las jugadas de la variante de un
+      // comentario no tienen a la lista como offsetParent.
       var mwrap = document.querySelector('.chess-mwrap');
-      if (mwrap) {
-        var elTop = el.offsetTop;
-        var elH   = el.offsetHeight;
-        var wst   = mwrap.scrollTop;
-        var wH    = mwrap.clientHeight;
-        if (elTop < wst) { mwrap.scrollTop = elTop; }
-        else if (elTop + elH > wst + wH) { mwrap.scrollTop = elTop + elH - wH; }
+      if (mwrap && mwrap.scrollHeight > mwrap.clientHeight) {
+        var er = el.getBoundingClientRect(), wr = mwrap.getBoundingClientRect();
+        var elTop = er.top - wr.top + mwrap.scrollTop;
+        mwrap.scrollTop = Math.max(0, elTop - (mwrap.clientHeight - er.height) / 2);
       }
     }
   }
@@ -34610,7 +34634,7 @@ function mevNext() {
     else setTimeout(_faRellenarSiLibre, 0);   // motor libre: completar lo salteado del gráfico en vivo
     return;
   }
-  _mev.last = null; _mev.lines = [];
+  _mev.last = null; _mev.lines = []; _mev.pv = null;
   _mev.t0 = Date.now();   // para medir cuánto tarda una posición en ESTE equipo (presupuesto del aviso)
   sf.engine.postMessage('stop');
   // El motor está quieto (llegó el bestmove anterior): se puede cambiar la cantidad de líneas.
@@ -34651,6 +34675,11 @@ function mevHandleMsg(line) {
     if (mm && mm[1] !== '1') return;
     // Una cota (lower/upperbound) es a medio calcular: sólo sirve si no hay nada mejor (cortado por el tope).
     if ((cpM || mtM) && !(_mev.last && /\b(lower|upper)bound\b/.test(line))) _mev.last = mtM ? { mate: parseInt(mtM[1]) } : { cp: parseInt(cpM[1]) };
+    // Trabajos que piden la LÍNEA entera (los comentarios de los errores: "Mejor era…" + variante).
+    if ((cpM || mtM) && _mev.jobs[_mev.i] && _mev.jobs[_mev.i].pv && !/\b(lower|upper)bound\b/.test(line)) {
+      var pvL = line.match(/ pv (.+)$/);
+      if (pvL) _mev.pv = pvL[1].split(' ');
+    }
   }
   if (line.indexOf('bestmove') === 0) {
     var job = _mev.jobs[_mev.i];
@@ -34674,9 +34703,9 @@ function mevHandleMsg(line) {
       if (job.multipv) _ln = (_mev.lines || []).filter(Boolean).map(function(l){   // también desde las blancas
         return { mv: l.mv, re: l.re || '', r3: l.r3 || '', sc: l.sc.mate !== undefined ? { mate: turn === 'b' ? -l.sc.mate : l.sc.mate } : { cp: turn === 'b' ? -l.sc.cp : l.sc.cp } };
       });
-      if (job.cb) { try { job.cb(score, _ln); } catch (e) {} }
+      if (job.cb) { try { job.cb(score, _ln, _mev.pv); } catch (e) {} }
     }
-    _mev.i++; _mev.last = null; mevNext();
+    _mev.i++; _mev.last = null; _mev.pv = null; mevNext();
   }
 }
 
@@ -38579,7 +38608,8 @@ var PUZ_DAILY_GOAL = 5;     // meta diaria de ejercicios (para el "Hoy: X/5")
 var PUZ_LVL_NAME = { inicial: 'Nivel inicial', aficionado: 'Nivel aficionado', avanzado: 'Nivel avanzado', maestro: 'Nivel maestro' };
 var PUZ_LVL_SHORT = { inicial: 'Inicial', aficionado: 'Aficionado', avanzado: 'Avanzado', maestro: 'Maestro' };
 var PUZ_SEC_LABEL = { mates:'Mate', tactics:'Táctica', defensa:'Defensa', ventaja:'Ventaja', sacrificio:'Sacrificio', finales:'Final' };
-var PUZ_MOTIF_LABEL = { horquilla:'Horquilla', clavada:'Clavada', enfilada:'Enfilada', descubierta:'Descubierta',
+// horquilla: la clave queda (está en puzzles.json); lo que se VE, como se dice acá ("Ataque doble", 01/10).
+var PUZ_MOTIF_LABEL = { horquilla:'Ataque doble', clavada:'Clavada', enfilada:'Enfilada', descubierta:'Descubierta',
   'doble-jaque':'Doble jaque', 'mate-pasillo':'Mate del pasillo', coronacion:'Coronación', tablas:'Tablas',
   'final-ganado':'Final ganado', 'final-tablas':'Final en tablas',
   // Los que se marcan a mano en la revisión (los mismos de review.html).
@@ -42846,6 +42876,7 @@ function faNext() {
   }
   _fa.lastScore = null;
   _fa.lastDepth = 0;
+  _fa.lastPv = null;
   if (_fa._capTimer) { clearTimeout(_fa._capTimer); _fa._capTimer = null; }
   sf.engine.postMessage('stop');
   sf.engine.postMessage('position fen ' + _fa.nodes[_fa.ply].fen);
@@ -42902,6 +42933,8 @@ function faHandleMsg(line) {
       _fa.lastScore = mtM ? {mate:parseInt(mtM[1])} : {cp:parseInt(cpM[1])};
       var dM = line.match(/\bdepth (\d+)\b/);
       _fa.lastDepth = dM ? parseInt(dM[1]) : 0;
+      var pvM = line.match(/ pv (.+)$/);   // la línea del motor: el "Mejor era…" de los comentarios
+      _fa.lastPv = pvM ? pvM[1].split(' ') : null;
     }
   }
   if (line.indexOf('bestmove') === 0) {
@@ -42930,6 +42963,7 @@ function faHandleMsg(line) {
     var bmM = line.match(/^bestmove ([a-h][1-8][a-h][1-8][qrbn]?)/);
     if (bmM) score.bm = bmM[1];
     score.d = _fa.lastDepth || 0;   // profundidad a la que se calculó (para diferir la calificación)
+    if (_fa.lastPv && _fa.lastPv.length) _faPvGuardar(node.fen, _fa.lastPv);   // sólo en memoria (no al caché)
     score = _faFixMate0(score, node.fen);   // jaque mate: firmar el {mate:0} según el turno (si no, cae como derrota)
     var _prevC = _faLiveCache[node.fen];
     if (_prevC && _prevC.ln) score.ln = _prevC.ln;   // las 3 líneas del módulo (filtros del "!!") no se pierden
@@ -43585,6 +43619,296 @@ function faApplyNags() {
   var el = document.getElementById('cv-moves');
   if (el) el.innerHTML = renderMoveTable(cv.root);
   cvHighlight();
+}
+
+/* ── 💬 Comentario de los errores, estilo Lichess (01/10/2026) ──────────────────────────────────────
+   Lichess NO usa IA para el "Error. Mejor era Cf3": es una plantilla (lila, modules/tree/Advice.scala)
+   que pega el juicio, la 1ª jugada de la línea del motor en la posición ANTERIOR y esa línea como
+   variante. Acá igual: debajo de cada ?!, ? y ?? de la notación va una franja del color del símbolo
+   con el juicio, "Mejor era …", el cambio de valoración y la variante (se toca y se juega en el tablero).
+   Los umbrales ya eran los de Lichess (faClassify). Los mates, como Lichess: si antes no había mate y
+   ahora te lo dan → "Acá ya se puede ir agilizando la mesa"; si tenías mate y se fue → "¡Todavía sirve, no
+   vio el mate!" (o "Dejó escapar un mate forzado" si encima quedó mal). Jerga de la casa: ?? = "Una colgada" /
+   "¡Uff, qué colgada!", ? = "Jugada floja", ?! = "Mmm… polémica." + "Preferible era"; ya perdido = "Resistía un poco más con".
+   La línea sale del pase del gráfico (faHandleMsg la guarda) o, si las evals vinieron del PGN (Lichess,
+   barrido), se le pide al motor SÓLO para las posiciones de los errores (cola _mevExtra, prof. 16).
+   Va en memoria, no al caché del gráfico (el localStorage ya se llenó una vez). */
+var _faPvMemo = {};          // FEN → línea del motor (uci); [] = no hay (no se vuelve a pedir)
+var _faPvPend = {};          // FEN → ya está en la cola del motor
+var _FA_COM_PV_DEPTH = 16;   // ~0,4 s por posición en la PC del autor
+var _FA_COM_PLIES = 8;       // medias jugadas de la variante (texto corto)
+var _FA_COM_UFF = 35;        // colgada de ≥35 puntos de win% (ej. de igualado a perdido) → "¡Uff, qué colgada!"
+var _FA_COM_PERDIDO = 25;    // el que movió ya estaba perdido (≤25% ≈ −3 o peor) → "Resistía un poco más con"
+var _FA_COM_GANADO = 75;     // se le fue el mate pero sigue ≥75% (≈ +3 o mejor) → "¡Todavía sirve, no vio el mate!"
+var _faComT = null, _faComRedT = null;
+function _faPvGuardar(fen, pv) {
+  _faPvMemo[fen] = (pv || []).slice(0, 12);
+  _capCache(_faPvMemo, 3000);
+}
+function _faComPedir(fen) {
+  if (!_faPvPend[fen]) {
+    _faPvPend[fen] = 1;
+    _mevExtra.push({ fen: fen, depth: _FA_COM_PV_DEPTH, pv: true, cb: function(sc, ln, pv) {
+      delete _faPvPend[fen];
+      _faPvGuardar(fen, pv);
+      // Redibujar la notación UNA vez por tanda (llegan varias seguidas).
+      if (!_faComRedT) _faComRedT = setTimeout(function(){ _faComRedT = null; faApplyNags(); }, 200);
+    }});
+  }
+  // Arrancar la cola (si el motor está ocupado con el gráfico o el módulo, mevTick se anota y espera).
+  if (!_faComT && !_mev.running) _faComT = setTimeout(function(){ _faComT = null; if (!_mev.running && _mevExtra.length) mevTick(); }, 0);
+}
+function _faComEv(s) {   // valoración desde las blancas, como el gráfico: "+0.3", "−1.8", "#3", "#−2"
+  if (s.mate !== undefined) return '#' + (s.mate < 0 ? '−' + (-s.mate) : s.mate);
+  return (s.cp >= 0 ? '+' : '−') + (Math.abs(s.cp) / 100).toFixed(1);
+}
+// Franja del comentario para la jugada i del análisis ('' si no es un error calificado).
+function _faComHtml(i) {
+  var node = _fa.nodes[i], nag = node && node.move && node.move.nag;
+  var cls = { '?!': 'dubious', '?': 'mistake', '??': 'blunder' }[nag];
+  if (!cls || !node.parent) return '';
+  var R = _fa.results, rA = R[i], rB = i === 0 ? { cp: 20 } : R[i - 1];
+  if (!rA || !rB) return '';
+  var white = _cvMoveNo(node).white;
+  function pov(s) { return s.mate !== undefined ? { mate: white ? s.mate : -s.mate } : { cp: white ? s.cp : -s.cp }; }
+  var pB = pov(rB), pA = pov(rA);
+  // Con la jerga de la casa (lo pidió el autor, 01/10): el ?? es "una colgada" y, si tiró por la
+  // borda casi todo (perdió ≥ _FA_COM_UFF puntos de expectativa), "¡Uff, qué colgada!".
+  // Expectativa de victoria del que movió (0-100), antes y después de la jugada.
+  var wpB = white ? _faWinP(rB) : 100 - _faWinP(rB), wpA = white ? _faWinP(rA) : 100 - _faWinP(rA);
+  var dwin = wpB - wpA;
+  var txt = { dubious: 'Mmm… polémica.', mistake: 'Jugada floja.', blunder: dwin >= _FA_COM_UFF ? '¡Uff, qué colgada!' : 'Una colgada.' }[cls];
+  if (pB.mate === undefined && pA.mate !== undefined && pA.mate < 0) txt = 'Acá ya se puede ir agilizando la mesa.';
+  else if (pB.mate !== undefined && pB.mate > 0 && (pA.mate === undefined || pA.mate < 0))
+    // Se le fue el mate: si igual sigue ganando, "todavía sirve"; si encima quedó mal, no.
+    txt = wpA >= _FA_COM_GANADO ? '¡Todavía sirve, no vio el mate!' : 'Dejó escapar un mate forzado.';
+  // La mejor línea, desde la posición ANTERIOR a la jugada.
+  var par = node.parent, pfen = par.fen, pv = _faPvMemo[pfen];
+  if (pv === undefined) _faComPedir(pfen);
+  var best = '', line = '';
+  if (pv && pv.length && pv[0].slice(0, 4) !== node.move.from + node.move.to && typeof Chess !== 'undefined') {
+    var comp = null;   // ¿ya se jugó en el tablero? Entonces son nodos de verdad (resaltado, ◀ ▶)
+    for (var c = 1; c < par.children.length; c++) if (par.children[c].comp) { comp = par.children[c]; break; }
+    if (comp) { best = comp.move.san; line = renderVariantLine(comp); }
+    else {
+      var tmp = new Chess(pfen), fp = pfen.split(' '), n = parseInt(fp[5] || '1', 10), w = fp[1] === 'w', out = [];
+      for (var k = 0; k < pv.length && k < _FA_COM_PLIES; k++) {
+        var u = pv[k], mv = null;
+        try { mv = tmp.move({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u[4] || 'q' }); } catch (e) {}
+        if (!mv) break;
+        if (k === 0) best = mv.san;
+        var num = w ? n + '.' : (k === 0 ? n + '…' : '');
+        if (!w) n++;
+        out.push((num ? '<span class="cmn">' + num + '</span>' : '')
+          + '<span class="cmv cmv-var" onclick="cvComJugar(' + par._id + ',' + k + ')">' + cvFanHtml(mv.san) + '</span>');
+        w = !w;
+      }
+      line = out.join(' ');
+    }
+  }
+  // Cómo se nombra la jugada del motor:
+  //  · ya estaba PERDIDO antes de jugar (≤ _FA_COM_PERDIDO de expectativa) → "Resistía un poco más con"
+  //    (la expresión de Shirov: la mejor no salva, sólo estira la defensa);
+  //  · imprecisión → "Preferible era": no le tira abajo el plan al que revisa su partida;
+  //  · jugada floja o colgada → "Mejor era".
+  var bestLbl = wpB <= _FA_COM_PERDIDO ? 'Resistía un poco más con' : (cls === 'dubious' ? 'Preferible era' : 'Mejor era');
+  var extra = best ? '<span class="cv-mcom-best">' + bestLbl + ' <b>' + cvFanHtml(best) + '</b></span>'
+            : (pv === undefined ? '<span class="cv-mcom-calc">buscando la mejor…</span>' : '');
+  var why = cls !== 'dubious' ? _faMotivo(i) : '';   // 💡 el por qué (paso 2), sólo en ? y ??
+  return '<div class="cv-mcom cv-mcom-' + cls + '">'
+    + '<div class="cv-mcom-h"><span class="cv-mcom-sym">' + nag + '</span><span class="cv-mcom-t">' + txt + '</span>' + extra
+    + '<span class="cv-mcom-ev" title="Valoración antes → después (desde las blancas)">' + _faComEv(rB) + ' → ' + _faComEv(rA) + '</span></div>'
+    + (why ? '<div class="cv-mcom-why">' + why + '</div>' : '')
+    + (line ? '<div class="cv-mcom-line">' + line + '</div>' : '')
+    + '</div>';
+}
+// Tocar una jugada de la variante del comentario: la línea entera entra como variante (`comp`, que la
+// notación muestra dentro del comentario y no repetida abajo) y el tablero va hasta esa jugada.
+function cvComJugar(pid, k) {
+  _nodeMap = {}; buildNodeMap(cv.root);
+  var par = _nodeMap[pid];
+  if (!par || typeof Chess === 'undefined') return;
+  var pv = _faPvMemo[par.fen];
+  if (!pv || !pv.length) return;
+  var node = par, tmp = new Chess(par.fen), target = null;
+  for (var i = 0; i < pv.length && i < _FA_COM_PLIES; i++) {
+    var u = pv[i], mv = null;
+    try { mv = tmp.move({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u[4] || 'q' }); } catch (e) {}
+    if (!mv) break;
+    var ex = null;
+    for (var c = 0; c < node.children.length; c++) if (node.children[c].move.san === mv.san) { ex = node.children[c]; break; }
+    if (i === 0 && ex && !ex.own) return;   // es la jugada de la partida: nunca marcarla como variante
+    if (!ex) {
+      ex = makeNode(tmp.fen(), { san: mv.san, from: mv.from, to: mv.to, nag: '' }, node);
+      ex.own = true;   // análisis, no partida real (igual que las líneas del módulo)
+      node.children.push(ex);
+    }
+    if (i === 0) ex.comp = true;
+    node = ex;
+    if (i === k) target = ex;
+  }
+  if (!target) return;
+  cvBuildMoveList();
+  _cvUserMove = true;   // ya está en el tablero: no animar el deslizamiento
+  cvSetNode(target);
+}
+
+/* ── 💡 Paso 2: el POR QUÉ del error, sin IA (01/10/2026) ───────────────────────────────────────────
+   Mira la línea del motor DESPUÉS de la jugada (lo que contesta el rival) y reconoce tres temas, con las
+   recetas del etiquetador de ejercicios de Lichess (lichess-puzzler, tagger/cook.py) rehechas acá:
+   · mate: la línea termina en mate del pasillo (rey en su 1ª fila, tapado por sus peones, jaque desde esa
+     fila) → "Permite el mate del pasillo."; si no, con mate en ≤ 5 → "Permite mate en N.";
+   · colgada: la 1ª jugada del rival come una pieza (no peón) que nadie defendía, no es un cambio parejo y
+     no la recupera en las 2 siguientes → "Deja colgado el caballo de f3.";
+   · doblete (la horquilla; acá nadie le dice así): una de las 2 primeras del rival ataca a 2 piezas (más valiosas que ella, o indefensas) desde
+     una casilla segura, y la línea termina ganando material → "Permite un doblete de caballo en e6.".
+   Sólo en la ? y la ?? (en la ?! casi nunca es táctico, y cuesta otra posición de motor). Sesgo PRUDENTE:
+   ante la duda no dice nada (una explicación falsa es peor que ninguna).
+   Interruptores: _FA_MOT apaga un tema; ?motivos=0 en la dirección apaga todo en ese navegador (queda
+   guardado; ?motivos=1 lo vuelve a prender). Respaldo de antes de esto: .claude/respaldos/. */
+var _FA_MOT = { mate: true, colgada: true, doblete: true };
+var _MOT_PIEZA = { p: ['el', 'peón'], n: ['el', 'caballo'], b: ['el', 'alfil'], r: ['la', 'torre'], q: ['la', 'dama'], k: ['el', 'rey'] };
+var _motLlave = null;
+function _motActivo(q, ls) {
+  try {
+    if (/[?&]motivos=1(?!\w)/.test(q)) ls.removeItem('aa_mot_on');
+    if (/[?&]motivos=0(?!\w)/.test(q)) ls.setItem('aa_mot_on', '0');
+    return ls.getItem('aa_mot_on') !== '0';
+  } catch (e) { return true; }
+}
+function _motOn() {
+  if (_motLlave === null) { try { _motLlave = _motActivo(location.search || '', localStorage); } catch (e) { _motLlave = true; } }
+  return _motLlave;
+}
+// Material de `side` menos el del rival (p1 c3 a3 t5 d9), sobre un FEN.
+function _motMaterial(fen, side) {
+  var g = _fenGrid(fen), s = 0;
+  for (var i = 0; i < 64; i++) {
+    var p = g[i]; if (!p || p.toLowerCase() === 'k') continue;
+    s += ((p === p.toUpperCase()) === (side === 'w')) ? _pval(p) : -_pval(p);
+  }
+  return s;
+}
+// Casillas que ataca la pieza de (f,r) (al revés que _attackersOf: desde la pieza hacia afuera).
+function _motAtacadas(g, f, r) {
+  var p = g[r * 8 + f]; if (!p) return [];
+  var t = p.toLowerCase(), out = [];
+  function add(ff, rr) { if (ff >= 0 && ff < 8 && rr >= 0 && rr < 8) out.push([ff, rr]); }
+  if (t === 'p') { var d = (p === 'P') ? 1 : -1; add(f - 1, r + d); add(f + 1, r + d); }
+  else if (t === 'n') [[1,2],[2,1],[2,-1],[1,-2],[-1,-2],[-2,-1],[-2,1],[-1,2]].forEach(function(o){ add(f + o[0], r + o[1]); });
+  else if (t === 'k') [[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]].forEach(function(o){ add(f + o[0], r + o[1]); });
+  else {
+    var dirs = [];
+    if (t === 'b' || t === 'q') dirs = dirs.concat([[1,1],[1,-1],[-1,1],[-1,-1]]);
+    if (t === 'r' || t === 'q') dirs = dirs.concat([[1,0],[-1,0],[0,1],[0,-1]]);
+    dirs.forEach(function(dd){
+      for (var s = 1; s < 8; s++) {
+        var ff = f + dd[0] * s, rr = r + dd[1] * s;
+        if (ff < 0 || ff > 7 || rr < 0 || rr > 7) break;
+        out.push([ff, rr]);
+        if (g[rr * 8 + ff]) break;
+      }
+    });
+  }
+  return out;
+}
+// ¿Alguien de los suyos defiende la pieza de (f,r)? Incluye la defensa "en rayos X" (Lichess is_defended):
+// una torre detrás del alfil que ataca también defiende, porque aparece cuando el alfil come.
+function _motDefendida(g, f, r) {
+  var p = g[r * 8 + f]; if (!p) return false;
+  var side = (p === p.toUpperCase()) ? 'w' : 'b', opp = side === 'w' ? 'b' : 'w';
+  if (_attackersOf(g, f, r, side).length) return true;
+  var at = _attackersOf(g, f, r, opp);
+  for (var i = 0; i < at.length; i++) {
+    var t = at[i].p.toLowerCase();
+    if (t !== 'b' && t !== 'r' && t !== 'q') continue;
+    var g2 = g.slice(); g2[at[i].r * 8 + at[i].f] = null;
+    if (_attackersOf(g2, f, r, side).length) return true;
+  }
+  return false;
+}
+// Atacada y (indefensa o comible por una pieza que vale menos): ahí un doblete no sirve.
+function _motMalParada(g, f, r) {
+  var p = g[r * 8 + f]; if (!p) return false;
+  var opp = (p === p.toUpperCase()) ? 'b' : 'w', at = _attackersOf(g, f, r, opp);
+  if (!at.length) return false;
+  if (!_motDefendida(g, f, r)) return true;
+  var v = _pval(p);
+  return at.some(function(a){ return a.p.toLowerCase() !== 'k' && a.val < v; });
+}
+// Mate del pasillo sobre el FEN final (Lichess back_rank_mate). `mated` = 'w'/'b', el que recibe el mate.
+function _motPasillo(fen, mated) {
+  var g = _fenGrid(fen), ki = g.indexOf(mated === 'w' ? 'K' : 'k');
+  if (ki < 0) return false;
+  var kf = ki % 8, kr = (ki - kf) / 8, fila = mated === 'w' ? 0 : 7, adel = mated === 'w' ? 1 : -1;
+  var mater = mated === 'w' ? 'b' : 'w';
+  if (kr !== fila) return false;
+  for (var df = -1; df <= 1; df++) {
+    var f = kf + df; if (f < 0 || f > 7) continue;
+    var p = g[(kr + adel) * 8 + f];
+    if (!p || (p === p.toUpperCase()) !== (mated === 'w')) return false;   // la escapatoria la tapa uno de los suyos…
+    if (_attackersOf(g, f, kr + adel, mater).length) return false;          // …no que esté atacada
+  }
+  return _attackersOf(g, kf, kr, mater).some(function(a){ return a.r === fila; });   // el jaque viene por la fila
+}
+// El "por qué" de la jugada mala `node` ('' si no hay nada seguro). `pv` = línea del motor en node.fen
+// (la del rival); `rA` = la valoración después de la jugada (desde las blancas).
+function _motivoDe(node, pv, rA) {
+  if (!node || !node.move || !node.parent || !pv || !pv.length || typeof Chess === 'undefined') return '';
+  var mover = node.fen.split(' ')[1] === 'w' ? 'b' : 'w', rival = mover === 'w' ? 'b' : 'w';
+  var ch = new Chess(node.fen), fens = [node.fen], movs = [];
+  for (var k = 0; k < pv.length && k < 10; k++) {
+    var u = pv[k], mv = null;
+    try { mv = ch.move({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u[4] || 'q' }); } catch (e) {}
+    if (!mv) break;
+    movs.push(mv); fens.push(ch.fen());
+  }
+  if (!movs.length) return '';
+  // 1) Mate (rA.mate < 0 = mate de las negras; desde el rival, > 0).
+  var mateN = (rA && rA.mate !== undefined) ? (mover === 'w' ? -rA.mate : rA.mate) : 0;
+  if (_FA_MOT.mate && mateN > 0) {
+    if (ch.in_checkmate() && ch.turn() === mover && _motPasillo(ch.fen(), mover)) return 'Permite el mate del pasillo.';
+    if (mateN <= 5) return 'Permite mate en ' + mateN + '.';
+  }
+  // 2) Pieza colgada: la 1ª del rival la come gratis.
+  var m1 = movs[0];
+  if (_FA_MOT.colgada && m1.captured && m1.captured !== 'p') {
+    var g0 = _fenGrid(node.fen), tf = m1.to.charCodeAt(0) - 97, tr = parseInt(m1.to[1], 10) - 1;
+    var cambio = node.move.to === m1.to && _pieceValAtFen(node.parent.fen, m1.to) >= _pval(m1.captured);
+    if (!cambio && !_motDefendida(g0, tf, tr)
+        && (movs.length < 3 || _motMaterial(fens[3], rival) >= _motMaterial(fens[1], rival))) {
+      var nm = _MOT_PIEZA[m1.captured];
+      return 'Deja ' + (nm[0] === 'la' ? 'colgada ' : 'colgado ') + nm[0] + ' ' + nm[1] + ' de ' + m1.to + '.';
+    }
+  }
+  // 3) Doblete en una de las 2 primeras del rival (nunca en la última de la línea: falta ver qué gana).
+  if (_FA_MOT.doblete && movs.length >= 2) {
+    var L = fens.length - 1;
+    var gana = Math.min(_motMaterial(fens[L], rival), _motMaterial(fens[L - 1], rival)) - _motMaterial(node.fen, rival);
+    for (var j = 0; j <= 2 && j < movs.length - 1; j += 2) {
+      var m = movs[j]; if (m.piece === 'k' || gana < 2) continue;
+      var g = _fenGrid(fens[j + 1]), f = m.to.charCodeAt(0) - 97, r = parseInt(m.to[1], 10) - 1;
+      if (_motMalParada(g, f, r)) continue;
+      var vm = _pval(m.piece), nb = 0, contra = _attackersOf(g, f, r, mover);
+      _motAtacadas(g, f, r).forEach(function(sq){
+        var p = g[sq[1] * 8 + sq[0]];
+        if (!p || p.toLowerCase() === 'p' || (p === p.toUpperCase()) !== (mover === 'w')) return;   // piezas del que erró
+        var vp = p.toLowerCase() === 'k' ? 99 : _pval(p);
+        var devuelve = contra.some(function(a){ return a.f === sq[0] && a.r === sq[1]; });   // ¿ataca de vuelta?
+        if (vp > vm || (!_motDefendida(g, sq[0], sq[1]) && !devuelve)) nb++;
+      });
+      if (nb > 1) return 'Permite un doblete de ' + _MOT_PIEZA[m.piece][1] + ' en ' + m.to + '.';
+    }
+  }
+  return '';
+}
+// Para el comentario de la jugada i: pide la línea del rival si falta (y por ahora no dice nada).
+function _faMotivo(i) {
+  if (!_motOn()) return '';
+  var node = _fa.nodes[i]; if (!node) return '';
+  var pv = _faPvMemo[node.fen];
+  if (pv === undefined) { _faComPedir(node.fen); return ''; }
+  return _motivoDe(node, pv, _fa.results[i]);
 }
 
 function faRenderStats() {
