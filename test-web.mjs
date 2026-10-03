@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2100;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2102;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -1465,6 +1465,24 @@ console.log('\n=== 30. "Finalizado" a mano y lo horneado que no se tapa ===');
   chk(/!d\.aperturas/.test(graft) && /_crBakedFor\(key, 'aperturas'\)/.test(graft)
       && /!d\.stats/.test(graft) && /_crBakedFor\(key, 'stats'\)/.test(graft),
       'injerta los DOS campos horneados, y sólo si faltan (nunca pisa lo que ya está)');
+
+  // 02/10/2026, Mayor de Rosario: la tabla de la LISTA se bajaba antes que el archivo y guardaba
+  // `rounds:{}`; esa copia tapaba la ronda 1 del archivo → "Sin datos". Las rondas que el vivo no
+  // trae (o trae vacías) se completan con el archivo; las que sí trae, mandan.
+  {
+    const W = { __EMBEDDED_CR__: { cr2_tz_x: { rounds: { 1: [{ m: '1', w: 'A' }], 2: [{ m: '1', w: 'ARCH' }], 3: [{ m: '1' }] },
+                                               roundDates: { 1: 'v1' }, standings: [{ name: 'Viejo' }] } } };
+    const G = new Function('window', extraerFuncion('_crEmbeddedAlts') + extraerFuncion('_crEmbeddedFor')
+                           + extraerFuncion('_crBakedFor') + graft + ' return _crGraftBaked;')(W);
+    const vivo = { rounds: { 2: [{ m: '1', w: 'VIVO' }], 3: [] }, standings: [{ name: 'Nuevo' }] };
+    G('cr2_ls_x', vivo);
+    chk(vivo.rounds[1] && vivo.rounds[1].length === 1 && vivo.rounds[2][0].w === 'VIVO' && vivo.rounds[3].length === 1
+        && vivo.roundDates && vivo.roundDates[1] === 'v1' && vivo.standings[0].name === 'Nuevo',
+        'una copia del vivo SIN rondas no tapa las del archivo (y lo que trae el vivo manda)', JSON.stringify(vivo));
+    const sinRounds = { standings: [] };
+    G('cr2_ls_x', sinRounds);
+    chk(sinRounds.rounds && sinRounds.rounds[1], 'también si la copia ni siquiera tiene el campo rounds');
+  }
 
   // El alias sigue funcionando: el autor guarda 'tz', la web abre 'ls'.
   const alts = extraerFuncion('_crEmbeddedAlts');
