@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2109;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2147;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -8502,11 +8502,13 @@ console.log('\n=== Auditoría 23/09 — Fase 4: accesibilidad y prolijidad ===')
 console.log('\n=== Buscar planes ===');
 {
   const tol = /var _PLA_TOLERA = (\d+);/.exec(SRC);
-  const P = new Function('var _PLA_TOLERA = ' + (tol ? tol[1] : 'NaN') + ';\n' + ['_fenGrid', '_plaSq', '_plaFR', '_plaMia', '_plaFig', '_plaDel',
+  const casa = /var _PLA_CASA = [^\n]*/.exec(SRC);
+  const P = new Function('var _PLA_TOLERA = ' + (tol ? tol[1] : 'NaN') + ';\n' + (casa ? casa[0] : '') + '\n' + ['_fenGrid', '_plaSq', '_plaFR', '_plaMia', '_plaFig', '_plaDel',
     '_plaWin', '_plaAceptable', '_plaPateada', '_plaCasillasFuertes', '_plaRutaCaballo', '_plaColumnas', '_plaVeAlfil',
-    '_plaDiagonales', '_plaRecorridos', '_plaQuien', '_plaDespeje', '_plaEnroque', '_plaCandidatos', '_plaArmar', '_plaGrupos', '_plaGrillas', '_plaEtiquetaPaso'].map(extraerFuncion).join('\n')
+    '_plaDiagonales', '_plaRecorridos', '_plaQuien', '_plaDespeje', '_plaEnroque', '_plaEsFinal', '_plaPeones', '_plaTorreA', '_plaRutaRey',
+    '_plaVeCaballo', '_plaMejorDestino', '_plaIdeasPeones', '_plaIdeasPiezas', '_plaCandidatos', '_plaSimular', '_plaNombrar', '_plaArmar', '_plaGrupos', '_plaGrillas', '_plaEtiquetaPaso'].map(extraerFuncion).join('\n')
     + '; return { g: _fenGrid, fuertes: _plaCasillasFuertes, ruta: _plaRutaCaballo, cols: _plaColumnas, diags: _plaDiagonales,'
-    + ' rec: _plaRecorridos, cands: _plaCandidatos, armar: _plaArmar, ok: _plaAceptable, grillas: _plaGrillas, etq: _plaEtiquetaPaso };')();
+    + ' rec: _plaRecorridos, cands: _plaCandidatos, armar: _plaArmar, ok: _plaAceptable, grillas: _plaGrillas, etq: _plaEtiquetaPaso, nom: _plaNombrar, peones: _plaPeones, sim: _plaSimular };')();
   // Estructura con el agujero de d5 (peones c4/e4 blancos contra c5/d6/e5 negros)
   const A = 'r1bqkb1r/pp3ppp/3p1n2/2p1p3/2P1P3/2N5/PP1P1PPP/R1BQKBNR w KQkq - 0 1';
   const gA = P.g(A);
@@ -8621,6 +8623,107 @@ console.log('\n=== Buscar planes ===');
   chk(pl2.length === 1 && pl2[0].tipo === 'palanca' && pl2[0].titulo === 'Palanca f4: ataca el peón de e5' && pl2[0].circulos.join() === 'e5',
       'palanca de peón: f4 contra e5', JSON.stringify(pl2));
   chk(P.armar({ side: 'w', g: gA, lineas: [], cadena: [], cands: [] }).length === 0, 'sin datos, ninguna tarjeta (la caja dice "no encontré un plan claro")');
+  // 🏷️ Nombre del plan (02/10, idea 1 del autor): sólo si encaja clarito en un plan de manual
+  const nm = (fen, side, ucis) => P.nom(P.g(fen), side, ucis).map(n => n.nombre).join(' + ');
+  chk(nm('6k1/5ppp/8/8/8/8/6PP/3R2K1 w - - 0 1', 'w', ['d1d7']) === 'Torre en séptima', 'la torre que llega a la 7ª con peones rivales ahí: "Torre en séptima"');
+  chk(nm('8/8/8/8/3k4/8/6PP/3R2K1 w - - 0 1', 'w', ['d1d7']) === '', 'pero si en la 7ª no hay nada (ni peones ni el rey en la 8ª), no');
+  chk(nm('3q2k1/5ppp/8/8/8/8/5PPP/2KR1Q2 w - - 0 1', 'w', ['g2g4', 'h2h4', 'g4g5']) === 'Avalancha contra el enroque',
+      'enroques opuestos y los peones g/h que avanzan: "Avalancha contra el enroque"');
+  chk(nm('6k1/5ppp/8/8/8/8/5PPP/6K1 w - - 0 1', 'w', ['h2h4', 'g2g4', 'h4h5']) === '', '🔒 en un final, avanzar los peones del flanco no es una avalancha contra el enroque');
+  chk(nm('3qr1k1/5ppp/8/8/8/8/5PPP/3QR1K1 w - - 0 1', 'w', ['h2h4', 'h4h5']) === '' && nm('3qr1k1/5ppp/8/8/8/8/5PPP/3QR1K1 w - - 0 1', 'w', ['h2h4', 'g2g4', 'h4h5']) === 'Avalancha contra el enroque',
+      'con los dos reyes del mismo lado hacen falta 3 jugadas de peón (2 pueden ser sólo hacer lugar)');
+  chk(nm('r2q1rk1/pp2bppp/2p1pn2/3p4/3P4/2N1PN2/PP3PPP/R2QKB1R w KQ - 0 1', 'w', ['b2b4', 'b4b5']) === 'Ataque de minorías',
+      'Carlsbad: b4-b5 con 2 peones contra 3 en el flanco de dama = "Ataque de minorías"');
+  chk(nm('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1', 'w', ['b2b4', 'b4b5']) === '', 'con los mismos peones en ese flanco, b4-b5 no es ataque de minorías');
+  chk(nm(A, 'w', ['f2f4']) === 'Ruptura central' && nm(A, 'w', ['a2a4']) === '', 'f4 contra el peón de e5: "Ruptura central" (a4 no choca con nada)');
+  chk(nm('6k1/pp3ppp/8/8/8/8/PP3PPP/R4RK1 w - - 0 1', 'w', ['f1d1', 'd1d2', 'a1d1']) === 'Doblar las torres en la columna d'
+      && P.nom(P.g('6k1/pp3ppp/8/8/8/8/PP3PPP/R4RK1 w - - 0 1'), 'w', ['f1d1', 'd1d2', 'a1d1'])[0].explica === 'Dos torres juntas en una columna abierta pesan el doble.',
+      'dos torres en la columna d abierta: "Doblar las torres en la columna d"');
+  chk(nm('4r1k1/pp1n1ppp/2p5/3p4/3P4/8/PP3PPP/4R1K1 b - - 0 1', 'b', ['d7f8', 'f8e6']) === 'Reagrupar', 'Carlsbad con negras: ♞d7-f8-e6 = "Reagrupar"');
+  const rq = P.armar({ side: 'b', g: P.g('r2q1rk1/pp1bppbp/2np1np1/8/3NP3/2N1BP2/PPPQ2PP/2KR1B1R b - - 0 1'), plies: 10,
+    lineas: [{ pv: ['d8a5', 'c1b1', 'a5c7'], score: { cp: 0 } }], cadena: [], cands: [] });
+  chk(rq.length === 1 && rq[0].nombres.length === 0 && rq[0].nota === '', 'a una maniobra sola (♛ d8 → a5 → c7) no se le pone "Reagrupar": el título ya dice que es una maniobra', JSON.stringify(rq));
+  chk(nm('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1', 'w', ['e2e4', 'g1f3', 'f1c4']) === '', '🔒 si no encaja en ningún plan de manual, sin nombre (mejor nada que algo falso)');
+  chk(nm('rnb1kbnr/pppp1ppp/8/8/8/8/PPPP1PPP/RNB1KBNR w KQkq - 0 1', 'w', ['e1e2', 'e2e3']) === '' && pk[0].nombres.join() === 'Activar el rey'
+      && pk[0].nota === 'En el final el rey es una pieza más: va hacia el centro.',
+      'el rey al centro en un final: "Activar el rey" (con todas las piezas en el tablero, no)', JSON.stringify(pk[0]));
+  // 🧱 Estructura de peones (idea 3) y peor pieza / alfil malo (idea 5), 02/10
+  const cd = (fen, side) => P.cands(P.g(fen), side).map(c => c.tipo + ' ' + c.ruta.join('-'));
+  const pw = (fen, side) => P.peones(P.g(fen), side).filter(p => p.aislado || p.retrasado || p.pasado).map(p => p.sq + (p.aislado ? ' aislado' : '') + (p.retrasado ? ' retrasado' : '') + (p.pasado ? ' pasado' : '')).join();
+  const SVE = 'r1bqkb1r/5ppp/p1np4/1p1Np1B1/4P3/N7/PPP2PPP/R2QKB1R w KQkq - 0 10', IQP = 'r1bq1rk1/pp2bppp/2n2n2/3p4/8/2N2N2/PP2BPPP/R1BQ1RK1 w - - 0 10';
+  chk(pw(SVE, 'b') === 'd6 retrasado' && pw(IQP, 'b') === 'd5 aislado pasado' && pw(INI, 'w') === '',
+      'peones: d6 retrasado en la Sveshnikov, d5 aislado (y pasado) en la de dama aislada, y nada en la posición inicial', pw(SVE, 'b') + ' | ' + pw(IQP, 'b'));
+  chk(cd(INI, 'w').length === 0, '🔒 en la posición inicial no propone nada');
+  const fr = P.cands(P.g('rnbqkbnr/pp3ppp/4p3/2ppP3/3P4/2P5/PP3PPP/RNBQKBNR b KQkq - 0 4'), 'b').filter(c => c.tipo === 'alfilmalo')[0];
+  chk(fr && fr.ruta.join('-') === 'c8-d7-b5' && fr.trabados.join() === 'd5,e6' && fr.antes === 1 && fr.despues === 8,
+      'Francesa del avance: el alfil de c8 es el malo (d5 y e6 trabados en su color) y sale por d7 a b5', JSON.stringify(fr));
+  chk(cd('6k1/5ppp/8/2P5/8/8/5PPP/6K1 w - - 0 1', 'w').join() === 'pasado c5-c6-c7-c8', 'peón pasado propio: la ruta hasta coronar');
+  chk(P.cands(P.g('6k1/2P2ppp/8/8/8/8/5PPP/6K1 w - - 0 1'), 'w')[0].uci0 === 'c7c8q', 'en la 7ª, la 1ª jugada ya corona (c7c8q, para que el motor la verifique)');
+  chk(cd('6k1/5ppp/8/8/3p4/8/5PPP/4N1K1 w - - 0 1', 'w').join() === 'frenar e1-d3', 'pasado rival en d4: el caballo lo bloquea en d3');
+  chk(cd('8/5ppp/4k3/8/8/3p4/5PPP/5K2 w - - 0 1', 'w').join() === 'frenar f1-e1-d2', 'en el final, el rey lo bloquea (por e1: e2 lo controla el peón)');
+  chk(cd(IQP, 'w')[0] === 'frenar f3-d4', 'contra la dama aislada: bloquear d5 desde d4 con el caballo');
+  chk(cd('6k1/5ppp/3p4/2p1p3/2P1P3/8/5PPP/R5K1 w - - 0 1', 'w').indexOf('debil a1-d1') >= 0, 'peón retrasado en d6 (columna sin peón blanco): la torre a d1');
+  chk(cd(SVE, 'w').every(c => c.indexOf('debil') !== 0), '🔒 si ninguna torre llega en una jugada (la dama tapa d1), el débil no sale');
+  chk(cd('r1bqkb1r/pppp1ppp/5n2/n3p3/4P3/2N2N2/PPPP1PPP/R1BQKB1R w KQkq - 0 1', 'b')[0] === 'peor a5-c6', 'el caballo del borde (a5, 2 casillas) es la peor pieza: a c6');
+  const sc = { cp: 0 };
+  const p35 = P.armar({ side: 'w', g: P.g(IQP), plies: 10, lineas: [{ pv: ['a2a3'], score: sc }], cadena: [], cands: [
+    { tipo: 'frenar', p: 'N', sq: 'd5', aislado: true, bloqueo: 'd4', ruta: ['f3', 'd4'], uci0: 'f3d4', score: sc },
+    { tipo: 'pasado', p: 'P', sq: 'c5', ruta: ['c5', 'c6', 'c7', 'c8'], corona: true, uci0: 'c5c6', score: sc },
+    { tipo: 'debil', clase: 'retrasado', modo: 'torre', p: 'R', sq: 'd6', ruta: ['a1', 'd1'], uci0: 'a1d1', score: sc },
+    { tipo: 'columna', p: 'R', col: 'd', abierta: false, peon: 'd6', ruta: ['a1', 'd1'], uci0: 'a1d1', score: sc },
+    { tipo: 'alfilmalo', p: 'B', ruta: ['c1', 'd2', 'b4'], antes: 1, despues: 8, trabados: ['d4', 'e3'], uci0: 'c1d2', score: sc },
+    { tipo: 'peor', p: 'N', ruta: ['f3', 'h4'], antes: 2, despues: 5, uci0: 'f3h4', score: sc }] });
+  const pm = P.armar({ side: 'w', g: P.g(IQP), plies: 10, lineas: [{ pv: ['e2d3', 'a7a6', 'd3b1'], score: sc }], cadena: [], cands: [
+    { tipo: 'diagonal', p: 'B', diag: 'b1–h7', antes: 4, despues: 10, ruta: ['e2', 'd3'], uci0: 'e2d3', score: sc }] });
+  chk(pm.map(p => p.tipo).join() === 'maniobra', 'el alfil que ya tiene maniobra del motor (e2 → d3 → b1) no repite con su diagonal (e2 → d3)', JSON.stringify(pm.map(p => p.titulo)));
+  const FAB = '2b3k1/pp3ppp/4p3/3pP3/3P4/8/PP3PPP/2B3K1 b - - 0 1';
+  const pab = P.armar({ side: 'b', g: P.g(FAB), plies: 10, lineas: [{ pv: ['c8d7', 'g1f2', 'd7b5', 'f2e3', 'b5d3'], score: sc }], cadena: [], cands: P.cands(P.g(FAB), 'b').map(c => Object.assign(c, { score: sc })) });
+  chk(pab.length === 1 && pab[0].tipo === 'maniobra' && pab[0].nombres[0] === 'Alfil malo' && pab[0].nota.indexOf('Sus peones (d5, e6) están trabados') === 0,
+      'si el motor ya saca el alfil malo, su maniobra lleva la etiqueta "Alfil malo" y el porqué (y no sale otra tarjeta repetida)', JSON.stringify(pab));
+  const prk = P.armar({ side: 'b', g: P.g(FAB), plies: 10, lineas: [{ pv: ['f7f6', 'g1f2', 'g8f7', 'f2e3', 'f7g6'], score: sc }], cadena: [], cands: [] });
+  chk(prk.length >= 1 && prk[0].titulo === '♚ Maniobra del rey: g8 → f7 → g6' && prk[0].nombres.indexOf('Ruptura central') < 0,
+      '🔒 la maniobra del rey no se llama "Ruptura central" por el f6 que le hace lugar (en las maniobras, sólo nombres de piezas)', JSON.stringify(prk.map(p => p.titulo + ' ' + p.nombres)));
+  chk(p35.map(p => p.tipo).join() === 'frenar,pasado,debil,alfilmalo',
+      '🔒 una tarjeta por jugada (la torre a d1 por el débil, no también por la columna) y por pieza (el caballo de f3 no sale dos veces)', p35.map(p => p.tipo).join());
+  chk(p35[0].titulo === '🛑 Frenar el peón pasado de d5: bloquearlo en d4' && / Además está aislado/.test(p35[0].detalle)
+      && p35[1].titulo === 'Peón pasado de c5: a coronar' && p35[1].flechas.length === 3
+      && p35[2].titulo === '🎯 Peón débil en d6 (retrasado): ♜ a1 → d1' && p35[3].titulo === '♝ Alfil malo: c1 → d2 → b4',
+      'los títulos de las tarjetas nuevas, en castellano', JSON.stringify(p35.map(p => p.titulo + ' | ' + p.detalle)));
+  const pz = P.armar({ side: 'b', g: P.g('r1bqkb1r/pppp1ppp/5n2/n3p3/4P3/2N2N2/PPPP1PPP/R1BQKB1R b KQkq - 0 1'), plies: 10, lineas: [{ pv: ['a5c6'], score: sc }], cadena: [], cands: [
+    { tipo: 'peor', p: 'N', ruta: ['a5', 'c6'], antes: 2, despues: 5, uci0: 'a5c6', score: sc }] });
+  chk(pz[0].titulo === '♞ La peor pieza: a5 → c6' && pz[0].detalle === 'El caballo de a5 casi no tiene casillas (2). En c6 tendría 5.', 'la peor pieza, con cuántas casillas tiene y tendría', JSON.stringify(pz));
+  chk(/promotion: c\.uci0\[4\] \|\| undefined/.test(extraerFuncion('plaTermino')) && extraerFuncion('plaTermino').includes('j.sm.slice(0, 4)') && extraerFuncion('plaTermino').includes('nver < 6'),
+      'el motor verifica hasta 6 ideas, también una 1ª jugada que corona');
+  // 02/10, caso del autor (Bona–Ibarra): con el rival pasando, ♗xf5 y después ♗c2 "salvaba" el alfil, pero exf5
+  // retomaba. Ahora, después de una toma, el rival contesta de verdad (la retoma entra a la cadena entre paréntesis).
+  const RT = '4k3/8/4p3/5b2/8/2NB4/8/4K3 w - - 0 1';
+  const prt = P.armar({ side: 'w', g: P.g(RT), plies: 10, lineas: [], cands: [],
+    cadena: [{ uci: 'd3f5', san: 'Bxf5' }, { uci: 'e6f5', san: 'exf5', rival: true }, { uci: 'c3e2', san: 'Ne2' }] });
+  chk(prt.length === 1 && prt[0].titulo === 'Si pudieras jugar 2 seguidas' && prt[0].detalle === '1. ♝xf5 (…exf5)   2. ♞e2'
+      && prt[0].flechas.map(f => f.from + f.to + f.n + (f.rival ? 'R' : '')).join() === 'd3f51,e6f5nullR,c3e22'
+      && / Cuando hay un cambio, el rival retoma \(entre paréntesis\)\.$/.test(prt[0].nota),
+      '🔒 la retoma del rival va entre paréntesis, con su flecha sin número, y no cuenta como jugada "seguida"', JSON.stringify(prt));
+  const grt = P.grillas(RT, prt[0].flechas);
+  chk(grt.length === 4 && fg(grt[2]) === '4k3/8/8/5p2/8/2N5/8/4K3' && P.etq(grt[1], prt[0].flechas[1]) === 'el rival retoma exf5' && P.etq(grt[0], prt[0].flechas[0]) === '♝xf5',
+      'paso a paso: la retoma es un paso propio ("el rival retoma exf5") y el alfil desaparece del tablero', grt.map(fg).join(' | '));
+  const srt = P.sim(P.g(RT), ['d3f5', 'e6f5', 'c3e2'], 'w');
+  chk(srt.movs.map(m => m.from + m.to).join() === 'd3f5,c3e2' && fg(srt.g) === '4k3/8/8/5p2/8/8/4N3/4K3',
+      'para ponerle nombre al plan, la retoma del rival mueve el tablero pero no cuenta como jugada propia');
+  chk(/if \(m\.captured\) \{ _pla\.jobs\.unshift\(\{ tipo:'respuesta'/.test(extraerFuncion('_plaCadenaAvanza'))
+      && extraerFuncion('_plaCadenaRespuesta').includes("uci.slice(2, 4) !== casilla) return;")
+      && extraerFuncion('_plaCadenaRespuesta').includes("rival: true"),
+      '🔒 después de una toma el motor busca la respuesta del rival; si no retoma en esa casilla, el plan termina en la toma');
+  // ¿Qué quiere el rival? (02/10, idea 2 del autor): la misma búsqueda desde la posición con el turno pasado
+  const rv = P.armar({ side: 'b', g: P.g('4r1k1/pp1n1ppp/2p5/3p4/3P4/8/PP3PPP/4R1K1 w - - 0 1'), plies: 10, rival: true,
+    lineas: [], cadena: [{ uci: 'd7f8', san: 'Nf8' }, { uci: 'f8e6', san: 'Ne6' }], cands: [] });
+  chk(rv.length === 1 && rv[0].titulo === 'Si las negras jugaran 2 seguidas' && rv[0].nombres.join() === 'Reagrupar'
+      && rv[0].nota === 'Sin apuro: las piezas buscan mejores casillas. Como si las blancas pasaran: adónde quieren llevar las piezas.',
+      'los planes del rival: "Si las negras jugaran 2 seguidas", con su nombre y su explicación', JSON.stringify(rv));
+  chk(/var vista = cv\.chess\.fen\(\), fen = rival \? _threatFen\(vista\) : vista, key = \(rival \? 'r:' : ''\) \+ vista;/.test(extraerFuncion('plaProbe'))
+      && extraerFuncion('plaFinal').includes('_plaCache[_pla.key] = planes;') && extraerFuncion('plaFinal').includes('cv.chess.fen() === vista'),
+      '🔒 el rival se busca desde la posición con el turno pasado, y cada pestaña tiene su lugar en la caché');
+  chk(extraerFuncion('plaPestana').includes('_pla.running') && extraerFuncion('_plaCabecera').includes("(ocupado ? ' disabled' : '')"),
+      'mientras se busca, las pestañas no se pueden tocar (la búsqueda en curso es de una sola)');
   // Enganches con el resto del motor
   chk(/if \(typeof _pla !== 'undefined' && _pla\.running\) \{ plaHandleMsg\(line\); return; \}/.test(extraerFuncion('sfOnMsg')),
       'los mensajes del motor van a la búsqueda de planes mientras corre');
