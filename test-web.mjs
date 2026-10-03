@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2205;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2206;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -8948,12 +8948,14 @@ console.log('\n── Portada de aperturas ──');
   chk(SL('Siciliana: Najdorf, Ataque Inglés') === 'siciliana-najdorf-ataque-ingles' && SL('Gambito Benkő Totalmente Aceptado') === 'gambito-benko-totalmente-aceptado',
       'el link de una apertura es su nombre sin tildes ni signos', SL('Siciliana: Najdorf, Ataque Inglés'));
   chk(/sec === 'favoritos' && typeof _apUrlPartidas === 'function'/.test(extraerFuncion('_secUrl')) && extraerFuncion('_apUrlPartidas').includes("'&apertura='"),
-      'la dirección de Partidas dice qué apertura se está viendo (?ir=partidas&apertura=…)');
+      'la dirección de Aperturas dice qué apertura se está viendo (?ir=aperturas&apertura=…)');
   const AIR = extraerFuncion('apIr');
   chk(AIR.indexOf('_apUrlSync(true)') > 0 && AIR.indexOf('_apUrlSync(true)') < AIR.indexOf('renderPartidas()') && extraerFuncion('_obRefreshAll').includes('_apUrlSync(false)'),
       'entrar a una apertura apila una marca (Atrás vuelve a la portada); cada jugada sólo reemplaza la dirección');
-  chk(/if \(slug === 'partidas'\) _apDesdeUrl\(\)/.test(SRC) && /if \(_apPendiente\)/.test(extraerFuncion('renderPartidas')),
+  chk(/if \(slug && _SLUG_SEC\[slug\] === 'favoritos'\) _apDesdeUrl\(\)/.test(SRC) && /if \(_apPendiente\)/.test(extraerFuncion('renderPartidas')),
       'Atrás/Adelante y el link compartido abren la apertura que dice la dirección');
+  chk(/favoritos:'aperturas'/.test(SRC) && /_SLUG_SEC\.partidas = 'favoritos'/.test(SRC) && /ir !== 'aperturas' && ir !== 'partidas'/.test(SRC),
+      'la pestaña es ?ir=aperturas y los links viejos ?ir=partidas siguen andando');
   // Entrar a una página = arriba de todo (03/10: el perfil abría donde había quedado el anterior).
   chk(!/querySelector\(['"]\.modal['"]\)/.test(SRC), 'nadie busca ".modal" a secas (agarra el del TORNEO, que está antes en el documento)');
   chk(extraerFuncion('pgVerApertura').includes('_aaBajarA(') && !/window\.scrollTo/.test(extraerFuncion('pgVerApertura')),
