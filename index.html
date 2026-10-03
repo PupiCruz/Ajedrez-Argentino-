@@ -44005,12 +44005,27 @@ function _qpAtajo(fen, tipo) {
     if (!k) return;
     n[_qpColor(m[sq])][k]++; sqs[k].push(sq);
   });
-  var clases = tipo === 'q' ? ['q'] : tipo === 'qr' ? ['q', 'r'] : ['q', 'r', 'm'], out = [];
+  var clases = tipo === 'q' ? ['q'] : tipo === 'qr' ? ['q', 'r'] : tipo === 'm' ? ['m'] : ['q', 'r', 'm'], out = [];
   for (var i = 0; i < clases.length; i++) {
     if (n.w[clases[i]] !== n.b[clases[i]]) return null;
     out = out.concat(sqs[clases[i]]);
   }
   return out.length ? out.sort() : null;
+}
+// Qué atajos mostrar, en orden. 'm' = sin piezas menores (03/10, idea del autor: para probar finales de torres).
+// Sin repetidos: sin torres, "sin damas ni torres" = "sin damas"; si quedan sólo damas/torres o sólo menores,
+// el que hace lo mismo que "sólo peones" no sale (queda éste, que se entiende mejor).
+function _qpAtajosVisibles(fen) {
+  var at = [['q', 'Sin damas'], ['qr', 'Sin damas ni torres'], ['m', 'Sin piezas menores'], ['todo', 'Sólo peones']], k = {};
+  at.forEach(function(a) { var s = _qpAtajo(fen, a[0]); k[a[0]] = s ? s.join() : ''; });
+  var sinDamas = !/[qQ]/.test(String(fen).split(' ')[0]);
+  return at.filter(function(a) {
+    var x = k[a[0]];
+    if (!x) return false;
+    if (a[0] === 'qr') return x !== k.q && x !== k.todo;
+    if (a[0] === 'm') return x !== k.todo;
+    return true;
+  }).map(function(a) { return (a[0] === 'qr' && sinDamas) ? ['qr', 'Sin torres'] : a; });   // ya no hay damas: que diga lo que hace
 }
 // Puntaje del motor (desde el que mueve) → desde las blancas.
 function _qpBlancas(s, side) {
@@ -44149,7 +44164,8 @@ function _qpAplicar(casillas, txt) {
 function qpAtajo(tipo) {
   if (!_qp.on || !cv.chess) return;
   var sqs = _qpAtajo(cv.chess.fen(), tipo);
-  if (sqs) _qpAplicar(sqs, ({ q: 'las damas', qr: 'damas y torres', todo: 'todas las piezas' })[tipo]);
+  var sinDamas = !/[qQ]/.test(cv.chess.fen().split(' ')[0]);
+  if (sqs) _qpAplicar(sqs, ({ q: 'las damas', qr: sinDamas ? 'las torres' : 'damas y torres', m: 'las piezas menores', todo: 'todas las piezas' })[tipo]);
 }
 function qpDeshacer() {
   if (!_qp.on || !_qp.pila.length) return;
@@ -44166,23 +44182,64 @@ function qpClick(sq) {
   else if (!_QP_CLASE[pc.toLowerCase()]) { _qp.aviso = pc.toLowerCase() === 'k' ? 'Los reyes no se pueden sacar.' : 'Los peones se quedan: se sacan piezas.'; }
   else if (!_qp.sel || _qpColor(m[_qp.sel]) === _qpColor(pc)) { _qp.sel = sq; }
   else {
-    var err = _qpPareja(cv.chess.fen(), _qp.sel, sq);
-    if (err) _qp.aviso = err;
-    else { var a = _qp.sel; _qp.sel = null; _qpAplicar([a, sq]); return; }
+    var cb = _qpCambio(cv.chess.fen(), _qp.sel, sq);
+    if (cb.err) _qp.aviso = cb.err;
+    else {
+      // dama por dos torres: "♕d1 por ♜c8 ♜h8" (primero las del que eligió)
+      var ca = _qpColor(m[_qp.sel]), et = function(s) { return _qpEt(m[s], s); };
+      var txt = cb.sqs.length > 2 ? cb.sqs.filter(function(s) { return _qpColor(m[s]) === ca; }).map(et).join(' ') + ' por '
+        + cb.sqs.filter(function(s) { return _qpColor(m[s]) !== ca; }).map(et).join(' ') : '';
+      _qp.sel = null; _qpAplicar(cb.sqs, txt); return;
+    }
   }
   _qpPintarCaja();
   _qpMarcar();
+}
+// Las torres de un bando (casillas).
+function _qpTorres(m, color) {
+  return Object.keys(m).filter(function(sq) { return m[sq] === (color === 'w' ? 'R' : 'r'); }).sort();
+}
+// Qué sale al tocar `a` (la 1ª pieza) y después `b` (del rival): { sqs: [...] } o { err: '…' }.
+// Además de los pares de la misma clase, DAMA POR LAS DOS TORRES (03/10, idea del autor: 10 contra 9 en los
+// números, pero con torres descoordinadas o peones pasados la dama puede ser mejor). Tocás tu dama y una torre
+// del rival → salen tu dama y SUS dos torres; o tocás una torre tuya y la dama rival → salen TUS dos torres y su
+// dama. Sólo si ese bando tiene justo dos torres.
+function _qpCambio(fen, a, b) {
+  var m = _qpMapa(fen), pa = m[a], pb = m[b];
+  if (pa && pb && _qpColor(pa) !== _qpColor(pb)) {
+    var ta = pa.toLowerCase(), tb = pb.toLowerCase();
+    if (ta === 'q' && tb === 'r') {
+      var tr = _qpTorres(m, _qpColor(pb));
+      return tr.length === 2 ? { sqs: [a].concat(tr) } : { err: 'Dama por torres: el rival tiene que tener las dos torres.' };
+    }
+    if (ta === 'r' && tb === 'q') {
+      var mt = _qpTorres(m, _qpColor(pa));
+      return mt.length === 2 ? { sqs: mt.concat([b]) } : { err: 'Torres por dama: hacen falta tus dos torres.' };
+    }
+  }
+  var err = _qpPareja(fen, a, b);
+  return err ? { err: err } : { sqs: [a, b] };
+}
+// "Ahora tocá …" con la 1ª pieza elegida (y la opción de dama por dos torres cuando se puede).
+function _qpTextoElegir(fen, sel) {
+  var m = _qpMapa(fen), ps = m[sel], yo = _qpColor(ps), riv = yo === 'w' ? 'b' : 'w', de = riv === 'w' ? 'las blancas' : 'las negras';
+  var t = ps.toLowerCase(), base = _QP_CLASE_TXT[_QP_CLASE[t]] + ' de ' + de;
+  var damaRiv = Object.keys(m).some(function(sq) { return m[sq] === (riv === 'w' ? 'Q' : 'q'); });
+  if (t === 'q' && _qpTorres(m, riv).length === 2) return '👆 Ahora tocá la dama de ' + de + ' (dama por dama) o una de sus torres (' + _qpEt(ps, sel) + ' por sus dos torres).';
+  if (t === 'r' && damaRiv && _qpTorres(m, yo).length === 2) return '👆 Ahora tocá una torre de ' + de + ' (torre por torre) o su dama (tus dos torres por la dama).';
+  return '👆 Ahora tocá ' + base + ' para sacarla junto con ' + _qpEt(ps, sel) + '.';
 }
 // Resalta en el tablero la pieza elegida y las del rival que se pueden cambiar por ella.
 function _qpMarcar() {
   var b = document.getElementById('cv-board');
   if (!b) return;
-  var m = (_qp.on && _qp.sel && cv.chess) ? _qpMapa(cv.chess.fen()) : null, ps = m && m[_qp.sel];
+  var fen = (_qp.on && _qp.sel && cv.chess) ? cv.chess.fen() : null, m = fen ? _qpMapa(fen) : null, ps = m && m[_qp.sel];
   var cells = b.querySelectorAll('.csq');
   for (var i = 0; i < cells.length; i++) {
     var sq = cells[i].getAttribute('data-sq'), q = m && m[sq];
     cells[i].classList.toggle('qp-sel', !!ps && sq === _qp.sel);
-    cells[i].classList.toggle('qp-cand', !!(ps && q && _qpColor(q) !== _qpColor(ps) && _QP_CLASE[q.toLowerCase()] === _QP_CLASE[ps.toLowerCase()]));
+    // pareja posible = las que _qpCambio acepta (misma clase, o dama ↔ torres cuando están las dos)
+    cells[i].classList.toggle('qp-cand', !!(ps && q && _qpColor(q) !== _qpColor(ps) && _qpCambio(fen, _qp.sel, sq).sqs));
   }
 }
 function _qpPintarCaja() {
@@ -44196,16 +44253,12 @@ function _qpPintarCaja() {
   h += '<div id="qp-ev" aria-live="polite"></div>';
   var ps = _qp.sel && m[_qp.sel];
   h += '<div class="qp-paso">' + (ps
-    ? '👆 Ahora tocá ' + _QP_CLASE_TXT[_QP_CLASE[ps.toLowerCase()]] + ' de las ' + (_qpColor(ps) === 'w' ? 'negras' : 'blancas') + ' para sacarla junto con ' + _qpEt(ps, _qp.sel) + '.'
+    ? _qpTextoElegir(fen, _qp.sel)
     : _qp.pila.length ? '👆 Podés seguir: tocá otra pieza y después una del rival.' : '👆 Tocá una pieza en el tablero y después una del rival.') + '</div>';
   if (_qp.aviso) h += '<div class="qp-aviso">' + _qp.aviso + '</div>';
-  var at = [['q', 'Sin damas'], ['qr', 'Sin damas ni torres'], ['todo', 'Sólo peones']], vistos = {}, bt = '';
-  at.forEach(function(a) {
-    var s = _qpAtajo(fen, a[0]), k = s ? s.join() : '';
-    if (!s || vistos[k]) return;   // repetido (ej. sin torres, "sin damas ni torres" = "sin damas")
-    vistos[k] = 1;
-    bt += '<button class="pla-tab" onclick="qpAtajo(\'' + a[0] + '\')">' + a[1] + '</button>';
-  });
+  var bt = _qpAtajosVisibles(fen).map(function(a) {
+    return '<button class="pla-tab" onclick="qpAtajo(\'' + a[0] + '\')">' + a[1] + '</button>';
+  }).join('');
   if (bt) h += '<div class="qp-atajos"><span class="pla-ph">O de una:</span>' + bt + '</div>';
   if (_qp.pila.length) h += '<div class="pla-pasos"><button class="pla-pbtn" onclick="qpDeshacer()">↶ Deshacer</button><button class="pla-pbtn" onclick="qpSalir()">Volver a la partida</button></div>';
   box.innerHTML = h;

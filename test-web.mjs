@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2169;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2177;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -8757,8 +8757,9 @@ console.log('\n=== Probar cambios ===');
   const ChessQ = _mq.exports.Chess || _mq.exports;
   const vars = ['_QP_FIG', '_QP_CLASE', '_QP_CLASE_TXT'].map(n => (new RegExp('var ' + n + ' = [^\\n]*').exec(SRC) || [''])[0]).join('\n');
   const Q = new Function('Chess', vars + '\n' + ['_threatFen', '_plaWin', '_qpColor', '_qpEt', '_qpMapa', '_qpFenSin', '_qpLegal', '_qpPareja',
-    '_qpAtajo', '_qpBlancas', '_qpVeredicto', '_qpFlojo'].map(extraerFuncion).join('\n')
-    + '; return { mapa: _qpMapa, sin: _qpFenSin, legal: _qpLegal, par: _qpPareja, atajo: _qpAtajo, bl: _qpBlancas, ver: _qpVeredicto, flojo: _qpFlojo };')(ChessQ);
+    '_qpAtajo', '_qpAtajosVisibles', '_qpBlancas', '_qpVeredicto', '_qpFlojo', '_qpTorres', '_qpCambio', '_qpTextoElegir'].map(extraerFuncion).join('\n')
+    + '; return { mapa: _qpMapa, sin: _qpFenSin, legal: _qpLegal, par: _qpPareja, atajo: _qpAtajo, vis: _qpAtajosVisibles, bl: _qpBlancas, ver: _qpVeredicto, flojo: _qpFlojo,'
+    + ' cambio: _qpCambio, elegir: _qpTextoElegir };')(ChessQ);
   // Meier–Oro (Francesa avance, juegan negras): el caso que probó el autor en Lichess
   const MO = '2r1k2r/pp1bqppp/2n1p3/3pPn2/3P4/P1N2N2/1P2BPPP/R2Q1RK1 b k - 0 15';
   const MOsd = '2r1k2r/pp1b1ppp/2n1p3/3pPn2/3P4/P1N2N2/1P2BPPP/R4RK1 b k - 0 15';
@@ -8772,8 +8773,30 @@ console.log('\n=== Probar cambios ===');
   chk(Q.par(MO, 'e2', 'd7') === '' && Q.par(MO, 'f3', 'd7') === '' && Q.par(MO, 'a1', 'c8') === '', 'pares que valen: alfil por alfil, caballo por alfil, torre por torre');
   chk(/la dama/.test(Q.par(MO, 'd1', 'c8')) && /otro bando/.test(Q.par(MO, 'e2', 'f3')) && /peones se quedan/.test(Q.par(MO, 'e2', 'e6')),
       'y los que no, con el porqué: dama por torre, dos del mismo bando, un peón');
+  // 03/10, idea del autor: DAMA POR LAS DOS TORRES (sin botón: tocando la dama y una torre del rival, o al revés)
+  chk(JSON.stringify(Q.cambio(MO, 'd1', 'c8').sqs) === '["d1","c8","h8"]' && JSON.stringify(Q.cambio(MO, 'e7', 'f1').sqs) === '["e7","a1","f1"]',
+      'tu dama + una torre del rival → salen tu dama y SUS dos torres (vale para los dos bandos)');
+  chk(JSON.stringify(Q.cambio(MO, 'a1', 'e7').sqs) === '["a1","f1","e7"]' && JSON.stringify(Q.cambio(MO, 'c8', 'd1').sqs) === '["c8","h8","d1"]',
+      'al revés: una torre tuya + la dama rival → salen TUS dos torres y su dama');
+  chk(JSON.stringify(Q.cambio(MO, 'd1', 'e7').sqs) === '["d1","e7"]' && JSON.stringify(Q.cambio(MO, 'a1', 'c8').sqs) === '["a1","c8"]',
+      'dama por dama y torre por torre siguen como siempre');
+  const MO1 = Q.sin(MO, ['h8', 'f1']);   // un rook de cada lado afuera: ya no hay "dos torres"
+  chk(/dos torres/.test(Q.cambio(MO1, 'd1', 'c8').err) && /dos torres/.test(Q.cambio(MO1, 'a1', 'e7').err) && /la dama/.test(Q.cambio(MO, 'd1', 'd7').err),
+      'sin las dos torres no hay dama por torres (con el porqué); dama por alfil sigue sin valer');
+  chk(Q.elegir(MO, 'd1') === '👆 Ahora tocá la dama de las negras (dama por dama) o una de sus torres (♕d1 por sus dos torres).'
+      && Q.elegir(MO, 'a1') === '👆 Ahora tocá una torre de las negras (torre por torre) o su dama (tus dos torres por la dama).'
+      && Q.elegir(MO1, 'd1') === '👆 Ahora tocá la dama de las negras para sacarla junto con ♕d1.',
+      'el cartel avisa de la opción dama por dos torres sólo cuando se puede');
   chk(Q.atajo(MO, 'q').join() === 'd1,e7' && Q.atajo(MO, 'qr').length === 6 && Q.atajo(MO, 'todo').length === 12,
       'atajos: sin damas (2), sin damas ni torres (6), sólo peones (las 12 piezas)');
+  // 03/10, idea del autor: "Sin piezas menores" (alfiles y caballos), para probar finales de torres
+  chk(Q.atajo(MO, 'm').join() === 'c3,c6,d7,e2,f3,f5' && Q.sin(Q.sin(MO, Q.atajo(MO, 'q')), Q.atajo(Q.sin(MO, Q.atajo(MO, 'q')), 'm')) === '2r1k2r/pp3ppp/4p3/3pP3/3P4/P7/1P3PPP/R4RK1 b k - 0 15',
+      'sin piezas menores saca los 6 alfiles y caballos; con "sin damas" antes queda el final de torres');
+  chk(Q.vis(MO).map(a => a[0]).join() === 'q,qr,m,todo' && Q.vis('2r1k3/pp3ppp/8/8/8/8/PP3PPP/2R3K1 w - - 0 1').map(a => a[0]).join() === 'todo'
+      && Q.vis('4k3/pp1b1ppp/8/8/8/8/PP3PPP/2N3K1 w - - 0 1').map(a => a[0]).join() === 'todo',
+      'atajos sin repetidos: con todo, los 4; sólo torres → "Sólo peones"; sólo menores → "Sólo peones" (no "Sin piezas menores")');
+  chk(Q.vis(Q.sin(MO, ['d1', 'e7'])).map(a => a[1]).join() === 'Sin torres,Sin piezas menores,Sólo peones',
+      'sin damas en el tablero, "Sin damas ni torres" pasa a decir "Sin torres"');
   chk(Q.atajo('4k3/8/8/8/8/8/8/3QK3 w - - 0 1', 'q') === null && Q.atajo('4k3/8/8/8/8/8/8/4K3 w - - 0 1', 'todo') === null,
       'sin atajo si no sería un cambio parejo (dama de un solo lado) o no queda nada para sacar');
   chk(JSON.stringify(Q.bl({ cp: 30 }, 'b')) === '{"cp":-30}' && JSON.stringify(Q.bl({ mate: 3 }, 'w')) === '{"mate":3}', 'el puntaje del motor se pasa a "desde las blancas"');
