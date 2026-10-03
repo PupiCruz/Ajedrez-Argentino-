@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2177;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2205;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -1249,7 +1249,7 @@ console.log('\n=== 26. El árbol de aperturas del torneo ===');
   // El conteo, con detector y dedup de mentira para poder probar SOLO las reglas propias.
   const armar = (nombrePorPgn) => new Function(
     'dedupGamesByMoves', 'detectOpeningByMoves', 'parsePgnHeaders', '_noticiaFechaHoy',
-    'var _AP_V=2, _AP_MIN_N=3, _AP_MIN_REL=25, _AP_MIN_FILAS=4, _AP_MIN_PCT=6;'
+    'var _AP_V=2, _AP_MIN_N=3, _AP_MIN_REL=25, _AP_MIN_FILAS=4, _AP_MIN_PCT=6, _apA=null;'
     + extraerFuncion('_apUnificar') + extraerFuncion('_stAperturasCalc')
     + '; return _stAperturasCalc;')(
       (items, get) => { const vistos = new Set(), out = []; items.forEach(it => { const p = get(it); if (!vistos.has(p)) { vistos.add(p); out.push(it); } }); return out; },
@@ -1321,6 +1321,47 @@ console.log('\n=== 26. El árbol de aperturas del torneo ===');
       'y al visitante no se le muestra la sección si todavía no se calculó');
   chk(/dedupGamesByMoves/.test(extraerFuncion('_stAperturasCalc')),
       'el conteo usa el dedup por JUGADAS, que reconoce la misma partida venida de dos fuentes');
+
+  // Con el ÁRBOL del explorador (03/10/2026): mismos nombres que la portada, las variantes de cada
+  // familia y la clave para ir al explorador. ("¿se podrá mostrar las variantes más jugadas?")
+  const nodos = {};
+  ['Siciliana', 'Siciliana: Najdorf', 'Siciliana: Dragón', 'Siciliana: Kan', 'Francesa', 'Francesa: Winawer'].forEach(k => {
+    nodos[k] = { key: k, label: k.split(': ').pop(), padre: k.includes(':') ? {} : null };
+  });
+  const calcA = new Function(
+    'dedupGamesByMoves', 'detectOpeningByMoves', 'parsePgnHeaders', '_noticiaFechaHoy', '_apPartes', 'nodos',
+    'var _AP_V=3, _AP_MIN_N=3, _AP_MIN_REL=25, _AP_MIN_FILAS=4, _AP_MIN_PCT=6, _apA={ nodos: nodos };'
+    + extraerFuncion('_apUnificar') + extraerFuncion('_stAperturasCalc')
+    + '; return _stAperturasCalc;')(
+      (items) => items, (pgn, modo) => (modo === 'arbol' ? { name: pgn.split('#')[0] } : null), () => ({}), () => '3 Oct 2026',
+      (n) => n.split(/: |, /), nodos);
+  const arb = [];
+  meterEn(arb, 20, 'Siciliana: Najdorf, Ataque Inglés'); meterEn(arb, 9, 'Siciliana: Dragón');
+  meterEn(arb, 1, 'Siciliana: Kan'); meterEn(arb, 4, 'Siciliana'); meterEn(arb, 12, 'Francesa: Winawer');
+  meterEn(arb, 3, 'Apertura de la tabla vieja');
+  const rA = calcA(arb);
+  chk(rA.v === 3 && rA.top[0].nombre === 'Siciliana' && rA.top[0].k === 'Siciliana' && rA.top[0].cantidad === 34,
+      'con el árbol, la familia suma todas sus variantes (y lleva su clave para el explorador)', rA.top[0].nombre + ' ' + rA.top[0].cantidad);
+  chk(rA.top[0].vars.map(x => x.nombre + ' ' + x.cantidad).join(', ') === 'Najdorf 20, Dragón 9',
+      'y trae sus variantes más jugadas (la de 1 sola partida no)', rA.top[0].vars.map(x => x.nombre + ' ' + x.cantidad).join(', '));
+  chk(rA.conNombre === 46 && !rA.top.some(o => /tabla vieja/.test(o.nombre)),
+      'lo que no está en el árbol cuenta para el total pero no se lista', rA.conNombre);
+
+  // Las guardadas ANTES (v2) se traducen solas, pero un cajón viejo de una sola línea no se rebautiza.
+  const V = new Function('_ECO_TABLE', '_apA',
+    'var _stApMapa = null;' + extraerFuncion('_stApViejo') + extraerFuncion('_stApFilas') + '; return { viejo: _stApViejo, filas: _stApFilas };');
+  const trie = { k: {}, i: -1 }, rows = [], camino = [];
+  const linea = (sans, fam) => { let nd = trie; sans.split(' ').forEach(s => { nd = nd.k[s] || (nd.k[s] = { k: {}, i: -1 }); }); nd.i = rows.length; rows.push(sans); camino.push([{ key: fam }]); };
+  linea('d4 d5 c4 e6', 'Gambito de Dama Rehusado'); linea('d4 d5 c4 e6 Nc3 Nf6', 'Gambito de Dama Rehusado'); linea('d4 Nf6', 'India');
+  const AA = { trie, rows, camino, nodos: { 'Siciliana': { key: 'Siciliana', label: 'Siciliana', padre: null }, 'Gambito de Dama Rehusado': { label: 'Gambito de Dama Rehusado', padre: null } } };
+  const ECO = [['d4 d5 c4 e6', 'D30', 'GD'], ['d4 d5 c4 e6 Nc3 Nf6', 'D35', 'GD: Variante'], ['d4 Nf6', 'A45', 'India sin c4']];
+  const VV = V(ECO, AA);
+  chk(VV.viejo('Siciliana') === 'Siciliana' && VV.viejo('Defensa Siciliana') === null && VV.viejo('GD') === 'Gambito de Dama Rehusado' && VV.viejo('India sin c4') === null,
+      'nombres viejos: los claros pasan al árbol; "India sin c4" (un cajón de una sola línea) queda como estaba');
+  const fil = VV.filas({ v: 2, top: [{ nombre: 'Siciliana', cantidad: 10, pct: 50 }, { nombre: 'India sin c4', cantidad: 6, pct: 30 }] });
+  chk(fil[0].k === 'Siciliana' && !fil[1].k && fil[1].nombre === 'India sin c4', 'y el que no se traduce sale sin link al explorador');
+  chk(/_apArbolEnsure\(function\(\)\{/.test(boton), 'el botón espera al árbol antes de contar');
+  chk(/stApExplorar\(/.test(seccion) && /st-vars/.test(seccion), 'cada apertura y cada variante de la radiografía lleva al explorador');
 }
 
 
@@ -1329,9 +1370,10 @@ console.log('\n=== 27. Las aperturas del PERFIL, sin partirse en dos ===');
   // En el perfil pasaba lo mismo que en el torneo: 'Siciliana' y 'Defensa Siciliana' eran dos filas
   // (36 y 28, cuando son 64). Ahora se unen — y el FILTRO tiene que usar el mismo criterio, si no
   // tocás la fila unida y te muestra la mitad de las partidas.
-  chk(/_pgOpMap = \{\};[\s\S]{0,220}topOpenings\(_apUnificar\(cs\.white, _pgOpMap\), 4\)/.test(SRC),
+  chk(/_pgOpMap = \{\};\s*\n\s*var _uW = _apUnificar\(cs\.white, _pgOpMap\), _uB = _apUnificar\(cs\.black, _pgOpMap\);/.test(SRC),
       'las columnas del perfil unen las aperturas repetidas');
-  chk(/topOpenings\(_apUnificar\(cs\.black, _pgOpMap\), 4\)/.test(SRC), 'con blancas y con negras');
+  chk(/_pgOpLista\(_uW, _apUnificarR\(cs\.whiteR, _pgOpMap\), 10\)/.test(SRC) && /_pgOpLista\(_uB, _apUnificarR\(cs\.blackR, _pgOpMap\), 10\)/.test(SRC),
+      'con blancas y con negras (y los resultados de cada apertura se unen con el mismo mapa)');
   chk(/if \(_pgOpMap && _pgOpMap\[shortOpG\]\) shortOpG = _pgOpMap\[shortOpG\];/.test(SRC),
       'y el filtro por apertura aplica la MISMA unión (si no, mostraría la mitad)');
 
@@ -8821,6 +8863,109 @@ console.log('\n=== Probar cambios ===');
   chk(/if \(_fa\.running\) return;\s*\n(\s*\/\/[^\n]*\n)+\s*if \(_thr\.running \|\| _pla\.running\) \{/.test(extraerFuncion('faLiveEngineStart'))
       && extraerFuncion('faToggle').includes('if (_thr.running || _pla.running) return;'),
       '🔒 el gráfico en vivo espera a que terminen ¿Qué amenaza?/Buscar planes (si no, se quedaba con su respuesta y los trababa)');
+}
+
+// ── 🌳 Portada de aperturas (03/10, pedido del autor): familias → variantes, números y argentinos ──
+console.log('\n── Portada de aperturas ──');
+{
+  const AR = JSON.parse(fs.readFileSync(new URL('./assets/aperturas-arbol.json', import.meta.url), 'utf8'));
+  const P = new Function(['_apPartes', '_apEtiqueta', '_apArbolPrep', '_apSumaJug', '_apStatsBuild'].map(extraerFuncion).join('\n')
+    + '\n' + SRC.match(/var _AP_TOP_ARG = .*\n/)[0] + SRC.match(/var _AP_SIMUL = .*\n/)[0]
+    + 'return { prep: _apArbolPrep, stats: _apStatsBuild, eti: _apEtiqueta, partes: _apPartes };')();
+  const A = P.prep(AR);
+  const lin = (k) => { const n = A.nodos[k]; return n && n.main >= 0 ? A.rows[n.main][2] : null; };
+  chk(P.partes('Siciliana: Variante Najdorf, Ataque Inglés').join('|') === 'Siciliana|Variante Najdorf|Ataque Inglés'
+      && P.eti('Variante Najdorf') === 'Najdorf' && P.eti('Variante del Avance') === 'Variante del Avance',
+      'el nombre se parte en familia, variante y subvariante; "Variante Najdorf" se lee "Najdorf" pero "Variante del Avance" queda');
+  chk(lin('Siciliana') === 'e4 c5' && lin('Gambito de Dama Rehusado') === 'd4 d5 c4 e6' && lin('India de Rey') === 'd4 Nf6 c4 g6 Nc3',
+      'cada familia va a SU línea, no a la de una variante más corta (el GDR mostraba 2…Af5, la Báltica)',
+      [lin('Siciliana'), lin('Gambito de Dama Rehusado'), lin('India de Rey')].join(' / '));
+  const naj = A.nodos['Siciliana: Najdorf'];
+  chk(naj && naj.padre === A.nodos['Siciliana'] && naj.label === 'Najdorf' && A.fams.indexOf(A.nodos['Siciliana']) >= 0 && A.fams.length > 100,
+      'el árbol: la Najdorf cuelga de la Siciliana; hay más de 100 familias', A.fams.length);
+  const duenoDe = (k) => { const n = A.nodos[k]; return n ? A.rows[n.main][4] : null; };
+  chk(duenoDe('Siciliana') === 1 && duenoDe('India de Rey') === 1 && duenoDe('Gambito Benko') === 1 && duenoDe('Gambito Letón') === 1
+      && duenoDe('Española: Ataque Marshall') === 1 && duenoDe('Española') === 0 && duenoDe('Italiana: Gambito Evans') === 0
+      && duenoDe('Siciliana: Gambito Smith-Morra') === 0 && duenoDe('Gambito de Dama') === 0 && duenoDe('Gambito de Dama Rehusado') === 1,
+      'de quién es cada apertura: defensas y gambitos de negras (Benko/Volga, Letón, Marshall) vs. Española, Evans, Smith-Morra, GD');
+  // Partidas de mentira: dos Najdorf, una Siciliana que se va del libro, una Española y un histórico sin argentinos.
+  const N = 'e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 a6';
+  const rows = [
+    { m: N + ' Be3 e5', r: '0-1', we: 2500, be: 2600, w: 'A', b: 'B', d: '2020.01.01', t: 't1', gi: 0 },
+    { m: N + ' Bg5 e6', r: '1-0', we: 2700, be: 2700, w: 'C', b: 'D', d: '2021.01.01', t: 't2', gi: 5 },
+    { m: 'e4 c5 a3 a6 h3', r: '1/2-1/2', we: 2000, be: 2000, w: 'E', b: 'F', d: '2019.01.01', t: 't1', gi: 1 },
+    { m: 'e4 e5 Nf3 Nc6 Bb5 a6', r: '1-0', we: 2100, be: 2000, w: 'G', b: 'H', d: '2019.01.01', t: 't1', gi: 2 },
+    { m: N, r: '1-0', we: 2850, be: 2850, w: 'X', b: 'Y', d: '1939.01.01', t: 't9', gi: 0, na: 1 },
+    { m: N + ' Be2', r: '1-0', we: 2800, be: 2750, w: 'Kasparov', b: 'Z', d: '1997.01.01', ev: 'Buenos Aires simultaan', t: 't3', gi: 0 },
+  ];
+  // p1 juega la Siciliana con negras 2 veces; p2 la enfrenta con blancas 3 veces (no debe ganar).
+  const pls = [['p2', 'p1'], ['p2', 'p1'], ['p2', null], ['p2', null], null, null];
+  const S = P.stats(rows, pls, A, { t2: 'Torneo T2' });
+  const sic = S.s['Siciliana'], nj = S.s['Siciliana: Najdorf'], esp = S.s['Española'];
+  chk(S.n === 5 && sic[0] === 4 && sic[1] === 2 && sic[2] === 1 && sic[3] === 1 && nj[0] === 3 && esp[0] === 1,
+      'cuenta cada partida en su apertura más profunda y en sus padres; el histórico sin argentinos (na) no suma', JSON.stringify([S.n, sic.slice(0, 4), nj && nj[0]]));
+  chk(nj[4] && nj[4].w === 'C' && nj[4].ev === 'Torneo T2' && nj[4].gi === 5 && !('m' in nj[4]),
+      'la partida destacada es la de mejor Elo promedio (una simultánea de Kasparov no cuenta), con el nombre del torneo y su puntero');
+  chk(JSON.stringify(sic[5]) === '[1,["p1",2]]' && esp[5] === undefined,
+      'los argentinos que más la juegan cuentan el bando dueño (en la Siciliana, negras) y desde 2 partidas', JSON.stringify([sic[5], esp[5]]));
+  chk(/var _dbMode = 'portada'/.test(SRC) && /btn\('portada', '🌳 Aperturas'\) \+ btn\('openings', '♟️ Jugada por jugada'\) \+ btn\('search', '🔍 Buscar partidas'\)/.test(SRC),
+      'Partidas abre en la portada de aperturas; el buscador es el último botón');
+  chk(extraerFuncion('_fsCollectSaveEntries').includes("rel: 'aperturas-stats.json'") && extraerFuncion('exportGithubData').includes("'data/aperturas-stats.json'")
+      && /'assets\/aperturas-arbol\.json',/.test(SRC) && extraerFuncion('_apStatsEnsure').includes("fetch('data/aperturas-stats.json' + _dataV())"),
+      '🔒 el guardado y el ZIP hornean data/aperturas-stats.json, y el árbol viaja con los assets');
+  // El nombre de la apertura en el visor lleva al explorador, y los archivos de aperturas se piden con versión
+  // (/assets/* es inmutable un año: sin ?v= el visitante seguiría con los nombres viejos).
+  chk(/id="fa-opening"[^>]*onclick="cvAperturaEnExplorador\(\)"/.test(SRC) && extraerFuncion('cvAperturaEnExplorador').includes('_apIrDesdeAfuera(n)') && extraerFuncion('_apIrDesdeAfuera').includes("goTo('favoritos', btn)")
+      && SRC.includes("fetch('assets/aperturas-arbol.json?v=' + _AP_ASSET_V)") && SRC.includes("s.src = 'assets/aperturas.js?v=' + _AP_ASSET_V"),
+      '🔒 tocar el nombre de la apertura en el visor abre el explorador; los archivos de aperturas se piden con versión');
+  // El perfil nombra las aperturas con el árbol (texto contra texto, sin chess.js); sin árbol, la tabla vieja.
+  // (se recorta hasta la función siguiente: extraerFuncion se confunde con las llaves de sus regex)
+  const iDet = SRC.indexOf('function detectOpeningByMoves('), srcDet = SRC.slice(iDet, SRC.indexOf('\nfunction computeStatsFromGames(', iDet));
+  const mkDet = (arbol) => new Function('_apA', '_ECO_TABLE', 'window', 'var _openingDetectCache = {}; function _capCache() {}\n'
+    + srcDet + '; return detectOpeningByMoves;')(arbol, [['e4 c5', 'B20', 'Siciliana vieja']], {});
+  const NAJ = '[White "A"]\n[Black "B"]\n\n1. e4 c5 2. Nf3 d6 3. d4 cxd4 4. Nxd4 Nf6 5. Nc3 a6 6. Be3+ e5 7. Nb3 Be6 1-0';
+  const dA = mkDet(A)(NAJ, 'arbol'), dV = mkDet(null)(NAJ, 'arbol');
+  chk(dA && /^Siciliana: Najdorf/.test(dA.name) && dA.name.split(':')[0] === 'Siciliana' && dV && dV.name === 'Siciliana vieja',
+      'el perfil reconoce la Najdorf por el árbol del explorador (aunque traiga "6.Be3+"); sin el árbol, usa la tabla de siempre', (dA && dA.name) + ' / ' + (dV && dV.name));
+  // Buscar por código ECO (03/10, idea del autor: "capaz haya gente que todavía busca por eco").
+  const ER = new Function(extraerFuncion('_apEcoRango') + '; return _apEcoRango;')();
+  chk(JSON.stringify([ER('B90'), ER('b90'), ER('B9'), ER('B'), ER('B90-B99'), ER('e4'), ER('Najdorf')])
+      === '[["B90","B90"],["B90","B90"],["B90","B99"],["B00","B99"],["B90","B99"],null,null]',
+      'el buscador entiende ECO ("B90", "B9" = B90–B99, "B90-B99") pero "e4" en minúscula siguen siendo jugadas');
+  // Ir y volver por la línea (el ▶ llamaba a obPlayTop, que no existía; al retroceder se perdía la línea).
+  const NAV = new Function(['_obEsPrefijo', '_obGuardarIda', 'obPlay', 'obBack', 'obUndo', 'obIrA', 'obPlayTop'].map(extraerFuncion).join('\n')
+    + `\nvar _obLine = [], _obAdelante = [], _obGamesPage = 1, top = 'Nf3';
+    function _obRefreshBoard() {} function _obRefreshAll() {} function _obCompute() { return { nextMoves: [{ san: top }] }; }
+    return { set: function (l) { _obLine = l.slice(); _obAdelante = l.slice(); }, linea: function () { return _obLine.join(' '); },
+             obPlay: obPlay, obUndo: obUndo, obBack: obBack, obIrA: obIrA, obPlayTop: obPlayTop };`)();
+  NAV.set(['e4', 'c5', 'Nf3', 'd6']); NAV.obBack(0); NAV.obPlayTop(); NAV.obPlayTop();
+  const ida = NAV.linea(); NAV.obIrA(4); const fin = NAV.linea();
+  NAV.obUndo(); NAV.obUndo(); NAV.obPlay('Nc3'); NAV.obUndo(); NAV.obPlayTop();
+  chk(ida === 'e4 c5' && fin === 'e4 c5 Nf3 d6' && NAV.linea() === 'e4 c5 Nc3',
+      'en el explorador, retroceder no olvida la línea: ▶ vuelve a avanzar por ella; si se juega otra cosa, ésa pasa a ser la línea', [ida, fin, NAV.linea()].join(' / '));
+  // Link de cada apertura (03/10, pedido del autor: "¿podrán las aperturas tener su link?").
+  const SL = new Function(extraerFuncion('_apSlug') + '; return _apSlug;')();
+  chk(SL('Siciliana: Najdorf, Ataque Inglés') === 'siciliana-najdorf-ataque-ingles' && SL('Gambito Benkő Totalmente Aceptado') === 'gambito-benko-totalmente-aceptado',
+      'el link de una apertura es su nombre sin tildes ni signos', SL('Siciliana: Najdorf, Ataque Inglés'));
+  chk(/sec === 'favoritos' && typeof _apUrlPartidas === 'function'/.test(extraerFuncion('_secUrl')) && extraerFuncion('_apUrlPartidas').includes("'&apertura='"),
+      'la dirección de Partidas dice qué apertura se está viendo (?ir=partidas&apertura=…)');
+  const AIR = extraerFuncion('apIr');
+  chk(AIR.indexOf('_apUrlSync(true)') > 0 && AIR.indexOf('_apUrlSync(true)') < AIR.indexOf('renderPartidas()') && extraerFuncion('_obRefreshAll').includes('_apUrlSync(false)'),
+      'entrar a una apertura apila una marca (Atrás vuelve a la portada); cada jugada sólo reemplaza la dirección');
+  chk(/if \(slug === 'partidas'\) _apDesdeUrl\(\)/.test(SRC) && /if \(_apPendiente\)/.test(extraerFuncion('renderPartidas')),
+      'Atrás/Adelante y el link compartido abren la apertura que dice la dirección');
+  // Entrar a una página = arriba de todo (03/10: el perfil abría donde había quedado el anterior).
+  chk(!/querySelector\(['"]\.modal['"]\)/.test(SRC), 'nadie busca ".modal" a secas (agarra el del TORNEO, que está antes en el documento)');
+  chk(extraerFuncion('pgVerApertura').includes('_aaBajarA(') && !/window\.scrollTo/.test(extraerFuncion('pgVerApertura')),
+      'tocar una apertura del perfil baja hasta sus partidas moviendo el panel (la ventana no se desplaza)');
+  chk(extraerFuncion('apIr').includes('_aaArriba(') && extraerFuncion('dbSetMode').includes('_aaArriba('),
+      'entrar a una apertura desde la portada deja el tablero a la vista, arriba');
+  // Todo botón onclick="algo(…)" tiene que llamar a una función que exista (así se coló obPlayTop).
+  const llamadas = new Set(), reOn = /on(?:click|keydown|change|input|toggle)=\\?["']([A-Za-z_$][\w$]*)\(/g;
+  for (let m; (m = reOn.exec(SRC));) llamadas.add(m[1]);
+  const nativas = new Set(['if', 'return', 'alert', 'confirm', 'event', 'setTimeout', 'window', 'document', 'history', 'location', 'open', 'this', 'handler']);
+  const faltan = [...llamadas].filter(n => !nativas.has(n) && !new RegExp('function\\s+' + n.replace(/\$/g, '\\$') + '\\s*\\(|(var|let|const)\\s+' + n + '\\s*=|window\\.' + n + '\\s*=|\\b' + n + '\\s*=\\s*(async\\s+)?function').test(SRC));
+  chk(llamadas.size > 200 && faltan.length === 0, '🔒 ningún botón llama a una función que no existe', faltan.join(', ') || llamadas.size);
 }
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
 console.log('   Corrieron ' + corridas + ' de ' + ESPERADAS + ' comprobaciones.'
