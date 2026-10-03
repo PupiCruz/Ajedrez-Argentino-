@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2102;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2104;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -4839,6 +4839,20 @@ console.log('\n=== 53c. Por equipos: marcadores parciales con lo que terminó en
       'se redibuja al llegar resultados nuevos (ronda, ficha liviana o tablero suelto)');
   chk(/ap\.contains\(document\.activeElement\)\)\{ listo=false; return; \}/.test(extraerFuncion('_teamLiveRefresh')),
       'con el foco adentro (lector de pantalla) no se redibuja debajo del usuario');
+  // 02/10/2026, Mayor de Rosario: en un torneo INDIVIDUAL la tabla de cruces de la ronda tiene el MISMO id
+  // (cr-panel-<crk>-1) y se pisaba con la vista por equipos vacía ("Sin datos.") al llegar un resultado.
+  const tlr = (isTeam) => {
+    const panel = { innerHTML: 'CRUCES', getAttribute: () => null, contains: () => false, querySelector: () => null };
+    new Function('_tdLiveCtx', '_tdCtx', 'document',
+      'var _teamLiveSig = {}; function _tdGameRes(g){ return g.res; } function crDataLoad(){ return {}; }'
+      + ' function _teamRoundPatch(){ return false; } function _teamPanelContent(){ return "Sin datos."; }\n'
+      + extraerFuncion('_teamLiveRefresh') + '; _teamLiveRefresh();')
+      ({ crKey: 'k', currentNum: 1, isTeam }, { byRound: { 1: [{ res: '1-0' }] } },
+       { activeElement: null, getElementById: (id) => id === 'cr-panel-k-1' ? panel : null });
+    return panel.innerHTML;
+  };
+  chk(tlr(false) === 'CRUCES', '🔒 torneo INDIVIDUAL: un resultado nuevo de Lichess NO pisa la tabla de cruces de la ronda (Rosario, "Sin datos.")');
+  chk(tlr(true) === 'Sin datos.', 'torneo por equipos: la formación de la ronda se sigue redibujando al llegar resultados');
 }
 
 // ── 53k. Abrir el torneo sin trabones (24/09, Olimpiada R8) ──
