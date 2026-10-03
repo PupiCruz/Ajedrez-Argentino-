@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2147;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2169;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -8732,6 +8732,72 @@ console.log('\n=== Buscar planes ===');
   chk(extraerFuncion('plaCerrar').includes("setoption name MultiPV value 3") && extraerFuncion('plaCerrar').includes('sfAnalyze()'),
       'al terminar (o cancelar), el módulo vuelve a sus 3 líneas y retoma su análisis');
   chk((SRC.match(/onclick="plaProbe\(\)"/g) || []).length === 1, 'el botón está una sola vez (en el visor; en el tablero de jugar NO: sería trampa)');
+}
+// ── 🔴 Cartel "EN VIVO" con rondas que Lichess no marca (03/10, Mayor de Rosario cargado a mano) ──
+console.log('\n=== Cartel EN VIVO sin marca de Lichess ===');
+{
+  const vv = /var _BC_RONDA_VIVA_MS = [^\n]*/.exec(SRC);
+  const RC = new Function((vv ? vv[0] : '') + '\n' + extraerFuncion('_bcRondaCandidata') + '; return _bcRondaCandidata;')();
+  // Los horarios de verdad del Mayor de Rosario 2026: Lichess no trae ni "ongoing" ni "finished"
+  const R = [{ name: 'Round 1', startsAt: 1790978400000 }, { name: 'Round 2', startsAt: 1791032400000 }, { name: 'Round 3', startsAt: 1791057600000 }];
+  const c1 = RC(R, 1791032400000 + 3 * 3600 * 1000);
+  chk(c1 && c1.name === 'Round 2', 'con la 2 en juego mira la ronda 2 (antes miraba la 1, ya jugada, y el cartel no se encendía)', JSON.stringify(c1));
+  chk(RC(R, 1790978400000 - 60000) === null, 'antes de la primera ronda: nada');
+  chk(RC(R.slice(0, 2), 1791032400000 + 13 * 3600 * 1000) === null, 'una ronda que arrancó hace más de 12 h no deja el cartel prendido (partida "*" olvidada)');
+  const R2 = [{ name: 'Round 1', startsAt: 1, finished: true }, { name: 'Round 2', startsAt: 1000 }, { name: 'Round 3', startsAt: 5000 }];
+  chk(RC(R2, 2000).name === 'Round 2', 'con las marcas normales de Lichess: la que arrancó y no terminó (igual que antes)');
+}
+// ── ⚖️ Probar cambios (03/10, idea del autor): sacar piezas de a pares y comparar la evaluación ──
+// Lo que no necesita el motor: armar la posición sin las piezas, qué pares valen, los atajos y las frases.
+console.log('\n=== Probar cambios ===');
+{
+  const chessSrcQ = fs.readFileSync(new URL('./assets/chess.min.js', import.meta.url), 'utf8');
+  const _mq = { exports: {} };
+  new Function('module', 'exports', 'window', chessSrcQ)(_mq, _mq.exports, {});
+  const ChessQ = _mq.exports.Chess || _mq.exports;
+  const vars = ['_QP_FIG', '_QP_CLASE', '_QP_CLASE_TXT'].map(n => (new RegExp('var ' + n + ' = [^\\n]*').exec(SRC) || [''])[0]).join('\n');
+  const Q = new Function('Chess', vars + '\n' + ['_threatFen', '_plaWin', '_qpColor', '_qpEt', '_qpMapa', '_qpFenSin', '_qpLegal', '_qpPareja',
+    '_qpAtajo', '_qpBlancas', '_qpVeredicto', '_qpFlojo'].map(extraerFuncion).join('\n')
+    + '; return { mapa: _qpMapa, sin: _qpFenSin, legal: _qpLegal, par: _qpPareja, atajo: _qpAtajo, bl: _qpBlancas, ver: _qpVeredicto, flojo: _qpFlojo };')(ChessQ);
+  // Meier–Oro (Francesa avance, juegan negras): el caso que probó el autor en Lichess
+  const MO = '2r1k2r/pp1bqppp/2n1p3/3pPn2/3P4/P1N2N2/1P2BPPP/R2Q1RK1 b k - 0 15';
+  const MOsd = '2r1k2r/pp1b1ppp/2n1p3/3pPn2/3P4/P1N2N2/1P2BPPP/R4RK1 b k - 0 15';
+  chk(Q.mapa(MO).d1 === 'Q' && Q.mapa(MO).e7 === 'q' && Q.mapa(MO).g1 === 'K', 'lee las piezas del FEN por casilla');
+  chk(Q.sin(MO, ['d1', 'e7']) === MOsd, 'sin damas: la misma posición sin ♕d1 ni ♛e7 (turno, enroque y número de jugada intactos)', Q.sin(MO, ['d1', 'e7']));
+  chk(Q.sin('r3k2r/8/8/8/8/8/8/R3K2R w KQkq e3 0 1', ['h1', 'a8']).split(' ').slice(2, 4).join(' ') === 'Qk -',
+      'sacar la torre de h1 borra el enroque corto blanco (y la de a8 el largo negro); el al paso se pierde');
+  chk(Q.sin('rn2k3/8/8/8/8/8/8/1N2K2R w Kq - 0 1', ['b1', 'b8']).split(' ')[2] === 'Kq', 'sacar caballos no toca los enroques');
+  chk(Q.legal(MOsd) && !Q.legal('r3k3/8/8/8/8/8/8/K7 b - - 0 1') && Q.legal('r3k3/8/8/8/8/8/8/K7 w - - 0 1'),
+      'si al sacar una pieza que tapaba queda en jaque el rey del que NO mueve, no vale (si le toca a él, sí)');
+  chk(Q.par(MO, 'e2', 'd7') === '' && Q.par(MO, 'f3', 'd7') === '' && Q.par(MO, 'a1', 'c8') === '', 'pares que valen: alfil por alfil, caballo por alfil, torre por torre');
+  chk(/la dama/.test(Q.par(MO, 'd1', 'c8')) && /otro bando/.test(Q.par(MO, 'e2', 'f3')) && /peones se quedan/.test(Q.par(MO, 'e2', 'e6')),
+      'y los que no, con el porqué: dama por torre, dos del mismo bando, un peón');
+  chk(Q.atajo(MO, 'q').join() === 'd1,e7' && Q.atajo(MO, 'qr').length === 6 && Q.atajo(MO, 'todo').length === 12,
+      'atajos: sin damas (2), sin damas ni torres (6), sólo peones (las 12 piezas)');
+  chk(Q.atajo('4k3/8/8/8/8/8/8/3QK3 w - - 0 1', 'q') === null && Q.atajo('4k3/8/8/8/8/8/8/4K3 w - - 0 1', 'todo') === null,
+      'sin atajo si no sería un cambio parejo (dama de un solo lado) o no queda nada para sacar');
+  chk(JSON.stringify(Q.bl({ cp: 30 }, 'b')) === '{"cp":-30}' && JSON.stringify(Q.bl({ mate: 3 }, 'w')) === '{"mate":3}', 'el puntaje del motor se pasa a "desde las blancas"');
+  const v1 = Q.ver({ cp: 0 }, { cp: -88 }), v2 = Q.ver({ cp: 20 }, { cp: -21 }), v3 = Q.ver({ cp: 20 }, { cp: 28 });
+  chk(v1.cls === 'qp-negras' && v1.txt === 'Les conviene a las negras, y las blancas deberían evitarlo.'
+      && v2.txt === 'Les conviene un poco a las negras.' && /^Casi no cambia nada/.test(v3.txt) && Q.ver(null, { cp: 0 }) === null,
+      'a quién le conviene: Sindarov–Ivanchuk 2♞ contra 2♝ (0 → −0,88) sí; Meier–Oro sin damas (+0,2 → −0,21) un poco; +0,2 → +0,28 nada', JSON.stringify([v1, v2, v3]));
+  const f1 = Q.flojo(MOsd, 'f5d4', { cp: 20 }, { cp: -195 });
+  chk(f1 && f1.txt === 'quedó flojo el peón de d4' && f1.san === 'Nfxd4', 'sin damas se cae d4: el aviso dice qué quedó flojo y con qué jugada', JSON.stringify(f1));
+  chk(Q.flojo(MOsd, 'a7a6', { cp: 20 }, { cp: -195 }) === null && Q.flojo(MOsd, 'f5d4', { cp: 20 }, { cp: 0 }) === null,
+      'sin aviso si la 1ª jugada no come, o si come pero la evaluación casi no se mueve');
+  chk(extraerFuncion('cvSetNode').includes('qpSalir(true)') && extraerFuncion('cvHandleClick').includes('qpClick(sq); return;')
+      && extraerFuncion('sfTurnOff').includes('qpSalir()') && extraerFuncion('sfUpdateUI').includes('if (!_qpActivo()) _faFeedModuleEval'),
+      '🔒 navegar o apagar el módulo vuelve a la partida; el toque elige piezas; la eval de prueba no entra al gráfico');
+  chk((SRC.match(/onclick="qpToggle\(\)"/g) || []).length === 1, 'el botón está una sola vez (en el visor; en el tablero de jugar NO)');
+  // 03/10, pregunta del autor: con una herramienta abierta, la jugada que llega en vivo no lo saca de ahí
+  const HA = new Function('_qp', '_pla', '_plaFenVista', extraerFuncion('_cvHerramientaAbierta') + '; return _cvHerramientaAbierta();');
+  chk(HA({ on: true }, { running: false }, null) && HA({ on: false }, { running: true }, null) && HA({ on: false }, { running: false }, 'fen')
+      && !HA({ on: false }, { running: false }, null), 'cuenta como herramienta abierta: Probar cambios, planes calculando o la caja de planes a la vista');
+  chk(extraerFuncion('_cvLiveExtendInPlace').includes('if (_cvHerramientaAbierta()) followLive = false;'),
+      '🔒 en vivo, con una herramienta abierta, no salta a la jugada nueva: queda "Volver a la jugada en directo"');
+  chk(/if \(_fa\.running\) return;\s*\n(\s*\/\/[^\n]*\n)+\s*if \(_thr\.running \|\| _pla\.running\) \{/.test(extraerFuncion('faLiveEngineStart'))
+      && extraerFuncion('faToggle').includes('if (_thr.running || _pla.running) return;'),
+      '🔒 el gráfico en vivo espera a que terminen ¿Qué amenaza?/Buscar planes (si no, se quedaba con su respuesta y los trababa)');
 }
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
 console.log('   Corrieron ' + corridas + ' de ' + ESPERADAS + ' comprobaciones.'

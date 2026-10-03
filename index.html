@@ -2307,6 +2307,37 @@
     .pla-pl { font-size: 12px; font-weight: 700; color: var(--text); }
     .pla-ph { font-size: 11px; color: var(--text3); }
     .pla-ph2 { flex-basis: 100%; font-size: 11px; color: var(--text3); }
+    /* ⚖️ "Probar cambios": el visitante saca piezas de a pares y compara la evaluación (dorado, para no confundirse con los planes). */
+    .qp-btn:hover:not(:disabled) { background: #2d2610; border-color: #8f7631; color: #f1d78a; }
+    body.light .qp-btn:hover:not(:disabled) { background: #f8efd6; border-color: #c9a646; color: #7a5c0c; }
+    .qp-btn.on { background: rgba(201,164,58,.2); border-color: #c9a43a; color: var(--text); }
+    .chess-board-wrap.qp-on #cv-board { outline: 3px dashed #c9a43a; outline-offset: 3px; }
+    #sf-panel.qp-abierto { max-height: 74%; }
+    .csq.qp-sel { box-shadow: inset 0 0 0 4px #c9a43a; }
+    .csq.qp-cand { box-shadow: inset 0 0 0 3px rgba(201,164,58,.7); cursor: pointer; }
+    .qp-intro { font-size: 12px; color: var(--text2); line-height: 1.45; }
+    .qp-paso { font-size: 12px; font-weight: 700; color: var(--text); margin-top: 6px; }
+    .qp-aviso { font-size: 11.5px; color: #e0a458; margin-top: 5px; }
+    body.light .qp-aviso { color: #9a5a0a; }
+    .qp-atajos { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin-top: 7px; }
+    .qp-quit { font-size: 12px; color: var(--text2); margin-bottom: 6px; overflow-wrap: anywhere; }
+    .qp-quit b { color: var(--text); font-weight: 700; }
+    .qp-cmp { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
+    .qp-num { display: flex; flex-direction: column; gap: 1px; }
+    .qp-num span { font-size: 10.5px; color: var(--text3); text-transform: uppercase; letter-spacing: .04em; }
+    .qp-num b { font-size: 17px; font-variant-numeric: tabular-nums; }
+    .qp-flecha { color: var(--text3); font-size: 15px; }
+    .qp-ver { font-size: 12.5px; font-weight: 700; color: var(--text); margin-top: 7px; border-left: 3px solid var(--border); padding-left: 7px; }
+    .qp-ver.qp-blancas { border-left-color: #e9e4d4; }
+    .qp-ver.qp-negras { border-left-color: #3a3a40; }
+    body.light .qp-ver.qp-blancas { border-left-color: #c8c2ae; }
+    .qp-flojo, .qp-tb { font-size: 11.5px; color: var(--text2); margin-top: 6px; }
+    /* En el teléfono la caja queda lejos, abajo: un renglón con lo esencial justo debajo del tablero. */
+    .qp-mini { margin: 8px 2px 0; padding: 7px 10px; border: 1px solid #c9a43a; border-radius: 8px; background: var(--bg3);
+      font-size: 12.5px; color: var(--text); line-height: 1.4; }
+    .qp-mini b { font-variant-numeric: tabular-nums; }
+    .qp-mini a { color: var(--text3); text-decoration: underline; cursor: pointer; white-space: nowrap; }
+    @media (min-width: 601px) { .qp-mini { display: none !important; } }
     /* ── Modal torneos ── */
     .tz-modal-overlay{display:none;position:fixed;inset:0;z-index:2000;background:rgba(0,0,0,.75);align-items:center;justify-content:center;padding:16px}
     .tz-modal-overlay.open{display:flex}
@@ -4990,6 +5021,7 @@
         <div class="sf-vbar-fill" id="sf-vbar-fill" style="height: 50%;"></div>
       </div>
     </div>
+    <div id="qp-mini" class="qp-mini" style="display:none" aria-hidden="true"></div>
     <div class="chess-files-row" id="cv-files"><div class="chess-file-l">a</div><div class="chess-file-l">b</div><div class="chess-file-l">c</div><div class="chess-file-l">d</div><div class="chess-file-l">e</div><div class="chess-file-l">f</div><div class="chess-file-l">g</div><div class="chess-file-l">h</div></div>
 
     <!-- Jugador abajo del tablero (blancas por defecto) -->
@@ -5030,9 +5062,11 @@
       <div class="sf-threat-row">
         <button class="sf-threat-btn" id="sf-threat-btn" onclick="thrProbe()" title="¿Qué haría el rival si le tocara mover?">⚠️ ¿Qué amenaza?</button>
         <button class="sf-threat-btn pla-btn" id="pla-btn" onclick="plaProbe()" title="Ideas de plan: adónde llevar las piezas">🧭 Buscar planes</button>
+        <button class="sf-threat-btn qp-btn" id="qp-btn" onclick="qpToggle()" title="Sacá piezas de a pares y mirá a quién le conviene cada cambio">⚖️ Probar cambios</button>
         <span class="sf-threat-txt" id="sf-threat-txt"></span>
       </div>
       <div id="pla-box" class="pla-box" style="display:none"></div>
+      <div id="qp-box" class="pla-box qp-box" style="display:none"></div>
     </div>
     <!-- Aviso: el operador de la transmisión está corrigiendo la partida a mano (mandó variantes y la
          línea principal todavía no avanzó). Evita que parezca que el visor se colgó. -->
@@ -27495,6 +27529,7 @@ function cvSetNode(node) {
   // a mano, cortarla. La propia reproducción marca _cvAnimStepping para no autocancelarse.
   if (_cvAnimTimer && !_cvAnimStepping) { clearTimeout(_cvAnimTimer); _cvAnimTimer = null; _cvLiveCatchup = false; }
   if (!_cvAnimStepping) _cvPlyObjetivo = 0;   // navegó a mano: ya no hay que llevarlo a la colgada
+  if (typeof _qp !== 'undefined' && _qp.on) qpSalir(true);   // ⚖️ navegar sale de la posición de prueba
   var _prevNode = cv.node;   // para animar el deslizamiento SOLO al avanzar de a una jugada
   cv.node = node;
   cv.sel = null;
@@ -28279,12 +28314,21 @@ function cvRender960Note() {
   if (el) el.style.display = cv.is960 ? 'block' : 'none';
 }
 
+// ¿Está usando una herramienta del módulo sobre esta posición? (la caja de planes a la vista o calculando, o la
+// posición de prueba de "Probar cambios")
+function _cvHerramientaAbierta() {
+  return (typeof _qp !== 'undefined' && _qp.on)
+      || (typeof _pla !== 'undefined' && (_pla.running || !!_plaFenVista));
+}
 // Aplica `newPgn` (jugadas en vivo) a la partida abierta preservando la navegación del visitante.
 // `meta` = pgMeta(newPgn). Devuelve true si se pudo en caliente; false si hace falta reconstruir.
 function _cvLiveExtendInPlace(newPgn, meta) {
   // ¿Estaba siguiendo la jugada en directo? (en el final real, o en plena reproducción de ponerse al día)
   var followLive = (cv.node === cvLiveEndNode()) || (_cvAnimTimer != null);
   if (_cvPlyObjetivo) followLive = false;   // vino de un aviso de colgada: hay que frenar ahí, no seguir de largo
+  // Con "Probar cambios" o "Buscar planes" abiertos (03/10, pregunta del autor), la jugada que llega NO lo saca de
+  // ahí: se queda en lo que estaba mirando y aparece "Volver a la jugada en directo", como si hubiera navegado.
+  if (_cvHerramientaAbierta()) followLive = false;
   var prevDepth = _cvNodeDepth(cv.node);
   var r = _cvExtendLiveGame(newPgn);
   if (r === 'rebuild') return false;
@@ -28384,8 +28428,8 @@ function _cvNagQ() {
 function cvRenderBoard() {
   if (!cv.chess) return;
   var bd = cv.chess.board(), FL = ['a','b','c','d','e','f','g','h'];
-  var lastFrom = cv.node && cv.node.move ? cv.node.move.from : '';
-  var lastTo   = cv.node && cv.node.move ? cv.node.move.to   : '';
+  var lastFrom = cv.node && cv.node.move && !_qpActivo() ? cv.node.move.from : '';   // ⚖️ la posición de prueba no tiene última jugada
+  var lastTo   = cv.node && cv.node.move && !_qpActivo() ? cv.node.move.to   : '';
   var nagq = _cvNagQ();   // si la jugada actual es ?/?!/??, sus casillas van tintadas (no amarillo)
   var boardEl = document.getElementById('cv-board');
   var cells = boardEl.children;
@@ -28440,6 +28484,7 @@ function cvRenderBoard() {
   }
   // 🧭 Paso a paso de un plan: si algo redibuja en el medio (misma posición), las piezas del plan siguen a la vista
   if (typeof _plaPaso !== 'undefined' && _plaPaso && _plaFenVista && cv.chess.fen() === _plaFenVista) _plaPintarTablero(_plaPaso.grids[_plaPaso.k]);
+  if (typeof _qp !== 'undefined' && _qp.on) _qpMarcar();   // ⚖️ la pieza elegida y sus parejas posibles
   cvDrawArrows();
 }
 
@@ -28491,6 +28536,7 @@ function cvInitDrag(boardEl) {
     if (!sqEl) return;
     var sq = sqEl.getAttribute('data-sq');
     if (!cv.chess) return;
+    if (typeof _qp !== 'undefined' && _qp.on) return;   // ⚖️ Probar cambios: las piezas no se arrastran
     var pc = cv.chess.get(sq);
     if (!pc || pc.color !== cv.chess.turn()) return;
     var img = sqEl.querySelector('img.cpc');
@@ -28540,8 +28586,8 @@ function cvInitDrag(boardEl) {
 function cvApplyBoardClasses() {
   var boardEl = document.getElementById('cv-board');
   if (!boardEl || !cv.chess) return;
-  var lastFrom = cv.node && cv.node.move ? cv.node.move.from : '';
-  var lastTo   = cv.node && cv.node.move ? cv.node.move.to   : '';
+  var lastFrom = cv.node && cv.node.move && !_qpActivo() ? cv.node.move.from : '';   // ⚖️ la posición de prueba no tiene última jugada
+  var lastTo   = cv.node && cv.node.move && !_qpActivo() ? cv.node.move.to   : '';
   var nagq = _cvNagQ();
   var bd = cv.chess.board();
   var FL = ['a','b','c','d','e','f','g','h'];
@@ -28561,6 +28607,7 @@ function cvApplyBoardClasses() {
     if (isLegal) cls += hasPiece ? ' legal-cap' : ' legal';
     cell.className = cls;
   });
+  if (typeof _qp !== 'undefined' && _qp.on) _qpMarcar();
 }
 
 /* ── Clic-clic (casilla origen → casilla destino) ──────────────────────────────
@@ -28588,6 +28635,8 @@ function cvHandleClick(sq) {
     cvClearUserArrows();
     return;
   }
+  // ⚖️ Probar cambios: el toque elige qué piezas sacar (no mueve)
+  if (typeof _qp !== 'undefined' && _qp.on) { qpClick(sq); return; }
 
   if (cv.sel) {
     if (sq === cv.sel) {
@@ -29439,6 +29488,7 @@ function sfToggle() {
 function sfTurnOff() {
   if (!sf.on) return;
   sf.on = false;
+  if (typeof _qp !== 'undefined' && _qp.on) qpSalir();   // ⚖️ sin módulo no hay con qué comparar: vuelve a la partida
   if (sf._capTimer) { clearTimeout(sf._capTimer); sf._capTimer = null; }
   sf.capped = false; sf.deepened = false; _sfDeepenBtn(false);
   document.getElementById('sf-toggle').classList.remove('on');
@@ -29728,7 +29778,7 @@ function sfAnalyzeNow() {
   // la sembramos con la mejor eval que ya tengamos de ESTA posición: el [%eval] del PGN (Lichess) o,
   // en vivo, la eval PROFUNDA que el gráfico acaba de calcular (_faLiveCache). Así el número arranca
   // en el valor correcto y el motor solo lo afina — nunca muestra el signo dado vuelta de prof. 1-2.
-  var _seed = (cv.node && cv.node.move && cv.node.move.ev)
+  var _seed = (cv.node && cv.node.move && cv.node.move.ev && !_qpActivo())   // ⚖️ la de la partida no sirve para la prueba
            || (typeof _faLiveCache !== 'undefined' && cv.chess && _faLiveCache[cv.chess.fen()])
            || null;
   // La siembra exige la MISMA vara que la barra (_SF_BAR_MINDEPTH): una eval del caché calculada a
@@ -29894,6 +29944,7 @@ function sfRenderPvLine(lineIdx, pvArr) {
 function sfPlayPvUpto(lineIdx, plyIdx) {
   var pv = _sfShownPv[lineIdx];
   if (!pv || typeof Chess === 'undefined' || !cv.node) return;
+  if (_qpActivo()) return;   // ⚖️ la línea es de la posición de prueba: no se puede colgar de la partida
   var node = cv.node, tmp = new Chess(node.fen);
   for (var i = 0; i <= plyIdx && i < pv.length; i++) {
     var uci = pv[i];
@@ -29955,11 +30006,12 @@ function sfUpdateUI() {
       var scoreEl = document.getElementById('sf-score');
       scoreEl.textContent = sfScoreStr(main.score, flip);
       scoreEl.className = 'sf-score ' + sfScoreCls(main.score, flip);
+      if (typeof _qp !== 'undefined' && _qp.on) _qpLectura(main, flip, sf.depth, sf.curFen);   // ⚖️ Probar cambios
       // El módulo es la eval MÁS PROFUNDA que tenemos de esta posición (prof. 20-30, en vivo
       // continuo). Su valor alimenta directo el punto del gráfico de ESTA jugada: así la cola del
       // gráfico coincide siempre con el número del módulo, sin depender de la eval más corta del
       // pase ni de lecturas transitorias. Solo en modo en vivo y con el pase quieto.
-      _faFeedModuleEval(main.score, flip);
+      if (!_qpActivo()) _faFeedModuleEval(main.score, flip);   // la posición de prueba no es de la partida
     }
   }
   document.getElementById('sf-depth').textContent = sf.depth ? 'prof. ' + sf.depth : '';
@@ -30905,6 +30957,19 @@ function _bcResolveTourIdFromRef(bcid, bcurl, cb) {
   _bcTourIdCache[cacheKey] = false; cb(null);
 }
 
+// Sin ronda marcada "en curso": ¿cuál mirar? La ÚLTIMA que ya arrancó por horario y no terminó (03/10/2026,
+// Mayor de Rosario: las jugadas se cargan a mano y Lichess no marca las rondas ni "en curso" ni "terminadas";
+// se tomaba la PRIMERA —la 1, ya jugada, sin partidas "*"— y el cartel no se encendía nunca con la 2 en juego).
+// Con tope de _BC_RONDA_VIVA_MS desde su horario: una ronda vieja con alguna partida "*" olvidada no deja el
+// cartel prendido para siempre. Sólo decide el cartel/botón rojo: no toca el sondeo, las tablas ni el análisis.
+var _BC_RONDA_VIVA_MS = 12 * 3600 * 1000;
+function _bcRondaCandidata(rounds, now) {
+  var cand = null;
+  for (var j = 0; j < (rounds || []).length; j++) {
+    if (!rounds[j].finished && rounds[j].startsAt && rounds[j].startsAt <= now) cand = rounds[j];
+  }
+  return (cand && now - cand.startsAt <= _BC_RONDA_VIVA_MS) ? cand : null;
+}
 // ¿El torneo tiene una ronda en vivo? (criterio B, liviano: baja metadata y solo el PGN de la
 // ronda candidata si hace falta). Cachea ~1 min.
 function _bcIsTourLive(tourId, cb) {
@@ -30919,8 +30984,7 @@ function _bcIsTourLive(tourId, cb) {
       var ongoing = null;
       for (var i = 0; i < rounds.length; i++) { if (rounds[i].ongoing) { ongoing = rounds[i]; break; } }
       if (ongoing) { set(true); return; }
-      var cand = null;
-      for (var j = 0; j < rounds.length; j++) { if (!rounds[j].finished && rounds[j].startsAt && rounds[j].startsAt <= now) { cand = rounds[j]; break; } }
+      var cand = _bcRondaCandidata(rounds, now);
       if (!cand) { set(false); return; }
       fetch(_liApi('round/' + cand.id + '.pgn'))
         .then(function(r) { return r.text(); })
@@ -42476,6 +42540,7 @@ function thrUpdateBtn() {
           : busy  ? 'El análisis de la partida está usando el motor'
           : '¿Qué haría el rival si le tocara mover?';
   plaUpdateBtn();
+  qpUpdateBtn();
 }
 
 // Mensaje efímero en el rótulo del botón (motivo por el que no se calculó, o "pensando…").
@@ -43848,6 +43913,370 @@ function _plaTableroToque(e) {
   document.addEventListener(t, _plaTableroToque, { capture: true, passive: false });
 });
 
+/* ── ⚖️ Probar cambios (03/10/2026, idea del autor) ─────────────────────────────────────────────────
+   El método de un profesor del autor: antes de cambiar piezas, sacarlas del tablero y ver qué dice el
+   módulo de lo que queda, para saber a quién le conviene cada cambio (¿damas afuera? ¿el alfil malo por
+   el caballo?). Lo hace el VISITANTE: toca una pieza y después una del rival de la misma clase (dama por
+   dama, torre por torre, alfil o caballo por alfil o caballo) y salen las dos. El módulo analiza la
+   posición que quedó como cualquier otra y la cajita la compara con la de la partida.
+   La app no elige los cambios por su cuenta: se probó el 03/10 (scripts en match-motores) y había que
+   afinar demasiado. Así es más simple y enseña más: el que piensa el cambio es el visitante.
+   · cv.chess pasa a la posición de prueba, pero cv.node (la partida) NO se toca. Cualquier navegación
+     (flechas, clic en una jugada, otra partida) sale sola y vuelve a la partida (cvSetNode → qpSalir).
+   · Al sacar piezas suele quedar algo colgado (la dama defendía d4): si la 1ª jugada del módulo es una
+     toma y la evaluación se mueve mucho para el que la hace, se avisa (_qpFlojo).
+   · Sólo en el visor/análisis, como Buscar planes: nunca en partidas contra personas. */
+var _qp = { on: false, fen0: null, base: null, pila: [], fen: null, sel: null, aviso: '', ev: null, pv0: null, tbPide: null };
+var _QP_FIG = { w: { q: '♕', r: '♖', b: '♗', n: '♘' }, b: { q: '♛', r: '♜', b: '♝', n: '♞' } };
+var _QP_CLASE = { q: 'q', r: 'r', b: 'm', n: 'm' };
+var _QP_CLASE_TXT = { q: 'la dama', r: 'una torre', m: 'un alfil o un caballo' };
+function _qpActivo() { return typeof _qp !== 'undefined' && _qp.on && !!_qp.fen; }
+function _qpColor(ch) { return ch === ch.toUpperCase() ? 'w' : 'b'; }
+function _qpEt(ch, sq) { return _QP_FIG[_qpColor(ch)][ch.toLowerCase()] + sq; }
+// FEN → { casilla: letra } (sólo la parte de las piezas).
+function _qpMapa(fen) {
+  var filas = String(fen || '').split(' ')[0].split('/'), m = {};
+  for (var i = 0; i < 8 && i < filas.length; i++) {
+    var c = 0, s = filas[i];
+    for (var k = 0; k < s.length; k++) {
+      var ch = s[k];
+      if (ch >= '1' && ch <= '8') { c += +ch; continue; }
+      m['abcdefgh'[c] + (8 - i)] = ch; c++;
+    }
+  }
+  return m;
+}
+// La posición sin las piezas de `casillas`. Se pierde el enroque del lado de una torre que se saca (en 960
+// la letra del enroque es la columna de su torre) y el al paso (ya no tiene sentido).
+function _qpFenSin(fen, casillas) {
+  var p = String(fen).split(' '), m0 = _qpMapa(fen), m = _qpMapa(fen), filas = [], enr = p[2] || '-';
+  (casillas || []).forEach(function(sq) {
+    var pc = m0[sq];
+    delete m[sq];
+    if (!pc || pc.toLowerCase() !== 'r') return;
+    var bl = pc === 'R', fila = bl ? '1' : '8', kf = -1, f = 'abcdefgh'.indexOf(sq[0]);
+    if (sq[1] !== fila) return;
+    for (var x = 0; x < 8; x++) if (m0['abcdefgh'[x] + fila] === (bl ? 'K' : 'k')) kf = x;
+    enr = enr.split('').filter(function(ch) {
+      if (_qpColor(ch) !== (bl ? 'w' : 'b') || ch === '-') return true;
+      var l = ch.toLowerCase();
+      if (l === 'k') return !(kf >= 0 && f > kf);
+      if (l === 'q') return !(kf >= 0 && f < kf);
+      return l !== sq[0];
+    }).join('') || '-';
+  });
+  for (var r = 8; r >= 1; r--) {
+    var s = '', v = 0;
+    for (var c = 0; c < 8; c++) {
+      var ch = m['abcdefgh'[c] + r];
+      if (!ch) { v++; continue; }
+      if (v) { s += v; v = 0; }
+      s += ch;
+    }
+    filas.push(s + (v || ''));
+  }
+  return [filas.join('/'), p[1] || 'w', enr, '-', p[4] || '0', p[5] || '1'].join(' ');
+}
+// ¿Puede darse? El rey del bando que NO mueve no puede quedar en jaque (sacar una pieza que lo tapaba).
+function _qpLegal(fen) {
+  try {
+    if (!new Chess().validate_fen(fen).valid) return false;
+    var t = _threatFen(fen), c = t ? new Chess(t) : null;
+    if (!c || c.fen().split(' ')[0] !== t.split(' ')[0]) return false;
+    return !c.in_check();
+  } catch (e) { return false; }
+}
+// '' si a y b se pueden sacar juntas; si no, por qué no.
+function _qpPareja(fen, a, b) {
+  var m = _qpMapa(fen), pa = m[a], pb = m[b];
+  if (!pa || !pb) return 'Tocá dos piezas.';
+  if (_qpColor(pa) === _qpColor(pb)) return 'Tiene que ser una pieza del otro bando.';
+  var ka = _QP_CLASE[pa.toLowerCase()], kb = _QP_CLASE[pb.toLowerCase()];
+  if (!ka || !kb) return 'Se sacan piezas: los reyes y los peones se quedan.';
+  if (ka !== kb) return 'Tiene que ser ' + _QP_CLASE_TXT[ka] + ': dama por dama, torre por torre, alfil o caballo por alfil o caballo.';
+  return '';
+}
+// Los atajos: 'q' sin damas · 'qr' sin damas ni torres · 'todo' sólo peones. Devuelve las casillas, o null si
+// no se puede (algún bando tiene más piezas de esa clase que el otro: no sería un cambio parejo).
+function _qpAtajo(fen, tipo) {
+  var m = _qpMapa(fen), n = { w: { q: 0, r: 0, m: 0 }, b: { q: 0, r: 0, m: 0 } }, sqs = { q: [], r: [], m: [] };
+  Object.keys(m).forEach(function(sq) {
+    var k = _QP_CLASE[m[sq].toLowerCase()];
+    if (!k) return;
+    n[_qpColor(m[sq])][k]++; sqs[k].push(sq);
+  });
+  var clases = tipo === 'q' ? ['q'] : tipo === 'qr' ? ['q', 'r'] : ['q', 'r', 'm'], out = [];
+  for (var i = 0; i < clases.length; i++) {
+    if (n.w[clases[i]] !== n.b[clases[i]]) return null;
+    out = out.concat(sqs[clases[i]]);
+  }
+  return out.length ? out.sort() : null;
+}
+// Puntaje del motor (desde el que mueve) → desde las blancas.
+function _qpBlancas(s, side) {
+  if (!s) return null;
+  return s.mate !== undefined ? { mate: side === 'b' ? -s.mate : s.mate } : { cp: side === 'b' ? -s.cp : s.cp };
+}
+// A quién le conviene, por la diferencia de win% (desde las blancas) entre la partida y la prueba. Con la fórmula de
+// Lichess (_plaWin), 3 puntos ≈ 30 centésimas y 7 ≈ 75: +0,2 → −0,2 es "un poco"; 0 → −0,9 (2♞ contra 2♝) ya conviene.
+function _qpVeredicto(base, ahora) {
+  var a = _plaWin(base), b = _plaWin(ahora);
+  if (a === null || b === null) return null;
+  var d = b - a, quien = d > 0 ? 'blancas' : 'negras', otro = d > 0 ? 'negras' : 'blancas';
+  if (Math.abs(d) < 3) return { cls: '', txt: 'Casi no cambia nada: este cambio no le conviene especialmente a ninguno.', corto: 'casi no cambia nada' };
+  if (Math.abs(d) < 7) return { cls: 'qp-' + quien, txt: 'Les conviene un poco a las ' + quien + '.', corto: 'les conviene un poco a las ' + quien };
+  return { cls: 'qp-' + quien, txt: 'Les conviene a las ' + quien + ', y las ' + otro + ' deberían evitarlo.', corto: 'les conviene a las ' + quien };
+}
+// ¿Quedó algo colgado? La 1ª jugada del módulo es una toma y la evaluación se movió mucho para el que mueve.
+function _qpFlojo(fen, uci, base, ahora) {
+  if (!uci || uci.length < 4) return null;
+  var presa = _qpMapa(fen)[uci.slice(2, 4)], a = _plaWin(base), b = _plaWin(ahora);
+  if (!presa || a === null || b === null) return null;
+  var d = (String(fen).split(' ')[1] === 'w' ? 1 : -1) * (b - a);
+  if (d < 10) return null;
+  var t = presa.toLowerCase(), nom = ({ p: 'el peón', n: 'el caballo', b: 'el alfil', r: 'la torre', q: 'la dama' })[t], san = '';
+  try { var mv = new Chess(fen).move({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci[4] || 'q' }); if (mv) san = mv.san; } catch (e) {}
+  return { txt: 'quedó ' + (t === 'r' || t === 'q' ? 'floja ' : 'flojo ') + nom + ' de ' + uci.slice(2, 4), san: san };
+}
+// 📚 Con 7 piezas o menos, la tabla de finales (la misma del análisis) dice el resultado exacto.
+function _qpTbTxt(fen) {
+  var c = _tb.cat[_tbClave(fen)];
+  if (!c || c === 'unknown') return '';
+  var mueve = String(fen).split(' ')[1] === 'w' ? 'blancas' : 'negras', otro = mueve === 'blancas' ? 'negras' : 'blancas';
+  if (c === 'cursed-win' || c === 'blessed-loss') return 'tablas por la regla de las 50 jugadas';
+  var v = _tbValor(c);
+  return v === 0 ? 'tablas teóricas' : v > 0 ? 'ganan las ' + mueve : v < 0 ? 'ganan las ' + otro : '';
+}
+function _qpTb(fen) {
+  if (!fen || !_tbOn() || _tb.off || !_tbEnRango(fen)) return;
+  var k = _tbClave(fen);
+  if (_tb.cat[k] !== undefined || _qp.tbPide === k) return;
+  _qp.tbPide = k;
+  fetch(_TB_URL + '?fen=' + encodeURIComponent(fen))
+    .then(function(r) {
+      if (r.status === 429 || r.status >= 500) throw new Error('tabla ' + r.status);
+      return r.ok ? r.json() : null;
+    })
+    .then(function(j) {
+      var m = {}, md = {};
+      if (j) (j.moves || []).forEach(function(x) { m[x.uci] = x.category; md[x.uci] = x.dtm; });
+      _tb.cat[k] = (j && j.category) || ''; _tb.mov[k] = m; _tb.dtm[k] = j ? j.dtm : null; _tb.mdtm[k] = md;
+      if (_qp.tbPide === k) _qp.tbPide = null;
+      _qpPintarEv();
+    })
+    .catch(function() { _tb.off = true; if (_qp.tbPide === k) _qp.tbPide = null; });
+}
+
+// ── Pantalla ──
+function qpUpdateBtn() {
+  var b = document.getElementById('qp-btn');
+  if (!b) return;
+  b.classList.toggle('on', _qp.on);
+  b.disabled = !_qp.on && (!cv.chess || _faOcupado() || _pla.running || _thr.running);
+  b.title = _qp.on ? 'Volver a la partida' : _faOcupado() ? 'El análisis de la partida está usando el motor'
+          : 'Sacá piezas de a pares y mirá a quién le conviene cada cambio';
+}
+function qpToggle() { if (_qp.on) qpSalir(); else qpEntrar(); }
+function qpEntrar() {
+  if (_qp.on || !cv.chess || !cv.node || _pla.running || _thr.running) return;
+  if (!sf.on) sfToggle();
+  plaReset(true); thrReset();
+  var fen0 = cv.chess.fen();
+  _qp = { on: true, fen0: fen0, base: null, pila: [], fen: null, sel: null, aviso: '', ev: null, pv0: null, tbPide: null };
+  // La evaluación de la partida: la del módulo si ya la tiene a buena profundidad; si no, la del PGN o del gráfico.
+  if (sf.lines[0] && sf.curFen === fen0 && sf.depth >= _SF_BAR_MINDEPTH) _qp.base = { s: _qpBlancas(sf.lines[0].score, sf.curSide), d: sf.depth };
+  else {
+    var sd = (cv.node.move && cv.node.move.ev) || (typeof _faLiveCache !== 'undefined' && _faLiveCache[fen0]) || null;
+    if (sd) _qp.base = { s: sd.mate !== undefined ? { mate: sd.mate } : { cp: sd.cp }, d: sd.d || 0 };
+  }
+  _qpEnPantalla(true);
+  qpUpdateBtn();
+  _qpPintarCaja();
+  _qpMarcar();
+  // El panel del módulo tiene su propio scroll: que la caja arranque a la vista (arriba de todo).
+  var p = document.getElementById('sf-panel'), box = document.getElementById('qp-box');
+  if (p && box) p.scrollTop += box.getBoundingClientRect().top - p.getBoundingClientRect().top - 6;
+}
+// El tablero con borde punteado (no es la partida) y el panel del módulo más alto (las jugadas no hacen falta).
+function _qpEnPantalla(on) {
+  var bd = document.getElementById('cv-board'), w = bd && bd.closest('.chess-board-wrap'), p = document.getElementById('sf-panel');
+  if (w) w.classList.toggle('qp-on', on);
+  if (p) p.classList.toggle('qp-abierto', on);
+}
+// soloEstado: lo llama cvSetNode, que ya va a poner la posición nueva en el tablero.
+function qpSalir(soloEstado) {
+  if (!_qp.on) return;
+  var habia = !!_qp.fen;
+  _qp.on = false; _qp.sel = null; _qp.fen = null; _qp.pila = [];
+  var box = document.getElementById('qp-box'); if (box) { box.innerHTML = ''; box.style.display = 'none'; }
+  _qpPintarMini();
+  _qpEnPantalla(false);
+  _cvSfNode = null;   // que el módulo vuelva a analizar la posición de la partida
+  qpUpdateBtn();
+  if (soloEstado || !cv.node) return;
+  cv.chess = new Chess(cv.node.fen); cv.sel = null; cv.legalDests = [];
+  plaReset(true); thrReset();
+  cvRenderBoard();
+  if (habia) {
+    sfClearArrows(); _sfArrowsHold = true;
+    if (sf.on && sf.ready) sfAnalyze();
+    if (typeof cvUpdateNagBadge === 'function') cvUpdateNagBadge();
+    if (typeof _tbRenglon === 'function') _tbRenglon();
+    thrUpdateBtn();
+  }
+}
+// Pone en el tablero (y en el motor) la posición de prueba `fen`, o la de la partida si es null.
+function _qpPoner(fen) {
+  _qp.fen = fen; _qp.ev = null; _qp.pv0 = null; _qp.sel = null;
+  cv.chess = new Chess(fen || _qp.fen0); cv.sel = null; cv.legalDests = [];
+  plaReset(true); thrReset();
+  cvRenderBoard();
+  sfClearArrows(); _sfArrowsHold = true;
+  if (sf.on && sf.ready) sfAnalyze();
+  thrUpdateBtn();
+  var nb = document.getElementById('cv-nag-badge'), tl = document.getElementById('cv-tbline');
+  if (fen) { if (nb) nb.style.display = 'none'; if (tl) tl.style.display = 'none'; _qpTb(fen); }
+  else { if (typeof cvUpdateNagBadge === 'function') cvUpdateNagBadge(); if (typeof _tbRenglon === 'function') _tbRenglon(); }
+  _qpPintarCaja();
+}
+function _qpAplicar(casillas, txt) {
+  var fen = cv.chess.fen(), m = _qpMapa(fen), nf = _qpFenSin(fen, casillas);
+  if (!_qpLegal(nf)) { _qp.aviso = 'Así no se puede: el rey del bando que no mueve quedaría en jaque.'; _qpPintarCaja(); return; }
+  _qp.aviso = '';
+  _qp.pila.push({ fen: nf, txt: txt || casillas.map(function(sq) { return _qpEt(m[sq], sq); }).join(' ') });
+  _qpPoner(nf);
+}
+function qpAtajo(tipo) {
+  if (!_qp.on || !cv.chess) return;
+  var sqs = _qpAtajo(cv.chess.fen(), tipo);
+  if (sqs) _qpAplicar(sqs, ({ q: 'las damas', qr: 'damas y torres', todo: 'todas las piezas' })[tipo]);
+}
+function qpDeshacer() {
+  if (!_qp.on || !_qp.pila.length) return;
+  _qp.pila.pop(); _qp.aviso = '';
+  var top = _qp.pila[_qp.pila.length - 1];
+  _qpPoner(top ? top.fen : null);
+}
+// Toque en el tablero con la herramienta abierta: elegir la 1ª pieza, después la del rival.
+function qpClick(sq) {
+  var m = _qpMapa(cv.chess.fen()), pc = m[sq];
+  _qp.aviso = '';
+  if (_qp.sel && sq === _qp.sel) { _qp.sel = null; }
+  else if (!pc) { _qp.sel = null; }
+  else if (!_QP_CLASE[pc.toLowerCase()]) { _qp.aviso = pc.toLowerCase() === 'k' ? 'Los reyes no se pueden sacar.' : 'Los peones se quedan: se sacan piezas.'; }
+  else if (!_qp.sel || _qpColor(m[_qp.sel]) === _qpColor(pc)) { _qp.sel = sq; }
+  else {
+    var err = _qpPareja(cv.chess.fen(), _qp.sel, sq);
+    if (err) _qp.aviso = err;
+    else { var a = _qp.sel; _qp.sel = null; _qpAplicar([a, sq]); return; }
+  }
+  _qpPintarCaja();
+  _qpMarcar();
+}
+// Resalta en el tablero la pieza elegida y las del rival que se pueden cambiar por ella.
+function _qpMarcar() {
+  var b = document.getElementById('cv-board');
+  if (!b) return;
+  var m = (_qp.on && _qp.sel && cv.chess) ? _qpMapa(cv.chess.fen()) : null, ps = m && m[_qp.sel];
+  var cells = b.querySelectorAll('.csq');
+  for (var i = 0; i < cells.length; i++) {
+    var sq = cells[i].getAttribute('data-sq'), q = m && m[sq];
+    cells[i].classList.toggle('qp-sel', !!ps && sq === _qp.sel);
+    cells[i].classList.toggle('qp-cand', !!(ps && q && _qpColor(q) !== _qpColor(ps) && _QP_CLASE[q.toLowerCase()] === _QP_CLASE[ps.toLowerCase()]));
+  }
+}
+function _qpPintarCaja() {
+  var box = document.getElementById('qp-box');
+  if (!box) return;
+  if (!_qp.on) { box.innerHTML = ''; box.style.display = 'none'; return; }
+  var fen = cv.chess ? cv.chess.fen() : _qp.fen0, m = _qpMapa(fen), h = '';
+  h += '<div class="pla-head"><span>⚖️ Probar cambios</span><button class="pla-x" onclick="qpSalir()" title="Volver a la partida" aria-label="Volver a la partida">✕</button></div>';
+  if (!_qp.pila.length) h += '<div class="qp-intro">Sacá piezas <b>de a pares</b>, una de cada bando, y mirá cómo cambia la evaluación: así ves <b>a quién le conviene</b> cada cambio.</div>';
+  else h += '<div class="qp-quit">Sacaste: ' + _qp.pila.map(function(x) { return '<b>' + x.txt + '</b>'; }).join(' · ') + '</div>';
+  h += '<div id="qp-ev" aria-live="polite"></div>';
+  var ps = _qp.sel && m[_qp.sel];
+  h += '<div class="qp-paso">' + (ps
+    ? '👆 Ahora tocá ' + _QP_CLASE_TXT[_QP_CLASE[ps.toLowerCase()]] + ' de las ' + (_qpColor(ps) === 'w' ? 'negras' : 'blancas') + ' para sacarla junto con ' + _qpEt(ps, _qp.sel) + '.'
+    : _qp.pila.length ? '👆 Podés seguir: tocá otra pieza y después una del rival.' : '👆 Tocá una pieza en el tablero y después una del rival.') + '</div>';
+  if (_qp.aviso) h += '<div class="qp-aviso">' + _qp.aviso + '</div>';
+  var at = [['q', 'Sin damas'], ['qr', 'Sin damas ni torres'], ['todo', 'Sólo peones']], vistos = {}, bt = '';
+  at.forEach(function(a) {
+    var s = _qpAtajo(fen, a[0]), k = s ? s.join() : '';
+    if (!s || vistos[k]) return;   // repetido (ej. sin torres, "sin damas ni torres" = "sin damas")
+    vistos[k] = 1;
+    bt += '<button class="pla-tab" onclick="qpAtajo(\'' + a[0] + '\')">' + a[1] + '</button>';
+  });
+  if (bt) h += '<div class="qp-atajos"><span class="pla-ph">O de una:</span>' + bt + '</div>';
+  if (_qp.pila.length) h += '<div class="pla-pasos"><button class="pla-pbtn" onclick="qpDeshacer()">↶ Deshacer</button><button class="pla-pbtn" onclick="qpSalir()">Volver a la partida</button></div>';
+  box.innerHTML = h;
+  box.style.display = '';
+  _qpPintarEv();
+}
+// La comparación (se repinta sola con cada lectura del módulo; el resto de la caja queda quieto).
+function _qpPintarEv() {
+  var el = document.getElementById('qp-ev');
+  if (!el || !_qp.on) return;
+  var b = _qp.base && _qp.base.s;
+  function num(lbl, s) {
+    return '<div class="qp-num"><span>' + lbl + '</span><b class="' + (s ? sfScoreCls(s, false) : 'sf-neu') + '">' + (s ? sfScoreStr(s, false) : '…') + '</b></div>';
+  }
+  if (!_qp.fen) { el.innerHTML = '<div class="qp-cmp">' + num('En la partida', b) + '</div>'; _qpPintarMini(); return; }
+  var h = '<div class="qp-cmp">' + num('En la partida', b) + '<span class="qp-flecha">→</span>' + num('Con los cambios', _qp.ev) + '</div>';
+  var v = _qpVeredicto(b, _qp.ev), fl = _qpFlojo(_qp.fen, _qp.pv0, b, _qp.ev);
+  // Con algo colgado, la diferencia es (en parte) esa pieza: el veredicto va con reservas y el aviso dice cuál.
+  if (v && fl) h += '<div class="qp-ver ' + v.cls + '">👉 Así como quedó, ' + v.corto + '… pero ojo:</div>'
+    + '<div class="qp-flojo">⚠️ Al sacarlas ' + fl.txt + ' y el módulo empieza comiéndolo' + (fl.san ? ' (' + cvFanHtml(fl.san) + ')' : '')
+    + '. En la partida, antes de cambiar, quizás haya tiempo de defenderlo: la diferencia puede ser sólo eso.</div>';
+  else if (v) h += '<div class="qp-ver ' + v.cls + '">👉 ' + v.txt + '</div>';
+  else if (!_qp.ev) h += '<div class="qp-flojo">El módulo está evaluando la posición nueva…</div>';
+  var tb = _qpTbTxt(_qp.fen);
+  if (tb) h += '<div class="qp-tb">📚 Tabla de finales: <b>' + tb + '</b> con juego perfecto.</div>';
+  el.innerHTML = h;
+  _qpPintarMini();
+}
+// 📱 El renglón de debajo del tablero (sólo se ve en el teléfono, por CSS): qué tocar y cómo va la comparación.
+function _qpPintarMini() {
+  var el = document.getElementById('qp-mini');
+  if (!el) return;
+  if (!_qp.on) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  var b = _qp.base && _qp.base.s, h = '';
+  if (_qp.aviso) h = _qp.aviso;
+  else if (_qp.sel) h = '👆 Ahora tocá la pieza del rival.';
+  else if (!_qp.fen) h = '⚖️ Tocá una pieza y después una del rival para sacarlas.';
+  else {
+    var v = _qpVeredicto(b, _qp.ev), fl = _qpFlojo(_qp.fen, _qp.pv0, b, _qp.ev);
+    h = '⚖️ <b>' + (b ? sfScoreStr(b, false) : '…') + '</b> → <b>' + (_qp.ev ? sfScoreStr(_qp.ev, false) : '…') + '</b>'
+      + (v ? ' · ' + v.corto + (fl ? ' (ojo: quedó algo flojo)' : '') : '');
+  }
+  el.innerHTML = h + ' <a onclick="_qpVerCaja()">detalles ↓</a>';
+  el.style.display = '';
+}
+function _qpVerCaja() {
+  var box = document.getElementById('qp-box');
+  if (box) try { box.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {}
+}
+// Lectura del módulo (desde sfUpdateUI, ya a profundidad confiable): de la partida o de la prueba.
+function _qpLectura(main, flip, depth, fen) {
+  if (!_qp.on || !main) return;
+  var s = _qpBlancas(main.score, flip ? 'b' : 'w');
+  if (!_qp.fen && fen === _qp.fen0) {
+    if (!_qp.base || depth >= _qp.base.d) _qp.base = { s: s, d: depth };
+  } else if (_qp.fen && fen === _qp.fen) {
+    _qp.ev = s; _qp.pv0 = main.pv && main.pv[0];
+  } else return;
+  _qpPintarEv();
+}
+// Esc cierra la herramienta (antes que el visor). Si hay un plan paso a paso, primero sale de ése.
+document.addEventListener('keydown', function(e) {
+  if (!_qp.on || e.key !== 'Escape' || _plaPaso) return;
+  var ov = document.getElementById('chess-overlay');
+  if (!ov || !ov.classList.contains('open')) return;
+  var tg = e.target;
+  if (tg && (/^(INPUT|TEXTAREA|SELECT)$/.test(tg.tagName || '') || tg.isContentEditable)) return;
+  e.preventDefault(); e.stopPropagation();
+  qpSalir();
+}, true);
+
 // Los colores de las flechas/resaltados del usuario viven en _UA_COLORS (arriba, junto a drawArrow).
 // Geometría de la GRILLA (las 8×8 casillas viven DENTRO del borde de 4px del tablero) en coordenadas
 // del buffer del canvas. Robusta al borde y a cualquier desalineación/escala entre canvas y tablero:
@@ -44539,6 +44968,21 @@ function faLiveEngineStart() {
     return;
   }
   if (_fa.running) return;
+  // "¿Qué amenaza?" o "Buscar planes" usando el motor (03/10, visto probando el vivo): si llegaba una jugada
+  // mientras se buscaban planes, el pase se quedaba con la respuesta del motor (sfOnMsg le da prioridad) y los
+  // planes quedaban "calculando" para siempre, con los botones grises. Ahora el pase espera a que terminen
+  // (unos segundos) y recién ahí arranca.
+  if (_thr.running || _pla.running) {
+    if (!_fa._esperaHerr) {
+      _fa._esperaHerr = true;
+      var _iv2 = setInterval(function() {
+        if (_thr.running || _pla.running) return;
+        clearInterval(_iv2); _fa._esperaHerr = false;
+        if (_fa.live && !_fa.running) faLiveEngineStart();
+      }, 400);
+    }
+    return;
+  }
   mevAbort();
   _fa._preluding = false;   // el pase arranca: cancelar cualquier "prelude" del módulo en curso
   _fa.relleno = false; _fa.cola = null; _fa.volver = null; _fa.forzar = -1;   // pase GRUESO (ver _faSaltea)
@@ -44571,6 +45015,7 @@ function faGetNodes() {
 
 function faToggle() {
   if (_faOcupado()) { cancelFA(); return; }
+  if (_thr.running || _pla.running) return;   // el motor está en "¿Qué amenaza?"/"Buscar planes": son segundos (si no, los trababa)
   _faCederRelleno();   // el relleno de lo salteado no es "un análisis corriendo": se corta y se sigue
   var _rb = document.getElementById('fa-reopen'); if (_rb) _rb.style.display = 'none';   // se está (re)abriendo
   // El botón 📊 vuelve a habilitar el gráfico si el visitante lo había cerrado.
@@ -45800,7 +46245,7 @@ function _tbRenglon() {
   if (!el) return;
   var fin = false;
   try { fin = !!(cv.chess && cv.chess.game_over && cv.chess.game_over()); } catch (e) {}
-  var r = (typeof cv !== 'undefined') ? _tbRenglonDe(cv.node, fin) : null;
+  var r = (typeof cv !== 'undefined' && !_qpActivo()) ? _tbRenglonDe(cv.node, fin) : null;   // ⚖️ el de la partida no vale para la prueba
   if (!r) { el.style.display = 'none'; return; }
   el.className = 'cv-tbline' + (r.cls ? ' ' + r.cls : '') + (_tbExpAbierto ? ' abierto' : '');
   el.innerHTML = '<div class="tb-fila"><span>📚</span><span>' + r.html + '</span><span class="tb-i" aria-hidden="true">ⓘ</span></div>'
@@ -46400,7 +46845,7 @@ function cvUpdateNagBadge() {
   if (!badge) return;
   var nag = cv.node && cv.node.move ? cv.node.move.nag : '';
   var cls = { '??':'nb-blunder', '?':'nb-mistake', '?!':'nb-inaccuracy', '!!':'nb-brilliant' }[nag];
-  if (!_showNagBadges || !cls || !cv.node.move.to) { badge.style.display = 'none'; return; }
+  if (!_showNagBadges || !cls || !cv.node.move.to || _qpActivo()) { badge.style.display = 'none'; return; }   // ⚖️ en la posición de prueba no hay jugada que calificar
   var sq = cv.node.move.to;
   var f = 'abcdefgh'.indexOf(sq[0]);
   var r = 8 - parseInt(sq[1]);
