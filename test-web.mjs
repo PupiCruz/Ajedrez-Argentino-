@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2104;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2109;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -4546,10 +4546,10 @@ console.log('\n=== 50. Puntos del torneo en el visor (6½/7) ===');
   const FakeDate = { now: () => ahora };
   const M = new Function('Date',
     'var _TD_PENDING_WINDOW_MS = 3*3600*1000, _TD_MAX_IDLE_MS = 20*60*1000, _TD_FIN_GRACE = 3;'
-    + 'var _tdLiveNoPoll = false, _tdIdleSince = 0, _tdFinGrace = 0, _tdIdlePolls = 0;'
-    + extraerFuncion('_bcMergeMeta') + extraerFuncion('_bcOnDemandRes') + extraerFuncion('_tdKeepPolling')
+    + 'var _tdLiveNoPoll = false, _tdIdleSince = 0, _tdFinGrace = 0, _tdIdlePolls = 0, _TD_MAX_QUIETO_MS = 30*60*1000, _tdMovSig = "", _tdMovAt = 0;'
+    + extraerFuncion('_bcMergeMeta') + extraerFuncion('_bcOnDemandRes') + extraerFuncion('_tdKeepPolling') + extraerFuncion('_tdJugandoSinMarca')
     + 'return { merge: _bcMergeMeta, odRes: _bcOnDemandRes, keep: _tdKeepPolling,'
-    + '  reset: function(){ _tdIdleSince = 0; _tdFinGrace = 0; _tdLiveNoPoll = false; }, noPoll: function(){ _tdLiveNoPoll = true; } };')(FakeDate);
+    + '  reset: function(){ _tdIdleSince = 0; _tdFinGrace = 0; _tdLiveNoPoll = false; _tdMovSig = ""; _tdMovAt = 0; }, noPoll: function(){ _tdLiveNoPoll = true; } };')(FakeDate);
   const R = (n, extra) => Object.assign({ id: 'r' + n, name: 'Ronda ' + n }, extra);
   const fin = (n, at) => R(n, { finished: true, finishedAt: at, startsAt: at - 15 * MIN });
   const res = (rounds) => { const m = M.merge([{ rounds }]); return M.odRes(m, []); };
@@ -4621,6 +4621,23 @@ console.log('\n=== 50. Puntos del torneo en el visor (6½/7) ===');
   const wake = extraerFuncion('_tdLiveWake');
   chk(/_tdLiveRefresh\(\)/.test(wake) && /document\.addEventListener\('visibilitychange', _tdLiveWake\)/.test(SRC),
       '🔒 al volver a la pestaña se piden las jugadas enseguida (no espera al timer frenado por Chrome)');
+
+  // 02/10/2026, Mayor de Rosario: ronda cargada A MANO en Lichess (sin relojes) que Lichess NO marca "en curso".
+  // Era un "hueco entre rondas": a los 20 min de abrir la página dejaba de preguntar (tableros congelados y el
+  // análisis mostraba los comentarios con la partida en juego). Con partidas "*" que se mueven, sigue en vivo.
+  const pg = (jug, r) => '[White "A"]\n[Black "B"]\n[Result "' + (r || '*') + '"]\n\n' + jug + ' ' + (r || '*');
+  const manual = (games) => ({ roundsWithGames: [{ name: 'Ronda 1', games, live: false, finished: false }], rounds: [R(1, { startsAt: T0 - 3 * 3600 * 1000 })] });
+  M.reset(); ahora = T0;
+  chk(M.keep(manual([pg('1. e4 e5'), pg('1. d4')])) === true, 'ronda a mano con partidas en juego: pregunta');
+  ahora = T0 + 25 * MIN;
+  chk(M.keep(manual([pg('1. e4 e5 2. Nf3'), pg('1. d4')])) === true, '🔒 a los 25 min SIGUE preguntando si llegaron jugadas (antes cortaba a los 20)');
+  ahora = T0 + 50 * MIN;
+  chk(M.keep(manual([pg('1. e4 e5 2. Nf3 Nc6'), pg('1. d4 d5')])) === true, 'y a los 50 min también, mientras se muevan');
+  ahora = T0 + 81 * MIN;
+  chk(M.keep(manual([pg('1. e4 e5 2. Nf3 Nc6'), pg('1. d4 d5')])) === false, '🔒 31 min sin ninguna jugada nueva: se rinde (transmisión abandonada)');
+  M.reset(); ahora = T0;
+  chk(M.keep(manual([pg('1. e4 e5', '1-0'), pg('1. d4', '0-1')])) === true && M.keep(manual([pg('1. e4 e5', '1-0')])) === true,
+      'todas terminadas pero la ronda sin cerrar: vuelve a la regla de siempre (hueco con tope)');
 }
 
 // ── 53. Vivo: los tableros que se están mirando llegan al instante (16/09) ──

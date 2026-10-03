@@ -37796,6 +37796,9 @@ function _tdKeepPolling(res) {
   if (_tdLiveNoPoll) { _tdIdleSince = 0; _tdFinGrace = 0; return false; }   // finalizado a mano → nunca sondear
   if (!res || !res.roundsWithGames || !res.roundsWithGames.length) return false;
   if (res.roundsWithGames.some(function(r){ return r.live; })) { _tdIdleSince = 0; _tdFinGrace = _TD_FIN_GRACE; return true; }
+  var _jsm = _tdJugandoSinMarca(res);   // null = no hay partidas en juego; false = hay, pero quietas hace rato
+  if (_jsm) { _tdIdleSince = 0; _tdFinGrace = _TD_FIN_GRACE; return true; }
+  if (_jsm === false) { _tdIdleSince = 0; return false; }
   var pendiente;
   if (res._si) {
     // sichess: del config sabemos cuántas rondas tiene el torneo. Entre rondas (todas las cargadas
@@ -37826,7 +37829,28 @@ function _tdKeepPolling(res) {
   return (Date.now() - (res._odLastFin || _tdIdleSince)) <= _TD_MAX_IDLE_MS;
 }
 
-function _tdLiveStop() { _tdFocusStop(); if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; } _tdLivePolling = false; _tdLiveNoPoll = false; _tdLivePace = ''; _tdStopWatchdog(); _tdPollGen++; _tdLiveCtx = null; _tdIdleSince = 0; _tdFinGrace = 0; _tdFetchFails = 0; _tdLastGood = 0; _tdStopClocks(); mevAbort(); }
+// RONDA EN JUEGO QUE LICHESS NO MARCA "EN CURSO" (02/10/2026, Mayor de Rosario: las jugadas se cargan a mano,
+// sin relojes). Para _tdKeepPolling era un "hueco entre rondas": a los 20 min de abrir la página dejaba de
+// sondear → los tableros se congelaban y el análisis dejaba de ser "en vivo" (_fa.live) y mostraba los
+// comentarios con la partida en juego. Ahora: ronda sin terminar con partidas "*" cuyas jugadas SIGUEN
+// llegando = en vivo. Si nada se mueve en _TD_MAX_QUIETO_MS, se rinde (transmisión abandonada).
+var _TD_MAX_QUIETO_MS = 30 * 60 * 1000;
+var _tdMovSig = '', _tdMovAt = 0;
+function _tdJugandoSinMarca(res) {
+  var sig = [];
+  res.roundsWithGames.forEach(function(r){
+    if (!r || r.finished || !r.games) return;
+    r.games.forEach(function(g){
+      var p = typeof g === 'string' ? g : (g && g.pgn) || '';
+      if (/\[Result\s+"\*"\]/.test(p)) sig.push(p.length);
+    });
+  });
+  if (!sig.length) return null;
+  var s = sig.join(','), now = Date.now();
+  if (s !== _tdMovSig || !_tdMovAt) { _tdMovSig = s; _tdMovAt = now; }
+  return now - _tdMovAt <= _TD_MAX_QUIETO_MS;
+}
+function _tdLiveStop() { _tdFocusStop(); if (_tdLiveTimer) { clearTimeout(_tdLiveTimer); _tdLiveTimer = null; } _tdLivePolling = false; _tdLiveNoPoll = false; _tdLivePace = ''; _tdStopWatchdog(); _tdPollGen++; _tdLiveCtx = null; _tdIdleSince = 0; _tdFinGrace = 0; _tdMovSig = ''; _tdMovAt = 0; _tdFetchFails = 0; _tdLastGood = 0; _tdStopClocks(); mevAbort(); }
 
 function _tdLoadLiveGames(broadcastId, broadcastUrl, name, location, pgnKey, typ, status, hasFallback) {
   // OJO: NO prender acá _tdLivePolling. Al abrir en PESTAÑA NUEVA todavía no sabemos si el torneo está
