@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2219;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2244;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -5976,7 +5976,7 @@ console.log('\n=== 53f. Visor en el teléfono: tocar piezas y gráfico al cambia
   // 4) Con el motor del visor prendido, las miniaturas le piden una pausa (19/09).
   const T = new Function('var _tdLiveCtx = {}, _MEV_YIELD_DEPTH = 20, Chess = function(){}, env = [], JOBS = [1];'
     + 'var _fa = { running: false }, _mev = {}, sf = {}, _thr = { running: false }, _pla = { running: false };'
-    + 'function mevAbort(){} function sfStart(){} function mevCollect(){ return JOBS; } function _repSync(){}'
+    + 'function mevAbort(){} function sfStart(){} function mevCollect(){ return JOBS; } function _repSync(){} function _pracSobreVisor(){ return false; }'
     + extraerFuncion('mevTick')
     + '; return { tick: function(s, fa){ sf = s; sf.ready = true; sf.engine = { postMessage: function(m){ env.push(m); } }; _fa.running = !!fa; _mev = {}; env.length = 0; mevTick(); return { corre: !!_mev.running, espera: !!_mev.want, pausa: !!_mev.resume, env: env.slice() }; } };')();
   let t = T.tick({ on: false });
@@ -6852,7 +6852,7 @@ console.log('\n=== 53g-quinquies. Gráfico en vivo: una sí y una no, afinar la 
     + '    _cvMobileOn = false, _cvAnalysisStarted = false, _faLiveHidden = false, document = { hidden: false },'
     + '    _FA_RELLENO_TANDA = 6, _FA_RELLENO_MAXMS = 20000, _FA_RELLENO_INTENTOS = 2, _faRellIntentos = {};'
     + 'function _faLiveEligible(){ return true; } function faGetNodes(){ return o.ahora || _fa.nodes; }'
-    + 'function _faNeedsPassEval(i){ return _fa.results[i] == null; } function setTimeout(){ return 1; } function clearTimeout(){}'
+    + 'function _faNeedsPassEval(i){ return _fa.results[i] == null; } function setTimeout(){ return 1; } function clearTimeout(){} function _pracSobreVisor(){ return false; }'
     + ['_faWinP', '_faCederRelleno', '_faRellenarSiLibre'].map(extraerFuncion).join('\n')
     + '; _faRellenarSiLibre(); return { fa: _fa, mev: _mev, posts: posts, sf: sf };')(o);
   const nodos = Array.from({ length: 40 }, (_, k) => ({ fen: 'g' + k }));
@@ -8860,7 +8860,7 @@ console.log('\n=== Probar cambios ===');
       && !HA({ on: false }, { running: false }, null), 'cuenta como herramienta abierta: Probar cambios, planes calculando o la caja de planes a la vista');
   chk(extraerFuncion('_cvLiveExtendInPlace').includes('if (_cvHerramientaAbierta()) followLive = false;'),
       '🔒 en vivo, con una herramienta abierta, no salta a la jugada nueva: queda "Volver a la jugada en directo"');
-  chk(/if \(_fa\.running\) return;\s*\n(\s*\/\/[^\n]*\n)+\s*if \(_thr\.running \|\| _pla\.running\) \{/.test(extraerFuncion('faLiveEngineStart'))
+  chk(/if \(_fa\.running\) return;\s*\n(\s*\/\/[^\n]*\n)+\s*if \(_thr\.running \|\| _pla\.running \|\| _pracSobreVisor\(\)\) \{/.test(extraerFuncion('faLiveEngineStart'))
       && extraerFuncion('faToggle').includes('if (_thr.running || _pla.running) return;'),
       '🔒 el gráfico en vivo espera a que terminen ¿Qué amenaza?/Buscar planes (si no, se quedaba con su respuesta y los trababa)');
 }
@@ -9101,6 +9101,133 @@ console.log('\n── Portada de aperturas ──');
   chk(/Todavía no hay medición/.test(sinDato) && /Sobra lugar/.test(hV) && /1,5 GB/.test(hV) && /Se está llenando/.test(hA) && /Avisale a Claude/.test(hA)
       && /Muy cerca del tope/.test(hR) && /73 %/.test(hR),
       'el medidor anota el pico del guardado: verde < 50 %, amarillo desde 50 % (avisar), rojo desde 70 %');
+}
+// ── 🤖 Jugáselo al módulo (04/10, pedido del autor): la posición del visor se juega en Practicar ──
+{
+  console.log('\n=== 🤖 Jugáselo al módulo ===');
+  const chessSrcJ = fs.readFileSync(new URL('./assets/chess.min.js', import.meta.url), 'utf8');
+  const _mj = { exports: {} };
+  new Function('module', 'exports', 'window', chessSrcJ)(_mj, _mj.exports, {});
+  const ChessJ = _mj.exports.Chess || _mj.exports;
+  // pracOpenFen: arma la posición "de mentira" y abre Practicar
+  const OF = new Function('Chess', 'var prac = { chess: null }, sf = { engine: null, on: false }, _fa = { running: false }, abrio = 0, armo = 0, cortes = 0;'
+    + 'function pracAnOff(){} function pracStopEngine(){} function pracOpenOverlay(){ abrio++; } function pracSetup(){ armo++; }'
+    + 'function mevAbort(){ cortes++; } function _faCederRelleno(){ cortes++; }'
+    + extraerFuncion('pracOpenFen') + '\n' + extraerFuncion('_pracSobreVisor')
+    + '; return { abrir: function(f, s){ prac.cur = null; return pracOpenFen(f, s); }, get cur(){ return prac.cur; }, get color(){ return prac.humanColor; },'
+    + ' get abrio(){ return abrio; }, get cortes(){ return cortes; }, sobre: _pracSobreVisor };')(ChessJ);
+  const MOj = '2r1k2r/pp1bqppp/2n1p3/3pPn2/3P4/P1N2N2/1P2BPPP/R2Q1RK1 b k - 0 15';
+  chk(OF.abrir(MOj, { origen: 'visor', white: 'Meier', black: 'Oro' }) === true && OF.cur.id === 'fen:' + MOj && OF.cur.sideToMove === 'b'
+      && OF.color === 'b' && OF.cur.origen === 'visor' && OF.cur.source.white === 'Meier' && OF.abrio === 1,
+      'abre Practicar en la posición del tablero: jugás el bando que mueve, y recuerda de qué partida sale', JSON.stringify(OF.cur));
+  chk(OF.sobre() && OF.cortes === 2, 'abierta desde el visor: el motor pasa a ser de Practicar (se cortan las barritas y el relleno del gráfico)');
+  chk(OF.abrir('esto no es un FEN') === false && OF.abrir('7k/6Q1/6K1/8/8/8/8/8 b - - 0 1') === false && OF.abrir('7k/8/6QK/8/8/8/8/8 b - - 0 1') === false,
+      'no abre con un FEN roto, ni con mate o ahogado en el tablero (no hay nada que jugar)');
+  OF.abrir('8/8/8/4k3/8/8/4P3/4K3 w - - 0 1');
+  chk(OF.cur.origen === 'link' && !OF.sobre() && OF.color === 'w', 'sin origen = link compartido (no frena al visor)');
+  // _cvJugarOrigen: "después de 23.Tad1" sale del nodo de la partida
+  const JO = (nodo, extra) => new Function('cv', '_cvTourName', '_qpActivo', SRC.match(/function pgMeta\(pgn\) \{[^]*?\n\}/)[0] + '\n' + extraerFuncion('_cvJugarOrigen')
+    + '; return _cvJugarOrigen();')(Object.assign({ rawPgn: '[Event "Abierto de Mar del Plata"]\n[White "Flores, Diego"]\n[Black "Mecking, Henrique"]\n[Round "3"]\n[Date "2026.01.05"]\n\n1. e4 *', node: nodo }, extra || {}), '', () => false);
+  const o1 = JO({ fen: 'x x x - 0 23'.replace('x x x', '2r2rk1/8/8/8/8/8/8/3R1RK1 b -'), move: { san: 'Rad1' } });
+  const o2 = JO({ fen: '2r2rk1/8/8/8/8/8/8/3R1RK1 w - - 0 16', move: { san: 'Bd7' } });
+  const o3 = JO({ fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1', move: null });
+  chk(o1.jugada === '23.Rad1' && o1.nJug === 23 && o2.jugada === '15…Bd7' && o2.nJug === 15 && !o3.jugada
+      && o1.white === 'Flores, Diego' && o1.tournamentName === 'Abierto de Mar del Plata' && o1.round === '3' && o1.origen === 'visor',
+      'el cartel sabe de qué partida es y después de qué jugada (23.Tad1 de blancas, 15…Ad7 de negras; en la inicial, ninguna)', JSON.stringify([o1, o2]));
+  // _pracFuenteFenHtml: lo que dice a la izquierda
+  const FH = new Function('escHtml', 'cvFanHtml', extraerFuncion('_pracFuenteFenHtml') + '; return _pracFuenteFenHtml;')((s) => String(s), (s) => s);
+  chk(FH({ origen: 'visor', source: { white: 'Flores', black: 'Mecking', jugada: '23.Rad1', tournamentName: 'Mar del Plata', round: '3' } })
+      === 'Posición de la partida entre <b>Flores</b> y <b>Mecking</b>, después de 23.Rad1.<div class="meta">Mar del Plata · Ronda 3</div>'
+      && /^⚖️ Posición de prueba \(con los cambios\) de la partida entre/.test(FH({ origen: 'visor', source: { white: 'A', black: 'B', jugada: '15…Bd7', prueba: true } }))
+      && FH({ origen: 'visor', source: { white: 'A', black: 'B' } }).indexOf('Posición inicial de la partida') === 0
+      && /compartieron/.test(FH({ origen: 'link', source: {} }))
+      && /· Ronda 4<\/div>$/.test(FH({ origen: 'visor', source: { white: 'A', black: 'B', tournamentName: 'T', round: '4.1' } })),
+      'a la izquierda: de qué partida y jugada sale, si es la de prueba de ⚖️ Probar cambios, o que te la compartieron');
+  // ¿Quién tiene el motor? (Practicar espera al gráfico/amenaza/planes; el relleno no cuenta)
+  const MA = (fa, thr, pla) => new Function('_fa', '_thr', '_pla', extraerFuncion('_pracMotorAjeno') + '; return _pracMotorAjeno();')(fa, thr, pla);
+  chk(MA({ running: true, relleno: false }, { running: false }, { running: false }) && MA({ running: false }, { running: true }, { running: false })
+      && MA({ running: false }, { running: false }, { running: true }) && !MA({ running: true, relleno: true }, { running: false }, { running: false })
+      && !MA({ running: false }, { running: false }, { running: false }),
+      'el módulo espera si el gráfico de la partida, ¿Qué amenaza? o Buscar planes tienen el motor (el relleno cede solo)');
+  const HAj = new Function('_qp', '_pla', '_plaFenVista', '_pracSobreVisor', extraerFuncion('_cvHerramientaAbierta') + '; return _cvHerramientaAbierta();');
+  chk(HAj({ on: false }, { running: false }, null, () => true) && !HAj({ on: false }, { running: false }, null, () => false),
+      'con Practicar abierta encima, la jugada que llega en vivo no mueve el visor (queda "Volver a la jugada en directo")');
+  // 🔒 candados: los frenos y la vuelta
+  chk(/if \(_pracSobreVisor\(\)\) return;/.test(extraerFuncion('sfAnalyze')) && /if \(_pracSobreVisor\(\)\) return;/.test(extraerFuncion('sfAnalyzeNow'))
+      && /if \(_pracSobreVisor\(\)\) \{ _mev\.want = true; return; \}/.test(extraerFuncion('mevTick'))
+      && /if \(_pracSobreVisor\(\)\) return;/.test(extraerFuncion('_faRellenarSiLibre')),
+      '🔒 mientras se practica encima, el visor, las barritas y el relleno del gráfico no le sacan el motor');
+  const DC = extraerFuncion('_pracDoClose');
+  chk(DC.includes('var deVisor = _pracSobreVisor();') && DC.includes('if (deVisor) _pracVolverAlVisor();') && /_pracUrlAntes/.test(DC)
+      && /if \(sf\.on\) sfAnalyze\(\);/.test(extraerFuncion('_pracVolverAlVisor')) && /_pracUrlAntes = location\.href/.test(extraerFuncion('pracOpenOverlay')),
+      '🔒 al cerrar vuelve a la dirección de la partida y el visor retoma su motor y sus barritas');
+  chk(/if \(_pracMotorAjeno\(\)\) \{/.test(extraerFuncion('pracEngineMove')) && /clearInterval\(prac\._espera\)/.test(extraerFuncion('pracStopEngine')),
+      '🔒 la jugada del módulo espera a que el motor se libere (y la espera se corta al reiniciar o cerrar)');
+  const RA = extraerFuncion('pracRenderActions');
+  chk(RA.includes('if (!deFen) h += \'<button class="puz-btn" onclick="pracNext()">') && RA.includes('← Volver a la partida')
+      && RA.includes('Compartir posición') && /if \(p\.origen\) return;/.test(extraerFuncion('pracResolveSrcGame'))
+      && /indexOf\('fen:'\) === 0\) \{ pracOpenFen/.test(extraerFuncion('pracOpenById')),
+      '🔒 sin "Otra posición" ni "Ver la partida original"; "Volver a la partida" y "Compartir posición"; el link ?practica=fen: abre la posición');
+  chk((SRC.match(/onclick="cvJugarModulo\(\)"/g) || []).length === 1 && /cv\.is960 && fen\.split\(' '\)\[2\] !== '-'/.test(extraerFuncion('cvJugarModulo')),
+      'el botón está una sola vez (en el visor) y en 960 espera a que no queden enroques');
+  chk(/if \(typeof prac !== 'undefined' && prac\.running\) \{\s*\n\s*prac\.running = false;[^\n]*prac\.wantMove = true;/.test(extraerFuncion('_sfStartLite'))
+      && /prac\.cur && prac\.cur\.origen \? '\.' : ' o cambiá de posición\.'/.test(extraerFuncion('pracResign')),
+      '🔒 si el motor se cae con el módulo pensando, Practicar lo suelta y vuelve a pedir su jugada (si no, se quedaban sin motor ella y el vivo)');
+  // Desde Aperturas (04/10): arrancás del lado de la apertura
+  OF.abrir('rnbqkb1r/1p2pppp/p2p1n2/8/3NP3/2N5/PPP2PPP/R1BQKB1R w KQkq - 0 6', { origen: 'aperturas', apertura: 'Siciliana: Najdorf', color: 'b', jugada: '5…a6' });
+  chk(OF.color === 'b' && OF.cur.sideToMove === 'w' && OF.cur.origen === 'aperturas' && !OF.sobre()
+      && /Posición de la apertura <b>Siciliana: Najdorf<\/b>, después de 5…a6\./.test(FH(OF.cur))
+      && RA.includes('← Volver a la apertura') && /color: \(r && r\[4\]\) \? 'b' : 'w'/.test(extraerFuncion('apJugarModulo'))
+      && (SRC.match(/onclick="apJugarModulo\(\)"/g) || []).length === 1,
+      'Aperturas: la Najdorf se juega con negras (el módulo abre con blancas), con su cartel y "Volver a la apertura"');
+  // 🔗 Compartir en un recuadro: link + FEN + PGN (04/10, estilo chess.com)
+  const PA = new Function(extraerFuncion('pgMeta') + '\n' + extraerFuncion('_cvPgnArchivo') + '; return _cvPgnArchivo;')();
+  chk(PA('[White "Mizzau, Pablo"]\n[Black "Carrizo, Luciano Ariel"]\n\n1. e4 *') === 'Mizzau - Carrizo.pgn' && PA('1. e4 e5 *') === 'partida.pgn'
+      && PA('[White "a/b:c"]\n[Black "d*e?"]\n\n*') === 'abc - de.pgn',
+      'el .pgn se baja como "Blancas - Negras.pgn" (apellidos, sin caracteres que Windows no acepta)');
+  // PGN limpio, sin evaluaciones (04/10): las nuestras {[%eval 0.30]} + [EvalSource], y las de Lichess junto al reloj
+  const SE = new Function(extraerFuncion('_pgnSinEvals') + '; return _pgnSinEvals;')();
+  const nuestro = '[Event "Mayor de Rosario"]\n[White "Petti, Luca"]\n[Black "Sanchez, Christian"]\n[Result "0-1"]\n[EvalSource "aa-sf16"]\n\n1. e4 {[%eval 0.30]} e6 {[%eval 0.33]} 2. d4 {[%eval 0.34]} d5 {[%eval #-3]} 0-1';
+  const lichess = '[Event "X"]\n[Result "*"]\n\n1. e4 { [%eval 0.17] [%clk 1:30:00] } 1... c5 { [%clk 1:29:58] [%eval 0.2] } 2. Nf3 { [%eval 0.1] Buena jugada } *';
+  chk(SE(nuestro) === '[Event "Mayor de Rosario"]\n[White "Petti, Luca"]\n[Black "Sanchez, Christian"]\n[Result "0-1"]\n\n1. e4 e6 2. d4 d5 0-1'
+      && SE(lichess) === '[Event "X"]\n[Result "*"]\n\n1. e4 { [%clk 1:30:00] } 1... c5 { [%clk 1:29:58] } 2. Nf3 { Buena jugada } *'
+      && SE('[Event "Sin evals"]\n\n1. e4 {Linda} e5 *') === '[Event "Sin evals"]\n\n1. e4 {Linda} e5 *',
+      'PGN sin evaluaciones: se van las nuestras (y [EvalSource]) y las de Lichess; quedan los relojes, el texto y los encabezados', JSON.stringify([SE(nuestro), SE(lichess)]));
+  const jugadas = (p) => { const c = new ChessJ(); c.load_pgn(p); return c.history().join(' '); };
+  chk(jugadas(SE(nuestro)) === 'e4 e6 d4 d5' && jugadas(SE(lichess)) === jugadas(lichess) && jugadas(lichess) === 'e4 c5 Nf3',
+      'el PGN limpio tiene exactamente las mismas jugadas (chess.js lo lee igual)');
+  // Completar el PGN con la tabla del torneo (04/10): sólo lo que falta; lo de Lichess (también el Elo) se respeta
+  const TABLA = { 'betito': { title: 'FM', elo: 2210, fide: '111', fed: 'ARG' }, 'dieguito': { title: 'IM', elo: 2400, fide: '222', fed: 'ARG' } };
+  const CJ = new Function('_tourEntryByName', extraerFuncion('_pgnCompletarJugadores') + '; return _pgnCompletarJugadores;')((n, k) => k === 'cr1' ? TABLA[n.toLowerCase()] || null : null);
+  const pelado = '[Event "X"]\n[White "Betito"]\n[Black "Dieguito"]\n[Result "*"]\n\n1. e4 e5 *';
+  chk(CJ(pelado, 'cr1') === '[Event "X"]\n[White "Betito"]\n[Black "Dieguito"]\n[Result "*"]\n[WhiteTitle "FM"]\n[WhiteElo "2210"]\n[WhiteFideId "111"]\n[BlackTitle "IM"]\n[BlackElo "2400"]\n[BlackFideId "222"]\n\n1. e4 e5 *',
+      'Lichess manda sólo "Betito" y "Dieguito": el PGN sale con título, Elo y FIDE id de la tabla (sin federación)', CJ(pelado, 'cr1'));
+  const conElo = '[White "Betito"]\n[Black "Dieguito"]\n[WhiteElo "2150"]\n[BlackElo "?"]\n[WhiteTitle "CM"]\n\n1. e4 *';
+  chk(CJ(conElo, 'cr1') === '[White "Betito"]\n[Black "Dieguito"]\n[WhiteElo "2150"]\n[BlackElo "2400"]\n[WhiteTitle "CM"]\n[WhiteFideId "111"]\n[BlackTitle "IM"]\n[BlackFideId "222"]\n\n1. e4 *',
+      'lo que mandó Lichess se respeta (Elo 2150 y título CM quedan); un "?" cuenta como vacío y se completa', CJ(conElo, 'cr1'));
+  chk(CJ(pelado, null) === pelado && CJ(pelado, 'otra') === pelado && CJ('1. e4 *', 'cr1') === '1. e4 *'
+      && CJ(pelado.replace(/\n/g, '\r\n'), 'cr1').split('\r\n\r\n')[1] === '1. e4 e5 *',
+      'sin tabla del torneo (o si nadie coincide) el PGN sale igual; con saltos de Windows también anda');
+  // FIDE id: la tabla de Chess-Results muchas veces no lo trae → de la base de jugadores, sólo si hay UNO solo
+  const sinFide = { 'betito': { title: 'FM', elo: 2210, fide: '' } };
+  const CJ2 = new Function('_tourEntryByName', extraerFuncion('_pgnCompletarJugadores') + '; return _pgnCompletarJugadores;')((n) => sinFide[n.toLowerCase()] || null);
+  const base = (n) => n === 'Betito' ? '999' : '';
+  chk(/\[WhiteFideId "999"\]/.test(CJ2(pelado, 'cr1', base)) && !/BlackFideId/.test(CJ2(pelado, 'cr1', base))
+      && /\[WhiteFideId "999"\]/.test(CJ2(pelado, null, base)) && !/WhiteTitle/.test(CJ2(pelado, null, base))
+      && CJ2('[White "Betito"]\n[WhiteFideId "123"]\n\n*', null, base) === '[White "Betito"]\n[WhiteFideId "123"]\n\n*',
+      'sin FIDE id en la tabla, sale de la base de jugadores (también en partidas sueltas); el que mandó Lichess no se pisa');
+  const FB = (players) => new Function('PLAYERS', 'pgnNameMatchesPlayer', extraerFuncion('_cvFideDeLaBase') + '; return _cvFideDeLaBase;')(players, (n, p) => p.ap === n.split(',')[0]);
+  chk(FB([{ ap: 'Flores', fide_id: '100' }, { ap: 'Mecking', fide_id: '200' }])('Flores, Diego') === '100'
+      && FB([{ ap: 'Flores', fide_id: '100' }, { ap: 'Flores', fide_id: '101' }])('Flores, D.') === ''
+      && FB([{ ap: 'Flores' }])('Flores, Diego') === '',
+      'FIDE id de la base: con un solo jugador que coincide, ése; con dos (hermanos, iniciales) ninguno: mejor nada que uno equivocado');
+  const CA = extraerFuncion('cvCompartirAbrir');
+  chk(!/onclick="cvCopy(Fen|Pgn)\(\)"/.test(SRC) && (SRC.match(/onclick="cvCompartirAbrir\(\)"/g) || []).length === 1
+      && CA.includes("data-k=\"' + k + '\"") && CA.includes('data-k="pgn"') && CA.includes('navigator.share ?') && CA.includes('cv-sh-bajar'),
+      'un solo botón Compartir: link, FEN y PGN con su iconito de copiar, el menú de redes (si el aparato lo tiene) y bajar el .pgn');
+  chk(CA.includes("window.addEventListener('keydown', onKey, true)") && /if \(e\.key === 'Escape'\) \{ e\.preventDefault\(\); e\.stopPropagation\(\); cerrar\(\)/.test(CA)
+      && CA.includes("window.addEventListener('popstate', cerrar)"),
+      '🔒 Esc cierra sólo el recuadro (no la partida de abajo) y el Atrás del celular no lo deja flotando');
 }
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
 console.log('   Corrieron ' + corridas + ' de ' + ESPERADAS + ' comprobaciones.'
