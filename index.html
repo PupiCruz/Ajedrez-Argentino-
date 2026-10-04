@@ -30569,6 +30569,13 @@ var sf = { engine:null, loading:false, ready:false, on:false, depth:0, lines:[nu
 // 14 es un buen equilibrio: SF18 ya es confiable a esa prof. (el salto feo era a 12) y aparece más
 // rápido que a 16. Hasta entonces se conserva el valor de la jugada anterior (correcto).
 var _SF_BAR_MINDEPTH = 14;
+// …pero esa espera es para no PISAR un valor bueno que ya está en pantalla. Si el panel está VACÍO
+// ('…' / '—': partida recién abierta, o posición sin eval conocida), esperar a prof. 14 hacía que en
+// el teléfono pareciera que el módulo no andaba (03/10/2026, lo pidió el autor). En ese caso el número,
+// la barra y las líneas aparecen desde prof. 10 y se van afinando; el gráfico y "Probar cambios"
+// siguen tomando la lectura recién a prof. 14.
+var _SF_SHOW_MINDEPTH = 10;
+var _sfScoreTemprano = true, _sfLineasTemprano = true;
 // La barra se mueve a lo sumo cada _SF_BAR_THROTTLE_MS: `go infinite` emite una eval nueva cada ~50ms
 // (prof. 12,13,14…) y aplicarlas todas hacía que la barra zigzagueara (sube, baja, se acomoda). Con el
 // acelerador, cada paso alcanza a asentarse antes del siguiente → escalones limpios que convergen.
@@ -30901,7 +30908,9 @@ function sfAnalyzeNow() {
   // la sembramos con la mejor eval que ya tengamos de ESTA posición: el [%eval] del PGN (Lichess) o,
   // en vivo, la eval PROFUNDA que el gráfico acaba de calcular (_faLiveCache). Así el número arranca
   // en el valor correcto y el motor solo lo afina — nunca muestra el signo dado vuelta de prof. 1-2.
-  var _seed = (cv.node && cv.node.move && cv.node.move.ev && !_qpActivo())   // ⚖️ la de la partida no sirve para la prueba
+  // ⚖️ La de la partida no sirve para la prueba. OJO con el orden: `ev && !_qpActivo()` devolvía el
+  // BOOLEANO true (no la eval) y el número salía "NaN" hasta prof. 14 (03/10/2026, lo vio el autor).
+  var _seed = (!_qpActivo() && cv.node && cv.node.move && cv.node.move.ev)
            || (typeof _faLiveCache !== 'undefined' && cv.chess && _faLiveCache[cv.chess.fen()])
            || null;
   // La siembra exige la MISMA vara que la barra (_SF_BAR_MINDEPTH): una eval del caché calculada a
@@ -30918,6 +30927,7 @@ function sfAnalyzeNow() {
     document.getElementById('sf-score').textContent = '…';
     document.getElementById('sf-score').className = 'sf-score sf-neu';
   }
+  _sfScoreTemprano = !_seed;   // sin nada que mostrar: el número aparece desde _SF_SHOW_MINDEPTH
   // Las 3 líneas de variantes NO se borran a "—" al llegar la jugada: se conservan las anteriores
   // hasta que el motor tenga las nuevas a profundidad confiable (sfUpdateUI las cambia recién en
   // prof. _SF_BAR_MINDEPTH). Así el panel no parpadea ni "reinicia" en cada jugada del vivo.
@@ -31101,6 +31111,8 @@ function sfUpdateUI() {
   // las evals que entran de la posición anterior, cuando el tablero ya avanzó, salían del bando contrario.
   var flip = sf.curSide === 'b';
   var main = sf.lines[0];
+  var _minNum = _sfScoreTemprano ? _SF_SHOW_MINDEPTH : _SF_BAR_MINDEPTH;   // panel vacío: no hacer esperar
+  var _minLin = _sfLineasTemprano ? _SF_SHOW_MINDEPTH : _SF_BAR_MINDEPTH;
   if (main && sf.depth >= _SF_BAR_MINDEPTH && sf.curFen) {   // la miniatura de esta posición, con la misma eval
     _tdMiniFromDeep(sf.curFen, main.score.mate !== undefined ? { mate: flip ? -main.score.mate : main.score.mate }
                                                             : { cp: flip ? -main.score.cp : main.score.cp }, sf.depth);
@@ -31112,7 +31124,7 @@ function sfUpdateUI() {
     // (prof. 1-5) son ruidosas y hacían "saltar" la barra en cada jugada. El número sí se
     // actualiza siempre. Hasta entonces la barra queda en el valor sembrado (ver sfAnalyzeNow).
     var _now = (window.performance && performance.now) ? performance.now() : Date.now();
-    if (sf.depth >= _SF_BAR_MINDEPTH && (_now - _sfBarLastT >= _SF_BAR_THROTTLE_MS)) {
+    if (sf.depth >= _minNum && (_now - _sfBarLastT >= _SF_BAR_THROTTLE_MS)) {
       _sfBarLastT = _now;
       var pct = sfBarPct(main.score, flip);
       if (cv.flipped) pct = 100 - pct;
@@ -31125,10 +31137,12 @@ function sfUpdateUI() {
     // instante (ej. -7.2 cuando la posición es +6, porque prof. 1-2 ve el material antes de la
     // recaptura). Hasta prof. _SF_BAR_MINDEPTH se conserva el valor sembrado (jugada anterior o
     // gráfico, ya normalizado a blancas en sfAnalyzeNow).
-    if (sf.depth >= _SF_BAR_MINDEPTH) {
+    if (sf.depth >= _minNum) {
       var scoreEl = document.getElementById('sf-score');
       scoreEl.textContent = sfScoreStr(main.score, flip);
       scoreEl.className = 'sf-score ' + sfScoreCls(main.score, flip);
+    }
+    if (sf.depth >= _SF_BAR_MINDEPTH) {
       if (typeof _qp !== 'undefined' && _qp.on) _qpLectura(main, flip, sf.depth, sf.curFen);   // ⚖️ Probar cambios
       // El módulo es la eval MÁS PROFUNDA que tenemos de esta posición (prof. 20-30, en vivo
       // continuo). Su valor alimenta directo el punto del gráfico de ESTA jugada: así la cola del
@@ -31141,7 +31155,9 @@ function sfUpdateUI() {
 
   // three lines — también esperan prof. confiable: hasta _SF_BAR_MINDEPTH se conservan las de la
   // jugada anterior (no se borran ni parpadean con variantes de prof. 1-2 que después cambian).
-  if (sf.depth >= _SF_BAR_MINDEPTH) {
+  // Si estaban vacías ('—'), aparecen desde _SF_SHOW_MINDEPTH.
+  if (sf.depth >= _SF_BAR_MINDEPTH) _sfLineasTemprano = false;   // ya hay líneas firmes: de acá en más se conservan
+  if (sf.depth >= _minLin) {
     for (var i = 0; i < 3; i++) {
       var ln  = sf.lines[i];
       var els = document.getElementById('sf-ls'+i);
@@ -31170,6 +31186,7 @@ function sfUpdateUI() {
 function sfClearLiveDisplay() {
   sf.lines = [null, null, null];
   sf.depth = 0;
+  _sfScoreTemprano = true; _sfLineasTemprano = true;   // panel vacío: mostrar desde _SF_SHOW_MINDEPTH
   var sc = document.getElementById('sf-score');
   if (sc) { sc.textContent = '…'; sc.className = 'sf-score sf-neu'; }
   var sd = document.getElementById('sf-depth'); if (sd) sd.textContent = '';
