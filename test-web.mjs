@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2206;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2219;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -8910,7 +8910,7 @@ console.log('\n── Portada de aperturas ──');
       'los argentinos que más la juegan cuentan el bando dueño (en la Siciliana, negras) y desde 2 partidas', JSON.stringify([sic[5], esp[5]]));
   chk(/var _dbMode = 'portada'/.test(SRC) && /btn\('portada', '🌳 Aperturas'\) \+ btn\('openings', '♟️ Jugada por jugada'\) \+ btn\('search', '🔍 Buscar partidas'\)/.test(SRC),
       'Partidas abre en la portada de aperturas; el buscador es el último botón');
-  chk(extraerFuncion('_fsCollectSaveEntries').includes("rel: 'aperturas-stats.json'") && extraerFuncion('exportGithubData').includes("'data/aperturas-stats.json'")
+  chk(extraerFuncion('_fsSaveJobs').includes("uno('aperturas-stats.json'") && extraerFuncion('exportGithubData').includes("'data/aperturas-stats.json'")
       && /'assets\/aperturas-arbol\.json',/.test(SRC) && extraerFuncion('_apStatsEnsure').includes("fetch('data/aperturas-stats.json' + _dataV())"),
       '🔒 el guardado y el ZIP hornean data/aperturas-stats.json, y el árbol viaja con los assets');
   // El nombre de la apertura en el visor lleva al explorador, y los archivos de aperturas se piden con versión
@@ -8968,6 +8968,139 @@ console.log('\n── Portada de aperturas ──');
   const nativas = new Set(['if', 'return', 'alert', 'confirm', 'event', 'setTimeout', 'window', 'document', 'history', 'location', 'open', 'this', 'handler']);
   const faltan = [...llamadas].filter(n => !nativas.has(n) && !new RegExp('function\\s+' + n.replace(/\$/g, '\\$') + '\\s*\\(|(var|let|const)\\s+' + n + '\\s*=|window\\.' + n + '\\s*=|\\b' + n + '\\s*=\\s*(async\\s+)?function').test(SRC));
   chk(llamadas.size > 200 && faltan.length === 0, '🔒 ningún botón llama a una función que no existe', faltan.join(', ') || llamadas.size);
+}
+
+// ── Guardado más rápido (03/10/2026): 95 s → 58 s con 285.000 partidas, mismos archivos ─────────────
+{
+  console.log('\n=== 💾 Guardado en la carpeta más rápido (03/10) ===');
+  // 1) El libro de aperturas se arma como árbol: tiene que dar EXACTAMENTE el book.json de antes.
+  const BK = new Function(SRC.match(/var _BOOK_MAXPLY = [^\n]*/)[0] + '\n' + extraerFuncion('_buildOpeningBook') + '; return _buildOpeningBook;')();
+  const VIEJO = function (rows) {   // la versión anterior, tal cual (diccionario por línea entera)
+    var _BOOK_MAXPLY = 20, _BOOK_MINCOUNT = 4, _BOOK_NEXTMIN = 2, _BOOK_TOPN = 8;
+    var nodes = Object.create(null);
+    for (var r = 0; r < rows.length; r++) {
+      var moves = rows[r].moves, res = rows[r].r;
+      if (!moves || !moves.length) continue;
+      var lim = Math.min(moves.length, _BOOK_MAXPLY), line = '';
+      for (var i = 0; i <= lim; i++) {
+        var node = nodes[line]; if (!node) node = nodes[line] = { t: 0, next: Object.create(null) };
+        node.t++;
+        var nx = moves[i];
+        if (nx) { var t = node.next[nx]; if (!t) t = node.next[nx] = { c: 0, w: 0, d: 0, b: 0 }; t.c++; if (res === '1-0') t.w++; else if (res === '0-1') t.b++; else if (res === '1/2-1/2') t.d++; }
+        if (i < lim) line = line ? line + ' ' + moves[i] : moves[i];
+      }
+    }
+    var out = {};
+    for (var k in nodes) {
+      var n = nodes[k]; if (n.t < _BOOK_MINCOUNT) continue;
+      var next = [];
+      for (var s in n.next) { var v = n.next[s]; if (v.c >= _BOOK_NEXTMIN || n.t < 10) next.push([s, v.c, v.w, v.d, v.b]); }
+      if (!next.length) continue;
+      next.sort(function (a, b) { return b[1] - a[1]; });
+      out[k] = next.slice(0, _BOOK_TOPN);
+    }
+    return out;
+  };
+  let semilla = 7; const azar = (n) => { semilla = (semilla * 1103515245 + 12345) % 2147483648; return semilla % n; };
+  const jug = ['e4', 'd4', 'c4', 'Nf3', 'e5', 'c5', 'e6', 'Nc6', 'd5', 'Nf6', 'g3', 'Bb5', 'O-O', 'a6'], res = ['1-0', '0-1', '1/2-1/2', '*'];
+  const filas = [];
+  for (let i = 0; i < 4000; i++) { const m = []; const L = azar(30); for (let j = 0; j < L; j++) m.push(jug[azar(j < 4 ? 3 : jug.length)]); filas.push({ moves: m, r: res[azar(4)] }); }
+  filas.push({ moves: [], r: '1-0' }, { moves: null, r: '1-0' });
+  const a = JSON.stringify(BK(filas)), b = JSON.stringify(VIEJO(filas));
+  chk(a === b && a.length > 1000, 'el libro de aperturas armado como árbol da el MISMO book.json (mismas claves, mismo orden)', a.length + ' / ' + b.length);
+
+  // 2) Lista de jugadores preparada una vez por jugador: si el autor lo RENOMBRA, se entera.
+  const NL = new Function(SRC.match(/var _NAME_PARTICLES = [^\n]*/)[0] + '\nvar _nmListCache = new Map();\n'
+    + ['normStr', 'pgnNameToNatural', '_isNameParticle', '_nmListPrep', '_pgnNameMatchesList'].map(extraerFuncion).join('\n') + '; return _pgnNameMatchesList;')();
+  const lista = [{ name: 'Diego Flores' }, { name: 'Sandro Mareco' }];
+  const antes = NL('Flores, Diego', lista) && NL('Mareco Sandro', lista) && !NL('Perez, Juan', lista);
+  lista[0].name = 'Juan Perez';
+  chk(antes && NL('Perez, Juan', lista) && !NL('Flores, Diego', lista), 'la lista de jugadores se prepara una vez, pero un jugador renombrado se vuelve a preparar');
+
+  // 2b) El libro acepta las jugadas como texto ("e4 c5 Nf3"): así el guardado no arma 285.000 arreglos.
+  chk(JSON.stringify(BK(filas.map((f) => ({ moves: f.moves ? f.moves.join(' ') : f.moves, r: f.r })))) === a,
+      'el libro da lo mismo con las jugadas como texto que como arreglo');
+
+  // 3) La memoria del guardado es SÓLO de nombres (normStr). Recordar encabezados y jugadas de cada
+  //    partida sumaba cientos de MB y la pestaña moría con "Out of Memory" (03/10): que no vuelva.
+  const MF = new Function('memo', 'var _splitMemo = memo;\n' + extraerFuncion('normStr') + '; return normStr;');
+  const M = { norm: new Map() }, nCon = MF(M), nSin = MF(null);
+  chk(nCon('Pérez, José') === nSin('Pérez, José') && nCon('Pérez, José') === 'perez jose' && M.norm.size === 1,
+      'con la memoria del guardado prendida, normStr da lo mismo (y lo recuerda)');
+  chk(/_splitMemo = \{ norm: new Map\(\) \}/.test(extraerFuncion('buildSplitData'))
+      && extraerFuncion('buildSplitData').includes('} finally { if (_memoPropio) _splitMemo = null; }')
+      && !['parsePgnHeaders', '_moveBody', '_sanMoves'].some((nm) => extraerFuncion(nm).includes('_splitMemo')),
+      '🔒 el split recuerda sólo nombres, se apaga al terminar, y NO guarda nada por partida (memoria)');
+
+  // 4) Guardado UN ARCHIVO POR VEZ (03/10, "Out of Memory"): antes se armaban todos juntos (~1.100 MB).
+  const fnGen = (nombre) => {   // extraerFuncion no conoce "function*"
+    const i = SRC.indexOf('function* ' + nombre + '('); let d = 0;
+    for (let k = SRC.indexOf('{', i); k < SRC.length; k++) { if (SRC[k] === '{') d++; else if (SRC[k] === '}' && --d === 0) return SRC.slice(i, k + 1); }
+  };
+  const HS = new Function(extraerFuncion('_fsHash') + '\n' + extraerFuncion('_fsHasher') + '; return { uno: _fsHash, mk: _fsHasher };')();
+  const trozos = ['window.X=[', '{"n":"Ståhlberg — Šahovski"}', ',', '{"n":"Пешка 😀"}', '];\n'];
+  const hz = HS.mk(); trozos.forEach((t) => hz.add(t));
+  chk(hz.end() === HS.uno(trozos.join('')), 'la huella de a pedazos da lo mismo que la del texto entero (las guardadas siguen valiendo)', hz.end());
+  const datos = [{ id: 'a', games: ['1. e4'] }, { id: 'b', name: 'Šahovski — "x"' }];
+  const ED = new Function('localStorage', '_dedupById', '_memTournaments', 'getTzConfig', '_troMan', 'getNewsItems', '_collectCrData', '_cgMan', '_embeddedPlayersJs',
+    fnGen('_embeddedDataPedazos') + '; return _embeddedDataPedazos;')(
+    { getItem: () => JSON.stringify([datos[0]]) }, (arr) => arr, [datos[1]], () => ({ tz: -3 }), () => ({ t: 1 }), () => [{ n: 1 }], () => ({ cr2_x: { a: 1 } }), () => ({}), () => 'window.__EMBEDDED_PLAYERS__=[];\n');
+  const viejo = 'window.__EMBEDDED_DATA__=' + JSON.stringify(datos) + ';\n' + 'window.__EMBEDDED_TZ__=' + JSON.stringify({ tz: -3 }) + ';\n'
+    + 'window.__EMBEDDED_TROPHIES__=' + JSON.stringify({ t: 1 }) + ';\n' + 'window.__EMBEDDED_NEWS__=' + JSON.stringify([{ n: 1 }]) + ';\n'
+    + 'window.__EMBEDDED_CR__=' + JSON.stringify({ cr2_x: { a: 1 } }) + ';\n' + 'window.__EMBEDDED_COLG__=' + JSON.stringify({}) + ';\n' + 'window.__EMBEDDED_PLAYERS__=[];\n';
+  chk([...ED()].join('') === viejo, 'embedded-data.js armado de a pedazos (un torneo por vez) sale IGUAL al de antes');
+  const WF2 = new Function('var _fsSubdirCache = null;' + extraerFuncion('_fsWriteFile').replace(/^\s*(async\s+)?function/, 'async function') + ' return _fsWriteFile;')();
+  let intentos = 0; const escrito = {};
+  const dir2 = { async getDirectoryHandle() { return dir2; }, async removeEntry() {},
+    async getFileHandle(n) { return { async createWritable() { let buf = ''; intentos++;
+      return { async write(c) { buf += c; if (intentos === 1) { const e = new Error('cambió'); e.name = 'InvalidStateError'; throw e; } }, async close() { escrito[n] = buf; }, async abort() {} }; } }; } };
+  await WF2(dir2, 'embedded-data.js', { pedazos: function* () { yield 'window.X=['; yield '1,2'; yield '];\n'; } });
+  chk(escrito['embedded-data.js'] === 'window.X=[1,2];\n' && intentos === 2, 'se escribe de a pedazos, y si hay que reintentar los pedazos se rearman', JSON.stringify(escrito) + ' ' + intentos);
+  const SJ = new Function(SRC.match(/var _GAMES_PER_PART = \d+;/)[0] + '\n' + SRC.match(/var _TOUR_PART_CHARS = \d+;/)[0] + '\n' + SRC.match(/var _BOOK_MAXPLY = [^\n]*/)[0] + '\n'
+    + ['_gamesPartCount', '_gamesParts', '_tourFileEntries', '_buildOpeningBook', '_fsSaveJobs'].map(extraerFuncion).join('\n') + '; return { jobs: _fsSaveJobs, parts: _gamesParts, book: _buildOpeningBook };')();
+  const ge = [{ m: 'e4 c5 Nf3', r: '1-0' }, { m: 'e4 c5 Nc3', r: '0-1' }, { m: 'd4', r: '1/2-1/2' }];
+  const split = { gameEntries: ge, apStats: { x: 1 }, tFiles: { 'tz_1': { id: 'tz_1', games: ['1. e4'] } }, pFiles: { 7: [{ pgn: 'p' }] }, crFiles: { cr2_tz_1: { s: 1 } } };
+  const foto = new Uint8Array([9, 9]);
+  const J = SJ.jobs(split, { files: [{ name: 'data/ph/7.jpg', data: foto }] }, [], 'var __DATA_TS__=1;\nM', [{ rel: 'embedded-data.js', arma: () => 'ED' }]);
+  const sal = {}; J.forEach((t) => t.arma().forEach((f) => { sal[f.rel] = f; }));
+  chk(Object.keys(sal).join(' ') === 'embedded-data.js manifest.js games_0.json book.json aperturas-stats.json t/tz_1.json p/7.json cr/cr2_tz_1.json ph/7.jpg'
+      && sal['manifest.js'].ignoreTs && sal['games_0.json'].c === SJ.parts(ge)[0] && sal['ph/7.jpg'].c === foto
+      && sal['book.json'].c === JSON.stringify(SJ.book(ge.map((g) => ({ moves: g.m.split(' '), r: g.r })))) && sal['t/tz_1.json'].c === JSON.stringify(split.tFiles.tz_1),
+      'las tareas del guardado arman los mismos archivos de siempre, cada uno recién cuando le toca', Object.keys(sal).join(' '));
+  const ED2 = extraerFuncion('exportDataFile');
+  chk(ED2.includes('_fsSaveJobs(split, photos, flyers, manifest, _authorJobs())') && ED2.includes('jobs[i] = null') && !ED2.includes('_fsCollectSaveEntries'),
+      '🔒 el guardado con carpeta arma, compara y escribe un archivo por vez (no todos juntos)');
+}
+// ── Modo autor: el libro del visor sale de data/book.json + medidor de memoria (03/10/2026) ──────────
+{
+  console.log('\n=== 📖 Libro del visor desde data/book.json y 🧠 medidor de memoria (03/10) ===');
+  const W1 = {};
+  const mkLB = (fetchFn) => new Function('_ondemand', 'fetch', '_buildObIndex', '_buildOpeningBook', 'window', 'setTimeout',
+    'var _obIdx = null; var _bookLoading = false, _bookCbs = [];\n' + extraerFuncion('_bookReady') + '\n' + extraerFuncion('_loadBookAsync') + '; return _loadBookAsync;')(
+    false, fetchFn, () => { throw new Error('no debería armar el índice'); }, () => ({ armado: 1 }), W1, (f) => f());
+  let pidio = '';
+  await new Promise((ok) => mkLB((u) => { pidio = u; return Promise.resolve({ ok: true, json: () => Promise.resolve({ '': [['e4', 5, 2, 1, 2]] }) }); })(ok));
+  chk(/^data\/book\.json\?v=\d+$/.test(pidio) && W1.__BOOK__ && W1.__BOOK__[''][0][0] === 'e4',
+      'modo autor: el libro del visor se lee del data/book.json del último guardado (no se arma desde toda la base)', pidio);
+  const W2 = {}; let armo = false;
+  const LB2 = new Function('_ondemand', 'fetch', '_buildObIndex', '_buildOpeningBook', 'window', 'setTimeout',
+    'var _obIdx = [{ moves: ["d4"], result: "1-0" }]; var _bookLoading = false, _bookCbs = [];\n' + extraerFuncion('_bookReady') + '\n' + extraerFuncion('_loadBookAsync') + '; return _loadBookAsync;')(
+    false, () => Promise.resolve({ ok: false }), () => {}, () => { armo = true; return { d4: [] }; }, W2, (f) => f());
+  await new Promise((ok) => LB2(ok));
+  chk(armo && W2.__BOOK__ && W2.__BOOK__.d4, 'si data/book.json no está (nunca se guardó en la carpeta), lo arma como antes');
+
+  const ls = new Map();
+  const MM = (usado) => new Function('performance', 'localStorage', SRC.match(/var _MEM_AMARILLO = [^\n]*/)[0] + '\n'
+    + ['_memAhora', '_memMuestra', '_memGuardarPico', '_memGb', '_memMedidorHtml'].map(extraerFuncion).join('\n')
+    + '; return { muestra: _memMuestra, guardar: _memGuardarPico, html: _memMedidorHtml, set p(v) { _memPicoGuardado = v; } };')(
+    { memory: { usedJSHeapSize: usado, jsHeapSizeLimit: 4.4e9 } }, { getItem: (k) => ls.has(k) ? ls.get(k) : null, setItem: (k, v) => ls.set(k, String(v)) });
+  const sinDato = MM(1e9).html();
+  const verde = MM(1.5e9); verde.muestra(); verde.guardar(); const hV = verde.html();
+  const amar = MM(2.4e9); amar.muestra(); amar.guardar(); const hA = amar.html();
+  const rojo = MM(3.2e9); rojo.muestra(); rojo.guardar(); const hR = rojo.html();
+  chk(/Todavía no hay medición/.test(sinDato) && /Sobra lugar/.test(hV) && /1,5 GB/.test(hV) && /Se está llenando/.test(hA) && /Avisale a Claude/.test(hA)
+      && /Muy cerca del tope/.test(hR) && /73 %/.test(hR),
+      'el medidor anota el pico del guardado: verde < 50 %, amarillo desde 50 % (avisar), rojo desde 70 %');
 }
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
 console.log('   Corrieron ' + corridas + ' de ' + ESPERADAS + ' comprobaciones.'

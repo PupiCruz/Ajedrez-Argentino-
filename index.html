@@ -15821,6 +15821,7 @@ function exportTabInit() {
   h += '<div style="font-size:12px;color:var(--text2);margin-bottom:10px;line-height:1.5">💾 <b style="color:var(--text2)">Guardar en tu carpeta.</b> Deja al día <i>tu carpeta principal</i> (torneos, fotos, flyers y lo que lee la web). <b style="color:var(--text2)">Es lo que usás todos los días.</b></div>';
   h += '<button onclick="exportDataFile()" style="width:100%;padding:13px;background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-size:14px;font-weight:700;border-radius:10px;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:9px;margin-bottom:22px">';
   h += _dlSvg + '<span>Guardar datos en mi carpeta</span></button>';
+  if (!_ondemand) h += _memMedidorHtml();   // 🧠 pico de memoria del último guardado (ver _MEM_AMARILLO)
 
   // BOTÓN — Liberar espacio del navegador (cuando aparece "Sin espacio en localStorage")
   h += '<div style="font-size:12px;color:var(--text3);margin:-8px 0 10px;line-height:1.5">🧹 <b style="color:var(--text2)">¿Te salió <span style="color:var(--gold)">"Sin espacio en localStorage"</span>?</b> Guardá con 💾 arriba y después apretá este botón. Borra del navegador lo que ya quedó en tu carpeta para hacer lugar. <b style="color:var(--text2)">No se pierde nada.</b></div>';
@@ -16817,7 +16818,16 @@ function _tourManifestMeta(entry) {
 //   - pFiles:   { playerId: [{tourName,tourLocation,pgn}] }     → 1 archivo por jugador (perfil)
 // El match jugador↔partida replica EXACTO a gatherGamesForPlayer (FideId, o nombre si el lado
 // no tiene un FideId distinto). pFiles ya viene deduplicado (White|Black|Date|Round), como el perfil.
+// Memoria del guardado (03/10/2026). Mientras se arma el split, los mismos NOMBRES pasan por normStr
+// millones de veces: mientras _splitMemo está prendido, normStr recuerda lo que ya calculó; al terminar
+// se apaga y se suelta. OJO: sólo nombres (chico). Recordar también los encabezados y las jugadas de
+// cada PARTIDA ahorraba ~10 s pero sumaba cientos de MB, y el guardado ya roza el tope de memoria de
+// Chrome ("Out of Memory", 03/10/2026): no volver a hacerlo.
+var _splitMemo = null;
 function buildSplitData() {
+  var _memoPropio = !_splitMemo;
+  if (_memoPropio && typeof Map === 'function') _splitMemo = { norm: new Map() };
+  try {
   var all = _collectAllTournaments();
   var fideToPid = {}, byLastToken = {};
   PLAYERS.forEach(function(p) {
@@ -16825,12 +16835,14 @@ function buildSplitData() {
     var toks = nameTokens(p.name);
     if (toks.length) { var last = toks[toks.length - 1]; (byLastToken[last] = byLastToken[last] || []).push(p); }
   });
+  var _candMemo = Object.create(null);   // el mismo nombre aparece en cientos de partidas: se calcula una vez
   function nameCandidates(pgnName) {
     if (!pgnName) return [];
+    if (_candMemo[pgnName]) return _candMemo[pgnName];
     var toks = nameTokens(normStr(pgnNameToNatural(pgnName))), cands = {}, out = [];
     for (var i = 0; i < toks.length; i++) { var arr = byLastToken[toks[i]]; if (arr) for (var k = 0; k < arr.length; k++) cands[arr[k].id] = arr[k]; }
     for (var id in cands) out.push(cands[id]);
-    return out;
+    return (_candMemo[pgnName] = out);
   }
   var tournaments = [], playerIndex = {}, tFiles = {}, pFiles = {}, pSeen = {}, metaSeen = {}, dkeyPl = {};
   var metaCr = {};   // id de torneo → datos para hornear su radiografía (ver _stBakeForPublish)
@@ -16909,6 +16921,7 @@ function buildSplitData() {
       }
     });
   });
+  _memMuestra();
   // Dedup de ids repetidos en cada lista de playerIndex (la data tiene torneos duplicados).
   for (var ipid in playerIndex) {
     var arr2 = playerIndex[ipid], outp = [], seenp = {};
@@ -16936,6 +16949,10 @@ function buildSplitData() {
       if (_arbolFuera(pgn, _histArb, h)) gameEntries[gameEntries.length - 1].na = 1;   // histórico sin argentinos: no va al árbol
     });
   });
+  // Soltar lo que ya no se usa (gSeen guarda las jugadas de CADA partida, ~100 MB): el guardado roza el
+  // tope de memoria de Chrome y lo que sigue (cuadros, radiografías) también ocupa.
+  _memMuestra();   // medidor de memoria: acá adentro está el pico real del guardado
+  gSeen = null; dkeyPl = null; pSeen = null;
   // Stats W/D/L por jugador, precomputadas desde pFiles para que la web publicada
   // las muestre en el listado sin necesidad de cargar las partidas de cada jugador.
   var pidToPlayer = {};
@@ -17073,6 +17090,7 @@ function buildSplitData() {
   // Colgadas de la ronda aceptadas por el autor: viajan en el archivo de su torneo (se bajan al abrirlo).
   try { var _cgm = _cgMan(); Object.keys(_cgm).forEach(function(id){ if (tFiles[id]) { var pub = _cgPublicable(_cgm[id]); if (pub) tFiles[id].colgadas = pub; } }); } catch (e) {}
   return { manifest: { tournaments: tournaments, playerIndex: playerIndex, playerStats: playerStats, playerAwards: playerAwards }, tFiles: tFiles, pFiles: pFiles, gameEntries: gameEntries, gamePl: gamePl, crFiles: crFiles, crIndex: crIndex, crNames: crNames, crBaked: crBaked };
+  } finally { if (_memoPropio) _splitMemo = null; }
 }
 
 function pgnDeleteTorneo(id) {
@@ -17539,7 +17557,19 @@ async function _fsWriteFile(dir, rel, content) {
       if (intento === INTENTOS) { try { await d.removeEntry(name); } catch (e) {} }   // último recurso: de cero
       var fh = await d.getFileHandle(name, { create: true });
       var w = await fh.createWritable();
-      try { await w.write(content); await w.close(); }
+      try {
+        if (content && typeof content.pedazos === 'function') {
+          // Archivo gigante de a pedazos (embedded-data.js): se juntan de a ~4 millones de letras y se
+          // escriben, sin armar nunca el texto entero. Si hay que reintentar, los pedazos se rearman.
+          var buf = [], lb = 0, it = content.pedazos();
+          for (var p = it.next(); !p.done; p = it.next()) {
+            buf.push(p.value); lb += p.value.length;
+            if (lb >= 4e6) { await w.write(buf.join('')); buf = []; lb = 0; }
+          }
+          if (buf.length) await w.write(buf.join(''));
+        } else await w.write(content);
+        await w.close();
+      }
       catch (e) { try { await w.abort(); } catch (e2) {} throw e; }
       return;
     } catch (err) {
@@ -17566,6 +17596,63 @@ function _fsHash(content, ignoreFirstLine) {
     for (i = 0; i < n; i++) { h1 = Math.imul(h1 ^ b[i], 0x01000193); h2 = Math.imul(h2 ^ b[i], 0x85ebca6b); }
   }
   return (h1 >>> 0).toString(36) + (h2 >>> 0).toString(36) + ':' + n;
+}
+
+// Huella de un archivo que se arma DE A PEDAZOS (embedded-data.js, ~340 MB): da EXACTAMENTE lo mismo
+// que _fsHash(pedazos.join('')) —las huellas guardadas siguen valiendo— pero sin juntar nunca el texto
+// entero en memoria (03/10/2026, "Out of Memory" al guardar). Misma cuenta que la rama de texto de _fsHash.
+function _fsHasher() {
+  var h1 = 0x811c9dc5, h2 = 0xc2b2ae35, n = 0;
+  return {
+    add: function (s) {
+      var L = s.length;
+      for (var i = 0; i < L; i++) { var c = s.charCodeAt(i); h1 = Math.imul(h1 ^ c, 0x01000193); h2 = Math.imul(h2 ^ c, 0x85ebca6b); }
+      n += L;
+    },
+    end: function () { return (h1 >>> 0).toString(36) + (h2 >>> 0).toString(36) + ':' + n; }
+  };
+}
+
+// ── Medidor de memoria (03/10/2026) ──────────────────────────────────────────────────────────
+// Chrome le da a cada pestaña un tope de memoria (~4,4 GB). En modo autor todas las partidas viven en
+// la pestaña y el guardado necesita bastante más encima: si se pasa del tope, la pestaña muere con
+// "Out of Memory" (pasó el 03/10/2026 con 285.000 partidas, antes de guardar de a un archivo). Cada
+// guardado anota su PICO y la pestaña de guardado lo muestra con colores, para enterarse meses antes:
+//   verde    < 50 % del tope  → sobra lugar
+//   amarillo 50–70 %          → avisarle a Claude: encarar el modo autor "por demanda"
+//   rojo     ≥ 70 %           → el guardado puede fallar en cualquier momento
+// performance.memory existe sólo en Chrome/Edge: si no está, el medidor no aparece.
+var _MEM_AMARILLO = 0.5, _MEM_ROJO = 0.7, _memPicoGuardado = 0;
+function _memAhora() {
+  try { var m = performance.memory; if (m && m.jsHeapSizeLimit) return { usado: m.usedJSHeapSize, tope: m.jsHeapSizeLimit }; } catch (e) {}
+  return null;
+}
+function _memMuestra() { var m = _memAhora(); if (m && m.usado > _memPicoGuardado) _memPicoGuardado = m.usado; }
+function _memGuardarPico() {
+  var m = _memAhora(); if (!m || !_memPicoGuardado) return;
+  try { localStorage.setItem('aa_mem_pico', JSON.stringify({ pico: _memPicoGuardado, tope: m.tope, at: Date.now() })); } catch (e) {}
+}
+function _memGb(b) { return (b / 1e9).toFixed(1).replace('.', ',') + ' GB'; }
+function _memMedidorHtml() {
+  var ahora = _memAhora(); if (!ahora) return '';
+  var u = null; try { u = JSON.parse(localStorage.getItem('aa_mem_pico') || 'null'); } catch (e) {}
+  var tope = (u && u.tope) || ahora.tope, frac = u && u.pico ? u.pico / tope : null;
+  var col = frac == null ? 'var(--text3)' : frac >= _MEM_ROJO ? '#d04040' : frac >= _MEM_AMARILLO ? '#e0a020' : '#28a05a';
+  var fondo = frac == null ? 'var(--bg3)' : frac >= _MEM_ROJO ? 'rgba(208,64,64,.12)' : frac >= _MEM_AMARILLO ? 'rgba(200,140,20,.12)' : 'rgba(40,160,90,.10)';
+  var msg = frac == null ? 'Todavía no hay medición: se toma en el próximo guardado.'
+    : frac >= _MEM_ROJO ? '<b style="color:' + col + '">Muy cerca del tope.</b> El guardado puede fallar con "Out of Memory". Avisale a Claude ya.'
+    : frac >= _MEM_AMARILLO ? '<b style="color:' + col + '">Se está llenando.</b> Avisale a Claude: conviene encarar el modo autor "por demanda".'
+    : '<b style="color:' + col + '">Sobra lugar.</b>';
+  var pct = frac == null ? 0 : Math.min(100, Math.round(frac * 100));
+  var h = '<div style="margin:-8px 0 22px;padding:11px 13px;border-radius:10px;background:' + fondo + ';border:1px solid var(--border)">';
+  h += '<div style="font-size:12.5px;color:var(--text2);line-height:1.45;margin-bottom:8px">🧠 <b style="color:var(--text2)">Memoria del guardado</b>'
+     + (u && u.pico ? ': el último llegó a <b>' + _memGb(u.pico) + '</b> de ' + _memGb(tope) + ' (' + pct + ' %)' : '') + '. ' + msg + '</div>';
+  h += '<div role="img" aria-label="Memoria usada en el último guardado: ' + pct + ' por ciento del tope" style="position:relative;height:8px;background:var(--bg3);border:1px solid var(--border);border-radius:20px;overflow:hidden">'
+     + '<div style="position:absolute;top:0;left:0;height:100%;width:' + pct + '%;background:' + col + '"></div>'
+     + '<div style="position:absolute;top:0;bottom:0;left:' + (_MEM_AMARILLO * 100) + '%;width:1px;background:#e0a020"></div>'
+     + '<div style="position:absolute;top:0;bottom:0;left:' + (_MEM_ROJO * 100) + '%;width:1px;background:#d04040"></div></div>';
+  h += '<div style="font-size:11px;color:var(--text3);margin-top:6px">Ahora, sin guardar: ' + _memGb(ahora.usado) + '. Amarillo desde el 50 %, rojo desde el 70 %.</div>';
+  return h + '</div>';
 }
 
 // ── Barra de progreso del guardado ───────────────────────────────────────────────────────────
@@ -17675,45 +17762,56 @@ async function exportDataFile() {
   }
 
   // ── CON carpeta: guardado unificado e incremental, con barra de progreso ──
+  // UN ARCHIVO POR VEZ (03/10/2026). Antes se armaban TODOS los archivos juntos (~1.100 MB de texto) y
+  // recién después se comparaban y escribían: sumado a los datos que la app ya tiene cargados, Chrome
+  // llegaba a su tope (~4 GB por pestaña) y la pestaña moría con "Out of Memory". Ahora cada archivo se
+  // arma, se compara con su huella, se escribe si cambió y se suelta antes de pasar al siguiente.
   _saveProgressShow('Guardando en tu carpeta…');
   await _paint();
+  _memPicoGuardado = 0; _memMuestra();   // medidor de memoria: anotar el PICO de este guardado
   try {
     _saveProgressIndeterminate('Preparando datos… (puede tardar unos segundos)');
     await _paint();
     var split    = buildSplitData();
+    _memMuestra();
     try { split.apStats = await _apStatsForSplit(split); } catch (e) {}
     var photos   = _collectExportPhotoFiles();          // { index, files:[{name,data:bytes}] }
     var flyers   = _collectExportFlyerFiles();          // [{name,data:bytes}]
     var manifest = _manifestJsFromSplit(split, Date.now(), photos.index);
-    var entries  = _fsCollectSaveEntries(_authorFiles(), split, photos, flyers, manifest);
+    var jobs     = _fsSaveJobs(split, photos, flyers, manifest, _authorJobs());
+    split = null; photos = null; flyers = null; manifest = null;   // ahora los tienen sólo las tareas
 
-    _saveProgressIndeterminate('Revisando cambios…');
-    await _paint();
     var fps = {};
     try { fps = await _fsLoadFps(dir); } catch (e) {}
-    var toWrite = [];
-    entries.forEach(function (e) {
-      e.hash = _fsHash(e.bytes != null ? e.bytes : e.str, e.ignoreTs);
-      if (fps[e.rel] !== e.hash) toWrite.push(e);
-    });
-
-    var total = toWrite.length, done = 0, falla = null;
+    var total = jobs.length, hechas = 0, escritos = 0, falla = null;
     var cont = { torneos: 0, jugadores: 0, fotos: 0, flyers: 0, cruces: 0, base: 0 };
     _fsSubdirCache = {};   // reusar handles de subcarpeta (t/, p/, ph/, fl/, cr/) entre miles de archivos
-    if (total) { _saveProgressSet(0, total, 'Escribiendo archivos…'); await _paint(); }
-    for (var i = 0; i < toWrite.length; i++) {
-      var e = toWrite[i];
-      try { await _fsWriteFile(dir, e.rel, e.bytes != null ? e.bytes : e.str); fps[e.rel] = e.hash; }
-      catch (err) { falla = e.rel + ': ' + (err && err.message ? err.message : err); break; }
-      done++;
-      if (/^t\//.test(e.rel)) cont.torneos++;
-      else if (/^p\//.test(e.rel)) cont.jugadores++;
-      else if (/^ph\//.test(e.rel)) cont.fotos++;
-      else if (/^fl\//.test(e.rel)) cont.flyers++;
-      else if (/^cr\//.test(e.rel)) cont.cruces++;
-      else cont.base++;
-      if (done % 25 === 0 || done === total) { _saveProgressSet(done, total, 'Escribiendo archivos…'); await _paint(); }
+    _saveProgressSet(0, total, 'Revisando y guardando archivos…'); await _paint();
+    for (var i = 0; i < jobs.length && !falla; i++) {
+      var archivos = jobs[i].arma(); jobs[i] = null;
+      for (var j = 0; j < archivos.length; j++) {
+        var a = archivos[j], c = a.c, hash;
+        if (c && typeof c.pedazos === 'function') {   // archivo gigante: huella de a pedazos (ver _fsHasher)
+          var hh = _fsHasher(), it = c.pedazos();
+          for (var p = it.next(); !p.done; p = it.next()) hh.add(p.value);
+          hash = hh.end();
+        } else hash = _fsHash(c, a.ignoreTs);
+        if (fps[a.rel] === hash) continue;
+        try { await _fsWriteFile(dir, a.rel, c); fps[a.rel] = hash; }
+        catch (err) { falla = a.rel + ': ' + (err && err.message ? err.message : err); break; }
+        escritos++;
+        if (/^t\//.test(a.rel)) cont.torneos++;
+        else if (/^p\//.test(a.rel)) cont.jugadores++;
+        else if (/^ph\//.test(a.rel)) cont.fotos++;
+        else if (/^fl\//.test(a.rel)) cont.flyers++;
+        else if (/^cr\//.test(a.rel)) cont.cruces++;
+        else cont.base++;
+      }
+      archivos = null;
+      hechas++;
+      if (hechas % 40 === 0 || hechas === total) { _memMuestra(); _saveProgressSet(hechas, total, 'Revisando y guardando archivos…'); await _paint(); }
     }
+    jobs = null;
     _fsSubdirCache = null;
     // Sitemap: la lista de direcciones para Google (torneos + perfiles). Se escribe SIEMPRE, aunque
     // no haya cambiado nada más, porque es chico y así nunca queda viejo. Va dentro de data\ porque
@@ -17723,13 +17821,14 @@ async function exportDataFile() {
     // Datos para la vista previa al compartir (los lee el servidor, ver functions/_middleware.js).
     try { await _fsWriteFile(dir, 'og.json', _ogJson()); } catch (e) {}
     try { await _fsSaveFps(dir, fps); } catch (e) {}
+    _memGuardarPico();
     _saveProgressHide();
 
     if (falla) { alert('❌ No se pudo escribir ' + falla + '.\n\nProbá "Elegir carpeta data\\" de nuevo, o usá la descarga.'); return; }
     try { localStorage.setItem('last_export_fp', _estadoActualFp()); } catch (e) {}
     if (typeof exportTabInit === 'function') { try { exportTabInit(); } catch (e) {} }
 
-    if (!total) { alert('✓ Ya estaba todo al día. No hubo cambios para guardar.'); return; }
+    if (!escritos) { alert('✓ Ya estaba todo al día. No hubo cambios para guardar.'); return; }
     var det = [];
     if (cont.torneos)   det.push(cont.torneos + ' torneo' + (cont.torneos !== 1 ? 's' : ''));
     if (cont.fotos)     det.push(cont.fotos + ' foto' + (cont.fotos !== 1 ? 's' : ''));
@@ -17737,7 +17836,7 @@ async function exportDataFile() {
     if (cont.cruces)    det.push(cont.cruces + ' cruce' + (cont.cruces !== 1 ? 's' : ''));
     if (cont.jugadores) det.push(cont.jugadores + ' perfil' + (cont.jugadores !== 1 ? 'es' : ''));
     if (cont.base)      det.push(cont.base + ' base');
-    alert('✅ Guardado en tu carpeta.\n\n' + total + ' archivo' + (total !== 1 ? 's' : '') + ' actualizado' + (total !== 1 ? 's' : '')
+    alert('✅ Guardado en tu carpeta.\n\n' + escritos + ' archivo' + (escritos !== 1 ? 's' : '') + ' actualizado' + (escritos !== 1 ? 's' : '')
       + (det.length ? '  (' + det.join(', ') + ')' : '')
       + '.\n\nPara que salga a la web: doble clic en publicar-web.cmd.');
   } catch (e) {
@@ -17746,28 +17845,67 @@ async function exportDataFile() {
   }
 }
 
-// Junta TODOS los archivos de un guardado completo con carpeta: los de autor (raíz) + los publicables
-// (dentro de data\, sin el prefijo "data/"). Cada entrada lleva `str` (texto) o `bytes` (binario).
-function _fsCollectSaveEntries(authorFiles, split, photos, flyers, manifestJs) {
+// TODOS los archivos de un guardado completo con carpeta, como TAREAS que arman su contenido recién
+// cuando les toca (ver "UN ARCHIVO POR VEZ" en exportDataFile): los de autor (raíz) + los publicables
+// (dentro de data\, sin el prefijo "data/"). Cada tarea: { arma() → [{ rel, c, ignoreTs }] }, con c =
+// texto, bytes (fotos/flyers) o { pedazos: function* } (embedded-data.js). Casi siempre devuelve UN
+// archivo; un torneo enorme devuelve varios (sus pedazos .p2.json…, ver _tourFileEntries).
+function _fsSaveJobs(split, photos, flyers, manifestJs, autor) {
   function tfn(id) { return String(id).replace(/[^a-z0-9_-]/gi, '_') + '.json'; }
-  var E = [];
-  authorFiles.forEach(function (f) { E.push({ rel: f.name, str: f.content }); });   // copia de autor (raíz)
-  E.push({ rel: 'manifest.js', str: manifestJs, ignoreTs: true });                  // lo que lee la web
-  // Índice de partidas + libro de aperturas del visor publicado.
+  function uno(rel, arma, ignoreTs) { return { arma: function () { return [{ rel: rel, c: arma(), ignoreTs: !!ignoreTs }]; } }; }
+  var J = [];
+  autor.forEach(function (a) { J.push(uno(a.rel, a.arma)); });                       // copia de autor (raíz)
+  J.push(uno('manifest.js', function () { return manifestJs; }, true));              // lo que lee la web
+  // Índice de partidas (de a _GAMES_PER_PART, igual que _gamesParts) + libro de aperturas del visor publicado.
   var ge = split.gameEntries;
-  _gamesParts(ge).forEach(function (s, i) { E.push({ rel: 'games_' + i + '.json', str: s }); });
-  var bookRows = ge.map(function (g) { return { moves: (g.m || '').split(' ').filter(Boolean), r: g.r }; });
-  E.push({ rel: 'book.json', str: JSON.stringify(_buildOpeningBook(bookRows)) });
-  if (split.apStats) E.push({ rel: 'aperturas-stats.json', str: JSON.stringify(split.apStats) });   // portada de aperturas
+  for (var gi = 0; gi < _gamesPartCount(ge); gi++) (function (i) {
+    J.push(uno('games_' + i + '.json', function () { return JSON.stringify(ge.slice(i * _GAMES_PER_PART, (i + 1) * _GAMES_PER_PART)); }));
+  })(gi);
+  J.push(uno('book.json', function () {
+    return JSON.stringify(_buildOpeningBook(ge.map(function (g) { return { moves: g.m || '', r: g.r }; })));
+  }));
+  if (split.apStats) { var aps = split.apStats; J.push(uno('aperturas-stats.json', function () { return JSON.stringify(aps); })); }   // portada de aperturas
   // Un archivo por torneo (data/t; los enormes, en pedazos) y por perfil (data/p).
-  Object.keys(split.tFiles).forEach(function (id) { _tourFileEntries(id, split.tFiles[id]).forEach(function (f) { E.push({ rel: 't/' + f.name, str: f.str }); }); });
-  Object.keys(split.pFiles).forEach(function (id) { E.push({ rel: 'p/' + tfn(id), str: JSON.stringify(split.pFiles[id]) }); });
+  var tF = split.tFiles, pF = split.pFiles, crF = split.crFiles || {};
+  Object.keys(tF).forEach(function (id) {
+    J.push({ arma: function () { return _tourFileEntries(id, split.tFiles[id]).map(function (f) { return { rel: 't/' + f.name, c: f.str }; }); } });
+  });
+  Object.keys(pF).forEach(function (id) { J.push(uno('p/' + tfn(id), function () { return JSON.stringify(pF[id]); })); });
   // Cuadros de cruces por demanda (data/cr/<key>.json). La clave ya está saneada (cr2_ + alfanum/_).
-  Object.keys(split.crFiles || {}).forEach(function (k) { E.push({ rel: 'cr/' + k + '.json', str: JSON.stringify(split.crFiles[k]) }); });
+  Object.keys(crF).forEach(function (k) { J.push(uno('cr/' + k + '.json', function () { return JSON.stringify(crF[k]); })); });
   // Fotos (data/ph) y flyers (data/fl) sueltos, binarios. Vienen con nombre "data/…": sacar el prefijo.
-  photos.files.forEach(function (f) { E.push({ rel: f.name.replace(/^data\//, ''), bytes: f.data }); });
-  flyers.forEach(function (f)       { E.push({ rel: f.name.replace(/^data\//, ''), bytes: f.data }); });
-  return E;
+  photos.files.forEach(function (f) { J.push(uno(f.name.replace(/^data\//, ''), function () { return f.data; })); });
+  flyers.forEach(function (f)       { J.push(uno(f.name.replace(/^data\//, ''), function () { return f.data; })); });
+  return J;
+}
+
+// Los 3 archivos de AUTOR como tareas. embedded-data.js (~340 MB) va DE A PEDAZOS, un torneo por vez:
+// sale el mismo texto que 'window.__EMBEDDED_DATA__=' + JSON.stringify(allData) + …, pero sin armarlo
+// entero nunca (ni para la huella ni para escribirlo).
+function _authorJobs() {
+  return [
+    { rel: 'embedded-data.js',   arma: function () { return { pedazos: _embeddedDataPedazos }; } },
+    { rel: 'embedded-photos.js', arma: _collectExportPhotosJs },
+    { rel: 'embedded-flyers.js', arma: _collectExportFlyersJs }
+  ];
+}
+function* _embeddedDataPedazos() {
+  var stored  = JSON.parse(localStorage.getItem('pgn_tournaments') || '[]');
+  var allData = _dedupById(stored.concat(_memTournaments));
+  yield 'window.__EMBEDDED_DATA__=[';
+  for (var i = 0; i < allData.length; i++) {
+    var s = JSON.stringify(allData[i]);                         // como JSON.stringify(array): undefined → null
+    yield (i ? ',' : '') + (s === undefined ? 'null' : s);
+  }
+  yield '];\n';
+  yield 'window.__EMBEDDED_TZ__='       + JSON.stringify(getTzConfig())  + ';\n';
+  yield 'window.__EMBEDDED_TROPHIES__=' + JSON.stringify(_troMan())      + ';\n';
+  yield 'window.__EMBEDDED_NEWS__='     + JSON.stringify(getNewsItems()) + ';\n';
+  yield 'window.__EMBEDDED_CR__=';
+  yield JSON.stringify(_collectCrData());
+  yield ';\n';
+  yield 'window.__EMBEDDED_COLG__='     + JSON.stringify(_cgMan())       + ';\n';
+  yield _embeddedPlayersJs();
 }
 
 // Índice de partidas publicado, repartido en data/games_0.json, games_1.json, … Cloudflare Pages
@@ -20803,9 +20941,14 @@ function normStr(s) {
   // NFD descompone los caracteres acentuados (á → a + tilde) y borramos las marcas
   // combinantes: así maneja TODOS los diacríticos (á é í ó ú ñ ç ã õ ü š …) en un solo
   // lugar, no solo las vocales españolas. Es la normalización base que reusa crNormTokens.
-  return s.toLowerCase()
+  // Durante el guardado se recuerda (ver _splitMemo). typeof: el banco de pruebas copia esta función sola.
+  var memo = typeof _splitMemo !== 'undefined' && _splitMemo ? _splitMemo.norm : null;
+  if (memo) { var ya = memo.get(s); if (ya !== undefined) return ya; }
+  var r = s.toLowerCase()
     .normalize('NFD').replace(/[̀-ͯ]/g,'')
     .replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
+  if (memo) memo.set(s, r);
+  return r;
 }
 
 // Extrae tokens (palabras) de un nombre normalizado
@@ -20917,7 +21060,9 @@ function _nmNamePrep(pgnName) {
     surname: surname,
     gInit:   (gTok.length && gTok.every(function(t){ return t.length === 1; })) ? gTok : null
   };
-  if (_nmNameCache) { if (_nmNameCache.size > 6000) _nmNameCache.clear(); _nmNameCache.set(pgnName, prep); }
+  // Tope 60.000: con 6.000 el guardado (decenas de miles de nombres distintos) lo vaciaba a cada rato
+  // y volvía a preparar los mismos nombres (03/10/2026). Cada entrada es chica (~20 MB en total).
+  if (_nmNameCache) { if (_nmNameCache.size > 60000) _nmNameCache.clear(); _nmNameCache.set(pgnName, prep); }
   return prep;
 }
 
@@ -30126,28 +30271,65 @@ function obSchedule() {
    - Publicado: se baja data/book.json (~0.5MB comprimido, cacheado por sesión).
    El nombre de la apertura sale de _ECO_TABLE (local), no de Lichess. */
 var _BOOK_MAXPLY = 20, _BOOK_MINCOUNT = 4, _BOOK_NEXTMIN = 2, _BOOK_TOPN = 8;
+// Libro desde las filas {moves, r} (moves = array de jugadas SAN o el texto "e4 c5 Nf3", r = resultado).
+// Antes era un diccionario con la línea ENTERA como clave: por cada una de las ~285.000 partidas se
+// pegaba y se buscaba un texto cada vez más largo, y se guardaba un nodo por cada línea aunque la
+// hubiera jugado una sola partida (millones). Lento (11 s) y, peor, cientos de MB en el guardado, que
+// ya roza el tope de memoria de Chrome ("Out of Memory", 03/10/2026). Ahora va POR PISOS: en la pasada
+// N sólo se abren las jugadas de las posiciones que ya juntaron _BOOK_MINCOUNT partidas (un hijo nunca
+// tiene más que su padre, así que lo raro no se sigue). Las jugadas van como números en un solo
+// arreglo. Sale el MISMO book.json con las claves en el mismo orden: cada nodo recuerda en qué
+// partida y a qué altura apareció por primera vez (`o`). Supone jugadas sin vacíos ('').
 function _buildOpeningBook(rows) {
-  var nodes = Object.create(null);
+  var ids = new Map(), sanes = [], plano = [], off = [0], rs = [];
   for (var r = 0; r < rows.length; r++) {
-    var moves = rows[r].moves, res = rows[r].r;
+    var moves = rows[r].moves;
+    if (typeof moves === 'string') moves = moves.split(' ').filter(Boolean);
     if (!moves || !moves.length) continue;
-    var lim = Math.min(moves.length, _BOOK_MAXPLY), line = '';
-    for (var i = 0; i <= lim; i++) {
-      var node = nodes[line]; if (!node) node = nodes[line] = { t: 0, next: Object.create(null) };
-      node.t++;
-      var nx = moves[i];
-      if (nx) {
-        var t = node.next[nx]; if (!t) t = node.next[nx] = { c: 0, w: 0, d: 0, b: 0 };
-        t.c++; if (res === '1-0') t.w++; else if (res === '0-1') t.b++; else if (res === '1/2-1/2') t.d++;
-      }
-      if (i < lim) line = line ? line + ' ' + moves[i] : moves[i];
+    var hasta = Math.min(moves.length, _BOOK_MAXPLY + 1);   // la jugada _BOOK_MAXPLY+1 sólo cuenta como "siguiente"
+    for (var i = 0; i < hasta; i++) {
+      var id = ids.get(moves[i]);
+      if (id === undefined) { id = sanes.length; sanes.push(moves[i]); ids.set(moves[i], id); }
+      plano.push(id);
     }
+    off.push(plano.length);
+    var res = rows[r].r;
+    rs.push(res === '1-0' ? 1 : res === '0-1' ? 2 : res === '1/2-1/2' ? 3 : 0);
   }
+  plano = typeof Int32Array === 'function' ? Int32Array.from(plano) : plano;
+  var nF = rs.length;
+  function nodo() { return { t: 0, c: 0, w: 0, d: 0, b: 0, o: -1, kids: null }; }
+  var root = nodo(); root.t = nF; root.o = 0;
+  var cur = new Array(nF);   // en qué nodo está cada partida en este piso (null = ya no sigue)
+  for (var f = 0; f < nF; f++) cur[f] = root;
+  for (var dep = 0; dep <= _BOOK_MAXPLY; dep++) {
+    var siguen = 0;
+    for (var k = 0; k < nF; k++) {
+      var P = cur[k]; if (!P) continue;
+      var ini = off[k], n0 = off[k + 1] - ini, lim = Math.min(n0, _BOOK_MAXPLY);
+      if (P.t < _BOOK_MINCOUNT || dep >= n0) { cur[k] = null; continue; }
+      var jid = plano[ini + dep];
+      if (!P.kids) P.kids = new Map();
+      var K = P.kids.get(jid); if (!K) { K = nodo(); P.kids.set(jid, K); }
+      K.c++; var rr = rs[k]; if (rr === 1) K.w++; else if (rr === 2) K.b++; else if (rr === 3) K.d++;
+      if (dep < lim) { K.t++; if (K.o < 0) K.o = k * 32 + dep + 1; cur[k] = K; siguen++; }
+      else cur[k] = null;
+    }
+    if (!siguen) break;
+  }
+  cur = null; plano = null;
+  var hits = [];
+  (function walk(nd, line) {
+    if (nd.t < _BOOK_MINCOUNT) return;
+    hits.push({ n: nd, k: line });
+    if (nd.kids) nd.kids.forEach(function(K, jid) { var mv = sanes[jid]; walk(K, line ? line + ' ' + mv : mv); });
+  })(root, '');
+  hits.sort(function(a, b) { return a.n.o - b.n.o; });
   var out = {};
-  for (var k in nodes) {
-    var n = nodes[k]; if (n.t < _BOOK_MINCOUNT) continue;
+  for (var h = 0; h < hits.length; h++) {
+    var n = hits[h].n, k = hits[h].k;
     var next = [];
-    for (var s in n.next) { var v = n.next[s]; if (v.c >= _BOOK_NEXTMIN || n.t < 10) next.push([s, v.c, v.w, v.d, v.b]); }
+    if (n.kids) n.kids.forEach(function(v, jid) { if (v.c >= _BOOK_NEXTMIN || n.t < 10) next.push([sanes[jid], v.c, v.w, v.d, v.b]); });
     if (!next.length) continue;
     next.sort(function(a, b) { return b[1] - a[1]; });
     out[k] = next.slice(0, _BOOK_TOPN);
@@ -30167,15 +30349,26 @@ function _loadBookAsync(cb) {
       .then(function(b) { window.__BOOK__ = b; _bookReady(); })
       .catch(function() { window.__BOOK__ = {}; _bookReady(); });
   } else {
-    // Autor: construir desde el índice (tiene toda la base embebida; sin descargas).
-    setTimeout(function() {
-      try {
-        if (!_obIdx) _buildObIndex();
-        var rows = _obIdx.map(function(g) { return { moves: g.moves, r: g.result }; });
-        window.__BOOK__ = _buildOpeningBook(rows);
-      } catch (e) { window.__BOOK__ = {}; }
-      _bookReady();
-    }, 0);
+    // Autor: usar el data/book.json que deja cada "Guardar en mi carpeta" (el MISMO que ve la web).
+    // Antes se armaba acá desde toda la base: ~30 s y cientos de MB cada vez que se abría la primera
+    // partida (03/10/2026, pedido del autor). Lo cargado DESPUÉS del último guardado recién entra al
+    // libro al guardar. Si el archivo no está (carpeta sin guardar nunca, doble clic sin servidor), se
+    // arma como antes.
+    var armar = function () {
+      setTimeout(function() {
+        try {
+          if (!_obIdx) _buildObIndex();
+          var rows = _obIdx.map(function(g) { return { moves: g.moves, r: g.result }; });
+          window.__BOOK__ = _buildOpeningBook(rows);
+        } catch (e) { window.__BOOK__ = {}; }
+        _bookReady();
+      }, 0);
+    };
+    try {
+      fetch('data/book.json?v=' + Date.now()).then(function(r) { if (!r.ok) throw 0; return r.json(); })
+        .then(function(b) { if (!b || typeof b !== 'object' || !Object.keys(b).length) throw 0; window.__BOOK__ = b; _bookReady(); })
+        .catch(armar);
+    } catch (e) { armar(); }
   }
 }
 
@@ -30215,10 +30408,10 @@ function obLocalUpdate() {
   var faOpEl = document.getElementById('fa-opening');
   if (faOpEl && opEl) faOpEl.textContent = opEl.textContent;
   if (!window.__BOOK__) {
-    // En modo autor el libro se arma en memoria (~20s la 1ª vez); avisar para que no parezca colgado.
+    // En modo autor se lee data/book.json (un instante); sólo si falta se arma en memoria (~30 s).
     if (!_ondemand) {
-      var totEl0 = document.getElementById('ob-total'); if (totEl0) totEl0.textContent = 'armando libro…';
-      var listEl0 = document.getElementById('ob-list'); if (listEl0) listEl0.innerHTML = '<div style="padding:14px;text-align:center;color:var(--text3);font-size:12px">⏳ Armando libro de aperturas… (solo la 1ª vez)</div>';
+      var totEl0 = document.getElementById('ob-total'); if (totEl0) totEl0.textContent = 'cargando libro…';
+      var listEl0 = document.getElementById('ob-list'); if (listEl0) listEl0.innerHTML = '<div style="padding:14px;text-align:center;color:var(--text3);font-size:12px">⏳ Cargando libro de aperturas…</div>';
       obSetVisible(true);
     }
     _loadBookAsync(obLocalUpdate); return;
@@ -31651,9 +31844,20 @@ function _getArgFideSet() {
 // falsos positivos extranjeros (Di Benedetto italiano, "De Lima"/"Macedo" brasileños), 0 legítimos.
 var _NAME_PARTICLES = {di:1,de:1,del:1,della:1,dello:1,degli:1,da:1,das:1,dos:1,do:1,van:1,von:1,der:1,den:1,du:1,la:1,le:1,las:1,los:1,san:1,santa:1,santo:1,mac:1,mc:1,vander:1};
 function _isNameParticle(t){ return _NAME_PARTICLES[t] === 1; }
+// Lado JUGADOR de _pgnNameMatchesList, preparado una sola vez por jugador. Antes cada consulta
+// normalizaba los ~1.600 nombres de la lista de nuevo: el guardado en la carpeta preguntaba miles de
+// veces (partidas de Olimpiadas sin bandera) y se iban ~4 s sólo en esto (medido 03/10/2026).
+var _nmListCache = (typeof Map === 'function') ? new Map() : null;
+function _nmListPrep(p) {
+  if (_nmListCache) { var hit = _nmListCache.get(p); if (hit && hit.src === p.name) return hit.r; }   // renombrado: revalidar
+  var ptoks = normStr(p.name).split(' ').filter(function(t){ return t.length > 1; }), r = null;
+  if (ptoks.length) r = { last: ptoks[ptoks.length - 1], first: ptoks.slice(0, ptoks.length - 1).filter(function(t){ return !_isNameParticle(t); }) };
+  if (_nmListCache) { if (_nmListCache.size > 8000) _nmListCache.clear(); _nmListCache.set(p, { src: p.name, r: r }); }
+  return r;
+}
 function _pgnNameMatchesList(pgnName, list) {
   if (!pgnName) return false;
-  var i, j, p, ptoks, pLast, pFirst, fn;
+  var i, j, pr, pLast, pFirst, fn;
   if (pgnName.indexOf(',') >= 0) {
     // Formato "Apellido Compuesto, Nombre" — separamos claramente
     var parts = pgnName.split(',');
@@ -31662,14 +31866,13 @@ function _pgnNameMatchesList(pgnName, list) {
     var pgnFToks  = pgnFirstNorm.split(' ').filter(function(t){ return t.length > 1 && !_isNameParticle(t); });
     var pgnFToks1 = pgnFirstNorm.split(' ').filter(function(t){ return t.length === 1; });
     for (i = 0; i < list.length; i++) {
-      p = list[i];
-      ptoks = normStr(p.name).split(' ').filter(function(t){ return t.length > 1; });
-      if (!ptoks.length) continue;
-      pLast = ptoks[ptoks.length - 1];
+      pr = _nmListPrep(list[i]);
+      if (!pr) continue;
+      pLast = pr.last;
       // El apellido PGN debe ser exactamente pLast o terminar en " pLast"
       // "gomez alvarez" no termina en "gomez" → no matchea "Alejandro Gomez"
       if (pgnLastNorm !== pLast && !pgnLastNorm.endsWith(' ' + pLast)) continue;
-      pFirst = ptoks.slice(0, ptoks.length - 1).filter(function(t){ return !_isNameParticle(t); });
+      pFirst = pr.first;
       if (!pFirst.length) return true;
       for (j = 0; j < pFirst.length; j++) {
         fn = pFirst[j];
@@ -31685,12 +31888,11 @@ function _pgnNameMatchesList(pgnName, list) {
     var ntoks    = natural.split(' ').filter(function(t){ return t.length > 1; });
     var origToks1 = normStr(pgnName).split(' ').filter(function(t){ return t.length === 1; });
     for (i = 0; i < list.length; i++) {
-      p = list[i];
-      ptoks = normStr(p.name).split(' ').filter(function(t){ return t.length > 1; });
-      if (!ptoks.length) continue;
-      pLast = ptoks[ptoks.length - 1];
+      pr = _nmListPrep(list[i]);
+      if (!pr) continue;
+      pLast = pr.last;
       if (ntoks.indexOf(pLast) < 0) continue;
-      pFirst = ptoks.slice(0, ptoks.length - 1).filter(function(t){ return !_isNameParticle(t); });
+      pFirst = pr.first;
       if (!pFirst.length) return true;
       for (j = 0; j < pFirst.length; j++) {
         fn = pFirst[j];
