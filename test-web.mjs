@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2244;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2264;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -8677,6 +8677,15 @@ console.log('\n=== Buscar planes ===');
   chk(nm('r2q1rk1/pp2bppp/2p1pn2/3p4/3P4/2N1PN2/PP3PPP/R2QKB1R w KQ - 0 1', 'w', ['b2b4', 'b4b5']) === 'Ataque de minorías',
       'Carlsbad: b4-b5 con 2 peones contra 3 en el flanco de dama = "Ataque de minorías"');
   chk(nm('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1', 'w', ['b2b4', 'b4b5']) === '', 'con los mismos peones en ese flanco, b4-b5 no es ataque de minorías');
+  // 04/10 (planes típicos): la Najdorf daba "minorías" en el 55% y la Francesa Avance "avalancha" negra en el 38%
+  chk(nm('rn1qkb1r/1p3ppp/p2pbn2/4p3/4P3/1NN1BP2/PPP3PP/R2QKB1R b KQkq - 0 1', 'b', ['b7b5', 'b5b4']) === '',
+      '🔒 Najdorf: el …b5-b4 contra un peón c en c2 (no en c3) no es "Ataque de minorías"');
+  chk(nm('r1b1k1nr/pp3ppp/1qn1p3/3pP3/3P4/5N2/PP2BPPP/RN1Q1RK1 b kq - 0 1', 'b', ['f7f6', 'g7g5']) === 'Ruptura central',
+      '🔒 Francesa Avance: …f6-g5 no pisa la mitad blanca: es ruptura, no "Avalancha contra el enroque"');
+  chk(nm('r1bq1rk1/pp2npbp/3p2p1/2pPp3/2P1P3/2N2N2/PP2BPPP/R2Q1RK1 b - - 0 1', 'b', ['f7f5', 'f5f4', 'g6g5']).startsWith('Avalancha contra el enroque'),
+      'India de Rey: …f5-f4 y …g5 (aunque …f5 choque con e4) sí es "Avalancha contra el enroque"');
+  chk(nm('r1bqkb1r/5ppp/p1np1n2/1p2p3/4P3/N1P5/PP3PPP/R2QKB1R b KQkq - 0 1', 'b', ['b5b4']) === '',
+      '🔒 Sveshnikov: …b4 contra c3 sin peón d blanco no es "Ataque de minorías"');
   chk(nm(A, 'w', ['f2f4']) === 'Ruptura central' && nm(A, 'w', ['a2a4']) === '', 'f4 contra el peón de e5: "Ruptura central" (a4 no choca con nada)');
   chk(nm('6k1/pp3ppp/8/8/8/8/PP3PPP/R4RK1 w - - 0 1', 'w', ['f1d1', 'd1d2', 'a1d1']) === 'Doblar las torres en la columna d'
       && P.nom(P.g('6k1/pp3ppp/8/8/8/8/PP3PPP/R4RK1 w - - 0 1'), 'w', ['f1d1', 'd1d2', 'a1d1'])[0].explica === 'Dos torres juntas en una columna abierta pesan el doble.',
@@ -9228,6 +9237,101 @@ console.log('\n── Portada de aperturas ──');
   chk(CA.includes("window.addEventListener('keydown', onKey, true)") && /if \(e\.key === 'Escape'\) \{ e\.preventDefault\(\); e\.stopPropagation\(\); cerrar\(\)/.test(CA)
       && CA.includes("window.addEventListener('popstate', cerrar)"),
       '🔒 Esc cierra sólo el recuadro (no la partida de abajo) y el Atrás del celular no lo deja flotando');
+}
+
+// ── 🧭 Planes típicos de la apertura (04/10, pedido del autor): data/planes/<familia>.json + panel ──
+console.log('\n── Planes típicos de la apertura ──');
+{
+  const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const PT = new Function('escHtml', '_flagImg', '_apFmt',
+    ['_apPartes', '_apEtiqueta', '_ptSlug', '_ptElegir', '_ptUnoDe10', '_ptVeces', '_ptTablero', '_ptPly', '_ptEjemplos', '_ptPosicion', '_ptEmpujes', '_ptEmpDet', '_ptHtml'].map(extraerFuncion).join('\n')
+    + '\n' + SRC.match(/var _PT_ESTR = \{[\s\S]*?\n\};\n/)[0] + SRC.match(/var _PT_PLAN = \{[\s\S]*?\n\};\n/)[0]
+    + 'return { slug: _ptSlug, elegir: _ptElegir, ply: _ptPly, html: _ptHtml, partes: _apPartes, pos: _ptPosicion, empDet: _ptEmpDet };')(esc, () => '<img ARG>', (x) => String(x));
+  chk(PT.slug('Española') === 'espanola' && PT.slug('Gambito de Dama Rehusado') === 'gambito-de-dama-rehusado' && PT.slug('Caro-Kann') === 'caro-kann',
+      'nombre del archivo de cada familia: sin tildes, en minúscula y con guiones (igual que hornear-web.js)');
+  // Los archivos horneados: cada apertura está en el archivo de SU familia y existe en el árbol de la app
+  const AR = JSON.parse(fs.readFileSync(new URL('./assets/aperturas-arbol.json', import.meta.url), 'utf8'));
+  const enArbol = new Set(); AR.a.forEach(r => { let k = ''; PT.partes(r[1]).forEach((x, d) => { k = d === 0 ? x : k + (d === 1 ? ': ' : ', ') + x; enArbol.add(k); }); });
+  const dir = new URL('./data/planes/', import.meta.url), archivos = fs.existsSync(dir) ? fs.readdirSync(dir).filter(f => f.endsWith('.json')) : [];
+  let malArchivo = [], fuera = [], conEj = 0, sinPgn = 0, nAp = 0;
+  archivos.forEach(f => {
+    const F = JSON.parse(fs.readFileSync(new URL(f, dir), 'utf8'));
+    for (const k in F.A) {
+      nAp++;
+      if (PT.slug(PT.partes(k)[0]) + '.json' !== f) malArchivo.push(k + ' → ' + f);
+      if (!enArbol.has(k)) fuera.push(k);
+      ['w', 'b'].forEach(s => F.A[k][s].pl.concat(F.A[k][s].mn).forEach(p => p[4].forEach(e => { conEj++; if (e[8] && !F.pgn[e[8]]) sinPgn++; })));
+    }
+  });
+  chk(archivos.length > 50 && nAp > 1000 && !malArchivo.length && !fuera.length,
+      'los planes horneados: cada apertura en el archivo de su familia y con un nombre que existe en el árbol', archivos.length + ' archivos, ' + nAp + ' aperturas; ' + malArchivo.slice(0, 3).join(' | ') + ' ' + fuera.slice(0, 3).join(' | '));
+  chk(conEj > 5000 && sinPgn === 0, 'cada partida modelo de la GigaBase trae su PGN en el archivo de la familia', conEj + ' ejemplos, ' + sinPgn + ' sin PGN');
+  const F0 = { A: { 'Siciliana': {}, 'Siciliana: Najdorf': {} } };
+  chk(PT.elegir(F0, 'Siciliana: Najdorf, Gambito Dekker') === 'Siciliana: Najdorf' && PT.elegir(F0, 'Siciliana: Najdorf') === 'Siciliana: Najdorf'
+      && PT.elegir(F0, 'Siciliana: Alapin') === 'Siciliana' && PT.elegir(null, 'Siciliana') === null && PT.elegir(F0, 'Francesa') === null,
+      'la variante con pocas partidas usa la de su madre; sin archivo o sin datos, nada');
+  chk(PT.ply({ j: 11, s: 'w' }) === 20 && PT.ply({ j: 9, s: 'b' }) === 17 && PT.ply({ j: 1, s: 'w' }) === 0,
+      'el ▶ abre el visor justo ANTES de la primera jugada del plan (11 de blancas = media jugada 20; 9 de negras = 17)');
+  // Panel con un registro de mentira
+  const ej = (a, giga) => ['t1', 3, 11, 'Peralta, Fernando', '<b>Lopez</b>, Ricardo', '2022.05.01', '1-0', a].concat(giga ? [giga] : []);
+  const REC = { n: 1200, es: [['Peón aislado (blancas)', 65, 3]], en: [85, 10, 100, 10], ia: [59, 9, 26, 10], hu: [['b', 'd5', 50, 12, 60]],
+    w: { pl: [['Ataque de minorías', 23, 1, 11, [ej(1), ej(0), ej(0, 'g99')]]], mn: [['C', ['d4', 'b5', 'a3', 'c2', 'e3', 'd5'], ['c4'], 65, [ej(1)]]], rp: [['c3', 61]] },
+    b: { pl: [], mn: [], rp: [] } };
+  const ejs = [], H = PT.html('Caro-Kann: Ataque Panov, Algo', 'Caro-Kann: Ataque Panov', REC, ejs, { g99: '[White "X"]\n\n1. d4 *' });
+  chk(/Algo tiene pocas partidas de maestros: estos son los planes de <b>Ataque Panov<\/b>/.test(H) && /Peón aislado \(blancas\)/.test(H)
+      && !/Peón aislado<\/b> de las blancas/.test(H) && /Peón aislado<\/b> de las negras en 3 de cada 10/.test(H),
+      'aviso de la madre; el peón aislado blanco no se repite si ES la estructura (el negro sí va, en su renglón)');
+  chk(/Enroques opuestos en <span>9 de cada 10 partidas/.test(H) && /Casi siempre son las blancas las que enrocan largo/.test(H)
+      && /Cuando d5 queda débil, <b>un caballo blanco se instala ahí<\/b> en 6 de cada 10/.test(H) && !/Casilla débil en d5/.test(H) && /d4 → b5 → a3 → c2 <span>→ e3 → d5<\/span>/.test(H) && /o desde a3 a c4/.test(H) && /Ningún plan con nombre/.test(H),
+      'enroques opuestos con quién enroca largo; la casilla que la estructura ya nombra (d5) va sólo con el dato del caballo; maniobra encadenada (continuación en gris) y "ningún plan" del lado vacío');
+  chk(ejs.length === 4 && ejs[2].pgn && ejs[0].t === 't1' && ejs[0].s === 'w' && (H.match(/<img ARG>/g) || []).length === 3
+      && /Peralta – &lt;b&gt;Lopez&lt;\/b&gt;, 2022/.test(H) && !/<b>Lopez/.test(H) && /📚/.test(H)
+      && PT.html('X', 'X', Object.assign({}, REC, { w: { pl: [['Ataque de minorías', 23, 1, 11, [ej(0, 'g404')]]], mn: [], rp: [] } }), [], {}).indexOf('pt-ej') < 0,
+      '3 partidas modelo por plan (bandera = argentino del bando, 📚 = GigaBase), nombres escapados; la de la GigaBase sin PGN no se ofrece');
+  // Empujes de peón típicos (04/10, pedido del autor: "esos números no le suman si no lo ve en el tablero"):
+  // cada empuje con ejemplo es un botón que abre la posición real justo antes, con la flecha y el ▶
+  const exE = ['t2', 7, 9, 'Dolezal, Cristian', 'Tokman, Ariel', '2025.11.08', '1-0', 1, 0, 'rnbqkb1r/pppp1ppp/4pn2/8/1bPP4/2N5/PP2PPPP/R1BQKBNR', 'b2', 'c3'];
+  const REC2 = Object.assign({}, REC, { w: { pl: [], mn: [], rp: [['bxc3', 25, 4, 9, exE], ['a3', 42, 9, 5, null]] }, b: { pl: [], mn: [], rp: [['exd5', 26, 12, 11, exE.slice(0, 8).concat(['g7', 'fen', 'e6', 'd5'])]] } });
+  const ejs2 = [], H2 = PT.html('X', 'X', REC2, ejs2, {});
+  chk(/<button type="button" class="pt-chip pt-chip-b" data-i="0" aria-expanded="false" aria-controls="pt-emp-w"/.test(H2) && /<span class="pt-chip"><b>a3<\/b> <span>42%<\/span><\/span>/.test(H2)
+      && /<span class="pt-chip"><b>…exd5<\/b>/.test(H2) && (H2.match(/pt-emp-det/g) || []).length === 1 && ejs2.length === 1 && ejs2[0].emp === 1,
+      'empujes: con ejemplo es un botón que abre su posición; sin ejemplo (o de la GigaBase sin PGN) queda la etiqueta de siempre');
+  const D = PT.empDet(0, ejs2, {});
+  chk(/En 3 de cada 10 partidas \(6 veces más que en el resto\), casi siempre hacia la jugada 9\./.test(D) && /La posición es de <img ARG> <b>Dolezal – Tokman, 2025<\/b>, justo antes de bxc3 \(jugada 9\)/.test(D)
+      && /onclick="ptAbrir\(1\)"/.test(D) && ejs2[1].j === 9 && ejs2[1].s === 'w' && PT.ply(ejs2[1]) === 16 && PT.empDet(5, ejs2, {}) === '',
+      'lo que se abre: cuánto se juega, en qué jugada, de qué partida es la posición y el ▶ que la abre justo antes del empuje');
+  const P0 = PT.pos('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR', 'e2', 'e4');
+  chk((P0.match(/<image /g) || []).length === 32 && /assets\/piezas\/bK\.svg" x="4" y="0"/.test(P0) && /assets\/piezas\/wP\.svg" x="4" y="6"/.test(P0)
+      && (P0.match(/opacity="\.35"/g) || []).length === 2 && /<polygon points="4\.5,4\.6 /.test(P0) && /aria-hidden="true"/.test(P0),
+      'la miniatura dibuja las 32 piezas del FEN en su lugar, marca las dos casillas y la flecha apunta a la de llegada');
+  // En los archivos horneados: la posición de cada ejemplo tiene el peón del bando en la casilla de salida
+  let emps = 0, conPos = 0, malPos = [];
+  archivos.forEach(f => {
+    const F = JSON.parse(fs.readFileSync(new URL(f, dir), 'utf8'));
+    for (const k in F.A) ['w', 'b'].forEach(s => F.A[k][s].rp.forEach(r => {
+      emps++; const x = r[4]; if (!x) return; conPos++;
+      const filas = x[9].split('/'), fila = filas[8 - +x[10][1]] || '';
+      let col = 0, pz = ''; for (const ch of fila) { if (/\d/.test(ch)) col += +ch; else { if (col === 'abcdefgh'.indexOf(x[10][0])) pz = ch; col++; } }
+      if (filas.length !== 8 || pz !== (s === 'w' ? 'P' : 'p') || !r[0].endsWith(x[11]) || (x[8] && !F.pgn[x[8]])) malPos.push(k + ' ' + s + ' ' + r[0]);
+    }));
+  });
+  chk(emps > 3000 && conPos / emps > 0.95 && !malPos.length, 'empujes horneados: casi todos con su posición, y en cada una el peón del bando está en la casilla de salida',
+      emps + ' empujes, ' + conPos + ' con posición; mal: ' + malPos.slice(0, 3).join(' | '));
+  chk(/_ptEmpDet\(\+i, _ptEjs, _ptPgns\)/.test(extraerFuncion('_ptEmpMostrar')) && /matchMedia\('\(hover: hover\)'\)/.test(extraerFuncion('ptEmpVer'))
+      && /_ptPgns = F\.pgn/.test(extraerFuncion('_ptRefrescar')),
+      '🔒 empujes: al tocar queda fijo; el pasar el mouse sólo en la PC (en el teléfono no hay mouse)');
+  chk(/<section id="ob-planes"/.test(extraerFuncion('renderOpeningExplorer')) && /_ptRefrescar\(n\)/.test(extraerFuncion('_apRefrescarNombres'))
+      && /await openTourGameByIndex\(0\)/.test(extraerFuncion('ptAbrir')) && /_cvGameMatches/.test(extraerFuncion('ptAbrir')),
+      '🔒 el panel vive debajo del tablero, se repinta con el explorador y el ▶ abre como la partida destacada (buscándola si cambió de lugar)');
+  // Botón de volver del visor (04/10, lo notó el autor): abierta desde OTRA pantalla, vuelve a ésa (no al torneo)
+  const BX = extraerFuncion('_cvBuildPageExtras'), VA = extraerFuncion('cvVolverAtras');
+  chk(/var _otra = !_cvFromTournament && !_fromTrain && !_salto;/.test(BX) && /onclick="cvVolverAtras\(\)"/.test(BX) && /if \(_cvHistoryPushed\) \{ history\.back\(\); return; \}/.test(VA),
+      '🔒 partida abierta desde Aperturas/buscador/perfil: el botón vuelve a esa pantalla (como el Atrás), no al torneo de la partida');
+  const VR = new Function('_cvTourName', 'document', extraerFuncion('_cvVolverRotulo') + '; return _cvVolverRotulo();');
+  const doc = (abierto) => ({ getElementById: () => ({ classList: { contains: () => abierto } }) });
+  chk(VR('Aperturas', doc(false)) === 'Volver a Aperturas' && VR('Búsqueda', doc(false)) === 'Volver a la búsqueda'
+      && VR('Cualquiera', doc(true)) === 'Volver al perfil' && VR('Otra', doc(false)) === 'Volver a la pantalla anterior',
+      'el botón dice adónde vuelve: Aperturas, la búsqueda, el perfil del jugador o "la pantalla anterior"');
 }
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
 console.log('   Corrieron ' + corridas + ' de ' + ESPERADAS + ' comprobaciones.'
