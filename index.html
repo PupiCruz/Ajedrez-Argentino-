@@ -48612,7 +48612,7 @@ function _motivoDe(node, pv, rA) {
     if (!cambio && !_motDefendida(g0, tf, tr)
         && (movs.length < 3 || _motMaterial(fens[3], rival) >= _motMaterial(fens[1], rival))) {
       var nm = _MOT_PIEZA[m1.captured];
-      return 'Deja ' + (nm[0] === 'la' ? 'colgada ' : 'colgado ') + nm[0] + ' ' + nm[1] + ' de ' + m1.to + '.';
+      return 'Deja ' + (nm[0] === 'la' ? 'colgada ' : 'colgado ') + nm[0] + ' ' + nm[1] + ' de ' + m1.to + '.' + _motNoPuedeTomar(g0, m1.to, mover);
     }
   }
   // 3) Doblete en una de las 2 primeras del rival (nunca en la última de la línea: falta ver qué gana).
@@ -48623,30 +48623,30 @@ function _motivoDe(node, pv, rA) {
       var m = movs[j]; if (m.piece === 'k' || gana < 2) continue;
       var g = _fenGrid(fens[j + 1]), f = m.to.charCodeAt(0) - 97, r = parseInt(m.to[1], 10) - 1;
       if (_motMalParada(g, f, r)) continue;
-      if (_motDobleteN(g, f, r, mover) > 1) return 'Permite un doblete de ' + _MOT_PIEZA[m.piece][1] + ' en ' + m.to + '.';
+      if (_motDobleteN(g, f, r, mover) > 1) return 'Permite un doblete de ' + _MOT_PIEZA[m.piece][1] + ' en ' + m.to + '.' + _motNoPuedeTomar(g, m.to, mover);
     }
   }
-  // 4) Clavada (05/10): una de las 2 primeras del rival es un alfil/torre/dama que clava una pieza del que erró, la
-  //    línea termina ganando material y en ella el rival come la clavada (o la de atrás, si se corrió).
+  // 4) Clavada (05/10): una de las 2 primeras del rival CREA una clavada contra el que erró (la pieza que movió, o una
+  //    que destapó), la línea termina ganando material y en ella el rival la COBRA (_motCobraClavada).
   if (_FA_MOT.clavada && movs.length >= 2) {
     var L2 = fens.length - 1;
     var gana2 = Math.min(_motMaterial(fens[L2], rival), _motMaterial(fens[L2 - 1], rival)) - _motMaterial(node.fen, rival);
     for (var j2 = 0; j2 <= 2 && j2 < movs.length - 1 && gana2 >= 2; j2 += 2) {
-      var mc = movs[j2]; if (!/^[brq]$/.test(mc.piece)) continue;
-      var gc = _fenGrid(fens[j2 + 1]), fc = mc.to.charCodeAt(0) - 97, rc = parseInt(mc.to[1], 10) - 1;
-      if (_motMalParada(gc, fc, rc)) continue;
-      var cl = _motClavada(gc, fc, rc, mover);
-      if (!cl) continue;
-      var cobra = false;
-      for (var k2 = j2 + 2; k2 < movs.length; k2 += 2) if (movs[k2].captured && (movs[k2].to === cl.sq || movs[k2].to === cl.trasSq)) cobra = true;
-      if (cobra) return 'Permite una clavada de ' + _MOT_PIEZA[mc.piece][1] + ' en ' + mc.to + ': ' + _motClavadaTxt(cl, true) + '.';
+      var nuevas = _motClavadasNuevas(fens[j2], fens[j2 + 1], rival);
+      for (var n2 = 0; n2 < nuevas.length; n2++) {
+        var cl = nuevas[n2];
+        if (_motCobraClavada(cl, movs, j2)) return 'Permite una clavada de ' + _MOT_PIEZA[cl.pz][1] + ' en ' + cl.desde + ': ' + _motClavadaTxt(cl, true) + '.';
+      }
     }
   }
   return '';
 }
-// ¿La pieza de (f,r) (alfil, torre o dama) CLAVA una de `victima`? En su línea, la 1ª pieza es de la víctima (no
-// peón ni rey) y detrás, en la misma línea, hay otra suya que vale más que ella y que la que clava: el rey (clavada
-// absoluta) o la dama/torre (relativa: si se corre, cae la de atrás). → { p, sq, tras, trasSq } o null.
+// ¿La pieza de (f,r) (alfil, torre o dama) CLAVA una de `victima`? En su línea, la 1ª pieza es de la víctima y detrás,
+// en la misma línea, hay otra suya:
+//  · el REY (clavada absoluta): vale cualquier pieza clavada, también un PEÓN (no puede avanzar ni retomar);
+//  · si no (relativa), la clavada no es peón, y lo de atrás vale más que ella y, además, más que la que clava o está
+//    SIN DEFENSA (la dama de f5 clava el caballo de e4 contra la dama suelta de c2: ejemplos del autor, 05/10).
+// → { p, sq, tras, trasSq, abs, desde, pz } o null (desde/pz = la que clava).
 function _motClavada(g, f, r, victima) {
   var pz = g[r * 8 + f]; if (!pz) return null;
   var t = pz.toLowerCase(), dirs = [];
@@ -48654,20 +48654,74 @@ function _motClavada(g, f, r, victima) {
   if (t === 'r' || t === 'q') dirs = dirs.concat([[1,0],[-1,0],[0,1],[0,-1]]);
   function suya(p) { return !!p && (p === p.toUpperCase()) === (victima === 'w'); }
   function en(ff, rr) { return ff >= 0 && ff < 8 && rr >= 0 && rr < 8; }
+  function nom(ff, rr) { return 'abcdefgh'.charAt(ff) + (rr + 1); }
   for (var d = 0; d < dirs.length; d++) {
     var dx = dirs[d][0], dy = dirs[d][1], s = 1, a = null, ff, rr;
     for (; s < 8; s++) { ff = f + dx * s; rr = r + dy * s; if (!en(ff, rr)) break; if (!g[rr * 8 + ff]) continue; if (suya(g[rr * 8 + ff])) a = { p: g[rr * 8 + ff], f: ff, r: rr }; break; }
-    if (!a || /^[pk]$/i.test(a.p)) continue;
+    if (!a || /^k$/i.test(a.p)) continue;
     for (s++; s < 8; s++) {
       ff = f + dx * s; rr = r + dy * s; if (!en(ff, rr)) break;
       var q = g[rr * 8 + ff]; if (!q) continue;
-      var vq = q.toLowerCase() === 'k' ? 99 : _pval(q);
-      if (suya(q) && vq > _pval(a.p) && vq > _pval(pz))
-        return { p: a.p.toLowerCase(), sq: 'abcdefgh'.charAt(a.f) + (a.r + 1), tras: q.toLowerCase(), trasSq: 'abcdefgh'.charAt(ff) + (rr + 1) };
+      if (suya(q)) {
+        var rey = q.toLowerCase() === 'k', vq = _pval(q), va = _pval(a.p);
+        var ok = rey || (!/^p$/i.test(a.p) && vq > va && (vq > _pval(pz) || !_motDefendida(g, ff, rr)));
+        if (ok) return { p: a.p.toLowerCase(), sq: nom(a.f, a.r), tras: q.toLowerCase(), trasSq: nom(ff, rr), abs: rey, desde: nom(f, r), pz: t };
+      }
       break;
     }
   }
   return null;
+}
+// Las clavadas de `atacante` que aparecen con la jugada fenA → fenB: la de la pieza que se movió y las que destapó al
+// correrse (la torre de d1 clava el alfil de d5 cuando sale el caballo de d4). La que clava no puede quedar mal parada.
+function _motClavadasNuevas(fenA, fenB, atacante) {
+  var gA = _fenGrid(fenA), gB = _fenGrid(fenB), out = [], victima = atacante === 'w' ? 'b' : 'w';
+  for (var s = 0; s < 64; s++) {
+    var p = gB[s]; if (!p || !/^[brq]$/i.test(p) || (p === p.toUpperCase()) !== (atacante === 'w')) continue;
+    var f = s % 8, r = (s - f) / 8, cl = _motClavada(gB, f, r, victima);
+    if (!cl || _motMalParada(gB, f, r)) continue;
+    var antes = gA[s] === p ? _motClavada(gA, f, r, victima) : null;   // ¿ya clavaba lo mismo antes de la jugada?
+    if (antes && antes.sq === cl.sq && antes.trasSq === cl.trasSq) continue;
+    cl.ataca = _motAtacadas(gB, cl.sq.charCodeAt(0) - 97, parseInt(cl.sq[1], 10) - 1).map(function(x) { return 'abcdefgh'.charAt(x[0]) + (x[1] + 1); });
+    out.push(cl);
+  }
+  return out;
+}
+// ¿La línea `movs` COBRA la clavada `cl`? `movs[k0]` es la jugada que la creó; desde ahí, el que clava (k0, k0+2…) come
+// la clavada o la de atrás; o, si es contra el rey y la clavada SIGUE EN PIE (no se movió la que clava, ni la clavada,
+// ni el rey), algo que la clavada defendía: no puede retomar (el alfil de f5 que defendía el peón de e6). Si la dama
+// que clavaba ya se fue (17…♛b4 y 19…♛d4 de Oatlhotse–Fier), lo que se come después no es por la clavada.
+// En una relativa NO cuenta lo que defendía: la pieza se puede mover y defender (Galván–Spector, ♖d8: la "media
+// mentirosa" que el autor pidió dejar afuera).
+function _motCobraClavada(cl, movs, k0) {
+  var vigente = true;
+  for (var k = k0; k < movs.length; k++) {
+    var m = movs[k];
+    if ((k - k0) % 2 === 0 && m.captured) {
+      if (m.to === cl.sq || m.to === cl.trasSq) return true;
+      if (cl.abs && vigente && m.from !== cl.desde && cl.ataca && cl.ataca.indexOf(m.to) >= 0) return true;
+    }
+    if (k > k0 && (m.from === cl.desde || m.from === cl.sq || m.from === cl.trasSq || m.to === cl.desde)) vigente = false;
+  }
+  return false;
+}
+// ¿Alguna pieza de `bando` ataca la casilla `sq` pero NO puede tomar ahí porque está clavada contra su rey? Es el "por
+// qué" de muchas tácticas (ejercicios del autor, 05/10): ♖e6 clava el peón de e3 y por eso ♘d4+ no se puede tomar; el
+// alfil de b3 clava el peón de e6 y el alfil de f5 queda sin defensa. → ' El peón de e3 no puede tomar en d4: está
+// clavado.' o ''. Si hay varias, se nombra un peón (el caso típico).
+function _motNoPuedeTomar(g, sq, bando) {
+  var tf = sq.charCodeAt(0) - 97, tr = parseInt(sq[1], 10) - 1, mejor = null;
+  for (var s = 0; s < 64; s++) {
+    var p = g[s]; if (!p || p.toLowerCase() === 'k' || (p === p.toUpperCase()) !== (bando === 'w')) continue;
+    var f = s % 8, r = (s - f) / 8;
+    if (!_motAtacadas(g, f, r).some(function(x) { return x[0] === tf && x[1] === tr; })) continue;
+    var pd = _pinDir(g, f, r);
+    if (!pd || (tf - f) * pd[1] === (tr - r) * pd[0]) continue;   // no está clavada, o come a lo largo de la línea
+    if (!mejor || p.toLowerCase() === 'p') mejor = { p: p.toLowerCase(), sq: 'abcdefgh'.charAt(f) + (r + 1) };
+  }
+  if (!mejor) return '';
+  var nm = _MOT_PIEZA[mejor.p];
+  return ' ' + nm[0].charAt(0).toUpperCase() + nm[0].slice(1) + ' ' + nm[1] + ' de ' + mejor.sq + ' no puede tomar en ' + sq + ': está ' + (nm[0] === 'la' ? 'clavada' : 'clavado') + '.';
 }
 // "el caballo de c6 queda clavado contra el rey" (`queda`) / "el caballo de c6 contra el rey".
 function _motClavadaTxt(cl, queda) {
@@ -48708,7 +48762,7 @@ function _motGratis(node, pvB) {
   if (pm && pm.to === m1.to && gp && gp.fen && _fenGrid(gp.fen)[tr * 8 + tf]) return '';
   if (movs.length >= 3 && _motMaterial(fens[3], mover) < _motMaterial(fens[1], mover)) return '';   // la recuperaba
   var nm = _MOT_PIEZA[m1.captured];
-  return 'Se podía comer gratis ' + nm[0] + ' ' + nm[1] + ' de ' + m1.to + '.';
+  return 'Se podía comer gratis ' + nm[0] + ' ' + nm[1] + ' de ' + m1.to + '.' + _motNoPuedeTomar(g, m1.to, mover === 'w' ? 'b' : 'w');
 }
 // Para el comentario de la jugada i: pide la línea del rival si falta (y por ahora no dice nada).
 function _faMotivo(i) {
@@ -48792,9 +48846,9 @@ function _faBuenaCand(i, node, rB, rA, whiteMoved) {
   if (!p || p.toLowerCase() === 'k' || _motMalParada(g, f, r)) return null;
   var rival = whiteMoved ? 'b' : 'w';
   if (_FA_BUENA.doblete && _motDobleteN(g, f, r, rival) >= 2) return { tipo: 'doblete', p: p.toLowerCase(), sq: to };
-  // Clavada (05/10): la pieza que se movió clava una del rival contra otra que vale más.
-  var cl = _FA_BUENA.clavada ? _motClavada(g, f, r, rival) : null;
-  if (cl) return { tipo: 'clavada', p: p.toLowerCase(), sq: to, cl: cl };
+  // Clavada (05/10): la jugada crea una (la pieza que se movió, o una que destapó al correrse).
+  var cls = _FA_BUENA.clavada ? _motClavadasNuevas(node.parent.fen, node.fen, whiteMoved ? 'w' : 'b') : [];
+  if (cls.length) return { tipo: 'clavada', p: p.toLowerCase(), sq: to, cls: cls, cl: cls[0] };
   return null;
 }
 // El doblete ¿gana de verdad? En la línea del motor después de la jugada (contesta el rival), la pieza del
@@ -48803,13 +48857,19 @@ function _faBuenaCand(i, node, rB, rA, whiteMoved) {
 function _faBuenaConfirma(node, pv, c) {
   if (!pv || pv.length < 3 || typeof Chess === 'undefined') return false;
   var mover = node.fen.split(' ')[1] === 'w' ? 'b' : 'w', ch = new Chess(node.fen), fens = [node.fen], come = false, desde = c.sq;
+  // La jugada misma va primera: si destapó una clavada contra el rey comiendo algo que la clavada defendía, ya cobró.
+  var pg = node.parent && _fenGrid(node.parent.fen), ti = (parseInt(c.sq[1], 10) - 1) * 8 + c.sq.charCodeAt(0) - 97;
+  var todas = [{ to: c.sq, captured: !!(pg && pg[ti]) }];
   for (var k = 0; k < pv.length && k < 10; k++) {
     var u = pv[k], mv = null;
     try { mv = ch.move({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u[4] || 'q' }); } catch (e) {}
     if (!mv) break;
-    if (c.cl) { if (k % 2 === 1 && mv.captured && (mv.to === c.cl.sq || mv.to === c.cl.trasSq)) come = true; }   // cobra la clavada (o la de atrás)
-    else if (k % 2 === 1 && mv.from === desde) { if (mv.captured) come = true; desde = mv.to; }   // sigue a la pieza del doblete
+    todas.push(mv);
+    if (!c.cls && k % 2 === 1 && mv.from === desde) { if (mv.captured) come = true; desde = mv.to; }   // sigue a la pieza del doblete
     fens.push(ch.fen());
+  }
+  if (c.cls) {   // clavada: alguna de las que creó la jugada se cobra (_motCobraClavada); ésa es la que se cuenta
+    for (var q = 0; q < c.cls.length && !come; q++) if (_motCobraClavada(c.cls[q], todas, 0)) { come = true; c.cl = c.cls[q]; }
   }
   if (!come || fens.length < 4) return false;
   var L = fens.length - 1, fin = Math.min(_motMaterial(fens[L], mover), _motMaterial(fens[L - 1], mover));
@@ -48939,8 +48999,9 @@ function _faComBuenaHtml(i) {
     }
     else { var f1 = _faSiLaToma(node, e, pv, rA, white); if (f1) why += ' ' + f1; }
   }
-  else if (!bri && c && c.tipo === 'doblete') why = 'Doblete de ' + _MOT_PIEZA[c.p][1] + ' en ' + c.sq + '.';
-  else if (!bri && c && c.tipo === 'clavada') why = 'Clava ' + _motClavadaTxt(c.cl, false) + '.';
+  else if (!bri && c && c.tipo === 'doblete') why = 'Doblete de ' + _MOT_PIEZA[c.p][1] + ' en ' + c.sq + '.' + _motNoPuedeTomar(_fenGrid(node.fen), c.sq, white ? 'b' : 'w');
+  else if (!bri && c && c.tipo === 'clavada') why = c.cl.desde === c.sq ? 'Clava ' + _motClavadaTxt(c.cl, false) + '.'
+    : 'Destapa una clavada: ' + _MOT_PIEZA[c.cl.pz][0] + ' ' + _MOT_PIEZA[c.cl.pz][1] + ' de ' + c.cl.desde + ' clava ' + _motClavadaTxt(c.cl, false) + '.';
   else if (!bri && c && c.tipo === 'mate') why = 'Encontró el mate en ' + c.n + '.';
   if (!filas.length && pv && pv.length) {
     if (_faEsIgual(node, pv)) why += (why ? ' ' : '') + 'La partida siguió por el mismo camino que el módulo.';

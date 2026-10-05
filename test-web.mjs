@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2304;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2313;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -8183,8 +8183,8 @@ console.log('\n=== Auditoría 23/09 — Fase 4: accesibilidad y prolijidad ===')
   const ChessM = _mM.exports.Chess || _mM.exports;
   const M = new Function('Chess', SRC.match(/var _FA_MOT = [^\n]*/)[0] + '\n' + SRC.match(/var _MOT_PIEZA = [^\n]*/)[0] + '\n'
     + ['_fenGrid', '_pval', '_pieceValAtFen', '_pinDir', '_attackersOf', '_motMaterial', '_motAtacadas', '_motDefendida',
-       '_motMalParada', '_motPasillo', '_motivoDe', '_motDobleteN', '_motClavada', '_motClavadaTxt', '_motGratis', '_motActivo'].map(extraerFuncion).join('\n')
-    + '; return { de: _motivoDe, clav: _motClavada, clavTxt: _motClavadaTxt, gratis: _motGratis, activo: _motActivo, temas: _FA_MOT };')(ChessM);
+       '_motMalParada', '_motPasillo', '_motivoDe', '_motDobleteN', '_motClavada', '_motClavadasNuevas', '_motCobraClavada', '_motClavadaTxt', '_motNoPuedeTomar', '_motGratis', '_motActivo'].map(extraerFuncion).join('\n')
+    + '; return { de: _motivoDe, clav: _motClavada, nuevas: _motClavadasNuevas, cobra: _motCobraClavada, clavTxt: _motClavadaTxt, noToma: _motNoPuedeTomar, grid: _fenGrid, gratis: _motGratis, activo: _motActivo, temas: _FA_MOT };')(ChessM);
   const N = (fen, to, parentFen) => ({ fen, move: { to, from: 'a1', san: 'x' }, parent: { fen: parentFen || fen } });
   // 3.♘g5?? (1.e4 e5 2.♘f3 d6): el caballo queda sin defensa y la dama lo come.
   const G5 = N('rnbqkbnr/ppp2ppp/3p4/4p1N1/4P3/8/PPPP1PPP/RNBQKB1R b KQkq - 1 3', 'g5', 'rnbqkbnr/ppp2ppp/3p4/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 0 3');
@@ -8226,8 +8226,45 @@ console.log('\n=== Auditoría 23/09 — Fase 4: accesibilidad y prolijidad ===')
   const rel = M.clav(gc('4r1k1/8/2n5/1B6/8/8/8/4K3 b - - 0 1'), 1, 4, 'b');
   chk(rel && rel.p === 'n' && rel.sq === 'c6' && rel.tras === 'r' && rel.trasSq === 'e8' && M.clavTxt(rel, false) === 'el caballo de c6 contra la torre',
       'clavada RELATIVA: el alfil clava el caballo contra la torre (si se corre, cae la torre)');
-  chk(M.clav(gc('4r1k1/8/2n5/1Q6/8/8/8/4K3 b - - 0 1'), 1, 4, 'b') === null && M.clav(gc('4k3/8/2p5/1B6/8/8/8/4K3 b - - 0 1'), 1, 4, 'b') === null,
-      'no es clavada si lo de atrás no vale más que la que clava (la dama contra una torre), ni si lo clavado es un peón');
+  chk(M.clav(gc('4rk2/8/2n5/1Q6/8/8/8/4K3 b - - 0 1'), 1, 4, 'b') === null && M.clav(gc('4r1k1/8/2p5/1B6/8/8/8/4K3 b - - 0 1'), 1, 4, 'b') === null,
+      'no es clavada: la dama contra una torre DEFENDIDA (no vale más que la que clava), ni un peón contra una torre');
+  const pe = M.clav(gc('4k3/8/2p5/1B6/8/8/8/4K3 b - - 0 1'), 1, 4, 'b');
+  chk(pe && pe.p === 'p' && pe.abs === true && M.clavTxt(pe, true) === 'el peón de c6 queda clavado contra el rey', '🔒 un PEÓN clavado contra el rey sí cuenta (no puede avanzar ni retomar): ejemplos del autor, 05/10');
+  // Ejercicios del autor (05/10). Ibarra–Marconi: …♛xf5 clava el caballo de e4 contra la dama de c2, que está SIN
+  // defensa (la dama clava contra otra dama). Genocchio–Felgaer: ♖c8 clava el alfil de d8 contra la torre suelta de e8.
+  const im = M.nuevas('4r1k1/p4pbp/8/1p1q1Np1/4N3/1P2P3/P1Q3PP/3R2K1 b - - 0 25', '4r1k1/p4pbp/8/1p3qp1/4N3/1P2P3/P1Q3PP/3R2K1 w - - 0 26', 'b');
+  const gf = M.nuevas('3br1k1/3p1ppp/P2Bp1n1/8/3Nq3/1PR1P3/P4PPP/3R2K1 w - - 0 25', '2Rbr1k1/3p1ppp/P2Bp1n1/8/3Nq3/1P2P3/P4PPP/3R2K1 b - - 1 25', 'w');
+  chk(im.length === 1 && im[0].desde === 'f5' && im[0].sq === 'e4' && im[0].trasSq === 'c2' && gf.length === 1 && gf[0].sq === 'd8' && gf[0].tras === 'r',
+      '🔒 contra una pieza SIN DEFENSA vale aunque valga lo mismo que la que clava (Ibarra–Marconi ♛xf5, Genocchio–Felgaer ♖c8)');
+  // Descubierta: sale el caballo de d4 y la torre de d1 clava el alfil de d5 contra el rey (Ubilava–Adla, explicado por el autor).
+  const desc = M.nuevas('8/8/3k4/3b4/3N4/8/8/3RK3 w - - 0 1', '8/8/3kN3/3b4/8/8/8/3RK3 b - - 0 1', 'w');
+  chk(desc.length === 1 && desc[0].desde === 'd1' && desc[0].sq === 'd5' && desc[0].abs && desc[0].ataca.indexOf('e6') >= 0,
+      'clavada DESCUBIERTA: al correrse el caballo, la torre de d1 clava el alfil de d5 contra el rey (y el alfil ya no defiende e6)');
+  // Galván–Spector: ♖d8 clava el alfil de d5 contra la torre de d1, pero en la línea el alfil se corre (♗f3) y lo
+  // que se come es en f3 y d8: la "media mentirosa" que el autor pidió dejar afuera.
+  const gs = { sq: 'd5', trasSq: 'd1', abs: false, desde: 'd8', ataca: ['e4', 'f3', 'c6', 'e6', 'c4'] };
+  chk(!M.cobra(gs, [{ to: 'd8' }, { to: 'f3' }, { to: 'f3', captured: 'b' }, { to: 'd8', captured: 'r' }, { to: 'd8', captured: 'r' }], 0)
+      && M.cobra(Object.assign({}, gs, { abs: true }), [{ from: 'a8', to: 'd8' }, { from: 'h1', to: 'g2' }, { from: 'b7', to: 'f3', captured: 'p' }], 0),
+      '🔒 en una RELATIVA no cuenta comer lo que la clavada defendía (Galván–Spector, ♖d8); contra el rey, sí (no puede retomar)');
+  // Oatlhotse–Fier: 17…♛b4 clava el caballo de c3 contra el rey, pero 19…♛d4 se va y recién 20…♝xe4 come lo que el
+  // caballo defendía: para entonces la clavada ya no existe.
+  const of = { sq: 'c3', trasSq: 'e1', abs: true, desde: 'b4', ataca: ['e4', 'd5', 'b5', 'a4', 'a2', 'b1', 'd1', 'e2'] };
+  const lineaOF = [{ from: 'b5', to: 'b4' }, { from: 'b3', to: 'a2' }, { from: 'c8', to: 'f5' }, { from: 'a1', to: 'b1' }, { from: 'b4', to: 'd4' }, { from: 'd5', to: 'd6' }, { from: 'f5', to: 'e4', captured: 'p' }];
+  chk(!M.cobra(of, lineaOF, 0) && M.cobra(of, [{ from: 'b5', to: 'b4' }, { from: 'b3', to: 'a2' }, { from: 'f5', to: 'e4', captured: 'p' }], 0),
+      '🔒 lo que la clavada defendía cuenta sólo MIENTRAS la clavada sigue en pie (17…♛b4 de Oatlhotse–Fier: la dama se fue antes)');
+  // El POR QUÉ de la táctica: una pieza clavada contra el rey no puede tomar (ejercicios del autor, 05/10).
+  const jugar = (fen, ucis) => { const c = new ChessM(fen); for (const u of ucis) c.move({ from: u.slice(0, 2), to: u.slice(2, 4) }); return c.fen(); };
+  const sq = jugar('8/5pkp/4r1p1/Qp6/2p3qP/P1N1PnP1/1PR2P2/5K2 b - - 10 34', ['g4h3', 'f1e2', 'f3d4']);
+  chk(M.noToma(M.grid(sq), 'd4', 'w') === ' El peón de e3 no puede tomar en d4: está clavado.',
+      '🔒 Rodríguez–Boulier: …♘d4+ no se puede tomar porque la torre de e6 clava el peón de e3 contra el rey');
+  const gl = jugar('r4rk1/pp1q1ppp/1n2p3/5b2/3B4/PBP5/P3QPPP/R3K2R w KQ - 1 15', ['e2e5', 'f7f6']);
+  chk(M.noToma(M.grid(gl), 'f5', 'b') === ' El peón de e6 no puede tomar en f5: está clavado.'
+      && M.noToma(M.grid('r4rk1/pp1q1ppp/1n2p3/5b2/3B4/PBP5/P3QPPP/R3K2R w KQ - 1 15'), 'f5', 'b') === '',
+      '🔒 Glavina–Bueno Abalo: después de …f6, el peón de e6 queda clavado y ya no defiende el alfil de f5 (antes de …f6, sí)');
+  chk(M.noToma(M.grid('4k3/4r3/8/8/8/8/4R3/4K3 w - - 0 1'), 'e2', 'b') === '', 'comer A LO LARGO de la clavada sí se puede: no se dice nada');
+  chk(extraerFuncion('_motivoDe').includes("+ _motNoPuedeTomar(g, m.to, mover)") && extraerFuncion('_motivoDe').includes("+ _motNoPuedeTomar(g0, m1.to, mover)")
+      && extraerFuncion('_motGratis').includes("_motNoPuedeTomar(g, m1.to,") && extraerFuncion('_faComBuenaHtml').includes("_motNoPuedeTomar(_fenGrid(node.fen), c.sq,"),
+      'la frase se suma al doblete (permitido y propio), a la colgada y a la pieza gratis');
   M.temas.gratis = false;
   chk(M.gratis(NC6, ['d8g5', 'd2d4', 'g5g6']) === '', 'el tema se apaga por separado (_FA_MOT.gratis)');
   chk(/return _motivoDe\(node, pv, _fa\.results\[i\]\) \|\| \(node\.parent \? _motGratis\(node, _faPvMemo\[node\.parent\.fen\]\) : ''\);/.test(extraerFuncion('_faMotivo')),
@@ -8246,7 +8283,7 @@ console.log('\n=== Auditoría 23/09 — Fase 4: accesibilidad y prolijidad ===')
     + 'var _FA_COM_IGUAL = 3, _FA_ENTREGA_TOPE = 95; var pedidos = [], _faBrillLn = {}, _brillOk = true, _descarte = false;\n'
     + 'function _faIsBrilliant() { return _brillOk; } function _faDescarteLista(n, rb) { return _descarte || !rb.ln; }\n'
     + 'function _faComEsperaFinal() { return false; } function _faBriPedir(fen, multi) { pedidos.push([fen, multi]); }\n'
-    + ['_fenGrid', '_pval', '_pinDir', '_attackersOf', '_motMaterial', '_motAtacadas', '_motDefendida', '_motMalParada', '_motDobleteN', '_motClavada',
+    + ['_fenGrid', '_pval', '_pinDir', '_attackersOf', '_motMaterial', '_motAtacadas', '_motDefendida', '_motMalParada', '_motDobleteN', '_motClavada', '_motClavadasNuevas', '_motCobraClavada',
        '_faWinP', '_faBuenaCand', '_faBuenaConfirma', '_faBrillSinPase', '_faEntregaTxt', '_faSiLaToma', '_faIgualPartida', '_faEsIgual'].map(extraerFuncion).join('\n')
     + '; return { fa: _fa, cand: _faBuenaCand, conf: _faBuenaConfirma, sinPase: _faBrillSinPase, entrega: _faEntregaTxt, siToma: _faSiLaToma, igual: _faIgualPartida, esIgual: _faEsIgual, dobl: _motDobleteN,'
     + ' grid: _fenGrid, ped: pedidos, ln: _faBrillLn, set: function(b, d) { _brillOk = b; _descarte = d; } };')(ChessJ);
@@ -8267,7 +8304,8 @@ console.log('\n=== Auditoría 23/09 — Fase 4: accesibilidad y prolijidad ===')
   chk(cc && cc.tipo === 'clavada' && cc.cl.sq === 'c6' && cc.cl.tras === 'k', 'candidata a "¡Tremendooo!": el alfil clava el caballo de c6 contra el rey');
   chk(J.conf(B5, ['e8d8', 'd5c6', 'd8c7'], cc) === true && J.conf(B5, ['e8d7', 'b5a4', 'd7d6'], cc) === false,
       '🔒 la línea lo confirma sólo si se cobra la clavada (dxc6 y queda ≥2 arriba); si el rey la defiende y no gana nada, no');
-  chk(extraerFuncion('_faComBuenaHtml').includes("why = 'Clava ' + _motClavadaTxt(c.cl, false) + '.';"), 'la franja dice "Clava el caballo de c6 contra el rey."');
+  chk(extraerFuncion('_faComBuenaHtml').includes("'Clava ' + _motClavadaTxt(c.cl, false) + '.'") && extraerFuncion('_faComBuenaHtml').includes("'Destapa una clavada: '"),
+      'la franja dice "Clava el caballo de c6 contra el rey." o, si la destapó, "Destapa una clavada: la torre de d1 clava…"');
   J.fa.results = [{ cp: 30 }, { cp: 40 }, { cp: 60 }];
   const m = J.cand(4, C7, { mate: 3 }, { mate: 2 }, true);
   J.fa.results = [{ cp: 30 }, { cp: 40 }, { mate: 4 }];
