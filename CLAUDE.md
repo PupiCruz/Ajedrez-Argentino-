@@ -207,6 +207,13 @@ El autor **no es programador** y trabaja en español. El objetivo es eventualmen
   Motor principal: `stockfish-19-lite-single.{js,wasm}` (SF19 con red neuronal NNUE, 1,8 MB,
   un solo hilo, el mismo build que usa Chess.com; reemplazó al SF18 el 30/09/2026). Plan B y modo `file://` (doble clic):
   `stockfish-embedded.js` (SF16 en base64, sin red). La lógica está en `sfStart()`.
+  **Librería de ajedrez** (`assets/chess.min.js`, desde el 04/10/2026): es **chess.js 1.4.0** (4 a 30
+  veces más rápida) envuelta en un **traductor** que le pone la cara EXACTA de la vieja 0.10.3
+  (`load_pgn`, `in_check`, `move()` que devuelve null…), así que el `index.html` no cambió. **No se
+  edita a mano:** se arma con `node herramientas/chess-compat/armar.cjs` (fuentes en esa carpeta) y
+  se compara contra la vieja con `node herramientas/chess-compat/comparar.cjs` (tiene que decir
+  "CERO diferencias"). Si se cambia, subir el `?v=` del `<script>` en `index.html` y `editar.html`
+  (`/assets/*` se cachea un año).
 - `iniciar-servidor.cmd` / `serve.ps1` — levantan un servidor local para abrir la app.
 
 ## Cómo se trabaja (flujo del autor)
