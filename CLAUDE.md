@@ -212,7 +212,7 @@ El autor **no es programador** y trabaja en español. El objetivo es eventualmen
   (`load_pgn`, `in_check`, `move()` que devuelve null…), así que el `index.html` no cambió. **No se
   edita a mano:** se arma con `node herramientas/chess-compat/armar.cjs` (fuentes en esa carpeta) y
   se compara contra la vieja con `node herramientas/chess-compat/comparar.cjs` (tiene que decir
-  "CERO diferencias"). Si se cambia, subir el `?v=` del `<script>` en `index.html` y `editar.html`
+  "CERO diferencias"). Si se cambia, subir el `?v=` del `<script>` (va por v=3) en `index.html` y `editar.html`
   (`/assets/*` se cachea un año).
 - `iniciar-servidor.cmd` / `serve.ps1` — levantan un servidor local para abrir la app.
 

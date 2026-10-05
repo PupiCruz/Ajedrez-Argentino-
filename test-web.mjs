@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2264;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2266;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -2064,6 +2064,19 @@ console.log('\n=== 34. La vitrina de trofeos del perfil ===');
       && /isProfile: !pr/.test(cfd) && /_protEv\[_normEvName\(t\.name \|\| ''\)\]\) return;/.test(SRC)
       && /s\[_normEvName\(_catEventName\(nombre, c\.name\)\)\] = true/.test(extraerFuncion('_eventosDeTorneos')),
       '🔒 "Limpiar duplicados" nunca quita las partidas de un torneo del sitio (ni de sus categorías): quita la otra copia');
+  // 04/10/2026: la copia del torneo (OlimpBase) era MÁS CORTA (Trikaliotis–Sanguineti 1968: 30 medias contra 95).
+  // Antes de quitar la otra se le pasan sus jugadas, con los encabezados del torneo; si no se puede, no se quita.
+  const UPG = new Function(extraerFuncion('_pgnPartes') + extraerFuncion('_pgnConJugadasDe') + '; return _pgnConJugadasDe;')();
+  const _dest = '[Event "18° Olimpiada"]\n[White "Trikaliotis, Georgios"]\n[Black "Sanguineti, Raúl"]\n[Date "1968.10.20"]\n[Result "0-1"]\n[EvalSource "aa-sf16"]\n\n1. d4 {[%eval 0.2]} Nf6 2. c4 0-1';
+  const _fuente = '[Event "Lugano ol"]\r\n[White "Trikaliotis, G."]\r\n[Black "Sanguinetti, Ricardo"]\r\n[Date "1968.01.01"]\r\n[Result "*"]\r\n\r\n1. d4 Nf6 2. c4 e6 3. Nf3 b6 *';
+  const _up = UPG(_dest, _fuente);
+  chk(/\[Black "Sanguineti, Raúl"\]/.test(_up) && /\[Date "1968\.10\.20"\]/.test(_up) && /3\. Nf3 b6 0-1$/.test(_up)
+      && !/EvalSource/.test(_up) && !/Sanguinetti/.test(_up),
+      '🧹 la copia corta del torneo recibe las jugadas de la larga, conserva sus nombres, fecha y resultado (y suelta el EvalSource si las evals no viajan)', _up);
+  chk(/if \(!dedupIndexCovered\(idx, it\.pgn\)\) \{/.test(cpd) && /if \(!dest \|\| !dest\.it\.entry\) \{ dedupIndexAdd\(idx, it\.pgn\); anotar\(it\); return; \}/.test(cpd)
+      && /_applyGameUpgrades\(ups\);\s*_applyProfileDrops\(combined\);/.test(extraerFuncion('runProfileDedup'))
+      && !/\bconfirm\(|\balert\(/.test(extraerFuncion('runProfileDedup')),
+      '🧹 la limpieza nunca pierde jugadas (si no puede pasarlas, no quita la copia larga) y pregunta con el cartel de la app');
   chk(/try \{ if \(_histVista !== null\) histSalir\(true\); \} catch \(_\) \{\}/.test(extraerFuncion('goHome')),
       '🏛️ el logo lleva a la lista principal aunque estés adentro de Torneos históricos');
   chk(/var src = _ondemand \? \(window\.__EMBEDDED_TZ__ \|\| \{\}\) : getTzConfig\(\);/.test(extraerFuncion('_colCfg'))

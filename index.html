@@ -23244,7 +23244,11 @@ function _computeProfileDedup() {
   var lsStored = [];
   try { lsStored = JSON.parse(localStorage.getItem('pgn_tournaments') || '[]'); } catch (e) {}
   var idx = newDedupIndex();
-  lsStored.forEach(function(e) { if (!e.playerOnly) (e.games || []).forEach(function(g) { dedupIndexAdd(idx, g); }); });
+  // Dónde está cada copia que se QUEDA (por dupla de jugadores): si la que se quita resulta más larga,
+  // hay que saber a cuál pasarle las jugadas (ver abajo). Las de torneos públicos no tienen entry.
+  var quedan = Object.create(null);
+  function anotar(it) { var k = _dedupKey(it.pgn); if (k.body.length >= 4) (quedan[k.pk] = quedan[k.pk] || []).push({ it: it, body: k.body }); }
+  lsStored.forEach(function(e) { if (!e.playerOnly) (e.games || []).forEach(function(g) { dedupIndexAdd(idx, g); anotar({ pgn: g }); }); });
   // Aplanar todas las partidas de perfil con su ubicación (entry + índice): primero las de un TORNEO del
   // sitio (no se quitan nunca, ver _eventosDeTorneos) y, dentro de cada grupo, las más largas primero.
   var prot = _eventosDeTorneos();
@@ -23252,14 +23256,62 @@ function _computeProfileDedup() {
   _memTournaments.forEach(function(t) { var pr = !!prot[_normEvName(t.name || '')]; (t.games || []).forEach(function(g, gi) { all.push({ entry: t, gi: gi, pgn: g, len: _moveBody(g).length, prot: pr }); }); });
   all.sort(function(a, b) { if (a.prot !== b.prot) return a.prot ? -1 : 1; return b.len - a.len; });
   var dropByEntry = new Map();   // entry -> { gi: true } de las partidas a quitar
-  var removed = 0;
+  var removed = 0, upgrades = [];
   all.forEach(function(it) {
     if (!it.prot && dedupIndexHas(idx, it.pgn)) {
+      // La copia que se queda (la del torneo) puede ser MÁS CORTA: OlimpBase trae a veces la partida
+      // cortada o sin la última jugada (04/10/2026: Trikaliotis–Sanguineti 1968, 30 medias jugadas
+      // contra 95). Entonces se le pasan las jugadas de ésta antes de quitarla. Si no se puede (está
+      // en un torneo público, sin entry), ésta NO se quita: la limpieza nunca pierde jugadas.
+      if (!dedupIndexCovered(idx, it.pgn)) {
+        var dest = _dedupCopiaCorta(quedan, it.pgn);
+        if (!dest || !dest.it.entry) { dedupIndexAdd(idx, it.pgn); anotar(it); return; }
+        upgrades.push({ entry: dest.it.entry, gi: dest.it.gi, pgn: it.pgn });
+        dest.body = _dedupKey(it.pgn).body;   // de acá en más esa copia ya es la larga
+        dedupIndexAdd(idx, it.pgn);
+      }
       var s = dropByEntry.get(it.entry); if (!s) { s = {}; dropByEntry.set(it.entry, s); }
       s[it.gi] = true; removed++;
-    } else { dedupIndexAdd(idx, it.pgn); }
+    } else { dedupIndexAdd(idx, it.pgn); anotar(it); }
   });
-  return { removed: removed, _dropByEntry: dropByEntry, apply: function() { if (removed) _applyProfileDrops(dropByEntry); } };
+  return { removed: removed, upgrades: upgrades, _dropByEntry: dropByEntry,
+           apply: function() { if (removed) { _applyGameUpgrades(upgrades); _applyProfileDrops(dropByEntry); } } };
+}
+
+// De las copias que se quedan con la misma dupla, la más larga que sea un PRINCIPIO de esta partida.
+function _dedupCopiaCorta(quedan, pgn) {
+  var k = _dedupKey(pgn), arr = quedan[k.pk] || [], best = null;
+  for (var i = 0; i < arr.length; i++) {
+    var q = arr[i];
+    if (q.body !== k.body && k.body.indexOf(q.body) === 0 && (!best || q.body.length > best.body.length)) best = q;
+  }
+  return best;
+}
+
+// Separa un PGN en encabezados ([Tag "valor"]) y jugadas.
+function _pgnPartes(pgn) {
+  var s = String(pgn || ''), re = /\s*\[[A-Za-z0-9_]+\s+"(?:[^"\\]|\\.)*"\]/y, fin = 0;
+  for (;;) { re.lastIndex = fin; if (!re.exec(s)) break; fin = re.lastIndex; }
+  return { head: s.slice(0, fin).trim(), moves: s.slice(fin).trim() };
+}
+
+// Los encabezados de `destino` (nombres, fecha y resultado buenos) con las jugadas de `fuente`.
+function _pgnConJugadasDe(destino, fuente) {
+  var d = _pgnPartes(destino), f = _pgnPartes(fuente);
+  var res = (d.head.match(/\[Result "([^"]*)"\]/) || [])[1];
+  var mv = f.moves.replace(/\s*(1-0|0-1|1\/2-1\/2|\*)\s*$/, '');
+  if (res) mv += ' ' + res;
+  var head = d.head;
+  // Si las evaluaciones del barrido no viajan con las jugadas nuevas, el encabezado que las anuncia sobra.
+  if (!/\[%eval/.test(mv)) head = head.replace(/^\[EvalSource "[^"]*"\]\s*\n?/m, '');
+  return head ? head + '\n\n' + mv : mv;
+}
+
+// Aplica los "pasar las jugadas a la copia que se queda" de _computeProfileDedup.
+function _applyGameUpgrades(upgrades) {
+  (upgrades || []).forEach(function(u) {
+    if (u.entry && u.entry.games && u.entry.games[u.gi] != null) u.entry.games[u.gi] = _pgnConJugadasDe(u.entry.games[u.gi], u.pgn);
+  });
 }
 
 // Aplica un mapa entry->{gi:true} de partidas de perfil a quitar (compartido por prefijo + posición final).
@@ -23320,8 +23372,9 @@ function _computeFenDedup(prefixPlan, onProgress, done) {
         if (!fen) continue;
         var fk = g.date + '|' + fen;
         if (seen[fk]) {
-          if (g.isProfile) { var d = dropByEntry.get(g.entry); if (!d) { d = {}; dropByEntry.set(g.entry, d); } if (!d[g.gi]) { d[g.gi] = true; removed++; } }
-        } else seen[fk] = true;
+          // Misma posición final con MÁS jugadas (una vuelta de repetición, otro orden): no se pierde.
+          if (g.isProfile && _moveBody(g.pgn).split(' ').length <= _moveBody(seen[fk].pgn).split(' ').length) { var d = dropByEntry.get(g.entry); if (!d) { d = {}; dropByEntry.set(g.entry, d); } if (!d[g.gi]) { d[g.gi] = true; removed++; } }
+        } else seen[fk] = g;
       }
       if (performance.now() - tStart > 350) break;   // ceder ~cada 350ms para refrescar la barra de progreso
     }
@@ -23361,18 +23414,31 @@ function runProfileDedup() {
     function merge(m) { if (!m || !m.forEach) return; m.forEach(function(s, entry) { var d = combined.get(entry); if (!d) { d = {}; combined.set(entry, d); } for (var k in s) d[k] = true; }); }
     merge(prefixPlan._dropByEntry); merge(fenPlan._dropByEntry);
     var total = 0; combined.forEach(function(s) { total += Object.keys(s).length; });
-    if (total === 0) { alert('No se encontraron partidas duplicadas en los perfiles. 🎉'); return; }
-    var porPos = fenPlan.removed;
-    if (!confirm('Se encontraron ' + total + ' partidas duplicadas en los perfiles de jugadores'
+    if (total === 0) { _avisoApp('🎉', 'No hay duplicadas', 'No se encontraron partidas duplicadas en los perfiles.'); return; }
+    var porPos = fenPlan.removed, ups = prefixPlan.upgrades || [];
+    var lista = ups.map(function(u) {
+      var h = parsePgnHeaders(String(u.entry.games[u.gi]).slice(0, 1500)), antes = _moveBody(u.entry.games[u.gi]).split(' ').length;
+      var mas = _moveBody(u.pgn).split(' ').length - antes;
+      return '• ' + (h.White || '?') + ' – ' + (h.Black || '?') + ' ' + String(h.Date || '').slice(0, 4) + ' (+' + mas + (mas === 1 ? ' media jugada)' : ' medias jugadas)');
+    });
+    var texto = 'Se encontraron ' + total + ' partidas duplicadas en los perfiles de jugadores'
       + (porPos ? ' (' + porPos + ' por misma posición final: transposiciones / notación)' : '') + '.\n\n'
-      + 'Se va a dejar UNA sola copia (la más completa) de cada una. No se tocan los torneos públicos.\n\n'
-      + '💡 Antes conviene descargar tu copia de autor por las dudas.\n\n'
-      + '¿Quitar las ' + total + ' partidas duplicadas ahora?')) return;
-    _applyProfileDrops(combined);
-    alert('✓ Listo. Se quitaron ' + total + ' partidas duplicadas de los perfiles.\n\n'
-      + 'Para que el cambio quede PERMANENTE (y no vuelvan al recargar), usá ahora el botón '
-      + '"Guardar datos en mi carpeta" y reemplazá los archivos en tu carpeta data\\.');
-    exportTabInit();   // refrescar las estadísticas de la pestaña
+      + 'Se va a dejar UNA sola copia de cada una. No se tocan los torneos públicos.'
+      + (ups.length ? '\n\nEn ' + ups.length + ' la copia que se queda (la del torneo) tenía MENOS jugadas: antes de quitar la otra '
+        + 'se le pasan sus jugadas (con los nombres y la fecha del torneo), así no se pierde ninguna:\n'
+        + lista.slice(0, 15).join('\n') + (lista.length > 15 ? '\n… y ' + (lista.length - 15) + ' más' : '') : '')
+      + '\n\n💡 Antes conviene descargar tu copia de autor por las dudas.';
+    window.aaAsk({ icono: '🧹', titulo: '¿Quitar las ' + total + ' partidas duplicadas?', texto: texto, lineas: true,
+                   ok: 'Quitar las ' + total, cancelar: 'Cancelar' }).then(function(ok) {
+      if (!ok) return;
+      _applyGameUpgrades(ups);
+      _applyProfileDrops(combined);
+      _avisoApp('✓', 'Listo', 'Se quitaron ' + total + ' partidas duplicadas de los perfiles'
+        + (ups.length ? ' y ' + ups.length + ' partidas de torneos recibieron las jugadas que les faltaban' : '') + '.\n\n'
+        + 'Para que el cambio quede PERMANENTE (y no vuelvan al recargar), usá ahora el botón '
+        + '"Guardar datos en mi carpeta".');
+      exportTabInit();   // refrescar las estadísticas de la pestaña
+    });
   });
 }
 
@@ -48723,7 +48789,7 @@ function cvUpdateNagBadge() {
 (function(){ var b = document.getElementById('cv-nag-toggle'); if (b) b.classList.toggle('on', _showNagBadges); })();
 
 </script>
-<script async="" src="assets/chess.min.js?v=2" onerror="window.__chessLibFailed=true">
+<script async="" src="assets/chess.min.js?v=3" onerror="window.__chessLibFailed=true">
 </script>
 
 <!-- ── DATOS HISTÓRICOS al azar en la columna derecha del visor ──────────────
