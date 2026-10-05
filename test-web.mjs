@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2266;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2304;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -8183,8 +8183,8 @@ console.log('\n=== Auditoría 23/09 — Fase 4: accesibilidad y prolijidad ===')
   const ChessM = _mM.exports.Chess || _mM.exports;
   const M = new Function('Chess', SRC.match(/var _FA_MOT = [^\n]*/)[0] + '\n' + SRC.match(/var _MOT_PIEZA = [^\n]*/)[0] + '\n'
     + ['_fenGrid', '_pval', '_pieceValAtFen', '_pinDir', '_attackersOf', '_motMaterial', '_motAtacadas', '_motDefendida',
-       '_motMalParada', '_motPasillo', '_motivoDe', '_motActivo'].map(extraerFuncion).join('\n')
-    + '; return { de: _motivoDe, activo: _motActivo, temas: _FA_MOT };')(ChessM);
+       '_motMalParada', '_motPasillo', '_motivoDe', '_motDobleteN', '_motClavada', '_motClavadaTxt', '_motGratis', '_motActivo'].map(extraerFuncion).join('\n')
+    + '; return { de: _motivoDe, clav: _motClavada, clavTxt: _motClavadaTxt, gratis: _motGratis, activo: _motActivo, temas: _FA_MOT };')(ChessM);
   const N = (fen, to, parentFen) => ({ fen, move: { to, from: 'a1', san: 'x' }, parent: { fen: parentFen || fen } });
   // 3.♘g5?? (1.e4 e5 2.♘f3 d6): el caballo queda sin defensa y la dama lo come.
   const G5 = N('rnbqkbnr/ppp2ppp/3p4/4p1N1/4P3/8/PPPP1PPP/RNBQKB1R b KQkq - 1 3', 'g5', 'rnbqkbnr/ppp2ppp/3p4/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 0 3');
@@ -8206,6 +8206,127 @@ console.log('\n=== Auditoría 23/09 — Fase 4: accesibilidad y prolijidad ===')
   chk(M.activo('', ls) === true && M.activo('?motivos=0', ls) === false && M.activo('', ls) === false && M.activo('?motivos=1', ls) === true,
       '?motivos=0 apaga el por qué en ese navegador (queda guardado) y ?motivos=1 lo vuelve a prender');
   chk(/var why = cls !== 'dubious' \? _faMotivo\(i\) : '';/.test(extraerFuncion('_faComHtml')), 'sólo en la ? y la ?? (en la ?! no se gasta otra posición de motor)');
+  M.temas.colgada = true;
+  // 05/10: "Se podía comer gratis…" — el caballo de g5 quedó suelto (3.♘g5?) y las negras jugaron otra cosa.
+  const G5f = 'rnbqkbnr/ppp2ppp/3p4/4p1N1/4P3/8/PPPP1PPP/RNBQKB1R b KQkq - 1 3';
+  const NC6 = { fen: 'r1bqkbnr/ppp2ppp/2np4/4p1N1/4P3/8/PPPP1PPP/RNBQKB1R w KQkq - 2 4', move: { from: 'b8', to: 'c6' },
+    parent: { fen: G5f, move: { from: 'f3', to: 'g5' }, parent: { fen: 'rnbqkbnr/ppp2ppp/3p4/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 0 3' } } };
+  chk(M.gratis(NC6, ['d8g5', 'd2d4', 'g5g6']) === 'Se podía comer gratis el caballo de g5.', '🔒 la mejor comía una pieza suelta y no se comió → "Se podía comer gratis el caballo de g5."');
+  const NC6d = { fen: NC6.fen, move: NC6.move, parent: { fen: 'rnbqkbnr/ppp2ppp/3p4/4p1N1/3PP3/8/PPP2PPP/RNBQKB1R b KQkq - 0 3', move: NC6.parent.move, parent: NC6.parent.parent } };
+  chk(M.gratis(NC6d, ['d8g5', 'c1g5', 'f7f6']) === '', 'defendida por el alfil c1: no era gratis');
+  const NC6r = { fen: NC6.fen, move: NC6.move, parent: { fen: G5f, move: { from: 'f3', to: 'g5' }, parent: { fen: 'rnbqkbnr/ppp2ppp/3p4/4p1p1/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 0 3' } } };
+  chk(M.gratis(NC6r, ['d8g5', 'd2d4', 'g5g6']) === '', 'si el rival acababa de COMER ahí, era recuperar (un cambio), no un regalo');
+  chk(M.gratis({ fen: NC6.fen, move: { from: 'd8', to: 'g5' }, parent: NC6.parent }, ['d8g5', 'd2d4']) === '', 'si la jugada comió en esa misma casilla, no hay nada que reprochar');
+  // 05/10: la clavada. 1...♘c6?? y 2.♗b5 clava el caballo contra el rey; el peón d5 se lo come.
+  const NC6p = { fen: '4k3/8/2n5/3P4/8/8/8/4KB2 w - - 1 2', move: { from: 'b8', to: 'c6' }, parent: { fen: '1n2k3/8/8/3P4/8/8/8/4KB2 b - - 0 1' } };
+  chk(M.de(NC6p, ['f1b5', 'e8d8', 'd5c6', 'd8c7'], { cp: 300 }) === 'Permite una clavada de alfil en b5: el caballo de c6 queda clavado contra el rey.',
+      '🔒 el rival clava una pieza y se la come en la línea → "Permite una clavada de alfil en b5: el caballo de c6 queda clavado contra el rey."');
+  chk(M.de(NC6p, ['f1b5', 'e8d7', 'b5a4', 'd7d6'], { cp: 60 }) === '', 'si en la línea la clavada no cobra nada, no se dice');
+  const gc = (fen) => { const g = new Array(64).fill(null); fen.split(' ')[0].split('/').forEach((row, i) => { let f = 0; for (const ch of row) { if (ch >= '1' && ch <= '8') f += +ch; else { g[(7 - i) * 8 + f] = ch; f++; } } }); return g; };
+  const rel = M.clav(gc('4r1k1/8/2n5/1B6/8/8/8/4K3 b - - 0 1'), 1, 4, 'b');
+  chk(rel && rel.p === 'n' && rel.sq === 'c6' && rel.tras === 'r' && rel.trasSq === 'e8' && M.clavTxt(rel, false) === 'el caballo de c6 contra la torre',
+      'clavada RELATIVA: el alfil clava el caballo contra la torre (si se corre, cae la torre)');
+  chk(M.clav(gc('4r1k1/8/2n5/1Q6/8/8/8/4K3 b - - 0 1'), 1, 4, 'b') === null && M.clav(gc('4k3/8/2p5/1B6/8/8/8/4K3 b - - 0 1'), 1, 4, 'b') === null,
+      'no es clavada si lo de atrás no vale más que la que clava (la dama contra una torre), ni si lo clavado es un peón');
+  M.temas.gratis = false;
+  chk(M.gratis(NC6, ['d8g5', 'd2d4', 'g5g6']) === '', 'el tema se apaga por separado (_FA_MOT.gratis)');
+  chk(/return _motivoDe\(node, pv, _fa\.results\[i\]\) \|\| \(node\.parent \? _motGratis\(node, _faPvMemo\[node\.parent\.fen\]\) : ''\);/.test(extraerFuncion('_faMotivo')),
+      'primero lo que PERMITE la jugada (mate, colgada, doblete); si nada, lo que dejó pasar');
+}
+
+// ── 🌟 Jugadones (!!) y muy buenas (!) con su comentario (05/10) ──
+{
+  console.log('\n🌟 Jugadones (!!) y muy buenas (!)');
+  const chessSrcJ = fs.readFileSync(new URL('./assets/chess.min.js', import.meta.url), 'utf8');
+  const _mJ = { exports: {} };
+  new Function('module', 'exports', 'window', chessSrcJ)(_mJ, _mJ.exports, {});
+  const ChessJ = _mJ.exports.Chess || _mJ.exports;
+  const J = new Function('Chess', SRC.match(/var _FA_BUENA = [^\n]*/)[0] + '\n' + SRC.match(/var _FA_BUENA_MATE_MAX = [^\n]*/)[0] + '\n' + SRC.match(/var _MOT_PIEZA = [^\n]*/)[0] + '\n'
+    + 'var _fa = { results: [] }; function _motOn() { return true; }\n'
+    + 'var _FA_COM_IGUAL = 3, _FA_ENTREGA_TOPE = 95; var pedidos = [], _faBrillLn = {}, _brillOk = true, _descarte = false;\n'
+    + 'function _faIsBrilliant() { return _brillOk; } function _faDescarteLista(n, rb) { return _descarte || !rb.ln; }\n'
+    + 'function _faComEsperaFinal() { return false; } function _faBriPedir(fen, multi) { pedidos.push([fen, multi]); }\n'
+    + ['_fenGrid', '_pval', '_pinDir', '_attackersOf', '_motMaterial', '_motAtacadas', '_motDefendida', '_motMalParada', '_motDobleteN', '_motClavada',
+       '_faWinP', '_faBuenaCand', '_faBuenaConfirma', '_faBrillSinPase', '_faEntregaTxt', '_faSiLaToma', '_faIgualPartida', '_faEsIgual'].map(extraerFuncion).join('\n')
+    + '; return { fa: _fa, cand: _faBuenaCand, conf: _faBuenaConfirma, sinPase: _faBrillSinPase, entrega: _faEntregaTxt, siToma: _faSiLaToma, igual: _faIgualPartida, esIgual: _faEsIgual, dobl: _motDobleteN,'
+    + ' grid: _fenGrid, ped: pedidos, ln: _faBrillLn, set: function(b, d) { _brillOk = b; _descarte = d; } };')(ChessJ);
+  // 1.♘c7+: doblete al rey y la torre de a8.
+  const ANT = { fen: 'r3kbnr/pp3ppp/8/1N6/8/8/PPP2PPP/R1B1KBNR w KQkq - 0 1' };
+  ANT.parent = { fen: ANT.fen };
+  const C7 = { fen: 'r3kbnr/ppN2ppp/8/8/8/8/PPP2PPP/R1B1KBNR b KQkq - 1 1', move: { from: 'b5', to: 'c7' }, parent: ANT };
+  chk(J.dobl(J.grid(C7.fen), 2, 6, 'b') === 2, 'el caballo de c7 le hace doblete al rey y a la torre (cuenta 2)');
+  const c = J.cand(5, C7, { cp: 100 }, { cp: 500 }, true);
+  chk(c && c.tipo === 'doblete' && c.p === 'n' && c.sq === 'c7', 'candidata a "¡Tremendooo!": doblete de caballo en c7');
+  chk(J.conf(C7, ['e8d8', 'c7a8', 'f8d6'], c) === true, '🔒 la línea del motor lo confirma: el caballo se come la torre y queda ≥2 arriba');
+  chk(J.conf(C7, ['e8d8', 'c7b5', 'a8c8'], c) === false, 'si en la línea el caballo no come nada, no hay "¡Tremendooo!"');
+  chk(J.cand(5, C7, { cp: 900 }, { cp: 1300 }, true) === null, 'ya ganando de sobra (≥95%) no se festeja el doblete');
+  // 05/10: 1.♗b5 clava el caballo de c6 contra el rey y el peón d5 lo gana.
+  const B5 = { fen: '4k3/8/2n5/1B1P4/8/8/8/4K3 b - - 1 1', move: { from: 'f1', to: 'b5' }, parent: { fen: '4k3/8/2n5/3P4/8/8/8/4KB2 w - - 0 1' } };
+  B5.parent.parent = { fen: B5.parent.fen };
+  const cc = J.cand(5, B5, { cp: 100 }, { cp: 300 }, true);
+  chk(cc && cc.tipo === 'clavada' && cc.cl.sq === 'c6' && cc.cl.tras === 'k', 'candidata a "¡Tremendooo!": el alfil clava el caballo de c6 contra el rey');
+  chk(J.conf(B5, ['e8d8', 'd5c6', 'd8c7'], cc) === true && J.conf(B5, ['e8d7', 'b5a4', 'd7d6'], cc) === false,
+      '🔒 la línea lo confirma sólo si se cobra la clavada (dxc6 y queda ≥2 arriba); si el rey la defiende y no gana nada, no');
+  chk(extraerFuncion('_faComBuenaHtml').includes("why = 'Clava ' + _motClavadaTxt(c.cl, false) + '.';"), 'la franja dice "Clava el caballo de c6 contra el rey."');
+  J.fa.results = [{ cp: 30 }, { cp: 40 }, { cp: 60 }];
+  const m = J.cand(4, C7, { mate: 3 }, { mate: 2 }, true);
+  J.fa.results = [{ cp: 30 }, { cp: 40 }, { mate: 4 }];
+  const m2 = J.cand(4, C7, { mate: 3 }, { mate: 2 }, true);
+  chk(m && m.tipo === 'mate' && m.n === 3 && m2 === null, '🔒 mate: sólo la PRIMERA jugada del mate que el rival recién permitió ("Encontró el mate en 3"), no las siguientes');
+  J.fa.results = [{ cp: 30 }, { cp: 40 }, { cp: 60 }];
+  const largo = J.cand(4, C7, { mate: 16 }, { mate: 15 }, true);
+  const RET = { fen: C7.fen, move: { from: 'b5', to: 'c7' }, parent: { fen: ANT.fen, move: { from: 'd8', to: 'c7' }, parent: { fen: 'r3kbnr/ppN2ppp/8/8/8/8/PPP2PPP/R1B1KBNR b KQkq - 0 1' } } };
+  const ret = J.cand(4, RET, { mate: 3 }, { mate: 2 }, true);
+  chk(largo === null && ret === null, 'un mate largo (en 16, cosa de motor) o RETOMAR en la casilla donde el rival comió no es "¡Tremendooo!"');
+  // !! sin pase: el motor confirma sólo las candidatas.
+  const PREV = { fen: 'r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4' };
+  const BRI = { fen: 'x', move: { from: 'h5', to: 'f7' }, parent: PREV };
+  chk(J.sinPase(BRI, {}, {}, true, 50) === false && J.ped.length === 1 && J.ped[0][0] === PREV.fen && J.ped[0][1] === true,
+      'candidata sin datos: le pide al motor 3 líneas en la posición de antes (y por ahora no marca)');
+  J.ln[PREV.fen] = { pv: ['h5f7'], ln: [{ mv: 'h5f7', sc: 9000 }, { mv: 'c4f7', sc: 100 }] };
+  chk(J.sinPase(BRI, {}, {}, true, 50) === true, '🔒 el motor dice que ES la mejor → !! (también con evals de Lichess)');
+  J.ln[PREV.fen] = { pv: ['c4f7'], ln: [] };
+  chk(J.sinPase(BRI, {}, {}, true, 50) === false, 'si la mejor del motor es otra, no hay !!');
+  J.ln[PREV.fen] = { pv: ['h5f7'], ln: [] }; J.set(true, true);
+  chk(J.sinPase(BRI, {}, {}, true, 50) === false, 'corren los filtros de la lista (la única, la calidad, retomar…)');
+  J.set(false, false);
+  chk(J.sinPase(BRI, {}, {}, true, 50) === false && J.ped.length === 1, 'si no pasa el filtro del sacrificio, ni se le pregunta al motor');
+  const Q = { fen: C7.fen, move: C7.move, parent: ANT, _entrega: { p: 'Q', sq: 'd1', movida: false } };
+  chk(J.entrega(Q._entrega) === 'Entrega la dama de d1.' && J.siToma(Q, Q._entrega, null, { mate: 3 }, true) === 'Si la toma, mate en 3.', 'el por qué del jugadón: "Entrega la dama de d1." y, si la toman, "Si la toma, mate en 3."');
+  Q._entrega = { p: 'n', sq: 'f7', movida: true };
+  chk(J.entrega(Q._entrega) === 'Entrega el caballo en f7.' && J.siToma(Q, Q._entrega, null, { cp: 200 }, false) === '', '"en" si es la pieza que movió; sin línea, no se dice qué pasa si la toman');
+  // La línea que coincide con la partida: 3 medias jugadas iguales y no se repite.
+  const mk = (u) => ({ move: { from: u.slice(0, 2), to: u.slice(2, 4) }, children: [] });
+  const P0 = { children: [] }; let q = P0; for (const u of ['e2e4', 'e7e5', 'g1f3', 'b8c6']) { const h = mk(u); q.children.push(h); q = h; }
+  P0.children[0].children.push(Object.assign(mk('d7d5'), { own: true }));
+  chk(J.igual(P0, ['e2e4', 'e7e5', 'g1f3', 'g8f6']) === 3 && J.esIgual(P0, ['e2e4', 'e7e5', 'g1f3', 'g8f6']) && !J.esIgual(P0, ['e2e4', 'd7d5', 'g1f3']),
+      '🔒 la variante del módulo igual a la partida en 3 medias jugadas no se repite (las variantes propias no cuentan como partida)');
+  chk(J.esIgual(P0, ['e2e4', 'e7e5']) && !J.esIgual(P0, []), 'una línea corta que coincide entera también cuenta');
+  const bh2 = extraerFuncion('_faComBuenaHtml');
+  chk(bh2.includes('if (t === undefined) _faTomaPedir(node.fen, e.sq);') && bh2.includes("'Si no ' + lo + ' toma:'") && bh2.includes("'Si ' + lo + ' toma:'")
+      && bh2.includes("'La partida siguió por el mismo camino que el módulo.'"),
+      '🔒 si la mejor del motor NO toma la pieza, se pide aparte la mejor captura y van los dos renglones ("Si no lo toma:" / "Si lo toma:")');
+  const tp = extraerFuncion('_faTomaPedir'), mn = extraerFuncion('mevNext'), mh = extraerFuncion('mevHandleMsg');
+  chk(/sm: sm/.test(tp) && /searchmoves/.test(mn) && mh.includes('if (!job.sm) {'),
+      'la captura se busca con searchmoves, y esa valoración (no es la de la posición) no se guarda ni pinta barritas');
+  chk(extraerFuncion('_faIsBrilliant').includes('if (moverWinBefore >= (tope || _faWinP({ cp: 500 }))) return false;'), '🔒 sin tope a mano, no hay !! si el que mueve ya iba +5 o más (la lista de jugadones de la ronda; pedido del autor, 05/10)');
+  const ES = new Function(SRC.match(/var _FA_ENTREGA_TOPE = [^\n]*/)[0] + '\n' + ['_faWinP', '_faEntregaSym'].map(extraerFuncion).join('\n') + '; return _faEntregaSym;')();
+  const nE = {}, nE2 = {}, wp = cp => 50 + 50 * (2 / (1 + Math.exp(-0.00368208 * cp)) - 1);
+  chk(ES(nE, wp(300), true) === '!!' && ES(nE2, wp(600), true) === '!' && nE2._buena && nE2._buena.tipo === 'entrega' && ES({}, wp(-600), false) === '!',
+      '🔒 la entrega sana: hasta +5 es !!, ya ganando (+6, como 27.♕xd7 de Vijayakumar–Sezdbekov) es "¡Tremendooo!" — también para las negras');
+  chk(extraerFuncion('_faComBuenaHtml').includes("ent = bri || !!(c && c.tipo === 'entrega')"), 'el "¡Tremendooo!" de una entrega lleva la misma explicación que el jugadón (qué entrega y qué pasa si la toma)');
+  const fc = extraerFuncion('faClassify'), ch = extraerFuncion('_faComHtml');
+  chk(fc.includes('else if (!bm && _faBrillSinPase(node, rBefore, rAfter, whiteMoved, wpB)) {') && fc.includes('_faIsBrilliant(node, rBefore, rAfter, whiteMoved, wpB, _FA_ENTREGA_TOPE)')
+      && (fc.match(/sym = _faEntregaSym\(node, wpB, whiteMoved\);/g) || []).length === 2
+      && /else if \(_faBuena\(i, node, rBefore, rAfter, whiteMoved\)\) \{ sym = '!'; side\.buena\+\+; \}/.test(fc)
+      && /else if \(dwin <= 2 && _faBuena\(i, node, rBefore, rAfter, whiteMoved\)\) \{ sym = '!'; side\.buena\+\+; \}/.test(fc),
+      '🔒 faClassify: !! sin pase, y ! antes que ★ (con pase) o sin perder chances (sin pase)');
+  chk(/if \(nag === '!!' \|\| nag === '!'\) return _faComBuenaHtml\(i\);/.test(ch) && ch.indexOf('_faComEsperaFinal()') < ch.indexOf('_faComBuenaHtml'),
+      'las franjas de !! y ! salen por el mismo camino que las de los errores (en vivo esperan al final)');
+  const bh = extraerFuncion('_faComBuenaHtml');
+  chk(bh.includes("'¡Qué jugadón metió!'") && bh.includes("'¡Tremendooo!'") && /cv-mcom-' \+ \(bri \? 'brilliant' : 'good'\)/.test(bh),
+      'frases de la casa: "¡Qué jugadón metió!" (verde agua) y "¡Tremendooo!" (verde)');
+  chk(/'!':'nb-good'/.test(extraerFuncion('cvUpdateNagBadge')) && /#cv-nag-badge\.nb-good/.test(SRC), 'el ! también lleva su pastilla en el tablero');
 }
 
 // ── 📚 La tabla de finales manda en los errores con ≤7 piezas (01/10) ──

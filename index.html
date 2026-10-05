@@ -1807,6 +1807,8 @@
     .cv-mcom-dubious { --mc: #d4a12b; --mc-bg: rgba(212,161,43,.12); }
     .cv-mcom-mistake { --mc: #e07020; --mc-bg: rgba(224,112,32,.12); }
     .cv-mcom-blunder { --mc: #d03030; --mc-bg: rgba(208,48,48,.13); }
+    .cv-mcom-brilliant { --mc: #1fae92; --mc-bg: rgba(38,194,163,.13); }   /* !! jugadón */
+    .cv-mcom-good { --mc: #5fae4c; --mc-bg: rgba(123,200,104,.13); }        /* ! muy buena */
     .cv-mcom-h { display: flex; flex-wrap: wrap; align-items: center; column-gap: 7px; row-gap: 2px; color: var(--text); }
     .cv-mcom-sym { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 4px; box-sizing: border-box;
       border-radius: 9px; background: var(--mc); color: #fff; font-size: 11px; font-weight: 800; box-shadow: 0 1px 3px rgba(0,0,0,.35); }
@@ -1817,6 +1819,8 @@
     .cv-mcom-ev { margin-left: auto; font-size: 11.5px; color: var(--text3); font-variant-numeric: tabular-nums; white-space: nowrap; }
     .cv-mcom-why { margin-top: 2px; color: var(--text); font-size: 12.5px; }
     .cv-mcom-line { margin-top: 3px; font-family: 'Courier New', monospace; font-size: 12.5px; color: var(--fg-c8); }
+    .cv-mcom-lbl { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; font-size: 12px; font-weight: 700; color: var(--text); }
+    .cv-mcom-line .cv-mcom-calc { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; font-size: 12px; }
     .cmv { cursor: pointer; padding: 1px 4px; border-radius: 3px; transition: background-color .1s, border-color .1s, color .1s, box-shadow .1s, transform .1s; }
     .cmv:hover { background: var(--border); color: var(--text); }
     .cmv.on { background: var(--gold-fill); color: #111; font-weight: 700; border-radius: 4px; padding: 1px 5px; box-shadow: 0 0 0 2px rgba(201,162,39,.35); text-shadow: none; }
@@ -1852,6 +1856,7 @@
     #cv-nag-badge.nb-mistake    { background: #e07020; }
     #cv-nag-badge.nb-inaccuracy { background: #d4a12b; }
     #cv-nag-badge.nb-brilliant  { background: #26c2a3; }
+    #cv-nag-badge.nb-good       { background: #5fae4c; }
     .cv-nag-toggle { background: var(--gl40); border: 1px solid var(--bd20); color: var(--fg-e0); border-radius: var(--r-sm); cursor: pointer; font-size: 12px; font-weight: 700; font-family: inherit; padding: 11px 8px; min-width: 0; white-space: nowrap; }
     .cv-nag-toggle.on { border-color: var(--gold-dim); color: var(--gold); background: var(--gold-bg); }
     /* análisis completo de partida */
@@ -36897,7 +36902,9 @@ function mevNext() {
     _mev.mpvPrev = !!_mev.jobs[_mev.i].multipv;
   }
   sf.engine.postMessage('position fen ' + _mev.jobs[_mev.i].fen);
-  sf.engine.postMessage('go depth ' + (_mev.jobs[_mev.i].depth || _MEV_DEPTH) + _mevTope(_mev.jobs[_mev.i]));
+  // `sm` (searchmoves, al final: se come el resto de la orden) = buscar SÓLO entre esas jugadas ("¿y si la toma?").
+  var _smJ = _mev.jobs[_mev.i].sm;
+  sf.engine.postMessage('go depth ' + (_mev.jobs[_mev.i].depth || _MEV_DEPTH) + _mevTope(_mev.jobs[_mev.i]) + (_smJ && _smJ.length ? ' searchmoves ' + _smJ.join(' ') : ''));
   sf.searching = true;
 }
 
@@ -36943,16 +36950,19 @@ function mevHandleMsg(line) {
       var score = raw.mate !== undefined
         ? { mate: turn === 'b' ? -raw.mate : raw.mate }
         : { cp:   turn === 'b' ? -raw.cp   : raw.cp   };
-      _mevEvals[job.fen] = score;
-      _capCache(_mevEvals, 2000);
-      delete _repDe[job.fen];                                  // ahora es propia
-      if (job.rep) _repEncolar(job.fen, score, job.depth || _MEV_DEPTH);   // motor repartido: a los demás
-      mevApply(job.fen, score);
-      if (!job.depth && _mev.t0) {   // promedio móvil de lo que tarda una posición a prof. 12
-        var _ms = Date.now() - _mev.t0;
-        _mev.avgMs = _mev.avgMs ? Math.round(_mev.avgMs * 0.8 + _ms * 0.2) : _ms;
+      // Con `sm` (sólo algunas jugadas) la valoración NO es la de la posición: no se guarda ni se pinta.
+      if (!job.sm) {
+        _mevEvals[job.fen] = score;
+        _capCache(_mevEvals, 2000);
+        delete _repDe[job.fen];                                  // ahora es propia
+        if (job.rep) _repEncolar(job.fen, score, job.depth || _MEV_DEPTH);   // motor repartido: a los demás
+        mevApply(job.fen, score);
+        if (!job.depth && _mev.t0) {   // promedio móvil de lo que tarda una posición a prof. 12
+          var _ms = Date.now() - _mev.t0;
+          _mev.avgMs = _mev.avgMs ? Math.round(_mev.avgMs * 0.8 + _ms * 0.2) : _ms;
+        }
+        if (job.depth) _colDeep[job.fen] = job.depth;
       }
-      if (job.depth) _colDeep[job.fen] = job.depth;
       var _ln = null;
       if (job.multipv) _ln = (_mev.lines || []).filter(Boolean).map(function(l){   // también desde las blancas
         return { mv: l.mv, re: l.re || '', r3: l.r3 || '', sc: l.sc.mate !== undefined ? { mate: turn === 'b' ? -l.sc.mate : l.sc.mate } : { cp: turn === 'b' ? -l.sc.cp : l.sc.cp } };
@@ -47659,13 +47669,15 @@ function _seeGain(g, tf, tr, side) {
 
 // Gates de "sacrificio sano" (el motor ya lo probó: es su mejor jugada) + escaneo del sacrificio.
 var _FA_BRILL_MIN_NET = 2;   // el que movió invierte al menos ~2 puntos de material (valor colgado − capturado)
-function _faIsBrilliant(node, rBefore, rAfter, whiteMoved, wpB) {
+function _faIsBrilliant(node, rBefore, rAfter, whiteMoved, wpB, tope) {
   if (!node || !node.fen || !node.parent) return false;
-  // Cond. 3 (soundness, baratas): no quedó perdido, ni ya ganaba de sobra (para no regalar !! en +9).
+  // Cond. 3 (soundness, baratas): no quedó perdido, ni ya ganaba de sobra. Tope: +5 (≈86 % de expectativa;
+  // antes era 95 %, ≈ +8: el autor, 05/10, no quería !! con la partida ya liquidada, como en +7,8).
+  // `tope` (opcional, en %): el visor pasa 95 y decide él: hasta +5 es !!, de ahí a +8 es "¡Tremendooo!".
   var moverCpAfter = whiteMoved ? faNum(rAfter) : -faNum(rAfter);
   if (moverCpAfter < -200) return false;
   var moverWinBefore = whiteMoved ? wpB : (100 - wpB);
-  if (moverWinBefore >= 95) return false;
+  if (moverWinBefore >= (tope || _faWinP({ cp: 500 }))) return false;
   // Cond. 2 (sacrificio genuino) en la posición DESPUÉS de la jugada (rival a mover).
   var g = _fenGrid(node.fen);
   var parentG = _fenGrid(node.parent.fen);   // posición ANTES de la jugada (para descartar piezas ya colgadas)
@@ -47695,7 +47707,7 @@ function _faIsBrilliant(node, rBefore, rAfter, whiteMoved, wpB) {
   // las OTRAS sólo la dama (desviación tipo Légal). Dejar colgado un caballo, un alfil o una torre que no
   // se tocó casi siempre es "no defenderla", no entregarla: en la R9 de la Olimpiada fueron 4 jugadones
   // rechazados por el autor y ninguno aceptado (19.exd6 con el alfil b2 suelto, 36...Rc3, 36...Bd6, 26...Nd5).
-  var hay = false;
+  var hay = false, ent = null;
   for (var sq = 0; sq < 64 && !hay; sq++) {
     var p = g[sq];
     if (!p || _pval(p) < 3 || _pval(p) >= 100) continue;
@@ -47714,10 +47726,12 @@ function _faIsBrilliant(node, rBefore, rAfter, whiteMoved, wpB) {
       // OJO CLAVADAS AL REY: el SEE cuenta atacantes clavados que no pueden capturar. Confirmar con
       // chess.js que el rival tiene una captura LEGAL de esta casilla; si no, no es sacrificio real.
       var sqName = 'abcdefgh'.charAt(f) + (r + 1);
-      if (_oppHasLegalCaptureOf(node.fen, sqName) && !_faTomarDestapa(node.fen, sqName, mover, _pval(p))) hay = true;
+      if (_oppHasLegalCaptureOf(node.fen, sqName) && !_faTomarDestapa(node.fen, sqName, mover, _pval(p))) { hay = true; ent = { p: p, sq: sqName, movida: sq === toSq }; }
     }
   }
-  return hay && !_faTapaJaque(node) && !_faRepetida(node) && !_faForzada(node);
+  var ok = hay && !_faTapaJaque(node) && !_faRepetida(node) && !_faForzada(node);
+  if (ok) node._entrega = ent;   // qué pieza entregó: lo cuenta el comentario del jugadón ("Entrega el caballo en f7")
+  return ok;
 }
 // JUGADA FORZADA: con 3 jugadas legales o menos no hay nada que encontrar. 45...♖xd6 de Subelj–Burovic
 // (R11 de la Olimpiada, 27/09): en jaque del peón d6, las únicas eran ♖xd6 y ♕xd6, y entre dar la torre
@@ -47989,8 +48003,8 @@ function _faTabsSync() {
 // (ACPL) también cuenta solo jugadas confirmadas. Usa los resultados CRUDOS (no interpolados): un
 // hueco no debe generar una calificación.
 function faClassify() {
-  var st = { w:{best:0,brill:0,exc:0,good:0,inacc:0,mist:0,blun:0,lossSum:0,acc:null,n:0},
-             b:{best:0,brill:0,exc:0,good:0,inacc:0,mist:0,blun:0,lossSum:0,acc:null,n:0} };
+  var st = { w:{best:0,brill:0,buena:0,exc:0,good:0,inacc:0,mist:0,blun:0,lossSum:0,acc:null,n:0},
+             b:{best:0,brill:0,buena:0,exc:0,good:0,inacc:0,mist:0,blun:0,lossSum:0,acc:null,n:0} };
   // 🧭 Imprecisiones/errores/colgadas de cada etapa (apertura, medio juego, final), para "Por etapa".
   st.w.ez = [{inacc:0,mist:0,blun:0}, {inacc:0,mist:0,blun:0}, {inacc:0,mist:0,blun:0}];
   st.b.ez = [{inacc:0,mist:0,blun:0}, {inacc:0,mist:0,blun:0}, {inacc:0,mist:0,blun:0}];
@@ -48021,10 +48035,19 @@ function faClassify() {
     else if (!tbj && dwin >= 10) { sym = '?';  side.mist++; }
     else if (!tbj && dwin >= 5)  { sym = '?!'; side.inacc++; }
     else if (bm && uci === bm) {
-      // La mejor jugada del motor ASCIENDE a brillante (!!) si además es un sacrificio genuino y sano.
-      if (_faIsBrilliant(node, rBefore, rAfter, whiteMoved, wpB) && !_faDescarteLista(node, rBefore, rAfter, whiteMoved)) { sym = '!!'; side.brill++; }
+      // La mejor jugada del motor ASCIENDE a brillante (!!) si además es un sacrificio genuino y sano. Si el que
+      // la hizo ya iba +5 o más, el mismo sacrificio es "¡Tremendooo!" (_faEntregaSym; pasado +8, nada).
+      if (_faIsBrilliant(node, rBefore, rAfter, whiteMoved, wpB, _FA_ENTREGA_TOPE) && !_faDescarteLista(node, rBefore, rAfter, whiteMoved)) {
+        sym = _faEntregaSym(node, wpB, whiteMoved); if (sym === '!!') side.brill++; else side.buena++;
+      }
+      else if (_faBuena(i, node, rBefore, rAfter, whiteMoved)) { sym = '!'; side.buena++; }
       else { sym = '★'; side.best++; }
     }
+    // 🌟 Sin pase (evals del PGN de Lichess no traen la mejor jugada): el motor confirma SÓLO las candidatas.
+    else if (!bm && _faBrillSinPase(node, rBefore, rAfter, whiteMoved, wpB)) {
+      sym = _faEntregaSym(node, wpB, whiteMoved); if (sym === '!!') side.brill++; else side.buena++;
+    }
+    else if (dwin <= 2 && _faBuena(i, node, rBefore, rAfter, whiteMoved)) { sym = '!'; side.buena++; }
     else if (dwin <= 2)  side.exc++;
     else                 side.good++;
     node.move.nag = sym;
@@ -48346,6 +48369,7 @@ function _faComEsperaFinal() {
 function _faComHtml(i) {
   if (_faComEsperaFinal()) { _faComOculto = true; return ''; }
   var node = _fa.nodes[i], nag = node && node.move && node.move.nag;
+  if (nag === '!!' || nag === '!') return _faComBuenaHtml(i);   // 🌟 jugadón / muy buena (05/10)
   var cls = { '?!': 'dubious', '?': 'mistake', '??': 'blunder' }[nag];
   if (!cls || !node.parent) return '';
   var R = _fa.results, rA = R[i], rB = i === 0 ? { cp: 20 } : R[i - 1];
@@ -48433,11 +48457,11 @@ function _faComHtml(i) {
 }
 // Tocar una jugada de la variante del comentario: la línea entera entra como variante (`comp`, que la
 // notación muestra dentro del comentario y no repetida abajo) y el tablero va hasta esa jugada.
-function cvComJugar(pid, k) {
+function cvComJugar(pid, k, cual) {
   _nodeMap = {}; buildNodeMap(cv.root);
   var par = _nodeMap[pid];
   if (!par || typeof Chess === 'undefined') return;
-  var pv = _faPvMemo[par.fen];
+  var pv = cual === 't' ? (_faTomaMemo[par.fen] || {}).pv : _faPvMemo[par.fen];   // 't' = la de "si la toma"
   if (!pv || !pv.length) return;
   var node = par, tmp = new Chess(par.fen), target = null;
   for (var i = 0; i < pv.length && i < _FA_COM_PLIES; i++) {
@@ -48446,13 +48470,14 @@ function cvComJugar(pid, k) {
     if (!mv) break;
     var ex = null;
     for (var c = 0; c < node.children.length; c++) if (node.children[c].move.san === mv.san) { ex = node.children[c]; break; }
-    if (i === 0 && ex && !ex.own) return;   // es la jugada de la partida: nunca marcarla como variante
+    // Si es la jugada de la PARTIDA se la sigue, sin marcarla nunca como variante (la línea de un jugadón
+    // suele ser la que se jugó; la de un error, desde su 1ª jugada ya es otra).
     if (!ex) {
       ex = makeNode(tmp.fen(), { san: mv.san, from: mv.from, to: mv.to, nag: '' }, node);
       ex.own = true;   // análisis, no partida real (igual que las líneas del módulo)
       node.children.push(ex);
     }
-    if (i === 0) ex.comp = true;
+    if (i === 0 && ex.own) ex.comp = true;
     node = ex;
     if (i === k) target = ex;
   }
@@ -48475,7 +48500,7 @@ function cvComJugar(pid, k) {
    ante la duda no dice nada (una explicación falsa es peor que ninguna).
    Interruptores: _FA_MOT apaga un tema; ?motivos=0 en la dirección apaga todo en ese navegador (queda
    guardado; ?motivos=1 lo vuelve a prender). Respaldo de antes de esto: .claude/respaldos/. */
-var _FA_MOT = { mate: true, colgada: true, doblete: true };
+var _FA_MOT = { mate: true, colgada: true, doblete: true, clavada: true, gratis: true };
 var _MOT_PIEZA = { p: ['el', 'peón'], n: ['el', 'caballo'], b: ['el', 'alfil'], r: ['la', 'torre'], q: ['la', 'dama'], k: ['el', 'rey'] };
 var _motLlave = null;
 function _motActivo(q, ls) {
@@ -48598,18 +48623,92 @@ function _motivoDe(node, pv, rA) {
       var m = movs[j]; if (m.piece === 'k' || gana < 2) continue;
       var g = _fenGrid(fens[j + 1]), f = m.to.charCodeAt(0) - 97, r = parseInt(m.to[1], 10) - 1;
       if (_motMalParada(g, f, r)) continue;
-      var vm = _pval(m.piece), nb = 0, contra = _attackersOf(g, f, r, mover);
-      _motAtacadas(g, f, r).forEach(function(sq){
-        var p = g[sq[1] * 8 + sq[0]];
-        if (!p || p.toLowerCase() === 'p' || (p === p.toUpperCase()) !== (mover === 'w')) return;   // piezas del que erró
-        var vp = p.toLowerCase() === 'k' ? 99 : _pval(p);
-        var devuelve = contra.some(function(a){ return a.f === sq[0] && a.r === sq[1]; });   // ¿ataca de vuelta?
-        if (vp > vm || (!_motDefendida(g, sq[0], sq[1]) && !devuelve)) nb++;
-      });
-      if (nb > 1) return 'Permite un doblete de ' + _MOT_PIEZA[m.piece][1] + ' en ' + m.to + '.';
+      if (_motDobleteN(g, f, r, mover) > 1) return 'Permite un doblete de ' + _MOT_PIEZA[m.piece][1] + ' en ' + m.to + '.';
+    }
+  }
+  // 4) Clavada (05/10): una de las 2 primeras del rival es un alfil/torre/dama que clava una pieza del que erró, la
+  //    línea termina ganando material y en ella el rival come la clavada (o la de atrás, si se corrió).
+  if (_FA_MOT.clavada && movs.length >= 2) {
+    var L2 = fens.length - 1;
+    var gana2 = Math.min(_motMaterial(fens[L2], rival), _motMaterial(fens[L2 - 1], rival)) - _motMaterial(node.fen, rival);
+    for (var j2 = 0; j2 <= 2 && j2 < movs.length - 1 && gana2 >= 2; j2 += 2) {
+      var mc = movs[j2]; if (!/^[brq]$/.test(mc.piece)) continue;
+      var gc = _fenGrid(fens[j2 + 1]), fc = mc.to.charCodeAt(0) - 97, rc = parseInt(mc.to[1], 10) - 1;
+      if (_motMalParada(gc, fc, rc)) continue;
+      var cl = _motClavada(gc, fc, rc, mover);
+      if (!cl) continue;
+      var cobra = false;
+      for (var k2 = j2 + 2; k2 < movs.length; k2 += 2) if (movs[k2].captured && (movs[k2].to === cl.sq || movs[k2].to === cl.trasSq)) cobra = true;
+      if (cobra) return 'Permite una clavada de ' + _MOT_PIEZA[mc.piece][1] + ' en ' + mc.to + ': ' + _motClavadaTxt(cl, true) + '.';
     }
   }
   return '';
+}
+// ¿La pieza de (f,r) (alfil, torre o dama) CLAVA una de `victima`? En su línea, la 1ª pieza es de la víctima (no
+// peón ni rey) y detrás, en la misma línea, hay otra suya que vale más que ella y que la que clava: el rey (clavada
+// absoluta) o la dama/torre (relativa: si se corre, cae la de atrás). → { p, sq, tras, trasSq } o null.
+function _motClavada(g, f, r, victima) {
+  var pz = g[r * 8 + f]; if (!pz) return null;
+  var t = pz.toLowerCase(), dirs = [];
+  if (t === 'b' || t === 'q') dirs = dirs.concat([[1,1],[1,-1],[-1,1],[-1,-1]]);
+  if (t === 'r' || t === 'q') dirs = dirs.concat([[1,0],[-1,0],[0,1],[0,-1]]);
+  function suya(p) { return !!p && (p === p.toUpperCase()) === (victima === 'w'); }
+  function en(ff, rr) { return ff >= 0 && ff < 8 && rr >= 0 && rr < 8; }
+  for (var d = 0; d < dirs.length; d++) {
+    var dx = dirs[d][0], dy = dirs[d][1], s = 1, a = null, ff, rr;
+    for (; s < 8; s++) { ff = f + dx * s; rr = r + dy * s; if (!en(ff, rr)) break; if (!g[rr * 8 + ff]) continue; if (suya(g[rr * 8 + ff])) a = { p: g[rr * 8 + ff], f: ff, r: rr }; break; }
+    if (!a || /^[pk]$/i.test(a.p)) continue;
+    for (s++; s < 8; s++) {
+      ff = f + dx * s; rr = r + dy * s; if (!en(ff, rr)) break;
+      var q = g[rr * 8 + ff]; if (!q) continue;
+      var vq = q.toLowerCase() === 'k' ? 99 : _pval(q);
+      if (suya(q) && vq > _pval(a.p) && vq > _pval(pz))
+        return { p: a.p.toLowerCase(), sq: 'abcdefgh'.charAt(a.f) + (a.r + 1), tras: q.toLowerCase(), trasSq: 'abcdefgh'.charAt(ff) + (rr + 1) };
+      break;
+    }
+  }
+  return null;
+}
+// "el caballo de c6 queda clavado contra el rey" (`queda`) / "el caballo de c6 contra el rey".
+function _motClavadaTxt(cl, queda) {
+  var a = _MOT_PIEZA[cl.p], b = _MOT_PIEZA[cl.tras];
+  return a[0] + ' ' + a[1] + ' de ' + cl.sq + (queda ? ' queda ' + (a[0] === 'la' ? 'clavada' : 'clavado') : '') + ' contra ' + b[0] + ' ' + b[1];
+}
+// ¿A cuántas piezas de `victima` ('w'/'b') le hace doblete la pieza de (f,r)? Cuentan las que no son peones y
+// valen más que ella, o están indefensas y no la atacan de vuelta. 2 o más = doblete.
+function _motDobleteN(g, f, r, victima) {
+  var pz = g[r * 8 + f]; if (!pz) return 0;
+  var vm = _pval(pz), nb = 0, contra = _attackersOf(g, f, r, victima);
+  _motAtacadas(g, f, r).forEach(function(sq){
+    var p = g[sq[1] * 8 + sq[0]];
+    if (!p || p.toLowerCase() === 'p' || (p === p.toUpperCase()) !== (victima === 'w')) return;
+    var vp = p.toLowerCase() === 'k' ? 99 : _pval(p);
+    var devuelve = contra.some(function(a){ return a.f === sq[0] && a.r === sq[1]; });   // ¿ataca de vuelta?
+    if (vp > vm || (!_motDefendida(g, sq[0], sq[1]) && !devuelve)) nb++;
+  });
+  return nb;
+}
+// "Se podía comer gratis el caballo de g5.": la mejor (`pvB`, línea del motor en la posición de ANTES) comía
+// una pieza (no peón) que nadie defendía, el rival no la recupera en las 2 siguientes, y la jugada no comió ahí.
+function _motGratis(node, pvB) {
+  if (!_FA_MOT.gratis || !node || !node.move || !node.parent || !pvB || !pvB.length || typeof Chess === 'undefined') return '';
+  var pf = node.parent.fen, mover = pf.split(' ')[1], ch = new Chess(pf), fens = [pf], movs = [];
+  for (var k = 0; k < pvB.length && k < 3; k++) {
+    var u = pvB[k], mv = null;
+    try { mv = ch.move({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u[4] || 'q' }); } catch (e) {}
+    if (!mv) break;
+    movs.push(mv); fens.push(ch.fen());
+  }
+  var m1 = movs[0];
+  if (!m1 || !m1.captured || m1.captured === 'p' || node.move.to === m1.to) return '';
+  var g = _fenGrid(pf), tf = m1.to.charCodeAt(0) - 97, tr = parseInt(m1.to[1], 10) - 1;
+  if (_motDefendida(g, tf, tr)) return '';
+  // Si el rival acababa de COMER en esa casilla, era recuperar (un cambio), no una pieza regalada.
+  var pm = node.parent.move, gp = node.parent.parent;
+  if (pm && pm.to === m1.to && gp && gp.fen && _fenGrid(gp.fen)[tr * 8 + tf]) return '';
+  if (movs.length >= 3 && _motMaterial(fens[3], mover) < _motMaterial(fens[1], mover)) return '';   // la recuperaba
+  var nm = _MOT_PIEZA[m1.captured];
+  return 'Se podía comer gratis ' + nm[0] + ' ' + nm[1] + ' de ' + m1.to + '.';
 }
 // Para el comentario de la jugada i: pide la línea del rival si falta (y por ahora no dice nada).
 function _faMotivo(i) {
@@ -48617,7 +48716,242 @@ function _faMotivo(i) {
   var node = _fa.nodes[i]; if (!node) return '';
   var pv = _faPvMemo[node.fen];
   if (pv === undefined) { _faComPedir(node.fen); return ''; }
-  return _motivoDe(node, pv, _fa.results[i]);
+  // Primero lo que PERMITE la jugada; si nada, lo que dejó pasar (la línea de antes ya la pidió el "Mejor era").
+  return _motivoDe(node, pv, _fa.results[i]) || (node.parent ? _motGratis(node, _faPvMemo[node.parent.fen]) : '');
+}
+
+/* ── 🌟 Jugadones (!!) y muy buenas (!), con su comentario (05/10/2026) ──────────────────────────────
+   · !! "¡Qué jugadón metió!": el sacrificio sano de siempre (_faIsBrilliant + _faDescarteLista). Necesita
+     saber que fue LA MEJOR del motor, y las evals del PGN de Lichess no lo dicen → antes, en esas partidas
+     no salía nunca. Ahora el motor mira SÓLO las candidatas (las que pasan el filtro del sacrificio), con
+     3 líneas (_faBriPedir, prof. 16): así corren también los filtros de la lista (la única, la calidad…).
+   · !  "¡Tremendooo!" (latiguillo del autor; en el resumen, "muy buenas"): un DOBLETE que de verdad gana material (la línea del motor después de la jugada lo
+     confirma: la pieza que lo hizo come algo y se termina ≥2 arriba), una CLAVADA que gana (se cobra la clavada o
+     la de atrás, ≥2 arriba), o ENCONTRAR un mate (de 3 a 6) que el rival recién había permitido. Sin perder chances (caída ≤2) y no ya ganando de sobra (≥95%).
+   La franja del comentario es la misma de los errores, en verde agua (!!) o verde (!). En vivo esperan al
+   final de la partida, como los otros comentarios. ?motivos=0 apaga también estos "por qué". */
+var _FA_BUENA = { doblete: true, clavada: true, mate: true };
+var _FA_BUENA_MATE_MAX = 6;   // "Encontró el mate en N" sólo hasta mate en 6
+var _faBrillLn = {};    // FEN de ANTES de la candidata a !! → { pv, ln } (3 líneas, desde el que mueve)
+var _faBriPend = {}, _faBriRedT = null;
+function _faBriPedir(fen, multi) {
+  var k = (multi ? 'm|' : 'p|') + fen;
+  if (_faBriPend[k]) return;
+  _faBriPend[k] = 1;
+  _mevExtra.push({ fen: fen, depth: _FA_COM_PV_DEPTH, pv: true, multipv: multi ? 3 : 0, cb: function(sc, ln, pv) {
+    delete _faBriPend[k];
+    _faPvGuardar(fen, pv);
+    if (multi) {
+      var s = fen.split(' ')[1] === 'b' ? -1 : 1;   // las líneas vienen desde las blancas; los filtros las quieren desde el que mueve
+      _faBrillLn[fen] = { pv: pv || [], ln: (ln || []).map(function(l) {
+        return { mv: l.mv, re: l.re || '', r3: l.r3 || '', sc: l.sc.mate !== undefined ? (l.sc.mate * s > 0 ? 10000 : -10000) : l.sc.cp * s };
+      }) };
+      _capCache(_faBrillLn, 500);
+    }
+    // Recalificar UNA vez por tanda (llegan varias seguidas).
+    if (!_faBriRedT) _faBriRedT = setTimeout(function(){ _faBriRedT = null; _faNagSig = ''; _faReclassifyIfChanged(); }, 200);
+  }});
+  if (!_faComT && !_mev.running) _faComT = setTimeout(function(){ _faComT = null; if (!_mev.running && _mevExtra.length) mevTick(); }, 0);
+}
+// Un sacrificio sano: !! si el que lo hizo no iba +5 o más; si ya iba ganando (hasta +8, _FA_ENTREGA_TOPE), es
+// "¡Tremendooo!" con la misma explicación (pedido del autor, 05/10: 27.♕xd7 de Vijayakumar–Sezdbekov en +6,
+// si ♛xd7 viene el doblete ♘f6+). Deja anotado en `node._buena` que el ! es por la entrega.
+var _FA_ENTREGA_TOPE = 95;   // % de expectativa (≈ +8): más allá, ni !! ni !
+function _faEntregaSym(node, wpB, whiteMoved) {
+  if ((whiteMoved ? wpB : 100 - wpB) < _faWinP({ cp: 500 })) return '!!';
+  node._buena = { tipo: 'entrega' };
+  return '!';
+}
+// !! sin el pase del motor (sólo evals del PGN): candidata por el tablero → el motor confirma que es la mejor.
+function _faBrillSinPase(node, rB, rA, whiteMoved, wpB) {
+  if (!node || !node.parent || !node.move) return false;
+  if (!_faIsBrilliant(node, rB, rA, whiteMoved, wpB, _FA_ENTREGA_TOPE)) return false;
+  var pf = node.parent.fen, d = _faBrillLn[pf];
+  if (!d) { if (!_faComEsperaFinal()) _faBriPedir(pf, true); return false; }
+  var uci = node.move.from + node.move.to + (node.move.promotion || '');
+  if (!d.pv.length || d.pv[0] !== uci) return false;
+  return !_faDescarteLista(node, { ln: d.ln }, rA, whiteMoved);
+}
+// Candidata a "¡Tremendooo!" sólo por el tablero y las evals: { tipo:'mate', n } o { tipo:'doblete', p, sq }.
+function _faBuenaCand(i, node, rB, rA, whiteMoved) {
+  function pov(s) { return !s ? null : s.mate !== undefined ? { mate: whiteMoved ? s.mate : -s.mate } : { cp: whiteMoved ? s.cp : -s.cp }; }
+  var pB = pov(rB), pA = pov(rA);
+  if (!pB || !pA || !node.move || !node.move.to) return null;
+  // Mate: había mate en 3 a 6, la jugada lo sigue, y una jugada atrás (antes de la del rival) no estaba. Los
+  // más largos son cosa de motor (un "mate en 16" de reyes y peones no se festeja), y RETOMAR no es encontrar
+  // nada (66…♚xg5 después de 66.♗xg5, en la Olimpiada).
+  var pm = node.parent.move, gp = node.parent.parent, idx = function(s) { return (parseInt(s[1], 10) - 1) * 8 + s.charCodeAt(0) - 97; };
+  var retoma = !!(pm && pm.to === node.move.to && gp && gp.fen && _fenGrid(gp.fen)[idx(pm.to)]);
+  if (_FA_BUENA.mate && !retoma && pB.mate >= 3 && pB.mate <= _FA_BUENA_MATE_MAX && pA.mate > 0 && pA.mate < pB.mate && i >= 2) {
+    var pP = pov(_fa.results[i - 2]);
+    if (pP && !(pP.mate > 0)) return { tipo: 'mate', n: pB.mate };
+  }
+  var wpB = whiteMoved ? _faWinP(rB) : 100 - _faWinP(rB);
+  if (wpB >= 95 || pA.mate !== undefined) return null;
+  var to = node.move.to, g = _fenGrid(node.fen), f = to.charCodeAt(0) - 97, r = parseInt(to[1], 10) - 1, p = g[r * 8 + f];
+  if (!p || p.toLowerCase() === 'k' || _motMalParada(g, f, r)) return null;
+  var rival = whiteMoved ? 'b' : 'w';
+  if (_FA_BUENA.doblete && _motDobleteN(g, f, r, rival) >= 2) return { tipo: 'doblete', p: p.toLowerCase(), sq: to };
+  // Clavada (05/10): la pieza que se movió clava una del rival contra otra que vale más.
+  var cl = _FA_BUENA.clavada ? _motClavada(g, f, r, rival) : null;
+  if (cl) return { tipo: 'clavada', p: p.toLowerCase(), sq: to, cl: cl };
+  return null;
+}
+// El doblete ¿gana de verdad? En la línea del motor después de la jugada (contesta el rival), la pieza del
+// doblete come algo y el que la hizo termina ≥2 arriba de lo que tenía (antes de la jugada y antes de la del
+// rival: si venía de un cambio, no cuenta lo que el rival le acababa de comer).
+function _faBuenaConfirma(node, pv, c) {
+  if (!pv || pv.length < 3 || typeof Chess === 'undefined') return false;
+  var mover = node.fen.split(' ')[1] === 'w' ? 'b' : 'w', ch = new Chess(node.fen), fens = [node.fen], come = false, desde = c.sq;
+  for (var k = 0; k < pv.length && k < 10; k++) {
+    var u = pv[k], mv = null;
+    try { mv = ch.move({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u[4] || 'q' }); } catch (e) {}
+    if (!mv) break;
+    if (c.cl) { if (k % 2 === 1 && mv.captured && (mv.to === c.cl.sq || mv.to === c.cl.trasSq)) come = true; }   // cobra la clavada (o la de atrás)
+    else if (k % 2 === 1 && mv.from === desde) { if (mv.captured) come = true; desde = mv.to; }   // sigue a la pieza del doblete
+    fens.push(ch.fen());
+  }
+  if (!come || fens.length < 4) return false;
+  var L = fens.length - 1, fin = Math.min(_motMaterial(fens[L], mover), _motMaterial(fens[L - 1], mover));
+  var base = _motMaterial(node.parent.fen, mover), gp = node.parent.parent;
+  if (gp && gp.fen) base = Math.max(base, _motMaterial(gp.fen, mover));
+  return fin - base >= 2;
+}
+function _faBuena(i, node, rB, rA, whiteMoved) {
+  if (!node || !node.parent || !node.move || !_motOn()) return false;
+  var c = _faBuenaCand(i, node, rB, rA, whiteMoved);
+  if (!c) return false;
+  if (c.tipo !== 'mate') {
+    var pv = _faPvMemo[node.fen];
+    if (pv === undefined) { if (!_faComEsperaFinal()) _faBriPedir(node.fen, false); return false; }
+    if (!_faBuenaConfirma(node, pv, c)) return false;
+  }
+  node._buena = c;
+  return true;
+}
+// "Entrega el caballo en f7." (la pieza que movió) / "Entrega la dama de d1." (otra que quedó a tiro).
+function _faEntregaTxt(e) {
+  var nm = _MOT_PIEZA[e.p.toLowerCase()];
+  return 'Entrega ' + nm[0] + ' ' + nm[1] + (e.movida ? ' en ' : ' de ') + e.sq + '.';
+}
+// Qué pasa si el rival TOMA la pieza entregada `e`: `pv` (desde node.fen) empieza con esa captura; `sc` = la
+// valoración de esa línea (desde las blancas) o null. '' si no hay nada seguro que decir.
+function _faSiLaToma(node, e, pv, sc, white) {
+  var nm = _MOT_PIEZA[e.p.toLowerCase()], si = 'Si ' + (nm[0] === 'la' ? 'la' : 'lo') + ' toma, ';
+  var mateN = sc && sc.mate !== undefined ? (white ? sc.mate : -sc.mate) : 0;
+  if (mateN > 0) return si + 'mate en ' + mateN + '.';
+  if (!pv || !pv.length || typeof Chess === 'undefined') return '';
+  var mover = white ? 'w' : 'b', ch = new Chess(node.fen), fens = [node.fen], movs = [];
+  for (var k = 0; k < pv.length && k < 10; k++) {
+    var u = pv[k], mv = null;
+    try { mv = ch.move({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u[4] || 'q' }); } catch (x) {}
+    if (!mv) break;
+    movs.push(mv); fens.push(ch.fen());
+  }
+  if (!movs[0] || movs[0].to !== e.sq || !movs[0].captured || fens.length < 4) return '';
+  var L = fens.length - 1, fin = Math.min(_motMaterial(fens[L], mover), _motMaterial(fens[L - 1], mover));
+  var base = _motMaterial(node.parent.fen, mover);
+  if (fin < base) return '';
+  var m2 = movs[1];
+  if (m2 && m2.piece !== 'k') {
+    var g = _fenGrid(fens[2]), f = m2.to.charCodeAt(0) - 97, r = parseInt(m2.to[1], 10) - 1;
+    if (!_motMalParada(g, f, r) && _motDobleteN(g, f, r, mover === 'w' ? 'b' : 'w') > 1)
+      return si + 'doblete de ' + _MOT_PIEZA[m2.piece][1] + ' en ' + m2.to + '.';
+  }
+  return si + (fin > base ? 'termina ganando material.' : 'recupera el material.');
+}
+// "¿Y si la toma?": cuando la mejor del motor NO toma la pieza entregada, se le pide la mejor forma de tomarla
+// (searchmoves con las capturas legales de esa casilla). En memoria, como las otras líneas.
+var _faTomaMemo = {}, _faTomaPend = {};
+function _faTomaPedir(fen, sq) {
+  if (_faTomaPend[fen] || typeof Chess === 'undefined') return;
+  var sm = [];
+  try { new Chess(fen).moves({ verbose: true }).forEach(function(m) { if (m.to === sq && m.captured) sm.push(m.from + m.to + (m.promotion || '')); }); } catch (x) {}
+  if (!sm.length) { _faTomaMemo[fen] = { pv: [], sc: null }; return; }
+  _faTomaPend[fen] = 1;
+  _mevExtra.push({ fen: fen, depth: _FA_COM_PV_DEPTH, pv: true, sm: sm, cb: function(sc, ln, pv) {
+    delete _faTomaPend[fen];
+    _faTomaMemo[fen] = { pv: (pv || []).slice(0, 12), sc: sc };
+    _capCache(_faTomaMemo, 500);
+    if (!_faComRedT) _faComRedT = setTimeout(function(){ _faComRedT = null; faApplyNags(); }, 200);
+  }});
+  if (!_faComT && !_mev.running) _faComT = setTimeout(function(){ _faComT = null; if (!_mev.running && _mevExtra.length) mevTick(); }, 0);
+}
+// Cuántas medias jugadas del principio de `pv` son las que se jugaron en la partida desde `node`.
+var _FA_COM_IGUAL = 3;   // con 3 iguales, la variante no se repite: "La partida siguió por el mismo camino que el módulo."
+function _faIgualPartida(node, pv) {
+  var k = 0, q = node;
+  while (pv && k < pv.length) {
+    var h = q && q.children && q.children[0];
+    if (!h || !h.move || h.own) break;
+    if (h.move.from + h.move.to + (h.move.promotion || '') !== pv[k]) break;
+    k++; q = h;
+  }
+  return k;
+}
+function _faEsIgual(node, pv) { return !!(pv && pv.length) && _faIgualPartida(node, pv) >= Math.min(_FA_COM_IGUAL, pv.length); }
+// Variante del motor desde la posición de `par` (tocable, como la de los errores). `cual` = 't': la de "si la toma".
+function _faComLineaHtml(par, pv, cual) {
+  if (!pv || !pv.length || typeof Chess === 'undefined') return '';
+  var tmp = new Chess(par.fen), fp = par.fen.split(' '), n = parseInt(fp[5] || '1', 10), w = fp[1] === 'w', out = [];
+  var arg = cual === 't' ? ",'t'" : '';
+  for (var k = 0; k < pv.length && k < _FA_COM_PLIES; k++) {
+    var u = pv[k], mv = null;
+    try { mv = tmp.move({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u[4] || 'q' }); } catch (e) {}
+    if (!mv) break;
+    var num = w ? n + '.' : (k === 0 ? n + '…' : '');
+    if (!w) n++;
+    out.push((num ? '<span class="cmn">' + num + '</span>' : '')
+      + '<span class="cmv cmv-var" onclick="cvComJugar(' + par._id + ',' + k + arg + ')">' + cvFanHtml(mv.san) + '</span>');
+    w = !w;
+  }
+  return out.join(' ');
+}
+// Franja del !! o del ! (la llama _faComHtml, que ya frenó el vivo en juego).
+//  · !!: qué entregó + qué pasa si lo toma. Si la mejor del motor no lo toma, van DOS renglones: "Si no lo toma:"
+//    (la del motor) y "Si lo toma:" (la mejor captura, pedida aparte).
+//  · Un renglón que coincide con la partida (3 medias jugadas) no se repite: se dice que la partida siguió igual.
+function _faComBuenaHtml(i) {
+  var node = _fa.nodes[i], nag = node.move.nag, bri = nag === '!!';
+  var R = _fa.results, rA = R[i], rB = i === 0 ? { cp: 20 } : R[i - 1];
+  if (!rA || !rB || !node.parent) return '';
+  var white = _cvMoveNo(node).white, pv = _faPvMemo[node.fen];
+  if (pv === undefined) _faComPedir(node.fen);   // la línea que sigue (lo que contesta el rival)
+  var c = node._buena, ent = bri || !!(c && c.tipo === 'entrega');   // el ! de una entrega se explica igual que el !!
+  var e = (ent && _motOn()) ? node._entrega : null, why = '', filas = [];
+  function fila(lbl, p, cual) {
+    var cont = _faEsIgual(node, p) ? '<span class="cv-mcom-calc">así siguió la partida.</span>' : _faComLineaHtml(node, p, cual);
+    return cont ? '<div class="cv-mcom-line">' + (lbl ? '<span class="cv-mcom-lbl">' + lbl + '</span> ' : '') + cont + '</div>' : '';
+  }
+  if (e) {
+    why = _faEntregaTxt(e);
+    var mateN = rA.mate !== undefined ? (white ? rA.mate : -rA.mate) : 0;
+    if (mateN > 0) why += ' Fuerza mate en ' + mateN + '.';
+    else if (pv && pv.length && pv[0].slice(2, 4) !== e.sq) {
+      // La mejor del motor no la toma: pedir (o usar) la mejor forma de tomarla.
+      var t = _faTomaMemo[node.fen], lo = _MOT_PIEZA[e.p.toLowerCase()][0] === 'la' ? 'la' : 'lo';
+      if (t === undefined) _faTomaPedir(node.fen, e.sq);
+      else if (t.pv.length) {
+        var f2 = _faSiLaToma(node, e, t.pv, t.sc, white);
+        if (f2) why += ' ' + f2;
+        filas.push(fila('Si no ' + lo + ' toma:', pv, ''), fila('Si ' + lo + ' toma:', t.pv, 't'));
+      }
+    }
+    else { var f1 = _faSiLaToma(node, e, pv, rA, white); if (f1) why += ' ' + f1; }
+  }
+  else if (!bri && c && c.tipo === 'doblete') why = 'Doblete de ' + _MOT_PIEZA[c.p][1] + ' en ' + c.sq + '.';
+  else if (!bri && c && c.tipo === 'clavada') why = 'Clava ' + _motClavadaTxt(c.cl, false) + '.';
+  else if (!bri && c && c.tipo === 'mate') why = 'Encontró el mate en ' + c.n + '.';
+  if (!filas.length && pv && pv.length) {
+    if (_faEsIgual(node, pv)) why += (why ? ' ' : '') + 'La partida siguió por el mismo camino que el módulo.';
+    else filas.push(fila('', pv, ''));
+  }
+  return '<div class="cv-mcom cv-mcom-' + (bri ? 'brilliant' : 'good') + '">'
+    + '<div class="cv-mcom-h"><span class="cv-mcom-sym">' + nag + '</span><span class="cv-mcom-t">' + (bri ? '¡Qué jugadón metió!' : '¡Tremendooo!') + '</span>'
+    + '<span class="cv-mcom-ev" title="Valoración antes → después (desde las blancas)">' + _faComEv(rB) + ' → ' + _faComEv(rA) + '</span></div>'
+    + (why ? '<div class="cv-mcom-why">' + why + '</div>' : '')
+    + filas.join('')
+    + '</div>';
 }
 
 function faRenderStats() {
@@ -48653,6 +48987,7 @@ function faRenderStats() {
       + (acc != null ? '<div class="fa-stat-acc">Precisión <b>' + acc + '%</b></div>' : '')
       + '<div class="fa-sv"><div class="fa-sv-g">'
       + (s.brill ? '<div class="fa-stat-row"><span class="mq-brilliant">!!</span> ' + s.brill + (s.brill === 1 ? ' jugadón' : ' jugadones') + '</div>' : '')
+      + (s.buena ? '<div class="fa-stat-row"><span class="mq-good">!</span> ' + s.buena + (s.buena === 1 ? ' muy buena' : ' muy buenas') + '</div>' : '')
       + (hasBest ? '<div class="fa-stat-row"><span class="mq-best">★</span> ' + s.best + ' mejores jugadas</div>' : '')
       + '<div class="fa-stat-row"><span class="mq-inaccuracy">?!</span> ' + s.inacc + ' imprecisiones</div>'
       + '<div class="fa-stat-row"><span class="mq-mistake">?</span> ' + s.mist + ' errores</div>'
@@ -48774,7 +49109,7 @@ function cvUpdateNagBadge() {
   var badge = document.getElementById('cv-nag-badge');
   if (!badge) return;
   var nag = cv.node && cv.node.move ? cv.node.move.nag : '';
-  var cls = { '??':'nb-blunder', '?':'nb-mistake', '?!':'nb-inaccuracy', '!!':'nb-brilliant' }[nag];
+  var cls = { '??':'nb-blunder', '?':'nb-mistake', '?!':'nb-inaccuracy', '!!':'nb-brilliant', '!':'nb-good' }[nag];
   if (!_showNagBadges || !cls || !cv.node.move.to || _qpActivo()) { badge.style.display = 'none'; return; }   // ⚖️ en la posición de prueba no hay jugada que calificar
   var sq = cv.node.move.to;
   var f = 'abcdefgh'.indexOf(sq[0]);
