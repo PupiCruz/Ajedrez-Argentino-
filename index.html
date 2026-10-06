@@ -59199,16 +59199,16 @@ function cvUpdateNagBadge() {
     'Centro clásico': 'las blancas se quedan con el centro grande en e4 y d4, y las negras le tiran con las piezas',
     'Muro Czech': 'el centro queda trabadísimo con …c5, d6 y e5, y las negras preparan …f5'
   };
+  // El plan típico de un bando, como lo que "suelen" hacer: "tirar los peones contra el enroque".
   function planTxt(L, s, ya) {
-    var quien = s === 'w' ? 'las blancas' : 'las negras';
     if (L && L.pl && L.pl.length) {
       var n = L.pl[0][0], m = /^Doblar torres en la (.)$/.exec(n);
-      if (n === 'Avalancha contra el enroque') return quien + ' suelen tirar los peones contra el enroque';
-      if (n === 'Ataque de minorías') return /b4‑b5|flanco de dama/.test(ya) ? '' : quien + ' suelen ir con el ataque de minorías (' + (s === 'w' ? 'b4‑b5' : '…b5‑b4') + ')';
-      if (m) return quien + ' suelen doblar las torres en la columna ' + m[1];
-      return quien + ' suelen ir con ' + n.toLowerCase();
+      if (n === 'Avalancha contra el enroque') return 'tirar los peones contra el enroque';
+      if (n === 'Ataque de minorías') return /b4‑b5|flanco de dama/.test(ya) ? '' : 'ir con el ataque de minorías (' + (s === 'w' ? 'b4‑b5' : '…b5‑b4') + ')';
+      if (m) return 'doblar las torres en la columna ' + m[1];
+      return 'ir con ' + n.toLowerCase();
     }
-    if (L && L.mn && L.mn.length) { var mn = L.mn[0]; return quien + ' suelen llevar el ' + (mn[0] === 'C' ? 'caballo' : 'alfil') + ' por ' + mn[1].slice(0, 4).join('‑'); }
+    if (L && L.mn && L.mn.length) { var mn = L.mn[0]; return 'llevar el ' + (mn[0] === 'C' ? 'caballo' : 'alfil') + ' por ' + mn[1].slice(0, 4).join('‑'); }
     return '';
   }
   function comentarioApertura(ap) {
@@ -59218,9 +59218,15 @@ function cvUpdateNagBadge() {
       var e = R.es && R.es[0], txt = e && e[1] >= 30 && ESTR_TXT[e[0]];
       if (txt) b += ' Acá ' + (e[1] >= 60 ? 'casi siempre ' : e[1] >= 45 ? 'muchas veces ' : 'a veces ') + txt + '.';
       var pw = planTxt(R.w, 'w', txt || ''), pb = planTxt(R.b, 'b', txt || '');
-      var pls = [pw, pb].filter(Boolean);
-      if (pls.length) b += ' Después, ' + pls.join(' y ') + '.';
-      if (R.en && R.en[0] >= 20 && R.en[0] >= 2 * R.en[1]) b += ' Y ojo, que muchas veces enroca cada uno para su lado: ahí es a ver quién llega primero.';
+      // El mismo plan para los dos (pasa con la avalancha contra el enroque): se dice una sola vez.
+      if (pw && pw === pb) b += ' Después, para los dos el plan suele ser el mismo: ' + pw + '.';
+      else {
+        var pls = [pw ? 'las blancas suelen ' + pw : '', pb ? 'las negras suelen ' + pb : ''].filter(Boolean);
+        if (pls.length) b += ' Después, ' + pls.join(' y ') + '.';
+      }
+      // R.en[0] = % de partidas de esta apertura con enroques opuestos; R.en[1] = lo normal en todas.
+      if (R.en && R.en[0] >= 20 && R.en[0] >= 2 * R.en[1])
+        b += ' Y ojo, que acá ' + (R.en[0] >= 40 ? 'muchas veces' : 'a veces') + ' se dan enroques opuestos: ahí es a ver quién llega primero con el ataque.';
     }
     return { cara: 'idea', sym: '📖', symColor: '#8a6a3a', titulo: 'Hasta acá, todo de libro', cuerpo: b,
              acc: R ? [['🧭 Ver más en Aperturas', 'window.__pupi.aperturas()']] : [] };
@@ -59247,14 +59253,67 @@ function cvUpdateNagBadge() {
     return null;
   }
 
-  // ── Datos al azar cada 5 jugadas tranquilas ───────────────────────────────────────────────────
-  // Torneos que se juegan ahora o arrancan en las próximas 3 semanas (de la lista de torneos de la app):
-  // los de acá, con quién va; los de afuera, sólo si juega algún argentino. Mezclados con los
-  // "¿Sabías que…?" de data/datos.json.
+  // ── Datos cada 10 jugadas tranquilas ──────────────────────────────────────────────────────────
+  // Primero los próximos torneos de los que juegan y un trofeo de la vitrina de cada uno; después torneos que
+  // se juegan ahora o arrancan en los próximos 30 días (de la lista de torneos de la app): los de acá, con quién
+  // va; los de afuera, sólo si juega algún argentino. Mezclados con los "¿Sabías que…?" de data/datos.json.
+  // Lo que ya contó queda anotado en el navegador (vistos): la partida siguiente empieza por lo que no viste.
   var HIST = [];
   try { fetch('data/datos.json' + (typeof _dataV === 'function' ? _dataV() : '')).then(function (r) { return r.json(); }).then(function (j) { HIST = (j || []).filter(function (d) { return d && d.t; }); }).catch(function () {}); } catch (e) {}
   var AR = /Argentina|Buenos Aires|CABA|C[oó]rdoba|Santa Fe|R[ií]o Negro|Chubut|San Luis|Corrientes|Entre R[ií]os|Mendoza|Tucum[aá]n|Salta|Jujuy|Neuqu[eé]n|La Pampa|Misiones|Chaco|Formosa|Santiago del Estero|Catamarca|La Rioja|San Juan|Santa Cruz|Tierra del Fuego/i;
-  var TORNEOS_DATOS = null;
+  var TORNEOS_DATOS = null, DIAS_TORNEOS = 30;
+  // Quién juega cada torneo. En la web los cuadros se bajan recién al abrir cada torneo (crDataLoad da null
+  // en los demás), así que se usan los NOMBRES de cada tabla, que viajan en el manifest para el buscador
+  // (__CR_NAMES__), cruzados con los jugadores de la app (ranking argentino + adicionales). Si el cuadro sí
+  // está (modo autor, o un torneo ya abierto), suma también su tabla.
+  var IDX_JUG = null, ANOTADOS = {};
+  function anotados(type, key, cats) {
+    var ck = type + '|' + key;
+    if (ANOTADOS[ck]) return ANOTADOS[ck];
+    var out = [], vistos = {};
+    try {
+      if (!IDX_JUG) IDX_JUG = _awPlayerIndex(PLAYERS);
+      var nombres = [];
+      (_crKeysForTourAll(type, key, cats) || []).forEach(function (k) {
+        String((window.__CR_NAMES__ || {})[k] || '').split('|').forEach(function (n) { if (n) nombres.push(n); });
+        var dd = null; try { dd = crDataLoad(k); } catch (e) {}
+        ((dd && dd.standings) || []).forEach(function (p) { if (p && p.name) nombres.push(p.name); });
+      });
+      nombres.forEach(function (n) { var pl = _awFindPlayer(n, IDX_JUG); if (pl && !vistos[pl.id]) { vistos[pl.id] = 1; out.push(pl); } });
+      out.sort(function (a, b) { return (+b.elo || 0) - (+a.elo || 0); });
+    } catch (e) {}
+    return (ANOTADOS[ck] = out);
+  }
+  // Torneos en curso o por venir, con lo que hace falta para nombrarlos.
+  function torneosVigentes() {
+    var out = [];
+    try {
+      var hoy = todayKey();
+      _torneoItems(getTzConfig()).forEach(function (x) {
+        if (x._status !== 'live' && x._status !== 'upcoming') return;
+        var o = x._data || x._st || x._t || {};
+        out.push({ o: o, live: x._status === 'live', start: x._startKey || 0,
+                   d: x._status === 'live' ? 0 : dias(hoy, x._startKey || hoy),
+                   type: x._type === 'tzconfig' ? 'tz' : x._type === 'stored' ? 'ls' : 'hc',
+                   key: x._type === 'tzconfig' ? x._key : x._type === 'stored' ? x._st._id : x._t.id });
+      });
+    } catch (e) {}
+    return out;
+  }
+  // Lo que el Pupi ya contó (torneos, trofeos), del más viejo al más nuevo.
+  function vistos() { try { var v = JSON.parse(lsGet('aa_pupi_vistos') || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; } }
+  function marcarVisto(id) {
+    var v = vistos();
+    if (v[v.length - 1] === id) return;
+    v = v.filter(function (x) { return x !== id; }); v.push(id);
+    lsSet('aa_pupi_vistos', JSON.stringify(v.slice(-60)));
+  }
+  // Primero lo que no contó nunca (mezclado, fijo para esta partida); después lo ya contado, el más viejo primero.
+  function ordenar(lista, sem) {
+    var v = vistos();
+    return lista.map(function (d) { return { d: d, s: v.indexOf(d.visto), r: hash(sem + ':' + d.visto) }; })
+      .sort(function (a, b) { return (a.s - b.s) || (a.r - b.r); }).map(function (x) { return x.d; });
+  }
   function dias(a, b) {
     function d(k) { k = String(k); return Date.UTC(+k.slice(0, 4), +k.slice(4, 6) - 1, +k.slice(6, 8)); }
     return Math.round((d(b) - d(a)) / 864e5);
@@ -59272,9 +59331,22 @@ function cvUpdateNagBadge() {
     return ns[0];
   }
   function tituloTorneo(n) {
-    n = String(n || '').trim().split(' - ')[0].replace(/-\s*R\$.*$/, '').replace(/[\s-]+$/, '');   // 'Abierto PRO AM - Copa Clarín -' → 'Abierto PRO AM'
-    if (n === n.toUpperCase()) n = n.toLowerCase().replace(/(^|\s)(\S)/g, function (m, a, b) { return a + b.toUpperCase(); })
-      .replace(/\b(Irt|Itt|Fada|Fide)\b/g, function (m) { return m.toUpperCase(); }).replace(/ (De|Del|La|El|Los|Las|Y|En) /g, function (m) { return m.toLowerCase(); });
+    // Sin emojis ni comillas ('"Homenaje a la Bandera" 2026♟ Rosario'), y 'BLANCA- VENTAJEDREZ' cuenta como ' - '.
+    n = String(n || '').replace(/[☀-➿⭐⭕]|[\uD83C-\uDBFF][\uDC00-\uDFFF]|️/g, ' ').replace(/["“”«»]/g, '')
+      .replace(/(\S)- (\S)/g, '$1 - $2').replace(/\s+/g, ' ').trim();
+    n = n.split(' - ')[0].replace(/-\s*R\$.*$/, '').replace(/[\s-]+$/, '');   // 'Abierto PRO AM - Copa Clarín -' → 'Abierto PRO AM'
+    function lindo(s) {
+      return s.toLowerCase().replace(/(^|[\s-])(\S)/g, function (m, a, b) { return a + b.toUpperCase(); })
+        .replace(/\b[ivxlc]+\b/gi, function (w) {   // números romanos en mayúscula: "Xlv Open" → "XLV Open" (no "Vi", "Li", "Ci")
+          return /^(c{0,3})(xc|xl|l?x{0,3})(ix|iv|v?i{0,3})$/i.test(w) && !/^(vi|li|ci)$/i.test(w) ? w.toUpperCase() : w;
+        });
+    }
+    if (n === n.toUpperCase()) n = lindo(n).replace(/ (De|Del|La|El|Los|Las|Y|En|A)(?= )/g, function (m) { return m.toLowerCase(); });
+    // Medio en mayúsculas ('IRT ABIERTO GRAFICA YAEL-TORRE…'): las palabras gritadas de 4 letras o más, en minúscula.
+    else if ((n.match(/\b[A-ZÁÉÍÓÚÑ]{4,}\b/g) || []).filter(function (w) { return !/^[IVXLC]+$/.test(w); }).length >= 2)
+      n = n.replace(/[A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ-]{3,}/g, function (w) { return /^[IVXLC]+$/.test(w) ? w : lindo(w); });
+    // "Ciudad DE Vera", "Homenaje A la Bandera": conectores en minúscula ("La Plata" queda como está).
+    n = n.replace(/\b(Irt|Itt|Fada|Fide)\b/g, function (m) { return m.toUpperCase(); }).replace(/ (DE|DEL|Y|EN|A)(?= )/g, function (m) { return m.toLowerCase(); });
     // Como se dice: "la Semifinal del Campeonato Argentino…", y sin el año si es el de ahora.
     n = n.replace(/^(Semifinal|Final|Semi Final)\s+(Campeonato|Torneo)/i, '$1 del $2').replace(new RegExp('\\s+' + new Date().getFullYear() + '$'), '');
     return n;
@@ -59284,23 +59356,14 @@ function cvUpdateNagBadge() {
     if (TORNEOS_DATOS) return TORNEOS_DATOS;
     var out = [];
     try {
-      var hoy = todayKey(), tzCfg = getTzConfig(), actual = ((document.getElementById('cv-title') || {}).textContent || '').trim();
-      _torneoItems(tzCfg).forEach(function (x) {
-        if (x._status !== 'live' && x._status !== 'upcoming') return;
-        var o = x._data || x._st || x._t || {}, type = x._type === 'tzconfig' ? 'tz' : x._type === 'stored' ? 'ls' : 'hc';
-        var key = x._type === 'tzconfig' ? x._key : x._type === 'stored' ? x._st._id : x._t.id;
-        var loc = String(o.location || '').trim(), live = x._status === 'live';
+      var actual = ((document.getElementById('cv-title') || {}).textContent || '').trim();
+      torneosVigentes().forEach(function (v) {
+        var o = v.o, key = v.key, live = v.live, d = v.d;
+        var loc = String(o.location || '').trim();
         if (!loc || / - /.test(loc) || (o.name || '').trim() === actual) return;
-        var d = live ? 0 : dias(hoy, x._startKey || hoy);
-        if (d > 21) return;
-        var cuando = live ? 'ahora' : d <= 0 ? 'hoy' : d === 1 ? 'mañana' : d <= 6 ? 'en unos días' : d <= 13 ? 'la semana que viene' : 'en un par de semanas';
-        // Los argentinos anotados, de más Elo a menos
-        var args = [], vistos = {};
-        (_crKeysForTourAll(type, key, o.categories) || []).forEach(function (k) {
-          var dd = null; try { dd = crDataLoad(k); } catch (e) {}
-          ((dd && dd.standings) || []).forEach(function (p) { if (p && p.fed === 'ARG' && p.name && !vistos[p.name]) { vistos[p.name] = 1; args.push(p); } });
-        });
-        args.sort(function (a, b) { return (+b.elo || 0) - (+a.elo || 0); });
+        if (d > DIAS_TORNEOS) return;
+        var cuando = live ? 'ahora' : d <= 0 ? 'hoy' : d === 1 ? 'mañana' : d <= 6 ? 'en unos días' : d <= 13 ? 'la semana que viene' : d <= 20 ? 'en un par de semanas' : 'en unas semanas';
+        var args = anotados(v.type, key, o.categories);   // los argentinos anotados, de más Elo a menos
         var nom = tituloTorneo(o.name), art = articulo(nom), local = AR.test(loc);
         var ciudad = loc.split(',')[0].trim(), pais = loc.split(',').pop().trim();
         var t, c;
@@ -59314,16 +59377,22 @@ function cvUpdateNagBadge() {
                    : cuando.charAt(0).toUpperCase() + cuando.slice(1) + ' va' + (varios ? 'n' : '') + ' a estar ' + js + ' jugando en ' + pais + '.';
           c = 'Es ' + art + ' ' + esc(nom) + '.';
         }
-        out.push({ t: t, c: c, key: key, start: x._startKey || 0 });
+        out.push({ t: t, c: c, key: key, start: v.start });
       });
     } catch (e) {}
     return (TORNEOS_DATOS = out);
   }
   function dato(n) {   // el n-ésimo dato de esta partida: los próximos torneos de los que juegan, y después torneo, torneo, histórico, …
-    var PJ = datosJugadores();
-    if (n < PJ.length) return PJ[n];
+    var g = P.g; if (!g) return null;
+    // La lista se arma UNA vez por partida (así, al volver a una jugada, el dato es el mismo).
+    if (!g.lista) {
+      var pre = datosJugadores().concat(trofeosPartida()), ya = {};
+      pre.forEach(function (d) { ya[d.visto] = 1; });
+      g.lista = { pre: pre, T: ordenar(tarjetasTorneos().filter(function (d) { return !ya[d.visto]; }), g.sem) };
+    }
+    var PJ = g.lista.pre, T = g.lista.T, off = hash(g.sem);
+    if (n < PJ.length) return Object.assign({}, PJ[n]);
     n -= PJ.length;
-    var aca = tourActual(), T = torneosDatos().filter(function (d) { return String(d.key) !== aca; }), off = P.g ? hash(P.g.sem) : 0;
     var usarHist = !T.length || (n % 3 === 2 && HIST.length);
     if (usarHist && HIST.length) {
       var h = HIST[(off + Math.floor(n / 3)) % HIST.length], tx = String(h.t).trim().replace(/\.$/, '');
@@ -59331,9 +59400,17 @@ function cvUpdateNagBadge() {
       return { cara: 'ceba', sonido: 'termo', sym: '💡', symColor: '#b8860b', titulo: '¿Sabías que ' + tx.charAt(0).toLowerCase() + tx.slice(1) + '?' };
     }
     if (!T.length) return null;
-    var d = T[(off + n - Math.floor(n / 3)) % T.length];
-    return { cara: 'guino', sym: '🗞️', symColor: '#3b6ea8', titulo: d.t, cuerpo: d.c,
-             acc: [['Ver torneo', "window.__pupi.torneo('" + String(d.key).replace(/'/g, "\\'") + "')"]] };
+    return Object.assign({}, T[(n - Math.floor(n / 3)) % T.length]);
+  }
+  // Sin el mismo torneo dos veces ("Pablo va a jugar el Abierto PRO AM" y "arranca un torneo en Villa Martelli").
+  function sinRepetir(lista) { var ya = {}; return lista.filter(function (d) { if (!d.visto) return true; if (ya[d.visto]) return false; ya[d.visto] = 1; return true; }); }
+  // Los torneos como tarjeta del Pupi (sin el que se está mirando).
+  function tarjetasTorneos() {
+    var aca = tourActual();
+    return torneosDatos().filter(function (d) { return String(d.key) !== aca; }).map(function (d) {
+      return { cara: 'guino', sym: '🗞️', symColor: '#3b6ea8', titulo: d.t, cuerpo: d.c, visto: 'tor:' + d.key,
+               acc: [['Ver torneo', "window.__pupi.torneo('" + String(d.key).replace(/'/g, "\\'") + "')"]] };
+    });
   }
   // ── Cómo vienen los jugadores (pedido del autor, 05/10) ───────────────────────────────────────
   // Desde la 2.ª ronda: con cuántos puntos llega cada uno (la tabla de cruces trae pw/pb = los puntos
@@ -59504,6 +59581,16 @@ function cvUpdateNagBadge() {
     ['White', 'Black'].forEach(function (tag) {
       var pl = jugadorDe(tag); if (!pl || typeof playerTournamentsData !== 'function') return;
       var ts = (playerTournamentsData(pl).upcoming || []).filter(function (t) { return String(t.id) !== aca && t.start; });
+      // playerTournamentsData mira los cuadros, que en la web están sólo si se abrió el torneo: se suman los
+      // que lo tienen anotado según los nombres del manifest (ver anotados).
+      var ya = {}; ts.forEach(function (t) { ya[String(t.id)] = 1; });
+      torneosVigentes().forEach(function (v) {
+        if (v.live || !v.start || ya[String(v.key)] || String(v.key) === aca) return;
+        if (anotados(v.type, v.key, v.o.categories).some(function (p) { return String(p.id) === String(pl.id); })) {
+          ya[String(v.key)] = 1; ts.push({ name: v.o.name, location: v.o.location, start: v.start, id: v.key });
+        }
+      });
+      ts.sort(function (a, b) { return (a.start || 0) - (b.start || 0); });
       if (!ts.length) return;
       var nom = String(pl.name).trim().split(/\s+/)[0];   // "Diego Flores" → "Diego"
       var lista = ts.slice(0, 2).map(function (t) { var n = tituloTorneo(t.name); return articulo(n) + ' ' + esc(n); });
@@ -59512,10 +59599,73 @@ function cvUpdateNagBadge() {
         : nom + ' tiene por delante ' + lista.join(' y ') + (ts.length > 2 ? ', entre otros' : '') + '.';
       var cuerpo = ts.length === 1 ? (ciudad ? 'Es en ' + esc(ciudad) + '.' : '')
         : 'El primero arranca ' + cuandoArranca(t0.start) + (ciudad ? ', en ' + esc(ciudad) : '') + '.';
-      out.push({ cara: 'ceba', sonido: 'termo', sym: '🗓️', symColor: '#3b6ea8', titulo: titulo, cuerpo: cuerpo,
+      out.push({ cara: 'ceba', sonido: 'termo', sym: '🗓️', symColor: '#3b6ea8', titulo: titulo, cuerpo: cuerpo, visto: 'tor:' + t0.id,
                  acc: [['Ver torneo', "window.__pupi.torneo('" + String(t0.id).replace(/'/g, "\\'") + "')"]] });
     });
     return (g.dj = out);
+  }
+  // ── Trofeos de la vitrina (pedido del autor, 05/10) ───────────────────────────────────────────
+  // Los mismos que muestra el perfil (_troHtml): los automáticos del manifest (playerAwards) con las
+  // correcciones del autor, más los cargados a mano (campeón argentino, mundial, medallas olímpicas…).
+  function trofeosDe(tag) { return trofeosJug(jugadorDe(tag), apellido(tag)); }
+  function trofeosJug(pl, quien) {
+    if (!pl || !quien) return [];
+    var fem = !!pl.female, o = fem ? 'a' : 'o', ON = fem ? 'ona' : 'ón', ELLA = fem ? 'la' : 'el';
+    var tours = {}, lista = [], porClave = {}, man = [];
+    try { (_manifest.tournaments || []).forEach(function (t) { tours[String(t.id)] = t; }); } catch (e) {}
+    try {
+      ((_manifest.playerAwards || {})[pl.id] || []).forEach(function (a) {
+        var x = { k: a.k, d: a.d, t: a.t, y: a.y || (typeof _troAnio === 'function' ? _troAnio(tours[String(a.t)]) : 0), cl: String(a.t) + '|' + (a.c != null ? a.c : '') };
+        porClave[x.cl] = x; lista.push(x);
+      });
+    } catch (e) {}
+    try { man = (typeof _troMan === 'function' && _troMan()[pl.id]) || []; } catch (e) {}
+    man.forEach(function (m, i) {
+      if (m.de != null) { var x = porClave[m.de]; if (x) { if (m.k) x.k = m.k; if (m.y) x.y = m.y; if (m.d != null) x.d = m.d; } return; }
+      lista.push({ k: m.k, y: m.y, d: m.d, cl: 'm' + i });
+    });
+    var nArg = lista.filter(function (x) { return x.k === 'arg'; }), out = [];
+    function deT(t) { var n = tituloTorneo(t.name); return (articulo(n) === 'la' ? 'de la ' : 'del ') + esc(n); }
+    function enT(t) { var n = tituloTorneo(t.name); return 'en ' + articulo(n) + ' ' + esc(n); }
+    function anio(y) { return y && y !== new Date().getFullYear() ? ' en ' + y : ''; }
+    function detalle(d) {   // "8½ pts · Rp 2543" → "8½ puntos, performance de 2543."
+      d = String(d || '').trim(); if (!d) return '';
+      d = d.replace(/\bpts\b/g, 'puntos').replace(/\bRp (\d+)/, 'performance de $1').replace(/ · /g, ', ');
+      return esc(cap(d)) + (/[.!?]$/.test(d) ? '' : '.');
+    }
+    lista.forEach(function (x) {
+      var t = x.t != null ? tours[String(x.t)] : null, frase = '', cuerpo = detalle(x.d);
+      if (t) {
+        var vs = String(t.name || '').split(/\s+vs\.?\s+/i), otro = vs.length === 2 ? (norm(vs[0]).indexOf(norm(quien)) >= 0 ? vs[1] : vs[0]).trim() : '';
+        frase = x.k === 'c' && otro ? 'le ganó un match a ' + esc(otro) + anio(x.y)   // "Faustino Oro vs José Martínez Alcántara"
+          : x.k === 'c' ? 'salió campe' + ON + ' ' + deT(t) + anio(x.y)
+          : x.k === '2' ? 'salió subcampe' + ON + ' ' + deT(t) + anio(x.y)
+          : x.k === '3' ? 'salió tercer' + (fem ? 'a' : 'o') + ' ' + enT(t) + anio(x.y)
+          : x.k === 'fem' ? 'fue la mejor femenina ' + deT(t) + anio(x.y)
+          : x.k === 's20' ? 'fue ' + ELLA + ' mejor sub-20 ' + deT(t) + anio(x.y)
+          : x.k === 'm50' ? 'fue ' + ELLA + ' mejor +50 ' + deT(t) + anio(x.y)
+          : x.k === 'rev' ? 'fue la revelación ' + deT(t) + anio(x.y) : '';
+      } else if (x.k === 'arg') {
+        if (x !== nArg[0]) return;   // varios campeonatos argentinos: un solo dato que los cuenta
+        var ys = nArg.map(function (a) { return +a.y || 0; }).filter(Boolean).sort();
+        frase = nArg.length > 1 ? 'fue ' + nArg.length + ' veces campe' + ON + ' argentin' + o : 'fue campe' + ON + ' argentin' + o + anio(x.y);
+        cuerpo = nArg.length > 1 && ys.length > 1 ? 'La primera, en ' + ys[0] + '; la última, en ' + ys[ys.length - 1] + '.' : cuerpo;
+      } else if (x.k === 'mun') frase = 'fue campe' + ON + ' mundial' + anio(x.y);
+      else if (x.k === 'oro' || x.k === 'pla' || x.k === 'bro') frase = 'ganó una medalla de ' + { oro: 'oro', pla: 'plata', bro: 'bronce' }[x.k] + ' en una Olimpiada' + anio(x.y);
+      else if (x.k === 'cam' || x.k === 'sub') frase = 'tiene en la vitrina un título de ' + (x.k === 'sub' ? 'sub' : '') + 'campe' + ON + anio(x.y);
+      if (!frase || out.some(function (d) { return d.frase === frase; })) return;   // el mismo torneo en dos categorías
+      out.push({ cara: 'guino', sym: '🏆', symColor: '#b8860b', titulo: '¿Sabías que ' + esc(quien) + ' ' + frase + '?', cuerpo: cuerpo,
+                 visto: 'tro:' + pl.id + ':' + x.cl, frase: frase,
+                 acc: t ? [['Ver torneo', "window.__pupi.torneo('" + String(x.t).replace(/'/g, "\\'") + "')"]] : [] });
+    });
+    return out;
+  }
+  // Un trofeo de cada jugador para esta partida: al azar, pero primero los que todavía no contó.
+  function trofeosPartida() {
+    var g = P.g; if (!g) return [];
+    var out = [];
+    ['White', 'Black'].forEach(function (tag) { var l = ordenar(trofeosDe(tag), g.sem + tag); if (l.length) out.push(l[0]); });
+    return out;
   }
 
   function esQuieto(n, i) {
@@ -59937,6 +60087,7 @@ function cvUpdateNagBadge() {
       if (!visible()) return;
       if (P.estado === 'si') { apertura(); if (!hayDatos()) pedirAnalisis(); cargarSonidos(); precargarCaras(); }
       var cc = comentario(); pintar(cc); sonar(cc);
+      if (cc && cc.visto) marcarVisto(cc.visto);   // torneo o trofeo contado: la próxima partida empieza por otro
       // Mientras analiza, refrescar el "voy por la jugada…"
       clearTimeout(P.esperaT);
       if (P.estado === 'si' && (analizando() || !hayDatos())) P.esperaT = setTimeout(function () { P.html = ''; actualizar(); }, 700);
@@ -60025,12 +60176,8 @@ function cvUpdateNagBadge() {
     // sin repetir hasta que se acaben. Con "Otro" pide el siguiente.
     pedirDato: function () {
       if (!P.mazo || !P.mazo.length) {
-        var aca = tourActual();
-        P.mazo = datosJugadores().concat(torneosDatos().filter(function (d) { return String(d.key) !== aca; }).map(function (d) {
-          return { cara: 'guino', sym: '🗞️', symColor: '#3b6ea8', titulo: d.t, cuerpo: d.c,
-                   acc: [['Ver torneo', "window.__pupi.torneo('" + String(d.key).replace(/'/g, "\\'") + "')"]] };
-        }));
-        for (var k = P.mazo.length - 1; k > 0; k--) { var r = Math.floor(Math.random() * (k + 1)), x = P.mazo[k]; P.mazo[k] = P.mazo[r]; P.mazo[r] = x; }
+        // Todo junto (próximos torneos de los que juegan, sus trofeos y los torneos), primero lo que no contó.
+        P.mazo = ordenar(sinRepetir(datosJugadores().concat(trofeosDe('White'), trofeosDe('Black'), tarjetasTorneos())), String(Math.random()));
       }
       var d = P.mazo.shift();
       var c = d ? Object.assign({}, d, { sonido: null, acc: (d.acc || []).concat([['🎲 Otro', 'window.__pupi.pedirDato()', false, 'Otro dato', 'pupi-cartoon pupi-pide']]) })
@@ -60068,7 +60215,7 @@ function cvUpdateNagBadge() {
       }
       return out.join(', ');
     },
-    estado: function () { return P.estado; }, _P: P, _mate: function () { sonidoMate(); }, _termo: function () { sonidoTermo(); }, _grab: GRAB, _grabN: GRAB_N, _sonando: function () { return SONANDO; }, _torneos: function () { return torneosDatos(); }
+    estado: function () { return P.estado; }, _P: P, _mate: function () { sonidoMate(); }, _termo: function () { sonidoTermo(); }, _grab: GRAB, _grabN: GRAB_N, _sonando: function () { return SONANDO; }, _torneos: function () { return torneosDatos(); }, _trofeos: function (pl, quien) { return trofeosJug(pl, quien); }
   };
 
   imgsListas.then(function () { P.cara = ''; P.html = ''; actualizar(); });
