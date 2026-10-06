@@ -59390,7 +59390,13 @@ function cvUpdateNagBadge() {
       }
       if (best < 0 || hondo >= ml.length) { g.ap = null; return; }
       var cam = _apA.camino[best], n = cam[cam.length - 1];
-      g.ap = { nodo: ml[hondo - 1], key: n.key, R: null, clave: null, n: n.main >= 0 ? n : null };
+      g.ap = { nodo: ml[hondo - 1], key: n.key, R: null, clave: null, n: n.main >= 0 ? n : null, arg: null };
+      // Los argentinos que más la juegan (los mismos de 🌳 Aperturas): de la variante más honda que los tenga.
+      if (typeof _apStatsEnsure === 'function') _apStatsEnsure(function () {
+        if (P.g !== g || !g.ap) return;
+        g.ap.arg = argentinosDe(cam, g.sem);
+        if (g.ap.arg) { P.html = ''; actualizar(); }
+      });
       if (typeof _ptCargar === 'function') _ptCargar(_apPartes(n.key)[0], function (F) {
         if (!F || P.g !== g) return;
         var k = _ptElegir(F, n.key);
@@ -59398,6 +59404,27 @@ function cvUpdateNagBadge() {
       });
       P.html = ''; actualizar();
     });
+  }
+  // Pedido del autor (06/10): "¿Sabés quién juega mucho esta línea? Betito López", uno de los (hasta 3)
+  // argentinos que más la juegan, elegido al azar pero FIJO por partida. Si el que la está jugando ES uno de
+  // ellos, se dice eso. `cam` = familia → variante → subvariante; se toma la más honda con argentinos.
+  function argentinosDe(cam, sem) {
+    if (typeof _apSt !== 'function' || typeof PLAYERS === 'undefined') return null;
+    for (var c = cam.length - 1; c >= 0; c--) {
+      var s = _apSt(cam[c]);
+      if (!s || !s[5] || s[5].length < 2) continue;
+      var lado = s[5][0], tops = [];
+      s[5].slice(1).forEach(function (t) {
+        for (var i = 0; i < PLAYERS.length; i++) if (String(PLAYERS[i].id) === String(t[0])) { tops.push({ pl: PLAYERS[i], n: t[1] }); break; }
+      });
+      if (!tops.length) continue;
+      var dueño = jugadorDe(lado ? 'Black' : 'White'), otro = jugadorDe(lado ? 'White' : 'Black');
+      var esEl = dueño && tops.filter(function (t) { return String(t.pl.id) === String(dueño.id); })[0];
+      var resto = tops.filter(function (t) { return !(dueño && String(t.pl.id) === String(dueño.id)) && !(otro && String(t.pl.id) === String(otro.id)); });
+      return { lado: lado, nivel: cam[c].d === 0 ? 'apertura' : 'línea', esEl: esEl || null,
+               uno: resto.length ? resto[hash(sem + 'arg') % resto.length] : null, tag: lado ? 'Black' : 'White' };
+    }
+    return null;
   }
   // La apertura contada como la contaría uno en el club: sin porcentajes, con "casi siempre / muchas veces".
   var ESTR_TXT = {
@@ -59450,6 +59477,29 @@ function cvUpdateNagBadge() {
     }
     return { cara: 'idea', sym: '📖', symColor: '#8a6a3a', titulo: 'Hasta acá, todo de libro', cuerpo: b,
              acc: R ? [['🧭 Ver más en Aperturas', 'window.__pupi.aperturas()']] : [] };
+  }
+  // El argentino que más la juega va en la jugada SIGUIENTE al cartel de la apertura (pedido del autor: ahí
+  // ya es un choclo), mientras ceba el mate. La primera tranquila de las 4 que siguen; si no hay, no se dice.
+  function argentinoI() {
+    var ap = P.g && P.g.ap; if (!ap || !ap.arg) return -1;
+    var N = _fa.nodes, k = N.indexOf(ap.nodo);
+    if (k < 0) return -1;
+    for (var j = k + 1; j <= k + 4 && j < N.length; j++) if (esQuieto(N[j], j)) return j;
+    return -1;
+  }
+  function comentarioArgentino(a) {
+    var sem = (P.g ? P.g.sem : '') + ':ap', con = a.lado ? 'con negras' : 'con blancas', esta = 'esta ' + a.nivel, c;
+    if (a.esEl) {
+      c = { titulo: 'Y ' + esc(cap(apellido(a.tag)) || nombreLindo(a.esEl.pl.name)) + ' de esto sabe.',
+            cuerpo: 'Es de los argentinos que más juegan ' + esta + ': ya tiene ' + a.esEl.n + ' partidas ' + con + '.' };
+    } else if (a.uno) {
+      var nom = '<b>' + esc(nombreLindo(a.uno.pl.name)) + '</b>';
+      c = { titulo: '¿Sabés quién juega mucho ' + esta + ' ' + con + '?',
+            cuerpo: una([nom + ': ya la jugó ' + a.uno.n + ' veces.', nom + '. Tiene ' + a.uno.n + ' partidas con ella.'], sem + 'argt'),
+            acc: [['👤 Ver a ' + esc(String(a.uno.pl.name).split(',').pop().trim().split(/\s+/)[0]), 'window.__pupi.perfil(' + JSON.stringify(a.uno.pl.id).replace(/"/g, '&quot;') + ')']] };
+    } else return null;
+    c.cara = 'ceba'; c.sonido = 'termo'; c.sym = '♟️'; c.symColor = '#3b6ea8';
+    return c;
   }
 
   // ── "Hasta ahora es un pelotazo la partida" (latiguillo del autor) ─────────────────────────────
@@ -59966,6 +60016,7 @@ function cvUpdateNagBadge() {
       }
     }
     if (P.g && P.g.ap && P.g.ap.nodo === node) return comentarioApertura(P.g.ap);
+    if (i === argentinoI()) { var ca = comentarioArgentino(P.g.ap.arg); if (ca) return ca; }
     // Lo que quedó de "cómo vienen", de a una parte por semijugada.
     if (i <= 2) { var pv = previa(); if (pv[i + 1]) return { cara: 'habla', cuerpo: pv[i + 1] }; }
     if (ultimo && resultado() !== '*') {
@@ -60386,6 +60437,16 @@ function cvUpdateNagBadge() {
     aperturas: function () {
       var n = P.g && P.g.ap && P.g.ap.n;
       salirA(function () { if (n && typeof _apIrDesdeAfuera === 'function') _apIrDesdeAfuera(n); else cvAperturaEnExplorador(); });
+    },
+    // El perfil del argentino que nombró en la apertura. Como cvClickPlayer: Atrás vuelve a la partida.
+    perfil: function (id) {
+      var snap = (_cvHistoryPushed && _cvTourGames && _cvTourGames.length) ? {
+        games: _cvTourGames, keys: _cvShareKeys, idx: _cvTourIdx, name: _cvTourName, loc: _cvTourLoc, from: _cvFromTournament,
+        pgnKey: _cvTourPgnKey, liveCtx: _liveCtx, liveParams: _liveParams, bcBaseKey: _bcBaseKey, bcArgMode: _bcArgMode
+      } : null;
+      closeChessViewer();
+      openPlayer(id);
+      _playerReturnToGame = snap;
     },
     // "¡Despertalo al Pupi!": la siesta termina en esta jugada y sigue comentando normal el resto de la partida.
     despertar: function () {
