@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2313;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2324;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -9504,6 +9504,71 @@ console.log('\n── Planes típicos de la apertura ──');
   chk(VR('Aperturas', doc(false)) === 'Volver a Aperturas' && VR('Búsqueda', doc(false)) === 'Volver a la búsqueda'
       && VR('Cualquiera', doc(true)) === 'Volver al perfil' && VR('Otra', doc(false)) === 'Volver a la pantalla anterior',
       'el botón dice adónde vuelve: Aperturas, la búsqueda, el perfil del jugador o "la pantalla anterior"');
+}
+// ── 🏹 Flechas y casillas resaltadas del PGN ([%cal] / [%csl], 06/10/2026: lecciones de las Colecciones) ──
+{
+  console.log('\n🏹 Flechas y casillas resaltadas que trae el PGN');
+  const hasta = (nombre) => { const i = SRC.indexOf('function ' + nombre + '('); const j = SRC.indexOf('\nfunction ', i + 10); return SRC.slice(i, j); };
+  const S = new Function(SRC.match(/var _PGN_COLOR = [^\n]*/)[0] + '\n' + hasta('parseMoveShapes') + '\n' + extraerFuncion('_cvFormasNodo')
+    + '; return { p: parseMoveShapes, nodo: function (c, n) { cv = c; return _cvFormasNodo(n); } }; var cv;')();
+  const pgn = '[Event "Leccion"]\n\n{ Así se reconoce [%csl Gd4,Gd5] } 1. d4 { [%cal Gb4b5,Rd8d1] [%csl Rc6] } d5 2. c4 (2. Nf3 { [%cal Ge2e4] }) e6 { El plan [%csl Yd5][%cal Bf1d3] } { [%cal Gg1f3] } *';
+  const F = S.p(pgn);
+  chk(F.ini && F.ini.h.d4 === 'g' && F.ini.h.d5 === 'g' && F.m[0].a.length === 2 && F.m[0].a[1].from === 'd8' && F.m[0].a[1].c === 'r' && F.m[0].h.c6 === 'r'
+      && !F.m[1] && !F.m[2] && F.m[3].h.d5 === 'v' && F.m[3].a.length === 2 && F.m[3].a[0].c === 'b' && F.m[3].a[1].to === 'f3',
+      'lee lo de antes de la 1.ª jugada (posición inicial), lo de cada jugada (varios comentarios se suman), saltea las variantes y el amarillo pasa a violeta');
+  chk(!S.p('[Event "x"]\n\n1. e4 { [%eval 0.3] [%clk 0:03:00] } e5 *').m.length && !S.p('').ini,
+      'una partida sin flechas (sólo %eval / %clk) no trae nada');
+  // Árbol de mentira: raíz → e4 → e5, y una jugada propia del usuario (own) que no es de la partida
+  const raiz = { children: [] }, n1 = { children: [] }, n2 = { children: [] }, propia = { own: true, children: [] };
+  raiz.children.push(n1); n1.children.push(n2, propia);
+  const cvF = { root: raiz, rawPgn: '[Event "x"]\n\n{ [%csl Re4] } 1. e4 { [%cal Gg1f3] } e5 { [%csl Bd5] } *' };
+  chk(S.nodo(cvF, raiz).h.e4 === 'r' && S.nodo(cvF, n1).a[0].to === 'f3' && S.nodo(cvF, n2).h.d5 === 'b' && S.nodo(cvF, propia) === null,
+      'cada posición de la línea principal muestra lo suyo; en una jugada propia del usuario no se dibuja nada de la partida');
+  const DA = extraerFuncion('cvDrawArrows');
+  chk(/var _pf = _cvFormasNodo\(cv\.node\);/.test(DA) && DA.indexOf('_cvFormasNodo') < DA.indexOf('Object.keys(_highlights)'),
+      '🔒 el visor las dibuja en cada jugada, DEBAJO de las flechas y resaltados que hace el usuario');
+}
+// ── 🏆 Finales con objetivo en Practicar (06/10/2026: los que vienen de las Colecciones) ──
+{
+  console.log('\n🏆 Finales con objetivo en Practicar');
+  const G = new Function('prac', extraerFuncion('pracGoalText') + '; return pracGoalText();');
+  const fin = (o, yo) => G({ cur: { phase: 'endgame', objective: o, sideToMove: 'w' }, humanColor: yo });
+  chk(fin('ganar', 'w') === 'Tu tarea: ganá este final.' && fin('ganar', 'b') === 'Tu tarea: defendete y salvá este final (tablas).'
+      && fin('salvar', 'w') === 'Tu tarea: salvá este final, hacé tablas.' && /intentá ganarlo/.test(fin('salvar', 'b'))
+      && fin(null, 'w') === 'Jugá el final lo mejor que puedas contra el módulo.',
+      'la tarea es del bando que mueve (ganar o salvar); con el otro color se da vuelta; los finales viejos sin objetivo dicen lo de siempre');
+  chk(/if \(prac\.fObj && p\.objective !== prac\.fObj\) return false; \}/.test(extraerFuncion('pracItems')) && /eobjs\.ganar \|\| eobjs\.salvar/.test(extraerFuncion('pracRenderFilters')),
+      '🔒 el filtro de objetivo de los finales aparece sólo si hay finales con objetivo, y filtra la lista');
+}
+// ── 📖 Estudiar › Finales (06/10/2026: la pestaña Aperturas pasa a ser Estudiar, con lecciones de finales) ──
+{
+  console.log('\n📖 Estudiar › Finales');
+  const U = new Function('location', 'v', 'var _estVista = v; ' + extraerFuncion('_estUrl') + '; return _estUrl();');
+  const loc = { pathname: '/' };
+  chk(U(loc, 'finales') === '/?ir=estudiar&ver=finales' && U(loc, 'leccion:torre-menor') === '/?ir=estudiar&leccion=torre-menor',
+      'la dirección dice qué se ve: la lista de Finales o la lección');
+  // Qué botón lleva cada tarjeta según el ejemplo (partida real, armada, fabricada, simulados de ganar o de tablas)
+  const T = new Function('var _estK = {}, _estN = 0, _EST_COL = { g: "#0", r: "#1", b: "#2", v: "#3" };'
+    + 'function escHtml(s) { return String(s); } function _flagImg() { return "[AR]"; }'
+    + extraerFuncion('_estTablero') + extraerFuncion('_estRes') + extraerFuncion('_estAp') + extraerFuncion('_estTarjeta')
+    + '; return function (e) { return _estTarjeta(e); };')();
+  const base = { fen: '8/8/8/8/8/8/8/K6k w - - 0 1', w: 'Pérez, Juan', b: 'López, Ana', r: '1-0', d: '2020.01.01', ply: 41, evento: 'Abierto', marcas: { a: [{ from: 'a1', to: 'a8', c: 'g' }], h: { h1: 'r' } } };
+  const btn = e => (T(Object.assign({}, base, e)).match(/class="est-btn"[^>]*>([^<]*)</) || [])[1];
+  chk(btn({}) === '▶ Ver la partida' && btn({ fabricada: true, sim: { sans: [] } }) === '▶ Ver cómo se gana (simulado)'
+      && btn({ armada: true, sim: { sans: [] } }) === '▶ Ver el final simulado' && btn({ sim: { sans: [], tablas: true } }) === '▶ Ver cómo se entablaba (simulado)'
+      && btn({ sim: { sans: [], ganada: false } }) === '▶ Ver cómo se ganaba (simulado)' && btn({ sim: { sans: [], ganada: true } }) === '▶ Ver la partida',
+      'cada tarjeta lleva el botón que corresponde: partida, final simulado, cómo se ganaba / se entablaba, posición de estudio');
+  const h = T(Object.assign({}, base, { arg: true }));
+  chk(/jugada 21/.test(h) && /\[AR\] Pérez – López/.test(h) && /<line /.test(h) && /fill="#1"/.test(h),
+      'la tarjeta muestra la jugada, los apellidos (con bandera si juega un argentino) y dibuja la flecha y la casilla marcadas');
+  const B = new Function(extraerFuncion('_estBarra') + '; return _estBarra;')();
+  const b = B({ t: 71, d: 21, p: 8 });
+  chk(/width:71%/.test(b) && /width:21%/.test(b) && /width:8%/.test(b) && /aria-label="Gana la torre 71%, tablas 21%, gana la pieza 8%"/.test(b) && />8%</.test(b) && !B({ t: 95, d: 5, p: 0 }).includes('class="bp"'),
+      'los cuadros: barra con los tres porcentajes, su texto para el lector de pantalla, y sin el tramo vacío');
+  chk(/if \(typeof _estPintar === 'function' && !_estPintar\(\)\) return;/.test(extraerFuncion('renderPartidas'))
+      && /_estVista = 'aperturas'/.test(extraerFuncion('_apIrDesdeAfuera')) && /_SLUG_SEC\.estudiar = 'favoritos'/.test(SRC)
+      && /_cvTourGames\[_cvTourIdx\] === _estSimNota\.pgn/.test(extraerFuncion('cvRender960Note')),
+      '🔒 las Aperturas siguen igual (Finales se pinta aparte), ?ir=estudiar lleva a la pestaña, abrir una apertura desde afuera vuelve a Aperturas, y el cartel del simulado sólo sale en ESE final');
 }
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
 console.log('   Corrieron ' + corridas + ' de ' + ESPERADAS + ' comprobaciones.'
