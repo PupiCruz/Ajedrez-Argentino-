@@ -3169,7 +3169,7 @@
 
       <!-- ── Panel: PRACTICAR (jugar posiciones vs el módulo) ── -->
       <div class="train-pane" id="train-pane-practicar">
-      <div class="puz-intro" style="text-align:center;max-width:640px;margin-left:auto;margin-right:auto">Elegí una posición de <b>finales</b> o de <b>medio juego</b> tomada de partidas reales y jugala contra Stockfish. Vos elegís el color y la fuerza del módulo.</div>
+      <div class="puz-intro" style="text-align:center;max-width:640px;margin-left:auto;margin-right:auto">Elegí una posición de <b>finales</b><span id="prac-intro-mid" style="display:none"> o de <b>medio juego</b></span> tomada de partidas reales y jugala contra Stockfish. Vos elegís el color y la fuerza del módulo.</div>
 
       <!-- Sub-pestañas: finales / medio juego -->
       <div class="tabs" id="tab-practicar">
@@ -41598,7 +41598,7 @@ function _routineEnsurePractice(cb) {
     PRACTICE = Array.isArray(d) ? d : (d.practice || []); _pracLoaded = true; cb();
   }).catch(function(){ cb(); });
 }
-function _routineMidCount() { return routine.inc.mid ? 1 : 0; }
+function _routineMidCount() { return routine.inc.mid && _pracHayMedio() ? 1 : 0; }
 function _routineFinCount() { return routine.inc.fin ? 1 : 0; }
 function _routinePracItems() { return _routineMidCount() + _routineFinCount(); }
 // Reparto del tiempo (modo por tiempo) según el slider de proporción.
@@ -41632,8 +41632,10 @@ function _puzRoutineBuilderHtml() {
   colB += '<div style="font-size:13px;color:var(--text2);margin:0 0 5px;font-weight:700">Incluir:</div>';
   colB += _routineCheck('puz', 'Ejercicios de táctica');
   if (R.inc.puz) colB += _routineLvlPicker();
-  colB += _routineCheck('mid', 'Práctica de medio juego');
-  if (R.inc.mid) colB += _routineMidPicker();
+  if (_pracHayMedio()) {   // sin posiciones de medio juego (06/10/2026) la casilla no se ofrece
+    colB += _routineCheck('mid', 'Práctica de medio juego');
+    if (R.inc.mid) colB += _routineMidPicker();
+  }
   colB += _routineCheck('fin', 'Práctica de finales');
   if (R.inc.fin) colB += _routineFinPicker();
   var top = '<div style="display:flex;gap:18px;flex-wrap:wrap">'
@@ -43245,8 +43247,17 @@ function pracUpdatePhaseCounts() {
     var m = chips[i].getAttribute('onclick').match(/'(endgame|middlegame)'/); if (!m) continue;
     var n = PRACTICE.filter(function(p){ return p.phase === m[1]; }).length;
     chips[i].innerHTML = labels[m[1]] + ' <span style="opacity:.6">(' + n + ')</span>';
+    if (m[1] === 'middlegame') chips[i].style.display = n ? '' : 'none';
   }
+  // 06/10/2026: el medio juego se vació para volver a armarlo desde las Colecciones (las etiquetas de
+  // estructura estaban mal). Sin posiciones no se muestra ni la sub-pestaña ni la casilla de la rutina;
+  // vuelven solas cuando practice.json traiga medio juego otra vez.
+  var hay = _pracHayMedio(), tabs = document.getElementById('tab-practicar'), intro = document.getElementById('prac-intro-mid');
+  if (tabs) tabs.style.display = hay ? '' : 'none';
+  if (intro) intro.style.display = hay ? '' : 'none';
+  if (!hay && prac.phase === 'middlegame') { prac.phase = 'endgame'; if (chips[0]) chips[0].classList.add('active'); }
 }
+function _pracHayMedio() { return (PRACTICE || []).some(function(p){ return p.phase === 'middlegame'; }); }
 function pracSyncLevelChips() {
   var chips = document.querySelectorAll('#tab-prac-level .chip');
   for (var i=0;i<chips.length;i++) chips[i].classList.toggle('active', chips[i].getAttribute('onclick').indexOf("'"+prac.level+"'") >= 0);
