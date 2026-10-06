@@ -31,8 +31,10 @@
   <!-- Al abrir una partida por link directo (pestaña nueva / compartido), tapar TODO con una pantalla de
        carga limpia desde el primer instante, así no se ven de fondo el panel de autor ni las secciones
        mientras carga. Se quita cuando el visor abre (cvOpenOverlay) o por seguridad a los 12s.
-       (Va DESPUÉS del <meta charset> para no empujarlo fuera de los primeros 1024 bytes.) -->
-  <script>
+       (Va DESPUÉS del <meta charset> para no empujarlo fuera de los primeros 1024 bytes.)
+       El id lo usa el servidor (functions/index.js): la ficha de texto para Google va justo DESPUÉS de
+       este script, o sea debajo de la pantalla de carga, y se borra en el acto. NO cambiarle el id. -->
+  <script id="dl-cover">
   (function(){
     try {
       var p = new URLSearchParams(location.search || '');
@@ -17923,9 +17925,19 @@ async function exportDataFile() {
     // no haya cambiado nada más, porque es chico y así nunca queda viejo. Va dentro de data\ porque
     // es la única carpeta sobre la que el navegador tiene permiso; publicar-web.cmd lo copia a la
     // raíz del sitio, que es donde lo busca Google (robots.txt ya lo declara ahí).
-    try { await _fsWriteFile(dir, 'sitemap.xml', _sitemapXml()); } catch (e) {}
+    // Las fichas para Google (data/seo/) y las fechas reales del sitemap salen de la misma pasada.
+    var _seo = null;
+    try { _seo = _seoDatos(); } catch (e) {}
+    try { await _fsWriteFile(dir, 'sitemap.xml', _sitemapXml(_seo)); } catch (e) {}
     // Datos para la vista previa al compartir (los lee el servidor, ver functions/_middleware.js).
     try { await _fsWriteFile(dir, 'og.json', _ogJson()); } catch (e) {}
+    if (_seo) {
+      try {
+        var _seoArch = _seoArchivos(_seo);
+        for (var _sa in _seoArch) await _fsWriteFile(dir, _sa, _seoArch[_sa]);
+      } catch (e) {}
+    }
+    _seo = null;
     try { await _fsSaveFps(dir, fps); } catch (e) {}
     _memGuardarPico();
     _saveProgressHide();
@@ -28209,13 +28221,29 @@ function _seoMeta(selector, attr, valor) {
   if (el) el.setAttribute(attr, valor);
 }
 
+/* La dirección "oficial" (canonical) de un torneo va SIN ?cat= (06/10/2026). Search Console de
+   septiembre mostró la Olimpiada partida en tres: ?torneo=X&cat=0 (16.648 impresiones), ?torneo=X
+   (1.145) y &cat=1 (761). Cada una se declaraba oficial a sí misma, así que Google las ponía a
+   competir entre ellas. Con la partida abierta el cat SÍ se queda: el número de partida es de esa
+   categoría, y sin él el link oficial apuntaría a otra partida. La barra del navegador y el link
+   para compartir (og:url) no cambian. Lo mismo hace el servidor en functions/index.js. */
+function _seoBusquedaCanonica(search) {
+  try {
+    var q = new URLSearchParams(search || '');
+    if (!q.has('torneo') || !q.has('cat') || q.get('partida') || q.get('g') || q.get('vg')) return search || '';
+    q.delete('cat');
+    var s = q.toString();
+    return s ? '?' + s : '';
+  } catch (e) { return search || ''; }
+}
+
 function _seoAplicar(titulo, desc) {
   try {
     var t = _a11yTexto(titulo || '') || _seoTituloBase;
     if (t !== _seoTituloBase && t.indexOf(_SEO_MARCA) < 0) t = t + ' | ' + _SEO_MARCA;
     var url = _seoOrigen() + location.pathname + (location.search || '');
     document.title = t;
-    _seoMeta('link[rel="canonical"]', 'href', url);
+    _seoMeta('link[rel="canonical"]', 'href', _seoOrigen() + location.pathname + _seoBusquedaCanonica(location.search));
     _seoMeta('meta[property="og:url"]', 'content', url);
     _seoMeta('meta[property="og:title"]', 'content', t);
     var d = _a11yTexto(desc || '') || _seoDescBase;
@@ -28351,7 +28379,7 @@ function _seoTorneo() {
     if (c.location) partes.push(c.location);
     if (c.dates) partes.push(c.dates);
     _seoAplicar(
-      c.name + ' — resultados y partidas',
+      c.name + ' — posiciones, resultados y partidas',
       'Tabla de posiciones, cruces, rondas y partidas de ' + c.name +
         (partes.length ? '. ' + partes.join('. ') : '') + '. Ajedrez argentino.'
     );
@@ -28586,15 +28614,207 @@ function _ogJson() {
   return JSON.stringify(out);
 }
 
-function _sitemapXml() {
+/* ═══ FICHAS PARA GOOGLE (data/seo/t0..7.json y data/seo/j0..15.json) — 06/10/2026 ═══════════════
+   Search Console (export del 06/10): de las 1.847 páginas del sitemap Google indexó 34, y 1.667
+   estaban "Descubierta: actualmente sin indexar". El motivo: las 1.847 direcciones devuelven el MISMO
+   index.html de 4 MB. Sólo cambia el título, y el perfil o la tabla aparecen recién cuando corre el
+   JavaScript, que Google deja "para más adelante" en un sitio nuevo.
+
+   El arreglo: el servidor (functions/index.js) mete en el HTML un bloque de texto con lo esencial de
+   cada torneo y cada jugador. En los torneos, la tabla (los 10 primeros); en los jugadores, sus
+   torneos, todo con links de verdad. Así Google ve páginas distintas y conectadas sin ejecutar nada.
+   Al visitante NO le cambia nada: el bloque va debajo de la pantalla "Cargando…" y un script lo borra
+   en el acto, antes de que se pinte la página.
+
+   Los datos se arman acá, al guardar, y se reparten en archivitos (por un número que sale de la
+   clave, ver _seoShard) para que el servidor lea uno chico y no tarde más en responder.
+   NO guarda nada por partida: sólo recorre las tablas que ya están en memoria. */
+var _SEO_SHARDS_T = 8, _SEO_SHARDS_J = 16;   // si se cambian, cambiarlos también en functions/index.js
+// A qué archivito va cada clave. Tiene que dar EXACTAMENTE lo mismo que shard() en functions/index.js.
+function _seoShard(clave, n) {
+  var h = 0, s = String(clave);
+  for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return h % n;
+}
+
+/* Arma todo de una pasada: las fichas de torneos y jugadores, y las fechas de última modificación
+   reales para el sitemap. Antes el sitemap decía "hoy" en las 1.847 direcciones cada vez que se
+   publicaba, y Google aprende a no creerle a esa fecha. */
+function _seoDatos() {
+  var res = { t: {}, j: {}, modT: {}, modJ: {} };
+  var hoy = _isoToKey(new Date().toISOString().slice(0, 10));
+  function pts(v) {
+    if (v === null || v === undefined || v === '') return '';
+    return String(v).replace('.', ',');
+  }
+  // Índices para reconocer jugadores rápido: por FIDE id y por apellido (el último token del nombre).
+  var porFid = {}, porTok = {};
+  (window.PLAYERS || []).forEach(function (p) {
+    if (!p || p.id === null || p.id === undefined || !p.name) return;
+    if (p.fide_id) porFid[String(p.fide_id)] = p;
+    var pr = _nmPlayerPrep(p);
+    if (pr) (porTok[pr.last] = porTok[pr.last] || []).push(p);
+  });
+  /* El jugador de un renglón de tabla. Primero por FIDE id; si no hay, por nombre, y sólo si UN ÚNICO
+     jugador encaja (dos candidatos = no se sabe cuál es, mejor ninguno). Un renglón de otra federación
+     sólo engancha a quien juegue con esa misma bandera: en una Olimpiada hay muchos "Garcia". */
+  function buscar(nombre, fid, fed) {
+    if (fid && porFid[String(fid)]) return porFid[String(fid)];
+    if (!nombre) return null;
+    var pg = _nmNamePrep(String(nombre));
+    if (!pg || !pg.tokens) return null;
+    var hallado = null, vistos = {};
+    for (var i = 0; i < pg.tokens.length; i++) {
+      var cands = porTok[pg.tokens[i]] || [];
+      for (var c = 0; c < cands.length; c++) {
+        var p = cands[c];
+        if (vistos[p.id]) continue;
+        vistos[p.id] = 1;
+        if (fid && p.fide_id && String(p.fide_id) !== String(fid)) continue;
+        if (fed && fed !== 'ARG' && (p.fed || 'ARG') !== fed) continue;
+        if (_nmMatch(_nmPlayerPrep(p), pg)) {
+          if (hallado && hallado !== p) return null;
+          hallado = p;
+        }
+      }
+    }
+    return hallado;
+  }
+  function anotarJugador(p, fila, fin) {
+    var k = String(p.id);
+    var l = res.j[k] = res.j[k] || [];
+    for (var i = 0; i < l.length; i++) if (l[i][0] === fila[0]) return;   // un torneo, una vez
+    fila.fin = fin;
+    l.push(fila);
+  }
+  function torneo(type, key, d) {
+    if (key === null || key === undefined || key === '' || res.t[key]) return;
+    var rng = null; try { rng = tourRange(d); } catch (e) {}
+    var fin = rng ? Math.min(rng.end || 0, hoy) : 0;
+    var cats = (d && d.categories) || [];
+    var keys = [];
+    try { keys = _crKeysForTourAll(type, key, cats); } catch (e) { keys = [crKey(type, key)]; }
+    // Las categorías primero; la clave del torneo entero sólo si ninguna categoría tenía tabla
+    // (en los torneos por categorías suele tener nada más que los argentinos escritos a mano).
+    keys = keys.filter(function (k) { return _crKeyCat(k) >= 0; })
+               .concat(keys.filter(function (k) { return _crKeyCat(k) < 0; }));
+    var bloques = [], otros = [], conTabla = false, enLista = {};
+    keys.forEach(function (k) {
+      var ci = _crKeyCat(k);
+      if (ci < 0 && conTabla) return;
+      var data = null; try { data = crDataLoad(k); } catch (e) {}
+      if (!data) return;
+      var cat = ci >= 0 ? String((cats[ci] && cats[ci].name) || '').replace(/\s+/g, ' ').trim().slice(0, 60) : '';
+      var st = Array.isArray(data.standings) ? data.standings : [];
+      var eq = data.teamStandings && Array.isArray(data.teamStandings.teams) ? data.teamStandings.teams : [];
+      if (st.length) {
+        conTabla = true;
+        // Todavía no se jugó nada (todos en cero): la "tabla" es la lista de inscriptos por Elo. Un
+        // "puesto 1, 0 puntos" ahí sería mentira, así que van sin puesto ni puntos (tipo 'p').
+        var sinJugar = st.every(function (r) { return !r || !parseFloat(r.pts); });
+        var filas = [];
+        st.forEach(function (r, i) {
+          if (!r || !r.name) return;
+          var p = buscar(r.name, r.fideId, r.fed);
+          var rk = sinJugar ? '' : (r.rank || (i + 1));
+          var pt = sinJugar ? '' : pts(r.pts);
+          if (p) anotarJugador(p, [key, rk, sinJugar ? '' : st.length, pt, cat, '', ''], fin);
+          if (filas.length < 10) {
+            filas.push([rk, pgnNameToNatural(String(r.name)).slice(0, 60), p ? p.id : '', r.title || '', r.fed || '', r.elo || 0, pt]);
+            if (p) enLista[p.id] = 1;
+          } else if (p && !enLista[p.id] && otros.length < 40) {
+            otros.push([p.id, rk, pt]); enLista[p.id] = 1;
+          }
+        });
+        if (filas.length) bloques.push([cat, sinJugar ? 'p' : 'i', filas]);
+      } else if (eq.length) {
+        conTabla = true;
+        // Igual que en la individual: sin ningún punto todavía (la Bundesliga antes de la 1ª fecha), no hay puestos.
+        var sinJugarE = eq.every(function (t) { return !t || !parseFloat(t.des && t.des[0]); });
+        var filasE = eq.slice(0, 10).map(function (t, i) {
+          var nom = String(t.name || '');
+          try { nom = _paisES(nom, t.fed) || nom; } catch (e) {}
+          return [sinJugarE ? '' : (t.rk || (i + 1)), nom.slice(0, 60), '', '', t.fed || '', 0, sinJugarE ? '' : pts(t.des && t.des[0])];
+        });
+        bloques.push([cat, sinJugarE ? 'q' : 'e', filasE]);
+        // Los planteles: cada jugador conocido se lleva el torneo a su perfil, con su equipo y tablero.
+        var nEq = eq.length;
+        (data.teamRoster || []).forEach(function (t) {
+          var rkEq = 0;
+          if (!sinJugarE) for (var i = 0; i < eq.length; i++) if (eq[i].name === t.name) { rkEq = eq[i].rk || (i + 1); break; }
+          var nomEq = String(t.name || '');
+          try { nomEq = _paisES(nomEq) || nomEq; } catch (e) {}
+          ((t && t.players) || []).forEach(function (pj) {
+            if (!pj || !pj.nm) return;
+            var p = buscar(pj.nm, pj.fid, pj.fed);
+            if (!p) return;
+            var marca = (pts(pj.pts) && pj.gm) ? pts(pj.pts) + ' de ' + pj.gm : '';
+            anotarJugador(p, [key, rkEq, nEq, marca, cat, nomEq.slice(0, 40), pj.bo || ''], fin);
+            if (!enLista[p.id] && otros.length < 40) { otros.push([p.id, '', marca]); enLista[p.id] = 1; }
+          });
+        });
+      }
+    });
+    if (bloques.length || otros.length) res.t[key] = { b: bloques, a: otros };
+    // Fecha de última modificación: cuando terminó (o hoy, si se está jugando). Si la clave trae la
+    // fecha de alta (tz_1781292739125 = cuando se cargó), cuenta la más nueva de las dos: un torneo
+    // viejo cargado ayer es una página nueva para Google.
+    var alta = 0, m = String(key).match(/^tz_(\d{12,13})$/);
+    if (m) { try { alta = _isoToKey(new Date(Number(m[1])).toISOString().slice(0, 10)); } catch (e) {} }
+    var mod = Math.max(fin || 0, Math.min(alta, hoy));
+    if (rng && rng.start && rng.start > hoy) mod = Math.min(alta, hoy) || 0;   // próximo: lo que cuenta es cuando se cargó
+    // Un histórico sin fecha de alta (tz_ob1939) diría "cambió en 1939", y la página se cargó en 2026.
+    // Si la fecha tiene más de un año y no se sabe cuándo se cargó, mejor sin fecha.
+    if (!alta && mod && mod < hoy - 10000) mod = 0;
+    if (mod) res.modT[key] = _keyToIso(mod);
+  }
+  try {
+    var tzCfg = getTzConfig();
+    TORNEOS.forEach(function (t, i) {
+      if (_hiddenTorneos.indexOf(i) >= 0) return;
+      var ov = tzCfg['hc_' + t.id] || {};
+      torneo('hc', t.id, { name: t.name, dates: ov.dates || t.dates, startDate: ov.startDate, endDate: ov.endDate, categories: ov.categories || t.categories });
+    });
+    pgnGetTorneosForList().forEach(function (st) { torneo('ls', st._id, st); });
+    Object.keys(tzCfg).forEach(function (k) { if (k.indexOf('tz_') === 0) torneo('tz', k, tzCfg[k]); });
+  } catch (e) {}
+  // Cada jugador: sus 8 torneos más recientes, y como fecha la del último.
+  Object.keys(res.j).forEach(function (k) {
+    var l = res.j[k].sort(function (a, b) { return (b.fin || 0) - (a.fin || 0); }).slice(0, 8);
+    // Igual que en los torneos: un jugador histórico (último torneo en 1984) no "cambió en 1984".
+    if (l[0] && l[0].fin && l[0].fin >= hoy - 10000) res.modJ[k] = _keyToIso(l[0].fin);
+    res.j[k] = l.map(function (f) { return f.slice(0, 7); });   // sin la fecha: el servidor no la usa
+  });
+  return res;
+}
+
+// Los archivitos: { 'seo/t0.json': '…', …, 'seo/j15.json': '…' }.
+function _seoArchivos(datos) {
+  var out = {}, i;
+  var t = [], j = [];
+  for (i = 0; i < _SEO_SHARDS_T; i++) t.push({});
+  for (i = 0; i < _SEO_SHARDS_J; i++) j.push({});
+  Object.keys(datos.t).forEach(function (k) { t[_seoShard(k, _SEO_SHARDS_T)][k] = datos.t[k]; });
+  Object.keys(datos.j).forEach(function (k) { j[_seoShard(k, _SEO_SHARDS_J)][k] = datos.j[k]; });
+  for (i = 0; i < _SEO_SHARDS_T; i++) out['seo/t' + i + '.json'] = JSON.stringify({ v: 1, t: t[i] });
+  for (i = 0; i < _SEO_SHARDS_J; i++) out['seo/j' + i + '.json'] = JSON.stringify({ v: 1, j: j[i] });
+  return out;
+}
+
+function _sitemapXml(seo) {
   var base = 'https://chessargentino.ar';
-  var urls = [{ loc: base + '/', prio: '1.0' }];
+  /* lastmod: la fecha REAL en que cambió cada página (ver _seoDatos). La portada y las pestañas
+     cambian todos los días, así que llevan la de hoy. Si no se sabe (un perfil sin torneos, una
+     noticia sin fecha), va sin lastmod: es mejor no decir nada que decir algo falso. */
+  var hoy = new Date().toISOString().slice(0, 10);
+  var modT = (seo && seo.modT) || {}, modJ = (seo && seo.modJ) || {};
+  var urls = [{ loc: base + '/', prio: '1.0', mod: hoy }];
   var vistos = {};
   // Las pestañas. Torneos NO va: es la portada, ya está arriba con "/" a secas.
   try {
     for (var _s in _SEC_SLUG) {
       if (_s === _SEC_INICIAL) continue;
-      urls.push({ loc: base + '/?ir=' + _SEC_SLUG[_s], prio: '0.9' });
+      urls.push({ loc: base + '/?ir=' + _SEC_SLUG[_s], prio: '0.9', mod: hoy });
     }
   } catch (e) {}
   function agregarTorneo(key) {
@@ -28602,7 +28822,7 @@ function _sitemapXml() {
     var u = base + '/' + _tourHref(key);
     if (vistos[u]) return;
     vistos[u] = 1;
-    urls.push({ loc: u, prio: '0.8' });
+    urls.push({ loc: u, prio: '0.8', mod: seo ? (modT[key] || '') : hoy });
   }
   try {
     var tzCfg = getTzConfig();
@@ -28617,7 +28837,8 @@ function _sitemapXml() {
       var u = base + '/' + _noticiaHref(n.id);
       if (vistos[u]) return;
       vistos[u] = 1;
-      urls.push({ loc: u, prio: '0.9' });
+      var fn = /^\d{4}-\d{2}-\d{2}$/.test(String(n.date || '')) && String(n.date) <= hoy ? String(n.date) : '';
+      urls.push({ loc: u, prio: '0.9', mod: seo ? fn : hoy });
     });
   } catch (e) {}
   try {
@@ -28626,15 +28847,14 @@ function _sitemapXml() {
       var u = base + '/?jugador=' + encodeURIComponent(p.id);
       if (vistos[u]) return;
       vistos[u] = 1;
-      urls.push({ loc: u, prio: '0.6' });
+      urls.push({ loc: u, prio: '0.6', mod: seo ? (modJ[String(p.id)] || '') : hoy });
     });
   } catch (e) {}
-  var hoy = new Date().toISOString().slice(0, 10);
   var x = '<?xml version="1.0" encoding="UTF-8"?>\n'
         + '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n';
   urls.forEach(function (u) {
     x += '  <url><loc>' + u.loc.replace(/&/g, '&amp;') + '</loc>'
-       + '<lastmod>' + hoy + '</lastmod><priority>' + u.prio + '</priority></url>\n';
+       + (u.mod ? '<lastmod>' + u.mod + '</lastmod>' : '') + '<priority>' + u.prio + '</priority></url>\n';
   });
   return x + '</urlset>\n';
 }

@@ -137,6 +137,22 @@ jugadores, datos de torneos, la siesta del "pelotazo"…). Lo que dice sale del 
   volumen). Se "hornean" desde la maqueta con `await __pupi.hornear()` en la consola. **/assets/* se cachea un año:**
   al cambiar alguno, subir `PUPI_V` y actualizar las listas `PUPI_CARAS` / `PUPI_SONIDOS` en pupi.js.
 
+## 🔎 Google: fichas de texto y sitemap (06/10/2026)
+Search Console mostró que Google tenía indexadas 34 de 1.847 páginas: todas devolvían el mismo
+`index.html` y lo propio de cada una aparecía recién con el JavaScript.
+- **Fichas:** al apretar 💾 Guardar en mi carpeta, `_seoDatos()` arma `data/seo/t0..7.json` (tablas de
+  los torneos) y `data/seo/j0..15.json` (torneos de cada jugador). El servidor (`functions/index.js`)
+  lee el archivito que corresponde y mete un bloque de texto con links **justo después de
+  `<script id="dl-cover">`** (la pantalla "Cargando…"). Un script lo **borra en el acto**, así que el
+  visitante no lo ve nunca. **No cambiarle el id a ese script.**
+- El reparto en archivitos (`_seoShard` / `shard`) y las cantidades (8 y 16) tienen que ser
+  **iguales en los dos archivos**.
+- **Canonical sin `?cat=`** en los torneos (salvo con una partida abierta) y título con
+  "posiciones, resultados y partidas": se cambian **en los dos lados** (`_seo*` en index.html y
+  functions/index.js), si no la misma página queda con dos títulos.
+- **Sitemap:** `lastmod` es la fecha real (fin del torneo, último torneo del jugador). Sin fecha
+  conocida, o si tiene más de un año sin fecha de alta, va **sin** lastmod.
+
 ## ✅ Auditorías 2026: TERMINADAS
 La auditoría de seguridad y código del **26/08/2026** (27 hallazgos) se arregló entera en
 **8 fases**, todas publicadas y andando al **27/08/2026**. La **segunda, del 23/09/2026**
