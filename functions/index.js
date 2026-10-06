@@ -118,10 +118,15 @@ function armarNoticia(f) {
    varias páginas que compiten entre sí (la Olimpiada 2026 salía en tres). Con una partida abierta el
    cat se queda: el número de partida es de esa categoría. Misma regla que _seoBusquedaCanonica() en
    index.html. og:url sigue con la dirección completa: es el link que se comparte. */
+/* Además, sólo se conservan los datos que la app usa en estas páginas: los agregados que traen los
+   links compartidos (fbclid de Facebook, utm_… de campañas, cualquier ?v=) hacían una dirección
+   oficial distinta por cada link. La app ya los limpia al cargar (pisa la dirección), así que esto
+   alinea la primera lectura de Google con lo que ve después. */
+const PARAMS_CANONICOS = ['torneo', 'jugador', 'noticia', 'partida', 'g', 'vg', 't', 'r', 'cat'];
 function busquedaCanonica(q) {
-  if (!q.has('torneo') || !q.has('cat') || q.get('partida') || q.get('g') || q.get('vg')) return q.toString();
-  const c = new URLSearchParams(q);
-  c.delete('cat');
+  const c = new URLSearchParams();
+  for (const [k, v] of q) if (PARAMS_CANONICOS.includes(k)) c.append(k, v);
+  if (c.has('torneo') && c.has('cat') && !c.get('partida') && !c.get('g') && !c.get('vg')) c.delete('cat');
   return c.toString();
 }
 
