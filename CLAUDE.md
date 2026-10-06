@@ -125,6 +125,18 @@ como tarjetas. Al tocar uno se abre la ficha de siempre.
   con una sola condición: **citar la fuente** → cada torneo lleva en "Sitio web del torneo" el link a su
   página de OlimpBase (sale como "📚 Fuente de los datos: OlimpBase").
 
+## 🧉 El Pupi (comentarista con mate, 05/10/2026)
+La caricatura del autor que mira la partida en el visor y la comenta (colgadas, jugadones, cómo vienen los
+jugadores, datos de torneos, la siesta del "pelotazo"…). Lo que dice sale del análisis que ya hace la app
+(`_faComHtml`), nada de IA.
+- **El código NO se edita en el index:** vive en `prototipos/comentarista/pupi.js` + `pupi.css` (fuera de esta
+  carpeta) y se copia al final del `index.html`, entre las marcas `PUPI:INICIO` y `PUPI:FIN`, con
+  `node prototipos/comentarista/pasar-al-index.cjs`. Si esa carpeta se perdiera, la copia del index está completa.
+- **Maqueta para probar:** `node prototipos/comentarista/servir.cjs 8141` (saca el bloque del index y pone el de la carpeta).
+- **Caras y sonidos:** `assets/pupi/caras/*.webp` y `assets/pupi/sonidos/*.wav` (ya recortados y emparejados de
+  volumen). Se "hornean" desde la maqueta con `await __pupi.hornear()` en la consola. **/assets/* se cachea un año:**
+  al cambiar alguno, subir `PUPI_V` y actualizar las listas `PUPI_CARAS` / `PUPI_SONIDOS` en pupi.js.
+
 ## ✅ Auditorías 2026: TERMINADAS
 La auditoría de seguridad y código del **26/08/2026** (27 hallazgos) se arregló entera en
 **8 fases**, todas publicadas y andando al **27/08/2026**. La **segunda, del 23/09/2026**

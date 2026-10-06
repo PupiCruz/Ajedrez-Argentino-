@@ -17460,11 +17460,12 @@ async function migrateFlyers() {
 async function _fetchExportAssets(skip) {
   skip = skip || [];
   var out = [];
-  for (var i = 0; i < _EXPORT_ASSET_PATHS.length; i++) {
-    if (skip.indexOf(_EXPORT_ASSET_PATHS[i]) >= 0) continue;
+  var paths = _EXPORT_ASSET_PATHS.concat(window._PUPI_ASSETS || []);   // + las caras y sonidos del Pupi (los anota su bloque, al final)
+  for (var i = 0; i < paths.length; i++) {
+    if (skip.indexOf(paths[i]) >= 0) continue;
     try {
-      var ar = await fetch(_EXPORT_ASSET_PATHS[i]);
-      if (ar.ok) out.push({ name: _EXPORT_ASSET_PATHS[i], data: new Uint8Array(await ar.arrayBuffer()) });
+      var ar = await fetch(paths[i]);
+      if (ar.ok) out.push({ name: paths[i], data: new Uint8Array(await ar.arrayBuffer()) });
     } catch (e) { /* si falta un asset, se omite (no rompe el export) */ }
   }
   return out;
@@ -48321,7 +48322,7 @@ function _tbSiguiente() {
    variante. Acá igual: debajo de cada ?!, ? y ?? de la notación va una franja del color del símbolo
    con el juicio, "Mejor era …", el cambio de valoración y la variante (se toca y se juega en el tablero).
    Los umbrales ya eran los de Lichess (faClassify). Los mates, como Lichess: si antes no había mate y
-   ahora te lo dan → "Acá ya se puede ir agilizando la mesa"; si tenías mate y se fue → "¡Todavía sirve, no
+   ahora te lo dan estando ya perdido → "Acá ya se puede ir agilizando la mesa"; si tenías mate y se fue → "¡Todavía sirve, no
    vio el mate!" (o "Dejó escapar un mate forzado" si encima quedó mal). Jerga de la casa: ?? = "Una colgada" /
    "¡Uff, qué colgada!", ? = "Jugada floja", ?! = "Mmm… polémica." + "Preferible era"; ya perdido = "Resistía un poco más con".
    La línea sale del pase del gráfico (faHandleMsg la guarda) o, si las evals vinieron del PGN (Lichess,
@@ -48383,7 +48384,9 @@ function _faComHtml(i) {
   var wpB = white ? _faWinP(rB) : 100 - _faWinP(rB), wpA = white ? _faWinP(rA) : 100 - _faWinP(rA);
   var dwin = wpB - wpA;
   var txt = { dubious: 'Mmm… polémica.', mistake: 'Jugada floja.', blunder: dwin >= _FA_COM_UFF ? '¡Uff, qué colgada!' : 'Una colgada.' }[cls];
-  if (pB.mate === undefined && pA.mate !== undefined && pA.mate < 0) txt = 'Acá ya se puede ir agilizando la mesa.';
+  // "Agilizando la mesa" sólo si YA estaba perdido y ahora le dan mate (05/10, pedido del autor): de igualado
+  // a mateado es una colgada como cualquier otra ("¡Uff, qué colgada!").
+  if (pB.mate === undefined && pA.mate !== undefined && pA.mate < 0 && wpB <= _FA_COM_PERDIDO) txt = 'Acá ya se puede ir agilizando la mesa.';
   else if (pB.mate !== undefined && pB.mate > 0 && (pA.mate === undefined || pA.mate < 0))
     // Se le fue el mate: si igual sigue ganando, "todavía sirve"; si encima quedó mal, no.
     txt = wpA >= _FA_COM_GANADO ? '¡Todavía sirve, no vio el mate!' : 'Dejó escapar un mate forzado.';
@@ -53812,6 +53815,8 @@ function cvUpdateNagBadge() {
         '<div class="aa-pref-sec">Partida</div>'+
         prefRow('autoqueen','Coronar siempre en dama','Al coronar no te pregunta la pieza. Mantené <b>Ctrl</b> (o ⌘) apretado al coronar para elegir otra esta vez.', prefRead('aa_pref_autoqueen'))+
         prefRow('pvpchatoff','Ocultar el chat en mis partidas','No se muestra el chat dentro de las partidas en vivo.', prefRead('aa_pref_pvpchat_off'))+
+        // 🧉 El Pupi (05/10): apagado, no aparece más en el visor (lo lee su bloque, al final del archivo).
+        prefRow('pupi','🧉 El Pupi en las partidas','La caricatura que mira las partidas con vos tomando mate y te las va comentando. Apagado, no aparece más.', !prefRead('aa_pref_pupi_off'))+
         // Plan del arena, Fase 3. Sale cuando el arena está prendido (lo está salvo ?arena=0).
         (window.aaArena&&window.aaArena.activo&&window.aaArena.activo() ? prefRow('berserksnd','Silenciar el sonido del berserk','En los torneos arena, no suena el golpe cuando vos o tu rival hacen berserk.', prefRead('aa_pref_berserk_snd_off')) : '')+
         // Aviso de colgadas (19/09): mientras se prueba, sólo donde se prendió con ?colgadas=1.
@@ -53840,6 +53845,7 @@ function cvUpdateNagBadge() {
       var p=el.getAttribute('data-pref');
       if(p==='autoqueen') setPref('aa_pref_autoqueen', el.checked);
       else if(p==='pvpchatoff') setPref('aa_pref_pvpchat_off', el.checked);
+      else if(p==='pupi') setPref('aa_pref_pupi_off', !el.checked);
       else if(p==='berserksnd') setPref('aa_pref_berserk_snd_off', el.checked);
       else if(p==='colgadas') setPref('aa_pref_col_off', !el.checked);
       else if(p==='theme'){ if(typeof toggleTheme==='function') toggleTheme(); }
@@ -58639,5 +58645,1420 @@ function cvUpdateNagBadge() {
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();
 </script>
+
+
+<!-- PUPI:INICIO -->
+<!-- ── 🧉 EL PUPI: el comentarista que mira la partida tomando mate ──────────────
+     NO editar acá: se arma en prototipos/comentarista (pupi.css + pupi.js) y se copia con
+     node prototipos/comentarista/pasar-al-index.cjs. Caras y sonidos: assets/pupi/. -->
+<style>
+/* 🧉 Maqueta del comentarista: el Pupi ocupa el lugar del módulo (arriba de las notaciones). */
+#pupi-panel { display: flex; align-items: flex-start; gap: 8px; margin: 8px 0 0; padding: 8px 8px 8px 4px;
+  background: var(--gl45); border: 1px solid var(--gold-dim); border-radius: 9px; flex-shrink: 0;
+  position: relative; overflow: hidden; max-height: 46%; }
+#pupi-panel.pupi-oculto { display: none; }
+.pupi-av { width: 76px; flex: 0 0 76px; align-self: flex-start; }   /* siempre arriba: no sube y baja con el largo del globo */
+.pupi-av svg { display: block; width: 100%; height: auto; overflow: visible; }
+.pupi-av.pupi-pop > * { animation: pupiPop .28s ease-out; }
+.pupi-av.pupi-tiembla > * { animation: pupiTiembla .5s ease-in-out; }
+@keyframes pupiPop { 0% { transform: scale(.94) translateY(3px); } 60% { transform: scale(1.04); } 100% { transform: none; } }
+@keyframes pupiTiembla { 0%,100% { transform: none; } 20% { transform: translateX(-3px) rotate(-2deg); } 40% { transform: translateX(3px) rotate(2deg); }
+  60% { transform: translateX(-2px) rotate(-1deg); } 80% { transform: translateX(2px); } }
+.pupi-vapor path { animation: pupiVapor 2.4s ease-in-out infinite; transform-box: fill-box; }
+.pupi-vapor path:nth-child(2) { animation-delay: 1.2s; }
+@keyframes pupiVapor { 0% { opacity: 0; transform: translateY(4px); } 40% { opacity: .75; } 100% { opacity: 0; transform: translateY(-8px); } }
+.pupi-saludo { animation: pupiSaludo 1s ease-in-out 3; transform-origin: 18px 104px; }
+@keyframes pupiSaludo { 0%,100% { transform: rotate(0); } 50% { transform: rotate(-14deg); } }
+.pupi-gotas ellipse { animation: pupiGota .9s ease-in infinite; transform-box: fill-box; }
+.pupi-gotas ellipse:nth-child(2) { animation-delay: .3s; } .pupi-gotas ellipse:nth-child(3) { animation-delay: .6s; }
+@keyframes pupiGota { 0% { opacity: 1; transform: translate(0,0); } 100% { opacity: 0; transform: translate(4px,12px); } }
+
+/* Entrada (se asoma desde el costado) y salida (se va triste) */
+#pupi-panel.pupi-entra .pupi-av { animation: pupiEntra .7s cubic-bezier(.2,.9,.3,1.2); }
+#pupi-panel.pupi-entra .pupi-globo { animation: pupiGloboEntra .5s .35s both; }
+@keyframes pupiEntra { 0% { transform: translateX(-110%) rotate(-12deg); } 100% { transform: none; } }
+@keyframes pupiGloboEntra { 0% { opacity: 0; transform: scale(.85); transform-origin: left center; } 100% { opacity: 1; transform: none; } }
+#pupi-panel.pupi-sale .pupi-globo { transition: opacity .3s; opacity: 0; }
+#pupi-panel.pupi-sale .pupi-av { transition: transform .9s ease-in, opacity .9s; transform: translateX(-130%) translateY(6px) rotate(-6deg); opacity: 0; }
+#pupi-panel.pupi-cierra { transition: max-height .35s ease-in, padding .35s, margin .35s, opacity .35s; max-height: 0 !important; padding-top: 0; padding-bottom: 0; margin-top: 0; opacity: 0; }
+
+/* El globo: blanco como una historieta, en los dos modos */
+.pupi-globo { position: relative; flex: 1 1 auto; min-width: 0; background: #fff; color: #222; border-radius: 12px;
+  padding: 8px 11px 9px; box-shadow: 0 2px 8px rgba(0,0,0,.25); font-size: 13.5px; line-height: 1.38; overflow-y: auto; max-height: 100%; }
+.pupi-globo::before { content: ''; position: absolute; left: -9px; bottom: 22px; border: 9px solid transparent; border-right-color: #fff; border-left: 0; }
+.pupi-globo.pupi-chico { background: rgba(255,255,255,.88); color: #555; font-style: italic; padding: 6px 11px; align-self: center; }
+.pupi-h { display: flex; align-items: center; gap: 7px; font-weight: 700; font-size: 14px; }
+.pupi-t { flex: 1 1 auto; min-width: 0; }
+.pupi-sym { flex: 0 0 auto; min-width: 22px; height: 22px; padding: 0 4px; border-radius: 11px; display: inline-flex; align-items: center; justify-content: center;
+  background: var(--mc, #8a6a3a); color: #fff; font-size: 12px; font-weight: 800; letter-spacing: -.5px; }
+.pupi-ev { flex: 0 0 auto; background: #2b2b2b; color: #fff; font: 700 12px/1 ui-monospace, Consolas, monospace; padding: 4px 6px; border-radius: 4px; white-space: nowrap; }
+.pupi-b { margin-top: 3px; }
+.pupi-b:empty { display: none; }
+.pupi-b .cv-mcom-best { color: #333; } .pupi-b .cv-mcom-best b { color: #000; }
+.pupi-b .cv-mcom-line { margin-top: 3px; font-size: 12.5px; color: #444; }
+.pupi-b .cv-mcom-line .cmv-var, .pupi-b .cv-mcom-line .cmv { color: #1a5d8a; cursor: pointer; }
+.pupi-b .cv-mcom-lbl { font-weight: 700; color: #555; }
+.pupi-b .cmn { color: #888; margin-right: 1px; }
+.pupi-b .cv-mcom-calc { color: #888; font-style: italic; }
+.pupi-acc { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.pupi-acc:empty { display: none; }
+.pupi-btn { border: 0; border-radius: 7px; padding: 6px 11px; font: 700 13px/1.1 inherit; font-family: inherit; cursor: pointer; background: #e9e4da; color: #333; }
+.pupi-btn:hover { filter: brightness(.95); }
+.pupi-btn.pupi-si { background: #5fae4c; color: #fff; }
+.pupi-btn.pupi-nav { background: #eee; padding: 4px 9px; font-weight: 600; font-size: 12px; }
+.pupi-btn.pupi-nav[disabled] { opacity: .4; cursor: default; }
+.pupi-x { position: absolute; top: 3px; right: 4px; border: 0; background: none; color: var(--fg-c0, #aaa); font-size: 13px; cursor: pointer; padding: 2px 5px; opacity: .6; }
+.pupi-x:hover { opacity: 1; }
+#pupi-volver { font-size: 15px; }
+@media (max-width: 700px) {
+  .pupi-av { width: 66px; flex-basis: 66px; }
+  .pupi-globo { font-size: 13px; }
+}
+
+/* Callado (jugada tranquila o variante): sin globo, sólo ‹ Próximo › chiquitos */
+.pupi-globo.pupi-mudo { background: transparent; box-shadow: none; padding: 0 0 4px; align-self: flex-end; overflow: visible; }
+.pupi-globo.pupi-mudo::before { display: none; }
+.pupi-globo.pupi-mudo .pupi-h { display: none; }
+.pupi-globo.pupi-mudo .pupi-acc { margin-top: 0; opacity: .75; }
+
+/* Gato con Botas: los ojos le brillan y se hamaca un poquito */
+.pupi-brillo { animation: pupiBrillo 1.6s ease-in-out infinite; }
+@keyframes pupiBrillo { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
+.pupi-av[data-cara="suplica"] > * { animation: pupiRuego 2.4s ease-in-out infinite; transform-origin: 50% 100%; }
+@keyframes pupiRuego { 0%,100% { transform: rotate(0); } 50% { transform: rotate(-2.5deg) translateY(-1px); } }
+
+/* La siesta: respira despacio y le salen las zetas */
+.pupi-av[data-cara="dormido"] > * { animation: pupiRespira 3s ease-in-out infinite; transform-origin: 50% 100%; }
+@keyframes pupiRespira { 0%,100% { transform: scale(1); } 50% { transform: scale(1.025, .985); } }
+.pupi-zzz text { animation: pupiZ 3s ease-in-out infinite; transform-box: fill-box; opacity: 0; }
+.pupi-zzz text:nth-child(2) { animation-delay: 1s; } .pupi-zzz text:nth-child(3) { animation-delay: 2s; }
+@keyframes pupiZ { 0% { opacity: 0; transform: translate(-4px, 6px) scale(.7); } 30% { opacity: 1; } 100% { opacity: 0; transform: translate(4px, -6px) scale(1.1); } }
+
+/* 🔊 al lado de la ✕ */
+.pupi-x.pupi-snd { right: 24px; font-size: 12px; }
+
+/* ¡SE ESTÁN COLGANDO LA VIDA! */
+.pupi-globo.pupi-grito .pupi-t { color: #c0392b; font-size: 16px; font-weight: 900; letter-spacing: .3px; }
+.pupi-globo.pupi-grito { animation: pupiGrito .45s ease-in-out 2; }
+@keyframes pupiGrito { 0%,100% { transform: none; } 25% { transform: translateX(-3px) rotate(-1deg); } 75% { transform: translateX(3px) rotate(1deg); } }
+
+/* El chorro del termo y la bronca */
+.pupi-chorro { animation: pupiChorro .35s linear infinite; stroke-dasharray: 2 2; }
+@keyframes pupiChorro { to { stroke-dashoffset: -4; } }
+.pupi-grr { animation: pupiGrr .6s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+@keyframes pupiGrr { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-2px); } }
+/* ✕ y 🔊 arriba a la IZQUIERDA (sobre el fondo del muñequito): a la derecha tapaban el globo */
+.pupi-x { left: 3px; right: auto; z-index: 2; }
+.pupi-x.pupi-snd { left: 21px; right: auto; }
+
+/* ✕ y 🔊 AFUERA del panel, arriba a la derecha (pedido del autor) */
+.chess-mlabel.pupi-con-ctrl { display: flex; align-items: center; justify-content: space-between; }
+#pupi-ctrl { display: inline-flex; gap: 2px; align-items: center; }
+#pupi-ctrl.pupi-ctrl-fila { display: flex; justify-content: flex-end; margin: 6px 0 -4px; }
+#pupi-ctrl .pupi-x, #pupi-ctrl .pupi-x.pupi-snd { position: static; left: auto; right: auto; font-size: 13px; padding: 2px 6px; opacity: .65;
+  letter-spacing: 0; text-transform: none; color: var(--fg-c0, #aaa); }
+#pupi-ctrl .pupi-x:hover { opacity: 1; }
+
+/* Escupida y tos */
+.pupi-spray { animation: pupiSpray .7s ease-out both; transform-box: fill-box; transform-origin: left center; }
+@keyframes pupiSpray { 0% { transform: scale(.2); opacity: 0; } 30% { opacity: 1; } 100% { transform: scale(1); opacity: .9; } }
+.pupi-tos text { animation: pupiTos .5s ease-in-out infinite alternate; transform-box: fill-box; }
+.pupi-tos text:nth-child(2) { animation-delay: .25s; }
+@keyframes pupiTos { from { transform: translateY(0); } to { transform: translateY(-2px) scale(1.06); } }
+.pupi-av[data-cara="atraganta"] > * { animation: pupiTiembla .5s ease-in-out 2; }
+
+/* Las caricaturas del autor (caras/*.png): alto fijo, ancho el que dé la figura */
+.pupi-av:has(img) { width: auto; flex: 0 0 auto; }
+/* Todas las caras vienen en el MISMO lienzo (gorra del mismo tamaño y en el mismo lugar: normalizadas el 05/10),
+   así el muñequito no se agranda ni se achica al cambiar de expresión. Tamaño fijo, sin max-width que lo achique. */
+/* El tamaño depende SÓLO del ancho del panel (no del texto del globo): en un panel angosto se achica, pero igual
+   para todas las caras. cqw = ancho del panel (#pupi-panel es el contenedor). */
+#pupi-panel { container-type: inline-size; }
+.pupi-av img { display: block; width: clamp(64px, calc(100cqw - 165px), 115px); max-width: none; height: auto; aspect-ratio: 341 / 308; object-fit: contain; object-position: bottom; }
+@media (max-width: 700px) { .pupi-av img { width: clamp(60px, calc(100cqw - 165px), 93px); } }
+.pupi-globo { min-width: 150px; }
+
+/* Las caras con signos o rayitas BLANCAS (la vida colgada, el uff): un borde oscuro suave para que se vean en modo claro */
+.pupi-av[data-cara="vida"] img, .pupi-av[data-cara="uff"] img, .pupi-av[data-cara="despierta"] img { filter: drop-shadow(0 0 1px rgba(0,0,0,.55)); }
+/* El grito es grande: la valoración baja a su propio renglón (si no, en pantallas angostas tapaba "COLGANDO") */
+.pupi-globo.pupi-grito .pupi-h { flex-wrap: wrap; }
+.pupi-globo.pupi-grito .pupi-t { flex: 1 1 calc(100% - 30px); overflow-wrap: anywhere; }
+
+/* Botones de historieta: "¡Despertalo al Pupi!" (en la siesta) y "Pedile data de torneos" (en las jugadas calladas).
+   Borde grueso, sombra corrida como de dibujito, un poquito torcidos; se mueven cada tanto para llamar la atención. */
+.pupi-btn.pupi-cartoon { background: #ffd23f; color: #2a1f14; border: 2px solid #2a1f14; border-radius: 14px; padding: 5px 12px 6px;
+  font-weight: 900; font-size: 13px; letter-spacing: .2px; box-shadow: 3px 3px 0 #2a1f14; transform: rotate(-2deg);
+  transition: transform .12s, box-shadow .12s; }
+.pupi-btn.pupi-cartoon:hover { filter: none; transform: rotate(-2deg) translate(-1px, -1px); box-shadow: 4px 4px 0 #2a1f14; }
+.pupi-btn.pupi-cartoon:active { transform: rotate(-2deg) translate(2px, 2px); box-shadow: 1px 1px 0 #2a1f14; }
+.pupi-btn.pupi-pide { background: #ffd23f; transform: rotate(1.5deg); }   /* amarillo como el de despertarlo: con verde las letras oscuras se leían mal */
+.pupi-btn.pupi-pide:hover { transform: rotate(1.5deg) translate(-1px, -1px); }
+.pupi-btn.pupi-pide:active { transform: rotate(1.5deg) translate(2px, 2px); }
+.pupi-btn.pupi-despierta { animation: pupiSacude 3.2s ease-in-out infinite; }
+@keyframes pupiSacude { 0%, 82%, 100% { transform: rotate(var(--rot, -2deg)); } 86% { transform: rotate(calc(var(--rot, -2deg) - 4deg)) scale(1.05); }
+  90% { transform: rotate(calc(var(--rot, -2deg) + 5deg)) scale(1.05); } 94% { transform: rotate(calc(var(--rot, -2deg) - 2deg)); } }
+.pupi-globo.pupi-mudo .pupi-acc:has(.pupi-cartoon) { opacity: 1; padding: 0 4px 4px 0; }
+
+/* Los dos de historieta FLOTAN en la esquina de arriba a la derecha (pedido del autor, 05/10): chiquitos y casi
+   cuadrados (el dibujito arriba, el texto abajo), subiendo y bajando despacito, y cada tanto se sacuden. */
+.pupi-flota { position: absolute; top: 6px; right: 8px; z-index: 3; animation: pupiFlota 2.8s ease-in-out infinite; }
+.pupi-flota:empty { display: none; }
+@keyframes pupiFlota { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+.pupi-btn.pupi-cartoon.pupi-flotante { display: flex; flex-direction: column; align-items: center; gap: 2px; width: 74px; padding: 4px 4px 5px;
+  border-radius: 7px; font-size: 11px; line-height: 1.12; text-align: center; white-space: normal; letter-spacing: 0;
+  animation: pupiSacude 3.2s ease-in-out infinite; }
+.pupi-btn.pupi-flotante.pupi-pide { --rot: 2deg; animation-delay: 1.4s; }
+.pupi-btn.pupi-flotante .pupi-emo { font-size: 16px; line-height: 1; }
+/* Panel angosto (la columna de la derecha en una ventana chica): más chiquito, para que no pise el "Próximo ›" */
+@container (max-width: 300px) {
+  .pupi-flota { right: 5px; top: 5px; }
+  .pupi-btn.pupi-cartoon.pupi-flotante { width: 64px; font-size: 10px; padding: 3px 3px 4px; box-shadow: 2px 2px 0 #2a1f14; }
+  .pupi-btn.pupi-flotante .pupi-emo { font-size: 14px; }
+}
+</style>
+<script>
+/* 🧉 El comentarista: el Pupi (caricatura del autor) mira la partida con vos, tomando mate.
+   - Al abrir una partida se asoma y pregunta "¿Puedo ver la partida con vos?".
+     "Dale, cabezón" → se queda (y se acuerda para la próxima). "No hinchés, Pupi" → se va triste y queda
+     el análisis de siempre; el 🧉 de la barra lo vuelve a llamar.
+   - Ocupa el lugar del módulo. Si se prende el módulo, se corre; cuando se apaga, vuelve.
+   - Lo que dice sale de lo que YA calcula el análisis (_faComHtml: frases de la casa, motivos, !, !!),
+     del árbol de aperturas (fin de la teoría) y de los planes típicos (data/planes/). Nada de IA.
+   Las caras y los sonidos son del autor (assets/pupi/); el dibujo SVG de abajo queda sólo de respaldo.
+   Se arma en la maqueta (prototipos/comentarista: servir.cjs, puerto 8141) y se copia al index con
+   pasar-al-index.cjs, entre las marcas PUPI:INICIO y PUPI:FIN. */
+(function () {
+  'use strict';
+  // ── Estado ──────────────────────────────────────────────────────────────────────────────────────
+  function lsGet(k, s) { try { return (s ? sessionStorage : localStorage).getItem(k); } catch (e) { return null; } }
+  function lsSet(k, v, s) { try { var st = s ? sessionStorage : localStorage; if (v == null) st.removeItem(k); else st.setItem(k, v); } catch (e) {} }
+  // (la app reescribe la dirección al abrir la partida: se mira la que se pidió de verdad)
+  try { var _url0 = (performance.getEntriesByType('navigation')[0] || {}).name || location.href;
+    if (typeof cv !== 'undefined' && /[?&]pupi=reset/.test(_url0)) { lsSet('aa_pupi', null); lsSet('aa_pupi_no', null); } } catch (e) {}
+  // invita | si | no | saliendo
+  var P = { estado: lsGet('aa_pupi_no') ? 'no' : (lsGet('aa_pupi') === 'si' ? 'si' : 'invita'),
+            root: null, g: null, html: '', cara: '', esperaT: null, raf: 0 };
+
+  // ── El dibujo (provisorio) ──────────────────────────────────────────────────────────────────────
+  var PIEL = '#f2c9a0', TRAZO = '#6b4426', PELO = '#3a2a1e', BUZO = '#2f5d73';
+  var CARAS = {
+    tranqui:    { ojos: 'relajados', cejas: 'normal', boca: 'sorbo', mate: 'sorbo', extra: ['vapor'] },
+    habla:      { ojos: 'normal', cejas: 'normal', boca: 'sonrisa', mate: 'abajo' },
+    saluda:     { ojos: 'normal', cejas: 'arriba', boca: 'risa', mate: 'abajo', extra: ['mano', 'cachetes'] },
+    contento:   { ojos: 'feliz', cejas: 'arriba', boca: 'risa', mate: 'abajo', extra: ['cachetes'] },
+    asombro:    { ojos: 'grandes', cejas: 'muyarriba', boca: 'O', mate: 'arriba', extra: ['chispas'] },
+    ceja:       { ojos: 'costado', cejas: 'ceja', boca: 'mueca', mate: 'abajo' },
+    preocupado: { ojos: 'normal', cejas: 'preocupado', boca: 'ondulada', mate: 'abajo', extra: ['gota'] },
+    horror:     { ojos: 'grandes', cejas: 'muyarriba', boca: 'grito', mate: 'cae', extra: ['gota'] },
+    resignado:  { ojos: 'cerrados', cejas: 'triste', boca: 'plana', mate: 'abajo', extra: ['gota'] },
+    triste:     { ojos: 'abajo', cejas: 'triste', boca: 'triste', mate: 'abajo', extra: ['lagrima'] },
+    // La mirada pedigüeña del Gato con Botas: ojazos brillosos, cabeza ladeada, el mate apretado contra el pecho.
+    suplica:    { ojos: 'gato', cejas: 'preocupado', boca: 'puchero', mate: 'ofrece', inclina: -8 },
+    bostezo:    { ojos: 'cerrados', cejas: 'arriba', boca: 'bostezo', mate: 'abajo', inclina: -4 },
+    ceba:       { ojos: 'abajo2', cejas: 'normal', boca: 'sonrisa', mate: 'ceba', extra: ['termoMano'] },
+    malhumor:   { ojos: 'fastidio', cejas: 'enojado', boca: 'triste', mate: 'abajo', inclina: 3, extra: ['grr'] },
+    ofendido:   { ojos: 'reojo', cejas: 'enojado', boca: 'mueca', mate: 'abajo', inclina: 9 },
+    escupe:     { ojos: 'grandes', cejas: 'muyarriba', boca: 'escupe', mate: 'abajo', extra: ['spray', 'cachetes'] },
+    atraganta:  { ojos: 'apretados', cejas: 'preocupado', boca: 'sorbo', mate: 'sorbo', extra: ['tos', 'rojo'] },
+    dormido:    { ojos: 'cerrados', cejas: 'normal', boca: 'ronca', mate: 'abajo', inclina: 10, extra: ['zzz'] }
+  };
+  function ojo(cx, tipo) {
+    var cy = 54, w = '<ellipse cx="' + cx + '" cy="' + cy + '" rx="4.6" ry="5.2" fill="#fff" stroke="#4a2e1a" stroke-width="1"/>';
+    function pu(dx, dy, r) { return '<circle cx="' + (cx + dx) + '" cy="' + (cy + dy) + '" r="' + (r || 2.5) + '" fill="#2a1c12"/>'; }
+    var arco = function (d) { return '<path d="' + d + '" fill="none" stroke="#2a1c12" stroke-width="2.2" stroke-linecap="round"/>'; };
+    switch (tipo) {
+      case 'gato': return '<ellipse cx="' + cx + '" cy="55" rx="8.4" ry="9.8" fill="#fff" stroke="#4a2e1a" stroke-width="1.1"/>'
+        + '<circle cx="' + cx + '" cy="56.5" r="7.2" fill="#3a2414"/><circle cx="' + cx + '" cy="56.5" r="4.6" fill="#120a05"/>'
+        + '<g class="pupi-brillo" fill="#fff"><circle cx="' + (cx - 2.6) + '" cy="53" r="2.8"/><circle cx="' + (cx + 2.8) + '" cy="59.6" r="1.3"/><circle cx="' + (cx + 1.6) + '" cy="52.4" r=".9"/></g>'
+        + '<path d="M' + (cx - 6) + ' 63.6 Q' + cx + ' 66.4 ' + (cx + 6) + ' 63.6" fill="none" stroke="#9fd3e8" stroke-width="1.6" opacity=".95"/>';
+      // Mirada para abajo (cebando): sin el párpado triste.
+      case 'abajo2': return w + pu(0.3, 2.4, 2.3);
+      // Medio dormido y con bronca: párpado de arriba plano tapando la mitad.
+      case 'fastidio': return w + pu(0.4, 1.6) + '<path d="M' + (cx - 5.3) + ' 54.2 L' + (cx + 5.3) + ' 54.2 L' + (cx + 5.3) + ' 47.5 L' + (cx - 5.3) + ' 47.5 Z" fill="' + PIEL + '"/>'
+        + '<path d="M' + (cx - 5) + ' 54.2 L' + (cx + 5) + ' 54.2" stroke="#2a1c12" stroke-width="1.6" stroke-linecap="round"/>';
+      // De reojo, ofendido: igual que fastidio pero mirando para el costado.
+      case 'reojo': return w + pu(-2.4, 1.4) + '<path d="M' + (cx - 5.3) + ' 53.6 L' + (cx + 5.3) + ' 53.6 L' + (cx + 5.3) + ' 47.5 L' + (cx - 5.3) + ' 47.5 Z" fill="' + PIEL + '"/>'
+        + '<path d="M' + (cx - 5) + ' 53.6 L' + (cx + 5) + ' 53.6" stroke="#2a1c12" stroke-width="1.6" stroke-linecap="round"/>';
+      // Bien apretados (> <), atragantado.
+      case 'apretados': return '<path d="M' + (cx - 4.5) + ' 51.5 L' + (cx + (cx < 58 ? 3.5 : -3.5)) + ' 54.5 L' + (cx - 4.5) + ' 57.5" fill="none" stroke="#2a1c12" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" transform="' + (cx < 58 ? '' : 'translate(' + (2 * cx) + ',0) scale(-1,1)') + '"/>';
+      case 'grandes': return '<ellipse cx="' + cx + '" cy="' + cy + '" rx="6.2" ry="7" fill="#fff" stroke="#4a2e1a" stroke-width="1"/>' + pu(0, 0, 2);
+      case 'costado': return w + pu(2.2, -0.3);
+      case 'feliz': return arco('M' + (cx - 4.5) + ' 56 Q' + cx + ' 50.5 ' + (cx + 4.5) + ' 56');
+      case 'relajados': return arco('M' + (cx - 4.5) + ' 54 Q' + cx + ' 57.5 ' + (cx + 4.5) + ' 54');
+      case 'cerrados': return arco('M' + (cx - 4.5) + ' 55 Q' + cx + ' 56 ' + (cx + 4.5) + ' 55');
+      case 'abajo': return w + pu(0, 2.4, 2.3) + '<path d="M' + (cx - 5.2) + ' 54.5 Q' + cx + ' 47.5 ' + (cx + 5.2) + ' 54.5 Z" fill="' + PIEL + '" stroke="#4a2e1a" stroke-width="1"/>';
+      default: return w + pu(0.6, 0.8);
+    }
+  }
+  var CEJAS = {
+    normal: ['M41 45 Q46.5 42 52 44', 'M64 44 Q69.5 42 75 45'],
+    arriba: ['M41 42 Q46.5 39 52 41', 'M64 41 Q69.5 39 75 42'],
+    muyarriba: ['M41 39 Q46.5 34 52 37.5', 'M64 37.5 Q69.5 34 75 39'],
+    preocupado: ['M41 46 Q47 45 52 41', 'M64 41 Q69 45 75 46'],
+    triste: ['M41 46.5 Q47 45.5 52 42', 'M64 42 Q69 45.5 75 46.5'],
+    ceja: ['M41 45 Q46.5 42 52 44', 'M64 40 Q70 33 76 38'],
+    enojado: ['M41 42 Q47 43.5 52.5 47', 'M63.5 47 Q69 43.5 75 42']
+  };
+  var BOCAS = {
+    sonrisa: '<path d="M51 73 Q58 79.5 65 73" fill="none" stroke="#6b2a1e" stroke-width="2.2" stroke-linecap="round"/>',
+    risa: '<path d="M49.5 71.5 Q58 86 66.5 71.5 Z" fill="#7a2a22" stroke="#6b2a1e" stroke-width="1.2" stroke-linejoin="round"/>'
+        + '<path d="M51.5 72.4 Q58 75.2 64.5 72.4 L63.8 74.2 Q58 76.6 52.2 74.2 Z" fill="#fff"/>',
+    O: '<ellipse cx="58" cy="76" rx="3.6" ry="4.6" fill="#6b1e18"/>',
+    grito: '<ellipse cx="58" cy="77.5" rx="6.5" ry="8.5" fill="#5a1a16"/><ellipse cx="58" cy="83" rx="4" ry="2.4" fill="#c85a5a"/>'
+         + '<path d="M52.6 71.6 Q58 69.6 63.4 71.6 L63 73.6 Q58 72.2 53 73.6 Z" fill="#fff"/>',
+    ondulada: '<path d="M51 76 Q54 73.5 57 76 T63 76 T66 75" fill="none" stroke="#6b2a1e" stroke-width="2" stroke-linecap="round"/>',
+    plana: '<path d="M52 75.5 L64 75.5" stroke="#6b2a1e" stroke-width="2.2" stroke-linecap="round"/>',
+    triste: '<path d="M51 78.5 Q58 72 65 78.5" fill="none" stroke="#6b2a1e" stroke-width="2.2" stroke-linecap="round"/>',
+    mueca: '<path d="M52 76.5 Q59 77 65.5 72.5" fill="none" stroke="#6b2a1e" stroke-width="2.2" stroke-linecap="round"/>',
+    sorbo: '<ellipse cx="60" cy="75" rx="2.7" ry="2.3" fill="#6b2a1e"/>',
+    escupe: '<ellipse cx="62" cy="76" rx="3.4" ry="2.6" fill="#5a1a16"/><path d="M57 73.5 Q60 71.8 63.5 73" fill="none" stroke="#6b2a1e" stroke-width="1.6" stroke-linecap="round"/>',
+    puchero: '<path d="M54.5 77.5 Q58 74.6 61.5 77.5" fill="none" stroke="#6b2a1e" stroke-width="2" stroke-linecap="round"/>',
+    bostezo: '<ellipse cx="58" cy="77" rx="5" ry="7.5" fill="#5a1a16"/><ellipse cx="58" cy="81.5" rx="3.2" ry="2" fill="#c85a5a"/>',
+    ronca: '<ellipse cx="58" cy="76" rx="2" ry="2.6" fill="#6b1e18"/>'
+  };
+  // El mate: [x, y, giro, punta de la bombilla (x,y en el mate), brazo]
+  var MATES = {
+    sorbo: [74, 93, -15, [-8, -20], 'M96 130 Q93 108 76 103'],
+    abajo: [90, 113, 6, [8, -25], 'M104 131 Q100 123 91 121'],
+    arriba: [101, 74, -12, [6, -25], 'M106 131 Q113 102 102 84'],
+    cae: [93, 106, 62, [8, -24], 'M104 131 Q102 119 92 113'],
+    ceba: [92, 118, 0, [7, -24], 'M104 131 Q102 126 93 126'],
+    ofrece: [58, 112, 0, [5, -25], 'M88 131 Q86 120 70 118', 'M28 131 Q30 120 46 118']
+  };
+  function mate(pos) {
+    var m = MATES[pos];
+    return '<path d="' + m[4] + '" fill="none" stroke="' + BUZO + '" stroke-width="13" stroke-linecap="round"/>'
+      + (m[5] ? '<path d="' + m[5] + '" fill="none" stroke="' + BUZO + '" stroke-width="13" stroke-linecap="round"/>' : '')
+      + '<g transform="translate(' + m[0] + ',' + m[1] + ') rotate(' + m[2] + ')">'
+      + '<path d="M-11 -9 C-15 3 -10 16 0 16 C10 16 15 3 11 -9 Z" fill="#7a5230" stroke="#4a2e1a" stroke-width="1.2"/>'
+      + '<path d="M-9.5 2 Q0 6.5 9.5 2" fill="none" stroke="#5a3a20" stroke-width="1"/>'
+      + '<ellipse cx="0" cy="-9.6" rx="10.6" ry="3" fill="#5f8a35"/>'
+      + '<ellipse cx="0" cy="-9.6" rx="11.4" ry="3.3" fill="none" stroke="#d2bd7e" stroke-width="2.2"/>'
+      + '<line x1="3" y1="-10" x2="' + m[3][0] + '" y2="' + m[3][1] + '" stroke="#c3c9cf" stroke-width="2.2" stroke-linecap="round"/>'
+      + '<ellipse cx="-2" cy="9" rx="12" ry="6.5" fill="' + PIEL + '" stroke="' + TRAZO + '" stroke-width="1.1"/>'
+      + '<path d="M-8 7 L-8 11 M-3 7.5 L-3 12 M2 7.5 L2 12" stroke="' + TRAZO + '" stroke-width=".9" stroke-linecap="round"/>'
+      + '</g>'
+      + (pos === 'cae' ? '<g class="pupi-gotas"><ellipse cx="104" cy="92" rx="1.8" ry="2.6" fill="#9fd3e8"/><ellipse cx="110" cy="99" rx="1.6" ry="2.3" fill="#9fd3e8"/><ellipse cx="99" cy="86" rx="1.4" ry="2" fill="#9fd3e8"/></g>' : '');
+  }
+  // Termo verde tipo Stanley, dibujado alrededor de (0,0): cuerpo de y=-20 a 18, pico arriba.
+  function termo(tr) {
+    return '<g transform="' + tr + '">'
+      + '<rect x="-7" y="-20" width="14" height="38" rx="3.5" fill="#2f7a4c" stroke="#173d27" stroke-width="1.1"/>'
+      + '<rect x="-7" y="-9" width="14" height="3" fill="#256340"/><rect x="-7" y="10" width="14" height="3" fill="#256340"/>'
+      + '<rect x="-4.6" y="-26" width="9.2" height="6.5" rx="1.6" fill="#c3c9cf" stroke="#6d757c" stroke-width=".9"/>'
+      + '<path d="M7 -14 Q13 -12 13 -2 Q13 6 7 7" fill="none" stroke="#173d27" stroke-width="2.2"/>'
+      + '</g>';
+  }
+  function dibujo(cara) {
+    var F = CARAS[cara] || CARAS.habla, ex = F.extra || [], s = '';
+    s += '<svg viewBox="0 0 120 130" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="El Pupi">';
+    if (ex.indexOf('mano') >= 0) s += '<g class="pupi-saludo"><path d="M14 131 Q8 106 18 90" fill="none" stroke="' + BUZO + '" stroke-width="13" stroke-linecap="round"/>'
+      + '<ellipse cx="18" cy="83" rx="7" ry="8.5" fill="' + PIEL + '" stroke="' + TRAZO + '" stroke-width="1.1"/></g>';
+    s += '<path d="M8 131 C10 106 32 96 58 96 C84 96 106 106 108 131 Z" fill="' + BUZO + '"/>'
+      + '<rect x="50" y="78" width="16" height="20" fill="' + PIEL + '" stroke="' + TRAZO + '" stroke-width="1"/>'
+      + '<path d="M46 96 L58 110 L70 96 L64 94 L58 101 L52 94 Z" fill="#f4f1ea"/>'
+      + '<g' + (F.inclina ? ' transform="rotate(' + F.inclina + ' 58 84)"' : '') + '>'
+      + '<ellipse cx="29.5" cy="57" rx="5" ry="8" fill="' + PIEL + '" stroke="' + TRAZO + '" stroke-width="1.2"/>'
+      + '<ellipse cx="86.5" cy="57" rx="5" ry="8" fill="' + PIEL + '" stroke="' + TRAZO + '" stroke-width="1.2"/>'
+      + '<ellipse cx="58" cy="53" rx="29" ry="33" fill="' + PIEL + '" stroke="' + TRAZO + '" stroke-width="1.5"/>'
+      + '<path d="M29 52 C25 24 42 13 59 14 C77 13 93 25 88 52 C86 41 82 34 74 31 C66 35 51 35 43 31 C36 35 31 42 29 52 Z" fill="' + PELO + '"/>';
+    s += ojo(47, F.ojos) + ojo(69, F.ojos);
+    var c = CEJAS[F.cejas] || CEJAS.normal;
+    s += '<path d="' + c[0] + '" fill="none" stroke="' + PELO + '" stroke-width="2.6" stroke-linecap="round"/>'
+      + '<path d="' + c[1] + '" fill="none" stroke="' + PELO + '" stroke-width="2.6" stroke-linecap="round"/>';
+    s += '<path d="M58 57 Q55.5 63.5 58.5 65.5 Q60.5 66.5 62 64.5" fill="none" stroke="#8a5a3a" stroke-width="1.4" stroke-linecap="round"/>';
+    if (ex.indexOf('cachetes') >= 0) s += '<ellipse cx="40" cy="66" rx="5" ry="3" fill="#e8846e" opacity=".35"/><ellipse cx="76" cy="66" rx="5" ry="3" fill="#e8846e" opacity=".35"/>';
+    s += BOCAS[F.boca] || BOCAS.sonrisa;
+    s += '</g>';
+    s += mate(F.mate);
+    if (ex.indexOf('vapor') >= 0) s += '<g class="pupi-vapor" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" opacity=".7"><path d="M86 82 q-3 -5 0 -9 t0 -9"/><path d="M92 84 q-3 -5 0 -9 t0 -9"/></g>';
+    if (ex.indexOf('termoMano') < 0) s += termo('translate(13,111)');   // el termo, al lado y AL FRENTE
+    if (ex.indexOf('termoMano') >= 0) s += '<path d="M24 131 Q38 106 60 98" fill="none" stroke="' + BUZO + '" stroke-width="13" stroke-linecap="round"/>'
+      + termo('translate(71,93) rotate(115)')
+      + '<ellipse cx="63" cy="96" rx="6.5" ry="7.5" fill="' + PIEL + '" stroke="' + TRAZO + '" stroke-width="1.1"/>'
+      + '<path class="pupi-chorro" d="M93.5 104 Q93 106.5 92.5 109" fill="none" stroke="#9fd3e8" stroke-width="2.4" stroke-linecap="round"/>'
+      + '<g class="pupi-vapor" fill="none" stroke="#fff" stroke-width="1.4" stroke-linecap="round" opacity=".7"><path d="M100 104 q-3 -5 0 -9 t0 -9"/><path d="M105 106 q-3 -5 0 -9 t0 -9"/></g>';
+    if (ex.indexOf('grr') >= 0) s += '<g class="pupi-grr"><path d="M88 30 q4 -6 8 0 q4 -6 8 0 q4 -6 8 0" fill="none" stroke="#c0392b" stroke-width="1.8" stroke-linecap="round"/>'
+      + '<text x="92" y="22" font-size="10" font-weight="800" fill="#c0392b" font-family="Segoe UI, sans-serif">#@!</text></g>';
+    if (ex.indexOf('spray') >= 0) {   // el buche de mate que sale volando
+      var gotas = [[84, 64, 4.2], [92, 76, 5], [100, 62, 3.6], [104, 86, 4], [110, 70, 4.6], [114, 56, 3], [98, 94, 3.2], [116, 84, 3.2]];
+      s += '<g class="pupi-spray"><path d="M64 75 L114 52 Q122 74 114 98 Z" fill="#bfe6f5" opacity=".55"/><path d="M64 75 L110 64 L110 86 Z" fill="#9fd3e8" opacity=".7"/>'
+        + gotas.map(function (g, k) { return '<ellipse cx="' + g[0] + '" cy="' + g[1] + '" rx="' + g[2] + '" ry="' + (g[2] * .8) + '" fill="' + (k % 3 ? '#7cc4e0' : '#6f9a3c') + '" stroke="#2f6f8a" stroke-width=".6"/>'; }).join('') + '</g>';
+    }
+    if (ex.indexOf('rojo') >= 0) s += '<ellipse cx="58" cy="60" rx="25" ry="22" fill="#e0533f" opacity=".2"/>';
+    if (ex.indexOf('tos') >= 0) s += '<g class="pupi-tos" font-family="Comic Sans MS, Segoe UI, sans-serif" font-weight="800" fill="#7a4a2a"><text x="2" y="38" font-size="11">cof</text><text x="10" y="24" font-size="13">cof!</text></g>';
+    if (ex.indexOf('zzz') >= 0) s += '<g class="pupi-zzz" fill="#cfe3ff" stroke="#4a6a90" stroke-width=".5" font-family="Comic Sans MS, Segoe UI, sans-serif" font-weight="700"><text x="90" y="32" font-size="11">z</text><text x="98" y="21" font-size="14">z</text><text x="106" y="9" font-size="17">Z</text></g>';
+    if (ex.indexOf('gota') >= 0) s += '<path d="M86 35 Q81.5 42 86 45.5 Q90.5 42 86 35 Z" fill="#9fd3e8" stroke="#5aa0c0" stroke-width=".8"/>';
+    if (ex.indexOf('lagrima') >= 0) s += '<path d="M45 60 Q42 65.5 45 67.5 Q48 65.5 45 60 Z" fill="#9fd3e8" stroke="#5aa0c0" stroke-width=".7"/>';
+    if (ex.indexOf('chispas') >= 0) s += '<g fill="#ffd34d" stroke="#c99a1a" stroke-width=".6">'
+      + '<path d="M14 26 l2 5 5 2 -5 2 -2 5 -2 -5 -5 -2 5 -2z"/><path d="M104 18 l1.6 4 4 1.6 -4 1.6 -1.6 4 -1.6 -4 -4 -1.6 4 -1.6z"/><path d="M20 62 l1.2 3 3 1.2 -3 1.2 -1.2 3 -1.2 -3 -3 -1.2 3 -1.2z"/></g>';
+    return s + '</svg>';
+  }
+
+  // Las caricaturas del autor: caras/<momento>.png (ej. horror.png, horror2.png = otra versión del mismo momento).
+  // Si hay foto para el momento se usa (una de sus versiones, fija para cada jugada); si no, el dibujo de arriba.
+  var IMGS = {};
+  var SIN_FOTO = { gracias: 'contento', analiza: 'tranqui', concentrado: 'habla', idea: 'habla', guino: 'habla', miravos: 'ceja', chau: 'habla', dale: 'contento', nocomio: 'asombro', despierta: 'asombro', uff: 'horror', vida: 'horror' };
+  // En la web: assets/pupi/ (las caras en webp y los sonidos ya recortados y emparejados, en wav). /assets/* se
+  // cachea un año: al cambiar alguno, subir PUPI_V. En la maqueta (prototipos/comentarista) se leen las carpetas
+  // de allá, para poder probar caras y sonidos nuevos sin hornearlos.
+  var MAQUETA = !!window.__PUPI_MAQUETA, PUPI_V = '20261005';
+  var PUPI_CARAS = ['analiza', 'asombro', 'atraganta', 'bostezo', 'ceba', 'ceja', 'ceja2', 'chau', 'concentrado', 'contento', 'contento2', 'contento3',
+    'dale', 'despierta', 'dormido', 'escupe', 'gracias', 'guino', 'habla', 'horror', 'horror2', 'idea', 'malhumor', 'miravos', 'nocomio',
+    'ofendido', 'ofendido2', 'preocupado', 'preocupado2', 'resignado', 'suplica', 'tranqui', 'triste', 'uff', 'vida'];
+  var PUPI_SONIDOS = ['escupe1', 'jugadon1', 'mate1', 'mmm1', 'termo1', 'tos1', 'tremendo1'];
+  window._PUPI_ASSETS = PUPI_CARAS.map(function (n) { return 'assets/pupi/caras/' + n + '.webp'; })
+    .concat(PUPI_SONIDOS.map(function (n) { return 'assets/pupi/sonidos/' + n + '.wav'; }));   // para la copia del autor (zip)
+  var imgsListas = MAQUETA ? fetch('/__pupi/caras/lista').then(function (r) { return r.ok ? r.json() : []; }).then(function (lista) {
+    (lista || []).sort().forEach(function (n) { var b = n.replace(/\d*\.(png|webp)$/i, ''); (IMGS[b] = IMGS[b] || []).push('/__pupi/caras/' + n); });
+  }).catch(function () {}) : Promise.resolve().then(function () {
+    PUPI_CARAS.forEach(function (n) { var b = n.replace(/\d+$/, ''); (IMGS[b] = IMGS[b] || []).push('assets/pupi/caras/' + n + '.webp?v=' + PUPI_V); });
+  });
+  function avatar(cara, sem) {
+    var v = IMGS[cara];
+    if (v && v.length) {
+      var h = 0, t = String(sem || ''); for (var i = 0; i < t.length; i++) h = (h * 33 + t.charCodeAt(i)) >>> 0;
+      return '<img src="' + v[h % v.length] + '" alt="" draggable="false">';
+    }
+    return dibujo(CARAS[cara] ? cara : (SIN_FOTO[cara] || 'habla'));
+  }
+  // Todas las caras de una vez cuando se queda a mirar (si no, cada cara nueva tardaba un ratito en aparecer).
+  var carasPrecargadas = false;
+  function precargarCaras() {
+    if (carasPrecargadas || !Object.keys(IMGS).length) return; carasPrecargadas = true;
+    Object.keys(IMGS).forEach(function (k) { IMGS[k].forEach(function (u) { var im = new Image(); im.src = u; }); });
+  }
+  window.__pupiDibujo = dibujo; window.__pupiAvatar = avatar; window.__pupiImgs = function () { return imgsListas.then(function () { return IMGS; }); };
+  if (typeof cv === 'undefined' || typeof cvHighlight !== 'function') return;
+
+  // ── El panel ────────────────────────────────────────────────────────────────────────────────────
+  var sfPanel = document.getElementById('sf-panel');
+  if (!sfPanel) return;
+  var panel = document.createElement('div');
+  panel.id = 'pupi-panel';
+  panel.className = 'pupi-oculto';
+  panel.innerHTML = '<div class="pupi-flota"></div><div class="pupi-av"></div><div class="pupi-globo"><div class="pupi-h"></div><div class="pupi-b"></div><div class="pupi-acc"></div></div>';
+  sfPanel.parentNode.insertBefore(panel, sfPanel);
+  // Los controles van AFUERA del panel: en el renglón del título "MOVIMIENTOS" si está justo arriba (PC);
+  // si no (teléfono), en un renglón propio arriba del panel.
+  var ctrl = document.createElement('span');
+  ctrl.id = 'pupi-ctrl';
+  ctrl.innerHTML = '<button class="pupi-x pupi-snd" type="button"></button><button class="pupi-x pupi-chau" type="button" title="Chau, Pupi" aria-label="Que se vaya el Pupi">✕</button>';
+  function ubicarCtrl() {
+    var prev = panel.previousElementSibling;
+    if (prev && prev.classList.contains('chess-mlabel')) { prev.classList.add('pupi-con-ctrl'); if (ctrl.parentNode !== prev) prev.appendChild(ctrl); ctrl.className = ''; }
+    else if (ctrl.nextSibling !== panel) { panel.parentNode.insertBefore(ctrl, panel); ctrl.className = 'pupi-ctrl-fila'; }
+  }
+  var elAv = panel.querySelector('.pupi-av'), elGlobo = panel.querySelector('.pupi-globo'),
+      elH = panel.querySelector('.pupi-h'), elB = panel.querySelector('.pupi-b'), elAcc = panel.querySelector('.pupi-acc'), elFlota = panel.querySelector('.pupi-flota');
+  elGlobo.setAttribute('role', 'status'); elGlobo.setAttribute('aria-live', 'polite');
+  var btnSnd = ctrl.querySelector('.pupi-snd');
+  function pintarSnd() { btnSnd.textContent = sonidoOn() ? '🔊' : '🔇'; btnSnd.title = sonidoOn() ? 'Callar los sonidos del Pupi' : 'Prender los sonidos del Pupi'; }
+  btnSnd.onclick = function () { lsSet('aa_pupi_snd', sonidoOn() ? 'no' : null); pintarSnd(); cargarSonidos(); };
+  pintarSnd();
+  ctrl.querySelector('.pupi-chau').onclick = function () { irse('Bueno, me voy. Si me extrañás, tocá el 🧉 de arriba.'); };
+
+  // 🧉 en la barra del análisis para volver a llamarlo
+  var btnVolver = document.createElement('button');
+  btnVolver.id = 'pupi-volver'; btnVolver.className = 'fa-btn'; btnVolver.type = 'button';
+  btnVolver.title = 'Llamar al Pupi para ver la partida juntos'; btnVolver.textContent = '🧉';
+  btnVolver.onclick = function () { lsSet('aa_pupi_no', null); P.estado = 'invita'; P.html = ''; entrar(); actualizar(); };
+  var faBtn = document.getElementById('fa-btn');
+  if (faBtn && faBtn.parentNode) faBtn.parentNode.insertBefore(btnVolver, faBtn.nextSibling);
+
+  function moduloPrendido() { return sfPanel.style.display !== 'none' && getComputedStyle(sfPanel).display !== 'none'; }
+  function visible() {
+    // En el teléfono la app muda el módulo de lugar (y lo devuelve en la PC): el Pupi va siempre pegado arriba de él.
+    if (panel.nextSibling !== sfPanel && sfPanel.parentNode) sfPanel.parentNode.insertBefore(panel, sfPanel);
+    var ver = (P.estado === 'invita' || P.estado === 'si' || P.estado === 'saliendo') && !moduloPrendido() && !!cv.root && !apagado() && !enVivo();
+    ubicarCtrl();
+    ctrl.style.display = ver && P.estado !== 'saliendo' ? '' : 'none';
+    if (ver && P.vis === false && P.estado !== 'saliendo') entrar();   // vuelve (p. ej. al apagar el módulo): se asoma de nuevo
+    P.vis = ver;
+    panel.classList.toggle('pupi-oculto', !ver);
+    btnVolver.style.display = P.estado === 'no' && !apagado() && !enVivo() ? '' : 'none';
+    return ver;
+  }
+  // ⚙️ Preferencias → "🧉 El Pupi en las partidas" apagado: no aparece más (ni pregunta, ni el 🧉 para llamarlo).
+  function apagado() { return lsGet('aa_pref_pupi_off') === '1'; }
+  document.addEventListener('aa-prefs-changed', function () { P.html = ''; actualizar(); });
+  // Partida EN VIVO (todavía sin resultado): no aparece. El análisis guarda los comentarios para el final, así que
+  // no tendría mucho para decir; cuando la partida termina, se asoma como en cualquier otra.
+  function enVivo() {
+    try { var g = cv.games && cv.games[cv.gIdx]; return typeof _faLiveEligible === 'function' && _faLiveEligible() && !!g && (g.res || '*') === '*'; }
+    catch (e) { return false; }
+  }
+  new MutationObserver(function () { P.html = ''; actualizar(); }).observe(sfPanel, { attributes: true, attributeFilter: ['style', 'class'] });
+
+  function entrar() { panel.classList.remove('pupi-entra'); void panel.offsetWidth; panel.classList.add('pupi-entra'); }
+  function irse(frase, cara) {
+    P.estado = 'saliendo';
+    lsSet('aa_pupi', null); lsSet('aa_pupi_no', '1');
+    pintar({ cara: cara || 'triste', titulo: frase, chico: false });
+    setTimeout(function () { panel.classList.add('pupi-sale'); }, 1500);
+    setTimeout(function () { panel.classList.add('pupi-cierra'); }, 2300);
+    setTimeout(function () { P.estado = 'no'; panel.classList.remove('pupi-sale', 'pupi-cierra'); visible(); }, 2750);
+  }
+
+  // ── De dónde saca lo que dice ───────────────────────────────────────────────────────────────────
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  // FNV-1a + mezcla final: con el *31 de antes la paridad dependía sólo de la suma de los caracteres y
+  // las 6 flojas de una partida caían todas en "Jugada floja." (nunca Panno).
+  function hash(s) {
+    var h = 2166136261;
+    for (var i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
+    h ^= h >>> 13; h = Math.imul(h, 0x5bd1e995); h ^= h >>> 15;
+    return h >>> 0;
+  }
+  function una(lista, semilla) { return lista[hash(semilla) % lista.length]; }
+  function lineaPrincipal() { var out = [], n = cv.root; while (n && n.children && n.children.length && !n.children[0].own) { n = n.children[0]; out.push(n); } return out; }
+  function hayDatos() {
+    if (typeof _fa === 'undefined' || !_fa.nodes.length || !_fa.results.length) return false;
+    var r = _fa.nodes[0]; while (r && r.parent) r = r.parent;
+    return r === cv.root && _fa.results.some(Boolean) && !(_fa.running && !_fa.relleno);
+  }
+  function analizando() { return typeof _fa !== 'undefined' && _fa.running && !_fa.relleno; }
+  function pedirAnalisis() {
+    if (hayDatos() || analizando() || !P.g || P.g.pedido) return;
+    P.g.pedido = true;
+    try { faToggle(); } catch (e) {}
+  }
+  // El resultado sale del PGN que está EN PANTALLA: al abrir una partida desde "Partidas de la ronda" la app
+  // no toca cv.gIdx y cv.games[cv.gIdx] sigue siendo la partida anterior (decía "Ganaron las negras" en unas tablas).
+  function resultado() {
+    var m = /\[Result "([^"]+)"\]/.exec(cv.rawPgn || ''), r = m && m[1];
+    if (r && r !== '*') return r;
+    var g = cv.games && cv.games[cv.gIdx]; r = g && g.res;
+    if (!r) { var el = document.getElementById('cv-result'); r = el ? el.textContent.trim() : ''; }
+    return r || '*';
+  }
+  function irA(node) { if (node && node !== cv.node) cvSetNode(node); }
+
+  // Fin de la teoría + planes típicos (data/planes/), una vez por partida.
+  function apertura() {
+    var g = P.g;
+    if (!g || g.ap !== undefined || typeof _apArbolEnsure !== 'function') return;
+    g.ap = null;
+    _apArbolEnsure(function (ok) {
+      if (!ok || P.g !== g) return;
+      var ml = lineaPrincipal(), nd = _apA.trie, hondo = 0, best = -1;
+      if (ml.length < 4) { g.ap = undefined; return; }   // la partida todavía no cargó: probar después
+      for (var i = 0; i < ml.length; i++) {
+        nd = nd.k[(ml[i].move.san || '').replace(/[+#!?]/g, '')];
+        if (!nd) break;
+        hondo = i + 1; if (nd.i >= 0) best = nd.i;
+      }
+      if (best < 0 || hondo >= ml.length) { g.ap = null; return; }
+      var cam = _apA.camino[best], n = cam[cam.length - 1];
+      g.ap = { nodo: ml[hondo - 1], key: n.key, R: null, clave: null, n: n.main >= 0 ? n : null };
+      if (typeof _ptCargar === 'function') _ptCargar(_apPartes(n.key)[0], function (F) {
+        if (!F || P.g !== g) return;
+        var k = _ptElegir(F, n.key);
+        if (k) { g.ap.R = F.A[k]; g.ap.clave = k; P.html = ''; actualizar(); }
+      });
+      P.html = ''; actualizar();
+    });
+  }
+  // La apertura contada como la contaría uno en el club: sin porcentajes, con "casi siempre / muchas veces".
+  var ESTR_TXT = {
+    'Carlsbad': 'queda la estructura Carlsbad, y ahí las blancas suelen tirar los peones del flanco de dama (b4‑b5) para dejarle un peón débil al negro',
+    'Carlsbad (al revés)': 'queda una Carlsbad dada vuelta: el que tira los peones del flanco de dama es el negro',
+    'Centro cerrado (d5/e4 contra d6/e5)': 'se traba el centro, y ahí cada uno juega para donde apuntan sus peones: las blancas por el flanco de dama y las negras al ataque sobre el rey',
+    'Cadena francesa (e5/d4 contra e6/d5)': 'se traba el centro con la cadena de peones, y las negras le pegan a la base con …c5 y a la punta con …f6',
+    'Boleslavsky (agujero en d5)': 'a las negras les queda el agujero en d5, y las blancas sueñan con meter un caballo ahí',
+    'Scheveningen (centro chico)': 'las negras arman el centrito con d6 y e6: sólido, pero hay que tenerle paciencia',
+    'Maroczy': 'las blancas arman el Maroczy con c4 y e4 y le sacan el aire a las negras',
+    'Erizo': 'las negras se meten en el erizo y esperan el momento de romper con …b5 o …d5',
+    'Benoni': 'queda una Benoni: las blancas empujan en el centro y las negras buscan juego por el flanco de dama',
+    'Stonewall (blancas)': 'las blancas arman el muro Stonewall y apuntan al enroque con un caballo en e5',
+    'Stonewall (negras)': 'las negras arman el muro Stonewall y plantan un caballo en e4',
+    'Peones colgantes (blancas)': 'las blancas se quedan con los peones colgantes en c4 y d4: dan espacio, pero hay que cuidarlos',
+    'Peones colgantes (negras)': 'las negras se quedan con los peones colgantes en c5 y d5: dan espacio, pero hay que cuidarlos',
+    'Peón aislado (blancas)': 'las blancas se quedan con el peón aislado en d4: da juego de piezas, pero si se cambia todo, pesa',
+    'Peón aislado (negras)': 'las negras se quedan con el peón aislado en d5: da juego de piezas, pero si se cambia todo, pesa',
+    'Centro clásico': 'las blancas se quedan con el centro grande en e4 y d4, y las negras le tiran con las piezas',
+    'Muro Czech': 'el centro queda trabadísimo con …c5, d6 y e5, y las negras preparan …f5'
+  };
+  function planTxt(L, s, ya) {
+    var quien = s === 'w' ? 'las blancas' : 'las negras';
+    if (L && L.pl && L.pl.length) {
+      var n = L.pl[0][0], m = /^Doblar torres en la (.)$/.exec(n);
+      if (n === 'Avalancha contra el enroque') return quien + ' suelen tirar los peones contra el enroque';
+      if (n === 'Ataque de minorías') return /b4‑b5|flanco de dama/.test(ya) ? '' : quien + ' suelen ir con el ataque de minorías (' + (s === 'w' ? 'b4‑b5' : '…b5‑b4') + ')';
+      if (m) return quien + ' suelen doblar las torres en la columna ' + m[1];
+      return quien + ' suelen ir con ' + n.toLowerCase();
+    }
+    if (L && L.mn && L.mn.length) { var mn = L.mn[0]; return quien + ' suelen llevar el ' + (mn[0] === 'C' ? 'caballo' : 'alfil') + ' por ' + mn[1].slice(0, 4).join('‑'); }
+    return '';
+  }
+  function comentarioApertura(ap) {
+    var R = ap.R, partes = _apPartes(ap.key), nom = partes[0] + (partes[1] ? ' ' + _apEtiqueta(partes[1]) : '');
+    var b = 'Es una <b>' + esc(nom) + '</b>.';
+    if (R) {
+      var e = R.es && R.es[0], txt = e && e[1] >= 30 && ESTR_TXT[e[0]];
+      if (txt) b += ' Acá ' + (e[1] >= 60 ? 'casi siempre ' : e[1] >= 45 ? 'muchas veces ' : 'a veces ') + txt + '.';
+      var pw = planTxt(R.w, 'w', txt || ''), pb = planTxt(R.b, 'b', txt || '');
+      var pls = [pw, pb].filter(Boolean);
+      if (pls.length) b += ' Después, ' + pls.join(' y ') + '.';
+      if (R.en && R.en[0] >= 20 && R.en[0] >= 2 * R.en[1]) b += ' Y ojo, que muchas veces enroca cada uno para su lado: ahí es a ver quién llega primero.';
+    }
+    return { cara: 'idea', sym: '📖', symColor: '#8a6a3a', titulo: 'Hasta acá, todo de libro', cuerpo: b,
+             acc: R ? [['🧭 Ver más en Aperturas', 'window.__pupi.aperturas()']] : [] };
+  }
+
+  // ── "Hasta ahora es un pelotazo la partida" (latiguillo del autor) ─────────────────────────────
+  // Si llegó pareja (±0,7, sin errores ni jugadones) hasta la jugada 30, lo dice en la primera jugada
+  // tranquila desde ahí, y se queda dormido mientras siga pareja. Se despierta con lo primero que pase.
+  var PELOTAZO_DESDE = 58;   // índice de la 30.ª de las blancas
+  function pelotazo() {
+    if (!hayDatos()) return null;
+    var R = _fa.results, N = _fa.nodes, k = 0;
+    for (; k < N.length; k++) {
+      var r = R[k], nag = N[k].move && N[k].move.nag;
+      if (!r || r.mate !== undefined || Math.abs(r.cp) > 70 || nag === '?' || nag === '??' || nag === '!!' || nag === '!') break;
+    }
+    if (k <= PELOTAZO_DESDE) return null;
+    for (var j = PELOTAZO_DESDE; j < k; j++) if (esQuieto(N[j], j)) {
+      // Si lo despertaron con el botón, la siesta termina ahí (porVos: "¿Eh? ¿Qué pasó?").
+      var dz = P.g && P.g.despierto;
+      if (dz > j && dz < k) return { desde: j, hasta: dz, porVos: true };
+      return { desde: j, hasta: k };
+    }
+    return null;
+  }
+
+  // ── Datos al azar cada 5 jugadas tranquilas ───────────────────────────────────────────────────
+  // Torneos que se juegan ahora o arrancan en las próximas 3 semanas (de la lista de torneos de la app):
+  // los de acá, con quién va; los de afuera, sólo si juega algún argentino. Mezclados con los
+  // "¿Sabías que…?" de data/datos.json.
+  var HIST = [];
+  try { fetch('data/datos.json' + (typeof _dataV === 'function' ? _dataV() : '')).then(function (r) { return r.json(); }).then(function (j) { HIST = (j || []).filter(function (d) { return d && d.t; }); }).catch(function () {}); } catch (e) {}
+  var AR = /Argentina|Buenos Aires|CABA|C[oó]rdoba|Santa Fe|R[ií]o Negro|Chubut|San Luis|Corrientes|Entre R[ií]os|Mendoza|Tucum[aá]n|Salta|Jujuy|Neuqu[eé]n|La Pampa|Misiones|Chaco|Formosa|Santiago del Estero|Catamarca|La Rioja|San Juan|Santa Cruz|Tierra del Fuego/i;
+  var TORNEOS_DATOS = null;
+  function dias(a, b) {
+    function d(k) { k = String(k); return Date.UTC(+k.slice(0, 4), +k.slice(4, 6) - 1, +k.slice(6, 8)); }
+    return Math.round((d(b) - d(a)) / 864e5);
+  }
+  function nombreLindo(n) {   // "Fiorito, Francisco" → "Francisco Fiorito"
+    var p = String(n).split(','); return p.length === 2 ? p[1].trim() + ' ' + p[0].trim() : String(n).trim();
+  }
+  function jugadoresTxt(lista) {
+    var ns = lista.map(nombreLindo);
+    if (ns.length === 2) {
+      var a1 = ns[0].split(' '), a2 = ns[1].split(' ');
+      if (a1[a1.length - 1] === a2[a2.length - 1]) return a1.slice(0, -1).join(' ') + ' y ' + ns[1];   // hermanos
+      return ns[0] + ' y ' + ns[1];
+    }
+    return ns[0];
+  }
+  function tituloTorneo(n) {
+    n = String(n || '').trim().split(' - ')[0].replace(/-\s*R\$.*$/, '').replace(/[\s-]+$/, '');   // 'Abierto PRO AM - Copa Clarín -' → 'Abierto PRO AM'
+    if (n === n.toUpperCase()) n = n.toLowerCase().replace(/(^|\s)(\S)/g, function (m, a, b) { return a + b.toUpperCase(); })
+      .replace(/\b(Irt|Itt|Fada|Fide)\b/g, function (m) { return m.toUpperCase(); }).replace(/ (De|Del|La|El|Los|Las|Y|En) /g, function (m) { return m.toLowerCase(); });
+    // Como se dice: "la Semifinal del Campeonato Argentino…", y sin el año si es el de ahora.
+    n = n.replace(/^(Semifinal|Final|Semi Final)\s+(Campeonato|Torneo)/i, '$1 del $2').replace(new RegExp('\\s+' + new Date().getFullYear() + '$'), '');
+    return n;
+  }
+  function articulo(n) { return /^(Liga|Copa|Olimpiada|Final|Semifinal)/i.test(n) ? 'la' : 'el'; }
+  function torneosDatos() {
+    if (TORNEOS_DATOS) return TORNEOS_DATOS;
+    var out = [];
+    try {
+      var hoy = todayKey(), tzCfg = getTzConfig(), actual = ((document.getElementById('cv-title') || {}).textContent || '').trim();
+      _torneoItems(tzCfg).forEach(function (x) {
+        if (x._status !== 'live' && x._status !== 'upcoming') return;
+        var o = x._data || x._st || x._t || {}, type = x._type === 'tzconfig' ? 'tz' : x._type === 'stored' ? 'ls' : 'hc';
+        var key = x._type === 'tzconfig' ? x._key : x._type === 'stored' ? x._st._id : x._t.id;
+        var loc = String(o.location || '').trim(), live = x._status === 'live';
+        if (!loc || / - /.test(loc) || (o.name || '').trim() === actual) return;
+        var d = live ? 0 : dias(hoy, x._startKey || hoy);
+        if (d > 21) return;
+        var cuando = live ? 'ahora' : d <= 0 ? 'hoy' : d === 1 ? 'mañana' : d <= 6 ? 'en unos días' : d <= 13 ? 'la semana que viene' : 'en un par de semanas';
+        // Los argentinos anotados, de más Elo a menos
+        var args = [], vistos = {};
+        (_crKeysForTourAll(type, key, o.categories) || []).forEach(function (k) {
+          var dd = null; try { dd = crDataLoad(k); } catch (e) {}
+          ((dd && dd.standings) || []).forEach(function (p) { if (p && p.fed === 'ARG' && p.name && !vistos[p.name]) { vistos[p.name] = 1; args.push(p); } });
+        });
+        args.sort(function (a, b) { return (+b.elo || 0) - (+a.elo || 0); });
+        var nom = tituloTorneo(o.name), art = articulo(nom), local = AR.test(loc);
+        var ciudad = loc.split(',')[0].trim(), pais = loc.split(',').pop().trim();
+        var t, c;
+        if (local) {
+          t = live ? '¿Viste que se está jugando un torneo en ' + ciudad + '?' : '¿Viste que ' + cuando + ' arranca un torneo en ' + ciudad + '?';
+          c = 'Es ' + art + ' ' + esc(nom) + (args.length ? (live ? '. Ahí anda ' : ', y va a estar ') + esc(nombreLindo(args[0].name)) : '') + '.';
+        } else {
+          if (!args.length) return;
+          var js = jugadoresTxt(args.slice(0, 2).map(function (p) { return p.name; })), varios = args.length > 1 && / y /.test(js);
+          t = live ? js + (varios ? ' están' : ' está') + ' jugando ahora en ' + pais + '.'
+                   : cuando.charAt(0).toUpperCase() + cuando.slice(1) + ' va' + (varios ? 'n' : '') + ' a estar ' + js + ' jugando en ' + pais + '.';
+          c = 'Es ' + art + ' ' + esc(nom) + '.';
+        }
+        out.push({ t: t, c: c, key: key, start: x._startKey || 0 });
+      });
+    } catch (e) {}
+    return (TORNEOS_DATOS = out);
+  }
+  function dato(n) {   // el n-ésimo dato de esta partida: los próximos torneos de los que juegan, y después torneo, torneo, histórico, …
+    var PJ = datosJugadores();
+    if (n < PJ.length) return PJ[n];
+    n -= PJ.length;
+    var aca = tourActual(), T = torneosDatos().filter(function (d) { return String(d.key) !== aca; }), off = P.g ? hash(P.g.sem) : 0;
+    var usarHist = !T.length || (n % 3 === 2 && HIST.length);
+    if (usarHist && HIST.length) {
+      var h = HIST[(off + Math.floor(n / 3)) % HIST.length], tx = String(h.t).trim().replace(/\.$/, '');
+      // Lo cuenta mientras ceba (pedido del autor: la de "¡Mirá vos…" parecía enojada).
+      return { cara: 'ceba', sonido: 'termo', sym: '💡', symColor: '#b8860b', titulo: '¿Sabías que ' + tx.charAt(0).toLowerCase() + tx.slice(1) + '?' };
+    }
+    if (!T.length) return null;
+    var d = T[(off + n - Math.floor(n / 3)) % T.length];
+    return { cara: 'guino', sym: '🗞️', symColor: '#3b6ea8', titulo: d.t, cuerpo: d.c,
+             acc: [['Ver torneo', "window.__pupi.torneo('" + String(d.key).replace(/'/g, "\\'") + "')"]] };
+  }
+  // ── Cómo vienen los jugadores (pedido del autor, 05/10) ───────────────────────────────────────
+  // Desde la 2.ª ronda: con cuántos puntos llega cada uno (la tabla de cruces trae pw/pb = los puntos
+  // ANTES de esa ronda) y cómo le fue en la anterior. En la 1.ª: el último torneo que jugó en la web
+  // (playerIndex del manifest) y cómo le fue ahí; y si hay mucha diferencia de Elo, quién es el candidato.
+  var MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+  function cab(tag) { var m = new RegExp('\\[' + tag + ' "([^"]*)"\\]').exec(cv.rawPgn || ''); return m ? m[1].trim() : ''; }
+  function tourActual() { try { return String((typeof _tdTourKey !== 'undefined' && _tdTourKey) || new URLSearchParams(location.search).get('torneo') || ''); } catch (e) { return ''; } }
+  function norm(s) { return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z, ]/g, '').replace(/\s+/g, ' ').trim(); }
+  function mismoJug(a, b) {   // "Carrizo, Luciano Ariel" (PGN) vs la tabla (a veces sin el 2.º nombre, o "Nombre Apellido")
+    if (!a || !b) return false;
+    if (norm(a) === norm(b)) return true;
+    try { return typeof pgnNameMatchesPlayer === 'function' && pgnNameMatchesPlayer(a, { name: nombreLindo(b) }); } catch (e) { return false; }
+  }
+  function num(v) { var f = parseFloat(String(v == null ? '' : v).replace('½', '.5').replace(',', '.')); return isNaN(f) ? null : f; }
+  function pts(x) { var e = Math.floor(x), m = x - e >= 0.5; return (e || !m ? String(e) : '') + (m ? '½' : ''); }
+  function resDe(res, blanca) {   // resultado de la mesa para uno de los dos: 'G', 'T', 'P' (null = sin jugar)
+    res = String(res || '').replace(/\s/g, '');
+    var w = /^(1-0|\+-|\+:-|1F?-0F?)$/.test(res) ? 1 : /^(0-1|-\+|-:\+|0F?-1F?)$/.test(res) ? 0 : /½|1\/2|^=/.test(res) ? 0.5 : null;
+    if (w === null) return null;
+    if (!blanca) w = 1 - w;
+    return w === 1 ? 'G' : w === 0 ? 'P' : 'T';
+  }
+  function crDatos(key) {   // los cuadros del torneo (el general y los de cada categoría)
+    var out = [];
+    try {
+      var cats = ((getTzConfig() || {})[key] || {}).categories;
+      (_crKeysForTourAll(_resolveTourType(key), key, cats) || []).forEach(function (k) { var d = null; try { d = crDataLoad(k); } catch (e) {} if (d) out.push(d); });
+    } catch (e) {}
+    return out;
+  }
+  function comoVienen(R) {
+    var W = cab('White'), B = cab('Black'), ds = crDatos(tourActual()), t = null;
+    ds.forEach(function (d) {
+      ((d.rounds && d.rounds[R]) || []).forEach(function (m) {
+        if (t || !m) return;
+        if (mismoJug(W, m.w) && mismoJug(B, m.b)) t = { d: d, pw: num(m.pw), pb: num(m.pb) };
+        else if (mismoJug(W, m.b) && mismoJug(B, m.w)) t = { d: d, pw: num(m.pb), pb: num(m.pw) };
+      });
+    });
+    if (!t || t.pw === null || t.pb === null) return null;
+    var todos = [];
+    (t.d.rounds[R] || []).forEach(function (m) { if (m) [m.pw, m.pb].forEach(function (v) { var f = num(v); if (f !== null) todos.push(f); }); });
+    var J = R - 1;
+    function arriba(p) { return todos.filter(function (x) { return x > p; }).length; }
+    function iguales(p) { return todos.filter(function (x) { return x === p; }).length; }
+    function hist(nombre) {
+      var out = [];
+      for (var k = 1; k < R; k++) {
+        var r = null;
+        ((t.d.rounds[k]) || []).some(function (m) {
+          if (!m) return false;
+          if (mismoJug(nombre, m.w)) { r = resDe(m.res, true); return true; }
+          if (mismoJug(nombre, m.b)) { r = resDe(m.res, false); return true; }
+          return false;
+        });
+        out.push(r);
+      }
+      return out;
+    }
+    var nW = apellido('White') || 'el de blancas', nB = apellido('Black') || 'el de negras';
+    function racha(h, p) {
+      var u = h[h.length - 1], u2 = h[h.length - 2];
+      if (p === J) return '';
+      if (u === 'G' && u2 === 'G') return ', con dos triunfos seguidos';
+      if (u === 'P' && p > 0) return ', y viene de perder en la ronda pasada';
+      if (u === 'G' && u2 === 'P') return ', y viene de levantar con un triunfo';
+      return '';
+    }
+    function frase(n, p, h) {
+      if (p === J && J >= 2) return cap(n) + ' viene con puntaje ideal: ' + pts(p) + ' de ' + J + '.';
+      if (!arriba(p) && p > 0) return cap(n) + (iguales(p) === 1 ? ' llega puntero solo, con ' : ' llega compartiendo la punta, con ') + pts(p) + ' de ' + J + racha(h, p) + '.';
+      if (p === 0) return cap(n) + ' todavía no sumó' + (J > 1 ? ' en ' + J + ' rondas' : '') + '.';
+      return cap(n) + ' viene con ' + pts(p) + ' de ' + J + racha(h, p) + '.';
+    }
+    var hW = hist(cab('White')), hB = hist(cab('Black'));
+    if (R === 2) {   // después de una sola ronda, "puntero" no dice nada: se cuenta cómo les fue en la primera
+      var VERBO = { G: 'ganó', T: 'empató', P: 'perdió' }, VERBOS = { G: 'ganaron', T: 'empataron', P: 'perdieron' };
+      // Sin partida en la primera (libre o medio punto pedido): se cuenta por los puntos.
+      var a = hW[0] || (t.pw === 0.5 ? 'M' : t.pw === 1 ? 'L' : 'N'), b = hB[0] || (t.pb === 0.5 ? 'M' : t.pb === 1 ? 'L' : 'N');
+      VERBO.M = 'no jugó la primera (se anotó medio punto)'; VERBOS.M = 'no jugaron la primera ronda: arrancan con medio punto';
+      VERBO.L = 'tuvo libre la primera'; VERBOS.L = 'tuvieron libre la primera ronda';
+      VERBO.N = 'no jugó la primera'; VERBOS.N = 'se saltearon la primera ronda';
+      var enLa = function (x) { return /[MLN]/.test(x) ? '' : ' en la primera ronda'; };
+      if (a === b) return 'Los dos ' + VERBOS[a] + enLa(a) + '.' + (a === 'G' ? ' A ver quién sigue con puntaje ideal.' : '');
+      return cap(nW) + ' ' + VERBO[a] + enLa(a) + ' y ' + nB + ' ' + VERBO[b] + '.';
+    }
+    if (!arriba(t.pw) && !arriba(t.pb) && t.pw > 0) {
+      return '¡Partida de punteros! ' + (t.pw === t.pb ? 'Los dos llegan con ' + pts(t.pw) + ' de ' + J + '.'
+        : cap(nW) + ' llega con ' + pts(t.pw) + ' y ' + nB + ' con ' + pts(t.pb) + '.');
+    }
+    if (t.pw === t.pb && !racha(hW, t.pw) && !racha(hB, t.pb) && t.pw > 0 && t.pw < J) return 'Los dos vienen parejitos, con ' + pts(t.pw) + ' de ' + J + '.';
+    return [frase(nW, t.pw, hW), frase(nB, t.pb, hB)];
+  }
+  function inicioTorneo(t) {   // YYYYMMDD de arranque de un torneo del manifest
+    try { var r = tourRange(t); if (r && r.start) return +r.start; } catch (e) {}
+    var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(t.startDate || ''));
+    return m ? +(m[1] + m[2] + m[3]) : (t.dateKey || 0);
+  }
+  function jugadorDe(tag) { try { return cvFindPlayer(cab(tag), cab(tag + 'FideId') || undefined); } catch (e) { return null; } }
+  function vieneDe(tag, cb) {   // el último torneo que jugó en la web, y cómo le fue (async: puede bajar la tabla)
+    var nom = cab(tag), fid = cab(tag + 'FideId'), pl = jugadorDe(tag);
+    var man = typeof _manifest !== 'undefined' ? _manifest : null;
+    if (!pl || !man || !man.playerIndex || !man.tournaments) return cb('');
+    var ids = {}; (man.playerIndex[pl.id] || []).forEach(function (x) { ids[String(x)] = 1; });
+    var aca = tourActual(), cur = null, prev = null;
+    man.tournaments.forEach(function (t) { if (t && String(t.id) === aca) cur = t; });
+    var desde = cur ? inicioTorneo(cur) : todayKey();
+    man.tournaments.forEach(function (t) {
+      if (!t || t.playerOnly || !ids[String(t.id)] || String(t.id) === aca || !t.dateKey || t.dateKey >= desde) return;
+      if (!prev || t.dateKey > prev.dateKey) prev = t;
+    });
+    if (!prev || dias(prev.dateKey, desde) > 75) return cb('');   // si fue hace mucho, no es "viene de jugar"
+    Promise.resolve(typeof _crEnsureLoaded === 'function' ? _crEnsureLoaded(prev.id) : 0).catch(function () {}).then(function () {
+      var fila = null, n = +prev.rounds || 0;
+      crDatos(String(prev.id)).forEach(function (d) {
+        (d.standings || []).forEach(function (p) { if (!fila && p && ((fid && String(p.fideId || '') === fid) || mismoJug(nom, p.name))) fila = p; });
+        if (!n && d.rounds) n = Object.keys(d.rounds).length;
+      });
+      var tit = tituloTorneo(prev.name), el = articulo(tit) + ' ' + esc(tit), quien = cap(apellido(tag));
+      var con = fila && num(fila.pts) !== null && n ? ', con ' + pts(num(fila.pts)) + ' de ' + n : '';
+      cb(fila && +fila.rank === 1 ? '¡' + quien + ' viene de ganar ' + el + con + '!'
+        : fila && +fila.rank ? quien + ' viene de salir ' + fila.rank + '.° en ' + el + con + '.'
+        : quien + ' viene de jugar ' + el + '.');
+    });
+  }
+  function papeles() {   // 1.ª ronda: si la diferencia de Elo es grande, quién es el candidato
+    var eW = +cab('WhiteElo') || 0, eB = +cab('BlackElo') || 0;
+    if (!eW || !eB || Math.abs(eW - eB) < 250) return '';
+    var fav = apellido(eW > eB ? 'White' : 'Black');
+    return fav ? 'Los papeles dicen ' + fav + ': le saca ' + Math.abs(eW - eB) + ' puntos de Elo.' : '';
+  }
+  // Lo que cuenta al principio de la partida, EN PARTES: la primera antes de la 1.ª jugada y las otras en las
+  // semijugadas siguientes (pedido del autor: todo junto no entraba en el globo). [] mientras lo calcula.
+  function previa() {
+    var g = P.g; if (!g) return [];
+    if (g.previa !== undefined) return g.previa;
+    var R = parseInt(cab('Round'), 10) || 0;
+    if (R >= 2) {
+      var cvn = comoVienen(R);
+      if (cvn !== null) return (g.previa = [].concat(cvn).filter(Boolean));
+      // La tabla del torneo todavía no está (se baja al abrirlo): probar de nuevo un ratito después.
+      if ((g.previaN = (g.previaN || 0) + 1) < 15) { setTimeout(function () { if (P.g === g) { P.html = ''; actualizar(); } }, 1000); return []; }
+    }
+    g.previa = [];
+    var partes = ['', ''], faltan = 2;
+    function listo() {
+      if (--faltan || P.g !== g) return;
+      g.previa = partes.filter(Boolean).concat(R <= 1 ? [papeles()] : []).filter(Boolean);
+      if (g.previa.length) { P.html = ''; actualizar(); }
+    }
+    vieneDe('White', function (s) { partes[0] = s; listo(); });
+    vieneDe('Black', function (s) { partes[1] = s; listo(); });
+    return g.previa;
+  }
+
+  // ── Los próximos torneos de los que están jugando (pedido del autor, 05/10) ────────────────────
+  // "Diego va a estar jugando…": lo cuenta mientras ceba, como los datos de la casa.
+  function cuandoArranca(start) {
+    var d = dias(todayKey(), start);
+    return d <= 0 ? 'hoy' : d === 1 ? 'mañana' : d <= 6 ? 'en unos días' : d <= 13 ? 'la semana que viene' : d <= 31 ? 'en un par de semanas'
+      : 'en ' + MESES[(Math.floor(start / 100) % 100) - 1];
+  }
+  function datosJugadores() {
+    var g = P.g; if (!g) return [];
+    if (g.dj) return g.dj;
+    var out = [], aca = tourActual();
+    ['White', 'Black'].forEach(function (tag) {
+      var pl = jugadorDe(tag); if (!pl || typeof playerTournamentsData !== 'function') return;
+      var ts = (playerTournamentsData(pl).upcoming || []).filter(function (t) { return String(t.id) !== aca && t.start; });
+      if (!ts.length) return;
+      var nom = String(pl.name).trim().split(/\s+/)[0];   // "Diego Flores" → "Diego"
+      var lista = ts.slice(0, 2).map(function (t) { var n = tituloTorneo(t.name); return articulo(n) + ' ' + esc(n); });
+      var t0 = ts[0], ciudad = String(t0.location || '').split(',')[0].trim();
+      var titulo = ts.length === 1 ? nom + ' va a estar jugando ' + lista[0] + (/^(hoy|mañana)$/.test(cuandoArranca(t0.start)) ? ', que arranca ' : ' ') + cuandoArranca(t0.start) + '.'
+        : nom + ' tiene por delante ' + lista.join(' y ') + (ts.length > 2 ? ', entre otros' : '') + '.';
+      var cuerpo = ts.length === 1 ? (ciudad ? 'Es en ' + esc(ciudad) + '.' : '')
+        : 'El primero arranca ' + cuandoArranca(t0.start) + (ciudad ? ', en ' + esc(ciudad) : '') + '.';
+      out.push({ cara: 'ceba', sonido: 'termo', sym: '🗓️', symColor: '#3b6ea8', titulo: titulo, cuerpo: cuerpo,
+                 acc: [['Ver torneo', "window.__pupi.torneo('" + String(t0.id).replace(/'/g, "\\'") + "')"]] });
+    });
+    return (g.dj = out);
+  }
+
+  function esQuieto(n, i) {
+    var ml = _fa.nodes;
+    return !(n.move && NAGS[n.move.nag]) && !(P.g && P.g.ap && P.g.ap.nodo === n) && i !== ml.length - 1;
+  }
+
+  // Momentos para saltar con ‹ ›: errores, jugadones, fin de la teoría y el final.
+  var NAGS = { '??': 1, '?': 1, '?!': 1, '!': 1, '!!': 1 };
+  var SALTOS = { '??': 1, '?': 1, '!': 1, '!!': 1 };   // ‹ › saltean las imprecisiones (?!): son muchas
+  function momentos() {
+    var ml = lineaPrincipal(), out = [];
+    ml.forEach(function (n, i) {
+      if ((n.move && SALTOS[n.move.nag]) || (P.g && P.g.ap && P.g.ap.nodo === n) || i === ml.length - 1) out.push(n);
+    });
+    return out;
+  }
+  function navAcc() {
+    var ms = momentos(), ml = lineaPrincipal(), pos = ml.indexOf(cv.node), ant = null, sig = null;
+    for (var i = 0; i < ms.length; i++) {
+      var k = ml.indexOf(ms[i]);
+      if (k < pos) ant = ms[i];
+      if (k > pos && !sig) sig = ms[i];
+    }
+    P.ant = ant; P.sig = sig;
+    return [['‹', 'window.__pupi.ant()', !ant, 'Momento anterior'], ['Próximo ›', 'window.__pupi.sig()', !sig, 'Saltar al próximo momento importante']];
+  }
+
+  function comentarioJugada(i, node, sinForzar) {
+    var nag = node.move && node.move.nag, ml = lineaPrincipal(), ultimo = ml[ml.length - 1] === node;
+    var semilla = (P.g ? P.g.sem : '') + ':' + i;
+    // En vivo, los textos esperan al final (como la franja de la notación): sólo la cara y un "¡ay!".
+    if (NAGS[nag] && typeof _faComEsperaFinal === 'function' && _faComEsperaFinal()) {
+      var R0 = { '??': ['horror', '¡Nooo! Después te cuento…'], '?': ['preocupado', 'Mmm… no me gustó nada.'], '?!': ['ceja', 'Polémica…'],
+                 '!': ['contento', '¡Epa! ¡Qué buena!'], '!!': ['asombro', '¡¿Qué hizo?!'] }[nag];
+      return { cara: R0[0], titulo: R0[1], chico: true };
+    }
+    if (NAGS[nag]) {
+      var h = '';
+      try { h = _faComHtml(i); } catch (e) {}
+      if (h) {
+        var d = document.createElement('div'); d.innerHTML = h;
+        var q = function (s) { return d.querySelector(s); };
+        var t = q('.cv-mcom-t'), best = q('.cv-mcom-best'), why = q('.cv-mcom-why'), ev = q('.cv-mcom-ev'), box = q('.cv-mcom');
+        var titulo = t ? t.textContent : '', cuerpo = '';
+        // Un poco de variedad en las frases de todos los días (las de la casa salen la mitad de las veces).
+        var VAR = { 'Mmm… polémica.': ['Mmm… no sé, eh.', 'Discutible…', 'Ahí yo dudaba.'], 'Jugada floja.': ['Uy, no.', 'Esa no me gustó.', 'Si lo viera Panno, le corta la mano por esa jugada.', 'Si lo viera Panno, le corta la mano por esa jugada.'] }[titulo];
+        if (VAR && hash(semilla) % 2) titulo = una(VAR, semilla + 'v');
+        var pel0 = pelotazo();
+        if (pel0 && i === pel0.hasta) titulo = '¡Epa, me despertaron! ' + titulo;   // venía durmiendo la siesta
+        if (why) cuerpo += '<div>' + why.innerHTML + '</div>';
+        if (best) cuerpo += '<div>' + best.outerHTML + '</div>';
+        else if (q('.cv-mcom-h .cv-mcom-calc')) cuerpo += '<div>' + q('.cv-mcom-h .cv-mcom-calc').outerHTML + '</div>';
+        // La variante no se repite: está en la franja de la notación, justo abajo.
+        var cara = { '??': 'horror', '?': 'preocupado', '?!': 'ceja', '!': 'contento', '!!': 'asombro' }[nag];
+        // Colgada contestada con otra colgada: grito (pedido del autor).
+        var antNag = node.parent && node.parent.move && node.parent.move.nag, grito = false;
+        if (nag === '??' && antNag === '??') { titulo = '¡SE ESTÁN COLGANDO LA VIDA!'; grito = true; }
+        // Se alternan (pedido del autor): colgada → horror o escupe el mate; floja → preocupado o se atraganta.
+        var alt = hash(semilla + 'cara') % 2;
+        if (nag === '??' && alt) cara = 'escupe';
+        if (nag === '?' && alt) cara = 'atraganta';
+        if (cara === 'horror' && /^¡Uff/.test(titulo)) cara = 'uff';   // la colgada grande (de igualado a perdido): con el puño
+        if (/agilizando/.test(titulo)) cara = 'bostezo';      // se aburre de ver que el perdido sigue jugando
+        if (titulo === 'Ahí yo dudaba.') cara = 'miravos';      // "¡Mirá vos…"
+        if (grito) cara = 'vida';   // "¡SE ESTÁN COLGANDO LA VIDA!": no entiende nada (los signos de pregunta)
+        if (/Todavía sirve/.test(titulo)) cara = 'dale';   // la falsa esperanza: "¡dale que se puede!"
+        // "Se podía comer gratis el caballo de g5.": no se la comió → los ojos como platos (la cara vieja del jugadón).
+        if (why && /comer gratis/.test(why.textContent)) cara = 'nocomio';
+        var snd = cara === 'escupe' ? 'escupe' : cara === 'atraganta' ? 'tos' : null;
+        // La voz del autor (05/10): "Mmm…" en las polémicas, "¡Tremendooo!" en las !, "¡Qué jugadón!" en las !!.
+        if (!snd) snd = /^Mmm/.test(titulo) ? 'mmm' : nag === '!' ? 'tremendo' : nag === '!!' ? 'jugadon' : null;
+        if (cara === 'atraganta' && !grito) titulo = 'Cof, cof… ' + titulo.charAt(0).toLowerCase() + titulo.slice(1);
+        var c = { cara: cara, sonido: snd, sym: nag, symCls: box ? box.className.replace('cv-mcom ', '') : '', titulo: titulo,
+                  ev: ev ? ev.textContent.split('→').pop().trim() : '', cuerpo: cuerpo, grito: grito };
+        if (ultimo) c.cuerpo += '<div style="margin-top:4px">' + fin(true) + '</div>';
+        return c;
+      }
+    }
+    if (P.g && P.g.ap && P.g.ap.nodo === node) return comentarioApertura(P.g.ap);
+    // Lo que quedó de "cómo vienen", de a una parte por semijugada.
+    if (i <= 2) { var pv = previa(); if (pv[i + 1]) return { cara: 'habla', cuerpo: pv[i + 1] }; }
+    if (ultimo && resultado() !== '*') {
+      var pelF = pelotazo(), dormido = pelF && pelF.hasta >= _fa.nodes.length - 1;
+      return { cara: dormido ? 'malhumor' : 'chau', sym: '🏁', symColor: '#555',
+               titulo: tituloFin(), cuerpo: fin(false) };
+    }
+    // Jugada tranquila: el pelotazo (y la siesta), un dato cada 5 jugadas, o nada (toma mate callado).
+    var pel = pelotazo();
+    if (pel && i === pel.desde) return { cara: 'bostezo', titulo: 'Hasta ahora es un pelotazo la partida.' };
+    if (pel && i > pel.desde && i < pel.hasta) return { cara: 'dormido', mudo: true,
+      acc: [['<span class="pupi-emo">📣</span>¡Despertalo al Pupi!', 'window.__pupi.despertar()', false, 'Que se despierte y siga mirando', 'pupi-cartoon pupi-flotante pupi-despierta']] };
+    if (pel && pel.porVos && i === pel.hasta) return { cara: 'despierta', titulo: una(['¿Eh? ¿Qué pasó? ¿Siguen jugando?', '¿Eh? ¿Qué? ¡No, no, si estaba mirando! ¿Siguen jugando?', '¡Epa! ¿Qué pasó? ¿Me perdí algo?'], semilla + 'dz') };
+    var racha = 0;
+    for (var j = i; j >= 0 && esQuieto(_fa.nodes[j], j); j--) racha++;
+    if (racha && racha % 10 === 0) {
+      var nDato = 0;   // cuántos datos salieron antes en esta partida
+      for (var a = 0, r2 = 0; a < i; a++) { r2 = esQuieto(_fa.nodes[a], a) ? r2 + 1 : 0; if (r2 && r2 % 10 === 0 && !(pel && a >= pel.desde && a < pel.hasta)) nDato++; }
+      var dd = dato(nDato);
+      if (dd) return dd;
+    }
+    // Ritmo fijo: una cebada cada 24 medias jugadas (desde la 10.ª), en la primera tranquila del tramo.
+    var marca = i >= 20 ? 20 + Math.floor((i - 20) / 24) * 24 : -1, primera = -1;
+    for (var mq = marca; marca >= 0 && mq <= i; mq++) if (esQuieto(_fa.nodes[mq], mq) && !(pel && mq >= pel.desde && mq <= pel.hasta)) { primera = mq; break; }
+    if (primera === i) return { cara: 'ceba', titulo: '(cebando)', chico: true, sonido: 'termo', pedir: true };
+    // Y cada tanto, algo cortito (1 de cada 4, siempre las mismas jugadas para la misma partida).
+    if (i >= 6 && hash(semilla + 'q') % 4 === 0) {
+      var fr = una(['Todo normal.', '(sonido de mate)', 'Tranqui por ahora.', '(sonido de mate)', 'Mmm…', 'Sigamos.', 'Nada raro.'], semilla + 'f');
+      return fr === '(sonido de mate)' ? { cara: 'tranqui', titulo: fr, chico: true, sonido: 'mate', pedir: true } : { cara: 'habla', titulo: fr, chico: true, pedir: true };
+    }
+    // Un sorbo cada tanto aunque no toque (pedido del autor: hubo 27 semijugadas sin mate).
+    if (!sinForzar && sorbosForzados()[i]) return { cara: 'tranqui', titulo: '(sonido de mate)', chico: true, sonido: 'mate', pedir: true };
+    return { cara: 'tranqui', mudo: true, pedir: true };
+  }
+  // Las jugadas tranquilas donde el Pupi toma mate sí o sí: si pasaron entre 10 y 12 semijugadas (varía, para que
+  // no sea un reloj) sin sorbo ni cebada, en la siguiente callada toma. Mientras duerme la siesta no cuenta.
+  // Se calcula una vez por partida (cambia si llegan más evaluaciones: la firma son los símbolos de las jugadas).
+  function sorbosForzados() {
+    var g = P.g, N = _fa.nodes; if (!g) return {};
+    var firma = (g.despierto || '') + '|' + N.length + ':' + N.map(function (n) { return (n.move && n.move.nag) || ''; }).join(',');
+    if (g.sorbosFirma === firma) return g.sorbos;
+    var out = {}, ult = -1;
+    for (var j = 0; j < N.length; j++) {
+      var c = null; try { c = comentarioJugada(j, N[j], true); } catch (e) {}
+      if (!c) continue;
+      if (c.sonido === 'mate' || c.sonido === 'termo' || c.cara === 'dormido') { ult = j; continue; }
+      if (c.mudo && j - ult >= 10 + hash(g.sem + 'sorbo' + ult) % 3) { out[j] = 1; ult = j; }
+    }
+    g.sorbos = out; g.sorbosFirma = firma;
+    return out;
+  }
+  function tituloFin() {
+    var r = resultado();
+    return r === '1-0' ? 'Ganaron las blancas' : r === '0-1' ? 'Ganaron las negras' : r === '1/2-1/2' ? 'Tablas' : 'Fin';
+  }
+  // El resumen del final: quién se equivocó más y dónde se definió.
+  function fin(corto) {
+    if (typeof _fa === 'undefined' || !hayDatos()) return corto ? 'Y ahí terminó.' : '';
+    var cuenta = { w: { '??': 0, '?': 0 }, b: { '??': 0, '?': 0 } }, peor = null, peorD = 0, peorI = -1;
+    _fa.nodes.forEach(function (n, i) {
+      var nag = n.move && n.move.nag; if (nag !== '??' && nag !== '?') return;
+      var white = _cvMoveNo(n).white, rA = _fa.results[i], rB = i === 0 ? { cp: 20 } : _fa.results[i - 1];
+      cuenta[white ? 'w' : 'b'][nag]++;
+      if (!rA || !rB) return;
+      var d = white ? _faWinP(rB) - _faWinP(rA) : _faWinP(rA) - _faWinP(rB);
+      if (d > peorD) { peorD = d; peor = n; peorI = i; }
+    });
+    var r = resultado(), txt = '', sem = P.g.sem + 'fin';
+    // Contado como lo cuenta uno en el club, con los apellidos y sin planillas de números (pedido del autor, 05/10).
+    var nom = { w: apellido('White') || 'el de blancas', b: apellido('Black') || 'el de negras' };
+    if (corto) return r === '1/2-1/2' ? 'Y con eso, tablas.' : r === '1-0' || r === '0-1'
+      ? 'Y con eso ' + nom[r === '1-0' ? 'w' : 'b'] + ' se llevó el punto.' : 'Y ahí terminó.';
+    var pel = pelotazo();   // durmió la siesta hasta el final
+    if (pel && pel.hasta >= _fa.nodes.length - 1) { P.decisiva = null; return r === '1/2-1/2'
+      ? '¿Eh? ¿Qué? ¿Ya terminó? ¿Tablas? ¿Y para esto me despiertan?'
+      : '¿Eh? ¿Qué pasó? Me perdí el final… ¿y justo ahora me despiertan?'; }
+    function cuantas(n, f) { return n === 1 ? (f ? 'una' : 'una vez') : (['', '', 'dos', 'tres'][n] || 'varias') + (f ? '' : ' veces'); }
+    function flojas(n) { return n === 1 ? 'una jugada floja' : cuantas(n, true) + ' jugadas flojas'; }
+    if (r === '1-0' || r === '0-1') {
+      var g = r === '1-0' ? 'w' : 'b', l = g === 'w' ? 'b' : 'w', cg = cuenta[g], cl = cuenta[l];
+      if (peor && peorD >= 15) {
+        var mn = _cvMoveNo(peor), jug = '<b>' + mn.num + (mn.white ? '.' : '…') + (typeof cvFanHtml === 'function' ? cvFanHtml(peor.move.san) : esc(peor.move.san)) + peor.move.nag + '</b>';
+        P.decisiva = peor;
+        txt += una(['Se definió en ' + jug + '.', 'La partida se rompió en ' + jug + '.', 'Todo se terminó de decidir en ' + jug + '.'], sem + 'd') + ' ';
+      } else P.decisiva = null;
+      // El que perdió
+      if (cl['??'] >= 2) txt += cap(nom[l]) + ' se colgó ' + cuantas(cl['??']) + ': así es imposible.';
+      else if (cl['??'] && cl['?']) txt += (/^el /.test(nom[l]) ? 'Al ' + nom[l].slice(3) : 'A ' + nom[l]) + ' se le juntaron una colgada y ' + flojas(cl['?']) + ', y eso no perdona.';
+      else if (cl['??']) txt += cap(nom[l]) + ' ' + una(['la venía peleando, pero se colgó y ya no hubo vuelta.', 'tuvo una sola colgada, pero alcanzó.'], sem + 'l');
+      else if (cl['?']) txt += cap(nom[l]) + ' no se colgó, pero se fue complicando con ' + flojas(cl['?']) + '.';
+      else txt += cap(nom[l]) + ' no se equivocó feo: le ganaron bien.';
+      // El que ganó
+      var minG = 100;   // peor momento del ganador (expectativa de victoria, 0-100)
+      _fa.results.forEach(function (x) { if (x) { var w = _faWinP(x); minG = Math.min(minG, g === 'w' ? w : 100 - w); } });
+      if (minG <= 20) txt += ' ¡Y eso que ' + nom[g] + ' estuvo con la partida perdida! Lo dio vuelta.';
+      else if (cg['??']) txt += ' ' + cap(nom[g]) + ' también tuvo su colgada, pero zafó.';
+      else if (cg['?']) txt += ' ' + cap(nom[g]) + ' tuvo ' + (cg['?'] === 1 ? 'alguna floja' : 'un par de flojas') + ', nada grave.';
+      else txt += ' ' + cap(nom[g]) + ' ' + una(['jugó limpito, sin una mancha.', 'no regaló nada.'], sem + 'g') + '';
+      return txt;
+    }
+    P.decisiva = null;
+    if (r !== '1/2-1/2') return 'Y ahí terminó.';
+    var cw = cuenta.w, cb = cuenta.b;
+    if (cw['??'] && cb['??']) return 'Hubo colgadas de los dos lados y se terminaron compensando. Repartieron el punto y a otra cosa.';
+    if (cw['??'] || cb['??']) { var k = cw['??'] ? 'w' : 'b'; return cap(nom[k]) + ' se colgó, pero ' + nom[k === 'w' ? 'b' : 'w'] + ' no lo pudo aprovechar. Tablas.'; }
+    if (cw['?'] || cb['?']) return 'Alguna floja por ahí, nada grave. ' + una(['Bien peleada.', 'Repartieron el punto y a otra cosa.'], sem);
+    return 'Ninguno regaló nada. ' + una(['Bien peleada.', 'Tablas justas.'], sem);
+  }
+  function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+  // Apellido del jugador desde el PGN: "Mizzau, Pablo" → "Mizzau"; "MIZZAU PABLO" → "Mizzau".
+  function apellido(tag) {
+    var m = new RegExp('\\[' + tag + ' "([^"]*)"\\]').exec(cv.rawPgn || ''), n = m ? m[1].trim() : '';
+    if (!n || n === '?') return '';
+    n = n.indexOf(',') >= 0 ? n.split(',')[0] : n.split(/\s+/).length > 1 && n.indexOf(',') < 0 && /^[A-ZÁÉÍÓÚÑ]+$/.test(n.split(/\s+/)[0]) ? n.split(/\s+/)[0] : n.split(/\s+/).slice(-1)[0];
+    return n.toLowerCase().replace(/(^|[\s'-])(\p{L})/gu, function (a, b, c) { return b + c.toUpperCase(); });
+  }
+
+  function comentario() {
+    if (P.estado === 'invita') return { cara: 'suplica', titulo: '¿Puedo ver la partida con vos?',
+      acc: [['🧉 Dale, cabezón', 'window.__pupi.si()', false, '', 'pupi-si'], ['No hinchés, Pupi', 'window.__pupi.no()']] };
+    if (P.estado === 'saliendo') return null;
+    var ml = lineaPrincipal();
+    if (!hayDatos()) {
+      if (analizando() && typeof _fa !== 'undefined') {
+        var tot = _fa.nodes.length || ml.length, va = Math.min(tot, Math.max(0, (_fa.ply || 0) - (_fa.desde || 0)));
+        return { cara: 'analiza', titulo: 'Aguantá que le pego una mirada antes…', cuerpo: '<span class="cv-mcom-calc">(voy por la ' + Math.ceil(va / 2) + ' de ' + Math.ceil(tot / 2) + ')</span>' };
+      }
+      return { cara: 'habla', titulo: 'Para comentarla necesito el análisis.', acc: [['📊 Analizar', 'window.__pupi.analizar()', false, '', 'pupi-si']] };
+    }
+    var node = cv.node, i = _fa.nodes.indexOf(node);
+    var c;
+    if (!node || node === cv.root) {
+      var pv = previa();
+      c = { cara: 'concentrado', titulo: P.g && P.g.saludo ? '¡Arrancamos!' : 'Bueno, veamos…',
+        cuerpo: pv[0] || 'Avanzá con ▶ y te voy contando. Con <b>Próximo ›</b> salto directo a lo importante.' };
+    }
+    else if (i < 0) c = { cara: 'tranqui', mudo: true };   // revisando una variante: no dice nada
+    else c = comentarioJugada(i, node);
+    // El dato que le pidieron con el botón (vale para esta jugada; al moverse vuelve lo de siempre).
+    if (P.pedido && P.pedido.node !== node) P.pedido = null;
+    if (P.pedido) c = Object.assign({}, P.pedido.c);
+    else if (c.pedir) c.acc = [['<span class="pupi-emo">🗞️</span>Pedile data de torneos', 'window.__pupi.pedirDato()', false, 'Que te cuente de algún torneo', 'pupi-cartoon pupi-flotante pupi-pide']];
+    c.acc = (c.acc || []).concat(navAcc());
+    if (P.decisiva && c.sym === '🏁') c.acc.unshift(['Ver la jugada', 'window.__pupi.decisiva()', false, '']);
+    return c;
+  }
+
+  // ── Sonidos (sintetizados: no hace falta bajar ningún archivo) ────────────────────────────────
+  // Suenan sólo al avanzar de a UNA jugada (no al saltar), y el 🔊 del panel los apaga.
+  function sonidoOn() { return lsGet('aa_pupi_snd') !== 'no'; }
+  function ruido(c, seg) {
+    var b = c.createBuffer(1, Math.ceil(c.sampleRate * seg), c.sampleRate), d = b.getChannelData(0);
+    for (var i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    var src = c.createBufferSource(); src.buffer = b; return src;
+  }
+  // Sorbo con bombilla: gorgoteo (ráfagas cortas con el filtro saltando) y el "slurp" final que sube.
+  function sonidoMate() {
+    var c = _getAudioCtx(), t = c.currentTime + .02, dur = 1.15, src = ruido(c, dur);
+    var bp = c.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 6;
+    var lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 2600;
+    var g = c.createGain(); g.gain.setValueAtTime(0, t);
+    var x = t;
+    while (x < t + .78) {
+      var on = .025 + Math.random() * .035, off = .02 + Math.random() * .045;
+      bp.frequency.setValueAtTime(380 + Math.random() * 900, x);
+      g.gain.setValueAtTime(0, x); g.gain.linearRampToValueAtTime(.35 + Math.random() * .3, x + .008); g.gain.linearRampToValueAtTime(.02, x + on);
+      x += on + off;
+    }
+    bp.frequency.setValueAtTime(420, x); bp.frequency.exponentialRampToValueAtTime(2300, x + .3);
+    g.gain.setValueAtTime(.05, x); g.gain.linearRampToValueAtTime(.45, x + .06); g.gain.exponentialRampToValueAtTime(.001, x + .32);
+    src.connect(bp); bp.connect(lp); lp.connect(g); g.connect(c.destination);
+    src.start(t); src.stop(t + dur);
+  }
+  // Agua del termo: chorro (ruido filtrado) que va subiendo de tono a medida que se llena el mate.
+  function sonidoTermo() {
+    var c = _getAudioCtx(), t = c.currentTime + .02, dur = 1.5, src = ruido(c, dur);
+    var bp = c.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 3;
+    bp.frequency.setValueAtTime(320, t); bp.frequency.exponentialRampToValueAtTime(1100, t + dur);
+    var hp = c.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 180;
+    var g = c.createGain();
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.32, t + .12);
+    for (var k = .15; k < dur - .2; k += .05) g.gain.setValueAtTime(.24 + Math.random() * .14, t + k);   // el burbujeo
+    g.gain.linearRampToValueAtTime(0, t + dur);
+    src.connect(bp); bp.connect(hp); hp.connect(g); g.connect(c.destination);
+    src.start(t); src.stop(t + dur);
+  }
+  // Escupida: "pfff" (ruido agudo que se apaga rápido).
+  function sonidoEscupe() {
+    var c = _getAudioCtx(), t = c.currentTime + .02, dur = .55, src = ruido(c, dur);
+    var hp = c.createBiquadFilter(); hp.type = 'bandpass'; hp.Q.value = .8;
+    hp.frequency.setValueAtTime(2600, t); hp.frequency.exponentialRampToValueAtTime(1200, t + dur);
+    var g = c.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.55, t + .03); g.gain.exponentialRampToValueAtTime(.001, t + dur);
+    src.connect(hp); hp.connect(g); g.connect(c.destination); src.start(t); src.stop(t + dur);
+  }
+  // Tos: dos golpes de ruido grave.
+  function sonidoTos() {
+    var c = _getAudioCtx(), t0 = c.currentTime + .02;
+    [0, .32].forEach(function (d) {
+      var t = t0 + d, src = ruido(c, .28), bp = c.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 1.2;
+      bp.frequency.setValueAtTime(700, t); bp.frequency.exponentialRampToValueAtTime(350, t + .25);
+      var g = c.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.6, t + .015); g.gain.exponentialRampToValueAtTime(.001, t + .26);
+      src.connect(bp); bp.connect(g); g.connect(c.destination); src.start(t); src.stop(t + .28);
+    });
+  }
+  var SINTE = { mate: sonidoMate, termo: sonidoTermo, escupe: sonidoEscupe, tos: sonidoTos };
+  // Grabaciones del autor: la carpeta sonidos/ de la maqueta (el servidor da la lista). Se reconocen por
+  // palabras del nombre ("sonido de mate 1.ogg", "sonido de cebando mate.ogg", "escupo el mate.ogg",
+  // "tos de atragantado.ogg"…). Si hay varias del mismo, se turnan en orden (1, 2, 1, 2…).
+  // Se les recorta el silencio del principio y del final y se emparejan de volumen.
+  var GRAB = {}, GRAB_N = {}, GRAB_I = {};
+  function claveSonido(nom) {
+    var s = nom.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    return /escup/.test(s) ? 'escupe' : /\btos\b|atragant/.test(s) ? 'tos' : /ceba|termo/.test(s) ? 'termo'
+      : /jugadon/.test(s) ? 'jugadon' : /tremend/.test(s) ? 'tremendo' : /^m{2,}|polemic/.test(s) ? 'mmm'
+      : /mate|sorbo/.test(s) ? 'mate' : null;
+  }
+  // Se bajan recién cuando el Pupi está mirando con el sonido prendido (no en cada visita a la web).
+  var sonidosPedidos = false;
+  function cargarSonidos() {
+    if (sonidosPedidos || !sonidoOn()) return;
+    sonidosPedidos = true;
+    function bajar(nom, url, k, crudo) {
+      fetch(url).then(function (r) { return r.arrayBuffer(); })
+        .then(function (ab) { return _getAudioCtx().decodeAudioData(ab); })
+        .then(function (buf) {
+          // Llegan en cualquier orden: se guardan ordenadas por nombre para que el turno sea 1, 2, 1, 2…
+          var ns = (GRAB_N[k] = GRAB_N[k] || []), bs = (GRAB[k] = GRAB[k] || []), j = 0;
+          while (j < ns.length && ns[j] < nom) j++;
+          ns.splice(j, 0, nom); bs.splice(j, 0, crudo ? recortar(buf, k) : buf);
+        }).catch(function () {});
+    }
+    try {
+      if (!MAQUETA) PUPI_SONIDOS.forEach(function (n) { bajar(n, 'assets/pupi/sonidos/' + n + '.wav?v=' + PUPI_V, n.replace(/\d+$/, ''), false); });
+      else fetch('/__pupi/sonidos/lista').then(function (r) { return r.ok ? r.json() : []; }).then(function (lista) {
+        (lista || []).forEach(function (nom) { var k = claveSonido(nom); if (k) bajar(nom, '/__pupi/sonidos/' + encodeURIComponent(nom), k, true); });
+      }).catch(function () {});
+    } catch (e) {}
+  }
+  // Volumen parejo: no por el pico (un golpecito suelto engaña) sino por el volumen PROMEDIO de la parte que suena
+  // (ventanas de 50 ms por encima del 10% de la más fuerte), que es lo que oye el oído. El de cebar vino ~100 veces
+  // más bajo que los otros. Si al subirlo algún pico pasa de 0,8, un limitador suave lo redondea (sin distorsión fea).
+  var SND_RMS = 0.09;
+  // Retoques a pedido del autor: el de cebar, más bajo (la mitad del volumen) y de 3 segundos (eran ~8 s de chorro).
+  // vol = multiplica el volumen parejo; seg = largo máximo en segundos (se apaga despacito al final).
+  var SND_AJUSTE = { termo: { vol: 0.5, seg: 3 } };
+  function recortar(buf, clave) {
+    var aj = SND_AJUSTE[clave] || {};
+    var c = _getAudioCtx(), d = buf.getChannelData(0), n = d.length, pico = 0, i, sr = buf.sampleRate;
+    for (i = 0; i < n; i++) pico = Math.max(pico, Math.abs(d[i]));
+    // Silencio de las puntas: por VOLUMEN en tramos de 20 ms (no por el pico: el ruido de fondo del celular, con
+    // algún chasquido, engañaba y quedaban 4 segundos de nada antes de la escupida). Se queda desde el primer tramo
+    // que llega al 8% del más fuerte hasta el último, con un margen (60 ms antes, 150 ms después).
+    var w0 = Math.max(1, Math.round(sr * .02)), env = [], emx = 0;
+    for (i = 0; i + w0 <= n; i += w0) { var e2 = 0; for (var t0 = i; t0 < i + w0; t0++) e2 += d[t0] * d[t0]; e2 = Math.sqrt(e2 / w0); env.push(e2); if (e2 > emx) emx = e2; }
+    var p0 = 0, p1 = env.length - 1;
+    while (p0 < env.length && env[p0] < emx * .08) p0++;
+    while (p1 > p0 && env[p1] < emx * .08) p1--;
+    var a = Math.max(0, p0 * w0 - Math.round(sr * .06)), b = Math.min(n - 1, (p1 + 1) * w0 + Math.round(sr * .15));
+    var w = Math.max(1, Math.round(sr * .05)), vs = [], mx = 0;
+    for (i = a; i + w <= b; i += w) { var q = 0; for (var t = i; t < i + w; t++) q += d[t] * d[t]; q = Math.sqrt(q / w); vs.push(q); if (q > mx) mx = q; }
+    var act = vs.filter(function (v) { return v > mx * .1; }), rms = act.length ? Math.sqrt(act.reduce(function (s, v) { return s + v * v; }, 0) / act.length) : 0;
+    var k = (rms ? SND_RMS / rms : (pico ? .8 / pico : 1)) * (aj.vol || 1);
+    var corte = aj.seg && b - a > aj.seg * sr;
+    if (corte) b = a + Math.round(aj.seg * sr);
+    var out = c.createBuffer(buf.numberOfChannels, b - a + 1, buf.sampleRate);
+    for (var ch = 0; ch < buf.numberOfChannels; ch++) {
+      var src = buf.getChannelData(ch), dst = out.getChannelData(ch);
+      var L = b - a + 1, fi = Math.round(sr * .01), fo = Math.round(sr * (corte ? .5 : .06));   // si se acortó, se apaga despacito (medio segundo)   // fundido cortito en las puntas (sin "click")
+      for (i = a; i <= b; i++) {
+        var x = src[i] * k, ax = Math.abs(x), j = i - a;
+        x = ax <= .8 ? x : Math.sign(x) * (.8 + .19 * Math.tanh((ax - .8) / .19));
+        if (j < fi) x *= j / fi; else if (L - j < fo) x *= (L - j) / fo;
+        dst[j] = x;
+      }
+    }
+    return out;
+  }
+  // Lo que está sonando: al cambiar de jugada se corta (con un fundido de 0,12 s). Antes seguía hasta el final
+  // aunque ya estuvieras tres jugadas más adelante (el de cebar dura ~8 s).
+  var SONANDO = null;
+  function callar() {
+    var s = SONANDO; SONANDO = null;
+    if (!s) return;
+    try { var t = s.ctx.currentTime; s.g.gain.cancelScheduledValues(t); s.g.gain.setValueAtTime(s.g.gain.value, t); s.g.gain.linearRampToValueAtTime(0, t + .12); s.src.stop(t + .14); } catch (e) {}
+  }
+  function tocar(buf) {
+    var ctx = _getAudioCtx(), src = ctx.createBufferSource(), g = ctx.createGain();
+    src.buffer = buf; src.connect(g); g.connect(ctx.destination); src.start();
+    var s = SONANDO = { ctx: ctx, src: src, g: g, buf: buf };
+    src.onended = function () { if (SONANDO === s) SONANDO = null; };
+  }
+  function sonar(c) {
+    var prev = P.sndPrev; P.sndPrev = cv.node;
+    if (prev !== cv.node) callar();   // cambió la jugada (para adelante, para atrás o salto): se calla lo anterior
+    if (!c || !c.sonido || !sonidoOn() || !prev || cv.node.parent !== prev) return;
+    try {
+      var g = GRAB[c.sonido];
+      if (g && g.length) { var i = GRAB_I[c.sonido] || 0; tocar(g[i % g.length]); GRAB_I[c.sonido] = i + 1; }
+      else if (SINTE[c.sonido]) SINTE[c.sonido]();   // sin grabación y sin versión de prueba (las voces): nada
+    } catch (e) {}
+  }
+
+  // ── Pintar ──────────────────────────────────────────────────────────────────────────────────────
+  function pintar(c) {
+    if (!c) return;
+    // Los botones de historieta (despertarlo, pedirle data) flotan en la esquina de arriba a la derecha.
+    function boton(a) {
+      return '<button type="button" class="pupi-btn ' + (a[4] || (/^‹|›$/.test(a[0]) ? 'pupi-nav' : '')) + '" onclick="' + a[1] + '"' + (a[2] ? ' disabled' : '') + (a[3] ? ' title="' + a[3] + '"' : '') + '>' + a[0] + '</button>';
+    }
+    function flota(a) { return /pupi-flotante/.test(a[4] || ''); }
+    var accH = (c.acc || []).filter(function (a) { return !flota(a); }).map(boton).join('');
+    var flotaH = (c.acc || []).filter(flota).map(boton).join('');
+    var head = (c.sym ? '<span class="pupi-sym ' + (c.symCls || '') + '"' + (c.symColor ? ' style="--mc:' + c.symColor + '"' : '') + '>' + c.sym + '</span>' : '')
+      + '<span class="pupi-t">' + esc(c.titulo || '') + '</span>' + (c.ev ? '<span class="pupi-ev">' + esc(c.ev) + '</span>' : '');
+    if (c.mudo) head = '';
+    var html = c.cara + '|' + head + '|' + (c.cuerpo || '') + '|' + accH + '|' + flotaH + '|' + !!c.chico + !!c.mudo;
+    if (html === P.html) return;
+    P.html = html;
+    elGlobo.classList.toggle('pupi-chico', !!c.chico);
+    elGlobo.classList.toggle('pupi-mudo', !!c.mudo);
+    elGlobo.classList.toggle('pupi-grito', !!c.grito);   // callado: sin globo, sólo ‹ Próximo ›
+    elH.innerHTML = head; elB.innerHTML = c.cuerpo || ''; elAcc.innerHTML = accH; elFlota.innerHTML = flotaH;
+    var sem = cv.node ? cv.node.fen : '', av = avatar(c.cara, sem);
+    if (c.cara !== P.cara || av !== P.av) {
+      var cambioCara = c.cara !== P.cara;
+      P.cara = c.cara; P.av = av;
+      elAv.innerHTML = av;
+      if (!cambioCara) return;
+      elAv.setAttribute('data-cara', c.cara);
+      elAv.classList.remove('pupi-pop', 'pupi-tiembla'); void elAv.offsetWidth;
+      elAv.classList.add(c.cara === 'horror' || c.cara === 'uff' ? 'pupi-tiembla' : 'pupi-pop');
+    }
+  }
+  function actualizar() {
+    if (P.raf) return;
+    P.raf = setTimeout(function () {
+      P.raf = 0;
+      if (cv.root !== P.root) nuevaPartida();
+      if (!visible()) return;
+      if (P.estado === 'si') { apertura(); if (!hayDatos()) pedirAnalisis(); cargarSonidos(); precargarCaras(); }
+      var cc = comentario(); pintar(cc); sonar(cc);
+      // Mientras analiza, refrescar el "voy por la jugada…"
+      clearTimeout(P.esperaT);
+      if (P.estado === 'si' && (analizando() || !hayDatos())) P.esperaT = setTimeout(function () { P.html = ''; actualizar(); }, 700);
+    });
+  }
+  function nuevaPartida() {
+    P.root = cv.root; P.html = ''; P.decisiva = null; P.pedido = null; P.mazo = null;
+    var cab = String(cv.rawPgn || '').slice(0, 600).match(/\[(White|Black|Date|Round) "[^"]*"\]/g);
+    P.g = { sem: cab ? cab.join('') : String(Math.random()), pedido: false, saludo: false };
+    if (P.estado === 'si' || P.estado === 'invita') entrar();
+  }
+
+  // ── Ir a otro lado (un torneo, Aperturas) y que Atrás traiga la partida de vuelta ─────────────
+  // Como el clic en el nombre de un jugador (cvClickPlayer): se guarda una instantánea de la partida y,
+  // cuando Atrás vuelve a su dirección, se reabren el torneo de abajo y el visor en la misma jugada.
+  // Antes la partida se perdía: el torneo nuevo reemplazaba al de abajo y Aperturas pisaba la dirección.
+  var VOLVER = null;
+  function salirA(fn) {
+    VOLVER = null;
+    try {
+      if (_cvHistoryPushed && _cvTourGames && _cvTourGames.length) {
+        var to = document.getElementById('tour-overlay'), sec = document.querySelector('.section.active');
+        VOLVER = {
+          snap: { games: _cvTourGames, keys: _cvShareKeys, idx: _cvTourIdx, name: _cvTourName, loc: _cvTourLoc, from: _cvFromTournament,
+                  pgnKey: _cvTourPgnKey, liveCtx: _liveCtx, liveParams: _liveParams, bcBaseKey: _bcBaseKey, bcArgMode: _bcArgMode },
+          url: location.search, ply: lineaPrincipal().indexOf(cv.node) + 1,
+          tour: to && to.classList.contains('open') ? String(_tdTourKey) : null,
+          sec: sec ? sec.id.replace(/^s-/, '') : null
+        };
+      }
+    } catch (e) { VOLVER = null; }
+    try { _cvHistoryPushed = false; closeChessViewer(); } catch (e) {}
+    setTimeout(fn, 30);
+  }
+  // Al volver desde Aperturas, el Atrás de la app ve otra pestaña activa y salta a la de inicio, pisando la
+  // dirección de la partida antes de que lleguemos. En ESE caso (volviendo a la partida del Pupi) sólo se
+  // cambia de pestaña, sin tocar la dirección.
+  var goToApp = window.goTo;
+  if (typeof goToApp === 'function') window.goTo = function (sec) {
+    if (VOLVER && typeof _navDesdePop !== 'undefined' && _navDesdePop && location.search === VOLVER.url) {
+      try { _secMostrar(VOLVER.sec || sec); } catch (e) {}
+      return;
+    }
+    return goToApp.apply(this, arguments);
+  };
+  window.addEventListener('popstate', function () {
+    var v = VOLVER;
+    if (!v || location.search !== v.url) return;
+    VOLVER = null;
+    try { if (v.sec) _secMostrar(v.sec); } catch (e) {}
+    setTimeout(function () {   // después de que la app cierre lo suyo
+      var ch = document.getElementById('chess-overlay');
+      if (ch && ch.classList.contains('open')) return;
+      try {
+        var to = document.getElementById('tour-overlay');
+        if (v.tour && !(to && to.classList.contains('open') && String(_tdTourKey) === v.tour)) { _tourHistoryPushed = true; openTournamentByKey(v.tour); }
+        _cvReopenViewer(v.snap);
+        try { history.replaceState(history.state, '', v.url); } catch (e) {}
+        if (v.ply) setTimeout(function () { var n = lineaPrincipal()[v.ply - 1]; if (n) cvSetNode(n); }, 400);
+      } catch (e) {}
+    }, 0);
+  });
+
+  // Lo que tocan los botones
+  window.__pupi = {
+    si: function () {
+      lsSet('aa_pupi', 'si'); P.estado = 'si'; if (P.g) P.g.saludo = true;
+      pintar({ cara: 'gracias', titulo: '¡Buenísimo! Cebo uno y arrancamos.' });
+      setTimeout(function () { P.html = ''; actualizar(); }, 1300);
+    },
+    no: function () { irse('Al cabo que ni quería verla.', 'ofendido'); },
+    analizar: function () { if (P.g) P.g.pedido = false; pedirAnalisis(); P.html = ''; actualizar(); },
+    ant: function () { irA(P.ant); }, sig: function () { irA(P.sig); }, decisiva: function () { irA(P.decisiva); },
+    // Cierra la partida y abre el torneo (si no, queda tapado detrás del visor). Con Atrás, vuelve a la partida.
+    torneo: function (key) { salirA(function () { _tourHistoryPushed = false; openTournamentByKey(key); }); },
+    aperturas: function () {
+      var n = P.g && P.g.ap && P.g.ap.n;
+      salirA(function () { if (n && typeof _apIrDesdeAfuera === 'function') _apIrDesdeAfuera(n); else cvAperturaEnExplorador(); });
+    },
+    // "¡Despertalo al Pupi!": la siesta termina en esta jugada y sigue comentando normal el resto de la partida.
+    despertar: function () {
+      var i = _fa.nodes.indexOf(cv.node); if (!P.g || i < 0) return;
+      P.g.despierto = i; P.html = ''; actualizar();
+    },
+    // "Pedile data de torneos": uno al azar (los próximos de los que juegan + los que se juegan ahora o pronto),
+    // sin repetir hasta que se acaben. Con "Otro" pide el siguiente.
+    pedirDato: function () {
+      if (!P.mazo || !P.mazo.length) {
+        var aca = tourActual();
+        P.mazo = datosJugadores().concat(torneosDatos().filter(function (d) { return String(d.key) !== aca; }).map(function (d) {
+          return { cara: 'guino', sym: '🗞️', symColor: '#3b6ea8', titulo: d.t, cuerpo: d.c,
+                   acc: [['Ver torneo', "window.__pupi.torneo('" + String(d.key).replace(/'/g, "\\'") + "')"]] };
+        }));
+        for (var k = P.mazo.length - 1; k > 0; k--) { var r = Math.floor(Math.random() * (k + 1)), x = P.mazo[k]; P.mazo[k] = P.mazo[r]; P.mazo[r] = x; }
+      }
+      var d = P.mazo.shift();
+      var c = d ? Object.assign({}, d, { sonido: null, acc: (d.acc || []).concat([['🎲 Otro', 'window.__pupi.pedirDato()', false, 'Otro dato', 'pupi-cartoon pupi-pide']]) })
+                : { cara: 'resignado', titulo: 'Uh, ahora no tengo ningún torneo para contarte. Preguntame más tarde.' };
+      P.pedido = { node: cv.node, c: c }; P.html = ''; actualizar();
+    },
+    // Sólo en la maqueta: pasa las caras (caras/*.png → webp) y los sonidos (ya recortados y emparejados → wav
+    // mono 22 kHz) a ajedrez-argentino/assets/pupi/. Se corre en la consola: await __pupi.hornear().
+    // Después: actualizar PUPI_CARAS / PUPI_SONIDOS, subir PUPI_V y correr pasar-al-index.cjs.
+    hornear: async function () {
+      if (!MAQUETA) return 'sólo en la maqueta';
+      var out = [];
+      function wav(b) {
+        var n = b.length, sr = b.sampleRate, d = b.getChannelData(0), ab = new ArrayBuffer(44 + n * 2), v = new DataView(ab);
+        function w(o, s) { for (var i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); }
+        w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVE'); w(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+        v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, n * 2, true);
+        for (var i = 0; i < n; i++) { var x = Math.max(-1, Math.min(1, d[i])); v.setInt16(44 + i * 2, x < 0 ? x * 32768 : x * 32767, true); }
+        return new Blob([ab], { type: 'audio/wav' });
+      }
+      var lista = await fetch('/__pupi/caras/lista').then(function (r) { return r.json(); });
+      for (var n of lista.sort()) {
+        var im = await new Promise(function (ok) { var x = new Image(); x.onload = function () { ok(x); }; x.src = '/__pupi/caras/' + n + '?v=' + Date.now(); });
+        var c = document.createElement('canvas'); c.width = im.naturalWidth; c.height = im.naturalHeight; c.getContext('2d').drawImage(im, 0, 0);
+        var b = await new Promise(function (ok) { c.toBlob(ok, 'image/webp', 0.9); });
+        await fetch('/__pupi/hornear?dir=caras&n=' + n.replace(/\.\w+$/, ''), { method: 'POST', body: b });
+        out.push(n.replace(/\.\w+$/, ''));
+      }
+      cargarSonidos(); await new Promise(function (r) { setTimeout(r, 1500); });
+      for (var k of Object.keys(GRAB)) for (var j = 0; j < GRAB[k].length; j++) {
+        var src = GRAB[k][j], oc = new OfflineAudioContext(1, Math.ceil(src.duration * 22050), 22050), s = oc.createBufferSource();
+        s.buffer = src; s.connect(oc.destination); s.start();
+        await fetch('/__pupi/hornear?dir=sonidos&n=' + k + (j + 1), { method: 'POST', body: wav(await oc.startRendering()) });
+        out.push(k + (j + 1) + '.wav');
+      }
+      return out.join(', ');
+    },
+    estado: function () { return P.estado; }, _P: P, _mate: function () { sonidoMate(); }, _termo: function () { sonidoTermo(); }, _grab: GRAB, _grabN: GRAB_N, _sonando: function () { return SONANDO; }, _torneos: function () { return torneosDatos(); }
+  };
+
+  imgsListas.then(function () { P.cara = ''; P.html = ''; actualizar(); });
+
+  // Engancharse a la navegación del visor: cada vez que se marca una jugada.
+  var orig = window.cvHighlight;
+  window.cvHighlight = function () { var r = orig.apply(this, arguments); try { actualizar(); } catch (e) { console.error('pupi', e); } return r; };
+  actualizar();
+})();
+</script>
+<!-- PUPI:FIN -->
 
 </body></html>
