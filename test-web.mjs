@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2324;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2326;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -9561,14 +9561,35 @@ console.log('\n── Planes típicos de la apertura ──');
   const h = T(Object.assign({}, base, { arg: true }));
   chk(/jugada 21/.test(h) && /\[AR\] Pérez – López/.test(h) && /<line /.test(h) && /fill="#1"/.test(h),
       'la tarjeta muestra la jugada, los apellidos (con bandera si juega un argentino) y dibuja la flecha y la casilla marcadas');
-  const B = new Function(extraerFuncion('_estBarra') + '; return _estBarra;')();
+  // _estBarra usa la leyenda por defecto (_EST_CLEY) y escHtml: se traen del index tal cual.
+  const CLEY = (/var _EST_CLEY = [^;]+;/.exec(SRC) || [''])[0];
+  const ESC = 'function escHtml(s){return String(s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;"}[c];});}';
+  const B = new Function(CLEY + ESC + extraerFuncion('_estBarra') + '; return _estBarra;')();
   const b = B({ t: 71, d: 21, p: 8 });
   chk(/width:71%/.test(b) && /width:21%/.test(b) && /width:8%/.test(b) && /aria-label="Gana la torre 71%, tablas 21%, gana la pieza 8%"/.test(b) && />8%</.test(b) && !B({ t: 95, d: 5, p: 0 }).includes('class="bp"'),
       'los cuadros: barra con los tres porcentajes, su texto para el lector de pantalla, y sin el tramo vacío');
+  // 07/10: cada lección trae su leyenda (Lucena y Philidor: gana el del peón / tablas / gana el que defiende) y las
+  // posiciones de libro llevan su botón ("Ver la defensa" en las tablas, "Ver cómo se gana" en las ganadas).
+  const b2 = B({ t: 9, d: 90, p: 1 }, ['gana el del peón', 'tablas', 'gana el que defiende']);
+  chk(/aria-label="Gana el del peón 9%, tablas 90%, gana el que defiende 1%"/.test(b2) && /title="gana el que defiende: 1%"/.test(b2)
+      && btn({ libro: 'De la Villa, Final 52', fabricada: true, sim: { sans: [], tablas: true } }) === '▶ Ver la defensa'
+      && btn({ libro: 'De la Villa, Final 53', fabricada: true, sim: { sans: [], ganada: true } }) === '▶ Ver cómo se gana'
+      && /Posición de libro/.test(T(Object.assign({}, base, { libro: 'De la Villa, Final 52', fabricada: true, sim: { sans: [], tablas: true } }))),
+      'la leyenda de los cuadros es de cada lección, y las posiciones de libro llevan su nombre y su botón');
   chk(/if \(typeof _estPintar === 'function' && !_estPintar\(\)\) return;/.test(extraerFuncion('renderPartidas'))
       && /_estVista = 'aperturas'/.test(extraerFuncion('_apIrDesdeAfuera')) && /_SLUG_SEC\.estudiar = 'favoritos'/.test(SRC)
       && /_cvTourGames\[_cvTourIdx\] === _estSimNota\.pgn/.test(extraerFuncion('cvRender960Note')),
       '🔒 las Aperturas siguen igual (Finales se pinta aparte), ?ir=estudiar lleva a la pestaña, abrir una apertura desde afuera vuelve a Aperturas, y el cartel del simulado sólo sale en ESE final');
+  // 07/10: posiciones de libro de torre contra pieza menor (sin peones): gana la TORRE (sim.gana), no "el del peón";
+  // y si después de la línea del libro sigue la tablebase (sim.tbDesde), el cartel lo dice.
+  const S = new Function('var _estK = {}, _estVista = "leccion:torre-menor", _estSimNota = null, _cvTourGames, _cvShareKeys, _cvFromTournament, _cvTourName, _cvTourLoc;'
+    + ESC + 'async function openTourGameByIndex() {} async ' + extraerFuncion('estSim')
+    + '; return function (e) { _estK.x = e; estSim("x"); return { pgn: _cvTourGames[0], nota: _estSimNota.html }; };')();
+  const kb = S({ fen: '8/8/8/8/8/5K2/7R/5k2 w - - 0 1', libro: 'De la Villa, Diagrama 1.24', nota: 'Zugzwang.', sim: { sans: ['Rf7', 'Kg1', 'Rg7+'], ganada: true, gana: '1-0', tbDesde: 1 } });
+  const bl = S({ fen: '8/8/8/8/8/5K2/7R/5k2 w - - 0 1', libro: 'De la Villa, Final 7', sim: { sans: ['Rf7', 'Kg1'], tablas: true } });
+  chk(/\[Result "1-0"\]/.test(kb.pgn) && /1\. Rf7 Kg1 2\. Rg7\+ 1-0/.test(kb.pgn) && /La primera jugada es la del libro; después sigue la tablebase/.test(kb.nota)
+      && /\[Result "1\/2-1\/2"\]/.test(bl.pgn) && !/sigue la tablebase/.test(bl.nota),
+      'posición de libro sin peones: gana la torre (1-0) y el cartel avisa desde dónde juega la tablebase; las de tablas, sin ese aviso');
 }
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
 console.log('   Corrieron ' + corridas + ' de ' + ESPERADAS + ' comprobaciones.'

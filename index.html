@@ -20495,7 +20495,9 @@ var _estVista = 'aperturas';   // 'aperturas' | 'finales' | 'leccion:<id>'
 var _estDatos = {}, _estK = {}, _estN = 0, _estColSec = '', _estColPag = 12;
 var _EST_LECCIONES = [
   { id: 'torre-menor', titulo: 'Torre contra pieza menor', fen: '8/5pk1/6p1/3b3p/7P/5RP1/5PK1/8 w - - 0 1',
-    sub: 'Cuándo gana la torre y cuándo se salvan el alfil o el caballo: las reglas, cuadros con números reales de la base, finales simulados y una colección de 175 partidas.' }
+    sub: 'Cuándo gana la torre y cuándo se salvan el alfil o el caballo: las reglas, cuadros con números reales de la base, finales simulados y una colección de 175 partidas.' },
+  { id: 'lucena-philidor', titulo: 'Torre y peón contra torre: Lucena y Philidor', fen: '3K4/3P1k2/8/8/8/8/7r/4R3 b - - 0 1',
+    sub: 'El final de torres más importante: la defensa Philidor, los jaques del lado largo, la posición Lucena y el puente. Posiciones de libro comprobadas con la tablebase y errores de verdad de nuestra base.' }
 ];
 (function () {
   try {
@@ -20599,7 +20601,7 @@ function _estLeccion(el, id) {
     var ley = p.leyenda;
     p.grupos.forEach(function (g) {
       var xs = ej[g.clave] || []; if (!xs.length) return;
-      if (g.cuadro) { h += (g.titulo ? '<h5 class="est-h3">' + escHtml(g.titulo) + '</h5>' : '') + (g.texto ? '<p class="est-texto est-chico">' + g.texto + '</p>' : '') + _estCuadro(xs, g.cuadro); return; }
+      if (g.cuadro) { h += (g.titulo ? '<h5 class="est-h3">' + escHtml(g.titulo) + '</h5>' : '') + (g.texto ? '<p class="est-texto est-chico">' + g.texto + '</p>' : '') + _estCuadro(xs, g.cuadro, L.cley); return; }
       if (g.titulo) h += '<h5 class="est-h3">' + escHtml(g.titulo) + (g.mapa ? '' : ' <span class="est-n">(' + xs.length + ')</span>') + '</h5>';
       if (g.texto) h += '<p class="est-texto est-chico">' + g.texto + '</p>';
       if (ley) { h += '<p class="est-ley">' + ley + '</p>'; ley = null; }
@@ -20618,7 +20620,8 @@ function _estAp(n) { return escHtml(String(n || '?').split(',')[0].trim()); }
 function _estTarjeta(e) {
   var k = 'e' + (++_estN); _estK[k] = e;
   var anio = String(e.d || '').slice(0, 4), nom, meta;
-  if (e.fabricada) { nom = 'Posición de estudio'; meta = '<span class="est-etq">armada y verificada con la tablebase</span>'; }
+  if (e.libro) { nom = 'Posición de libro'; meta = escHtml(e.libro) + '<br><span class="est-etq">comprobada con la tablebase</span>'; }
+  else if (e.fabricada) { nom = 'Posición de estudio'; meta = '<span class="est-etq">armada y verificada con la tablebase</span>'; }
   else {
     nom = (e.arg ? _flagImg('ARG') + ' ' : '') + _estAp(e.w) + ' – ' + _estAp(e.b);
     meta = escHtml(e.evento || '') + (/^\d{4}$/.test(anio) ? ' · ' + anio : '') + ' · ' + _estRes(e.r) + '<br>'
@@ -20628,7 +20631,8 @@ function _estTarjeta(e) {
     par = function (t) { return '<button type="button" class="est-btn" onclick="estVer(\'' + k + '\')">' + t + '</button>'; },
     link = function (f, t) { return '<button type="button" class="est-link" onclick="' + f + '(\'' + k + '\')">' + t + '</button>'; };
   if (!e.sim) b = par('▶ Ver la partida');
-  else if (e.fabricada) b = sim('▶ Ver cómo se gana (simulado)');
+  else if (e.libro) b = sim(e.sim.tablas ? '▶ Ver la defensa' : '▶ Ver cómo se gana') + (e.pgn ? link('estVer', 'o la partida entera') : '');
+  else if (e.fabricada) b = sim(e.sim.tablas ? '▶ Ver la defensa (simulado)' : '▶ Ver cómo se gana (simulado)');
   else if (e.sim.tablas) b = sim('▶ Ver cómo se entablaba (simulado)') + link('estVer', 'o la partida original (terminó ' + _estRes(e.r) + ')');
   else if (e.armada) b = sim('▶ Ver el final simulado') + link('estVer', 'o la partida original (' + _estRes(e.r) + ')');
   else if (e.sim.ganada === false) b = sim('▶ Ver cómo se ganaba (simulado)') + link('estVer', 'o la partida original (terminó ' + _estRes(e.r) + ')');
@@ -20638,18 +20642,23 @@ function _estTarjeta(e) {
     + (e.nota ? '<div class="est-nota">' + escHtml(e.nota) + '</div>' : '') + '<div class="est-bots">' + b + '</div></div>';
 }
 // Cuadro de porcentajes: una barra por situación (verde gana la torre, gris tablas, naranja gana la pieza).
-function _estBarra(x) {
+// Cada lección puede traer su propia leyenda (def.cley: los tres rótulos); sin ella, la de torre contra pieza menor.
+var _EST_CLEY = ['gana la torre', 'tablas', 'gana la pieza'];
+function _estBarra(x, ley) {
+  ley = ley || _EST_CLEY;
   var sp = function (v, c, t) { return v > 0 ? '<span class="' + c + '" style="width:' + v + '%" title="' + t + ': ' + v + '%">' + (v >= 7 ? v + '%' : '') + '</span>' : ''; };
-  return '<div class="est-barra" role="img" aria-label="Gana la torre ' + x.t + '%, tablas ' + x.d + '%, gana la pieza ' + x.p + '%">'
-    + sp(x.t, 'bt', 'gana la torre') + sp(x.d, 'bd', 'tablas') + sp(x.p, 'bp', 'gana la pieza') + '</div>';
+  var cap = function (s) { return s.charAt(0).toUpperCase() + s.slice(1); };
+  return '<div class="est-barra" role="img" aria-label="' + escHtml(cap(ley[0]) + ' ' + x.t + '%, ' + ley[1] + ' ' + x.d + '%, ' + ley[2] + ' ' + x.p + '%') + '">'
+    + sp(x.t, 'bt', ley[0]) + sp(x.d, 'bd', ley[1]) + sp(x.p, 'bp', ley[2]) + '</div>';
 }
-function _estCuadro(xs, tipo) {
-  var h = '<div class="est-cuadro"><div class="est-cley"><span><i class="bt"></i>gana la torre</span><span><i class="bd"></i>tablas</span><span><i class="bp"></i>gana la pieza</span></div>';
+function _estCuadro(xs, tipo, ley) {
+  ley = ley || _EST_CLEY;
+  var h = '<div class="est-cuadro"><div class="est-cley"><span><i class="bt"></i>' + escHtml(ley[0]) + '</span><span><i class="bd"></i>' + escHtml(ley[1]) + '</span><span><i class="bp"></i>' + escHtml(ley[2]) + '</span></div>';
   xs.forEach(function (f) {
     h += tipo === 'pieza'
-      ? '<div class="est-cfila"><div class="est-cet">' + escHtml(f.et) + '</div><div class="est-barras"><div class="est-csub">contra el alfil</div>' + _estBarra(f.alfil)
-        + '<div class="est-csub">contra el caballo</div>' + _estBarra(f.caballo) + '</div><div class="est-cn">' + f.alfil.n + '<br>y ' + f.caballo.n + '<br>partidas</div></div>'
-      : '<div class="est-cfila"><div class="est-cet">' + escHtml(f.et) + '</div><div class="est-barras">' + _estBarra(f) + '</div><div class="est-cn">' + f.n.toLocaleString('es-AR') + ' partidas</div></div>';
+      ? '<div class="est-cfila"><div class="est-cet">' + escHtml(f.et) + '</div><div class="est-barras"><div class="est-csub">contra el alfil</div>' + _estBarra(f.alfil, ley)
+        + '<div class="est-csub">contra el caballo</div>' + _estBarra(f.caballo, ley) + '</div><div class="est-cn">' + f.alfil.n + '<br>y ' + f.caballo.n + '<br>partidas</div></div>'
+      : '<div class="est-cfila"><div class="est-cet">' + escHtml(f.et) + '</div><div class="est-barras">' + _estBarra(f, ley) + '</div><div class="est-cn">' + f.n.toLocaleString('es-AR') + ' partidas</div></div>';
   });
   return h + '</div>';
 }
@@ -20676,12 +20685,17 @@ var _EST_SECS = [['alfil:dos', 'Alfil · dos flancos'], ['alfil:uno', 'Alfil · 
   ['caballo:dos', 'Caballo · dos flancos'], ['caballo:uno', 'Caballo · un flanco'], ['caballo:sin', 'Caballo · sin peones']];
 function _estColeccion(D) {
   var el = document.getElementById('est-col'); if (!el || !D.coleccion) return;
-  var C = D.coleccion, todas = [];
-  _EST_SECS.forEach(function (s) { (C[s[0]] || []).forEach(function (e) { e.sec = s[0]; todas.push(e); }); });
-  var xs = _estColSec ? todas.filter(function (e) { return e.sec === _estColSec; }) : todas, RES = { torre: 'ganó la torre', tablas: 'tablas', pieza: 'ganó la pieza' };
+  // Cada lección puede traer sus secciones (def.secciones) y los rótulos del resultado (def.cres); sin ellos, los de
+  // torre contra pieza menor.
+  var C = D.coleccion, todas = [], def = D.def || {}, SECS = def.secciones || _EST_SECS;
+  SECS.forEach(function (s) { (C[s[0]] || []).forEach(function (e) { e.sec = s[0]; todas.push(e); }); });
+  if (!todas.length) { el.innerHTML = ''; return; }   // lección sin colección (todavía)
+  if (_estColSec && !SECS.some(function (s) { return s[0] === _estColSec; })) _estColSec = '';   // venía de otra lección
+  var xs = _estColSec ? todas.filter(function (e) { return e.sec === _estColSec; }) : todas, RES = def.cres || { torre: 'ganó la torre', tablas: 'tablas', pieza: 'ganó la pieza' };
+  var TB0 = { gana: 'ganado', tablas: 'tablas', pierde: 'perdido' };
   var h = '<h4 class="est-h2">📚 La colección: ' + todas.length + ' partidas</h4>'
     + '<p class="est-texto">Partidas lentas de la base con este final, elegidas y revisadas una por una: primero las de argentinos. Tocá una para verla entera desde que empieza el final.</p>'
-    + '<div class="est-chips">' + [['', 'Todas']].concat(_EST_SECS).map(function (s) {
+    + '<div class="est-chips">' + [['', 'Todas']].concat(SECS).map(function (s) {
       var n = s[0] ? (C[s[0]] || []).length : todas.length;
       return '<button type="button" class="est-chip' + (s[0] === _estColSec ? ' on' : '') + '" aria-pressed="' + (s[0] === _estColSec) + '" onclick="estColSec(\'' + s[0] + '\')">' + s[1] + ' <small>' + n + '</small></button>';
     }).join('') + '</div><div class="est-grilla">';
@@ -20691,7 +20705,7 @@ function _estColeccion(D) {
     h += '<button type="button" class="est-ej est-ej-col" onclick="estVer(\'' + k + '\')" aria-label="Ver ' + _estAp(e.w) + ' contra ' + _estAp(e.b) + '">' + _estTablero(e.fen)
       + '<span class="est-nom">' + (e.arg ? _flagImg('ARG') + ' ' : '') + _estAp(e.w) + ' – ' + _estAp(e.b) + '</span>'
       + '<span class="est-meta">' + escHtml(e.evento || '') + (/^\d{4}$/.test(anio) ? ' · ' + anio : '') + ' · ' + _estRes(e.r) + '<br>'
-      + RES[e.res] + (e.sec.slice(-4) === ':sin' ? '' : ' · peones: torre ' + e.pt + ', ' + pz + ' ' + e.pp) + '</span></button>';
+      + RES[e.res] + (def.secciones ? (e.tb0 ? ' · al empezar era ' + TB0[e.tb0] : '') : e.sec.slice(-4) === ':sin' ? '' : ' · peones: torre ' + e.pt + ', ' + pz + ' ' + e.pp) + '</span></button>';
   });
   h += '</div>';
   if (xs.length > _estColPag) h += '<button type="button" class="est-mas" onclick="_estColPag+=24;_estColeccion(_estDatos[\'' + D.id + '\'])">Ver más (' + (xs.length - _estColPag) + ')</button>';
@@ -20700,17 +20714,22 @@ function _estColeccion(D) {
 function estColSec(s) { _estColSec = s; _estColPag = 12; var id = _estVista.slice(8); if (_estDatos[id]) _estColeccion(_estDatos[id]); }
 // ▶ La partida real, parada en la posición del ejemplo (como las partidas modelo de las aperturas).
 async function estVer(k) {
-  var e = _estK[k]; if (!e || e.t == null) return;
-  var g = { w: e.w, b: e.b, d: e.d, r: e.r, t: e.t, gi: e.gi }, pgn = _reconstructPgn(g);
-  if (!_ondemand) { try { var gs = await fetchTournamentGames(g.t); if (gs && gs[g.gi] && _cvGameMatches(gs[g.gi], parsePgnHeaders(pgn))) pgn = gs[g.gi]; } catch (er) {} }
+  var e = _estK[k]; if (!e || (e.t == null && !e.pgn)) return;
+  // Posición de libro de una partida que no está en la base (Kamsky–Bacrot): el PGN viaja en la lección.
+  var ply = e.pgn ? (e.plyPartida || 0) : e.ply, pgn, g = { w: e.w, b: e.b, d: e.d, r: e.r, t: e.t, gi: e.gi };
+  if (e.pgn) { pgn = e.pgn; _cvShareKeys = [null]; }
+  else {
+    pgn = _reconstructPgn(g);
+    if (!_ondemand) { try { var gs = await fetchTournamentGames(g.t); if (gs && gs[g.gi] && _cvGameMatches(gs[g.gi], parsePgnHeaders(pgn))) pgn = gs[g.gi]; } catch (er) {} }
+    _cvShareKeys = [{ url: _gameHref(g.t, g.gi), tour: g.t }];
+  }
   _cvTourGames = [pgn];
-  _cvShareKeys = [{ url: _gameHref(g.t, g.gi), tour: g.t }];
   _cvFromTournament = false;
   _cvTourName = 'Estudiar'; _cvTourLoc = '';
   await openTourGameByIndex(0);
-  if (e.ply > 0 && typeof cv !== 'undefined' && cv && cv.root) {
+  if (ply > 0 && typeof cv !== 'undefined' && cv && cv.root) {
     var node = cv.root;
-    for (var p = 0; p < e.ply && node.children && node.children.length; p++) node = node.children[0];
+    for (var p = 0; p < ply && node.children && node.children.length; p++) node = node.children[0];
     if (node && node !== cv.root) cvSetNode(node);
   }
 }
@@ -20723,21 +20742,40 @@ async function estSim(k) {
     var pl = i + (negras ? 1 : 0), num = n0 + Math.floor(pl / 2);
     return (pl % 2 === 0 ? num + '. ' : (i === 0 ? num + '... ' : '')) + s + (uni.indexOf(i) >= 0 ? '!' : '');
   }).join(' ');
-  var res = e.sim.fin === 'mate' ? (((ult + (negras ? 1 : 0)) % 2 === 0) ? '1-0' : '0-1') : (e.sim.tablas || e.sim.fin !== 'sigue' ? '1/2-1/2' : '*');
+  // 'corona' (torre y peón contra torre: la simulación se corta al coronar) gana el que movió último, como el mate.
+  var res = e.sim.fin === 'mate' || e.sim.fin === 'corona' ? (((ult + (negras ? 1 : 0)) % 2 === 0) ? '1-0' : '0-1')
+    : e.libro && e.sim.ganada ? (e.sim.gana || (/P/.test(f[0]) ? '1-0' : '0-1'))
+    : (e.sim.tablas || e.sim.fin !== 'sigue' ? '1/2-1/2' : '*');
+  // Quién prueba en las tablas simuladas: en torre contra pieza menor, la torre; en las demás, el del peón.
+  var tm = _estVista === 'leccion:torre-menor', quien = tm ? 'la torre' : 'el del peón';
+  var como = e.sim.tablas ? (tm ? ' (la torre prueba en cada jugada el intento más difícil; el que defiende responde con una que salva; con ! las que eran la única).'
+    : ' (el del peón intenta avanzar; el que defiende responde con una que salva; con ! las que eran la única).')
+    : ' (el que gana va por el camino más corto; el que defiende resiste todo lo posible).';
+  if (e.libro) {   // la línea del libro, comprobada con la tablebase (no la juega la tablebase)
+    // sim.tbDesde: después de la línea del libro sigue la tablebase hasta el final (cuántas semijugadas son del libro)
+    var td = e.sim.tbDesde, sigue = !td ? '' : (td === 1 ? ' La primera jugada es la del libro' : ' Las primeras ' + td + ' semijugadas son del libro')
+      + '; después sigue la tablebase con juego perfecto hasta el final.';
+    var tit = '📖 Línea del libro: ' + e.libro + ', comprobada jugada por jugada con la tablebase de Lichess (ninguna jugada cambia el resultado).' + sigue;
+    var pgnL = '[Event "' + String(e.libro).replace(/[{}"\\]/g, '') + '"]\n[Site "chessargentino.ar"]\n[White "Posición de libro"]\n[Black "Teoría"]\n'
+      + '[Result "' + res + '"]\n[SetUp "1"]\n[FEN "' + e.fen + '"]\n\n{' + tit.replace(/[{}"\\]/g, '') + '} ' + mov + ' ' + res + '\n';
+    _estSimNota = { pgn: pgnL, html: '📖 <b>Línea del libro</b>: ' + escHtml(e.libro) + ', comprobada jugada por jugada con la tablebase de Lichess (ninguna jugada cambia el resultado).' + escHtml(sigue) + ' ' + escHtml(e.nota || '') };
+    _cvTourGames = [pgnL]; _cvShareKeys = [null]; _cvFromTournament = false;
+    _cvTourName = 'Estudiar'; _cvTourLoc = '';
+    await openTourGameByIndex(0);
+    return;
+  }
   var que = e.fabricada ? 'Posición de estudio, armada para mostrar la idea (no es de una partida).'
     : e.armada ? 'No se jugó así: es la posición de ' + e.w + ' – ' + e.b + ' con el alfil corrido de color.'
     : 'Arranca en la jugada ' + (Math.floor((e.ply - 1) / 2) + 1) + ' de ' + e.w + ' – ' + e.b + '. '
       + (e.sim.tablas ? 'En la partida hubo ganador (' + _estRes(e.r) + '), pero con buena defensa eran tablas.' : e.sim.ganada === false ? 'En la partida no se ganó (' + _estRes(e.r) + ').' : 'En la partida se jugó distinto.');
-  var cartel = '🤖 Final simulado: lo juega la tablebase de Lichess con juego perfecto de los dos lados'
-    + (e.sim.tablas ? ' (la torre prueba en cada jugada el intento más difícil; el que defiende responde con una que salva; con ! las que eran la única).' : ' (el que gana va por el camino más corto; el que defiende resiste todo lo posible).')
-    + ' ' + que;
-  var cierre = e.sim.fin === 'ahogado' ? '¡Ahogado! Tablas.' : e.sim.fin === 'sin material' ? 'Se quedó sin la torre: tablas.' : e.sim.tablas ? 'Y así sigue: la torre no tiene cómo progresar. Tablas.' : '';
+  var cartel = '🤖 Final simulado: lo juega la tablebase de Lichess con juego perfecto de los dos lados' + como + ' ' + que;
+  var cierre = e.sim.fin === 'ahogado' ? '¡Ahogado! Tablas.' : e.sim.fin === 'sin material' ? (tm ? 'Se quedó sin la torre: tablas.' : 'No queda con qué ganar: tablas.')
+    : e.sim.fin === 'corona' ? 'Corona el peón: gana.' : e.sim.tablas ? 'Y así sigue: ' + quien + ' no tiene cómo progresar. Tablas.' : '';
   var lim = function (s) { return String(s || '').replace(/[{}"\\]/g, ''); };
   var pgn = '[Event "Final simulado (tablebase de Lichess)"]\n[Site "chessargentino.ar"]\n[White "' + lim(e.fabricada ? 'Posición de estudio' : e.w) + '"]\n[Black "' + lim(e.fabricada ? 'Tablebase' : e.b) + '"]\n'
     + '[Result "' + res + '"]\n[SetUp "1"]\n[FEN "' + e.fen + '"]\n\n{' + lim(cartel) + '} ' + mov + (cierre ? ' {' + lim(cierre) + '}' : '') + ' ' + res + '\n';
   _estSimNota = { pgn: pgn, html: '🤖 <b>Final simulado</b>: lo juega la tablebase de Lichess con juego perfecto de los dos lados'
-    + (e.sim.tablas ? ' (la torre prueba en cada jugada el intento más difícil; el que defiende responde con una que salva; con <b>!</b> las que eran la única).' : ' (el que gana va por el camino más corto; el que defiende resiste todo lo posible).')
-    + ' ' + escHtml(que) + (cierre ? ' <b>' + escHtml(cierre) + '</b>' : e.sim.fin === 'mate' ? ' <b>Termina en mate.</b>' : '') };
+    + escHtml(como).replace('con ! las', 'con <b>!</b> las') + ' ' + escHtml(que) + (cierre ? ' <b>' + escHtml(cierre) + '</b>' : e.sim.fin === 'mate' ? ' <b>Termina en mate.</b>' : '') };
   _cvTourGames = [pgn]; _cvShareKeys = [null]; _cvFromTournament = false;
   _cvTourName = 'Estudiar'; _cvTourLoc = '';
   await openTourGameByIndex(0);
