@@ -60398,18 +60398,254 @@ function cvUpdateNagBadge() {
     return out;
   }
 
+  // ── 🏁 Finales: torre contra pieza menor (06/10, pedido del autor) ─────────────────────────────
+  // Si la partida llega a ese final, el Pupi lo cuenta con los números y las reglas de la lección de
+  // 📖 Estudiar › Finales (data/lecciones/torre-menor.json, se baja sólo si aparece el final) y ofrece
+  // el botón para ir a verla. Las MISMAS reglas que armaron la lección (prototipos/colecciones):
+  // dos flancos = algún peón en a-c y alguno en f-h; un flanco = todos dentro de 4 columnas seguidas;
+  // esquina = el rey a 1 casilla del rincón; caballo "pegado" = a 2 casillas o menos de su rey.
+  // Detectarlo es contar las piezas del FEN de cada jugada: no corre chess.js ni el módulo.
+  var TM_DURA = 6, TM_LECCION = 'torre-menor';
+  function tmPiezas(fen) {
+    var out = [];
+    String(fen || '').split(' ')[0].split('/').forEach(function (f, i) {
+      var c = 0;
+      for (var k = 0; k < f.length; k++) {
+        var ch = f[k];
+        if (/\d/.test(ch)) { c += +ch; continue; }
+        out.push({ x: c, y: 7 - i, p: ch.toLowerCase(), c: ch === ch.toUpperCase() ? 'w' : 'b' });
+        c++;
+      }
+    });
+    return out;
+  }
+  function tmDist(a, b) { return Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y)); }
+  function tmSq(a) { return 'abcdefgh'[a.x] + (a.y + 1); }
+  // ¿Es torre contra pieza menor (+ peones)? Devuelve quién tiene qué, o null.
+  function tmPos(fen) {
+    var pz = tmPiezas(fen), cnt = { w: {}, b: {} };
+    pz.forEach(function (q) { cnt[q.c][q.p] = (cnt[q.c][q.p] || 0) + 1; });
+    function solo(c, p) { var o = cnt[c]; return o[p] === 1 && ['q', 'r', 'b', 'n'].every(function (t) { return t === p || !o[t]; }); }
+    var torre = solo('w', 'r') ? 'w' : solo('b', 'r') ? 'b' : null; if (!torre) return null;
+    var def = torre === 'w' ? 'b' : 'w', pieza = solo(def, 'b') ? 'alfil' : solo(def, 'n') ? 'caballo' : null; if (!pieza) return null;
+    var peones = pz.filter(function (q) { return q.p === 'p'; }), cs = peones.map(function (q) { return q.x; });
+    var flancos = !cs.length ? 'sin' : cs.some(function (c) { return c <= 2; }) && cs.some(function (c) { return c >= 5; }) ? 'dos'
+      : Math.max.apply(null, cs) - Math.min.apply(null, cs) <= 3 ? 'uno' : 'otro';
+    var pt = peones.filter(function (q) { return q.c === torre; }).length;
+    return { torre: torre, def: def, pieza: pieza, flancos: flancos, pt: pt, pp: peones.length - pt,
+             rey: pz.filter(function (q) { return q.p === 'k' && q.c === def; })[0],
+             menor: pz.filter(function (q) { return q.c === def && (q.p === 'b' || q.p === 'n'); })[0], pz: pz };
+  }
+  // El peón pasado más avanzado del que defiende (desde la 5.ª fila): la "sorpresa" de la parte 6.
+  function tmPasado(t) {
+    var mios = t.pz.filter(function (q) { return q.p === 'p' && q.c === t.def; }), suyos = t.pz.filter(function (q) { return q.p === 'p' && q.c === t.torre; });
+    var blanco = t.def === 'w', mejor = null;
+    mios.forEach(function (q) {
+      var fila = blanco ? q.y : 7 - q.y; if (fila < 4) return;
+      var libre = !suyos.some(function (s) { return Math.abs(s.x - q.x) <= 1 && (blanco ? s.y > q.y : s.y < q.y); });
+      if (libre && (!mejor || fila > (blanco ? mejor.y : 7 - mejor.y))) mejor = q;
+    });
+    return mejor;
+  }
+  function tmCorner(t) {
+    var cs = [{ x: 0, y: 0 }, { x: 7, y: 0 }, { x: 0, y: 7 }, { x: 7, y: 7 }];
+    for (var k = 0; k < 4; k++) if (tmDist(cs[k], t.rey) <= 1) return cs[k];
+    return null;
+  }
+  function tmClara(a) { return (a.x + a.y) % 2 === 1; }   // a1 (0,0) es oscura
+  // Una vez por partida (y cuando llegan más jugadas): dónde empieza el final, cuándo se quedan sin peones,
+  // cuándo el rey llega a una esquina (contra el alfil) o el caballo se separa del rey.
+  function finalTM() {
+    var g = P.g, N = _fa.nodes; if (!g || !N.length) return null;
+    var firma = N.length + '|' + N[N.length - 1].fen;
+    if (g.tmFirma === firma) return g.tm;
+    g.tmFirma = firma; g.tm = null;
+    var pos = N.map(function (n) { return tmPos(n.fen); }), fin = N.length - 1;
+    // El mismo final (mismos bandos y pieza) durante varias jugadas seguidas: no un cambio a medio hacer.
+    function igual(a, b) { return a && b && a.torre === b.torre && a.pieza === b.pieza; }
+    var s = -1;
+    for (var i = 0; i < N.length; i++) {
+      if (!pos[i]) continue;
+      var j = i; while (j + 1 < N.length && igual(pos[j + 1], pos[i])) j++;
+      if (j - i + 1 >= TM_DURA || (j === fin && j - i >= 2)) { s = i; break; }
+      i = j;
+    }
+    if (s < 0) return null;
+    var e = s; while (e + 1 < N.length && igual(pos[e + 1], pos[s])) e++;
+    var R = { s: s, e: e, hastaElFin: e === fin, t: pos[s] };
+    // Sin peones: desde dónde (si dura al menos 4 semijugadas o llega al final).
+    if (pos[s].flancos !== 'sin') for (var k = s + 1; k <= e; k++) if (pos[k].flancos === 'sin') {
+      if (e - k + 1 >= 4 || e === fin) R.sin = k;
+      break;
+    }
+    var s0 = pos[s].flancos === 'sin' ? s : R.sin;
+    if (s0 != null) {
+      R.t0 = pos[s0];
+      // Contra el alfil: el rey llega a una esquina y se queda (2 posiciones). Contra el caballo: se separa.
+      var junto = false, sepIni = tmDist(pos[s0].rey, pos[s0].menor) >= 3;
+      for (var m = s0; m <= e; m++) {
+        var p = pos[m], p2 = pos[Math.min(m + 1, e)];
+        if (p.pieza === 'alfil') {
+          var co = tmCorner(p);
+          if (co && tmCorner(p2) && tmCorner(p2).x === co.x && tmCorner(p2).y === co.y) { R.esq = { i: m, sq: tmSq(co), buena: tmClara(co) !== tmClara(p.menor), t: p }; break; }
+        } else if (tmDist(p.rey, p.menor) <= 2) junto = true;
+        else if (junto && tmDist(p2.rey, p2.menor) >= 3) { R.sep = { i: m, t: p, otra: sepIni }; break; }   // se separa (después de haber estado juntos)
+      }
+    }
+    g.tm = R;
+    if (typeof _estDatos !== 'undefined' && !_estDatos[TM_LECCION] && !P.tmBajando) {   // los números de la lección
+      P.tmBajando = true;
+      fetch('data/lecciones/' + TM_LECCION + '.json' + (typeof _dataV === 'function' ? _dataV() : ''))
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (j) { if (j) _estDatos[TM_LECCION] = j; P.tmBajando = false; P.html = ''; actualizar(); })
+        .catch(function () { P.tmBajando = false; });
+    }
+    return R;
+  }
+  // La jugada donde lo dice: la primera tranquila (sin ?/!) desde i, en las 4 siguientes.
+  function tmQuieta(i) {
+    var N = _fa.nodes;
+    for (var j = i; j <= i + 4 && j < N.length - 1; j++) {
+      var n = N[j];
+      if (!(n.move && NAGS[n.move.nag]) && !(P.g && P.g.ap && P.g.ap.nodo === n)) return j;
+    }
+    return -1;
+  }
+  // Los momentos del final en esta partida: { índice: 'entra' | 'sin' | 'esq' | 'sep' }.
+  function tmMomentos() {
+    var R = finalTM(), g = P.g; if (!R) return {};
+    if (g.tmMomFirma === g.tmFirma && g.tmMom) return g.tmMom;
+    var out = {}; g.tmMom = out; g.tmMomFirma = g.tmFirma;
+    function poner(i, que) { var j = tmQuieta(i); if (j >= 0 && !out[j]) out[j] = que; }
+    poner(R.s, 'entra');
+    if (R.sin != null) poner(R.sin, 'sin');
+    if (R.esq && R.esq.i !== (R.sin != null ? R.sin : R.s)) poner(R.esq.i, 'esq');
+    if (R.sep) poner(R.sep.i, 'sep');
+    return out;
+  }
+  function tmCuadro(t) {   // { t, d, p } en % de lo que pasó en la base con ese final, o null
+    var D = typeof _estDatos !== 'undefined' && _estDatos[TM_LECCION], ej = D && D.ej; if (!ej) return null;
+    if (t.flancos === 'sin') { var fp = (ej.cuadroPieza || []).filter(function (f) { return f.et === 'Sin peones'; })[0]; return fp && fp[t.pieza]; }
+    var dif = t.pp - t.pt, et = dif === 0 ? 'Peones iguales' : dif === 1 ? 'La pieza con un peón de más' : dif >= 2 ? 'La pieza con dos peones de más (o más)' : dif === -1 ? 'La torre con un peón de más' : null;
+    var tabla = t.flancos === 'dos' ? ej.cuadroDos : t.flancos === 'uno' ? ej.cuadroUno : null;
+    if (!et || !tabla) return null;
+    var f = tabla.filter(function (x) { return x.et === et; })[0];
+    return f && f.n >= 30 ? f : null;
+  }
+  function tmDeCada10(x) { var n = Math.round(x / 10); return (x < n * 10 - 1 ? 'casi ' : '') + n; }
+  function tmRapida() {
+    var tc = cab('TimeControl'), base = +(tc.split('+')[0]) || 0;
+    return /blitz|rapid|r[aá]pid|bullet|armag|titled|arena|online|speed|lightning/i.test(cab('Event')) || (base > 0 && base < 3600);
+  }
+  function tmNom(c) { return apellido(c === 'w' ? 'White' : 'Black') || (c === 'w' ? 'el de blancas' : 'el de negras'); }
+  function tmNumeros(c, tablasPrimero) {
+    if (!c) return '';
+    var donde = tmRapida() ? 'En nuestra base, en partidas lentas (en una rápida pasa de todo)' : 'En nuestra base, en partidas lentas';
+    if (tablasPrimero) return donde + ', así terminan en tablas <b>' + tmDeCada10(c.d) + ' de cada 10</b>.';
+    if (c.t >= 80) return donde + ', así la torre gana casi siempre: <b>más de ' + Math.floor(c.t / 10) + ' de cada 10</b>.';
+    return donde + ', así la torre gana <b>' + tmDeCada10(c.t) + ' de cada 10</b>'
+      + (c.d >= 15 ? ', y ' + tmDeCada10(c.d) + ' terminan en tablas' : '') + (c.p >= 10 ? '. ¡Y ' + tmDeCada10(c.p) + ' las gana la pieza!' : '.') ;
+  }
+  function tmBoton(parte) {
+    return ['📖 Ver la lección', 'window.__pupi.leccion(\'' + TM_LECCION + '\',' + parte + ')', false, 'La lección de 📖 Estudiar › Finales sobre este final'];
+  }
+  // Contra el alfil sin peones: cuáles son las esquinas buenas (las del color contrario al alfil).
+  function tmEsquinas(t) { return tmClara(t.menor) ? 'la oscura (a1 o h8), porque el alfil es de casillas claras' : 'la clara (h1 o a8), porque el alfil es de casillas oscuras'; }
+  // El número (tablas) va PRIMERO, como regla general, y al final cómo está ESTA posición: si el rey está en la
+  // esquina mala o el caballo separado, el remate es eso (antes terminaba en "9 de cada 10 son tablas": se contradecía).
+  function tmSinPeones(t, i, primero) {
+    var D = tmNom(t.def), T = tmNom(t.torre), txt, parte, mal;
+    var arranque = primero ? cap(T) + ' tiene la torre y ' + D + ' ' + (t.pieza === 'alfil' ? 'el alfil' : 'el caballo') + ', sin peones. ' : '';
+    var c = tmCuadro(t), num = c ? ' (en nuestra base, en partidas lentas, ' + tmDeCada10(c.d) + ' de cada 10)' : '';
+    if (t.pieza === 'alfil') {
+      parte = 3;
+      var co = tmCorner(t);
+      mal = co && tmClara(co) === tmClara(t.menor);
+      txt = arranque + (primero ? 'Esto' : 'Ahora esto') + ' suele ser tablas' + num + ', pero hay que saber defenderlo: el rey de ' + D + ' tiene que ir a la <b>esquina buena</b>, '
+        + tmEsquinas(t) + '. En la del color del alfil, se pierde.';
+      if (co) txt += mal ? ' <b>Y el rey está justo en la mala</b>: acá la torre tiene con qué ganar.' : ' Y el rey ya está ahí, en la buena.';
+    } else {
+      parte = 4;
+      mal = tmDist(t.rey, t.menor) > 2;
+      txt = arranque + (primero ? 'Esto' : 'Ahora esto') + ' suele ser tablas' + num + ', siempre que el caballo <b>no se separe de su rey</b>.'
+        + (mal ? ' <b>¡Y ahora están separados!</b> Así, la torre puede ir a buscarlo.' : ' Por ahora están juntos.');
+    }
+    return { cara: mal ? 'preocupado' : 'idea', sym: '🏁', symColor: mal ? '#c0262d' : '#b45309',
+             titulo: primero ? '¡Final de torre contra ' + t.pieza + ' sin peones!' : 'Se fueron todos los peones.',
+             cuerpo: txt + (mal ? '' : tmMotor(i, t)), acc: [tmBoton(parte)] };
+  }
+  // Si lo que dice la regla no coincide con lo que ve el módulo en ESTA posición, avisarlo (no mentir).
+  // 80%: en estos finales el módulo se queda corto (−4,5 donde la tablebase ve mate en 17).
+  function tmMotor(i, t) {
+    var r = _fa.results[i]; if (!r || typeof _faWinP !== 'function') return '';
+    var w = _faWinP(r), torre = t.torre === 'w' ? w : 100 - w;
+    return torre >= 80 ? ' <i>Igual, ojo: el módulo ve que acá la torre gana.</i>' : '';
+  }
+  function tmComentario(i, que) {
+    var R = finalTM(); if (!R) return null;
+    var t = R.t, T = tmNom(t.torre), D = tmNom(t.def), sem = (P.g ? P.g.sem : '') + ':tm' + i;
+    if (que === 'entra' && t.flancos === 'sin') return tmSinPeones(t, i, true);
+    if (que === 'entra') {
+      var dif = t.pp - t.pt, quien = cap(T) + ' tiene la calidad de más';
+      var lado = { dos: ' en los dos flancos', uno: ' todos del mismo lado', otro: '' }[t.flancos];
+      if (dif === 0) quien += ', con los peones iguales' + (lado ? ' y' + lado : '') + '.';
+      else if (dif > 0) quien += ', pero ' + D + ' tiene ' + (dif === 1 ? 'un peón' : dif === 2 ? 'dos peones' : dif + ' peones') + ' por ella.';
+      else quien += ' y encima ' + (dif === -1 ? 'un peón' : -dif + ' peones') + ' de más.';
+      var donde = dif === 0 ? '' : { dos: ' Hay peones en los dos flancos.', uno: ' Todos los peones están del mismo lado.', otro: '' }[t.flancos];
+      var c = tmCuadro(t), consejo, parte = t.flancos === 'uno' ? 2 : 0;
+      if (dif <= -2) consejo = 'Con la calidad y peones de más, esto tendría que ser coser y cantar.';
+      else if (t.flancos === 'dos') consejo = una(['La torre ataca de un lado y del otro, y la pieza no llega a todo: a ' + D + ' le conviene cambiar peones.',
+        'La torre llega rápido a los dos flancos y la pieza no: ' + D + ' tiene que buscar cambiar peones.'], sem);
+      else if (t.flancos === 'uno') consejo = 'Con todo de un lado, la pieza y el rey cuidan de cerca: si la estructura está firme, a la torre le cuesta entrar.';
+      else if (dif >= 1) consejo = 'Con peones por la calidad, la pieza tiene con qué pelear. Cada peón que se cambia acerca las tablas.';
+      else consejo = 'Casi siempre gana la torre, pero cada peón que se cambia acerca las tablas.';
+      var pas = tmPasado(t), extra = '';
+      if (pas) extra = ' Ojo con el pasado de ' + tmSq(pas) + ': a veces la pieza da la sorpresa.';
+      return { cara: 'idea', sym: '🏁', symColor: '#b45309', titulo: '¡Final de torre contra ' + t.pieza + '!',
+               cuerpo: quien + donde + (c ? ' ' + tmNumeros(c) : '') + '<div style="margin-top:4px">' + consejo + extra + '</div>', acc: [tmBoton(parte)] };
+    }
+    if (que === 'sin') return tmSinPeones(R.t0, i, false);
+    if (que === 'esq') {
+      var q = R.esq;
+      if (q.buena) return { cara: 'contento', sym: '🏁', symColor: '#15803d', titulo: '¡Se metió en la esquina buena!',
+        cuerpo: cap(D) + ' llevó el rey a ' + q.sq + ', del color contrario al alfil. Si no se equivoca, son tablas.' + tmMotor(q.i, q.t), acc: [tmBoton(3)] };
+      return { cara: 'preocupado', sym: '🏁', symColor: '#c0262d', titulo: '¡Uy, la esquina mala!',
+        cuerpo: cap(D) + ' llevó el rey a ' + q.sq + ', del mismo color que el alfil: ahí la torre puede ganar. La buena era ' + tmEsquinas(q.t) + '.', acc: [tmBoton(3)] };
+    }
+    if (que === 'sep') return { cara: 'ceja', sym: '🏁', symColor: '#c0262d', titulo: R.sep.otra ? '¡Otra vez se separó el caballo!' : '¡Se separó el caballo del rey!',
+      cuerpo: 'El caballo se alejó de su rey: ahora la torre puede ir a buscarlo o encerrarlo. Lejos del rey, el caballo se pierde.', acc: [tmBoton(4)] };
+    return null;
+  }
+  // Para el resumen del final: cómo salió comparado con lo que suele pasar en ese final.
+  function tmFin() {
+    var R = finalTM(); if (!R || !R.hastaElFin) return '';
+    var r = resultado(); if (r !== '1-0' && r !== '0-1' && r !== '1/2-1/2') return '';
+    var t = R.t, c = tmCuadro(t), quien = r === '1/2-1/2' ? 'tablas' : ((r === '1-0') === (t.torre === 'w') ? 'torre' : 'pieza');
+    var f = 'el final de torre contra ' + t.pieza;
+    if (R.t0) {   // terminó sin peones: lo que cuenta es esa parte de la lección
+      var c0 = tmCuadro(R.t0), f0 = 'torre contra ' + R.t0.pieza + ' sin peones';
+      if (quien === 'tablas') return ' Terminó en ' + f0 + ': tablas, como pasa ' + (c0 ? tmDeCada10(c0.d) + ' de cada 10 veces' : 'casi siempre') + '.';
+      if (quien === 'torre') return ' Y ojo, que ' + f0 + ' casi siempre es tablas: '
+        + (R.esq && !R.esq.buena ? '¡el rey se fue a la esquina mala!' : R.sep ? '¡el caballo se separó de su rey!' : '¡bien jugado!');
+    }
+    if (quien === 'torre') return c && c.t < 50 ? ' Y eso que en ' + f + ' así, la torre gana sólo ' + tmDeCada10(c.t) + ' de cada 10: ¡bien ganado!' : ' En ' + f + ', la torre hizo valer la calidad, como dice el libro.';
+    if (quien === 'pieza') return ' ¡Y en ' + f + ' ganó la pieza! Eso pasa poco' + (c && c.p < 10 ? ': menos de 1 de cada 10.' : '.');
+    if (c && c.t >= 60) return ' En ' + f + ' la pieza se salvó, y eso que la torre suele ganarlo: buena defensa.';
+    return ' En ' + f + ', tablas, como pasa muchas veces.';
+  }
+
   function esQuieto(n, i) {
     var ml = _fa.nodes;
-    return !(n.move && NAGS[n.move.nag]) && !(P.g && P.g.ap && P.g.ap.nodo === n) && i !== ml.length - 1;
+    return !(n.move && NAGS[n.move.nag]) && !(P.g && P.g.ap && P.g.ap.nodo === n) && i !== ml.length - 1 && !tmMomentos()[i];
   }
 
   // Momentos para saltar con ‹ ›: errores, jugadones, fin de la teoría y el final.
   var NAGS = { '??': 1, '?': 1, '?!': 1, '!': 1, '!!': 1 };
   var SALTOS = { '??': 1, '?': 1, '!': 1, '!!': 1 };   // ‹ › saltean las imprecisiones (?!): son muchas
   function momentos() {
-    var ml = lineaPrincipal(), out = [];
+    var ml = lineaPrincipal(), out = [], tm = hayDatos() ? tmMomentos() : {};
     ml.forEach(function (n, i) {
-      if ((n.move && SALTOS[n.move.nag]) || (P.g && P.g.ap && P.g.ap.nodo === n) || i === ml.length - 1) out.push(n);
+      if ((n.move && SALTOS[n.move.nag]) || (P.g && P.g.ap && P.g.ap.nodo === n) || i === ml.length - 1 || tm[i]) out.push(n);
     });
     return out;
   }
@@ -60477,6 +60713,8 @@ function cvUpdateNagBadge() {
     }
     if (P.g && P.g.ap && P.g.ap.nodo === node) return comentarioApertura(P.g.ap);
     if (i === argentinoI()) { var ca = comentarioArgentino(P.g.ap.arg); if (ca) return ca; }
+    var tmQ = tmMomentos()[i];   // 🏁 torre contra pieza menor: lo que dice la lección de Finales
+    if (tmQ) { var ctm = tmComentario(i, tmQ); if (ctm) return ctm; }
     // Lo que quedó de "cómo vienen", de a una parte por semijugada.
     if (i <= 2) { var pv = previa(); if (pv[i + 1]) return { cara: 'habla', cuerpo: pv[i + 1] }; }
     if (ultimo && resultado() !== '*') {
@@ -60575,15 +60813,16 @@ function cvUpdateNagBadge() {
       else if (cg['??']) txt += ' ' + cap(nom[g]) + ' también tuvo su colgada, pero zafó.';
       else if (cg['?']) txt += ' ' + cap(nom[g]) + ' tuvo ' + (cg['?'] === 1 ? 'alguna floja' : 'un par de flojas') + ', nada grave.';
       else txt += ' ' + cap(nom[g]) + ' ' + una(['jugó limpito, sin una mancha.', 'no regaló nada.'], sem + 'g') + '';
-      return txt;
+      return txt + tmFin();
     }
     P.decisiva = null;
     if (r !== '1/2-1/2') return 'Y ahí terminó.';
     var cw = cuenta.w, cb = cuenta.b;
-    if (cw['??'] && cb['??']) return 'Hubo colgadas de los dos lados y se terminaron compensando. Repartieron el punto y a otra cosa.';
-    if (cw['??'] || cb['??']) { var k = cw['??'] ? 'w' : 'b'; return cap(nom[k]) + ' se colgó, pero ' + nom[k === 'w' ? 'b' : 'w'] + ' no lo pudo aprovechar. Tablas.'; }
-    if (cw['?'] || cb['?']) return 'Alguna floja por ahí, nada grave. ' + una(['Bien peleada.', 'Repartieron el punto y a otra cosa.'], sem);
-    return 'Ninguno regaló nada. ' + una(['Bien peleada.', 'Tablas justas.'], sem);
+    var tf = tmFin();   // 🏁 si terminó en torre contra pieza menor, se suma cómo salió ese final
+    if (cw['??'] && cb['??']) return 'Hubo colgadas de los dos lados y se terminaron compensando. Repartieron el punto y a otra cosa.' + tf;
+    if (cw['??'] || cb['??']) { var k = cw['??'] ? 'w' : 'b'; return cap(nom[k]) + ' se colgó, pero ' + nom[k === 'w' ? 'b' : 'w'] + ' no lo pudo aprovechar. Tablas.' + tf; }
+    if (cw['?'] || cb['?']) return 'Alguna floja por ahí, nada grave.' + (tf || ' ' + una(['Bien peleada.', 'Repartieron el punto y a otra cosa.'], sem));
+    return 'Ninguno regaló nada.' + (tf || ' ' + una(['Bien peleada.', 'Tablas justas.'], sem));
   }
   function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
   // Apellido del jugador desde el PGN: "Mizzau, Pablo" → "Mizzau"; "MIZZAU PABLO" → "Mizzau".
@@ -60620,7 +60859,8 @@ function cvUpdateNagBadge() {
     if (P.pedido) c = Object.assign({}, P.pedido.c);
     else if (c.pedir) c.acc = [['<span class="pupi-emo">🗞️</span>Pedile data de torneos', 'window.__pupi.pedirDato()', false, 'Que te cuente de algún torneo', 'pupi-cartoon pupi-flotante pupi-pide']];
     c.acc = (c.acc || []).concat(navAcc());
-    if (P.decisiva && c.sym === '🏁') c.acc.unshift(['Ver la jugada', 'window.__pupi.decisiva()', false, '']);
+    if (P.decisiva && c.sym === '🏁' && c.titulo === tituloFin()) c.acc.unshift(['Ver la jugada', 'window.__pupi.decisiva()', false, '']);
+    if (c.titulo === tituloFin() && c.sym === '🏁' && hayDatos() && finalTM() && finalTM().hastaElFin) c.acc.unshift(tmBoton(0));
     return c;
   }
 
@@ -60898,6 +61138,30 @@ function cvUpdateNagBadge() {
       var n = P.g && P.g.ap && P.g.ap.n;
       salirA(function () { if (n && typeof _apIrDesdeAfuera === 'function') _apIrDesdeAfuera(n); else cvAperturaEnExplorador(); });
     },
+    // 🏁 La lección de Finales (y baja hasta la parte que corresponde). Con Atrás, vuelve a la partida.
+    leccion: function (id, parte) {
+      salirA(function () {
+        _estVista = 'leccion:' + id;
+        var btn = null, bs = document.querySelectorAll('.nav-btn');
+        for (var j = 0; j < bs.length; j++) if (/goTo\('favoritos'/.test(bs[j].getAttribute('onclick') || '')) { btn = bs[j]; break; }
+        goTo('favoritos', btn);
+        try { _apUrlSync(true); } catch (e) {}
+        if (!parte) return;
+        var n = 0, t = setInterval(function () {   // la lección se baja aparte: esperar a que esté pintada
+          var hs = document.querySelectorAll('#est-finales .est-h2');
+          if (hs.length <= parte && ++n < 40) return;
+          clearInterval(t);
+          // Un rato después: al cambiar de pestaña la app sube la página arriba de todo y pisaría el salto.
+          setTimeout(function () {
+            var h = hs[parte]; if (!h) return;
+            var hd = document.querySelector('header'), pos = hd ? getComputedStyle(hd).position : '', barra = hd ? hd.getBoundingClientRect() : null;
+            var tapa = barra && (pos === 'fixed' || pos === 'sticky') && barra.top < 5 ? Math.round(barra.bottom) : 0;
+            h.style.scrollMarginTop = (tapa + 10) + 'px';   // que no quede tapado por la barra de arriba
+            h.scrollIntoView({ block: 'start' });
+          }, 450);
+        }, 150);
+      });
+    },
     // El perfil del argentino que nombró en la apertura. Como cvClickPlayer: Atrás vuelve a la partida.
     perfil: function (id) {
       var snap = (_cvHistoryPushed && _cvTourGames && _cvTourGames.length) ? {
@@ -60956,7 +61220,7 @@ function cvUpdateNagBadge() {
       }
       return out.join(', ');
     },
-    estado: function () { return P.estado; }, _P: P, _mate: function () { sonidoMate(); }, _termo: function () { sonidoTermo(); }, _grab: GRAB, _grabN: GRAB_N, _sonando: function () { return SONANDO; }, _torneos: function () { return torneosDatos(); }, _trofeos: function (pl, quien) { return trofeosJug(pl, quien); }
+    estado: function () { return P.estado; }, _P: P, _mate: function () { sonidoMate(); }, _termo: function () { sonidoTermo(); }, _grab: GRAB, _grabN: GRAB_N, _sonando: function () { return SONANDO; }, _torneos: function () { return torneosDatos(); }, _trofeos: function (pl, quien) { return trofeosJug(pl, quien); }, _tm: function () { return [finalTM(), tmMomentos()]; }
   };
 
   imgsListas.then(function () { P.cara = ''; P.html = ''; actualizar(); });
