@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2356;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2362;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -3088,8 +3088,8 @@ console.log('\n=== 26. Filtro por TEMA de los ejercicios (chips que se cuentan s
     if (!m) throw new Error('no encontré la declaración de ' + n + ' en index.html');
     return m[0] + '\n';
   };
-  const src = decl('PUZ_TEMA_MIN') + decl('PUZ_TEMA_SKIP') + decl('PUZ_MOTIF_LABEL') + decl('PUZ_SEC_LABEL')
-    + extraerFuncion('_puzTemaLabel') + extraerFuncion('_puzEsTema')
+  const src = decl('PUZ_TEMA_MIN') + decl('PUZ_TEMA_SKIP') + decl('PUZ_MOTIF_LABEL') + decl('PUZ_SEC_LABEL') + decl('PUZ_AP_MIN')
+    + extraerFuncion('_puzTemaLabel') + extraerFuncion('_puzEsTema') + extraerFuncion('_puzDeApertura') + extraerFuncion('_puzFamilia')
     + extraerFuncion('puzTemas') + extraerFuncion('puzForTema') + extraerFuncion('puzTemaLabel');
   const mk = (id, themes, section) => ({ id, themes, section: section || 'tactics', difficulty: 1200 });
   const PUZZLES = [];
@@ -3100,6 +3100,12 @@ console.log('\n=== 26. Filtro por TEMA de los ejercicios (chips que se cuentan s
   for (let i = 0; i < 50; i++) PUZZLES.push(mk('t' + i, ['tablas', 'defensa'], 'defensa'));  // 'tablas' vetado
   for (let i = 0; i < 12; i++) PUZZLES.push(mk('f' + i, ['final'], 'finales'));        // 12: sección chica
   PUZZLES.push(Object.assign(mk('oculto', ['horquilla']), { hidden: true }));
+  // 🌳 Por apertura (08/10/2026): el nombre es el del árbol de la sección Aperturas.
+  const ap = (id, nombre) => Object.assign(mk(id, []), { opening: { eco: 'B90', nombre } });
+  for (let i = 0; i < 6; i++) PUZZLES.push(ap('najdorf' + i, 'Siciliana: Najdorf' + (i % 2 ? ', Ataque Inglés' : '')));
+  for (let i = 0; i < 2; i++) PUZZLES.push(ap('sici' + i, 'Siciliana'));
+  for (let i = 0; i < 4; i++) PUZZLES.push(ap('ital' + i, 'Italiana: Clásica'));
+  for (let i = 0; i < 5; i++) PUZZLES.push(ap('indiarey' + i, 'India de Rey: Normal'));
   const _shuffleCmp = (a, b) => (a.id < b.id ? -1 : 1);
   const F = new Function('PUZZLES', '_shuffleCmp',
     src + '; return { puzTemas, puzForTema, puzTemaLabel, _puzEsTema };')(PUZZLES, _shuffleCmp);
@@ -3131,6 +3137,14 @@ console.log('\n=== 26. Filtro por TEMA de los ejercicios (chips que se cuentan s
       'las etiquetas salen bien para las dos familias');
   chk(F.puzTemaLabel('tema-nuevo-inventado') === 'Tema nuevo inventado',
       'un tema que todavía no tiene etiqueta se muestra prolijo igual');
+  const aps = t.aperturas.map((x) => x.id + ':' + x.n);
+  chk(aps.includes('ap:Siciliana:8'), '🌳 la familia junta sus variantes (Najdorf y Ataque Inglés cuentan para la Siciliana)', aps.join(' '));
+  chk(!aps.some((x) => x.startsWith('ap:Italiana')), 'y una apertura con 4 no llega al piso de 5', aps.join(' '));
+  chk(F.puzForTema('ap:Siciliana: Najdorf').length === 6, 'una variante filtra los suyos y los de sus subvariantes');
+  chk(F.puzForTema('ap:India').length === 0 && F.puzForTema('ap:India de Rey').length === 5,
+      '«India» no se lleva los de la «India de Rey» (el nombre tiene que cortar en dos puntos o coma)');
+  chk(!F.puzForTema('ap:Siciliana').some((p) => /^h|^m/.test(p.id)), 'los ejercicios sin apertura no entran en ninguna');
+  chk(F.puzTemaLabel('ap:Siciliana: Najdorf') === 'Siciliana: Najdorf', 'la insignia de una apertura dice su nombre');
 }
 
 
