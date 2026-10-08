@@ -60672,16 +60672,179 @@ function cvUpdateNagBadge() {
     return ' En ' + f + ', tablas, como pasa muchas veces.';
   }
 
+  // ── ♜ Finales: torre y peón contra torre (07/10, pedido del autor) ────────────────────────────
+  // Lo mismo que con torre contra pieza menor, con la lección "Lucena y Philidor" (data/lecciones/lucena-philidor.json,
+  // se baja sólo si aparece el final). Las MISMAS reglas que armaron la lección (prototipos/colecciones/torres):
+  // todo "desde el bando del peón" (y = su fila, 0 = su 1.ª). El peón de torre se saltea: tiene su propia lección.
+  // Momentos: entra (rey delante / cortado a N columnas), philidor, detras (torre detrás del peón: lado corto o largo),
+  // lateral (primer jaque de costado: lado largo o corto), ultima (rey delante y torre en la última fila), lucena.
+  var TP_LECCION = 'lucena-philidor';
+  function tpRel(fen) {   // { lado, Ap, Ak, Ar, Dk, Dr } si es torre + 1 peón (no de torre) contra torre; si no, null
+    var pz = tmPiezas(fen), cnt = { w: {}, b: {} };
+    pz.forEach(function (q) { cnt[q.c][q.p] = (cnt[q.c][q.p] || 0) + 1; });
+    if (pz.some(function (q) { return q.p === 'q' || q.p === 'b' || q.p === 'n'; })) return null;
+    if (cnt.w.r !== 1 || cnt.b.r !== 1 || (cnt.w.p || 0) + (cnt.b.p || 0) !== 1) return null;
+    var lado = cnt.w.p ? 'w' : 'b', o = { lado: lado };
+    pz.forEach(function (q) { o[(q.c === lado ? 'A' : 'D') + q.p] = { x: q.x, y: lado === 'w' ? q.y : 7 - q.y, sq: tmSq(q) }; });
+    if (!o.Ap || o.Ap.x === 0 || o.Ap.x === 7) return null;
+    return o;
+  }
+  function tpFrente(o) { return Math.abs(o.Dk.x - o.Ap.x) <= 1 && o.Dk.y > o.Ap.y && o.Dk.y >= 6; }
+  function tpTipo(o) { var x = o.Ap.x; return x === 1 || x === 6 ? 'caballo' : x === 2 || x === 5 ? 'alfil' : 'central'; }
+  function tpCorto(o) { return (o.Ap.x >= 4) === (o.Dk.x > o.Ap.x); }   // ¿el rey que defiende está en el lado corto?
+  function tpPatrones(o, mueve) {
+    var p = o.Ap, Ka = o.Ak, Kd = o.Dk, Rd = o.Dr, Ra = o.Ar, out = {};
+    if (tpFrente(o) && Rd.y === 5 && p.y <= 4 && Ka.y <= 4) out.philidor = 1;
+    if (tpFrente(o) && Rd.y === 7 && p.y >= 3) out.ultima = 1;
+    if (p.y === 6 && Ka.x === p.x && Ka.y === 7 && Math.abs(Kd.x - p.x) >= 2) out.lucena = 1;
+    if (p.x >= 2 && p.x <= 5 && p.y === 4 && Rd.x === p.x && Rd.y < p.y && Kd.y >= 6 && Math.abs(Kd.x - p.x) <= 2
+        && Math.abs(Ka.x - p.x) <= 1 && Ka.y >= 4 && !((Ra.x - Kd.x) * (Ra.x - p.x) < 0)) out.detras = 1;
+    // jaque de costado: le toca al del peón, la torre en la fila de su rey, sin nada en el medio
+    if (mueve === o.lado && p.y >= 4 && Rd.y === Ka.y && Math.abs(Rd.x - Ka.x) >= 2 && !tpFrente(o)
+        && ![o.Ap, o.Ar, o.Dk].some(function (q) { return q.y === Ka.y && (q.x - Rd.x) * (q.x - Ka.x) < 0; })) out.lateral = 1;
+    return out;
+  }
+  function finalTP() {
+    var g = P.g, N = _fa.nodes; if (!g || !N.length) return null;
+    var firma = N.length + '|' + N[N.length - 1].fen;
+    if (g.tpFirma === firma) return g.tp;
+    g.tpFirma = firma; g.tp = null;
+    var pos = N.map(function (n) { return tpRel(n.fen); }), fin = N.length - 1, s = -1;
+    for (var i = 0; i < N.length; i++) {
+      if (!pos[i]) continue;
+      var j = i; while (j + 1 < N.length && pos[j + 1] && pos[j + 1].lado === pos[i].lado) j++;
+      if (j - i + 1 >= TM_DURA || (j === fin && j - i >= 2)) { s = i; break; }
+      i = j;
+    }
+    if (s < 0) return null;
+    var e = s; while (e + 1 < N.length && pos[e + 1] && pos[e + 1].lado === pos[s].lado) e++;
+    var R = { s: s, e: e, hastaElFin: e === fin, t: pos[s], lado: pos[s].lado, pat: {} };
+    // primera posición de cada patrón que dure 2 posiciones (salvo al final del tramo)
+    for (var k = s; k <= e; k++) {
+      var pk = tpPatrones(pos[k], N[k].fen.split(' ')[1]);
+      for (var nom in pk) {
+        if (R.pat[nom] != null) continue;
+        var sig = k + 1 <= e ? tpPatrones(pos[k + 1], N[k + 1].fen.split(' ')[1]) : null;
+        if (nom !== 'lateral' && sig && !sig[nom] && k + 1 < e) continue;
+        R.pat[nom] = { i: k, o: pos[k] };
+      }
+    }
+    g.tp = R;
+    if (typeof _estDatos !== 'undefined' && !_estDatos[TP_LECCION] && !P.tpBajando) {
+      P.tpBajando = true;
+      fetch('data/lecciones/' + TP_LECCION + '.json' + (typeof _dataV === 'function' ? _dataV() : ''))
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (j) { if (j) _estDatos[TP_LECCION] = j; P.tpBajando = false; P.html = ''; actualizar(); })
+        .catch(function () { P.tpBajando = false; });
+    }
+    return R;
+  }
+  function tpMomentos() {
+    var R = finalTP(), g = P.g; if (!R) return {};
+    if (g.tpMomFirma === g.tpFirma && g.tpMom) return g.tpMom;
+    var out = {}, tm = tmMomentos(); g.tpMom = out; g.tpMomFirma = g.tpFirma;
+    function poner(i, que) { var j = tmQuieta(i); if (j >= 0 && !out[j] && !tm[j]) out[j] = que; }
+    poner(R.s, 'entra');
+    ['philidor', 'detras', 'lateral', 'ultima', 'lucena'].forEach(function (nom) {
+      var q = R.pat[nom]; if (q && q.i !== R.s) poner(q.i, nom);   // si ya estaba al empezar, lo dice el de entrada
+    });
+    return out;
+  }
+  function tpEj() { var D = typeof _estDatos !== 'undefined' && _estDatos[TP_LECCION]; return D && D.ej; }
+  function tpFila(clave, et) { var ej = tpEj(), xs = ej && ej[clave]; return xs ? xs.filter(function (f) { return f.et === et; })[0] : null; }
+  function tpBoton(parte) {
+    return ['📖 Ver la lección', 'window.__pupi.leccion(\'' + TP_LECCION + '\',' + parte + ')', false, 'La lección de 📖 Estudiar › Finales: Lucena y Philidor'];
+  }
+  // Las partes de la lección (índice del título .est-h2): 1 Philidor, 2 torre detrás, 3 lado largo, 4 última fila,
+  // 5 Lucena, 6 rey cortado.
+  function tpComentario(i, que) {
+    var R = finalTP(); if (!R) return null;
+    var A = cap(tmNom(R.lado)), D = tmNom(R.lado === 'w' ? 'b' : 'w'), sem = (P.g ? P.g.sem : '') + ':tp' + i;
+    var tit = '♜', col = '#b45309';
+    if (que === 'entra') {
+      var o = R.t, txt = A + ' tiene el peón de más (' + o.Ap.sq + ').', parte = 5;
+      // si la posición de libro ya está en la entrada, se dice acá (no hay otro comentario para ella)
+      var ya = function (nom) { return R.pat[nom] && R.pat[nom].i === R.s; };
+      if (tpFrente(o) && ya('philidor')) {
+        parte = 1;
+        txt += ' Y ' + D + ' ya tiene armado <b>Philidor</b>: el rey delante del peón y la torre en su 3.ª fila. En nuestra base, así se salvó el 95%.';
+      } else if (tpFrente(o)) {
+        parte = 1;
+        txt += ' Pero el rey de ' + D + ' está delante del peón: con buena defensa, esto es tablas. La receta es <b>Philidor</b>: la torre en su 3.ª fila, esperando.';
+        if (tpTipo(o) === 'caballo') txt += ' Y con peón de caballo, hasta alcanza la torre en la última fila.';
+      } else if (ya('lucena')) {
+        parte = 5;
+        txt += ' ¡Y ya es la <b>posición Lucena</b>! Ahora hay que hacer el puente: un jaque para alejar al rey rival y la torre a la 4.ª fila. En nuestra base, así se ganó el 99%.';
+      } else if (ya('detras')) {
+        parte = 2;
+        txt += ' ' + cap(D) + ' tiene la torre detrás del peón (' + o.Dr.sq + ')' + (tpCorto(o) ? ' y el rey en el lado corto: así se salva.' : ', pero el rey en el lado largo: peligro.');
+      } else {
+        var cols = Math.abs(o.Dk.x - o.Ap.x) - 1, corta = (o.Ar.x - o.Dk.x) * (o.Ar.x - o.Ap.x) < 0;
+        if (corta && cols >= 1 && tpTipo(o) !== 'caballo' && o.Ap.y >= 3) {
+          parte = 6;
+          var f = tpFila('cuadroCorte', cols === 1 ? 'Cortado a 1 columna' : cols === 2 ? 'Cortado a 2 columnas' : 'Cortado a 3 columnas o más');
+          txt += ' El rey de ' + D + ' está <b>cortado a ' + (cols >= 3 ? 'tres columnas o más' : cols === 1 ? 'una columna' : 'dos columnas') + '</b> por la torre.'
+            + (f ? ' Con el peón en la mitad del tablero, así la tablebase da ganado ' + tmDeCada10(f.t) + ' de cada 10.' : '');
+        } else txt += ' El rey de ' + D + ' no llega a ponerse delante del peón: ojo, que se puede venir la posición Lucena.';
+      }
+      var fi = tpFila('cuadroInicio', 'Empieza en tablas (según la tablebase)');
+      if (fi && tpFrente(o) && !ya('philidor')) txt += ' En nuestra base, 1 de cada 10 de estos finales que eran tablas se terminó perdiendo: defender esto parece fácil, pero hay que saber cómo.';
+      return { cara: 'idea', sym: tit, symColor: col, titulo: '¡Final de torre y peón contra torre!', cuerpo: txt, acc: [tpBoton(parte)] };
+    }
+    if (que === 'philidor') return { cara: 'contento', sym: tit, symColor: '#15803d', titulo: una(['¡Philidor de libro!', '¡Ahí está Philidor!'], sem),
+      cuerpo: cap(D) + ' armó la defensa de Philidor: el rey delante del peón y la torre en su 3.ª fila. En nuestra base, así se salvó el 95%. Cuando el peón avance, la torre se va atrás de todo a dar jaques.', acc: [tpBoton(1)] };
+    if (que === 'detras') {
+      var od = R.pat.detras.o, ck = tpFila('cuadroKarstedt', 'Rey en el lado corto'), lk = tpFila('cuadroKarstedt', 'Rey en el lado largo (o en el centro)');
+      if (tpCorto(od)) return { cara: 'contento', sym: tit, symColor: '#15803d', titulo: 'La torre detrás del peón',
+        cuerpo: cap(D) + ' puso la torre detrás del peón (' + od.Dr.sq + ') y tiene el rey en el lado corto: así se salva' + (ck ? ' (' + ck.d + '% de tablas en nuestra base)' : '') + '. Es la defensa de Kling y Horwitz.', acc: [tpBoton(2)] };
+      return { cara: 'preocupado', sym: tit, symColor: '#c0262d', titulo: 'La torre detrás del peón… pero el rey en el lado largo',
+        cuerpo: cap(D) + ' puso la torre detrás del peón, pero el rey quedó en el lado largo. Así se salva bastante menos' + (lk ? ' (' + lk.d + '% de tablas)' : '') + ': la torre ya no tiene lugar para los jaques de costado.', acc: [tpBoton(2)] };
+    }
+    if (que === 'lateral') {
+      var ol = R.pat.lateral.o, dist = Math.abs(ol.Dr.x - ol.Ap.x), lc = tpFila('cuadroLado', 'Rey en el lado corto, torre en el largo'), ll = tpFila('cuadroLado', 'Rey en el lado largo, torre en el corto');
+      var torreLarga = (ol.Dr.x > ol.Ap.x) !== (ol.Ap.x >= 4);
+      if (dist >= 3 && torreLarga) return { cara: 'contento', sym: tit, symColor: '#15803d', titulo: 'Jaques de costado desde el lado largo',
+        cuerpo: 'La torre de ' + D + ' da jaques de costado desde ' + ol.Dr.sq + ', a ' + dist + ' columnas del peón' + (tpCorto(ol) ? ', con el rey en el lado corto' : '') + '. Así, el rey atacante no tiene dónde esconderse' + (lc && tpCorto(ol) ? ' (en nuestra base, ' + lc.d + '% de tablas)' : '') + '.', acc: [tpBoton(3)] };
+      if (dist <= 2) return { cara: 'preocupado', sym: tit, symColor: '#c0262d', titulo: '¡Uy, la torre está muy cerca!',
+        cuerpo: 'La torre de ' + D + ' da jaques de costado desde ' + ol.Dr.sq + ', pero está a ' + (dist === 1 ? 'una columna' : 'dos columnas') + ' del peón: muy cerca. El rey atacante se le acerca y los jaques se terminan.'
+          + (!tpCorto(ol) && ll ? ' Con el rey en el lado largo y la torre en el corto, casi siempre se pierde (' + ll.t + '%).' : ''), acc: [tpBoton(3)] };
+      return null;
+    }
+    if (que === 'ultima') {
+      var ou = R.pat.ultima.o, tp = tpTipo(ou);
+      if (tp === 'caballo') return { cara: 'contento', sym: tit, symColor: '#15803d', titulo: 'La torre en la última fila',
+        cuerpo: cap(D) + ' tiene el rey delante del peón y la torre en la última fila. Con peón de caballo, esta defensa alcanza.', acc: [tpBoton(4)] };
+      var fu = tpFila('cuadroUltima', tp === 'alfil' ? 'Peón de alfil' : 'Peón central');
+      return { cara: 'preocupado', sym: tit, symColor: '#c0262d', titulo: '¡Ojo con la última fila!',
+        cuerpo: cap(D) + ' defiende con la torre en la última fila, pero contra un peón ' + (tp === 'alfil' ? 'de alfil' : 'central') + ' eso no alcanza: el atacante tiene lugar para jaquear de los dos lados.'
+          + (fu ? ' En nuestra base, ' + fu.t + '% de esas posiciones ya estaban perdidas.' : '') + ' La buena era Philidor.', acc: [tpBoton(4)] };
+    }
+    if (que === 'lucena') return { cara: 'idea', sym: tit, symColor: col, titulo: '¡Posición Lucena!',
+      cuerpo: 'Peón en 7.ª, el rey de ' + A + ' delante y el de ' + D + ' cortado. Ahora hay que <b>hacer el puente</b>: un jaque para alejar al rey rival y la torre a la 4.ª fila, para taparse de los jaques. En nuestra base, así se ganó el 99%.', acc: [tpBoton(5)] };
+    return null;
+  }
+  // Para el resumen del final: si se escapó una Lucena o se perdió un Philidor, lo dice.
+  function tpFin() {
+    var R = finalTP(); if (!R || !R.hastaElFin) return '';
+    var r = resultado(); if (r !== '1-0' && r !== '0-1' && r !== '1/2-1/2') return '';
+    var gana = r === '1/2-1/2' ? 'tablas' : (r === '1-0') === (R.lado === 'w') ? 'peon' : 'defensa';
+    if (R.pat.lucena && gana !== 'peon') return ' ¡Y tenía la posición Lucena! Eso se gana el 99% de las veces: le faltó el puente.';
+    if (R.pat.philidor && gana === 'peon') return ' ¡Y eso que había armado Philidor! Con esa defensa se salva el 95%.';
+    if (gana === 'tablas') return tpFrente(R.t) ? ' Con el rey delante del peón, era lo que correspondía.' : ' En el final de torre y peón contra torre, el que defendía se salvó.';
+    if (gana === 'peon') return tpFrente(R.t) ? ' Y eso que el rey defensor estaba delante del peón: se le escapó un final de tablas.' : ' Final de torre y peón contra torre: el peón hizo valer la ventaja.';
+    return '';
+  }
+
   function esQuieto(n, i) {
     var ml = _fa.nodes;
-    return !(n.move && NAGS[n.move.nag]) && !(P.g && P.g.ap && P.g.ap.nodo === n) && i !== ml.length - 1 && !tmMomentos()[i];
+    return !(n.move && NAGS[n.move.nag]) && !(P.g && P.g.ap && P.g.ap.nodo === n) && i !== ml.length - 1 && !tmMomentos()[i] && !tpMomentos()[i];
   }
 
   // Momentos para saltar con ‹ ›: errores, jugadones, fin de la teoría y el final.
   var NAGS = { '??': 1, '?': 1, '?!': 1, '!': 1, '!!': 1 };
   var SALTOS = { '??': 1, '?': 1, '!': 1, '!!': 1 };   // ‹ › saltean las imprecisiones (?!): son muchas
   function momentos() {
-    var ml = lineaPrincipal(), out = [], tm = hayDatos() ? tmMomentos() : {};
+    var ml = lineaPrincipal(), out = [], tm = hayDatos() ? Object.assign({}, tmMomentos(), tpMomentos()) : {};
     ml.forEach(function (n, i) {
       if ((n.move && SALTOS[n.move.nag]) || (P.g && P.g.ap && P.g.ap.nodo === n) || i === ml.length - 1 || tm[i]) out.push(n);
     });
@@ -60753,6 +60916,8 @@ function cvUpdateNagBadge() {
     if (i === argentinoI()) { var ca = comentarioArgentino(P.g.ap.arg); if (ca) return ca; }
     var tmQ = tmMomentos()[i];   // 🏁 torre contra pieza menor: lo que dice la lección de Finales
     if (tmQ) { var ctm = tmComentario(i, tmQ); if (ctm) return ctm; }
+    var tpQ = tpMomentos()[i];   // ♜ torre y peón contra torre: lo que dice la lección Lucena y Philidor
+    if (tpQ) { var ctp = tpComentario(i, tpQ); if (ctp) return ctp; }
     // Lo que quedó de "cómo vienen", de a una parte por semijugada.
     if (i <= 2) { var pv = previa(); if (pv[i + 1]) return { cara: 'habla', cuerpo: pv[i + 1] }; }
     if (ultimo && resultado() !== '*') {
@@ -60851,12 +61016,12 @@ function cvUpdateNagBadge() {
       else if (cg['??']) txt += ' ' + cap(nom[g]) + ' también tuvo su colgada, pero zafó.';
       else if (cg['?']) txt += ' ' + cap(nom[g]) + ' tuvo ' + (cg['?'] === 1 ? 'alguna floja' : 'un par de flojas') + ', nada grave.';
       else txt += ' ' + cap(nom[g]) + ' ' + una(['jugó limpito, sin una mancha.', 'no regaló nada.'], sem + 'g') + '';
-      return txt + tmFin();
+      return txt + tmFin() + tpFin();
     }
     P.decisiva = null;
     if (r !== '1/2-1/2') return 'Y ahí terminó.';
     var cw = cuenta.w, cb = cuenta.b;
-    var tf = tmFin();   // 🏁 si terminó en torre contra pieza menor, se suma cómo salió ese final
+    var tf = tmFin() + tpFin();   // 🏁♜ si terminó en uno de los finales de las lecciones, se suma cómo salió
     if (cw['??'] && cb['??']) return 'Hubo colgadas de los dos lados y se terminaron compensando. Repartieron el punto y a otra cosa.' + tf;
     if (cw['??'] || cb['??']) { var k = cw['??'] ? 'w' : 'b'; return cap(nom[k]) + ' se colgó, pero ' + nom[k === 'w' ? 'b' : 'w'] + ' no lo pudo aprovechar. Tablas.' + tf; }
     if (cw['?'] || cb['?']) return 'Alguna floja por ahí, nada grave.' + (tf || ' ' + una(['Bien peleada.', 'Repartieron el punto y a otra cosa.'], sem));
@@ -60899,6 +61064,7 @@ function cvUpdateNagBadge() {
     c.acc = (c.acc || []).concat(navAcc());
     if (P.decisiva && c.sym === '🏁' && c.titulo === tituloFin()) c.acc.unshift(['Ver la jugada', 'window.__pupi.decisiva()', false, '']);
     if (c.titulo === tituloFin() && c.sym === '🏁' && hayDatos() && finalTM() && finalTM().hastaElFin) c.acc.unshift(tmBoton(0));
+    if (c.titulo === tituloFin() && c.sym === '🏁' && hayDatos() && finalTP() && finalTP().hastaElFin) c.acc.unshift(tpBoton(0));
     return c;
   }
 
@@ -61258,7 +61424,7 @@ function cvUpdateNagBadge() {
       }
       return out.join(', ');
     },
-    estado: function () { return P.estado; }, _P: P, _mate: function () { sonidoMate(); }, _termo: function () { sonidoTermo(); }, _grab: GRAB, _grabN: GRAB_N, _sonando: function () { return SONANDO; }, _torneos: function () { return torneosDatos(); }, _trofeos: function (pl, quien) { return trofeosJug(pl, quien); }, _tm: function () { return [finalTM(), tmMomentos()]; }
+    estado: function () { return P.estado; }, _P: P, _mate: function () { sonidoMate(); }, _termo: function () { sonidoTermo(); }, _grab: GRAB, _grabN: GRAB_N, _sonando: function () { return SONANDO; }, _torneos: function () { return torneosDatos(); }, _trofeos: function (pl, quien) { return trofeosJug(pl, quien); }, _tm: function () { return [finalTM(), tmMomentos()]; }, _tp: function () { return [finalTP(), tpMomentos()]; }
   };
 
   imgsListas.then(function () { P.cara = ''; P.html = ''; actualizar(); });
