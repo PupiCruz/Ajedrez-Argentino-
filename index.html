@@ -8854,10 +8854,14 @@ function crBuildRoundPanel(key,pairings,data,roundNum){
   var _schedEd = (typeof _tdRoundDTEditable === 'function') && _tdRoundDTEditable(key);
   if(_sched || _schedEd){
     // inline-flex: la cajita mide lo que dice, no todo el ancho de la columna.
-    var _schedClick = _schedEd ? ' onclick="tdEditRoundDT(\''+key+'\','+roundNum+')" title="Tocá para cambiar el día y la hora de esta ronda"' : '';
-    h+='<div'+_schedClick+' style="display:inline-flex;align-items:center;gap:8px;margin-bottom:10px;font-size:15px;background:var(--gl30);border:1px solid var(--bd14);border-radius:9px;padding:9px 14px;max-width:100%;flex-wrap:wrap'+(_schedEd?';cursor:pointer':'')+'">'
+    // Tabla con los horarios de TODAS las rondas: el visitante la abre tocando el cartel; el autor
+    // (que toca el cartel para editar) con el botón "▾ Todas las rondas".
+    var _schedAll=_crSchedAllHtml(data,key,roundNum);
+    var _schedClick = _schedEd ? ' onclick="tdEditRoundDT(\''+key+'\','+roundNum+')" title="Tocá para cambiar el día y la hora de esta ronda"'
+                    : (_schedAll ? ' onclick="_crSchedToggle(this)" title="Ver los horarios de todas las rondas"' : '');
+    h+='<div data-sched-box'+_schedClick+' style="display:inline-flex;align-items:center;gap:8px;margin-bottom:10px;font-size:15px;background:var(--gl30);border:1px solid var(--bd14);border-radius:9px;padding:9px 14px;max-width:100%;flex-wrap:wrap'+((_schedEd||_schedAll)?';cursor:pointer':'')+'">'
       +'<span style="font-size:17px">🕒</span><span style="color:var(--fg-c0)">Se juega:</span> <span style="font-weight:700;color:var(--fg-e0);text-shadow:var(--txt-out);font-size:15.5px">'+escHtml(_sched||'sin día ni hora')+'</span>'
-      +(_schedEd?'<span style="font-size:12px;color:var(--text3)">✏️</span>':'')+'</div>';
+      +(_schedEd?'<span style="font-size:12px;color:var(--text3)">✏️</span>':'')+(_schedAll?_crSchedBtnHtml():'')+'</div>'+_schedAll;
   }
   // Y cuándo se juega la SIGUIENTE (sólo si esta ya arrancó y aquella todavía no).
   var _nxt=_crNextRoundNote(data,key,roundNum);
@@ -10903,8 +10907,9 @@ function _teamRoundHead(roundNum, crk, cx){
   var _tSched='';
   try { _tSched=_crRoundSchedule(cx.rdata, crk, roundNum); } catch(e) {}
   if(_tSched){
-    inner+='<div><div style="display:inline-flex;align-items:center;gap:8px;margin-bottom:10px;font-size:15px;background:var(--gl30);border:1px solid var(--bd14);border-radius:9px;padding:9px 14px;max-width:100%;flex-wrap:wrap">'
-      +'<span style="font-size:17px">🕒</span><span style="color:var(--fg-c0)">Se juega:</span> <span style="font-weight:700;color:var(--fg-e0);text-shadow:var(--txt-out);font-size:15.5px">'+escHtml(_tSched)+'</span></div></div>';
+    var _tAll=_crSchedAllHtml(cx.rdata, crk, roundNum);
+    inner+='<div><div data-sched-box'+(_tAll?' onclick="_crSchedToggle(this)" title="Ver los horarios de todas las rondas"':'')+' style="display:inline-flex;align-items:center;gap:8px;margin-bottom:10px;font-size:15px;background:var(--gl30);border:1px solid var(--bd14);border-radius:9px;padding:9px 14px;max-width:100%;flex-wrap:wrap'+(_tAll?';cursor:pointer':'')+'">'
+      +'<span style="font-size:17px">🕒</span><span style="color:var(--fg-c0)">Se juega:</span> <span style="font-weight:700;color:var(--fg-e0);text-shadow:var(--txt-out);font-size:15.5px">'+escHtml(_tSched)+'</span>'+(_tAll?_crSchedBtnHtml():'')+'</div>'+_tAll+'</div>';
   }
   try { var _tNxt=_crNextRoundNote(cx.rdata, crk, roundNum); if(_tNxt) inner+='<div>'+_tNxt+'</div>'; } catch(e) {}
   return inner;
@@ -11256,10 +11261,11 @@ function _teamRenderCrosses(crosses, roundNum, crk, hasFormation){
   if(!crosses||!crosses.length) return '<div style="color:var(--text3);font-size:12px;padding:10px">'+(_teamArgOnly?'' + _flagImg('ARG') + ' Argentina no juega en esta ronda.':'Sin cruces cargados.')+'</div>';
   var ks=(crk||'').replace(/'/g,"\\'");
   var inner='';
-  var _tSched=''; try { _tSched=_crRoundSchedule(crk?crDataLoad(crk):null, crk, roundNum); } catch(e) {}
+  var _tSched='', _tData=null; try { _tData=crk?crDataLoad(crk):null; _tSched=_crRoundSchedule(_tData, crk, roundNum); } catch(e) {}
   if(_tSched){
-    inner+='<div style="display:inline-flex;align-items:center;gap:8px;margin-bottom:10px;font-size:14px;background:var(--gl30);border:1px solid var(--bd14);border-radius:9px;padding:8px 13px;max-width:100%;flex-wrap:wrap">'
-      +'<span style="font-size:16px">🕒</span><span style="color:var(--fg-c0)">Se juega:</span> <span style="font-weight:700;color:var(--fg-e0);text-shadow:var(--txt-out)">'+escHtml(_tSched)+'</span></div>';
+    var _tAll=_crSchedAllHtml(_tData, crk, roundNum);
+    inner+='<div><div data-sched-box'+(_tAll?' onclick="_crSchedToggle(this)" title="Ver los horarios de todas las rondas"':'')+' style="display:inline-flex;align-items:center;gap:8px;margin-bottom:10px;font-size:14px;background:var(--gl30);border:1px solid var(--bd14);border-radius:9px;padding:8px 13px;max-width:100%;flex-wrap:wrap'+(_tAll?';cursor:pointer':'')+'">'
+      +'<span style="font-size:16px">🕒</span><span style="color:var(--fg-c0)">Se juega:</span> <span style="font-weight:700;color:var(--fg-e0);text-shadow:var(--txt-out)">'+escHtml(_tSched)+'</span>'+(_tAll?_crSchedBtnHtml():'')+'</div>'+_tAll+'</div>';
   }
   if(hasFormation) inner+='<div style="font-size:11px;color:var(--text3);margin-bottom:8px">Tocá un cruce para ver la formación tablero por tablero.</div>';
   // El rótulo dice "Cruces POR PAÍSES/EQUIPOS" y no sólo "Cruces": en un torneo por equipos hay dos
@@ -11723,6 +11729,66 @@ function _crNextRoundNote(data, key, n) {
     + '</div>';
 }
 
+// ── TABLA DE HORARIOS (como la "Tabla de horarios" de Chess-Results, 08/10/2026) ─────────────────
+// Tocando el cartel de un horario ("El torneo arranca" o el "🕒 Se juega" de una ronda) se despliegan
+// los de TODAS las rondas, con la que ya se jugó tachada y la próxima resaltada. Sale de los mismos
+// datos que cada cartel (_crRoundSchedule), así que respeta la categoría y la hora cargada a mano.
+function _crSchedList(data, key) {
+  var nums = {};
+  var add = function (k) { var n = parseInt(k, 10); if (n > 0 && n < 100) nums[n] = 1; };
+  [_crRoundDTByKey[key], data && data.roundDates, data && data.rounds, data && data.teamRounds].forEach(function (m) { if (m) Object.keys(m).forEach(add); });
+  String(_crRoundTimesByKey[key] || '').split('\n').forEach(function (ln) { var m = ln.trim().match(/^(?:R|Ronda|Round)?\s*0*(\d+)\b/i); if (m) add(m[1]); });
+  var max = 0; Object.keys(nums).forEach(function (n) { if (+n > max) max = +n; });
+  if (key === _tdRoundDTCrk && _tdRoundsTotal > max) max = _tdRoundsTotal;   // el detalle abierto sabe cuántas rondas tiene
+  var out = [];
+  for (var n = 1; n <= max; n++) {
+    var s = _crRoundSchedule(data, key, n) || '';
+    var i = s.lastIndexOf(' · ');
+    out.push({ n: n, dia: i > 0 ? s.slice(0, i) : s, hora: i > 0 ? s.slice(i + 3) : '' });
+  }
+  return out;
+}
+// La tabla, oculta, para poner justo después del cartel. '' si hay menos de dos rondas con horario.
+function _crSchedAllHtml(data, key, cur, editBtn) {
+  var L = [];
+  try { L = _crSchedList(data, key); } catch (e) {}
+  if (L.filter(function (x) { return x.dia; }).length < 2) return '';
+  var prox = 0;
+  for (var i = 0; i < L.length; i++) { if (!_crRoundStarted(data, L[i].n, key)) { prox = L[i].n; break; } }
+  var h = '<div class="cr-sched-all" hidden style="margin:-2px 0 12px">'
+    + '<div aria-hidden="true" style="font-size:11px;letter-spacing:.8px;text-transform:uppercase;color:var(--text3);font-weight:700;padding:0 0 5px">Horarios de las rondas</div>'
+    + '<table aria-label="Horarios de las rondas" style="border-collapse:collapse;font-size:13px;background:var(--gl30);border:1px solid var(--bd14);border-radius:9px;overflow:hidden;min-width:min(100%,320px);max-width:100%">'
+    + '<thead><tr style="color:var(--text3);font-size:11.5px;text-align:left"><th scope="col" style="padding:6px 10px;font-weight:600">Ronda</th><th scope="col" style="padding:6px 10px;font-weight:600">Día</th><th scope="col" style="padding:6px 10px;font-weight:600">Hora</th><th scope="col" style="padding:6px 6px"><span class="sr-only">Estado</span></th></tr></thead><tbody>';
+  L.forEach(function (x) {
+    var jugada = prox ? x.n < prox : _crRoundStarted(data, x.n, key);
+    var esProx = x.n === prox, esCur = String(x.n) === String(cur);
+    var st = esProx ? '<span style="color:var(--gold);font-weight:700;font-size:11.5px;white-space:nowrap">Próxima</span>'
+           : (jugada ? '<span aria-label="Ya se jugó" style="color:var(--text3)">✓</span>' : '');
+    h += '<tr style="border-top:1px solid var(--bd14);' + (esProx ? 'background:var(--gold-bg);' : '') + (jugada ? 'color:var(--text3);' : 'color:var(--fg-e0);') + '"' + (esCur ? ' aria-current="true"' : '') + '>'
+      + '<td style="padding:6px 10px;font-weight:700;white-space:nowrap">' + (esCur ? '▸ ' : '') + x.n + '</td>'
+      + '<td style="padding:6px 10px">' + (x.dia ? escHtml(x.dia) : '<span style="color:var(--text3)">sin fecha</span>') + '</td>'
+      + '<td style="padding:6px 10px;white-space:nowrap">' + escHtml(x.hora) + '</td>'
+      + '<td style="padding:6px 6px;text-align:center">' + st + '</td></tr>';
+  });
+  h += '</tbody></table>' + (editBtn || '') + '</div>';
+  return h;
+}
+// Botón "▾ Todas las rondas" que va DENTRO del cartel. stopPropagation: en modo autor el cartel de la
+// ronda se toca para editar su horario; el botón sólo despliega.
+function _crSchedBtnHtml() {
+  return '<button type="button" class="cr-sched-btn" aria-expanded="false" onclick="event.stopPropagation();_crSchedToggle(this)" '
+    + 'style="background:none;border:1px solid var(--bd22);border-radius:7px;color:var(--text2);font-size:11.5px;padding:2px 8px;cursor:pointer;font-family:inherit;white-space:nowrap">▾ Todas las rondas</button>';
+}
+// El cartel lleva data-sched-box; la tabla es el siguiente hermano (.cr-sched-all).
+function _crSchedToggle(el) {
+  var box = el.closest('[data-sched-box]'); if (!box) return;
+  var wrap = box.nextElementSibling; if (!wrap || !wrap.classList.contains('cr-sched-all')) return;
+  var abrir = wrap.hasAttribute('hidden');
+  if (abrir) wrap.removeAttribute('hidden'); else wrap.setAttribute('hidden', '');
+  var b = box.querySelector('.cr-sched-btn');
+  if (b) { b.setAttribute('aria-expanded', abrir ? 'true' : 'false'); b.textContent = abrir ? '▴ Ocultar' : '▾ Todas las rondas'; }
+}
+
 // ── Podio de un torneo terminado ────────────────────────────────────────────
 // Reemplaza al "hay que abrir la tabla y leer" cuando el torneo ya terminó. Forma de podio de
 // verdad: el 1º elevado en el centro, el 2º a la izquierda y el 3º a la derecha, más bajos.
@@ -11980,7 +12046,7 @@ function _anticipoGatherData(data, m){
   var feds = {}; st.forEach(function(p){ if (p.fed) feds[String(p.fed).toUpperCase()] = 1; });
   return {
     modo:'anticipo',
-    torneo:{ nombre:m.name, sede:m.location||'', fechas:m.dates||'', tipo:m.typ||'', internacional:!!isIntl,
+    torneo:{ nombre:m.name, sede:(m.venue ? m.venue + (m.location ? ', ' + m.location : '') : (m.location||'')), fechas:m.dates||'', tipo:m.typ||'', internacional:!!isIntl,
              rondas:(m.rounds||null), sistema:(m.format||''), ritmo:(m.pace||''),
              inscriptos:(st.length||null), paises:(Object.keys(feds).length||null) },
     favoritos:favoritos,
@@ -35280,8 +35346,30 @@ function _cvApplyBoardSize() {
 // objeto de la categoría (categories[i].pace/rounds/timeControl/dates/type/location); si el campo
 // queda vacío, se borra y la categoría vuelve a heredar el dato general del torneo.
 var _tdChipType = null, _tdChipId = null, _tdChipCat = -1;
+var _tdCatHeredado = {};   // datos del TORNEO que hereda la categoría abierta (para el "hoy usa…")
+// Dato de la categoría sobre el del torneo: vacío = hereda; "-" (o "—") = la categoría NO tiene ese dato.
+function _tdCatOv(v, base) {
+  v = (v == null) ? '' : String(v).trim();
+  if (!v) return base;
+  return /^[-–—]$/.test(v) ? '' : v;
+}
 var _TD_CHIP_FIELDS = {
-  dates:       { label: '📅 Fechas de esta categoría', type: 'text',   placeholder: 'Ej: 7 al 12 de septiembre de 2026' },
+  // Fechas: con inicio y fin la categoría calcula su propio estado (PRÓXIMO / EN CURSO / FINALIZADO);
+  // el texto a mano es opcional y, si está, es lo que se muestra.
+  dates:       { label: '📅 Fechas de esta categoría', type: 'multi', fields: [
+                   { k: 'startDate', label: 'Empieza', type: 'date' },
+                   { k: 'endDate',   label: 'Termina', type: 'date' },
+                   { k: 'dates',     label: 'O escribilo a mano (opcional)', placeholder: 'Ej: sábados de octubre' }] },
+  venue:       { label: '🏛 Lugar de juego de esta categoría', type: 'multi', guion: true, fields: [
+                   { k: 'venue',    label: 'Nombre del lugar', placeholder: 'Ej: Club Torre Blanca' },
+                   { k: 'venueMap', label: 'Mapa (link de Google Maps o dirección)', placeholder: 'Ej: Av. Rivadavia 1234, CABA' }] },
+  organizer:   { label: '👥 Organizador de esta categoría', type: 'text', guion: true, placeholder: 'Club / Federación' },
+  director:    { label: '📋 Director/a de esta categoría', type: 'text', guion: true, placeholder: 'Ej: OI Juan Pérez' },
+  arbiter:     { label: '⚖ Árbitro principal de esta categoría', type: 'text', guion: true, placeholder: 'Ej: AF María Gómez' },
+  whatsapp:    { label: '💬 WhatsApp de contacto de esta categoría', type: 'text', guion: true, placeholder: 'Ej: +54 9 11 1234-5678' },
+  regurl:      { label: '📝 Link de inscripción de esta categoría', type: 'text', guion: true, placeholder: 'https://docs.google.com/forms/...' },
+  flyerUrl:    { label: '🖼 Flyer propio de esta categoría', type: 'text', placeholder: 'https://i.imgur.com/xxxx.jpg',
+                 nota: 'Pegá el link de la imagen. Sin flyer propio, la categoría muestra el del torneo.' },
   startDate:   { label: '📅 Fecha de INICIO de esta categoría', type: 'date' },
   endDate:     { label: '📅 Fecha de FIN de esta categoría', type: 'date' },
   location:    { label: '📍 Lugar de esta categoría',  type: 'text',   placeholder: 'Ciudad, país' },
@@ -35334,9 +35422,21 @@ function _tdCatStore(type, id) {
   return null;
 }
 function _tdSaveCatField(field, value) {
+  var o = {}; o[field] = value;
+  _tdSaveCatFields([_tdChipCat], o);
+}
+// Guarda varios campos a la vez en una o varias categorías (la abierta + las tildadas en
+// "Aplicar también a…"), con un solo guardado.
+function _tdSaveCatFields(idxs, vals) {
   var st = _tdCatStore(_tdChipType, _tdChipId);
-  if (!st || !st.cats[_tdChipCat]) return;
-  var cat = st.cats[_tdChipCat];
+  if (!st) return;
+  idxs.forEach(function (i) {
+    var cat = st.cats[i]; if (!cat) return;
+    Object.keys(vals).forEach(function (f) { _tdSetCatVal(cat, f, vals[f]); });
+  });
+  st.save();
+}
+function _tdSetCatVal(cat, field, value) {
   if (field === 'rounds') {
     var n = parseInt(value, 10);
     if (n > 0) cat.rounds = n; else delete cat.rounds;
@@ -35347,8 +35447,8 @@ function _tdSaveCatField(field, value) {
   } else {
     var v = (value || '').trim();
     if (v) cat[field] = v; else delete cat[field];
+    if (field === 'flyerUrl' && !v) delete cat.flyerPos;
   }
-  st.save();
 }
 function _tdCloseChipEdit() { var ov = document.getElementById('td-chip-edit-ov'); if (ov) ov.remove(); }
 
@@ -35447,12 +35547,6 @@ function _tdRoundDTCommit(crk, n, borrar) {
     });
   } catch (e) {}
 }
-function _tdCommitChipEdit(field) {
-  var inp = document.getElementById('td-chip-input'); if (!inp) return;
-  _tdSaveCatField(field, inp.value);
-  _tdCloseChipEdit();
-  openTournamentDetail(_tdChipType, _tdChipId, false, _tdChipCat);
-}
 // ── "Finalizado" manual (por categoría o por torneo sin categorías) ─────────────────────────────
 // Marca una categoría/torneo como TERMINADO a mano: corta el sondeo (deja de re-pedir partidas al worker)
 // y muestra el podio, aunque el calendario todavía lo dé en vivo. Por categoría vive en cat.finished;
@@ -35495,18 +35589,90 @@ function _tdToggleFinished() {
   }
   openTournamentDetail(_tdChipType, _tdChipId, false, _tdChipCat);
 }
+function _tdCommitChipEdit(field) {
+  var cf = _TD_CHIP_FIELDS[field]; if (!cf) return;
+  var vals = {};
+  if (cf.type === 'multi') {
+    cf.fields.forEach(function (f) { var el = document.getElementById('td-chip-in-' + f.k); vals[f.k] = el ? el.value : ''; });
+  } else {
+    var inp = document.getElementById('td-chip-input'); if (!inp) return;
+    vals[field] = inp.value;
+  }
+  if (field === 'dates' && vals.startDate && vals.endDate && vals.startDate > vals.endDate) {
+    _tdChipErr('La fecha de inicio no puede ser posterior a la de fin.'); return;
+  }
+  _tdSaveCatFields([_tdChipCat].concat(_tdAlsoCats()), vals);
+  _tdCloseChipEdit();
+  openTournamentDetail(_tdChipType, _tdChipId, false, _tdChipCat);
+}
+function _tdChipErr(msg) {
+  var el = document.getElementById('td-chip-err');
+  if (el) { el.textContent = msg; el.style.display = 'block'; }
+}
+// "Aplicar también a…": un tilde por cada OTRA categoría del torneo. En los campeonatos por
+// categorías es común que dos o tres compartan sede, árbitro u horarios: se carga una vez.
+function _tdAlsoCatsHtml(st) {
+  if (!st || !st.cats || st.cats.length < 2) return '';
+  var h = '<div style="margin-top:14px;border-top:1px solid var(--bd14);padding-top:10px">'
+    + '<div style="font-size:12px;color:var(--text3);margin-bottom:6px">Aplicar también a:</div>'
+    + '<div style="display:flex;flex-wrap:wrap;gap:6px 14px">';
+  st.cats.forEach(function (c, i) {
+    if (i === _tdChipCat || !c) return;
+    h += '<label style="display:inline-flex;align-items:center;gap:5px;font-size:13px;color:var(--text2);cursor:pointer">'
+       + '<input type="checkbox" class="td-also-cat" value="' + i + '"> ' + escHtml(c.name || ('Categoría ' + (i + 1))) + '</label>';
+  });
+  return h + '</div></div>';
+}
+function _tdAlsoCats() {
+  return Array.prototype.map.call(document.querySelectorAll('#td-chip-edit-ov .td-also-cat:checked'), function (el) { return parseInt(el.value, 10); })
+    .filter(function (i) { return i >= 0 && i !== _tdChipCat; });
+}
+// Lo que la categoría hereda del torneo para ese campo, en texto ('' si el torneo no lo tiene).
+function _tdChipHeredadoTxt(field) {
+  var H = _tdCatHeredado || {};
+  if (field === 'flyerUrl') return H.flyerUrl ? 'el flyer del torneo' : '';
+  if (field === 'regurl') return H.regurl ? 'el link del torneo' : '';
+  var v = H[field];
+  return (v != null && v !== '') ? String(v) : '';
+}
+function _tdChipBox(titulo, cuerpo) {
+  return '<div style="background:var(--card90);border:1px solid var(--bd22);border-radius:14px;padding:20px;max-width:440px;width:100%;max-height:calc(100vh - 40px);overflow-y:auto;box-shadow:var(--shadow-card)">'
+    + '<div style="font-weight:700;color:var(--text);font-size:16px;margin-bottom:4px">' + titulo + '</div>' + cuerpo + '</div>';
+}
+function _tdChipBotones(onGuardar) {
+  return '<div id="td-chip-err" style="display:none;color:#f28b82;font-size:12.5px;margin-top:10px"></div>'
+    + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px;flex-wrap:wrap">'
+    + '<button onclick="_tdCloseChipEdit()" style="padding:8px 14px;background:var(--gl35);border:1px solid var(--bd22);color:var(--text2);border-radius:9px;cursor:pointer;font-family:inherit;font-size:13px">Cancelar</button>'
+    + '<button onclick="' + onGuardar + '" style="padding:8px 16px;background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-weight:700;border-radius:9px;cursor:pointer;font-family:inherit;font-size:13px">✓ Guardar</button>'
+    + '</div>';
+}
+function _tdChipOverlay(html) {
+  var ov = document.createElement('div');
+  ov.id = 'td-chip-edit-ov';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:100002;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:20px';
+  ov.innerHTML = html;
+  document.body.appendChild(ov);
+  ov.addEventListener('click', function (e) { if (e.target === ov) _tdCloseChipEdit(); });
+  return ov;
+}
 function _tdEditCatChip(field) {
+  if (field === 'roundDT') return _tdEditCatSchedule();
   var cf = _TD_CHIP_FIELDS[field]; if (!cf) return;
   var st = _tdCatStore(_tdChipType, _tdChipId);
   var cat = (st && st.cats[_tdChipCat]) ? st.cats[_tdChipCat] : {};
   var cur = cat[field];
   var catName = cat.name || ('Categoría ' + (_tdChipCat + 1));
   _tdCloseChipEdit();
-  var ov = document.createElement('div');
-  ov.id = 'td-chip-edit-ov';
-  ov.style.cssText = 'position:fixed;inset:0;z-index:100002;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:20px';
+  var _inp = function (f, idAttr, val) {
+    var it = f.type === 'number' ? 'number' : (f.type === 'date' ? 'date' : 'text');
+    return '<input id="' + idAttr + '" class="tz-input" type="' + it + '" ' + (f.type === 'number' ? 'min="1" max="25" ' : '') + 'placeholder="' + escHtml(f.placeholder || '') + '" value="' + escHtml(val != null ? String(val) : '') + '">';
+  };
   var ctl;
-  if (cf.type === 'select') {
+  if (cf.type === 'multi') {
+    ctl = cf.fields.map(function (f) {
+      return '<label for="td-chip-in-' + f.k + '" style="display:block;font-size:12px;color:var(--text3);margin:0 0 4px">' + escHtml(f.label) + '</label>' + _inp(f, 'td-chip-in-' + f.k, cat[f.k]);
+    }).join('<div style="height:10px"></div>');
+  } else if (cf.type === 'select') {
     // OJO: el valor por defecto es del CAMPO (`def`), no fijo. Antes estaba clavado en 'standard'
     // —el del ritmo—, y un select nuevo cuyas opciones no incluyan ese valor abriría siempre en la
     // primera opción aunque la categoría ya tuviera algo guardado.
@@ -35515,24 +35681,123 @@ function _tdEditCatChip(field) {
       return '<option value="' + o[0] + '"' + ((_sel === o[0]) ? ' selected' : '') + '>' + o[1] + '</option>';
     }).join('') + '</select>';
   } else {
-    var _it = cf.type === 'number' ? 'number' : (cf.type === 'date' ? 'date' : 'text');
-    ctl = '<input id="td-chip-input" class="tz-input" type="' + _it + '" ' + (cf.type === 'number' ? 'min="1" max="25" ' : '') + 'placeholder="' + escHtml(cf.placeholder || '') + '" value="' + escHtml(cur != null ? String(cur) : '') + '">';
+    ctl = _inp(cf, 'td-chip-input', cur);
   }
-  ov.innerHTML = '<div style="background:var(--card90);border:1px solid var(--bd22);border-radius:14px;padding:20px;max-width:420px;width:100%;box-shadow:var(--shadow-card)">'
-    + '<div style="font-weight:700;color:var(--text);font-size:16px;margin-bottom:4px">' + escHtml(cf.label) + '</div>'
-    + '<div style="color:var(--text3);font-size:12.5px;margin-bottom:14px;line-height:1.4">Solo para la categoría <b style="color:var(--text2)">' + escHtml(catName) + '</b>.' + (cf.type !== 'select' ? ' Dejalo vacío para volver a usar el dato general del torneo.' : '') + (cf.nota ? ' ' + escHtml(cf.nota) : '') + '</div>'
-    + ctl
-    + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px">'
-    + '<button onclick="_tdCloseChipEdit()" style="padding:8px 14px;background:var(--gl35);border:1px solid var(--bd22);color:var(--text2);border-radius:9px;cursor:pointer;font-family:inherit;font-size:13px">Cancelar</button>'
-    + '<button onclick="_tdCommitChipEdit(\'' + field + '\')" style="padding:8px 16px;background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-weight:700;border-radius:9px;cursor:pointer;font-family:inherit;font-size:13px">✓ Guardar</button>'
-    + '</div></div>';
-  document.body.appendChild(ov);
-  ov.addEventListener('click', function (e) { if (e.target === ov) _tdCloseChipEdit(); });
-  var inp = document.getElementById('td-chip-input');
-  if (inp) {
-    inp.focus(); if (inp.select) { try { inp.select(); } catch (e) {} }
-    inp.addEventListener('keydown', function (e) { if (e.key === 'Enter' && inp.tagName !== 'SELECT') { e.preventDefault(); _tdCommitChipEdit(field); } });
-  }
+  var ayuda = 'Solo para la categoría <b style="color:var(--text2)">' + escHtml(catName) + '</b>.'
+    + (cf.type !== 'select' ? ' Dejalo vacío para volver a usar el dato general del torneo.' : '')
+    + (cf.guion ? ' Poné un guion (<b>-</b>) para que esta categoría no muestre ninguno.' : '')
+    + (cf.nota ? ' ' + escHtml(cf.nota) : '');
+  var her = (cf.type !== 'select') ? _tdChipHeredadoTxt(field) : '';
+  var tienePropio = (cf.type === 'multi') ? cf.fields.some(function (f) { return cat[f.k]; }) : (cur != null && cur !== '');
+  var herHtml = her ? '<div style="font-size:11.5px;color:var(--text3);margin-top:8px">' + (tienePropio ? 'El del torneo es: ' : 'Hoy usa el del torneo: ') + '<b style="color:var(--text2)">' + escHtml(her) + '</b></div>' : '';
+  _tdChipOverlay(_tdChipBox(escHtml(cf.label),
+      '<div style="color:var(--text3);font-size:12.5px;margin-bottom:14px;line-height:1.4">' + ayuda + '</div>'
+    + ctl + herHtml + _tdAlsoCatsHtml(st)
+    + _tdChipBotones('_tdCommitChipEdit(\'' + field + '\')')));
+  var ins = document.querySelectorAll('#td-chip-edit-ov input.tz-input, #td-chip-edit-ov select.tz-input');
+  if (ins[0]) { ins[0].focus(); if (ins[0].select && ins[0].type === 'text') { try { ins[0].select(); } catch (e) {} } }
+  Array.prototype.forEach.call(ins, function (el) {
+    el.addEventListener('keydown', function (e) { if (e.key === 'Enter' && el.tagName !== 'SELECT') { e.preventDefault(); _tdCommitChipEdit(field); } });
+  });
+}
+
+// ── Horarios de TODAS las rondas de una categoría, en un solo cartel (08/10/2026) ───────────────
+// El renglón "Se juega" de cada ronda (tdEditRoundDT) sólo existe cuando la ronda ya está en el cuadro,
+// y antes de que el torneo arranque no hay ninguna: no había dónde cargar el calendario de una categoría
+// que juega en otro lado y a otra hora. Acá van todas juntas. Se guarda en cat.roundDT, que se MEZCLA
+// sobre los horarios del torneo: lo que quede igual al del torneo no se guarda (sigue heredando).
+function _tdSchSplit(v) {
+  var m = String(v || '').match(/^(\d{4}-\d{2}-\d{2})[ T](\d{1,2}):(\d{2})/);
+  return m ? { d: m[1], t: (m[2].length < 2 ? '0' : '') + m[2] + ':' + m[3] } : { d: '', t: '' };
+}
+function _tdSchRowHtml(r, v, heredado) {
+  var p = _tdSchSplit(v);
+  var limpiar = 'var s=this.parentNode.querySelector(\'.td-sch-her\'); if (s) s.remove()';
+  return '<div class="td-sch-row" data-r="' + r + '" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">'
+    + '<span style="flex:0 0 70px;font-size:13px;color:var(--text2);font-weight:600">Ronda ' + r + '</span>'
+    + '<input class="tz-input td-sch-d" type="date" style="flex:1 1 140px;min-width:0" value="' + p.d + '" aria-label="Día de la ronda ' + r + '" oninput="' + limpiar + '">'
+    + '<input class="tz-input td-sch-t" type="time" style="flex:0 1 110px;min-width:0" value="' + p.t + '" aria-label="Hora de la ronda ' + r + '" oninput="' + limpiar + '">'
+    + (heredado ? '<span class="td-sch-her" style="font-size:11px;color:var(--text3)">del torneo</span>' : '')
+    + '</div>';
+}
+function _tdEditCatSchedule() {
+  var st = _tdCatStore(_tdChipType, _tdChipId);
+  var cat = st && st.cats[_tdChipCat]; if (!cat) return;
+  var base = _tdRoundDTBase || {}, own = cat.roundDT || {};
+  var maxK = 0;
+  [base, own].forEach(function (m) { Object.keys(m).forEach(function (k) { var n = parseInt(k, 10); if (n > maxK) maxK = n; }); });
+  var nR = Math.max(parseInt(cat.rounds, 10) || _tdRoundsTotal || 0, maxK) || 7;
+  var catName = cat.name || ('Categoría ' + (_tdChipCat + 1));
+  _tdCloseChipEdit();
+  var filas = '';
+  for (var r = 1; r <= nR; r++) filas += _tdSchRowHtml(r, own[r] || base[r] || '', !own[r] && !!base[r]);
+  var otras = '';
+  st.cats.forEach(function (c, i) { if (i !== _tdChipCat && c && c.roundDT && Object.keys(c.roundDT).length) otras += '<option value="' + i + '">' + escHtml(c.name || ('Categoría ' + (i + 1))) + '</option>'; });
+  var sinFechas = !cat.startDate && !cat.endDate && !cat.dates;
+  _tdChipOverlay(_tdChipBox('🗓 Horarios de las rondas',
+      '<div style="color:var(--text3);font-size:12.5px;margin-bottom:14px;line-height:1.4">Solo para la categoría <b style="color:var(--text2)">' + escHtml(catName) + '</b>. '
+    + 'Las rondas que dicen <i>del torneo</i> usan el horario general; si las cambiás, quedan propias de la categoría. Una ronda sin día vuelve a usar la del torneo.</div>'
+    + (otras ? '<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap"><span style="font-size:12.5px;color:var(--text3)">Copiar de:</span>'
+             + '<select class="tz-input" style="flex:1 1 160px;min-width:0" onchange="_tdSchCopyFrom(this.value)"><option value="">— elegir categoría —</option>' + otras + '</select></div>' : '')
+    + '<div id="td-sch-rows">' + filas + '</div>'
+    + '<button onclick="_tdSchAddRow()" style="margin-top:2px;padding:5px 12px;background:transparent;border:1px dashed var(--bd22);color:var(--text3);border-radius:8px;cursor:pointer;font-family:inherit;font-size:12.5px">➕ Otra ronda</button>'
+    + '<label style="display:flex;align-items:flex-start;gap:7px;margin-top:14px;font-size:12.5px;color:var(--text2);cursor:pointer;line-height:1.35">'
+    + '<input type="checkbox" id="td-sch-fechas"' + (sinFechas ? ' checked' : '') + ' style="margin-top:2px"> '
+    + '<span>Usar el día de la primera y de la última ronda como fechas de la categoría <span style="color:var(--text3)">(así sabe sola cuándo está en curso y cuándo terminó)</span></span></label>'
+    + _tdAlsoCatsHtml(st)
+    + _tdChipBotones('_tdSchCommit()')));
+}
+function _tdSchAddRow() {
+  var box = document.getElementById('td-sch-rows'); if (!box) return;
+  var rows = box.querySelectorAll('.td-sch-row');
+  var last = rows[rows.length - 1];
+  var hora = last ? ((last.querySelector('.td-sch-t') || {}).value || '') : '';
+  box.insertAdjacentHTML('beforeend', _tdSchRowHtml(rows.length + 1, '', false));
+  var nueva = box.lastElementChild;
+  if (nueva) { nueva.querySelector('.td-sch-t').value = hora; nueva.querySelector('.td-sch-d').focus(); }   // misma hora que la anterior
+}
+function _tdSchCopyFrom(idx) {
+  var st = _tdCatStore(_tdChipType, _tdChipId);
+  var src = st && st.cats[parseInt(idx, 10)]; if (!src) return;
+  var dt = Object.assign({}, _tdRoundDTBase || {}, src.roundDT || {});
+  var box = document.getElementById('td-sch-rows'); if (!box) return;
+  var maxK = 0; Object.keys(dt).forEach(function (k) { var n = parseInt(k, 10); if (n > maxK) maxK = n; });
+  while (box.querySelectorAll('.td-sch-row').length < maxK) _tdSchAddRow();
+  Array.prototype.forEach.call(box.querySelectorAll('.td-sch-row'), function (row) {
+    var r = parseInt(row.getAttribute('data-r'), 10);
+    var p = _tdSchSplit(dt[r]);
+    row.querySelector('.td-sch-d').value = p.d;
+    row.querySelector('.td-sch-t').value = p.t;
+    var s = row.querySelector('.td-sch-her'); if (s) s.remove();
+  });
+}
+function _tdSchCommit() {
+  var st = _tdCatStore(_tdChipType, _tdChipId); if (!st) { _tdCloseChipEdit(); return; }
+  var base = _tdRoundDTBase || {};
+  var out = {}, dias = [], ultima = 0;
+  Array.prototype.forEach.call(document.querySelectorAll('#td-chip-edit-ov .td-sch-row'), function (row) {
+    var r = parseInt(row.getAttribute('data-r'), 10);
+    var d = row.querySelector('.td-sch-d').value || '', t = row.querySelector('.td-sch-t').value || '';
+    if (!d) { if (base[r]) dias.push(_tdSchSplit(base[r]).d); return; }   // sin día: hereda la del torneo
+    dias.push(d);
+    if (r > ultima) ultima = r;
+    var b = _tdSchSplit(base[r]);
+    if (base[r] && b.d === d && b.t === (t || '00:00')) return;           // igual a la del torneo: sigue heredando
+    out[r] = d + ' ' + (t || '00:00');
+  });
+  var usarFechas = !!(document.getElementById('td-sch-fechas') || {}).checked;
+  dias = dias.filter(Boolean).sort();
+  [_tdChipCat].concat(_tdAlsoCats()).forEach(function (i) {
+    var c = st.cats[i]; if (!c) return;
+    if (Object.keys(out).length) c.roundDT = JSON.parse(JSON.stringify(out)); else delete c.roundDT;
+    // Con "➕ Otra ronda" se cargó una ronda más de las que tenía (ej. una categoría a 7 rondas en un
+    // torneo a 6): la cantidad de rondas de la categoría sube sola, así el panelcito y el tope coinciden.
+    if (ultima > (parseInt(c.rounds, 10) || _tdRoundsTotal || 0)) c.rounds = ultima;
+    if (usarFechas && dias.length) { c.startDate = dias[0]; c.endDate = dias[dias.length - 1]; delete c.dates; }
+  });
+  st.save();
+  _tdCloseChipEdit();
+  openTournamentDetail(_tdChipType, _tdChipId, false, _tdChipCat);
 }
 
 async function openTournamentDetail(type, id, scrollToGames, catIdx) {
@@ -35680,8 +35945,9 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   }
 
   // ── Categorías: si el torneo tiene varias, mostramos UNA a la vez (la activa). La categoría
-  // pisa broadcast + Chess-Results + cruces/partidas con los suyos; el resto del header (nombre,
-  // fechas, sede) se comparte. catSuffix separa los datos de cruces/partidas por categoría.
+  // pisa broadcast + Chess-Results + cruces/partidas con los suyos; el resto del header (fechas, sede,
+  // organizador, árbitro, horarios…) se hereda del torneo salvo que la categoría tenga el suyo.
+  // catSuffix separa los datos de cruces/partidas por categoría.
   var activeCat = -1, catSuffix = '';
   if (categories && categories.length) {
     // Sin categoría pedida, abre en la marcada `inicial` (ej. la Final A de una Olimpiada vieja, que en
@@ -35690,6 +35956,11 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     for (var _ci0 = 0; _ci0 < categories.length; _ci0++) { if (categories[_ci0] && categories[_ci0].inicial) { _catIni = _ci0; break; } }
     activeCat = (catIdx != null && catIdx >= 0 && catIdx < categories.length) ? catIdx : _catIni;
     var _cat = categories[activeCat];
+    // Lo que la categoría HEREDA del torneo (antes de pisarlo con lo suyo): el editor de los
+    // panelcitos lo muestra como "hoy usa el del torneo: …".
+    _tdCatHeredado = { dates: dates, location: location, type: typ, rounds: rounds, timeControl: timeControl,
+                       venue: venue, venueMap: venueMap, organizer: organizer, director: director, arbiter: arbiter,
+                       whatsapp: whatsapp, regurl: regurl, flyerUrl: flyerUrl };
     var _cbc = _parseBcInput(_cat.broadcast || '');
     broadcastId = _cbc.id || ''; broadcastUrl = _cbc.url || '';
     crUrl = _cat.crurl || '';
@@ -35723,6 +35994,19 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     // "Fem" en vez de "Femenino" para que repartiera "mejor femenina" en un torneo de mujeres —donde
     // la mejor femenina ES la campeona—. Lo pidió el autor: un tilde y listo, sin depender del nombre.
     if (_cat.rama)                                    rama = _cat.rama;
+    // SEDE, GENTE Y CONTACTO por categoría (08/10/2026): en los campeonatos infantiles por categorías
+    // cada una se juega en otro lado, con otro organizador, otro árbitro y otro WhatsApp. Lo que la
+    // categoría no tenga cargado se hereda del torneo; un guion ("-") la deja SIN ese dato aunque el
+    // torneo lo tenga (ej. el director general no dirige esta categoría). Ver _tdCatOv.
+    if (_cat.venue) { venue = _tdCatOv(_cat.venue, venue); venueMap = venue ? (_cat.venueMap || '') : ''; }
+    else if (_cat.venueMap)                           venueMap = _cat.venueMap;
+    organizer = _tdCatOv(_cat.organizer, organizer);
+    director  = _tdCatOv(_cat.director, director);
+    arbiter   = _tdCatOv(_cat.arbiter, arbiter);
+    whatsapp  = _tdCatOv(_cat.whatsapp, whatsapp);
+    regurl    = _tdCatOv(_cat.regurl, regurl);
+    // Flyer propio de la categoría (cada organizador hace el suyo). El crédito es del flyer del torneo.
+    if (_cat.flyerUrl) { flyerUrl = _cat.flyerUrl; flyerPos = _cat.flyerPos || ''; flyerCredit = ''; flyerCreditUrl = ''; }
     // chesscomUrl y weburl (sitio oficial) son del torneo (no por categoría): se conservan para que
     // los botones sigan visibles al cambiar de categoría, igual que el "Sitio oficial".
     pgnGames = [];
@@ -35888,10 +36172,10 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   var _chipBase = 'background:var(--gl35);border:1px solid var(--bd22);border-radius:20px;padding:4px 13px';
   // dicho = cómo se lee en voz alta. A la vista el emoji dice qué es cada dato; al oído hay que
   // decirlo con todas las letras (y el emoji, que se cantaría, se calla).
-  function _chip(inner, field, dicho) {
+  function _chip(inner, field, dicho, tip) {
     var vis = dicho ? _a11yEnVezDe(inner, dicho) : inner;
     if (_chipEdit && field) return '<span onclick="_tdEditCatChip(\'' + field + '\')" role="button" tabindex="0" title="Editar solo para esta categoría" style="' + _chipBase + ';cursor:pointer">' + vis + ' <span aria-hidden="true" style="opacity:.5;font-size:11px">✏️</span></span>';
-    return '<span style="' + _chipBase + '">' + vis + '</span>';
+    return '<span style="' + _chipBase + '"' + (tip ? ' title="' + escHtml(tip) + '"' : '') + '>' + vis + '</span>';
   }
   // Chip vacío "➕" para AGREGAR a la categoría un dato que todavía no tiene (solo en modo edición).
   function _chipAdd(field, label) {
@@ -35900,7 +36184,10 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   h += '<div style="display:flex;flex-wrap:wrap;gap:7px;font-size:13px;color:var(--fg-d0)">';
   if (dates)       h += _chip('📅 ' + escHtml(dates), 'dates', 'Fechas: ' + dates);           else if (_chipEdit) h += _chipAdd('dates', 'Fechas');
   if (location)    h += _chip('📍 ' + escHtml(location), 'location', 'Lugar: ' + location);   else if (_chipEdit) h += _chipAdd('location', 'Lugar');
-  if (venue)    h += '<span onclick="openVenueMap()" role="button" tabindex="0" title="Ver en el mapa" style="' + _chipBase + ';cursor:pointer">' + _a11yEnVezDe('🏛 ' + escHtml(venue), 'Sede: ' + venue + '. Ver en el mapa') + ' <span aria-hidden="true" style="opacity:.65">🗺</span></span>';
+  // La sede abre el mapa al tocarla; en modo edición lleva además su propio ✏️ (que no abre el mapa).
+  if (venue)    h += '<span onclick="openVenueMap()" role="button" tabindex="0" title="Ver en el mapa" style="' + _chipBase + ';cursor:pointer">' + _a11yEnVezDe('🏛 ' + escHtml(venue), 'Sede: ' + venue + '. Ver en el mapa') + ' <span aria-hidden="true" style="opacity:.65">🗺</span>'
+                 + (_chipEdit ? ' <span onclick="event.stopPropagation();_tdEditCatChip(\'venue\')" role="button" tabindex="0" title="Editar la sede solo para esta categoría" aria-label="Editar la sede de esta categoría" style="opacity:.6;font-size:11px;padding-left:2px">✏️</span>' : '') + '</span>';
+  else if (_chipEdit) h += _chipAdd('venue', 'Sede');
   if (typ)         h += _chip('🏷 ' + escHtml(typ), 'type', 'Tipo de torneo: ' + typ);        else if (_chipEdit) h += _chipAdd('type', 'Tipo');
   if (rounds)      h += _chip('🎯 ' + rounds + ' rondas', 'rounds', rounds + ' rondas');      else if (_chipEdit) h += _chipAdd('rounds', 'Rondas');
   if (timeControl) h += _chip('⏱ ' + escHtml(timeControl), 'timeControl', 'Ritmo de juego: ' + _a11yRitmo(timeControl)); else if (_chipEdit) h += _chipAdd('timeControl', 'Tiempo');
@@ -35917,9 +36204,22 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     var _sinPod = !!(categories && categories[activeCat] && categories[activeCat].sinPodio);
     h += _chip(_sinPod ? '🚫 Sin podio' : '🏆 Con podio', 'sinPodio', _sinPod ? 'Esta categoría no muestra podio' : 'Esta categoría muestra podio');
   }
-  if (organizer) h += '<span style="' + _chipBase + '" title="Organizador">' + _a11yEnVezDe('👥 ' + escHtml(organizer), 'Organiza: ' + organizer) + '</span>';
-  if (director)  h += '<span style="' + _chipBase + '" title="Director/a del torneo">' + _a11yEnVezDe('📋 ' + escHtml(director), 'Dirige el torneo: ' + director) + '</span>';
-  if (arbiter)   h += '<span style="' + _chipBase + '" title="Árbitro principal">' + _a11yEnVezDe('⚖ ' + escHtml(arbiter), 'Árbitro principal: ' + arbiter) + '</span>';
+  if (organizer) h += _chip('👥 ' + escHtml(organizer), 'organizer', 'Organiza: ' + organizer, 'Organizador');   else if (_chipEdit) h += _chipAdd('organizer', 'Organizador');
+  if (director)  h += _chip('📋 ' + escHtml(director), 'director', 'Dirige el torneo: ' + director, 'Director/a del torneo'); else if (_chipEdit) h += _chipAdd('director', 'Director');
+  if (arbiter)   h += _chip('⚖ ' + escHtml(arbiter), 'arbiter', 'Árbitro principal: ' + arbiter, 'Árbitro principal'); else if (_chipEdit) h += _chipAdd('arbiter', 'Árbitro');
+  // Horarios de TODAS las rondas, contacto, inscripción y flyer: también son de la categoría, pero
+  // al visitante ya le llegan por otro lado (el cartel "El torneo arranca", las pestañas de ronda, los
+  // botones de la derecha, el flyer), así que estos panelcitos son sólo para el autor.
+  if (_chipEdit) {
+    var _nRdt = 0;
+    if (roundDT) Object.keys(roundDT).forEach(function (k) { if (roundDT[k]) _nRdt++; });
+    if (_nRdt) h += _chip('🗓 Horarios de ' + _nRdt + (parseInt(rounds) ? ' de ' + parseInt(rounds) : '') + ' rondas', 'roundDT', 'Horarios de las rondas');
+    else h += _chipAdd('roundDT', 'Horarios de las rondas');
+    if (whatsapp) h += _chip('💬 ' + escHtml(whatsapp), 'whatsapp', 'WhatsApp: ' + whatsapp); else h += _chipAdd('whatsapp', 'WhatsApp');
+    if (regurl)   h += _chip('📝 Inscripción', 'regurl', 'Link de inscripción');            else h += _chipAdd('regurl', 'Inscripción');
+    var _flyCat = !!(categories && categories[activeCat] && categories[activeCat].flyerUrl);
+    if (_flyCat) h += _chip('🖼 Flyer de la categoría', 'flyerUrl', 'Flyer propio de la categoría'); else h += _chipAdd('flyerUrl', 'Flyer propio');
+  }
   h += '</div>';
   // "El torneo arranca": SÓLO mientras no haya ninguna ronda cargada. En cuanto aparece la pestaña
   // R1 con su día y hora, este cartel repetiría el mismo dato dos veces en la misma pantalla, así
@@ -35941,11 +36241,20 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
                                   (_cd.teamRounds && Object.keys(_cd.teamRounds).length)));
       var _empezo = _r1 ? (Date.now() >= _r1.getTime()) : (_hayRondas || (games && games.length > 0));
       if (!_empezo) {
-        h += '<div style="display:inline-flex;align-items:center;gap:9px;margin-top:12px;background:var(--gold-bg);border:1px solid var(--gold-dim);border-radius:9px;padding:9px 13px;max-width:100%;flex-wrap:wrap">'
+        // Tocar el cartel despliega la tabla con los horarios de todas las rondas (como la de
+        // Chess-Results). En modo autor la tabla trae además el botón para editarlos; si todavía no hay
+        // tabla (una sola ronda con horario), el cartel abre directo el editor.
+        var _iniEdit = _chipEdit ? '<button type="button" onclick="_tdEditCatChip(\'roundDT\')" style="display:block;margin-top:8px;background:var(--gl35);border:1px solid var(--bd22);border-radius:8px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:inherit">✏️ Editar horarios de esta categoría</button>' : '';
+        var _iniAll = _crSchedAllHtml(_cd, crk, 0, _iniEdit);
+        var _iniClick = _iniAll ? ' onclick="_crSchedToggle(this)" title="Ver los horarios de todas las rondas"'
+                      : (_chipEdit ? ' onclick="_tdEditCatChip(\'roundDT\')" role="button" tabindex="0" title="Editar los horarios de las rondas de esta categoría"' : '');
+        h += '<div data-sched-box' + _iniClick
+          + ' style="display:inline-flex;align-items:center;gap:9px;margin-top:12px;background:var(--gold-bg);border:1px solid var(--gold-dim);border-radius:9px;padding:9px 13px;max-width:100%;flex-wrap:wrap' + ((_iniAll || _chipEdit) ? ';cursor:pointer' : '') + '">'
           + '<span style="font-size:15px">🚩</span>'
           + '<span style="color:var(--fg-c0);font-size:13.5px">El torneo arranca:</span>'
           + '<span style="color:var(--gold);font-weight:700;font-size:14px;text-shadow:var(--txt-out)">' + escHtml(_ini) + '</span>'
-          + '</div>';
+          + (_iniAll ? _crSchedBtnHtml() : (_chipEdit ? '<span aria-hidden="true" style="opacity:.5;font-size:11px">✏️</span>' : ''))
+          + '</div>' + (_iniAll ? _iniAll.replace('margin:-2px 0 12px', 'margin:8px 0 0') : '');
       }
     }
   }
@@ -36034,7 +36343,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   h += '<div id="td-podium-box">' + _tdPodiumInnerHtml() + '</div>';
   if (status === 'upcoming' && !_ondemand) {
     // Torneo que se va a jugar → botón de ANTICIPO (previa) en modo autor.
-    _tdNewsMeta = { crk: crk, name: name, location: location, dates: dates, typ: typ, isTeam: isTeam, status: 'upcoming', rounds: rounds, format: format, pace: pace };
+    _tdNewsMeta = { crk: crk, name: name, location: location, venue: venue, dates: dates, typ: typ, isTeam: isTeam, status: 'upcoming', rounds: rounds, format: format, pace: pace };
     h += _tdAnticipoBtnHtml();
   }
 
