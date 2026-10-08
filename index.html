@@ -315,7 +315,7 @@
       /* Auto-ocultar estilo Lichess: el header FLOTA fijo arriba y se esconde deslizándose con transform
          (capa GPU, NO toca el layout → cero reflow, cero salto). El contenido reserva su alto real con
          padding-top:var(--hdr-real), que nunca cambia. El JS mide ese alto en --hdr-real. */
-      position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+      position: fixed; top: 0; left: 0; right: var(--hdr-sb, 0px); z-index: 100;   /* --hdr-sb: no tapar la barra de scroll (_hdrSbFit) */
       transform: translateY(0); transition: transform .2s ease, border-color .2s ease;
       will-change: transform;
     }
@@ -20822,7 +20822,7 @@ async function estSim(k) {
     var td = e.sim.tbDesde, sigue = !td ? '' : (td === 1 ? ' La primera jugada es la del libro' : ' Las primeras ' + td + ' semijugadas son del libro')
       + '; después sigue la tablebase con juego perfecto hasta el final.';
     var tit = '📖 Línea del libro: ' + e.libro + ', comprobada jugada por jugada con la tablebase de Lichess (ninguna jugada cambia el resultado).' + sigue;
-    var pgnL = '[Event "' + String(e.libro).replace(/[{}"\\]/g, '') + '"]\n[Site "chessargentino.ar"]\n[White "Posición de libro"]\n[Black "Teoría"]\n'
+    var pgnL = '[Event "' + String(e.libro).replace(/[{}"\\]/g, '') + '"]\n[Site "chessargentino.ar"]\n[White "Blancas"]\n[Black "Negras"]\n'
       + '[Result "' + res + '"]\n[SetUp "1"]\n[FEN "' + e.fen + '"]\n\n{' + tit.replace(/[{}"\\]/g, '') + '} ' + mov + ' ' + res + '\n';
     _estSimNota = { pgn: pgnL, html: '📖 <b>Línea del libro</b>: ' + escHtml(e.libro) + ', comprobada jugada por jugada con la tablebase de Lichess (ninguna jugada cambia el resultado).' + escHtml(sigue) + ' ' + escHtml(e.nota || '') };
     _cvTourGames = [pgnL]; _cvShareKeys = [null]; _cvFromTournament = false;
@@ -20838,7 +20838,7 @@ async function estSim(k) {
   var cierre = e.sim.fin === 'ahogado' ? '¡Ahogado! Tablas.' : e.sim.fin === 'sin material' ? (tm ? 'Se quedó sin la torre: tablas.' : 'No queda con qué ganar: tablas.')
     : e.sim.fin === 'corona' ? 'Corona el peón: gana.' : e.sim.tablas ? 'Y así sigue: ' + quien + ' no tiene cómo progresar. Tablas.' : '';
   var lim = function (s) { return String(s || '').replace(/[{}"\\]/g, ''); };
-  var pgn = '[Event "Final simulado (tablebase de Lichess)"]\n[Site "chessargentino.ar"]\n[White "' + lim(e.fabricada ? 'Posición de estudio' : e.w) + '"]\n[Black "' + lim(e.fabricada ? 'Tablebase' : e.b) + '"]\n'
+  var pgn = '[Event "Final simulado (tablebase de Lichess)"]\n[Site "chessargentino.ar"]\n[White "' + lim(e.fabricada ? 'Blancas' : e.w) + '"]\n[Black "' + lim(e.fabricada ? 'Negras' : e.b) + '"]\n'
     + '[Result "' + res + '"]\n[SetUp "1"]\n[FEN "' + e.fen + '"]\n\n{' + lim(cartel) + '} ' + mov + (cierre ? ' {' + lim(cierre) + '}' : '') + ' ' + res + '\n';
   _estSimNota = { pgn: pgn, html: '🤖 <b>Final simulado</b>: lo juega la tablebase de Lichess con juego perfecto de los dos lados'
     + escHtml(como).replace('con ! las', 'con <b>!</b> las') + ' ' + escHtml(que) + (cierre ? ' <b>' + escHtml(cierre) + '</b>' : e.sim.fin === 'mate' ? ' <b>Termina en mate.</b>' : '') };
@@ -35255,6 +35255,22 @@ function _hdrSuppressResize(on) {
 function _resetHdrForNav() {
   _hdrLastEl = null; _hdrLastY = 0;
   _showHeader();
+  setTimeout(function () { _hdrSbFit(); }, 60);   // la pantalla nueva puede tener otra caja que scrollea
+}
+// La barra flota sobre la caja que scrollea (.main, el visor, el torneo…), y ésas tienen su propia barra de
+// scroll a la derecha: al bajar la barra de menús tapaba la flechita de arriba (pedido del autor). Se mide el
+// ancho de esa barra de scroll y la barra de menús termina antes (--hdr-sb). En el teléfono mide 0: no cambia nada.
+function _hdrSbFit(el) {
+  if (!el || !el.getBoundingClientRect) {   // sin caja: la que está a la derecha, abajo (debajo de la barra no: ahí está ella)
+    el = document.elementFromPoint(window.innerWidth - 4, window.innerHeight - 30);
+    while (el && el !== document.body && !_isPageScroller(el)) el = el.parentElement;
+    if (!el || el === document.body) return;
+  }
+  var r = el.getBoundingClientRect(), sb = 0;
+  if (r.right >= window.innerWidth - 1) sb = Math.max(0, Math.round(r.right - (r.left + el.clientLeft + el.clientWidth)));
+  if (sb > 24) sb = 0;   // no es una barra de scroll (algún borde raro): mejor no correr nada
+  var v = sb + "px", rs = document.documentElement.style;
+  if (rs.getPropertyValue("--hdr-sb") !== v) rs.setProperty("--hdr-sb", v);
 }
 // Solo el scroll de la PÁGINA (o del overlay a pantalla completa) oculta/muestra el header. Los
 // contenedores internos que scrollean solos (lista de jugadas, columna del libro, panel del motor,
@@ -35277,7 +35293,7 @@ function _isPageScroller(el) {
     var y = (el === document || el === document.documentElement || el === window)
       ? (window.scrollY || document.documentElement.scrollTop || 0)
       : (el.scrollTop || 0);
-    if (el !== _hdrLastEl) { _hdrLastEl = el; _hdrLastY = y; return; }   // cambió de contenedor: rebasar sin togglear
+    if (el !== _hdrLastEl) { _hdrLastEl = el; _hdrLastY = y; _hdrSbFit(el.getBoundingClientRect ? el : null); return; }   // cambió de contenedor: rebasar sin togglear
     var dy = y - _hdrLastY;
     if (Math.abs(dy) < 6) return;                                       // micro-scroll: ignorar (acumula, anti-jitter)
     if (y <= 8) _showHeader();                                          // en el tope: header visible
@@ -35296,9 +35312,9 @@ function _isPageScroller(el) {
     });
   }, { passive: true, capture: true });
   // Medir el header al cargar y en cada resize (el alto cambia con los breakpoints responsive).
-  if (document.readyState !== 'loading') _setHdrVar();
-  else document.addEventListener('DOMContentLoaded', _setHdrVar);
-  window.addEventListener('resize', function() { _showHeader(); _setHdrVar(); });
+  if (document.readyState !== 'loading') { _setHdrVar(); _hdrSbFit(); }
+  else document.addEventListener('DOMContentLoaded', function () { _setHdrVar(); _hdrSbFit(); });
+  window.addEventListener('resize', function() { _showHeader(); _setHdrVar(); _hdrSbFit(); });
 })();
 
 // ── Tablero redimensionable por el visitante (se guarda en el navegador) ──────────────────────────
@@ -60198,6 +60214,10 @@ function cvUpdateNagBadge() {
       if (!ok || P.g !== g) return;
       var ml = lineaPrincipal(), nd = _apA.trie, hondo = 0, best = -1;
       if (ml.length < 4) { g.ap = undefined; return; }   // la partida todavía no cargó: probar después
+      // Partida que arranca de una posición armada ([FEN], p. ej. un final de 📖 Estudiar o una 960): no hay
+      // apertura que buscar (1.h4 desde un final de torre contra alfil decía "Es una Kádas").
+      var fm = /\[FEN "([^"]+)"\]/.exec(cv.rawPgn || '');
+      if (fm && fm[1].split(' ')[0] !== 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR') { g.ap = null; return; }
       for (var i = 0; i < ml.length; i++) {
         nd = nd.k[(ml[i].move.san || '').replace(/[+#!?]/g, '')];
         if (!nd) break;
@@ -61348,7 +61368,8 @@ function cvUpdateNagBadge() {
   // Apellido del jugador desde el PGN: "Mizzau, Pablo" → "Mizzau"; "MIZZAU PABLO" → "Mizzau".
   function apellido(tag) {
     var m = new RegExp('\\[' + tag + ' "([^"]*)"\\]').exec(cv.rawPgn || ''), n = m ? m[1].trim() : '';
-    if (!n || n === '?') return '';
+    // "Blancas"/"Negras" no son apellidos (los finales de 📖 Estudiar): así queda "el de blancas", no "Blancas tiene".
+    if (!n || n === '?' || /^(blancas|negras|white|black)$/i.test(n)) return '';
     n = n.indexOf(',') >= 0 ? n.split(',')[0] : n.split(/\s+/).length > 1 && n.indexOf(',') < 0 && /^[A-ZÁÉÍÓÚÑ]+$/.test(n.split(/\s+/)[0]) ? n.split(/\s+/)[0] : n.split(/\s+/).slice(-1)[0];
     return n.toLowerCase().replace(/(^|[\s'-])(\p{L})/gu, function (a, b, c) { return b + c.toUpperCase(); });
   }
