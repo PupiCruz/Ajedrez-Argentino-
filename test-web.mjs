@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2326;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2356;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -1514,8 +1514,11 @@ console.log('\n=== 30. "Finalizado" a mano y lo horneado que no se tapa ===');
   {
     const W = { __EMBEDDED_CR__: { cr2_tz_x: { rounds: { 1: [{ m: '1', w: 'A' }], 2: [{ m: '1', w: 'ARCH' }], 3: [{ m: '1' }] },
                                                roundDates: { 1: 'v1' }, standings: [{ name: 'Viejo' }] } } };
-    const G = new Function('window', extraerFuncion('_crEmbeddedAlts') + extraerFuncion('_crEmbeddedFor')
-                           + extraerFuncion('_crBakedFor') + graft + ' return _crGraftBaked;')(W);
+    const AYUD = extraerFuncion('_crNomClave') + extraerFuncion('_crNombresDe') + extraerFuncion('_crRosterDe')
+               + extraerFuncion('_crNombresAjenos');
+    const hacerG = (W) => new Function('window', extraerFuncion('_crEmbeddedAlts') + extraerFuncion('_crEmbeddedFor')
+                           + extraerFuncion('_crBakedFor') + AYUD + graft + ' return _crGraftBaked;')(W);
+    const G = hacerG(W);
     const vivo = { rounds: { 2: [{ m: '1', w: 'VIVO' }], 3: [] }, standings: [{ name: 'Nuevo' }] };
     G('cr2_ls_x', vivo);
     chk(vivo.rounds[1] && vivo.rounds[1].length === 1 && vivo.rounds[2][0].w === 'VIVO' && vivo.rounds[3].length === 1
@@ -1524,6 +1527,28 @@ console.log('\n=== 30. "Finalizado" a mano y lo horneado que no se tapa ===');
     const sinRounds = { standings: [] };
     G('cr2_ls_x', sinRounds);
     chk(sinRounds.rounds && sinRounds.rounds[1], 'también si la copia ni siquiera tiene el campo rounds');
+
+    // 08/10/2026, II Magistral La Nucía: info64 nombra sus .xlsx por el SEGUNDO y dos exports
+    // simultáneos de torneos distintos se pisan. Un visitante guardó la ronda 4 de un suizo catalán;
+    // como venía completa, no la volvía a pedir. Si los jugadores no son los del torneo, gana el archivo.
+    const P = (w, b, res) => ({ w, b, res: res || '' });
+    const nucia = { rounds: {
+        3: [P('Munoz, Miguel', 'Fiorito, Joaquin', '0-1'), P('Macias Pino, Diego', 'Sos Andreu, Eric', '½-½'), P('Del Rio De Angelis, Salvador Gab', 'Ruiz Buendia, Miguel', '½-½')],
+        4: [P('Fiorito, Joaquin', 'Otero Marino, Alain'), P('Valenzuela Gomez, Fernando', 'Fiorito, Francisco'), P('Ruiz Buendia, Miguel', 'Martinez Duany, Lelys Stanley')] },
+      roundDates: { 4: '2026-10-08 17:00' }, standings: [{ name: 'Fiorito, Joaquin' }] };
+    const G2 = hacerG({ __EMBEDDED_CR__: { cr2_tz_n: nucia } });
+    const brave = { rounds: {
+        3: [P('Fiorito, Joaquin', 'Munoz, Miguel', '1-0'), P('Sos Andreu, Eric', 'Macias Pino, Diego', '½-½'), P('Ruiz Buendia, Miguel', 'Del Rio De Angelis, Salvador Gab', '½-½')],
+        4: [P('Budhrani, Dhanesh', 'Tattersall Rodriguez, Lester', '0-1'), P('Ruiz Vinals, Matias', 'Cerdo Fernandez, Miguel', '1-0'), P('Baldo Company, Jordi', 'Santandreu Tost, Josep', '0-1')] },
+      roundDates: { 4: '2026-10-08 10:00' } };
+    G2('cr2_ls_n', brave);
+    chk(brave.rounds[4][0].w === 'Fiorito, Joaquin' && brave.roundDates[4] === '2026-10-08 17:00',
+        'una ronda guardada con jugadores de OTRO torneo se cambia por la del archivo (con su horario)', JSON.stringify(brave.rounds[4][0]));
+    chk(brave.rounds[3][0].w === 'Fiorito, Joaquin' && brave.rounds[3][0].res === '1-0',
+        'y una ronda del vivo con los MISMOS jugadores sigue mandando, aunque cambien las mesas');
+    const conTitulos = { rounds: { 4: [P('IM Fiorito, Joaquín', 'Otero Marino, Alain', '0-1'), P('Valenzuela Gomez, Fernando', 'IM FIORITO, Francisco', '½-½')] } };
+    G2('cr2_ls_n', conTitulos);
+    chk(conTitulos.rounds[4][0].res === '0-1', 'los nombres se comparan sin acentos, mayúsculas ni títulos');
   }
 
   // El alias sigue funcionando: el autor guarda 'tz', la web abre 'ls'.
@@ -3997,13 +4022,17 @@ console.log('\n=== 46. Accesibilidad Fase 1: las tablas de torneo ===');
     + 'function _i64ExportUrl(u, kind, rd){ return kind + ":" + rd; }'
     + 'async function _i64ProxyFetch(u){ pedidos.push(u); return u; }'
     + 'function crExtractXlsx(u){ var m = String(u).match(/^round:(\\d+)$/); if (!m) return [["tabla"]]; return Number(m[1]) <= ESTADO.rondas ? [["Ronda " + m[1]], ["x"]] : []; }'
-    + 'function _crParseSections(rows, hdr){ var o = {}; if (hdr.length) o[hdr[0].num] = [ { w: "A", b: "B", res: "1-0" } ]; return o; }'
+    + 'function _crParseSections(rows, hdr){ var o = {}; if (hdr.length) o[hdr[0].num] = (ESTADO.ajena === hdr[0].num)'
+    + '   ? [ { w: "Budhrani, Dhanesh", b: "Tattersall, Lester", res: "0-1" }, { w: "Ruiz Vinals, Matias", b: "Cerdo, Miguel", res: "1-0" } ]'
+    + '   : [ { w: "A", b: "B", res: "1-0" } ]; return o; }'
     + 'function _crParseRoundDT(){ return null; }'
-    + 'function _crParseStandingsRows(){ return { standings: [ { name: "A", fideId: "1" } ], kind: "standings" }; }'
+    + 'function _crParseStandingsRows(){ return ESTADO.tablaAjena ? { standings: [ { name: "Budhrani, Dhanesh" }, { name: "Cerdo, Miguel" }, { name: "Baldo, Jordi" } ], kind: "standings" }'
+    + '   : { standings: [ { name: "A", fideId: "1" } ], kind: "standings" }; }'
     + 'function _crCarryOverFeds(){} function _crCarryOverFideIds(){}'
     + 'function crLooksLikeRoundRobin(){ return false; } function crRefreshSection(){}'
     + 'function _tdRefreshArgLine(){} function _tdRefreshPodium(){} function renderTorneos(){}'
     + extraerFuncion('_crRoundCompleteIndiv')
+    + extraerFuncion('_crNomClave') + extraerFuncion('_crNombresDe') + extraerFuncion('_crRosterDe') + extraerFuncion('_crNombresAjenos')
     + 'async ' + extraerFuncion('_i64AutoFetchIndiv')
     + ' return _i64AutoFetchIndiv;');
   const publicado = () => {
@@ -4030,6 +4059,23 @@ console.log('\n=== 46. Accesibilidad Fase 1: las tablas de torneo ===');
   pedidos.length = 0; E = { data: publicado(), rondas: 9 };
   await mundo(pedidos, E)('cr2_i', 'https://info64.org/torneo', {});
   chk(rondasDe().length === 10, 'el botón "Actualizar desde info64" del autor sigue bajando todas', JSON.stringify(rondasDe()));
+
+  // 08/10/2026, La Nucía: info64 mandó el .xlsx de OTRO torneo (dos exports en el mismo segundo).
+  pedidos.length = 0; E = { data: publicado(), rondas: 9, ajena: 9 };
+  await mundo(pedidos, E)('cr2_i', 'https://info64.org/torneo', { silent: true });
+  chk(E.guardado && E.guardado.rounds[9].length === 2 && E.guardado.rounds[9][0].w === 'A' && E.guardado.rounds[9][1].w === 'C',
+      'una ronda que llega con jugadores de OTRO torneo no se guarda: queda la que se tenía', JSON.stringify(E.guardado && E.guardado.rounds[9]));
+  chk(JSON.stringify(rondasDe()) === '[8,9,10]', 'y no corta la búsqueda: igual se pide la siguiente', JSON.stringify(rondasDe()));
+
+  pedidos.length = 0; E = { data: publicado(), rondas: 10, ajena: 10 };
+  await mundo(pedidos, E)('cr2_i', 'https://info64.org/torneo', { silent: true });
+  chk(!E.guardado.rounds[10] && JSON.stringify(rondasDe()) === '[8,9,10]',
+      'si la ajena es una ronda que no se conocía, no se guarda y se frena ahí (no se piden de más)', JSON.stringify(rondasDe()));
+
+  pedidos.length = 0; E = { data: publicado(), rondas: 9, tablaAjena: true };
+  await mundo(pedidos, E)('cr2_i', 'https://info64.org/torneo', { silent: true });
+  chk(E.guardado.standings.length === 1 && E.guardado.standings[0].name === 'A',
+      'y una TABLA de otro torneo tampoco pisa la que se tenía', JSON.stringify(E.guardado.standings));
 }
 
 
@@ -6114,8 +6160,8 @@ console.log('\n=== 53g. Aviso de colgadas graves (19/09) ===');
       + 'var _cvMobileMQ = { get matches(){ return CHICA; } };'
       + extraerFuncion('_colBarreRonda')
       + '; return { b: _colBarreRonda, set ms(v){ _mev.avgMs = v; }, set chica(v){ CHICA = v; } };')();
-    B.ms = 64;  chk(B.b() === true,  '🔒 una PC (64 ms por posición, lo medido con el SF18 lite) barre toda la ronda');
-    B.ms = 400; chk(B.b() === false, '🔒 un teléfono (lento) NO barre: gastaba la batería en un barrido que nunca termina; recibe por el arbitrito');
+    B.ms = 194; chk(B.b() === true,  '🔒 una PC (194 ms por posición a prof. 14, lo medido con el SF19 lite el 08/10) barre toda la ronda');
+    B.ms = 1200; chk(B.b() === false, '🔒 un teléfono (lento, ~3 veces una PC) NO barre: gastaba la batería en un barrido que nunca termina; recibe por el arbitrito');
     B.ms = 0; B.chica = true;  chk(B.b() === false, 'hasta tener medida, decide la pantalla: la chica no barre');
     B.chica = false;           chk(B.b() === true,  '…y la grande sí');
   }
@@ -6764,7 +6810,7 @@ console.log('\n=== 53g-quater. Al entrar desde un aviso: parar en la colgada y g
   FI.foco = { gk: 'mesa7', ply: 1 };   chk(FI.i() === 0, 'una colgada en la jugada 1 no se va de rango');
   FI.foco = { gk: 'mesa7', ply: 61 };
   chk(FI.i() === 0, '🔒 si la partida TODAVÍA no llegó a la colgada (PGN atrasado), el gráfico va como siempre: quedarse en el final y volver al principio hacía que el "?? " saliera último', FI.i());
-  chk(/if \(_faOcupado\(\) && !_faSaltoPendiente\(\)\) return;/.test(extraerFuncion('faMaybeAutoLive'))
+  chk(/if \(_faOcupado\(\) && !_faSaltoPendiente\(\)\) \{ _faRepNuevasYa\(\); return; \}/.test(extraerFuncion('faMaybeAutoLive'))
       && /faGetNodes\(\)\.length >= _colFoco\.ply && _fa\.ply < _colFoco\.ply - 2/.test(extraerFuncion('_faSaltoPendiente')),
       '🔒 y el "ya está calculando" deja pasar ESE caso: si no, el pase seguía dibujando el principio y el arreglo no corría nunca');
   const fh = extraerFuncion('faHandleMsg');
@@ -6786,7 +6832,7 @@ console.log('\n=== 53g-quater. Al entrar desde un aviso: parar en la colgada y g
     + 'function sfAnalyze(){} function setTimeout(){} function clearTimeout(){} var _faNagSig = "";'
     + 'var document = { getElementById: function(){ return { style: {}, textContent: "", classList: { add: function(){}, remove: function(){} } }; } };'
     + 'Object.defineProperty(_fa.nodes, "fen", { value: "" });'
-    + 'function _faInicio(){ return 0; }' + extraerFuncion('_faSaltea')
+    + 'function _faInicio(){ return 0; }' + extraerFuncion('_faDeAyudantes') + extraerFuncion('_faSaltea')
     + extraerFuncion('faNext')
     + '; return { next: faNext, fa: _fa, get fin(){ return terminado; } };')();
   // Falta evaluar la 46 (índice 45, la colgada) y la 3 (índice 2, del principio).
@@ -6821,7 +6867,7 @@ console.log('\n=== 53g-quinquies. Gráfico en vivo: una sí y una no, afinar la 
       + 'function _faRellenarSiLibre(){} ' + 'function _faLiveEligible(){ return false; } var _faLiveHidden = false; function _faInterp(r){ return r; }'
       + 'function sfAnalyze(){} function setTimeout(){} function clearTimeout(){} var _faNagSig = "";'
       + 'var document = { getElementById: function(){ return { style: {}, textContent: "", classList: { add: function(){}, remove: function(){} } }; } };'
-      + ['_faWinP', '_faSaltea', '_faAfinar', '_faSiguiente', 'faNext'].map(extraerFuncion).join('\n')
+      + ['_faWinP', '_faDeAyudantes', '_faSaltea', '_faAfinar', '_faSiguiente', 'faNext'].map(extraerFuncion).join('\n')
       + '; for (var i = 0; i < ' + n + '; i++) { _fa.nodes.push({ fen: "f" + i }); _fa.results.push(null); }'
       + '  _fa.ply = _fa.desde = _faInicio();'
       + '  function correr(){ var vueltas = 0; faNext(); while (_fa.running && vueltas++ < 1000) {'
@@ -8088,8 +8134,8 @@ console.log('\n=== Auditoría 23/09 — Fase 4: accesibilidad y prolijidad ===')
       && /if \(reusa && P\.ev\[k - 1\]\) \{ sc\[k\] = P\.ev\[k - 1\];/.test(pr) && /P\.evProf >= _CG_PASADA_DEPTH/.test(pr),
       '🔒 cada partida se guarda APENAS termina (cortar el barrido no pierde lo hecho), desde la jugada 1 para el gráfico entero, y lo guardado se reusa');
   chk(/_evjContar\(\)/.test(extraerFuncion('_estadoActualFp')), 'guardar evaluaciones enciende el aviso de "cambios sin guardar"');
-  chk(/depth: _CG_PASADA_DEPTH, cb:/.test(pr) && !/_mevEvals/.test(pr) && /var _CG_PASADA_DEPTH = 16;/.test(SRC),
-      '🔒 el barrido evalúa a prof. 16 (medido: ronda de 20 partidas de 40 jugadas ≈ 11 min; lo eligió el autor) y no reusa las de prof. 12 de las miniaturas');
+  chk(/depth: _CG_PASADA_DEPTH, cb:/.test(pr) && !/_mevEvals/.test(pr) && /var _CG_PASADA_DEPTH = 18;/.test(SRC),
+      '🔒 el barrido evalúa a prof. 18 (08/10, con varios motores; a 16 eran ≈ 11 min con uno solo; lo eligió el autor) y no reusa las de prof. 12 de las miniaturas');
 }
 // ── Visor de un torneo POR EQUIPOS: bandera y título desde el plantel (28/09/2026, Moscú 1994) ──
 {
@@ -9590,6 +9636,103 @@ console.log('\n── Planes típicos de la apertura ──');
   chk(/\[Result "1-0"\]/.test(kb.pgn) && /1\. Rf7 Kg1 2\. Rg7\+ 1-0/.test(kb.pgn) && /La primera jugada es la del libro; después sigue la tablebase/.test(kb.nota)
       && /\[Result "1\/2-1\/2"\]/.test(bl.pgn) && !/sigue la tablebase/.test(bl.nota),
       'posición de libro sin peones: gana la torre (1-0) y el cartel avisa desde dónde juega la tablebase; las de tablas, sin ese aviso');
+}
+// ── 74. ⚡ Análisis REPARTIDO entre varios motores (08/10/2026) ──────────────────────────────────────
+console.log('\n=== 74. ⚡ Gráfico repartido entre varios motores: pedazos, robo de medio pedazo, vivo sólo ayudantes (08/10) ===');
+{
+  const M = new Function('var _faLiveCache = {}, _fa = { live: false, rep: null, results: new Array(30).fill(null), nodes: [] };'
+    + 'for (var q = 0; q < 30; q++) _fa.nodes.push({ fen: "f" + q });'
+    + 'function _faNeedsPassEval(i){ return _fa.results[i] == null; }'
+    + ['_faRepFalta', '_faRepProxima', '_faDeAyudantes'].map(extraerFuncion).join('\n')
+    + '; return { fa: _fa, prox: _faRepProxima, deAyu: _faDeAyudantes };')();
+  const fa = M.fa;
+  const main = { pz: null }, a1 = { pz: null }, a2 = { pz: null };
+  const fens = fa.nodes.map(n => n.fen), conEv = fens.map(() => false);
+  fa.rep = { live: false, hasta: 30, fens: fens, conEv: conEv, cola: [{ sig: 0, b: 12 }, { sig: 12, b: 24 }, { sig: 24, b: 30 }], main: main, ayu: [a1, a2] };
+  const p1 = M.prox(main), p2 = M.prox(a1), p3 = M.prox(a2);
+  chk(p1 === 0 && p2 === 12 && p3 === 24 && fa.rep.cola.length === 0, 'cada motor toma su pedazo de la fila (0, 12, 24)', [p1, p2, p3]);
+  fa.results[1] = { cp: 0 }; fa.results[2] = { cp: 0 };   // otro ya las hizo (o venían sembradas)
+  chk(M.prox(main) === 3, 'las posiciones que ya tienen eval se saltean', main.pz);
+  for (let i = 25; i < 30; i++) M.prox(a2);                 // a2 termina su pedazo corto…
+  const r = M.prox(a2);                                     // …y le roba la mitad al que más tiene (a1: 13..23)
+  chk(r >= 13 && r < 24 && a1.pz.b === r && a2.pz.b === 24, 'el que se queda sin trabajo le saca la mitad del pedazo al que más tiene', { r: r, a1: a1.pz, a2: a2.pz });
+  for (let i = 0; i < 30; i++) fa.results[i] = { cp: 0 };
+  chk(M.prox(main) === -1 && M.prox(a1) === -1, 'sin nada por hacer devuelve -1 (el principal espera o cierra)');
+  fa.live = true; fa.rep = { live: true, hasta: 20, cola: [], main: null, ayu: [] };
+  chk(M.deAyu(0) && M.deAyu(19) && !M.deAyu(20), 'en el vivo, el historial (antes de "hasta") es de los ayudantes; la cola y lo que llega, del principal');
+  fa.rep.live = false;
+  chk(!M.deAyu(0), 'en el 📊 manual el principal también toma pedazos (no se saltea nada)');
+  // Tanda que llega con el pase ocupado: posiciones que todavía NO están en el gráfico (más allá de _fa.nodes).
+  const M2 = new Function('var _faLiveCache = { g31: { cp: 5 } }, _fa = { live: true, results: [], nodes: [] };'
+    + 'function _faNeedsPassEval(i){ return _fa.results[i] == null; }' + extraerFuncion('_faRepFalta')
+    + '; return function (i) { return _faRepFalta({ fens: { 30: "g30", 31: "g31", 32: "g32" }, conEv: { 32: true } }, i); };')();
+  chk(M2(30) && !M2(31) && !M2(32) && !M2(33),
+      'una jugada que llegó con el pase ocupado: falta si no está en el caché ni trae la eval de Lichess (lo que calculan los ayudantes va al caché)');
+  chk(/if \(_faDeAyudantes\(i\)\) return true;/.test(extraerFuncion('_faSaltea')) && /_fa\.rep\) return -1/.test(extraerFuncion('_faAfinar'))
+      && /if \(_fa\.rep\) return;/.test(extraerFuncion('_faRellenarSiLibre')),
+      'con ayudantes en el vivo: el pase principal saltea su historial, no afina y el relleno no se mete');
+  chk(/_fa\.rep && !_fa\.rep\.live\) _faRepMatar\(\)/.test(extraerFuncion('faFinish')) && /_faRepMatar\(\)/.test(extraerFuncion('cancelFA'))
+      && /_faRepMatar\(\)/.test(extraerFuncion('faReset')) && /_faRepMatar\(\)/.test(extraerFuncion('closeChessViewer')),
+      '🔒 los ayudantes se apagan al cancelar, cerrar el gráfico/visor o cambiar de partida; el fin del pase corto del vivo NO apaga los del historial');
+  chk(/'go depth ' \+ R\.depth \+ ' movetime ' \+ R\.cap/.test(extraerFuncion('_faRepSigue')) && /movetime/.test(extraerFuncion('faNext')),
+      'el tope por jugada lo pone el motor (movetime): no se estira en pestañas ocultas');
+  chk(/stockfish-19-lite-single\.js/.test(extraerFuncion('_faRepIniciar')) && /Math\.min\(4, Math\.floor\(hc \/ 2\)\)/.test(extraerFuncion('_faRepCuantos'))
+      && /total = Math\.min\(total, 2\)/.test(extraerFuncion('_faRepCuantos')),
+      'ayudantes = el mismo motor de un hilo (sin COOP/COEP); hasta 4 motores en total, 2 en teléfonos o con poca memoria');
+}
+// ── 75. ⚡ Barrido de colgadas y jugadones con varios motores (08/10/2026) ─────────────────────────
+console.log('\n=== 75. ⚡ Barrido con varios motores: cada uno sigue su partida, confirmaciones primero, plan B (08/10) ===');
+{
+  const B = new Function('var _mevExtra = [], _cgAyu = null, ticks = 0; function mevTick(){ ticks++; }'
+    + 'var setTimeout = function(f){ f(); return 1; };'
+    + 'var _cgMevT = null;' + ['_cgDespertarMev', '_cgEncolar', '_cgAyuProximo'].map(extraerFuncion).join('\n')
+    + '; return { enc: _cgEncolar, prox: _cgAyuProximo, extra: _mevExtra, setA: function(a){ _cgAyu = a; }, ticks: function(){ return ticks; } };')();
+  // Sin motores del barrido: todo al motor de siempre, como antes.
+  B.enc({ fen: 'x1' }, 1); B.enc({ fen: 'x2' });
+  chk(B.extra.length === 2 && B.ticks() >= 1, 'sin motores del barrido (file://, no cargaron): los trabajos van a la fila del motor de siempre');
+  const A = { hs: [], urg: [], grupos: [], porG: {} };
+  B.setA(A);
+  for (let g = 1; g <= 3; g++) for (let k = 0; k < 4; k++) B.enc({ fen: 'p' + g + '-' + k }, g);
+  const h1 = { listo: false }, h2 = { listo: false }, h3 = { listo: false };
+  const a = B.prox(A, h1), b = B.prox(A, h2), c = B.prox(A, h3);
+  chk(a.fen === 'p1-0' && b.fen === 'p2-0' && c.fen === 'p3-0', 'cada motor arranca una partida distinta, en orden (los argentinos van primero)', [a.fen, b.fen, c.fen]);
+  chk(B.prox(A, h1).fen === 'p1-1' && B.prox(A, h2).fen === 'p2-1', 'cada motor sigue con SU partida (aprovecha la memoria de la jugada anterior)');
+  B.enc({ fen: 'conf', multipv: 3 });
+  chk(B.prox(A, h3).fen === 'conf' && B.prox(A, h3).fen === 'p3-1', 'las confirmaciones (3 líneas) pasan adelante; después vuelve a su partida');
+  B.prox(A, h3); B.prox(A, h3);                       // h3 termina la partida 3
+  const robo = B.prox(A, h3);
+  chk(robo && /^p[12]-/.test(robo.fen), 'el que terminó su partida y no hay otra libre ayuda en la que más le falta', robo && robo.fen);
+  while (B.prox(A, h1)) {} 
+  chk(B.prox(A, h2) === null && B.prox(A, h3) === null, 'sin trabajo devuelve null (quietos hasta que llegue más o termine el barrido)');
+  // 08/10, La Banda R1: al terminar una partida, su callback encola las confirmaciones y el MISMO motor
+  // recibía dos 'go' seguidos → "RuntimeError: unreachable" (se cayeron los 4). Un 'go' por bestmove.
+  const C = new Function('var _mevExtra = [], _cgAyu = null, _CG_PASADA_DEPTH = 18, _cgMevT = null, _MEV_TOPE_MS = 10000, _MEV_TOPE_MPV_MS = 30000; function mevTick(){}'
+    + ['_mevTope', '_cgDespertarMev', '_cgEncolar', '_cgAyuProximo', '_cgAyuSigue', '_cgAyuMsg'].map(extraerFuncion).join('\n')
+    + '; return { enc: _cgEncolar, msg: _cgAyuMsg, setA: function(a){ _cgAyu = a; } };')();
+  const env = [], A2 = { hs: [], urg: [], grupos: [], porG: {} };
+  const hm = { listo: false, job: null, g: null, mpv: 1, lines: [], w: { postMessage: (c) => env.push(c) } };
+  A2.hs.push(hm); C.setA(A2);
+  C.enc({ fen: '8/8/8/8/8/8/8/K6k w - - 0 1', depth: 18, cb: () => { C.enc({ fen: '8/8/8/8/8/8/8/K6k b - - 0 1', depth: 18, multipv: 3, cb: () => {} }); } }, 1);
+  C.msg(A2, hm, 'readyok');
+  const go1 = env.filter(c => /^go /.test(c)).length;
+  C.msg(A2, hm, 'info depth 18 score cp 0 pv a1a2'); C.msg(A2, hm, 'bestmove a1a2');
+  const go2 = env.filter(c => /^go /.test(c)).length;
+  chk(go1 === 1 && go2 === 2 && hm.job && hm.job.multipv === 3,
+      '🔒 un solo "go" por posición terminada, aunque al terminar se encolen confirmaciones (dos seguidos tumbaban al motor)', env);
+  const prof = (n) => +SRC.match(new RegExp('var ' + n + ' = (\\d+);'))[1];
+  chk(prof('_CG_VERIF_DEPTH') > prof('_CG_PASADA_DEPTH') && prof('_CG_BRI_DEPTH') > prof('_CG_PASADA_DEPTH'),
+      '🔒 las confirmaciones (colgadas y jugadones) miran MÁS hondo que la pasada: si no, no confirman nada (08/10, el autor)',
+      { pasada: prof('_CG_PASADA_DEPTH'), colgadas: prof('_CG_VERIF_DEPTH'), jugadones: prof('_CG_BRI_DEPTH') });
+  chk(/A\.reemplazos < 4/.test(extraerFuncion('_cgAyuCaido')) && /job\.caidas >= 2/.test(extraerFuncion('_cgAyuCaido')),
+      'si un motor se cae igual, se pone otro en su lugar (hasta 4); la posición que tumbó a dos va al motor de siempre');
+  chk(/_cgEncolar\(\{ fen: f, depth: _CG_PASADA_DEPTH/.test(extraerFuncion('_cgPasadaRapida')) && /_cgEncolar\(/.test(extraerFuncion('_cgVerificar'))
+      && /_cgEncolar\(/.test(extraerFuncion('_cgVerificarBri')),
+      '🔒 la pasada, la confirmación de colgadas y la de jugadones van por los motores del barrido');
+  chk(/_cgAyuIniciar\(\)/.test(extraerFuncion('cgBarrer')) && /_cgAyuMatar\(\)/.test(extraerFuncion('_cgQuizasTermino')) && /_cgAyuMatar\(\)/.test(extraerFuncion('cgCancelar')),
+      '🔒 se prenden al empezar el barrido y se apagan al terminar o al cortarlo');
+  chk(/stockfish-19-lite-single\.js/.test(extraerFuncion('_cgAyuNuevo')) && /_faRepCuantos\(\)/.test(extraerFuncion('_cgAyuCuantos'))
+      && /_mevTope\(job\)/.test(extraerFuncion('_cgAyuSigue')) && /_mevExtra\.push/.test(extraerFuncion('_cgAyuDevolver')),
+      'mismo motor de un hilo y la misma cuenta que el gráfico; con el tope de 10 s por posición; si se caen, lo pendiente vuelve al de siempre');
 }
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
 console.log('   Corrieron ' + corridas + ' de ' + ESPERADAS + ' comprobaciones.'

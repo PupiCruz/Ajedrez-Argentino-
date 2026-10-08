@@ -2140,6 +2140,9 @@
     body.light .puz-tag.s-mates { color: #a33a22; }   /* el rojo general daba 4,2:1 sobre su tinte (auditoría 23/09) */
     .puz-tag.s-ventaja { background: rgba(82,183,136,.14); color: var(--green); border-color: rgba(82,183,136,.32); }
     .puz-tag.s-finales { background: rgba(160,160,160,.14); color: var(--text2); border-color: var(--border); }
+    /* Igualdad (08/10/2026): la jugada que sostiene una posición pareja (o el jaque perpetuo). Turquesa. */
+    .puz-tag.s-igualdad { background: rgba(64,190,190,.14); color: #6fd3cf; border-color: rgba(64,190,190,.32); }
+    body.light .puz-tag.s-igualdad { color: #1d7774; }
 
     /* Desplegable de filtros de Practicar (más vistoso) */
     .prac-select {
@@ -7510,8 +7513,61 @@ function _crGraftBaked(key, d) {
           if (cur == null || (Array.isArray(cur) && !cur.length)) d[campo][n] = src[n];
         });
       });
+      // RONDA DE OTRO TORNEO guardada en el navegador (08/10/2026, La Nucía; ver _crNombresAjenos): si
+      // los jugadores de una ronda del vivo no son los del torneo publicado, gana la del archivo. Así se
+      // curan solos los visitantes que ya la tenían guardada (completa, el vivo no la volvía a pedir).
+      // crDataLoad se llama MUCHO (ticks del vivo): los jugadores del archivo se juntan una sola vez (se
+      // guardan en el propio archivo, sin que se vean al serializar) y de cada ronda alcanza con mirar
+      // las primeras 6 mesas para saber si es del torneo.
+      if (f.rounds && d.rounds && typeof f.rounds === 'object') {
+        var _rosArch = f.__roster;
+        if (!_rosArch) { _rosArch = _crRosterDe(f); try { Object.defineProperty(f, '__roster', { value: _rosArch }); } catch(e) {} }
+        Object.keys(f.rounds).forEach(function(n) {
+          var cur = d.rounds[n], src = f.rounds[n];
+          if (!Array.isArray(cur) || !cur.length || !Array.isArray(src) || !src.length || cur === src) return;
+          if (_crNombresAjenos(_crNombresDe(cur.slice(0, 6)), _rosArch)) {
+            d.rounds[n] = src;
+            if (f.roundDates && f.roundDates[n]) { if (!d.roundDates) d.roundDates = {}; d.roundDates[n] = f.roundDates[n]; }
+          }
+        });
+      }
     }
   } catch(e) {}
+}
+// CRUCE DE ARCHIVOS EN INFO64 (08/10/2026, II Magistral Internacional La Nucía). info64 nombra el
+// .xlsx que exporta sólo con la fecha y el SEGUNDO ("2026-10-08-21-56-1791489382-pairing-table.xlsx"),
+// sin nada del torneo: si dos personas piden un export en el mismo segundo —de torneos distintos— un
+// archivo pisa al otro y el Worker baja el AJENO. Pasó: la ronda 4 de La Nucía (todos contra todos de
+// 10) llegó con la ronda 4 de un suizo catalán (Budhrani, Tattersall…), el visitante la guardó y, como
+// venía completa, no la volvía a pedir nunca. La defensa: lo que llega tiene que tener a los jugadores
+// del torneo. Nombres comparados sin acentos, sin título y sin importar el orden ("Pérez, Ana" ≡ "Ana Perez").
+function _crNomClave(n) {
+  return String(n || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ')
+    .trim().split(' ').filter(function(t) { return t && !/^(gm|im|fm|cm|nm|wgm|wim|wfm|wcm|wnm)$/.test(t); }).sort().join(' ');
+}
+// Los nombres de una lista de cruces ({w, b}) o de una tabla ({name}).
+function _crNombresDe(lista) {
+  var out = [];
+  (lista || []).forEach(function(p) { if (!p) return; ['w', 'b', 'name'].forEach(function(c) { if (p[c]) out.push(p[c]); }); });
+  return out;
+}
+// Todos los jugadores que ya se conocen de un cuadro: su tabla + todas sus rondas. {clave: true}
+function _crRosterDe(d) {
+  var set = {};
+  if (!d) return set;
+  var add = function(n) { var k = _crNomClave(n); if (k) set[k] = true; };
+  _crNombresDe(d.standings).forEach(add);
+  Object.keys(d.rounds || {}).forEach(function(r) { _crNombresDe(d.rounds[r]).forEach(add); });
+  return set;
+}
+// ¿Esta lista de nombres es de OTRO torneo? Sí cuando menos de la mitad está entre los conocidos. Con
+// menos de 4 conocidos no se juzga (torneo recién cargado): se acepta como siempre. La mitad deja
+// margen para los BYE y las altas tardías de un suizo.
+function _crNombresAjenos(nombres, roster) {
+  if (!roster || Object.keys(roster).length < 4) return false;
+  var tot = 0, en = 0;
+  (nombres || []).forEach(function(n) { var k = _crNomClave(n); if (!k) return; tot++; if (roster[k]) en++; });
+  return tot >= 2 && en / tot < 0.5;
 }
 function crDataSave(key, data) {
   try { localStorage.setItem(key, JSON.stringify(data)); _crArgCache = {}; _tourSearchIndex = {}; _stdFedCache = {}; _manualArgCache = {}; }
@@ -14727,10 +14783,12 @@ async function _i64AutoFetchIndiv(crk, i64url, opts) {
     var _visita = !!opts.silent;
     var _rLoc = Object.keys(data.rounds).map(Number).filter(function(n){ return n > 0; });
     var _tope = _rLoc.length ? Math.max.apply(null, _rLoc) : 0;
+    // Los jugadores ya conocidos, para descartar un .xlsx de OTRO torneo (ver _crNombresAjenos).
+    var _roster = _crRosterDe(data), ajenas = 0;
     for (var r = 1; r <= _I64_MAX_ROUNDS; r++) {
       if (_visita && r < _tope - 1 && _crRoundCompleteIndiv(data, r)) { salteadas++; continue; }
       setS('⏳ Bajando emparejamientos ronda ' + r + '…');
-      var got = 0;
+      var got = 0, ajena = false;
       try {
         var rows = await crExtractXlsx(await _i64ProxyFetch(_i64ExportUrl(i64url, 'round', r)));
         var roundHdrIdx = [];
@@ -14742,16 +14800,22 @@ async function _i64AutoFetchIndiv(crk, i64url, opts) {
         var parsed = _crParseSections(rows, roundHdrIdx);
         if (!data.roundDates) data.roundDates = {};
         var _rdM = {}; roundHdrIdx.forEach(function(hh){ var dt = _crParseRoundDT(hh.line); if (dt) _rdM[hh.num] = dt; });
-        Object.keys(parsed).forEach(function(n){ data.rounds[n] = parsed[n]; if (_rdM[n]) data.roundDates[n] = _rdM[n]; got += parsed[n].length; okR++; });
+        Object.keys(parsed).forEach(function(n){
+          if (_crNombresAjenos(_crNombresDe(parsed[n]), _roster)) { ajena = true; return; }   // de otro torneo: no se guarda
+          data.rounds[n] = parsed[n]; if (_rdM[n]) data.roundDates[n] = _rdM[n]; got += parsed[n].length; okR++;
+        });
       } catch(e) { /* ronda inexistente o vacía → cortamos abajo */ }
-      if (!got) break;   // primera ronda sin partidas = no hay más → frenar
+      if (ajena) ajenas++;
+      // Primera ronda sin partidas = no hay más → frenar. Una que llegó AJENA no dice nada de si hay más:
+      // si es una ronda que ya conocemos, se sigue con la próxima (queda la que teníamos).
+      if (!got && !(ajena && data.rounds[r] && data.rounds[r].length)) break;
     }
     // Tabla: si ya hay rondas → clasificación; si no → ranking inicial. (Las salteadas también son rondas.)
     var standKind = (okR > 0 || salteadas > 0) ? 'standings' : 'initial';
     setS('⏳ Bajando ' + (standKind === 'initial' ? 'ranking inicial' : 'clasificación') + '…');
     try {
       var ps = _crParseStandingsRows(await crExtractXlsx(await _i64ProxyFetch(_i64ExportUrl(i64url, standKind))));
-      if (ps.standings.length) {
+      if (ps.standings.length && !_crNombresAjenos(_crNombresDe(ps.standings), _roster)) {
         _crCarryOverFeds(data.standings, ps.standings);   // conservar banderas ya resueltas al re-bajar la tabla
         _crCarryOverFideIds(data.standings, ps.standings);// ídem los fide_id (la clasificación no los trae)
         data.standings = ps.standings; data.standingsKind = ps.kind;
@@ -14779,7 +14843,8 @@ async function _i64AutoFetchIndiv(crk, i64url, opts) {
     if (!opts.silent) {
       var msg = (!okR && hasStand && data.standingsKind === 'initial')
         ? '✓ Ranking inicial actualizado — ' + data.standings.length + ' jugadores'
-        : '✓ Actualizado desde info64 — ' + okR + ' ronda(s)' + (hasStand ? ' + tabla' : '');
+        : '✓ Actualizado desde info64 — ' + okR + ' ronda(s)' + (hasStand ? ' + tabla' : '')
+          + (ajenas ? ' · ' + ajenas + ' ronda(s) descartada(s): info64 mandó la de otro torneo, probá de nuevo en 2 minutos' : '');
       setS(msg + (_ondemand ? '' : '. Acordate de "Guardar datos en mi carpeta" y publicar.'));
     }
     var isRR = crLooksLikeRoundRobin(data,crk);
@@ -15005,7 +15070,8 @@ async function _liveStandingsFetch(crk, crUrl, info64url, isTeam) {
     else if (crUrl && /tnr\d+/i.test(crUrl)) rows = await crExtractXlsx(await _crProxyFetch(_crExportUrl(crUrl, 1, null)));
     if (!rows) return;
     var ps = _crParseStandingsRows(rows);
-    if (ps.standings.length) {
+    // Una tabla de OTRO torneo (el cruce de archivos de info64, ver _crNombresAjenos) no se guarda.
+    if (ps.standings.length && !_crNombresAjenos(_crNombresDe(ps.standings), _crRosterDe(data))) {
       _crCarryOverFeds(data.standings, ps.standings);   // conservar banderas ya resueltas al re-bajar la tabla
       data.standings = ps.standings; data.standingsKind = ps.kind;
       delete data.standingsRound; delete data.standingsFinal;
@@ -31191,6 +31257,7 @@ function closeChessViewer(e){
     _gamePageOff();   // salir del modo PÁGINA del visor
     // limpiar estado interactivo
     cv.sel = null; cv.legalDests = [];
+    if (typeof _faRepMatar === 'function') _faRepMatar();   // motores ayudantes del gráfico: apagados
     if(sf.engine) sf.engine.postMessage('stop');
     sf.on = false;
     document.getElementById('sf-toggle').classList.remove('on');
@@ -31857,6 +31924,7 @@ function _sfStartLite() {
       sf.searching = false; sf.rokWaiting = false;    // el motor muerto no va a mandar su bestmove
       _fa.running = false; _fa.armed = false; _fa.rokSeen = false;   // que el gráfico no quede esperando un motor muerto
       _fa.relleno = false; _fa.cola = null; _fa.volver = null; _fa.forzar = -1;
+      if (typeof _faRepMatar === 'function') _faRepMatar();          // y sin ayudantes calculando para nadie
       if (typeof _mev !== 'undefined') { _mev.running = false; _mev.armed = false; }
       // Practicar con la jugada del módulo a medio pensar (04/10): soltar el motor (si no, sfOnMsg le pasaba
       // a ella el 'uciok'/'readyok' del motor nuevo y nunca quedaba listo: práctica Y vivo sin motor) y que
@@ -37710,7 +37778,10 @@ function _tdSetEvalBar(el, ev, flip) {
    que tiene PRIORIDAD sobre el motor local (ver _liveEvalFor). */
 var _mevEvals = {};   // FEN → score {cp|mate} en perspectiva de blancas (memoria de lo ya evaluado)
 var _mev = { running: false, armed: false, jobs: [], i: 0, last: null };
-var _MEV_DEPTH = 12;        // orientativo: rápido y suficiente para la barrita
+var _MEV_DEPTH = 14;        // barritas y candidatas de colgadas en vivo. Era 12; 08/10/2026 (pedido del autor), medido con
+                            // La Banda R1 simulando el vivo jugada por jugada: el aviso de colgadas encontraba 7 de 11 a prof. 12
+                            // y 9 de 11 a 14 (confirmando a 16 en los dos casos). Cuesta ~3 veces más por posición (61 → 194 ms
+                            // en la PC del autor), pero el motor está quieto casi todo el tiempo: sobra lugar.
 var _MEV_MAX_JOBS = 40;     // tope de tableros por ciclo (no saturar el motor)
 var _MEV_YIELD_DEPTH = 20;  // con el motor del visor prendido, las miniaturas le piden una pausa recién desde acá
 var _mevReadyPoll = null;
@@ -38314,10 +38385,11 @@ function _colVivoCaidaOk(antes, despues, lado, fin, nPartidas) {
    llega ni cerca: gastaría la batería en un barrido que nunca termina (por eso no le llegaba ningún
    aviso). Así que **barre el que puede, y el resto se entera por el arbitrito** (_colDeRedLote).
    No se adivina "PC o teléfono": se MIDE este equipo con _mev.avgMs, que es el promedio real de lo que
-   tarda acá una posición a prof. 12. Hasta tener medida (los primeros segundos), decide la pantalla.
+   tarda acá una posición a prof. _MEV_DEPTH. Hasta tener medida (los primeros segundos), decide la pantalla.
    Lo que sigue igual para todos: los tableros en pantalla (esas evals ya se calculan para la barrita,
    comparar una con la anterior son 2 ms sobre 400 partidas) y la confirmación a prof. 16 de lo propio. */
-var _COL_BARRE_MS = 150;   // más lento que esto por posición = no barre (una PC común mide ~64 ms)
+var _COL_BARRE_MS = 450;   // más lento que esto por posición = no barre. Va a la par de _MEV_DEPTH: a prof. 12 eran 150
+                           // (la PC del autor medía ~64 ms); a 14 la misma PC mide ~194 ms (08/10) → 450, el mismo margen.
 function _colBarreRonda() {
   if (_mev.avgMs) return _mev.avgMs <= _COL_BARRE_MS;
   try { return !_cvMobileMQ.matches; } catch (e) { return true; }
@@ -39295,7 +39367,7 @@ window.aaEjv = { probar: _ejvProbar };
    criterios del aviso en vivo (_colClasifica). Con transmisión de Lichess no hace falta motor: al
    terminar la ronda Lichess le pone [%eval] a cada jugada. Sin eval (Chess-Results, cargadas a mano)
    van dos pasadas con el motor de las miniaturas: prof. 12 en todas las posiciones y, en las
-   candidatas, prof. 18 con 3 líneas (la vara del gráfico), que además da el castigo y sus alternativas.
+   candidatas, prof. 18 con 3 líneas, que además da el castigo y sus alternativas.
    El autor acepta / rechaza cada una (y puede pasarla a Entrenar con rating y temas). Las aceptadas se
    publican dentro del archivo del torneo (data/t/<id>.json → "colgadas") y el público las juega en el
    tablero de ejercicios, en la posición de después de la colgada: "X lo castigó bien, ¿probás si vos
@@ -39304,12 +39376,15 @@ window.aaEjv = { probar: _ejvProbar };
    Forma: { idTorneo: { 'categoría|ronda': { t, items: [ … ] } } }; cada ítem con estado pend/ok/no.
    ════════════════════════════════════════════════════════════════════════════════════════════════ */
 var _CG_DESDE_PLY = 10;          // la apertura no cuenta (desde la jugada 6)
-var _CG_VERIF_DEPTH = 18;        // la vara del gráfico (_FA_MANUAL_DEPTH): confirma las candidatas del motor
-var _CG_PASADA_DEPTH = 16;       // pasada de TODAS las posiciones (sin eval de Lichess). Era 12 (la de las miniaturas).
+var _CG_VERIF_DEPTH = 20;        // confirma las candidatas del motor con 3 líneas. Una vara MÁS que la pasada (_CG_PASADA_DEPTH):
+                                 // si no, mira la misma posición a la misma profundidad y no confirma nada (08/10, pedido del autor; era 18).
+var _CG_PASADA_DEPTH = 18;       // pasada de TODAS las posiciones (sin eval de Lichess). Era 12 (la de las miniaturas).
                                  // Medido 26/09 en la PC del autor, 232 posiciones reales, ms por posición: prof. 12 = 55,
                                  // 14 = 146, 15 = 247, 16 = 383, 17 = 731, 18 = 1100. Confirmar (3 líneas): 18 = 2,9 s, 16 = 1,4 s.
-                                 // Ronda de 20 partidas de ~40 jugadas (1600 posiciones): a 15 son ~8 min; a 16, ~11. El autor
-                                 // eligió 16 ("si se hace eterno lo bajamos"): volver a 15 es cambiar sólo este número.
+                                 // Ronda de 20 partidas de ~40 jugadas (1600 posiciones), con UN motor: a 15 ~8 min; a 16 ~11.
+                                 // 08/10/2026: con los motores del barrido (_cgAyu*, 4 en la PC del autor) 16 → 18 ("dale, vamos
+                                 // con 18"): más o menos lo que tardaba antes a 16, y más cerca del gráfico del 📊 (prof. 20).
+                                 // Si se hace largo, bajarlo es cambiar sólo este número.
                                  // Estas evals son las que quedan guardadas en el PGN (gráfico de la web).
 var _CG_VERIF_DEPTH_LI = 14;     // con eval de Lichess la gravedad ya está confirmada: sólo hace falta el castigo
                                  // (Olimpiada R3: 289 candidatas; a prof. 18 eran ~2,5 s cada una = 12 min)
@@ -39398,6 +39473,173 @@ function _cgDetectar(P, evCp, fin) {
 }
 function _cgApellido(n) { return _colApellido(n); }
 
+/* ══ ⚡ Barrido con varios motores (08/10/2026, pedido del autor) ═══════════════════════════════════
+   Igual que el gráfico (_faRep*): en vez de pasar todo por el motor de las barritas (uno solo, de a una
+   posición), el barrido prende motores PROPIOS (SF19 lite de un hilo, los mismos archivos: no se baja
+   nada) y se reparte las posiciones. Cuántos: la misma cuenta que el gráfico (_faRepCuantos + el
+   principal): 4 en la PC del autor. El motor de las barritas queda libre para el visor y las miniaturas.
+   · Cada motor sigue con la MISMA partida mientras le quede (aprovecha la memoria de la jugada anterior);
+     si no queda ninguna partida sin dueño, ayuda en la más larga.
+   · Las confirmaciones (3 líneas) pasan adelante: las colgadas aparecen en la lista enseguida.
+   · Se prenden al empezar el barrido y se apagan al terminar o al cortarlo (~70 MB cada uno mientras dura).
+   · Sin Workers (file://), si no cargan, o si se caen todos: lo pendiente vuelve a la fila del motor de
+     siempre (_mevExtra), como antes del 08/10. */
+var _CG_AYU_HASH = 32;
+var _cgAyu = null;       // { hs: [motores], urg: [confirmaciones], grupos: [{ jobs, en }], tCarga }
+var _cgAyuFallo = false; // no cargaron una vez: en esta pestaña, el motor de siempre
+var _cgAyuSeq = 0;
+function _cgAyuCuantos() {
+  if (_cgAyuFallo || typeof _faRepCuantos !== 'function') return 0;
+  var n = _faRepCuantos();
+  return n ? n + 1 : 0;   // con uno solo no vale la pena: el de siempre
+}
+function _cgAyuIniciar() {
+  _cgAyuMatar();
+  var n = _cgAyuCuantos();
+  if (!n) return false;
+  var A = _cgAyu = { hs: [], urg: [], grupos: [], porG: {}, tCarga: null, reemplazos: 0 };
+  for (var k = 0; k < n; k++) if (!_cgAyuNuevo(A)) break;
+  if (!A.hs.length) { _cgAyu = null; _cgAyuFallo = true; return false; }
+  A.tCarga = setTimeout(function() {   // seguro: si ninguno termina de cargar en 15 s, el de siempre
+    if (_cgAyu !== A || A.hs.some(function(h) { return h.listo; })) return;
+    _cgAyuFallo = true; _cgAyuDevolver(A);
+  }, 15000);
+  return true;
+}
+function _cgAyuNuevo(A) {
+  var h = { w: null, listo: false, job: null, g: null, mpv: 1, last: null, lines: [], pv: null };
+  try { h.w = new Worker('assets/stockfish-19-lite-single.js'); } catch (e) { return null; }
+  h.w.onmessage = function(e) { _cgAyuMsg(A, h, e.data); };
+  h.w.onerror = function() { _cgAyuCaido(A, h); };
+  h.w.postMessage('uci');
+  A.hs.push(h);
+  return h;
+}
+// Un solo mevTick por vuelta aunque se encolen 80 posiciones de golpe.
+var _cgMevT = null;
+function _cgDespertarMev() { if (!_cgMevT) _cgMevT = setTimeout(function() { _cgMevT = null; mevTick(); }, 0); }
+// Un trabajo del barrido: a los motores del barrido si están, si no al motor de siempre.
+// `grupo` = la partida (pasada); sin grupo = confirmación (va primero).
+function _cgEncolar(job, grupo) {
+  var A = _cgAyu;
+  if (!A) { _mevExtra.push(job); _cgDespertarMev(); return; }
+  if (grupo == null) A.urg.push(job);
+  else {
+    var G = A.porG[grupo];
+    if (!G) { G = A.porG[grupo] = { jobs: [], en: 0 }; A.grupos.push(G); }
+    G.jobs.push(job);
+  }
+  A.hs.forEach(function(h) { if (h.listo && !h.job) _cgAyuSigue(A, h); });
+}
+// Qué le toca al motor h: una confirmación; si no, lo que sigue de SU partida; si no, una partida sin
+// dueño (en orden: los argentinos van primero); si no, ayudar en la que más le falte.
+function _cgAyuProximo(A, h) {
+  if (A.urg.length) return A.urg.shift();
+  if (h.g && h.g.jobs.length) return h.g.jobs.shift();
+  if (h.g) { h.g.en--; h.g = null; }
+  while (A.grupos.length && !A.grupos[0].jobs.length && !A.grupos[0].en) A.grupos.shift();   // terminadas
+  var libre = null, larga = null;
+  for (var i = 0; i < A.grupos.length; i++) {
+    var G = A.grupos[i];
+    if (!G.jobs.length) continue;
+    if (!G.en) { libre = G; break; }
+    if (!larga || G.jobs.length > larga.jobs.length) larga = G;
+  }
+  var E = libre || larga;
+  if (!E) return null;
+  h.g = E; E.en++;
+  return E.jobs.shift();
+}
+function _cgAyuSigue(A, h) {
+  if (_cgAyu !== A || h.job) return;   // ocupado: nunca un 2º 'go' encima (ver el bestmove de _cgAyuMsg)
+  var job = _cgAyuProximo(A, h);
+  h.job = job || null;
+  if (!job) return;   // quieto hasta que llegue más trabajo (o termine el barrido)
+  h.last = null; h.lines = []; h.pv = null;
+  var mpv = job.multipv || 1;
+  if (mpv !== h.mpv) { h.w.postMessage('setoption name MultiPV value ' + mpv); h.mpv = mpv; }
+  h.w.postMessage('position fen ' + job.fen);
+  h.w.postMessage('go depth ' + (job.depth || _CG_PASADA_DEPTH) + _mevTope(job));
+}
+// Mismo criterio que mevHandleMsg (las cotas no pisan una eval; 2ª y 3ª jugada de cada línea).
+function _cgAyuMsg(A, h, line) {
+  if (_cgAyu !== A) return;
+  if (line === 'uciok') {
+    h.w.postMessage('setoption name Hash value ' + _CG_AYU_HASH);
+    h.w.postMessage('setoption name MultiPV value 1');
+    h.w.postMessage('isready');
+    return;
+  }
+  if (line === 'readyok') {
+    if (!h.listo) { h.listo = true; if (A.tCarga) { clearTimeout(A.tCarga); A.tCarga = null; } _cgAyuSigue(A, h); }
+    return;
+  }
+  var job = h.job;
+  if (!job) return;
+  if (line.indexOf('info') === 0) {
+    var mm = line.match(/\bmultipv (\d+)\b/);
+    var cpM = line.match(/\bscore cp (-?\d+)\b/), mtM = line.match(/\bscore mate (-?\d+)\b/);
+    var cota = /\b(lower|upper)bound\b/.test(line);
+    if ((cpM || mtM) && job.multipv && !cota) {
+      var pvM = line.match(/ pv ([a-h][1-8][a-h][1-8][qrbn]?)(?: ([a-h][1-8][a-h][1-8][qrbn]?))?(?: ([a-h][1-8][a-h][1-8][qrbn]?))?/);
+      if (pvM) h.lines[(mm ? parseInt(mm[1]) : 1) - 1] = { mv: pvM[1], re: pvM[2] || '', r3: pvM[3] || '', sc: mtM ? { mate: parseInt(mtM[1]) } : { cp: parseInt(cpM[1]) } };
+    }
+    if (mm && mm[1] !== '1') return;
+    if ((cpM || mtM) && !(h.last && cota)) h.last = mtM ? { mate: parseInt(mtM[1]) } : { cp: parseInt(cpM[1]) };
+    if ((cpM || mtM) && job.pv && !cota) { var pvL = line.match(/ pv (.+)$/); if (pvL) h.pv = pvL[1].split(' '); }
+    return;
+  }
+  if (line.indexOf('bestmove') === 0) {
+    var raw = h.last || { cp: 0 }, turn = job.fen.split(' ')[1];   // UCI: desde el lado a mover → blancas
+    var score = raw.mate !== undefined ? { mate: turn === 'b' ? -raw.mate : raw.mate } : { cp: turn === 'b' ? -raw.cp : raw.cp };
+    var ln = null;
+    if (job.multipv) ln = h.lines.filter(Boolean).map(function(l) {
+      return { mv: l.mv, re: l.re || '', r3: l.r3 || '', sc: l.sc.mate !== undefined ? { mate: turn === 'b' ? -l.sc.mate : l.sc.mate } : { cp: turn === 'b' ? -l.sc.cp : l.sc.cp } };
+    });
+    // h.job sigue puesto MIENTRAS corre cb: si cb encola trabajo (al terminar una partida, sus confirmaciones),
+    // _cgEncolar no se lo da a este motor. Antes se lo daba y acá abajo le llegaba un 2º 'go' encima del
+    // primero: el motor se caía ("RuntimeError: unreachable"; 08/10, La Banda R1: los 4 en 6 minutos,
+    // siempre en la 1ª posición de una partida nueva).
+    if (job.cb) { try { job.cb(score, ln, h.pv); } catch (e) {} }
+    h.job = null;
+    _cgAyuSigue(A, h);
+  }
+}
+// Un motor se cayó: su trabajo vuelve adelante y siguen los demás; si no queda ninguno, el de siempre.
+// Si ya andaba, se pone otro en su lugar (hasta 4 por barrido). La posición que tumbó a dos, al motor de siempre.
+function _cgAyuCaido(A, h) {
+  try { h.w.terminate(); } catch (e) {}
+  if (_cgAyu !== A) return;
+  var i = A.hs.indexOf(h); if (i >= 0) A.hs.splice(i, 1);
+  if (h.g) { h.g.en--; h.g = null; }
+  var job = h.job; h.job = null;
+  if (job) {
+    job.caidas = (job.caidas || 0) + 1;
+    if (job.caidas >= 2) { _mevExtra.push(job); _cgDespertarMev(); }
+    else A.urg.unshift(job);
+  }
+  if (h.listo && A.reemplazos < 4 && _cg.corriendo) { A.reemplazos++; _cgAyuNuevo(A); }
+  if (!A.hs.length) { _cgAyuFallo = true; _cgAyuDevolver(A); return; }   // (los que cargan todavía: los cuida tCarga)
+  A.hs.forEach(function(x) { if (x.listo && !x.job) _cgAyuSigue(A, x); });
+}
+// Lo pendiente (también lo que estaban calculando) a la fila del motor de siempre, y apagarlos.
+function _cgAyuDevolver(A) {
+  var pend = A.urg.slice();
+  A.hs.forEach(function(h) { if (h.job) pend.unshift(h.job); });
+  A.grupos.forEach(function(G) { pend = pend.concat(G.jobs); });
+  _cgAyuMatar();
+  pend.forEach(function(j) { _mevExtra.push(j); });
+  if (pend.length) _cgDespertarMev();
+}
+// Apaga los motores del barrido (si hay) y devuelve la memoria. Seguro de llamar siempre.
+function _cgAyuMatar() {
+  var A = _cgAyu; _cgAyu = null;
+  if (!A) return;
+  if (A.tCarga) { clearTimeout(A.tCarga); A.tCarga = null; }
+  A.hs.forEach(function(h) { try { h.w.postMessage('stop'); h.w.terminate(); } catch (e) {} });
+  A.hs = []; A.urg = []; A.grupos = []; A.porG = {};
+}
+
 function cgBarrer(rInt) {
   if (_ondemand || _cg.corriendo || !_tdCtx) return;
   var games = (_tdCtx.byRound[rInt] || []).filter(function(g){ return (g.h.Result || '*') !== '*'; });
@@ -39410,6 +39652,7 @@ function cgBarrer(rInt) {
   ((m[_cg.tour][_cg.rk] || {}).items || []).forEach(function(it){ viejo[it.id] = it; });
   m[_cg.tour][_cg.rk] = { t: Date.now(), items: [] }; _cgSave(m);
   _cg.viejo = viejo;
+  _cgAyuIniciar();   // ⚡ los motores del barrido (si se puede; si no, todo va al motor de siempre)
   // Red de seguridad: mientras dura el barrido, si el motor quedó quieto con trabajo en la fila, despertarlo.
   if (_cg.vigia) clearInterval(_cg.vigia);
   _cg.vigia = setInterval(function(){
@@ -39452,6 +39695,7 @@ function _cgPasadaRapida(g, P) {
     _evjReemplazarEnPantalla(g, g.pgn, pp);
   }
   var enPool = !!u && !reusa;   // se escribe (o se reescribe, si las guardadas eran menos hondas)
+  var grupo = ++_cgAyuSeq;      // las posiciones de ESTA partida (un motor la sigue de punta a punta)
   function listo() {
     if (enPool) _evjEscribir(g, P, sc);
     _cgDetectar(P, evCp, false).forEach(function(c){ _cgVerificar(g, P, c, false); });
@@ -39462,15 +39706,15 @@ function _cgPasadaRapida(g, P) {
       var f = P.fens[k];
       if (reusa && P.ev[k - 1]) { sc[k] = P.ev[k - 1]; evCp[k] = _colCp(sc[k], f); return; }   // ya guardada en el PGN
       faltan++; _cg.total++;
-      _mevExtra.push({ fen: f, depth: _CG_PASADA_DEPTH, cb: function(s){
+      _cgEncolar({ fen: f, depth: _CG_PASADA_DEPTH, cb: function(s){
         if (!_cg.corriendo) return;
         sc[k] = s; evCp[k] = _colCp(s, f); _cg.hechas++;
         if (--faltan === 0) listo();
         _cgQuizasTermino(); _cgRenderProg();
-      } });
+      } }, grupo);
     })(k);
   }
-  if (!faltan) listo(); else setTimeout(mevTick, 0);
+  if (!faltan) listo();
 }
 /* ══ 💾 Evaluaciones del barrido guardadas en el PGN (26/09/2026, pedido del autor) ══════════════
    Las partidas SIN eval de Lichess (Chess-Results subidas al pool) se evalúan en el barrido. Antes esas
@@ -39602,7 +39846,7 @@ function _evjContar() {
 function _cgVerificar(g, P, c, deLichess) {
   var f = P.fens[c.i + 1], mover = P.fens[c.i].split(' ')[1];
   _cg.total++;
-  _mevExtra.push({ fen: f, depth: deLichess ? _CG_VERIF_DEPTH_LI : _CG_VERIF_DEPTH, multipv: 3, cb: function(sc, lines){
+  _cgEncolar({ fen: f, depth: deLichess ? _CG_VERIF_DEPTH_LI : _CG_VERIF_DEPTH, multipv: 3, cb: function(sc, lines){
     _cg.hechas++;
     if (!_cg.corriendo) return;
     try {
@@ -39631,7 +39875,6 @@ function _cgVerificar(g, P, c, deLichess) {
     } catch (e) {}
     _cgQuizasTermino(); _cgRender();
   } });
-  setTimeout(mevTick, 0);
 }
 function _cgAgregar(g, P, c, dCp, mejor, alts, unico, deLichess, clara) {
   var f = P.fens[c.i + 1], ch = new Chess(f), mm = ch.move({ from: mejor.slice(0, 2), to: mejor.slice(2, 4), promotion: mejor[4] || 'q' });
@@ -39687,7 +39930,8 @@ function _cgMeter(it) {
    (_faTomarDestapa). Sacan 7 rechazados de la R10 y 9 de la R9, sin perder ningún aceptado.
    Con la R10 femenina (26/09: 7 aceptados, 15 rechazados), sólo en la lista: el JAQUE INTERMEDIO que
    después come la pieza que el rival acaba de mover (_cgJaqueIntermedio, con la 3ª jugada de la línea). */
-var _CG_BRI_DEPTH = 16;
+var _CG_BRI_DEPTH = 20;   // 3 líneas en la posición de antes. Igual que las colgadas: una vara más que la pasada (08/10; era 16,
+                          // MENOS que la pasada a 18). Son pocas por ronda (5-10 en un torneo común): suma segundos.
 var _CG_BRI_MARGEN = 30;   // centipeones: la jugada del partido puede quedar a 0,3 de la mejor del motor
 function _cgDetectarBri(P, evCp) {
   var out = [], cadena = [];
@@ -39712,7 +39956,7 @@ function _cgDetectarBri(P, evCp) {
 function _cgVerificarBri(g, P, c) {
   var f = P.fens[c.i], s = f.split(' ')[1] === 'w' ? 1 : -1, jug = P.uci[c.i];
   _cg.total++;
-  _mevExtra.push({ fen: f, depth: _CG_BRI_DEPTH, multipv: 3, cb: function(sc, lines){
+  _cgEncolar({ fen: f, depth: _CG_BRI_DEPTH, multipv: 3, cb: function(sc, lines){
     _cg.hechas++;
     if (!_cg.corriendo) return;
     try {
@@ -39746,7 +39990,6 @@ function _cgVerificarBri(g, P, c) {
     } catch (e) {}
     _cgQuizasTermino(); _cgRender();
   } });
-  setTimeout(mevTick, 0);
 }
 // JAQUE INTERMEDIO: se entrega una pieza dando jaque y, en la jugada siguiente, se come la pieza que el
 // rival ACABA de mover (donde quedó, o adonde fue después), que vale lo mismo o más que la entregada.
@@ -39834,11 +40077,13 @@ function _cgGameKeyId(h) { return (h.Round || '') + '|' + (h.White || '') + '|' 
 function _cgQuizasTermino() {
   if (_cg.corriendo && _cg.vistas >= _cg.partidas && _cg.hechas >= _cg.total) {
     _cg.corriendo = false; _cg.viejo = null;
+    _cgAyuMatar();
     _cgRender(); _cgBarRefrescar();
   }
 }
 function cgCancelar() {
   _cg.corriendo = false; _mevExtra.length = 0;
+  _cgAyuMatar();
   // Las del barrido que ya estaban en la tanda del motor también se sueltan (si no, seguía minutos).
   if (_mev.running && _mev.jobs) _mev.jobs = _mev.jobs.slice(0, _mev.i + 1).concat(_mev.jobs.slice(_mev.i + 1).filter(function(j){ return !j.cb; }));
   _cgRenderYa(); _cgBarRefrescar();
@@ -41865,7 +42110,7 @@ var PUZ_RATING_MINNB = 5;   // intentos mínimos para confiar en el rating calib
 var PUZ_DAILY_GOAL = 5;     // meta diaria de ejercicios (para el "Hoy: X/5")
 var PUZ_LVL_NAME = { inicial: 'Nivel inicial', aficionado: 'Nivel aficionado', avanzado: 'Nivel avanzado', maestro: 'Nivel maestro' };
 var PUZ_LVL_SHORT = { inicial: 'Inicial', aficionado: 'Aficionado', avanzado: 'Avanzado', maestro: 'Maestro' };
-var PUZ_SEC_LABEL = { mates:'Mate', tactics:'Táctica', defensa:'Defensa', ventaja:'Ventaja', sacrificio:'Sacrificio', finales:'Final' };
+var PUZ_SEC_LABEL = { mates:'Mate', tactics:'Táctica', defensa:'Defensa', ventaja:'Ventaja', igualdad:'Igualdad', sacrificio:'Sacrificio', finales:'Final' };
 // horquilla: la clave queda (está en puzzles.json); lo que se VE, como se dice acá ("Ataque doble", 01/10).
 var PUZ_MOTIF_LABEL = { horquilla:'Ataque doble', clavada:'Clavada', enfilada:'Enfilada', descubierta:'Descubierta',
   'doble-jaque':'Doble jaque', 'mate-pasillo':'Mate del pasillo', coronacion:'Coronación', tablas:'Tablas',
@@ -41875,7 +42120,7 @@ var PUZ_MOTIF_LABEL = { horquilla:'Ataque doble', clavada:'Clavada', enfilada:'E
   interferencia:'Interferencia', 'rayos-x':'Rayos X', molino:'Molino', intermedia:'Jugada intermedia',
   'red-de-mate':'Red de mate', ahogado:'Ahogado', 'peon-pasado':'Peón pasado', colgada:'Pieza colgada' };
 // Tags técnicos o que ya muestra el badge de sección: no se listan como motivos.
-var PUZ_MOTIF_SKIP = { short:1, long:1, mate:1, sacrifice:1, sacrificio:1, defensa:1, ventaja:1, final:1, ventajaDecisiva:1 };
+var PUZ_MOTIF_SKIP = { short:1, long:1, mate:1, sacrifice:1, sacrificio:1, defensa:1, ventaja:1, igualdad:1, final:1, ventajaDecisiva:1 };
 
 var puz = { level:'inicial', tema:null, list:[], idx:0, cur:null, chess:null, flipped:false, sel:null, legalDests:[],
   step:0, solved:false, revealed:false, failed:false, busy:false, reviewing:false, reviewIdx:0,
@@ -41929,7 +42174,7 @@ function puzForLevel(level) {
    son exactos y crecen por su lado. */
 var PUZ_TEMA_MIN = 30;        // piso para que un tema se gane su chip
 // Etiquetas que NO son tema: técnicas, de sección, o que ya tienen su propio grupo.
-var PUZ_TEMA_SKIP = { short:1, long:1, mate:1, sacrifice:1, sacrificio:1, defensa:1, ventaja:1,
+var PUZ_TEMA_SKIP = { short:1, long:1, mate:1, sacrifice:1, sacrificio:1, defensa:1, ventaja:1, igualdad:1,
   final:1, ventajaDecisiva:1, tactics:1, mates:1, finales:1, endgame:1, middlegame:1, opening:1,
   // 'tablas' se lo salta aparte: medido, 93 de sus 94 ejercicios SON la sección Defensa,
   // así que como chip repetiría una sección en vez de agregar un tema.
@@ -47596,11 +47841,11 @@ function _faSaveLiveCache() {   // debounce: guarda 2s después de la última ev
 // valoración del módulo en vivo en posiciones muy ganadas, sin desperdiciar tiempo en las quietas.
 // _FA_LIVE_CAP_MS es el tope por jugada (las posiciones agudas no frenan el dibujado). Subí la
 // profundidad para más exactitud (más lento) o bajala para más velocidad.
-// El presupuesto LIVIANO (historial) va igualado al análisis MANUAL del pool (prof. 18, 0,45s):
-// así el gráfico de una partida en vivo se dibuja tan rápido como el 📊 del pool. La "cola" (las
-// últimas jugadas, la posición que el visitante mira) sí usa el presupuesto PROFUNDO de abajo.
-var _FA_LIVE_DEPTH = 18;
-var _FA_LIVE_CAP_MS = 450;
+// El presupuesto LIVIANO (historial) va igualado al análisis MANUAL del pool (prof. 20, 0,6 s; ver
+// _FA_MANUAL_DEPTH): una sola regla para los dos gráficos. La "cola" (las últimas jugadas, la posición
+// que el visitante mira) sí usa el presupuesto PROFUNDO de abajo.
+var _FA_LIVE_DEPTH = 20;
+var _FA_LIVE_CAP_MS = 600;
 // Prof. mínima para aceptar CUALQUIER eval del vivo (también el historial): una eval de prof. 8-11
 // en posición aguda puede salir del lado equivocado y quedaba cacheada para siempre. Si no llega,
 // hueco interpolado + reintento en el próximo refresco (la hash precalentada llega más lejos).
@@ -47614,17 +47859,21 @@ var _FA_LIVE_MIN = 12;
 // está prendido) hasta prof. 30, así que no hace falta gastar mucho tiempo profundo en más de la cola.
 // Con la cola corta, cuando llegan VARIAS jugadas juntas el pase las evalúa a todas dentro de la
 // ventana de refresco (antes 6 profundas tardaban ~28s y algunas quedaban sin corregir hasta el
-// siguiente refresco). Las demás usan el presupuesto liviano de arriba (prof. 18, 0,45s), suficiente.
+// siguiente refresco). Las demás usan el presupuesto liviano de arriba (prof. 20, 0,6 s), suficiente.
 var _FA_LIVE_DEEP_N      = 2;     // cuántas jugadas finales cuentan como "cola" profunda
 var _FA_LIVE_DEEP_DEPTH  = 22;    // profundidad objetivo de la cola
 var _FA_LIVE_DEEP_CAP_MS = 3000;  // tope de tiempo por jugada de la cola
 var _FA_LIVE_DEEP_MIN    = 13;    // prof. mínima para aceptar una eval de la cola (si no: hueco)
 // Análisis MANUAL del pool (botón 📊): mismo criterio (profundidad fija + tope por jugada), pero como
-// recorre TODAS las jugadas de la partida, el tope marca el presupuesto total. 450ms/jugada ≈ 45s por
-// cada 100 jugadas. Profundidad alta para que las posiciones quietas/finales corten antes (más exactas
-// y eficientes en máquinas rápidas); las agudas se cortan en el tope. (Antes: tiempo fijo 350ms.)
-var _FA_MANUAL_DEPTH = 18;
-var _FA_MANUAL_CAP_MS = 450;
+// recorre TODAS las jugadas de la partida, el tope marca el presupuesto total. Con los motores ayudantes
+// (_faRep*, 4 motores) ~0,15 s por posición: ~15 s por partida de 100 jugadas.
+// 08/10/2026 (medido con 8 partidas contra una referencia a prof. 22): 18/450 ms → 20/600 ms. Lo que más
+// rinde es la PROFUNDIDAD OBJETIVO: con 18 las posiciones fáciles cortaban antes de tiempo y no usaban el
+// tope (más tiempo con 18 casi no mejoraba); con 20 todas lo aprovechan. Errores grandes de símbolo 6 → 0,
+// ?/?? perdidos 5 → 3, inventados 7 → 3, a cambio de ~35% más de tiempo. 700 ms ya casi no suma.
+// (Antes: tiempo fijo 350 ms; después prof. 18 con tope 450 ms.)
+var _FA_MANUAL_DEPTH = 20;
+var _FA_MANUAL_CAP_MS = 600;
 // GRÁFICO EN VIVO "SALTEADO" (pedido del autor 26/09): una partida en curso de 50 jugadas eran 100
 // posiciones a ~0,45 s = ~45 s con el motor tomado por el gráfico, y mientras tanto el módulo, las
 // barritas y el detector de colgadas esperaban en fila. Ahora el pase del vivo va en dos tiempos:
@@ -47639,7 +47888,7 @@ var _FA_MANUAL_CAP_MS = 450;
 // Así aparecen al final también las colgadas MUTUAS (una la cuelga y el otro no la ve), que en el
 // grueso se tapan entre sí. El análisis MANUAL (📊 del pool, partidas terminadas) no cambia nada.
 var _FA_AFINAR_WP = 8;            // salto de win% entre dos puntos del grueso que obliga a mirar el medio
-var _FA_RELLENO_TANDA = 6;        // posiciones por tanda de relleno (~2,7 s con el presupuesto liviano)
+var _FA_RELLENO_TANDA = 6;        // posiciones por tanda de relleno (~3,6 s con el presupuesto liviano)
 var _FA_RELLENO_MAXMS = 20000;    // seguro: una tanda que no termina en este tiempo se da por cortada
 var _FA_RELLENO_INTENTOS = 2;     // una posición que no llega a prof. confiable no se reintenta más en el relleno
 // El relleno también aprovecha al módulo MADURO (pedido del autor 26/09: con jugadas llegando seguido
@@ -47668,6 +47917,7 @@ function _faAnotarBase(nodes, nueva) {
 
 // ¿El pase GRUESO del vivo saltea la posición i? (ver arriba)
 function _faSaltea(i) {
+  if (_faDeAyudantes(i)) return true;                          // el historial lo calculan los ayudantes
   if (!_fa.live || _fa.relleno || i === _fa.forzar) return false;
   if (i % 2 === 1) return false;                               // una sí…
   if (i >= _faBase.n) return false;                            // llegó mientras se miraba: entera
@@ -47685,7 +47935,7 @@ function _faCuantasPase() {
 // Recién evaluada la posición i en el grueso: si con su vecino evaluado (i±2) hay un salto grande y la
 // del medio falta, devuelve el índice del medio (para evaluarla ya); si no, -1.
 function _faAfinar(i) {
-  if (!_fa.live || _fa.relleno) return -1;
+  if (!_fa.live || _fa.relleno || _fa.rep) return -1;
   var R = _fa.results, n = _fa.nodes.length, pares = [[i - 2, i], [i, i + 2]];
   for (var k = 0; k < 2; k++) {
     var a = pares[k][0], b = pares[k][1], m = a + 1;
@@ -47749,6 +47999,7 @@ function _sfReanudarVisor(r) {
 function _faRellenarSiLibre() {
   try {
     if (typeof _fa === 'undefined' || !_fa.live || _fa.running || _fa._preluding || !_fa.nodes.length) return;
+    if (_fa.rep) return;                                            // los ayudantes están con el historial
     if (!_faLiveEligible() || _faLiveHidden || document.hidden) return;
     if (_cvMobileOn && !_cvAnalysisStarted) return;                 // teléfono sin "Estadísticas" abierta
     if (!sf.engine || !sf.ready || sf.pending || sf.rokWaiting) return;
@@ -47847,7 +48098,7 @@ function faMaybeAutoLive() {
   // faltaban para la colgada por la que se entró, y el pase anda dibujando el principio. Ahí sí se
   // entra a faLiveBuild, que lo corta y lo manda a la colgada (si no, el "??" salía último).
   // (Una tanda de RELLENO no cuenta como "calculando": faLiveBuild la corta si llegaron jugadas.)
-  if (_faOcupado() && !_faSaltoPendiente()) return;
+  if (_faOcupado() && !_faSaltoPendiente()) { _faRepNuevasYa(); return; }   // (la tanda nueva, a los ayudantes)
   _fa.live = true;
   faLiveBuild();
 }
@@ -47921,6 +48172,13 @@ function faLiveBuild() {
   // ¿Falta (re)evaluar alguna? Lanzar el pase del motor (incremental) que solo calcula esas. Las
   // salteadas del grueso no cuentan: esas las completa el relleno con el motor quieto (si hay una
   // tanda corriendo, llegó hasta acá porque no hubo jugadas nuevas: se la deja seguir).
+  // ⚡ Todo lo que falta MENOS la cola profunda (las 2 últimas, que mira el principal) lo calculan los motores
+  // ayudantes, entero y sin sacarle el motor al módulo: el historial al abrir (o al volver a una partida que
+  // siguió: lo ya visto viene del caché) y las tandas de jugadas que llegan de golpe. Si ya están trabajando,
+  // lo nuevo se suma a su fila. Una jugada suelta no los prende (queda en la cola: la mira el principal).
+  // Sin ayudantes (equipo chico, file://) queda el camino de antes: pase salteado + relleno.
+  if (_fa.rep && _fa.rep.live) _faRepAmpliar(nodes.length - _FA_LIVE_DEEP_N, nodes);
+  else if (!(_fa.running && _fa.relleno)) _faRepIniciar(true, nodes.length - _FA_LIVE_DEEP_N);
   if (_fa.running && _fa.relleno) { /* sigue la tanda de relleno */ }
   else if (_faCuantasPase() > 0) {
     // PARTIDA NUEVA con el módulo prendido: antes de que el pase del gráfico le saque el motor,
@@ -48113,6 +48371,7 @@ function startFA() {
   _fa.results = nodes.map(function(nd) { return (nd.move && nd.move.ev) || _faLiveCache[nd.fen] || null; });
   _fa.ply = _fa.desde = _faInicio();   // si vino de un aviso de colgada, empieza por ahí
   _fa.lastScore = null;
+  _faRepIniciar(false, nodes.length);   // ⚡ motores ayudantes: se reparten la partida con el principal (si el equipo da)
   document.getElementById('fa-btn').classList.add('active');
   document.getElementById('eval-graph-wrap').style.display = 'block';
   document.getElementById('fa-prog-row').style.display = 'flex';
@@ -48128,6 +48387,7 @@ function startFA() {
 }
 
 function faFinish() {
+  if (_fa.rep && !_fa.rep.live) _faRepMatar();   // los ayudantes del 📊 se apagan (los del historial del vivo siguen)
   _fa.running = false; _fa.armed = false;
   _fa.relleno = false; _fa.cola = null; _fa.volver = null; _fa.forzar = -1; _fa.resume = null;
   if (_fa._rellT) { clearTimeout(_fa._rellT); _fa._rellT = null; }
@@ -48144,6 +48404,7 @@ function faFinish() {
 }
 
 function cancelFA() {
+  _faRepMatar();   // también los del historial del vivo (cerrar el gráfico, etc.)
   if (sf.engine) sf.engine.postMessage('stop');
   faFinish();
   faUpdateBuildBtn();
@@ -48177,6 +48438,14 @@ function faNext() {
   if (_fa.relleno) {
     while (_fa.cola && _fa.cola.length && !_faNeedsPassEval(_fa.cola[0])) _fa.cola.shift();
     _fa.ply = (_fa.cola && _fa.cola.length) ? _fa.cola.shift() : _fa.nodes.length;
+  } else if (_fa.rep && !_fa.rep.live) {
+    // Análisis REPARTIDO (📊): el motor principal también toma pedazos de la fila. Si no queda nada para él
+    // pero algún ayudante sigue calculando, espera quieto (lo despierta _faRepQuieto); si no, cierra.
+    _fa.ply = _faRepProxima(_fa.rep.main);
+    if (_fa.ply < 0) {
+      if (_faRepOcupados()) { _fa.rep.quieto = true; return; }
+      _fa.ply = _fa.nodes.length;
+    }
   } else {
     while (_fa.ply < _fa.nodes.length && (!_faNeedsPassEval(_fa.ply) || _faSaltea(_fa.ply))) _fa.ply++;
     // Se empezó por el medio (aviso de colgada) y se llegó al final: volver al principio por las que
@@ -48241,10 +48510,14 @@ function faNext() {
   var depth = _fa.live ? (deep ? _FA_LIVE_DEEP_DEPTH : _FA_LIVE_DEPTH) : _FA_MANUAL_DEPTH;
   var capMs = _fa.live ? (deep ? _FA_LIVE_DEEP_CAP_MS : _FA_LIVE_CAP_MS) : _FA_MANUAL_CAP_MS;
   _fa.minD  = _fa.live ? (deep ? _FA_LIVE_DEEP_MIN : _FA_LIVE_MIN) : 8;   // prof. mínima para aceptar la eval de ESTE nodo
-  sf.engine.postMessage('go depth ' + depth);
+  // Manual: el tope lo pone el MOTOR (movetime). Antes era sólo el setTimeout, que Chrome estira a 1 s
+  // en pestañas ocultas (el análisis tardaba el doble si el visitante se iba a otra pestaña). El
+  // setTimeout queda igual como respaldo.
+  sf.engine.postMessage('go depth ' + depth + (_fa.live ? '' : ' movetime ' + capMs));
   sf.searching = true;
   _fa._capTimer = setTimeout(function() { if (sf.engine) sf.engine.postMessage('stop'); }, capMs);
-  if (!_fa.live) {   // la barra de progreso es solo para el análisis manual
+  if (_fa.rep && !_fa.rep.live) _faRepAvance();
+  else if (!_fa.live) {   // la barra de progreso es solo para el análisis manual
     var pct = Math.round(_fa.ply / _fa.nodes.length * 100);
     var t = document.getElementById('fa-prog-txt');
     var f = document.getElementById('fa-prog-fill');
@@ -48304,28 +48577,8 @@ function faHandleMsg(line) {
       faNext();
       return;
     }
-    var raw  = _fa.lastScore;
-    var turn = node.fen.split(' ')[1];   // lado a mover en esta posición
-    // UCI da el score desde la perspectiva del lado a mover → normalizar a blancas
-    var score = raw.mate !== undefined
-      ? {mate: turn === 'b' ? -raw.mate : raw.mate}
-      : {cp:   turn === 'b' ? -raw.cp   : raw.cp  };
-    // Guardar también la MEJOR jugada del motor en esta posición (uci): permite marcar con ★
-    // la jugada siguiente de la partida si coincide (como el "Best" de Chess.com). Viaja en el
-    // caché, así el ★ también aparece al redibujar desde localStorage.
-    var bmM = line.match(/^bestmove ([a-h][1-8][a-h][1-8][qrbn]?)/);
-    if (bmM) score.bm = bmM[1];
-    score.d = _fa.lastDepth || 0;   // profundidad a la que se calculó (para diferir la calificación)
-    if (_fa.lastPv && _fa.lastPv.length) _faPvGuardar(node.fen, _fa.lastPv);   // sólo en memoria (no al caché)
-    score = _faFixMate0(score, node.fen);   // jaque mate: firmar el {mate:0} según el turno (si no, cae como derrota)
-    var _prevC = _faLiveCache[node.fen];
-    if (_prevC && _prevC.ln) score.ln = _prevC.ln;   // las 3 líneas del módulo (filtros del "!!") no se pierden
-    _fa.results[_fa.ply] = score;
-    // Cachear SIEMPRE (vivo y manual) por FEN y persistir: así, al cerrar el gráfico con la ✕ y
-    // reabrirlo (o abrir la partida en otra pestaña), se dibuja al instante sin recalcular nada.
-    _faLiveCache[node.fen] = score;
-    _capCache(_faLiveCache, 4000);
-    _faSaveLiveCache();
+    var score = _faAnotarEval(_fa.ply, _fa.lastScore, _fa.lastDepth, _fa.lastPv, line);
+    if (_fa.rep && !_fa.rep.live) _faRepAvance();
     if (_fa.live) _tdMiniFromDeep(node.fen, score, score.d);   // su miniatura, si es la posición actual
     if (_fa.live) {
       faRender(_faInterp(_fa.results));          // el gráfico se va llenando jugada a jugada
@@ -48338,6 +48591,293 @@ function faHandleMsg(line) {
     _faSiguiente();   // la siguiente; o, si abrió un salto grande, la del medio (ver _faAfinar)
     faNext();
   }
+}
+
+// Anota la eval que dio el motor (raw: perspectiva del que mueve) para la posición `ply` del pase: la
+// normaliza a blancas, le pega la mejor jugada y la profundidad, y la deja en el gráfico y en el caché.
+// La usan el motor principal (faHandleMsg) y los ayudantes del análisis repartido (_faRep*).
+function _faAnotarEval(ply, raw, depth, pv, bmLine) {
+  var score = _faEvalDe(_fa.nodes[ply].fen, raw, depth, pv, bmLine);
+  _fa.results[ply] = score;
+  return score;
+}
+// La eval normalizada de la posición `fen`, guardada en el caché (sin tocar el gráfico). Los ayudantes la
+// usan solita para las jugadas que llegaron mientras el pase estaba ocupado (todavía no están en _fa.nodes):
+// al rearmarse el gráfico, salen del caché sin recalcular.
+function _faEvalDe(fen, raw, depth, pv, bmLine) {
+  var node = { fen: fen };
+  var turn = node.fen.split(' ')[1];   // lado a mover en esta posición
+  // UCI da el score desde la perspectiva del lado a mover → normalizar a blancas
+  var score = raw.mate !== undefined
+    ? {mate: turn === 'b' ? -raw.mate : raw.mate}
+    : {cp:   turn === 'b' ? -raw.cp   : raw.cp  };
+  // Guardar también la MEJOR jugada del motor en esta posición (uci): permite marcar con ★
+  // la jugada siguiente de la partida si coincide (como el "Best" de Chess.com). Viaja en el
+  // caché, así el ★ también aparece al redibujar desde localStorage.
+  var bmM = bmLine.match(/^bestmove ([a-h][1-8][a-h][1-8][qrbn]?)/);
+  if (bmM) score.bm = bmM[1];
+  score.d = depth || 0;   // profundidad a la que se calculó (para diferir la calificación)
+  if (pv && pv.length) _faPvGuardar(node.fen, pv);   // sólo en memoria (no al caché)
+  score = _faFixMate0(score, node.fen);   // jaque mate: firmar el {mate:0} según el turno (si no, cae como derrota)
+  var _prevC = _faLiveCache[node.fen];
+  if (_prevC && _prevC.ln) score.ln = _prevC.ln;   // las 3 líneas del módulo (filtros del "!!") no se pierden
+  // Cachear SIEMPRE (vivo y manual) por FEN y persistir: así, al cerrar el gráfico con la ✕ y
+  // reabrirlo (o abrir la partida en otra pestaña), se dibuja al instante sin recalcular nada.
+  _faLiveCache[node.fen] = score;
+  _capCache(_faLiveCache, 4000);
+  _faSaveLiveCache();
+  return score;
+}
+
+/* ── ⚡ Análisis REPARTIDO entre varios motores (08/10/2026) ──────────────────────────────────────
+   El gráfico recorría las jugadas de a una con UN motor (~40 s por partida). Ahora se prenden unos
+   motores AYUDANTES (otros Stockfish de un solo hilo, cada uno en su Worker) y la partida se reparte en
+   pedazos de _FA_REP_PEDAZO posiciones, como hace fishnet de Lichess. Cada motor toma un pedazo de la
+   fila; el que se queda sin trabajo le saca la mitad del pedazo al que más tiene, así nadie espera al
+   final. Medido en la PC del autor (4 núcleos): ~41 s → ~11 s con 4 motores, con la misma exactitud de
+   símbolos (contra una referencia a prof. 22).
+   El MISMO mecanismo sirve a los dos gráficos:
+    · 📊 de una partida terminada (startFA): el motor principal también toma pedazos (rep.main).
+    · VIVO (faLiveBuild): el HISTORIAL que había al abrir la partida lo calculan SÓLO los ayudantes,
+      entero, mientras el motor principal sigue con el módulo sin que nadie se lo saque. La cola
+      (las últimas jugadas, presupuesto profundo) y las jugadas que van llegando siguen con el
+      principal, como siempre. Con ayudantes no hay pase salteado ni relleno (eso queda de plan B
+      para los equipos donde no hay ayudantes: _faRepCuantos() = 0).
+   NO son los hilos de julio (un motor con varios hilos: a 0,45 s por jugada no profundizaban y pedían
+   COOP/COEP): acá cada motor es el de siempre, no hace falta tocar los headers y anda también en iPhone.
+   El archivo del motor se baja UNA vez (el navegador lo guarda un año): los ayudantes no suman descarga.
+   Cuidados: los ayudantes viven SÓLO mientras se arma el gráfico (terminate() al terminar, cancelar,
+   cerrar el gráfico, abrir otra partida o si el motor se cae: devuelven la memoria, ~70 MB cada uno);
+   hash chico (32 MB; con 64 no mejoró); cuántos según el equipo (_faRepCuantos). Si uno falla, su
+   pedazo vuelve a la fila y no se intentan más en esta pestaña. */
+var _FA_REP_PEDAZO = 12;    // posiciones por pedazo
+var _FA_REP_MIN = 16;       // 📊: con menos posiciones por calcular no vale la pena prender ayudantes
+var _FA_REP_MIN_VIVO = 6;   // vivo: más bajo, porque si no las calcula el principal y le saca el motor al módulo
+var _FA_REP_HASH = 32;      // MB de memoria de cada ayudante
+var _faRepFallo = false;    // un ayudante no pudo arrancar: no se intentan más en esta pestaña
+// Cuántos AYUDANTES (además del motor de siempre). Un motor por núcleo físico (≈ la mitad de los
+// hilos lógicos), hasta 4 en total; en teléfonos o equipos con poca memoria, 2 en total.
+function _faRepCuantos() {
+  if (_faRepFallo || location.protocol === 'file:' || typeof Worker === 'undefined') return 0;
+  var hc = navigator.hardwareConcurrency || 2;
+  var total = Math.min(4, Math.floor(hc / 2));
+  var movil = _cvMobileOn || /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '');
+  if (movil || (navigator.deviceMemory && navigator.deviceMemory <= 4)) total = Math.min(total, 2);
+  return Math.max(0, total - 1);
+}
+// ¿A la posición i de la fila de los ayudantes le falta la eval? Si ya está en el gráfico, lo de siempre
+// (_faNeedsPassEval); si todavía no (llegó con el pase ocupado), si no está en el caché ni trae la de Lichess.
+function _faRepFalta(R, i) {
+  var f = R.fens[i];
+  if (!f) return false;
+  var nd = _fa.nodes[i];
+  if (nd && nd.fen === f) return _faNeedsPassEval(i);
+  return !_faLiveCache[f] && !R.conEv[i];
+}
+// ¿La posición i del vivo la están calculando (o la van a calcular) los ayudantes?
+function _faDeAyudantes(i) {
+  return !!(_fa.live && _fa.rep && _fa.rep.live && i < _fa.rep.hasta);
+}
+// Arma la fila de pedazos de [0, hasta) y prende los ayudantes. Devuelve true si arrancó.
+//  · manual (vivo=false): lo llama startFA con el pase ya armado; el principal también participa.
+//  · vivo (vivo=true): lo llama faLiveBuild; sólo los ayudantes, el principal queda con el módulo.
+function _faRepIniciar(vivo, hasta, nodes) {
+  _faRepMatar();
+  nodes = nodes || _fa.nodes;
+  var n = Math.min(hasta, nodes.length), faltan = 0;
+  var fens = [], conEv = [];
+  for (var j = 0; j < n; j++) { fens.push(nodes[j].fen); conEv.push(!!(nodes[j].move && nodes[j].move.ev)); }
+  var R0 = { fens: fens, conEv: conEv };
+  for (var i = 0; i < n; i++) if (_faRepFalta(R0, i)) faltan++;
+  var cuantos = _faRepCuantos();
+  if (!cuantos || faltan < (vivo ? _FA_REP_MIN_VIVO : _FA_REP_MIN)) return false;
+  var cola = [], ini = Math.min(_faInicio() || 0, n);   // si vino de un aviso de colgada, primero desde ahí
+  for (var a = ini; a < n; a += _FA_REP_PEDAZO) cola.push({ sig: a, b: Math.min(n, a + _FA_REP_PEDAZO) });
+  for (var a2 = 0; a2 < ini; a2 += _FA_REP_PEDAZO) cola.push({ sig: a2, b: Math.min(ini, a2 + _FA_REP_PEDAZO) });
+  var R = _fa.rep = { live: !!vivo, hasta: n, fens: fens, conEv: conEv, cola: cola, main: vivo ? null : { pz: null }, ayu: [], quieto: false, renderT: 0,
+                      depth: vivo ? _FA_LIVE_DEPTH : _FA_MANUAL_DEPTH, cap: vivo ? _FA_LIVE_CAP_MS : _FA_MANUAL_CAP_MS,
+                      minD: vivo ? _FA_LIVE_MIN : 8 };
+  for (var k = 0; k < cuantos; k++) {
+    var h = { w: null, listo: false, pz: null, ply: -1, fen: '', ls: null, ld: 0, lpv: null };
+    try { h.w = new Worker('assets/stockfish-19-lite-single.js'); } catch (e) { _faRepFallo = true; break; }
+    h.w.onmessage = (function(h) { return function(e) { _faRepMsg(R, h, e.data); }; })(h);
+    h.w.onerror = (function(h) { return function() { _faRepCaido(R, h); }; })(h);
+    h.w.postMessage('uci');
+    R.ayu.push(h);
+  }
+  if (!R.ayu.length) { _fa.rep = null; return false; }
+  // Seguro: si ningún ayudante termina de cargar en 15 s, no insistir (el vivo quedaría esperándolos;
+  // el manual igual sigue solo con el principal).
+  R.tCarga = setTimeout(function() {
+    if (_fa.rep !== R || R.ayu.some(function(h) { return h.listo; })) return;
+    _faRepFallo = true;
+    if (R.live) _faRepFinVivo(); else _faRepMatar();
+  }, 15000);
+  if (vivo) faSetBuilding();   // "armando gráfico…" mientras trabajan
+  return true;
+}
+// Vivo: llegaron jugadas MIENTRAS los ayudantes trabajan (en la Olimpiada, el PGN fresco de Lichess llega
+// unos segundos después de abrir, con muchas jugadas de golpe): lo nuevo que deja de ser cola se suma a SU
+// fila, en vez de caerle al principal (que le sacaría el motor al módulo). Los que estaban quietos, siguen.
+function _faRepAmpliar(hasta, nodes) {
+  var R = _fa.rep;
+  if (!R || !R.live) return;
+  nodes = nodes || faGetNodes();
+  hasta = Math.min(hasta, nodes.length);
+  if (hasta <= R.hasta) return;
+  var k = R.fens.length;
+  if (k && (!nodes[k - 1] || nodes[k - 1].fen !== R.fens[k - 1])) return;   // otra partida: no mezclar
+  for (; k < hasta; k++) { R.fens.push(nodes[k].fen); R.conEv.push(!!(nodes[k].move && nodes[k].move.ev)); }
+  for (var a = R.hasta; a < hasta; a += _FA_REP_PEDAZO) R.cola.push({ sig: a, b: Math.min(hasta, a + _FA_REP_PEDAZO) });
+  R.hasta = hasta;
+  R.ayu.forEach(function(h) { if (h.listo && h.ply < 0) _faRepSigue(R, h); });
+}
+// Llegó una tanda de jugadas con el pase principal OCUPADO (faMaybeAutoLive no rearma el gráfico hasta que
+// termine): lo que no es cola se lo damos YA a los ayudantes (si no, esperaba ~6 s a que el principal
+// terminara con la cola). El pase en curso no se toca; lo calculado va al caché y el gráfico lo toma al rearmarse.
+function _faRepNuevasYa() {
+  try {
+    if (!_fa.live || _fa.relleno || !_fa.nodes.length) return;
+    var nodes = faGetNodes(), n0 = _fa.nodes.length;
+    if (nodes.length <= n0 || nodes[n0 - 1] !== _fa.nodes[n0 - 1]) return;   // nada nuevo, u otra partida
+    var hasta = nodes.length - _FA_LIVE_DEEP_N;
+    if (_fa.rep && _fa.rep.live) _faRepAmpliar(hasta, nodes);
+    else if (!_fa.rep) _faRepIniciar(true, hasta, nodes);
+  } catch (e) {}
+}
+// Apaga los ayudantes (si hay) y devuelve la memoria. Seguro de llamar siempre.
+function _faRepMatar() {
+  var R = typeof _fa !== 'undefined' && _fa.rep;
+  if (!R) return;
+  _fa.rep = null;
+  if (R.tCarga) clearTimeout(R.tCarga);
+  R.ayu.forEach(function(h) { try { h.w.terminate(); } catch (e) {} h.listo = false; });
+  if (R.live) faSetBuilding();
+}
+// La próxima posición para el motor `m` (el principal o un ayudante), o -1 si no queda nada para él.
+function _faRepProxima(m) {
+  var R = _fa.rep;
+  for (;;) {
+    var pz = m.pz;
+    if (pz) {
+      while (pz.sig < pz.b && !_faRepFalta(R, pz.sig)) pz.sig++;   // ya hecha (por otro, o sembrada)
+      if (pz.sig < pz.b) return pz.sig++;
+      m.pz = null;
+    }
+    if (R.cola.length) { m.pz = R.cola.shift(); continue; }
+    // Fila vacía: sacarle la mitad del pedazo al que más tiene por delante.
+    var mejor = null, todos = R.main ? [R.main].concat(R.ayu) : R.ayu;
+    for (var k = 0; k < todos.length; k++) {
+      var o = todos[k].pz;
+      if (o && o !== pz && o.b - o.sig >= 4 && (!mejor || o.b - o.sig > mejor.b - mejor.sig)) mejor = o;
+    }
+    if (!mejor) return -1;
+    var mitad = Math.ceil((mejor.sig + mejor.b) / 2);
+    m.pz = { sig: mitad, b: mejor.b };
+    mejor.b = mitad;
+  }
+}
+function _faRepMsg(R, h, line) {
+  if (_fa.rep !== R) return;   // de un análisis viejo
+  if (line === 'uciok') {
+    h.w.postMessage('setoption name Hash value ' + _FA_REP_HASH);
+    h.w.postMessage('setoption name MultiPV value 1');
+    h.w.postMessage('isready');
+    return;
+  }
+  if (line === 'readyok') { if (!h.listo) { h.listo = true; _faRepSigue(R, h); } return; }
+  if (h.ply < 0) return;
+  if (line.indexOf('info') === 0) {   // mismo criterio que faHandleMsg
+    if (/\bmultipv [2-9]/.test(line) || /\b(lower|upper)bound\b/.test(line)) return;
+    var cpM = line.match(/\bscore cp (-?\d+)\b/), mtM = line.match(/\bscore mate (-?\d+)\b/);
+    if (cpM || mtM) {
+      h.ls = mtM ? { mate: parseInt(mtM[1]) } : { cp: parseInt(cpM[1]) };
+      var dM = line.match(/\bdepth (\d+)\b/); h.ld = dM ? parseInt(dM[1]) : 0;
+      var pvM = line.match(/ pv (.+)$/); h.lpv = pvM ? pvM[1].split(' ') : null;
+    }
+    return;
+  }
+  if (line.indexOf('bestmove') === 0) {
+    var ply = h.ply; h.ply = -1;
+    // Sólo si la eval es de fiar. Si la posición ya está en el gráfico, va a su punto; si todavía no (llegó con
+    // el pase ocupado), sólo al caché: el gráfico la toma de ahí al rearmarse.
+    var nd = _fa.nodes[ply];
+    if (h.ls && (h.ls.mate !== undefined || h.ld >= R.minD)) {
+      if (nd && nd.fen === h.fen) {
+        if (_faNeedsPassEval(ply)) { _faAnotarEval(ply, h.ls, h.ld, h.lpv, line); _faRepAvance(); }
+      } else if (R.live && !_faLiveCache[h.fen]) _faEvalDe(h.fen, h.ls, h.ld, h.lpv, line);
+    }
+    _faRepSigue(R, h);
+  }
+}
+// El ayudante `h` terminó una posición (o recién está listo): darle otra, o quedarse quieto.
+function _faRepSigue(R, h) {
+  if (_fa.rep !== R || (!R.live && !_fa.running)) return;
+  var i = _faRepProxima(h);
+  if (i < 0) { _faRepQuieto(); return; }
+  h.ply = i; h.fen = R.fens[i]; h.ls = null; h.ld = 0; h.lpv = null;
+  h.w.postMessage('position fen ' + h.fen);
+  // El tope de tiempo lo pone el MOTOR (movetime), no un setTimeout: así no se estira en pestañas ocultas.
+  h.w.postMessage('go depth ' + R.depth + ' movetime ' + R.cap);
+}
+// Un ayudante se cayó (o no pudo cargar): su trabajo vuelve a la fila y sigue el resto.
+function _faRepCaido(R, h) {
+  try { h.w.terminate(); } catch (e) {}
+  if (!h.listo) _faRepFallo = true;   // ni arrancó: no insistir en esta pestaña
+  h.listo = false;
+  if (_fa.rep !== R) return;
+  var i = R.ayu.indexOf(h); if (i >= 0) R.ayu.splice(i, 1);
+  if (h.pz) R.cola.unshift({ sig: h.ply >= 0 ? h.ply : h.pz.sig, b: h.pz.b });
+  h.pz = null; h.ply = -1;
+  _faRepQuieto();
+}
+// ¿Algún ayudante está calculando todavía?
+function _faRepOcupados() {
+  var R = _fa.rep;
+  // (Uno que todavía está cargando no cuenta: si nunca termina de cargar, el pase no queda esperándolo.)
+  return !!R && R.ayu.some(function(h) { return h.ply >= 0; });
+}
+// Un ayudante se quedó sin trabajo (o se cayó).
+//  · manual: si el principal estaba esperando, que vuelva a mirar (toma lo que quedó o cierra el pase).
+//  · vivo: si ya no queda nada ni nadie calculando, se cierra el historial.
+function _faRepQuieto() {
+  var R = _fa.rep;
+  if (!R) return;
+  if (!R.live) {
+    if (!R.quieto || !_fa.running) return;
+    R.quieto = false;
+    faNext();
+    return;
+  }
+  if (_faRepOcupados()) return;
+  if (R.cola.length && R.ayu.length) return;   // quedan pedazos y hay ayudantes cargando: los toman al estar listos
+  _faRepFinVivo();
+}
+// Terminó el historial del vivo: apagar ayudantes y dibujar todo calificado. Si quedó alguna posición
+// sin eval de fiar (o se cayeron todos los ayudantes), la toma el motor principal en su próximo pase.
+function _faRepFinVivo() {
+  _faRepMatar();
+  if (!_fa.live) return;
+  faRender(_faInterp(_fa.results));
+  if (!_fa.running) { faClassify(); faRenderStats(); faApplyNags(); cvUpdateNagBadge(); faUpdateBar(); _faNagSig = ''; }
+  else _faReclassifyIfChanged();
+  faUpdateBuildBtn();
+  if (!_fa.running && _faCuantasPase() > 0) faLiveEngineStart();   // huecos que quedaron: el principal
+}
+// Barra de progreso (cuántas posiciones ya están) y el gráfico que se va llenando en varios lugares a la vez.
+function _faRepAvance() {
+  var R = _fa.rep; if (!R) return;
+  var now = Date.now();
+  if (R.live) {   // vivo: sin barra de progreso; el gráfico y los símbolos se van completando
+    if (now - R.renderT >= 300) { R.renderT = now; faRender(_faInterp(_fa.results)); _faReclassifyIfChanged(); }
+    return;
+  }
+  var n = _fa.nodes.length, hechas = 0;
+  for (var i = 0; i < n; i++) if (_fa.results[i] != null) hechas++;
+  var t = document.getElementById('fa-prog-txt'), f = document.getElementById('fa-prog-fill');
+  if (t) t.textContent = 'Jugada ' + hechas + ' / ' + n;
+  if (f) f.style.width = Math.round(hechas / n * 100) + '%';
+  if (now - R.renderT >= 300) { R.renderT = now; faRender(_faInterp(_fa.results)); }
 }
 
 // El módulo en vivo alimenta el punto del gráfico de la posición que está analizando (normalmente la
@@ -50137,6 +50677,7 @@ function faReset() {
   _faCederRelleno();   // relleno en curso (quizá con el módulo en pausa): cortarlo por la vía que lo reanuda
   if (_fa._capTimer) { clearTimeout(_fa._capTimer); _fa._capTimer = null; }
   if (_fa.running) { _fa.running = false; if (sf.engine) { sf.engine.postMessage('stop'); sf.engine.postMessage('setoption name MultiPV value 3'); } }
+  _faRepMatar();
   _fa.armed = false;
   _fa.relleno = false; _fa.cola = null; _fa.volver = null; _fa.forzar = -1;
   if (_fa._rellT) { clearTimeout(_fa._rellT); _fa._rellT = null; }
@@ -50170,6 +50711,7 @@ function faSetBuilding() {
   var el = document.getElementById('fa-building'); if (!el) return;
   var show = (typeof _fa !== 'undefined' && _fa && _fa.running);
   if (show && _fa.live && (_fa._buildCount || 0) < _FA_BUILDING_MINMOVES) show = false;
+  if (typeof _fa !== 'undefined' && _fa && _fa.rep && _fa.rep.live) show = true;   // los ayudantes con el historial del vivo
   el.style.display = show ? 'flex' : 'none';
 }
 function faUpdateBuildBtn() {
