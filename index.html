@@ -3886,6 +3886,18 @@
       .col-mate .col-fila:hover { background:rgba(224,163,58,.16); }
       .col-mate .col-no { background:#211c12; color:#cfc3ab; border-color:#4a4030; }
       .col-mate .col-nomas { color:#9a8f7a; }
+      /* ✨ JUGADÓN EN VIVO (10/10): verde agua y con "!!", el mismo color del botón Jugadones de la ronda. */
+      .col-cartel.col-bri { background:#17282a; border-color:#26c2a3; }
+      .col-bri .col-nb { background:#26c2a3; color:#06231d; font-size:13px; letter-spacing:-1px; }
+      .col-bri .col-barra { background:#26c2a3; }
+      .col-bri .col-txt b { color:#dff7f1; }
+      .col-bri .col-txt > span, .col-bri .col-fila span { color:#a9cfc6; }
+      .col-bri .col-fila { border-color:rgba(38,194,163,.35); }
+      .col-bri .col-fila:hover { background:rgba(38,194,163,.16); }
+      .col-bri .col-no { background:#122022; color:#a9cfc6; border-color:#2c4a48; }
+      .col-bri .col-nomas { color:#7fa69e; }
+      .col-ch-bri { background:#173a33; color:#8fe8d2; }
+      .cg-ult-fila.cg-ult-bri { border-left-color:#26c2a3; }
       /* COLGADAS DE LA RONDA (19/09): botón arriba de los tableros de la ronda + revisión del autor. */
       .cg-bar { grid-column:1/-1; display:flex; flex-wrap:wrap; gap:8px; margin:-4px 0 14px; }
       .cg-pub { display:inline-flex; align-items:center; gap:6px; padding:8px 14px; border-radius:20px; cursor:pointer; font-family:inherit;
@@ -39131,6 +39143,7 @@ function _colScan() {
     _colEst[gk] = now; _capCache(_colEst, 1500);
     _colVisto[gk] = ahora; _capCache(_colVisto, 1500);   // el turno del barrido (_colMasTrabajos)
     if (!prev || now.plies <= prev.plies) return;             // la primera vez sólo se anota
+    if (now.plies === prev.plies + 1) _briVivo(gk, g, prev, now);   // ✨ ¿fue un jugadón? (con su llave, ver _briOn)
     if (ahora < (_colMesaHasta[gk] || 0)) return;             // esta mesa ya avisó hace poco
     // Motor repartido: con la eval de otro, una mesa ajena la vigila su dueño (y el aviso llega repartido).
     // Salvo que la eval sea de un invitado: él no puede repartir avisos, así que la colgada se busca acá.
@@ -39506,7 +39519,7 @@ function _colNagAviso() {
       node = node.children[0];
     }
     if (!node.move || node.move.nag) return;
-    node.move.nag = '??';
+    node.move.nag = _colFoco.nag || '??';   // un jugadón en vivo trae '!!' (ver _briAbrir)
     faApplyNags(); cvUpdateNagBadge();
   } catch (e) {}
 }
@@ -39706,7 +39719,7 @@ var _colHist = [], _colHid = 0, _colUltAbierto = false;
 function _colHistGuardar(items) {
   var tour = String(_tdTourKey), cat = _tdActiveCat, r = (_tdLiveCtx && _tdLiveCtx.currentNum) || _tdCurrentRound;
   items.forEach(function(it){
-    _colHist.unshift({ hid: ++_colHid, gk: it.gk, g: it.g, prev: it.prev, now: it.now, c: it.c, mateN: it.mateN, ts: Date.now(), tour: tour, cat: cat, r: r });
+    _colHist.unshift({ hid: ++_colHid, gk: it.gk, g: it.g, prev: it.prev, now: it.now, c: it.c, mateN: it.mateN, bri: it.bri || null, ts: Date.now(), tour: tour, cat: cat, r: r });
   });
   // Tope POR SECCIÓN (las del absoluto no desplazan a las de la femenina).
   var cuenta = {};
@@ -39727,20 +39740,242 @@ function _colHace(ts) {
 }
 function colUltimas() { _colUltAbierto = !_colUltAbierto; try { _cgBarRefrescar(); } catch (e) {} }
 function colUltimaIr(hid) {
-  for (var i = 0; i < _colHist.length; i++) if (_colHist[i].hid === hid) { _colAbrir(_colHist[i].gk, _colPlyColgada(_colHist[i])); return; }
+  for (var i = 0; i < _colHist.length; i++) if (_colHist[i].hid === hid) { _colAbrir(_colHist[i].gk, _colPlyColgada(_colHist[i])); if (_colHist[i].bri && _colFoco) _colFoco.nag = '!!'; return; }
 }
 function _colUltPanelHtml(rInt) {
   if (!_colUltAbierto) return '';
   var hist = _colHistDe(rInt); if (!hist.length) return '';
   return '<div class="cg-ult-panel">' + hist.map(function(x){
     var mate = !!(x.c && x.c.tipo === 'M');
-    return '<button type="button" class="cg-ult-fila' + (mate ? ' cg-ult-mate' : '') + '" onclick="colUltimaIr(' + x.hid + ')">'
+    return '<button type="button" class="cg-ult-fila' + (mate ? ' cg-ult-mate' : '') + (x.bri ? ' cg-ult-bri' : '') + '" onclick="colUltimaIr(' + x.hid + ')">'
       + '<span class="cg-ult-j">' + _colJugadoresHtml(x) + '</span>'
-      + '<span class="cg-ult-d">' + _colDetalleHtml(x) + '</span>'
+      + '<span class="cg-ult-d">' + (x.bri ? _briDetalleHtml(x) : _colDetalleHtml(x)) + '</span>'
       + '<span class="cg-ult-t">' + escHtml(_colHace(x.ts)) + '</span></button>';
   }).join('') + '</div>';
 }
 window.aaCol = { llave: _colLlave, probar: _colProbar };
+
+/* ══ ✨ JUGADONES EN VIVO (10/10/2026, pedido del autor; EN PRUEBA con ?jugadones=1) ══════════════
+   Lo mismo que el aviso de colgadas, pero al revés: un sacrificio sano que el motor da como la mejor
+   jugada y la ÚNICA. Va montado sobre el detector de colgadas (_colScan), que ya compara cada partida
+   con la posición anterior que se le conocía: cuando avanzó UNA sola media jugada se sabe exactamente
+   qué se jugó, y ahí se mira. (Si llegaron dos o más juntas, esa vuelta no se mira: es el precio de
+   no reproducir partidas en cada vuelta.)
+   · Filtro barato, sin motor: no perdió chances según las miniaturas, y _faIsBrilliant (el mismo "!!"
+     del visor, con todos los descartes que fueron saliendo de las rondas que revisó el autor).
+   · Confirmación: 3 líneas a prof. _BRI_VIVO_DEPTH en la posición de ANTES, con la vara de los Jugadones
+     de la ronda (_cgVerificarBri, copiada en _briVara): la mejor (±0,3), sana, la única, y sin lo que el
+     autor rechazó (la calidad que el rival acepta, el jaque intermedio, la entrega falsa que termina pareja).
+   · Después, como las colgadas, se mira el PGN en Lichess por si la transmisión corrigió la jugada.
+   · Cartel verde agua con "!!" (#bri-cartel, aparte del rojo) y queda en 🕑 Últimas colgadas.
+   · NO se reparte por el arbitrito todavía (el que lo recibe lo confirmaría como colgada): sólo lo ve
+     la PC que lo detecta. Si anda bien, se reparte y se manda al hilo del torneo en Discord.
+   · Llave: ?jugadones=1 lo prende en ese navegador, ?jugadones=0 lo apaga. Arranca APAGADO.
+     Para ver el cartel sin esperar un jugadón: aaBri.probar() en la consola, con una ronda en vivo.
+   ════════════════════════════════════════════════════════════════════════════════════════════════ */
+var _BRI_VIVO_DEPTH = 18;          // 3 líneas en la posición de antes (como la verificación de las colgadas de la ronda)
+var _BRI_MESA_MS = 10 * 60000;     // una mesa no vuelve a avisar un jugadón en 10 minutos
+var _BRI_GLOBAL_MS = 60000;        // un cartel por minuto como mucho: lo que llega antes sale junto
+var _BRI_CARTEL_MS = 20000;
+var _briLlaveVal = null, _briPend = {}, _briMesaHasta = {}, _briCola = [], _briUltimo = 0, _briTimer = null, _briCartelTimer = null;
+function _briActivo(q, ls) {
+  try {
+    if (/[?&]jugadones=1(?!\w)/.test(q)) ls.setItem('aa_bri_on', '1');
+    if (/[?&]jugadones=0(?!\w)/.test(q)) ls.removeItem('aa_bri_on');
+    return ls.getItem('aa_bri_on') === '1';
+  } catch (e) { return false; }
+}
+function _briOn() {
+  if (_briLlaveVal === null) { try { _briLlaveVal = _briActivo(_colQ0, localStorage); } catch (e) { _briLlaveVal = false; } }
+  return !!_briLlaveVal && _colOn();
+}
+// La jugada que llevó de una posición a la otra (una sola media jugada). Con la última jugada de la
+// ficha, directo; si no (o si fue una coronación en otra pieza), se prueba cada jugada legal.
+function _briJugada(fenA, fenD, last) {
+  if (typeof Chess === 'undefined') return null;
+  var meta = String(fenD).split(' ').slice(0, 2).join(' ');
+  function igual(ch) { return ch.fen().split(' ').slice(0, 2).join(' ') === meta; }
+  try {
+    var ch = new Chess(fenA), m;
+    if (last && last.from) {
+      m = ch.move({ from: last.from, to: last.to, promotion: 'q' });
+      if (m && igual(ch)) return m;
+      ch = new Chess(fenA);
+    }
+    var ms = ch.moves({ verbose: true });
+    for (var i = 0; i < ms.length; i++) {
+      var c2 = new Chess(fenA);
+      m = c2.move({ from: ms[i].from, to: ms[i].to, promotion: ms[i].promotion });
+      if (m && igual(c2)) return m;
+    }
+  } catch (e) {}
+  return null;
+}
+// Lo llama _colScan con cada partida que avanzó UNA media jugada (prev/now: fen + eval desde las blancas).
+function _briVivo(gk, g, prev, now) {
+  if (!_briOn() || prev.cp == null || now.cp == null) return;
+  if (_briPend[gk] || Date.now() < (_briMesaHasta[gk] || 0) || gk === _colMirandoGk()) return;
+  var blancas = String(prev.fen).split(' ')[1] === 'w';
+  var rB = { cp: prev.cp }, rA = { cp: now.cp }, wpB = _faWinP(rB), wpA = _faWinP(rA);
+  if ((blancas ? wpB - wpA : wpA - wpB) >= 5) return;           // perdió chances: no es la mejor
+  var m = _briJugada(prev.fen, now.fen, now.last);
+  if (!m) return;
+  // RETOMAR no es jugadón (igual que en la lista de la ronda): el rival acaba de llegar a esa casilla.
+  if (m.captured && prev.last && prev.last.to === m.to) return;
+  var node = { fen: now.fen, move: { from: m.from, to: m.to }, parent: { fen: prev.fen, parent: null } };
+  try { if (!_faIsBrilliant(node, rB, rA, blancas, wpB)) return; } catch (e) { return; }
+  _briConfirmar({ gk: gk, g: g, prev: prev, now: now, m: m, c: { lado: blancas ? 'w' : 'b', tipo: 'BR' } });
+}
+function _briConfirmar(info) {
+  var f = info.prev.fen, gk = info.gk, jug = info.m.from + info.m.to + (info.m.promotion || '');
+  var prevUci = (info.prev.last && info.prev.last.from) ? info.prev.last.from + info.prev.last.to : '';
+  _briPend[gk] = 1;
+  _mevExtra.push({ fen: f, depth: _BRI_VIVO_DEPTH, multipv: 3, cb: function(sc, lines){
+    delete _briPend[gk];
+    var ok = _briVara(f, jug, lines, info.m.captured || '', prevUci);
+    if (!ok || gk === _colMirandoGk() || Date.now() < (_briMesaHasta[gk] || 0)) return;
+    info.ev = _colCp(ok.suya.sc, f);   // desde las blancas
+    _briAvisar(info);
+  } });
+  setTimeout(mevTick, 0);
+}
+// La vara de _cgVerificarBri (Jugadones de la ronda), para una sola jugada. Si se cambia allá, cambiarla acá.
+function _briVara(f, jug, lines, cap, prevUci) {
+  lines = lines || [];
+  var s = f.split(' ')[1] === 'w' ? 1 : -1, suya = null;
+  lines.forEach(function(l){ if (!suya && l.mv === jug) suya = l; });
+  if (!suya) return null;
+  var bestSol = _colCp(lines[0].sc, f) * s, suyaSol = _colCp(suya.sc, f) * s;
+  var alts = lines.filter(function(l){ return l.mv !== jug && _cgOtraOk(_colCp(l.sc, f) * s, suyaSol); });
+  var calidad = /^[nb]$/.test(cap || '') && /^[rR]$/.test(_fenGrid(f)[(parseInt(jug[1], 10) - 1) * 8 + jug.charCodeAt(0) - 97] || '')
+    && !!suya.re && suya.re.slice(2, 4) === jug.slice(2, 4);
+  var intermedio = _cgJaqueIntermedio(f, jug, suya.re, suya.r3, prevUci || '');
+  var pareja = (Math.abs(suyaSol) <= _CG_BRI_PAREJA && _cgEntregaFalsa(f, jug))
+    || (suyaSol >= -_CG_BRI_PAREJA && _cgPeonFalso(f, jug));
+  if (calidad || intermedio || pareja) return null;
+  if (!(suyaSol >= bestSol - _CG_BRI_MARGEN && suyaSol > -200 && lines.length >= 2 && !alts.length)) return null;
+  return { suya: suya };
+}
+function _briAvisar(info) {
+  if (!info.prueba) _briMesaHasta[info.gk] = Date.now() + _BRI_MESA_MS;
+  else _briUltimo = 0;   // la prueba no espera el minuto entre carteles
+  try { info.arg = _tdIsArgGame(info.g.h); } catch (e) { info.arg = false; }
+  info.bri = { san: info.m && info.m.san, ply: info.now.plies, ev: info.ev };
+  // Como las colgadas: unos segundos y se mira el PGN en Lichess, por si la jugada estaba mal cargada.
+  setTimeout(function(){
+    _colVerificar(info, function(sirve){
+      if (!sirve) { _briMesaHasta[info.gk] = 0; return; }
+      _briCola.push(info); _briDespachar();
+    });
+  }, info.prueba ? 0 : _COL_VERIF_ESPERA);
+}
+function _briDespachar() {
+  if (!_briCola.length) return;
+  var falta = _briUltimo + _BRI_GLOBAL_MS - Date.now();
+  if (falta > 0) {
+    if (!_briTimer) _briTimer = setTimeout(function(){ _briTimer = null; _briDespachar(); }, falta);
+    return;
+  }
+  var items = _briCola.splice(0, _briCola.length).filter(function(it){ var g = _colBuscar(it.gk); if (g) it.g = g; return !!g; });
+  if (!items.length || !_briOn()) return;
+  _briUltimo = Date.now();
+  items.sort(function(a, b){ return (b.arg ? 1 : 0) - (a.arg ? 1 : 0); });   // argentinos primero
+  _colHistGuardar(items);
+  _briMostrar(items);
+}
+// ── Textos y cartel ──
+function _briTitulo(it) {
+  var h = it.g.h || {};
+  if (h.WhiteTeam && h.BlackTeam) return '¡Jugadón en ' + escHtml(_paisES(h.WhiteTeam)) + ' – ' + escHtml(_paisES(h.BlackTeam)) + '!';
+  var m = /^\d+\.(\d+)$/.exec(String(h.Round || ''));
+  return m ? '¡Jugadón en el tablero ' + m[1] + '!' : '¡Jugadón!';
+}
+function _briJugadaTxt(it) {
+  var b = it.bri || {}, ply = b.ply || it.now.plies;
+  var san = b.san ? (typeof cvFan === 'function' ? cvFan(b.san) : b.san) : '';
+  return san ? Math.ceil(ply / 2) + (ply % 2 ? '.' : '...') + san + '!!' : 'jugada ' + Math.ceil(ply / 2);
+}
+function _briDetalleHtml(it) {
+  var ev = it.bri && it.bri.ev;
+  return escHtml(_briJugadaTxt(it)) + (ev != null ? ' &nbsp;<span class="col-ch col-ch-bri">' + _colEvTxt(ev) + '</span>' : '');
+}
+function _briSonido() {
+  try {
+    var A = window.AudioContext || window.webkitAudioContext; if (!A) return;
+    var ctx = _colSonido._c || (_colSonido._c = new A());
+    [[660, 0], [880, 0.12], [1175, 0.24]].forEach(function(n){   // sube (la colgada baja)
+      var o = ctx.createOscillator(), g = ctx.createGain(), t = ctx.currentTime + n[1];
+      o.type = 'sine'; o.frequency.value = n[0];
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.2, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.26);
+      o.connect(g); g.connect(ctx.destination); o.start(t); o.stop(t + 0.3);
+    });
+  } catch (e) {}
+}
+function _briCerrar() {
+  if (_briCartelTimer) { clearTimeout(_briCartelTimer); _briCartelTimer = null; }
+  var c = document.getElementById('bri-cartel'); if (!c) return;
+  c.classList.add('col-fuera');
+  setTimeout(function(){ if (c.parentNode) c.parentNode.removeChild(c); }, 350);
+}
+// Abre la partida EN el jugadón, con su "!!" (en el teléfono, sin esperar al gráfico: ver _colNagAviso).
+function _briAbrir(gk, ply) {
+  _briCerrar();
+  _colAbrir(gk, ply);
+  if (_colFoco && _colFoco.gk === gk) _colFoco.nag = '!!';
+}
+function _briNoMas() {
+  try { localStorage.removeItem('aa_bri_on'); } catch (e) {}
+  _briLlaveVal = false; _briCola = [];
+  _briCerrar();
+}
+function _briMostrar(items) {
+  var host = document.getElementById('lv-notices');
+  if (!host) { host = document.createElement('div'); host.id = 'lv-notices'; document.body.appendChild(host); }
+  var viejo = document.getElementById('bri-cartel'); if (viejo && viejo.parentNode) viejo.parentNode.removeChild(viejo);
+  if (_briCartelTimer) clearTimeout(_briCartelTimer);
+  var d = document.createElement('div');
+  d.id = 'bri-cartel'; d.className = 'col-cartel col-bri'; d.setAttribute('role', 'status');
+  var uno = items.length === 1, it = items[0];
+  var cuerpo = uno
+    ? '<b>' + _briTitulo(it) + '</b><span>' + _colJugadoresHtml(it) + '</span><span>' + _briDetalleHtml(it) + '</span>'
+    : '<b>¡Jugadones en ' + items.length + ' tableros!</b>' + items.map(function(x){
+        return '<button type="button" class="col-fila" data-gk="' + escHtml(x.gk) + '" data-ply="' + x.now.plies + '"><span class="col-fila-j">' + _colJugadoresHtml(x) + '</span><span>' + _briDetalleHtml(x) + '</span></button>';
+      }).join('');
+  d.innerHTML = '<div class="col-top"><span class="col-nb" aria-hidden="true">!!</span><div class="col-txt">' + cuerpo + '</div></div>'
+    + '<div class="col-btns"><button type="button" class="col-no">Descartar</button>'
+    + (uno ? '<button type="button" class="col-si">Ver partida</button>' : '') + '</div>'
+    + '<button type="button" class="col-nomas">No avisarme jugadones</button>'
+    + '<div class="col-barra" style="animation-duration:' + _BRI_CARTEL_MS + 'ms"></div>';
+  host.appendChild(d);
+  d.querySelector('.col-no').onclick = _briCerrar;
+  d.querySelector('.col-nomas').onclick = _briNoMas;
+  if (uno) d.querySelector('.col-si').onclick = function(){ _briAbrir(it.gk, it.now.plies); };
+  Array.prototype.forEach.call(d.querySelectorAll('.col-fila'), function(b){ b.onclick = function(){ _briAbrir(b.getAttribute('data-gk'), parseInt(b.getAttribute('data-ply'), 10)); }; });
+  _briSonido();
+  _briCartelTimer = setTimeout(_briCerrar, _BRI_CARTEL_MS);
+}
+/* 🧪 aaBri.probar() en la consola: un jugadón de PRUEBA con la última jugada de una partida de la ronda
+   en vivo (argentina si hay). Pasa por el chequeo del PGN, el cartel y 🕑 Últimas; no mira el motor. */
+function _briProbar() {
+  if (!_briOn()) return 'Falta la llave: entrá una vez con ?jugadones=1 (y el aviso de colgadas prendido)';
+  var games = _colRonda();
+  if (!games || !games.length) return 'Abrí primero un torneo con la ronda EN VIVO.';
+  var g = null, n = 0;
+  for (var i = 0; i < games.length; i++) {
+    var p = _pgnPlies(games[i].pgn);
+    if (p <= 12) continue;
+    if (!g || _tdIsArgGame(games[i].h)) { g = games[i]; n = p; }
+    if (g && _tdIsArgGame(g.h)) break;
+  }
+  if (!g) return 'Ninguna partida de la ronda tiene jugadas suficientes todavía.';
+  var fa = _colFenEnPly(g.pgn, n - 1), fd = _colFenEnPly(g.pgn, n);
+  if (!fa || !fd) return 'No se pudo reproducir esa partida (¿960?).';
+  var blancas = fa.split(' ')[1] === 'w';
+  _briAvisar({ gk: _tdEvKey(g.h), g: g, prueba: true, c: { lado: blancas ? 'w' : 'b', tipo: 'BR' }, ev: blancas ? 250 : -250,
+    m: { san: _colSanEnPly(g.pgn, n) }, prev: { fen: fa, cp: 0, plies: n - 1, last: null }, now: { fen: fd, cp: 0, plies: n, last: null } });
+  return 'Jugadón de prueba: ' + (g.h.White || '?') + ' – ' + (g.h.Black || '?') + ', jugada ' + Math.ceil(n / 2);
+}
+window.aaBri = { llave: _briOn, probar: _briProbar };
 
 /* ══ 🧩 ¿PODÉS CASTIGARLO ANTES? — EJERCICIO EN VIVO (25/09/2026; PRENDIDO PARA TODOS desde el 27/09) ══
    Idea del autor, montada sobre el aviso de colgadas. Cuando el aviso confirma una colgada y el que

@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2396;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2410;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -6085,7 +6085,7 @@ console.log('\n=== 53g. Aviso de colgadas graves (19/09) ===');
     + 'var window = { aaTourChat: { avisarColgada: function(cs){ lotes.push(cs); cs.forEach(function(c){ repartidos.push(c); }); return true; } } };'
     + 'function setTimeout(fn, ms){ timers.push({ fn: fn, ms: ms }); return timers.length; }'
     + 'function _colOn(){ return true; } function _capCache(){} function mevTick(){} function _bcGameIds(p){ return { game: p }; }'
-    + 'function _cgBarRefrescar(){} var _colVisto = {}; function _ejvIntentar(){ return false; }'
+    + 'function _cgBarRefrescar(){} var _colVisto = {}; function _ejvIntentar(){ return false; } function _briVivo(){}'
     + 'var _repDe = {}; function _repTomar(){ return false; } function _repDueno(){ return ""; }'
     // El chequeo de verdad (pedirle a Lichess el PGN otra vez) es asincrónico: se prueba aparte, más abajo.
     + 'function _colChequear(items, cb){ items.sort(function(a, b){ return (b.arg ? 1 : 0) - (a.arg ? 1 : 0); }); cb(items); }'
@@ -9877,6 +9877,77 @@ console.log('\n=== 75. ⚡ Barrido con varios motores: cada uno sigue su partida
   chk(/stockfish-19-lite-single\.js/.test(extraerFuncion('_cgAyuNuevo')) && /_faRepCuantos\(\)/.test(extraerFuncion('_cgAyuCuantos'))
       && /_mevTope\(job\)/.test(extraerFuncion('_cgAyuSigue')) && /_mevExtra\.push/.test(extraerFuncion('_cgAyuDevolver')),
       'mismo motor de un hilo y la misma cuenta que el gráfico; con el tope de 10 s por posición; si se caen, lo pendiente vuelve al de siempre');
+}
+
+// ── 53l. ✨ Jugadones EN VIVO (10/10, pedido del autor; en prueba con ?jugadones=1) ──
+{
+  console.log('\n✨ Jugadones en vivo (10/10)');
+  const _mV = { exports: {} };
+  new Function('module', 'exports', 'window', fs.readFileSync(new URL('./assets/chess.min.js', import.meta.url), 'utf8'))(_mV, _mV.exports, {});
+  const ChessV = _mV.exports.Chess || _mV.exports;
+  const V = new Function('Chess', 'var AHORA = 1e9, Date = { now: function(){ return AHORA; } }, ON = true, confirmados = [], _briPend = {}, _briMesaHasta = {}, mirando = "";'
+    + 'function _briOn(){ return ON; } function _colMirandoGk(){ return mirando; } function _briConfirmar(info){ confirmados.push(info); }'
+    + 'function _cgJaqueIntermedio(){ return false; } function _cgEntregaFalsa(){ return false; } function _cgPeonFalso(){ return false; } function cvFan(s){ return s; }\n'
+    + [/var _FA_BRILL_MIN_NET[^\n]*/, /var _CG_ALT_MARGEN_MIN[^\n]*/, /var _CG_ALT_MARGEN_FRAC[^\n]*/, /var _CG_BRI_MARGEN[^\n]*/, /var _CG_BRI_PAREJA[^\n]*/].map((r) => SRC.match(r)[0]).join('\n') + '\n'
+    + ['faNum', '_fenGrid', '_pval', '_pieceValAtFen', '_pinDir', '_attackersOf', '_seeGain', '_faIsBrilliant', '_faTapaJaque', '_faFrenaCoronacion', '_faTomarDestapa', '_faRepetida', '_faForzada', '_oppHasLegalCaptureOf', '_faWinP',
+       '_colCp', '_cgOtraOk', '_briActivo', '_briJugada', '_briVivo', '_briVara', '_briJugadaTxt'].map(extraerFuncion).join('\n')
+    + '; return { activo: _briActivo, jugada: _briJugada, vivo: _briVivo, vara: _briVara, txt: _briJugadaTxt, conf: confirmados, mesa: _briMesaHasta,'
+    + '  set on(v){ ON = v; }, set mirando(v){ mirando = v; } };')(ChessV);
+  const lsV = (() => { const m = {}; return { getItem: k => (k in m ? m[k] : null), setItem: (k, v) => { m[k] = String(v); }, removeItem: k => { delete m[k]; } }; })();
+  chk(V.activo('', lsV) === false && V.activo('?jugadones=1', lsV) === true && V.activo('', lsV) === true && V.activo('?x=1&jugadones=0', lsV) === false && V.activo('', lsV) === false,
+      '🔒 la llave: arranca APAGADO, ?jugadones=1 lo prende y queda guardado, ?jugadones=0 lo apaga');
+
+  // Reconocer la jugada que llevó de una posición a la otra (con la última jugada de la ficha o sin ella).
+  const LEGAL = 'rn1qkbnr/ppp2p1p/3p2p1/4p3/2B1P1b1/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 0 5';
+  const tras = (fen, uci) => { const c = new ChessV(fen); c.move({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci[4] || 'q' }); return c.fen(); };
+  const dL = tras(LEGAL, 'f3e5');
+  const j1 = V.jugada(LEGAL, dL, { from: 'f3', to: 'e5' }), j2 = V.jugada(LEGAL, dL, null), j3 = V.jugada(LEGAL, dL, { from: 'c3', to: 'd5' });
+  chk(j1 && j1.san === 'Nxe5' && j2 && j2.san === 'Nxe5' && j3 && j3.san === 'Nxe5' && V.jugada(LEGAL, LEGAL, null) === null,
+      'se reconoce la jugada con la ficha, sin ella, y aunque la ficha traiga otra; si no hay jugada que lleve ahí, nada', [j1 && j1.san, j2 && j2.san, j3 && j3.san].join(','));
+  const PROMO = '8/4P1k1/8/8/8/8/6K1/8 w - - 0 60', dP = tras(PROMO, 'e7e8n'), jP = V.jugada(PROMO, dP, { from: 'e7', to: 'e8' });
+  chk(jP && jP.promotion === 'n', 'una coronación en caballo también (la ficha no dice en qué coronó)', jP && jP.san);
+
+  // El filtro sin motor: el sacrificio de Legal sí pasa a confirmarse; lo demás no.
+  const prevL = { fen: LEGAL, cp: 30, plies: 8, last: { from: 'c8', to: 'g4' } };
+  V.vivo('m1', {}, prevL, { fen: dL, cp: 250, plies: 9, last: { from: 'f3', to: 'e5' } });
+  chk(V.conf.length === 1 && V.conf[0].m.san === 'Nxe5' && V.conf[0].c.lado === 'w' && V.conf[0].c.tipo === 'BR',
+      '🔒 5.♘xe5 de Legal (la dama queda colgada, la eval no cae) va a confirmarse con el motor', V.conf.length);
+  V.vivo('m2', {}, prevL, { fen: tras(LEGAL, 'h2h3'), cp: 25, plies: 9, last: { from: 'h2', to: 'h3' } });
+  V.vivo('m3', {}, prevL, { fen: dL, cp: -400, plies: 9, last: { from: 'f3', to: 'e5' } });
+  chk(V.conf.length === 1, 'una jugada tranquila no, y el mismo sacrificio si pierde chances (−4) tampoco');
+  V.mirando = 'm4'; V.vivo('m4', {}, prevL, { fen: dL, cp: 250, plies: 9, last: null }); V.mirando = '';
+  V.mesa.m5 = 2e9; V.vivo('m5', {}, prevL, { fen: dL, cp: 250, plies: 9, last: null });
+  V.on = false; V.vivo('m6', {}, prevL, { fen: dL, cp: 250, plies: 9, last: null }); V.on = true;
+  chk(V.conf.length === 1, 'no se mira: la partida que tiene abierta, una mesa que avisó hace poco, ni sin la llave');
+  // Retomar: el rival acaba de llegar a e5 y se come ahí.
+  const RT = 'rnbqkb1r/pppp1ppp/5n2/4N3/4P3/8/PPPP1PPP/RNBQKB1R b KQkq - 0 3';
+  V.vivo('m7', {}, { fen: RT, cp: -30, plies: 5, last: { from: 'f3', to: 'e5' } }, { fen: tras(RT, 'd8e7'), cp: -30, plies: 6, last: null });
+  chk(V.conf.length === 1, 'una jugada que no entrega nada (retomar, defender) no');
+
+  // La vara del motor (la misma de los Jugadones de la ronda): la mejor, la única, sana.
+  const L = (mv, cp) => ({ mv, re: '', r3: '', sc: { cp } });
+  chk(!!V.vara(LEGAL, 'f3e5', [L('f3e5', 300), L('h2h3', 40), L('d2d3', 30)], 'p', 'c8g4'),
+      '🔒 la mejor, sana y la ÚNICA (las otras quedan muy lejos): jugadón');
+  chk(!V.vara(LEGAL, 'f3e5', [L('f3e5', 300), L('h2h3', 280)], 'p', '')
+      && !V.vara(LEGAL, 'f3e5', [L('h2h3', 400), L('f3e5', 300)], 'p', '')
+      && !V.vara(LEGAL, 'f3e5', [L('f3e5', 300)], 'p', '')
+      && !V.vara(LEGAL, 'f3e5', [L('h2h3', 40), L('d2d3', 30)], 'p', '')
+      && !V.vara(LEGAL, 'f3e5', [L('f3e5', -250), L('h2h3', -900)], 'p', ''),
+      'no: si otra jugada también sirve, si no es la mejor, si era forzada (una sola línea), si el motor no la tiene, o si queda perdida');
+  chk(V.txt({ bri: { san: 'Nxe5', ply: 9 }, now: { plies: 9 } }) === '5.Nxe5!!' && V.txt({ bri: { san: 'Rxf2+', ply: 66 }, now: { plies: 66 } }) === '33...Rxf2+!!',
+      'el cartel nombra la jugada con su número: 5.♘xe5!! / 33...♖xf2+!!');
+
+  // Enganches con lo que ya existía.
+  chk(/if \(now\.plies === prev\.plies \+ 1\) _briVivo\(gk, g, prev, now\);/.test(extraerFuncion('_colScan'))
+      && extraerFuncion('_colScan').indexOf('_briVivo(') < extraerFuncion('_colScan').indexOf('_colMesaHasta[gk]'),
+      '🔒 lo mira el detector de colgadas cuando la partida avanzó UNA media jugada, antes del freno de colgadas de esa mesa');
+  chk(/_colVerificar\(info,/.test(extraerFuncion('_briAvisar')) && /_colHistGuardar\(items\)/.test(extraerFuncion('_briDespachar'))
+      && /multipv: 3/.test(extraerFuncion('_briConfirmar')) && /depth: _BRI_VIVO_DEPTH/.test(extraerFuncion('_briConfirmar')),
+      '🔒 3 líneas con el motor, después el PGN de Lichess (por si corrigieron la jugada), y queda en 🕑 Últimas');
+  chk(/node\.move\.nag = _colFoco\.nag \|\| '\?\?';/.test(extraerFuncion('_colNagAviso')) && /_colFoco\.nag = '!!'/.test(extraerFuncion('_briAbrir')),
+      'al abrirlo desde el cartel en el teléfono, la jugada lleva "!!" (no el "??" de las colgadas)');
+  chk(!/_colRepartir/.test(extraerFuncion('_briDespachar') + extraerFuncion('_briAvisar')),
+      '🔒 en prueba NO se reparte por el arbitrito (el que lo recibe lo trataría como colgada)');
 }
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
 console.log('   Corrieron ' + corridas + ' de ' + ESPERADAS + ' comprobaciones.'
