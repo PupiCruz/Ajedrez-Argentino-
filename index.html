@@ -898,7 +898,7 @@
     .search-pill { position: relative; max-width: 520px; margin: 0 auto 14px; }
     /* 🧩 Ejercicio del día en la portada (09/10/2026). En la PC, tarjeta chica a la DERECHA de los
        filtros, que pasan a alinearse a la izquierda para no chocar con ella; en el teléfono, sólo el
-       botón "Ir al ejercicio del día" debajo de Torneos Históricos. Sin ejercicio (#torneo-cab sin
+       botón "🧩 Ejercicio del día" debajo de Torneos Históricos. Sin ejercicio (#torneo-cab sin
        .con-ej) nada cambia: filtros centrados como siempre. */
     .tt-tipos { justify-content: center; }
     .ejdia-card, .ejdia-btn { display: none; }
@@ -924,15 +924,21 @@
     .ejdia-redes { font-size: 11.5px; color: var(--text2); margin-top: 9px; line-height: 1.5; }
     .ejdia-redes a { color: var(--gold); font-weight: 700; text-decoration: none; white-space: nowrap; }
     .ejdia-redes a:hover { text-decoration: underline; }
-    .ejdia-redes-tel { display: none; flex-basis: 100%; text-align: center; margin-top: 2px; }
+    /* En la tarjeta de la PC los links van en su propio renglón: así la tarjeta no se estira (10/10/2026). */
+    .ejdia-card .ejdia-redes-l { display: block; }
+    .ejdia-redes-tel { display: none; text-align: right; margin-top: 2px; }
+    /* Teléfono: el botón y los links, en su propio renglón y a la derecha, debajo de Torneos Históricos.
+       El botón, del ancho de su texto (a lo ancho de la columna quedaba muy estirado, 10/10/2026). */
+    .ejdia-tel { display: none; }
+    @media (max-width: 899px) { .ejdia-tel { display: flex; flex-basis: 100%; flex-direction: column; align-items: flex-end; } }
     @media (max-width: 899px) { .ejdia-btn.on + .ejdia-redes-tel { display: block; } }
     /* 🏛️ Torneos históricos: en la PC, en el medio de la cabecera (arriba de la tarjeta del ejercicio
-       no se entendía que era otra cosa). En el teléfono sigue a la derecha, arriba de "Ir al ejercicio". */
+       no se entendía que era otra cosa). En el teléfono sigue a la derecha, arriba del botón del ejercicio. */
     @media (min-width: 900px) {
       #s-torneos > .pg-head { position: relative; }
-      #s-torneos > .pg-head #btn-hist { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); }
+      #s-torneos > .pg-head #btn-hist { position: absolute; left: 50%; top: 50%; transform: translate(calc(-50% + 60px), -50%); }
     }
-    .ejdia-btn { flex-basis: 100%; justify-content: center; align-items: center; gap: 6px; padding: 9px 14px; border-radius: 11px;
+    .ejdia-btn { justify-content: center; align-items: center; gap: 6px; padding: 9px 14px; border-radius: 11px;
       background: var(--gold-fill); color: #1a1400; border: 1px solid var(--gold-dim); font-family: inherit; font-size: 13.5px;
       font-weight: 800; cursor: pointer; box-shadow: var(--shadow-card); }
     .search-pill .sp-icon { position: absolute; left: 16px; top: 50%; transform: translateY(-50%); font-size: 16px; opacity: .75; pointer-events: none; }
@@ -3159,8 +3165,10 @@
           <button id="btn-hist" class="hist-cta" onclick="histAbrir('')" style="display:none" aria-label="Torneos históricos"><span class="hc-ic" aria-hidden="true">🏛️</span><span class="hc-tx" aria-hidden="true"><span class="hc-a">Torneos</span><span class="hc-b">Históricos</span></span><span class="hc-star" aria-hidden="true">✨</span></button>
           <button id="btn-add-tour" onclick="openTzModal(null)" style="padding:8px 14px;background:var(--gold-bg);border:1px solid var(--gold-dim);color:var(--gold);font-size:12px;font-weight:700;border-radius:9px;cursor:pointer;font-family:inherit;flex-shrink:0">+ Agregar</button>
           <!-- 🧩 Ejercicio del día, versión TELÉFONO: un botón solo (en la PC va la tarjeta de #ejdia-card). -->
-          <button id="ejdia-btn" class="ejdia-btn" type="button" onclick="ejdiaAbrir()">🧩 Ir al ejercicio del día</button>
+          <div class="ejdia-tel">
+          <button id="ejdia-btn" class="ejdia-btn" type="button" onclick="ejdiaAbrir()">🧩 Ejercicio del día</button>
           <div class="ejdia-redes ejdia-redes-tel"></div>
+          </div>
         </div>
       </div>
       <!-- Filtros a la izquierda y, en la PC, la tarjeta del 🧩 Ejercicio del día a la derecha (sólo
@@ -13994,8 +14002,12 @@ function _crExportUrl(crUrl, art, rd) {
 }
 
 // Baja una URL de chess-results a través del Worker. Devuelve Uint8Array (los bytes del xlsx).
+// Las tablas que el Worker guarda 10 min se piden "frescas" (copia de menos de 2 min) sólo en el ratito
+// que abre _tdCrTablesOnNewRound: ronda nueva en una rápida/blitz, que no puede esperar 10 min.
+var _crFrescoHasta = 0;
+function _crFrescoQS() { return Date.now() < _crFrescoHasta ? '&fresco=1' : ''; }
 async function _crProxyFetch(crUrl) {
-  var res = await fetch(CR_PROXY + '/?url=' + encodeURIComponent(crUrl));
+  var res = await fetch(CR_PROXY + '/?url=' + encodeURIComponent(crUrl) + _crFrescoQS());
   if (!res.ok) throw new Error('proxy HTTP ' + res.status);
   return new Uint8Array(await res.arrayBuffer());
 }
@@ -14019,7 +14031,7 @@ function _i64ExportUrl(url, kind, rd) {
 }
 // Baja un xlsx de info64 a través del Worker (que resuelve el POST→media). Uint8Array.
 async function _i64ProxyFetch(exportUrl) {
-  var res = await fetch(CR_PROXY + '/i64xls?url=' + encodeURIComponent(exportUrl));
+  var res = await fetch(CR_PROXY + '/i64xls?url=' + encodeURIComponent(exportUrl) + _crFrescoQS());
   if (!res.ok) throw new Error('proxy HTTP ' + res.status);
   return new Uint8Array(await res.arrayBuffer());
 }
@@ -28466,7 +28478,7 @@ function _redesEjHtml() {
   var parar = ' onclick="event.stopPropagation()" target="_blank" rel="noopener"';
   var l = ['<a href="https://t.me/PupiChessbot?start=ej"' + parar + '>✈️ Telegram</a>'];
   if (AA_DISCORD_EJ || AA_DISCORD) l.push('<a href="' + (AA_DISCORD_EJ || AA_DISCORD) + '"' + parar + '>💬 Discord</a>');
-  return 'Resolvelo también con ranking en ' + l.join(' · ');
+  return 'Resolvelo también con ranking en <span class="ejdia-redes-l">' + l.join(' · ') + '</span>';
 }
 (function _redesPintar() {
   if (!AA_DISCORD) return;
@@ -29751,7 +29763,9 @@ function _ogJson() {
   try {
     (window.PLAYERS || []).forEach(function (p) {
       if (!p || p.id === null || p.id === undefined || !p.name) return;
-      out.j[p.id] = [limpiar(p.name, 80), p.title || '', p.elo || 0, ''];
+      // 4.º lugar: '' = está en el ranking argentino; si es "adicional" (fuera del ranking: otra
+      // federación o inactivo), su federación. El bot de Discord lo usa para no contarlo en el puesto.
+      out.j[p.id] = [limpiar(p.name, 80), p.title || '', p.elo || 0, p.ranked === false ? (p.fed || 'ARG') : ''];
     });
   } catch (e) {}
   // ── Noticias: título, resumen y portada ──
@@ -42338,8 +42352,9 @@ window.addEventListener('online', _tdJsonWake);
    Idea del autor: en un suizo el árbitro no puede sortear la ronda siguiente sin cargar los resultados de
    la anterior; así que cuando aparece la ronda NUEVA de Lichess, Chess-Results ya tiene la tabla al día y
    el emparejamiento nuevo. Ahí se piden las tablas (cruces + clasificación), en silencio y sin mover al
-   visitante de pestaña. Se pide dos veces: al llegar la ronda y otra a los 3 minutos (el Worker guarda
-   las tablas 2 minutos, y a veces Lichess abre la ronda por horario antes de que el árbitro sortee).
+   visitante de pestaña. Se pide dos veces: al llegar la ronda y otra a los 3 minutos (a veces Lichess abre
+   la ronda por horario antes de que el árbitro sortee). El Worker guarda las tablas 10 min (10/10/2026),
+   así que acá se piden "frescas" (_crFrescoHasta): le sirve una copia de menos de 2 min, como antes.
    La primera vez que se ve el torneo sólo se anota la ronda: al abrirlo las tablas ya se bajaron. */
 var _TD_CR_TABLES_RETRY_MS = 3 * 60 * 1000;
 function _tdCrTablesOnNewRound(maxRound) {
@@ -42359,6 +42374,7 @@ function _tdCrTablesOnNewRound(maxRound) {
   function pedir() {
     if (!_tdLiveCtx || _tdLiveCtx.key !== key) return;   // el visitante cerró el torneo o abrió otro
     var opts = { silent: true, keepTab: true };
+    _crFrescoHasta = Date.now() + 60000;
     if (hayCr) { if (_tdLiveCtx.isTeam) _crAutoFetchTeam(crk, crUrl, opts); else _crAutoFetchIndiv(crk, crUrl, opts); }
     if (hayI64) _i64AutoFetchIndiv(crk, i64url, opts);
     if (hayVs) _vsAutoFetchIndiv(crk, vsurl, opts);

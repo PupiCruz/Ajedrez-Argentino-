@@ -72,6 +72,14 @@ const ALLOWED_HOST_LI = /(^|\.)lichess\.org$/i;
 // NO publica en Chess-Results sino en su propia página. Sólo ese subdominio, no todo schachbund.de.
 const ALLOWED_HOST_DSB = /^ergebnisdienst\.schachbund\.de$/i;
 const CACHE_SECONDS = 120;
+// Tablas de Chess-Results / info64 / Ergebnisdienst (clasificación, cruces, formaciones, planteles): 10 min
+// (10/10/2026). Eran 2 min, y un sábado con ~10 torneos abiertos le pedíamos a CR ~520 por hora en el pico.
+// Los resultados cambian casi siempre al terminar la ronda, y lo que se juega en Lichess ya llega por /libc.
+const TABLAS_CACHE_SECONDS = 600;
+// Si el sitio de afuera contesta con error de servidor (5xx, 429) o no contesta, durante 1 min le decimos
+// "no disponible" a todos sin volver a preguntarle (10/10/2026: s2.chess-results.com estuvo 4 h tirando
+// 503 a 8 s por pedido, y como el error no se guardaba, cada visitante nuevo le volvía a pegar).
+const ERROR_CACHE_SECONDS = 60;
 const STATS_CACHE_SECONDS = 30;
 const SI_CACHE_SECONDS = 15;   // vivo: caché corta para que las jugadas nuevas lleguen rápido
 const LI_LIVE_CACHE = 10;      // broadcast Lichess EN VIVO (PGN de ronda + metadata): jugadas nuevas al toque.
@@ -244,7 +252,13 @@ export default {
     const cache = caches.default;
     const cacheKey = llaveCache(reqUrl, '/', { url: t.toString() });
     const hit = await cache.match(cacheKey);
-    if (hit) return hit;
+    if (hit) {
+      const errGuardado = errorGuardadoResp(hit);
+      if (errGuardado) return errGuardado;
+      // "&fresco=1": la app lo pide sólo cuando arranca una ronda nueva en una rápida/blitz (los
+      // emparejamientos nuevos no pueden esperar 10 min). Ahí la copia sirve si tiene menos de 2 min.
+      if (!(reqUrl.searchParams.get('fresco') === '1' && tablaVieja(hit))) return tablaClientResp(hit);
+    }
     if (!rlAllow('crmiss:' + ipDe(request), 120)) return tooMany();
 
     let upstream;
@@ -254,19 +268,25 @@ export default {
         redirect: 'follow', // chess-results.com a veces redirige (302) al nodo s2/s3...
       });
     } catch (e) {
+      ctx.waitUntil(guardarError(cache, cacheKey, 502));
       return errJson('No se pudo bajar de chess-results: ' + e.message, 502);
+    }
+    if (esErrorDeServidor(upstream.status)) {
+      ctx.waitUntil(guardarError(cache, cacheKey, upstream.status));
+      return errJson(t.hostname + ' no está respondiendo (HTTP ' + upstream.status + ')', upstream.status);
     }
 
     const headers = corsHeaders();
     const ct = upstream.headers.get('content-type');
     if (ct) headers.set('Content-Type', ct);
-    headers.set('Cache-Control', 'public, max-age=' + CACHE_SECONDS);
+    headers.set('Cache-Control', 'public, max-age=' + TABLAS_CACHE_SECONDS);
+    headers.set('x-fa-fetched', String(Date.now()));
 
     const resp = new Response(upstream.body, { status: upstream.status, headers });
 
     // Guardar en caché en segundo plano (sólo si salió bien).
     if (upstream.ok) ctx.waitUntil(cache.put(cacheKey, resp.clone()));
-    return resp;
+    return tablaClientResp(resp);
   },
 };
 
@@ -284,11 +304,15 @@ async function i64Xls(reqUrl, ctx) {
     return errJson('Host no permitido (sólo info64.org)', 403);
   }
 
-  // Caché: la respuesta final (el .xlsx) la guardamos ~2 min, igual que el proxy de CR.
+  // Caché: la respuesta final (el .xlsx) la guardamos 10 min, igual que el proxy de CR.
   const cache = caches.default;
   const cacheKey = llaveCache(reqUrl, '/i64xls', { url: t.toString() });
   const hit = await cache.match(cacheKey);
-  if (hit) return hit;
+  if (hit) {
+    const errGuardado = errorGuardadoResp(hit);
+    if (errGuardado) return errGuardado;
+    if (!(reqUrl.searchParams.get('fresco') === '1' && tablaVieja(hit))) return tablaClientResp(hit);
+  }
 
   // Paso 1: POST al endpoint de export → JSON { url: "/media/....xlsx" }
   let meta;
@@ -304,9 +328,13 @@ async function i64Xls(reqUrl, ctx) {
       },
       body: '',
     });
-    if (!r1.ok) return errJson('info64 export HTTP ' + r1.status, 502);
+    if (!r1.ok) {
+      if (esErrorDeServidor(r1.status)) ctx.waitUntil(guardarError(cache, cacheKey, 502));
+      return errJson('info64 export HTTP ' + r1.status, 502);
+    }
     meta = await r1.json();
   } catch (e) {
+    ctx.waitUntil(guardarError(cache, cacheKey, 502));
     return errJson('No se pudo pedir el export a info64: ' + e.message, 502);
   }
   if (!meta || !meta.url) return errJson('info64 no devolvió la URL del archivo', 502);
@@ -319,16 +347,22 @@ async function i64Xls(reqUrl, ctx) {
       redirect: 'follow',
     });
   } catch (e) {
+    ctx.waitUntil(guardarError(cache, cacheKey, 502));
     return errJson('No se pudo bajar el .xlsx de info64: ' + e.message, 502);
+  }
+  if (esErrorDeServidor(upstream.status)) {
+    ctx.waitUntil(guardarError(cache, cacheKey, upstream.status));
+    return errJson('info64 no está respondiendo (HTTP ' + upstream.status + ')', upstream.status);
   }
 
   const headers = corsHeaders();
   const ct = upstream.headers.get('content-type');
   if (ct) headers.set('Content-Type', ct);
-  headers.set('Cache-Control', 'public, max-age=' + CACHE_SECONDS);
+  headers.set('Cache-Control', 'public, max-age=' + TABLAS_CACHE_SECONDS);
+  headers.set('x-fa-fetched', String(Date.now()));
   const resp = new Response(upstream.body, { status: upstream.status, headers });
   if (upstream.ok) ctx.waitUntil(cache.put(cacheKey, resp.clone()));
-  return resp;
+  return tablaClientResp(resp);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -401,6 +435,8 @@ async function crPgn(reqUrl, ctx, request) {
   const hit = await cache.match(cacheKey);
   if (!hit && !rlAllow('crpgnmiss:' + ipDe(request), 30)) return tooMany();
   if (hit) {
+    const errGuardado = errorGuardadoResp(hit);
+    if (errGuardado) return errGuardado;
     const fetchedAt = Number(hit.headers.get('x-fa-fetched') || 0);
     if (!fetchedAt) return hit;   // copia corta (sin partidas, o del formato anterior): tal cual
     const body = await hit.text();
@@ -414,6 +450,7 @@ async function crPgn(reqUrl, ctx, request) {
   try {
     pgn = await crPgnFetchOnce(cacheKeyStr, host, tnr, fideList, rd);
   } catch (e) {
+    ctx.waitUntil(guardarError(cache, cacheKey, 502));
     return errJson('No se pudieron bajar las partidas de chess-results: ' + e.message, 502);
   }
   ctx.waitUntil(cache.put(cacheKey, crPgnStoredResp(pgn)));
@@ -1321,6 +1358,37 @@ function llaveCache(reqUrl, ruta, params) {
   const u = new URL(reqUrl.origin + ruta);
   for (const k of Object.keys(params)) u.searchParams.set(k, params[k]);
   return new Request(u.toString());
+}
+
+// ── Errores guardados un minuto (10/10/2026) ──
+// Cuando Chess-Results / info64 se caen, el error NO se guardaba: cada visitante nuevo volvía a
+// pegarle a un servidor que ya estaba saturado. Ahora el error se guarda ERROR_CACHE_SECONDS.
+// Se guarda como 200 con una marca (x-fa-error) para no depender de si la caché de Cloudflare
+// acepta respuestas 5xx; al leerla, errorGuardadoResp() la devuelve otra vez como el error original.
+// Sólo errores del SERVIDOR (5xx, 429) o sin respuesta: un 404 es una respuesta de verdad y no se toca.
+function esErrorDeServidor(status) { return status >= 500 || status === 429; }
+function guardarError(cache, cacheKey, status) {
+  const h = corsHeaders();
+  h.set('Cache-Control', 'public, max-age=' + ERROR_CACHE_SECONDS);
+  h.set('x-fa-error', String(status));
+  return cache.put(cacheKey, new Response('', { status: 200, headers: h })).catch(() => {});
+}
+// Tablas: la copia del Worker vive TABLAS_CACHE_SECONDS, pero al navegador se le dice 2 min (CACHE_SECONDS):
+// si no, el reintento de la app a los 3 min (ronda nueva en rápidas) le saldría de su propia copia vieja.
+function tablaClientResp(r) {
+  const h = new Headers(r.headers);
+  h.set('Cache-Control', 'public, max-age=' + CACHE_SECONDS);
+  return new Response(r.body, { status: r.status, headers: h });
+}
+// ¿La copia tiene más de 2 min? Las guardadas antes de este cambio no traen sello: se toman como viejas.
+function tablaVieja(hit) {
+  const fa = Number(hit.headers.get('x-fa-fetched') || 0);
+  return !fa || Date.now() - fa >= CACHE_SECONDS * 1000;
+}
+function errorGuardadoResp(hit) {
+  const st = Number(hit.headers.get('x-fa-error') || 0);
+  if (!st) return null;
+  return errJson('El sitio de origen no está respondiendo; se reintenta en un minuto', st);
 }
 
 function errJson(msg, status) {

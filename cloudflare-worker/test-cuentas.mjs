@@ -1182,6 +1182,99 @@ console.log('\n=== 19. Proxys: la caché no se puede esquivar (y /crpgn no va a 
   } finally { globalThis.caches = cachesAntes; globalThis.fetch = fetchAntes; }
 }
 
+// ── Chess-Results caído: el error se guarda un minuto (10/10/2026) ──────────────────────────────
+// s2.chess-results.com estuvo 4 h tirando 503 a 8 s por pedido, y como el error no se guardaba, cada
+// visitante nuevo le volvía a pegar. Ahora: 1 min de "no disponible" sin preguntarle, y las tablas
+// buenas se guardan 10 min.
+console.log('\n=== 21. Chess-Results / info64 caídos: el error se guarda un minuto ===');
+{
+  const guardado = new Map();
+  const cacheFalsa = {
+    async match(k) {
+      const e = guardado.get(typeof k === 'string' ? k : k.url); if (!e) return undefined;
+      return Date.now() < e.vence ? e.r.clone() : undefined;
+    },
+    async put(k, r) {
+      const seg = Number(((r.headers.get('Cache-Control') || '').match(/max-age=(\d+)/) || [])[1] || 0);
+      guardado.set(typeof k === 'string' ? k : k.url, { r: r.clone(), vence: Date.now() + seg * 1000 });
+    },
+  };
+  const cachesAntes = globalThis.caches, fetchAntes = globalThis.fetch, nowAntes = Date.now;
+  globalThis.caches = { default: cacheFalsa };
+  let reloj = 2_000_000_000_000;
+  Date.now = () => reloj;
+  let afuera = 0, estado = 503;
+  globalThis.fetch = async (url, opt) => {
+    afuera++;
+    if (estado === 'cae') throw new Error('timeout');
+    if (String(url).includes('info64') && opt && opt.method === 'POST' && estado === 200) {
+      return new Response(JSON.stringify({ url: '/media/tabla.xlsx' }), { status: 200 });
+    }
+    return new Response(estado === 200 ? 'XLSX' : 'Service Unavailable', { status: estado });
+  };
+  const pendientes = [];
+  const ctxCr = { waitUntil(p) { pendientes.push(p); } };
+  const ir = async (path) => {
+    const r = await worker.fetch(req(path, { headers: { 'CF-Connecting-IP': '8.8.0.77' } }), env, ctxCr);
+    await Promise.all(pendientes.splice(0));
+    return r;
+  };
+  const CR = '/?url=' + encodeURIComponent('https://s2.chess-results.com/tnr1496824.aspx?lan=2&art=1&excel=2010');
+  const I64 = '/i64xls?url=' + encodeURIComponent('https://info64.org/torneo-de-prueba/standings_xls');
+  try {
+    let r = await ir(CR);
+    chk(r.status === 503 && afuera === 1, 'Chess-Results contesta 503: el visitante recibe el error', r.status);
+    let antes = afuera, todos503 = true;
+    for (let s = 5; s <= 55; s += 5) { reloj += 5_000; const x = await ir(CR); if (x.status !== 503) todos503 = false; }
+    chk(todos503 && afuera === antes, '🔒 durante el minuto siguiente NO se le vuelve a preguntar a Chess-Results', afuera - antes);
+    estado = 200; reloj += 6_000; antes = afuera;
+    r = await ir(CR);
+    chk(r.status === 200 && afuera === antes + 1, 'pasado el minuto, se reintenta y la tabla llega', r.status);
+    const copiaCR = [...guardado.entries()].find(([k]) => k.includes('tnr1496824'));
+    chk(copiaCR && /max-age=600\b/.test(copiaCR[1].r.headers.get('Cache-Control') || ''), 'la tabla buena se guarda 10 minutos en el Worker');
+    chk(/max-age=120\b/.test(r.headers.get('Cache-Control') || ''), 'al navegador se le dicen 2 minutos (si no, el reintento de las rápidas le saldría de su copia)', r.headers.get('Cache-Control'));
+    reloj += 60_000; antes = afuera;
+    await ir(CR + '&fresco=1');
+    chk(afuera === antes, 'pedido "fresco" con una copia de 1 minuto: sale de la copia');
+    reloj += 8 * 60_000; antes = afuera;
+    r = await ir(CR);
+    chk(afuera === antes && /max-age=120\b/.test(r.headers.get('Cache-Control') || ''), 'a los 9 minutos todavía sale de la copia (y al navegador, 2 min)');
+    reloj -= 5 * 60_000; antes = afuera;
+    await ir(CR + '&fresco=1');
+    chk(afuera === antes + 1, 'ronda nueva en una rápida ("fresco") con una copia de 4 minutos: se baja de nuevo');
+    reloj += 30_000; antes = afuera;
+    await ir(CR + '&fresco=1'); await ir(CR);
+    chk(afuera === antes, '🔒 y "fresco" no sirve para machacar: la copia recién bajada vale para todos');
+    reloj += 8 * 60_000 + 30_000;   // la copia nueva tiene 9 min; dos más y vence
+    reloj += 2 * 60_000; antes = afuera;
+    await ir(CR);
+    chk(afuera === antes + 1, 'a los 11 minutos se vuelve a bajar');
+
+    // Sin respuesta (tiempo agotado): también se guarda un minuto.
+    const CR2 = '/?url=' + encodeURIComponent('https://s2.chess-results.com/tnr1502126.aspx?lan=2&art=0&excel=2010');
+    estado = 'cae'; antes = afuera;
+    r = await ir(CR2); const r2 = await ir(CR2);
+    chk(r.status === 502 && r2.status === 502 && afuera === antes + 1, '🔒 si Chess-Results no contesta, tampoco se insiste durante un minuto', afuera - antes);
+
+    // Un 404 es una respuesta de verdad: no se guarda como "caído".
+    const CR3 = '/?url=' + encodeURIComponent('https://s1.chess-results.com/tnr9999999.aspx?lan=2&art=1&excel=2010');
+    estado = 404; antes = afuera;
+    await ir(CR3); await ir(CR3);
+    chk(afuera === antes + 2, 'un 404 no se guarda (se vuelve a preguntar)', afuera - antes);
+
+    // info64: lo mismo.
+    estado = 503; antes = afuera;
+    r = await ir(I64); reloj += 10_000; const i2 = await ir(I64);
+    chk(r.status === 502 && i2.status === 502 && afuera === antes + 1, '🔒 info64 caído: un solo pedido por minuto', afuera - antes);
+    estado = 200; reloj += 60_000;
+    r = await ir(I64);
+    const copiaI64 = [...guardado.entries()].find(([k]) => k.includes('i64xls'));
+    chk(r.status === 200 && copiaI64 && /max-age=600\b/.test(copiaI64[1].r.headers.get('Cache-Control') || ''), 'info64 de vuelta: la tabla se guarda 10 minutos', r.status);
+  } finally {
+    globalThis.caches = cachesAntes; globalThis.fetch = fetchAntes; Date.now = nowAntes;
+  }
+}
+
 console.log('\n=== 20. Rating: dos partidas que terminan juntas suman las dos ===');
 {
   const H = { 'X-Vivo-Secret': 'secreto-vivo', 'Content-Type': 'application/json' };
