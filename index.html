@@ -6993,6 +6993,8 @@ function renderTorneos(filter) {
   if (!_ondemand && typeof _liveTzPendingItems === 'function' && _liveTzPendingItems().total) {
     try { html += _liveTzAuthorBanner(); } catch (e) {}
   }
+  // 📥 Partidas analizadas por los visitantes, esperando en la bandeja (solo modo autor; ver _vbAdoptar).
+  try { html += _vbAuthorBanner(); } catch (e) {}
 
   var tzCfg = getTzConfig();
   var items = _torneoItems(tzCfg);
@@ -17042,6 +17044,7 @@ function _liveTzInit() {
   } catch (e) {}
 }
 _liveTzInit();
+setTimeout(function() { try { _vbInit(); } catch (e) {} }, 0);   // 📥 bandeja de los visitantes (modo autor; definida más abajo)
 
 // Arranque: bajar data/live-partidas.json (partidas subidas desde el teléfono). Se inyectan en el
 // detalle del torneo al abrirlo (_livePgnForTour, en openTournamentDetail). Si el archivo llega
@@ -18206,6 +18209,7 @@ async function exportDataFile() {
       af.forEach(function (f) { _downloadBlob(new Blob([f.content], { type: 'application/javascript' }), f.name); });
       _downloadBlob(new Blob([_manifestJsFromSplit(buildSplitData(), Date.now())], { type: 'application/javascript' }), 'manifest.js');
       try { localStorage.setItem('last_export_fp', _estadoActualFp()); } catch (e) {}
+      try { _vbTrasGuardar(); } catch (e) {}   // 📥 las adoptadas de la bandeja ya quedaron guardadas: fuera de la bandeja
       if (typeof exportTabInit === 'function') { try { exportTabInit(); } catch (e) {} }
       alert('✅ ¡Datos al día!\n\nSe descargaron 4 archivos:\n  • embedded-data.js  (tu copia de autor)\n  • embedded-photos.js\n  • embedded-flyers.js  (flyers migrados)\n  • manifest.js  (lo que lee la web)\n\nMovelos a  ajedrez-argentino\\data\\  y reemplazá los que están.\n\nPara que salga a la web: doble clic en publicar-web.cmd.'
         + (_fsSupported ? '\n\n💡 Tip: con "Elegir carpeta data\\" (arriba) se guardan solos, sin mover nada.' : '')
@@ -18289,6 +18293,7 @@ async function exportDataFile() {
 
     if (falla) { alert('❌ No se pudo escribir ' + falla + '.\n\nProbá "Elegir carpeta data\\" de nuevo, o usá la descarga.'); return; }
     try { localStorage.setItem('last_export_fp', _estadoActualFp()); } catch (e) {}
+    try { _vbTrasGuardar(); } catch (e) {}   // 📥 las adoptadas de la bandeja ya quedaron guardadas: fuera de la bandeja
     if (typeof exportTabInit === 'function') { try { exportTabInit(); } catch (e) {} }
 
     if (!escritos) { alert('✓ Ya estaba todo al día. No hubo cambios para guardar.'); return; }
@@ -40376,8 +40381,14 @@ function _cgPasadaRapida(g, P) {
    Peso medido: ~+6 KB comprimido por ronda de 30 partidas.
    ════════════════════════════════════════════════════════════════════════════════════════════════ */
 function _evjMarca() { return 'aa-sf' + _CG_PASADA_DEPTH; }
-function _evjEsPropia(h) { return !!(h && /^aa-sf\d+$/.test(h.EvalSource || '')); }
-function _evjProf(h) { return _evjEsPropia(h) ? parseInt(h.EvalSource.slice(5), 10) : 0; }
+// También son NUESTRAS las de los visitantes adoptadas de la bandeja ("aa-vis16", ver _vbAdoptar): el número es
+// la profundidad MEDIANA que alcanzaron (tope de 0,6 s por posición, como el 📊), pero valen como una pasada del
+// barrido: el barrido las reusa sin motor (para eso se juntaron). Las colgadas igual se confirman a 20.
+function _evjEsPropia(h) { return !!(h && /^aa-(?:sf|vis)\d+$/.test(h.EvalSource || '')); }
+function _evjProf(h) {
+  if (!_evjEsPropia(h)) return 0;
+  return h.EvalSource.indexOf('aa-vis') === 0 ? _CG_PASADA_DEPTH : parseInt(h.EvalSource.slice(5), 10);
+}
 // ¿Dónde está esta partida en el pool? { t, i, propia, prof } o null. Primero el MISMO texto de PGN; si
 // no, por huella de jugadas: cuando el torneo además baja las de Chess-Results, en pantalla puede quedar
 // la copia de CR (_tdMergeSlots) y no la del pool, aunque sea la misma partida. Las que traen eval de
@@ -40424,13 +40435,13 @@ function _evjTok(s) {
 }
 // Saca las evals NUESTRAS de un PGN (para reescribirlas más hondas). Sólo lo que escribe _evjInsertar.
 function _evjLimpiar(pgn) {
-  return pgn.replace(/\r?\n\[EvalSource "aa-sf\d+"\]/, '').replace(/ \{\[%eval [^\]\}]*\]\}/g, '');
+  return pgn.replace(/\r?\n\[EvalSource "aa-(?:sf|vis)\d+"\]/, '').replace(/ \{\[%eval [^\]\}]*\]\}/g, '');
 }
 // Mete {[%eval x]} después de cada jugada de la línea principal (sc[k] = eval de la posición después
 // de la jugada k, desde las blancas). Respeta comentarios, variantes y NAG que ya hubiera. null si las
 // jugadas del texto no coinciden con las reproducidas (no se toca nada).
 var _EVJ_SAN = /^(?:[KQRBN][a-h]?[1-8]?x?[a-h][1-8]|[a-h](?:x[a-h])?[1-8](?:=?[QRBN])?|O-O-O|O-O)[+#]?[!?]*$/;
-function _evjInsertar(pgn, sc, nPlies) {
+function _evjInsertar(pgn, sc, nPlies, marca) {
   var m = /\r?\n\r?\n/.exec(pgn);
   if (!m) return null;
   var head = pgn.slice(0, m.index), body = pgn.slice(m.index);
@@ -40453,7 +40464,7 @@ function _evjInsertar(pgn, sc, nPlies) {
     if (t) out += ' {[%eval ' + t + ']}';
   }
   if (n !== nPlies) return null;
-  return head + (m[0].charAt(0) === '\r' ? '\r\n' : '\n') + '[EvalSource "' + _evjMarca() + '"]' + out;
+  return head + (m[0].charAt(0) === '\r' ? '\r\n' : '\n') + '[EvalSource "' + (marca || _evjMarca()) + '"]' + out;
 }
 function _evjEscribir(g, P, sc) {
   try {
@@ -40479,11 +40490,338 @@ function _evjEscribir(g, P, sc) {
 }
 // Para el aviso de "cambios sin guardar": cuántas partidas del pool tienen evals nuestras, y a qué profundidad.
 function _evjContar() {
-  var n = 0, marca = 'EvalSource "aa-sf';
+  var n = 0, re = /EvalSource "aa-(sf|vis)(\d+)"/;
   _memTournaments.forEach(function(t){ if (t && t.dbPool) (t.games || []).forEach(function(p){
-    var i = p.indexOf(marca); if (i >= 0) n += parseInt(p.slice(i + marca.length), 10) || 1;
+    if (p.indexOf('EvalSource "aa-') < 0) return;
+    var m = re.exec(p); if (m) n += (parseInt(m[2], 10) || 1) + (m[1] === 'vis' ? 100 : 0);   // (las adoptadas de la bandeja también)
   }); });
   return n;
+}
+
+/* ══ 📥 BANDEJA DE EVALUACIONES DE LOS VISITANTES (10/10/2026, pedido del autor) ═══════════════════
+   Cuando un visitante arma ENTERO el gráfico de una partida terminada que no traía evaluaciones (📊 de una
+   partida del pool, o el gráfico del vivo de una transmisión sin [%eval]), su motor ya hizo todo el trabajo
+   y antes se tiraba. Ahora, si lo hizo desde una PC, los números viajan a una BANDEJA del worker ajedrez-vivo
+   (/vb/subir, ver EvalBandeja en vivo-worker). En modo autor aparece un aviso arriba de la lista de torneos
+   ("📥 N partidas analizadas por visitantes"); al tocarlo, la PC del autor:
+     1) busca cada partida en el pool por sus JUGADAS (_moveBody: el vivo la manda antes de que la ronda
+        esté en el pool, así que la que todavía no está queda esperando en la bandeja);
+     2) recalcula _VB_MUESTRA posiciones con su motor (las 2 de los saltos más grandes, donde caen los ?? que
+        importan, y el resto al azar) y si en 2 o más la diferencia pasa de _VB_TOL puntos de win%, la
+        descarta: alguien pudo mandar números inventados (el worker no tiene motor);
+     3) mete las que coinciden en el PGN del pool como [%eval …] con [EvalSource "aa-vis16"] (16 = la
+        profundidad mediana; ver _evjEsPropia: el barrido las reusa como si fueran suyas).
+   Al apretar 💾 Guardar datos, se borran de la bandeja las adoptadas (_vbTrasGuardar). Como lo del teléfono:
+   un lugar temporal que se vacía al guardar. Si se recarga sin guardar, siguen en la bandeja y se vuelven a
+   adoptar; las descartadas y las que ya tenían evaluaciones se borran en el acto.
+   Condiciones para mandar: web publicada, PC (ni teléfono ni tablet, 4+ núcleos), partida terminada (1-0,
+   0-1, ½-½) de al menos _VB_MIN_PLIES jugadas, sin [%eval] en el PGN, posición inicial normal (ni [FEN] ni
+   960), ni partidas propias del sitio ni de Lichess sueltas (arenas), y TODAS las posiciones con eval del
+   motor a prof. _VB_MIN_D o más. Cada navegador manda cada partida una sola vez (aa_vb_env).
+   Clave del autor: la de publicar en Telegram (_tgClave); sin ella guardada, el aviso no aparece.
+   ═══════════════════════════════════════════════════════════════════════════════════════════════════════ */
+var VB_URL = (function() {   // para probar con el worker local (wrangler dev): localStorage.lv_server = 'local'
+  try { if (localStorage.getItem('lv_server') === 'local') return 'http://localhost:8787/vb/'; } catch (e) {}
+  return 'https://ajedrez-vivo.mmatiasscruz.workers.dev/vb/';
+})();
+var _VB_MIN_PLIES = 10;   // partidas más cortas no valen el viaje
+var _VB_MIN_D = 12;       // prof. mínima de CADA evaluación (la misma vara que el vivo: _FA_LIVE_MIN)
+var _VB_MUESTRA = 6;      // posiciones que recalcula la PC del autor por partida
+var _VB_TOL = 22;         // puntos de win% de diferencia que se toleran en cada una
+var _VB_PROF = 16;        // profundidad de esa revisión (con tope _VB_TOPE_MS por posición)
+var _VB_TOPE_MS = 1500;
+
+// ── Del lado del VISITANTE ──
+function _vbEsPC() {
+  try {
+    if (_cvMobileOn) return false;
+    var ua = navigator.userAgent || '';
+    if (/Android|iPhone|iPad|iPod|Mobile|Tablet|Silk|Kindle/i.test(ua)) return false;
+    if (/Macintosh/.test(ua) && (navigator.maxTouchPoints || 0) > 1) return false;   // iPad que dice ser Mac
+    if ((navigator.hardwareConcurrency || 0) < 4) return false;
+    if (navigator.deviceMemory && navigator.deviceMemory < 4) return false;
+    return true;
+  } catch (e) { return false; }
+}
+// Lo que se manda (sin la clave k, que es async), o null si esta partida no va. Puro: lo prueba el banco.
+//   pgn = el PGN del visor; R = _fa.results (una eval por posición, desde las blancas, con .d); n = posiciones.
+function _vbArmar(pgn, R, n, vivo) {
+  if (n < _VB_MIN_PLIES || !R || R.length !== n) return null;
+  var h = parsePgnHeaders(pgn || '');
+  if (!/^(1-0|0-1|1\/2-1\/2)$/.test(h.Result || '')) return null;
+  if (h.FEN || h.SetUp || /960|fischer|freestyle/i.test(h.Variant || '')) return null;
+  var site = h.Site || '';
+  if (/chessargentino/i.test(site) || /lichess\.org\/[A-Za-z0-9]{8}(?:[\/?#]|$)/.test(site)) return null;   // partidas del sitio / de un arena
+  if (/%eval/.test(pgn)) return null;   // ya trae evaluaciones (Lichess o nuestras)
+  var m = _moveBody(pgn);
+  if (!m || m.split(' ').length !== n) return null;
+  var ev = [];
+  for (var i = 0; i < n; i++) {
+    var r = R[i];
+    if (!r || typeof r.d !== 'number') return null;
+    // Jaque mate en el tablero: _faFixMate0 lo firma como mate 1 con prof. 0. Viaja como mate 0, que no se escribe
+    // en el PGN (igual que el barrido y que Lichess: después de la jugada que da mate no va eval).
+    if (r.mate !== undefined) { if (typeof r.mate !== 'number') return null; ev.push([null, r.d === 0 ? 0 : r.mate, r.d]); continue; }
+    if (typeof r.cp !== 'number' || r.d < _VB_MIN_D) return null;
+    ev.push([Math.round(r.cp), null, r.d]);
+  }
+  return { m: m, ev: ev, w: h.White || '', b: h.Black || '', e: h.Event || '', r: h.Round || '', f: h.Date || '', res: h.Result, o: vivo ? 'vivo' : 'pool' };
+}
+async function _vbHash(m) {
+  var h = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(m));
+  return Array.prototype.map.call(new Uint8Array(h), function(b) { return ('0' + b.toString(16)).slice(-2); }).join('').slice(0, 32);
+}
+function _vbEnviadas() { try { return JSON.parse(localStorage.getItem('aa_vb_env') || '[]'); } catch (e) { return []; } }
+var _vbEnCurso = {};
+// Lo llaman los lugares donde el gráfico puede quedar completo (fin del pase, fin de los ayudantes del vivo,
+// el gráfico que sale entero del caché, cada rearmado del vivo). Si no se cumple todo, no hace nada.
+function _vbQuizasSubir() {
+  try {
+    if (!_ondemand || typeof crypto === 'undefined' || !crypto.subtle || !_vbEsPC()) return;
+    if (cv.is960 || _fa.running || (_fa.rep && _fa.rep.live)) return;
+    var nodes = faGetNodes(), n = nodes.length;
+    if (_fa.nodes.length !== n || !n || _fa.nodes[n - 1] !== nodes[n - 1]) return;
+    var p = _vbArmar(cv.rawPgn || '', _fa.results, n, !!_fa.live);
+    if (!p || _vbEnCurso[p.m]) return;
+    _vbEnCurso[p.m] = true;
+    _vbHash(p.m).then(function(k) {
+      var env = _vbEnviadas();
+      if (env.indexOf(k) >= 0) return;
+      p.k = k;
+      env.push(k); if (env.length > 500) env = env.slice(-500);
+      try { localStorage.setItem('aa_vb_env', JSON.stringify(env)); } catch (e) {}
+      // Texto plano: así el navegador no hace el pedido previo de CORS (la mitad de pedidos al worker).
+      return fetch(VB_URL + 'subir', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(p), keepalive: true });
+    }).catch(function() {});
+  } catch (e) {}
+}
+
+// ── Del lado del AUTOR ──
+var _vbPend = null;        // lo que espera en la bandeja (modo autor), o null si no se pudo leer
+var _vbAdoptadas = [];     // claves adoptadas EN ESTA PESTAÑA: se borran de la bandeja al guardar
+var _vbEstado = '';        // el renglón de progreso del aviso mientras revisa
+var _vbCorriendo = false;
+async function _vbPedir(ruta, datos) {
+  var clave = _tgClaveGet(); if (!clave) return null;
+  try {
+    var r = await fetch(VB_URL + ruta, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(Object.assign({ clave: clave }, datos || {})) });
+    var j = null; try { j = await r.json(); } catch (e) {}
+    return j && j.ok ? j : null;
+  } catch (e) { return null; }
+}
+function _vbRefrescarAviso() { try { if (document.getElementById('list-torneos')) renderTorneos(_lastTorneoFilter); } catch (e) {} }
+// Arranque (modo autor): ¿qué hay en la bandeja? Sin la clave de Telegram guardada no pregunta nada.
+function _vbInit() {
+  if (_ondemand || !_tgClaveGet()) return;
+  _vbPedir('lista').then(function(j) {
+    if (!j) return;
+    // Las ya adoptadas en esta pestaña siguen en la bandeja hasta que se guarde: no se vuelven a ofrecer
+    // (y no se borran antes de tiempo como "ya tenía evaluaciones").
+    _vbPend = (j.items || []).filter(function(it) { return _vbAdoptadas.indexOf(it.k) < 0; });
+    _vbRefrescarAviso();
+  });
+}
+function _vbAuthorBanner() {
+  if (_ondemand || !_vbPend || !_vbPend.length) return '';
+  var n = _vbPend.length, vivo = _vbPend.filter(function(it) { return it.o === 'vivo'; }).length;
+  return '<div style="margin:0 0 14px;padding:13px 15px;border-radius:12px;border:1px solid var(--gold-dim);background:var(--gold-bg);font-size:13px;line-height:1.55;color:var(--text2)">'
+    + '<b style="color:var(--gold)">📥 ' + n + ' partida' + (n !== 1 ? 's' : '') + ' analizada' + (n !== 1 ? 's' : '') + ' por visitantes</b> (desde PC'
+    + (vivo ? ', ' + vivo + ' del vivo' : '') + '). Las busco en el pool, recalculo unas posiciones de cada una con tu motor y meto las que coinciden: el gráfico sale al instante y el barrido de colgadas no las vuelve a calcular.'
+    + '<div style="margin-top:11px;display:flex;gap:9px;flex-wrap:wrap;align-items:center">'
+    + '<button onclick="_vbAdoptar()"' + (_vbCorriendo ? ' disabled' : '') + ' style="padding:8px 16px;border-radius:9px;border:1px solid var(--gold);background:var(--gold-fill);color:#1a1508;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit' + (_vbCorriendo ? ';opacity:.6' : '') + '">📥 Revisar y pasar al pool</button>'
+    + '<span id="vb-estado" style="color:var(--text3);font-size:12px">' + escHtml(_vbEstado || 'Después: 💾 Guardar datos (al guardar se vacían de la bandeja).') + '</span>'
+    + '</div></div>';
+}
+function _vbSetEstado(t) { _vbEstado = t; var e = document.getElementById('vb-estado'); if (e) e.textContent = t; }
+var _vbPausa = function() { return new Promise(function(r) { setTimeout(r, 0); }); };
+
+// Las posiciones a revisar: las 2 de los saltos más grandes (ahí caen los ?/?? que se ven) + al azar,
+// desde la jugada 4 (la apertura no prueba nada). ev = la de la bandeja; devuelve índices de posición 1..n.
+function _vbElegirMuestra(ev, cuantas, azar) {
+  var n = ev.length, wp = ev.map(function(e) { return _faWinP(e[1] != null ? { mate: e[1] } : { cp: e[0] }); });
+  var desde = Math.min(8, Math.max(1, n - cuantas));
+  var saltos = [];
+  for (var i = Math.max(1, desde - 1); i < n; i++) saltos.push({ k: i + 1, s: Math.abs(wp[i] - wp[i - 1]) });
+  saltos.sort(function(a, b) { return b.s - a.s; });
+  var elegidas = saltos.slice(0, 2).map(function(x) { return x.k; });
+  var resto = [];
+  for (var k = desde; k <= n; k++) if (elegidas.indexOf(k) < 0) resto.push(k);
+  azar = azar || Math.random;
+  while (elegidas.length < cuantas && resto.length) elegidas.push(resto.splice(Math.floor(azar() * resto.length), 1)[0]);
+  return elegidas.sort(function(a, b) { return a - b; });
+}
+// ¿Coincide la de la bandeja (e = [cp, mate, prof]) con la de la PC del autor (s = {cp}|{mate}, desde las blancas)?
+function _vbCoincide(e, s) {
+  if (!s) return true;   // el motor del autor no dio nada: no cuenta en contra
+  var a = _faWinP(e[1] != null ? { mate: e[1] } : { cp: e[0] }), b = _faWinP(s);
+  return Math.abs(a - b) <= _VB_TOL;
+}
+function _vbMediana(ev) {
+  var ds = ev.filter(function(e) { return e[1] == null; }).map(function(e) { return e[2]; }).sort(function(a, b) { return a - b; });
+  return ds.length ? ds[Math.floor(ds.length / 2)] : _VB_PROF;
+}
+
+// Motores de la revisión: Stockfish de un hilo en Workers (como los ayudantes del 📊). Cada uno resuelve
+// UNA posición por vez: _vbEvaluar(h, fen) → promesa con {cp}|{mate} desde las blancas, o null.
+function _vbMotores(n) {
+  var hs = [];
+  for (var i = 0; i < n; i++) {
+    var h = { w: null, listo: null, res: null, ls: null };
+    try { h.w = new Worker('assets/stockfish-19-lite-single.js'); } catch (e) { break; }
+    h.listo = new Promise(function(ok) { h._ok = ok; });
+    h.w.onmessage = (function(h) { return function(ev) {
+      var line = String(ev.data || '');
+      if (line === 'uciok') { h.w.postMessage('setoption name Hash value 32'); h.w.postMessage('isready'); return; }
+      if (line === 'readyok') { if (h._ok) { h._ok(true); h._ok = null; } return; }
+      if (line.indexOf('info') === 0 && !/\bmultipv [2-9]/.test(line) && !/\b(lower|upper)bound\b/.test(line)) {
+        var cp = line.match(/\bscore cp (-?\d+)\b/), mt = line.match(/\bscore mate (-?\d+)\b/);
+        if (cp || mt) h.ls = mt ? { mate: parseInt(mt[1], 10) } : { cp: parseInt(cp[1], 10) };
+        return;
+      }
+      if (line.indexOf('bestmove') === 0 && h.res) { var r = h.res; h.res = null; r(h.ls); }
+    }; })(h);
+    h.w.onerror = (function(h) { return function() { if (h._ok) { h._ok(false); h._ok = null; } if (h.res) { var r = h.res; h.res = null; r(null); } h.caido = true; }; })(h);
+    h.w.postMessage('uci');
+    hs.push(h);
+  }
+  return hs;
+}
+function _vbEvaluar(h, fen) {
+  if (h.caido) return Promise.resolve(null);
+  return new Promise(function(ok) {
+    h.ls = null; h.res = function(s) {
+      if (!s) return ok(null);
+      var negras = fen.split(' ')[1] === 'b';   // UCI: desde el que mueve → desde las blancas
+      ok(s.mate !== undefined ? { mate: negras ? -s.mate : s.mate } : { cp: negras ? -s.cp : s.cp });
+    };
+    h.w.postMessage('position fen ' + fen);
+    h.w.postMessage('go depth ' + _VB_PROF + ' movetime ' + _VB_TOPE_MS);
+  });
+}
+
+// Índice del pool por jugadas, SÓLO de las que se buscan (con 200.000 partidas no se guarda el de todas).
+// De a pedazos, para que la página no se congele. Devuelve { body: { t, i } }.
+async function _vbIndicePool(buscadas) {
+  var quiero = Object.create(null), faltan = 0;
+  buscadas.forEach(function(m) { if (!quiero[m]) { quiero[m] = true; faltan++; } });
+  var idx = Object.create(null), total = 0, vistas = 0;
+  _memTournaments.forEach(function(t) { if (t && t.dbPool && t.games) total += t.games.length; });
+  for (var ti = 0; ti < _memTournaments.length && faltan; ti++) {
+    var t = _memTournaments[ti];
+    if (!t || !t.dbPool || !t.games) continue;
+    for (var i = 0; i < t.games.length && faltan; i++) {
+      var b = _moveBody(t.games[i]);
+      if (quiero[b] && !idx[b]) { idx[b] = { t: t, i: i }; faltan--; }
+      if (++vistas % 4000 === 0) { _vbSetEstado('Buscando en el pool… ' + Math.round(vistas / Math.max(1, total) * 100) + '%'); await _vbPausa(); }
+    }
+  }
+  return idx;
+}
+
+async function _vbAdoptar() {
+  if (_vbCorriendo || !_vbPend || !_vbPend.length) return;
+  var items = _vbPend.slice();
+  var si = await window.aaAsk({ icono: '📥', titulo: 'Evaluaciones de los visitantes',
+    texto: 'Hay ' + items.length + ' partida' + (items.length !== 1 ? 's' : '') + ' analizada' + (items.length !== 1 ? 's' : '') + ' por visitantes. Las busco en el pool, recalculo '
+      + _VB_MUESTRA + ' posiciones de cada una con tu motor y meto las que coinciden. Puede tardar un par de minutos.',
+    ok: 'Dale' });
+  if (!si) return;
+  _vbCorriendo = true; _vbRefrescarAviso();
+  var hs = [];
+  try {
+    // 1) ¿Dónde está cada una en el pool?
+    _vbSetEstado('Buscando en el pool…'); await _vbPausa();
+    var idx = await _vbIndicePool(items.map(function(it) { return it.m; }));
+    var revisar = [], esperan = [], yaTenian = [], noCoinciden = [];
+    items.forEach(function(it) {
+      var u = idx[it.m];
+      if (!u) { esperan.push(it); return; }
+      var pgn = u.t.games[u.i];
+      if (pgn.indexOf('%eval') >= 0) {
+        var hh = parsePgnHeaders(pgn);
+        // De Lichess, o nuestras igual de buenas: la bandeja no aporta nada. Las nuestras viejas (prof. menor
+        // que el barrido de hoy) sí se reemplazan.
+        if (!_evjEsPropia(hh) || _evjProf(hh) >= _CG_PASADA_DEPTH) { yaTenian.push(it); return; }
+      }
+      var P = _cgPosiciones(pgn);
+      if (!P || P.uci.length !== it.ev.length) { noCoinciden.push(it); return; }
+      revisar.push({ it: it, u: u, P: P });
+    });
+    // 2) Recalcular unas posiciones de cada una (varios motores, una partida cada uno).
+    var ok = [], descartadas = [];
+    if (revisar.length) {
+      var nMot = Math.max(1, Math.min(3, (typeof _faRepCuantos === 'function' ? _faRepCuantos() : 0) + 1, revisar.length));
+      hs = _vbMotores(nMot);
+      var listos = await Promise.race([Promise.all(hs.map(function(h) { return h.listo; })), new Promise(function(r) { setTimeout(function() { r(null); }, 20000); })]);
+      hs = hs.filter(function(h) { return !h.caido; });
+      if (!listos || !hs.length) throw new Error('el motor no arrancó');
+      var sig = 0, hechas = 0;
+      var trabajar = async function(h) {
+        while (sig < revisar.length) {
+          var R = revisar[sig++], malas = 0;
+          var muestra = _vbElegirMuestra(R.it.ev, _VB_MUESTRA);
+          for (var j = 0; j < muestra.length && malas < 2; j++) {
+            var k = muestra[j];
+            var s = await _vbEvaluar(h, R.P.fens[k]);
+            if (!_vbCoincide(R.it.ev[k - 1], s)) malas++;
+          }
+          (malas >= 2 ? descartadas : ok).push(R);
+          hechas++;
+          _vbSetEstado('Revisando con tu motor… ' + hechas + ' / ' + revisar.length);
+        }
+      };
+      await Promise.all(hs.map(trabajar));
+    }
+    // 3) Meter las buenas en el PGN del pool (mismo camino que el barrido, con su comprobación).
+    var metidas = 0;
+    ok.forEach(function(R) {
+      var base = R.u.t.games[R.u.i];
+      if (_evjEsPropia(parsePgnHeaders(base))) base = _evjLimpiar(base);
+      var sc = [null];
+      R.it.ev.forEach(function(e) { sc.push(e[1] != null ? { mate: e[1] } : { cp: e[0] }); });
+      var nuevo = _evjInsertar(base, sc, R.P.uci.length, 'aa-vis' + _vbMediana(R.it.ev));
+      if (!nuevo) { noCoinciden.push(R.it); return; }
+      var leidas = parseMoveEvals(nuevo);
+      for (var k = 1; k <= R.P.uci.length; k++) {
+        var tk = _evjTok(sc[k]);
+        if (tk && !(leidas[k - 1] && _evjTok(leidas[k - 1]) === tk)) { noCoinciden.push(R.it); return; }
+      }
+      R.u.t.games[R.u.i] = nuevo;
+      _vbAdoptadas.push(R.it.k);
+      metidas++;
+    });
+    if (metidas) { try { _invalidateDbSearch(); } catch (e) {} }
+    // Las que no sirven se borran ya; las adoptadas, al guardar; las que esperan su ronda quedan.
+    var borrar = yaTenian.concat(descartadas.map(function(R) { return R.it; }), noCoinciden).map(function(it) { return it.k; });
+    if (borrar.length) await _vbPedir('borrar', { ks: borrar });
+    var fuera = {}; borrar.concat(_vbAdoptadas).forEach(function(k) { fuera[k] = true; });
+    _vbPend = (_vbPend || []).filter(function(it) { return !fuera[it.k]; });
+    var lineas = [];
+    lineas.push('✅ ' + metidas + ' pasada' + (metidas !== 1 ? 's' : '') + ' al pool.');
+    if (descartadas.length) lineas.push('🗑 ' + descartadas.length + ' descartada' + (descartadas.length !== 1 ? 's' : '') + ': no coincidían con tu motor.');
+    if (yaTenian.length) lineas.push('↩️ ' + yaTenian.length + ' ya tenía' + (yaTenian.length !== 1 ? 'n' : '') + ' evaluaciones.');
+    if (noCoinciden.length) lineas.push('⚠️ ' + noCoinciden.length + ' con jugadas que no cuadraban con el pool.');
+    if (esperan.length) lineas.push('⏳ ' + esperan.length + ' todavía no está' + (esperan.length !== 1 ? 'n' : '') + ' en el pool (quedan esperando a que subas su ronda).');
+    if (metidas) lineas.push('\nAhora: 💾 Guardar datos. Al guardar se vacían de la bandeja.');
+    _vbEstado = '';
+    _vbCorriendo = false; _vbRefrescarAviso();
+    try { if (typeof exportTabInit === 'function') exportTabInit(); } catch (e) {}
+    await window.aaAsk({ icono: '📥', titulo: 'Evaluaciones de los visitantes', texto: lineas.join('\n'), lineas: true, ok: 'Entendido', cancelar: 'Cerrar' });
+  } catch (e) {
+    _vbEstado = '';
+    _vbCorriendo = false; _vbRefrescarAviso();
+    await window.aaAsk({ icono: '⚠️', titulo: 'No se pudo revisar', texto: (e && e.message) || String(e), ok: 'Entendido', cancelar: 'Cerrar' });
+  } finally {
+    hs.forEach(function(h) { try { h.w.terminate(); } catch (e) {} });
+  }
+}
+// Después de 💾 Guardar datos: las adoptadas ya están en el archivo → fuera de la bandeja.
+function _vbTrasGuardar() {
+  if (_ondemand || !_vbAdoptadas.length) return;
+  var ks = _vbAdoptadas.slice();
+  _vbPedir('borrar', { ks: ks }).then(function(j) {
+    if (j) _vbAdoptadas = _vbAdoptadas.filter(function(k) { return ks.indexOf(k) < 0; });
+  });
 }
 
 // Candidata → prof. 18 con 3 líneas en la posición de DESPUÉS: confirma, y da el castigo y sus alternativas.
@@ -48913,6 +49251,7 @@ function faLiveBuild() {
     }
   } else {
     setTimeout(_faRellenarSiLibre, 0);   // nada para el pase: si el motor está quieto, completar lo salteado
+    _vbQuizasSubir();   // 📥 ya estaba todo calculado y la partida pudo terminar recién (rendición, tablas)
   }
   faUpdateBuildBtn();
 }
@@ -49067,6 +49406,7 @@ function startFA() {
     document.getElementById('fa-cancel-btn').style.display = 'none';
     faClassify(); faRender(); faRenderStats(); faApplyNags(); cvUpdateNagBadge(); faUpdateBar();
     faUpdateBuildBtn();
+    _vbQuizasSubir();   // 📥 (el caché la tenía entera: también vale)
     return;
   }
   if (!sf.engine || !sf.ready) {
@@ -49200,6 +49540,7 @@ function faNext() {
     cvUpdateNagBadge();
     faUpdateBar();
     _faNagSig = '';   // el pase acaba de re-render; resincronizar la firma para el módulo
+    _vbQuizasSubir();   // 📥 gráfico completo de una partida terminada: a la bandeja (si va)
     // ¿Llegaron jugadas MIENTRAS corría el pase? faMaybeAutoLive las ignora si _fa.running estaba
     // activo, y esperar al próximo refresco (30s) dejaba esas jugadas sin evaluar/calificar. Al
     // terminar el pase, si el número de jugadas creció, reconstruimos y relanzamos ya el pase para
@@ -49582,6 +49923,7 @@ function _faRepFinVivo() {
   else _faReclassifyIfChanged();
   faUpdateBuildBtn();
   if (!_fa.running && _faCuantasPase() > 0) faLiveEngineStart();   // huecos que quedaron: el principal
+  else _vbQuizasSubir();   // 📥 (partida terminada y sin huecos)
 }
 // Barra de progreso (cuántas posiciones ya están) y el gráfico que se va llenando en varios lugares a la vez.
 function _faRepAvance() {

@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2367;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2391;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -6843,7 +6843,7 @@ console.log('\n=== 53g-quater. Al entrar desde un aviso: parar en la colgada y g
     + 'function _faNeedsPassEval(i){ return _fa.results[i] == null; }'
     + 'function faFinish(){ terminado++; _fa.running = false; } function faClassify(){} function faRender(){} function faRenderStats(){}'
     + 'function faApplyNags(){} function cvUpdateNagBadge(){} function faUpdateBar(){} function faGetNodes(){ return _fa.nodes; }'
-    + 'function sfAnalyze(){} function setTimeout(){} function clearTimeout(){} var _faNagSig = "";'
+    + 'function sfAnalyze(){} function setTimeout(){} function clearTimeout(){} var _faNagSig = ""; function _vbQuizasSubir(){}'
     + 'var document = { getElementById: function(){ return { style: {}, textContent: "", classList: { add: function(){}, remove: function(){} } }; } };'
     + 'Object.defineProperty(_fa.nodes, "fen", { value: "" });'
     + 'function _faInicio(){ return 0; }' + extraerFuncion('_faDeAyudantes') + extraerFuncion('_faSaltea')
@@ -6879,7 +6879,7 @@ console.log('\n=== 53g-quinquies. Gráfico en vivo: una sí y una no, afinar la 
       + 'function faFinish(){ terminado++; _fa.running = false; } function faClassify(){} function faRender(){} function faRenderStats(){}'
       + 'function faApplyNags(){} function cvUpdateNagBadge(){} function faUpdateBar(){} function faGetNodes(){ return _fa.nodes; }'
       + 'function _faRellenarSiLibre(){} ' + 'function _faLiveEligible(){ return false; } var _faLiveHidden = false; function _faInterp(r){ return r; }'
-      + 'function sfAnalyze(){} function setTimeout(){} function clearTimeout(){} var _faNagSig = "";'
+      + 'function sfAnalyze(){} function setTimeout(){} function clearTimeout(){} var _faNagSig = ""; function _vbQuizasSubir(){}'
       + 'var document = { getElementById: function(){ return { style: {}, textContent: "", classList: { add: function(){}, remove: function(){} } }; } };'
       + ['_faWinP', '_faDeAyudantes', '_faSaltea', '_faAfinar', '_faSiguiente', 'faNext'].map(extraerFuncion).join('\n')
       + '; for (var i = 0; i < ' + n + '; i++) { _fa.nodes.push({ fen: "f" + i }); _fa.results.push(null); }'
@@ -8150,6 +8150,83 @@ console.log('\n=== Auditoría 23/09 — Fase 4: accesibilidad y prolijidad ===')
   chk(/_evjContar\(\)/.test(extraerFuncion('_estadoActualFp')), 'guardar evaluaciones enciende el aviso de "cambios sin guardar"');
   chk(/depth: _CG_PASADA_DEPTH, cb:/.test(pr) && !/_mevEvals/.test(pr) && /var _CG_PASADA_DEPTH = 18;/.test(SRC),
       '🔒 el barrido evalúa a prof. 18 (08/10, con varios motores; a 16 eran ≈ 11 min con uno solo; lo eligió el autor) y no reusa las de prof. 12 de las miniaturas');
+}
+// ── 63b. 📥 Bandeja de evaluaciones de los visitantes (10/10/2026, pedido del autor) ──
+{
+  console.log('\n📥 Bandeja de evaluaciones de los visitantes');
+  const hastaV = (nombre) => { const i = SRC.indexOf('function ' + nombre + '('); const j = SRC.indexOf('\nfunction ', i + 10); return SRC.slice(i, j); };
+  const consts = ['_VB_MIN_PLIES', '_VB_MIN_D', '_VB_MUESTRA', '_VB_TOL', '_VB_PROF', '_CG_PASADA_DEPTH']
+    .map((c) => SRC.match(new RegExp('var ' + c + ' = \\d+;'))[0]).join('\n');
+  const V = new Function('_memTournaments', consts + '\n' + SRC.match(/var _EVJ_SAN = [^\n]*/)[0] + '\n'
+    + ['parseEvalToken', 'parseMoveEvals', '_moveBody', '_evjInsertar', '_evjLimpiar'].map(hastaV).join('\n') + '\n'
+    + ['parsePgnHeaders', '_evjMarca', '_evjEsPropia', '_evjProf', '_evjTok', '_evjContar', '_faWinP',
+       '_vbArmar', '_vbElegirMuestra', '_vbCoincide', '_vbMediana'].map(extraerFuncion).join('\n')
+    + '; return { armar: _vbArmar, muestra: _vbElegirMuestra, coincide: _vbCoincide, mediana: _vbMediana, propia: _evjEsPropia, prof: _evjProf,'
+    + ' ins: _evjInsertar, limpiar: _evjLimpiar, ev: parseMoveEvals, cuenta: _evjContar, body: _moveBody, D: _CG_PASADA_DEPTH, MIN: _VB_MIN_PLIES };');
+  const poolV = [], B = V(poolV);
+  const PGN = '[Event "Panamericano"]\n[Site "Lima"]\n[Date "2026.10.10"]\n[Round "1"]\n[White "Rek, Slava"]\n[Black "Romero, Wilbert"]\n[Result "1-0"]\n\n'
+    + '1. e4 c6 2. d4 d5 3. e5 Bf5 4. Nf3 e6 5. Be2 c5 6. Be3 Nd7 7. O-O Ne7 1-0';
+  const R = Array.from({ length: 14 }, (_, i) => ({ cp: 20 + i * 3, d: 16 }));
+  const p = B.armar(PGN, R, 14, true);
+  chk(p && p.m === B.body(PGN) && p.ev.length === 14 && p.ev[0][0] === 20 && p.ev[0][2] === 16 && p.w === 'Rek, Slava' && p.res === '1-0' && p.o === 'vivo',
+      'una partida terminada con todas sus evaluaciones se arma con las MISMAS jugadas que usa el pool (_moveBody)', JSON.stringify(p && p.m));
+  const conR = (cambios) => R.map((r, i) => Object.assign({}, r, cambios[i] || {}));
+  chk(B.armar(PGN.replace('[Result "1-0"]', '[Result "*"]'), R, 14) === null, 'partida sin terminar: no va');
+  chk(B.armar(PGN, conR({ 5: { d: 11 } }), 14) === null, 'una evaluación por debajo de prof. 12: no va (la vara del vivo)');
+  chk(B.armar(PGN, R.map((r, i) => i === 3 ? null : r), 14) === null, 'con un hueco en el gráfico: no va');
+  chk(B.armar(PGN, R.map((r) => ({ cp: r.cp })), 14) === null, 'evaluaciones sin profundidad (las de Lichess, por ejemplo): no va');
+  chk(B.armar(PGN.replace('1. e4 c6', '1. e4 {[%eval 0.3]} c6'), R, 14) === null, 'el PGN ya trae [%eval]: no va');
+  chk(B.armar(PGN.replace('[Site "Lima"]', '[Site "https://lichess.org/AbCd1234"]'), R, 14) === null
+      && B.armar(PGN.replace('[Site "Lima"]', '[Site "chessargentino.ar"]'), R, 14) === null
+      && B.armar(PGN.replace('[Site "Lima"]', '[Site "https://lichess.org/broadcast/x/round-1/cUO2YKUp/xDC6KCoo"]'), R, 14) !== null,
+      'partidas sueltas de Lichess (arenas) y las propias del sitio no van; las de una transmisión sí');
+  chk(B.armar(PGN.replace('[Result "1-0"]', '[Result "1-0"]\n[SetUp "1"]\n[FEN "8/8/8/8/8/8/8/K6k w - - 0 1"]'), R, 14) === null, 'partida desde una posición armada: no va');
+  chk(B.armar(PGN, R.slice(0, 13), 13) === null, 'si el gráfico no tiene tantas posiciones como jugadas el PGN: no va');
+  const PGN8 = PGN.replace(' 7. O-O Ne7', '');
+  chk(B.armar(PGN8, R.slice(0, 12), 12) !== null && B.armar(PGN8.replace(' 6. Be3 Nd7', ''), R.slice(0, 10), 10) !== null
+      && B.armar(PGN8.replace(' 5. Be2 c5 6. Be3 Nd7', ''), R.slice(0, 8), 8) === null, 'partidas de menos de ' + B.MIN + ' jugadas (medias): no valen el viaje');
+  const mate = B.armar(PGN, conR({ 12: { cp: undefined, mate: 2, d: 18 }, 13: { cp: undefined, mate: 1, d: 0 } }), 14);
+  chk(mate && mate.ev[12][1] === 2 && mate.ev[12][0] === null && mate.ev[13][1] === 0,
+      'mate en 2 viaja como mate; el jaque mate en el tablero (mate 1 con prof. 0, de _faFixMate0) viaja como mate 0', JSON.stringify(mate && mate.ev.slice(12)));
+
+  // La revisión del autor.
+  const ev = Array.from({ length: 40 }, (_, i) => [i === 25 ? -450 : 30, null, 16]);   // un ?? en la 26
+  const azar = (() => { let s = 7; return () => (s = (s * 9301 + 49297) % 233280) / 233280; })();
+  const mu = B.muestra(ev, 6, azar);
+  chk(mu.length === 6 && new Set(mu).size === 6 && mu.indexOf(26) >= 0 && mu.indexOf(27) >= 0 && mu.every((k) => k >= 8 && k <= 40),
+      'la muestra lleva las posiciones del salto (donde cae el ??) y el resto al azar, desde la jugada 4', JSON.stringify(mu));
+  chk(B.muestra(ev.slice(0, 10), 6, azar).length === 6, 'en una partida corta igual junta 6');
+  chk(B.coincide([30, null, 16], { cp: 80 }) && !B.coincide([30, null, 16], { cp: 400 }) && B.coincide([null, 5, 20], { cp: 900 })
+      && !B.coincide([null, 5, 20], { cp: -200 }) && B.coincide([30, null, 16], null),
+      'coinciden si la diferencia no pasa de ' + 22 + ' puntos de win% (un mate y +9 coinciden; el motor que no contesta no cuenta en contra)');
+  chk(B.mediana([[10, null, 14], [20, null, 18], [null, 3, 30], [5, null, 16]]) === 16, 'la marca lleva la profundidad mediana (los mates no cuentan)');
+
+  // En el PGN del pool: marca propia, el barrido las reusa, se limpian y cuentan para "cambios sin guardar".
+  const sc = [null].concat(R.map((r) => ({ cp: r.cp })));
+  const nuevo = B.ins(PGN, sc, 14, 'aa-vis16');
+  const h = { EvalSource: 'aa-vis16' };
+  chk(nuevo && nuevo.indexOf('[EvalSource "aa-vis16"]') >= 0 && B.ev(nuevo).length >= 14 && B.limpiar(nuevo) === PGN,
+      'se escriben con [EvalSource "aa-vis16"] y sacarlas deja la partida como estaba');
+  chk(B.propia(h) && B.prof(h) === B.D && B.prof({ EvalSource: 'aa-sf15' }) === 15 && !B.propia({ EvalSource: 'lichess' }),
+      '🔒 son NUESTRAS y valen como una pasada del barrido (prof. ' + B.D + '): el barrido las reusa sin motor');
+  poolV.push({ dbPool: true, games: [nuevo] });
+  const c1 = B.cuenta(); poolV[0].games[0] = nuevo.replace('aa-vis16', 'aa-sf16');
+  chk(c1 > 0 && B.cuenta() !== c1, 'cuentan para el aviso de "cambios sin guardar" (y no igual que las del barrido)');
+
+  // Enganches.
+  const qs = extraerFuncion('_vbQuizasSubir');
+  chk(/if \(!_ondemand \|\|/.test(qs) && /_vbEsPC\(\)/.test(qs) && /aa_vb_env/.test(SRC) && /'Content-Type': 'text\/plain'/.test(qs),
+      '🔒 sólo manda la web publicada desde una PC, una vez por partida, como texto plano (sin pedido previo de CORS)');
+  const pc = extraerFuncion('_vbEsPC');
+  chk(/Android\|iPhone\|iPad/.test(pc) && /hardwareConcurrency \|\| 0\) < 4/.test(pc) && /maxTouchPoints/.test(pc), 'teléfonos, tablets (también el iPad que dice ser Mac) y equipos de menos de 4 núcleos no mandan');
+  chk((SRC.match(/_vbQuizasSubir\(\);/g) || []).length === 4 && /_vbQuizasSubir\(\);/.test(extraerFuncion('_faRepFinVivo'))
+      && /_vbQuizasSubir\(\);/.test(extraerFuncion('startFA')) && /_vbQuizasSubir\(\);/.test(extraerFuncion('faLiveBuild')) && /_vbQuizasSubir\(\);/.test(extraerFuncion('faNext')),
+      'se prueba al terminar el pase, al terminar los ayudantes del vivo, al dibujar desde el caché y en cada rearmado del vivo');
+  chk((SRC.match(/try \{ _vbTrasGuardar\(\); \} catch \(e\) \{\}/g) || []).length === 2, '🔒 al guardar (con carpeta o descargando) se vacían de la bandeja las adoptadas');
+  chk(/html \+= _vbAuthorBanner\(\)/.test(extraerFuncion('renderTorneos')) && /if \(_ondemand \|\| !_vbPend/.test(extraerFuncion('_vbAuthorBanner')), 'el aviso sale arriba de la lista de torneos, sólo en modo autor');
+  const ad = extraerFuncion('_vbAdoptar');
+  chk(/malas >= 2 \? descartadas : ok/.test(ad) && /_vbPedir\('borrar', \{ ks: borrar \}\)/.test(ad) && /_vbAdoptadas\.push\(R\.it\.k\)/.test(ad) && !/_vbPedir\('borrar', \{ ks: _vbAdoptadas/.test(ad),
+      '🔒 las que no coinciden con el motor del autor se descartan y se borran ya; las adoptadas recién al guardar');
 }
 // ── Visor de un torneo POR EQUIPOS: bandera y título desde el plantel (28/09/2026, Moscú 1994) ──
 {
