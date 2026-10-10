@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2362;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2365;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -9605,8 +9605,15 @@ console.log('\n── Planes típicos de la apertura ──');
   console.log('\n📖 Estudiar › Finales');
   const U = new Function('location', 'v', 'var _estVista = v; ' + extraerFuncion('_estUrl') + '; return _estUrl();');
   const loc = { pathname: '/' };
-  chk(U(loc, 'finales') === '/?ir=estudiar&ver=finales' && U(loc, 'leccion:torre-menor') === '/?ir=estudiar&leccion=torre-menor',
-      'la dirección dice qué se ve: la lista de Finales o la lección');
+  chk(U(loc, 'finales') === '/?ir=estudiar&ver=finales' && U(loc, 'leccion:torre-menor') === '/?ir=estudiar&leccion=torre-menor'
+      && U(loc, 'estructuras') === '/?ir=estudiar&ver=estructuras',
+      'la dirección dice qué se ve: la lista de Finales o de Estructuras, o la lección');
+  // 09/10: tercera sub-pestaña ♟️ Estructuras. Cada lección dice en cuál va (sec); sin sec, Finales.
+  const SD = new Function('var _EST_LECCIONES = [{ id: "carlsbad", sec: "estructuras" }, { id: "torre-menor", sec: "finales" }, { id: "vieja" }];'
+    + extraerFuncion('_estSecDe') + '; return _estSecDe;')();
+  chk(SD('leccion:carlsbad') === 'estructuras' && SD('leccion:torre-menor') === 'finales' && SD('leccion:vieja') === 'finales'
+      && SD('estructuras') === 'estructuras' && SD('aperturas') === 'aperturas',
+      'cada lección se marca en su sub-pestaña (la Carlsbad en Estructuras; sin dato, Finales)');
   // Qué botón lleva cada tarjeta según el ejemplo (partida real, armada, fabricada, simulados de ganar o de tablas)
   const T = new Function('var _estK = {}, _estN = 0, _EST_COL = { g: "#0", r: "#1", b: "#2", v: "#3" };'
     + 'function escHtml(s) { return String(s); } function _flagImg() { return "[AR]"; }'
@@ -9636,6 +9643,20 @@ console.log('\n── Planes típicos de la apertura ──');
       && btn({ libro: 'De la Villa, Final 53', fabricada: true, sim: { sans: [], ganada: true } }) === '▶ Ver cómo se gana'
       && /Posición de libro/.test(T(Object.assign({}, base, { libro: 'De la Villa, Final 52', fabricada: true, sim: { sans: [], tablas: true } }))),
       'la leyenda de los cuadros es de cada lección, y las posiciones de libro llevan su nombre y su botón');
+  // 09/10 (Carlsbad): la partida modelo de un libro viaja con su PGN y no tiene simulado → los jugadores, la fuente
+  // del libro y "Ver la partida" (nada de "comprobada con la tablebase").
+  const pm = T(Object.assign({}, base, { w: 'Getz, Nicolai', b: 'Agdestein, Simen', ply: 22, libro: 'Flores Ríos, cap. 5', pgn: '1. d4 *', plyPartida: 22 }));
+  chk(/Getz – Agdestein/.test(pm) && /📖 Flores Ríos, cap\. 5/.test(pm) && /jugada 11/.test(pm) && !/tablebase/.test(pm) && !/Posición de libro/.test(pm)
+      && (pm.match(/class="est-btn"[^>]*>([^<]*)</) || [])[1] === '▶ Ver la partida',
+      'partida modelo de un libro: los jugadores, la jugada, la fuente y el botón para verla entera');
+  // 09/10: al abrir la partida desde una tarjeta, las marcas de la miniatura van al PGN como [%cal]/[%csl] después de
+  // ESA semijugada (sin contar comentarios, variantes ni números), así el visor las dibuja en esa posición.
+  const PM = new Function(extraerFuncion('_estComMarcas') + extraerFuncion('_estPgnMarcas') + '; return _estPgnMarcas;')();
+  const pg = '[White "A"]\n[Black "B"]\n\n1. d4 {un comentario 2. e4} d5 2. c4 (2. Nf3 Nf6) e6 3. Nc3 Nf6 *';
+  const out = PM(pg, 3, { a: [{ from: 'b2', to: 'b4', c: 'g' }], h: { c6: 'r', d4: 'b', x9: 'q' } });
+  chk(out === '[White "A"]\n[Black "B"]\n\n1. d4 {un comentario 2. e4} d5 2. c4 {[%cal Gb2b4][%csl Rc6,Bd4]} (2. Nf3 Nf6) e6 3. Nc3 Nf6 *'
+      && PM(pg, 3, { a: [], h: {} }) === pg && PM(pg, 99, { a: [{ from: 'a1', to: 'a2', c: 'g' }] }) === pg,
+      'las marcas de la tarjeta entran al PGN justo después de su jugada (no cuenta comentarios ni variantes); sin marcas o sin esa jugada, el PGN no cambia');
   chk(/if \(typeof _estPintar === 'function' && !_estPintar\(\)\) return;/.test(extraerFuncion('renderPartidas'))
       && /_estVista = 'aperturas'/.test(extraerFuncion('_apIrDesdeAfuera')) && /_SLUG_SEC\.estudiar = 'favoritos'/.test(SRC)
       && /_cvTourGames\[_cvTourIdx\] === _estSimNota\.pgn/.test(extraerFuncion('cvRender960Note')),
