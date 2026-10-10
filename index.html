@@ -4014,6 +4014,9 @@
       .lv-lobby-card h4 { font-size:15px; font-weight:700; margin:0 0 8px; }
       .lv-lobby-card p { color:var(--text2); font-size:13.5px; margin:0 0 14px; line-height:1.5; }
       .lv-field { display:block; margin-bottom:12px; font-size:13px; color:var(--text2); }
+      .lv-discord-chk { display:flex; gap:9px; align-items:flex-start; margin:0 0 12px; padding:9px 11px; border:1px solid var(--border); border-radius:var(--r-sm); background:var(--bg2); font-size:13px; color:var(--text); cursor:pointer; line-height:1.35; }
+      .lv-discord-chk input { width:17px; height:17px; margin:1px 0 0; flex:0 0 auto; accent-color:#5865F2; cursor:pointer; }
+      .lv-discord-chk small { display:block; font-size:11.5px; color:var(--text2); margin-top:2px; }
       .lv-field select, .lv-field input, #lv-join-id, #lv-link { font-family:inherit; font-size:14px; padding:9px 11px; border-radius:var(--r-sm); border:1px solid var(--border); background:var(--bg2); color:var(--text); width:100%; margin-top:5px; }
       .lv-btn-main, .lv-btn-sec { font-family:inherit; font-weight:700; font-size:14px; padding:11px 16px; border-radius:var(--r-md); cursor:pointer; border:1px solid transparent; transition:filter .15s, opacity .15s; }
       .lv-btn-main { background:var(--gold-bg); border-color:var(--gold-dim); color:var(--gold); width:100%; }
@@ -4840,6 +4843,12 @@
                 <button type="button" class="lv-seg lv-seg-on" data-rated="1">🏅 Con rating</button>
                 <button type="button" class="lv-seg" data-rated="0">🤝 Amistosa</button>
               </div>
+            </label>
+            <!-- 📣 El desafío también en el servidor de Discord (#desafios). Sólo con cuenta: el servidor
+                 publica el nombre y el rating de la cuenta, y frena a uno cada 10 minutos por persona. -->
+            <label id="lv-discord-field" class="lv-discord-chk" style="display:none">
+              <input type="checkbox" id="lv-discord">
+              <span>📣 Avisar también en <b>Discord</b><small>Sale en #desafios del servidor de ChessArgentino, con tu nombre, tu rating y el ritmo.</small></span>
             </label>
             <label id="lv-name-field" class="lv-field">Tu nombre (opcional)
               <input id="lv-name" maxlength="24" placeholder="Anónimo">
@@ -40577,13 +40586,14 @@ var _vbEnCurso = {};
 // el gráfico que sale entero del caché, cada rearmado del vivo). Si no se cumple todo, no hace nada.
 function _vbQuizasSubir() {
   try {
-    if (!_ondemand || typeof crypto === 'undefined' || !crypto.subtle || !_vbEsPC()) return;
     if (cv.is960 || _fa.running || (_fa.rep && _fa.rep.live)) return;
+    if (_ondemand && (typeof crypto === 'undefined' || !crypto.subtle || !_vbEsPC())) return;
     var nodes = faGetNodes(), n = nodes.length;
     if (_fa.nodes.length !== n || !n || _fa.nodes[n - 1] !== nodes[n - 1]) return;
     var p = _vbArmar(cv.rawPgn || '', _fa.results, n, !!_fa.live);
     if (!p || _vbEnCurso[p.m]) return;
     _vbEnCurso[p.m] = true;
+    if (!_ondemand) { _vbEscribirAutor(p); return; }   // modo autor: directo al pool, sin bandeja
     _vbHash(p.m).then(function(k) {
       var env = _vbEnviadas();
       if (env.indexOf(k) >= 0) return;
@@ -40596,8 +40606,57 @@ function _vbQuizasSubir() {
   } catch (e) {}
 }
 
+// ── Lo que analiza el AUTOR (pedido suyo, 10/10): en modo autor el 📊 (o el gráfico del vivo de una partida
+// que ya terminó) no va a la bandeja: se escribe DIRECTO en el PGN del pool, como lo que se adopta, sin
+// revisión (es su propio motor). Mismas condiciones que _vbArmar. La partida se busca primero por el MISMO
+// texto (la que se abrió desde el pool) y si no, por jugadas SÓLO dentro del torneo del pool con el nombre de
+// su [Event] (recorrer las 280.000 congelaba la página unos segundos). Si no está en el pool (una ronda en
+// vivo que todavía no subiste), no se hace nada. Enciende el aviso de "cambios sin guardar" (_evjContar).
+function _vbUbicarAutor(pgn, m) {
+  var ev = parsePgnHeaders(pgn).Event || '', u = null;
+  for (var ti = 0; ti < _memTournaments.length && !u; ti++) {
+    var t = _memTournaments[ti];
+    if (!t || !t.dbPool || !t.games) continue;
+    var i = t.games.indexOf(pgn);
+    if (i >= 0) u = { t: t, i: i };
+  }
+  for (var tj = 0; tj < _memTournaments.length && !u && ev; tj++) {
+    var t2 = _memTournaments[tj];
+    if (!t2 || !t2.dbPool || !t2.games || t2.name !== ev) continue;
+    for (var j = 0; j < t2.games.length; j++) if (_moveBody(t2.games[j]) === m) { u = { t: t2, i: j }; break; }
+  }
+  return u;
+}
+function _vbEscribirAutor(p) {
+  try {
+    var u = _vbUbicarAutor(cv.rawPgn || '', p.m);
+    if (!u) return false;
+    var base = u.t.games[u.i];
+    if (base.indexOf('%eval') >= 0) {
+      var h = parsePgnHeaders(base);
+      if (!_evjEsPropia(h) || _evjProf(h) >= _CG_PASADA_DEPTH) return false;   // de Lichess, o ya buenas
+      base = _evjLimpiar(base);
+    }
+    var sc = [null];
+    p.ev.forEach(function(e) { sc.push(e[1] != null ? { mate: e[1] } : { cp: e[0] }); });
+    var nuevo = _evjInsertar(base, sc, p.ev.length, 'aa-vis' + _vbMediana(p.ev));
+    if (!nuevo) return false;
+    var leidas = parseMoveEvals(nuevo);
+    for (var k = 1; k <= p.ev.length; k++) {
+      var tk = _evjTok(sc[k]);
+      if (tk && !(leidas[k - 1] && _evjTok(leidas[k - 1]) === tk)) return false;
+    }
+    var viejo = u.t.games[u.i];
+    u.t.games[u.i] = nuevo;
+    _evjReemplazarEnPantalla({ pgn: viejo }, viejo, nuevo);   // la lista del torneo en pantalla, si es esa
+    try { _invalidateDbSearch(); } catch (e) {}
+    try { if (typeof exportTabInit === 'function') exportTabInit(); } catch (e) {}
+    return true;
+  } catch (e) { return false; }
+}
+
 // ── Del lado del AUTOR ──
-var _vbPend = null;        // lo que espera en la bandeja (modo autor), o null si no se pudo leer
+var _vbPend = null;       // lo que espera en la bandeja (modo autor), o null si no se pudo leer
 var _vbAdoptadas = [];     // claves adoptadas EN ESTA PESTAÑA: se borran de la bandeja al guardar
 var _vbEstado = '';        // el renglón de progreso del aviso mientras revisa
 var _vbCorriendo = false;
@@ -52887,7 +52946,7 @@ function cvUpdateNagBadge() {
     // Al arrancar la partida (entró el rival por el lobby o por link): retiro mi
     // desafío público y, si estaba navegando por otra parte de la web, me traigo a la sala.
     if(prev!=='playing' && lvStatus==='playing'){
-      if(lvMyChallenge){ lobbySend({type:'cancel'}); lvMyChallenge=null; }
+      if(lvMyChallenge){ lobbySend({type:'cancel', empezo:true}); lvMyChallenge=null; }   // empezo: en Discord pasa a "✅ Ya encontró rival"
       var _vivoActive=false; try{ _vivoActive=document.getElementById('s-vivo').classList.contains('active'); }catch(e){}
       // Traerme al tablero SIEMPRE que sea mi partida. Antes sólo pasaba si estaba en otra pestaña
       // del sitio; desde que se puede esperar rival DESDE EL SALÓN, si no se agrega la segunda rama
@@ -53071,13 +53130,13 @@ function cvUpdateNagBadge() {
       // Si es DIRIGIDO (desde un perfil), va como challenge-direct; si no, como desafío abierto.
       if(lvPubParams && (lvMyColor==='w'||lvMyColor==='b') && lvStatus==='waiting'){
         var pp=lvPubParams; lvPubParams=null;
-        lvMyChallenge={ id:lvSala, name:pp.name, base:pp.base, inc:pp.inc, rated:pp.rated!==false, seat:lvMyColor, rating:pp.rating, prov:pp.prov, target:pp.target||null, targetName:pp.targetName||null };
+        lvMyChallenge={ id:lvSala, name:pp.name, base:pp.base, inc:pp.inc, rated:pp.rated!==false, seat:lvMyColor, rating:pp.rating, prov:pp.prov, target:pp.target||null, targetName:pp.targetName||null, discord:!!pp.discord };
         lobbyConnect();
         if(pp.target){
           lobbySend({type:'challenge-direct', id:lvMyChallenge.id, target:pp.target, name:lvMyChallenge.name, base:lvMyChallenge.base, inc:lvMyChallenge.inc, rated:lvMyChallenge.rated, seat:lvMyColor, rating:lvMyChallenge.rating, prov:lvMyChallenge.prov});
           setStatus('Desafío enviado a '+(pp.targetName||'tu rival')+' — esperando respuesta…');
         } else {
-          lobbySend({type:'create', id:lvMyChallenge.id, name:lvMyChallenge.name, base:lvMyChallenge.base, inc:lvMyChallenge.inc, rated:lvMyChallenge.rated, seat:lvMyColor, rating:lvMyChallenge.rating, prov:lvMyChallenge.prov});
+          lobbySend({type:'create', id:lvMyChallenge.id, name:lvMyChallenge.name, base:lvMyChallenge.base, inc:lvMyChallenge.inc, rated:lvMyChallenge.rated, seat:lvMyColor, rating:lvMyChallenge.rating, prov:lvMyChallenge.prov, discord:lvMyChallenge.discord});
         }
         lvSetAvailable();   // esperando/​jugando → disponible
         updatePendingPill();
@@ -53863,7 +53922,9 @@ function cvUpdateNagBadge() {
       if(chip){ chip.style.display=''; chip.innerHTML='<div class="lv-id-line">Jugás como '+ttl+'<b>'+esc(u.username)+'</b></div>'+ratHtml; }
       if(nameField) nameField.style.display='none';
       if(anon) anon.style.display='none';
+      if($('lv-discord-field')) $('lv-discord-field').style.display='';
     } else {
+      if($('lv-discord-field')) $('lv-discord-field').style.display='none';
       // Sin cuenta ya no se elige nombre: desde el 23/09 el servidor le pone a cada invitado uno fijo
       // ("Invitado 4821"), el mismo en el lobby y en la partida (antes se podía poner cualquier cosa).
       if(chip){ chip.style.display=''; chip.innerHTML='<div class="lv-id-line">Jugás como <b>invitado</b>: el nombre te lo pone el sitio (por ejemplo, «Invitado 4821»).</div>'; }
@@ -53900,7 +53961,8 @@ function cvUpdateNagBadge() {
     // Color elegido: blancas / negras / al azar (el azar se resuelve acá a un color concreto).
     var seatSel='rnd', on=document.querySelector('#lv-color .lv-seg.lv-seg-on'); if(on) seatSel=on.getAttribute('data-seat');
     lvSeatPref=(seatSel==='w')?'w':(seatSel==='b')?'b':(Math.random()<0.5?'w':'b');
-    lvPubParams={ name:pnm, base:cBase, inc:cInc, rated:cRated, rating:myR?myR.r:null, prov:myR?myR.prov:false };
+    var cDiscord=!!(lvAuthUser() && $('lv-discord') && $('lv-discord').checked);
+    lvPubParams={ name:pnm, base:cBase, inc:cInc, rated:cRated, rating:myR?myR.r:null, prov:myR?myR.prov:false, discord:cDiscord };
     lvMyChallenge=null;
     $('lv-create').disabled=true;
     fetch(base+'/sala/nueva', {method:'POST'})
@@ -53987,7 +54049,7 @@ function cvUpdateNagBadge() {
       // Si soy anfitrión esperando, re-publico mi desafío (el DO lo perdió al caerse el ws).
       if(lvMyChallenge && lvStatus==='waiting'){
         if(lvMyChallenge.target) lobbySend({type:'challenge-direct', id:lvMyChallenge.id, target:lvMyChallenge.target, name:lvMyChallenge.name, base:lvMyChallenge.base, inc:lvMyChallenge.inc, seat:lvMyChallenge.seat, rating:lvMyChallenge.rating, prov:lvMyChallenge.prov});
-        else lobbySend({type:'create', id:lvMyChallenge.id, name:lvMyChallenge.name, base:lvMyChallenge.base, inc:lvMyChallenge.inc, rated:lvMyChallenge.rated!==false, seat:lvMyChallenge.seat, rating:lvMyChallenge.rating, prov:lvMyChallenge.prov});
+        else lobbySend({type:'create', id:lvMyChallenge.id, name:lvMyChallenge.name, base:lvMyChallenge.base, inc:lvMyChallenge.inc, rated:lvMyChallenge.rated!==false, seat:lvMyChallenge.seat, rating:lvMyChallenge.rating, prov:lvMyChallenge.prov, discord:!!lvMyChallenge.discord});
       }
       lvSetAvailable();   // al (re)conectar, informar mi disponibilidad
     };
@@ -54022,6 +54084,12 @@ function cvUpdateNagBadge() {
     else if(m.type==='challenge-add'){ if(m.challenge && !lvChallenges.some(function(c){return c.id===m.challenge.id;})) lvChallenges.push(m.challenge); renderChallenges(); }
     else if(m.type==='challenge-remove'){ lvChallenges=lvChallenges.filter(function(c){return c.id!==m.id;}); renderChallenges(); lvIncRemove(m.id); }
     else if(m.type==='accepted'){ if(m.id===lvAccepting){ lvAccepting=null; join(m.id); } }
+    // 📣 Cómo le fue al aviso en Discord (el desafío está en la lista de la web igual).
+    else if(m.type==='discord'){
+      if(m.ok) lvToast('📣 Tu desafío salió en Discord.');
+      else if(m.espera) lvToast('📣 Ya avisaste en Discord hace poco: podés volver a avisar en '+(+m.espera||1)+' min. Tu desafío está en la lista igual.');
+      else lvToast('📣 No pude avisar en Discord. Tu desafío está en la lista igual.');
+    }
     else if(m.type==='taken'){ if(m.id===lvAccepting){ lvAccepting=null; setLobbyMsg('Ese desafío ya no está disponible 😕'); } lvChallenges=lvChallenges.filter(function(c){return c.id!==m.id;}); renderChallenges(); }
     // ── Desafíos DIRIGIDOS ──
     else if(m.type==='challenge-incoming'){ if(m.fromId && window.aaBlock && window.aaBlock.isBlocked(m.fromId)) return; lvOnIncoming(m); }   // me desafían (descarto si lo tengo bloqueado)
@@ -54620,6 +54688,11 @@ function cvUpdateNagBadge() {
     if(rsegs.length){
       try{ var rv=localStorage.getItem('lv_rated'); if(rv){ rsegs.forEach(function(x){ x.classList.toggle('lv-seg-on', x.getAttribute('data-rated')===rv); }); } }catch(e){}
       rsegs.forEach(function(s){ s.onclick=function(){ rsegs.forEach(function(x){ x.classList.remove('lv-seg-on'); }); this.classList.add('lv-seg-on'); try{ localStorage.setItem('lv_rated', this.getAttribute('data-rated')); }catch(e){} }; });
+    }
+    // 📣 "Avisar también en Discord": se recuerda la elección.
+    if((b=$('lv-discord'))){
+      try{ b.checked=(localStorage.getItem('lv_discord')==='1'); }catch(e){}
+      b.onchange=function(){ try{ localStorage.setItem('lv_discord', this.checked?'1':'0'); }catch(e){} };
     }
     // Al cambiar el ritmo, refrescar el rating mostrado en el chip de identidad.
     if((b=$('lv-tc'))) b.onchange=lvUpdateIdentityUI;

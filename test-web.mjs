@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2391;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2396;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -8157,13 +8157,13 @@ console.log('\n=== Auditoría 23/09 — Fase 4: accesibilidad y prolijidad ===')
   const hastaV = (nombre) => { const i = SRC.indexOf('function ' + nombre + '('); const j = SRC.indexOf('\nfunction ', i + 10); return SRC.slice(i, j); };
   const consts = ['_VB_MIN_PLIES', '_VB_MIN_D', '_VB_MUESTRA', '_VB_TOL', '_VB_PROF', '_CG_PASADA_DEPTH']
     .map((c) => SRC.match(new RegExp('var ' + c + ' = \\d+;'))[0]).join('\n');
-  const V = new Function('_memTournaments', consts + '\n' + SRC.match(/var _EVJ_SAN = [^\n]*/)[0] + '\n'
+  const V = new Function('_memTournaments', 'cv', 'var _tdCtx = null, PGN_DB = {}; function _invalidateDbSearch(){} function exportTabInit(){}\n' + consts + '\n' + SRC.match(/var _EVJ_SAN = [^\n]*/)[0] + '\n'
     + ['parseEvalToken', 'parseMoveEvals', '_moveBody', '_evjInsertar', '_evjLimpiar'].map(hastaV).join('\n') + '\n'
     + ['parsePgnHeaders', '_evjMarca', '_evjEsPropia', '_evjProf', '_evjTok', '_evjContar', '_faWinP',
-       '_vbArmar', '_vbElegirMuestra', '_vbCoincide', '_vbMediana'].map(extraerFuncion).join('\n')
+       '_vbArmar', '_vbElegirMuestra', '_vbCoincide', '_vbMediana', '_evjReemplazarEnPantalla', '_vbUbicarAutor', '_vbEscribirAutor'].map(extraerFuncion).join('\n')
     + '; return { armar: _vbArmar, muestra: _vbElegirMuestra, coincide: _vbCoincide, mediana: _vbMediana, propia: _evjEsPropia, prof: _evjProf,'
-    + ' ins: _evjInsertar, limpiar: _evjLimpiar, ev: parseMoveEvals, cuenta: _evjContar, body: _moveBody, D: _CG_PASADA_DEPTH, MIN: _VB_MIN_PLIES };');
-  const poolV = [], B = V(poolV);
+    + ' ins: _evjInsertar, limpiar: _evjLimpiar, ev: parseMoveEvals, cuenta: _evjContar, body: _moveBody, D: _CG_PASADA_DEPTH, MIN: _VB_MIN_PLIES, autor: _vbEscribirAutor };');
+  const poolV = [], cvV = { rawPgn: '' }, B = V(poolV, cvV);
   const PGN = '[Event "Panamericano"]\n[Site "Lima"]\n[Date "2026.10.10"]\n[Round "1"]\n[White "Rek, Slava"]\n[Black "Romero, Wilbert"]\n[Result "1-0"]\n\n'
     + '1. e4 c6 2. d4 d5 3. e5 Bf5 4. Nf3 e6 5. Be2 c5 6. Be3 Nd7 7. O-O Ne7 1-0';
   const R = Array.from({ length: 14 }, (_, i) => ({ cp: 20 + i * 3, d: 16 }));
@@ -8213,10 +8213,31 @@ console.log('\n=== Auditoría 23/09 — Fase 4: accesibilidad y prolijidad ===')
   const c1 = B.cuenta(); poolV[0].games[0] = nuevo.replace('aa-vis16', 'aa-sf16');
   chk(c1 > 0 && B.cuenta() !== c1, 'cuentan para el aviso de "cambios sin guardar" (y no igual que las del barrido)');
 
+  // Modo autor: lo que analiza el autor va DIRECTO al pool (sin bandeja ni revisión).
+  poolV.length = 0;
+  const PGN2 = PGN.replace('7. O-O Ne7', '7. O-O h6'), copiaCR = PGN2.replace('[Site "Lima"]', '[Site "Chess-Results"]');
+  const lich = PGN.replace('7. O-O Ne7', '7. h3 h6').replace('1. e4 c6', '1. e4 {[%eval 0.3]} c6');
+  poolV.push({ dbPool: true, name: 'Panamericano', games: [PGN, PGN2, lich] });
+  cvV.rawPgn = PGN;
+  const pA = B.armar(PGN, R, 14);
+  chk(B.autor(pA) === true && poolV[0].games[0].indexOf('[EvalSource "aa-vis16"]') >= 0 && B.ev(poolV[0].games[0]).filter(Boolean).length === 14,
+      '🔒 el 📊 del autor queda escrito en la partida del pool (la misma que abrió), con sus 14 evaluaciones');
+  chk(B.autor(pA) === false, 'la segunda vez no la vuelve a escribir (ya tiene evaluaciones igual de buenas)');
+  cvV.rawPgn = copiaCR;
+  chk(B.autor(B.armar(copiaCR, R, 14)) === true && /aa-vis/.test(poolV[0].games[1]) && poolV[0].games[1].indexOf('Chess-Results') < 0,
+      'en pantalla la copia de Chess-Results (otro texto): la encuentra por jugadas en el torneo del pool con ese nombre y escribe en la del pool');
+  const otra = PGN.replace('[Event "Panamericano"]', '[Event "Otro"]').replace('7. O-O Ne7', '7. a3 a6');
+  cvV.rawPgn = otra;
+  chk(B.autor(B.armar(otra, R, 14)) === false, 'si la partida no está en el pool (ronda en vivo sin subir), no hace nada');
+  const lichSin = lich.replace(' {[%eval 0.3]}', '');
+  cvV.rawPgn = lichSin;
+  chk(B.autor(B.armar(lichSin, R, 14)) === false && poolV[0].games[2] === lich, 'la del pool con evaluaciones de Lichess no se toca');
+
   // Enganches.
   const qs = extraerFuncion('_vbQuizasSubir');
-  chk(/if \(!_ondemand \|\|/.test(qs) && /_vbEsPC\(\)/.test(qs) && /aa_vb_env/.test(SRC) && /'Content-Type': 'text\/plain'/.test(qs),
-      '🔒 sólo manda la web publicada desde una PC, una vez por partida, como texto plano (sin pedido previo de CORS)');
+  chk(/if \(_ondemand && \(typeof crypto === 'undefined' \|\| !crypto\.subtle \|\| !_vbEsPC\(\)\)\) return;/.test(qs) && /if \(!_ondemand\) \{ _vbEscribirAutor\(p\); return; \}/.test(qs)
+      && /aa_vb_env/.test(SRC) && /'Content-Type': 'text\/plain'/.test(qs),
+      '🔒 a la bandeja sólo manda la web publicada desde una PC, una vez por partida, como texto plano (sin pedido previo de CORS); en modo autor va directo al pool');
   const pc = extraerFuncion('_vbEsPC');
   chk(/Android\|iPhone\|iPad/.test(pc) && /hardwareConcurrency \|\| 0\) < 4/.test(pc) && /maxTouchPoints/.test(pc), 'teléfonos, tablets (también el iPad que dice ser Mac) y equipos de menos de 4 núcleos no mandan');
   chk((SRC.match(/_vbQuizasSubir\(\);/g) || []).length === 4 && /_vbQuizasSubir\(\);/.test(extraerFuncion('_faRepFinVivo'))
