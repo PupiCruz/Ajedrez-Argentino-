@@ -44684,7 +44684,13 @@ var PRAC_LEVELS = {
 var PRAC_LEVEL_ORDER = ['inicial','principiante','aficionado','intermedio','avanzado','experto','maestro'];
 // Nombres lindos de los temas de medio juego (espejo de MID_LABELS del generador).
 var PRAC_MID_LABELS = {
-  'carlsbad':'Estructura Carlsbad', 'maroczy':'Maróczy (clamp c4+e4)', 'stonewall':'Stonewall',
+  'carlsbad':'Estructura Carlsbad',
+  // 09/10/2026: las posiciones clave de la lección de Carlsbad (📖 Estudiar › Estructuras), una etiqueta por parte.
+  'carlsbad:alfil':'Estructura Carlsbad · el alfil de casillas negras', 'carlsbad:minorias':'Estructura Carlsbad · ataque de minorías',
+  'carlsbad:defensa':'Estructura Carlsbad · la defensa de las negras', 'carlsbad:e4':'Estructura Carlsbad · la ruptura e4 y Pillsbury',
+  'carlsbad:ataque-negro':'Estructura Carlsbad · el ataque de las negras', 'carlsbad:b6':'Estructura Carlsbad · negras con a7-b6-c7',
+  'carlsbad:al-reves':'Estructura Carlsbad · al revés (Caro-Kann)',
+  'maroczy':'Maróczy (clamp c4+e4)', 'stonewall':'Stonewall',
   'benoni':'Benoni (cuña en d5)', 'erizo':'Erizo (Hedgehog)', 'peon-dama-aislado':'Peón dama aislado',
   'peones-colgantes':'Peones colgantes', 'peon-retrasado':'Peón retrasado', 'peon-pasado':'Peón pasado',
   'peon-aislado':'Peón aislado', 'peones-doblados':'Peones doblados', 'centro-cerrado':'Centro cerrado',
@@ -45008,7 +45014,37 @@ function pracRenderSource() {
   if (s.round) meta.push('Ronda ' + escHtml(String(s.round)));
   var d = puzFmtDate(s.date); if (d) meta.push(d);
   if (meta.length) h += '<div class="meta">' + meta.join(' · ') + '</div>';
+  h += _pracLeccionHtml(prac.cur);
   el.innerHTML = h;
+}
+// 📖 Posición sacada de una lección (09/10/2026, la de Carlsbad): de qué parte es, la pista del plan (escondida hasta
+// que la pidas) y un botón para ir a la lección.
+function _pracLeccionHtml(p) {
+  var L = p && p.leccion; if (!L || !L.id) return '';
+  var bs = 'background:none;border:none;color:var(--gold);font:inherit;font-size:12px;font-weight:600;cursor:pointer;padding:0';
+  return '<div class="meta" style="margin-top:6px">📖 De la lección <b>' + escHtml(L.titulo || 'de Estudiar') + '</b>'
+    + (L.parteTitulo ? ' · ' + escHtml(L.parteTitulo) : '') + '</div>'
+    + '<div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:4px">'
+    + (L.pista ? '<button type="button" style="' + bs + '" onclick="var x=document.getElementById(\'prac-pista\');if(x){x.hidden=!x.hidden}">💡 ¿Cuál es el plan?</button>' : '')
+    + '<button type="button" style="' + bs + '" onclick="pracVerLeccion()">Ver la lección</button></div>'
+    + (L.pista ? '<div id="prac-pista" hidden style="margin-top:6px;font-size:12.5px;line-height:1.45;color:var(--text2)">' + escHtml(L.pista) + '</div>' : '');
+}
+function pracVerLeccion() {
+  var L = prac.cur && prac.cur.leccion; if (!L || !L.id || typeof goTo !== 'function') return;
+  var id = String(L.id).replace(/[^a-z0-9-]/g, ''), parte = L.parte || 0;   // parte 1 = el primer título .est-h2
+  _pracHistoryPushed = false; _pracDoClose();
+  _estVista = 'leccion:' + id;
+  var btn = null, bs = document.querySelectorAll('.nav-btn');
+  for (var j = 0; j < bs.length; j++) if (/goTo\('favoritos'/.test(bs[j].getAttribute('onclick') || '')) { btn = bs[j]; break; }
+  goTo('favoritos', btn);
+  try { _apUrlSync(true); } catch (e) {}
+  if (!parte) return;
+  var n = 0, t = setInterval(function () {   // la lección se baja aparte: esperar a que esté pintada (como el Pupi)
+    var hs = document.querySelectorAll('#est-finales .est-h2');
+    if (hs.length < parte && ++n < 40) return;
+    clearInterval(t);
+    setTimeout(function () { var h = hs[parte - 1]; if (h) { h.style.scrollMarginTop = '80px'; h.scrollIntoView({ block: 'start' }); } }, 450);
+  }, 150);
 }
 function pracSetStatus(kind, ic, txt) {
   var fb = document.getElementById('prac-status');
@@ -45380,6 +45416,7 @@ function pracResolveSrcGame(p) {
   prac._srcGame = null; prac._srcGameMaybe = false;
   if (p.origen) return;   // 🤖 del visor (la partida está abajo) o compartida por link: no hay que buscarla
   if (p.gameRef && p.gameRef.t != null) { prac._srcGameMaybe = true; return; }       // ya enlazado: botón directo, sin índice
+  if (p.leccion && p.leccion.id) { prac._srcGameMaybe = true; return; }              // 📖 de una lección: el PGN lo trae ella
   if (_ondemand && !window.__GAMES_INDEX__) { prac._srcGameMaybe = true; return; }   // publicado sin enlazar: se resuelve al clic
   try { prac._srcGame = pracFindGame(p); } catch(e) {}
 }
@@ -45429,6 +45466,16 @@ async function pracOpenSourceGame() {
     if (!prac.cur || prac.cur.fen !== fen) return;
     var pgn = puzPickGameFromTour(games, p.gameRef.gi, p.source || {});
     if (pgn) { g = pgn; t = p.gameRef.t; gi = p.gameRef.gi; }
+  }
+  // 1b) De una lección y sin partida en la base (las de los libros y la GigaBase): el PGN viene en la lección.
+  if (!g && !p.gameRef && p.leccion && p.leccion.id && typeof _estDatos !== 'undefined') {
+    pracSetStatus('think', '🔎', 'Cargando la partida original…');
+    var lid = String(p.leccion.id).replace(/[^a-z0-9-]/g, '');
+    if (!_estDatos[lid]) { try { var rl = await fetch('data/lecciones/' + lid + '.json' + _dataV()); if (rl.ok) _estDatos[lid] = await rl.json(); } catch (e) {} }
+    if (!prac.cur || prac.cur.fen !== fen) return;
+    var le = _estDatos[lid] && _estDatos[lid].ej && (_estDatos[lid].ej[p.leccion.k] || [])[p.leccion.i];
+    if (le && le.pgn) g = le.pgn;
+    else { pracSetStatus('bad', '🔎', 'No encontré la partida original.'); return; }
   }
   // 2) Sin puntero (o no se pudo): índice del pool (autor: en memoria; publicado: lo carga al pedir).
   if (!g) {
@@ -61940,7 +61987,7 @@ function cvUpdateNagBadge() {
     var mios = t.pz.filter(function (q) { return q.p === 'p' && q.c === t.def; }), suyos = t.pz.filter(function (q) { return q.p === 'p' && q.c === t.torre; });
     var blanco = t.def === 'w', mejor = null;
     mios.forEach(function (q) {
-      var fila = blanco ? q.y : 7 - q.y; if (fila < 4) return;
+      var fila = blanco ? q.y : 7 - q.y; if (fila < 3) return;   // desde la 4.ª (09/10: la lección marca todos; la 2.ª y 3.ª no asustan)
       var libre = !suyos.some(function (s) { return Math.abs(s.x - q.x) <= 1 && (blanco ? s.y > q.y : s.y < q.y); });
       if (libre && (!mejor || fila > (blanco ? mejor.y : 7 - mejor.y))) mejor = q;
     });
@@ -61952,6 +61999,11 @@ function cvUpdateNagBadge() {
     return null;
   }
   function tmClara(a) { return (a.x + a.y) % 2 === 1; }   // a1 (0,0) es oscura
+  // Parejas de peones trabados: un peón blanco con uno negro justo delante (como la lección, parte 6).
+  function tmTrabadas(t) {
+    var neg = {}; t.pz.forEach(function (q) { if (q.p === 'p' && q.c === 'b') neg[q.x + ',' + q.y] = 1; });
+    return t.pz.filter(function (q) { return q.p === 'p' && q.c === 'w' && neg[q.x + ',' + (q.y + 1)]; }).length;
+  }
   // Una vez por partida (y cuando llegan más jugadas): dónde empieza el final, cuándo se quedan sin peones,
   // cuándo el rey llega a una esquina (contra el alfil) o el caballo se separa del rey.
   function finalTM() {
@@ -61972,6 +62024,9 @@ function cvUpdateNagBadge() {
     if (s < 0) return null;
     var e = s; while (e + 1 < N.length && igual(pos[e + 1], pos[s])) e++;
     var R = { s: s, e: e, hastaElFin: e === fin, t: pos[s] };
+    // 09/10: devolver la calidad (parte 1 de la lección): el final se termina porque se cambian la torre y la pieza y, dos
+    // semijugadas después, quedan sólo reyes y peones.
+    if (e + 2 <= fin && tmPiezas(N[e + 2].fen).every(function (q) { return q.p === 'p' || q.p === 'k'; })) R.devolver = { i: e + 1 };
     // Sin peones: desde dónde (si dura al menos 4 semijugadas o llega al final).
     if (pos[s].flancos !== 'sin') for (var k = s + 1; k <= e; k++) if (pos[k].flancos === 'sin') {
       if (e - k + 1 >= 4 || e === fin) R.sin = k;
@@ -62020,6 +62075,7 @@ function cvUpdateNagBadge() {
     if (R.sin != null) poner(R.sin, 'sin');
     if (R.esq && R.esq.i !== (R.sin != null ? R.sin : R.s)) poner(R.esq.i, 'esq');
     if (R.sep) poner(R.sep.i, 'sep');
+    if (R.devolver) poner(R.devolver.i, 'devolver');
     return out;
   }
   function tmCuadro(t) {   // { t, d, p } en % de lo que pasó en la base con ese final, o null
@@ -62100,6 +62156,20 @@ function cvUpdateNagBadge() {
       else consejo = 'Casi siempre gana la torre, pero cada peón que se cambia acerca las tablas.';
       var pas = tmPasado(t), extra = '';
       if (pas) extra = ' Ojo con el pasado de ' + tmSq(pas) + ': a veces la pieza da la sorpresa.';
+      // 09/10 (probando con las partidas de la lección): lo que enseñan las partes 3 y 6 y el Pupi no decía.
+      var tr = tmTrabadas(t);
+      if (tr >= 3) {
+        parte = 5;
+        extra += t.pieza === 'caballo' ? ' Y hay ' + tr + ' parejas de peones <b>trabadas</b>: la torre no tiene por dónde entrar, y así el caballo gana casi el doble de veces que de costumbre.'
+          : ' Y hay ' + tr + ' parejas de peones <b>trabadas</b>: el alfil queda encerrado detrás de sus propios peones, y así la torre gana más que nunca.';
+      } else if (t.pieza === 'alfil' && t.flancos === 'uno' && t.pp >= 1) {
+        var mios = t.pz.filter(function (q) { return q.p === 'p' && q.c === t.def; });
+        var mismo = mios.filter(function (q) { return tmClara(q) === tmClara(t.menor); }).length;
+        if (!mismo) { parte = 2; extra += t.pp === 2 && t.pt === 2
+          ? ' Los dos peones de ' + D + ' están en casillas del color contrario al alfil: con dos contra dos, puede ser <b>la fortaleza que hay que conocer</b> (Dvoretsky).'
+          : ' Los peones de ' + D + ' están todos en casillas del color contrario al alfil: así arman una <b>barrera</b> que el rey rival no puede cruzar.'; }
+        else if (t.pp === 1 && t.pt === 1) { parte = 2; extra += ' Ojo: el peón de ' + D + ' está en una casilla <b>del color del alfil</b>. Así casi todas se pierden: el rey rival entra por las casillas del otro color.'; }
+      }
       return { cara: 'explica', sym: '🏁', symColor: '#b45309', titulo: '¡Final de torre contra ' + t.pieza + '!',
                cuerpo: quien + donde + (c ? ' ' + tmNumeros(c) : '') + '<div style="margin-top:4px">' + consejo + extra + '</div>', acc: [tmBoton(parte)] };
     }
@@ -62111,6 +62181,8 @@ function cvUpdateNagBadge() {
       return { cara: 'preocupado', sym: '🏁', symColor: '#c0262d', titulo: '¡Uy, la esquina mala!',
         cuerpo: cap(D) + ' llevó el rey a ' + q.sq + ', del mismo color que el alfil: ahí la torre puede ganar. La buena era ' + tmEsquinas(q.t) + '.', acc: [tmBoton(3)] };
     }
+    if (que === 'devolver') return { cara: 'explica', sym: '🏁', symColor: '#b45309', titulo: '¡Devolvió la calidad!',
+      cuerpo: 'Se cambiaron la torre y la pieza, y queda un final de peones. Muchas veces es la forma más limpia de ganar con la torre: si el final de peones está ganado, se terminó la discusión. Por eso, antes de cada cambio, hay que mirar cómo quedaría.', acc: [tmBoton(0)] };
     if (que === 'sep') return { cara: 'ceja', sym: '🏁', symColor: '#c0262d', titulo: R.sep.otra ? '¡Otra vez se separó el caballo!' : '¡Se separó el caballo del rey!',
       cuerpo: 'El caballo se alejó de su rey: ahora la torre puede ir a buscarlo o encerrarlo. Lejos del rey, el caballo se pierde.', acc: [tmBoton(4)] };
     return null;
@@ -62147,16 +62219,24 @@ function cvUpdateNagBadge() {
     if (cnt.w.r !== 1 || cnt.b.r !== 1 || (cnt.w.p || 0) + (cnt.b.p || 0) !== 1) return null;
     var lado = cnt.w.p ? 'w' : 'b', o = { lado: lado };
     pz.forEach(function (q) { o[(q.c === lado ? 'A' : 'D') + q.p] = { x: q.x, y: lado === 'w' ? q.y : 7 - q.y, sq: tmSq(q) }; });
-    if (!o.Ap || o.Ap.x === 0 || o.Ap.x === 7) return null;
+    if (!o.Ap) return null;
     return o;
   }
+  // 09/10 (probando el Pupi con las partidas de la lección): el peón de torre también entra, porque la parte 5 (la
+  // última fila) lo trae; pero sin Lucena, torre detrás, jaques de costado ni rey cortado, que son de otros peones.
   function tpFrente(o) { return Math.abs(o.Dk.x - o.Ap.x) <= 1 && o.Dk.y > o.Ap.y && o.Dk.y >= 6; }
-  function tpTipo(o) { var x = o.Ap.x; return x === 1 || x === 6 ? 'caballo' : x === 2 || x === 5 ? 'alfil' : 'central'; }
+  function tpTipo(o) { var x = o.Ap.x; return x === 0 || x === 7 ? 'torre' : x === 1 || x === 6 ? 'caballo' : x === 2 || x === 5 ? 'alfil' : 'central'; }
+  // ¿A cuántas columnas está cortado el rey que defiende? (0 = no está cortado). Como la parte 7 de la lección.
+  function tpCorte(o) {
+    var cols = Math.abs(o.Dk.x - o.Ap.x) - 1, corta = (o.Ar.x - o.Dk.x) * (o.Ar.x - o.Ap.x) < 0;
+    return corta && cols >= 1 && tpTipo(o) !== 'caballo' && tpTipo(o) !== 'torre' && o.Ap.y >= 3 ? cols : 0;
+  }
   function tpCorto(o) { return (o.Ap.x >= 4) === (o.Dk.x > o.Ap.x); }   // ¿el rey que defiende está en el lado corto?
   function tpPatrones(o, mueve) {
     var p = o.Ap, Ka = o.Ak, Kd = o.Dk, Rd = o.Dr, Ra = o.Ar, out = {};
     if (tpFrente(o) && Rd.y === 5 && p.y <= 4 && Ka.y <= 4) out.philidor = 1;
     if (tpFrente(o) && Rd.y === 7 && p.y >= 3) out.ultima = 1;
+    if (tpTipo(o) === 'torre') return out;   // el peón de torre: sólo Philidor y la última fila
     if (p.y === 6 && Ka.x === p.x && Ka.y === 7 && Math.abs(Kd.x - p.x) >= 2) out.lucena = 1;
     if (p.x >= 2 && p.x <= 5 && p.y === 4 && Rd.x === p.x && Rd.y < p.y && Kd.y >= 6 && Math.abs(Kd.x - p.x) <= 2
         && Math.abs(Ka.x - p.x) <= 1 && Ka.y >= 4 && !((Ra.x - Kd.x) * (Ra.x - p.x) < 0)) out.detras = 1;
@@ -62190,6 +62270,10 @@ function cvUpdateNagBadge() {
         R.pat[nom] = { i: k, o: pos[k] };
       }
     }
+    // El rey cortado, si no lo estaba al empezar: la primera vez que dura dos posiciones.
+    if (!tpCorte(pos[s])) for (var k2 = s + 1; k2 < e; k2++) {
+      var ck = tpCorte(pos[k2]); if (ck && tpCorte(pos[k2 + 1])) { R.corte = { i: k2, o: pos[k2], cols: ck }; break; }
+    }
     g.tp = R;
     if (typeof _estDatos !== 'undefined' && !_estDatos[TP_LECCION] && !P.tpBajando) {
       P.tpBajando = true;
@@ -62209,12 +62293,23 @@ function cvUpdateNagBadge() {
     ['philidor', 'detras', 'lateral', 'ultima', 'lucena'].forEach(function (nom) {
       var q = R.pat[nom]; if (q && q.i !== R.s) poner(q.i, nom);   // si ya estaba al empezar, lo dice el de entrada
     });
+    if (R.corte) poner(R.corte.i, 'corte');
     return out;
   }
   function tpEj() { var D = typeof _estDatos !== 'undefined' && _estDatos[TP_LECCION]; return D && D.ej; }
   function tpFila(clave, et) { var ej = tpEj(), xs = ej && ej[clave]; return xs ? xs.filter(function (f) { return f.et === et; })[0] : null; }
   function tpBoton(parte) {
     return ['📖 Ver la lección', 'window.__pupi.leccion(\'' + TP_LECCION + '\',' + parte + ')', false, 'La lección de 📖 Estudiar › Finales: Lucena y Philidor'];
+  }
+  // La torre detrás del peón (parte 3 de la lección). Con el rey atacante todavía en la 5.ª es Kling y Horwitz: con el rey
+  // cerca, tablas, esté donde esté. Recién con el rey atacante en la 6.ª importa el lado: el corto salva (Karstedt) y el
+  // largo, o en la columna del peón, se pierde casi la mitad (09/10: antes decía "lado largo, peligro" en las de Kling y Horwitz).
+  function tpDetras(o, D) {
+    var torre = 'la torre detrás del peón (' + o.Dr.sq + ')';
+    if (o.Ak.y <= 4) return { ok: true, txt: cap(D) + ' tiene ' + torre + ' y el rey cerca, con el rey atacante todavía en la 5.ª: el peón no puede avanzar sin quedar colgado. Es la defensa de Kling y Horwitz: tablas. Cuando el rey atacante llegue a la 6.ª, el rey que defiende tiene que estar en el lado corto.' };
+    var ck = tpFila('cuadroKarstedt', 'Rey en el lado corto'), lk = tpFila('cuadroKarstedt', 'Rey en el lado largo (o en el centro)');
+    if (tpCorto(o)) return { ok: true, txt: cap(D) + ' tiene ' + torre + ' y el rey en el lado corto: así se salva' + (ck ? ' (' + ck.d + '% de tablas en nuestra base)' : '') + ', aunque el rey atacante ya llegó a la 6.ª. Es la defensa de Kling y Horwitz, que estudió Karstedt.' };
+    return { ok: false, txt: cap(D) + ' tiene ' + torre + ', pero con el rey atacante ya en la 6.ª su rey no está en el lado corto. Así se salva bastante menos' + (lk ? ' (' + lk.d + '% de tablas)' : '') + ': la torre ya no tiene lugar para los jaques de costado.' };
   }
   // Las partes de la lección (índice del título .est-h2): 1 Philidor, 2 torre detrás, 3 lado largo, 4 última fila,
   // 5 Lucena, 6 rey cortado.
@@ -62225,10 +62320,25 @@ function cvUpdateNagBadge() {
     if (que === 'entra') {
       var o = R.t, txt = A + ' tiene el peón de más (' + o.Ap.sq + ').', parte = 5;
       // si la posición de libro ya está en la entrada, se dice acá (no hay otro comentario para ella)
-      var ya = function (nom) { return R.pat[nom] && R.pat[nom].i === R.s; };
+      var ya = function (nom) { return R.pat[nom] && R.pat[nom].i === R.s; }, tipo = tpTipo(o);
       if (tpFrente(o) && ya('philidor')) {
         parte = 1;
         txt += ' Y ' + D + ' ya tiene armado <b>Philidor</b>: el rey delante del peón y la torre en su 3.ª fila. En nuestra base, así se salvó el 95%.';
+      } else if (tpFrente(o) && ya('ultima')) {
+        // 09/10: si al empezar ya defiende desde la última fila, decir si alcanza (antes decía sólo "la receta es Philidor").
+        parte = 4;
+        var fu0 = tpFila('cuadroUltima', { torre: 'Peón de torre', caballo: 'Peón de caballo', alfil: 'Peón de alfil', central: 'Peón central' }[tipo]);
+        if (tipo === 'torre' || tipo === 'caballo') txt += ' ' + cap(D) + ' tiene el rey delante y la torre en la <b>última fila</b>: con peón de ' + tipo + ', esa defensa alcanza'
+          + (fu0 ? ' (en nuestra base, ' + fu0.d + '% de tablas)' : '') + '.';
+        else txt += ' ' + cap(D) + ' defiende con el rey delante y la torre en la <b>última fila</b>, pero contra un peón ' + (tipo === 'alfil' ? 'de alfil' : 'central')
+          + ' eso no alcanza' + (fu0 ? ' (en nuestra base, ' + fu0.t + '% de esas posiciones ya estaban perdidas)' : '') + '. La buena era Philidor: la torre en su 3.ª fila.';
+      } else if (tipo === 'torre') {
+        parte = 4;
+        txt += tpFrente(o) ? ' Con peón de torre y el rey de ' + D + ' delante, esto es tablas: alcanza hasta con la torre en la última fila.'
+          : ' Con peón de torre, a ' + D + ' le alcanza muchas veces con llevar el rey delante del peón.';
+      } else if (ya('detras')) {   // 09/10: antes que el Philidor genérico (Keymer–Gukesh: el rey delante Y la torre detrás)
+        parte = 2;
+        txt += ' ' + tpDetras(o, D).txt;
       } else if (tpFrente(o)) {
         parte = 1;
         txt += ' Pero el rey de ' + D + ' está delante del peón: con buena defensa, esto es tablas. La receta es <b>Philidor</b>: la torre en su 3.ª fila, esperando.';
@@ -62236,9 +62346,6 @@ function cvUpdateNagBadge() {
       } else if (ya('lucena')) {
         parte = 5;
         txt += ' ¡Y ya es la <b>posición Lucena</b>! Ahora hay que hacer el puente: un jaque para alejar al rey rival y la torre a la 4.ª fila. En nuestra base, así se ganó el 99%.';
-      } else if (ya('detras')) {
-        parte = 2;
-        txt += ' ' + cap(D) + ' tiene la torre detrás del peón (' + o.Dr.sq + ')' + (tpCorto(o) ? ' y el rey en el lado corto: así se salva.' : ', pero el rey en el lado largo: peligro.');
       } else {
         var cols = Math.abs(o.Dk.x - o.Ap.x) - 1, corta = (o.Ar.x - o.Dk.x) * (o.Ar.x - o.Ap.x) < 0;
         if (corta && cols >= 1 && tpTipo(o) !== 'caballo' && o.Ap.y >= 3) {
@@ -62246,20 +62353,29 @@ function cvUpdateNagBadge() {
           var f = tpFila('cuadroCorte', cols === 1 ? 'Cortado a 1 columna' : cols === 2 ? 'Cortado a 2 columnas' : 'Cortado a 3 columnas o más');
           txt += ' El rey de ' + D + ' está <b>cortado a ' + (cols >= 3 ? 'tres columnas o más' : cols === 1 ? 'una columna' : 'dos columnas') + '</b> por la torre.'
             + (f ? ' Con el peón en la mitad del tablero, así la tablebase da ganado ' + tmDeCada10(f.t) + ' de cada 10.' : '');
+        } else if (ya('lateral')) {
+          // 09/10: los jaques de costado ya están al empezar: lo dice el comentario de "lateral" (si no, se perdía).
+          var lat = tpComentario(i, 'lateral');
+          if (lat) { lat.cuerpo = txt + ' ' + lat.cuerpo; return lat; }
+          txt += ' El rey de ' + D + ' no llega a ponerse delante del peón: ojo, que se puede venir la posición Lucena.';
         } else txt += ' El rey de ' + D + ' no llega a ponerse delante del peón: ojo, que se puede venir la posición Lucena.';
       }
       var fi = tpFila('cuadroInicio', 'Empieza en tablas (según la tablebase)');
       if (fi && tpFrente(o) && !ya('philidor')) txt += ' En nuestra base, 1 de cada 10 de estos finales que eran tablas se terminó perdiendo: defender esto parece fácil, pero hay que saber cómo.';
       return { cara: 'explica', sym: tit, symColor: col, titulo: '¡Final de torre y peón contra torre!', cuerpo: txt, acc: [tpBoton(parte)] };
     }
+    if (que === 'corte') {   // 09/10: el rey quedó cortado después de empezar el final
+      var co = R.corte, fc = tpFila('cuadroCorte', co.cols === 1 ? 'Cortado a 1 columna' : co.cols === 2 ? 'Cortado a 2 columnas' : 'Cortado a 3 columnas o más');
+      return { cara: co.cols >= 2 ? 'preocupado' : 'explica', sym: tit, symColor: co.cols >= 2 ? '#c0262d' : col, titulo: '¡El rey quedó cortado!',
+        cuerpo: 'La torre de ' + A + ' le cortó el paso al rey de ' + D + ': quedó a ' + (co.cols >= 3 ? 'tres columnas o más' : co.cols === 1 ? 'una columna' : 'dos columnas') + ' del peón, del otro lado de la torre.'
+          + (fc ? ' Con el peón en la mitad del tablero, así la tablebase da ganado ' + tmDeCada10(fc.t) + ' de cada 10.' : ''), acc: [tpBoton(6)] };
+    }
     if (que === 'philidor') return { cara: 'contento', sym: tit, symColor: '#15803d', titulo: una(['¡Philidor de libro!', '¡Ahí está Philidor!'], sem),
       cuerpo: cap(D) + ' armó la defensa de Philidor: el rey delante del peón y la torre en su 3.ª fila. En nuestra base, así se salvó el 95%. Cuando el peón avance, la torre se va atrás de todo a dar jaques.', acc: [tpBoton(1)] };
     if (que === 'detras') {
-      var od = R.pat.detras.o, ck = tpFila('cuadroKarstedt', 'Rey en el lado corto'), lk = tpFila('cuadroKarstedt', 'Rey en el lado largo (o en el centro)');
-      if (tpCorto(od)) return { cara: 'contento', sym: tit, symColor: '#15803d', titulo: 'La torre detrás del peón',
-        cuerpo: cap(D) + ' puso la torre detrás del peón (' + od.Dr.sq + ') y tiene el rey en el lado corto: así se salva' + (ck ? ' (' + ck.d + '% de tablas en nuestra base)' : '') + '. Es la defensa de Kling y Horwitz.', acc: [tpBoton(2)] };
-      return { cara: 'preocupado', sym: tit, symColor: '#c0262d', titulo: 'La torre detrás del peón… pero el rey en el lado largo',
-        cuerpo: cap(D) + ' puso la torre detrás del peón, pero el rey quedó en el lado largo. Así se salva bastante menos' + (lk ? ' (' + lk.d + '% de tablas)' : '') + ': la torre ya no tiene lugar para los jaques de costado.', acc: [tpBoton(2)] };
+      var dt = tpDetras(R.pat.detras.o, D);
+      return dt.ok ? { cara: 'contento', sym: tit, symColor: '#15803d', titulo: 'La torre detrás del peón', cuerpo: dt.txt, acc: [tpBoton(2)] }
+        : { cara: 'preocupado', sym: tit, symColor: '#c0262d', titulo: 'La torre detrás del peón… pero el rey en el lado largo', cuerpo: dt.txt, acc: [tpBoton(2)] };
     }
     if (que === 'lateral') {
       var ol = R.pat.lateral.o, dist = Math.abs(ol.Dr.x - ol.Ap.x), lc = tpFila('cuadroLado', 'Rey en el lado corto, torre en el largo'), ll = tpFila('cuadroLado', 'Rey en el lado largo, torre en el corto');
@@ -62273,8 +62389,8 @@ function cvUpdateNagBadge() {
     }
     if (que === 'ultima') {
       var ou = R.pat.ultima.o, tp = tpTipo(ou);
-      if (tp === 'caballo') return { cara: 'contento', sym: tit, symColor: '#15803d', titulo: 'La torre en la última fila',
-        cuerpo: cap(D) + ' tiene el rey delante del peón y la torre en la última fila. Con peón de caballo, esta defensa alcanza.', acc: [tpBoton(4)] };
+      if (tp === 'caballo' || tp === 'torre') return { cara: 'contento', sym: tit, symColor: '#15803d', titulo: 'La torre en la última fila',
+        cuerpo: cap(D) + ' tiene el rey delante del peón y la torre en la última fila. Con peón de ' + tp + ', esta defensa alcanza.', acc: [tpBoton(4)] };
       var fu = tpFila('cuadroUltima', tp === 'alfil' ? 'Peón de alfil' : 'Peón central');
       return { cara: 'preocupado', sym: tit, symColor: '#c0262d', titulo: '¡Ojo con la última fila!',
         cuerpo: cap(D) + ' defiende con la torre en la última fila, pero contra un peón ' + (tp === 'alfil' ? 'de alfil' : 'central') + ' eso no alcanza: el atacante tiene lugar para jaquear de los dos lados.'
@@ -62296,16 +62412,169 @@ function cvUpdateNagBadge() {
     return '';
   }
 
+  // ── ♟️ Medio juego: la estructura Carlsbad (09/10, pedido del autor: "que el Pupi aprenda de la Carlsbad") ─────
+  // Las MISMAS reglas que la lección de 📖 Estudiar › Estructuras (prototipos/colecciones/carlsbad): la estructura se
+  // reconoce por los PEONES (d4-e3 sin peón c blanco contra d5-c6 sin peón e negro; con a7-b6-c7 si el peón c negro
+  // está en c7 con b6), no por el nombre de la apertura, y tiene que durar 6 semijugadas. Al revés (Caro-Kann del
+  // cambio): d4-c3 contra d5-e6. Momentos: entra (+ dónde está el alfil de casillas negras), b5 (ataque de minorías, o
+  // fijar c7), c5 (…c5 contra b5), e4 (la ruptura) y aislado (si después de …dxe4 el de d4 se queda solo), ce4 (caballo
+  // negro en e4, con …f5 o sin), torre6 (torre negra en g6/h6), cc4/cd6 (la defensa con el caballo), pills (Ce5 + f4).
+  // Sólo mira los FEN de cada jugada: no corre chess.js ni el módulo. Los números salen de la lección (se baja aparte).
+  var CB_LECCION = 'carlsbad';
+  function cbGrid(fen) {
+    var o = {};
+    tmPiezas(fen).forEach(function (q) { o[tmSq(q)] = q.c === 'w' ? q.p.toUpperCase() : q.p; });
+    return o;
+  }
+  function cbCol(o, f, pz) { for (var r = 1; r <= 8; r++) if (o[f + r] === pz) return true; return false; }
+  function cbTipo(o) {   // 'gd' | 'b6' | 'reves' | null
+    if (o.d4 === 'P' && o.d5 === 'p' && o.e3 === 'P' && !cbCol(o, 'c', 'P') && !cbCol(o, 'e', 'p')) {
+      if (o.c6 === 'p') return 'gd';
+      if (o.c7 === 'p' && o.b6 === 'p' && !cbCol(o, 'c', 'P')) return 'b6';
+    }
+    if (o.d4 === 'P' && o.d5 === 'p' && o.c3 === 'P' && o.e6 === 'p' && !cbCol(o, 'e', 'P') && !cbCol(o, 'c', 'p')) return 'reves';
+    return null;
+  }
+  function cbPiezas(o) { var n = 0; for (var k in o) if ('QRBNqrbn'.indexOf(o[k]) >= 0) n++; return n; }
+  function cbAlfil(o) {   // el alfil blanco de casillas negras: 'afuera' | 'adentro' | 'cambiado'
+    var sq = null;
+    for (var k in o) if (o[k] === 'B' && ((k.charCodeAt(0) - 97) + (+k[1] - 1)) % 2 === 0) sq = k;
+    if (!sq) return { donde: 'cambiado' };
+    if (['c1', 'd2', 'e1', 'b2'].indexOf(sq) >= 0) return { donde: 'adentro', sq: sq };
+    return +sq[1] >= 3 ? { donde: 'afuera', sq: sq } : { donde: 'otro', sq: sq };
+  }
+  function finalCB() {
+    var g = P.g, N = _fa.nodes; if (!g || !N.length) return null;
+    var firma = N.length + '|' + N[N.length - 1].fen;
+    if (g.cbFirma === firma) return g.cb;
+    g.cbFirma = firma; g.cb = null;
+    var G = N.map(function (n) { return cbGrid(n.fen); }), T = G.map(cbTipo), s = -1;
+    for (var i = 0; i < N.length && i <= 60; i++) {
+      if (!T[i] || cbPiezas(G[i]) < 8) continue;
+      var j = i; while (j + 1 < N.length && T[j + 1] === T[i]) j++;
+      if (j - i + 1 >= TM_DURA) { s = i; break; }
+      i = j;
+    }
+    if (s < 0) return null;
+    var R = { s: s, tipo: T[s], ev: {} };
+    if (R.tipo !== 'reves') {
+      var a6 = Math.min(s + 6, N.length - 1);
+      R.alfil = cbAlfil(T[a6] ? G[a6] : G[s]);
+      var antes = function (k) { return k > 0 ? G[k - 1] : null; };
+      var blancas = function (k) { return N[k].fen.split(' ')[1] === 'b'; };   // la jugada k la hicieron las blancas
+      var quieto = function (k, sq, pz, d) { for (var m = k; m <= k + d; m++) if (!G[m] || G[m][sq] !== pz) return false; return true; };
+      for (var k = s; k < N.length && k <= s + 70; k++) {
+        var A = antes(k), B = G[k], ev = R.ev; if (!A) continue;
+        var estaba = !!(T[k - 1] || (A.d4 === 'P' && A.d5 === 'p' && !cbCol(A, 'c', 'P')));
+        if (cbPiezas(B) < 6) break;   // ya es un final: lo comentan otros
+        if (blancas(k)) {
+          if (!ev.b5 && A.b4 === 'P' && B.b5 === 'P' && !B.b4 && estaba && (A.c6 === 'p' || (A.c7 === 'p' && A.b6 === 'p'))) ev.b5 = { i: k, c7: A.c6 !== 'p' };
+          if (!ev.e4 && A.e3 === 'P' && B.e4 === 'P' && !B.e3 && T[k - 1]) ev.e4 = { i: k, f3: A.f3 === 'P' };
+          if (!ev.pills && B.e5 === 'N' && B.f4 === 'P' && B.d4 === 'P' && B.d5 === 'p' && !(A.e5 === 'N' && A.f4 === 'P')) ev.pills = { i: k };
+        } else {
+          if (!ev.c5 && ev.b5 && k - ev.b5.i <= 3 && A.c6 === 'p' && B.c5 === 'p' && B.b5 === 'P') ev.c5 = { i: k };
+          if (!ev.ce4 && k <= 32 && B.e4 === 'n' && A.e4 !== 'n' && T[k] && quieto(k, 'e4', 'n', 2)) ev.ce4 = { i: k, f5: B.f5 === 'p' || (G[k + 4] || {}).f5 === 'p' };
+          if (!ev.torre6 && ['g6', 'h6'].some(function (q) { return B[q] === 'r' && A[q] !== 'r'; }) && B.d5 === 'p' && B.d4 === 'P') ev.torre6 = { i: k, sq: B.g6 === 'r' ? 'g6' : 'h6' };
+          // …o la dama a h4/h5 con el caballo en e4 (Namzhil–Ståhlberg, Leipzig 1960)
+          if (!ev.torre6 && ['h4', 'h5'].some(function (q) { return B[q] === 'q' && A[q] !== 'q'; }) && B.e4 === 'n' && B.d5 === 'p' && B.d4 === 'P') ev.torre6 = { i: k, sq: B.h4 === 'q' ? 'h4' : 'h5', dama: true };
+          if (!ev.cc4 && B.c4 === 'n' && A.c4 !== 'n' && cbCol(B, 'b', 'P') && B.d5 === 'p' && quieto(k, 'c4', 'n', 2)) ev.cc4 = { i: k };
+          if (!ev.cd6 && B.d6 === 'n' && A.d6 !== 'n' && T[k] === 'gd' && (B.b4 === 'P' || (G[k + 1] || {}).b4 === 'P') && quieto(k, 'd6', 'n', 2)) ev.cd6 = { i: k };
+        }
+        // Después de e4 y …dxe4: el peón de d4 se queda solo (sin peones blancos en c ni e) durante 10 semijugadas.
+        if (ev.e4 && !ev.aislado && k > ev.e4.i && k <= ev.e4.i + 6 && B.d4 === 'P' && !cbCol(B, 'c', 'P') && !cbCol(B, 'e', 'P') && !cbCol(B, 'd', 'p')
+            && quieto(k, 'd4', 'P', 10)) ev.aislado = { i: k };
+      }
+    }
+    g.cb = R;
+    if (typeof _estDatos !== 'undefined' && !_estDatos[CB_LECCION] && !P.cbBajando) {   // los números de la lección
+      P.cbBajando = true;
+      fetch('data/lecciones/' + CB_LECCION + '.json' + (typeof _dataV === 'function' ? _dataV() : ''))
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (j) { if (j) _estDatos[CB_LECCION] = j; P.cbBajando = false; P.html = ''; actualizar(); })
+        .catch(function () { P.cbBajando = false; });
+    }
+    return R;
+  }
+  function cbMomentos() {
+    var R = finalCB(), g = P.g; if (!R) return {};
+    if (g.cbMomFirma === g.cbFirma && g.cbMom) return g.cbMom;
+    var out = {}, tm = tmMomentos(), tp = tpMomentos(); g.cbMom = out; g.cbMomFirma = g.cbFirma;
+    function poner(i, que) { var j = tmQuieta(i); if (j >= 0 && !out[j] && !tm[j] && !tp[j]) out[j] = que; }
+    poner(R.s, 'entra');
+    ['b5', 'c5', 'cc4', 'cd6', 'e4', 'aislado', 'pills', 'ce4', 'torre6'].forEach(function (q) { if (R.ev[q]) poner(R.ev[q].i, q); });
+    return out;
+  }
+  function cbFila(clave, et) {
+    var D = typeof _estDatos !== 'undefined' && _estDatos[CB_LECCION], xs = D && D.ej && D.ej[clave];
+    var f = xs ? xs.filter(function (x) { return x.et === et; })[0] : null;
+    return f && f.n >= 30 ? f : null;
+  }
+  // "en nuestra base, ganan las blancas 4 de cada 10" (el bando que interesa primero).
+  function cbNumeros(f, quien) {
+    if (!f) return '';
+    var w = tmDeCada10(f.t), b = tmDeCada10(f.p), dif = quien === 'b' ? f.p - f.t : f.t - f.p;
+    var base = ' En nuestra base (' + f.n.toLocaleString('es-AR') + ' partidas lentas), ';
+    // Parejos (37 contra 35): "casi 4 de cada 10 y las blancas casi 4" no se entiende; mejor decirlo así.
+    if (dif >= 0 && dif < 5 && w === b) return base + 'las dos ganan ' + w + ' de cada 10' + (dif ? ' (las ' + (quien === 'b' ? 'negras' : 'blancas') + ', un poquito más)' : '') + '.';
+    return base + (quien === 'b'
+      ? 'las negras ganan <b>' + b + ' de cada 10</b> y las blancas ' + w + '.'
+      : 'las blancas ganan <b>' + w + ' de cada 10</b> y las negras ' + b + '.');
+  }
+  function cbBoton(parte) {   // parte = número de la lección (1 = el primer título)
+    return ['📖 Ver la lección', 'window.__pupi.leccion(\'' + CB_LECCION + '\',' + (parte - 1) + ')', false, 'La lección de 📖 Estudiar › Estructuras: la estructura Carlsbad'];
+  }
+  function cbComentario(i, que) {
+    var R = finalCB(); if (!R) return null;
+    var W = cap(tmNom('w')), Bn = cap(tmNom('b')), tit = '♟️', col = '#1d4ed8', ev = R.ev, sem = (P.g ? P.g.sem : '') + ':cb' + i;
+    var ok = function (titulo, cuerpo, parte, cara, color) { return { cara: cara || 'explica', sym: tit, symColor: color || col, titulo: titulo, cuerpo: cuerpo, acc: [cbBoton(parte)] }; };
+    if (que === 'entra') {
+      if (R.tipo === 'reves') return ok('¡La Carlsbad al revés!', 'Los peones quedaron como en la Caro-Kann del cambio: d4-c3 contra d5-e6. Es la estructura Carlsbad con los colores dados vuelta: la columna c semiabierta es de las negras, y el ataque de minorías (…b5-b4) lo hacen ellas.', 1);
+      var txt = R.tipo === 'b6'
+        ? 'Los peones quedaron en <b>estructura Carlsbad</b>, con una variante: las negras tienen a7-b6-c7 en vez de c6. El plan blanco es parecido: b5 para fijar el peón de c7 en la columna c, y más adelante e4.'
+        : 'Los peones quedaron en <b>estructura Carlsbad</b>: d4-e3 contra d5-c6, con la columna c semiabierta para las blancas. ' + una([
+            'Los planes de siempre: ' + W + ' con el ataque de minorías (b4-b5) o la ruptura e4; ' + Bn + ', el caballo a e4 y el juego contra el enroque.',
+            'Acá cada uno tiene su plan: ' + W + ' suele ir con b4-b5 (el ataque de minorías) o con e4; ' + Bn + ' busca el caballo en e4 y el flanco de rey.'], sem);
+      var a = R.alfil, parte = R.tipo === 'b6' ? 7 : 1;
+      if (a && a.donde === 'adentro') { parte = 2; txt += '<div style="margin-top:4px">Ojo con el alfil de casillas negras de ' + tmNom('w') + ': quedó <b>adentro de la cadena</b> (' + a.sq + '), tapado por sus propios peones. Los libros lo dan como el error típico.' + cbNumeros(cbFila('cuadroAlfil', 'Alfil adentro (c1, d2, e1, b2)'), 'b') + '</div>'; }
+      else if (a && a.donde === 'afuera') txt += '<div style="margin-top:4px">El alfil de casillas negras de ' + tmNom('w') + ' salió <b>afuera de la cadena</b> (' + a.sq + '), como recomiendan los libros.' + cbNumeros(cbFila('cuadroAlfil', 'Alfil afuera de la cadena (f4, g5, h4…)'), 'w') + '</div>';
+      else if (R.tipo !== 'b6') txt += cbNumeros(cbFila('cuadroTodas', 'Todas las partidas lentas'), 'w');
+      return ok('¡Estructura Carlsbad!', txt, parte);
+    }
+    if (que === 'b5') {
+      if (ev.b5.c7) return ok('b5: el peón de c7 queda fijo', W + ' jugó b5 y el peón negro de c7 queda atrasado en la columna c semiabierta, un blanco para las torres. Como Wojtaszek–Khairullin: después vienen Aa3 para cambiar los alfiles de casillas negras y, más tarde, e4.', 7);
+      return ok('¡El ataque de minorías!', W + ' llegó a <b>b5</b>: la idea es cambiar en c6 y dejarle a ' + tmNom('b') + ' un peón débil, el de c6 (retrasado) o el de d5 (aislado).' + cbNumeros(cbFila('cuadroMinor', 'Llegaron a b4-b5'), 'w') + ' Lo que importa es llegar: quedarse en b4 rinde menos.', 3);
+    }
+    if (que === 'c5') return ok('¡…c5, como dicen los libros!', 'Contra b4-b5, ' + tmNom('b') + ' contestó enseguida con …c5. Es la receta de Soltis y Flores: el peón de d5 queda aislado, pero activo, con la columna c abierta y el peón blanco de b5 como blanco.', 6, 'contento', '#15803d');
+    if (que === 'cc4') return ok('Caballo en c4', Bn + ' plantó un caballo en c4: tapa el flanco de dama y frena el ataque de minorías.' + cbNumeros(cbFila('cuadroDefensa', 'Caballo negro en c4'), 'b') + ' Es la mejor noticia para las negras en esta estructura.', 4);
+    if (que === 'cd6') return ok('Caballo en d6', Bn + ' llevó el caballo a d6: desde ahí tapa b5 y c4, las casillas que necesita el ataque de minorías. Como Onischuk–Domínguez en el libro de Flores.', 4);
+    if (que === 'e4') {
+      var fe = ev.e4.f3 ? cbFila('cuadroE4', 'e4 preparado con f3') : cbFila('cuadroE4', 'e4 directo');
+      return ok('¡La ruptura e4!', W + ' rompió en el centro con <b>e4</b>' + (ev.e4.f3 ? ', preparada con f3' : '') + '. Abre el juego para sus piezas, pero si después de …dxe4 el peón de d4 queda solo, puede ser una debilidad.' + cbNumeros(fe, 'w'), 5);
+    }
+    if (que === 'aislado') {
+      var fa = cbFila('cuadroE4', 'e4 y quedó el peón d aislado');
+      return ok('El peón de d4 quedó aislado', 'Después de e4 y el cambio en el centro, a ' + tmNom('w') + ' le quedó el peón de d4 solo, sin compañeros en c ni en e. Si ' + tmNom('b') + ' lo bloquea y lo ataca, es un blanco fijo, como en Kuzubov–Efimenko.' + cbNumeros(fa, 'w'), 5, 'ceja', '#c0262d');
+    }
+    if (que === 'pills') return ok('¡El plan de Pillsbury!', W + ' armó el caballo en e5 con el peón f4: es el plan de Pillsbury. Lo que sigue es traer una pieza pesada por la 3.ª fila (Tf3, después g3 o h3) y empujar f4-f5 contra el enroque.', 5);
+    if (que === 'ce4') {
+      var fc = ev.ce4.f5 ? cbFila('cuadroNegro', 'Caballo en e4 y …f5') : cbFila('cuadroNegro', 'Caballo negro en e4 (3 jugadas o más)');
+      return ok('Caballo negro en e4', Bn + ' plantó el caballo en e4' + (ev.ce4.f5 ? ', apoyado por el peón f5, como Malaniuk–Annageldyev' : '') + ': es el plan de las negras en la Carlsbad, para atacar el enroque blanco.' + cbNumeros(fc, 'b'), 6);
+    }
+    if (que === 'torre6' && ev.torre6.dama) return ok('¡La dama a ' + ev.torre6.sq + '!', Bn + ' llevó la dama a ' + ev.torre6.sq + ', con el caballo en e4: el ataque contra el enroque blanco, como en Malaniuk–Annageldyev. Es el plan de Pillsbury, pero al revés.', 6);
+    if (que === 'torre6') return ok('La torre por la 6.ª fila', Bn + ' subió la torre a ' + ev.torre6.sq + ', por la 6.ª fila, contra el enroque blanco: el plan de Pillsbury, pero al revés.' + cbNumeros(cbFila('cuadroNegro', 'Torre negra en g6 o h6'), 'b'), 6);
+    return null;
+  }
+
   function esQuieto(n, i) {
     var ml = _fa.nodes;
-    return !(n.move && NAGS[n.move.nag]) && !(P.g && P.g.ap && P.g.ap.nodo === n) && i !== ml.length - 1 && !tmMomentos()[i] && !tpMomentos()[i];
+    return !(n.move && NAGS[n.move.nag]) && !(P.g && P.g.ap && P.g.ap.nodo === n) && i !== ml.length - 1 && !tmMomentos()[i] && !tpMomentos()[i] && !cbMomentos()[i];
   }
 
   // Momentos para saltar con ‹ ›: errores, jugadones, fin de la teoría y el final.
   var NAGS = { '??': 1, '?': 1, '?!': 1, '!': 1, '!!': 1 };
   var SALTOS = { '??': 1, '?': 1, '!': 1, '!!': 1 };   // ‹ › saltean las imprecisiones (?!): son muchas
   function momentos() {
-    var ml = lineaPrincipal(), out = [], tm = hayDatos() ? Object.assign({}, tmMomentos(), tpMomentos()) : {};
+    var ml = lineaPrincipal(), out = [], tm = hayDatos() ? Object.assign({}, tmMomentos(), tpMomentos(), cbMomentos()) : {};
     ml.forEach(function (n, i) {
       if ((n.move && SALTOS[n.move.nag]) || (P.g && P.g.ap && P.g.ap.nodo === n) || i === ml.length - 1 || tm[i]) out.push(n);
     });
@@ -62379,6 +62648,8 @@ function cvUpdateNagBadge() {
     if (tmQ) { var ctm = tmComentario(i, tmQ); if (ctm) return ctm; }
     var tpQ = tpMomentos()[i];   // ♜ torre y peón contra torre: lo que dice la lección Lucena y Philidor
     if (tpQ) { var ctp = tpComentario(i, tpQ); if (ctp) return ctp; }
+    var cbQ = cbMomentos()[i];   // ♟️ estructura Carlsbad: lo que dice la lección de Estructuras
+    if (cbQ) { var ccb = cbComentario(i, cbQ); if (ccb) return ccb; }
     // Lo que quedó de "cómo vienen", de a una parte por semijugada.
     if (i <= 2) { var pv = previa(); if (pv[i + 1]) return { cara: 'habla', cuerpo: pv[i + 1] }; }
     if (ultimo && resultado() !== '*') {
@@ -62886,7 +63157,7 @@ function cvUpdateNagBadge() {
       }
       return out.join(', ');
     },
-    estado: function () { return P.estado; }, _P: P, _mate: function () { sonidoMate(); }, _termo: function () { sonidoTermo(); }, _grab: GRAB, _grabN: GRAB_N, _sonando: function () { return SONANDO; }, _torneos: function () { return torneosDatos(); }, _trofeos: function (pl, quien) { return trofeosJug(pl, quien); }, _tm: function () { return [finalTM(), tmMomentos()]; }, _tp: function () { return [finalTP(), tpMomentos()]; }
+    estado: function () { return P.estado; }, _P: P, _mate: function () { sonidoMate(); }, _termo: function () { sonidoTermo(); }, _grab: GRAB, _grabN: GRAB_N, _sonando: function () { return SONANDO; }, _torneos: function () { return torneosDatos(); }, _trofeos: function (pl, quien) { return trofeosJug(pl, quien); }, _tm: function () { return [finalTM(), tmMomentos()]; }, _tp: function () { return [finalTP(), tpMomentos()]; }, _cb: function () { return [finalCB(), cbMomentos()]; }
   };
 
   imgsListas.then(function () { P.cara = ''; P.html = ''; actualizar(); });

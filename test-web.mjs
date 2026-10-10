@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2365;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2367;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -9599,6 +9599,17 @@ console.log('\n── Planes típicos de la apertura ──');
       'la tarea es del bando que mueve (ganar o salvar); con el otro color se da vuelta; los finales viejos sin objetivo dicen lo de siempre');
   chk(/if \(prac\.fObj && p\.objective !== prac\.fObj\) return false; \}/.test(extraerFuncion('pracItems')) && /eobjs\.ganar \|\| eobjs\.salvar/.test(extraerFuncion('pracRenderFilters')),
       '🔒 el filtro de objetivo de los finales aparece sólo si hay finales con objetivo, y filtra la lista');
+  // 09/10: las posiciones clave de una lección (Carlsbad) dicen de qué parte son, esconden la pista del plan hasta que
+  // la pidas y llevan a la lección; "Ver la partida original" sale aunque no estén en la base (el PGN lo trae la lección).
+  const EH = 'function escHtml(s){return String(s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;"}[c];});}';
+  const LH = new Function(EH + extraerFuncion('_pracLeccionHtml') + '; return _pracLeccionHtml;')();
+  const lh = LH({ leccion: { id: 'carlsbad', parte: 3, titulo: 'La estructura Carlsbad', parteTitulo: '3. El ataque de minorías', pista: 'Llevá el peón a b5 <y> cambiá.' } });
+  chk(/De la lección <b>La estructura Carlsbad<\/b> · 3\. El ataque de minorías/.test(lh) && /<div id="prac-pista" hidden[^>]*>Llevá el peón a b5 &lt;y&gt; cambiá\.<\/div>/.test(lh)
+      && /onclick="pracVerLeccion\(\)"/.test(lh) && LH({}) === '' && !/prac-pista/.test(LH({ leccion: { id: 'x' } })),
+      'posición de una lección: de qué parte es, la pista escondida (escapada) y el botón a la lección; sin lección, nada');
+  const RS = new Function('prac', '_ondemand', 'var window = {}; function pracFindGame() { return null; }' + extraerFuncion('pracResolveSrcGame') + '; pracResolveSrcGame(prac.cur); return prac._srcGameMaybe;');
+  chk(RS({ cur: { leccion: { id: 'carlsbad' } } }, false) === true && RS({ cur: {} }, false) === false && /p\.leccion\.k\]/.test(extraerFuncion('pracOpenSourceGame')),
+      '🔒 "Ver la partida original" de una posición de lección sin partida en la base: busca el PGN en la lección');
 }
 // ── 📖 Estudiar › Finales (06/10/2026: la pestaña Aperturas pasa a ser Estudiar, con lecciones de finales) ──
 {
