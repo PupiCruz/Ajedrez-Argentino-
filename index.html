@@ -9871,7 +9871,7 @@ function _stTeamPanelHtml(key, s){
     h += '<div class="st-sec"><div class="st-h"><b role="heading" aria-level="3"><span aria-hidden="true">🥇</span> Las medallas por tablero</b>'
        + '<span>' + (porPct && s.pctConElo ? 'por porcentaje de puntos, como se premiaban hasta 2006, en el tablero que cada uno ocupa en su equipo'
                   : porPct ? 'por porcentaje de puntos (no había Elo), en el tablero que cada uno ocupa en su equipo'
-                            : 'por performance, en el tablero que cada uno ocupa en su equipo') + '</span></div><div class="st-mesas">';
+                            : 'por performance, ' + (s.tableroPor === 'mesa' ? 'en la mesa donde más jugó cada uno' : 'en el tablero que cada uno ocupa en su equipo')) + '</span></div><div class="st-mesas">';
     s.premios.porMesa.forEach(function(x){
       h += '<div class="st-mesa"><b>Tablero ' + x.mesa + '</b>';
       (x.podio || []).forEach(function(p, i){
@@ -12760,7 +12760,8 @@ function _stSig(data){
        // por tablero (Rubinstein 15/17); + las partidas premiadas de las Olimpiadas (premios.partidas), 01/10/2026.
        // 'e13' = 1931-1950: mínimo de partidas = la mitad de los matches (König 6/8, Praga 1931), 01/10/2026.
        // 'e14' = medallas por tablero aunque lleguen al mínimo menos de tres (Evans y Donner, Dubrovnik 1950), 01/10/2026.
-       + (tk.length ? '|e14' : '');
+       // 'e15' = fuera de las Olimpiadas, el tablero es la mesa donde más jugó (Liga Nacional 2026: no más "tablero 4"), 10/10/2026.
+       + (tk.length ? '|e15' : '');
 }
 
 // ── Rp (performance) calculado desde los cruces ─────────────────────────────────────────────
@@ -13411,7 +13412,7 @@ function _stOlimpPisoElo(anio, fem){
 function _stEsNN(n){ return /^N\.?\s?N\.?$/i.test(String(n || '').trim()); }
 
 // Los jugadores del torneo, sacados de los tableros: equipo, tablero de inscripción, puntos y Rp.
-function _stTeamPlayers(data, rondas, pisoElo, tope100, conWO, boInscripto){
+function _stTeamPlayers(data, rondas, pisoElo, tope100, conWO, boInscripto, porMesa){
   var tr = (data && data.teamRounds) || {}, ag = {}, porEquipo = {};
   // Se cuentan TODAS las partidas jugadas (puntos y porcentaje), tengan Elo o no: las Olimpiadas
   // viejas de OlimpBase no traen Elo y si no, no quedaba ni un jugador. El Rp sale sólo de las
@@ -13481,6 +13482,17 @@ function _stTeamPlayers(data, rondas, pisoElo, tope100, conWO, boInscripto){
     // lugar, Phiri (6½/7, 2.º suplente) quedaba 1.er suplente y no aparecía en su tablero (OlimpBase: oro).
     // En las ligas se siguen corriendo (planteles de 20 inscriptos: el 23 que jugó en la mesa 3).
     lista.forEach(function(n, i){ orden[nom + '::' + n] = boInscripto ? bo[n] : i + 1; });
+  });
+  // Fuera de las Olimpiadas (ligas, torneos de clubes) el tablero es la MESA DONDE MÁS JUGÓ. Con la
+  // lista del equipo, en una liga que rota planteles de 8-10 jugadores en 3 mesas salían "tablero 4…10"
+  // que no existen, y el tablero 3 se quedaba sin medallas (Liga Nacional Superior 2026: Real De Azua,
+  // 4.º de la lista de Obras, salía oro del "tablero 4"; lo marcó el autor, 10/10). En las Olimpiadas
+  // sigue mandando la lista: así se dan las medallas oficiales (Pichot, tablero 4 de España en 2024).
+  // Empate de mesas: la de más arriba.
+  if (porMesa) Object.keys(ag).forEach(function(n){
+    var M = ag[n].mesas, mejor = 0, cuantas = -1;
+    Object.keys(M).map(Number).sort(function(a, b){ return a - b; }).forEach(function(m){ if (M[m] > cuantas){ cuantas = M[m]; mejor = m; } });
+    if (mejor) orden[ag[n].equipo + '::' + n] = mejor;
   });
   // Mínimo de partidas para entrar en las medallas: la FIDE pide 8 en una Olimpiada de 11 rondas.
   // En torneos cortos (una liga de 6 rondas) se pide algo proporcional.
@@ -13586,7 +13598,7 @@ function _stTeamBuild(crk, data, meta){
   // Hamburgo 1930 también la cuenta: Rubinstein 15/17 con el triunfo por incomparecencia contra Hungría
   // (así lo dan la planilla y las estadísticas de OlimpBase y el libro de Puszczewicz); sin ella, 14/16.
   var jug = _stTeamPlayers(data, rondas, _stOlimpPisoElo(anioOlimp, titulares === 3), anioOlimp === 2002 ? 470 : 0,
-                           (anioOlimp >= 1998 && anioOlimp <= 2004) || anioOlimp === 1930, anioOlimp > 0);
+                           (anioOlimp >= 1998 && anioOlimp <= 2004) || anioOlimp === 1930, anioOlimp > 0, !(anioOlimp > 0));
   // Suizo (1976-2006): a los suplentes les alcanzaba con 7 partidas. Suplente = el que viene después de
   // los tableros de cada match (abierta: 4 + los tableros 5 y 6; femenina: 3 + el 4). A los titulares,
   // según el año (contado en las fichas de TODOS los equipos de OlimpBase, que dejan sin puesto al que
@@ -13736,6 +13748,7 @@ function _stTeamBuild(crk, data, meta){
       paises: esPaises ? teams.length : null
     },
     reglaMatch: regla ? regla.regla : null,
+    tableroPor: anioOlimp > 0 ? 'lista' : 'mesa',   // de dónde sale el tablero de las medallas (ver _stTeamPlayers)
     criterio: criterio,          // 'match' | 'tablero': lo que ordena la tabla
     medallasPor: medallasPor,    // 'rp' | 'pct': con Elo, performance; sin Elo, porcentaje
     pctConElo: medallasPor === 'pct' && conRp.length >= 3,   // Olimpiada hasta 2006: había Elo, pero iban por %
@@ -28509,11 +28522,14 @@ function _tgTorneosVivos(tzCfg, items){
     var fin = _tgKeyAFecha(it._endKey), hasta = fin ? fin + 36 * 3600e3 : 0, link = _SOC_SITE + _tourHref(key);
     // tabla = de dónde sacar "cómo vienen" y los punteros (info64 manda sobre Chess-Results, como en la ficha).
     var ids = deLichess([d.broadcastId, d.broadcastUrl]);
-    if (ids.length) lista.push({ ids: ids, nombre: nombre || '', link: link, hasta: hasta, tabla: d.info64url || d.crurl || d.crUrl || '' });
+    // nac = nacional según el "Tipo" del torneo: en un nacional el bot resume las primeras mesas y no
+    // "los argentinos" (serían todas). Sin esto el bot lo adivinaba contando FIDE ids, y fallaba.
+    var nac = d.type ? !/internacional/i.test(d.type) : null;   // sin Tipo cargado: que adivine el bot
+    if (ids.length) lista.push({ ids: ids, nombre: nombre || '', link: link, hasta: hasta, tabla: d.info64url || d.crurl || d.crUrl || '', nac: nac });
     // Cada categoría con su transmisión va aparte, con SU tabla.
     (d.categories || []).forEach(function(c){
       var ci = c ? deLichess([c.broadcast]) : [];
-      if (ci.length) lista.push({ ids: ci, nombre: (nombre || '') + (c.name ? ' · ' + c.name : ''), link: link, hasta: hasta, tabla: c.crurl || '' });
+      if (ci.length) lista.push({ ids: ci, nombre: (nombre || '') + (c.name ? ' · ' + c.name : ''), link: link, hasta: hasta, tabla: c.crurl || '', nac: nac });
     });
   });
   return lista;
