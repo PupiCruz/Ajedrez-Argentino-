@@ -321,6 +321,15 @@ export async function onRequest(context) {
       .on('meta[property="og:description"]', new PonerAtributo('content', m.desc))
       .on('meta[property="og:url"]',         new PonerAtributo('content', dir))
       .on('meta[property="og:image"]',       new PonerAtributo('content', m.imagen))
+      // Telegram (y X, WhatsApp a veces) leen PRIMERO las twitter:*: si quedaban las genéricas, la vista
+      // previa salía con la imagen de ChessArgentino aunque og:image fuera el flyer (lo notó el autor, 10/10).
+      .on('meta[name="twitter:title"]',       new PonerAtributo('content', m.titulo))
+      .on('meta[name="twitter:description"]', new PonerAtributo('content', m.desc))
+      .on('meta[name="twitter:image"]',       new PonerAtributo('content', m.imagen))
+      // El 1200×630 es la medida de la imagen genérica: con un flyer (otra medida) se saca, así ningún
+      // lector lo recorta o lo descarta por no coincidir.
+      .on('meta[property="og:image:width"]',  { element(el) { if (m.imagen) el.remove(); } })
+      .on('meta[property="og:image:height"]', { element(el) { if (m.imagen) el.remove(); } })
       .on('link[rel="canonical"]',           new PonerAtributo('href', canonica))
       .transform(res);
   } catch (e) {

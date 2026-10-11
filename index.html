@@ -28353,6 +28353,136 @@ function _tgAnunciarRonda(key, roundNum){
   });
   setTimeout(function(){ back.classList.add('open'); ta.focus(); }, 10);
 }
+// 🏁 TORNEO TERMINADO (10/10/2026). Al marcar "Finalizado" (modo autor, con la clave guardada) la app
+// arma el podio + lo más jugoso de la Radiografía y se lo pasa al bot (/tg/final). El bot se lo manda al
+// autor por Telegram con [📣 Publicar en el canal] [✋ No], como los avisos de ronda; publicado, sale en
+// el canal y en Discord (#en-vivo, dentro del hilo del torneo si las rondas ya tenían uno).
+// Por equipos el podio es de EQUIPOS. Todo sale de lo que ya calcula la Radiografía (_statsBuild) y
+// la noticia (_noticiaGatherData): ni un pedido a internet.
+function _tgResumenFinal(c){
+  c = c || _tdPodiumCtx;
+  if (!c || !c.crk || c.sinPodio) return '';
+  var data = null; try { data = crDataLoad(c.crk); } catch(e){}
+  if (!data) return '';
+  var meta = { crk: c.crk, name: c.name, location: c.location, dates: c.dates, typ: c.typ, isTeam: c.isTeam,
+               cat: c.cat, rama: c.rama, status: 'done', rounds: c.rounds, format: c.format, pace: c.pace };
+  var s = null; try { s = _statsBuild(c.crk, data, meta); } catch(e){}
+  var pts = function(n){ return crPtsStr(n) + (n === 1 ? ' punto' : ' pts'); };
+  var conTit = function(tit, nom){ tit = _normTitle(tit || ''); return (tit ? tit + ' ' : '') + nom; };
+  var MED = ['🥇', '🥈', '🥉'];
+  var nombre = (c.name || '') + (c.cat ? ' · ' + c.cat : '');
+  var podio = [], datos = [], numeros = [], alFinal = [];
+  // La punta: desde qué ronda el campeón quedó SOLO arriba hasta el final (lideres = [{r, nombre, empatados}]).
+  var punta = function(lideres, campeon){
+    if (!lideres || lideres.length < 2) return '';
+    var ult = lideres[lideres.length - 1];
+    if (ult.nombre !== campeon) return '';
+    if (ult.empatados > 1) return '🤝 Terminó empatado en la punta y se definió por desempate.';
+    var i = lideres.length - 1;
+    while (i > 0 && lideres[i - 1].nombre === campeon && lideres[i - 1].empatados === 1) i--;
+    if (i === 0) return '🚀 Puntero solo de punta a punta.';
+    return '📈 Puntero solo desde la ronda ' + lideres[i].r + (lideres[i].r == ult.r ? ' (¡en la última!)' : '') + '.';
+  };
+  if (c.isTeam){
+    if (!s || !s.podio || !s.podio.length) return '';
+    var porTablero = s.criterio === 'tablero';
+    s.podio.forEach(function(e, i){
+      var pm = e.match != null ? pts(e.match) : '', pt = e.tablero != null ? crPtsStr(e.tablero) : '';
+      podio.push(MED[i] + ' ' + e.nombre + (porTablero ? (pt ? ' · ' + pt + ' pts' : '') : (pm ? ' · ' + pm + (pt ? ' (' + pt + ' de tablero)' : '') : '')));
+    });
+    var ch = s.podio[0], jug = (ch.g || 0) + (ch.e || 0) + (ch.p || 0);
+    if (jug && !ch.p && !ch.e) datos.push('💯 ' + ch.nombre + ' ganó los ' + jug + ' matches: puntaje perfecto.');
+    else if (jug && !ch.p) datos.push('🛡️ Campeón invicto: ' + ch.g + ' ganados y ' + ch.e + ' empatado' + (ch.e === 1 ? '' : 's') + '.');
+    var pu = punta(s.carrera && s.carrera.lideres, ch.nombre); if (pu) datos.push(pu);
+    var r = s.premios || {};
+    if (r.mejorRp && r.mejorRp.rp) datos.push('⭐ Mejor performance: ' + conTit(r.mejorRp.titulo, r.mejorRp.nombre) + (r.mejorRp.equipo ? ' (' + r.mejorRp.equipo + ')' : '') + ', ' + r.mejorRp.rp + ' con ' + crPtsStr(r.mejorRp.pts) + '/' + r.mejorRp.partidas + '.');
+    if (r.masPuntos && (!r.mejorRp || r.masPuntos.raw !== r.mejorRp.raw)) datos.push('🎯 Más puntos: ' + conTit(r.masPuntos.titulo, r.masPuntos.nombre) + (r.masPuntos.equipo ? ' (' + r.masPuntos.equipo + ')' : '') + ', ' + crPtsStr(r.masPuntos.pts) + '/' + r.masPuntos.partidas + '.');
+    // Las medallas de oro de cada mesa, en una línea por mesa (hasta 6).
+    var oros = (r.porMesa || []).filter(function(m){ return m.podio && m.podio[0]; }).slice(0, 6);
+    if (oros.length) datos.push('🏅 Mejores por mesa:\n' + oros.map(function(m){ var p = m.podio[0];
+      return '   Mesa ' + m.mesa + ': ' + conTit(p.titulo, p.nombre) + (p.equipo ? ' (' + p.equipo + ')' : '') + (p.rp ? ' · Rp ' + p.rp : p.pct != null ? ' · ' + String(p.pct).replace('.', ',') + '%' : ''); }).join('\n'));
+    var be = s.equipos && s.equipos.batacazos && s.equipos.batacazos[0];
+    if (be) datos.push('😮 Batacazo de equipos: ' + be.gana + ' le ganó ' + be.score + ' a ' + be.pierde + ' en la ronda ' + be.ronda + '.');
+    if (s.argentina) datos.push('🇦🇷 Argentina terminó ' + s.argentina.puesto + 'º de ' + s.argentina.de + '.');
+    var t = s.torneo || {};
+    if (t.equipos) numeros.push(t.equipos + ' equipos');
+    if (t.jugadores) numeros.push(t.jugadores + ' jugadores');
+    if (t.partidas) numeros.push(t.partidas + ' partidas');
+  } else {
+    var g = null; try { g = _noticiaGatherData(data, meta, { raw: true }); } catch(e){}
+    if (!g || !g.podio || !g.podio.length) return '';
+    var intl = !!(g.torneo && g.torneo.internacional);
+    g.podio.forEach(function(p, i){
+      podio.push(MED[i] + ' ' + conTit(p.titulo, p.nombre) + (intl && p.arg ? ' 🇦🇷' : '') + ' · ' + p.puntos + ' pts' + (p.rp ? ' (Rp ' + p.rp + ')' : ''));
+    });
+    var d = g.definicion || {};
+    if (d.puntajePerfecto) datos.push('💯 Campeón con puntaje perfecto.');
+    else if (d.invicto) datos.push('🛡️ Campeón invicto.');
+    if (d.desempate) datos.push('🤝 Terminaron ' + d.coLideres + ' empatados arriba: se definió por desempate.');
+    else if (d.ventajaPuntos) datos.push('📏 Ganó con ' + d.ventajaPuntos + ' punto' + (/^(½|1)$/.test(d.ventajaPuntos) ? '' : 's') + ' de ventaja.');
+    if (s && s.carrera && !d.desempate){
+      var pu2 = punta((s.carrera.lideres || []).map(function(l){ return { r: l.r, nombre: l.raw, empatados: l.empatados }; }), g.campeon && g.campeon.raw);
+      if (pu2) datos.push(pu2);
+    }
+    var pr = (s && s.premios) || {};
+    var enPodio = {}; g.podio.forEach(function(p){ enPodio[p.raw] = 1; });
+    if (pr.mejorRp && pr.mejorRp.rp) datos.push('⭐ Mejor performance: ' + conTit(pr.mejorRp.titulo, pr.mejorRp.nombre) + ', ' + pr.mejorRp.rp + '.');
+    var rv = g.destacados && g.destacados.revelacion;
+    if (rv) datos.push('🚀 Revelación: ' + rv.nombre + ', ' + rv.desde + 'º por rating y terminó ' + rv.hasta + 'º.');
+    if (pr.masRatingSumo && pr.masRatingSumo.delta > 0) datos.push('📈 El que más Elo sumó: ' + conTit(pr.masRatingSumo.titulo, pr.masRatingSumo.nombre) + ', +' + pr.masRatingSumo.delta + '.');
+    // Internacional: el mejor argentino, si no está en el podio.
+    if (intl && g.argentinos && g.argentinos[0] && !enPodio[g.argentinos[0].raw]){
+      var a = g.argentinos[0]; datos.push('🇦🇷 Mejor argentino: ' + conTit(a.titulo, a.nombre) + ', ' + a.pos + 'º con ' + a.puntos + ' pts.');
+    }
+    if (pr.femenina && !enPodio[pr.femenina.raw]) alFinal.push('♛ Mejor femenina: ' + conTit(pr.femenina.titulo, pr.femenina.nombre) + (pr.femenina.pos ? ', ' + pr.femenina.pos + 'º' : '') + '.');
+    if (pr.sub20 && !enPodio[pr.sub20.raw]) alFinal.push('🌱 Mejor sub-20: ' + conTit(pr.sub20.titulo, pr.sub20.nombre) + (pr.sub20.edad ? ' (' + pr.sub20.edad + ' años)' : '') + (pr.sub20.pos ? ', ' + pr.sub20.pos + 'º' : '') + '.');
+    var t2 = (s && s.torneo) || {};
+    if (t2.jugadores) numeros.push(t2.jugadores + ' jugadores');
+    if (t2.paises > 1) numeros.push(t2.paises + ' países');
+    if (t2.partidas) numeros.push(t2.partidas + ' partidas');
+  }
+  // Para los dos: el batacazo más grande y la racha más larga.
+  var b = s && s.batacazos && s.batacazos[0];
+  if (b) datos.push('💥 Batacazo: ' + b.ganador + ' (' + b.ganadorElo + ') le ganó a ' + conTit(b.perdedorTitulo, b.perdedor) + ' (' + b.perdedorElo + ') en la ronda ' + b.ronda + '.');
+  var ra = s && s.premios && s.premios.racha;
+  if (ra && ra.n >= 3) datos.push('🔥 Racha: ' + ra.nombre + ' ganó ' + ra.n + ' partidas seguidas.');
+  datos = datos.concat(alFinal);
+  var elo = s && s.torneo && s.torneo.elo;
+  if (elo && elo.prom) numeros.push('Elo promedio ' + elo.prom);
+  if (!podio.length) return '';
+  var link = _SOC_SITE + (_tdTourKey != null ? _tourHrefCat(_tdTourKey, _tdActiveCat) : '');
+  return '🏁 ' + nombre + ' · ¡Terminó!\n\n'
+    + (c.isTeam ? '🏆 Los equipos del podio\n' : '🏆 El podio\n') + podio.join('\n')
+    + (datos.length ? '\n\n📊 De la Radiografía\n' + datos.slice(0, 8).join('\n') : '')
+    + (numeros.length ? '\n\n♟️ ' + numeros.join(' · ') : '')
+    + '\n\n👉 Todo el torneo: ' + link;
+}
+// Le pasa el resumen al bot. manual = lo pidió el autor con el botón (muestra el cartel aunque salga bien).
+async function _tgAvisarFinal(manual){
+  var c = _tdPodiumCtx;
+  var texto = _tgResumenFinal(c);
+  if (!texto){
+    if (manual) window.aaAsk({ icono:'🏁', titulo:'Todavía no hay podio', texto:'No encontré la tabla final de este torneo: subí la clasificación final y probá de nuevo.', ok:'Entendido' });
+    return;
+  }
+  var clave = manual ? await _tgClave() : _tgClaveGet(); if (!clave) return;
+  var j = null;
+  try {
+    var r = await fetch(TG_BASE + 'final', { method:'POST', headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify({ clave: clave, id: c.crk, texto: texto, nombre: (c.name || '') + (c.cat ? ' · ' + c.cat : ''),
+                             ids: c.bc || [], crurl: c.crUrl || '' }) });
+    if (r.status === 403) _tgClaveSet('');
+    j = await r.json();
+  } catch(e){}
+  if (j && j.ok){
+    if (manual) window.aaAsk({ icono:'🔔', titulo:'Listo, te lo mandé por Telegram', lineas:true,
+      texto:'El bot te escribió con el podio. Tocá "📣 Publicar en el canal" y sale en Telegram y en Discord' + (j.hilo ? ' (dentro del hilo del torneo)' : '') + '.' + (j.yaPublicado ? '\n\n⚠️ Ojo: este torneo ya lo publicaste antes.' : ''), ok:'Entendido' });
+    return;
+  }
+  var err = (j && j.error) || 'el servidor no respondió';
+  window.aaAsk({ icono:'⚠️', titulo:'El bot no pudo avisarte del podio', lineas:true, texto: err
+    + (/vincul/i.test(err) ? '\n\nConectá tu Telegram desde el cartel 📣 de cualquier ronda ("Conectar mi Telegram") y volvé a tocar "📣 Podio al bot".' : ''), ok:'Entendido' });
+}
 // 🔔 AVISOS DEL BOT. El worker (TgAvisador) vigila en Lichess los torneos que le pasa la app y, cuando
 // los argentinos terminan una ronda, le escribe al autor por privado con el botón para publicarla.
 // Al abrir la app (modo autor, una vez por carga) se le mandan los torneos en curso —y los que
@@ -36347,9 +36477,12 @@ function _tdCurrentFinished() {
   if (_tdChipCat >= 0) { var st = _tdCatStore(_tdChipType, _tdChipId); return !!(st && st.cats[_tdChipCat] && st.cats[_tdChipCat].finished); }
   return _tdTourFinished(_tdChipType, _tdChipId);
 }
-function _tdToggleFinished() {
+async function _tdToggleFinished() {
   var now = !_tdCurrentFinished();
-  if (now && !confirm('¿Marcar como FINALIZADO' + (_tdChipCat >= 0 ? ' esta categoría' : ' este torneo') + '?\n\nDeja de pedir las partidas cada rato (para no gastar pedidos) y muestra el podio. Lo podés desmarcar cuando quieras.')) return;
+  if (now && !(await window.aaAsk({ icono:'🏁', titulo:'¿Marcar como FINALIZADO' + (_tdChipCat >= 0 ? ' esta categoría' : ' este torneo') + '?',
+    texto:'Deja de pedir las partidas cada rato (para no gastar pedidos) y muestra el podio. Lo podés desmarcar cuando quieras.'
+      + (_tgClaveGet() ? '\n\n🔔 Además el bot te manda por Telegram el podio con datos de la Radiografía, para publicarlo en el canal y en Discord si querés.' : ''),
+    lineas:true, ok:'Marcar finalizado' }))) return;
   if (_tdChipCat >= 0) {
     var st = _tdCatStore(_tdChipType, _tdChipId); if (!st || !st.cats[_tdChipCat]) return;
     if (now) st.cats[_tdChipCat].finished = true; else delete st.cats[_tdChipCat].finished;
@@ -36358,6 +36491,7 @@ function _tdToggleFinished() {
     _tdTourFinishedSet(_tdChipType, _tdChipId, now);
   }
   openTournamentDetail(_tdChipType, _tdChipId, false, _tdChipCat);
+  if (now && _tgClaveGet()) setTimeout(_tgAvisarFinal, 400);   // el detalle ya se redibujó como terminado
 }
 function _tdCommitChipEdit(field) {
   var cf = _TD_CHIP_FIELDS[field]; if (!cf) return;
@@ -36918,6 +37052,8 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   if (!_ondemand) {
     var _mfLbl = manuallyFinished ? '✓ Finalizado (no pide más)' : '🏁 Marcar finalizado';
     h += '<button onclick="_tdToggleFinished()" title="' + (manuallyFinished ? 'Está marcado finalizado a mano. Tocá para reactivar el seguimiento en vivo.' : 'Marca ' + (activeCat >= 0 ? 'esta categoría' : 'el torneo') + ' como finalizado: deja de pedir partidas (ahorra pedidos) y muestra el podio.') + '" style="font-size:11px;padding:3px 9px;border-radius:7px;cursor:pointer;font-family:inherit;white-space:nowrap;border:1px solid ' + (manuallyFinished ? 'var(--gold-dim)' : 'var(--bd22)') + ';background:' + (manuallyFinished ? 'var(--gold-bg)' : 'var(--gl40)') + ';color:' + (manuallyFinished ? 'var(--gold)' : 'var(--text2)') + '">' + _mfLbl + '</button>';
+    // Terminado + bot conectado: volver a pedirle al bot el aviso del podio (ver _tgAvisarFinal).
+    if (status === 'done' && _tgClaveGet()) h += '<button onclick="_tgAvisarFinal(true)" title="El bot te manda por Telegram el podio con datos de la Radiografía, para publicarlo en el canal y en Discord" style="font-size:11px;padding:3px 9px;border-radius:7px;cursor:pointer;font-family:inherit;white-space:nowrap;border:1px solid var(--bd22);background:var(--gl40);color:var(--text2)">📣 Podio al bot</button>';
     // Subir partidas a ESTE torneo/categoría (la lista general sólo ofrece los últimos finalizados).
     _tdSubirEv = (activeCat >= 0 && _cat && _cat.name) ? _catEventName(name, _cat.name) : name;
     h += '<button onclick="_tdSubirPartidas()" title="Subir partidas (PGN) a ' + (activeCat >= 0 ? 'esta categoría' : 'este torneo') + '" style="font-size:11px;padding:3px 9px;border-radius:7px;cursor:pointer;font-family:inherit;white-space:nowrap;border:1px solid var(--bd22);background:var(--gl40);color:var(--text2)">📥 Subir partidas</button>';
@@ -37106,6 +37242,8 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   // SIEMPRE (aunque esté vacío) para poder rellenarlo cuando la tabla final llegue por el auto-fetch,
   // sin recargar ni esperar al otro día (lo refresca _tdRefreshPodium desde los _crAutoFetch*).
   _tdPodiumCtx = { crk: crk, isTeam: isTeam, name: name, location: location, dates: dates, typ: typ, rounds: rounds, format: format, pace: pace, status: status,
+                   // De dónde se transmitía (para que el bot encuentre el hilo del torneo en Discord, ver _tgAvisarFinal).
+                   bc: [broadcastId, broadcastUrl].filter(Boolean).map(String), crUrl: crUrl || '',
                    cat: (typeof _cat !== 'undefined' && _cat) ? (_cat.name || '') : '',
                    // Una categoría sin medallas (ej. un GRUPO preliminar de una Olimpiada): sin podio.
                    sinPodio: !!(typeof _cat !== 'undefined' && _cat && _cat.sinPodio),
