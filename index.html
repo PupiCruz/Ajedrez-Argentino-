@@ -47238,6 +47238,34 @@ function _uaToggleHl(map, sq, c) {
   if (map[sq] && (map[sq] === true ? 'g' : map[sq]) === c) delete map[sq]; else map[sq] = c;
 }
 function _uaHlColor(v) { return (v === true || !v) ? 'g' : v; }
+// Punta de la flecha mientras arrastrás (11/10/2026), como Lichess (snapToValidMove): en vez de la
+// casilla que está justo bajo el puntero, la MÁS CERCANA al puntero entre las que están en línea
+// recta, en diagonal o a salto de caballo desde la de salida. Antes, al dibujar una diagonal el
+// puntero rozaba la casilla de al lado y la punta pegaba un saltito para el costado.
+// INERCIA: cur = la punta actual; sólo se cambia a otra casilla si el puntero queda claramente (0,4 de
+// casilla) más cerca de ella. Sin esto, una diagonal hecha a mano igual zigzagueaba por las casillas
+// vecinas que también valen (e2→f2→f3→g3→g4→h5); con esto va e2→f3→g4→h5.
+// board = el tablero (las 8×8 casillas van dentro de su borde); null si el puntero salió.
+function _uaSnap(from, board, e, flipped, cur) {
+  if (!board) return null;
+  var rect = board.getBoundingClientRect(), q = board.clientWidth / 8;
+  if (!q) return null;
+  var x = (e.clientX - rect.left - board.clientLeft) / q, y = (e.clientY - rect.top - board.clientTop) / q;
+  if (x < 0 || y < 0 || x >= 8 || y >= 8) return null;
+  function sqAt(c, r) { if (flipped) { c = 7 - c; r = 7 - r; } return 'abcdefgh'[c] + (8 - r); }
+  if (!from) return sqAt(Math.floor(x), Math.floor(y));
+  var f0 = 'abcdefgh'.indexOf(from[0]), r0 = 8 - parseInt(from[1], 10);   // en la vista (fila 0 = arriba)
+  if (flipped) { f0 = 7 - f0; r0 = 7 - r0; }
+  var best = null, bd = Infinity, dCur = Infinity;
+  for (var c = 0; c < 8; c++) for (var r = 0; r < 8; r++) {
+    var dx = Math.abs(c - f0), dy = Math.abs(r - r0);
+    if (!(dx === 0 || dy === 0 || dx === dy || dx * dy === 2)) continue;   // dama o caballo (o la misma)
+    var d = Math.sqrt((c + 0.5 - x) * (c + 0.5 - x) + (r + 0.5 - y) * (r + 0.5 - y)), sq = sqAt(c, r);
+    if (sq === cur) dCur = d;
+    if (d < bd) { bd = d; best = sq; }
+  }
+  return (dCur < Infinity && bd > dCur - 0.4) ? cur : best;
+}
 
 function cvUpdateSfArrows() {
   if (!sf.on) { sfClearArrows(); return; }
@@ -49225,14 +49253,14 @@ function cvInitArrowEvents() {
   });
   inner.addEventListener('mousemove', function(e) {
     if (!_arrowDragFrom) return;
-    var sq = cvSqFromEvent(e), br = _uaBrush(e);
+    var sq = _uaSnap(_arrowDragFrom, document.getElementById('cv-board'), e, cv.flipped, _arrowDragTo), br = _uaBrush(e);
     // la flecha en curso sigue al puntero (y cambia de color si apretás/soltás Shift, Ctrl o Alt en el camino)
     if (sq !== _arrowDragTo || br !== _arrowBrush) { _arrowDragTo = sq; _arrowBrush = br; cvDrawArrows(); }
   });
   inner.addEventListener('mouseup', function(e) {
     if (e.button !== 2) return;
     e.preventDefault();
-    var to = cvSqFromEvent(e);
+    var to = _arrowDragFrom ? _uaSnap(_arrowDragFrom, document.getElementById('cv-board'), e, cv.flipped, _arrowDragTo) : cvSqFromEvent(e);
     if (_arrowDragFrom && to) {
       if (_arrowDragFrom !== to) {
         // Es una flecha: la agrega o, si ya estaba del mismo color, la quita (de otro color, la recolorea)
@@ -49300,12 +49328,12 @@ function _uaBind(boardId, canvasId, st, getFlipped) {
   wrap.addEventListener('mousedown', function(e) { if (e.button === 2) { e.preventDefault(); st.dragFrom = sqFrom(e); st.dragTo = st.dragFrom; st.brush = _uaBrush(e); _uaDraw(boardId, canvasId, st, getFlipped()); } });
   wrap.addEventListener('mousemove', function(e) {
     if (!st.dragFrom) return;
-    var sq = sqFrom(e), br = _uaBrush(e);
+    var sq = _uaSnap(st.dragFrom, board, e, getFlipped(), st.dragTo), br = _uaBrush(e);
     if (sq !== st.dragTo || br !== st.brush) { st.dragTo = sq; st.brush = br; _uaDraw(boardId, canvasId, st, getFlipped()); }   // la flecha en curso sigue al puntero
   });
   wrap.addEventListener('mouseup', function(e) {
     if (e.button !== 2) return; e.preventDefault();
-    var to = sqFrom(e);
+    var to = st.dragFrom ? _uaSnap(st.dragFrom, board, e, getFlipped(), st.dragTo) : sqFrom(e);
     if (to && st.dragFrom) {
       if (st.dragFrom !== to) {   // flecha (from → to): la agrega o, si ya estaba del mismo color, la quita
         _uaToggleArrow(st.arrows, st.dragFrom, to, _uaBrush(e));
@@ -53281,7 +53309,7 @@ function cvUpdateNagBadge() {
     });
     board.addEventListener('pointermove', function(e){
       // Flecha con clic derecho: seguí el puntero y redibujá el preview al cambiar de casilla.
-      if(lvRmDown){ var rto=sqUnder(e), rc=_uaBrush(e); if(rto!==lvRmDown.to || rc!==lvRmDown.c){ lvRmDown.to=rto; lvRmDown.c=rc; renderArrows(); } e.preventDefault(); return; }
+      if(lvRmDown){ var rto=_uaSnap(lvRmDown.from, $('lv-board'), e, isFlipped(), lvRmDown.to), rc=_uaBrush(e); if(rto!==lvRmDown.to || rc!==lvRmDown.c){ lvRmDown.to=rto; lvRmDown.c=rc; renderArrows(); } e.preventDefault(); return; }
       if(!lvDrag) return;
       // Volviste al tablero con el botón ya suelto: lo soltaste FUERA de la ventana y el pointerup
       // nunca llegó. Se cancela el arrastre en vez de dejar la pieza pegada al cursor.
@@ -53304,7 +53332,7 @@ function cvUpdateNagBadge() {
     });
     window.addEventListener('pointerup', function(e){
       // Cierre de una flecha/resaltado con clic derecho.
-      if(lvRmDown){ var rf=lvRmDown.from; lvRmDown=null; var rt=sqUnder(e);
+      if(lvRmDown){ var rf=lvRmDown.from, rcur=lvRmDown.to; lvRmDown=null; var rt=_uaSnap(rf, $('lv-board'), e, isFlipped(), rcur);
         if(rf && rt){ var rc=_uaBrush(e); if(rf===rt){ _uaToggleHl(lvHighlights, rf, rc); } else { _uaToggleArrow(lvArrows, rf, rt, rc); } renderArrows(); }
         return; }
       if(!lvDrag) return; var d=lvDrag; lvDrag=null;
