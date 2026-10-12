@@ -9232,7 +9232,7 @@ console.log('\n── Portada de aperturas ──');
   chk(P.partes('Siciliana: Variante Najdorf, Ataque Inglés').join('|') === 'Siciliana|Variante Najdorf|Ataque Inglés'
       && P.eti('Variante Najdorf') === 'Najdorf' && P.eti('Variante del Avance') === 'Variante del Avance',
       'el nombre se parte en familia, variante y subvariante; "Variante Najdorf" se lee "Najdorf" pero "Variante del Avance" queda');
-  chk(lin('Siciliana') === 'e4 c5' && lin('Gambito de Dama Rehusado') === 'd4 d5 c4 e6' && lin('India de Rey') === 'd4 Nf6 c4 g6 Nc3',
+  chk(lin('Siciliana') === 'e4 c5' && lin('Gambito de Dama Rehusado') === 'd4 d5 c4 e6' && lin('India de Rey') === 'd4 Nf6 c4 g6',   // 11/10: como en Wikipedia, E60 (2…g6) es la India de Rey a secas; con 3.Cc3 es una variante
       'cada familia va a SU línea, no a la de una variante más corta (el GDR mostraba 2…Af5, la Báltica)',
       [lin('Siciliana'), lin('Gambito de Dama Rehusado'), lin('India de Rey')].join(' / '));
   const naj = A.nodos['Siciliana: Najdorf'];
@@ -9784,7 +9784,10 @@ console.log('\n── Planes típicos de la apertura ──');
       'las marcas de la tarjeta entran al PGN justo después de su jugada (no cuenta comentarios ni variantes); sin marcas o sin esa jugada, el PGN no cambia');
   chk(/if \(typeof _estPintar === 'function' && !_estPintar\(\)\) return;/.test(extraerFuncion('renderPartidas'))
       && /_estVista = 'aperturas'/.test(extraerFuncion('_apIrDesdeAfuera')) && /_SLUG_SEC\.estudiar = 'favoritos'/.test(SRC)
-      && /_cvTourGames\[_cvTourIdx\] === _estSimNota\.pgn/.test(extraerFuncion('cvRender960Note')),
+      // 11/10: se compara con la partida que MUESTRA el visor (cv.rawPgn); con _cvTourGames, el análisis del arena
+      // (que no toca esa lista) heredaba el cartel de Dvoretsky abierto antes.
+      && /_shown = String\(cv\.rawPgn/.test(extraerFuncion('cvRender960Note')) && /_shown === _estSimNota\.pgn/.test(extraerFuncion('cvRender960Note'))
+      && !/_cvTourGames\[/.test(extraerFuncion('cvRender960Note')),
       '🔒 las Aperturas siguen igual (Finales se pinta aparte), ?ir=estudiar lleva a la pestaña, abrir una apertura desde afuera vuelve a Aperturas, y el cartel del simulado sólo sale en ESE final');
   // 07/10: posiciones de libro de torre contra pieza menor (sin peones): gana la TORRE (sim.gana), no "el del peón";
   // y si después de la línea del libro sigue la tablebase (sim.tbDesde), el cartel lo dice.

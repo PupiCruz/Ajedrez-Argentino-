@@ -88,6 +88,17 @@ const PHRASES = [
   ['Benko Gambit', 'Gambito Benko'],
   ['Alekhine Defense', 'Alekhine'],
   ['Scotch Game', 'Escocesa'],
+  // Las 'X Indian' van ANTES de 'Indian Defense' (si no, ésa se come el final y queda 'Antigua India', 'Oriental
+  // India': el autor lo vio en el visor, 11/10). Lo mismo los 'Old …' sueltos, que la palabra 'Old' daba vuelta.
+  ['Old Indian Defense', 'India Antigua'],
+  ['Old Indian Attack', 'Ataque Indio Antiguo'],
+  ['Old Indian', 'India Antigua'],
+  // 'East/West Indian' son nombres viejos (Est-/Ouest-Indienne). Lichess los pone en 1.d4 Cf6 2.Cf3 g6 y 1.d4 Cf6
+  // 2.c4 g6: las dos con g6, o sea India de Rey (autor, 11/10; nombres del anexo de aperturas de Wikipedia).
+  ['Indian Defense: West Indian Defense', 'India de Rey'],
+  ['East Indian Defense', 'India de Rey: Sin c4'],
+  ['Old Benoni', 'Benoni Antigua'],
+  ['Old Sicilian', 'Siciliana Antigua'],
   ['Indian Defense', 'India'],
   ["Petrov's Defense", 'Petrov'],
   ['Petrov Defense', 'Petrov'],
@@ -108,8 +119,6 @@ const PHRASES = [
   ['Bird Opening', 'Bird'],
   ['Tarrasch Defense', 'Tarrasch'],
   ['Bogo-Indian Defense', 'Bogo-India'],
-  ['Old Indian Defense', 'India Antigua'],
-  ['East Indian Defense', 'India Oriental'],
   ['Center Game Accepted', 'Partida del Centro Aceptada'],
   ['Center Game', 'Partida del Centro'],
   ['Ponziani Opening', 'Ponziani'],
@@ -262,7 +271,11 @@ const REORDER_RE = new RegExp('\\b(' + ADJ + ') (' + HEAD + ')\\b', 'g');
 // la PRIMERA palabra del segmento (tras inicio, ": " o ", "): así "Berlin Defensa"→"Defensa Berlin"
 // pero "Max Lange Ataque" (nombre de 2 palabras) NO se rompe (Lange no está al inicio del segmento).
 const LEAD_RE = new RegExp("(^|: |, )([A-ZÁÉÍÓÚÑ][\\wáéíóúñ'-]*) (" + HEAD + ")\\b", 'g');
+// Nombres COMPLETOS que se traducen enteros (no como frase dentro de otro). Como en el anexo de aperturas de
+// Wikipedia: E60 (1.d4 Cf6 2.c4 g6) es 'India de Rey' a secas y E61 (con 3.Cc3) 'India de Rey, 3.Cc3' (autor, 11/10).
+const EXACTO = { "King's Indian Defense": 'India de Rey: 3.Cc3' };
 function translate(name) {
+  if (EXACTO[name]) return EXACTO[name];
   let s = name;
   for (const [re, es] of PHRASE_RE) s = s.replace(re, es);
   for (const [re, es] of WORD_RE) s = s.replace(re, es);
