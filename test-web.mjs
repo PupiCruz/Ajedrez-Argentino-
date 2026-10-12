@@ -6301,8 +6301,8 @@ console.log('\n=== 53g. Aviso de colgadas graves (19/09) ===');
   C.hist().length = Math.min(C.hist().length, 99);
   chk(C.tope === 8, 'se guardan las últimas 8 (no crece para siempre)');
   const bh = extraerFuncion('_cgBarHtml');
-  chk(/_colHistDe\(rInt\)/.test(bh) && /🕑 Últimas colgadas/.test(bh) && /_colUltPanelHtml\(rInt\)/.test(bh),
-      '🔒 el botón "🕑 Últimas colgadas" va en la MISMA barra que "🎯 Colgadas de la ronda" (pedido del autor)');
+  chk(/_colHistDe\(rInt\)/.test(bh) && /🕑 Momentos destacados/.test(bh) && /_colUltPanelHtml\(rInt\)/.test(bh),
+      '🔒 el botón "🕑 Momentos destacados" (antes "Últimas colgadas", renombrado 12/10) va en la MISMA barra que "⭐ Momentos destacados de la ronda" (pedido del autor)');
   chk(/colUltimaIr\(' \+ x\.hid/.test(extraerFuncion('_colUltPanelHtml')) && extraerFuncion('colUltimaIr').includes('_colAbrir(_colHist[i].gk, _colPlyColgada(_colHist[i]))'),
       'cada renglón del desplegable abre esa partida en la jugada de la colgada');
   chk(extraerFuncion('_colDespachar').includes('_colHistGuardar(ok)'), 'se guardan las que SALIERON (no las que la verificación descartó)');
@@ -7127,8 +7127,8 @@ console.log('\n=== 53h. Colgadas de la ronda: barrido, revisión y tablero de ej
   const vv = extraerFuncion('_cgVigilarVuelta');
   chk(/cgAbrirRevision\(\);\s*_cgIrACard\(_cg\.volverA\)/.test(vv) && /_cg\.esperarVisor/.test(vv) && /_cg\.esperarVisor = Date\.now\(\) \+ 4000/.test(extraerFuncion('_cgVerPartida')),
       'al cerrar el tablero o la partida original, la revisión vuelve sola y queda en la colgada que se estaba mirando (pedido del autor)');
-  chk(ra.includes("'Próxima colgada →'") && ra.includes("'Saltar a la próxima colgada →'") && ra.includes("'Volver a la ronda'"),
-      'los botones dicen "Próxima colgada" (el visitante sabe que sigue en las colgadas, no en Entrenar)');
+  chk(ra.includes("'Próximo momento →'") && ra.includes("'Saltar al próximo →'") && ra.includes("'Volver a la ronda'") && !ra.includes('colgada →'),
+      'los botones dicen "Próximo momento" / "Saltar al próximo" (12/10: colgadas y jugadones van mezclados)');
   const des = extraerFuncion('_cgDesafio');
   chk(/lo castigó bien, ¿probás si vos también\?/.test(des) && /no lo castigó, ¿vos podés\?/.test(des),
       'el desafío: "X lo castigó bien, ¿probás si vos también?" / "X no lo castigó, ¿vos podés?"');
@@ -7288,8 +7288,8 @@ console.log('\n=== 53h. Colgadas de la ronda: barrido, revisión y tablero de ej
       && /_cgDetectarBri\(P, evCp\)\.forEach\(function\(c\)\{ _cgVerificarBri\(g, P, c\); \}\)/.test(extraerFuncion('_cgPasadaRapida')),
       'van en el MISMO barrido que las colgadas, con y sin eval de Lichess');
   const bh2 = extraerFuncion('_cgBarHtml'), cj = extraerFuncion('cgJugar'), cr2 = extraerFuncion('_cgRenderYa');
-  chk(/cgJugar\(' \+ rInt \+ ', null, true\)/.test(bh2) && /okCol\.length/.test(bh2) && /!!it\.bri === !!bri/.test(cj),
-      'en la web: botón "✨ Brillantes de la ronda" aparte, y cada botón abre sólo las suyas (no se mezclan con las colgadas)');
+  chk(/⭐ Momentos destacados de la ronda/.test(bh2) && /cgJugar\(' \+ rInt \+ '\)/.test(bh2) && !/Colgadas de la ronda|Jugadones de la ronda/.test(bh2) && /bri === undefined \|\| !!it\.bri === !!bri/.test(cj),
+      '🔒 en la web: UN solo botón "⭐ Momentos destacados de la ronda" con colgadas y jugadones juntos (pedido del autor 12/10: nadie se ve en "colgadas")');
   chk(/cgVista\(/.test(cr2) && /_cgBriCardHtml\(it\)/.test(cr2) && /!!it\.bri === bri/.test(cr2) && /!!it\.bri === bri/.test(extraerFuncion('cgProbar')),
       'en la revisión del autor: pestañas 🎯 Colgadas / ✨ Brillantes, y "Probar" recorre sólo las de la pestaña');
   const G2 = new Function(extraerFuncion('_cgPublicable') + '; return _cgPublicable;')();
@@ -9913,8 +9913,8 @@ console.log('\n=== 75. ⚡ Barrido con varios motores: cada uno sigue su partida
     + '; return { activo: _briActivo, jugada: _briJugada, vivo: _briVivo, vara: _briVara, txt: _briJugadaTxt, conf: confirmados, mesa: _briMesaHasta,'
     + '  set on(v){ ON = v; }, set mirando(v){ mirando = v; } };')(ChessV);
   const lsV = (() => { const m = {}; return { getItem: k => (k in m ? m[k] : null), setItem: (k, v) => { m[k] = String(v); }, removeItem: k => { delete m[k]; } }; })();
-  chk(V.activo('', lsV) === false && V.activo('?jugadones=1', lsV) === true && V.activo('', lsV) === true && V.activo('?x=1&jugadones=0', lsV) === false && V.activo('', lsV) === false,
-      '🔒 la llave: arranca APAGADO, ?jugadones=1 lo prende y queda guardado, ?jugadones=0 lo apaga');
+  chk(V.activo('', lsV) === true && V.activo('?x=1&jugadones=0', lsV) === false && V.activo('', lsV) === false && V.activo('?jugadones=1', lsV) === true && V.activo('', lsV) === true,
+      '🔒 la llave: PRENDIDO PARA TODOS (12/10), ?jugadones=0 lo apaga y queda guardado, ?jugadones=1 lo vuelve a prender');
 
   // Reconocer la jugada que llevó de una posición a la otra (con la última jugada de la ficha o sin ella).
   const LEGAL = 'rn1qkbnr/ppp2p1p/3p2p1/4p3/2B1P1b1/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 0 5';
