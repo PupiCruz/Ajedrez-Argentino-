@@ -2830,6 +2830,24 @@
       font-variant-numeric: tabular-nums; text-align: right; }
     .st-gap i { display: block; font-size: 9.5px; font-style: normal; font-weight: 600;
       color: var(--text3); letter-spacing: .3px; }
+    /* "Ver los N batacazos, ronda por ronda": desplegable debajo de los 5 grandes. Adentro cada fila
+       pierde la etiqueta "R3" (ya la dice el título de la ronda). */
+    .st-bx { margin-top: 10px; }
+    .st-bx > summary { list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: center;
+      gap: 7px; padding: 9px 12px; border: 1px dashed var(--border); border-radius: 11px; font-size: 12.5px;
+      font-weight: 600; color: var(--text2); user-select: none; }
+    .st-bx > summary::-webkit-details-marker { display: none; }
+    .st-bx > summary::after { content: ''; width: 6px; height: 6px; border-right: 1.5px solid currentColor;
+      border-bottom: 1.5px solid currentColor; transform: translateY(-2px) rotate(45deg); }
+    .st-bx[open] > summary::after { transform: translateY(1px) rotate(-135deg); }
+    .st-bx > summary:hover, .st-bx > summary:focus-visible { color: var(--text); border-color: var(--gold-dim); }
+    .st-bx[open] > summary { margin-bottom: 4px; }
+    .st-bxr { margin-top: 12px; }
+    .st-bxh { font-size: 10.5px; letter-spacing: .9px; text-transform: uppercase; color: var(--text3);
+      font-weight: 700; margin-bottom: 7px; }
+    .st-bxh span { text-transform: none; letter-spacing: 0; font-weight: 500; }
+    .st-bxr .st-rnd { display: none; }
+    .st-bxr .st-up { grid-template-columns: 1fr auto; }
     .st-duo { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 13px; }
     .st-rank { display: flex; flex-direction: column; gap: 8px; }
     .st-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: baseline; }
@@ -2922,6 +2940,8 @@
       .st-tile b { font-size: 21px; }
       .st-up { grid-template-columns: 28px 1fr; }
       .st-up .st-gap { grid-column: 2; text-align: left; }
+      .st-bxr .st-up { grid-template-columns: 1fr; }
+      .st-bxr .st-up .st-gap { grid-column: 1; }
       .st-gap i { display: inline; margin-left: 4px; }
     }
     /* 🌳 Portada de aperturas (Partidas → Aperturas, 03/10/2026): tarjetas por familia + árbol. */
@@ -9446,6 +9466,29 @@ function crBuildStandingsPanel(key,standings){
    Cada bloque se dibuja SOLO si tiene datos: un torneo sin cruces muestra menos, y no pasa nada.
 ═══════════════════════════════════════════════════════ */
 
+// Debajo de los 5 batacazos más grandes: el desplegable con TODOS, agrupados por ronda. Las rondas
+// sin batacazo no salen (nada de rellenar). Dentro de cada ronda, el más grande primero (la lista
+// ya viene ordenada por diferencia). `todos` es null cuando hay 5 o menos: entonces no hay botón.
+function _stBataPorRondaHtml(todos, fila){
+  if (!todos || !todos.length) return '';
+  var porRonda = {}, rondas = [];
+  todos.forEach(function(b){
+    var r = b.ronda;
+    if (!porRonda[r]){ porRonda[r] = []; rondas.push(r); }
+    porRonda[r].push(b);
+  });
+  rondas.sort(function(a, b){ return (parseInt(a, 10) || 0) - (parseInt(b, 10) || 0); });
+  var h = '<details class="st-bx"><summary>Ver los ' + todos.length + ' batacazos, ronda por ronda</summary>';
+  rondas.forEach(function(r){
+    var n = porRonda[r].length;
+    h += '<div class="st-bxr"><div class="st-bxh" role="heading" aria-level="4">Ronda ' + escHtml(String(r))
+       + ' <span>· ' + n + (n === 1 ? ' batacazo' : ' batacazos') + '</span></div><div class="st-ups">';
+    porRonda[r].forEach(function(b){ h += fila(b); });
+    h += '</div></div>';
+  });
+  return h + '</details>';
+}
+
 // Todas las partidas del torneo abierto: las de cada ronda (bajadas de Lichess) más las que están
 // en el pool o vinieron de Chess-Results. Se juntan crudas; el dedup por jugadas lo hace después
 // _stAperturasCalc, que es el que sabe reconocer la misma partida venida de dos fuentes.
@@ -10078,18 +10121,19 @@ function _stTeamPanelHtml(key, s){
   if (s.batacazos && s.batacazos.length){
     h += '<div class="st-sec"><div class="st-h"><b role="heading" aria-level="3"><span aria-hidden="true">💥</span> Los batacazos en los tableros</b>'
        + '<span>le ganó a alguien muy por encima de su Elo</span></div><div class="st-ups">';
-    s.batacazos.forEach(function(b){
+    var filaBataEq = function(b){
       var ojo = '';
       try {
         if (crFindGameIdx(b.ronda, b.ganadorRaw, b.perdedorRaw) >= 0 || crFindGameIdx(b.ronda, b.perdedorRaw, b.ganadorRaw) >= 0)
           ojo = '<span class="st-eye" title="Ver la partida" onclick="_teamOpenBoardGame(' + b.ronda + ',' + crArg(b.ganadorRaw) + ',' + crArg(b.perdedorRaw) + ')">👁</span>';
       } catch(e){}
-      h += '<div class="st-up"><div class="st-rnd">R' + b.ronda + '</div>'
+      return '<div class="st-up"><div class="st-rnd">R' + b.ronda + '</div>'
         + '<div class="st-who"><b>' + _stNm(key, b.ganadorRaw, b.ganador, '') + '</b> <span class="st-elo">(' + b.ganadorElo + ')</span>'
         + ' le ganó a <b>' + _stNm(key, b.perdedorRaw, b.perdedor, b.perdedorTitulo) + '</b> <span class="st-elo">(' + b.perdedorElo + ')</span>' + ojo + '</div>'
         + '<div class="st-gap">+' + b.diff + '<i>DE DIFERENCIA</i></div></div>';
-    });
-    h += '</div></div>';
+    };
+    s.batacazos.forEach(function(b){ h += filaBataEq(b); });
+    h += '</div>' + _stBataPorRondaHtml(s.batacazosTodos, filaBataEq) + '</div>';
   }
 
   // ── Top performances ──
@@ -10242,14 +10286,15 @@ function crBuildStatsPanel(key, data){
   // ── Los batacazos ──
   if (s.batacazos && s.batacazos.length){
     h += '<div class="st-sec"><div class="st-h"><b role="heading" aria-level="3"><span aria-hidden="true">💥</span> Los batacazos</b><span>le ganó a alguien muy por encima de su Elo</span></div><div class="st-ups">';
-    s.batacazos.forEach(function(b){
-      h += '<div class="st-up"><div class="st-rnd">' + _a11yEnVezDe('R' + b.ronda, 'Ronda ' + b.ronda) + '</div>'
+    var filaBata = function(b){
+      return '<div class="st-up"><div class="st-rnd">' + _a11yEnVezDe('R' + b.ronda, 'Ronda ' + b.ronda) + '</div>'
         + '<div class="st-who"><b>' + _stNm(key, b.ganadorRaw, b.ganador, '') + '</b> <span class="st-elo">' + _a11yEnVezDe('(' + b.ganadorElo + ')', 'Elo ' + b.ganadorElo) + '</span>'
         + ' le ganó a <b>' + _stNm(key, b.perdedorRaw, b.perdedor, b.perdedorTitulo) + '</b> <span class="st-elo">' + _a11yEnVezDe('(' + b.perdedorElo + ')', 'Elo ' + b.perdedorElo) + '</span>'
         + _stEye(b.ronda, b.ganadorRaw, b.perdedorRaw) + '</div>'
         + '<div class="st-gap">' + _a11yEnVezDe('+' + b.diff + '<i>DE DIFERENCIA</i>', b.diff + ' puntos de diferencia') + '</div></div>';
-    });
-    h += '</div></div>';
+    };
+    s.batacazos.forEach(function(b){ h += filaBata(b); });
+    h += '</div>' + _stBataPorRondaHtml(s.batacazosTodos, filaBata) + '</div>';
   }
 
   // ── Los dos top 5 ──
@@ -12795,6 +12840,8 @@ function _noticiaGatherData(data, m, opts){
     });
   });
   sorpresas.sort(function(a,b){ return b.diff - a.diff; });
+  // La Radiografía (opts.raw) también quiere TODOS, para el desplegable ronda por ronda; la noticia, los 5.
+  var sorpresasTodas = sorpresas;
   sorpresas = sorpresas.slice(0, 5);
 
   var argentinos = [];
@@ -12839,7 +12886,8 @@ function _noticiaGatherData(data, m, opts){
     argentinos:argentinos,
     femeninas:femeninas,
     juveniles:juveniles,
-    sorpresas:sorpresas
+    sorpresas:sorpresas,
+    sorpresasTodas:(opts && opts.raw && sorpresasTodas.length > sorpresas.length) ? sorpresasTodas : undefined
   };
 }
 
@@ -12853,7 +12901,8 @@ function _noticiaGatherData(data, m, opts){
        punta, racha, mesa 1, Elo promedio y el Rp cuando la tabla no lo trae.
    Todas estas funciones son PURAS (entra `data`, sale un objeto): se prueban solas en test-web.mjs.
 ═══════════════════════════════════════════════════════ */
-var _ST_V = 1;   // versión del formato. Si cambia, lo horneado se recalcula.
+var _ST_V = 2;   // versión del formato. Si cambia, lo horneado se recalcula.
+                 // 2 = + batacazosTodos (el desplegable ronda por ronda), 12/10/2026.
 
 // Resultados que cuentan como partida JUGADA. Las incomparecencias (+-- / --+) suman al puntaje
 // pero no son ajedrez: no entran en los colores, ni en el Rp, ni en los batacazos.
@@ -13198,6 +13247,8 @@ function _statsBuild(crk, data, meta){
       mesa1: mesa1
     },
     batacazos: g.sorpresas || [],
+    // Todos (sólo si hay más de 5): el desplegable "ver todos, ronda por ronda".
+    batacazosTodos: g.sorpresasTodas || null,
     topRp: topRp,
     topGain: topGain,
     rpCalculado: hayRpCalculado
@@ -13921,6 +13972,7 @@ function _stTeamBuild(crk, data, meta){
       racha: (function(){ var s = _stStreak(falso); if (s) s.nombre = pgnNameToNatural(s.raw); return s; })()
     },
     batacazos: bata.slice(0, 5),
+    batacazosTodos: bata.length > 5 ? bata : null,   // el desplegable "ver todos, ronda por ronda"
     topRp: conRp.slice(0, 5),
     topPct: medallasPor === 'pct' ? conPct.slice(0, 5) : [],
     pulso: pulso
