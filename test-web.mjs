@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2413;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2416;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -7291,7 +7291,15 @@ console.log('\n=== 53h. Colgadas de la ronda: barrido, revisión y tablero de ej
   chk(/⭐ Momentos destacados de la ronda/.test(bh2) && /cgJugar\(' \+ rInt \+ '\)/.test(bh2) && !/Colgadas de la ronda|Jugadones de la ronda/.test(bh2) && /bri === undefined \|\| !!it\.bri === !!bri/.test(cj),
       '🔒 en la web: UN solo botón "⭐ Momentos destacados de la ronda" con colgadas y jugadones juntos (pedido del autor 12/10: nadie se ve en "colgadas")');
   chk(/cgVista\(/.test(cr2) && /_cgBriCardHtml\(it\)/.test(cr2) && /!!it\.bri === bri/.test(cr2) && /!!it\.bri === bri/.test(extraerFuncion('cgProbar')),
-      'en la revisión del autor: pestañas 🎯 Colgadas / ✨ Brillantes, y "Probar" recorre sólo las de la pestaña');
+      'en la revisión del autor: chips 🎯 Colgadas / ✨ Jugadones como filtro, y "Probar" recorre las del chip');
+  chk(/⭐ Momentos destacados de la ronda/.test(cr2) && /_cg\.vista \|\| 'todos'/.test(cr2) && /vista === 'todos' \|\| !!it\.bri === bri/.test(cr2) && /it\.bri \|\| _cgCaida\(it\) >= _cg\.caidaMin/.test(cr2) && /vista === 'todos'/.test(extraerFuncion('cgProbar')),
+      '🔒 revisión del autor UNIFICADA (12/10): "⭐ Momentos destacados", arranca en ⭐ Todos (colgadas + jugadones), la caída mínima no esconde jugadones y "Probar" los recorre mezclados');
+  const brR = extraerFuncion('_briRepartir'), brD = extraerFuncion('_briDeRed'), brC = extraerFuncion('_briConfirmar'), brDes = extraerFuncion('_briDespachar');
+  chk(/_briRepartir\(items\)/.test(brDes) && /it\.red \|\| it\.prueba/.test(brR) && /tipo: 'BR'/.test(brR) && /avisarJugadon/.test(brR),
+      '🔒 ✨ el jugadón confirmado se reparte por el arbitrito (12/10), sin rebotar el que llegó de otro ni el de prueba');
+  chk(/m\.tipo !== 'BR'/.test(brD) && /_BRI_RED_MAX/.test(brD) && /_briJugada\(m\.fa, m\.fd, last\)/.test(brD) && /red: true/.test(brD)
+      && /if \(info\.red\) plazo = setTimeout/.test(brC) && /_briVara\(f, jug, lines/.test(brC),
+      '🔒 el que lo recibe lo confirma con SU motor y la misma vara; si no contesta a tiempo, usa los números del que avisó (como las colgadas)');
   const G2 = new Function(extraerFuncion('_cgPublicable') + '; return _cgPublicable;')();
   chk(JSON.stringify(G2({ '|8': { items: [{ id: 'a#!24', bri: 1, estado: 'ok', exp: 'x' }, { id: 'b#!30', bri: 1, estado: 'pend' }] } })) === '{"|8":{"items":[{"id":"a#!24","bri":1}]}}',
       'las brillantes aceptadas viajan a la web por el mismo camino que las colgadas');

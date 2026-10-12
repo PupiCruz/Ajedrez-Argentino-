@@ -3997,6 +3997,7 @@
       .cg-vista span { font-weight:600; opacity:.8; }
       .cg-vista.on { border-color:#d03030; color:var(--text); background:var(--bg2); }
       .cg-vista.cg-vista-bri.on { border-color:#26c2a3; }
+      .cg-vista.cg-vista-todos.on { border-color:var(--gold-dim); }
       .cg-card.cg-card-bri { border-left:3px solid #26c2a3; }
       .cg-bri-j { color:#26c2a3; font-weight:700; }
       /* 🧩 EJERCICIO EN VIVO (25/09; para todos desde el 27/09): el cartel de la colgada, pero violeta. */
@@ -40169,8 +40170,8 @@ window.aaCol = { llave: _colLlave, probar: _colProbar };
      autor rechazó (la calidad que el rival acepta, el jaque intermedio, la entrega falsa que termina pareja).
    · Después, como las colgadas, se mira el PGN en Lichess por si la transmisión corrigió la jugada.
    · Cartel verde agua con "!!" (#bri-cartel, aparte del rojo) y queda en 🕑 Momentos destacados.
-   · NO se reparte por el arbitrito todavía (el que lo recibe lo confirmaría como colgada): sólo lo ve
-     la PC que lo detecta. Si anda bien, se reparte y se manda al hilo del torneo en Discord.
+   · Desde el 12/10 se reparte por el arbitrito como las colgadas (type 'jugadon', ver _briRepartir): el
+     que lo recibe lo confirma con su motor. Falta mandarlo al hilo del torneo en Discord.
    · Llave: prendido para todos desde el 12/10. ?jugadones=0 lo apaga en ESE navegador (queda guardado '0'),
      ?jugadones=1 lo vuelve a prender.
      Para ver el cartel sin esperar un jugadón: aaBri.probar() en la consola, con una ronda en vivo.
@@ -40233,15 +40234,65 @@ function _briVivo(gk, g, prev, now) {
 function _briConfirmar(info) {
   var f = info.prev.fen, gk = info.gk, jug = info.m.from + info.m.to + (info.m.promotion || '');
   var prevUci = (info.prev.last && info.prev.last.from) ? info.prev.last.from + info.prev.last.to : '';
-  _briPend[gk] = 1;
-  _mevExtra.push({ fen: f, depth: _BRI_VIVO_DEPTH, multipv: 3, cb: function(sc, lines){
-    delete _briPend[gk];
-    var ok = _briVara(f, jug, lines, info.m.captured || '', prevUci);
-    if (!ok || gk === _colMirandoGk() || Date.now() < (_briMesaHasta[gk] || 0)) return;
-    info.ev = _colCp(ok.suya.sc, f);   // desde las blancas
+  var cerrado = false, plazo = null;
+  function fin(ev) {
+    if (cerrado) return;
+    cerrado = true; clearTimeout(plazo); delete _briPend[gk];
+    if (ev == null || gk === _colMirandoGk() || Date.now() < (_briMesaHasta[gk] || 0)) return;
+    info.ev = ev;   // desde las blancas
     _briAvisar(info);
+  }
+  _briPend[gk] = 1;
+  // Llegó por el arbitrito: si MI motor no contesta a tiempo (teléfono, motor cargando), sale con los números
+  // del que avisó — igual que las colgadas (_COL_RED_ESPERA_MAX) — y todavía tiene que pasar el chequeo del PGN.
+  if (info.red) plazo = setTimeout(function(){ info.sinMotor = true; fin(info.now.cp); }, _COL_RED_ESPERA_MAX);
+  _mevExtra.push({ fen: f, depth: _BRI_VIVO_DEPTH, multipv: 3, cb: function(sc, lines){
+    if (cerrado) return;
+    var ok = _briVara(f, jug, lines, info.m.captured || '', prevUci);
+    fin(ok ? _colCp(ok.suya.sc, f) : null);   // mi motor no lo ve así: no suena
   } });
   setTimeout(mevTick, 0);
+}
+/* ── ✨📣 EL ARBITRITO REPARTE LOS JUGADONES (12/10/2026, pedido del autor) ─────────────────────────
+   Igual que las colgadas (_colRepartir / _colDeRed): la PC que lo detectó y confirmó (motor + PGN) lo manda
+   al arbitrito del torneo, que se lo pasa a todos los que miran (type 'jugadon': una página vieja lo ignora).
+   El que lo recibe NO confía: mira la posición de antes con SU motor y la misma vara (_briVara); si no
+   contesta en _COL_RED_ESPERA_MAX, usa los números del que avisó. Después, el chequeo del PGN de siempre. */
+var _BRI_RED_MAX = 2;   // jugadones ajenos confirmándose A LA VEZ (son 3 líneas a prof. 18: en el teléfono pesa)
+function _briRepartir(items) {
+  try {
+    if (!window.aaTourChat || !window.aaTourChat.avisarJugadon) return;
+    var r = _tdLiveCtx && _tdLiveCtx.currentNum; if (!r) return;
+    var cs = [];
+    items.forEach(function(it){
+      if (it.red || it.prueba) return;   // llegó por el arbitrito (no rebota) o es la de prueba
+      var m = it.m || {}, lm = m.from ? m.from + m.to : ((it.now.last && it.now.last.from) ? it.now.last.from + it.now.last.to : '');
+      var pl = (it.prev.last && it.prev.last.from) ? it.prev.last.from + it.prev.last.to : '';
+      cs.push({ gk: it.gk, r: r, ply: it.now.plies, tipo: 'BR', a: it.prev.cp, d: it.ev != null ? it.ev : it.now.cp,
+        fa: it.prev.fen, fd: it.now.fen, lm: lm, pl: pl });
+    });
+    if (cs.length) window.aaTourChat.avisarJugadon(cs.slice(0, _COL_RED_LOTE));
+  } catch (e) {}
+}
+function _briDeRedLote(cs) {
+  if (!Array.isArray(cs) || !_briOn()) return;
+  for (var i = 0; i < cs.length && i < _COL_RED_LOTE; i++) _briDeRed(cs[i]);
+}
+function _briDeRed(m) {
+  if (!_briOn() || !m || m.tipo !== 'BR' || !m.gk || !m.fa || !m.fd) return;
+  var r = _tdLiveCtx && _tdLiveCtx.currentNum;
+  if (!r || m.r !== r) return;                                           // no estoy siguiendo esa ronda
+  if (m.gk === _colMirandoGk() || Date.now() < (_briMesaHasta[m.gk] || 0) || _briPend[m.gk]) return;
+  var k = 0; for (var q in _briPend) k++;
+  if (k >= _BRI_RED_MAX) return;
+  var g = _colBuscar(m.gk); if (!g) return;                              // no es de esta ronda
+  var uci = function(x){ x = String(x || ''); return /^[a-h][1-8][a-h][1-8]$/.test(x) ? { from: x.slice(0, 2), to: x.slice(2, 4) } : null; };
+  var last = uci(m.lm), prevLast = uci(m.pl);
+  var mv = _briJugada(m.fa, m.fd, last); if (!mv) return;                // esas dos posiciones no son una jugada
+  if (mv.captured && prevLast && prevLast.to === mv.to) return;          // retomar no es jugadón
+  _briConfirmar({ gk: m.gk, g: g, red: true, m: mv, c: { lado: m.fa.split(' ')[1] === 'w' ? 'w' : 'b', tipo: 'BR' },
+    prev: { fen: m.fa, cp: m.a, plies: _fenPlies(m.fa), last: prevLast },
+    now: { fen: m.fd, cp: m.d, plies: _fenPlies(m.fd), last: last } });
 }
 // La vara de _cgVerificarBri (Jugadones de la ronda), para una sola jugada. Si se cambia allá, cambiarla acá.
 function _briVara(f, jug, lines, cap, prevUci) {
@@ -40286,6 +40337,7 @@ function _briDespachar() {
   items.sort(function(a, b){ return (b.arg ? 1 : 0) - (a.arg ? 1 : 0); });   // argentinos primero
   _colHistGuardar(items);
   _briMostrar(items);
+  _briRepartir(items);
 }
 // ── Textos y cartel ──
 function _briTitulo(it) {
@@ -41814,38 +41866,41 @@ function _cgRender() {
 }
 function _cgRenderYa() {
   var ov = document.getElementById('cg-ov'); if (!ov || !ov.classList.contains('open')) return;
-  var todo = _cgItems(_cg.tour, _cg.rk), bri = _cg.vista === 'bri';
+  // ⭐ 12/10 (pedido del autor): UN panel "Momentos destacados" con colgadas y jugadones juntos, como en la web.
+  // Los chips 🎯 / ✨ quedan como filtro, por si se quiere revisar un tipo solo. Arranca en "Todos".
+  var todo = _cgItems(_cg.tour, _cg.rk), vista = _cg.vista || 'todos', bri = vista === 'bri';
   var nBri = todo.filter(function(it){ return it.bri; }).length;
-  var todas = todo.filter(function(it){ return !!it.bri === bri; });   // la pestaña: colgadas o ✨ brillantes
+  var todas = todo.filter(function(it){ return vista === 'todos' || !!it.bri === bri; });
   // Caída mínima (pedido del autor): con 200 colgadas en una ronda grande, quedarse sólo con las más fuleras.
-  // Filtra la lista y los contadores; lo ya aceptado/rechazado no se toca. (Las brillantes no caen: no aplica.)
+  // Filtra la lista y los contadores; lo ya aceptado/rechazado no se toca. (Los jugadones no caen: pasan siempre.)
   if (_cg.caidaMin == null) { try { _cg.caidaMin = parseInt(localStorage.getItem('aa_cg_caida'), 10) || 0; } catch (e) { _cg.caidaMin = 0; } }
-  var its = bri ? todas : todas.filter(function(it){ return _cgCaida(it) >= _cg.caidaMin; });
+  var its = todas.filter(function(it){ return it.bri || _cgCaida(it) >= _cg.caidaMin; });
   var n = { todas: its.length, pend: 0, ok: 0, no: 0 };
   its.forEach(function(it){ n[it.estado]++; });
   var caidaBtn = function(v, t){
-    var k = todas.filter(function(it){ return _cgCaida(it) >= v; }).length;
+    var k = todas.filter(function(it){ return it.bri || _cgCaida(it) >= v; }).length;
     return '<button class="cg-tab' + (_cg.caidaMin === v ? ' on' : '') + '" onclick="cgCaida(' + v + ')">' + t + ' (' + k + ')</button>';
   };
-  var vis = its.filter(function(it){ return (_cg.filtro === 'todas' || it.estado === _cg.filtro) && (!_cg.soloArg || it.arg) && (!_cg.soloUnica || it.unico) && (bri || !_cg.soloDecisivas || it.tipo !== 'C'); });
+  var vis = its.filter(function(it){ return (_cg.filtro === 'todas' || it.estado === _cg.filtro) && (!_cg.soloArg || it.arg) && (!_cg.soloUnica || it.unico) && (it.bri || !_cg.soloDecisivas || it.tipo !== 'C'); });
   var tab = function(k, t){ return '<button class="cg-tab' + (_cg.filtro === k ? ' on' : '') + '" onclick="cgFiltro(\'' + k + '\')">' + t + ' (' + n[k] + ')</button>'; };
+  var vistaBtn = function(v, cls, t, k){ return '<button class="cg-vista ' + cls + (vista === v ? ' on' : '') + '" onclick="cgVista(\'' + v + '\')">' + t + ' <span>(' + k + ')</span></button>'; };
   var h = '<div class="cg-box">'
-    + '<div class="cg-head"><b>' + (bri ? '✨ Jugadones' : '🎯 Colgadas') + ' de la ronda ' + escHtml(String(_cg.ronda)) + '</b>'
+    + '<div class="cg-head"><b>⭐ Momentos destacados de la ronda ' + escHtml(String(_cg.ronda)) + '</b>'
     + '<span style="flex:1"></span>'
     + (!_cg.corriendo ? '<button class="cg-mini" onclick="cgBarrer(' + _cg.ronda + ')">🔎 Volver a buscar</button>'
                       + '<button class="cg-mini" onclick="cgPodar()" title="Borra de todos los torneos las que no aceptaste (quedan las aceptadas y las pasadas a Entrenar)">🧹 Borrar las no aceptadas</button>' : '')
     + '<button class="cg-x" onclick="cgCerrarRevision()" aria-label="Cerrar">✕</button></div>'
     + '<div id="cg-prog" class="cg-prog">' + _cgProgHtml() + '</div>'
-    + '<div class="cg-vistas"><button class="cg-vista' + (bri ? '' : ' on') + '" onclick="cgVista(\'col\')">🎯 Colgadas <span>(' + (todo.length - nBri) + ')</span></button>'
-    + '<button class="cg-vista cg-vista-bri' + (bri ? ' on' : '') + '" onclick="cgVista(\'bri\')">✨ Jugadones <span>(' + nBri + ')</span></button></div>'
+    + '<div class="cg-vistas">' + vistaBtn('todos', 'cg-vista-todos', '⭐ Todos', todo.length)
+    + vistaBtn('col', '', '🎯 Colgadas', todo.length - nBri) + vistaBtn('bri', 'cg-vista-bri', '✨ Jugadones', nBri) + '</div>'
     + '<div class="cg-tabs">' + tab('todas', 'Todas') + tab('pend', 'Por revisar') + tab('ok', '✅ Aceptadas') + tab('no', '❌ Rechazadas')
     + '<span style="flex:1"></span>'
     + '<button class="cg-tab' + (_cg.soloArg ? ' on' : '') + '" onclick="cgSoloArg()">' + _flagImg('ARG') + ' Solo argentinos</button>'
-    + '<button class="cg-tab' + (_cg.soloUnica ? ' on' : '') + '" onclick="cgSoloUnica()">' + (bri ? 'Única solución' : 'Castigo único') + '</button>'
+    + '<button class="cg-tab' + (_cg.soloUnica ? ' on' : '') + '" onclick="cgSoloUnica()">' + (bri ? 'Única solución' : vista === 'col' ? 'Castigo único' : 'Solución única') + '</button>'
     + (bri ? '' : '<button class="cg-tab' + (_cg.soloDecisivas ? ' on' : '') + '" onclick="cgSoloDecisivas()" title="Oculta las que se dieron vuelta sin quedar decididas">Sólo decisivas</button>') + '</div>'
     + (bri ? '' : '<div class="cg-tabs cg-caida"><span class="cg-caida-t">Caída mínima:</span>' + caidaBtn(0, 'Todas') + caidaBtn(300, '3 peones') + caidaBtn(400, '4 peones') + caidaBtn(500, '5 peones') + '</div>')
     + '<div class="cg-lista">';
-  if (!vis.length) h += '<div class="cg-vacio">' + (_cg.corriendo ? 'Buscando…' : (todas.length ? 'Nada en este filtro.' : (bri ? 'No se encontraron jugadones en esta ronda.' + (todo.length && !nBri ? ' (Si esta ronda se barrió antes del 25/09, tocá 🔎 Volver a buscar.)' : '') : 'No se encontraron colgadas en esta ronda.'))) + '</div>';
+  if (!vis.length) h += '<div class="cg-vacio">' + (_cg.corriendo ? 'Buscando…' : (todas.length ? 'Nada en este filtro.' : (bri ? 'No se encontraron jugadones en esta ronda.' + (todo.length && !nBri ? ' (Si esta ronda se barrió antes del 25/09, tocá 🔎 Volver a buscar.)' : '') : vista === 'col' ? 'No se encontraron colgadas en esta ronda.' : 'No se encontraron momentos destacados en esta ronda.'))) + '</div>';
   vis.forEach(function(it){
     if (it.bri) { h += _cgBriCardHtml(it); return; }
     var solver = it.fen.split(' ')[1], last = { from: it.jug.slice(0, 2), to: it.jug.slice(2, 4) };
@@ -41879,7 +41934,7 @@ function _cgEvSolverHtml(it) {
 }
 function _cgTipoTxt(t) { return t === 'M' ? 'se dejó mate' : t === 'B' ? 'tiró la ganada' : t === 'C' ? 'se dio vuelta' : 'perdió una pareja'; }
 function cgFiltro(k) { _cg.filtro = k; _cgRenderYa(); }
-function cgVista(v) { _cg.vista = (v === 'bri') ? 'bri' : 'col'; _cg.abiertaExp = null; _cgRenderYa(); }
+function cgVista(v) { _cg.vista = (v === 'bri' || v === 'col') ? v : 'todos'; _cg.abiertaExp = null; _cgRenderYa(); }
 // Tarjeta de una brillante en la revisión: el tablero es la posición de ANTES (le toca al que la jugó).
 function _cgBriCardHtml(it) {
   var solver = it.fen.split(' ')[1], sg = solver === 'w' ? 1 : -1, id = escJs(it.id);
@@ -42021,7 +42076,7 @@ function _cgBarHtml(rInt) {
   if (!_ondemand) {
     var fin = (_tdCtx.byRound[rInt] || []).some(function(g){ return (g.h.Result || '*') !== '*'; });
     if (fin) h += '<button class="cg-autor" onclick="' + (its.length ? 'cgAbrirRevision(' + rInt + ')' : 'cgBarrer(' + rInt + ')') + '">🔎 '
-      + (its.length ? 'Revisar colgadas y jugadones (' + its.filter(function(i){ return i.estado === 'ok'; }).length + ' aceptadas de ' + its.length + ')' : 'Buscar colgadas y jugadones') + '</button>';
+      + (its.length ? 'Revisar momentos destacados (' + its.filter(function(i){ return i.estado === 'ok'; }).length + ' aceptados de ' + its.length + ')' : 'Buscar momentos destacados') + '</button>';
   }
   h += _colUltPanelHtml(rInt);   // el desplegable, debajo de los botones (ocupa todo el ancho)
   return h ? '<div class="cg-bar" id="cg-bar-' + rInt + '">' + h + '</div>' : '';
@@ -42061,8 +42116,8 @@ function _cgEloProm(it) {
   return e.length ? Math.round((e[0] + (e[1] || e[0])) / 2) : 0;
 }
 function cgProbar(id) {   // modo autor: probarla desde la revisión (esté aceptada o no)
-  var el = _cgBuscarItem(id), bri = !!(el && el.bri);
-  var its = _cgItems(_cg.tour, _cg.rk).filter(function(it){ return !!it.bri === bri; }); if (!its.length) return;   // colgadas o brillantes, no mezcladas
+  var vista = _cg.vista || 'todos', bri = vista === 'bri';
+  var its = _cgItems(_cg.tour, _cg.rk).filter(function(it){ return vista === 'todos' || !!it.bri === bri; }); if (!its.length) return;   // las del chip elegido (⭐ Todos = mezcladas)
   var ov = document.getElementById('cg-ov'); if (ov) ov.classList.remove('open');
   _cg.desdeRevision = true; _cg.volverA = id;
   _cgVigilarVuelta();
@@ -55582,6 +55637,7 @@ function cvUpdateNagBadge() {
       else if(m.type==='presence'){ tcSeeing=Number(m.n)||0; tcRenderPresence(); }
       // 🚨 Aviso de colgada repartido por el arbitrito (no es un mensaje del chat: no se guarda ni se ve).
       else if(m.type==='colgada'){ try{ if(typeof _colDeRedLote==='function') _colDeRedLote(m.cs); }catch(e){} }
+      else if(m.type==='jugadon'){ try{ if(typeof _briDeRedLote==='function') _briDeRedLote(m.cs); }catch(e){} }   // ✨ ídem, un jugadón
       // 🤝 Motor repartido: quiénes ayudan, lo que calcularon y a quién ya no se le cree.
       else if(m.type==='rep' || m.type==='ev' || m.type==='ev-veto'){ try{ if(typeof _repDeRed==='function') _repDeRed(m); }catch(e){} }
       else if(m.type==='reaction'){ tcApplyReaction(m.id, m.emoji, m.userId, !!m.on); }
@@ -55820,6 +55876,8 @@ function cvUpdateNagBadge() {
     // 🚨 Avisar una colgada al arbitrito para que se la reparta a todo el torneo (ver _colRepartir).
     // Sólo los logueados avisan, igual que para escribir: así hay a quién silenciar si alguien abusa.
     avisarColgada:function(cs){ if(!tcRoom || !lvAuthUser() || !(cs && cs.length)) return false; tcRawSend({ type:'colgada', cs:cs }); return true; },
+    // ✨ Lo mismo con un jugadón (12/10, ver _briRepartir).
+    avisarJugadon:function(cs){ if(!tcRoom || !lvAuthUser() || !(cs && cs.length)) return false; tcRawSend({ type:'jugadon', cs:cs }); return true; },
     // Monta el panel en `host` y registra esa vista. Idempotente por host (no reconstruye el DOM).
     mount:function(which, host){
       if(!host) return;
