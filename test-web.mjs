@@ -26,7 +26,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2416;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2417;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -548,7 +548,7 @@ console.log('\n=== 17. Radiografía POR EQUIPOS (Olimpiadas, ligas) ===');
   const P24 = { bp:{ India:35, USA:29.5, UZB:29.5, ARM:30 }, mp:{ India:21, USA:17, UZB:17, ARM:16 } };
   chk(M._stTeamCriterio([{ name:'India' }, { name:'USA' }, { name:'UZB' }, { name:'ARM' }], P24) === 'match',
       'Olimpiada moderna: va por puntos de MATCH');
-  chk(/\+ \(tk\.length \? '\|e15' : ''\)/.test(SRC),'la firma de los cuadros por equipos cambió de versión (lo horneado viejo se recalcula)');
+  chk(/\+ \(tk\.length \? '\|e16' : ''\)/.test(SRC),'la firma de los cuadros por equipos cambió de versión (lo horneado viejo se recalcula)');
 
   const boards = M._stTeamBoardsAsRounds(liga);
   chk(Object.keys(boards).length === 2 && boards['1'].length === 4,
@@ -8330,8 +8330,12 @@ console.log('\n=== Auditoría 23/09 — Fase 4: accesibilidad y prolijidad ===')
   chk(/var matchesEq = teams\.length - 1;/.test(SRC) && /anioOlimp >= 1931 && anioOlimp <= 1950 && anioOlimp !== 1939 && matchesEq > 0/.test(SRC)
       && /var minMitad = Math\.ceil\(matchesEq \/ 2\);/.test(SRC),
       '1931-1950 (menos 1939): mínimo de partidas = la mitad de los matches de cada equipo (König 6/8 afuera, 1931)');
-  chk(/if \(enMesa\.length >= \(minMitad \? 1 : 3\)\) mesas\.push\(/.test(SRC),
+  chk(/if \(enMesa\.length >= \(\(minMitad \|\| fases\) \? 1 : 3\)\) mesas\.push\(/.test(SRC),
       'Dubrovnik 1950, 2.º suplente: con sólo dos en el mínimo igual hay medallas (Evans oro, Donner plata); fuera de 1931-1950, tres o más');
+  // Helsinki 1952: las medallas suman grupo + final de TODAS las finales (Najdorf 12½/16 oro; Donner, Final B, plata).
+  chk(/var _ST_OLIMP_FASES_MIN = \{ 1952:9,/.test(SRC) && SRC.includes("pm = /^(.*?)Final\\s+A$/i.exec(")
+      && SRC.includes('? _stOlimpFases(crk, data, meta, anioOlimp) : null;') && SRC.includes('cats:  c ? (c.cats || null) : null,'),
+      '1952-1974: desde la Final A, medallas con grupo + final de todas las finales y el mínimo de cada año (9 en 1952)');
 }
 
 // ── Archivos de torneo de más de 25 MiB: se parten en pedazos (30/09/2026, 46ª Olimpiada) ──

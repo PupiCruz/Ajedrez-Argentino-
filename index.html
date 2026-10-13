@@ -9596,6 +9596,7 @@ function _stStatsMeta(key){
            isTeam: !!(c && c.isTeam),
            cat:   c ? (c.cat || '') : '',   // nombre de la categoría abierta (para _stNombreConCat)
            rama:  c ? (c.rama || '') : '',  // '' | 'abs' | 'fem' — lo declara el autor en la ficha
+           cats:  c ? (c.cats || null) : null,   // nombres de las categorías del torneo (_stOlimpFases)
            status: c ? (c.status || '') : '' };
 }
 
@@ -10011,15 +10012,19 @@ function _stTeamPanelHtml(key, s){
   if (s.premios && s.premios.porMesa && s.premios.porMesa.length){
     var MED = ['🥇','🥈','🥉'];
     h += '<div class="st-sec"><div class="st-h"><b role="heading" aria-level="3"><span aria-hidden="true">🥇</span> Las medallas por tablero</b>'
-       + '<span>' + (porPct && s.pctConElo ? 'por porcentaje de puntos, como se premiaban hasta 2006, en el tablero que cada uno ocupa en su equipo'
+       + '<span>' + (s.premios.mesasFases ? 'por porcentaje de puntos, sumando el grupo preliminar y la final de cada uno, entre los jugadores de todas las finales (con '
+                    + s.premios.mesasFases.min + ' partidas o más), como las medallas oficiales'
+                  : porPct && s.pctConElo ? 'por porcentaje de puntos, como se premiaban hasta 2006, en el tablero que cada uno ocupa en su equipo'
                   : porPct ? 'por porcentaje de puntos (no había Elo), en el tablero que cada uno ocupa en su equipo'
                             : 'por performance, ' + (s.tableroPor === 'mesa' ? 'en la mesa donde más jugó cada uno' : 'en el tablero que cada uno ocupa en su equipo')) + '</span></div><div class="st-mesas">';
     s.premios.porMesa.forEach(function(x){
       h += '<div class="st-mesa"><b>Tablero ' + x.mesa + '</b>';
       (x.podio || []).forEach(function(p, i){
         // Con empate, la medalla se comparte (`puesto`): dos oros y el que sigue es bronce.
+        // 1952-1974: el nombre abre su performance en SU final (p.crk) y se dice cuál fue.
         h += '<div class="st-medal"><em>' + MED[(p.puesto || (i + 1)) - 1] + '</em>'
-          + '<div>' + jug(p) + '<i>' + escHtml(p.equipo || '') + ' · ' + puntaje(p) + '</i></div>'
+          + '<div>' + (p.crk ? _stNm(p.crk, p.raw, p.nombre, p.titulo) : jug(p))
+          + '<i>' + escHtml(p.equipo || '') + (p.fase ? ' · Final ' + escHtml(p.fase) : '') + ' · ' + puntaje(p) + '</i></div>'
           + '<span>' + (porPct ? pctStr(p) : p.rp) + '</span></div>';
       });
       h += '</div>';
@@ -12958,7 +12963,8 @@ function _stSig(data){
        // 'e13' = 1931-1950: mínimo de partidas = la mitad de los matches (König 6/8, Praga 1931), 01/10/2026.
        // 'e14' = medallas por tablero aunque lleguen al mínimo menos de tres (Evans y Donner, Dubrovnik 1950), 01/10/2026.
        // 'e15' = fuera de las Olimpiadas, el tablero es la mesa donde más jugó (Liga Nacional 2026: no más "tablero 4"), 10/10/2026.
-       + (tk.length ? '|e15' : '');
+       // 'e16' = 1952-1974: las medallas de la Final A suman grupo + final de todas las finales (Najdorf 12½/16, Helsinki 1952), 13/10/2026.
+       + (tk.length ? '|e16' : '');
 }
 
 // ── Rp (performance) calculado desde los cruces ─────────────────────────────────────────────
@@ -13712,6 +13718,56 @@ function _stTeamPlayers(data, rondas, pisoElo, tope100, conWO, boInscripto, porM
 }
 
 // La radiografía de un torneo POR EQUIPOS.
+// ── Olimpiadas 1952-1974: grupos preliminares + finales ─────────────────────────────────────
+// Las medallas por tablero de esas Olimpiadas sumaban TODO lo que jugó cada uno (su grupo preliminar
+// Y su final) y se repartían entre los jugadores de TODAS las finales, no sólo los de la Final A
+// (OlimpBase, "Individual medals"). Caso real: Helsinki 1952, tablero 1 → oro Najdorf 12½/16 (grupo 1 +
+// Final A); con la Final A sola la app contaba la mitad. Y en el tablero 3 la plata es de Donner, de la
+// Final B (10/13). El mínimo de partidas de cada año sale de las estadísticas de OlimpBase
+// (/AAAA/AAAA-ind.html: el que no llegó queda sin puesto individual). 1952 → 9 ("Boleslavsky's 7/8
+// record was ignored"). Con estos mínimos, 1952-1974 dan los podios de OlimpBase.
+var _ST_OLIMP_FASES_MIN = { 1952:9, 1954:7, 1956:10, 1958:7, 1960:10, 1962:12, 1964:10, 1966:12, 1968:12,
+                            1970:10, 1972:12, 1974:6 };
+// Junta en un solo cuadro los grupos y las finales de la misma rama ("Absoluto · Grupo 3", "Absoluto ·
+// Final B"). Sólo desde la Final A, y sólo si están TODOS cargados: si falta uno, null (mejor las medallas
+// de la Final A sola que unas sumadas a medias). meta.cats = los nombres de las categorías del torneo.
+function _stOlimpFases(crk, data, meta, anio){
+  var min = _ST_OLIMP_FASES_MIN[anio], cats = meta && meta.cats;
+  var mc = /_c(\d+)$/.exec(String(crk || ''));
+  if (!min || !cats || !cats.length || !mc) return null;
+  var nomDe = function(c){ return String((c && typeof c === 'object') ? (c.name || '') : (c || '')).trim(); };
+  var yo = +mc[1], pm = /^(.*?)Final\s+A$/i.exec(nomDe(cats[yo]));
+  if (!pm) return null;
+  var pref = pm[1], base = String(crk).slice(0, mc.index);
+  var tr = {}, ros = {}, fedDe = {}, faseDe = {}, crkDe = {}, grupos = 0;
+  for (var i = 0; i < cats.length; i++){
+    var nom = nomDe(cats[i]);
+    if (nom.indexOf(pref) !== 0) continue;
+    var resto = nom.slice(pref.length), fin = /^Final\s+(\S+)$/i.exec(resto), grupo = /^Grupo\b/i.test(resto);
+    if (!fin && !grupo) continue;
+    var k = base + '_c' + i, d = (i === yo) ? data : crDataLoad(k);
+    if (!d || !d.teamRounds || !Object.keys(d.teamRounds).length) return null;
+    if (grupo) grupos++;
+    Object.keys(d.teamRounds).forEach(function(r){ tr['c' + i + '_' + r] = d.teamRounds[r]; });
+    (d.teamRoster || []).forEach(function(eq){
+      var n = _stTeamName(eq && eq.name);
+      if (!n) return;
+      var R = ros[n] || (ros[n] = { name:eq.name, players:[] });
+      (eq.players || []).forEach(function(p){
+        if (p && p.nm && !R.players.some(function(q){ return q.nm === p.nm; })) R.players.push(p);
+      });
+    });
+    ((d.teamStandings && d.teamStandings.teams) || []).forEach(function(t){
+      var n = _stTeamName(t.name);
+      if (t.fed && !fedDe[n]) fedDe[n] = t.fed;
+      if (fin){ faseDe[n] = fin[1].toUpperCase(); crkDe[n] = k; }
+    });
+  }
+  if (!grupos) return null;
+  return { data:{ teamRounds:tr, teamRoster:Object.keys(ros).map(function(n){ return ros[n]; }) },
+           min:min, fedDe:fedDe, faseDe:faseDe, crkDe:crkDe };
+}
+
 function _stTeamBuild(crk, data, meta){
   var ts = data && data.teamStandings;
   if (!ts || !ts.teams || !ts.teams.length || ts.kind === 'initial') return null;
@@ -13863,13 +13919,30 @@ function _stTeamBuild(crk, data, meta){
                         c.pct = Math.round(c.pts / c.partidas * 1000) / 10; c.premio = x.premio;
                         c.equipo = esNom(c.equipo); return c; });   // copia: el paso de abajo que traduce el país no la alcanza
   }
+  // 1952-1974, desde la Final A: las medallas salen de la suma grupo + final de TODOS los finalistas.
+  var fases = (olimpPct && anioOlimp >= 1952 && anioOlimp <= 1974 && medallasPor === 'pct')
+    ? _stOlimpFases(crk, data, meta, anioOlimp) : null;
+  var rankingMesas = ranking;
+  if (fases){
+    rankingMesas = _stTeamPlayers(fases.data, 99, 0, 0, false, true, false)
+      .filter(function(p){ return p.partidas >= fases.min; })
+      .map(function(p){
+        p.pct = Math.round(p.pts / p.partidas * 1000) / 10;
+        p.fase = fases.faseDe[p.equipo] || '';
+        p.crk = fases.crkDe[p.equipo] || '';   // su final: ahí se abre su performance
+        p.equipo = _paisES(p.equipo, fases.fedDe[p.equipo] || '');
+        return p;
+      })
+      .sort(function(a,b){ return (b.pct - a.pct) || (b.partidas - a.partidas); });
+  }
   if (!sinTableros && !especiales) [1,2,3,4,5,6,7,8].forEach(function(m){
-    var enMesa = ranking.filter(function(p){ return p.mesa === m; });
+    var enMesa = rankingMesas.filter(function(p){ return p.mesa === m; });
     // En las Olimpiadas por porcentaje la medalla se daba aunque llegaran al mínimo menos de tres: Dubrovnik 1950,
     // 2.º suplente, sólo Evans 9/10 (oro) y Donner 4½/8 (plata) ("Only two players completed more than half of the
     // games", OlimpBase). Sólo en las de todos contra todos 1931-1950 (las de la regla de la mitad, `minMitad`): en los
     // grupos de 1952-1978 saldrían más de cien tableros de uno o dos jugadores sin comprobar. En lo demás, tres o más.
-    if (enMesa.length >= (minMitad ? 1 : 3)) mesas.push({ mesa:m, podio: medallasPor === 'pct' ? _stPodioEmpates(enMesa, 3, pctDe) : enMesa.slice(0, 3) });
+    // (1952 también: en el 2.º suplente sólo Rellstab y Grynfeld llegaron a 9.)
+    if (enMesa.length >= ((minMitad || fases) ? 1 : 3)) mesas.push({ mesa:m, podio: medallasPor === 'pct' ? _stPodioEmpates(enMesa, 3, pctDe) : enMesa.slice(0, 3) });
   });
   // 1927 y 1928: sin orden de tableros, los premios eran para los 6 mejores del torneo.
   var mejores6 = sinTableros ? _stPodioEmpates(conPct, 6, pctDe) : null;
@@ -13964,6 +14037,7 @@ function _stTeamBuild(crk, data, meta){
       mejorPct: medallasPor === 'pct' ? (conPct[0] || null) : null,
       masPuntos: porPuntos[0] || null,
       porMesa: mesas,
+      mesasFases: fases ? { min:fases.min } : null,   // 1952-1974: grupo + final, entre todas las finales
       mejores6: mejores6,        // sólo 1927/1928: los premios individuales del torneo entero
       especiales: especiales,    // sólo 1930: los tres premios especiales (no hubo medallas por tablero)
       // Las Olimpiadas con premios a la mejor partida (OlimpBase), si alguna se jugó en este cuadro.
@@ -37549,6 +37623,9 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
                    cat: (typeof _cat !== 'undefined' && _cat) ? (_cat.name || '') : '',
                    // Una categoría sin medallas (ej. un GRUPO preliminar de una Olimpiada): sin podio.
                    sinPodio: !!(typeof _cat !== 'undefined' && _cat && _cat.sinPodio),
+                   // Los nombres de TODAS las categorías: la Final A de una Olimpiada 1952-1974 suma los grupos y las
+                   // otras finales para las medallas por tablero (ver _stOlimpFases).
+                   cats: (typeof categories !== 'undefined' && categories && categories.length) ? categories.map(function(c){ return (c && c.name) || ''; }) : null,
                    rama: rama || '' };
   h += '<div id="td-podium-box">' + _tdPodiumInnerHtml() + '</div>';
   if (status === 'upcoming' && !_ondemand) {
