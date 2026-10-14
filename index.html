@@ -33914,45 +33914,101 @@ function tzeRenderGameList() {
 
 // ── Categorías del torneo (filas dinámicas en el panel de edición) ──
 // Cada fila = una categoría con su nombre + link de transmisión Lichess + link de Chess-Results.
-function tzeAddCatRow(name, bc, cr) {
+// ORDEN (14/10/2026): las filas se reordenan arrastrando el asa ⠿ o con las flechitas ▲▼. `orig` = índice
+// de la categoría guardada (vacío en una fila nueva): ver _tzeCollectCats, que NO muda los datos de lugar.
+function tzeAddCatRow(name, bc, cr, orig) {
   var list = document.getElementById('tze-cat-list'); if (!list) return;
   var row = document.createElement('div');
   row.className = 'tze-cat-row';
+  if (orig != null) row.dataset.orig = String(orig);
   row.style.cssText = 'display:flex;gap:6px;align-items:center;margin-bottom:8px';
   row.innerHTML =
-      '<input class="tz-input tze-cat-name" type="text" placeholder="Nombre (ej: Sub-14 Femenino)" value="' + escHtml(name || '') + '" style="flex:1.1;min-width:0">'
+      '<span class="tze-cat-grip" title="Arrastrar para cambiar el orden" aria-hidden="true" style="cursor:grab;color:var(--text3);font-size:17px;line-height:1;padding:4px 2px;flex-shrink:0;user-select:none;touch-action:none">⠿</span>'
+    + '<span style="display:flex;flex-direction:column;flex-shrink:0">'
+    + '<button type="button" onclick="_tzeCatMove(this,-1)" title="Subir" aria-label="Subir esta categoría" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:11px;line-height:1;padding:1px 3px">▲</button>'
+    + '<button type="button" onclick="_tzeCatMove(this,1)" title="Bajar" aria-label="Bajar esta categoría" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:11px;line-height:1;padding:1px 3px">▼</button>'
+    + '</span>'
+    + '<input class="tz-input tze-cat-name" type="text" placeholder="Nombre (ej: Sub-14 Femenino)" value="' + escHtml(name || '') + '" style="flex:1.1;min-width:0">'
     + '<input class="tz-input tze-cat-bc" type="text" placeholder="Link transmisión Lichess" value="' + escHtml(bc || '') + '" style="flex:1.4;min-width:0">'
     + '<input class="tz-input tze-cat-cr" type="text" placeholder="Link Chess-Results o info64" value="' + escHtml(cr || '') + '" style="flex:1.4;min-width:0">'
     + '<button type="button" onclick="this.parentNode.remove()" title="Quitar categoría" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:16px;line-height:1;padding:2px 4px;flex-shrink:0">✕</button>';
   list.appendChild(row);
+  _tzeCatDragInit(list);
+}
+function _tzeCatMove(btn, dir) {
+  var row = btn.closest('.tze-cat-row'); if (!row) return;
+  var otra = dir < 0 ? row.previousElementSibling : row.nextElementSibling;
+  if (!otra) return;
+  if (dir < 0) row.parentNode.insertBefore(row, otra); else row.parentNode.insertBefore(otra, row);
+  btn.focus();
+}
+// Arrastre con el puntero (anda con mouse y con el dedo): se agarra del asa ⠿ y la fila se mete
+// antes de la fila sobre la que pasa el puntero (o al final, debajo de la última).
+function _tzeCatDragInit(list) {
+  if (list._dragOk) return; list._dragOk = true;
+  var fila = null;
+  list.addEventListener('pointerdown', function (e) {
+    var g = e.target.closest && e.target.closest('.tze-cat-grip'); if (!g) return;
+    e.preventDefault();
+    fila = g.closest('.tze-cat-row'); fila.style.opacity = '.55'; fila.style.outline = '1px dashed rgba(140,100,200,.6)';
+    try { g.setPointerCapture(e.pointerId); } catch (x) {}
+  });
+  list.addEventListener('pointermove', function (e) {
+    if (!fila) return;
+    var filas = Array.prototype.slice.call(list.querySelectorAll('.tze-cat-row'));
+    for (var i = 0; i < filas.length; i++) {
+      var r = filas[i].getBoundingClientRect();
+      if (e.clientY < r.top + r.height / 2) { if (filas[i] !== fila && filas[i] !== fila.nextElementSibling) list.insertBefore(fila, filas[i]); return; }
+    }
+    if (filas[filas.length - 1] !== fila) list.appendChild(fila);
+  });
+  var soltar = function () { if (!fila) return; fila.style.opacity = ''; fila.style.outline = ''; fila = null; };
+  list.addEventListener('pointerup', soltar); list.addEventListener('pointercancel', soltar);
 }
 // Vuelca las categorías guardadas en las filas del panel (al abrir Editar). [] limpia las filas.
 // Copia de las categorías tal como estaban al abrir el editor. El formulario solo muestra/edita
 // name/broadcast/crurl, pero cada categoría también guarda overrides que se editan en el DETALLE
 // (pace, fechas propias, finalizado, rondas…). Guardamos el original para NO perderlos al guardar.
 var _tzeOrigCats = [];
+// Índices de las categorías en el ORDEN en que se muestran (`orden`, puesto en Editar torneo); sin
+// `orden`, el de siempre.
+function _catOrden(cats) {
+  var o = function(i) { var c = cats[i]; return (c && c.orden != null && c.orden !== '') ? +c.orden : i; };
+  return (cats || []).map(function(c, i) { return i; }).sort(function(a, b) { return (o(a) - o(b)) || (a - b); });
+}
 function _tzeSetCats(cats) {
   _tzeOrigCats = cats ? JSON.parse(JSON.stringify(cats)) : [];
   var list = document.getElementById('tze-cat-list'); if (!list) return;
   list.innerHTML = '';
-  (cats || []).forEach(function(c) { tzeAddCatRow(c.name, c.broadcast, c.crurl); });
+  // Las filas salen en el ORDEN de presentación (el de los botones), cada una con su índice guardado.
+  _catOrden(cats || []).forEach(function(i) { var c = cats[i]; tzeAddCatRow(c.name, c.broadcast, c.crurl, i); });
 }
 // Lee las filas → array de categorías (descarta filas totalmente vacías). Conserva los overrides por
 // categoría del original (por índice): solo pisa name/broadcast/crurl del formulario. Sin esto, editar el
 // torneo (ej. actualizar tablas) borraba las fechas/ritmo/finalizado que el autor puso por pestaña.
+// ORDEN: las categorías NO cambian de lugar en el array aunque se arrastren las filas. Sus cruces, tablas y
+// partidas se guardan por POSICIÓN (clave `…_c<N>`, también en el navegador de cada visitante): moverlas
+// le cambiaría a cada una los datos de otra. El orden de las filas se guarda aparte, en `orden` (ver
+// _catOrden), y sólo cambia cómo se muestran los botones. Las filas nuevas van al final del array.
+// (Antes los overrides se tomaban por la posición de la FILA: quitar una del medio le pasaba a la
+// siguiente los de la quitada; ahora cada fila sabe de qué categoría vino.)
 function _tzeCollectCats() {
   var rows = document.querySelectorAll('#tze-cat-list .tze-cat-row');
-  var out = [];
-  rows.forEach(function(r, i) {
+  var items = [];
+  rows.forEach(function(r) {
     var name = (r.querySelector('.tze-cat-name').value || '').trim();
     var bc   = (r.querySelector('.tze-cat-bc').value || '').trim();
     var cr   = (r.querySelector('.tze-cat-cr').value || '').trim();
     if (!name && !bc && !cr) return;   // fila vacía → ignorar
-    var base = (_tzeOrigCats && _tzeOrigCats[i]) ? Object.assign({}, _tzeOrigCats[i]) : {};
+    var oi = (r.dataset.orig != null && r.dataset.orig !== '') ? parseInt(r.dataset.orig, 10) : null;
+    var base = (oi != null && _tzeOrigCats && _tzeOrigCats[oi]) ? Object.assign({}, _tzeOrigCats[oi]) : {};
     base.name = name; base.broadcast = bc || null; base.crurl = cr || null;
-    out.push(base);
+    items.push({ oi: oi, cat: base, pos: items.length });
   });
-  return out;
+  var enArray = items.filter(function(x) { return x.oi != null; }).sort(function(a, b) { return a.oi - b.oi; })
+                     .concat(items.filter(function(x) { return x.oi == null; }));
+  var igual = enArray.every(function(x, k) { return x.pos === k; });
+  return enArray.map(function(x) { if (igual) delete x.cat.orden; else x.cat.orden = x.pos; return x.cat; });
 }
 
 // Parsea lo que el autor pega en un campo de broadcast de Lichess → {id, url}.
@@ -37232,8 +37288,8 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
   if (categories && categories.length) {
     // Sin categoría pedida, abre en la marcada `inicial` (ej. la Final A de una Olimpiada vieja, que en
     // la lista va después de sus grupos preliminares); si ninguna lo está, en la primera.
-    var _catIni = 0;
-    for (var _ci0 = 0; _ci0 < categories.length; _ci0++) { if (categories[_ci0] && categories[_ci0].inicial) { _catIni = _ci0; break; } }
+    var _catOrd0 = _catOrden(categories), _catIni = _catOrd0[0];
+    for (var _ci0 = 0; _ci0 < _catOrd0.length; _ci0++) { if (categories[_catOrd0[_ci0]] && categories[_catOrd0[_ci0]].inicial) { _catIni = _catOrd0[_ci0]; break; } }
     activeCat = (catIdx != null && catIdx >= 0 && catIdx < categories.length) ? catIdx : _catIni;
     var _cat = categories[activeCat];
     // Lo que la categoría HEREDA del torneo (antes de pisarlo con lo suyo): el editor de los
@@ -37564,19 +37620,20 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     // sus grupos y sus finales. Las categorías con `grupo` ("Absoluto" / "Femenino") van en DOS pisos:
     // arriba un botón por grupo; abajo, las etapas del grupo que se está mirando (sin repetir el prefijo
     // "Femenino · " del nombre). Sin `grupo`, la barra de siempre.
-    var _grupos = [];
-    categories.forEach(function(c) { if (c && c.grupo && _grupos.indexOf(c.grupo) < 0) _grupos.push(c.grupo); });
+    var _grupos = [], _ord = _catOrden(categories);
+    var _enOrden = function(fn) { _ord.forEach(function(ci) { fn(categories[ci], ci); }); };
+    _enOrden(function(c) { if (c && c.grupo && _grupos.indexOf(c.grupo) < 0) _grupos.push(c.grupo); });
     h += '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:14px;justify-content:center">';
     if (_grupos.length > 1) {
       var _gAct = (categories[activeCat] && categories[activeCat].grupo) || '', _gHechos = {};
-      categories.forEach(function(c, ci) {
+      _enOrden(function(c, ci) {
         if (!c || !c.grupo) { h += _catBtn(ci, '', ci === activeCat, false); return; }
         if (_gHechos[c.grupo]) return;
         _gHechos[c.grupo] = 1;
         // Al tocar el grupo se abre su etapa principal: la marcada inicial, o la primera con podio (la
         // Final A: los grupos preliminares van sin podio), o la primera.
         var _deG = [];
-        categories.forEach(function(x, xi) { if (x && x.grupo === c.grupo) _deG.push(xi); });
+        _enOrden(function(x, xi) { if (x && x.grupo === c.grupo) _deG.push(xi); });
         var _dest = _deG.filter(function(xi) { return categories[xi].inicial; })[0];
         if (_dest == null) _dest = _deG.filter(function(xi) { return !categories[xi].sinPodio; })[0];
         if (_dest == null) _dest = _deG[0];
@@ -37586,7 +37643,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
            + (_gOn ? '🏆 ' : '') + escHtml(c.grupo) + '</button>';
       });
       var _subs = [];
-      categories.forEach(function(c, ci) { if (c && c.grupo && c.grupo === _gAct) _subs.push(ci); });
+      _enOrden(function(c, ci) { if (c && c.grupo && c.grupo === _gAct) _subs.push(ci); });
       if (_subs.length > 1) {
         h += '</div><div role="group" aria-label="' + escHtml('Etapas de ' + _gAct) + '" style="display:flex;flex-wrap:wrap;gap:5px;margin-top:8px;justify-content:center">';
         _subs.forEach(function(ci) {
@@ -37595,7 +37652,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
         });
       }
     } else {
-      categories.forEach(function(c, ci) { h += _catBtn(ci, '', ci === activeCat, false); });
+      _enOrden(function(c, ci) { h += _catBtn(ci, '', ci === activeCat, false); });
     }
     h += '</div>';
   }
