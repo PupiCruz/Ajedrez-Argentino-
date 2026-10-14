@@ -2092,7 +2092,8 @@ console.log('\n=== 34. La vitrina de trofeos del perfil ===');
   chk(/\['flyerUrl', 'flyerPos', 'flyerCredit', 'flyerCreditUrl', 'rama'\]\.forEach\(function \(k\) \{ if \(viejo\[k\] && !nuevo\[k\]\) nuevo\[k\] = viejo\[k\]; \}\);/.test(extraerFuncion('histImportarTexto'))
       && /a\.href = 'javascript:' \+ encodeURIComponent\(code\);/.test(extraerFuncion('histFavoritoOlimpbase')),
       '🔖 reimportar un histórico conserva el flyer que le puso el autor, y el favorito lleva el lector entero');
-  chk(/if \(categories\[_ci0\] && categories\[_ci0\]\.inicial\) \{ _catIni = _ci0; break; \}/.test(SRC)
+  // 14/10: con el orden propio de las categorías (⠿/▲▼) se busca la "inicial" recorriéndolas en ESE orden.
+  chk(/if \(categories\[_catOrd0\[_ci0\]\] && categories\[_catOrd0\[_ci0\]\]\.inicial\) \{ _catIni = _catOrd0\[_ci0\]; break; \}/.test(SRC)
       && /var c = _tdPodiumCtx; if \(!c \|\| c\.sinPodio\) return '';/.test(SRC)
       && /name: _paisES\(t\.name \|\| '', t\.fed\) \|\| t\.name/.test(extraerFuncion('_tdPodiumHtml')),
       '🏛️ la ficha abre en la categoría "inicial" (la Final A), los grupos sin medallas no muestran podio y el podio va en castellano');

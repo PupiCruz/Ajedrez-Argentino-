@@ -135,7 +135,28 @@ jugadores, datos de torneos, la siesta del "pelotazo"…). Lo que dice sale del 
 - **Maqueta para probar:** `node prototipos/comentarista/servir.cjs 8141` (saca el bloque del index y pone el de la carpeta).
 - **Caras y sonidos:** `assets/pupi/caras/*.webp` y `assets/pupi/sonidos/*.wav` (ya recortados y emparejados de
   volumen). Se "hornean" desde la maqueta con `await __pupi.hornear()` en la consola. **/assets/* se cachea un año:**
-  al cambiar alguno, subir `PUPI_V` y actualizar las listas `PUPI_CARAS` / `PUPI_SONIDOS` en pupi.js.
+  al cambiar alguno, subir `PUPI_V` y actualizar las listas `PUPI_CARAS` / `PUPI_SONIDOS` / `PUPI_MASCARAS` en pupi.js.
+- **🎞️ El Pupi animado (14/10/2026):** el avatar es un `<canvas>` WebGL (`crearVivo()` en pupi.js). Cada cuadro
+  dibuja **la misma imagen de la cara**, deformada en el shader (`FS`): respira, mueve la cabeza desde el cuello,
+  parpadea, mira de reojo y, **mientras el globo escribe el título letra por letra** (`escribir()`), la boca lo dice
+  (abre en vocales, cierra en m/b/p y en los signos). Especiales: escupe (a los 1,2 s pasa a `vida` o `triste`, con
+  el mismo sorteo de la jugada que elige horror/escupe → `c.despues`), uff, atraganta (el reloj arranca **con el
+  audio** `tos1.wav`: `vivo.alinear()` desde `sonar()`, así los sacudones caen en los "cof"), dormido, bostezo,
+  chau, contento3, ceba… **Sin WebGL queda la imagen quieta de siempre.** Con "reducir movimiento" sólo habla.
+  - **Las medidas de cada cara** (en píxeles del dibujo de 341×308: ojos `ojoL/ojoR` = centro y radios, pupilas,
+    `boca` cerrada que se abre o `abierta` que se cierra, `cuello`, manos, `marcas` que giran/tiemblan/titilan…)
+    están en la tabla **`VIVO_CARAS`** de pupi.js. El contorno de arriba y de abajo de las bocas abiertas, columna
+    por columna, está en **`VIVO_BORDES`** (= `bordes.json` del paquete) o en el `bordes` de la propia cara.
+    Las caras sin medidas (ofendido2, ceja2) sólo respiran y mueven la cabeza (`VIVO_SIN_MEDIDAS`).
+  - **Máscaras** (no se ven solas): `assets/pupi/mascaras/*.png` — escupe (rojo = chorro que vuela, verde = zona
+    que se rellena con `escupe-debajo`), uff (rojo = el mate que vuela, verde = rayitas, azul = queda vacío) y las
+    manos de chau y contento3. Cuál usa cada cara: `VIVO_MASC` / `mascarasDe()`.
+  - **Para calibrar una cara nueva:** la fuente y la maqueta están en el Escritorio,
+    `MINIATURAS\caras-para-dibujar\pupi-animado\` (`codigo/plantilla.html` + `maqueta/pupi-vivo.html`; copia de la
+    maqueta en `prototipos/comentarista/pupi-vivo.html` → `http://localhost:8141/__pupi/pupi-vivo.html` con la
+    maqueta del Pupi andando). Se mide en la maqueta, se copia el renglón a `VIVO_CARAS` y se prueba en la consola
+    con `__pupi._vivo().forzar = { blink: 1 }` (o `mouth`, `look: [x, y]`, `esp`: segundos del especial) y
+    `__pupi._pintar({ cara: 'horror', titulo: 'Probando la boca' })`. Después: `PUPI_V`, pasar-al-index, banco.
 
 ## 🔎 Google: fichas de texto y sitemap (06/10/2026)
 Search Console mostró que Google tenía indexadas 34 de 1.847 páginas: todas devolvían el mismo
