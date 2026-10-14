@@ -147,7 +147,7 @@ jugadores, datos de torneos, la siesta del "pelotazo"…). Lo que dice sale del 
     `boca` cerrada que se abre o `abierta` que se cierra, `cuello`, manos, `marcas` que giran/tiemblan/titilan…)
     están en la tabla **`VIVO_CARAS`** de pupi.js. El contorno de arriba y de abajo de las bocas abiertas, columna
     por columna, está en **`VIVO_BORDES`** (= `bordes.json` del paquete) o en el `bordes` de la propia cara.
-    Las caras sin medidas (ofendido2, ceja2) sólo respiran y mueven la cabeza (`VIVO_SIN_MEDIDAS`).
+    Las caras sin medidas (ofendido2) sólo respiran y mueven la cabeza (`VIVO_SIN_MEDIDAS`).
   - **Máscaras** (no se ven solas): `assets/pupi/mascaras/*.png` — escupe (rojo = chorro que vuela, verde = zona
     que se rellena con `escupe-debajo`), uff (rojo = el mate que vuela, verde = rayitas, azul = queda vacío) y las
     manos de chau y contento3. Cuál usa cada cara: `VIVO_MASC` / `mascarasDe()`.
