@@ -65306,13 +65306,15 @@ void main(){
     if (!full) { ESC_T = null; if (vivo) vivo.habla(false); return; }
     // El mismo título re-pintado en la misma jugada (p. ej. mientras analiza): sigue por donde iba.
     var T = ESC_T && ESC_T.full === full && ESC_T.nodo === nodo ? ESC_T : null;
-    if (!T) T = ESC_T = { full: full, nodo: nodo, ch: Array.from(full), i: 0 };
+    if (!T) { T = ESC_T = { full: full, nodo: nodo, ch: Array.from(full), i: 0 }; if (vivo) vivo.habla(false); }
     elT.innerHTML = '<span class="pupi-sr">' + esc(full) + '</span><span aria-hidden="true"><span class="pupi-ya"></span><span class="pupi-falta"></span></span>';
     T.ya = elT.querySelector('.pupi-ya'); T.falta = elT.querySelector('.pupi-falta');
     hasta(T);
     if (T.corre || T.i >= T.ch.length) return;
     T.corre = true;
     var vocal = /[aeiouáéíóú]/i, abierta = /[aáoó]/i;
+    // Lo que va entre paréntesis es una acción, no algo que dice ("(cebando)", "(sonido de mate)"): no mueve la boca.
+    var accion = /^\(.*\)$/.test(full.trim());
     (function paso() {
       if (ESC_T !== T) return;
       if (T.i >= T.ch.length) { T.corre = false; if (vivo) vivo.habla(false); return; }
@@ -65323,9 +65325,15 @@ void main(){
       else if (/[.,!?¡¿…]/.test(ch)) { b = 0; espera = ch === ',' ? 220 : 380; }
       else b = 0.25 + Math.random() * 0.15;
       hasta(T);
-      if (vivo) { vivo.habla(true); vivo.boca(b); }
+      if (vivo && !accion) { vivo.habla(true); vivo.boca(b); }
       setTimeout(paso, espera);
     })();
+  }
+  // Cuánto tarda el globo en escribir un texto (las mismas pausas que escribir()).
+  function tiempoEscribir(t) {
+    var ms = 0;
+    Array.from(String(t || '')).forEach(function (ch) { ms += ch === ' ' ? 40 : ch === ',' ? 220 : /[.!?¡¿…]/.test(ch) ? 380 : 58; });
+    return ms;
   }
   function hasta(T) {
     var i = REDUCIDO ? T.ch.length : T.i;   // con "reducir movimiento" el texto sale entero (la boca igual habla)
@@ -65370,6 +65378,13 @@ void main(){
       P.raf = 0;
       if (cv.root !== P.root) nuevaPartida();
       if (!visible()) return;
+      // El "gracias" de cuando lo invitás se queda su rato: el refresco del análisis (cada 0,7 s) lo pisaba en el acto.
+      // Si cambiás de jugada, manda la jugada.
+      if (P.gracias && Date.now() < P.gracias.hasta && cv.node === P.gracias.nodo) {
+        clearTimeout(P.esperaT); P.esperaT = setTimeout(function () { P.html = ''; actualizar(); }, P.gracias.hasta - Date.now() + 20);
+        return;
+      }
+      P.gracias = null;
       if (P.estado === 'si') { apertura(); if (!hayDatos()) pedirAnalisis(); cargarSonidos(); precargarCaras(); }
       var cc = comentario(); pintar(cc); sonar(cc);
       if (cc && cc.visto) marcarVisto(cc.visto);   // torneo o trofeo contado: la próxima partida empieza por otro
@@ -65440,8 +65455,12 @@ void main(){
   window.__pupi = {
     si: function () {
       lsSet('aa_pupi', 'si'); P.estado = 'si'; if (P.g) P.g.saludo = true;
-      pintar({ cara: 'gracias', titulo: '¡Buenísimo! Cebo uno y arrancamos.' });
-      setTimeout(function () { P.html = ''; actualizar(); }, 1300);
+      var gr = '¡Buenísimo! Cebo uno y arrancamos.';
+      pintar({ cara: 'gracias', titulo: gr });
+      // El "gracias" se queda hasta que el globo termina de escribir y un ratito más (antes eran 1,3 s y casi no se veía).
+      var dura = Math.max(2500, tiempoEscribir(gr) + 1200);
+      P.gracias = { hasta: Date.now() + dura, nodo: cv.node };
+      setTimeout(function () { P.html = ''; actualizar(); }, dura + 30);
     },
     no: function () { irse('Al cabo que ni quería verla.', 'ofendido'); },
     analizar: function () { if (P.g) P.g.pedido = false; pedirAnalisis(); P.html = ''; actualizar(); },
