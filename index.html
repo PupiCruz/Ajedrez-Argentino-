@@ -24598,7 +24598,9 @@ function _pvpGamePgn(g) {
   var dt = d.getFullYear() + '.' + ('0' + (d.getMonth() + 1)).slice(-2) + '.' + ('0' + d.getDate()).slice(-2);
   var mv = _pvpNumberMoves(g.moves), tok = _pvpResTok(g.result);
   return '[Event "Partida en vivo · chessargentino"]\n[Site "chessargentino.ar"]\n[Date "' + dt + '"]\n' +
-    '[White "' + _pvpHdrName(g.white) + '"]\n[Black "' + _pvpHdrName(g.black) + '"]\n[Result "' + tok + '"]\n\n' +
+    '[White "' + _pvpHdrName(g.white) + '"]\n[Black "' + _pvpHdrName(g.black) + '"]\n[Result "' + tok + '"]\n' +
+    // (15/10/2026) El rating del sitio con el que arrancó cada uno (antes el visor no mostraba ninguno).
+    (g.whiteBefore != null ? '[WhiteElo "' + (+g.whiteBefore) + '"]\n' : '') + (g.blackBefore != null ? '[BlackElo "' + (+g.blackBefore) + '"]\n' : '') + '\n' +
     (mv ? mv + ' ' : '') + tok + '\n';
 }
 // Abre una partida PvP en el visor con su link propio ?vg=<id>. fromNick (opcional) = perfil al
@@ -31627,7 +31629,12 @@ function cvPlayerHtml(title, name, fideId, elo, team, isBlack, gm) {
   // con banderas de un torneo viejo si se abrió una partida suelta).
   // Sin tabla que lo nombre, el país del EQUIPO del PGN (Olimpiadas), igual que las miniaturas.
   var stdFlag = _flagByName(name, _crK, fideId) || _teamFlag(team);
-  var flagStr = (stdFlag || fideId) ? '<span id="' + flagId + '">' + stdFlag + '</span>' : '';
+  // (15/10/2026) Partida entre usuarios del sitio: la bandera del país de su Lichess (llega después y se pone sola).
+  if (!stdFlag && isVivo && window.aaLiFlags) {
+    stdFlag = window.aaLiFlags.bandera(name);
+    if (!stdFlag) window.aaLiFlags.pedir([name]).then(function (n) { var el = document.getElementById(flagId); if (n && el) el.innerHTML = window.aaLiFlags.bandera(name); });
+  }
+  var flagStr = (stdFlag || fideId || isVivo) ? '<span id="' + flagId + '">' + stdFlag + '</span>' : '';
   // Puntos en el torneo hasta la ronda que se está viendo ("6½/7"), de la MISMA tabla de la que
   // salen la bandera y el título. `gm` es la partida abierta (trae ronda y resultado). Si esa tabla
   // no trae la columna de puntos, no se muestra nada.
@@ -62352,6 +62359,9 @@ function cvUpdateNagBadge() {
   body.light .aa-idav{box-shadow:0 0 0 3px var(--card90),0 6px 16px rgba(0,0,0,.18)}
   body.light .aa-idav.patron{box-shadow:0 0 0 3px var(--card90),0 0 0 6px #e8b23a,0 6px 16px rgba(0,0,0,.18)}
   .aa-idhead{align-items:flex-start}
+  /* (15/10/2026) Nicks largos (más de 11 letras): un poco más chicos para que no se partan. */
+  .aa-idname.largo, .aa-profpage-body .aa-idname.largo{font-size:1.45rem}
+  @media(max-width:480px){ .aa-idname.largo, .aa-profpage-body .aa-idname.largo{font-size:1.15rem} }
   .aa-prof-actions .aa-prof-btn{white-space:nowrap}
   @media(max-width:480px){ .aa-prof-actions{gap:7px} .aa-prof-actions .aa-prof-btn{padding:10px 8px;font-size:.85rem} }
   .aa-idult{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-top:9px;font-size:.78rem;color:var(--text3,#9a9a9a)}
@@ -62790,7 +62800,7 @@ function cvUpdateNagBadge() {
     var ult=P.isSelf&&mode!=='page'?'':'<div class="aa-idult" data-ultimos></div>';
     return '<div class="aa-idcard" style="--av:'+avColor(P.username)+';--av2:'+avColor(P.username,.38)+'">'+
         '<div class="aa-idhead">'+avatarHtml(P)+'<div class="aa-idmain">'+
-          '<div class="aa-idname">'+dot+cab+ttl+esc(P.username)+flag+'</div>'+
+          '<div class="aa-idname'+(String(P.username||'').length>11?' largo':'')+'">'+dot+cab+ttl+esc(P.username)+flag+'</div>'+
           name+meta+counts+cabChip+ult+
         '</div>'+editBtn+'</div>'+
         bio+acts+modRowHtml(P)+
