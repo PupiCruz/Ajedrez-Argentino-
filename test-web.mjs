@@ -28,7 +28,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2417;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2454;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -9982,6 +9982,154 @@ console.log('\n=== 75. ⚡ Barrido con varios motores: cada uno sigue su partida
       'al abrirlo desde el cartel en el teléfono, la jugada lleva "!!" (no el "??" de las colgadas)');
   chk(!/_colRepartir/.test(extraerFuncion('_briDespachar') + extraerFuncion('_briAvisar')),
       '🔒 en prueba NO se reparte por el arbitrito (el que lo recibe lo trataría como colgada)');
+}
+console.log('\n=== 76. 🌐 Ratings online: tarjeta "En línea" de Chess.com y Lichess (15/10) ===');
+{
+  const O = new Function('localStorage', 'window', '_ondemand',
+    'function escHtml(s){ return String(s).replace(/[&<>"]/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;"}[c]; }); }'
+    + 'function titleBadge(t){ return "[" + t + "]"; }'
+    + 'var _onlCuentasCache = null, _onlDatos = null;'
+    + 'var _ONL_SITIOS = { cc: { nom: "Chess.com", url: "https://www.chess.com/member/" }, li: { nom: "Lichess", url: "https://lichess.org/@/" } };'
+    + 'var _ONL_MODS = [["blitz", "Blitz"], ["bullet", "Bullet"], ["rapid", "Rápido"]];'
+    + 'var _ONL_VIGENCIA = 365 * 864e5;'
+    + 'function _rankingOverride(){ return { players: [{ fide_id: 1 }] }; }'
+    + ['_onlCuentas', '_onlCardHtml', '_onlHace', '_onlNormCC', '_onlNormLI', '_onlLimpiarUsuario', '_embeddedPlayersJs'].map(extraerFuncion).join('\n')
+    + '; return { cuentas: _onlCuentas, card: _onlCardHtml, cc: _onlNormCC, li: _onlNormLI, limpiar: _onlLimpiarUsuario, emb: _embeddedPlayersJs };');
+  const H = await import('./herramientas/online/actualizar.mjs');
+  const T0 = 1760000000000;
+  const DATOS = { ts: T0 - 3 * 3600000,
+    cc: { fulano: { title: 'GM', blitz: { r: 2650, max: 2701 }, bullet: { r: 2710 } } },
+    li: { fulanito: { title: 'GM', blitz: { r: 2800, prov: 1 }, rapid: { r: 2600 } } } };
+  const web = O(mkLS([]), {}, true);
+
+  // Al visitante
+  chk(web.card(7, null, DATOS, T0, false) === '' && web.card(7, {}, DATOS, T0, false) === '',
+      '🔒 sin cuentas cargadas, el visitante no ve NADA (ni un "sin datos")');
+  chk(web.card(7, { cc: 'NoBajado' }, DATOS, T0, false) === '' && web.card(7, { cc: 'Fulano' }, {}, T0, false) === '',
+      'con la cuenta cargada pero sin ratings bajados todavía (o sin data/online.json), tampoco');
+  chk(web.card(7, { cc: 'Quieto' }, { cc: { quieto: { title: 'GM' } } }, T0, false) === '' && /en el último año/.test(web.card(7, { cc: 'Quieto' }, { cc: { quieto: { title: 'GM' } } }, T0, true)),
+      'una cuenta sin ningún ritmo vigente: el visitante no la ve; el autor sí, con el aviso');
+  const uno = web.card(7, { cc: 'Fulano' }, DATOS, T0, false);
+  chk(/Chess\.com/.test(uno) && !/Lichess/.test(uno) && /2650/.test(uno) && /máx\. 2701/.test(uno) && /2710/.test(uno) && !/Rápido/.test(uno)
+      && /href="https:\/\/www\.chess\.com\/member\/Fulano"/.test(uno) && /\[GM\]/.test(uno) && /actualizado hace 3 h/.test(uno),
+      'con una sola cuenta: ese sitio, sus ritmos con el máximo, el link al perfil, el título y "actualizado hace 3 h"');
+  const dos = web.card(7, { cc: 'Fulano', li: 'Fulanito' }, DATOS, T0, false);
+  chk(/Chess\.com/.test(dos) && /Lichess/.test(dos) && /2800\?/.test(dos) && /Provisorio/.test(dos) && /href="https:\/\/lichess\.org\/@\/Fulanito"/.test(dos) && !/✏️/.test(dos),
+      'con las dos: las dos columnas; el provisorio de Lichess lleva "?" (como en Lichess); sin botón de autor');
+  chk(!/visto|última vez|seen/i.test(dos), '🔒 nada de "visto por última vez" (hay menores en el ranking)');
+  chk(/repeat\(' \+ mods\.length \+ ',minmax\(0,1fr\)\)/.test(extraerFuncion('_onlCardHtml')) && !/>Rápido</.test(uno) && />Bullet</.test(uno),
+      'tablita: los ritmos son columnas que se achican sin salirse (minmax(0,1fr)), y la que ningún sitio tiene no se dibuja');
+  const raro = web.card(7, { cc: 'a"><img src=x onerror=alert(1)>' }, { cc: { 'a"><img src=x onerror=alert(1)>': { blitz: { r: 1 } } } }, T0, false);
+  chk(!/<img/.test(raro), 'un usuario con HTML adentro no se cuela en la página');
+
+  // Al autor
+  const aut = web.card(7, null, DATOS, T0, true);
+  chk(/Sin cuentas cargadas/.test(aut) && /✏️ Cuentas/.test(aut) && /_onlGuardarCuentas\(7\)/.test(aut),
+      'el autor ve la tarjeta siempre, con ✏️ Cuentas para cargarlas');
+  const autSin = web.card(7, { li: 'NoBajado' }, DATOS, T0, true);
+  chk(/se bajan al publicar/.test(autSin) && /value="NoBajado"/.test(autSin), 'y una cuenta todavía sin ratings le avisa que se bajan al publicar');
+
+  // Las cuentas: del navegador del autor; en la web, sólo lo publicado
+  const autLs = O(mkLS([['online_cuentas', '{"123":{"cc":"x"}}']]), { __ONLINE_CUENTAS__: { 9: { li: 'y' } } }, false);
+  const webLs = O(mkLS([['online_cuentas', '{"123":{"cc":"x"}}']]), { __ONLINE_CUENTAS__: { 9: { li: 'y' } } }, true);
+  chk(autLs.cuentas()['123'] && !webLs.cuentas()['123'] && webLs.cuentas()['9'],
+      'modo autor: manda lo del navegador; en la web publicada, sólo window.__ONLINE_CUENTAS__');
+  // Viajan con el ranking y el script las sabe leer
+  const js = autLs.emb();
+  chk(/^window\.__EMBEDDED_PLAYERS__=/.test(js) && JSON.stringify(H.leerCuentas('window.__EMBEDDED_DATA__=[];\n' + js)) === '{"123":{"cc":"x"}}',
+      '🔒 viajan en los exports pegadas al ranking, y actualizar.mjs las lee de embedded-data.js');
+  chk(JSON.stringify(H.leerCuentas('nada')) === '{}' && JSON.stringify(H.leerCuentas('window.__ONLINE_CUENTAS__={roto;')) === '{}',
+      'sin el renglón, o roto, el script no revienta (no hay cuentas)');
+  const ixJs = 'window.__EMBEDDED_PLAYERS__=' + JSON.stringify({ players: [{ id: 7, fide_id: '20000197' }, { id: 5, fide_id: '112275' }], additionals: [{ id: 900, fide_id: '1' }] }) + ';';
+  chk(JSON.stringify(H.indicePorId({ 20000197: { cc: 'FaustinoOro' }, 1: { li: 'Adic' }, 999: { cc: 'nadie' } }, ixJs)) === '{"7":{"cc":"faustinooro"},"900":{"li":"adic"}}',
+      'online.json lleva qué cuenta tiene cada jugador por su NÚMERO de la web (lo usa el bot de Discord), adicionales incluidos');
+  const fp = extraerFuncion('_estadoActualFp');
+  chk(/_onlCuentas\(\)/.test(fp) && /onlFp \? '~onl' \+ onlFp : ''/.test(fp),
+      'cargar una cuenta enciende el aviso de "cambios sin guardar" (y sin cuentas la huella queda igual que antes)');
+  const op = extraerFuncion('openPlayer');
+  chk(/id="onl-slot"/.test(op) && op.indexOf('onl-slot') > op.indexOf('_eloChartCard(p)') && /_onlPintar\(p\)/.test(op),
+      'el gráfico de Elo queda pegado a los ratings FIDE y En línea va después; se pinta al abrir el perfil');
+  chk(!/api\.chess\.com|lichess\.org\/api/.test(extraerFuncion('_onlPintar') + extraerFuncion('_onlCargar') + op),
+      '🔒 al visitante NO se le pide nada a Chess.com ni a Lichess: sólo data/online.json');
+
+  // Normalizar: la página y el script dicen lo mismo
+  const pCC = { title: 'IM', status: 'premium' };
+  const sCC = { chess_blitz: { last: { rating: 2500 }, best: { rating: 2600 } }, chess_bullet: { last: { rating: 2550 }, best: { rating: 2500 } }, chess_daily: { last: { rating: 2000 } } };
+  const uLI = { title: 'BOT', perfs: { blitz: { games: 10, rating: 2400, prov: true }, bullet: { games: 0, rating: 1500 }, rapid: { games: 5, rating: 2300 } } };
+  chk(JSON.stringify(web.cc(pCC, sCC)) === JSON.stringify(H.normalizarCC(pCC, sCC))
+      && JSON.stringify(web.cc(pCC, sCC)) === '{"title":"IM","blitz":{"r":2500,"max":2600},"bullet":{"r":2550}}',
+      'Chess.com: blitz/bullet/rápido (no daily), el máximo sólo si es mayor; página y script iguales');
+  chk(JSON.stringify(web.li(uLI)) === JSON.stringify(H.normalizarLI(uLI)) && JSON.stringify(web.li(uLI)) === '{"blitz":{"r":2400,"prov":1},"rapid":{"r":2300}}',
+      'Lichess: sin el título BOT, sin ritmos con 0 partidas, provisorio marcado; página y script iguales');
+  chk(web.cc({ status: 'closed:fair_play_violations' }, sCC) === null && H.normalizarCC({ status: 'closed' }, sCC) === null
+      && web.li({ tosViolation: true }) === null && H.normalizarLI({ disabled: true }) === null,
+      '🔒 cuentas cerradas o suspendidas (fair play, TOS) NO se publican');
+  const HOY = Date.UTC(2026, 9, 15), viejo = { chess_blitz: { last: { rating: 2800, date: HOY / 1000 - 86400 } }, chess_bullet: { last: { rating: 1195, date: Date.UTC(2023, 1, 17) / 1000 } } };
+  chk(JSON.stringify(web.cc({}, viejo, HOY)) === '{"blitz":{"r":2800}}' && JSON.stringify(H.normalizarCC({}, viejo, HOY)) === '{"blitz":{"r":2800}}',
+      '🔒 un ritmo sin partidas en el último año no se muestra (el "bullet 1195" de Slipak, UNA partida de 2023); página y script iguales');
+
+  // La foto mensual de Chess.com
+  let hi = H.fotoMensual({}, 'fulano', { blitz: { r: 2600 } }, '2026-09');
+  hi = H.fotoMensual(hi, 'fulano', { blitz: { r: 2610 }, rapid: { r: 2500 } }, '2026-10');
+  hi = H.fotoMensual(hi, 'fulano', { blitz: { r: 2620 } }, '2026-10');
+  chk(JSON.stringify(hi.fulano) === '[{"d":"2026-09","b":2600},{"d":"2026-10","b":2620}]',
+      'historial de Chess.com: una foto por mes, la del mes en curso se pisa y la del mes nuevo se agrega');
+  chk(JSON.stringify(H.fotoMensual({ a: [{ d: '2026-10', b: 1 }] }, 'a', {}, '2026-10').a) === '[{"d":"2026-10","b":1}]',
+      'si un día no trae ningún ritmo, no borra la foto que había');
+
+  // Lo que pega el autor en ✏️ Cuentas
+  chk(web.limpiar('https://www.chess.com/member/Fulano') === 'Fulano' && web.limpiar('lichess.org/@/fulanito/all') === 'fulanito'
+      && web.limpiar(' @Pepe_99 ') === 'Pepe_99' && web.limpiar('') === '' && web.limpiar('dos palabras') === null && web.limpiar('<b>') === null,
+      'acepta el usuario, el link de cualquiera de los dos sitios o "@usuario"; con espacios o símbolos raros, avisa');
+}
+console.log('\n=== 77. 🔎 Buscar cuentas de Chess.com de los titulados (15/10) ===');
+{
+  const Q = new Function('var _NAME_PARTICLES = {de:1, del:1, la:1};'
+    + ['_onlUsuNorm', '_onlCandidatos', '_onlConfirmar'].map(extraerFuncion).join('\n')
+    + '; return { cand: _onlCandidatos, conf: _onlConfirmar };')();
+  const J = [
+    { id: 1, name: 'Faustino Oro', title: 'GM', fide_id: '20000197' },
+    { id: 2, name: 'Sandro Mareco', title: 'GM', fide_id: '112780' },
+    { id: 3, name: 'Federico Pérez Ponsa', title: 'GM', fide_id: '3' },
+    { id: 4, name: 'Juan de la Fuente', title: 'FM', fide_id: '4' },
+    { id: 5, name: 'Sin Título', title: '', fide_id: '5' },
+    { id: 6, name: 'Ya Cargado', title: 'IM', fide_id: '6' },
+  ];
+  const L = { GM: ['faustinooro', 'gmtodorov', 'ftorodent', 'moro182', 'sandromareco', 'SandroFan', 'perezponsa', 'Delahaye'], FM: ['juandela', 'fuente_j', 'laura'], IM: ['yacargado'] };
+  const g = Q.cand(J, L, { 6: { cc: 'yacargado' } }, 4);
+  const de = id => (g.find(x => x.p.id === id) || {}).cands;
+  chk(de(1) && de(1)[0] === 'faustinooro' && de(1).indexOf('gmtodorov') > 0,
+      'busca el apellido adentro del usuario, en la lista de SU título; primero el que además tiene el nombre (faustinooro)', de(1) && de(1).join(','));
+  chk(de(2).join(',') === 'sandromareco' && de(3).join(',') === 'perezponsa',
+      'un usuario sin el apellido no es candidato (SandroFan); los apellidos con tilde se buscan sin tilde (Pérez → perez)');
+  chk(de(4) && de(4).indexOf('fuente_j') >= 0 && de(4).indexOf('laura') < 0 && de(4).indexOf('juandela') < 0,
+      'las partículas ("de", "la") no cuentan como apellido: "laura" no es candidato de Juan de la Fuente');
+  chk(!de(5) && !de(6), 'no se buscan: los que no tienen título, ni los que ya tienen su cuenta de Chess.com cargada');
+  chk(Q.cand([{ id: 9, name: 'Oro Faustino', title: 'IM', fide_id: '9' }], L, {}, 4).length === 0,
+      '🔒 sólo en la lista del MISMO título (un IM no se busca entre los GM)');
+  chk(Q.cand([{ id: 1, name: 'Ana Oro', title: 'GM', fide_id: '1' }], { GM: Array.from({ length: 30 }, (_, i) => 'oro' + i) }, {}, 4)[0].cands.length === 4,
+      'como mucho 4 candidatos por jugador (así la búsqueda no pide cientos de perfiles de más)');
+
+  const m = (nom, p) => nom.toLowerCase().indexOf(p.name.split(' ').pop().toLowerCase()) >= 0 && nom.toLowerCase().indexOf(p.name.split(' ')[0].toLowerCase()) >= 0;
+  const P = J[0];
+  chk(JSON.stringify(Q.conf(P, { name: 'Faustino Oro', country: 'https://api.chess.com/pub/country/AR', username: 'faustinooro' }, m)) === '{"nivel":"nombre","pais":true}'
+      && JSON.stringify(Q.conf(P, { name: 'Faustino Oro', country: 'https://api.chess.com/pub/country/ES', username: 'faustinooro' }, m)) === '{"nivel":"nombre","pais":false}',
+      'el nombre real del perfil coincide → sugerida (aunque juegue con otra bandera; la bandera argentina se muestra aparte)');
+  chk(Q.conf(P, { name: 'Ivan Todorov', country: 'https://api.chess.com/pub/country/BG', username: 'gmtodorov' }, m) === null,
+      '🔒 si el perfil tiene OTRO nombre, se descarta aunque el usuario contenga el apellido');
+  chk(JSON.stringify(Q.conf(P, { country: 'https://api.chess.com/pub/country/AR', username: 'faustinooro' }, m)) === '{"nivel":"pais"}'.replace('}', ',"pais":true}')
+      && Q.conf(P, { country: 'https://api.chess.com/pub/country/ES', username: 'faustinooro' }, m) === null
+      && Q.conf(P, { country: 'https://api.chess.com/pub/country/AR', username: 'oro2000' }, m) === null,
+      'sin nombre en el perfil: sólo si dice Argentina Y el usuario tiene nombre y apellido (y sale como "probable", sin tildar)');
+  chk(Q.conf(P, { name: 'Faustino Oro', status: 'closed:fair_play_violations' }, m) === null && Q.conf(P, null, m) === null,
+      '🔒 una cuenta cerrada (fair play) o que no existe no se sugiere');
+  const busc = extraerFuncion('_onlBuscarCuentas'), most = extraerFuncion('_onlBuscarMostrar');
+  chk(/await dormir\(300\)/.test(busc) && /for \(var k = 0; k < usuarios\.length; k\+\+\)/.test(busc) && /status === 429\) \{ await dormir\(5000\); continue; \}/.test(busc) && /k < 2/.test(busc),
+      '🔒 a Chess.com de a uno con pausa; ante un 429 UNA espera y un reintento (nunca en loop)');
+  chk(/f\.c\.nivel === 'nombre' && f\.unico \? ' checked'/.test(most) && /_onlCuentas\(\)/.test(extraerFuncion('_onlBuscarGuardar')) && /if \(c\.cc\) \{ dobles\+\+; return; \}/.test(extraerFuncion('_onlBuscarGuardar')),
+      'vienen tildadas sólo las seguras (nombre + única opción); se guardan en las mismas cuentas de la tarjeta, sin pisar una ya cargada');
+  chk(/onclick="_onlBuscarCuentas\(\)"/.test(SRC) && !/confirm\(|alert\(/.test(busc + most + extraerFuncion('_onlBuscarGuardar')),
+      'el botón está en Jugadores (modo autor) y usa los carteles de la app (nada de confirm/alert)');
 }
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
 console.log('   Corrieron ' + corridas + ' de ' + ESPERADAS + ' comprobaciones.'

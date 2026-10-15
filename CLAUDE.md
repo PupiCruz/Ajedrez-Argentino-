@@ -202,6 +202,7 @@ lugares se pudre solo. (Pasó: este archivo decía 394 cuando el banco de la web
 | `vivo-worker/test-bandeja.mjs` | la bandeja de evaluaciones de los visitantes (📥, se adoptan en modo autor) | `cd vivo-worker` y `node test-bandeja.mjs` |
 | `vivo-worker/test-final-torneo.mjs` | 🏁 el aviso del bot al marcar un torneo Finalizado (podio → canal y hilo de Discord) | `cd vivo-worker` y `node test-final-torneo.mjs` |
 | `vivo-worker/test-avisos-ronda.mjs` | los avisos de ronda del bot: nacional (primeras mesas) vs internacional (los argentinos) | `cd vivo-worker` y `node test-avisos-ronda.mjs` |
+| `vivo-worker/test-titulados.mjs` | 🏆 avisos de los Titled Tuesday/Thursday de Chess.com en #en-vivo + 🌐 ratings online en /jugador | `cd vivo-worker` y `node test-titulados.mjs` |
 
 Ya cazaron varios bugs antes de que llegaran al sitio. Si uno falla, **no publicar**.
 
@@ -326,6 +327,37 @@ partidas solo traen nombres (sin federación, casi sin fide_id), NO se autodetec
 el FIDE id (se actualiza cada mes con la tabla) o dejarlo solo con nombre (engancha sus partidas por
 nombre). Crea Adicionales. Umbral de "conservar al salir del ranking" es 30 (`_ADIC_KEEP_GAMES`),
 distinto del de sugerencia (50).
+
+### 🌐 Ratings online: tarjeta "En línea" (Chess.com + Lichess, 15/10/2026)
+Fase 1 de `planes-de-la-web/PLAN-RATINGS-ONLINE.md` (afuera de esta carpeta).
+- **Cargar las cuentas:** en el perfil (modo autor), tarjeta **🌐 En línea → ✏️ Cuentas**. Acepta el usuario o el
+  link. Al guardar, la app comprueba la cuenta en Chess.com/Lichess y **avisa** (no bloquea) si no existe, si está
+  cerrada/suspendida o si el título no coincide con el FIDE. Después: **💾 Guardar datos en mi carpeta**.
+- Se guardan por **fide_id** (`online_cuentas` en el navegador → `window.__ONLINE_CUENTAS__`, en el mismo renglón
+  que el ranking: `_embeddedPlayersJs`). Sin fide_id no hay tarjeta.
+- **Los ratings** los baja `node herramientas/online/actualizar.mjs` → `data/online.json` (+ `data/online-hist.json`,
+  una foto mensual de Chess.com, que no tiene historial). **Lo corre solo `publicar-web.cmd`**; sin internet, deja
+  lo de la vez pasada. Las cuentas cerradas no se publican (las avisa el script).
+- El visitante **nunca** le pide nada a Chess.com ni a Lichess: sólo lee `data/online.json`. Sin cuentas, no ve nada.
+  No se muestra "visto por última vez" (hay menores). Pruebas: sección 76 del banco.
+- Un ritmo de Chess.com **sin partidas en el último año no se muestra** (`_ONL_VIGENCIA` / `VIGENCIA` del script):
+  Slipak salía con "bullet 1195" por una partida de 2023. Una cuenta sin ningún ritmo vigente, el visitante no la ve.
+- **El bot de Discord los usa** (`vivo-worker`): `data/online.json` lleva además `j` = { número del jugador: {cc, li} }
+  (lo arma el script con el ranking de `embedded-data.js`). Con eso: el **/jugador** muestra "🌐 En línea", y en
+  **#en-vivo** salen los avisos del **Titled Tuesday** (martes 12 h) y los **tres Titled Thursday** (jueves 12, 17 y 22 h):
+  a los 12 minutos, qué argentinos juegan (Chess.com NO publica a los anotados antes de que empiece) con el link al
+  torneo, y al terminar sus puntos y puesto POR PUNTOS ("56.º–80.º" si hay empate: los desempates no vienen al
+  instante). Sin argentinos, no avisa. Ojo: `player/{u}/tournaments` llega con HORAS de atraso; el torneo se encuentra
+  en el archivo de partidas del mes (al día) y los jugadores en sus rondas (la que se juega viene a medias). Código: `vivo-worker/src/titulados.js`. El Freestyle
+  Friday (960) y el Bullet Brawl no aparecieron en ninguna cuenta argentina en ago-oct 2026: si vuelven, un renglón
+  en `TT_EVENTOS`. Para probar sin publicar: `POST /tg/titulados { clave, probar: 'arranque', ev: 'thu2' }`.
+- **Decisiones del autor (15/10):** NO hay ranking online en Jugadores (se mezclarían aficionados con mucho rating
+  online: los ratings online van SÓLO dentro de cada perfil), NO gráficas de evolución online y NO Worker con cron
+  (publica todo el tiempo; el script alcanza).
+- **Carga masiva (fase 2):** Jugadores (modo autor) → **🌐 Buscar cuentas de Chess.com de los titulados** (~2 min).
+  Busca en la lista de Chess.com del MISMO título los usuarios que contienen el apellido y confirma cada uno con su
+  perfil (nombre real). Vienen tildadas las seguras; se guardan las tildadas. ⚠️ El listado "país Argentina" de
+  Chess.com viene cortado en 10.000 (alfabético): por eso NO se usa. Lichess no tiene listas: a mano. Banco: sección 77.
 
 ## Publicar la web
 Apretar "Descargar para publicar (ZIP)", descomprimir y arrastrar la carpeta a

@@ -38,6 +38,18 @@ if exist "data\sitemap.xml" (
 )
 
 :: ------------------------------------------------------------------
+:: 0b) Ratings online (tarjeta "En linea" de los perfiles): baja de
+::     Chess.com y Lichess los ratings de las cuentas cargadas en los
+::     perfiles y los deja en data\online.json. Si no hay internet o
+::     falla, avisa y se sigue publicando igual con los de la vez pasada.
+:: ------------------------------------------------------------------
+where node >nul 2>&1
+if not errorlevel 1 (
+    node "herramientas\online\actualizar.mjs"
+    echo.
+)
+
+:: ------------------------------------------------------------------
 :: 1) Si hay archivos sin guardar (datos nuevos, etc.), commitearlos.
 :: ------------------------------------------------------------------
 git status --short > "%TEMP%\gitstatus.txt" 2>&1
