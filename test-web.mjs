@@ -9,6 +9,8 @@
 // verdad, así que si mañana alguien las cambia, estas pruebas se enteran.
 
 import fs from 'node:fs';
+// La placa del trofeo envuelve "SUB-20" en un <span> que no se parte (14/10/2026): para leer el nombre, se lo saca.
+const _sinNowrap = s => String(s).replace(/<span style="white-space:nowrap">([^<]*)<\/span>/g, "$1");
 
 // 27/09: git en Windows (core.autocrlf=true) puede dejar la copia de trabajo con saltos CRLF, y varias
 // pruebas recortan funciones buscando "\n  }\n". Se pasan a LF acá (lo publicado va siempre en LF).
@@ -2307,7 +2309,7 @@ console.log('\n=== 34. La vitrina de trofeos del perfil ===');
       (h.match(/<b>([^<]*)<\/b>/) || [])[1]);
 
   // El orden manda: primero las copas del podio, después las medallas (aunque vengan mezcladas).
-  const orden = [...h.matchAll(/class="tro-nm">([^<]+)</g)].map(m => m[1]);
+  const orden = [..._sinNowrap(h).matchAll(/class="tro-nm">([^<]+)</g)].map(m => m[1]);
   chk(orden.join(' | ') === 'Campeón | Tercer puesto | Mejor femenina | Mejor sub-20',
       'las copas van antes que las medallas, sin importar cómo vengan mezcladas', orden.join(' | '));
 
@@ -2342,7 +2344,7 @@ console.log('\n=== 34. La vitrina de trofeos del perfil ===');
     ] }
   };
   const R9 = HTML(MAN2, [], true, () => ({}))({ id:9 });
-  const orden9 = [...R9.h.matchAll(/class="tro-nm">([^<]*?)(?:<span|<\/span>)/g)].map(m => m[1]);
+  const orden9 = [..._sinNowrap(R9.h).matchAll(/class="tro-nm">([^<]*?)(?:<span|<\/span>)/g)].map(m => m[1]);
   chk(orden9.join(' | ') === 'Campeón mundial | Medalla de oro olímpica | Campeón argentino | Campeón | Subcampeón | Mejor sub-20',
       'primero los títulos mayores (por año), después los campeonatos, y al final los logros',
       orden9.join(' | '));
@@ -2437,7 +2439,7 @@ console.log('\n=== 34. La vitrina de trofeos del perfil ===');
   const manDe = () => ({ 7: [ { k:'arg', y:2009, d:'Campeonato Argentino Absoluto' },
                               { k:'oro', y:1950, d:'Olimpiada de Dubrovnik' } ] });
   const Rm = HTML(MAN, [], true, manDe)({ id:7 });
-  const nombresM = [...Rm.h.matchAll(/class="tro-nm">([^<]*?)(?:<span|<\/span>)/g)].map(m => m[1]);
+  const nombresM = [..._sinNowrap(Rm.h).matchAll(/class="tro-nm">([^<]*?)(?:<span|<\/span>)/g)].map(m => m[1]);
   chk(nombresM[0] === 'Campeón argentino' && nombresM[1] === 'Medalla de oro olímpica',
       'los cargados a mano se mezclan con los del sitio y van primeros (nivel 0, por año)',
       nombresM.join(' | '));
@@ -2496,7 +2498,7 @@ console.log('\n=== 34. La vitrina de trofeos del perfil ===');
                                { de:'tz_6|1', y:2018, d:'Zonal' },
                                { de:'tz_99|', k:'mun', y:1999 } ] });
   const Rc = HTML(MANF, [], true, corr)({ id:169, female:true });
-  const nomC = [...Rc.h.matchAll(/class="tro-nm">([^<]*?)(?:<span|<\/span>)/g)].map(m => m[1]);
+  const nomC = [..._sinNowrap(Rc.h).matchAll(/class="tro-nm">([^<]*?)(?:<span|<\/span>)/g)].map(m => m[1]);
   chk(nomC.join(' | ') === 'Campeona argentina | Campeona argentina | Subcampeona | Mejor femenina',
       'corregida a campeona argentina, la copa sube con los títulos mayores y se ordena por año', nomC.join(' | '));
   chk(Rc.h.indexOf('Campeona argentina<span class="tro-anio">2026<') > 0,
@@ -9724,8 +9726,8 @@ console.log('\n── Planes típicos de la apertura ──');
       && fin('salvar', 'w') === 'Tu tarea: salvá este final, hacé tablas.' && /intentá ganarlo/.test(fin('salvar', 'b'))
       && fin(null, 'w') === 'Jugá el final lo mejor que puedas contra el módulo.',
       'la tarea es del bando que mueve (ganar o salvar); con el otro color se da vuelta; los finales viejos sin objetivo dicen lo de siempre');
-  chk(/if \(prac\.fObj && p\.objective !== prac\.fObj\) return false; \}/.test(extraerFuncion('pracItems')) && /eobjs\.ganar \|\| eobjs\.salvar/.test(extraerFuncion('pracRenderFilters')),
-      '🔒 el filtro de objetivo de los finales aparece sólo si hay finales con objetivo, y filtra la lista');
+  chk(/else if \(prac\.fObj && p\.objective !== prac\.fObj\) return false;/.test(extraerFuncion('pracItems')) && /prac\.fObj === 'libre'/.test(extraerFuncion('pracItems')) && /eobjs\.ganar \|\| eobjs\.salvar/.test(extraerFuncion('pracRenderFilters')),
+      '🔒 el filtro de objetivo de los finales aparece sólo si hay finales con objetivo, y filtra la lista (con "Jugalo libre" para los que no tienen)');
   // 09/10: las posiciones clave de una lección (Carlsbad) dicen de qué parte son, esconden la pista del plan hasta que
   // la pidas y llevan a la lección; "Ver la partida original" sale aunque no estén en la base (el PGN lo trae la lección).
   const EH = 'function escHtml(s){return String(s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;"}[c];});}';
