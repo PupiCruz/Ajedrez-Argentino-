@@ -9278,7 +9278,7 @@ console.log('\n── Portada de aperturas ──');
       'la partida destacada es la de mejor Elo promedio (una simultánea de Kasparov no cuenta), con el nombre del torneo y su puntero');
   chk(JSON.stringify(sic[5]) === '[1,["p1",2]]' && esp[5] === undefined,
       'los argentinos que más la juegan cuentan el bando dueño (en la Siciliana, negras) y desde 2 partidas', JSON.stringify([sic[5], esp[5]]));
-  chk(/var _dbMode = 'portada'/.test(SRC) && /btn\('portada', '🌳 Aperturas'\) \+ btn\('openings', '♟️ Jugada por jugada'\) \+ btn\('search', '🔍 Buscar partidas'\)/.test(SRC),
+  chk(/var _dbMode = 'portada'/.test(SRC) && /btn\('portada', '🌳', 'Familias'\) \+ btn\('openings', '♟️', 'Jugada por jugada'\) \+ btn\('search', '🔍', 'Buscar partidas'\)/.test(SRC),
       'Partidas abre en la portada de aperturas; el buscador es el último botón');
   chk(extraerFuncion('_fsSaveJobs').includes("uno('aperturas-stats.json'") && extraerFuncion('exportGithubData').includes("'data/aperturas-stats.json'")
       && /'assets\/aperturas-arbol\.json',/.test(SRC) && extraerFuncion('_apStatsEnsure').includes("fetch('data/aperturas-stats.json' + _dataV())"),
