@@ -1679,6 +1679,26 @@
     .n-hero-wrap { flex:1.8; min-width:0; }
     .n-side-wrap { flex:1; min-width:0; display:flex; flex-direction:column; gap:11px; }
     @media (max-width:620px){ .n-layout { flex-direction:column; } .n-hero-wrap,.n-side-wrap { flex:none; width:100%; } }
+    /* (15/10/2026, autor) En la compu la lista de la derecha medía ~360 px más que la noticia principal y abajo a la
+       izquierda quedaba un hueco. Ahora es una TAPA DE DIARIO en una grilla de 6: la principal ocupa 4 columnas y dos
+       filas, las dos siguientes van a su derecha (una arriba de la otra, misma altura) y el resto, de a tres, abajo.
+       .n-side-wrap pasa a "display: contents" para que sus noticias sean parte de la misma grilla. En el teléfono
+       (≤620) sigue como estaba: la principal y abajo la lista con fotitos. */
+    @media (min-width:621px){
+      .n-layout { display:grid; grid-template-columns:repeat(6, minmax(0,1fr)); gap:14px; align-items:stretch; }
+      .n-hero-wrap { grid-column:1 / span 4; grid-row:1 / span 2; display:flex; }
+      .n-hero-wrap > .n-hero { flex:1; margin-bottom:0; display:flex; flex-direction:column; }
+      .n-hero-wrap > .n-hero > .n-body { flex:1; }
+      .n-side-wrap { display:contents; }
+      .n-side-wrap > .n-mini { grid-column:span 2; flex-direction:column; }
+      .n-side-wrap > .n-mini .n-mini-img { width:100%; min-width:0; aspect-ratio:16 / 9; flex:0 0 auto; font-size:40px; }
+      .n-side-wrap > .n-mini:nth-child(-n+2) .n-mini-img { aspect-ratio:auto; flex:1 1 auto; min-height:140px; }
+      .n-side-wrap > .n-mini .n-mini-title { font-size:15px; }
+    }
+    /* Sin foto: el logo, chico y apenas transparente, sobre el halo dorado. */
+    .n-logo-ph { width:44%; max-width:120px; height:auto; opacity:.9; filter:drop-shadow(0 4px 10px rgba(0,0,0,.25)); }
+    .n-mini-img .n-logo-ph { width:56%; max-width:72px; }
+    .n-side-wrap > .n-mini .n-mini-img .n-logo-ph { max-width:96px; }
     .n-hero { cursor:pointer; }
     .n-hero .n-img { height:210px; font-size:78px; }
     /* Foto de la noticia principal: completa pero con tope, así entra junto al
@@ -1718,6 +1738,23 @@
       display:none; flex-direction:column; overflow-y:auto;
     }
     .n-reader-overlay.open { display:flex; }
+    /* (15/10/2026) Final de la nota: compartir, jugadores nombrados (link al perfil) y más noticias. */
+    .n-fin { margin-top:26px; padding-top:18px; border-top:1px solid var(--bd18); }
+    .n-fin-tit { font-size:11.5px; font-weight:700; letter-spacing:1px; text-transform:uppercase; color:var(--text3); margin:20px 0 9px; }
+    .n-fin-jug { display:flex; flex-wrap:wrap; gap:7px; }
+    .n-jug { display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:999px; border:1px solid var(--bd22);
+      background:var(--bg3); color:var(--text); font-size:13.5px; font-weight:600; text-decoration:none; }
+    .n-jug:hover, .n-jug:focus-visible { border-color:var(--gold); color:var(--gold); outline:none; }
+    .n-jug-t { font-size:10.5px; font-weight:800; color:var(--gold); }
+    .n-fin-mas { display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:10px; }
+    .n-fin-mas .n-mini { flex-direction:column; }
+    .n-fin-mas .n-mini-img { width:100%; min-width:0; aspect-ratio:16 / 9; }
+    @media (max-width:620px){ .n-fin-mas { grid-template-columns:minmax(0,1fr); } .n-fin-mas .n-mini { flex-direction:row; } .n-fin-mas .n-mini-img { width:92px; min-width:92px; aspect-ratio:auto; } }
+    .n-link-btn { display:inline-flex; align-items:center; gap:6px; padding:7px 14px; border-radius:999px; border:1px solid var(--gold-dim);
+      background:var(--gold-bg); color:var(--gold) !important; font-weight:700; text-decoration:none !important; margin:2px 0; }
+    .n-link-btn:hover { filter:brightness(1.08); }
+    /* El perfil abierto desde una nota va por ENCIMA del lector (la capa del perfil está en 200, la del lector en 500). */
+    body.perfil-sobre-nota #overlay { z-index:600; }
     .n-reader-hdr {
       position:sticky; top:0; background:var(--bg2); border-bottom:1px solid var(--border);
       padding:11px 14px; display:flex; align-items:center; gap:10px; z-index:10; flex-shrink:0;
@@ -5714,6 +5751,7 @@
       <div id="n-reader-body" class="n-reader-body"></div>
       <div id="n-reader-pgn"></div>
       <div id="n-reader-actions" style="margin-top:18px;display:flex;gap:10px;flex-wrap:wrap;align-items:center"></div>
+      <div id="n-reader-fin"></div>
     </div>
   </div>
 </div>
@@ -28142,11 +28180,16 @@ function newsCardClick(e, id) {
   return false;
 }
 
+// (15/10/2026) Sin foto: el logo del sitio en vez del 📰 de siempre (si el autor eligió otro emoji, va ése).
+function _newsSinFoto(n) {
+  return (!n.emoji || n.emoji === '📰') ? '<img class="n-logo-ph" src="assets/logo.png" alt="" draggable="false">'
+    : '<span class="n-emoji">' + _nEsc(n.emoji) + '</span>';
+}
 function _newsHeroHtml(n, editable) {
   var hasCover = n.coverImg && n.coverImg.length;
   var imgBlock = hasCover
     ? '<img src="' + _nEscAttr(n.coverImg) + '" style="width:100%;height:auto;display:block" draggable="false" onerror="this.style.display=\'none\'">'
-    : '<div class="n-img"><span class="n-emoji">' + _nEsc(n.emoji || '📰') + '</span></div>';
+    : '<div class="n-img">' + _newsSinFoto(n) + '</div>';
   return '<a class="n-card n-hero" href="' + _noticiaHref(n.id) + '" onclick="return newsCardClick(event,\'' + _nEscAttr(n.id) + '\')" style="position:relative">'
     + (editable ? _newsEditBtns(n.id) : '')
     + imgBlock
@@ -28160,8 +28203,9 @@ function _newsHeroHtml(n, editable) {
 
 function _newsMiniHtml(n, editable) {
   var hasCover = n.coverImg && n.coverImg.length;
-  var imgStyle = hasCover ? 'background-image:url(' + _nEscAttr(n.coverImg) + ');background-size:contain;background-position:center;background-repeat:no-repeat;' : '';
-  var imgInner = hasCover ? '' : '<span class="n-emoji">' + _nEsc(n.emoji || '📰') + '</span>';
+  // (15/10/2026) La foto LLENA el cuadro (recortada): con "contain" cada fotito quedaba de otro tamaño, con bandas.
+  var imgStyle = hasCover ? 'background-image:url(' + _nEscAttr(n.coverImg) + ');background-size:cover;background-position:center 22%;background-repeat:no-repeat;' : '';
+  var imgInner = hasCover ? '' : _newsSinFoto(n);
   return '<a class="n-mini" href="' + _noticiaHref(n.id) + '" onclick="return newsCardClick(event,\'' + _nEscAttr(n.id) + '\')">'
     + (editable ? _newsEditBtns(n.id) : '')
     + '<div class="n-mini-img" style="' + imgStyle + '">' + imgInner + '</div>'
@@ -28234,7 +28278,7 @@ function openNewsReader(id) {
   } else {
     coverEl.className = 'n-reader-cover no-img';
     coverEl.style.backgroundImage = '';
-    coverEl.innerHTML = '<span class="n-emoji">' + _nEsc(n.emoji || '📰') + '</span>';
+    coverEl.innerHTML = _newsSinFoto(n);
   }
   // Fecha (pill dorada; se oculta si la noticia no tiene fecha) y título
   var _rdDate = document.getElementById('n-reader-date');
@@ -28246,6 +28290,7 @@ function openNewsReader(id) {
   var _rdBody = document.getElementById('n-reader-body');
   _rdBody.innerHTML = n.body || ('<p>' + _nEsc(n.text || '') + '</p>');
   _nrCleanBody(_rdBody);
+  _nrLinksLindos(_rdBody);
   // Visor de partida embebido (si tiene PGN)
   var pgnEl = document.getElementById('n-reader-pgn');
   if (pgnEl) {
@@ -28257,6 +28302,8 @@ function openNewsReader(id) {
     ? '<a href="' + _nEscAttr(n.url) + '" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:5px;color:var(--gold);font-size:14px;text-decoration:none"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>Ver en la web</a>'
     : '';
   document.getElementById('n-reader-actions').innerHTML = actHtml;
+  var _fin = document.getElementById('n-reader-fin');
+  if (_fin) _fin.innerHTML = _nrFinHtml(n, (n.title || '') + ' ' + (_rdBody.textContent || ''));
   // Botón editar (modo autor)
   var editBtn = document.getElementById('n-reader-edit-btn');
   if (editBtn) editBtn.innerHTML = !_ondemand ? (''
@@ -28281,8 +28328,68 @@ function openNewsReader(id) {
   try { _seoNoticia(); } catch (e) {}
 }
 
+// (15/10/2026) Links del sitio pegados "en crudo" (https://chessargentino.ar/?torneo=tz_17836…): un botón con nombre.
+function _nrLinksLindos(root) {
+  [].forEach.call(root.querySelectorAll('a[href]'), function (a) {
+    var h = a.getAttribute('href') || '', tx = (a.textContent || '').trim();
+    if (!(/^https?:\/\//i.test(tx) || tx === h)) return;   // el autor le puso un texto propio: se respeta
+    if (/[?&]torneo=/.test(h)) { a.textContent = '🏆 Ver el torneo'; a.className = 'n-link-btn'; }
+    else if (/[?&]jugador=/.test(h)) { a.textContent = '👤 Ver el perfil'; a.className = 'n-link-btn'; }
+  });
+}
+// Jugadores nombrados en la nota (nombre y apellido enteros, como figuran en el ranking). Se saltean los
+// nombres repetidos (dos jugadores que se llaman igual) para no linkear al que no es.
+var _nrJugIdx = null;
+function _nrJugadoresEn(texto) {
+  if (!texto || typeof PLAYERS === 'undefined' || !PLAYERS.length) return [];
+  var limpio = function (x) { return ' ' + _normTxt(x).replace(/[^a-z0-9]+/g, ' ').trim() + ' '; };
+  if (!_nrJugIdx) {
+    var cuenta = {}, todos = [];
+    PLAYERS.forEach(function (p) { var k = limpio(p.name || ''); if (k.trim().split(' ').length < 2) return; cuenta[k] = (cuenta[k] || 0) + 1; todos.push({ k: k, p: p }); });
+    _nrJugIdx = todos.filter(function (x) { return cuenta[x.k] === 1; });
+  }
+  var t = limpio(texto), vistos = [];
+  _nrJugIdx.forEach(function (x) { var i = t.indexOf(x.k); if (i >= 0) vistos.push({ p: x.p, i: i }); });
+  vistos.sort(function (a, b) { return a.i - b.i; });
+  return vistos.slice(0, 12).map(function (x) { return x.p; });
+}
+function _nrFinHtml(n, texto) {
+  var h = '<div class="n-fin"><button type="button" class="apt-pill n-compartir" onclick="newsCompartir(this)">🔗 Compartir la nota</button>';
+  var js = _nrJugadoresEn(texto);
+  if (js.length) h += '<div class="n-fin-tit">Jugadores en esta nota</div><div class="n-fin-jug">' + js.map(function (p) {
+    return '<a class="n-jug" href="' + _playerHref(p.id) + '" onclick="return _nrAbrirJugador(event,' + JSON.stringify(p.id).replace(/"/g, '&quot;') + ')">'
+      + (p.title ? '<span class="n-jug-t">' + _nEsc(p.title) + '</span>' : '') + _nEsc(p.name) + '</a>';
+  }).join('') + '</div>';
+  // Más noticias: las tres que siguen (más viejas); si es de las últimas, completa con las primeras.
+  var items = getNewsItems(), i0 = -1;
+  for (var i = 0; i < items.length; i++) if (items[i].id === n.id) { i0 = i; break; }
+  var otras = items.slice(i0 + 1).concat(items.slice(0, Math.max(0, i0))).slice(0, 3);
+  if (otras.length) h += '<div class="n-fin-tit">Más noticias</div><div class="n-fin-mas">' + otras.map(function (x) { return _newsMiniHtml(x, false); }).join('') + '</div>';
+  return h + '</div>';
+}
+// El perfil se abre ENCIMA de la nota (la capa del perfil queda por debajo de la del lector), y al cerrarlo
+// se vuelve a la nota.
+function _nrAbrirJugador(e, id) {
+  if (e && (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1)) return true;
+  if (e) e.preventDefault();
+  document.body.classList.add('perfil-sobre-nota');
+  openPlayer(id);
+  return false;
+}
+function newsCompartir(btn) {
+  if (!_newsReaderCurrentId) return;
+  var n = getNewsItems().filter(function (x) { return x.id === _newsReaderCurrentId; })[0];
+  var url = location.origin + location.pathname + _noticiaHref(_newsReaderCurrentId);
+  var tactil = window.matchMedia && matchMedia('(pointer: coarse)').matches;
+  if (tactil && navigator.share) { navigator.share({ title: (n ? n.title : 'Noticia') + ' — ChessArgentino', url: url }).catch(function () {}); return; }
+  if (navigator.clipboard) navigator.clipboard.writeText(url).then(function () {
+    if (!btn) return; btn.textContent = '✓ Link copiado';
+    setTimeout(function () { btn.textContent = '🔗 Compartir la nota'; }, 1800);
+  }).catch(function () {});
+}
 var _newsHistoryPushed = false;
 function closeNewsReader() {
+  document.body.classList.remove('perfil-sobre-nota');
   // Si apilamos una entrada de historial, delegamos en Atrás: el popstate hace el cierre real
   // (una sola vez) y restaura la URL limpia. Igual criterio que el visor de partidas y el perfil.
   if (_newsHistoryPushed) { _newsHistoryPushed = false; history.back(); return; }
@@ -28524,7 +28631,7 @@ function openNewsEditor(id, prefill){
     // Emoji + Fecha
     + '<div style="display:flex;gap:10px">'
     + '<div style="width:80px;flex:none">' + _newsInput('Emoji','news-f-emoji', n?n.emoji:'📰','📰') + '</div>'
-    + '<div style="flex:1">' + _newsInput('Fecha','news-f-date', n?n.date:'','Ej: 14 Jun 2026') + '</div>'
+    + '<div style="flex:1">' + _newsInput('Fecha','news-f-date', n?n.date:_newsHoy(),'Ej: 14 Jun 2026') + '</div>'
     + '</div>'
     // Título
     + _newsInput('Título','news-f-title', n?n.title:'','Título de la noticia')
@@ -29862,8 +29969,23 @@ function _ttShowResult(blob){
     +'<div style="font-size:12px;color:var(--text2);line-height:1.55;margin-top:12px;background:var(--bg3);border-radius:10px;padding:11px">🎵 <b>La música se agrega en TikTok:</b> subí este video, tocá <b>“Agregar sonido”</b> y elegí la canción que quieras. El video sale sin música a propósito, así no te lo silencian por copyright.</div>';
 }
 
+// Fecha de hoy como la escriben las noticias ("15 Oct 2026").
+function _newsHoy() {
+  var d = new Date(), M = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+  return d.getDate() + ' ' + M[d.getMonth()] + ' ' + d.getFullYear();
+}
 function saveNewsFromEditor(id){
   var g = function(x){ var el=document.getElementById(x); return el?(el.value||'').trim():''; };
+  // (15/10/2026) Tres noticias quedaron sin fecha y se veían sueltas en la lista: ahora se pide antes de guardar.
+  if (!g('news-f-date') && window.aaAsk) {
+    window.aaAsk({ icono:'🗓️', titulo:'Falta la fecha', texto:'Las noticias sin fecha se ven sueltas en la lista. ¿Qué fecha le ponemos?',
+      campo:'Ej: ' + _newsHoy(), ok:'Guardar' }).then(function (v) {
+      v = (v || '').trim(); if (!v) return;
+      var el = document.getElementById('news-f-date'); if (el) el.value = v;
+      saveNewsFromEditor(id);
+    });
+    return;
+  }
   var emoji = g('news-f-emoji')||'📰', date=g('news-f-date'), title=g('news-f-title');
   var summary=g('news-f-summary'), url=g('news-f-url'), coverImg=g('news-f-cover'), pgn=g('news-f-pgn');
   var bodyEl=document.getElementById('news-f-body');
@@ -32898,6 +33020,13 @@ window.addEventListener('popstate', function() {
   // Perfil COMPLETO de usuario abierto (#u=nick): este Atrás es el suyo, lo cierra su propio hashchange.
   // Abrirlo también dispara popstate (escribe el #u=) y cerraba el torneo que había debajo (24/09).
   if (document.body.classList.contains('prof-page')) return;
+  // (15/10/2026) Perfil abierto desde una nota ("Jugadores en esta nota"): va ENCIMA del lector, así que este
+  // Atrás es el suyo; se cierra el perfil y queda la nota.
+  if (document.body.classList.contains('perfil-sobre-nota')) {
+    document.body.classList.remove('perfil-sobre-nota');
+    var _pso = document.getElementById('overlay');
+    if (_pso && _pso.classList.contains('open')) { _playerHistoryPushed = false; _pso.classList.remove('open'); _playerPageOff(); return; }
+  }
   // Lector de noticias: es el overlay más arriba (z-index 500), se cierra primero.
   var nreader = document.getElementById('n-reader-overlay');
   if (nreader && nreader.classList.contains('open')) {
