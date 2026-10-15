@@ -28,7 +28,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2454;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2456;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -10043,6 +10043,15 @@ console.log('\n=== 76. 🌐 Ratings online: tarjeta "En línea" de Chess.com y L
   const ixJs = 'window.__EMBEDDED_PLAYERS__=' + JSON.stringify({ players: [{ id: 7, fide_id: '20000197' }, { id: 5, fide_id: '112275' }], additionals: [{ id: 900, fide_id: '1' }] }) + ';';
   chk(JSON.stringify(H.indicePorId({ 20000197: { cc: 'FaustinoOro' }, 1: { li: 'Adic' }, 999: { cc: 'nadie' } }, ixJs)) === '{"7":{"cc":"faustinooro"},"900":{"li":"adic"}}',
       'online.json lleva qué cuenta tiene cada jugador por su NÚMERO de la web (lo usa el bot de Discord), adicionales incluidos');
+  const V = { ts: Date.UTC(2026, 9, 15, 13, 0), cc: { oro: {}, mareco: {} }, li: { lio: {} } };
+  const q1 = H.quePedir(V, ['oro', 'mareco'], ['lio'], Date.UTC(2026, 9, 15, 22, 0), false);
+  const q2 = H.quePedir(V, ['oro', 'mareco', 'ilan'], ['lio', 'nuevo'], Date.UTC(2026, 9, 15, 22, 0), false);
+  const q3 = H.quePedir(V, ['oro'], [], Date.UTC(2026, 9, 16, 4, 0), false);
+  chk(!q1.completo && !q1.cc.length && !q1.li.length && !q2.completo && q2.cc.join() === 'ilan' && q2.li.join() === 'nuevo',
+      'ratings online: si ya se bajaron HOY, no pide nada; con cuentas nuevas, pide sólo ésas (pedido del autor: tardaba 2 minutos cada vez)');
+  chk(H.quePedir(V, ['oro'], [], Date.UTC(2026, 9, 16, 2, 0), false).completo === false && q3.completo && q3.cc.join() === 'oro'
+      && H.quePedir(V, ['oro'], [], Date.UTC(2026, 9, 15, 22, 0), true).completo && H.quePedir(null, ['oro'], [], 1, false).completo,
+      'el día cambia a la medianoche ARGENTINA (las 23 h siguen siendo hoy); --todo o sin archivo previo, bajada completa');
   const fp = extraerFuncion('_estadoActualFp');
   chk(/_onlCuentas\(\)/.test(fp) && /onlFp \? '~onl' \+ onlFp : ''/.test(fp),
       'cargar una cuenta enciende el aviso de "cambios sin guardar" (y sin cuentas la huella queda igual que antes)');

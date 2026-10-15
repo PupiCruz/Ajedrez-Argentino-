@@ -336,8 +336,9 @@ Fase 1 de `planes-de-la-web/PLAN-RATINGS-ONLINE.md` (afuera de esta carpeta).
 - Se guardan por **fide_id** (`online_cuentas` en el navegador → `window.__ONLINE_CUENTAS__`, en el mismo renglón
   que el ranking: `_embeddedPlayersJs`). Sin fide_id no hay tarjeta.
 - **Los ratings** los baja `node herramientas/online/actualizar.mjs` → `data/online.json` (+ `data/online-hist.json`,
-  una foto mensual de Chess.com, que no tiene historial). **Lo corre solo `publicar-web.cmd`**; sin internet, deja
-  lo de la vez pasada. Las cuentas cerradas no se publican (las avisa el script).
+  una foto mensual de Chess.com, que no tiene historial). **Lo corre solo `publicar-web.cmd`**: la bajada completa
+  (~2 min) UNA vez por día (medianoche argentina); en las demás publicaciones del día pide sólo las cuentas nuevas
+  (si no hay, no pide nada). `--todo` la fuerza. Sin internet, deja lo de la vez pasada. Las cuentas cerradas no se publican (las avisa el script).
 - El visitante **nunca** le pide nada a Chess.com ni a Lichess: sólo lee `data/online.json`. Sin cuentas, no ve nada.
   No se muestra "visto por última vez" (hay menores). Pruebas: sección 76 del banco.
 - Un ritmo de Chess.com **sin partidas en el último año no se muestra** (`_ONL_VIGENCIA` / `VIGENCIA` del script):

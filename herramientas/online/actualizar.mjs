@@ -7,7 +7,8 @@
 // dos sitios y escribe:
 //   · data/online.json       → lo que lee la tarjeta: { ts, cc: { usuario: {...} }, li: { usuario: {...} } }
 //   · data/online-hist.json  → una "foto" por mes de Chess.com (su API no da historial): { usuario: [{ d, b, u, r }] }
-// Lo corre solo publicar-web.cmd antes de commitear. Si algo falla, avisa y deja los archivos como estaban.
+// Lo corre solo publicar-web.cmd antes de commitear: la bajada completa, UNA vez por día; en las otras publicaciones
+// del día sólo pide las cuentas nuevas (con --todo, todo). Si algo falla, avisa y deja los archivos como estaban.
 //
 // Cuidados (plan PLAN-RATINGS-ONLINE.md): a Chess.com DE A UNO con una pausa (en paralelo devuelve 429), con
 // un User-Agent que diga quiénes somos; a Lichess en UN solo pedido para todos. Las cuentas cerradas o
@@ -120,6 +121,17 @@ async function pedirCC(ruta) {
   throw new Error('Chess.com sigue frenando los pedidos (429)');
 }
 
+// ¿Qué hay que pedir? Una bajada COMPLETA por día (hora argentina); en las otras publicaciones del día, sólo las
+// cuentas nuevas (las que no están en el online.json de antes). Pedido del autor (15/10): bajar todo tardaba ~2
+// minutos en cada publicar-web.cmd, y nadie mira la variación de rating online varias veces por día.
+// --todo en la línea de comandos fuerza la completa. → { completo, cc: [usuarios], li: [usuarios] }
+const diaAR = (ms) => new Date(ms - 3 * 3600e3).toISOString().slice(0, 10);
+export function quePedir(viejo, usCC, usLI, ahora, forzar) {
+  const completo = !!forzar || !viejo || !viejo.ts || diaAR(viejo.ts) !== diaAR(ahora);
+  if (completo) return { completo, cc: usCC.slice(), li: usLI.slice() };
+  return { completo, cc: usCC.filter(u => !(viejo.cc || {})[u]), li: usLI.filter(u => !(viejo.li || {})[u]) };
+}
+
 async function main() {
   const fuente = ['data/embedded-data.js', 'data/manifest.js'].map(f => path.join(RAIZ, f)).find(f => fs.existsSync(f));
   if (!fuente) { console.log('Ratings online: no encontré data/embedded-data.js. No toco nada.'); return; }
@@ -130,12 +142,29 @@ async function main() {
 
   const usCC = [...new Set(ids.map(i => cuentas[i] && cuentas[i].cc).filter(Boolean).map(u => String(u).toLowerCase()))];
   const usLI = [...new Set(ids.map(i => cuentas[i] && cuentas[i].li).filter(Boolean).map(u => String(u).toLowerCase()))];
-  console.log('Ratings online: ' + usCC.length + ' cuenta(s) de Chess.com y ' + usLI.length + ' de Lichess…');
+  const archOnline = path.join(RAIZ, 'data', 'online.json');
+  let viejo = null;
+  try { viejo = JSON.parse(fs.readFileSync(archOnline, 'utf8')); } catch (e) {}
+  const plan = quePedir(viejo, usCC, usLI, Date.now(), process.argv.includes('--todo'));
+
+  // Lo de antes que sigue valiendo: las cuentas que siguen cargadas (las que el autor sacó, se van).
+  const salida = { ts: plan.completo ? Date.now() : viejo.ts, cc: {}, li: {}, j: indicePorId(cuentas, jsDatos) };
+  if (!plan.completo) {
+    for (const u of usCC) if (viejo.cc && viejo.cc[u]) salida.cc[u] = viejo.cc[u];
+    for (const u of usLI) if (viejo.li && viejo.li[u]) salida.li[u] = viejo.li[u];
+  }
+  if (!plan.completo && !plan.cc.length && !plan.li.length) {
+    const hora = new Date(viejo.ts - 3 * 3600e3).toISOString().slice(11, 16);
+    const nuevo = JSON.stringify(salida);
+    if (nuevo !== JSON.stringify(viejo)) fs.writeFileSync(archOnline, nuevo);   // por si sacaste alguna cuenta
+    console.log('Ratings online: ya se bajaron hoy a las ' + hora + ' y no hay cuentas nuevas. No pido nada (para forzar: --todo).');
+    return;
+  }
+  console.log('Ratings online: ' + (plan.completo ? 'la bajada del día, ' : 'sólo las cuentas nuevas, ') + plan.cc.length + ' de Chess.com y ' + plan.li.length + ' de Lichess…');
 
   const avisos = [];
-  const salida = { ts: Date.now(), cc: {}, li: {}, j: indicePorId(cuentas, jsDatos) };
-
-  for (const u of usCC) {
+  let nCC = 0, nLI = 0;
+  for (const u of plan.cc) {
     try {
       const p = await pedirCC('player/' + encodeURIComponent(u));
       if (p.noExiste) { avisos.push('Chess.com: la cuenta "' + u + '" no existe.'); continue; }
@@ -143,13 +172,13 @@ async function main() {
       const s = await pedirCC('player/' + encodeURIComponent(u) + '/stats');
       const d = normalizarCC(p.json, s.json);
       if (!d) avisos.push('Chess.com: "' + u + '" está CERRADA (' + p.json.status + '). No se muestra en la web.');
-      else salida.cc[u] = d;
+      else { salida.cc[u] = d; nCC++; }
     } catch (e) { avisos.push('Chess.com: "' + u + '" falló (' + e.message + ').'); }
     await dormir(PAUSA_CC);
   }
 
-  for (let i = 0; i < usLI.length; i += 300) {   // la API acepta hasta 300 por pedido
-    const tanda = usLI.slice(i, i + 300);
+  for (let i = 0; i < plan.li.length; i += 300) {   // la API acepta hasta 300 por pedido
+    const tanda = plan.li.slice(i, i + 300);
     try {
       const r = await fetch('https://lichess.org/api/users', { method: 'POST', headers: { 'Content-Type': 'text/plain', 'User-Agent': UA }, body: tanda.join(',') });
       if (!r.ok) throw new Error('respondió ' + r.status);
@@ -160,38 +189,34 @@ async function main() {
         vistos.add(k);
         const d = normalizarLI(x);
         if (!d) avisos.push('Lichess: "' + k + '" está cerrada o suspendida. No se muestra en la web.');
-        else salida.li[k] = d;
+        else { salida.li[k] = d; nLI++; }
       }
       tanda.filter(k => !vistos.has(k)).forEach(k => avisos.push('Lichess: la cuenta "' + k + '" no existe.'));
     } catch (e) { avisos.push('Lichess: el pedido falló (' + e.message + ').'); }
   }
 
-  // Si NO llegó nada de ninguno de los dos (sin internet, por ejemplo), no se pisa lo publicado.
-  const nCC = Object.keys(salida.cc).length, nLI = Object.keys(salida.li).length;
-  if (!nCC && !nLI) {
-    console.log('Ratings online: no llegó ningún dato. Dejo data/online.json como estaba.');
+  // En la bajada del día, si NO llegó nada de ninguno de los dos (sin internet, por ejemplo), no se pisa lo publicado.
+  if (plan.completo && !nCC && !nLI) {
+    console.log('Ratings online: no llegó ningún dato. Dejo data/online.json como estaba (se reintenta en la próxima publicación).');
     avisos.forEach(a => console.log('   ⚠️  ' + a));
     return;
   }
   // Una cuenta que hoy falló por la red conserva lo de la vez anterior (mejor eso que borrarle la tarjeta).
-  const archOnline = path.join(RAIZ, 'data', 'online.json');
-  try {
-    const viejo = JSON.parse(fs.readFileSync(archOnline, 'utf8'));
+  if (viejo) {
     for (const sitio of ['cc', 'li']) {
-      const lista = sitio === 'cc' ? usCC : usLI;
-      for (const u of lista) {
+      for (const u of plan[sitio]) {
         const fallo = avisos.some(a => a.indexOf('"' + u + '" falló') >= 0 || (sitio === 'li' && /^Lichess: el pedido falló/.test(a)));
         if (!salida[sitio][u] && fallo && viejo[sitio] && viejo[sitio][u]) salida[sitio][u] = viejo[sitio][u];
       }
     }
-  } catch (e) {}
+  }
   fs.writeFileSync(archOnline, JSON.stringify(salida));
 
   const archHist = path.join(RAIZ, 'data', 'online-hist.json');
   let hist = {};
   try { hist = JSON.parse(fs.readFileSync(archHist, 'utf8')); } catch (e) {}
   const hoy = new Date(), mes = hoy.getFullYear() + '-' + String(hoy.getMonth() + 1).padStart(2, '0');
-  for (const u of Object.keys(salida.cc)) hist = fotoMensual(hist, u, salida.cc[u], mes);
+  for (const u of plan.cc) if (salida.cc[u]) hist = fotoMensual(hist, u, salida.cc[u], mes);
   fs.writeFileSync(archHist, JSON.stringify(hist));
 
   console.log('Ratings online: listo (' + nCC + ' de Chess.com, ' + nLI + ' de Lichess).');
