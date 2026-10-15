@@ -5531,7 +5531,7 @@ console.log('\n=== Arena de Lichess — Fase 0: la cartelera ===');
 console.log('\n=== Arena de Lichess — Fase 1: anotarse y la pantalla de espera ===');
 {
   const N = ['_asEsc', '_asTiempo', '_asEstado', '_asPagina', '_asHoja', '_asTabla', '_asCaja', '_asIdDeUrl',
-    '_asPartidas', '_asPerf', '_asTarjeta', '_asPodioTop', '_asPaginador', '_asTablaMini', '_bkMiniHtml'];
+    '_asPartidas', '_asPerf', '_asTarjeta', '_asPodioTop', '_asPaginador', '_asTablaMini', '_bkMiniHtml', '_asBandera', '_asColor', '_asTop3'];
   const A = new Function('var _bkMiniN = 0;\n' + N.map(extraerFuncion).join('\n') + '; return {' + N.join(',') + '};')();
   const modS = (SRC.match(/ARENA DE LICHESS — Fase 1[\s\S]*?<\/script>/) || [''])[0];
   const modLi2 = (SRC.match(/aaLi — el permiso[\s\S]*?window\.aaLi = \{[\s\S]*?\};/) || [''])[0];
@@ -5554,7 +5554,7 @@ console.log('\n=== Arena de Lichess — Fase 1: anotarse y la pantalla de espera
   chk(!/<b>x<\/b>/.test(tabla), '🔒 los nombres de la tabla se escapan');
   chk(/lv-as-yo[^"]*"[\s\S]*ElPupiCruz/.test(tabla) && (tabla.match(/lv-as-yo/g) || []).length === 1,
       'tu fila se resalta (sin importar mayúsculas), y sólo la tuya');
-  chk(/<b>5<\/b><b>4<\/b>2/.test(tabla) && /🔥/.test(tabla), 'la hoja marca los puntos dobles de la racha y el fueguito');
+  chk(/<i class="lv-as-h x2">5<\/i><i class="lv-as-h x2">4<\/i><i class="lv-as-h g">2<\/i>/.test(tabla) && /🔥/.test(tabla), 'la hoja marca los puntos dobles de la racha (en naranja), las victorias en verde y el fueguito');
   chk(/lv-as-pausa/.test(tabla), 'el que está en pausa se ve apagado');
 
   const caja = (e, d) => A._asCaja(e, d, 'yo', 90);
@@ -5753,7 +5753,7 @@ console.log('\n=== Arenas temáticos: posición inicial ===');
       '"Analizar" un temático: la partida va entera desde 1.d4 si se conocen las jugadas; si no, desde la posición');
   chk(/class="lv-as-tema-bd" role="button" tabindex="0" aria-expanded="false"/.test(SRC) && /\.lv-as-tema-bd\.grande \{ width:min\(300px, 72vw\);/.test(SRC)
       && /if \(tb\) \{ agrandarTema\(tb\); return; \}/.test(SRC) && /function agrandarTema\(tb\)/.test(SRC)
-      && /<div id="lv-as-tema"[^>]*><\/div>\s*<div id="lv-as-podio"><\/div>/.test(SRC),
+      && /<div id="lv-as-tema"[^>]*><\/div>\s*<div id="lv-as-top3"><\/div>\s*<div id="lv-as-podio"><\/div>/.test(SRC),
       'temático: el tablerito se agranda al tocarlo (también con el teclado) y va ANTES del podio, sin pisarlo');
 }
 
