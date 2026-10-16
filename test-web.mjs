@@ -28,7 +28,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2464;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2471;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -9991,10 +9991,11 @@ console.log('\n=== 76. 🌐 Ratings online: tarjeta "En línea" de Chess.com y L
     + 'var _onlCuentasCache = null, _onlDatos = null;'
     + 'var _ONL_SITIOS = { cc: { nom: "Chess.com", url: "https://www.chess.com/member/" }, li: { nom: "Lichess", url: "https://lichess.org/@/" } };'
     + 'var _ONL_MODS = [["blitz", "Blitz"], ["bullet", "Bullet"], ["rapid", "Rápido"]];'
-    + 'var _ONL_VIGENCIA = 365 * 864e5; var _ONL_RED_ICONO = {};'
+    + 'var _ONL_VIGENCIA = 365 * 864e5; var _ONL_RED_ICONO = {}; var _ONL_REDES = { "youtube.com": "YouTube", "instagram.com": "Instagram" };'
+    + 'var _ONL_REDES_MANO = ["YouTube", "Instagram", "Facebook", "Twitch", "X", "TikTok", "Kick", "Sitio web"];'
     + 'function _rankingOverride(){ return { players: [{ fide_id: 1 }] }; }'
-    + ['_onlCuentas', '_onlCardHtml', '_onlRedesDe', '_onlRedChip', '_onlHace', '_onlNormCC', '_onlNormLI', '_onlLimpiarUsuario', '_embeddedPlayersJs'].map(extraerFuncion).join('\n')
-    + '; return { cuentas: _onlCuentas, card: _onlCardHtml, cc: _onlNormCC, li: _onlNormLI, limpiar: _onlLimpiarUsuario, emb: _embeddedPlayersJs };');
+    + ['_onlCuentas', '_onlCardHtml', '_onlRedesDe', '_onlRedChip', '_onlMias', '_onlRedDeLink', '_onlLinkLimpio', '_onlHace', '_onlNormCC', '_onlNormLI', '_onlLimpiarUsuario', '_embeddedPlayersJs'].map(extraerFuncion).join('\n')
+    + '; return { deLink: _onlRedDeLink, link: _onlLinkLimpio, cuentas: _onlCuentas, card: _onlCardHtml, cc: _onlNormCC, li: _onlNormLI, limpiar: _onlLimpiarUsuario, emb: _embeddedPlayersJs };');
   const H = await import('./herramientas/online/actualizar.mjs');
   const T0 = 1760000000000;
   const DATOS = { ts: T0 - 3 * 3600000,
@@ -10078,6 +10079,31 @@ console.log('\n=== 76. 🌐 Ratings online: tarjeta "En línea" de Chess.com y L
   chk(cl1.indexOf('🎓 Podés consultarle por clases') >= 0 && cl1.indexOf('🎓 Podés consultarle por clases') < cl1.indexOf('class="onl-red ')
       && cl2.indexOf('🎓 Podés consultarle por clases') >= 0 && cl2.indexOf('class="onl-red ') < 0 && cl3.indexOf('Podés consultarle') < 0,
       '🎓 con el tilde "Da clases": "Podés consultarle por clases" arriba de sus redes (o solo, si no se muestran); sin el tilde, nada');
+  // ✏️ Redes a mano y 🎓 perfil de entrenador (16/10)
+  const MIAS = { mias: [{ red: 'YouTube', url: 'https://youtube.com/@spata' }, { red: 'Sitio web', url: 'https://spata.com.ar' }, { red: 'Myspace', url: 'https://x' }, { red: 'X', url: 'javascript:alert(1)' }] };
+  const sm = web.card(7, MIAS, {}, T0, false);
+  chk(/class="onl-red onl-red-youtube"/.test(sm) && /class="onl-red onl-red-sitioweb"[^>]*>[^]*<span>Sitio web<\/span>/.test(sm) && !/Myspace|javascript:/.test(sm)
+      && sm.indexOf('Son canales públicos del jugador. ¿Sos vos') >= 0,
+      'redes a mano: se ven aunque no tenga cuentas ni tilde, con su ícono (Sitio web incluido); una red inventada o un link raro, no');
+  const sm2 = web.card(7, { cc: 'Fulano', redes: 1, mias: [{ red: 'Twitch', url: 'https://twitch.tv/Fulano/' }, { red: 'YouTube', url: 'https://youtube.com/@F' }] },
+    { cc: { fulano: { blitz: { r: 2500 }, redes: [{ red: 'Twitch', url: 'https://twitch.tv/Fulano' }, { red: 'Kick', url: 'https://kick.com/Fulano' }] } } }, T0, false);
+  chk((sm2.match(/onl-red-twitch/g) || []).length === 1 && /algunos los compartió él mismo en su perfil público de Chess\.com/.test(sm2),
+      'redes a mano + las de su perfil: sin repetir la misma, y la aclaración dice las dos cosas', sm2);
+  chk(web.deLink('youtube.com/@fulano') === 'YouTube' && web.deLink('https://www.instagram.com/x') === 'Instagram' && web.deLink('youtu.be/abc') === 'YouTube' && web.deLink('fulano.com.ar') === 'Sitio web'
+      && web.link('youtube.com/@fulano') === 'https://youtube.com/@fulano' && web.link('http://a.com') === 'https://a.com' && web.link('hola') === null
+      && web.link('javascript:alert(1)') === null && web.link('https://a.com/"><img') === null,
+      'al pegar el link adivina la red, y sólo acepta direcciones web de verdad (https)');
+  const CO = { li: { profe: { blitz: { r: 2000 }, coach: 1 } }, cc: { profe: { blitz: { r: 2000 } } } };
+  const co = web.card(7, { li: 'Profe', cc: 'Profe' }, CO, T0, false);
+  chk(co.indexOf('🎓 Podés consultarle por clases') >= 0 && /href="https:\/\/lichess\.org\/coach\/Profe"[^>]*>[^]*Entrenador en Lichess/.test(co) && !/Entrenador en Chess/.test(co),
+      '🎓 con perfil de entrenador (lo detecta el script): "Podés consultarle por clases" + el link a ese perfil, sin tilde del autor');
+  chk(H.esCoachCC('x isCoach: true, y') === true && H.esCoachCC('{"class":"badges-coach","id":"coach"}') === true && H.esCoachCC('isCoach: false,') === false && H.esCoachCC('<html>') === null,
+      'Chess.com: el perfil de entrenador sale de "isCoach" de su página (sin eso, no se sabe y no se toca)');
+  const CA = { viejo: { t: T0 - 20 * 864e5, c: 1 }, fresco: { t: T0 - 864e5, c: 0 }, medio: { t: T0 - 15 * 864e5, c: 0 } };
+  chk(H.coachPendientes(CA, ['fresco', 'viejo', 'nuevo', 'medio'], T0).join() === 'nuevo,viejo,medio' && H.coachPendientes(CA, ['nuevo', 'viejo'], T0, 1).join() === 'nuevo',
+      'entrenadores: revisa los nunca vistos primero y los de hace más de 2 semanas, con tope por publicación');
+  chk(JSON.stringify(H.indicePorId({ 1: { mias: [{ red: 'YouTube', url: 'https://youtube.com/@s' }, { red: 'X', url: 'mal' }] } }, ixJs)) === '{"900":{"mias":[{"red":"YouTube","url":"https://youtube.com/@s"}]}}',
+      'las redes a mano viajan al bot aunque el jugador no tenga cuentas');
   // 🔗 Revisar redes
   const ic = SRC.indexOf('var _ONL_CLASES = '), icf = SRC.indexOf(String.fromCharCode(10), ic);
   const RV = new Function(SRC.slice(ia, ib) + extraerFuncion('_onlRedes') + extraerFuncion('_onlRedesCC') + SRC.slice(ic, icf) + extraerFuncion('_onlMencionaClases') + extraerFuncion('_onlRevFilas')

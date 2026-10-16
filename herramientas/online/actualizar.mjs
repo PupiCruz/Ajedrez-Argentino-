@@ -40,11 +40,14 @@ export function indicePorId(cuentas, js) {
   const out = {};
   for (const p of pl) {
     const c = p && p.fide_id && cuentas[String(p.fide_id)];
-    if (!c || (!c.cc && !c.li)) continue;
+    if (!c || (!c.cc && !c.li && !(c.mias || []).length)) continue;
     out[p.id] = {};
     if (c.cc) out[p.id].cc = String(c.cc).toLowerCase();
     if (c.li) out[p.id].li = String(c.li).toLowerCase();
     if (c.clases) out[p.id].clases = 1;   // 🎓 tildado por el autor: el bot dice "Podés consultarle por clases"
+    // ✏️ Las redes que cargó el autor a mano (16/10): el bot las muestra igual que la web.
+    const mias = (c.mias || []).filter(r => r && r.red && /^https:\/\//.test(r.url || ''));
+    if (mias.length) out[p.id].mias = mias.map(r => ({ red: r.red, url: r.url }));
   }
   return out;
 }
@@ -119,6 +122,25 @@ export function redesCC(perfil) {
     .slice(0, 3).map(x => ({ red: tipos[x.type], url: x.channel_url }));
 }
 
+// 🎓 ¿Tiene perfil de ENTRENADOR? (16/10, pedido del autor) Ninguna de las dos APIs lo dice: Lichess contesta 200 en
+// lichess.org/coach/{usuario} si lo tiene (404 si no), y la página del perfil de Chess.com trae "isCoach: true" (y la
+// insignia "badges-coach"). Las listas por país no sirven: la de Lichess le contesta 403 a un script y la de Chess.com,
+// sin iniciar sesión, muestra sólo la primera página. → true / false / null (no se pudo saber).
+export function esCoachCC(html) {
+  const t = String(html || '');
+  if (/isCoach:\s*true/.test(t) || /"class":"badges-coach"/.test(t)) return true;
+  if (/isCoach:\s*false/.test(t)) return false;
+  return null;
+}
+// Qué cuentas revisar hoy: las que nunca se revisaron o hace más de COACH_DIAS, de a COACH_TOPE por sitio (así la
+// primera vez se reparte en varios días y no alarga cada publicación). cache = { usuario: { t, c } }.
+export const COACH_DIAS = 14, COACH_TOPE = 20;
+export function coachPendientes(cache, usuarios, ahora, tope = COACH_TOPE) {
+  const c = cache || {};
+  return usuarios.filter(u => !c[u] || !(ahora - c[u].t < COACH_DIAS * 864e5))
+    .sort((a, b) => ((c[a] && c[a].t) || 0) - ((c[b] && c[b].t) || 0)).slice(0, tope);
+}
+
 // La foto del mes de Chess.com: pisa la del mes en curso, agrega la del mes nuevo. `mes` = "2026-10".
 export function fotoMensual(hist, usuario, datos, mes) {
   const h = (hist && typeof hist === 'object') ? hist : {};
@@ -161,6 +183,28 @@ export function quePedir(viejo, usCC, usLI, ahora, forzar) {
   return { completo, cc: usCC.filter(u => !(viejo.cc || {})[u]), li: usLI.filter(u => !(viejo.li || {})[u]) };
 }
 
+const UA_WEB = { 'User-Agent': UA, 'Accept': 'text/html' };
+async function coachLI(u) {
+  const r = await fetch('https://lichess.org/coach/' + encodeURIComponent(u), { headers: UA_WEB });
+  if (r.status === 404) return false;
+  if (r.ok) return true;
+  return null;
+}
+async function coachCC(u) {
+  const r = await fetch('https://www.chess.com/member/' + encodeURIComponent(u), { headers: UA_WEB });
+  if (!r.ok) return null;
+  return esCoachCC(await r.text());
+}
+// Revisa los pendientes de un sitio (de a uno, con pausa) y anota en la cache. → cuántos revisó.
+async function revisarCoaches(cache, usuarios, pedir, pausa) {
+  let n = 0;
+  for (const u of coachPendientes(cache, usuarios, Date.now())) {
+    try { const c = await pedir(u); if (c !== null) { cache[u] = { t: Date.now(), c: c ? 1 : 0 }; n++; } } catch (e) {}
+    await dormir(pausa);
+  }
+  return n;
+}
+
 async function main() {
   const fuente = ['data/embedded-data.js', 'data/manifest.js'].map(f => path.join(RAIZ, f)).find(f => fs.existsSync(f));
   if (!fuente) { console.log('Ratings online: no encontré data/embedded-data.js. No toco nada.'); return; }
@@ -189,7 +233,20 @@ async function main() {
       if (!conRedes[s].has(u)) delete salida[s][u].redes;   // le sacaron el tilde
     }
   }
+  // 🎓 Entrenadores: en la bajada del día (de a 20 por sitio) y las cuentas nuevas (no en cada publicación). Los dos
+  // sitios a la vez y MIENTRAS se bajan los ratings (son otras páginas: no alarga la publicación).
+  const archCoach = path.join(RAIZ, 'herramientas', 'online', 'entrenadores.json');
+  let coach = { cc: {}, li: {} };
+  try { const x = JSON.parse(fs.readFileSync(archCoach, 'utf8')); if (x && x.cc && x.li) coach = x; } catch (e) {}
+  const marcarCoach = () => { for (const st of ['cc', 'li']) for (const u in salida[st]) { if (coach[st][u] && coach[st][u].c) salida[st][u].coach = 1; else delete salida[st][u].coach; } };
+  const coachListo = (plan.completo || plan.cc.length || plan.li.length)
+    ? Promise.all([revisarCoaches(coach.cc, plan.completo ? usCC : plan.cc, coachCC, 600), revisarCoaches(coach.li, plan.completo ? usLI : plan.li, coachLI, 1000)])
+      .then(([a, b]) => { if (a || b) { fs.writeFileSync(archCoach, JSON.stringify(coach)); console.log('Ratings online: perfiles de entrenador revisados: ' + a + ' de Chess.com y ' + b + ' de Lichess.'); } })
+      .catch(() => {})
+    : Promise.resolve();
+
   if (!plan.completo && !plan.cc.length && !plan.li.length) {
+    marcarCoach();
     const hora = new Date(viejo.ts - 3 * 3600e3).toISOString().slice(11, 16);
     const nuevo = JSON.stringify(salida);
     if (nuevo !== JSON.stringify(viejo)) fs.writeFileSync(archOnline, nuevo);   // por si sacaste alguna cuenta
@@ -232,6 +289,7 @@ async function main() {
   }
 
   // En la bajada del día, si NO llegó nada de ninguno de los dos (sin internet, por ejemplo), no se pisa lo publicado.
+  await coachListo;
   if (plan.completo && !nCC && !nLI) {
     console.log('Ratings online: no llegó ningún dato. Dejo data/online.json como estaba (se reintenta en la próxima publicación).');
     avisos.forEach(a => console.log('   ⚠️  ' + a));
@@ -246,6 +304,7 @@ async function main() {
       }
     }
   }
+  marcarCoach();
   fs.writeFileSync(archOnline, JSON.stringify(salida));
 
   const archHist = path.join(RAIZ, 'data', 'online-hist.json');

@@ -364,6 +364,17 @@ Fase 1 de `planes-de-la-web/PLAN-RATINGS-ONLINE.md` (afuera de esta carpeta).
   Segundo tilde **🎓 Da clases** (ahí y en ✏️ Cuentas; `clases: 1`, viaja en `online.json` → `j`): el perfil y el bot dicen
   **"🎓 Podés consultarle por clases"** arriba de sus redes. Sin marcar de entrada: lo decide el autor. La frase de la
   biografía NUNCA se publica (suele traer precios, mails o teléfonos).
+  **✏️ Redes a mano (16/10):** en ✏️ Cuentas, "Redes que agregás vos": se elige la red (YouTube, Instagram, Facebook,
+  Twitch, X, TikTok, Kick o **Sitio web**; al pegar el link se adivina sola) y Agregar / ✕ guardan en el acto
+  (`mias: [{red,url}]` en la cuenta, sólo https). Se ven SIEMPRE (sin el tilde de redes), primero, y aunque el jugador no
+  tenga cuentas; la aclaración pasa a "Son canales públicos del jugador". Viajan al bot en `online.json` → `j[id].mias`.
+- **🎓 Perfil de entrenador (16/10):** ninguna API lo da. `actualizar.mjs` lo averigua cuenta por cuenta: Lichess →
+  `lichess.org/coach/{u}` (200 = sí, 404 = no); Chess.com → la página del perfil trae `isCoach: true` (`esCoachCC`).
+  Las listas por país NO sirven (Lichess le da 403 a un script; Chess.com sin sesión muestra sólo la 1.ª página).
+  Cache en `herramientas/online/entrenadores.json` (`{cc|li: {u: {t, c}}}`): se revisa cada 14 días, de a 20 por sitio
+  y por bajada diaria (+ las cuentas nuevas), en paralelo con los ratings. Marca `coach: 1` en `online.json`; la
+  tarjeta y el bot muestran "🎓 Podés consultarle por clases" + "Entrenador en Lichess/Chess.com" (link) SIN tilde
+  del autor (es un perfil profesional público).
 - **Decisiones del autor (15/10):** NO hay ranking online en Jugadores (se mezclarían aficionados con mucho rating
   online: los ratings online van SÓLO dentro de cada perfil), NO gráficas de evolución online y NO Worker con cron
   (publica todo el tiempo; el script alcanza).
