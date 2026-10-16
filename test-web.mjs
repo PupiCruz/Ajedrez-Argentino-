@@ -9991,9 +9991,9 @@ console.log('\n=== 76. 🌐 Ratings online: tarjeta "En línea" de Chess.com y L
     + 'var _onlCuentasCache = null, _onlDatos = null;'
     + 'var _ONL_SITIOS = { cc: { nom: "Chess.com", url: "https://www.chess.com/member/" }, li: { nom: "Lichess", url: "https://lichess.org/@/" } };'
     + 'var _ONL_MODS = [["blitz", "Blitz"], ["bullet", "Bullet"], ["rapid", "Rápido"]];'
-    + 'var _ONL_VIGENCIA = 365 * 864e5;'
+    + 'var _ONL_VIGENCIA = 365 * 864e5; var _ONL_RED_ICONO = {};'
     + 'function _rankingOverride(){ return { players: [{ fide_id: 1 }] }; }'
-    + ['_onlCuentas', '_onlCardHtml', '_onlRedesDe', '_onlHace', '_onlNormCC', '_onlNormLI', '_onlLimpiarUsuario', '_embeddedPlayersJs'].map(extraerFuncion).join('\n')
+    + ['_onlCuentas', '_onlCardHtml', '_onlRedesDe', '_onlRedChip', '_onlHace', '_onlNormCC', '_onlNormLI', '_onlLimpiarUsuario', '_embeddedPlayersJs'].map(extraerFuncion).join('\n')
     + '; return { cuentas: _onlCuentas, card: _onlCardHtml, cc: _onlNormCC, li: _onlNormLI, limpiar: _onlLimpiarUsuario, emb: _embeddedPlayersJs };');
   const H = await import('./herramientas/online/actualizar.mjs');
   const T0 = 1760000000000;
@@ -10065,7 +10065,7 @@ console.log('\n=== 76. 🌐 Ratings online: tarjeta "En línea" de Chess.com y L
   chk(JSON.stringify(RW.cc(PCC)) === '[{"red":"Twitch","url":"https://twitch.tv/gothamchess"}]' && JSON.stringify(H.redesCC(PCC)) === JSON.stringify(RW.cc(PCC)) && RW.cc({}).length === 0,
       'de Chess.com, su canal de streamer; página y script iguales');
   const DR = { cc: { fulano: { blitz: { r: 2500 }, redes: [{ red: 'Twitch', url: 'https://twitch.tv/Fulano' }] } } };
-  chk(/class="onl-red"[^>]*>Twitch/.test(web.card(7, { cc: 'Fulano', redes: 1 }, DR, T0, false)) && !/onl-red/.test(web.card(7, { cc: 'Fulano' }, DR, T0, false))
+  chk(/class="onl-red onl-red-twitch"[^>]*><svg[^]*<span>Twitch<\/span>/.test(web.card(7, { cc: 'Fulano', redes: 1 }, DR, T0, false)) && !/onl-red/.test(web.card(7, { cc: 'Fulano' }, DR, T0, false))
       && /onl-apagadas/.test(web.card(7, { cc: 'Fulano' }, DR, T0, true)) && /Sólo las ves vos/.test(web.card(7, { cc: 'Fulano' }, DR, T0, true)),
       '🔒 el visitante ve las redes SÓLO con el tilde del autor; el autor las ve apagadas para decidir');
   chk(/rel="noopener nofollow"/.test(web.card(7, { cc: 'Fulano', redes: 1 }, DR, T0, false)), 'los links a redes van con nofollow (no les regalamos posicionamiento en Google)');
@@ -10075,8 +10075,8 @@ console.log('\n=== 76. 🌐 Ratings online: tarjeta "En línea" de Chess.com y L
       && conAcl.indexOf('¿Sos vos y preferís que no aparezcan? <a href="https://www.instagram.com/chessargentino/"') >= 0,
       '🔒 la aclaración (pedido del autor): de qué perfil público salen y cómo pedir que se saquen');
   const cl1 = web.card(7, { cc: 'Fulano', redes: 1, clases: 1 }, DR, T0, false), cl2 = web.card(7, { cc: 'Fulano', clases: 1 }, DR, T0, false), cl3 = web.card(7, { cc: 'Fulano', redes: 1 }, DR, T0, false);
-  chk(cl1.indexOf('🎓 Podés consultarle por clases') >= 0 && cl1.indexOf('🎓 Podés consultarle por clases') < cl1.indexOf('class="onl-red"')
-      && cl2.indexOf('🎓 Podés consultarle por clases') >= 0 && cl2.indexOf('class="onl-red"') < 0 && cl3.indexOf('Podés consultarle') < 0,
+  chk(cl1.indexOf('🎓 Podés consultarle por clases') >= 0 && cl1.indexOf('🎓 Podés consultarle por clases') < cl1.indexOf('class="onl-red ')
+      && cl2.indexOf('🎓 Podés consultarle por clases') >= 0 && cl2.indexOf('class="onl-red ') < 0 && cl3.indexOf('Podés consultarle') < 0,
       '🎓 con el tilde "Da clases": "Podés consultarle por clases" arriba de sus redes (o solo, si no se muestran); sin el tilde, nada');
   // 🔗 Revisar redes
   const ic = SRC.indexOf('var _ONL_CLASES = '), icf = SRC.indexOf(String.fromCharCode(10), ic);
