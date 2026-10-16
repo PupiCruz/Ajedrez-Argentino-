@@ -132,9 +132,38 @@ export function esCoachCC(html) {
   if (/isCoach:\s*false/.test(t)) return false;
   return null;
 }
-// Qué cuentas revisar hoy: las que nunca se revisaron o hace más de COACH_DIAS, de a COACH_TOPE por sitio (así la
-// primera vez se reparte en varios días y no alarga cada publicación). cache = { usuario: { t, c } }.
-export const COACH_DIAS = 14, COACH_TOPE = 20;
+// 🎓 La ficha de entrenador de Lichess (16/10, para la pestaña Estudiar → Entrenadores): su frase de presentación
+// (h), la ciudad (lugar), los idiomas y si acepta alumnos. Lo que el propio entrenador publica para promocionarse;
+// NO la tarifa (cambia, y sería recomendarla) ni el "Acerca de mí" (trae mails y teléfonos). → { h, lugar, idiomas, acepta }
+const IDIOMAS = { english: 'Inglés', 'español': 'Español', spanish: 'Español', 'português': 'Portugués', portuguese: 'Portugués', 'français': 'Francés', deutsch: 'Alemán', italiano: 'Italiano', 'русский': 'Ruso', catalan: 'Catalán', 'català': 'Catalán' };
+function _txt(h) {
+  return String(h || '').replace(/<[^>]*>/g, ' ').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#160;|&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+}
+export function infoCoachLI(html) {
+  const t = String(html || ''), o = {};
+  const fila = (cl) => { const m = new RegExp('<tr class="' + cl + '"><th>[^<]*</th><td>([\\s\\S]*?)</td></tr>').exec(t); return m ? m[1] : ''; };
+  const hm = /<p class="headline[^"]*">([\s\S]*?)<\/p>/.exec(t);
+  let h = hm ? _txt(hm[1]) : '';
+  if (/@|\bhttps?:|www\.|\d[\d\s-]{6,}\d/i.test(h)) h = '';    // nada de mails, links ni teléfonos
+  if (h.length > 160) h = h.slice(0, 157).replace(/\s+\S*$/, '') + '…';
+  if (h) o.h = h;
+  const lm = /<span class="location">([^<]{1,60})<\/span>/.exec(t);
+  if (lm) o.lugar = _txt(lm[1]);
+  const id = _txt(fila('languages')).split(/\s*,\s*/).filter(Boolean)
+    .map(x => IDIOMAS[x.replace(/\s*\(.*\)$/, '').toLowerCase()] || x.replace(/\s*\(.*\)$/, '')).filter((x, i, a) => x && a.indexOf(x) === i).slice(0, 5);
+  if (id.length) o.idiomas = id;
+  const av = _txt(fila('available'));
+  if (/^accepting/i.test(av)) o.acepta = 1; else if (av) o.acepta = 0;
+  // 📷 La foto de su ficha de entrenador (16/10, pedido del autor: "las fotos en vez de las iniciales"). Sólo de Lichess.
+  const fm = /<img[^>]*class="picture"[^>]*>/.exec(t) || /<img[^>]*src="([^"]+)"[^>]*class="picture"/.exec(t);
+  const fs2 = fm && /src="(https:\/\/image\.lichess1\.org\/[^"]+)"/.exec(fm[0]);
+  if (fs2) o.foto = _txt(fs2[1]);
+  o.v = 2;   // versión de la ficha: las guardadas antes (sin foto) se vuelven a pedir
+  return o;
+}
+// Qué cuentas revisar hoy: las que nunca se revisaron o hace más de COACH_DIAS, hasta COACH_TOPE por sitio (al principio
+// revisaba de a 20 y Krysa y Arias tardaban días en aparecer; como corre a la par de los ratings, no alarga nada). cache = { usuario: { t, c } }.
+export const COACH_DIAS = 14, COACH_TOPE = 120;
 export function coachPendientes(cache, usuarios, ahora, tope = COACH_TOPE) {
   const c = cache || {};
   return usuarios.filter(u => !c[u] || !(ahora - c[u].t < COACH_DIAS * 864e5))
@@ -187,7 +216,7 @@ const UA_WEB = { 'User-Agent': UA, 'Accept': 'text/html' };
 async function coachLI(u) {
   const r = await fetch('https://lichess.org/coach/' + encodeURIComponent(u), { headers: UA_WEB });
   if (r.status === 404) return false;
-  if (r.ok) return true;
+  if (r.ok) return infoCoachLI(await r.text());   // lo que muestra la pestaña Entrenadores
   return null;
 }
 async function coachCC(u) {
@@ -199,7 +228,7 @@ async function coachCC(u) {
 async function revisarCoaches(cache, usuarios, pedir, pausa) {
   let n = 0;
   for (const u of coachPendientes(cache, usuarios, Date.now())) {
-    try { const c = await pedir(u); if (c !== null) { cache[u] = { t: Date.now(), c: c ? 1 : 0 }; n++; } } catch (e) {}
+    try { const c = await pedir(u); if (c !== null) { cache[u] = { t: Date.now(), c: c ? 1 : 0 }; if (c && typeof c === 'object') cache[u].i = c; n++; } } catch (e) {}
     await dormir(pausa);
   }
   return n;
@@ -233,12 +262,14 @@ async function main() {
       if (!conRedes[s].has(u)) delete salida[s][u].redes;   // le sacaron el tilde
     }
   }
-  // 🎓 Entrenadores: en la bajada del día (de a 20 por sitio) y las cuentas nuevas (no en cada publicación). Los dos
+  // 🎓 Entrenadores: en la bajada del día (hasta COACH_TOPE por sitio: en paralelo con los ratings de Chess.com, que tardan más) y las cuentas nuevas (no en cada publicación). Los dos
   // sitios a la vez y MIENTRAS se bajan los ratings (son otras páginas: no alarga la publicación).
   const archCoach = path.join(RAIZ, 'herramientas', 'online', 'entrenadores.json');
   let coach = { cc: {}, li: {} };
   try { const x = JSON.parse(fs.readFileSync(archCoach, 'utf8')); if (x && x.cc && x.li) coach = x; } catch (e) {}
-  const marcarCoach = () => { for (const st of ['cc', 'li']) for (const u in salida[st]) { if (coach[st][u] && coach[st][u].c) salida[st][u].coach = 1; else delete salida[st][u].coach; } };
+  // Los entrenadores de Lichess revisados antes de que se guardara su ficha (16/10): se revisan de nuevo.
+  for (const u in coach.li) if (coach.li[u].c && !(coach.li[u].i && coach.li[u].i.v === 2)) coach.li[u].t = 0;
+  const marcarCoach = () => { for (const st of ['cc', 'li']) for (const u in salida[st]) { delete salida[st][u].ci; if (coach[st][u] && coach[st][u].c) { salida[st][u].coach = 1; if (coach[st][u].i) salida[st][u].ci = coach[st][u].i; } else { delete salida[st][u].coach; delete salida[st][u].foto; } } };   // 📷 la foto, sólo de los entrenadores
   const coachListo = (plan.completo || plan.cc.length || plan.li.length)
     ? Promise.all([revisarCoaches(coach.cc, plan.completo ? usCC : plan.cc, coachCC, 600), revisarCoaches(coach.li, plan.completo ? usLI : plan.li, coachLI, 1000)])
       .then(([a, b]) => { if (a || b) { fs.writeFileSync(archCoach, JSON.stringify(coach)); console.log('Ratings online: perfiles de entrenador revisados: ' + a + ' de Chess.com y ' + b + ' de Lichess.'); } })
@@ -265,7 +296,7 @@ async function main() {
       const s = await pedirCC('player/' + encodeURIComponent(u) + '/stats');
       const d = normalizarCC(p.json, s.json);
       if (!d) avisos.push('Chess.com: "' + u + '" está CERRADA (' + p.json.status + '). No se muestra en la web.');
-      else { if (conRedes.cc.has(u)) d.redes = redesCC(p.json); salida.cc[u] = d; nCC++; }
+      else { if (conRedes.cc.has(u)) d.redes = redesCC(p.json); if (/^https:\/\/images\.chesscomfiles\.com\//.test(p.json.avatar || '')) d.foto = p.json.avatar; salida.cc[u] = d; nCC++; }
     } catch (e) { avisos.push('Chess.com: "' + u + '" falló (' + e.message + ').'); }
     await dormir(PAUSA_CC);
   }

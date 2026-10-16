@@ -28,7 +28,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2471;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2477;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -9988,14 +9988,16 @@ console.log('\n=== 76. 🌐 Ratings online: tarjeta "En línea" de Chess.com y L
   const O = new Function('localStorage', 'window', '_ondemand',
     'function escHtml(s){ return String(s).replace(/[&<>"]/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;"}[c]; }); }'
     + 'function titleBadge(t){ return "[" + t + "]"; }'
+    + 'function _normTitle(t){ return String(t || "").trim().toUpperCase(); }'
+    + 'var _ENT_MOD = { blitz: "blitz", rapid: "rápido", bullet: "bullet" };'
     + 'var _onlCuentasCache = null, _onlDatos = null;'
     + 'var _ONL_SITIOS = { cc: { nom: "Chess.com", url: "https://www.chess.com/member/" }, li: { nom: "Lichess", url: "https://lichess.org/@/" } };'
     + 'var _ONL_MODS = [["blitz", "Blitz"], ["bullet", "Bullet"], ["rapid", "Rápido"]];'
     + 'var _ONL_VIGENCIA = 365 * 864e5; var _ONL_RED_ICONO = {}; var _ONL_REDES = { "youtube.com": "YouTube", "instagram.com": "Instagram" };'
     + 'var _ONL_REDES_MANO = ["YouTube", "Instagram", "Facebook", "Twitch", "X", "TikTok", "Kick", "Sitio web"];'
     + 'function _rankingOverride(){ return { players: [{ fide_id: 1 }] }; }'
-    + ['_onlCuentas', '_onlCardHtml', '_onlRedesDe', '_onlRedChip', '_onlMias', '_onlRedDeLink', '_onlLinkLimpio', '_onlHace', '_onlNormCC', '_onlNormLI', '_onlLimpiarUsuario', '_embeddedPlayersJs'].map(extraerFuncion).join('\n')
-    + '; return { deLink: _onlRedDeLink, link: _onlLinkLimpio, cuentas: _onlCuentas, card: _onlCardHtml, cc: _onlNormCC, li: _onlNormLI, limpiar: _onlLimpiarUsuario, emb: _embeddedPlayersJs };');
+    + ['_onlCuentas', '_onlCardHtml', '_onlRedesDe', '_onlRedChip', '_onlMias', '_onlRedDeLink', '_onlLinkLimpio', '_entLista', '_entPasa', '_entCardHtml', '_entColor', '_onlHace', '_onlNormCC', '_onlNormLI', '_onlLimpiarUsuario', '_embeddedPlayersJs'].map(extraerFuncion).join('\n')
+    + '; return { entLista: _entLista, entPasa: _entPasa, entCard: _entCardHtml, deLink: _onlRedDeLink, link: _onlLinkLimpio, cuentas: _onlCuentas, card: _onlCardHtml, cc: _onlNormCC, li: _onlNormLI, limpiar: _onlLimpiarUsuario, emb: _embeddedPlayersJs };');
   const H = await import('./herramientas/online/actualizar.mjs');
   const T0 = 1760000000000;
   const DATOS = { ts: T0 - 3 * 3600000,
@@ -10104,6 +10106,36 @@ console.log('\n=== 76. 🌐 Ratings online: tarjeta "En línea" de Chess.com y L
       'entrenadores: revisa los nunca vistos primero y los de hace más de 2 semanas, con tope por publicación');
   chk(JSON.stringify(H.indicePorId({ 1: { mias: [{ red: 'YouTube', url: 'https://youtube.com/@s' }, { red: 'X', url: 'mal' }] } }, ixJs)) === '{"900":{"mias":[{"red":"YouTube","url":"https://youtube.com/@s"}]}}',
       'las redes a mano viajan al bot aunque el jugador no tenga cuentas');
+  // 🎓 Estudiar › Entrenadores (16/10)
+  const EJ = [{ id: 1, fide_id: '1', name: 'Ana Profe', title: 'IM', elo: 2400 }, { id: 2, fide_id: '2', name: 'Beto Clases', title: '', elo: 2100 },
+    { id: 3, fide_id: '3', name: 'Ciro Nada', title: 'GM', elo: 2600 }, { id: 4, fide_id: '4', name: 'Dora Chesscom', title: 'FM', elo: 2300 }];
+  const EC = { 1: { li: 'Ana', redes: 1, mias: [{ red: 'YouTube', url: 'https://youtube.com/@ana' }] }, 2: { cc: 'beto', clases: 1 }, 3: { li: 'ciro' }, 4: { cc: 'Dora' } };
+  const ED = { li: { ana: { blitz: { r: 2500, prov: 1 }, coach: 1, ci: { h: 'Clases para todos', lugar: 'Rosario', idiomas: ['Español', 'Inglés'], acepta: 1 },
+    redes: [{ red: 'Twitch', url: 'https://twitch.tv/ana' }] }, ciro: { blitz: { r: 2700 } } }, cc: { beto: { rapid: { r: 2000 } }, dora: { coach: 1 } } };
+  const el = web.entLista(EJ, EC, ED);
+  chk(el.map((e) => e.p.name).join() === 'Ana Profe,Dora Chesscom,Beto Clases' && el[0].redes.length === 2 && el[0].online[0].r === 2500,
+      'Entrenadores: entran los que tienen perfil de entrenador (Lichess o Chess.com) o el tilde 🎓 Da clases, por Elo; sin nada de eso, no');
+  chk(el.filter((e) => web.entPasa(e, 'gmim', '')).length === 1 && el.filter((e) => web.entPasa(e, 'acepta', '')).length === 1 && el.filter((e) => web.entPasa(e, 'ingles', '')).length === 1
+      && el.filter((e) => web.entPasa(e, 'todos', 'rosario')).length === 1 && el.filter((e) => web.entPasa(e, 'todos', 'dóra')).length === 1,
+      'filtros GM y MI / Aceptan alumnos / En inglés, y el buscador por nombre o ciudad (sin importar los acentos)');
+  const ec0 = web.entCard(el[0]), ec2 = web.entCard(el[2]);
+  chk(/Clases para todos/.test(ec0) && /Rosario/.test(ec0) && /Acepta alumnos/.test(ec0) && /href="https:\/\/lichess\.org\/coach\/Ana"/.test(ec0) && /onl-red-youtube/.test(ec0) && /onl-red-twitch/.test(ec0)
+      && /openPlayer\(1\)/.test(ec0) && /Podés consultarle por clases/.test(ec2) && !/Entrenador en/.test(ec2),
+      'la tarjeta: frase, ciudad, "Acepta alumnos", link al perfil de entrenador, redes y el nombre abre el perfil; sin perfil de entrenador, "Podés consultarle por clases"');
+  const LIH = '<p class="headline large">Doy clases &quot;online&quot;</p><table><tbody><tr><th>Location</th><td><span class="location">Córdoba</span></td></tr><tr class="languages"><th>Languages</th><td>English (US), Español</td></tr>'
+    + '<tr class="available"><th>Availability</th><td><span class="text">Accepting students</span></td></tr></tbody></table>';
+  chk(JSON.stringify(H.infoCoachLI(LIH)) === '{"h":"Doy clases \\"online\\"","lugar":"Córdoba","idiomas":["Inglés","Español"],"acepta":1,"v":2}'
+      && !H.infoCoachLI('<p class="headline small">Escribime a profe@gmail.com</p>').h,
+      'de la ficha de entrenador de Lichess: frase, ciudad, idiomas en castellano y si acepta alumnos; una frase con mail, no', JSON.stringify(H.infoCoachLI(LIH)));
+  // 📷 Fotos de los entrenadores
+  chk(H.infoCoachLI('<img width="350" class="picture" src="https://image.lichess1.org/display?a=1&amp;b=2" alt="x" />').foto === 'https://image.lichess1.org/display?a=1&b=2'
+      && !H.infoCoachLI('<img class="picture" src="https://otro.com/x.jpg">').foto,
+      'la foto de la ficha de entrenador de Lichess (sólo de su servidor de imágenes)');
+  const EDf = JSON.parse(JSON.stringify(ED)); EDf.li.ana.ci.foto = 'https://image.lichess1.org/a.webp'; EDf.cc.dora.foto = 'https://images.chesscomfiles.com/d.jpg'; EDf.cc.beto.foto = 'https://images.chesscomfiles.com/b.jpg';
+  const elf = web.entLista(EJ, EC, EDf);
+  chk(/<img src="https:\/\/image\.lichess1\.org\/a\.webp"[^>]*onerror="this\.remove\(\)"/.test(web.entCard(elf[0])) && /chesscomfiles\.com\/d\.jpg/.test(web.entCard(elf[1]))
+      && !/<img/.test(web.entCard(elf[2])),
+      'la tarjeta muestra su foto (Lichess primero, si no Chess.com); si no carga, quedan las iniciales; sin perfil de entrenador, sin foto');
   // 🔗 Revisar redes
   const ic = SRC.indexOf('var _ONL_CLASES = '), icf = SRC.indexOf(String.fromCharCode(10), ic);
   const RV = new Function(SRC.slice(ia, ib) + extraerFuncion('_onlRedes') + extraerFuncion('_onlRedesCC') + SRC.slice(ic, icf) + extraerFuncion('_onlMencionaClases') + extraerFuncion('_onlRevFilas')

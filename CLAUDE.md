@@ -371,10 +371,17 @@ Fase 1 de `planes-de-la-web/PLAN-RATINGS-ONLINE.md` (afuera de esta carpeta).
 - **🎓 Perfil de entrenador (16/10):** ninguna API lo da. `actualizar.mjs` lo averigua cuenta por cuenta: Lichess →
   `lichess.org/coach/{u}` (200 = sí, 404 = no); Chess.com → la página del perfil trae `isCoach: true` (`esCoachCC`).
   Las listas por país NO sirven (Lichess le da 403 a un script; Chess.com sin sesión muestra sólo la 1.ª página).
-  Cache en `herramientas/online/entrenadores.json` (`{cc|li: {u: {t, c}}}`): se revisa cada 14 días, de a 20 por sitio
+  Cache en `herramientas/online/entrenadores.json` (`{cc|li: {u: {t, c}}}`): se revisa cada 14 días, hasta 120 por sitio
   y por bajada diaria (+ las cuentas nuevas), en paralelo con los ratings. Marca `coach: 1` en `online.json`; la
   tarjeta y el bot muestran "🎓 Podés consultarle por clases" + "Entrenador en Lichess/Chess.com" (link) SIN tilde
   del autor (es un perfil profesional público).
+- **🎓 Estudiar › Entrenadores (16/10):** 4.ª sub-pestaña (`?ir=estudiar&ver=entrenadores`, `_entPintar`). Entra quien
+  tiene `coach: 1` en algún sitio o el tilde 🎓 Da clases (`_entLista`, por Elo FIDE). De Lichess, el script guarda su
+  ficha (`infoCoachLI` → `ci: { h, lugar, idiomas, acepta }`): frase, ciudad, idiomas y "Acepta alumnos". NUNCA la
+  tarifa ni el "Acerca de mí" (mails/teléfonos); frase con mail/link/teléfono se descarta. Filtros: Todos / GM y MI /
+  Aceptan alumnos / En inglés + buscador (nombre o ciudad). Redes con las mismas reglas que la tarjeta. Banco: sección 76.
+  📷 Fotos: la de su ficha de entrenador de Lichess (`ci.foto`, image.lichess1.org) o el avatar de Chess.com (`foto`, sólo de
+  los entrenadores: `marcarCoach` la borra al resto). Se cargan desde Lichess/Chess.com; si fallan, quedan las iniciales.
 - **Decisiones del autor (15/10):** NO hay ranking online en Jugadores (se mezclarían aficionados con mucho rating
   online: los ratings online van SÓLO dentro de cada perfil), NO gráficas de evolución online y NO Worker con cron
   (publica todo el tiempo; el script alcanza).
