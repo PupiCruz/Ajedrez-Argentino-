@@ -44,6 +44,7 @@ export function indicePorId(cuentas, js) {
     out[p.id] = {};
     if (c.cc) out[p.id].cc = String(c.cc).toLowerCase();
     if (c.li) out[p.id].li = String(c.li).toLowerCase();
+    if (c.clases) out[p.id].clases = 1;   // 🎓 tildado por el autor: el bot dice "Podés consultarle por clases"
   }
   return out;
 }
@@ -88,6 +89,34 @@ export function normalizarLI(u) {
   if (bu) o.bullet = bu;
   if (r) o.rapid = r;
   return o;
+}
+
+// 🔗 Las redes que comparte el jugador (lo mismo que _onlRedes / _onlRedesCC del index.html; el banco compara).
+// Sólo se publican de los jugadores con el tilde "Mostrar sus redes" del autor (cuentas[fide].redes = 1).
+const REDES = { 'youtube.com': 'YouTube', 'twitch.tv': 'Twitch', 'kick.com': 'Kick', 'instagram.com': 'Instagram', 'x.com': 'X', 'twitter.com': 'X', 'tiktok.com': 'TikTok', 'facebook.com': 'Facebook' };
+const REDES_NO = /^(p|reel|reels|stories|status|i|home|explore|intent|share|sharer|hashtag|search|watch|shorts|playlist|results|videos|groups|events|photo|photos|story\.php|permalink\.php|login|signup|directory|tv|live)$/i;
+export function extraerRedes(textos) {
+  const out = [], vistos = {};
+  const re = /(?:^|[\s(\[<"'|,;:])(?:https?:\/\/)?(?:www\.|m\.|mobile\.)?(youtube\.com|twitch\.tv|kick\.com|instagram\.com|x\.com|twitter\.com|tiktok\.com|facebook\.com)\/([^\s<>"'\)\]|,;]+)/gi;
+  const txt = ' ' + (textos || []).filter(Boolean).join('\n');
+  let m;
+  while ((m = re.exec(txt)) && out.length < 6) {
+    const dom = m[1].toLowerCase(), segs = m[2].split(/[\/?#]/);
+    let h = segs[0];
+    if (dom === 'youtube.com' && /^(c|channel|user)$/i.test(h) && segs[1]) h = h + '/' + segs[1];
+    else if (dom === 'youtube.com' && h.charAt(0) !== '@') continue;
+    if (!h || REDES_NO.test(h) || !/^@?[A-Za-z0-9._-]{2,60}(\/[A-Za-z0-9._-]{2,60})?$/.test(h)) continue;
+    const url = 'https://' + (dom === 'twitter.com' ? 'x.com' : dom) + '/' + h.replace(/\.+$/, '');
+    if (vistos[url.toLowerCase()]) continue;
+    vistos[url.toLowerCase()] = 1;
+    out.push({ red: REDES[dom], url });
+  }
+  return out;
+}
+export function redesCC(perfil) {
+  const tipos = { twitch: 'Twitch', youtube: 'YouTube', kick: 'Kick' };
+  return ((perfil && perfil.streaming_platforms) || []).filter(x => x && tipos[x.type] && /^https:\/\//.test(x.channel_url || ''))
+    .slice(0, 3).map(x => ({ red: tipos[x.type], url: x.channel_url }));
 }
 
 // La foto del mes de Chess.com: pisa la del mes en curso, agrega la del mes nuevo. `mes` = "2026-10".
@@ -142,16 +171,23 @@ async function main() {
 
   const usCC = [...new Set(ids.map(i => cuentas[i] && cuentas[i].cc).filter(Boolean).map(u => String(u).toLowerCase()))];
   const usLI = [...new Set(ids.map(i => cuentas[i] && cuentas[i].li).filter(Boolean).map(u => String(u).toLowerCase()))];
+  // Los de "Mostrar sus redes": sus redes se publican; las del resto no (y si el autor sacó el tilde, se borran).
+  const conRedes = { cc: new Set(), li: new Set() };
+  for (const i of ids) for (const s of ['cc', 'li']) if (cuentas[i] && cuentas[i].redes && cuentas[i][s]) conRedes[s].add(String(cuentas[i][s]).toLowerCase());
   const archOnline = path.join(RAIZ, 'data', 'online.json');
   let viejo = null;
   try { viejo = JSON.parse(fs.readFileSync(archOnline, 'utf8')); } catch (e) {}
   const plan = quePedir(viejo, usCC, usLI, Date.now(), process.argv.includes('--todo'));
+  // Un tilde nuevo de redes en una cuenta que ya estaba: se pide aunque ya se haya bajado hoy.
+  if (!plan.completo && viejo) for (const s of ['cc', 'li']) for (const u of conRedes[s]) if (viejo[s] && viejo[s][u] && !viejo[s][u].redes && !plan[s].includes(u)) plan[s].push(u);
 
   // Lo de antes que sigue valiendo: las cuentas que siguen cargadas (las que el autor sacó, se van).
   const salida = { ts: plan.completo ? Date.now() : viejo.ts, cc: {}, li: {}, j: indicePorId(cuentas, jsDatos) };
   if (!plan.completo) {
-    for (const u of usCC) if (viejo.cc && viejo.cc[u]) salida.cc[u] = viejo.cc[u];
-    for (const u of usLI) if (viejo.li && viejo.li[u]) salida.li[u] = viejo.li[u];
+    for (const s of ['cc', 'li']) for (const u of (s === 'cc' ? usCC : usLI)) if (viejo[s] && viejo[s][u]) {
+      salida[s][u] = Object.assign({}, viejo[s][u]);
+      if (!conRedes[s].has(u)) delete salida[s][u].redes;   // le sacaron el tilde
+    }
   }
   if (!plan.completo && !plan.cc.length && !plan.li.length) {
     const hora = new Date(viejo.ts - 3 * 3600e3).toISOString().slice(11, 16);
@@ -160,7 +196,7 @@ async function main() {
     console.log('Ratings online: ya se bajaron hoy a las ' + hora + ' y no hay cuentas nuevas. No pido nada (para forzar: --todo).');
     return;
   }
-  console.log('Ratings online: ' + (plan.completo ? 'la bajada del día, ' : 'sólo las cuentas nuevas, ') + plan.cc.length + ' de Chess.com y ' + plan.li.length + ' de Lichess…');
+  console.log('Ratings online: ' + (plan.completo ? 'la bajada del día, ' : 'sólo lo nuevo (cuentas o tildes de redes), ') + plan.cc.length + ' de Chess.com y ' + plan.li.length + ' de Lichess…');
 
   const avisos = [];
   let nCC = 0, nLI = 0;
@@ -172,7 +208,7 @@ async function main() {
       const s = await pedirCC('player/' + encodeURIComponent(u) + '/stats');
       const d = normalizarCC(p.json, s.json);
       if (!d) avisos.push('Chess.com: "' + u + '" está CERRADA (' + p.json.status + '). No se muestra en la web.');
-      else { salida.cc[u] = d; nCC++; }
+      else { if (conRedes.cc.has(u)) d.redes = redesCC(p.json); salida.cc[u] = d; nCC++; }
     } catch (e) { avisos.push('Chess.com: "' + u + '" falló (' + e.message + ').'); }
     await dormir(PAUSA_CC);
   }
@@ -189,7 +225,7 @@ async function main() {
         vistos.add(k);
         const d = normalizarLI(x);
         if (!d) avisos.push('Lichess: "' + k + '" está cerrada o suspendida. No se muestra en la web.');
-        else { salida.li[k] = d; nLI++; }
+        else { if (conRedes.li.has(k)) d.redes = extraerRedes([(x.profile || {}).bio, (x.profile || {}).links]); salida.li[k] = d; nLI++; }
       }
       tanda.filter(k => !vistos.has(k)).forEach(k => avisos.push('Lichess: la cuenta "' + k + '" no existe.'));
     } catch (e) { avisos.push('Lichess: el pedido falló (' + e.message + ').'); }

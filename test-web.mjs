@@ -28,7 +28,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2456;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2464;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -9993,7 +9993,7 @@ console.log('\n=== 76. 🌐 Ratings online: tarjeta "En línea" de Chess.com y L
     + 'var _ONL_MODS = [["blitz", "Blitz"], ["bullet", "Bullet"], ["rapid", "Rápido"]];'
     + 'var _ONL_VIGENCIA = 365 * 864e5;'
     + 'function _rankingOverride(){ return { players: [{ fide_id: 1 }] }; }'
-    + ['_onlCuentas', '_onlCardHtml', '_onlHace', '_onlNormCC', '_onlNormLI', '_onlLimpiarUsuario', '_embeddedPlayersJs'].map(extraerFuncion).join('\n')
+    + ['_onlCuentas', '_onlCardHtml', '_onlRedesDe', '_onlHace', '_onlNormCC', '_onlNormLI', '_onlLimpiarUsuario', '_embeddedPlayersJs'].map(extraerFuncion).join('\n')
     + '; return { cuentas: _onlCuentas, card: _onlCardHtml, cc: _onlNormCC, li: _onlNormLI, limpiar: _onlLimpiarUsuario, emb: _embeddedPlayersJs };');
   const H = await import('./herramientas/online/actualizar.mjs');
   const T0 = 1760000000000;
@@ -10052,6 +10052,48 @@ console.log('\n=== 76. 🌐 Ratings online: tarjeta "En línea" de Chess.com y L
   chk(H.quePedir(V, ['oro'], [], Date.UTC(2026, 9, 16, 2, 0), false).completo === false && q3.completo && q3.cc.join() === 'oro'
       && H.quePedir(V, ['oro'], [], Date.UTC(2026, 9, 15, 22, 0), true).completo && H.quePedir(null, ['oro'], [], 1, false).completo,
       'el día cambia a la medianoche ARGENTINA (las 23 h siguen siendo hoy); --todo o sin archivo previo, bajada completa');
+
+  // 🔗 Redes
+  const ia = SRC.indexOf('var _ONL_REDES = '), ib = SRC.indexOf('function _onlRedes(');
+  const RW = new Function(SRC.slice(ia, ib) + extraerFuncion('_onlRedes') + extraerFuncion('_onlRedesCC') + '; return { redes: _onlRedes, cc: _onlRedesCC };')();
+  const BIO = ['Para clases escribime a fulano@gmail.com o al +54 11 5555-5555\r\nwatch live at https://www.twitch.tv/Fulano/\r\nhttps://www.youtube.com/watch?v=abc https://instagram.com/p/xyz/',
+    'https://www.youtube.com/@FulanoAjedrez\nhttps://twitter.com/Fulano/status/123\ninstagram.com/fulano.ok. https://discord.gg/abc https://www.facebook.com/groups/club'];
+  const esperado = '[{"red":"Twitch","url":"https://twitch.tv/Fulano"},{"red":"YouTube","url":"https://youtube.com/@FulanoAjedrez"},{"red":"X","url":"https://x.com/Fulano"},{"red":"Instagram","url":"https://instagram.com/fulano.ok"}]';
+  chk(JSON.stringify(RW.redes(BIO)) === esperado && JSON.stringify(H.extraerRedes(BIO)) === esperado,
+      '🔒 redes: sólo el PERFIL de redes conocidas (nada de mails, teléfonos, un video, un posteo, un grupo ni Discord); página y script iguales', JSON.stringify(RW.redes(BIO)));
+  const PCC = { streaming_platforms: [{ type: 'twitch', channel_url: 'https://twitch.tv/gothamchess' }, { type: 'otra', channel_url: 'https://x' }] };
+  chk(JSON.stringify(RW.cc(PCC)) === '[{"red":"Twitch","url":"https://twitch.tv/gothamchess"}]' && JSON.stringify(H.redesCC(PCC)) === JSON.stringify(RW.cc(PCC)) && RW.cc({}).length === 0,
+      'de Chess.com, su canal de streamer; página y script iguales');
+  const DR = { cc: { fulano: { blitz: { r: 2500 }, redes: [{ red: 'Twitch', url: 'https://twitch.tv/Fulano' }] } } };
+  chk(/class="onl-red"[^>]*>Twitch/.test(web.card(7, { cc: 'Fulano', redes: 1 }, DR, T0, false)) && !/onl-red/.test(web.card(7, { cc: 'Fulano' }, DR, T0, false))
+      && /onl-apagadas/.test(web.card(7, { cc: 'Fulano' }, DR, T0, true)) && /Sólo las ves vos/.test(web.card(7, { cc: 'Fulano' }, DR, T0, true)),
+      '🔒 el visitante ve las redes SÓLO con el tilde del autor; el autor las ve apagadas para decidir');
+  chk(/rel="noopener nofollow"/.test(web.card(7, { cc: 'Fulano', redes: 1 }, DR, T0, false)), 'los links a redes van con nofollow (no les regalamos posicionamiento en Google)');
+  const DR2 = { cc: DR.cc, li: { fulanito: { blitz: { r: 2400 }, redes: [{ red: 'YouTube', url: 'https://youtube.com/@F' }] } } };
+  const conAcl = web.card(7, { cc: 'Fulano', redes: 1 }, DR, T0, false), conAcl2 = web.card(7, { cc: 'Fulano', li: 'Fulanito', redes: 1 }, DR2, T0, false);
+  chk(conAcl.indexOf('Las compartió el propio jugador en su perfil público de Chess.com.') >= 0 && conAcl2.indexOf('sus perfiles públicos de Chess.com y Lichess.') >= 0
+      && conAcl.indexOf('¿Sos vos y preferís que no aparezcan? <a href="https://www.instagram.com/chessargentino/"') >= 0,
+      '🔒 la aclaración (pedido del autor): de qué perfil público salen y cómo pedir que se saquen');
+  const cl1 = web.card(7, { cc: 'Fulano', redes: 1, clases: 1 }, DR, T0, false), cl2 = web.card(7, { cc: 'Fulano', clases: 1 }, DR, T0, false), cl3 = web.card(7, { cc: 'Fulano', redes: 1 }, DR, T0, false);
+  chk(cl1.indexOf('🎓 Podés consultarle por clases') >= 0 && cl1.indexOf('🎓 Podés consultarle por clases') < cl1.indexOf('class="onl-red"')
+      && cl2.indexOf('🎓 Podés consultarle por clases') >= 0 && cl2.indexOf('class="onl-red"') < 0 && cl3.indexOf('Podés consultarle') < 0,
+      '🎓 con el tilde "Da clases": "Podés consultarle por clases" arriba de sus redes (o solo, si no se muestran); sin el tilde, nada');
+  // 🔗 Revisar redes
+  const ic = SRC.indexOf('var _ONL_CLASES = '), icf = SRC.indexOf(String.fromCharCode(10), ic);
+  const RV = new Function(SRC.slice(ia, ib) + extraerFuncion('_onlRedes') + extraerFuncion('_onlRedesCC') + SRC.slice(ic, icf) + extraerFuncion('_onlMencionaClases') + extraerFuncion('_onlRevFilas')
+    + '; return { clases: _onlMencionaClases, filas: _onlRevFilas };')();
+  chk(RV.clases('GM argentino' + String.fromCharCode(10) + 'Doy clases online, escribime') === 'Doy clases online, escribime' && RV.clases('Chess coach & streamer') === 'Chess coach & streamer'
+      && RV.clases('Enseño ajedrez en Rosario') !== '' && RV.clases('Profesional del ajedrez, clásicas y blitz') === '' && RV.clases('') === '',
+      'reconoce a los que mencionan clases ("doy clases", "coach", "enseño"), sin confundir "profesional" ni "clásicas"');
+  const JJ = [{ id: 1, name: 'Ana Coach', fide_id: '1', elo: 2000 }, { id: 2, name: 'Beto Gm', fide_id: '2', elo: 2600 }, { id: 3, name: 'Sin Redes', fide_id: '3', elo: 2500 }, { id: 4, name: 'Suspendido', fide_id: '4', elo: 2400 }];
+  const CU = { 1: { li: 'Ana' }, 2: { cc: 'beto', li: 'betol', redes: 1 }, 3: { li: 'sin' }, 4: { li: 'malo' } };
+  const LI = { ana: { profile: { bio: 'Doy clases! https://instagram.com/ana.ajedrez' } }, betol: { profile: { links: 'https://www.twitch.tv/beto' } }, sin: { profile: {} },
+    malo: { tosViolation: true, profile: { links: 'https://instagram.com/malo' } } };
+  const CCP = { beto: { streaming_platforms: [{ type: 'twitch', channel_url: 'https://twitch.tv/beto' }] } };
+  const fl = RV.filas(JJ, CU, LI, CCP);
+  chk(fl.map((x) => x.p.name).join(',') === 'Ana Coach,Beto Gm' && fl[0].clases === 'Doy clases! https://instagram.com/ana.ajedrez' && !fl[0].on && fl[1].on
+      && fl[1].redes.length === 1 && fl[1].de.join(' y ') === 'Lichess y Chess.com',
+      'la lista: primero los que dan clases, sin repetir la misma red de los dos sitios, con el tilde que ya tenían; sin redes o suspendidos, afuera');
   const fp = extraerFuncion('_estadoActualFp');
   chk(/_onlCuentas\(\)/.test(fp) && /onlFp \? '~onl' \+ onlFp : ''/.test(fp),
       'cargar una cuenta enciende el aviso de "cambios sin guardar" (y sin cuentas la huella queda igual que antes)');

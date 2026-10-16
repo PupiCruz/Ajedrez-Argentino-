@@ -1385,6 +1385,18 @@
     .onl-edit input { font: inherit; font-size: 13px; padding: 6px 8px; border-radius: var(--r-sm); border: 1px solid var(--bd22);
       background: var(--gl35); color: var(--text); min-width: 0; }
     .onl-edit .onl-ok { color: var(--gold); }
+    .onl-edit .onl-tilde { flex: 1 1 100%; flex-direction: row; align-items: center; gap: 7px; cursor: pointer; }
+    .onl-edit .onl-tilde input { width: 15px; height: 15px; }
+    .onl-redes { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--bd14); }
+    .onl-redes-l { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; color: var(--text2); margin-right: 2px; }
+    .onl-red { font-size: 12.5px; color: var(--gold); text-decoration: none; padding: 3px 9px; border: 1px solid var(--bd22);
+      border-radius: 999px; background: var(--gl35); transition: border-color .15s ease-out; }
+    .onl-red:hover { border-color: var(--gold-dim); }
+    .onl-apagadas .onl-red { opacity: .55; }
+    .onl-redes .onl-nada { flex-basis: 100%; margin-top: 0; }
+    .onl-redes-de { font-size: 11.5px; }
+    .onl-clases { flex-basis: 100%; font-size: 13.5px; font-weight: 700; color: var(--green); }
+    .onl-redes-de a { color: var(--text2); text-decoration: underline; text-underline-offset: 2px; }
     /* 🔎 Buscar cuentas de Chess.com (_onlBuscarCuentas) */
     .onl-busq { background: var(--bg2, #1c1c1e); border: 1px solid var(--border); border-radius: 14px; max-width: 580px; width: 100%;
       max-height: 90vh; overflow: auto; padding: 20px; box-sizing: border-box; }
@@ -1401,6 +1413,11 @@
     .onl-busq-cta, .onl-busq-por { display: block; font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; }
     .onl-busq-cta a { color: var(--gold); text-decoration: none; }
     .onl-busq-por { color: var(--text3); font-size: 11.5px; }
+    .onl-rv-clases { font-size: 11px; font-weight: 700; color: var(--green); white-space: nowrap; }
+    .onl-rv-nom { cursor: pointer; }
+    .onl-rv-tc { display: flex; align-items: center; gap: 6px; margin-top: 5px; font-size: 12.5px; color: var(--text); cursor: pointer; }
+    .onl-rv-tc input { width: 15px; height: 15px; margin: 0; }
+    .onl-rv-tc span { font-size: 11px; color: var(--text3); }
     .onl-busq-btns { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
     .onl-busq-btns button { padding: 10px 16px; background: var(--bg3); border: 1px solid var(--border); color: var(--text2);
       border-radius: 9px; cursor: pointer; font-family: inherit; font-size: 13px; }
@@ -3636,6 +3653,10 @@
           🌐 Buscar cuentas de Chess.com de los titulados
         </button>
         <div style="font-size:11px;color:var(--text3);margin-top:5px;line-height:1.5">Busca en Chess.com las cuentas de los titulados que todavía no tienen una cargada (tarjeta <b style="color:var(--text2)">🌐 En línea</b> del perfil) y te las muestra para que tildes las buenas. Tarda unos minutos.</div>
+        <button onclick="_onlRevisarRedes()" style="width:100%;margin-top:8px;padding:11px;background:var(--bg2);border:1px dashed var(--border);color:var(--text2);font-size:13px;font-weight:600;border-radius:11px;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:8px">
+          🔗 Revisar redes de los jugadores
+        </button>
+        <div style="font-size:11px;color:var(--text3);margin-top:5px;line-height:1.5">Las redes que comparte cada jugador con cuenta cargada (sobre todo en Lichess), con los que <b style="color:var(--text2)">dan clases</b> arriba. Tildás a quiénes mostrar en su perfil y en el bot.</div>
       </div>
 
       <!-- Selector de mes -->
@@ -20153,6 +20174,39 @@ function _onlNormLI(u) {
   });
   return o;
 }
+// 🔗 Las redes que el jugador comparte (15/10/2026): de Lichess, los links de su biografía y de "links"; de Chess.com,
+// su canal si es streamer. Sólo el PERFIL de redes conocidas (nada de mails, teléfonos, ni un video o un posteo suelto).
+// Se muestran recién cuando el autor tilda "Mostrar sus redes" en ✏️ Cuentas (cuentas.redes = 1): hay menores.
+// Lo mismo que extraerRedes / redesCC de herramientas/online/actualizar.mjs (el banco comprueba que den igual).
+var _ONL_REDES = { 'youtube.com': 'YouTube', 'twitch.tv': 'Twitch', 'kick.com': 'Kick', 'instagram.com': 'Instagram', 'x.com': 'X', 'twitter.com': 'X', 'tiktok.com': 'TikTok', 'facebook.com': 'Facebook' };
+var _ONL_REDES_NO = /^(p|reel|reels|stories|status|i|home|explore|intent|share|sharer|hashtag|search|watch|shorts|playlist|results|videos|groups|events|photo|photos|story\.php|permalink\.php|login|signup|directory|tv|live)$/i;
+function _onlRedes(textos) {
+  var out = [], vistos = {};
+  var re = /(?:^|[\s(\[<"'|,;:])(?:https?:\/\/)?(?:www\.|m\.|mobile\.)?(youtube\.com|twitch\.tv|kick\.com|instagram\.com|x\.com|twitter\.com|tiktok\.com|facebook\.com)\/([^\s<>"'\)\]|,;]+)/gi;
+  var txt = ' ' + (textos || []).filter(Boolean).join('\n'), m;
+  while ((m = re.exec(txt)) && out.length < 6) {
+    var dom = m[1].toLowerCase(), segs = m[2].split(/[\/?#]/), h = segs[0];
+    if (dom === 'youtube.com' && /^(c|channel|user)$/i.test(h) && segs[1]) h = h + '/' + segs[1];
+    else if (dom === 'youtube.com' && h.charAt(0) !== '@') continue;            // un video, no un canal
+    if (!h || _ONL_REDES_NO.test(h) || !/^@?[A-Za-z0-9._-]{2,60}(\/[A-Za-z0-9._-]{2,60})?$/.test(h)) continue;
+    var url = 'https://' + (dom === 'twitter.com' ? 'x.com' : dom) + '/' + h.replace(/\.+$/, '');
+    if (vistos[url.toLowerCase()]) continue;
+    vistos[url.toLowerCase()] = 1;
+    out.push({ red: _ONL_REDES[dom], url: url });
+  }
+  return out;
+}
+// "Las compartió el propio jugador en su perfil público de Lichess." (o de Chess.com, o en los dos).
+function _onlRedesDe(sitios) {
+  sitios = sitios || [];
+  return 'Las compartió el propio jugador en ' + (sitios.length > 1 ? 'sus perfiles públicos de ' + sitios.join(' y ') : 'su perfil público de ' + (sitios[0] || 'Lichess')) + '.';
+}
+// Chess.com: su canal de streamer (streaming_platforms).
+function _onlRedesCC(perfil) {
+  var tipos = { twitch: 'Twitch', youtube: 'YouTube', kick: 'Kick' };
+  return ((perfil && perfil.streaming_platforms) || []).filter(function (x) { return x && tipos[x.type] && /^https:\/\//.test(x.channel_url || ''); })
+    .slice(0, 3).map(function (x) { return { red: tipos[x.type], url: x.channel_url }; });
+}
 function _onlHace(ms) {
   if (!(ms >= 0)) return '';
   var h = Math.floor(ms / 3600000);
@@ -20207,12 +20261,35 @@ function _onlCardHtml(pid, cuentas, datos, ahora, autor) {
     });
     h += '</div>';
   }
+  // 🔗 Redes: las de los dos sitios juntas, sin repetir. Al visitante sólo con el tilde del autor (el script ni las
+  // publica sin él); el autor las ve igual, apagadas, para decidir.
+  var redes = [], vR = {}, deSitio = [];
+  filas.forEach(function (f) {
+    ((f.d && f.d.redes) || []).forEach(function (r) {
+      if (deSitio.indexOf(_ONL_SITIOS[f.s].nom) < 0) deSitio.push(_ONL_SITIOS[f.s].nom);
+      if (!vR[r.url.toLowerCase()]) { vR[r.url.toLowerCase()] = 1; redes.push(r); }
+    });
+  });
+  // 🎓 (15/10, autor) Se sobreentiende que le consultan por sus redes: por eso va arriba de ellas.
+  var clasesHtml = cuentas.clases && filas.length ? '<div class="onl-clases">🎓 Podés consultarle por clases</div>' : '';
+  if (clasesHtml && !(redes.length && cuentas.redes)) h += '<div class="onl-redes">' + clasesHtml + '</div>';
+  if (redes.length && (cuentas.redes || autor)) {
+    h += '<div class="onl-redes' + (cuentas.redes ? '' : ' onl-apagadas') + '">' + (cuentas.redes ? clasesHtml : '') + '<span class="onl-redes-l">Redes</span>'
+       + redes.map(function (r) { return '<a href="' + escHtml(r.url) + '" target="_blank" rel="noopener nofollow" class="onl-red">' + escHtml(r.red) + ' ↗</a>'; }).join('')
+       // (15/10, pedido del autor) De dónde salen, para que quede claro que no se expone nada privado, y cómo pedir que
+       // se saquen: el Instagram de la página (no hay otro contacto general).
+       + '<span class="onl-nada onl-redes-de">' + _onlRedesDe(deSitio) + ' ¿Sos vos y preferís que no aparezcan? '
+       + '<a href="https://www.instagram.com/chessargentino/" target="_blank" rel="noopener">Avisanos</a>.</span>'
+       + (cuentas.redes ? '' : '<span class="onl-nada">Sólo las ves vos: tildá "Mostrar sus redes" en ✏️ Cuentas.</span>') + '</div>';
+  }
   if (autor) {
     if (!filas.length) h += '<div class="onl-nada">Sin cuentas cargadas. Sólo lo ves vos: el visitante no ve esta tarjeta.</div>';
     h += '<div class="onl-autor"><button type="button" onclick="var e=this.nextElementSibling;e.hidden=!e.hidden">✏️ Cuentas</button>'
        + '<div class="onl-edit" hidden>'
        + '<label>Chess.com <input id="onl-in-cc" value="' + escHtml(cuentas.cc || '') + '" placeholder="usuario o link" autocomplete="off" spellcheck="false"></label>'
        + '<label>Lichess <input id="onl-in-li" value="' + escHtml(cuentas.li || '') + '" placeholder="usuario o link" autocomplete="off" spellcheck="false"></label>'
+       + '<label class="onl-tilde"><input type="checkbox" id="onl-in-redes"' + (cuentas.redes ? ' checked' : '') + '> Mostrar sus redes (las que comparte en Lichess y su canal de Chess.com)</label>'
+       + '<label class="onl-tilde"><input type="checkbox" id="onl-in-clases"' + (cuentas.clases ? ' checked' : '') + '> 🎓 Da clases (en su perfil dice «Podés consultarle por clases»)</label>'
        + '<button type="button" class="onl-ok" onclick="_onlGuardarCuentas(' + pid + ')">Guardar</button>'
        + '<div id="onl-msg" class="onl-nada"></div></div></div>';
   }
@@ -20268,6 +20345,7 @@ async function _onlGuardarCuentas(pid) {
         else if (r1.ok) {
           var pj = await r1.json(), r2 = await fetch(base + '/stats');
           d = _onlNormCC(pj, r2.ok ? await r2.json() : {});
+          if (d) d.redes = _onlRedesCC(pj);
           if (!d) cerrada = 'está cerrada (' + pj.status + ')';
           else if (pj.url) { var mu = /\/member\/([^\/?#]+)/.exec(pj.url); if (mu) nuevo[s2] = decodeURIComponent(mu[1]); }   // como lo escribe el jugador
         } else sinRed.push(_ONL_SITIOS[s2].nom);
@@ -20277,6 +20355,7 @@ async function _onlGuardarCuentas(pid) {
         else if (r3.ok) {
           var lj = await r3.json();
           d = _onlNormLI(lj);
+          if (d) d.redes = _onlRedes([(lj.profile || {}).bio, (lj.profile || {}).links]);
           if (!d) cerrada = 'está cerrada o suspendida';
           else if (lj.username) nuevo[s2] = lj.username;
         } else sinRed.push(_ONL_SITIOS[s2].nom);
@@ -20290,6 +20369,10 @@ async function _onlGuardarCuentas(pid) {
     if (d) datos[s2] = d;
   }
   var m = JSON.parse(JSON.stringify(_onlCuentas())), fid = String(p.fide_id);
+  var tRedes = document.getElementById('onl-in-redes');
+  if (tRedes && tRedes.checked) nuevo.redes = 1;
+  var tClases = document.getElementById('onl-in-clases');
+  if (tClases && tClases.checked) nuevo.clases = 1;
   if (nuevo.cc || nuevo.li) m[fid] = nuevo; else delete m[fid];
   try { localStorage.setItem('online_cuentas', JSON.stringify(m)); }
   catch (e) { if (typeof lsQuotaAlert === 'function') lsQuotaAlert(); }
@@ -20466,6 +20549,141 @@ async function _onlBuscarGuardar() {
   await aaAsk({ icono: '✅', titulo: n + ' cuenta' + (n > 1 ? 's guardadas' : ' guardada'),
     texto: (dobles ? 'Tildaste dos cuentas para el mismo jugador ' + dobles + ' vez/veces: quedó la primera. ' : '')
       + 'Los ratings se bajan al publicar. Acordate de 💾 Guardar datos en mi carpeta y después publicar.', ok: 'Listo', cancelar: 'Cerrar' });
+}
+
+/* ── 🔗 Revisar redes (15/10/2026, pedido del autor) ──
+   Una sola lista con las redes que comparte cada jugador con cuenta cargada, consultadas EN EL MOMENTO desde el
+   navegador del autor (Lichess: un pedido para todos; Chess.com: de a uno, sólo el canal de streamer). Un tilde por
+   jugador = "Mostrar sus redes" (lo mismo que en ✏️ Cuentas). Arriba, los que mencionan clases en su biografía:
+   la idea del autor es ayudar a difundir a los entrenadores. */
+var _ONL_CLASES = /(^|[^a-záéíóúñ])(clases?|coach(?:ing)?|entrenador(?:a|es)?|profesor(?:a|es)?|profe|lecciones|lessons?|trainer|enseño|enseno)(?![a-záéíóúñ])/i;
+// El renglón de la biografía que habla de clases (para que el autor lo lea), o ''.
+function _onlMencionaClases(bio) {
+  var lineas = String(bio || '').split(/\r?\n/);
+  for (var i = 0; i < lineas.length; i++) if (_ONL_CLASES.test(lineas[i])) return lineas[i].trim().slice(0, 140);
+  return '';
+}
+// jugadores = PLAYERS; cuentas = _onlCuentas(); li = { usuario: respuesta de Lichess }; cc = { usuario: perfil de Chess.com }.
+// → [{ p, fid, redes:[{red,url}], de:[sitios], clases:'renglón', on }] sólo de los que tienen alguna red; primero los que
+// dan clases, después por Elo.
+function _onlRevFilas(jugadores, cuentas, li, cc) {
+  var out = [], vistos = {};
+  (jugadores || []).forEach(function (p) {
+    var fid = p && p.fide_id && String(p.fide_id), c = fid && cuentas[fid];
+    if (!c || vistos[fid]) return;
+    vistos[fid] = 1;
+    var redes = [], vR = {}, de = [], clases = '';
+    var sumar = function (lista, sitio) {
+      (lista || []).forEach(function (r) {
+        if (de.indexOf(sitio) < 0) de.push(sitio);
+        if (!vR[r.url.toLowerCase()]) { vR[r.url.toLowerCase()] = 1; redes.push(r); }
+      });
+    };
+    var lj = c.li && (li || {})[String(c.li).toLowerCase()];
+    if (lj && !lj.disabled && !lj.tosViolation) {
+      var pf = lj.profile || {};
+      sumar(_onlRedes([pf.bio, pf.links]), 'Lichess');
+      clases = _onlMencionaClases(pf.bio);
+    }
+    var pj = c.cc && (cc || {})[String(c.cc).toLowerCase()];
+    if (pj && !/^closed/.test(pj.status || '')) sumar(_onlRedesCC(pj), 'Chess.com');
+    if (redes.length) out.push({ p: p, fid: fid, redes: redes, de: de, clases: clases, on: !!c.redes, da: !!c.clases });
+  });
+  out.sort(function (a, b) { return (b.clases ? 1 : 0) - (a.clases ? 1 : 0) || (b.p.elo || 0) - (a.p.elo || 0); });
+  return out;
+}
+var _onlRevLista = [];
+async function _onlRevisarRedes() {
+  if (_ondemand) return;
+  var cuentas = _onlCuentas(), fids = Object.keys(cuentas);
+  var B = _onlBusq = { cancelada: false };
+  var paso = function (t, frac) {
+    if (B.cancelada) return;
+    _onlBuscarOverlay('<div class="onl-busq-h">🔗 Revisando redes</div><div class="onl-busq-p">' + t + '</div>'
+      + '<div class="onl-busq-bar"><i style="width:' + Math.round((frac || 0) * 100) + '%"></i></div>'
+      + '<div class="onl-busq-btns"><button type="button" onclick="_onlBuscarCerrar()">Cancelar</button></div>');
+  };
+  if (!fids.length) {
+    _onlBuscarOverlay('<div class="onl-busq-h">🔗 Revisar redes</div><div class="onl-busq-p">Todavía no hay cuentas cargadas. Usá «🌐 Buscar cuentas de Chess.com» o ✏️ Cuentas en cada perfil (las redes salen sobre todo de Lichess).</div>'
+      + '<div class="onl-busq-btns"><button type="button" onclick="_onlBuscarCerrar()">Cerrar</button></div>');
+    return;
+  }
+  var dormir = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+  var usLI = [], usCC = [];
+  fids.forEach(function (f) { var c = cuentas[f]; if (c.li && usLI.indexOf(c.li.toLowerCase()) < 0) usLI.push(c.li.toLowerCase()); if (c.cc && usCC.indexOf(c.cc.toLowerCase()) < 0) usCC.push(c.cc.toLowerCase()); });
+  var li = {}, cc = {}, fallas = 0;
+  try {
+    for (var i = 0; i < usLI.length; i += 300) {
+      paso('Consultando Lichess (' + usLI.length + ' cuenta' + (usLI.length === 1 ? '' : 's') + ')…', 0.05);
+      var r = await fetch('https://lichess.org/api/users', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: usLI.slice(i, i + 300).join(',') });
+      if (!r.ok) throw new Error('Lichess respondió ' + r.status);
+      (await r.json()).forEach(function (x) { li[String(x.id || '').toLowerCase()] = x; });
+      if (B.cancelada) return;
+    }
+    for (var k = 0; k < usCC.length; k++) {
+      paso('Consultando Chess.com: ' + (k + 1) + ' de ' + usCC.length + '<br><span>(de a uno; de Chess.com sólo sale el canal de los que transmiten)</span>', 0.1 + k / usCC.length * 0.9);
+      try { var rc = await fetch('https://api.chess.com/pub/player/' + encodeURIComponent(usCC[k])); if (rc.ok) cc[usCC[k]] = await rc.json(); else fallas++; } catch (e) { fallas++; }
+      if (B.cancelada) return;
+      await dormir(250);
+    }
+  } catch (e) {
+    if (B.cancelada) return;
+    _onlBusq = null;
+    _onlBuscarOverlay('<div class="onl-busq-h">🔗 Revisar redes</div><div class="onl-busq-p">⚠️ Se cortó: ' + escHtml(e.message || String(e)) + '</div>'
+      + '<div class="onl-busq-btns"><button type="button" onclick="_onlBuscarCerrar()">Cerrar</button></div>');
+    return;
+  }
+  _onlBusq = null;
+  _onlRevLista = _onlRevFilas(PLAYERS, cuentas, li, cc);
+  // Para que el perfil las muestre al toque (apagadas o no), sin esperar a publicar.
+  try {
+    await _onlCargar();
+    for (var u in li) { var d = _onlDatos.li[u]; if (d) d.redes = _onlRedes([(li[u].profile || {}).bio, (li[u].profile || {}).links]); }
+    for (var u2 in cc) { var d2 = _onlDatos.cc[u2]; if (d2) d2.redes = _onlRedesCC(cc[u2]); }
+  } catch (e) {}
+  var nClases = _onlRevLista.filter(function (f) { return f.clases; }).length;
+  var h = '<div class="onl-busq-h">🔗 Redes que comparten los jugadores</div>'
+    + '<div class="onl-busq-p">Revisé ' + fids.length + ' jugador' + (fids.length === 1 ? '' : 'es') + ' con cuenta (' + usLI.length + ' de Lichess, ' + usCC.length + ' de Chess.com)'
+    + (fallas ? ', ' + fallas + ' no respondieron' : '') + '. Tildá a los que quieras mostrar: en la web y en el bot salen con la aclaración de que las compartió el propio jugador.'
+    + (nClases ? ' Arriba, los ' + nClases + ' que mencionan clases en su biografía.' : '') + '</div>';
+  if (!_onlRevLista.length) h += '<div class="onl-busq-p">Ninguno comparte redes todavía. Casi todas salen de Lichess: cargá su cuenta de Lichess en ✏️ Cuentas.</div>';
+  else {
+    h += '<div class="onl-busq-lista">';
+    _onlRevLista.forEach(function (f, i) {
+      h += '<div class="onl-busq-fila"><input type="checkbox" id="onl-rv-' + i + '"' + (f.on ? ' checked' : '') + ' aria-label="Mostrar las redes de ' + escHtml(f.p.name) + '">'
+        + '<span class="onl-busq-quien"><label for="onl-rv-' + i + '" class="onl-rv-nom"><b>' + (f.p.title ? titleBadge(f.p.title) : '') + escHtml(f.p.name) + '</b> <span class="onl-busq-elo">FIDE ' + (f.p.elo || '–') + '</span>'
+        + (f.clases ? ' <span class="onl-rv-clases">🎓 menciona clases</span>' : '') + '</label>'
+        + '<span class="onl-busq-cta">' + f.redes.map(function (r) { return '<a href="' + escHtml(r.url) + '" target="_blank" rel="noopener nofollow" onclick="event.stopPropagation()">' + escHtml(r.red) + ' ↗</a>'; }).join(' · ') + '</span>'
+        + (f.clases ? '<span class="onl-busq-por">«' + escHtml(f.clases) + '»</span>' : '')
+        + '<span class="onl-busq-por">De su perfil de ' + f.de.join(' y ') + '</span>'
+        // 🎓 Aparte del de las redes y sin marcar de entrada: que escriba "coach" no siempre es que ofrezca clases.
+        + '<label class="onl-rv-tc"><input type="checkbox" id="onl-rvc-' + i + '"' + (f.da ? ' checked' : '') + '> 🎓 Da clases <span>(en su perfil dice «Podés consultarle por clases»)</span></label>'
+        + '</span></div>';
+    });
+    h += '</div>';
+  }
+  h += '<div class="onl-busq-btns"><button type="button" onclick="_onlBuscarCerrar()">Cerrar</button>'
+     + (_onlRevLista.length ? '<button type="button" class="onl-busq-ok" onclick="_onlRevGuardar()">Guardar</button>' : '') + '</div>';
+  _onlBuscarOverlay(h);
+}
+async function _onlRevGuardar() {
+  var m = JSON.parse(JSON.stringify(_onlCuentas())), on = 0, off = 0;
+  _onlRevLista.forEach(function (f, i) {
+    var chk = document.getElementById('onl-rv-' + i);
+    if (!chk || !m[f.fid]) return;
+    if (chk.checked) { if (!m[f.fid].redes) on++; m[f.fid].redes = 1; }
+    else { if (m[f.fid].redes) off++; delete m[f.fid].redes; }
+    var chc = document.getElementById('onl-rvc-' + i);
+    if (chc && chc.checked) m[f.fid].clases = 1; else delete m[f.fid].clases;
+  });
+  try { localStorage.setItem('online_cuentas', JSON.stringify(m)); }
+  catch (e) { if (typeof lsQuotaAlert === 'function') lsQuotaAlert(); }
+  _onlCuentasCache = m;
+  _onlBuscarCerrar();
+  var total = Object.keys(m).filter(function (k) { return m[k].redes; }).length;
+  await aaAsk({ icono: '🔗', titulo: (on || off) ? 'Listo' : 'Sin cambios',
+    texto: total + ' jugador' + (total === 1 ? '' : 'es') + ' con las redes a la vista' + (on ? ' (' + on + ' nuevo' + (on === 1 ? '' : 's') + ')' : '') + (off ? ' · ' + off + ' sacado' + (off === 1 ? '' : 's') : '')
+      + '. Salen en la próxima publicación: acordate de 💾 Guardar datos en mi carpeta y después publicar.', ok: 'Listo', cancelar: 'Cerrar' });
 }
 
 function _eloChartCard(p) {

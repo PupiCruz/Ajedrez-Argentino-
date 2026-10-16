@@ -352,6 +352,18 @@ Fase 1 de `planes-de-la-web/PLAN-RATINGS-ONLINE.md` (afuera de esta carpeta).
   en el archivo de partidas del mes (al día) y los jugadores en sus rondas (la que se juega viene a medias). Código: `vivo-worker/src/titulados.js`. El Freestyle
   Friday (960) y el Bullet Brawl no aparecieron en ninguna cuenta argentina en ago-oct 2026: si vuelven, un renglón
   en `TT_EVENTOS`. Para probar sin publicar: `POST /tg/titulados { clave, probar: 'arranque', ev: 'thu2' }`.
+- **🔗 Redes del jugador:** las que comparte en Lichess (biografía + links) y su canal de streamer de Chess.com. Sólo el
+  perfil de YouTube/Twitch/Kick/Instagram/X/TikTok/Facebook (nada de mails, teléfonos, videos ni posteos sueltos).
+  **Se publican sólo con el tilde "Mostrar sus redes"** de ✏️ Cuentas (`redes: 1` en la cuenta; hay menores): sin
+  tilde el autor las ve apagadas y el script ni las escribe en `online.json`. Lector: `_onlRedes` / `extraerRedes`.
+  Llevan SIEMPRE la aclaración "Las compartió el propio jugador en su perfil público de Lichess/Chess.com. ¿Sos vos y
+  preferís que no aparezcan? Avisanos" (→ Instagram de la página): en la tarjeta y en el `/jugador` del bot (`dcCampoRedes`).
+  **Para revisarlas todas juntas:** Jugadores (modo autor) → **🔗 Revisar redes de los jugadores**: consulta en el momento
+  (Lichess de un pedido, Chess.com de a uno), arriba los que mencionan clases en su biografía ("🎓", `_ONL_CLASES`),
+  un tilde por jugador y Guardar. Después, 💾 Guardar datos y publicar.
+  Segundo tilde **🎓 Da clases** (ahí y en ✏️ Cuentas; `clases: 1`, viaja en `online.json` → `j`): el perfil y el bot dicen
+  **"🎓 Podés consultarle por clases"** arriba de sus redes. Sin marcar de entrada: lo decide el autor. La frase de la
+  biografía NUNCA se publica (suele traer precios, mails o teléfonos).
 - **Decisiones del autor (15/10):** NO hay ranking online en Jugadores (se mezclarían aficionados con mucho rating
   online: los ratings online van SÓLO dentro de cada perfil), NO gráficas de evolución online y NO Worker con cron
   (publica todo el tiempo; el script alcanza).
