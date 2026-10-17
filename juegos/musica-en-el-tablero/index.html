@@ -171,6 +171,8 @@ canvas { display: block; width: 100%; height: 100%; }
 @keyframes mc-pop { 0% { transform: scale(1); } 40% { transform: scale(1.18) rotate(-2deg); } 100% { transform: scale(1); } }
 .mc-rank h3 { margin: 0 0 8px; display: flex; flex-direction: column; font-family: var(--cartoon); font-weight: 400; font-size: 20px; color: var(--text); letter-spacing: .3px; }
 .mc-rank h3 small { font-family: var(--font); font-size: 12px; font-weight: 600; color: var(--text3); letter-spacing: 0; }
+.mc-quien { margin: 8px 0 0; padding-top: 7px; border-top: 2px dashed var(--bd14); font-size: 12px; color: var(--text3); line-height: 1.35; }
+.mc-quien b { color: var(--gold); } .mc-quien a { color: var(--gold); font-weight: 700; }
 .mc-rank ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; counter-reset: r; }
 .mc-rank li { display: grid; grid-template-columns: 26px 1fr auto; gap: 8px; align-items: center; padding: 5px 8px; border-radius: 10px; counter-increment: r; font-size: 14px; }
 .mc-rank li::before { content: counter(r); font-family: var(--cartoon); font-size: 16px; color: var(--text3); text-align: center; }
@@ -382,6 +384,7 @@ body.light .grade.lose { background: rgba(192,73,47,.10); }
       <h3><span id="mcRankT">Ranking</span><small id="mcRankS"></small></h3>
       <ol id="mcRank"></ol>
       <p class="mc-vacio" id="mcVacio" hidden>Nadie jugó todavía esta canción en esta dificultad. ¡Estrenala!</p>
+      <p class="mc-quien" id="mcQuien"></p>
       <p class="mc-toast" id="mcToast" aria-live="polite"></p>
     </section>
   </aside>
@@ -1351,6 +1354,9 @@ function marcRank(force) {
   const pos = mine ? rows.indexOf(mine) : -1, key = rankKey() + '|' + rows.length + '|' + pos + '|' + (mine ? '' : list.map(e => e.s).join());
   $('mcRankT').textContent = SONGS[songKey].name; $('mcRankS').textContent = 'Ranking · ' + DIFF_NAME[diffKey];
   $('mcVacio').hidden = rows.length > 0;
+  /* who you are for the ranking of everyone: the account's name, or a guest (only this browser's ranking) */
+  const yo = cuenta(), q = $('mcQuien'), qk = yo ? 'y' + yo.name : 'n';
+  if (q.dataset.k !== qk) { q.dataset.k = qk; if (yo) { q.textContent = 'Ranking de todos. Jugás como '; const b = document.createElement('b'); b.textContent = yo.name; q.appendChild(b); } else q.innerHTML = 'Sos invitado: guardás en tu compu. <a href="/?ir=jugar">Entrá con tu cuenta de Lichess</a> para el ranking de todos.'; }
   if (!force && key === MC.rankKeyNow) {   /* same order: only the live score changes */
     const me = $('mcRank').querySelector('li.me .pts'); if (me && mine) me.textContent = mine.s.toLocaleString('es-AR');
     return;
@@ -1652,7 +1658,9 @@ function rankLocal() { try { const a = JSON.parse(localStorage.getItem(rankKey()
 const rankSame = (a, b) => a.s === b.s && String(a.n).toLowerCase() === String(b.n).toLowerCase();
 function getRank() {
   const on = (RANK_ON[songKey + '.' + diffKey] || {}).list || [], loc = rankLocal();
-  return on.concat(loc.filter(e => !on.some(o => rankSame(o, e)))).sort((a, b) => b.s - a.s).slice(0, 10);
+  /* one place per name, with its best score (the author saw himself twice, 17/10): the server already keeps one per account */
+  const seen = new Set();
+  return on.concat(loc).sort((a, b) => b.s - a.s).filter(e => { const k = String(e.n).toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 10);
 }
 /* ask the server for this song's ranking (at most every 30 s; the answer redraws the lists) */
 function fetchRank() {
