@@ -281,6 +281,9 @@ kbd { font: 700 calc(var(--u) * 11.5) var(--font); border: 1px solid var(--bd30)
 /* the 3-2-1, same as the site's PvP games: big white numbers that pop, the go in green */
 .cd { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none;
   background: rgba(18,18,24,.42); backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); }
+/* phones (17/10): the frosted glass had to blur the board again in every frame behind the menu, the 3-2-1 and the results;
+   the panels are nearly opaque anyway */
+@media (pointer: coarse) { .ov, .cd { backdrop-filter: none; -webkit-backdrop-filter: none; } }
 .cd-num { font-size: calc(var(--u) * 150); font-weight: 900; line-height: 1; color: #fff; letter-spacing: -4px; text-shadow: 0 8px 30px rgba(0,0,0,.6); }
 .cd-num.go-word { color: var(--go); font-size: calc(var(--u) * 88); letter-spacing: -1px; }
 .cd-pop { animation: cdPop .5s cubic-bezier(.18,1.5,.4,1); }
@@ -570,9 +573,10 @@ function resize() {
   pupiPlace();
   stage.style.setProperty('--u', (w / W) + 'px');
   marcPlace();
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const dpr = Math.min(window.devicePixelRatio || 1, PHONE ? 1.5 : 2);   /* phones (17/10): a third fewer pixels to paint per frame, and still sharp */
   cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
   g.setTransform(cv.width / W, 0, 0, cv.height / H, 0, 0);
+  SPRITES.clear();
 }
 window.addEventListener('resize', resize);
 
@@ -874,6 +878,10 @@ function buildChoclo(P) {
 /* ---------- audio ---------- */
 let DET = null;   /* while a hit note builds its voice, the pitch (detune) of each oscillator is collected here, for vibrato */
 let ac = null, master = null, nb = null, t0 = 0, nextE = 0, muted = false, schedTimer = null;
+const PHONE = !!(window.matchMedia && matchMedia('(pointer: coarse)').matches);
+/* how far ahead the band is handed to the browser: on a phone a busy screen can hold the timer back, and a short margin
+   left holes in the music */
+const AHEAD = PHONE ? 0.6 : 0.3;
 function initAudio() {
   if (ac) return;
   try {
@@ -906,7 +914,7 @@ let fxBus = null, OUT = null;
 const fx = f => function () { OUT = fxBus; try { return f.apply(this, arguments); } finally { OUT = null; } };
 function pump() {
   if (!ac || state !== 'play') return;
-  while (t0 + nextE * SPB / 2 < ac.currentTime + 0.3 && nextE < TOTAL_BEATS * 2) SONGS[songKey].sched(nextE++);
+  while (t0 + nextE * SPB / 2 < ac.currentTime + AHEAD && nextE < TOTAL_BEATS * 2) SONGS[songKey].sched(nextE++);
 }
 const LANE_HZ = [440, 523.25, 659.25, 783.99];
 function sfxHit(lane, type) {
@@ -1316,13 +1324,33 @@ let king = { x: 1, from: 1, to: 1, t0: -9, warn: -1, moveAt: 0, next: 3 };
 const kbDown = [false, false, false, false], ptrDown = [0, 0, 0, 0], ptrLane = new Map();
 const isDown = l => kbDown[l] || ptrDown[l] > 0;
 /* The sound comes out of the speakers a little after the browser plays it (more with Bluetooth). The pieces wait for it:
-   the board runs that much behind the audio clock. Measured with "Ajustar el ritmo"; before that, what the browser reports. */
+   the board runs that much behind the audio clock. Measured with "Ajustar el ritmo"; before that, on a phone, what the
+   browser reports, and on a PC, LAT_DEFAULT. */
 let calibLat = null;
 try { const v = localStorage.getItem('chesshero.lat'); if (v !== null && isFinite(+v)) calibLat = +v; } catch (e) {}
 const autoLat = () => ac ? (ac.outputLatency || 0) + (ac.baseLatency || 0) : 0;
 const LAT_DEFAULT = -0.03;   /* what felt right on the author's PC; "Ajustar el ritmo" replaces it */
-const audioLat = () => calibLat !== null ? calibLat : LAT_DEFAULT;
-const clock = () => ac ? ac.currentTime - t0 - audioLat() : performance.now() / 1000 - t0;
+/* phones (17/10): with the PC's -30 ms the pieces reached the line 0,1-0,2 s before the music. The browser says 0 until the
+   sound has started; the first real figure is kept, so the board doesn't jump in the middle of a song */
+const LAT_PHONE_GUESS = 0.1;   /* when the browser doesn't say (Safari) */
+let phoneLat = null;
+function audioLat() {
+  if (calibLat !== null) return calibLat;
+  if (!PHONE) return LAT_DEFAULT;
+  if (phoneLat === null && ac && ac.state === 'running') { const a = autoLat(); if (a > 0.005) phoneLat = a; else if (ac.currentTime > 3) phoneLat = LAT_PHONE_GUESS; }
+  return phoneLat !== null ? phoneLat : LAT_PHONE_GUESS;
+}
+/* On a phone the audio clock moves in jumps (a chunk of sound at a time, 10-40 ms) and the pieces stuttered with it. The
+   board follows the screen's clock, which runs smooth, kept in step with the audio one. */
+const SMOOTH = { off: null, p: 0 };
+function audioNow() {
+  const p = performance.now() / 1000, a = ac.currentTime;
+  if (SMOOTH.off === null || ac.state !== 'running' || Math.abs(p + SMOOTH.off - a) > 0.1) SMOOTH.off = a - p;
+  else if (p - SMOOTH.p > 0.004) SMOOTH.off += (a - p - SMOOTH.off) * 0.03;
+  SMOOTH.p = p;
+  return p + SMOOTH.off;
+}
+const clock = () => ac ? audioNow() - t0 - audioLat() : performance.now() / 1000 - t0;
 
 /* ---------- The scoreboard on the right: live numbers (points rolling up, streak with its piece and multiplier, best
    streak, material, accuracy, the last pieces taken) and this song's ranking at this difficulty, with you climbing it live.
@@ -1952,7 +1980,7 @@ const CAL_N = 10, CAL_GAP = 0.6;
 let cal = null;
 function calShow(msg) {
   const ms = Math.round(audioLat() * 1000);
-  $('calNow').textContent = msg || (calibLat !== null ? 'Ajuste: ' + (ms > 0 ? '+' : '') + ms + ' ms' : 'Ajuste de fábrica: ' + ms + ' ms');
+  $('calNow').textContent = msg || (calibLat !== null ? 'Ajuste: ' + (ms > 0 ? '+' : '') + ms + ' ms' : (PHONE ? 'Ajuste automático: ' : 'Ajuste de fábrica: ') + ms + ' ms');
 }
 function calSave(v) {
   calibLat = v === null ? null : Math.max(-0.2, Math.min(0.4, Math.round(v * 1000) / 1000));
@@ -2128,7 +2156,7 @@ function update(dt) {
 }
 
 /* ---------- draw ---------- */
-function rr(x, y, w, h, r) { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); }
+function rr(x, y, w, h, r, c = g) { c.beginPath(); c.moveTo(x + r, y); c.arcTo(x + w, y, x + w, y + h, r); c.arcTo(x + w, y + h, x, y + h, r); c.arcTo(x, y + h, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath(); }
 const yAt = p => SPAWN_Y + p * (HIT_Y - SPAWN_Y);
 function pos(n, now) {
   const p = 1 - (n.t - now) / FALL; let lx = n.lane, yo = 0;
@@ -2156,17 +2184,38 @@ function pos(n, now) {
 }
 /* A piece on its square: ice-blue (the site's light square) for the pieces you capture, gold for the black king, the dark
    square for the white queen you must not touch. The piece itself is the site's own SVG; until it loads, a font glyph. */
-function tile(x, y, size, fill, piece, dashed) {
+function tileDraw(c, x, y, size, fill, piece, dashed) {
   const r = size * 0.16;
-  g.save(); g.shadowColor = C.shadow; g.shadowBlur = 12; g.shadowOffsetY = 5;
-  g.fillStyle = fill; rr(x - size / 2, y - size / 2, size, size, r); g.fill(); g.restore();
-  const hl = g.createLinearGradient(0, y - size / 2, 0, y + size / 2);   /* a soft light from above, like the board in the visor */
+  c.save(); c.shadowColor = C.shadow; c.shadowBlur = 12; c.shadowOffsetY = 5;
+  c.fillStyle = fill; rr(x - size / 2, y - size / 2, size, size, r, c); c.fill(); c.restore();
+  const hl = c.createLinearGradient(0, y - size / 2, 0, y + size / 2);   /* a soft light from above, like the board in the visor */
   hl.addColorStop(0, 'rgba(255,255,255,.22)'); hl.addColorStop(0.5, 'rgba(255,255,255,0)'); hl.addColorStop(1, 'rgba(0,0,0,.10)');
-  g.fillStyle = hl; rr(x - size / 2, y - size / 2, size, size, r); g.fill();
-  if (dashed) { g.save(); g.strokeStyle = 'rgba(255,255,255,.85)'; g.lineWidth = 2; g.setLineDash([5, 4]); rr(x - size / 2 + 5, y - size / 2 + 5, size - 10, size - 10, r * 0.7); g.stroke(); g.restore(); }
+  c.fillStyle = hl; rr(x - size / 2, y - size / 2, size, size, r, c); c.fill();
+  if (dashed) { c.save(); c.strokeStyle = 'rgba(255,255,255,.85)'; c.lineWidth = 2; c.setLineDash([5, 4]); rr(x - size / 2 + 5, y - size / 2 + 5, size - 10, size - 10, r * 0.7, c); c.stroke(); c.restore(); }
   const img = IMG[piece];
-  if (img && img.complete && img.naturalWidth) { const s = size * 0.84; g.drawImage(img, x - s / 2, y - s / 2 + size * 0.02, s, s); }
-  else { g.fillStyle = piece[0] === 'w' ? '#fff' : '#111'; g.font = `${size * 0.7}px ${SYM}`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(FALLBACK[piece] + '︎', x, y + size * 0.04); }   /* (the glyph keeps its own black or white) */
+  if (img && img.complete && img.naturalWidth) { const s = size * 0.84; c.drawImage(img, x - s / 2, y - s / 2 + size * 0.02, s, s); }
+  else { c.fillStyle = piece[0] === 'w' ? '#fff' : '#111'; c.font = `${size * 0.7}px ${SYM}`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(FALLBACK[piece] + '︎', x, y + size * 0.04); }   /* (the glyph keeps its own black or white) */
+}
+/* Phones (17/10): the soft shadow under each piece was blurred again for every piece in every frame, and that is what made
+   them stutter. Now each look (size, colour, piece) is drawn once into a picture of its own, at the screen's resolution,
+   and every frame only copies it. Emptied on resize. */
+const SPRITES = new Map();
+function sprite(key, half, draw) {
+  const sc = cv.width / W;
+  let sp = SPRITES.get(key);
+  if (!sp) {
+    sp = document.createElement('canvas'); sp.width = sp.height = Math.ceil(half * 2 * sc);
+    const c = sp.getContext('2d'); c.setTransform(sc, 0, 0, sc, half * sc, half * sc); draw(c);
+    SPRITES.set(key, sp);
+  }
+  g.drawImage(sp, -half, -half, half * 2, half * 2);
+}
+function tile(x, y, size, fill, piece, dashed) {
+  const img = IMG[piece];
+  if (!(img && img.complete && img.naturalWidth)) { tileDraw(g, x, y, size, fill, piece, dashed); return; }   /* the glyph, until the SVG loads */
+  g.save(); g.translate(x, y);
+  sprite('t' + size + fill + piece + (dashed ? 'd' : '') + C.shadow, size / 2 + 26, c => tileDraw(c, 0, 0, size, fill, piece, dashed));
+  g.restore();
 }
 function drawNote(n, now) {
   if (n.state === 'done' || n.impacted || n.state === 'missed' && !n.toKing && n.t < now - 0.5) return;
@@ -2185,7 +2234,9 @@ function drawNote(n, now) {
     if (n.state === 'wait' && n.path && n.dy === 0 && p < n.at) moveHint(x, y, size, n.lane > n.start ? 1 : -1);
   } else if (n.type === 'friend') {
     const qs = 74;
-    g.save(); g.shadowColor = 'rgba(255,255,255,.55)'; g.shadowBlur = 22; g.fillStyle = C.friend; rr(x - qs / 2, y - qs / 2, qs, qs, qs * 0.18); g.fill(); g.restore();
+    g.save(); g.translate(x, y);   /* its white halo, drawn once (see sprite) */
+    sprite('h' + qs + C.friend, qs / 2 + 44, c => { c.shadowColor = 'rgba(255,255,255,.55)'; c.shadowBlur = 22; c.fillStyle = C.friend; rr(-qs / 2, -qs / 2, qs, qs, qs * 0.18, c); c.fill(); });
+    g.restore();
     tile(x, y, qs, C.friend, PIECE.wqueen);
     g.save(); g.strokeStyle = C.red; g.lineWidth = 3; g.setLineDash([9, 6]); g.lineDashOffset = -now * 24;
     rr(x - qs / 2 - 5, y - qs / 2 - 5, qs + 10, qs + 10, qs * 0.22); g.stroke(); g.restore();
@@ -2289,8 +2340,21 @@ function step(ts) {
   }
   g.restore();
 }
+/* ?medir=1 (17/10, to tune phones): frames per second, the slowest frame of the last second and the sound's delay, in a corner */
+const MEDIR = /[?&]medir=1/.test(location.search) ? { n: 0, t: 0, peor: 0, prev: 0, txt: '' } : null;
+function medir(ts) {
+  const M = MEDIR, d = M.prev ? ts - M.prev : 0; M.prev = ts; M.n++; M.peor = Math.max(M.peor, d);
+  if (ts - M.t >= 1000) {
+    const ms = v => Math.round(v * 1000);
+    M.txt = Math.round(M.n * 1000 / (ts - M.t)) + ' fps · peor ' + Math.round(M.peor) + ' ms · retraso ' + ms(audioLat()) + ' ms'
+      + (ac ? ' (sal ' + ms(ac.outputLatency || 0) + ' + base ' + ms(ac.baseLatency || 0) + ')' : '');
+    M.n = 0; M.t = ts; M.peor = 0;
+  }
+  g.save(); g.font = `700 11px ${DISP}`; g.textAlign = 'left'; g.textBaseline = 'top';
+  g.fillStyle = 'rgba(0,0,0,.7)'; g.fillRect(0, H - 18, W, 18); g.fillStyle = '#7CFC9A'; g.fillText(M.txt, 6, H - 15); g.restore();
+}
 function frame(ts) {
-  try { step(ts); pupiTick(state === 'play' ? clock() : 0); marcTick(Math.min(0.1, (ts - (frame.t || ts)) / 1000)); frame.t = ts; } catch (err) { g.restore(); console.error(err); }
+  try { step(ts); if (MEDIR) medir(ts); pupiTick(state === 'play' ? clock() : 0); marcTick(Math.min(0.1, (ts - (frame.t || ts)) / 1000)); frame.t = ts; } catch (err) { g.restore(); console.error(err); }
   requestAnimationFrame(frame);
 }
 if (TOUCH) $('keysHint').textContent = 'Tocá las columnas · moviendo el dedo hacés vibrato';
