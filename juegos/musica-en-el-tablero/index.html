@@ -281,6 +281,12 @@ kbd { font: 700 calc(var(--u) * 11.5) var(--font); border: 1px solid var(--bd30)
 /* the 3-2-1, same as the site's PvP games: big white numbers that pop, the go in green */
 .cd { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none;
   background: rgba(18,18,24,.42); backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); }
+/* phones (17/10): while playing, the bar on top goes away so the board gets the whole screen; two small buttons on the
+   board stand in for it (start over, back to the menu) */
+@media (pointer: coarse) { body.jugando .bar { display: none; } body.jugando { padding-left: max(4px, env(safe-area-inset-left, 0px)); padding-right: max(4px, env(safe-area-inset-right, 0px)); } }
+.juego-btns { position: absolute; top: calc(var(--u) * 10); left: 50%; transform: translateX(-50%); display: flex; gap: calc(var(--u) * 10); z-index: 2; }
+.juego-btns button { width: calc(var(--u) * 36); height: calc(var(--u) * 36); padding: 0; border-radius: 50%; border: 1px solid var(--bd22);
+  background: rgba(13,17,30,.6); color: #fffaf0; font: 700 calc(var(--u) * 18)/1 var(--font); }
 /* phones (17/10): the frosted glass had to blur the board again in every frame behind the menu, the 3-2-1 and the results;
    the panels are nearly opaque anyway */
 @media (pointer: coarse) { .ov, .cd { backdrop-filter: none; -webkit-backdrop-filter: none; } }
@@ -393,6 +399,7 @@ body.light .grade.lose { background: rgba(192,73,47,.10); }
   </aside>
   <div id="stage">
     <canvas id="cv"></canvas>
+    <div class="juego-btns" id="juegoBtns" hidden><button type="button" id="jRestart" aria-label="Reiniciar" title="Reiniciar">↻</button><button type="button" id="jMenu" aria-label="Volver al menú" title="Volver al menú">✕</button></div>
     <div class="ov" id="menu">
       <h1 class="logo" aria-label="Música en el Tablero">
         <span class="lg-1" aria-hidden="true">Música<svg class="nota" viewBox="0 0 64 64" aria-hidden="true"><path d="M22 10 54 3v38.5a9 9 0 1 1-5-8V17L27 21.6v26a9 9 0 1 1-5-8z" fill="currentColor" stroke="var(--ink)" stroke-width="4" stroke-linejoin="round"/></svg></span>
@@ -915,6 +922,25 @@ const fx = f => function () { OUT = fxBus; try { return f.apply(this, arguments)
 function pump() {
   if (!ac || state !== 'play') return;
   while (t0 + nextE * SPB / 2 < ac.currentTime + AHEAD && nextE < TOTAL_BEATS * 2) SONGS[songKey].sched(nextE++);
+  preNotes();
+}
+/* Phones (17/10): when the sound comes out of the speaker late (a phone: 0,1 s; Bluetooth: 0,3 s), a note started on the tap
+   arrived that much behind the finger. Then each note of the tune is handed over ahead, on its own beat, like the rest of
+   the band: a hit keeps it, a miss silences it (a short one may still be heard: the miss is only known once it sounds). */
+const PRE_LAT = 0.1;
+function preNotes() {
+  if (audioLat() < PRE_LAT) return;
+  for (const n of notes) {
+    if (n.pre !== undefined || n.state !== 'wait' || !n.midi) continue;
+    const at = t0 + n.t;
+    if (at > ac.currentTime + AHEAD) continue;
+    if (at < ac.currentTime) { n.pre = null; continue; }   /* too late to hand over: it plays on the tap, as before */
+    DET = []; n.pre = noteVoice(n, at, 1); n.preDet = DET; DET = null;
+  }
+}
+function preCut(n) {
+  if (!n.pre || !ac) return;
+  n.pre.gain.cancelScheduledValues(ac.currentTime); n.pre.gain.setTargetAtTime(0, ac.currentTime, 0.02); n.pre = null;
 }
 const LANE_HZ = [440, 523.25, 659.25, 783.99];
 function sfxHit(lane, type) {
@@ -1656,7 +1682,7 @@ function start() {
   const lead = Math.max(0, FALL + 0.6 - notes.reduce((m, n) => Math.min(m, n.t), 9));
   t0 = (ac ? ac.currentTime : performance.now() / 1000) + CD_SECONDS + lead;
   $('menu').hidden = true; $('end').hidden = true; $('restart').hidden = false; $('optsBtn').hidden = true; $('opts').hidden = true;
-  state = 'play';
+  state = 'play'; modoJuego(true);
   countdown();
   clearInterval(schedTimer); schedTimer = setInterval(pump, 40); pump();
 }
@@ -1758,7 +1784,7 @@ if (/[?&]vivolocal=1\b/.test(location.search)) window.__pruebaRanking = pts => {
   score = pts; hits = 300; misses = 10; maxCombo = 120; material = 700; t0 = (ac ? ac.currentTime : performance.now() / 1000) - 200; finish('win');
 };
 function finish(kind) {
-  state = 'over'; clearInterval(schedTimer); stopCountdown();
+  state = 'over'; clearInterval(schedTimer); stopCountdown(); modoJuego(false);
   notes.forEach(n => { if (n.vib) n.vib.lfo.stop(); n.vib = null; });
   const total = hits + misses, acc = total ? hits / total : 0, lose = kind === 'mate';
   const fin = Math.floor(score), top0 = getRank()[0], prev = Math.max(getBest(), top0 ? top0.s : 0);   /* the record: this browser's best or the ranking's top */
@@ -1894,18 +1920,26 @@ function hitNote(n, d) {
   score += pts * mult(); hits++; bump();
   glow[n.lane] = 1; burst(x, HIT_Y, n.dur > 0 ? C.brass : C.ember);
   pop(label, x, HIT_Y - 64, col, 17);
-  DET = [];
-  /* the note sounds on its own beat, in step with the rest of the band: a press a little early waits for it (a late one plays at once) */
-  const at = ac ? Math.max(ac.currentTime, t0 + n.t) : 0;
-  if (n.midi && n.ch !== undefined) n.voice = voiceNote(voiceKind(n.ch, n.t), n.midi, at, Math.max(0.25, n.dur > 0 ? Math.max(n.dur, (n.sd || n.nd) * SPB) : (n.sd || n.nd) * SPB),   /* a held note sounds its whole written length */ (d <= 0.07 ? 1 : d <= 0.12 ? 0.85 : 0.7) * chGain(n.ch));
-  else if (n.midi && SONGS[songKey].leadKind) n.voice = voiceNote(SONGS[songKey].leadKind, n.midi, at, Math.max(0.15, n.dur > 0 ? Math.max(n.dur, n.nd * SPB * 0.97) : n.nd * SPB * 0.95), d <= 0.07 ? 1 : d <= 0.12 ? 0.85 : 0.7);
-  else if (n.midi) n.voice = lead(n.midi, at, Math.max(0.12, n.nd * SPB * 0.95), d <= 0.07 ? 0.1 : d <= 0.12 ? 0.085 : 0.07);
-  else sfxHit(n.lane, n.type);
-  n.det = DET; DET = null;
+  if (n.pre) { n.voice = n.pre; n.det = n.preDet; n.pre = null; }   /* already handed over on its beat (see preNotes) */
+  else {
+    DET = [];
+    /* the note sounds on its own beat, in step with the rest of the band: a press a little early waits for it (a late one plays at once) */
+    const at = ac ? Math.max(ac.currentTime, t0 + n.t) : 0;
+    if (n.midi) n.voice = noteVoice(n, at, d <= 0.07 ? 1 : d <= 0.12 ? 0.85 : 0.7);
+    else sfxHit(n.lane, n.type);
+    n.det = DET; DET = null;
+  }
   n.state = n.dur > 0 ? 'holding' : 'done';
   if (n.dur > 0 && !vibUsed) pop(TOUCH ? 'MOVÉ EL DEDO: VIBRATO' : keyLabel(TECLAS.vib).toUpperCase() + ': VIBRATO', x, HIT_Y - 92, C.muted, 13);
 }
+/* the voice of a piece's note at time at; k: louder the closer the hit */
+function noteVoice(n, at, k) {
+  if (n.ch !== undefined) return voiceNote(voiceKind(n.ch, n.t), n.midi, at, Math.max(0.25, n.dur > 0 ? Math.max(n.dur, (n.sd || n.nd) * SPB) : (n.sd || n.nd) * SPB),   /* a held note sounds its whole written length */ k * chGain(n.ch));
+  if (SONGS[songKey].leadKind) return voiceNote(SONGS[songKey].leadKind, n.midi, at, Math.max(0.15, n.dur > 0 ? Math.max(n.dur, n.nd * SPB * 0.97) : n.nd * SPB * 0.95), k);
+  return lead(n.midi, at, Math.max(0.12, n.nd * SPB * 0.95), k * 0.1);
+}
 function miss(n) {
+  preCut(n);
   n.state = 'missed'; misses++; breakCombo(); pupiEv('miss'); if (n.type === 'queen') pupiEv('queen');
   const x = laneX(n.lane);
   if (Math.abs(king.x - n.lane) < 0.5) {   /* it heads for the king: see kingImpact */
@@ -2068,7 +2102,14 @@ $('volFx').addEventListener('input', () => { volFx = $('volFx').value / 100; $('
 $('volPupi').addEventListener('input', () => { volPupi = $('volPupi').value / 100; $('volPupiV').textContent = $('volPupi').value + '%'; try { localStorage.setItem('chesshero.vol.pupi', String(volPupi)); } catch (e) {} });
 $('keysReset').addEventListener('click', () => { TECLAS = JSON.parse(JSON.stringify(TECLAS_DEF)); capturando = null; try { localStorage.removeItem('chesshero.teclas'); } catch (e) {} pintarTeclas(); });
 $('play').addEventListener('click', play); $('again').addEventListener('click', start); $('restart').addEventListener('click', start);
-$('toMenu').addEventListener('click', () => { guardarAlSalir(); pupiEv('menu'); stopCountdown(); clearTimeout(endTimer); state = 'menu'; $('end').hidden = true; $('restart').hidden = true; $('optsBtn').hidden = false; $('menu').hidden = false; showDiff(); $('play').focus(); });
+function modoJuego(on) {
+  const j = on && PHONE;
+  if (document.body.classList.contains('jugando') === j) return;
+  document.body.classList.toggle('jugando', j); $('juegoBtns').hidden = !j; resize();
+}
+$('jRestart').addEventListener('click', start);
+$('jMenu').addEventListener('click', () => $('toMenu').click());
+$('toMenu').addEventListener('click', () => { guardarAlSalir(); pupiEv('menu'); stopCountdown(); modoJuego(false); clearTimeout(endTimer); state = 'menu'; $('end').hidden = true; $('restart').hidden = true; $('optsBtn').hidden = false; $('menu').hidden = false; showDiff(); $('play').focus(); });
 document.querySelectorAll('.diff button').forEach(b => b.addEventListener('click', () => {
   diffKey = b.dataset.d; try { localStorage.setItem('chesshero.diff', diffKey); } catch (e) {} showDiff();
 }));
