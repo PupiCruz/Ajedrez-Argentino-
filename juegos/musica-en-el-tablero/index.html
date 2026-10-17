@@ -1605,6 +1605,7 @@ function countdown() {
 }
 const CD_SECONDS = 3;
 function start() {
+  guardarAlSalir();   /* (the Pupi's "¡Dale!", R or "Jugar de nuevo" right after a game) */
   initAudio();
   if (ac && ac.state === 'suspended') ac.resume();
   clearTimeout(endTimer);
@@ -1743,20 +1744,24 @@ function finish(kind) {
   /* only a finished song goes to the ranking of everyone (dur: how long the song ran, the server checks it) */
   pendingRank = makes ? { s: fin, a: Math.round(acc * 100), d: Date.now(), mat: material, c: maxCombo, dur: clock(), done: !lose } : null;
   savedRank = null; renderRank(); MC.rankKeyNow = ''; marcRank(true); fetchRank();
-  $('rankForm').hidden = !makes;
+  /* with an account nothing has to be typed: it is saved (here and in the ranking of everyone) right away. The author
+     finished El Choclo, went back to the menu without pressing Guardar and his score was lost (17/10). */
+  $('rankForm').hidden = !makes || !!yo;
   /* the name: the last one used here; if none, the nickname of the site's account (same site, same browser) */
   let saved = ''; try { saved = localStorage.getItem('chesshero.name') || ''; } catch (e) {}
   $('rankName').value = yo ? yo.name : saved; $('rankName').readOnly = !!yo;
-  if (online) $('rankNote').textContent = 'Guardalo en el ranking de todos con tu cuenta.';
-  else if (makes) $('rankNote').innerHTML = (yo ? 'Entraste al ranking de esta compu. Al de todos van solo las canciones completas.' : 'Entraste al ranking de esta compu. Poné tu nombre y guardalo. ' + ENTRAR);
+  if (makes && yo) guardarRank();
+  else if (makes) $('rankNote').innerHTML = 'Entraste al ranking de esta compu. Poné tu nombre y guardalo. ' + ENTRAR;
   else $('rankNote').textContent = list.length ? 'Para entrar al ranking: más de ' + list[list.length - 1].s.toLocaleString('es-AR') + ' puntos.' : '';
   if (lose) { sfxDefeat(); shake = 0.4; } else { sfxFanfare(); confetti(); }
   pupiEv(lose ? 'lose' : 'win');
   $('restart').hidden = true; $('optsBtn').hidden = false;
-  endTimer = setTimeout(() => { $('end').hidden = false; (makes && !yo ? $('rankName') : makes ? $('rankForm').querySelector('button') : $('again')).focus({ preventScroll: true }); }, lose ? 900 : 1500);
+  endTimer = setTimeout(() => { $('end').hidden = false; (makes && !yo ? $('rankName') : $('again')).focus({ preventScroll: true }); }, lose ? 900 : 1500);
 }
-$('rankForm').addEventListener('submit', e => {
-  e.preventDefault();
+$('rankForm').addEventListener('submit', e => { e.preventDefault(); guardarRank(); $('again').focus(); });
+/* a guest who leaves the results with a name written but without pressing Guardar: it is saved anyway */
+function guardarAlSalir() { if (pendingRank && ($('rankName').value || '').trim()) guardarRank(); }
+function guardarRank() {
   if (!pendingRank) return;
   const yo = cuenta(), name = yo ? yo.name : ($('rankName').value || '').trim().slice(0, 16) || 'Sin nombre';
   if (!yo) { try { localStorage.setItem('chesshero.name', name); } catch (err) {} }
@@ -1769,8 +1774,7 @@ $('rankForm').addEventListener('submit', e => {
   if (p.done && yo) sendRank(p, yo.tok);
   else if (!yo) $('rankNote').innerHTML = 'Guardado en esta compu. ' + ENTRAR;
   else $('rankNote').textContent = 'Guardado en esta compu. Al ranking de todos van solo las canciones completas.';
-  $('again').focus();
-});
+}
 
 /* ---------- scoring ---------- */
 const mult = () => tier + 1;
@@ -2028,7 +2032,7 @@ $('volFx').addEventListener('input', () => { volFx = $('volFx').value / 100; $('
 $('volPupi').addEventListener('input', () => { volPupi = $('volPupi').value / 100; $('volPupiV').textContent = $('volPupi').value + '%'; try { localStorage.setItem('chesshero.vol.pupi', String(volPupi)); } catch (e) {} });
 $('keysReset').addEventListener('click', () => { TECLAS = JSON.parse(JSON.stringify(TECLAS_DEF)); capturando = null; try { localStorage.removeItem('chesshero.teclas'); } catch (e) {} pintarTeclas(); });
 $('play').addEventListener('click', play); $('again').addEventListener('click', start); $('restart').addEventListener('click', start);
-$('toMenu').addEventListener('click', () => { pupiEv('menu'); stopCountdown(); clearTimeout(endTimer); state = 'menu'; $('end').hidden = true; $('restart').hidden = true; $('optsBtn').hidden = false; $('menu').hidden = false; showDiff(); $('play').focus(); });
+$('toMenu').addEventListener('click', () => { guardarAlSalir(); pupiEv('menu'); stopCountdown(); clearTimeout(endTimer); state = 'menu'; $('end').hidden = true; $('restart').hidden = true; $('optsBtn').hidden = false; $('menu').hidden = false; showDiff(); $('play').focus(); });
 document.querySelectorAll('.diff button').forEach(b => b.addEventListener('click', () => {
   diffKey = b.dataset.d; try { localStorage.setItem('chesshero.diff', diffKey); } catch (e) {} showDiff();
 }));
