@@ -28,13 +28,22 @@ try {
     Start-Process $url
   }
 } catch { try { Start-Process $url } catch {} }
-$mime = @{ ".html"="text/html"; ".js"="application/javascript"; ".css"="text/css"; ".json"="application/json"; ".svg"="image/svg+xml"; ".png"="image/png"; ".pgn"="text/plain"; ".wasm"="application/wasm"; ".mp3"="audio/mpeg" }
+$mime = @{ ".html"="text/html; charset=utf-8"; ".js"="application/javascript"; ".css"="text/css"; ".json"="application/json"; ".svg"="image/svg+xml"; ".png"="image/png"; ".pgn"="text/plain"; ".wasm"="application/wasm"; ".mp3"="audio/mpeg"; ".jpg"="image/jpeg"; ".webp"="image/webp"; ".wav"="audio/wav"; ".woff2"="font/woff2" }
 while ($listener.IsListening) {
   try {
     $ctx = $listener.GetContext()
     $rel = [Uri]::UnescapeDataString($ctx.Request.Url.AbsolutePath.TrimStart('/'))
     if ([string]::IsNullOrEmpty($rel)) { $rel = "index.html" }
     $path = Join-Path $root $rel
+    # Una carpeta (juegos/musica-en-el-tablero/) abre su index.html, como en Cloudflare.
+    # (Sin la barra final se la agrega, para que el juego encuentre sus archivos al lado.)
+    if ((Test-Path $path -PathType Container) -and $rel -and -not $rel.EndsWith('/')) {
+      $ctx.Response.StatusCode = 301
+      $ctx.Response.RedirectLocation = '/' + $rel + '/' + $ctx.Request.Url.Query
+      $ctx.Response.Close()
+      continue
+    }
+    if (Test-Path $path -PathType Container) { $path = Join-Path $path "index.html" }
     if (Test-Path $path -PathType Leaf) {
       $bytes = [System.IO.File]::ReadAllBytes($path)
       $ext = [System.IO.Path]::GetExtension($path).ToLower()

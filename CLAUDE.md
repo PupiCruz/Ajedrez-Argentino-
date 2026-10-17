@@ -183,7 +183,7 @@ misma carpeta, la más nueva arriba): conviene leerlo antes de tocar cuentas, mo
 los proxys del Worker o el arranque de la página.
 
 ## 🧪 Bancos de pruebas — correrlos antes y después de tocar esas partes
-Son trece y no necesitan instalar nada (Node y listo). **Cuántas comprobaciones tiene cada uno lo
+Son quince y no necesitan instalar nada (Node y listo). **Cuántas comprobaciones tiene cada uno lo
 dice el propio banco al terminar**, y por eso no está copiado acá: un número escrito a mano en dos
 lugares se pudre solo. (Pasó: este archivo decía 394 cuando el banco de la web ya iba por 542.)
 
@@ -203,6 +203,7 @@ lugares se pudre solo. (Pasó: este archivo decía 394 cuando el banco de la web
 | `vivo-worker/test-final-torneo.mjs` | 🏁 el aviso del bot al marcar un torneo Finalizado (podio → canal y hilo de Discord) | `cd vivo-worker` y `node test-final-torneo.mjs` |
 | `vivo-worker/test-avisos-ronda.mjs` | los avisos de ronda del bot: nacional (primeras mesas) vs internacional (los argentinos) | `cd vivo-worker` y `node test-avisos-ronda.mjs` |
 | `vivo-worker/test-titulados.mjs` | 🏆 avisos de los Titled Tuesday/Thursday de Chess.com en #en-vivo + 🌐 ratings online en /jugador | `cd vivo-worker` y `node test-titulados.mjs` |
+| `vivo-worker/test-ranking-musica.mjs` | 🎵 ranking de Música en el Tablero: sólo con cuenta (cr-proxy), frenos (30 s, canción completa, tope de puntos), orden, 100 mejores | `cd vivo-worker` y `node test-ranking-musica.mjs` |
 
 Ya cazaron varios bugs antes de que llegaran al sitio. Si uno falla, **no publicar**.
 
@@ -268,6 +269,12 @@ El autor **no es programador** y trabaja en español. El objetivo es eventualmen
   "CERO diferencias"). Si se cambia, subir el `?v=` del `<script>` (va por v=3) en `index.html` y `editar.html`
   (`/assets/*` se cachea un año).
 - `iniciar-servidor.cmd` / `serve.ps1` — levantan un servidor local para abrir la app.
+- `juegos/musica-en-el-tablero/` — 🎵 **Música en el Tablero**, el juego de ritmo (17/10/2026). Es una página
+  aparte; se entra desde la tarjeta de arriba de **Jugar** (`#lv-musica`). **No se edita acá:** el original vive
+  en `Desktop\Claude Code\ChessHero` y se trae con `node herramientas/llevar-a-la-web.js` (desde ChessHero), que
+  pisa esta carpeta. Piezas, fondos y el Pupi salen de `/assets/`. `pupi-datos.json` lo arma `publicar-web.cmd`
+  (`herramientas/armar-datos-pupi.js`). El ranking de todos vive en el vivo-worker (`/musica/…`, Durable
+  Object `RankingMusica`; sólo para quien entró con su cuenta: el nombre es su usuario de Lichess). Para probarlo contra el worker de esta PC: `?vivolocal=1` (como el resto de Jugar).
 
 ## Cómo se trabaja (flujo del autor)
 1. Abrir la app (con `iniciar-servidor.cmd`) y cargar/editar torneos, jugadores, noticias.

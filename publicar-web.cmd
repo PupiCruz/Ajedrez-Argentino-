@@ -50,6 +50,17 @@ if not errorlevel 1 (
 )
 
 :: ------------------------------------------------------------------
+:: 0c) Musica en el Tablero: los torneos y "Sabias que" que cuenta el
+::     Pupi del juego (juegos\musica-en-el-tablero\pupi-datos.json).
+::     Si falla, se sigue publicando con los de la vez pasada.
+:: ------------------------------------------------------------------
+where node >nul 2>&1
+if not errorlevel 1 (
+    node "herramientas\armar-datos-pupi.js"
+    echo.
+)
+
+:: ------------------------------------------------------------------
 :: 1) Si hay archivos sin guardar (datos nuevos, etc.), commitearlos.
 :: ------------------------------------------------------------------
 git status --short > "%TEMP%\gitstatus.txt" 2>&1
