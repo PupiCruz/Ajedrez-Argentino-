@@ -275,6 +275,8 @@ El autor **no es programador** y trabaja en español. El objetivo es eventualmen
   pisa esta carpeta. Piezas, fondos y el Pupi salen de `/assets/`. `pupi-datos.json` lo arma `publicar-web.cmd`
   (`herramientas/armar-datos-pupi.js`). El ranking de todos vive en el vivo-worker (`/musica/…`, Durable
   Object `RankingMusica`; sólo para quien entró con su cuenta: el nombre es su usuario de Lichess). Para probarlo contra el worker de esta PC: `?vivolocal=1` (como el resto de Jugar).
+  📱 Teléfono (17/10): piezas en sprites, reloj suave, retraso automático del navegador, nota adelantada si el
+  retraso es ≥ 0,1 s, sin barra al jugar, botón 🎧 Ritmo; `?medir=1` muestra fps y retraso.
 
 ## Cómo se trabaja (flujo del autor)
 1. Abrir la app (con `iniciar-servidor.cmd`) y cargar/editar torneos, jugadores, noticias.
