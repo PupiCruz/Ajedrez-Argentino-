@@ -1,5 +1,5 @@
 /* 🎵 Música en el Tablero (juegos/musica-en-el-tablero/): los datos que el Pupi cuenta entre partida y partida
-   ("Pedile data de torneos"): los torneos que se juegan en la Argentina ahora o en las próximas semanas (data/manifest.js)
+   ("Pedile data de torneos"): los torneos (de acá y de afuera) que se juegan ahora o en las próximas semanas (data/manifest.js)
    y los "¿Sabías que…?" (data/datos.json). Las frases se arman en el juego con la fecha del día, así que el archivo no se
    pone viejo enseguida. Pesa unos 12 KB: el juego no tiene que bajar el manifest de 4 MB.
    Uso:  node herramientas/armar-datos-pupi.js   → juegos/musica-en-el-tablero/pupi-datos.json   (publicar-web.cmd lo corre solo)
@@ -20,16 +20,16 @@ function tituloTorneo(n) {   /* sin emojis ni comillas, sin lo que va después d
     n = n.replace(/[A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ-]{3,}/g, w => /^[IVXLC]+$/.test(w) ? w : lindo(w));
   return n;
 }
-const articulo = n => /^((\d+°?|[IVXLC]+)\s+)?(Liga|Copa|Olimpiada|Final|Semifinal)/i.test(n) ? 'la' : 'el';   /* 'III Copa…' → la */
+const articulo = n => /^((\d+°?|[IVXLC]+)\s+)?(Liga|Copa|Olimpiada|Final|Semifinal)/i.test(n) || /\b(Cup|Bundesliga|Series)\b/i.test(n) ? 'la' : 'el';   /* 'III Copa…' → la; 'Nations Cup' → la */
 
 const win = {}; vm.runInNewContext(fs.readFileSync(path.join(WEB, 'manifest.js'), 'utf8'), { window: win });
 const hoy = new Date().toISOString().slice(0, 10), torneos = [];
 for (const [k, o] of Object.entries(win.__EMBEDDED_TZ__ || {})) {
   if (!o || !o.name || !o.startDate) continue;
   const loc = String(o.location || '').trim(), fin = o.endDate || o.startDate;
-  if (!loc || / - /.test(loc) || !AR.test(loc) || fin < hoy) continue;
-  const n = tituloTorneo(o.name);
-  torneos.push({ k, n, art: articulo(n), ciudad: loc.split(',')[0].trim(), ini: o.startDate, fin });
+  if (!loc || / - /.test(loc) || fin < hoy) continue;
+  const n = tituloTorneo(o.name);   /* los de afuera también (18/10): "un torneo en Montevideo, Uruguay"; los de acá, sólo la ciudad */
+  torneos.push({ k, n, art: articulo(n), ciudad: AR.test(loc) ? loc.split(',')[0].trim() : loc, ini: o.startDate, fin });
 }
 let hechos = [];
 try { hechos = JSON.parse(fs.readFileSync(path.join(WEB, 'datos.json'), 'utf8')).filter(d => d && d.t).map(d => String(d.t).trim()); } catch (e) {}
