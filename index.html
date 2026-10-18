@@ -34791,6 +34791,7 @@ function sfToggle() {
     document.getElementById('sf-btn-label').textContent = 'Detener';
     document.getElementById('sf-panel').style.display = 'block';
     document.getElementById('sf-vbar').classList.add('show');
+    _faCederAlModulo();   // si el gráfico del vivo tenía el motor y hay ayudantes, se lo devuelve ya
     sfStart();
     thrUpdateBtn();
     // Avisar a las otras pestañas para que apaguen su motor (uno solo a la vez, como Lichess).
@@ -52763,6 +52764,24 @@ function _faRepSoltarMain(R) {
   if (m) m.pz = null;
   R.ayu.forEach(function(h) { if (h.listo && h.ply < 0) _faRepSigue(R, h); });
 }
+// 🔬 Prendieron el módulo MIENTRAS se dibuja el gráfico (18/10/2026, lo notó el autor: "recién funciona cuando
+// termina de dibujar"): el módulo esperaba a que el principal terminara su pase. Ahora, si hay ayudantes
+// trabajando, el principal deja el pase YA y todo lo que le quedaba —la posición que estaba mirando, su pedazo
+// y la cola— pasa a los ayudantes; el módulo arranca al instante (sfToggle → sfStart). Sin ayudantes, lo de antes.
+function _faCederAlModulo() {
+  try {
+    var R = _fa.rep;
+    if (!_fa.running || _fa.relleno || !_fa.live || !R || !R.live || !R.ayu.length) return false;
+    var i = _fa.ply;
+    if (R.main) _faRepSoltarMain(R);
+    _faRepAmpliar(_fa.nodes.length, _fa.nodes);   // la cola también, para los ayudantes
+    if (i >= 0 && i < R.hasta && _faRepFalta(R, i)) R.cola.unshift({ sig: i, b: i + 1 });
+    R.ayu.forEach(function(h) { if (h.listo && h.ply < 0) _faRepSigue(R, h); });
+    if (sf.engine) sf.engine.postMessage('stop');
+    faFinish();   // (los ayudantes del vivo siguen: faFinish sólo apaga los del 📊)
+    return true;
+  } catch (e) { return false; }
+}
 function _faRepMsg(R, h, line) {
   if (_fa.rep !== R) return;   // de un análisis viejo
   if (line === 'uciok') {
@@ -52849,7 +52868,10 @@ function _faRepFinVivo() {
   if (!_fa.running) { faClassify(); faRenderStats(); faApplyNags(); cvUpdateNagBadge(); faUpdateBar(); _faNagSig = ''; }
   else _faReclassifyIfChanged();
   faUpdateBuildBtn();
-  if (!_fa.running && _faCuantasPase() > 0) faLiveEngineStart();   // huecos que quedaron: el principal
+  if (!_fa.running && _faCuantasPase() > 0) {   // huecos que quedaron: el principal…
+    if (sf.on) setTimeout(_faRellenarSiLibre, 0);   // …sin sacarle el motor al módulo (se turnan, como el relleno)
+    else faLiveEngineStart();
+  }
   else _vbQuizasSubir();   // 📥 (partida terminada y sin huecos)
 }
 // Barra de progreso (cuántas posiciones ya están) y el gráfico que se va llenando en varios lugares a la vez.

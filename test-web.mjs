@@ -28,7 +28,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2489;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2492;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -9926,6 +9926,26 @@ console.log('\n=== 74. ⚡ Gráfico repartido entre varios motores: pedazos, rob
       'el principal entra al reparto del vivo sólo con el módulo apagado; arranca su pase aunque falte sólo el historial; y el historial no se cierra con su pedazo a medias');
   chk(/var deep  = cola && sf\.on;/.test(extraerFuncion('faNext')) && /_fa\.minD  = _fa\.live \? \(cola \? _FA_LIVE_DEEP_MIN/.test(extraerFuncion('faNext')),
       'con el módulo apagado la cola va con el presupuesto común (prof. 20, 0,6 s) y conserva su vara mínima; con el módulo prendido, a fondo como antes');
+  // 18/10: prender el módulo MIENTRAS se dibuja el gráfico → el principal deja el pase ya y lo suyo pasa a los ayudantes.
+  const armarC = (conAyu) => new Function('conAyu', 'var paradas = 0, finish = 0, _faLiveCache = {}, _FA_REP_PEDAZO = 12;'
+    + 'var _fa = { running: true, relleno: false, live: true, nodes: [], results: [], ply: 4 },'
+    + '    sf = { on: true, engine: { postMessage: function(m){ if (m === "stop") paradas++; } } };'
+    + 'function _faNeedsPassEval(i){ return _fa.results[i] == null; } function _faRepSigue(){} function faGetNodes(){ return _fa.nodes; }'
+    + 'function faFinish(){ finish++; _fa.running = false; }'
+    + ['_faRepFalta', '_faRepSoltarMain', '_faRepAmpliar', '_faCederAlModulo'].map(extraerFuncion).join('\n')
+    + '; var fens = []; for (var i = 0; i < 30; i++) { _fa.nodes.push({ fen: "f" + i }); _fa.results.push(i < 4 ? { cp: 0 } : null); if (i < 28) fens.push("f" + i); }'
+    + '  var R = _fa.rep = { live: true, hasta: 28, fens: fens, conEv: fens.map(function(){ return false; }), cola: [{ sig: 12, b: 24 }, { sig: 24, b: 28 }],'
+    + '    main: { pz: { sig: 5, b: 12 } }, ayu: conAyu ? [{ listo: false, ply: -1, pz: null }] : [] };'
+    + '  var ok = _faCederAlModulo();'
+    + '  return { ok: ok, corre: _fa.running, paradas: paradas, finish: finish, main: R.main, hasta: R.hasta, cola: R.cola.map(function(p){ return p.sig + "-" + p.b; }).join(" ") };')(conAyu);
+  const c1 = armarC(true), c2 = armarC(false);
+  chk(c1.ok && !c1.corre && c1.paradas === 1 && c1.finish === 1 && c1.main === null && c1.hasta === 30
+      && c1.cola === '4-5 5-12 12-24 24-28 28-30',
+      '🔬 prender el módulo con el gráfico a medias: el principal deja el pase YA y la posición que miraba, su pedazo y la cola pasan a los ayudantes', JSON.stringify(c1));
+  chk(!c2.ok && c2.corre && c2.paradas === 0,
+      '…sin ayudantes, como antes: el módulo espera a que el principal termine (no queda nadie para el gráfico)', c2);
+  chk(/_faCederAlModulo\(\);/.test(extraerFuncion('sfToggle')) && /if \(sf\.on\) setTimeout\(_faRellenarSiLibre, 0\)/.test(extraerFuncion('_faRepFinVivo')),
+      'el botón del módulo lo llama al prenderse; y si al terminar el historial quedan huecos, se turnan con el módulo (no le sacan el motor)');
 }
 // ── 75. ⚡ Barrido de colgadas y jugadones con varios motores (08/10/2026) ─────────────────────────
 console.log('\n=== 75. ⚡ Barrido con varios motores: cada uno sigue su partida, confirmaciones primero, plan B (08/10) ===');
