@@ -28,7 +28,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2492;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2497;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -5315,8 +5315,40 @@ console.log('\n=== 53d. Varias transmisiones: menos pedidos al Worker (17/09) ==
   chk(/Math\.min\(_TD_JSON_MS, _liveRefreshMs\(_tdLiveCtx\.tourId\)\)/.test(jt) && /if \(Date\.now\(\) - _tdJsonLast < cada\) return;/.test(jt),
       'en una transmisión, la ficha va al ritmo del torneo (un blitz, cada 12 s)');
   chk(/seeing:function\(\)\{ return tcRoom \? tcSeeing : 0; \}/.test(SRC), 'el contador sale del "👁 X mirando" del chat del torneo');
-  chk(/'https:\/\/lichess\.org\/api\/broadcast\/' \+ tourId, 12000\)/.test(extraerFuncion('_bcFetchMetaDirect')) && /\.catch\(function\(\)\{ _bcFetchMeta\(tourId, cb\); \}\)/.test(extraerFuncion('_bcFetchMetaDirect')),
-      'si Lichess no contesta la lista, se pide por el Worker como siempre');
+  // La lista de rondas: Worker ⇄ directo a Lichess, cada uno respaldo del otro y sin vueltas infinitas (18/10/2026).
+  {
+    const armarMeta = (falla) => {
+      const pedidos = [];
+      const _fetchTO = (url) => {
+        const via = url.startsWith('https://w/') ? 'worker' : 'directo';
+        pedidos.push(via);
+        if (falla[via]) return Promise.resolve({ ok: false, status: 429, json: () => Promise.resolve({ error: 'Too many requests' }) });
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ tour: { slug: 'club-cup', rounds: [{ id: 'r1' }] } }) });
+      };
+      const F = new Function('_fetchTO', '_liApi', extraerFuncion('_bcFetchMeta') + extraerFuncion('_bcFetchMetaDirect') + '; return { _bcFetchMeta, _bcFetchMetaDirect };')(_fetchTO, (p) => 'https://w/' + p);
+      return { F, pedidos };
+    };
+    const pedir = (fn) => new Promise((res) => fn('seXJoc2H', res));
+    let a = armarMeta({ worker: true });
+    let m = await pedir(a.F._bcFetchMeta);
+    chk(m && m.tourSlug === 'club-cup' && a.pedidos.join() === 'worker,directo',
+        '🔒 el Worker da 429 (Club Cup femenino, 18/10) → la lista de rondas se pide directo a Lichess', a.pedidos.join());
+    a = armarMeta({ directo: true });
+    m = await pedir(a.F._bcFetchMetaDirect);
+    chk(m && m.tourSlug === 'club-cup' && a.pedidos.join() === 'directo,worker',
+        'si Lichess directo no contesta la lista, se pide por el Worker como siempre', a.pedidos.join());
+    a = armarMeta({ worker: true, directo: true });
+    m = await pedir(a.F._bcFetchMeta);
+    chk(m === null && a.pedidos.length === 2, 'si fallan los dos, se rinde (sin vueltas infinitas)', a.pedidos.join());
+    a = armarMeta({ worker: true, directo: true });
+    m = await pedir(a.F._bcFetchMetaDirect);
+    chk(m === null && a.pedidos.length === 2, 'lo mismo empezando por el directo', a.pedidos.join());
+  }
+  chk(/var url = _retry \? 'https:\/\/lichess\.org\/api\/broadcast\/'/.test(extraerFuncion('bcResolveTourId')),
+      'el reintento de resolver la transmisión va directo a Lichess');
+  chk(/_fetchTO\(url, 12000\)\.then\(_ok\)\.catch\(_directo\(broadcastId\)\)/.test(extraerFuncion('_bcFetchAll'))
+      && /_fetchTO\(pgnUrl, 15000\)\.then\(_ok\)\.catch\(_directo\('round\/'/.test(extraerFuncion('_bcFetchAll')),
+      'el camino de respaldo (todas las rondas) también cae directo a Lichess, y un 429 ya no entra como partida');
 }
 
 // ── 53e. Visor: buscador y "Solo argentinos" en las partidas de la ronda (17/09) ──

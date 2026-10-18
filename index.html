@@ -36323,7 +36323,8 @@ function toggleBcArgFilter() {
 function bcResolveTourId(slug, roundSlug, roundId, cb, _retry) {
   // Vía Worker (proxy con caché). SIN token (endpoint público). Mandar Authorization fuerza un
   // preflight CORS que rompe la descarga del PGN de ronda (ver nota en _bcFetchAll).
-  var url = _liApi(slug + '/' + roundSlug + '/' + roundId);
+  // El reintento va directo a Lichess (ver _bcFetchMeta): si el Worker dio 429, volver a él suele dar lo mismo.
+  var url = _retry ? 'https://lichess.org/api/broadcast/' + slug + '/' + roundSlug + '/' + roundId : _liApi(slug + '/' + roundSlug + '/' + roundId);
   fetch(url)
     .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
     .then(function(j) {
@@ -37065,10 +37066,11 @@ function _bcFetchAll(broadcastId, cb) {
   // (responde 404 al OPTIONS), así que si hay un token configurado el navegador BLOQUEA la
   // descarga de las partidas y caen al respaldo local. Sin token son requests "simples" → andan.
   var url = _liApi(broadcastId);
-  _fetchTO(url, 12000)
-    .then(function(r) {
-      if (!r.ok) throw new Error('HTTP ' + r.status); return r.json();
-    })
+  // Si el Worker no lo consigue (429 de Lichess a Cloudflare), directo a Lichess (ver _bcFetchMeta).
+  var _ok = function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r; };
+  var _directo = function(rest) { return function() { return _fetchTO('https://lichess.org/api/broadcast/' + rest, 15000).then(_ok); }; };
+  _fetchTO(url, 12000).then(_ok).catch(_directo(broadcastId))
+    .then(function(r) { return r.json(); })
     .then(function(data) {
       // La API de Lichess devuelve { tour: { slug, rounds: [...] } }.
       // Antes las rondas estaban en data.rounds; ahora están en data.tour.rounds.
@@ -37102,7 +37104,7 @@ function _bcFetchAll(broadcastId, cb) {
         // para CUALQUIER origen; el web route NO manda CORS desde dominios como Netlify, así que las
         // partidas no se descargaban en la web publicada (sí desde localhost). Solo necesita el roundId.
         var pgnUrl = _liApi('round/' + round.id + '.pgn');
-        _fetchTO(pgnUrl, 15000)
+        _fetchTO(pgnUrl, 15000).then(_ok).catch(_directo('round/' + round.id + '.pgn'))
           .then(function(r) { return r.text(); })
           .then(function(pgn) { byRound[round.id] = pgn.trim().split(/\n\n(?=\[Event )/).filter(function(g) { return g.trim() && !_bcIsPlaceholderGame(g); }); pending--; done(); })
           .catch(function() { byRound[round.id] = []; pending--; done(); });
@@ -37152,11 +37154,14 @@ function _bcMergeResults(results) {
 // JSON chico) + las partidas de la ronda ACTUAL. Las rondas anteriores se bajan cuando el visitante
 // las abre (tdShowRound) y quedan cacheadas. El refresco en vivo solo re-pide la ronda en curso.
 // El buscador y "Solo argentinos" operan por ronda (sobre la visible), así que no hace falta cargar todo.
-function _bcFetchMeta(tourId, cb){
+// Si el Worker no la consigue, se pide directo a Lichess (CORS abierto, IP del visitante). 18/10/2026: Lichess
+// le tiraba 429 a la salida compartida de Cloudflare (~40% de los pedidos, aun con 5 por hora), el Worker no
+// tenía copia de la lista de rondas del Club Cup femenino y la ficha decía "No se pudieron cargar las partidas".
+function _bcFetchMeta(tourId, cb, sinDirecto){
   _fetchTO(_liApi(tourId), 12000)
     .then(function(r){ if(!r.ok) throw 0; return r.json(); })
-    .then(function(data){ cb({ tourSlug: data.tour && data.tour.slug, rounds: (data.tour && data.tour.rounds) || data.rounds || [] }); })
-    .catch(function(){ cb(null); });
+    .then(function(data){ return { tourSlug: data.tour && data.tour.slug, rounds: (data.tour && data.tour.rounds) || data.rounds || [] }; })
+    .then(cb, function(){ if (sinDirecto) cb(null); else _bcFetchMetaDirect(tourId, cb, true); });
 }
 function _bcFetchMetaMulti(tourIds, cb){
   var out = new Array(tourIds.length), pending = tourIds.length;
@@ -45585,11 +45590,11 @@ function _tdAhorro() {
 // ¿Este vivo ahorra pedidos? Varias transmisiones siempre; una sola, si hay mucha gente mirando.
 function _tdLiveAhorra(tourIds) { return _tdLiveGrande(tourIds) || _tdAhorro(); }
 // Lista de rondas de UNA transmisión, directo a Lichess; si falla, por el Worker como siempre.
-function _bcFetchMetaDirect(tourId, cb) {
+function _bcFetchMetaDirect(tourId, cb, sinWorker) {
   _fetchTO('https://lichess.org/api/broadcast/' + tourId, 12000)
     .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-    .then(function(data){ cb({ tourSlug: data.tour && data.tour.slug, rounds: (data.tour && data.tour.rounds) || data.rounds || [] }); })
-    .catch(function(){ _bcFetchMeta(tourId, cb); });
+    .then(function(data){ return { tourSlug: data.tour && data.tour.slug, rounds: (data.tour && data.tour.rounds) || data.rounds || [] }; })
+    .then(cb, function(){ if (sinWorker) cb(null); else _bcFetchMeta(tourId, cb, true); });
 }
 // Huella de las rondas de una transmisión: cambia si aparece una ronda o una empieza / termina.
 function _bcRoundsSig(meta) {

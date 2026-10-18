@@ -94,6 +94,12 @@ const LI_STALE_WINDOW = 1800;  // 30 min de gracia (eran 10: en la Olimpiada de 
                                // Lichess frenando, alguna copia llegaba a los 10 min y se borraba → tablero vacío)
 // UA identificable (Lichess pide identificarse; así, si algo raro pasa, saben quiénes somos).
 const LI_UA = 'AjedrezArgentinoBot/1.0 (+https://chessargentino.pages.dev)';
+// Token de Lichess para /libc (18/10/2026). Sin token, Lichess limita por IP, y la de salida de los Workers la
+// comparte medio mundo: ~40% de 429 aun pidiendo 5 por hora, con el cartel "Use an oauth token to get 120
+// requests per minute". Con token el límite es NUESTRO (120/min; el pico medido es ~4/min). Es un token SIN
+// permisos (los datos de transmisiones son públicos) y vive SÓLO como secreto del Worker (LICHESS_TOKEN),
+// nunca en este archivo. Sin el secreto, todo sigue como antes.
+let _liToken = '';
 // Dedup de bajadas concurrentes DENTRO de un mismo isolate (single-flight): si llegan muchos
 // pedidos del mismo torneo a la vez, UNA sola va a Lichess y las demás esperan esa respuesta.
 // Cada entrada: { p: la promesa, desde: cuándo arrancó, soltar(): la borra y libera su lugar }.
@@ -227,7 +233,7 @@ export default {
     if (reqUrl.pathname === '/vspgn') return vsPgn(reqUrl, ctx);
 
     // ── Proxy con caché para el broadcast de Lichess (mata el 429 del vivo) ──
-    if (reqUrl.pathname === '/libc') return liBc(reqUrl, ctx, request);
+    if (reqUrl.pathname === '/libc') { _liToken = (env && env.LICHESS_TOKEN) || ''; return liBc(reqUrl, ctx, request); }
 
     // ── Redacción de noticias con IA (Workers AI) ──
     if (reqUrl.pathname === '/noticia') return noticiaAI(request, env);
@@ -744,7 +750,8 @@ function liFetchBuffered(cacheKeyStr, targetUrl, isPgn, cache, reqUrl, ctx, guar
     const corte = setTimeout(() => { try { ac.abort(); } catch (e) {} }, LI_FETCH_TIMEOUT_MS);
     try {
       const up = await fetch(targetUrl, {
-        headers: { 'User-Agent': LI_UA, 'Accept': isPgn ? 'application/x-chess-pgn' : 'application/json' },
+        headers: Object.assign({ 'User-Agent': LI_UA, 'Accept': isPgn ? 'application/x-chess-pgn' : 'application/json' },
+                               _liToken ? { 'Authorization': 'Bearer ' + _liToken } : {}),
         redirect: 'follow',
         signal: ac.signal,
       });

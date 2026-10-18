@@ -1289,5 +1289,38 @@ console.log('\n=== 20. Rating: dos partidas que terminan juntas suman las dos ==
   chk(fila().rating === esperado, '🔒 el rating final suma las dos variaciones', fila().rating + ' = ' + base + ' + ' + a.white.delta + ' + ' + b.white.delta);
 }
 
+// ── /libc con token de Lichess (18/10/2026) ─────────────────────────────────────────────────────
+// Sin token, Lichess limita por IP y la salida de los Workers es compartida: "Use an oauth token to get
+// 120 requests per minute". Con el secreto LICHESS_TOKEN el Worker lo manda; sin él, nada cambia.
+{
+  console.log('\n=== 12f. Lichess: token del Worker (secreto LICHESS_TOKEN) ===');
+  const cachesAntes = globalThis.caches, fetchAntes = globalThis.fetch;
+  const guardado = new Map();
+  globalThis.caches = { default: {
+    async match(k) { const r = guardado.get(typeof k === 'string' ? k : k.url); return r ? r.clone() : undefined; },
+    async put(k, r) { guardado.set(typeof k === 'string' ? k : k.url, r.clone()); },
+    async delete(k) { guardado.delete(typeof k === 'string' ? k : k.url); },
+  } };
+  const vistos = [];
+  globalThis.fetch = async (url, opts) => {
+    const h = (opts && opts.headers) || {};
+    vistos.push({ url: String(url), auth: h.Authorization || h.authorization || null });
+    return new Response('{"tour":{"id":"x"}}', { status: 200 });
+  };
+  const ctxT = { waitUntil() {} };
+  try {
+    await worker.fetch(req('/libc?url=' + encodeURIComponent('https://lichess.org/api/broadcast/tokEnSi1')), Object.assign({}, env, { LICHESS_TOKEN: 'lip_prueba' }), ctxT);
+    const conToken = vistos.filter((v) => v.url.includes('tokEnSi1'));
+    chk(conToken.length === 1 && conToken[0].auth === 'Bearer lip_prueba', '🔒 con el secreto, el pedido a Lichess lleva el token', JSON.stringify(conToken));
+    await worker.fetch(req('/libc?url=' + encodeURIComponent('https://lichess.org/api/broadcast/tokEnNo2')), env, ctxT);
+    const sinToken = vistos.filter((v) => v.url.includes('tokEnNo2'));
+    chk(sinToken.length === 1 && sinToken[0].auth === null, 'sin el secreto, sale sin token (como siempre)', JSON.stringify(sinToken));
+    chk(!/lip_[A-Za-z0-9]{8,}/.test((await import('node:fs')).readFileSync(new URL('./cr-proxy-worker.js', import.meta.url), 'utf8')),
+        '🔒 ningún token de Lichess escrito en el código del Worker');
+  } finally {
+    globalThis.caches = cachesAntes; globalThis.fetch = fetchAntes;
+  }
+}
+
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.') + '\n');
 process.exitCode = fallos ? 1 : 0;
