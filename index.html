@@ -11631,7 +11631,7 @@ function _teamRenderStandings(standings, crk){
     // hay que decirlo siempre: si no, el renglón de abajo del empate se queda sin puesto.
     h+='<td style="'+td+';color:var(--text3)">'+_a11yEnVezDe(_mismoRk?'':escHtml(String(t.rk||i+1)),
         _a11yEquipoFrase(t.rk||i+1, t.played, t.w, t.d, t.l, t.eloAvg, initial))+'</td>';
-    var _flag=_fed?crFlagEmoji(_fed):'';   // bandera solo si es país; los clubes van sin bandera
+    var _flag=(_fed&&_flagImg(_fed))||_teamClubFlag(_sdata,t.name)||(_fed?crFlagEmoji(_fed):'');   // país: su bandera; club: la de su país si Chess-Results la da (teamFeds)
     var _nm=(crk&&t.name)
       ? '<span onclick="crOpenCountry('+crArg(crk)+','+crArg(t.name)+')" title="Ver la performance de '+escHtml(_paisES(t.name,_fed))+'"'+_a11yClic()+' style="cursor:pointer;display:inline-flex;align-items:center;gap:7px" onmouseover="this.style.color=\'var(--gold)\'" onmouseout="this.style.color=\'\'">'+(_flag?_flag+' ':'')+'<span>'+escHtml(_paisES(t.name,_fed))+'</span></span>'
       : ((_flag?_flag+' ':'')+escHtml(t.name||''));
@@ -11747,6 +11747,31 @@ function _teamEraFlag(crk, nombre){
   }
   var f = mp[normStr(nombre)];
   return f && _paisFedEra(nombre, f) === f ? crFlagEmoji(f) : '';
+}
+// Bandera del CLUB (18/10/2026): el país con que Chess-Results lo inscribe (data.teamFeds, lo guarda
+// _crAutoFetchTeam). SÓLO para dibujar: no entra en _teamResolveFed ni en _paisES ni en "Solo argentinos"
+// (un club alemán no es "Alemania"). Sin teamFeds (casi todos los torneos) da '' y nada cambia.
+function _teamClubFlag(data, nombre){
+  var mp = data && data.teamFeds;
+  if (!mp || !nombre) return '';
+  var f = mp[_teamNorm(nombre)];
+  return f ? _flagImg(f) : '';
+}
+// Federación de cada JUGADOR según el plantel oficial (art=8), para la bandera en la formación. Sólo en los
+// torneos de clubes de varios países (los que tienen teamFeds): en una Olimpiada todo el equipo tendría la
+// misma bandera que el país del encabezado, y en una liga nacional casi todos la misma. Un mapa por plantel.
+var _teamRosterFedMemo = { ros: null, mp: null };
+function _teamRosterFed(data, nombre){
+  if (!data || !data.teamFeds || !data.teamRoster || !nombre) return '';
+  if (_teamRosterFedMemo.ros !== data.teamRoster) {
+    var mp = {};
+    data.teamRoster.forEach(function(t){ (t.players || []).forEach(function(p){
+      var f = String(p.fed || '').toUpperCase();
+      if (p.nm && _FED_ISO[f]) mp[normStr(p.nm)] = f;
+    }); });
+    _teamRosterFedMemo = { ros: data.teamRoster, mp: mp };
+  }
+  return _teamRosterFedMemo.mp[normStr(nombre)] || '';
 }
 function _teamCountryParts(name){
   var s=String(name||'');
@@ -11990,7 +12015,7 @@ function _teamRoundHead(roundNum, crk, cx){
 // Firma del panel entero: si cambia lo de arriba, qué matches se ven (filtro "Solo argentinos") o si la
 // ronda ya se puede abrir, no se parchea: se rehace.
 function _teamRoundHeadSig(matches, head, cx){
-  return _teamHash(head+'|'+(_teamArgOnly?1:0)+(cx.hasGm?1:0)+(cx.rondaEnMemoria?1:0)+'|'+(matches||[]).map(function(m){ return _teamPairKey(m.aName,m.bName)+':'+(m.boards||[]).length; }).join(','));
+  return _teamHash(head+'|'+(_teamArgOnly?1:0)+(cx.hasGm?1:0)+(cx.rondaEnMemoria?1:0)+(cx.rdata&&cx.rdata.teamFeds?1:0)+'|'+(matches||[]).map(function(m){ return _teamPairKey(m.aName,m.bName)+':'+(m.boards||[]).length; }).join(','));
 }
 function _teamHash(s){ var h=5381; s=String(s); for(var i=0;i<s.length;i++) h=((h<<5)+h+s.charCodeAt(i))|0; return (h>>>0).toString(36)+'.'+s.length; }
 function _teamRoundMatches(matches, crk){
@@ -12052,6 +12077,9 @@ function _teamRoundBlock(m, mi, roundNum, crk, cx, lv){
     // Sin sigla en el nombre: la bandera de ÉPOCA que guarda el cuadro (Georgia 1992-2002, Yugoslavia…).
     var _eA=_ca.fed?'':_teamEraFlag(crk,_ca.clean), _eB=_cb.fed?'':_teamEraFlag(crk,_cb.clean);
     if(_eA) _ca=Object.assign({},_ca,{flag:_eA}); if(_eB) _cb=Object.assign({},_cb,{flag:_eB});
+    // Y si es un CLUB, la bandera de su país según Chess-Results (Copa de Clubes de Europa).
+    if(!_ca.flag||(_ca.fed&&!_flagImg(_ca.fed))){ var _kA=_teamClubFlag(cx.rdata,m.aName); if(_kA) _ca=Object.assign({},_ca,{flag:_kA}); }
+    if(!_cb.flag||(_cb.fed&&!_flagImg(_cb.fed))){ var _kB=_teamClubFlag(cx.rdata,m.bName); if(_kB) _cb=Object.assign({},_cb,{flag:_kB}); }
     var _pk=lv.pk;  // id por NOMBRE para vincular cruce↔formación (países y clubes)
     // clave por FED para el salto a Partidas: resolvemos el nombre→fed (aunque no traiga "(FED)", ej.
     // "Bulgaria"), para que coincida con el id del match en la grilla de partidas (que también resuelve).
@@ -12096,7 +12124,7 @@ function _teamRoundBlock(m, mi, roundNum, crk, cx, lv){
         _resBl);
       inner+='<div role="row" class="tm-row" style="display:flex;align-items:center;gap:6px;padding:9px 16px;'+(bi?'border-top:1px solid var(--bd14);':'')+'font-size:15px">';
       inner+='<span role="rowheader" style="display:contents">'+_a11yDice(_mesaFrase)+'</span>';
-      inner+='<span role="cell"'+(b.nW?' data-jug="'+escHtml(b.nW)+'"':'')+' style="display:contents">'+side(b.tW,b.nW,b.eW,true,b.fW)+'</span>';
+      inner+='<span role="cell"'+(b.nW?' data-jug="'+escHtml(b.nW)+'"':'')+' style="display:contents">'+side(b.tW,b.nW,b.eW,true,b.fW||_teamRosterFed(cx.rdata,b.nW))+'</span>';
       inner+='<span role="cell" style="display:inline-flex;flex-shrink:0">'+_teamColorDot(leftIsWhite)+_a11yDice(leftIsWhite?'blancas':'negras')+'</span>';
       // Resultado clickeable: abre la partida del broadcast que coincide con ese tablero (por ronda
       // + nombres). El ojito NO depende de que haya resultado: una mesa EN JUEGO es justo la que más
@@ -12119,7 +12147,7 @@ function _teamRoundBlock(m, mi, roundNum, crk, cx, lv){
         inner+='<span role="cell" class="tm-res" style="flex-shrink:0;width:66px;text-align:center;font-weight:700;color:var(--text)">'+_a11yEnVezDe(escHtml(b.res||''), _a11yMesaCorto(leftIsWhite?(b.nW||''):(b.nB||''), leftIsWhite?(b.nB||''):(b.nW||''), _resBl))+'</span>';
       }
       inner+='<span role="cell" style="display:inline-flex;flex-shrink:0">'+_teamColorDot(!leftIsWhite)+_a11yDice(!leftIsWhite?'blancas':'negras')+'</span>';
-      inner+='<span role="cell"'+(b.nB?' data-jug="'+escHtml(b.nB)+'"':'')+' style="display:contents">'+side(b.tB,b.nB,b.eB,false,b.fB)+'</span>';
+      inner+='<span role="cell"'+(b.nB?' data-jug="'+escHtml(b.nB)+'"':'')+' style="display:contents">'+side(b.tB,b.nB,b.eB,false,b.fB||_teamRosterFed(cx.rdata,b.nB))+'</span>';
       inner+='</div>';
     });
     inner+='</div>';   // /tabla de mesas de este cruce
@@ -12370,11 +12398,11 @@ function _teamRenderCrosses(crosses, roundNum, crk, hasFormation){
     // Botón de verdad (no display:contents, que no se puede dibujar el recuadro del foco encima):
     // repite el flex del padre para que en pantalla quede exactamente igual.
     fila+='<span'+_a11yClic(_cruceFrase+((hasFormation&&_pk)?'. Ver la formación':''))+' style="flex:1;min-width:0;display:flex;align-items:center;justify-content:flex-end;gap:7px;overflow:hidden">';
-    fila+='<span style="color:var(--text);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(_paisES(m.aName,m.aFed))+'</span>'+crFlagEmoji(m.aFed);
+    fila+='<span style="color:var(--text);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(_paisES(m.aName,m.aFed))+'</span>'+((m.aFed&&_flagImg(m.aFed))||_teamClubFlag(_tData,m.aName)||crFlagEmoji(m.aFed));
     fila+='</span></span>';
     fila+='<span role="cell" style="flex-shrink:0;color:var(--gold);background:var(--bg3);border-radius:6px;padding:4px 13px;font-weight:700;font-size:15px;white-space:nowrap">'+_a11yEnVezDe(escHtml(aRes||'')+' : '+escHtml(bRes||''), (_a11yNum(aRes)==null||_a11yNum(bRes)==null)?'sin marcador':((parcial?(final?'terminado según la transmisión, ':'parcial, '):'')+_a11yMedios(_a11yNum(aRes))+' a '+_a11yMedios(_a11yNum(bRes))))+(parcial?_teamLiveDot(final):'')+'</span>';
     fila+='<span role="cell" style="flex:1;min-width:0;display:flex;align-items:center;gap:7px;overflow:hidden">';
-    fila+=crFlagEmoji(m.bFed)+'<span style="color:var(--text);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(m.bName ? _paisES(m.bName,m.bFed) : '(libre)')+'</span>';
+    fila+=((m.bFed&&_flagImg(m.bFed))||(m.bName?_teamClubFlag(_tData,m.bName):'')||crFlagEmoji(m.bFed))+'<span style="color:var(--text);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(m.bName ? _paisES(m.bName,m.bFed) : '(libre)')+'</span>';
     fila+='</span>';
     fila+='</div>';
     _filas+=fila;
@@ -14997,6 +15025,31 @@ function _crExportUrl(crUrl, art, rd) {
   return 'https://' + host + '/tnr' + m[1] + '.aspx?lan=2&zeilen=99999&art=' + art +
          (rd!=null ? '&rd=' + rd : '') + '&turdet=YES&flag=30&prt=4&excel=2010';
 }
+// País de cada CLUB (18/10/2026, Copa de Clubes de Europa). Chess-Results lo muestra como banderita en la
+// página, pero NINGÚN Excel lo trae. Se lee del HTML del "Orden de fuerza de los equipos" (art=1), que existe
+// desde antes de la ronda 1: cada encabezado es '<div class="tn_TUR"></div>&nbsp;&nbsp;1. Nombre (Elo medio…)'.
+// Devuelve {nombre normalizado (_teamNorm) → sigla}, o null si no hay al menos dos países distintos (en una
+// liga nacional todos tendrían la misma bandera: no suma nada y se deja como siempre).
+function _crParseTeamFeds(html){
+  var out={}, feds={}, n=0, re=/<div class="tn_([A-Z]{3})"><\/div>([\s\S]{0,400}?)<\/td>/g, m;
+  var dec=function(s){ return s.replace(/&nbsp;/g,' ').replace(/&#(\d+);/g,function(_,d){ return String.fromCharCode(+d); })
+    .replace(/&quot;/g,'"').replace(/&#39;|&apos;/g,"'").replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&'); };
+  while((m=re.exec(String(html||'')))){
+    var t=dec(m[2].replace(/<[^>]*>/g,'')).replace(/\s+/g,' ').trim();
+    var mh=t.match(/^\d+\.\s+(.+?)\s*(?:\((?:[^()]*(?:Elo|Rtg|Des\s*1|TB1)[^()]*)\))?\s*$/i);   // sólo encabezados de equipo
+    if(!mh) continue;
+    var k=_teamNorm(mh[1]); if(!k||!_FED_ISO[m[1]]) continue;
+    out[k]=m[1]; feds[m[1]]=1; n++;
+  }
+  return (n>=2 && Object.keys(feds).length>=2) ? out : null;
+}
+async function _crFetchTeamFeds(crUrl){
+  var u=_crExportUrl(crUrl, 1, null); if(!u) return null;
+  u=u.replace(/&flag=30&prt=4&excel=2010$/,'');
+  var res=await fetch(CR_PROXY + '/?url=' + encodeURIComponent(u));
+  if(!res.ok) return null;
+  return _crParseTeamFeds(await res.text());
+}
 
 // Baja una URL de chess-results a través del Worker. Devuelve Uint8Array (los bytes del xlsx).
 // Las tablas que el Worker guarda 10 min se piden "frescas" (copia de menos de 2 min) sólo en el ratito
@@ -15407,6 +15460,8 @@ async function _crAutoFetchTeam(crk, crUrl, opts) {
     var rosterP = (_visita && _yaEmpezo && data.teamRoster && data.teamRoster.length)
       ? Promise.resolve(null)
       : _crProxyFetch(_crExportUrl(crUrl, 8, null)).then(crExtractXlsx).then(_teamParseRoster).catch(function(){ return null; });
+    // País de cada club (banderas de los equipos): sólo el botón del autor; la visita lo recibe publicado.
+    var teamFedsP = _visita ? Promise.resolve(null) : _crFetchTeamFeds(crUrl).catch(function(){ return null; });
     try {
       var srows = await crExtractXlsx(await _crProxyFetch(_crExportUrl(crUrl, 0, null)));
       var stand = _teamParseStandings(srows);
@@ -15414,6 +15469,7 @@ async function _crAutoFetchTeam(crk, crUrl, opts) {
       if (!maxR) maxR = _teamRoundsFromStandings(srows);
     } catch(e) {}
     try { var _ros = await rosterP; if (_ros && _ros.length) data.teamRoster = _ros; } catch(e) {}
+    try { var _tf = await teamFedsP; if (_tf) data.teamFeds = _tf; } catch(e) {}
     // 2) Por ronda bajamos DOS vistas en paralelo: CRUCES POR PAÍSES (art=2, salen antes, país vs país)
     //    y FORMACIÓN por mesas (art=3, la composición tablero por tablero). Con maxR conocido vamos
     //    1..maxR+1 (la +1 agarra la ronda en curso, cuyos cruces ya salieron aunque la formación no).

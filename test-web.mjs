@@ -28,7 +28,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2477;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2485;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -3993,6 +3993,7 @@ console.log('\n=== 46. Accesibilidad Fase 1: las tablas de torneo ===');
     + 'function _teamParseCrosses(u){ var o = {}; o[_rd(u)] = [ { aName: "Egypt", bName: "Argentina" } ]; return o; }'
     + 'function _teamParseRounds(u){ var o = {}; o[_rd(u)] = [ { aName: "Egypt", bName: "Argentina", boards: [ { res: "1-0" } ] } ]; return o; }'
     + 'function _teamRefresh(){} function _tdRefreshPodium(){}'
+    + 'async function _crFetchTeamFeds(u){ pedidos.push(String(u).replace(/art=0/, "art=feds")); return { argentina: "ARG", egypt: "EGY" }; }'
     + extraerFuncion('_crExportUrl') + extraerFuncion('_teamRoundComplete')
     + 'async ' + extraerFuncion('_crAutoFetchTeam')
     + ' return _crAutoFetchTeam;');
@@ -4032,12 +4033,45 @@ console.log('\n=== 46. Accesibilidad Fase 1: las tablas de torneo ===');
   const todas = [...new Set(pedidos.filter((u) => artDe(u) === 3).map(rdDe))].sort((a, b) => a - b);
   chk(JSON.stringify(todas) === '[1,2,3,4,5,6,7,8]' && pedidos.some((u) => artDe(u) === 8),
       'el botón "Actualizar desde Chess-Results" del autor sigue bajando todas las rondas y el plantel', JSON.stringify(todas));
+  chk(!!E.guardado && E.guardado.teamFeds && E.guardado.teamFeds.egypt === 'EGY',
+      'el botón del autor guarda el país de cada equipo (teamFeds, banderas de los clubes)');
+  pedidos.length = 0; E = { data: publicado(), rondas: 7 };
+  await mundo(pedidos, E)('cr2_x', URL_CR, { silent: true });
+  chk(!pedidos.some((u) => /art=feds/.test(u)) && !(E.guardado && E.guardado.teamFeds),
+      'la visita NO pide el país de los clubes (lo recibe publicado)');
 
   // Un visitante sin nada guardado (torneo que el autor todavía no publicó) baja todo, como antes.
   pedidos.length = 0; E = { data: {}, rondas: 3 };
   await mundo(pedidos, E)('cr2_x', URL_CR, { silent: true });
   chk([...new Set(pedidos.filter((u) => artDe(u) === 2).map(rdDe))].length === 4 && pedidos.some((u) => artDe(u) === 8),
       'sin nada publicado todavía, la visita baja todas las rondas y el plantel, como siempre');
+}
+
+// ── 48b. Banderas de los CLUBES y de los jugadores en la formación (Copa de Clubes de Europa, 18/10/2026) ──
+{
+  console.log('\n=== 48b. Banderas de los clubes (teamFeds) ===');
+  const f = new Function('var _FED_ISO = { TUR: "tr", MKD: "mk", MNC: "mc", GER: "de", ARG: "ar" };'
+    + 'function normStr(s){ return String(s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]+/g," ").trim(); }'
+    + 'function _flagImg(f){ return "[" + f + "]"; }'
+    + extraerFuncion('_teamNorm') + extraerFuncion('_crParseTeamFeds') + extraerFuncion('_teamClubFlag')
+    + 'var _teamRosterFedMemo = { ros: null, mp: null };' + extraerFuncion('_teamRosterFed')
+    + ' return { _crParseTeamFeds, _teamClubFlag, _teamRosterFed };')();
+  const html = '<tr><td class="CR" colspan="9"><div class="tn_TUR"></div>&nbsp;&nbsp;1. Bayegan Pendik Chess Sports Club (Elo medio:2715, Des 1: 2 / Des 2: 0)</td></tr>'
+    + '<tr><td class="CR"><div class="tn_MNC"></div>&nbsp;&nbsp;101. Cercle d&#39;Echecs de Monte-Carlo (Elo medio:2120, Des 1: 0 / Des 2: 0)</td></tr>'
+    + '<tr><td class="CR"><div class="tn_GER"></div></td><td>Giri, Anish</td></tr>';
+  const mp = f._crParseTeamFeds(html);
+  chk(!!mp && mp.bayeganpendikchesssportsclub === 'TUR' && mp.cercledechecsdemontecarlo === 'MNC',
+      'lee el país de cada club del Orden de fuerza (con el apóstrofo de Monte-Carlo)', JSON.stringify(mp));
+  chk(!!mp && Object.keys(mp).length === 2, 'una bandera que no es de un encabezado de equipo (un jugador) no se cuenta', mp && Object.keys(mp).length);
+  const igual = '<td><div class="tn_ARG"></div>&nbsp;1. Obras (Elo medio:2300)</td><td><div class="tn_ARG"></div>&nbsp;2. Temperley (Elo medio:2200)</td>';
+  chk(f._crParseTeamFeds(igual) === null, 'en una liga nacional (todos del mismo país) no se guarda nada: queda como siempre');
+  const d = { teamFeds: mp, teamRoster: [ { name: 'Bayegan', players: [ { nm: 'Giri, Anish', fed: 'NED' }, { nm: 'Erdogmus, Yagiz Kaan', fed: 'TUR' }, { nm: 'Murzin, Volodar', fed: 'FID' } ] } ] };
+  chk(f._teamClubFlag(d, 'Bayegan Pendik Chess Sports Club') === '[TUR]' && f._teamClubFlag({}, 'Bayegan Pendik Chess Sports Club') === '',
+      'la bandera del club sale de teamFeds; sin teamFeds, nada');
+  chk(f._teamRosterFed(d, 'Erdogmus, Yagiz Kaan') === 'TUR' && f._teamRosterFed(d, 'Murzin, Volodar') === '' && f._teamRosterFed(d, 'Giri, Anish') === '',
+      'jugador: la federación del plantel; FID (sin bandera) y la que no está en el mapa quedan vacías');
+  chk(f._teamRosterFed({ teamRoster: d.teamRoster }, 'Erdogmus, Yagiz Kaan') === '',
+      'sin teamFeds (Olimpiada, liga nacional) los jugadores de la formación no llevan bandera nueva');
 }
 
 // ── 49. info64: la misma regla (la visita no vuelve a bajar las rondas completas) ────────────────
