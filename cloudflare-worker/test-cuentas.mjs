@@ -1315,6 +1315,42 @@ console.log('\n=== 20. Rating: dos partidas que terminan juntas suman las dos ==
     await worker.fetch(req('/libc?url=' + encodeURIComponent('https://lichess.org/api/broadcast/tokEnNo2')), env, ctxT);
     const sinToken = vistos.filter((v) => v.url.includes('tokEnNo2'));
     chk(sinToken.length === 1 && sinToken[0].auth === null, 'sin el secreto, sale sin token (como siempre)', JSON.stringify(sinToken));
+    // Lichess rechaza el token (lo que pasó el 18/10 con un token sin study:read): se repite sin token y el vivo sigue.
+    vistos.length = 0;
+    globalThis.fetch = async (url, opts) => {
+      const h = (opts && opts.headers) || {};
+      const auth = h.Authorization || null;
+      vistos.push({ url: String(url), auth });
+      if (auth) return new Response('{"error":"Missing scope: study:read"}', { status: 403 });
+      return new Response('{"tour":{"id":"rechazo"}}', { status: 200 });
+    };
+    const rr = await worker.fetch(req('/libc?url=' + encodeURIComponent('https://lichess.org/api/broadcast/tokRech3')), Object.assign({}, env, { LICHESS_TOKEN: 'lip_prueba' }), ctxT);
+    const cuerpo = await rr.text();
+    chk(rr.status === 200 && /rechazo/.test(cuerpo), '🔒 si Lichess rechaza el token (403), el visitante igual recibe la transmisión', rr.status + ' ' + cuerpo);
+    chk(vistos.length === 2 && vistos[0].auth && !vistos[1].auth, 'porque el Worker la volvió a pedir SIN token', JSON.stringify(vistos.map((v) => !!v.auth)));
+
+    // /libc/salud: lo que mira el bot para avisar al autor.
+    vistos.length = 0;
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url), h = (opts && opts.headers) || {};
+      vistos.push({ url: u, auth: h.Authorization || null });
+      if (u.endsWith('/api/token/test')) return Response.json({ [opts.body]: { userId: 'pupi', scopes: 'study:read', expires: null } });
+      if (u.includes('/api/broadcast/top?')) return Response.json({ active: [{ tour: { id: 'topTour1' } }] });
+      if (u.endsWith('/api/broadcast/topTour1')) return new Response('{}', { status: h.Authorization ? 403 : 200 });
+      return new Response('?', { status: 404 });
+    };
+    const sal = await worker.fetch(req('/libc/salud'), Object.assign({}, env, { LICHESS_TOKEN: 'lip_prueba' }), ctxT);
+    const s = await sal.json();
+    chk(s.token === true && s.valido === true && s.scopes === 'study:read' && s.vence === null, 'la salud dice: hay token, Lichess lo reconoce, permisos y que no vence', JSON.stringify(s));
+    chk(s.prueba === 403, 'y prueba una transmisión DE VERDAD con el token (así se ve un permiso nuevo que pida Lichess)', s.prueba);
+    chk(!JSON.stringify(s).includes('lip_prueba') && !JSON.stringify(s).includes('pupi'), '🔒 la salud nunca muestra el token ni de quién es');
+    const antesSalud = vistos.length;
+    await worker.fetch(req('/libc/salud'), Object.assign({}, env, { LICHESS_TOKEN: 'lip_prueba' }), ctxT);
+    chk(vistos.length === antesSalud, 'y queda guardada: pedirla de nuevo no le pide nada a Lichess', vistos.length - antesSalud);
+    guardado.clear();
+    const sinTok = await (await worker.fetch(req('/libc/salud'), env, ctxT)).json();
+    chk(sinTok.token === false, 'sin el secreto, la salud dice que no hay token', JSON.stringify(sinTok));
+
     chk(!/lip_[A-Za-z0-9]{8,}/.test((await import('node:fs')).readFileSync(new URL('./cr-proxy-worker.js', import.meta.url), 'utf8')),
         '🔒 ningún token de Lichess escrito en el código del Worker');
   } finally {

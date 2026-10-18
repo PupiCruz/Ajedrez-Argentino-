@@ -183,7 +183,7 @@ misma carpeta, la más nueva arriba): conviene leerlo antes de tocar cuentas, mo
 los proxys del Worker o el arranque de la página.
 
 ## 🧪 Bancos de pruebas — correrlos antes y después de tocar esas partes
-Son quince y no necesitan instalar nada (Node y listo). **Cuántas comprobaciones tiene cada uno lo
+Son dieciséis y no necesitan instalar nada (Node y listo). **Cuántas comprobaciones tiene cada uno lo
 dice el propio banco al terminar**, y por eso no está copiado acá: un número escrito a mano en dos
 lugares se pudre solo. (Pasó: este archivo decía 394 cuando el banco de la web ya iba por 542.)
 
@@ -204,6 +204,7 @@ lugares se pudre solo. (Pasó: este archivo decía 394 cuando el banco de la web
 | `vivo-worker/test-avisos-ronda.mjs` | los avisos de ronda del bot: nacional (primeras mesas) vs internacional (los argentinos) | `cd vivo-worker` y `node test-avisos-ronda.mjs` |
 | `vivo-worker/test-titulados.mjs` | 🏆 avisos de los Titled Tuesday/Thursday de Chess.com en #en-vivo + 🌐 ratings online en /jugador | `cd vivo-worker` y `node test-titulados.mjs` |
 | `vivo-worker/test-ranking-musica.mjs` | 🎵 ranking de Música en el Tablero: sólo con cuenta (cr-proxy), frenos (30 s, canción completa, tope de puntos), orden, 100 mejores | `cd vivo-worker` y `node test-ranking-musica.mjs` |
+| `vivo-worker/test-token-lichess.mjs` | 🔑 aviso por privado al autor si el token de Lichess de cr-proxy (`LICHESS_TOKEN`, permiso study:read) falla o vence | `cd vivo-worker` y `node test-token-lichess.mjs` |
 
 Ya cazaron varios bugs antes de que llegaran al sitio. Si uno falla, **no publicar**.
 

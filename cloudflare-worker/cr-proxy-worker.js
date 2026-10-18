@@ -100,6 +100,9 @@ const LI_UA = 'AjedrezArgentinoBot/1.0 (+https://chessargentino.pages.dev)';
 // permisos (los datos de transmisiones son públicos) y vive SÓLO como secreto del Worker (LICHESS_TOKEN),
 // nunca en este archivo. Sin el secreto, todo sigue como antes.
 let _liToken = '';
+let _liTokenRechazo = null;   // { t, status }: la última vez que Lichess rechazó el token en este isolate
+// La revisión de /libc/salud se guarda 5 min: es pública y cada una le pide 3 cosas a Lichess con NUESTRO token.
+const LI_SALUD_CACHE = 300;
 // Dedup de bajadas concurrentes DENTRO de un mismo isolate (single-flight): si llegan muchos
 // pedidos del mismo torneo a la vez, UNA sola va a Lichess y las demás esperan esa respuesta.
 // Cada entrada: { p: la promesa, desde: cuándo arrancó, soltar(): la borra y libera su lugar }.
@@ -234,6 +237,7 @@ export default {
 
     // ── Proxy con caché para el broadcast de Lichess (mata el 429 del vivo) ──
     if (reqUrl.pathname === '/libc') { _liToken = (env && env.LICHESS_TOKEN) || ''; return liBc(reqUrl, ctx, request); }
+    if (reqUrl.pathname === '/libc/salud') return liSalud(reqUrl, env, ctx);
 
     // ── Redacción de noticias con IA (Workers AI) ──
     if (reqUrl.pathname === '/noticia') return noticiaAI(request, env);
@@ -728,6 +732,45 @@ async function liBc(reqUrl, ctx, request) {
   return new Response(r.buf, { status: 200, headers: h });
 }
 
+// GET /libc/salud — ¿anda el token de Lichess del Worker? (18/10/2026). La consulta el bot (vivo-worker, TgAvisador)
+// y si algo está mal le escribe al autor por PRIVADO en Telegram. Devuelve:
+//   { token: hay secreto, valido: Lichess lo reconoce, scopes, vence (ms o null = nunca), prueba: estado HTTP de pedir
+//     una transmisión de verdad con el token (así se ve un permiso que Lichess empiece a pedir), rechazo }.
+// Nunca devuelve el token ni de quién es. Es pública pero queda guardada LI_SALUD_CACHE (no se puede usar para
+// gastar nuestro cupo de Lichess).
+async function liSalud(reqUrl, env, ctx) {
+  const cache = caches.default;
+  const key = llaveCache(reqUrl, '/__lisalud', {});
+  const hit = await cache.match(key);
+  if (hit) return hit;
+  const token = (env && env.LICHESS_TOKEN) || '';
+  const out = { ok: true, token: !!token, rechazo: _liTokenRechazo };
+  if (token) {
+    const conToken = { 'User-Agent': LI_UA, 'Authorization': 'Bearer ' + token };
+    try {
+      const r = await fetch('https://lichess.org/api/token/test', { method: 'POST', headers: { 'User-Agent': LI_UA, 'Content-Type': 'text/plain' }, body: token });
+      if (r.ok) {
+        const t = (await r.json())[token];
+        out.valido = !!t;
+        if (t) { out.scopes = String(t.scopes || ''); out.vence = t.expires == null ? null : Number(t.expires); }
+      } else out.testStatus = r.status;
+    } catch (e) { out.testError = String(e && e.message || e); }
+    try {
+      const top = await fetch('https://lichess.org/api/broadcast/top?page=1', { headers: conToken });
+      out.prueba = top.status;
+      if (top.ok) {
+        const j = await top.json();
+        const t = (j.active && j.active[0]) || ((j.past && j.past.currentPageResults) || [])[0];
+        const id = t && t.tour && t.tour.id;
+        if (id) out.prueba = (await fetch('https://lichess.org/api/broadcast/' + id, { headers: conToken })).status;
+      }
+    } catch (e) { out.pruebaError = String(e && e.message || e); }
+  }
+  const resp = jsonResp(out, 200, LI_SALUD_CACHE);
+  if (ctx) ctx.waitUntil(cache.put(key, resp.clone()));
+  return resp;
+}
+
 // Baja de Lichess a memoria (ArrayBuffer) con dedup por isolate: si ya hay una bajada en curso
 // para la misma URL, todos esperan esa. Devuelve { ok, status, buf, choque } — `choque`: cuando
 // arrancó había OTRA exportación de PGN andando (un 429 así es por eso, no un freno de verdad).
@@ -749,12 +792,21 @@ function liFetchBuffered(cacheKeyStr, targetUrl, isPgn, cache, reqUrl, ctx, guar
     const ac = new AbortController();
     const corte = setTimeout(() => { try { ac.abort(); } catch (e) {} }, LI_FETCH_TIMEOUT_MS);
     try {
-      const up = await fetch(targetUrl, {
+      const pedir = (token) => fetch(targetUrl, {
         headers: Object.assign({ 'User-Agent': LI_UA, 'Accept': isPgn ? 'application/x-chess-pgn' : 'application/json' },
-                               _liToken ? { 'Authorization': 'Bearer ' + _liToken } : {}),
+                               token ? { 'Authorization': 'Bearer ' + token } : {}),
         redirect: 'follow',
         signal: ac.signal,
       });
+      let up = await pedir(_liToken);
+      // Lichess rechaza el token (vencido, borrado, o un permiso nuevo que empezó a pedir; el 18/10/2026 un token sin
+      // study:read congeló el vivo con 403): se repite SIN token, como antes de tenerlo. Peor caso, vuelven los 429;
+      // nunca más tableros congelados. El aviso al autor lo da la revisión de /libc/salud (bot de Telegram).
+      if (_liToken && (up.status === 401 || up.status === 403)) {
+        _liTokenRechazo = { t: Date.now(), status: up.status };
+        try { await up.arrayBuffer(); } catch (e) {}
+        up = await pedir('');
+      }
       const buf = await up.arrayBuffer();
       return { ok: up.ok, status: up.status, buf, choque };
     } finally {
