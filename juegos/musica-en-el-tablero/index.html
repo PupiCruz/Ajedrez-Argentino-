@@ -802,11 +802,15 @@ const MIDISONGS = {
   /* Rey de la Montaña as Grieg wrote it for orchestra: strings sing the melody (legato), the bass starts plucked (pizzicato) and turns
      to horns when the piece grows (60 s), the kick becomes a timpani on B; snare and cymbals stay soft, hi-hats are left out */
   korobeiniki: { data: KOROBEINIKI, bass: 1, mel: 0, total: 204, local: true, melGap: 0.3, drumGain: 0.7, voices: { 0: 'chip_lead', 1: 'chip_tri', 2: 'chip_arp' } },
-  kingmtn: { data: KINGMTN, bass: 1, mel: 0, total: 258, local: true, legato: 0.92, samples: 'sonidos-reydelamontana.js', velFloor: 0.7, drumGain: 0.5,
+  kingmtn: { data: KINGMTN, bass: 1, mel: 0, total: 258, local: true, adelanto: 0.06, legato: 0.92, samples: 'sonidos-reydelamontana.js', velFloor: 0.7, drumGain: 0.5,
     drumMap: { 36: ['s_timp', 47], 35: ['s_timp', 42], 42: null }, chGain: { 0: 1.25, 1: 1.15, 2: 0.52 }, voices: { 0: 's_strings', 1: [[0, 's_pizz'], [60, 's_horn']], 2: 's_strings' } },
   cumparsita: { data: CUMPARSITA, bass: 1, mel: 0, total: 318, local: true, samples: ['sonidos-cumparsita.js', 'sonidos-bandoneon.js'], sostener: { 0: 0.55 }, chGain: { 0: 0.67, 1: 0.76, 2: 0.5, 3: 0.26 }, voices: { 0: 's_bando', 1: 's_bass', 2: 's_piano', 3: 's_legato' } }
 };
 let CH_EV = {}, CHARTED = new Set(), chPtr = 0;
+/* adelanto (18/10): the recordings of Rey de la Montaña (pizzicato, strings, horns) take 50-80 ms longer to be heard than
+   the piano and bandoneón of the other songs, so with the same latency setting its pieces seemed to come early. All of its
+   sound (the band and the player's notes) starts that much ahead; the pieces stay where they are */
+const adelanto = () => (MIDISONGS[songKey] && MIDISONGS[songKey].adelanto) || 0;
 function chocloEvents() {
   if (CH_EV[songKey]) return CH_EV[songKey];
   const D = MIDISONGS[songKey].data, ev = [];
@@ -994,7 +998,7 @@ function preNotes() {
   if (audioLat() < PRE_LAT) return;
   for (const n of notes) {
     if (n.pre !== undefined || n.state !== 'wait' || !n.midi) continue;
-    const at = t0 + n.t;
+    const at = t0 + n.t - adelanto();
     if (at > ac.currentTime + AHEAD) continue;
     if (at < ac.currentTime) { n.pre = null; continue; }   /* too late to hand over: it plays on the tap, as before */
     DET = []; n.pre = noteVoice(n, at, 1); n.preDet = DET; DET = null;
@@ -1340,7 +1344,7 @@ function schedChoclo(e) {
   while (chPtr < evs.length && evs[chPtr].beat < hi) {
     const v = evs[chPtr++];
     if (CHARTED.has(v.id)) continue;
-    const t = t0 + v.beat * SPB;
+    const t = Math.max(ac.currentTime, t0 + v.beat * SPB - adelanto());
     const M = MIDISONGS[songKey];
     if (v.ch === 9) {   /* drumMap: a drum note can go to a recorded instrument at a fixed pitch, or be left out (null) */
       const to = M.drumMap && M.drumMap[v.midi];
@@ -1987,7 +1991,7 @@ function hitNote(n, d) {
   else {
     DET = [];
     /* the note sounds on its own beat, in step with the rest of the band: a press a little early waits for it (a late one plays at once) */
-    const at = ac ? Math.max(ac.currentTime, t0 + n.t) : 0;
+    const at = ac ? Math.max(ac.currentTime, t0 + n.t - adelanto()) : 0;
     if (n.midi) n.voice = noteVoice(n, at, d <= 0.07 ? 1 : d <= 0.12 ? 0.85 : 0.7);
     else sfxHit(n.lane, n.type);
     n.det = DET; DET = null;
