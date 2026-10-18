@@ -28,7 +28,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2485;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2489;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -6900,7 +6900,7 @@ console.log('\n=== 53g-quater. Al entrar desde un aviso: parar en la colgada y g
     + 'var document = { getElementById: function(){ return { style: {}, textContent: "", classList: { add: function(){}, remove: function(){} } }; } };'
     + 'Object.defineProperty(_fa.nodes, "fen", { value: "" });'
     + 'function _faInicio(){ return 0; }' + extraerFuncion('_faDeAyudantes') + extraerFuncion('_faSaltea')
-    + extraerFuncion('faNext')
+    + extraerFuncion('_faRepPrincipalVivo') + extraerFuncion('faNext')
     + '; return { next: faNext, fa: _fa, get fin(){ return terminado; } };')();
   // Falta evaluar la 46 (índice 45, la colgada) y la 3 (índice 2, del principio).
   NX.fa.results[45] = null; NX.fa.results[2] = null;
@@ -6934,7 +6934,7 @@ console.log('\n=== 53g-quinquies. Gráfico en vivo: una sí y una no, afinar la 
       + 'function _faRellenarSiLibre(){} ' + 'function _faLiveEligible(){ return false; } var _faLiveHidden = false; function _faInterp(r){ return r; }'
       + 'function sfAnalyze(){} function setTimeout(){} function clearTimeout(){} var _faNagSig = ""; function _vbQuizasSubir(){}'
       + 'var document = { getElementById: function(){ return { style: {}, textContent: "", classList: { add: function(){}, remove: function(){} } }; } };'
-      + ['_faWinP', '_faDeAyudantes', '_faSaltea', '_faAfinar', '_faSiguiente', 'faNext'].map(extraerFuncion).join('\n')
+      + ['_faWinP', '_faDeAyudantes', '_faSaltea', '_faAfinar', '_faSiguiente', '_faRepPrincipalVivo', 'faNext'].map(extraerFuncion).join('\n')
       + '; for (var i = 0; i < ' + n + '; i++) { _fa.nodes.push({ fen: "f" + i }); _fa.results.push(null); }'
       + '  _fa.ply = _fa.desde = _faInicio();'
       + '  function correr(){ var vueltas = 0; faNext(); while (_fa.running && vueltas++ < 1000) {'
@@ -9891,6 +9891,41 @@ console.log('\n=== 74. ⚡ Gráfico repartido entre varios motores: pedazos, rob
   chk(/stockfish-19-lite-single\.js/.test(extraerFuncion('_faRepIniciar')) && /Math\.min\(4, Math\.floor\(hc \/ 2\)\)/.test(extraerFuncion('_faRepCuantos'))
       && /total = Math\.min\(total, 2\)/.test(extraerFuncion('_faRepCuantos')),
       'ayudantes = el mismo motor de un hilo (sin COOP/COEP); hasta 4 motores en total, 2 en teléfonos o con poca memoria');
+  // 18/10: vivo con el módulo APAGADO → el principal hace primero la cola y después toma pedazos del historial,
+  // como uno más. Si prenden el módulo a la mitad, devuelve su pedazo y cierra su pase (vuelve el módulo).
+  const armarV = (moduloEn) => new Function('moduloEn', 'var orden = [], terminado = 0, finVivo = 0, _faBase = { n: Infinity }, _faLiveCache = {};'
+    + 'var _fa = { running: true, nodes: [], results: [], ply: 0, desde: 0, live: true, relleno: false, cola: null, volver: null, forzar: -1, _capTimer: null },'
+    + '    sf = { on: false, ready: true, engine: { postMessage: function(){} } }, _FA_LIVE_DEEP_N = 2, _FA_LIVE_DEPTH = 20, _FA_LIVE_DEEP_DEPTH = 22, _FA_MANUAL_DEPTH = 20, _FA_LIVE_CAP_MS = 600, _FA_LIVE_DEEP_CAP_MS = 3000, _FA_MANUAL_CAP_MS = 600, _FA_LIVE_MIN = 12, _FA_LIVE_DEEP_MIN = 13, _FA_AFINAR_WP = 8;'
+    + 'function _faNeedsPassEval(i){ return _fa.results[i] == null; } function _faInicio(){ return 0; }'
+    + 'function faFinish(){ terminado++; _fa.running = false; } function faClassify(){} function faRender(){} function faRenderStats(){}'
+    + 'function faApplyNags(){} function cvUpdateNagBadge(){} function faUpdateBar(){} function faGetNodes(){ return _fa.nodes; }'
+    + 'function _faRellenarSiLibre(){} function _faLiveEligible(){ return false; } var _faLiveHidden = false; function _faInterp(r){ return r; }'
+    + 'function sfAnalyze(){} function setTimeout(){} function clearTimeout(){} var _faNagSig = ""; function _vbQuizasSubir(){}'
+    + 'function _faRepSigue(){} function _faRepFinVivo(){ finVivo++; _fa.rep = null; }'
+    + 'var document = { getElementById: function(){ return { style: {}, textContent: "", classList: { add: function(){}, remove: function(){} } }; } };'
+    + ['_faWinP', '_faDeAyudantes', '_faSaltea', '_faAfinar', '_faSiguiente', '_faRepFalta', '_faRepProxima', '_faRepOcupados',
+       '_faRepPrincipalVivo', '_faRepPrincipalFin', '_faRepSoltarMain', 'faNext'].map(extraerFuncion).join('\n')
+    + '; var fens = []; for (var i = 0; i < 30; i++) { _fa.nodes.push({ fen: "f" + i }); _fa.results.push(null); fens.push("f" + i); }'
+    + '  var ayu = { listo: false, ply: -1, pz: null };'   // un ayudante que todavía está cargando (no toma nada)
+    + '  _fa.rep = { live: true, hasta: 28, fens: fens, conEv: fens.map(function(){ return false; }), cola: [{ sig: 0, b: 12 }, { sig: 12, b: 24 }, { sig: 24, b: 28 }], main: { pz: null }, ayu: [ayu] };'
+    + '  var R0 = _fa.rep, vueltas = 0; faNext();'
+    + '  while (_fa.running && vueltas++ < 200) { orden.push(_fa.ply); _fa.results[_fa.ply] = { cp: 0 };'
+    + '    if (moduloEn && orden.length === 5) sf.on = true;'
+    + '    _faSiguiente(); faNext(); }'
+    + '  return { orden: orden, fin: terminado, finVivo: finVivo, cola: R0.cola, main: R0.main };')(moduloEn);
+  const v1 = armarV(false);
+  chk(v1.orden.slice(0, 2).join(',') === '28,29' && v1.orden.slice(2).join(',') === Array.from({ length: 28 }, (_, i) => i).join(',')
+      && v1.fin === 1 && v1.finVivo === 1,
+      '⚡ vivo con el módulo apagado: primero las 2 últimas a fondo, después el principal toma pedazos del historial (0..27) y cierra el historial', v1);
+  const v2 = armarV(true);
+  chk(v2.orden.join(',') === '28,29,0,1,2' && v2.main === null && v2.cola.length && v2.cola[0].sig === 3 && v2.cola[0].b === 12 && v2.finVivo === 0 && v2.fin === 1,
+      '…si prenden el módulo a la mitad, devuelve lo que le quedaba del pedazo (3..11) a los ayudantes y cierra su pase (el módulo vuelve)', v2);
+  chk(/main: \(vivo && sf\.on\) \? null : \{ pz: null \}/.test(extraerFuncion('_faRepIniciar'))
+      && /_fa\.rep\.main && !_fa\.running/.test(extraerFuncion('faLiveBuild'))
+      && /R\.main && R\.main\.pz && _fa\.running\) return;/.test(extraerFuncion('_faRepQuieto')),
+      'el principal entra al reparto del vivo sólo con el módulo apagado; arranca su pase aunque falte sólo el historial; y el historial no se cierra con su pedazo a medias');
+  chk(/var deep  = cola && sf\.on;/.test(extraerFuncion('faNext')) && /_fa\.minD  = _fa\.live \? \(cola \? _FA_LIVE_DEEP_MIN/.test(extraerFuncion('faNext')),
+      'con el módulo apagado la cola va con el presupuesto común (prof. 20, 0,6 s) y conserva su vara mínima; con el módulo prendido, a fondo como antes');
 }
 // ── 75. ⚡ Barrido de colgadas y jugadones con varios motores (08/10/2026) ─────────────────────────
 console.log('\n=== 75. ⚡ Barrido con varios motores: cada uno sigue su partida, confirmaciones primero, plan B (08/10) ===');

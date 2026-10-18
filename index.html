@@ -51790,6 +51790,7 @@ var _FA_LIVE_MIN = 12;
 // Con la cola corta, cuando llegan VARIAS jugadas juntas el pase las evalúa a todas dentro de la
 // ventana de refresco (antes 6 profundas tardaban ~28s y algunas quedaban sin corregir hasta el
 // siguiente refresco). Las demás usan el presupuesto liviano de arriba (prof. 20, 0,6 s), suficiente.
+// (18/10/2026: SÓLO con el módulo prendido. Apagado, la cola va al presupuesto común: ver faNext.)
 var _FA_LIVE_DEEP_N      = 2;     // cuántas jugadas finales cuentan como "cola" profunda
 var _FA_LIVE_DEEP_DEPTH  = 22;    // profundidad objetivo de la cola
 var _FA_LIVE_DEEP_CAP_MS = 3000;  // tope de tiempo por jugada de la cola
@@ -52110,7 +52111,7 @@ function faLiveBuild() {
   if (_fa.rep && _fa.rep.live) _faRepAmpliar(nodes.length - _FA_LIVE_DEEP_N, nodes);
   else if (!(_fa.running && _fa.relleno)) _faRepIniciar(true, nodes.length - _FA_LIVE_DEEP_N);
   if (_fa.running && _fa.relleno) { /* sigue la tanda de relleno */ }
-  else if (_faCuantasPase() > 0) {
+  else if (_faCuantasPase() > 0 || (_fa.rep && _fa.rep.live && _fa.rep.main && !_fa.running)) {   // (o el principal ayuda con el historial)
     // PARTIDA NUEVA con el módulo prendido: antes de que el pase del gráfico le saque el motor,
     // dejar que el módulo analice la POSICIÓN ACTUAL (prof. ~18) y la muestre. Así el visitante ve
     // ya la valoración + líneas de la posición final (no las de la partida anterior) mientras el
@@ -52379,12 +52380,20 @@ function faNext() {
       _fa.ply = _fa.nodes.length;
     }
   } else {
-    while (_fa.ply < _fa.nodes.length && (!_faNeedsPassEval(_fa.ply) || _faSaltea(_fa.ply))) _fa.ply++;
-    // Se empezó por el medio (aviso de colgada) y se llegó al final: volver al principio por las que
-    // quedaron. El gráfico sale entero igual, sólo que la parte que interesa se dibuja primero.
-    if (_fa.ply >= _fa.nodes.length && _fa.desde > 0) {
-      _fa.desde = 0; _fa.ply = 0;
+    for (;;) {
       while (_fa.ply < _fa.nodes.length && (!_faNeedsPassEval(_fa.ply) || _faSaltea(_fa.ply))) _fa.ply++;
+      // Se empezó por el medio (aviso de colgada) y se llegó al final: volver al principio por las que
+      // quedaron. El gráfico sale entero igual, sólo que la parte que interesa se dibuja primero.
+      if (_fa.ply >= _fa.nodes.length && _fa.desde > 0) {
+        _fa.desde = 0; _fa.ply = 0;
+        while (_fa.ply < _fa.nodes.length && (!_faNeedsPassEval(_fa.ply) || _faSaltea(_fa.ply))) _fa.ply++;
+      }
+      if (_fa.ply < _fa.nodes.length) break;
+      // ⚡ Vivo con el módulo apagado: hecha la cola (primero, mientras los ayudantes arrancan con el historial),
+      // el principal toma pedazos del historial. Si deja de tomarlos y hay que volver al principio, otra vuelta.
+      var _antes = _fa.ply, _ipRep = _faRepPrincipalVivo();
+      if (_ipRep >= 0) { _fa.ply = _ipRep; break; }
+      if (_fa.ply === _antes) break;   // nada más: se cierra el pase
     }
   }
   if (_fa.ply >= _fa.nodes.length && _fa.relleno) {
@@ -52439,10 +52448,14 @@ function faNext() {
   // En vivo hay dos presupuestos: liviano para el historial y PROFUNDO para la cola (las últimas
   // _FA_LIVE_DEEP_N jugadas), que es lo que el visitante está mirando y donde los símbolos y el
   // dibujo tienen que ser lo más verdaderos posible. Manual: presupuesto total ≈45s por 100 jugadas.
-  var deep  = _fa.live && (_fa.nodes.length - _fa.ply) <= _FA_LIVE_DEEP_N;
+  // Con el módulo APAGADO (18/10/2026, pedido del autor) la cola va con el presupuesto común, como en el 📊 del
+  // pool: eran ~6 s del principal por 2 puntos mientras los ayudantes ya dibujaban todo lo demás. Así los 4 motores
+  // dibujan el gráfico de una. La vara para aceptarla sigue siendo la de la cola (si no llega: hueco y reintento).
+  var cola  = _fa.live && (_fa.nodes.length - _fa.ply) <= _FA_LIVE_DEEP_N;
+  var deep  = cola && sf.on;
   var depth = _fa.live ? (deep ? _FA_LIVE_DEEP_DEPTH : _FA_LIVE_DEPTH) : _FA_MANUAL_DEPTH;
   var capMs = _fa.live ? (deep ? _FA_LIVE_DEEP_CAP_MS : _FA_LIVE_CAP_MS) : _FA_MANUAL_CAP_MS;
-  _fa.minD  = _fa.live ? (deep ? _FA_LIVE_DEEP_MIN : _FA_LIVE_MIN) : 8;   // prof. mínima para aceptar la eval de ESTE nodo
+  _fa.minD  = _fa.live ? (cola ? _FA_LIVE_DEEP_MIN : _FA_LIVE_MIN) : 8;   // prof. mínima para aceptar la eval de ESTE nodo
   // Manual: el tope lo pone el MOTOR (movetime). Antes era sólo el setTimeout, que Chrome estira a 1 s
   // en pestañas ocultas (el análisis tardaba el doble si el visitante se iba a otra pestaña). El
   // setTimeout queda igual como respaldo.
@@ -52627,7 +52640,8 @@ function _faRepIniciar(vivo, hasta, nodes) {
   var cola = [], ini = Math.min(_faInicio() || 0, n);   // si vino de un aviso de colgada, primero desde ahí
   for (var a = ini; a < n; a += _FA_REP_PEDAZO) cola.push({ sig: a, b: Math.min(n, a + _FA_REP_PEDAZO) });
   for (var a2 = 0; a2 < ini; a2 += _FA_REP_PEDAZO) cola.push({ sig: a2, b: Math.min(ini, a2 + _FA_REP_PEDAZO) });
-  var R = _fa.rep = { live: !!vivo, hasta: n, fens: fens, conEv: conEv, cola: cola, main: vivo ? null : { pz: null }, ayu: [], quieto: false, renderT: 0,
+  // En el vivo el principal se suma sólo con el módulo APAGADO (si no, es del módulo): ver _faRepPrincipalVivo.
+  var R = _fa.rep = { live: !!vivo, hasta: n, fens: fens, conEv: conEv, cola: cola, main: (vivo && sf.on) ? null : { pz: null }, ayu: [], quieto: false, renderT: 0,
                       depth: vivo ? _FA_LIVE_DEPTH : _FA_MANUAL_DEPTH, cap: vivo ? _FA_LIVE_CAP_MS : _FA_MANUAL_CAP_MS,
                       minD: vivo ? _FA_LIVE_MIN : 8 };
   for (var k = 0; k < cuantos; k++) {
@@ -52710,6 +52724,45 @@ function _faRepProxima(m) {
     mejor.b = mitad;
   }
 }
+// ⚡ VIVO con el módulo APAGADO (18/10/2026, lo notó el autor: "el gráfico tarda"): antes el principal no
+// tomaba nada del historial: miraba las 2 últimas a fondo (~6 s) y quedaba quieto, mientras 3 ayudantes hacían
+// todo lo demás (en el teléfono, UNO solo). Ahora, hecha la cola, toma pedazos como uno más (faNext). La cola
+// va PRIMERO: al final dejaba ~6 s con los ayudantes quietos (medido: 16,5 s contra ~11 s).
+// Si el visitante prende el módulo, devuelve su pedazo y sigue con lo suyo, como antes.
+// Devuelve la posición que le toca, o -1 (sin pedazos para él: que siga con la cola).
+function _faRepPrincipalVivo() {
+  var R = _fa.rep;
+  if (!R || !R.live || !R.main) return -1;
+  var m = R.main;
+  if (sf.on) _faRepSoltarMain(R);
+  else {
+    var i = _faRepProxima(m);
+    if (i >= 0) {
+      var nd = _fa.nodes[i];
+      if (nd && nd.fen === R.fens[i]) { m.hizo = true; return i; }
+      // Llegó con el pase ocupado (todavía no está en el gráfico): para los ayudantes, que la mandan al caché.
+      R.cola.unshift({ sig: i, b: m.pz ? m.pz.b : i + 1 });
+      m.pz = null;
+      R.ayu.forEach(function(h) { if (h.listo && h.ply < 0) _faRepSigue(R, h); });
+    }
+  }
+  // Si no queda nada en la fila ni ayudantes calculando, el historial terminó (lo cierra el principal).
+  if (_fa.rep === R && !_faRepOcupados() && !(R.cola.length && R.ayu.length)) _faRepFinVivo();
+  return _faRepPrincipalFin(m);
+}
+// El principal deja los pedazos: si hizo alguno, la cola se recorre desde el principio del pase.
+function _faRepPrincipalFin(m) {
+  if (m.hizo) { m.hizo = false; _fa.ply = _fa.desde; }
+  return -1;
+}
+// Prendieron el módulo: el principal devuelve lo que le quedaba de su pedazo y los ayudantes quietos lo toman.
+function _faRepSoltarMain(R) {
+  var m = R.main;
+  R.main = null;
+  if (m && m.pz && m.pz.sig < m.pz.b) R.cola.unshift({ sig: m.pz.sig, b: m.pz.b });
+  if (m) m.pz = null;
+  R.ayu.forEach(function(h) { if (h.listo && h.ply < 0) _faRepSigue(R, h); });
+}
 function _faRepMsg(R, h, line) {
   if (_fa.rep !== R) return;   // de un análisis viejo
   if (line === 'uciok') {
@@ -52784,6 +52837,7 @@ function _faRepQuieto() {
   }
   if (_faRepOcupados()) return;
   if (R.cola.length && R.ayu.length) return;   // quedan pedazos y hay ayudantes cargando: los toman al estar listos
+  if (R.main && R.main.pz && _fa.running) return;   // el principal sigue con su pedazo: lo cierra él (_faRepPrincipalVivo)
   _faRepFinVivo();
 }
 // Terminó el historial del vivo: apagar ayudantes y dibujar todo calificado. Si quedó alguna posición
