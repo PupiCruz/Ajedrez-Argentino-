@@ -1,10 +1,12 @@
 // 🎵 Audio del video "Un día como hoy": música tenue + sonidos del Pupi + clics de las piezas.
-// La música se SINTETIZA acá (acordes suaves y un arpegio, sin samples de nadie): es original, no tiene derechos de autor.
+// La música se SINTETIZA (ver musica.mjs: 6 estilos que rotan por día, sin samples de nadie): es original, sin derechos de autor.
 // Los sonidos del Pupi son los de la web (assets/pupi/sonidos). Todo se mezcla en un .wav estéreo de 44,1 kHz.
 //
 // Música propia en vez de la sintetizada:  node video-hoy.mjs partida.json salida.mp4 --musica mi-cancion.mp3
 import fs from 'node:fs';
 import path from 'node:path';
+import { musicaEstilo, estiloDelDia, ESTILOS } from './musica.mjs';
+export { estiloDelDia, ESTILOS };
 
 const SR = 44100;
 
@@ -27,53 +29,6 @@ function leerWav(ruta) {
   return out;
 }
 
-// ── la música ──
-const midi = (n) => 440 * Math.pow(2, (n - 69) / 12);
-const ACORDES = [   // La menor 7 · Fa mayor 7 · Do mayor 7 · Sol 6  (bajo, notas del acorde)
-  { bajo: 45, notas: [57, 60, 64, 67] }, { bajo: 41, notas: [53, 57, 60, 64] },
-  { bajo: 48, notas: [60, 64, 67, 71] }, { bajo: 43, notas: [55, 59, 62, 64] },
-];
-function musica(seg) {
-  const N = Math.ceil(seg * SR), L = new Float32Array(N), R = new Float32Array(N);
-  const bpm = 72, beat = 60 / bpm, compas = 4 * beat;
-  const patron = [0, 2, 1, 3, 2, 1, 3, 2];
-  const total = Math.ceil(seg / compas) + 1;
-  const sumar = (buf, t0, dur, f, amp, tipo) => {
-    const i0 = Math.floor(t0 * SR), n = Math.floor(dur * SR);
-    for (let i = 0; i < n && i0 + i < N; i++) {
-      const t = i / SR; let e, v;
-      if (tipo === 'pluck') { e = Math.exp(-t * 4.2) * Math.min(1, t / 0.004); v = Math.sin(2 * Math.PI * f * t) + 0.32 * Math.sin(4 * Math.PI * f * t) * Math.exp(-t * 3) + 0.1 * Math.sin(6 * Math.PI * f * t) * Math.exp(-t * 6); }
-      else if (tipo === 'bajo') { e = Math.exp(-t * 0.9) * Math.min(1, t / 0.05); v = Math.sin(2 * Math.PI * f * t) + 0.15 * Math.sin(4 * Math.PI * f * t); }
-      else { const a = Math.min(1, t / 0.9), r = Math.min(1, (dur - t) / 0.9); e = Math.sin(a * Math.PI / 2) ** 2 * Math.sin(r * Math.PI / 2) ** 2; v = Math.sin(2 * Math.PI * f * t) + Math.sin(2 * Math.PI * (f * 1.003) * t) * 0.8 + 0.2 * Math.sin(4 * Math.PI * f * t + 1); }
-      buf[i0 + i] += v * e * amp;
-    }
-  };
-  const arp = new Float32Array(N);
-  for (let c = 0; c < total; c++) {
-    const ac = ACORDES[c % ACORDES.length], t0 = c * compas;
-    sumar(L, t0, compas + 0.9, midi(ac.bajo), 0.34, 'bajo'); sumar(R, t0, compas + 0.9, midi(ac.bajo), 0.34, 'bajo');
-    for (const n of ac.notas.slice(0, 3)) { sumar(L, t0 - 0.4, compas + 0.9, midi(n), 0.085, 'pad'); sumar(R, t0 - 0.4, compas + 0.9, midi(n) * 1.002, 0.085, 'pad'); }
-    for (let k = 0; k < 8; k++) {
-      const nota = ac.notas[patron[k] % ac.notas.length] + (k % 4 === 0 ? 12 : 12), t = t0 + k * beat / 2 + (k % 2 ? 0.012 : 0);
-      sumar(arp, t, 1.6, midi(nota), 0.16 * (k % 4 === 0 ? 1 : 0.7), 'pluck');
-    }
-  }
-  // eco suave sobre el arpegio, abierto al estéreo
-  const d1 = Math.floor(beat * 0.75 * SR), d2 = Math.floor(beat * 1.5 * SR), h = Math.floor(0.013 * SR);
-  for (let i = 0; i < N; i++) {
-    const e = arp[i] + (i >= d1 ? arp[i - d1] * 0.32 : 0) + (i >= d2 ? arp[i - d2] * 0.16 : 0);
-    L[i] += e; if (i >= h) R[i] += e * 0.92;
-  }
-  // pico a 0,6 y fundidos
-  let pico = 0; for (let i = 0; i < N; i++) pico = Math.max(pico, Math.abs(L[i]), Math.abs(R[i]));
-  const g = 0.6 / (pico || 1);
-  for (let i = 0; i < N; i++) {
-    const t = i / SR, f = Math.min(1, t / 2) * Math.min(1, (seg - t) / 3.5);
-    L[i] *= g * f; R[i] *= g * f;
-  }
-  return [L, R];
-}
-
 // ── clics de las piezas (sintetizados) ──
 function clic(captura) {
   const dur = captura ? 0.11 : 0.07, n = Math.floor(dur * SR), out = new Float32Array(n);
@@ -89,7 +44,7 @@ function clic(captura) {
 
 // ── mezcla ──
 // eventos: [{ t, muestras: Float32Array, vol, voz: bool }]
-export function armarAudio({ duracion, eventos, musicaArchivo, salidaWav, ffmpeg, spawnSync }) {
+export function armarAudio({ duracion, eventos, musicaArchivo, estilo, salidaWav, ffmpeg, spawnSync }) {
   const N = Math.ceil(duracion * SR);
   let mL, mR;
   if (musicaArchivo) {
@@ -100,7 +55,7 @@ export function armarAudio({ duracion, eventos, musicaArchivo, salidaWav, ffmpeg
     const raw = fs.readFileSync(tmp); fs.unlinkSync(tmp);
     mL = new Float32Array(N); mR = new Float32Array(N);
     for (let i = 0; i < N && i * 4 + 3 < raw.length; i++) { const f = Math.min(1, (i / SR) / 2) * Math.min(1, (duracion - i / SR) / 3); mL[i] = raw.readInt16LE(i * 4) / 32768 * f * 0.6; mR[i] = raw.readInt16LE(i * 4 + 2) / 32768 * f * 0.6; }
-  } else [mL, mR] = musica(duracion);
+  } else [mL, mR] = musicaEstilo(duracion, estilo == null ? estiloDelDia() : estilo);
 
   // la música baja mientras habla el Pupi
   const duck = new Float32Array(N).fill(1);

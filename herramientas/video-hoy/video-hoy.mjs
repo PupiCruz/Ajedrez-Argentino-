@@ -15,7 +15,7 @@ import os from 'node:os';
 import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
 import { Resvg } from '@resvg/resvg-js';
 import { Chess } from 'chess.js';
-import { armarAudio, cargarSonidosPupi, sonidoClic } from './audio.mjs';
+import { armarAudio, cargarSonidosPupi, sonidoClic, estiloDelDia, ESTILOS } from './audio.mjs';
 
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
 const ASSETS = path.resolve(AQUI, '../../assets');
@@ -53,6 +53,29 @@ for (const c of ['w', 'b']) for (const t of ['K', 'Q', 'R', 'B', 'N', 'P']) {
 }
 const CARAS = {};
 for (const f of fs.readdirSync(path.join(AQUI, 'caras-png'))) CARAS[f.replace('.png', '')] = 'data:image/png;base64,' + fs.readFileSync(path.join(AQUI, 'caras-png', f)).toString('base64');
+// El marmolado de las casillas: la MISMA trama de la web (--sq-texture de index.html: ruido fractal de baja frecuencia pasado a
+// blanco con alfa variable). Se dibuja una vez a 2× y cada casilla muestra la esquina de la trama, como en la web
+// (ahí cada casilla de ~70 px enseña el arranque del mosaico de 200 px: por eso acá se muestran 70 px estirados a una casilla).
+const MARMOL = (() => {
+  const svg = "<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='m'><feTurbulence type='fractalNoise' baseFrequency='0.016' numOctaves='5' seed='11' stitchTiles='stitch'/>"
+    + "<feColorMatrix type='matrix' values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.9 -0.2'/></filter><rect width='100%' height='100%' filter='url(#m)' opacity='0.55'/></svg>";
+  return 'data:image/png;base64,' + new Resvg(svg, { fitTo: { mode: 'width', value: 400 } }).render().asPng().toString('base64');
+})();
+// Una casilla como la de la web: color, resaltado de la última jugada (sólido), marmolado por encima y coordenadas.
+function casillaSvg(r, f, ox, oy, resaltada) {
+  const clara = (r + f) % 2 === 0, x = ox + f * C, y = oy + r * C, tinta = clara ? '#5d7790' : '#e8edf2';
+  let t = '<rect x="' + x + '" y="' + y + '" width="' + (C + 0.5) + '" height="' + (C + 0.5) + '" fill="' + (resaltada ? (clara ? '#f6f669' : '#cdd16a') : (clara ? COL.claro : COL.oscuro)) + '"/>';
+  t += '<use href="#marm" x="' + x + '" y="' + y + '"/>';
+  if (r === 7) t += '<text x="' + (ox + (f + 1) * C - 8) + '" y="' + (oy + S - 9) + '" text-anchor="end" font-size="22" font-weight="700" fill="' + tinta + '">' + 'abcdefgh'[f] + '</text>';
+  if (f === 0) t += '<text x="' + (x + 8) + '" y="' + (y + 26) + '" font-size="22" font-weight="700" fill="' + tinta + '">' + (8 - r) + '</text>';
+  return t;
+}
+const MARM_DEF = '<svg id="marm" width="' + C + '" height="' + C + '" viewBox="0 0 70 70" overflow="hidden"><image href="' + MARMOL + '" width="200" height="200"/></svg>';
+const TABLERO_IMG = (() => {
+  let t = '<svg xmlns="http://www.w3.org/2000/svg" width="' + S + '" height="' + S + '"><defs>' + MARM_DEF + '</defs>';
+  for (let r = 0; r < 8; r++) for (let f = 0; f < 8; f++) t += casillaSvg(r, f, 0, 0, false);
+  return 'data:image/png;base64,' + new Resvg(t + '</svg>', { fitTo: { mode: 'width', value: S }, font: { loadSystemFonts: false, fontFiles: ['C:/Windows/Fonts/segoeui.ttf', 'C:/Windows/Fonts/segoeuib.ttf'], defaultFontFamily: 'Segoe UI' } }).render().asPng().toString('base64');
+})();
 const LOGO = 'data:image/png;base64,' + fs.readFileSync(path.join(ASSETS, 'logo.png')).toString('base64');
 
 // ── la partida: posiciones y animaciones de cada jugada ──
@@ -134,6 +157,7 @@ function dibujar(P, G, est) {
     + '<clipPath id="tab"><rect x="' + BX + '" y="' + BY + '" width="' + S + '" height="' + S + '" rx="20"/></clipPath>'
     + '<radialGradient id="vig" cx="0.5" cy="0.5" r="0.75"><stop offset="0.35" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity="0.55"/></radialGradient>'
     + '<linearGradient id="oroG" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffe27a"/><stop offset="1" stop-color="#f2a900"/></linearGradient>'
+    + MARM_DEF
     + '<filter id="sombra" x="-10%" y="-10%" width="120%" height="120%"><feDropShadow dx="0" dy="8" stdDeviation="14" flood-color="#000" flood-opacity="0.45"/></filter></defs>';
   s += '<rect width="' + W + '" height="' + H + '" fill="url(#fondo)"/>';
 
@@ -158,13 +182,9 @@ function dibujar(P, G, est) {
   s += '<rect x="' + (BX - 4) + '" y="' + (BY + 6) + '" width="' + (S + 8) + '" height="' + (S + 8) + '" rx="24" fill="#000" opacity="0.35"/><rect x="' + BX + '" y="' + BY + '" width="' + S + '" height="' + S + '" rx="20" fill="' + COL.claro + '"/>';
   s += '<g clip-path="url(#tab)">';
   const resaltar = new Set(an ? [an.from, an.to] : []);
-  for (let r = 0; r < 8; r++) for (let f = 0; f < 8; f++) {
-    const sq = 'abcdefgh'[f] + (8 - r), clara = (r + f) % 2 === 0;
-    s += '<rect x="' + (BX + f * C) + '" y="' + (BY + r * C) + '" width="' + (C + 0.5) + '" height="' + (C + 0.5) + '" fill="' + (clara ? COL.claro : COL.oscuro) + '"/>';
-    if (resaltar.has(sq)) s += '<rect x="' + (BX + f * C) + '" y="' + (BY + r * C) + '" width="' + (C + 0.5) + '" height="' + (C + 0.5) + '" fill="#f6f669" opacity="' + (clara ? 0.62 : 0.5) + '"/>';
-    if (r === 7) s += '<text x="' + (BX + (f + 1) * C - 8) + '" y="' + (BY + S - 9) + '" text-anchor="end" font-size="22" font-weight="700" fill="' + (clara ? COL.oscuro : COL.claro) + '">' + 'abcdefgh'[f] + '</text>';
-    if (f === 0) s += '<text x="' + (BX + 8) + '" y="' + (BY + r * C + 26) + '" font-size="22" font-weight="700" fill="' + (clara ? COL.oscuro : COL.claro) + '">' + (8 - r) + '</text>';
-  }
+  // El tablero entero (casillas + marmolado + coordenadas) se dibuja UNA vez (TABLERO_IMG); por cuadro sólo se redibujan las 2 casillas resaltadas.
+  s += '<image href="' + TABLERO_IMG + '" x="' + BX + '" y="' + BY + '" width="' + S + '" height="' + S + '"/>';
+  for (const sq of resaltar) s += casillaSvg(8 - +sq[1], 'abcdefgh'.indexOf(sq[0]), BX, BY, true);
   // Piezas (las que no se mueven primero; la que se mueve, encima)
   const mueven = new Map(); if (an) for (const m of an.mueve) mueven.set(m.id, m);
   const dibujarPieza = (pz, x, y, op, esc2) => {
@@ -401,10 +421,11 @@ if (!isMainThread) {
       }
       if (voz && sonidos[voz]) eventos.push({ t: t0 + T_MOV + 0.05, muestras: sonidos[voz], vol: 0.9, voz: true });
     }
-    const iMus = flags.indexOf('--musica');
-    audioWav = armarAudio({ duracion: total / FPS, eventos, musicaArchivo: iMus >= 0 ? flags[iMus + 1] : null,
+    const iMus = flags.indexOf('--musica'), iEst = flags.indexOf('--estilo');
+    const estilo = iEst >= 0 ? parseInt(flags[iEst + 1], 10) % ESTILOS.length : estiloDelDia();
+    audioWav = armarAudio({ duracion: total / FPS, eventos, musicaArchivo: iMus >= 0 ? flags[iMus + 1] : null, estilo,
       salidaWav: path.join(path.dirname(path.resolve(salida)), 'audio-temporal.wav'), ffmpeg, spawnSync });
-    console.log('Audio listo:', eventos.length, 'sonidos' + (iMus >= 0 ? ' + tu música' : ' + música propia'));
+    console.log('Audio listo:', eventos.length, 'sonidos' + (iMus >= 0 ? ' + tu música' : ' + música: ' + ESTILOS[estilo]));
   }
 
   // 2) Varios obreros dibujan en paralelo; el principal los junta en orden y se los pasa a ffmpeg.
