@@ -925,8 +925,8 @@ console.log('\n=== 10. La IA sabe redactar torneos POR EQUIPOS (Olimpiadas, liga
     const copiaVieja = guardado.get('https://cr-proxy.test/libc?url=' + encodeURIComponent(ronda('openI')));
     chk(!!copiaVieja, 'las copias quedan guardadas con la ventana de gracia de 30 min',
         copiaVieja && copiaVieja.headers.get('Cache-Control'));
-    chk(copiaVieja && copiaVieja.headers.get('Cache-Control') === 'public, max-age=1810',
-        '🔒 la copia en vivo dura 30 min (eran 10: con Lichess frenando se borraba)', copiaVieja && copiaVieja.headers.get('Cache-Control'));
+    chk(copiaVieja && copiaVieja.headers.get('Cache-Control') === 'public, max-age=1808',
+        '🔒 la copia en vivo dura 30 min (8 s fresca + 1800 de gracia; eran 10: con Lichess frenando se borraba)', copiaVieja && copiaVieja.headers.get('Cache-Control'));
   } finally {
     globalThis.caches = cachesAntes; globalThis.fetch = fetchAntes; Date.now = nowAntes;
   }

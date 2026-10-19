@@ -82,10 +82,13 @@ const TABLAS_CACHE_SECONDS = 600;
 const ERROR_CACHE_SECONDS = 60;
 const STATS_CACHE_SECONDS = 30;
 const SI_CACHE_SECONDS = 15;   // vivo: caché corta para que las jugadas nuevas lleguen rápido
-const LI_LIVE_CACHE = 10;      // broadcast Lichess EN VIVO (PGN de ronda + metadata): jugadas nuevas al toque.
-                               // 10s: un pelín abajo del poll más rápido (blitz=12s) para que ni el visitante
-                               // de blitz quede "capado" por una hoja vieja. No hay riesgo de 429: Lichess ve
-                               // UN solo cliente (el Worker) → ~6 pedidos/min por torneo, den igual 1 o 100 mirando.
+const LI_LIVE_CACHE = 8;       // broadcast Lichess EN VIVO (PGN de ronda + metadata): jugadas nuevas al toque.
+                               // 8s: abajo del poll más rápido (blitz=12s) para que ni el visitante de blitz
+                               // quede "capado" por una hoja vieja. Lichess ve UN solo cliente (el Worker) →
+                               // ~7,5 pedidos/min por URL y por centro de datos, den igual 1 o 100 mirando.
+                               // 19/10/2026: 10→8 con el token (120/min); estos pedidos NO cuentan para los
+                               // 100k/día de Cloudflare. No bajar de ~7: con 5 transmisiones (Olimpiada) en 2-3
+                               // centros de datos se arrimaría a los 120.
 const LI_RESOLVE_CACHE = 3600; // resolución id-de-ronda→id-de-torneo: es FIJA, cachear fuerte (1 h)
 // Ventana de gracia: cuánto tiempo MÁS (después de que la copia deja de ser "fresca") seguimos
 // sirviendo la última posición buena mientras Lichess se recupera de un 429/caída. Así el tablero
