@@ -34,7 +34,13 @@ const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
 export async function cosechar({ t, gi }, { log = () => {}, nombreEquipo = true } = {}) {
   // 1) La cabecera sale de los datos de esta carpeta (los mismos que publica la web).
   const T = JSON.parse(fs.readFileSync(path.join(DATA, 't', t + '.json'), 'utf8'));
-  const pgn = T.games[gi];
+  let pgn = T.games[gi];
+  // Un torneo enorme sigue en <id>.p2.json, .p3.json… (como en la web).
+  for (let k = 2, desde = T.games.length; !pgn && k <= (T.parts || 1); k++) {
+    const g = JSON.parse(fs.readFileSync(path.join(DATA, 't', t + '.p' + k + '.json'), 'utf8')).games || [];
+    if (gi < desde + g.length) pgn = g[gi - desde];
+    desde += g.length;
+  }
   if (!pgn) throw new Error('No encuentro la partida ' + gi + ' en el torneo ' + t);
   let evento = tag(pgn, 'Event');
   if (!evento || /^(Round|Ronda)\s*\d+\s*:/i.test(evento) || evento === '?') evento = T.name || evento;
@@ -42,26 +48,31 @@ export async function cosechar({ t, gi }, { log = () => {}, nombreEquipo = true 
   const exe = buscarNavegador();
   if (!exe) throw new Error('No encuentro Chrome ni Edge para abrir la web');
 
-  const browser = await puppeteer.launch({ executablePath: exe, headless: 'new', protocolTimeout: 0, args: ['--no-sandbox', '--window-size=1280,900', '--autoplay-policy=no-user-gesture-required', '--mute-audio'] });
+  // protocolTimeout: si la página se traba, cada pregunta se corta a los 3 minutos con error (con 0 esperaba para siempre).
+  const browser = await puppeteer.launch({ executablePath: exe, headless: 'new', protocolTimeout: 180000, args: ['--no-sandbox', '--window-size=1280,900', '--autoplay-policy=no-user-gesture-required', '--mute-audio'] });
   try {
     const page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 900 });
     log('Abriendo la partida en la web…');
     await page.goto(WEB + '?torneo=' + encodeURIComponent(t) + '&partida=' + gi, { waitUntil: 'domcontentloaded', timeout: 120000 });
-    await page.waitForFunction("typeof _fa !== 'undefined' && _fa.nodes && _fa.nodes.length > 0 && !!document.querySelector('#chess-overlay.open') && typeof __pupi !== 'undefined'", { timeout: 180000, polling: 1000 });
+    // Ojo: _fa.nodes queda VACÍO al abrir una partida sin evaluaciones (faAutoShow): se espera a la partida en el visor, no al análisis.
+    await page.waitForFunction("typeof _fa !== 'undefined' && typeof faGetNodes === 'function' && faGetNodes().length > 0 && !!document.querySelector('#chess-overlay.open') && typeof __pupi !== 'undefined'", { timeout: 180000, polling: 1000 });
     await page.evaluate("__pupi.si()");
 
     // 2) Que la partida esté analizada (con evaluaciones del PGN ya viene; si no, el motor de la web la analiza).
-    const total = await page.evaluate('_fa.nodes.length');
-    let listas = await page.evaluate('_fa.results.filter(Boolean).length');
-    if (listas < total) { log('La partida no trae evaluaciones: la analiza el motor de la web (puede tardar unos minutos)…'); await page.evaluate('__pupi.analizar()'); }
+    const total = await page.evaluate('faGetNodes().length');
+    const listasAhora = () => page.evaluate('(_fa.nodes.length >= ' + total + ' ? _fa.results.filter(Boolean).length : 0)');
+    let listas = await listasAhora();
+    if (listas < total) { log('La partida no trae evaluaciones: la analiza el motor de la web (puede tardar unos minutos)…'); await page.evaluate("if (!_fa.running) startFA()"); }
     const limite = Date.now() + 12 * 60e3;
-    let ultimo = -1;
+    let ultimo = -1, quieto = 0;
     while (Date.now() < limite) {
-      listas = await page.evaluate('_fa.results.filter(Boolean).length');
+      listas = await listasAhora();
       const corre = await page.evaluate('!!_fa.running');
       if (listas >= total && !corre) break;
-      if (listas !== ultimo) { log('Analizadas ' + listas + ' de ' + total + ' posiciones…'); ultimo = listas; }
+      if (listas !== ultimo) { log('Analizadas ' + listas + ' de ' + total + ' posiciones…'); ultimo = listas; quieto = 0; }
+      // El motor tarda en prender (startFA lo espera 20 s y se rinde): si no arrancó, se le vuelve a pedir.
+      else if (!corre && ++quieto % 10 === 0) await page.evaluate("if (!_fa.running) startFA()");
       await esperar(3000);
     }
     if (listas < total) throw new Error('El análisis no terminó a tiempo (' + listas + ' de ' + total + ' posiciones)');

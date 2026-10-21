@@ -89,3 +89,33 @@ export function cargarSonidosPupi(dir) {
   return S;
 }
 export const sonidoClic = { normal: clic(false), captura: clic(true) };
+
+// ── 🎉 festejo del podio (sintetizado): fanfarria de trompetas (ta-ta-ta-TAAA) + aplausos de una tribuna ──
+function festejo() {
+  const dur = 4.4, n = Math.floor(dur * SR), out = new Float32Array(n);
+  // fanfarria: [frecuencia, arranque, largo]; el acorde final (Do mayor) es largo
+  const notas = [[392, 0, 0.13], [523.25, 0.15, 0.13], [659.25, 0.3, 0.13], [783.99, 0.45, 0.95], [659.25, 0.45, 0.95], [523.25, 0.45, 0.95]];
+  for (const [f, t0, d] of notas) {
+    const i0 = Math.floor(t0 * SR), m = Math.floor((d + 0.3) * SR);
+    for (let k = 0; k < m && i0 + k < n; k++) {
+      const t = k / SR, env = Math.min(1, t / 0.025) * (t < d ? 1 - 0.2 * (t / d) : 0.8 * Math.exp(-(t - d) * 12));
+      const vib = 1 + 0.006 * Math.sin(2 * Math.PI * 5.5 * t) * Math.min(1, t / 0.25);
+      let v = 0; for (let h = 1; h <= 7; h++) v += Math.sin(2 * Math.PI * f * h * vib * t) / (0.6 + h * 0.8);   // armónicos: metal
+      out[i0 + k] += v * env * 0.11;
+    }
+  }
+  // aplausos: ~600 palmas (ráfagas de ruido de 6 a 16 ms) que crecen y se apagan, con algo de grave para que suene a tribuna
+  let semilla = 20261021; const azar = () => { semilla = (Math.imul(semilla, 1664525) + 1013904223) >>> 0; return semilla / 4294967296; };
+  const ta = 0.35, largo = 3.9;
+  for (let p = 0; p < 600; p++) {
+    const t = ta + Math.pow(azar(), 0.85) * largo, i0 = Math.floor(t * SR), len = Math.floor((0.006 + azar() * 0.01) * SR);
+    const amp = (0.3 + azar() * 0.6) * Math.min(1, (t - ta) / 0.35) * Math.max(0, 1 - (t - ta) / largo), fc = 0.18 + azar() * 0.4;
+    let y = 0;
+    for (let k = 0; k < len && i0 + k < n; k++) {
+      const r = azar() * 2 - 1; y += fc * (r - y);
+      out[i0 + k] += ((r - y) * 0.55 + y * 0.6) * amp * Math.exp(-k / (len * 0.35)) * 0.42;
+    }
+  }
+  return out;
+}
+export const sonidoFestejo = festejo();

@@ -1,4 +1,4 @@
-// 🎬 El armador de videos "Un día como hoy": queda abierto en esta PC, le pregunta al bot cada 15 segundos si hay un
+// 🎬 El armador de videos ("Un día como hoy", partidas elegidas con /video y resúmenes de torneo): queda abierto en esta PC, le pregunta al bot cada 15 segundos si hay un
 // video pedido (botón 🎬 Video de /hoy), lo arma y se lo entrega al bot, que te lo manda por Telegram.
 // Se abre con "armar-videos.cmd" (en la carpeta ajedrez-argentino).
 import fs from 'node:fs';
@@ -6,6 +6,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { cosechar } from './cosechar.mjs';
+import { datosTorneo } from './torneo-datos.mjs';
 
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
 const BASE = process.env.PUPI_WORKER || 'https://ajedrez-vivo.mmatiasscruz.workers.dev';
@@ -42,19 +43,44 @@ function correr(args, etiqueta) {
   });
 }
 
+// 🎵 La música: cualquier archivo de esta carpeta que empiece con "musica" (musica.mp3, musica1.mp3, musica2.m4a…).
+// Se elige uno al azar en cada video, sin repetir el del video anterior (si hay más de uno). Sin ninguno, va la sintetizada.
+let ultimaMusica = null;
+function elegirMusica() {
+  const temas = fs.readdirSync(AQUI).filter((f) => /^musica.*.(mp3|m4a|wav|ogg|aac|flac)$/i.test(f)).map((f) => path.join(AQUI, f));
+  if (!temas.length) return null;
+  const otros = temas.length > 1 ? temas.filter((f) => f !== ultimaMusica) : temas;
+  ultimaMusica = otros[Math.floor(Math.random() * otros.length)];
+  return ultimaMusica;
+}
+
 async function procesar(job) {
   const titulo = job.titulo || job.id;
   log('Pedido: ' + titulo + ' (' + job.id + ')');
-  await avisar(job.id, '⚙️ Empecé el video de ' + titulo + '.\nPaso 1 de 2: analizo la partida con el Pupi (unos 3 minutos).');
   const tmp = path.join(SALIDA, 'pedido-' + job.id.replace(/[^0-9a-z]+/gi, '_'));
   fs.mkdirSync(SALIDA, { recursive: true });
-  const partida = await cosechar({ t: job.t, gi: +job.gi }, { log });
-  fs.writeFileSync(tmp + '.json', JSON.stringify(partida, null, 1));
-  await avisar(job.id, '🎬 Paso 2 de 2: dibujo el video (' + partida.jugadas.length + ' jugadas, unos 5 minutos).');
-  const args = ['video-hoy.mjs', tmp + '.json', tmp + '.mp4'];
-  const musica = path.join(AQUI, 'musica.mp3');
-  if (fs.existsSync(musica)) args.push('--musica', musica);
-  await correr(args, 'Video');
+  const musica = elegirMusica();
+  if (musica) log('Música: ' + path.basename(musica));
+  if (job.tipo === 'torneo') {
+    // 🏆 Resumen del torneo: sale de los datos guardados en esta carpeta (podio, Radiografía, jugadones), sin analizar nada.
+    let D;
+    try { D = datosTorneo(job.t); }
+    catch (e) { throw new Error(e.message + '\n\nSi recién lo marcaste terminado: tocá 💾 Guardar datos en mi carpeta y pedilo de nuevo.'); }
+    fs.writeFileSync(tmp + '.json', JSON.stringify(D));
+    await avisar(job.id, '⚙️ Armo el resumen de ' + D.nombre + ' (' + D.categorias.length + (D.categorias.length > 1 ? ' categorías' : ' categoría') + ', unos 3 a 6 minutos).');
+    const args = ['video-torneo.mjs', tmp + '.json', tmp + '.mp4'];
+    if (musica) args.push('--musica', musica);
+    await correr(args, 'Video');
+  } else {
+    await avisar(job.id, '⚙️ Empecé el video de ' + titulo + '.\nPaso 1 de 2: analizo la partida con el Pupi (unos 3 minutos).');
+    const partida = await cosechar({ t: job.t, gi: +job.gi }, { log });
+    if (job.etiqueta) partida.etiqueta = job.etiqueta;   // partida elegida con /video: su título en lugar de "Un día como hoy"
+    fs.writeFileSync(tmp + '.json', JSON.stringify(partida, null, 1));
+    await avisar(job.id, '🎬 Paso 2 de 2: dibujo el video (' + partida.jugadas.length + ' jugadas, unos 5 minutos).');
+    const args = ['video-hoy.mjs', tmp + '.json', tmp + '.mp4'];
+    if (musica) args.push('--musica', musica);
+    await correr(args, 'Video');
+  }
   const mp4 = fs.readFileSync(tmp + '.mp4');
   log('Entrego el video (' + (mp4.length / 1e6).toFixed(1) + ' MB)…');
   const r = await fetch(BASE + '/tg/hoyvideo/subir?clave=' + encodeURIComponent(CLAVE) + '&id=' + encodeURIComponent(job.id), { method: 'POST', headers: { 'Content-Type': 'video/mp4' }, body: mp4 });

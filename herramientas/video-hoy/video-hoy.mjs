@@ -161,10 +161,12 @@ function dibujar(P, G, est) {
     + '<filter id="sombra" x="-10%" y="-10%" width="120%" height="120%"><feDropShadow dx="0" dy="8" stdDeviation="14" flood-color="#000" flood-opacity="0.45"/></filter></defs>';
   s += '<rect width="' + W + '" height="' + H + '" fill="url(#fondo)"/>';
 
-  // Encabezado
-  s += '<rect x="' + BX + '" y="40" width="440" height="56" rx="28" fill="' + COL.oro + '"/>'
+  // Encabezado: la píldora dorada dice "UN DÍA COMO HOY" o el título que eligió el autor (P.etiqueta, /video del bot)
+  const etq = String(P.etiqueta || 'UN DÍA COMO HOY').toUpperCase();
+  const tamEtq = Math.min(31, Math.floor(820 / (etq.length * 0.72))), anchoEtq = Math.min(S, Math.round(64 + etq.length * tamEtq * 0.72 + 28));
+  s += '<rect x="' + BX + '" y="40" width="' + anchoEtq + '" height="56" rx="28" fill="' + COL.oro + '"/>'
     + '<rect x="' + (BX + 22) + '" y="55" width="28" height="26" rx="5" fill="none" stroke="#0b1220" stroke-width="4"/><rect x="' + (BX + 22) + '" y="55" width="28" height="8" fill="#0b1220"/>'
-    + '<text x="' + (BX + 64) + '" y="78" font-size="31" font-weight="800" letter-spacing="2" fill="#0b1220">UN DÍA COMO HOY</text>';
+    + '<text x="' + (BX + 64) + '" y="' + (68 + tamEtq * 0.32).toFixed(0) + '" font-size="' + tamEtq + '" font-weight="800" letter-spacing="2" fill="#0b1220">' + esc(etq) + '</text>';
   const fl = fechaLarga(P.fecha);
   s += '<text x="' + BX + '" y="178" font-size="' + ajustar(fl, 78, 960, 0.55) + '" font-weight="800" fill="#fff">' + esc(fl) + '</text>';
   const ev = P.evento + (P.ronda ? ' · ' + P.ronda : '');
@@ -174,7 +176,7 @@ function dibujar(P, G, est) {
   const barra = (y, J, mueve) => '<rect x="' + BX + '" y="' + y + '" width="' + S + '" height="72" rx="14" fill="rgba(255,255,255,0.08)"/>'
     + (mueve ? '<rect x="' + BX + '" y="' + y + '" width="9" height="72" rx="4" fill="' + COL.oro + '"/>' : '')
     + '<text x="' + (BX + 28) + '" y="' + (y + 48) + '" font-size="' + ajustar(J.nombre, 38, 600, 0.56) + '" font-weight="700" fill="#fff">' + esc(J.nombre) + '</text>'
-    + '<text x="' + (BX + S - 22) + '" y="' + (y + 47) + '" text-anchor="end" font-size="30" font-weight="600" fill="' + COL.gris + '">' + esc((J.equipo || '') + (J.elo ? ' · ' + J.elo : '')) + '</text>';
+    + '<text x="' + (BX + S - 22) + '" y="' + (y + 47) + '" text-anchor="end" font-size="30" font-weight="600" fill="' + COL.gris + '">' + esc([J.equipo, J.elo].filter(Boolean).join(' · ')) + '</text>';
   const mueveBlancas = p % 2 === 0;
   s += barra(248, P.negras, !mueveBlancas && p < P.jugadas.length);
 
@@ -310,12 +312,12 @@ function dibujar(P, G, est) {
   if (est.fase === 'intro') {
     const o = est.fa;
     s += '<g opacity="' + o.toFixed(2) + '"><rect x="' + BX + '" y="' + BY + '" width="' + S + '" height="' + S + '" rx="20" fill="rgba(8,14,26,0.93)"/>'
-      + '<text x="' + (BX + S / 2) + '" y="' + (BY + 150) + '" text-anchor="middle" font-size="44" font-weight="800" letter-spacing="3" fill="' + COL.oro + '">PARTIDA HISTÓRICA</text>'
+      + '<text x="' + (BX + S / 2) + '" y="' + (BY + 150) + '" text-anchor="middle" font-size="' + (P.etiqueta ? ajustar(P.etiqueta.toUpperCase(), 44, 880, 0.68) : 44) + '" font-weight="800" letter-spacing="3" fill="' + COL.oro + '">' + esc(P.etiqueta ? P.etiqueta.toUpperCase() : 'PARTIDA HISTÓRICA') + '</text>'
       + '<text x="' + (BX + S / 2) + '" y="' + (BY + 330) + '" text-anchor="middle" font-size="' + ajustar(P.blancas.nombre, 78, 880, 0.58) + '" font-weight="800" fill="#fff">' + esc(P.blancas.nombre) + '</text>'
-      + '<text x="' + (BX + S / 2) + '" y="' + (BY + 380) + '" text-anchor="middle" font-size="36" font-weight="600" fill="' + COL.gris + '">' + esc(P.blancas.equipo + ' · ' + P.blancas.elo) + '</text>'
+      + '<text x="' + (BX + S / 2) + '" y="' + (BY + 380) + '" text-anchor="middle" font-size="36" font-weight="600" fill="' + COL.gris + '">' + esc([P.blancas.equipo, P.blancas.elo].filter(Boolean).join(' · ')) + '</text>'
       + '<text x="' + (BX + S / 2) + '" y="' + (BY + 490) + '" text-anchor="middle" font-size="64" font-weight="900" fill="' + COL.oro + '">vs</text>'
       + '<text x="' + (BX + S / 2) + '" y="' + (BY + 610) + '" text-anchor="middle" font-size="' + ajustar(P.negras.nombre, 78, 880, 0.58) + '" font-weight="800" fill="#fff">' + esc(P.negras.nombre) + '</text>'
-      + '<text x="' + (BX + S / 2) + '" y="' + (BY + 660) + '" text-anchor="middle" font-size="36" font-weight="600" fill="' + COL.gris + '">' + esc(P.negras.equipo + ' · ' + P.negras.elo) + '</text>'
+      + '<text x="' + (BX + S / 2) + '" y="' + (BY + 660) + '" text-anchor="middle" font-size="36" font-weight="600" fill="' + COL.gris + '">' + esc([P.negras.equipo, P.negras.elo].filter(Boolean).join(' · ')) + '</text>'
       + '<text x="' + (BX + S / 2) + '" y="' + (BY + 800) + '" text-anchor="middle" font-size="' + ajustar(P.evento, 40, 880, 0.52) + '" font-weight="700" fill="#fff">' + esc(P.evento) + '</text>'
       + '<text x="' + (BX + S / 2) + '" y="' + (BY + 856) + '" text-anchor="middle" font-size="34" font-weight="600" fill="' + COL.gris + '">' + esc([P.ronda, P.eco].filter(Boolean).join(' · ')) + '</text></g>';
   } else if (est.fase === 'outro') {
@@ -364,6 +366,9 @@ const png = (svg) => new Resvg(svg, { fitTo: { mode: 'width', value: W }, font: 
 // ── principal ──
 const [, , entrada, salida, ...flags] = isMainThread ? process.argv : ['', '', workerData.entrada];
 const P = JSON.parse(fs.readFileSync(entrada, 'utf8'));
+// Los símbolos que el video no dibuja se borran: ★ (la mejor jugada: la pone la web cuando la analiza su motor, y
+// serían decenas de estrellitas tapando a las importantes) y !? u otros que no están en NAG. Con ★ se rompía el video.
+for (const j of P.jugadas) if (j[1] && !NAG[j[1]]) j[1] = '';
 const G = prepararPartida(P);
 
 if (!isMainThread) {
@@ -380,7 +385,7 @@ if (!isMainThread) {
     const brillante = P.jugadas.findIndex((j) => j[1] === '!!') + 1, grave = P.jugadas.findIndex((j) => j[1] === '??') + 1;
     const fotos = [['intro', { p: 0, a: 1, th: -1, fase: 'intro', fa: 1 }], ['apertura', { p: 8, a: 0.5, th: -1, fase: 'mov', fa: 0 }],
       ['grave', { p: grave, a: 1, th: 1.7, fase: 'mov', fa: 0 }], ['brillante', { p: brillante, a: 1, th: 0.7, fase: 'mov', fa: 0 }],
-      ['brillante-flash', { p: brillante, a: 1, th: 0.08, fase: 'mov', fa: 0 }], ['final', { p: 80, a: 1, th: 0.1, fase: 'mov', fa: 0 }],
+      ['brillante-flash', { p: brillante, a: 1, th: 0.08, fase: 'mov', fa: 0 }], ['final', { p: Math.min(80, P.jugadas.length), a: 1, th: 0.1, fase: 'mov', fa: 0 }],
       ['cierre', { p: P.jugadas.length, a: 1, th: 5.6, fase: 'outro', fa: 1 }]];
     for (const [n, e] of fotos) { fs.writeFileSync(path.join(salida, 'foto-' + n + '.png'), png(dibujar(P, G, e))); console.log('foto-' + n + '.png'); }
     process.exit(0);
