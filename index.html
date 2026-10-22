@@ -30898,11 +30898,11 @@ var AA_DISCORD = 'https://discord.gg/5uDY8m8CbX';
   var a = document.getElementById('h-discord');
   if (a) { a.href = AA_DISCORD; a.style.display = ''; }
 })();
-// Abre el ejercicio en Entrenar → Ejercicios, igual que un link ?ejercicio=<id>.
+// Abre el ejercicio ENCIMA de la pantalla de donde se tocó (la portada Hoy), igual que un link ?ejercicio=<id>.
+// (22/10) Antes pasaba por la pestaña Entrenar: al resolverlo y dar Atrás quedabas en Entrenar en vez de en Hoy.
 function ejdiaAbrir(){
   if (!_ejdia || !_ejdia.id) return;
-  var ebtn = document.querySelector('.nav-btn[onclick*="\'entrenar\'"]');
-  if (ebtn) { try { goTo('entrenar', ebtn); trainTab('ejercicios'); } catch (e) {} }
+  try { _trainEnsureData(); } catch (e) {}   // los ejercicios se bajan recién acá (como al entrar a Entrenar)
   puzOpenByIdWhenReady(_ejdia.id);
 }
 
@@ -31052,17 +31052,41 @@ function _hoyFrase(o, d) {
 
 function _hoyHref(u) { return escHtml(u); }
 // Navegar dentro de la app sin recargar (lo mismo que hace el botón Atrás: reconciliar con la dirección).
+/* ↩️ VOLVER A HOY (22/10, pedido del autor). Una partida que se abre desde la portada va encima de su torneo,
+   pero Atrás tiene que volver a HOY (no dejarte dentro del torneo). Se apila UNA sola marca (la de la partida)
+   y el popstate del visor, al ver _hoyVuelta, cierra también el torneo de abajo:
+     { tipo: 'partida' }                       → «Un día como hoy»: vuelve la portada.
+     { tipo: 'jugadones', lista, idx }        → «Lo mejor de la semana»: vuelve el tablero de jugadones, en el mismo.
+   goTo (tocar una pestaña) la borra. */
+var _hoyVuelta = null;
 function _hoyIr(u) {
   try {
-    // Una partida se abre ENCIMA de su torneo: se apilan las dos marcas (como al entrar por un link), así
-    // Atrás vuelve partida → torneo → Hoy, y no queda la ficha del torneo abierta con la dirección de Hoy.
-    var mt = /[?&]partida=/.test(u) && u.match(/[?&]torneo=([^&]+)/);
-    if (mt) history.pushState({}, '', location.pathname + '?torneo=' + mt[1]);
+    if (/[?&]partida=/.test(u)) _hoyVuelta = { tipo: 'partida' };
     history.pushState({}, '', u);
   } catch (e) { location.href = u; return false; }
   try { _navReconciliar(); } catch (e) {}
   try { _seoDesdeUrl(); } catch (e) {}
   return false;
+}
+// Atrás desde una partida abierta en la portada (lo llama el popstate del visor, ya cerrado el visor).
+function _hoyVolverDePartida() {
+  var v = _hoyVuelta; _hoyVuelta = null;
+  var to = document.getElementById('tour-overlay');
+  if (to && to.classList.contains('open')) {
+    _tourHistoryPushed = false; _tdLiveStop();
+    try { if (window.aaTourChat) window.aaTourChat.close(); } catch (_) {}
+    to.classList.remove('open'); _tourPageOff();
+  }
+  _secMostrar('hoy');
+  if (v && v.tipo === 'jugadones' && v.lista && v.lista.length && typeof puzOpenOverlay === 'function') {
+    // El tablero REUSA la marca en la que estamos (era la del torneo, que reemplazó a la suya): Atrás desde los
+    // jugadones vuelve a Hoy. (En «Un día como hoy» la marca en la que quedamos ya es la de Hoy: no se toca.)
+    try { history.replaceState({ puzzle: true }, '', location.pathname); } catch (e) {}
+    _puzHistoryPushed = true;
+    puz.tema = null; puz.list = v.lista; puz.idx = Math.min(v.idx || 0, v.lista.length - 1);
+    puzOpenOverlay(); puzLoad();
+    _puzUrlAntes = location.pathname;   // al cerrarlo, la dirección queda la de Hoy
+  }
 }
 function _hoyTorneoA(o, cls, inner) {
   return '<a class="' + cls + '" href="' + escHtml(_tourHref(o.key)) + '" onclick="return tourCardClick(event,\'' + escJs(o.key) + '\')">' + inner + '</a>';
@@ -31317,8 +31341,7 @@ function ejdiaReintentar() {
   var r = _ejrLeer(); if (!r.mal.length) return;
   var otros = r.mal.filter(function (x) { return !_ejdia || x.id !== _ejdia.id; });
   if (!otros.length) return;
-  var ebtn = document.querySelector('.nav-btn[onclick*="\'entrenar\'"]');
-  if (ebtn) { try { goTo('entrenar', ebtn); trainTab('ejercicios'); } catch (e) {} }
+  try { _trainEnsureData(); } catch (e) {}   // encima de Hoy, como ejdiaAbrir
   puzOpenByIdWhenReady(otros[otros.length - 1].id);
 }
 /* 🔥 La racha CON LA CUENTA (Fase 4, 21/10): con sesión, la que vale es la del servidor (cr-proxy /ejdia/*): la misma en el
@@ -31444,8 +31467,13 @@ function _hoyMomHtml(ahora) {
 }
 // "Ver la partida" de un jugadón de la semana: abre su torneo y, cuando llegan las partidas, la partida en esa
 // jugada. Si la partida no aparece (la ronda todavía no bajó), queda abierto el torneo.
-function _hoyAbrirPartidaCg(it) {
-  _hoyIr(_tourHref(it._tid));
+function _hoyAbrirPartidaCg(it, vuelta) {
+  // El torneo se abre REEMPLAZANDO la marca del tablero de jugadones (que ya se cerró): queda Hoy → partida,
+  // y al volver de la partida se reabren los jugadones en esa misma marca (ver _hoyVolverDePartida).
+  _hoyVuelta = vuelta || null;
+  try { history.replaceState({}, '', _tourHref(it._tid)); } catch (e) {}
+  try { _navReconciliar(); } catch (e) {}
+  try { _seoDesdeUrl(); } catch (e) {}
   var hasta = Date.now() + 15000;
   (function mirar() {
     if (String(_tdTourKey) === String(it._tid) && _tdCtx && _tdCtx.games && _tdCtx.games.length) {
@@ -32173,6 +32201,7 @@ function goTo(sec, btn) {
   if (_nr0 && _nr0.classList.contains('open')) {
     _newsHistoryPushed = false; _nr0.classList.remove('open'); _newsReaderCurrentId = null;
   }
+  _hoyVuelta = null;   // tocar una pestaña corta el "volver a Hoy" de una partida abierta desde la portada
   var _pz = document.getElementById('puz-overlay');
   if (_pz && _pz.classList.contains('open')) { if (typeof puzSfOff === 'function') puzSfOff(); _puzHistoryPushed = false; _pz.classList.remove('open'); _puzPageOff(); puz.cur = null; puz.editing = false; }
   var _prc = document.getElementById('prac-overlay');
@@ -35178,6 +35207,8 @@ window.addEventListener('popstate', function() {
     if (_cvJumpStack.length) { _cvRestoreJump(_cvJumpStack.pop()); return; }
     _cvHistoryPushed = false;
     closeChessViewer();
+    // ↩️ Abierta desde la portada Hoy: se cierra también el torneo de abajo y se vuelve a Hoy (o a los jugadones).
+    if (_hoyVuelta) { _hoyVolverDePartida(); return; }
     // Si la partida se abrió desde un ejercicio ("Ver la partida original"), Atrás vuelve AL ejercicio.
     if (_cvFromPuzzle) { _cvFromPuzzle = false; puzReopenAfterGame(); }
     else if (_cvFromPractice) { _cvFromPractice = false; pracReopenAfterGame(); }
@@ -45189,9 +45220,12 @@ function _cgDesafio(it) {
 // "Ver la partida" desde el tablero de ejercicios: la del torneo, en la posición de la colgada.
 function _cgVerPartida(it) {
   // ☀️ Un jugadón de la semana (portada Hoy) de un torneo que no es el abierto: se abre la partida en su torneo.
-  if (it._tid != null && String(it._tid) !== String(_tdTourKey)) {
+  var _tourAb = !!document.querySelector('#tour-overlay.open');
+  if (it._tid != null && (String(it._tid) !== String(_tdTourKey) || !_tourAb)) {
+    var vuelta = { tipo: 'jugadones', lista: (puz.list || []).slice(), idx: puz.idx };
+    _puzHistoryPushed = false;   // su marca se reusa (la reemplaza el torneo): no hay que deshacerla
     if (typeof _puzDoClose === 'function') _puzDoClose();
-    _hoyAbrirPartidaCg(it);
+    _hoyAbrirPartidaCg(it, vuelta);
     return true;
   }
   var games = (_tdCtx && _tdCtx.games) || [];

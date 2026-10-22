@@ -28,7 +28,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2542;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2545;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -10459,6 +10459,14 @@ console.log('\n=== 78. ☀️ Portada «Hoy» (21/10) ===');
   chk(/_ondemand \? \(window\.__EMBEDDED_TZ__ \|\| \{\}\)\.aa_hoy : tzCfg\.aa_hoy/.test(extraerFuncion('_hoyPintar')) && !/hoy-ir-torneos/.test(extraerFuncion('_hoyPintar'))
       && /Ver todos los torneos/.test(extraerFuncion('_hoyNuevosHtml')),
       '📌 en la web, los destacados elegidos a mano llegan (de __EMBEDDED_TZ__); «Ver todos los torneos» va pegado a los torneos nuevos');
+  chk(!/goTo\('entrenar'/.test(extraerFuncion('ejdiaAbrir')) && !/goTo\('entrenar'/.test(extraerFuncion('ejdiaReintentar')) && /_trainEnsureData\(\)/.test(extraerFuncion('ejdiaAbrir')),
+      '↩️ el ejercicio del día se abre encima de Hoy (Atrás vuelve a Hoy, no a Entrenar)');
+  chk(/_hoyVuelta = \{ tipo: 'partida' \}/.test(extraerFuncion('_hoyIr')) && !/\?torneo=' \+ mt\[1\]/.test(extraerFuncion('_hoyIr'))
+      && /if \(_hoyVuelta\) \{ _hoyVolverDePartida\(\); return; \}/.test(SRC) && /_hoyVuelta = null;/.test(extraerFuncion('goTo')),
+      '↩️ una partida de Hoy apila UNA marca y Atrás cierra también su torneo (vuelve a Hoy); tocar una pestaña lo corta');
+  chk(/tipo: 'jugadones', lista: \(puz\.list \|\| \[\]\)\.slice\(\), idx: puz\.idx/.test(extraerFuncion('_cgVerPartida')) && /_puzHistoryPushed = true;/.test(extraerFuncion('_hoyVolverDePartida'))
+      && /history\.replaceState\(\{\}, '', _tourHref\(it\._tid\)\)/.test(extraerFuncion('_hoyAbrirPartidaCg')),
+      '↩️ de la partida original de un jugadón, Atrás vuelve al tablero de jugadones en el MISMO (y otro Atrás, a Hoy)');
   chk(/ejr-entrar/.test(extraerFuncion('_hoyEjHtml')) && /!_ejrTok\(\)/.test(extraerFuncion('_hoyEjHtml')), '🔐 sin cuenta y con racha: «Entrá con tu cuenta para no perder tu racha»');
   // 📈 Ranking FIDE: titulares del padrón
   const F = new Function(extraerFuncion('_hoyFideDatos') + '; return _hoyFideDatos;')();
