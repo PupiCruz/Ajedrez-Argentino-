@@ -18,6 +18,7 @@ self.addEventListener('push', (e) => {
   e.waitUntil(self.registration.showNotification(d.titulo || 'ChessArgentino', {
     body: d.texto || '',
     icon: '/favicon-192.png',
+    badge: '/badge-96.png',   // el caballito blanco de la barra de arriba (Android)
     tag: d.tag || undefined,
     data: { url: d.url || '/' },
   }));
