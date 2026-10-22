@@ -61,6 +61,18 @@ if not errorlevel 1 (
 )
 
 :: ------------------------------------------------------------------
+:: 0d) Portada "Hoy": apertura del dia, "un dia como hoy", horarios y
+::     punteros de los torneos cercanos y los jugadones recientes, en un
+::     archivito chico (data\portada.json). Si falla, se sigue publicando
+::     con el de la vez pasada.
+:: ------------------------------------------------------------------
+where node >nul 2>&1
+if not errorlevel 1 (
+    node "herramientas\armar-portada.mjs"
+    echo.
+)
+
+:: ------------------------------------------------------------------
 :: 1) Si hay archivos sin guardar (datos nuevos, etc.), commitearlos.
 :: ------------------------------------------------------------------
 git status --short > "%TEMP%\gitstatus.txt" 2>&1

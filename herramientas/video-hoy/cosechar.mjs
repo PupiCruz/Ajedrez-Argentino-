@@ -10,7 +10,8 @@ import puppeteer from 'puppeteer-core';
 
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.resolve(AQUI, '../../data');
-const WEB = 'https://chessargentino.ar/';
+// VIDEO_WEB=http://localhost:8141/ → cosecha contra la maqueta local (para probar un cambio del Pupi antes de publicarlo).
+const WEB = process.env.VIDEO_WEB || 'https://chessargentino.ar/';
 
 function buscarNavegador() {
   const candidatos = [

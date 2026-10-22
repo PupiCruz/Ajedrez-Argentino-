@@ -27,7 +27,7 @@ function mkDB() {
       { token: 'sess-eva', user_id: 'u_eva', created_at: 1, expires: 9e9 },
       { token: 'sess-vieja', user_id: 'u_ana', created_at: 1, expires: 100 },
     ],
-    ratings: [], rated_games: [], reports: [], admin_rl: [], follows: [], blocks: [], user_puzzle: [],
+    ratings: [], rated_games: [], reports: [], admin_rl: [], follows: [], blocks: [], user_puzzle: [], ejdia_dia: [], user_ejdia: [],
     // Una fila vieja con el id CORTADO a 80 letras, como las que dejó el Worker anterior.
     puz_stats: [{ id: EJ_LARGO.slice(0, 80), ok: 7, fail: 3, rating: 1650, nb: 10 }],
   };
@@ -127,6 +127,18 @@ function mkDB() {
       else t.user_puzzle.push({ user_id: a[0], data: a[1], solved: a[2], updated: a[3] });
       return {};
     }
+    // ── 🔥 Racha del ejercicio del día (21/10) ──
+    if (S.startsWith('INSERT INTO ejdia_dia')) { if (!t.ejdia_dia.some((x) => x.id === a[0])) t.ejdia_dia.push({ id: a[0], pub: a[1] }); return {}; }
+    if (S.startsWith('SELECT pub FROM ejdia_dia')) return t.ejdia_dia.find((x) => x.id === a[0]) || null;
+    if (S.startsWith('INSERT INTO user_ejdia')) {
+      const f = { user_id: a[0], act: a[1], mejor: a[2], mejor_ts: a[3], ult_ts: a[4], ult_id: a[5], ok: a[6], importado: a[7] };
+      const i = t.user_ejdia.findIndex((x) => x.user_id === a[0]);
+      if (i >= 0) t.user_ejdia[i] = f; else t.user_ejdia.push(f);
+      return {};
+    }
+    if (S.includes('FROM user_ejdia WHERE user_id')) return t.user_ejdia.find((x) => x.user_id === a[0]) || null;
+    if (S.includes('display_name, country, bio, created_at, dnd, patron_until, patron_since FROM usuarios WHERE LOWER(username)'))
+      return t.usuarios.find((x) => String(x.username).toLowerCase() === String(a[0]).toLowerCase()) || null;
     if (S.includes('FROM reports WHERE reporter_id')) return null;
     if (S.startsWith('INSERT INTO reports')) { t.reports.push({ id: a[0], reporter_id: a[1], target_id: a[2], created_at: a[5], handled: 0 }); return {}; }
     return modo === 'all' ? [] : null;
@@ -1356,6 +1368,44 @@ console.log('\n=== 20. Rating: dos partidas que terminan juntas suman las dos ==
   } finally {
     globalThis.caches = cachesAntes; globalThis.fetch = fetchAntes;
   }
+}
+
+console.log('\n=== 🔥 Racha del ejercicio del día con la cuenta (PLAN-PORTADA-HOY, Fase 4) ===');
+{
+  const EVA = { Authorization: 'Bearer sess-eva', 'Content-Type': 'application/json' };
+  const post = (ruta, body, headers) => pedir(ruta, { method: 'POST', headers, body: JSON.stringify(body) });
+  const hoy = await post('/ejdia/hoy', { id: 'ej-dia-1' }, { 'Content-Type': 'application/json' });
+  chk(hoy.status === 403, 'avisar el ejercicio del día sin el secreto → 403 (sólo lo avisa el bot)', hoy.status);
+  const hoyEva = await post('/ejdia/hoy', { id: 'ej-dia-1' }, EVA);
+  chk(hoyEva.status === 403, 'ni con una sesión de usuario', hoyEva.status);
+  const inventado = await json(await post('/ejdia/ok', { id: 'uno-cualquiera' }, EVA));
+  chk(!!inventado.error && !DB.tablas.user_ejdia.length, 'resolver uno que NO es el del día no suma', inventado.error);
+  chk((await post('/ejdia/hoy', { id: 'ej-dia-1' }, { 'X-Vivo-Secret': 'secreto-vivo', 'Content-Type': 'application/json' })).status === 200, 'el bot avisa cuál es el de hoy (con el secreto)');
+  const sinSesion = await post('/ejdia/ok', { id: 'ej-dia-1' }, { 'Content-Type': 'application/json' });
+  chk(sinSesion.status === 401, 'anotar un resuelto sin sesión → 401', sinSesion.status);
+  const ok1 = await json(await post('/ejdia/ok', { id: 'ej-dia-1' }, EVA));
+  chk(ok1.ok && ok1.act === 1 && ok1.mejor === 1 && ok1.enCurso === true, 'resuelto el del día: racha de 1, en curso', JSON.stringify(ok1));
+  const ok2 = await json(await post('/ejdia/ok', { id: 'ej-dia-1' }, EVA));
+  chk(ok2.act === 1, 'el mismo ejercicio dos veces no suma', ok2.act);
+  // Lo que traía del navegador: tope por los días que lleva el ejercicio del día, y una sola vez.
+  const imp = await json(await post('/ejdia/importar', { act: 999, mejor: 999, ultTs: Date.now() - 3600e3, ultId: 'x', ok: ['viejo-1'] }, EVA));
+  const tope = Math.floor((Math.floor(Date.now() / 1000) - Math.floor(Date.UTC(2026, 9, 10) / 1000)) / 86400) + 1;
+  chk(imp.ok && imp.act === tope && imp.mejor === tope && imp.okIds.includes('viejo-1') && imp.okIds.includes('ej-dia-1'),
+      'la racha del navegador se suma con TOPE (no más larga que los días que existe el ejercicio del día)', JSON.stringify(imp));
+  const imp2 = await json(await post('/ejdia/importar', { act: 1, mejor: 50000, ultTs: Date.now() }, EVA));
+  chk(imp2.mejor === tope, 'y se suma UNA sola vez (la segunda no cambia nada)', imp2.mejor);
+  const me = await json(await pedir('/ejdia/me', { headers: EVA }));
+  chk(me.act === tope && me.importado === 1 && Array.isArray(me.ok), '/ejdia/me devuelve mi racha', JSON.stringify(me));
+  const viejo = await post('/ejdia/importar', { act: 5, mejor: 5, ultTs: Date.now() - 10 * 864e5 }, { Authorization: 'Bearer sess-ayud', 'Content-Type': 'application/json' });
+  const dv = await json(viejo);
+  chk(dv.act === 0 && dv.mejor === 5, 'si lo último del navegador tiene más de 72 h, la actual se cortó (la más larga queda)', JSON.stringify(dv));
+  // Un ejercicio del día de hace más de 30 h ya no se puede anotar.
+  DB.tablas.ejdia_dia.push({ id: 'ej-viejo', pub: Math.floor(Date.now() / 1000) - 31 * 3600 });
+  const vencido = await json(await post('/ejdia/ok', { id: 'ej-viejo' }, EVA));
+  chk(!!vencido.error, 'el ejercicio del día de hace más de 30 h ya no suma', vencido.error);
+  // El perfil público la muestra.
+  const perfil = await json(await pedir('/u/Eva'));
+  chk(perfil.ejdia && perfil.ejdia.mejor === tope && perfil.ejdia.act === tope, 'el perfil público trae la racha (actual y la más larga)', JSON.stringify(perfil.ejdia));
 }
 
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.') + '\n');

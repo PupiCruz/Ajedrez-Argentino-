@@ -221,6 +221,8 @@ export default {
 
     // ── Progreso de EJERCICIOS atado a la cuenta (viaja entre dispositivos) ──
     if (reqUrl.pathname === '/puz/progress')  return puzProgress(request, env);   // GET (leer) / POST (guardar), Bearer
+    // ── 🔥 Racha del ejercicio del día atada a la cuenta (ver ejdRuta) ──
+    if (reqUrl.pathname.startsWith('/ejdia/')) return ejdRuta(request, reqUrl, env);
 
     // ── Edición desde el teléfono (editar.html) ──
     if (reqUrl.pathname === '/admin/live') return adminLive(request, env);
@@ -2644,7 +2646,8 @@ function _nivelLogro(valor, escalones) {
 
 // Devuelve { logros: [conseguidos], faltan: [los que se pueden mostrar como objetivo] }.
 // `usuario` = fila de usuarios (created_at, patron_until). `puzData` = blob de user_puzzle.
-async function calcularLogros(env, userId, puzData, usuario) {
+// `ejd` = la racha del ejercicio del día ({ mejor }, ver ejdPublico), o nada.
+async function calcularLogros(env, userId, puzData, usuario, ejd) {
   const P = {
     n: 0, rachaMax: 0, ritmos: new Set(), mate: false, tiempo: false,
     ahogado: false, cincuenta: false, dragon: false, miniatura: false,
@@ -2748,6 +2751,10 @@ async function calcularLogros(env, userId, puzData, usuario) {
   porNivel(dias, [7, 30, 100], 'dias', '📅', 'Constancia',
     ['Practicaste 7 días distintos', 'Practicaste 30 días distintos', 'Practicaste 100 días distintos'],
     'Practicá ejercicios 7 días distintos');
+  // 🔥 El ejercicio del día de la portada, días SEGUIDOS (con 48 h de gracia). Cuenta la racha más larga.
+  porNivel((ejd && ejd.mejor) || 0, [7, 30, 100], 'ejdia', '🔥', 'Fiel al ejercicio del día',
+    ['7 días seguidos con el ejercicio del día', '30 días seguidos con el ejercicio del día', '100 días seguidos con el ejercicio del día'],
+    'Resolvé el ejercicio del día 7 días seguidos');
 
   // ── La casa ──
   sea(esPatron, 'colab', '♞', 'Colaborador',
@@ -2810,8 +2817,13 @@ async function publicProfile(request, reqUrl, env) {
 
   // Logros. Van con el perfil (y no en un pedido aparte) para que la ficha salga completa de
   // una: son 1 ó 2 consultas más y el perfil ya venía haciendo varias.
+  // 🔥 Racha del ejercicio del día (pública: la actual y la más larga).
+  let ejdia = null;
+  try { await ensureEjdTables(env); const R = await ejdLeer(env, u.id); if (R.mejor > 0) ejdia = ejdPublico(R, Math.floor(Date.now() / 1000)); }
+  catch (e) { /* si falla, el perfil sale igual sin la racha */ }
+
   let logros = [], faltan = [];
-  try { const g = await calcularLogros(env, u.id, puzBlob, u); logros = g.logros; faltan = g.faltan; }
+  try { const g = await calcularLogros(env, u.id, puzBlob, u, ejdia); logros = g.logros; faltan = g.faltan; }
   catch (e) { /* si falla, el perfil sale igual y sin medallas */ }
 
   return jsonResp({
@@ -2821,7 +2833,7 @@ async function publicProfile(request, reqUrl, env) {
     // Colaborador: `patron` es lo único que mira el cliente para pintar el ♞; `patronSince`
     // es para el "colabora desde…" de la ficha. La fecha de vencimiento NO se publica.
     patron: patronVigente(u.patron_until) ? 1 : 0, patronSince: u.patron_since || null,
-    logros, faltan,
+    logros, faltan, ejdia,
   });
 }
 
@@ -3335,6 +3347,121 @@ async function puzProgress(request, env) {
   }
 
   return errJson('Método no soportado', 405);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔥 RACHA DEL EJERCICIO DEL DÍA (PLAN-PORTADA-HOY, Fase 4; 21/10/2026)
+// Días seguidos resolviendo el ejercicio del día de la portada, atados a la cuenta (la misma racha en el
+// teléfono y en la PC) y públicos en el perfil (actual y la más larga) + logros de 7, 30 y 100 días.
+//
+// Para que nadie se invente una racha:
+//   · sólo cuenta el ejercicio que DE VERDAD salió ese día: lo avisa el bot (vivo-worker) al publicarlo,
+//     por el enlace directo y con el secreto VIVO_SECRET (POST /ejdia/hoy), y vale 30 h desde que salió;
+//   · la hora la pone ESTE servidor, no el navegador;
+//   · lo que se traía del navegador al entrar con la cuenta se suma UNA sola vez y con tope (ejdImportar).
+// 48 h de gracia, como Chess.com: la racha sigue si entre dos resueltos pasaron hasta 72 h.
+//
+//   POST /ejdia/hoy      (X-Vivo-Secret) { id }           → el ejercicio del día que acaba de salir
+//   GET  /ejdia/me       (Bearer)                          → mi racha { act, mejor, mejorTs, ultTs, ok:[ids] }
+//   POST /ejdia/ok       (Bearer) { id }                   → resolví el de hoy sin errores
+//   POST /ejdia/importar (Bearer) { act, mejor, ultTs, ok } → lo que tenía en el navegador (una vez)
+// ─────────────────────────────────────────────────────────────────────────────
+const EJD_GRACIA = 72 * 3600;                                  // segundos entre dos resueltos sin cortar la racha
+const EJD_VIGENCIA = 30 * 3600;                                // un ejercicio del día se puede anotar hasta 30 h después
+const EJD_DESDE = Math.floor(Date.UTC(2026, 9, 10) / 1000);    // el ejercicio del día de la web salió el 10/10/2026
+let _ejdTablasListas = false;
+async function ensureEjdTables(env) {
+  if (_ejdTablasListas) return;
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS ejdia_dia (id TEXT PRIMARY KEY, pub INTEGER)').run();
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS user_ejdia (user_id TEXT PRIMARY KEY, act INTEGER, mejor INTEGER, mejor_ts INTEGER, ' +
+    'ult_ts INTEGER, ult_id TEXT, ok TEXT, importado INTEGER)').run();
+  _ejdTablasListas = true;
+}
+// La fila de la base → un objeto de trabajo (vacío si todavía no tiene racha).
+function ejdDeFila(f) {
+  let ok = [];
+  try { ok = JSON.parse((f && f.ok) || '[]'); } catch (e) { ok = []; }
+  return { act: +(f && f.act) || 0, mejor: +(f && f.mejor) || 0, mejorTs: +(f && f.mejor_ts) || 0, ultTs: +(f && f.ult_ts) || 0,
+           ultId: (f && f.ult_id) || '', ok: Array.isArray(ok) ? ok : [], importado: +(f && f.importado) || 0 };
+}
+// La racha "viva" a esta hora (si pasaron más de 72 h desde el último resuelto, se cortó).
+function ejdViva(R, ahora) { return (R.ultTs && ahora - R.ultTs <= EJD_GRACIA) ? R.act : 0; }
+// Lo que se muestra: la actual, la más larga y cuándo terminó la más larga (0 = sigue en curso).
+function ejdPublico(R, ahora) {
+  const act = ejdViva(R, ahora);
+  return { act, mejor: R.mejor, mejorTs: R.mejorTs, enCurso: act > 0 && act >= R.mejor, ultTs: R.ultTs };
+}
+// Anota un resuelto (id ya validado). Devuelve true si cambió algo.
+function ejdAnotar(R, id, ahora) {
+  if (R.ok.indexOf(id) >= 0) return false;                        // el mismo ejercicio no suma dos veces
+  R.act = ejdViva(R, ahora) + 1;
+  R.ultTs = ahora; R.ultId = id;
+  if (R.act >= R.mejor) { R.mejor = R.act; R.mejorTs = ahora; }   // mejorTs = el último día de la más larga
+  R.ok.push(id); if (R.ok.length > 40) R.ok = R.ok.slice(-40);
+  return true;
+}
+// Lo que traía el navegador antes de entrar con la cuenta: UNA vez, y con topes (no puede ser más larga que los
+// días que lleva existiendo el ejercicio del día, ni venir del futuro). Si la cuenta ya tenía racha, gana la mejor.
+function ejdImportar(R, imp, ahora) {
+  if (R.importado) return false;
+  R.importado = 1;
+  const tope = Math.max(0, Math.floor((ahora - EJD_DESDE) / 86400) + 1);
+  let act = Math.max(0, Math.min(tope, Math.floor(+imp.act || 0)));
+  let mejor = Math.max(act, Math.min(tope, Math.floor(+imp.mejor || 0)));
+  let ult = Math.floor((+imp.ultTs || 0) / 1000);                  // el navegador manda milisegundos
+  if (!(ult > 0 && ult <= ahora && ahora - ult <= EJD_GRACIA)) { ult = 0; act = 0; }
+  if (act > ejdViva(R, ahora)) { R.act = act; R.ultTs = ult; R.ultId = String(imp.ultId || '').slice(0, 160); }
+  if (mejor > R.mejor) { R.mejor = mejor; R.mejorTs = ult || ahora; }
+  (Array.isArray(imp.ok) ? imp.ok : []).slice(-40).forEach((id) => { id = String(id || '').slice(0, 160); if (id && R.ok.indexOf(id) < 0) R.ok.push(id); });
+  if (R.ok.length > 40) R.ok = R.ok.slice(-40);
+  return true;
+}
+async function ejdGuardar(env, userId, R) {
+  await env.DB.prepare(
+    'INSERT INTO user_ejdia (user_id, act, mejor, mejor_ts, ult_ts, ult_id, ok, importado) VALUES (?1,?2,?3,?4,?5,?6,?7,?8) ' +
+    'ON CONFLICT(user_id) DO UPDATE SET act=?2, mejor=?3, mejor_ts=?4, ult_ts=?5, ult_id=?6, ok=?7, importado=?8'
+  ).bind(userId, R.act, R.mejor, R.mejorTs, R.ultTs, R.ultId, JSON.stringify(R.ok), R.importado).run();
+}
+async function ejdLeer(env, userId) {
+  const f = await env.DB.prepare('SELECT act, mejor, mejor_ts, ult_ts, ult_id, ok, importado FROM user_ejdia WHERE user_id=?1').bind(userId).first();
+  return ejdDeFila(f);
+}
+async function ejdRuta(request, reqUrl, env) {
+  if (!env.DB) return errJson('Falta el binding D1 (DB)', 500);
+  await ensureEjdTables(env);
+  const ahora = Math.floor(Date.now() / 1000), p = reqUrl.pathname;
+  if (p === '/ejdia/hoy') {
+    if (request.method !== 'POST') return errJson('Usá POST', 405);
+    const secret = request.headers.get('X-Vivo-Secret') || '';
+    if (!env.VIVO_SECRET || secret !== env.VIVO_SECRET) return errJson('No autorizado', 403);
+    let b; try { b = await request.json(); } catch (e) { return errJson('JSON inválido', 400); }
+    const id = String((b && b.id) || '').slice(0, 160);
+    if (!id) return errJson('Falta el id', 400);
+    await env.DB.prepare('INSERT INTO ejdia_dia (id, pub) VALUES (?1,?2) ON CONFLICT(id) DO NOTHING').bind(id, ahora).run();
+    return jsonResp({ ok: true });
+  }
+  const u = await sessionUser(request, env);
+  if (!u) return errJson('No autenticado', 401);
+  if (p === '/ejdia/me' && request.method === 'GET') {
+    const R = await ejdLeer(env, u.id);
+    return jsonResp(Object.assign(ejdPublico(R, ahora), { ok: R.ok, importado: R.importado }));
+  }
+  if (request.method !== 'POST') return errJson('Usá POST', 405);
+  if (!rlAllow('ejd:' + u.id, 10)) return tooMany();
+  let b; try { b = await request.json(); } catch (e) { return errJson('JSON inválido', 400); }
+  const R = await ejdLeer(env, u.id);
+  if (p === '/ejdia/ok') {
+    const id = String((b && b.id) || '').slice(0, 160);
+    const d = id ? await env.DB.prepare('SELECT pub FROM ejdia_dia WHERE id=?1').bind(id).first() : null;
+    if (!d || !d.pub || ahora - d.pub > EJD_VIGENCIA || d.pub > ahora + 60) return errJson('Ése no es el ejercicio del día', 400);
+    if (ejdAnotar(R, id, ahora)) await ejdGuardar(env, u.id, R);
+    return jsonResp(Object.assign({ ok: true }, ejdPublico(R, ahora)));
+  }
+  if (p === '/ejdia/importar') {
+    if (ejdImportar(R, b || {}, ahora)) await ejdGuardar(env, u.id, R);
+    return jsonResp(Object.assign({ ok: true }, ejdPublico(R, ahora), { okIds: R.ok }));
+  }
+  return errJson('No existe', 404);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

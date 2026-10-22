@@ -28,7 +28,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2497;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2540;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -10360,6 +10360,134 @@ console.log('\n=== 77. 🔎 Buscar cuentas de Chess.com de los titulados (15/10)
       'vienen tildadas sólo las seguras (nombre + única opción); se guardan en las mismas cuentas de la tarjeta, sin pisar una ya cargada');
   chk(/onclick="_onlBuscarCuentas\(\)"/.test(SRC) && !/confirm\(|alert\(/.test(busc + most + extraerFuncion('_onlBuscarGuardar')),
       'el botón está en Jugadores (modo autor) y usa los carteles de la app (nada de confirm/alert)');
+}
+console.log('\n=== 78. ☀️ Portada «Hoy» (21/10) ===');
+{
+  const H = new Function('var _HOY_DIAS = ["domingo","lunes","martes","miércoles","jueves","viernes","sábado"];'
+    + 'function escHtml(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}'
+    + 'function pgnNameToNatural(s){var p=s.split(","); return (p[1]||"").trim()+" "+p[0].trim();}'
+    + ['_hoyIso', '_hoyMs', '_hoyCreado', '_hoyRonda', '_hoyElegirPrincipal', '_hoyFalta', '_hoyRondasTxt', '_hoyNom', '_hoyPts', '_hoyFrase'].map(extraerFuncion).join('\n')
+    + '; return { ms: _hoyMs, creado: _hoyCreado, ronda: _hoyRonda, elegir: _hoyElegirPrincipal, falta: _hoyFalta, rondas: _hoyRondasTxt, frase: _hoyFrase };')();
+  // 21/10/2026 a las 15:00 hora argentina = 18:00 UTC.
+  const AHORA = Date.UTC(2026, 9, 21, 18, 0);
+  chk(H.ms('2026-10-21 19:30').ms === Date.UTC(2026, 9, 21, 22, 30) && H.ms('2026-10-21 19:30').hora === '19:30' && H.ms('2026-10-21').hora === '' && H.ms('cualquier cosa') === null,
+      'los horarios de ronda se leen como hora ARGENTINA (19:30 → 22:30 UTC); sólo el día, sin hora; basura → nada');
+  chk(H.creado('tz_1792552117986') === 1792552117986 && H.creado(1779902442983) === 1779902442983 && H.creado('tz_ob1939', '27/5/2026') === new Date(2026, 4, 27, 12).getTime() && H.creado('x') === 0,
+      '«torneo nuevo»: la fecha sale de la clave (tz_<hora de creación>) o, si no la trae, de «cargado el»');
+  const rd = { 1: '2026-10-19 19:30', 2: '2026-10-20 19:30', 3: '2026-10-21 19:30', 4: '2026-10-22 19:30' };
+  const r = H.ronda(rd, AHORA);
+  chk(r && r.n === 3 && r.hoy && r.hora === '19:30', 'la ronda de HOY es la 3 (las de ayer ya pasaron)', JSON.stringify(r));
+  chk(H.ronda({ 1: '2026-10-21 10:00', 2: '2026-10-21 16:00' }, AHORA).n === 1, 'con dos rondas hoy, sigue siendo «la de hoy» la de la mañana mientras dura (6 h)');
+  chk(H.ronda({ 1: '2026-10-25 10:00' }, AHORA).hoy === false && H.ronda({}, AHORA) === null, 'sin ronda hoy: la próxima (no marcada «hoy»); sin horarios, nada');
+  const T = (key, status, extra) => Object.assign({ key, status, startKey: 20261015, intl: false, historico: false, _d: { rd: {} } }, extra || {});
+  const nacHoy = T('nac', 'live', { _d: { rd: rd } }), intHoy = T('int', 'live', { intl: true, _d: { rd: rd } }), vivoSin = T('vivo', 'live'), prox = T('prox', 'upcoming', { startKey: 20261030 }), lejos = T('lejos', 'upcoming', { startKey: 20270301 });
+  chk(H.elegir([intHoy, vivoSin, nacHoy], '', AHORA).key === 'nac', 'la tarjeta grande: primero los que juegan HOY y, entre ellos, el nacional');
+  chk(H.elegir([intHoy, nacHoy], 'int', AHORA).key === 'int', '📌 el que eligió el autor gana sobre el automático');
+  chk(H.elegir([T('fin', 'done'), nacHoy], 'fin', AHORA).key === 'nac', '📌 se apaga solo cuando el torneo elegido terminó');
+  chk(H.elegir([vivoSin, prox], '', AHORA).key === 'vivo' && H.elegir([prox, lejos], '', AHORA).key === 'prox' && H.elegir([lejos, T('h', 'live', { historico: true })], '', AHORA) === null,
+      'sin ronda hoy: cualquiera en curso; si no, el próximo (sólo dentro de 30 días); los históricos nunca');
+  chk(H.falta(45 * 60000) === 'Faltan 45 min' && H.falta(135 * 60000) === 'Faltan 2 h 15 min' && H.falta(3 * 864e5) === 'Faltan 3 días' && H.falta(-5) === '',
+      'la cuenta regresiva en castellano (minutos, horas, días)');
+  chk(H.rondas([5]) === 'Ronda 5' && H.rondas([2, 3]) === 'Rondas 2 y 3' && H.rondas([1, 2, 3, 4, 5, 6, 7]) === 'Rondas 1 a 7' && H.rondas([1, 3, 5]) === 'Rondas 1, 3 y 5',
+      'las rondas del día: «Rondas 1 a 7» en vez de la lista entera');
+  const o = { name: 'Abierto <Mar del Plata>', isTeam: false };
+  chk(H.frase(o, { s: [['Flores, Diego', 'GM', 'ARG', 7.5], ['Mareco, Sandro', 'GM', 'ARG', 7]] }) === '<b>Diego Flores</b> ganó <b>Abierto &lt;Mar del Plata&gt;</b> · 7,5 puntos',
+      'resultados: «Diego Flores ganó el Abierto… · 7,5 puntos», con el nombre dado vuelta y escapado');
+  chk(/por desempate$/.test(H.frase(o, { s: [['A, B', '', '', 6], ['C, D', '', '', 6]] })) && !/puntos/.test(H.frase(o, { s: [['A, B', '', '', 0]] })),
+      'empatados en puntos → «por desempate»; con 0 puntos (tabla vacía) no se dicen puntos');
+  chk(H.frase({ name: 'Liga', isTeam: true }, { s: [['A, B', '', '', 5]] }) === '' && /^🏆 <b>Club X<\/b> ganó/.test(H.frase({ name: 'Liga', isTeam: true }, { eq: [['Club X', 'ARG', 14]] })),
+      'en las ligas por equipos gana el EQUIPO (el mejor jugador individual no es «el ganador»)');
+  chk(/_hoySeguiAnotar\(t, location\.search/.test(extraerFuncion('_seoAplicar')) && /aa_hoy/.test(extraerFuncion('hoyFijar')) && /if \(_ondemand\) return;/.test(extraerFuncion('hoyFijar')),
+      '▶️ «Seguí donde dejaste» se anota al abrir una lección/apertura; 📌 sólo lo cambia el autor y se guarda en tz_config (viaja al publicar)');
+  chk(/var _SEC_INICIAL = 'hoy'/.test(SRC) && /hoy:'hoy', torneos:'torneos'/.test(SRC),
+      'la portada («/») es Hoy y Torneos sigue en ?ir=torneos (los links viejos andan)');
+
+  // 2.ª vuelta (pedidos del autor, 21/10)
+  const H2 = new Function('var _HOY_DIAS = ["domingo","lunes","martes","miércoles","jueves","viernes","sábado"];'
+    + 'function escHtml(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}'
+    + 'function pgnNameToNatural(s){var p=s.split(","); return (p[1]||"").trim()+" "+p[0].trim();}'
+    + ['_hoyIso', '_hoyMs', '_hoyRonda', '_hoyElegirPrincipal', '_hoyElegirDestacados', '_hoyNom', '_hoyPts', '_hoyFrase', '_ejrActual', '_ejrAnotar'].map(extraerFuncion).join('\n')
+    + '; var _EJR_GRACIA = 72 * 3600e3; return { dest: _hoyElegirDestacados, nom: _hoyNom, frase: _hoyFrase, act: _ejrActual, anotar: _ejrAnotar };')();
+  const rdHoy = { 1: '2026-10-21 19:30' };
+  const A = T('a', 'live', { _d: { rd: rdHoy } }), B = T('b', 'live', { intl: true, _d: { rd: rdHoy } }), C = T('c', 'live');
+  chk(H2.dest([A, B, C], ['', ''], AHORA).map(o => o.key).join() === 'a,b', 'dos destacados lado a lado: los dos que juegan HOY (el que sólo está «en curso» no)');
+  chk(H2.dest([A, C], ['', ''], AHORA).map(o => o.key).join() === 'a', 'si sólo uno juega hoy, va uno solo (como antes)');
+  chk(H2.dest([A, B, C], ['c', ''], AHORA).map(o => o.key).join() === 'c,a' && H2.dest([A, B, C], ['b', '-'], AHORA).map(o => o.key).join() === 'b',
+      '📌 el primero a mano y el segundo automático; «— Ninguno —» deja uno solo');
+  chk(H2.nom('Leskovar, Mario IM') === 'Mario Leskovar' && H2.nom('Campos, Maria Jose WGM') === 'Maria Jose Campos' && H2.nom('Oro, Faustino') === 'Faustino Oro',
+      'el título pegado al nombre por Chess-Results («Leskovar, Mario IM») se saca');
+  const pan = { name: 'Panamericano Seniors', isTeam: false };
+  const catsPan = { cats: [{ c: 0, nom: '+50', s: [['Lima, Darcy', '', 'BRA', 7], ['X, Y', '', 'ARG', 6]] }, { c: 1, nom: '+65', s: [['Leskovar, Mario', 'IM', 'ARG', 7], ['Z, W', '', 'CHI', 6.5]] }] };
+  chk(/^<b>Mario Leskovar<\/b> ganó .*\(\+65\)/.test(H2.frase(pan, catsPan)), '🇦🇷 resultados: con categorías, se cuenta la que ganó un argentino (Leskovar en +65)', H2.frase(pan, catsPan));
+  chk(/mejor argentino: <b>Y X<\/b> \(2\.º\)$/.test(H2.frase(pan, { cats: [catsPan.cats[0]] }) || '') || /mejor argentino: <b>Y X<\/b> \(2\.º\)$/.test(H2.frase(pan, { s: catsPan.cats[0].s })),
+      'si no ganó ningún argentino, se nombra al mejor del podio («mejor argentino: … (2.º)»)');
+  // 🔥 Racha del ejercicio del día
+  const h = 3600e3, R = { act: 0, mejor: 0, ok: {}, mal: [] }, T0 = Date.UTC(2026, 9, 21, 16);
+  H2.anotar(R, 'e1', true, true, '', T0);
+  H2.anotar(R, 'e2', true, true, '', T0 + 24 * h);
+  chk(R.act === 2 && R.mejor === 2 && H2.act(R, T0 + 24 * h) === 2, '🔥 dos días seguidos resueltos = racha de 2');
+  H2.anotar(R, 'e2', true, true, '', T0 + 25 * h);
+  chk(R.act === 2, '🔥 resolver otra vez el mismo no suma');
+  H2.anotar(R, 'e4', true, true, '', T0 + 24 * h + 70 * h);
+  chk(R.act === 3, '🔥 48 h de gracia: si un día no entró (70 h entre dos resueltos), la racha sigue');
+  chk(H2.act(R, T0 + 94 * h + 73 * h) === 0, '🔥 más de 72 h sin resolver: la racha se cortó (la mejor queda guardada)');
+  const R2 = { act: 0, mejor: 0, ok: {}, mal: [] };
+  H2.anotar(R2, 'f1', false, true, 'fen', T0);
+  chk(R2.act === 0 && R2.mal.length === 1, '✗ si falló, no suma y queda para reintentar');
+  H2.anotar(R2, 'f1', true, true, 'fen', T0 + h);
+  chk(R2.act === 1 && R2.mal.length === 0, '🔁 reintentado y resuelto sin errores: cuenta y sale de los fallados');
+  const R3 = { act: 0, mejor: 0, ok: {}, mal: [] };
+  H2.anotar(R3, 'g1', false, true, 'fen', T0, true); H2.anotar(R3, 'g1', true, true, 'fen', T0 + h);
+  chk(R3.act === 0, '👁 si vio la solución, aunque después lo haga bien, ése no suma');
+  chk(/_ejdiaResultado\(puz\.cur\.id, clean && !puz\.hinted\)/.test(extraerFuncion('puzOnSolved')) && /_ejdiaResultado\(puz\.cur\.id, false, true\)/.test(extraerFuncion('puzReveal'))
+      && /_ejdiaEnPuz/.test(extraerFuncion('puzLoad')) && !/_redesEjHtml\(\)/.test(extraerFuncion('_hoyEjHtml') + extraerFuncion('_ejdiaPintar')),
+      'el tablero avisa que es el del día y anota el resultado; ya no se invita a resolverlo en Telegram/Discord');
+  // 🔥 La racha con la cuenta (Fase 4)
+  const EC = new Function(['_ejrDeCuenta', 'ejrPerfilHtml'].map(extraerFuncion).join('\n') + '; return { de: _ejrDeCuenta, perfil: ejrPerfilHtml };')();
+  const RC = EC.de({ act: 9, mejor: 9, ok: { viejo: 1 }, mal: [{ id: 'z1' }, { id: 'q' }] }, { act: 3, mejor: 12, ultTs: 1761000000, okIds: ['z1', 'h2'] }, 5);
+  chk(RC.act === 3 && RC.mejor === 12 && RC.ultTs === 1761000000000 && RC.ok.z1 === 5 && RC.ok.viejo === 1 && RC.mal.length === 1 && RC.cuenta === 1,
+      '🔥 con cuenta manda la racha del servidor (segundos → ms), se suman sus resueltos y salen de los fallados');
+  chk(EC.perfil(null) === '' && EC.perfil({ act: 0, mejor: 0 }) === '', '🔥 perfil: sin racha nunca, no se muestra la franja');
+  const pf1 = EC.perfil({ act: 5, mejor: 5, enCurso: true }), pf2 = EC.perfil({ act: 0, mejor: 12, mejorTs: Date.UTC(2026, 9, 15, 15) / 1000 }, true);
+  chk(/aa-ejr-n on"><b>5<\/b>/.test(pf1) && /<b>5 días<\/b> · en curso/.test(pf1) && /terminó el 15\/10/.test(pf2) && /Se cortó/.test(pf2) && !/ on"/.test(pf2),
+      '🔥 perfil: la actual (dorada si sigue) y la más larga, «en curso» o con el día en que terminó', pf2);
+  chk(/_ejrMandarOk\(id\)/.test(extraerFuncion('_ejdiaResultado')) && /contaba = esHoy && limpio && !visto/.test(extraerFuncion('_ejdiaResultado'))
+      && /\/ejdia\/importar/.test(extraerFuncion('ejrSyncPull')) && /owner && owner !== uid/.test(extraerFuncion('ejrSyncPull')),
+      '🔥 con sesión: el resuelto limpio del día va a la cuenta; al entrar se suma la del navegador (si no es de OTRA cuenta)');
+  chk(/ejr-entrar/.test(extraerFuncion('_hoyEjHtml')) && /!_ejrTok\(\)/.test(extraerFuncion('_hoyEjHtml')), '🔐 sin cuenta y con racha: «Entrá con tu cuenta para no perder tu racha»');
+  // 📈 Ranking FIDE: titulares del padrón
+  const F = new Function(extraerFuncion('_hoyFideDatos') + '; return _hoyFideDatos;')();
+  const pj = (id, name, elo, hist, extra) => Object.assign({ id, name, elo, hist, ranked: true }, extra || {});
+  const ovF = { month: '2026-10', players: [
+    pj(1, 'Oro', 2560, [{ d: '2026-09', s: 2540 }]), pj(2, 'Flores', 2557, [{ d: '2026-09', s: 2590 }]),
+    pj(3, 'Subidor', 2205, [{ d: '2026-08', s: 2150 }, { d: '2026-09', s: 2185 }]), pj(4, 'Nuevo', 2029, []),
+    pj(5, 'Bajó', 2100, [{ d: '2026-09', s: 2300 }]) ] };
+  const DF = F(ovF);
+  chk(DF.nuevoN1 && DF.top[0].name === 'Oro' && DF.barreras.some(x => x.b === 2200 && x.L[0].name === 'Subidor') && DF.debut[0].name === 'Nuevo' && DF.records === 2,
+      '📈 titulares: nuevo N.º 1, pasó los 2200 por primera vez, debutantes y récords personales');
+  chk(DF.escalaron.length === 2 && DF.escalaron.some(x => x.p.name === 'Subidor' && x.de === 4 && x.a === 3) && DF.escalaron.some(x => x.p.name === 'Oro' && x.de === 2 && x.a === 1),
+      '🧗 puestos escalados: sin el puesto guardado, se aproxima entre los que siguen en el ranking (4.º → 3.º)', JSON.stringify(DF.escalaron.map(x => [x.p.name, x.de, x.a])));
+  const ovG = { month: '2026-11', players: Array.from({ length: 12 }, (_, i) => pj(i + 1, 'J' + (i + 1), 2600 - i * 10, [{ d: '2026-10', s: 2600 - i * 10, pos: i === 0 ? 11 : i + 1 }])) };
+  chk(F(ovG).top10.map(x => x.p.name + ':' + x.de).join() === 'J1:11', '🔟 entra al top 10 el que estaba afuera (con el puesto GUARDADO del mes pasado)');
+  chk(/h\.pos = pos/.test(extraerFuncion('_buildRankingFromActive')) && /h\.posF = pos/.test(extraerFuncion('_buildRankingFromActive')),
+      'al actualizar el ranking, el puesto de cada uno (y el femenino) queda guardado en su historial');
+  const ovH = { month: '2026-10', players: [
+    pj(1, 'Campos', 2266, [{ d: '2026-09', s: 2250 }], { female: true }), pj(2, 'Antes1', 2260, [{ d: '2026-09', s: 2290 }], { female: true }),
+    pj(3, 'Varón', 2500, [{ d: '2026-09', s: 2500 }]) ].concat(Array.from({ length: 10 }, (_, i) => pj(10 + i, 'F' + i, 2200 - i * 10, [{ d: '2026-09', s: 2200 - i * 10 }], { female: true })))
+    .concat([pj(30, 'Subió', 2215, [{ d: '2026-09', s: 2050 }], { female: true })]) };
+  const DH = F(ovH);
+  chk(DH.fem && DH.fem.p.name === 'Campos' && DH.fem.nueva && DH.fem.top10.some(x => x.p.name === 'Subió' && x.a === 3),
+      '👑 femenino: nueva N.º 1 (Campos pasó a Antes1) y quién entra al top 10 femenino', JSON.stringify(DH.fem && DH.fem.top10.map(x => [x.p.name, x.de, x.a])));
+  const DE = F({ month: '2026-10', players: [pj(1, 'Campos', 2266, [{ d: '2026-09', s: 2230 }], { female: true }), pj(2, 'Francisco', 2266, [{ d: '2026-09', s: 2268 }], { female: true })] });
+  chk(DE.fem && !DE.fem.nueva && DE.fem.todas.length === 2, '👑 empatadas en Elo en el 1.º puesto: no hay «nueva N.º 1» (la de antes sigue arriba) y se nombra a las dos');
+  // ⚡ Lo mejor de la semana
+  const M = new Function('var _hoyP = null;' + ['_hoyIso', '_hoyMomSemana', '_hoyMomElegido'].map(extraerFuncion).join('\n') + '; return { set: function (p) { _hoyP = p; }, sem: _hoyMomSemana, eleg: _hoyMomElegido };')();
+  M.set({ mom: [{ fen: 'x w', sol: ['e2e4'], fecha: '2026.10.21', wElo: '2700', arg: 0 }, { fen: 'x b', sol: ['e7e5'], fecha: '2026.10.19', wElo: '2300', arg: 1 },
+    { fen: 'x w', sol: ['a2a3'], fecha: '2026.10.10', wElo: '2800', arg: 1 }] });
+  const sem = M.sem(AHORA);
+  chk(sem.length === 2 && M.eleg(sem).arg === 1, '⚡ lo mejor de la semana: sólo los últimos 7 días y, de ésos, primero el de un argentino');
+  chk(/it\._tn \|\|/.test(extraerFuncion('_cgPuzzle')) && /it\._tid != null/.test(extraerFuncion('_cgVerPartida')) && /_cgAbrirEnTablero\(/.test(extraerFuncion('hoyJugadones')),
+      '✨ los jugadones de la semana se abren todos juntos en el tablero de siempre, cada uno con su torneo');
 }
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
 console.log('   Corrieron ' + corridas + ' de ' + ESPERADAS + ' comprobaciones.'

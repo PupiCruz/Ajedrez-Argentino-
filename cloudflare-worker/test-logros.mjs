@@ -222,9 +222,10 @@ console.log('\n=== 10. Ninguna medalla se repite ===');
   muchas.push(P('tablas', { reason: 'fifty' }));
   const blob = JSON.stringify({ solved: 600, bestStreak: 40, days: Object.fromEntries(Array(120).fill(0).map((_, i) => ['d' + i, 1])) });
   const r = await calcularLogros(fakeEnv(muchas, [{ moves: Array(30).fill('e4').join(' ') }]),
-    YO, blob, { created_at: AHORA - 400 * 86400, patron_until: AHORA + 86400 });
+    YO, blob, { created_at: AHORA - 400 * 86400, patron_until: AHORA + 86400 }, { mejor: 120 });   // 🔥 racha del ejercicio del día
   const ids = r.logros.map((l) => l.id);
   ok(new Set(ids).size === ids.length, 'sin repetidas con todo desbloqueado', ids.length + ' medallas');
+  ok(ids.includes('ejdia'), '🔥 «Fiel al ejercicio del día» con 100+ días seguidos');
   ok(r.faltan.length === 0, 'y no queda nada pendiente', r.faltan.length);
   ok(ids.includes('miniatura') && ids.includes('dragon') && ids.includes('ritmos'), 'están las difíciles');
 }

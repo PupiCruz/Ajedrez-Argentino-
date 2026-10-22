@@ -191,7 +191,7 @@ function linkJugador(og, id, nombreRespaldo) {
   return '<a href="/?jugador=' + esc(encodeURIComponent(id)) + '">' + esc(limpio(nombre)) + '</a>';
 }
 
-const PIE = '<p><a href="/">Torneos de ajedrez en Argentina</a> · <a href="/?ir=jugadores">Ranking FIDE de Argentina</a>'
+const PIE = '<p><a href="/?ir=torneos">Torneos de ajedrez en Argentina</a> · <a href="/?ir=jugadores">Ranking FIDE de Argentina</a>'
           + ' · <a href="/?ir=noticias">Noticias de ajedrez</a></p>';
 
 function fichaTorneo(fila, ficha, og) {

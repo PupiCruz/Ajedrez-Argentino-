@@ -66,20 +66,23 @@ function casillaSvg(r, f, ox, oy, resaltada) {
   const clara = (r + f) % 2 === 0, x = ox + f * C, y = oy + r * C, tinta = clara ? '#5d7790' : '#e8edf2';
   let t = '<rect x="' + x + '" y="' + y + '" width="' + (C + 0.5) + '" height="' + (C + 0.5) + '" fill="' + (resaltada ? (clara ? '#f6f669' : '#cdd16a') : (clara ? COL.claro : COL.oscuro)) + '"/>';
   t += '<use href="#marm" x="' + x + '" y="' + y + '"/>';
-  if (r === 7) t += '<text x="' + (ox + (f + 1) * C - 8) + '" y="' + (oy + S - 9) + '" text-anchor="end" font-size="22" font-weight="700" fill="' + tinta + '">' + 'abcdefgh'[f] + '</text>';
-  if (f === 0) t += '<text x="' + (x + 8) + '" y="' + (y + 26) + '" font-size="22" font-weight="700" fill="' + tinta + '">' + (8 - r) + '</text>';
+  if (r === 7) t += '<text x="' + (ox + (f + 1) * C - 8) + '" y="' + (oy + S - 9) + '" text-anchor="end" font-size="22" font-weight="700" fill="' + tinta + '">' + (VOLTEAR ? 'hgfedcba' : 'abcdefgh')[f] + '</text>';
+  if (f === 0) t += '<text x="' + (x + 8) + '" y="' + (y + 26) + '" font-size="22" font-weight="700" fill="' + tinta + '">' + (VOLTEAR ? r + 1 : 8 - r) + '</text>';
   return t;
 }
 const MARM_DEF = '<svg id="marm" width="' + C + '" height="' + C + '" viewBox="0 0 70 70" overflow="hidden"><image href="' + MARMOL + '" width="200" height="200"/></svg>';
-const TABLERO_IMG = (() => {
+let _tableroImg = null;
+const tableroImg = () => _tableroImg || (_tableroImg = (() => {
   let t = '<svg xmlns="http://www.w3.org/2000/svg" width="' + S + '" height="' + S + '"><defs>' + MARM_DEF + '</defs>';
   for (let r = 0; r < 8; r++) for (let f = 0; f < 8; f++) t += casillaSvg(r, f, 0, 0, false);
   return 'data:image/png;base64,' + new Resvg(t + '</svg>', { fitTo: { mode: 'width', value: S }, font: { loadSystemFonts: false, fontFiles: ['C:/Windows/Fonts/segoeui.ttf', 'C:/Windows/Fonts/segoeuib.ttf'], defaultFontFamily: 'Segoe UI' } }).render().asPng().toString('base64');
-})();
+})());
 const LOGO = 'data:image/png;base64,' + fs.readFileSync(path.join(ASSETS, 'logo.png')).toString('base64');
 
 // ── la partida: posiciones y animaciones de cada jugada ──
-const sqXY = (sq) => ({ x: BX + 'abcdefgh'.indexOf(sq[0]) * C, y: BY + (8 - +sq[1]) * C });
+// El tablero se ve del lado del que GANA (pedido del autor, 21/10): con 0-1, las negras abajo. VOLTEAR se fija al leer la partida.
+let VOLTEAR = false;
+const sqXY = (sq) => { const f = 'abcdefgh'.indexOf(sq[0]), r = +sq[1]; return VOLTEAR ? { x: BX + (7 - f) * C, y: BY + (r - 1) * C } : { x: BX + f * C, y: BY + (8 - r) * C }; };
 function prepararPartida(P) {
   const ch = new Chess();
   let id = 0;
@@ -178,15 +181,15 @@ function dibujar(P, G, est) {
     + '<text x="' + (BX + 28) + '" y="' + (y + 48) + '" font-size="' + ajustar(J.nombre, 38, 600, 0.56) + '" font-weight="700" fill="#fff">' + esc(J.nombre) + '</text>'
     + '<text x="' + (BX + S - 22) + '" y="' + (y + 47) + '" text-anchor="end" font-size="30" font-weight="600" fill="' + COL.gris + '">' + esc([J.equipo, J.elo].filter(Boolean).join(' · ')) + '</text>';
   const mueveBlancas = p % 2 === 0;
-  s += barra(248, P.negras, !mueveBlancas && p < P.jugadas.length);
+  s += VOLTEAR ? barra(248, P.blancas, mueveBlancas && p < P.jugadas.length) : barra(248, P.negras, !mueveBlancas && p < P.jugadas.length);
 
   // Tablero
   s += '<rect x="' + (BX - 4) + '" y="' + (BY + 6) + '" width="' + (S + 8) + '" height="' + (S + 8) + '" rx="24" fill="#000" opacity="0.35"/><rect x="' + BX + '" y="' + BY + '" width="' + S + '" height="' + S + '" rx="20" fill="' + COL.claro + '"/>';
   s += '<g clip-path="url(#tab)">';
   const resaltar = new Set(an ? [an.from, an.to] : []);
   // El tablero entero (casillas + marmolado + coordenadas) se dibuja UNA vez (TABLERO_IMG); por cuadro sólo se redibujan las 2 casillas resaltadas.
-  s += '<image href="' + TABLERO_IMG + '" x="' + BX + '" y="' + BY + '" width="' + S + '" height="' + S + '"/>';
-  for (const sq of resaltar) s += casillaSvg(8 - +sq[1], 'abcdefgh'.indexOf(sq[0]), BX, BY, true);
+  s += '<image href="' + tableroImg() + '" x="' + BX + '" y="' + BY + '" width="' + S + '" height="' + S + '"/>';
+  for (const sq of resaltar) { const q = sqXY(sq); s += casillaSvg(Math.round((q.y - BY) / C), Math.round((q.x - BX) / C), BX, BY, true); }
   // Piezas (las que no se mueven primero; la que se mueve, encima)
   const mueven = new Map(); if (an) for (const m of an.mueve) mueven.set(m.id, m);
   const dibujarPieza = (pz, x, y, op, esc2) => {
@@ -254,7 +257,7 @@ function dibujar(P, G, est) {
   if (flash > 0) s += '<rect width="' + W + '" height="' + H + '" fill="#fff" opacity="' + flash.toFixed(2) + '"/>';
 
   // Jugador de abajo (blancas)
-  s += barra(BY + S + 12, P.blancas, mueveBlancas && p < P.jugadas.length);
+  s += VOLTEAR ? barra(BY + S + 12, P.negras, !mueveBlancas && p < P.jugadas.length) : barra(BY + S + 12, P.blancas, mueveBlancas && p < P.jugadas.length);
 
   // Jugada actual + eval
   const yP = BY + S + 100;
@@ -291,10 +294,13 @@ function dibujar(P, G, est) {
     const gx = BX + 330, gw = S - 330, op = clamp(tiempoPupi / 0.25, 0, 1);
     const colT = nag === '??' ? '#ff9d9d' : nag === '!!' ? '#7df0d6' : '#fff';
     const cuerpoGrande = String(pu.b || '').length <= 48, tamB = cuerpoGrande ? 36 : 29, lhB = cuerpoGrande ? 46 : 37;
-    const lineasT = envolver(pu.t || '', gw - 70, 34, 0.54).slice(0, 2), lineasB = envolver(pu.b || '', gw - 70, tamB, cuerpoGrande ? 0.52 : 0.5).slice(0, 5);
-    const gh = Math.min(altoPu - 4, 40 + lineasT.length * 42 + (lineasT.length && lineasB.length ? 8 : 0) + lineasB.length * lhB), gy = yPu + (altoPu - gh) / 2;
-    let y0 = gy + 20 + 34, texto = '';
-    for (const l of lineasT) { texto += '<text x="' + (gx + 38) + '" y="' + y0 + '" font-size="34" font-weight="800" fill="' + colT + '">' + esc(l) + '</text>'; y0 += 42; }
+    // El título entra ENTERO: si pasa de 2 renglones se achica (antes se cortaba: "…en un par de" sin "semanas").
+    let tamT = 34, lineasT = envolver(pu.t || '', gw - 70, tamT, 0.54);
+    if (lineasT.length > 2) { tamT = 29; lineasT = envolver(pu.t || '', gw - 70, tamT, 0.54).slice(0, 4); }
+    const lhT = tamT + 8, lineasB = envolver(pu.b || '', gw - 70, tamB, cuerpoGrande ? 0.52 : 0.5).slice(0, 5);
+    const gh = Math.min(altoPu - 4, 40 + lineasT.length * lhT + (lineasT.length && lineasB.length ? 8 : 0) + lineasB.length * lhB), gy = yPu + (altoPu - gh) / 2;
+    let y0 = gy + 20 + tamT, texto = '';
+    for (const l of lineasT) { texto += '<text x="' + (gx + 38) + '" y="' + y0 + '" font-size="' + tamT + '" font-weight="800" fill="' + colT + '">' + esc(l) + '</text>'; y0 += lhT; }
     if (lineasT.length && lineasB.length) y0 += 8;
     const colB = /^(Mejor|Preferible|Resist)/.test(pu.b || '') ? COL.oro : COL.texto;
     for (const l of lineasB) { texto += '<text x="' + (gx + 38) + '" y="' + (y0 - (cuerpoGrande ? 0 : 4)) + '" font-size="' + tamB + '" font-weight="' + (cuerpoGrande ? 700 : 500) + '" fill="' + colB + '">' + esc(l) + '</text>'; y0 += lhB; }
@@ -369,6 +375,7 @@ const P = JSON.parse(fs.readFileSync(entrada, 'utf8'));
 // Los símbolos que el video no dibuja se borran: ★ (la mejor jugada: la pone la web cuando la analiza su motor, y
 // serían decenas de estrellitas tapando a las importantes) y !? u otros que no están en NAG. Con ★ se rompía el video.
 for (const j of P.jugadas) if (j[1] && !NAG[j[1]]) j[1] = '';
+VOLTEAR = P.voltear != null ? !!P.voltear : P.resultado === '0-1';
 const G = prepararPartida(P);
 
 if (!isMainThread) {
