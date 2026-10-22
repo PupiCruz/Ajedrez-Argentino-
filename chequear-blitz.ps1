@@ -51,8 +51,10 @@ try {
     }
 
     # 2) Las excepciones de boardApiHook (sacando espacios y saltos de linea).
-    $plano = $setup -replace '\s+', ''
-    $esperado = '.boardApiHook:ctx.isMobileOauth||ctx.isTakex3||(ctx.isAnon&&HTTPRequest.isLichessMobile(ctx.req)).bindFromRequest()'
+    #    El 22/10/2026 cambiaron isLichessMobile(ctx.req) por isLichessMobile a secas
+    #    (puro orden del codigo, salto el aviso al pedo): se aceptan las dos formas.
+    $plano = ($setup -replace '\s+', '') -replace 'isLichessMobile\(ctx\.req\)', 'isLichessMobile'
+    $esperado = '.boardApiHook:ctx.isMobileOauth||ctx.isTakex3||(ctx.isAnon&&HTTPRequest.isLichessMobile).bindFromRequest()'
     if (-not $plano.Contains($esperado)) {
         $aviso += 'Cambiaron las excepciones de quien puede jugar rapido (boardApiHook).'
     }

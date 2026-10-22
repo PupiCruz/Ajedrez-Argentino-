@@ -61077,13 +61077,31 @@ function cvUpdateNagBadge() {
     } catch (e) { try { return JSON.stringify(x).slice(0, 200); } catch (e2) { return ''; } }
   }
 
+  /* Desde el 21/10/2026 Lichess frena "buscar rival" en dos casos y lo explica en inglés
+     (403, `NoPlaybanOrCurrent` de su código): con una partida en vivo en curso, o con una
+     sanción por abandonar/abortar. Esos dos se dicen en castellano; el resto, tal cual. */
+  function motivoSeekES(m) {
+    if (!m || typeof m !== 'string') return '';
+    var r = m.match(/^You are already playing (.+?)\s*$/);
+    if (r) return 'Ya estás jugando una partida contra ' + r[1] + ' en Lichess. Terminala y volvé a buscar rival.';
+    r = m.match(/^Banned from playing for (\d+) minutes?/);
+    if (r) {
+      var n = +r[1];
+      return 'Lichess no te deja buscar rival por ' + (n === 1 ? '1 minuto' : n + ' minutos') +
+        ': te frenó por abandonar o abortar muchas partidas seguidas.';
+    }
+    return '';
+  }
+
   function avisarFallo(e) {
     try { console.warn('[Lichess] falló el pedido de partida:', (e && e.message) || e, e && e.cuerpo ? JSON.parse(e.cuerpo) : ''); } catch (x) {}
     var st = e && e.status;
     if (st === 401) { window.aaLi.olvidar(); pintar(); window.aaLi.avisar('Se venció el permiso de Lichess. Apretá de nuevo el ritmo para renovarlo.'); return; }
     if (st === 429) { window.aaLi.avisar('Lichess pidió esperar un momento (demasiados pedidos seguidos). Probá en un minuto.'); return; }
     var motivo = textoError(e && e.motivo);
-    window.aaLi.avisar(motivo ? ('Lichess rechazó el pedido → ' + motivo) : ('Se cortó el pedido a Lichess' + (e && e.message ? (' (' + e.message + ')') : '') + '.'));
+    var es = motivoSeekES(motivo);
+    if (es) { window.aaLi.avisar(es); return; }
+    window.aaLi.avisar(motivo ?('Lichess rechazó el pedido → ' + motivo) : ('Se cortó el pedido a Lichess' + (e && e.message ? (' (' + e.message + ')') : '') + '.'));
   }
 
   function onAviso(o) {

@@ -28,7 +28,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2546;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2551;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -4269,6 +4269,20 @@ console.log('\n=== 50. Puntos del torneo en el visor (6½/7) ===');
   // ya es Rápida. Si alguien vuelve a ofrecer blitz, esto lo caza antes de publicar.
   const ofrecidos = tcs.filter(t => { const [m, i] = t.split('+').map(Number); return m * 60 + 40 * i >= 480; });
   chk(/RITMOS_AZAR = RITMOS\.filter/.test(modGrid), 'la grilla filtra los ritmos que Lichess no acepta al azar');
+
+  // 🇦🇷 Los dos rechazos de "buscar rival" que Lichess sumó el 21/10/2026 (403), en castellano.
+  {
+    const motivoSeekES = new Function(extraerFuncion('motivoSeekES') + '; return motivoSeekES;')();
+    chk(motivoSeekES('You are already playing elPupiCruz') === 'Ya estás jugando una partida contra elPupiCruz en Lichess. Terminala y volvé a buscar rival.',
+        'rechazo por partida en curso: en castellano y con el nombre del rival', motivoSeekES('You are already playing elPupiCruz'));
+    chk(/por 15 minutos: te frenó por abandonar/.test(motivoSeekES('Banned from playing for 15 minutes. Reason: Too many aborts, unplayed games, or rage quits.')),
+        'sanción de Lichess: en castellano y con los minutos');
+    chk(/por 1 minuto:/.test(motivoSeekES('Banned from playing for 1 minutes. Reason: x')), 'sanción de 1 minuto en singular');
+    chk(motivoSeekES('Invalid time control') === '' && motivoSeekES('') === '' && motivoSeekES({ time: ['error.min'] }) === '',
+        'los demás motivos siguen saliendo tal cual (no se traducen)');
+    chk(/var es = motivoSeekES\(motivo\);\s*if \(es\) \{ window\.aaLi\.avisar\(es\); return; \}/.test(modGrid),
+        'avisarFallo usa la traducción antes del "Lichess rechazó el pedido"');
+  }
   chk(/>=\s*480/.test(modGrid), '🔒 el filtro usa la cuenta de Lichess (480 s = Rápida)');
   chk(ofrecidos.join(' ') === '5+5 6+3 7+2 8+0 10+0 10+5 15+10 30+0 30+20',
       'quedan ofrecidas las 9 rápidas y clásicas, ninguna bala ni blitz', ofrecidos.join(' '));
