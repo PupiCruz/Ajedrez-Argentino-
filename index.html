@@ -16,6 +16,9 @@
   <link rel="icon" type="image/png" sizes="48x48" href="/favicon-48.png">
   <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <!-- 📲 Instalable como app (Fase 5): la ficha de la app. El ayudante de notificaciones es /sw.js (ver _app*). -->
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="apple-mobile-web-app-title" content="ChessArgentino">
 
   <!-- SEO / compartir en redes (Open Graph + Twitter Card). Al pegar el link en
        WhatsApp / Facebook / X aparece con título, descripción e imagen. -->
@@ -637,6 +640,19 @@
     .hoy-an { width: 46px !important; font-size: 17px; font-weight: 700; color: color-mix(in srgb, #a0743c 70%, #fff); }
     body.light .hoy-an { color: #7d5524; }
     body.light .hoy-blq[data-c="hist"] { background: #f6ecd8; }
+    /* 📲 Instalar como app (Fase 5, en prueba): franja arriba de todo, con el ícono, el texto y los botones. */
+    .hoy-app { position: relative; display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 14px; align-items: start; padding-right: 40px;
+      border-color: color-mix(in srgb, var(--gold) 45%, transparent); background: color-mix(in srgb, var(--gold) 8%, var(--card90)); }
+    .hoy-app-ic { width: 52px; height: 52px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.35); }
+    .hoy-app-tx { display: flex; flex-direction: column; gap: 4px; min-width: 0; font-size: 13.5px; line-height: 1.45; color: var(--fg-e0); }
+    .hoy-app-tx > b { font-size: 15.5px; font-weight: 800; color: var(--fg0); }
+    .hoy-app-ios { display: inline-block; padding: 0 5px; border: 1px solid var(--bd22); border-radius: 5px; font-size: 12px; }
+    .hoy-app-acc { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; align-items: center; }
+    .hoy-app-nota { flex-basis: 100%; font-size: 12px; color: var(--text3); }
+    .hoy-app-x { position: absolute; top: 8px; right: 8px; width: 30px; height: 30px; border-radius: 50%; border: 0; background: transparent;
+      color: var(--text3); font-size: 15px; cursor: pointer; }
+    .hoy-app-x:hover { background: var(--bd10); color: var(--fg0); }
+
     /* 🎉 ¡Hoy cumplen años!: panel propio de fiesta (22/10; violeta, el autor eligió entre 3: el rosa era «muy de señorita»). Confeti de fondo (puntitos de colores, sólo CSS),
        banderines bajo el título, una tarjetita por cumpleañero con aro de colores y la tortita en la esquina.
        Las tarjetas «saltan» una vez al aparecer (hoy-fe-anim: sólo la primera pintada, la portada se redibuja seguido). */
@@ -31490,6 +31506,7 @@ function _hoyPintar() {
     }
   });
   var izq = '', der = '', h = '';
+  try { h += _appCardHtml(); } catch (e) {}   // 📲 instalar como app (sólo en la dirección de prueba, por ahora)
   h += _hoyHeroHtml(dest, infos, fijos, ahora);
   der += _hoyEjHtml();
   der += _hoyCumpleHtml(hoyD);
@@ -32071,6 +32088,79 @@ function _hoyFideDatos(ov) {
   });
   return D;
 }
+/* ── 📲 ChessArgentino como app de teléfono (PLAN-PORTADA-HOY, Fase 5, 22/10/2026) ──
+   · manifest.webmanifest (nombre, ícono, pantalla completa) + /sw.js, el ayudante que recibe notificaciones y NO guarda
+     nada de la web (la web se sigue bajando fresca).
+   · EN PRUEBA: el cartel y el ayudante sólo andan fuera de chessargentino.ar (la dirección de prueba de Cloudflare,
+     localhost) o con localStorage aa_app_prueba = 1. En la web de verdad no se ve nada hasta que el autor diga.
+   · Android/Chrome: el teléfono avisa que se puede instalar (beforeinstallprompt) y el botón abre su cartel.
+     iPhone: no hay botón posible; se explica Compartir → «Agregar a inicio».
+   · 🔔 «Probar una notificación»: pide el permiso (siempre después de un toque) y muestra una de ejemplo. Las de
+     verdad (las manda el bot) son el paso 2. */
+var _appPrompt = null, _appSw = null;
+function _appEnPrueba() {
+  var h = location.hostname;
+  if (h !== 'chessargentino.ar' && h !== 'www.chessargentino.ar') return true;
+  try { return localStorage.getItem('aa_app_prueba') === '1'; } catch (e) { return false; }
+}
+function _appInstalada() { return !!((window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone); }
+function _appEsIOS() { return /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); }
+function _appIniciar() {
+  if (!_appEnPrueba()) return;
+  if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+    navigator.serviceWorker.register('/sw.js').then(function (r) { _appSw = r; }).catch(function () {});
+  }
+  window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault(); _appPrompt = e; try { _hoyPronto(); } catch (x) {} });
+  window.addEventListener('appinstalled', function () { _appPrompt = null; try { _hoyPronto(); } catch (x) {} });
+}
+function _appCardHtml() {
+  if (!_appEnPrueba()) return '';
+  try { if (localStorage.getItem('aa_app_cerrado') === '1') return ''; } catch (e) {}
+  var inst = _appInstalada(), ios = _appEsIOS(), notif = ('Notification' in window), perm = notif ? Notification.permission : 'no';
+  var h = '<section class="hoy-blq hoy-app" style="--o:-1" aria-label="ChessArgentino en tu teléfono">'
+    + '<button class="hoy-app-x" type="button" onclick="appCerrar()" aria-label="Cerrar">✕</button>'
+    + '<img class="hoy-app-ic" src="/favicon-192.png" alt="" width="52" height="52">'
+    + '<div class="hoy-app-tx">';
+  if (inst) h += '<b>¡Ya la tenés instalada! 🎉</b><span>Probá cómo te llegaría un aviso: tocá el botón, aceptá el permiso y mirá arriba de la pantalla.</span>';
+  else if (_appPrompt) h += '<b>📲 Instalá ChessArgentino</b><span>Queda con su ícono en el inicio y se abre a pantalla completa, como una app.</span>';
+  else if (ios) h += '<b>📲 Tenela como app en tu iPhone</b><span>Tocá <b>Compartir</b> <span class="hoy-app-ios" aria-hidden="true">⬆︎</span> abajo y después <b>«Agregar a inicio»</b>. Las notificaciones en iPhone sólo llegan con la app agregada.</span>';
+  else h += '<b>📲 ChessArgentino como app</b><span>En el teléfono (Chrome) aparece el botón para instalarla. En la compu podés probar igual cómo llega un aviso.</span>';
+  h += '<div class="hoy-app-acc">';
+  if (!inst && _appPrompt) h += '<button class="hoy-btn" type="button" onclick="appInstalar()">Instalar</button>';
+  if (notif && (inst || !ios)) h += '<button class="hoy-btn' + (!inst && _appPrompt ? ' hoy-btn2' : '') + '" type="button" onclick="appProbarAviso()">🔔 Probar una notificación</button>';
+  if (perm === 'denied') h += '<small class="hoy-app-nota">Las notificaciones están bloqueadas para esta página: se habilitan desde el candadito de la barra de direcciones (o en los ajustes del teléfono).</small>';
+  return h + '</div></div></section>';
+}
+function appInstalar() {
+  if (!_appPrompt) return;
+  var p = _appPrompt; _appPrompt = null;
+  p.prompt();
+  Promise.resolve(p.userChoice).then(function () { try { _hoyPronto(); } catch (e) {} });
+}
+function appCerrar() { try { localStorage.setItem('aa_app_cerrado', '1'); } catch (e) {} try { _hoyPronto(); } catch (e) {} }
+function appProbarAviso() {
+  if (!('Notification' in window)) return;
+  Promise.resolve(Notification.requestPermission()).then(function (perm) {
+    if (perm !== 'granted') {
+      if (window.aaAsk) window.aaAsk({ icono: '🔕', titulo: 'Sin permiso no hay avisos', texto: 'Para ver la prueba, tocá otra vez y elegí «Permitir». Si ya lo bloqueaste, se habilita desde el candadito de la barra de direcciones o en los ajustes del teléfono.', ok: 'Entendido', cancelar: 'Cerrar' });
+      try { _hoyPronto(); } catch (e) {}
+      return;
+    }
+    var mostrar = function (reg) {
+      return reg.showNotification('🧩 Salió el ejercicio del día', {
+        body: 'Juegan las blancas y ganan. ¿Lo resolvés? (Éste es un aviso de prueba.)',
+        icon: '/favicon-192.png', tag: 'prueba', data: { url: '/?ir=hoy' },
+      });
+    };
+    // Con el ayudante (lo normal en el teléfono); sin él, la notificación común del navegador.
+    var listo = ('serviceWorker' in navigator) ? navigator.serviceWorker.getRegistration('/') : Promise.resolve(null);
+    listo.then(function (reg) {
+      if (reg) return mostrar(reg);
+      new Notification('🧩 Salió el ejercicio del día', { body: 'Juegan las blancas y ganan. ¿Lo resolvés? (Éste es un aviso de prueba.)', icon: '/favicon-192.png' });
+    }).catch(function () {});
+  });
+}
+try { _appIniciar(); } catch (e) {}
 // 🎵 Música en el Tablero: la misma tarjeta de Jugar, más angosta, al final de la columna de «algo para hacer»
 // (22/10: llenaba el hueco de abajo a la derecha; el hueco cambia cada día, la tarjeta siempre tiene sentido).
 function _hoyMusicaHtml() {
