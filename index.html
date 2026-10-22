@@ -31506,7 +31506,7 @@ function _hoyPintar() {
     }
   });
   var izq = '', der = '', h = '';
-  try { h += _appCardHtml(); } catch (e) {}   // 📲 instalar como app (sólo en la dirección de prueba, por ahora)
+  try { h += _appCardHtml(); } catch (e) {}   // 📲 instalar como app + avisos
   h += _hoyHeroHtml(dest, infos, fijos, ahora);
   der += _hoyEjHtml();
   der += _hoyCumpleHtml(hoyD);
@@ -31977,7 +31977,8 @@ function _hoyAperturaHtml(hoyD) {
   }
   if (!a || !a.fen) return '';
   var u = '?ir=aperturas&apertura=' + encodeURIComponent(a.slug), st = [a.n, a.w, a.d, a.b];
-  return '<section class="hoy-blq" data-c="ap" style="--o:8" aria-label="Apertura del día"><h3>🌳 Apertura del día</h3><div class="hoy-tab">'
+  // En el teléfono va entre «Un día como hoy» y «Lo mejor de la semana» (--o:3; pedido del autor 22/10: abajo quedaba colgada).
+  return '<section class="hoy-blq" data-c="ap" style="--o:3" aria-label="Apertura del día"><h3>🌳 Apertura del día</h3><div class="hoy-tab">'
     + '<a class="hoy-mini" href="' + _hoyHref(u) + '" onclick="return _hoyIr(this.getAttribute(\'href\'))" aria-hidden="true" tabindex="-1">' + tdMiniFen(a.fen) + '</a>'
     + '<div><div class="hoy-tab-t">' + escHtml(a.nom) + '</div><div class="hoy-tab-s">' + escHtml(a.eco) + ' · ' + _apJugadasTexto(String(a.jug).split(' '))
     + (a.n ? '<br>' + _apFmt(a.n) + ' partidas' : '') + '</div>' + (a.n ? _apBar(st) + _apPcts(st) : '')
@@ -32094,18 +32095,17 @@ function _hoyFideDatos(ov) {
 /* ── 📲 ChessArgentino como app de teléfono (PLAN-PORTADA-HOY, Fase 5, 22/10/2026) ──
    · manifest.webmanifest (nombre, ícono, pantalla completa) + /sw.js, el ayudante que recibe notificaciones y NO guarda
      nada de la web (la web se sigue bajando fresca).
-   · EN PRUEBA: el cartel y el ayudante sólo andan fuera de chessargentino.ar (la dirección de prueba de Cloudflare,
-     localhost) o con localStorage aa_app_prueba = 1. En la web de verdad no se ve nada hasta que el autor diga.
+   · Se probó en la rama prueba-app (prueba-app.chessargentino.pages.dev) y se publicó el 22/10. El interruptor
+     general es _appEnPrueba() (hoy siempre true).
+   · 📲 «Instalar la app» también en el menú del usuario y en el ☰ (appMenuInstalar), para quien cerró el cartel.
    · Android/Chrome: el teléfono avisa que se puede instalar (beforeinstallprompt) y el botón abre su cartel.
      iPhone: no hay botón posible; se explica Compartir → «Agregar a inicio».
    · 🔔 Avisos de verdad (paso 2, 22/10): ver «AVISOS AL TELÉFONO» más abajo. El cartel invita a instalarla sólo en el
      teléfono; su ✕, con cuenta, queda guardada en la cuenta (no vuelve en ningún aparato). */
 var _appPrompt = null, _appSw = null;
-function _appEnPrueba() {
-  var h = location.hostname;
-  if (h !== 'chessargentino.ar' && h !== 'www.chessargentino.ar') return true;
-  try { return localStorage.getItem('aa_app_prueba') === '1'; } catch (e) { return false; }
-}
+// (22/10) Probado en el teléfono del autor y PUBLICADO: anda en todos lados. Si hubiera que apagar la app y los
+// avisos de golpe, que devuelva false (y sw.js tiene adentro la receta para sacar el ayudante de los teléfonos).
+function _appEnPrueba() { return true; }
 function _appInstalada() { return !!((window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone); }
 function _appEsIOS() { return /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); }
 function _appIniciar() {
@@ -32343,6 +32343,19 @@ function avAbrir() {
 }
 window.avPanelPintar = avPanelPintar;
 window.avAbrir = avAbrir;   // el menú ☰ del teléfono («🔔 Avisos al teléfono»)
+// 📲 «Instalar la app» desde el menú del usuario y el ☰ (22/10): para quien cerró el cartel y cambió de opinión.
+// Con el botón del navegador a mano (Chrome/Android), lo abre; si no, explica cómo se hace en ese aparato.
+function appMenuVer() { return _appEnPrueba() && !_appInstalada(); }
+function appMenuInstalar() {
+  if (_appPrompt) { appInstalar(); return; }
+  if (!window.aaAsk) return;
+  if (_appEsIOS()) window.aaAsk({ icono: '📲', titulo: 'Instalar ChessArgentino', ok: 'Entendido',
+    texto: 'En Safari, tocá Compartir (el cuadradito con la flecha, abajo) y después «Agregar a inicio». Queda con su ícono y ahí te pueden llegar los avisos.' });
+  else window.aaAsk({ icono: '📲', titulo: 'Instalar ChessArgentino', ok: 'Entendido',
+    texto: 'Abrí el menú del navegador (los tres puntitos ⋮) y tocá «Instalar app» o «Agregar a la pantalla de inicio». Queda con su ícono y se abre a pantalla completa.' });
+}
+window.appMenuVer = appMenuVer;
+window.appMenuInstalar = appMenuInstalar;
 window.avDisponible = _avSoportado;
 try { _appIniciar(); } catch (e) {}
 // 🎵 Música en el Tablero: la misma tarjeta de Jugar, más angosta, al final de la columna de «algo para hacer»
@@ -61174,6 +61187,8 @@ function cvUpdateNagBadge() {
       '<button class="aa-item" data-a="perfil">👤 Mi perfil</button>'+
       '<button class="aa-item" data-a="partidas">♟️ Mis partidas '+soon+'</button>'+
       '<button class="aa-item" data-a="prefs">⚙️ Preferencias</button>'+
+      // 📲 (22/10) Para el que cerró el cartel y después cambió de opinión. No sale si ya la tiene instalada.
+      ((window.appMenuVer && window.appMenuVer()) ? '<button class="aa-item" data-a="app">📲 Instalar la app</button>' : '')+
       ((window.aaMod && window.aaMod.isMod()) ? '<button class="aa-item" data-a="modpanel">🛡️ Moderación</button>' : '')+
       '<button class="aa-item" data-a="tema"><span class="aa-tema-ic">'+(light?'☀️':'🌙')+'</span>'+
         '<span class="aa-tema-lbl">'+(light?'Tema claro':'Tema oscuro')+'</span></button>'+
@@ -61186,6 +61201,7 @@ function cvUpdateNagBadge() {
       if(a==='salir'){ logout(); return; }
       if(a==='perfil'){ closeMenu(); if(window.aaProfile&&window.aaProfile.open) window.aaProfile.open(); return; }
       if(a==='prefs'){ closeMenu(); openPrefs(); return; }
+      if(a==='app'){ closeMenu(); if(window.appMenuInstalar) window.appMenuInstalar(); return; }
       if(a==='modpanel'){ closeMenu(); if(window.aaModPanel&&window.aaModPanel.open) window.aaModPanel.open(); return; }
       if(a==='tema'){
         if(typeof toggleTheme==='function') toggleTheme();
@@ -66337,6 +66353,7 @@ function cvUpdateNagBadge() {
     var light=document.body.classList.contains('light');
     html+='<div class="aa-sheet-sep"></div>';
     // 🔔 Avisos al teléfono (22/10): siempre a mano para cambiar los temas, con cuenta o sin cuenta.
+    if(window.appMenuVer && window.appMenuVer()) html+='<button class="aa-sheet-item" data-act="app"><span class="em">📲</span><span>Instalar la app</span></button>';
     if(window.avDisponible && window.avDisponible()){
       var avOn=false; try { avOn=localStorage.getItem('aa_av_on')==='1'; } catch(e){}
       html+='<button class="aa-sheet-item" data-act="avisos"><span class="em">🔔</span><span>Avisos al teléfono</span>'+
@@ -66357,6 +66374,7 @@ function cvUpdateNagBadge() {
         }
         if(act==='online'){ openCol(); return; }   // abre la columna lateral, sin cerrar el menú
         if(act==='avisos'){ close(); if(window.avAbrir) window.avAbrir(); return; }
+        if(act==='app'){ close(); if(window.appMenuInstalar) window.appMenuInstalar(); return; }
         var idx=parseInt(it.getAttribute('data-nav'),10);
         var target=document.querySelectorAll('header nav .nav-btn')[idx];
         close();
