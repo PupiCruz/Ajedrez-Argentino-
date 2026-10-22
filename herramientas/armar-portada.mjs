@@ -29,7 +29,10 @@ export function armarCumples(js, historicos, desde, dias = 40) {
   const ov = linea('__EMBEDDED_PLAYERS__') || {}, C = linea('__CUMPLES__') || {};
   const pl = (ov.players || []).concat(ov.additionals || []);
   const norm = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim();
-  const porNombre = {}; pl.forEach((p) => { porNombre[norm(p.name)] = p; });
+  // Mismo cruce que el perfil (_cumMismoNombre del index): nombre entero, o primer nombre + apellido.
+  const porNombre = {}, porPuntas = {};
+  const puntas = (s) => { const w = norm(s).split(' '); return w.length > 1 ? w[0] + ' ' + w[w.length - 1] : ''; };
+  pl.forEach((p) => { porNombre[norm(p.name)] = p; const k = puntas(p.name); if (k) porPuntas[k] = porPuntas[k] === undefined ? p : null; });   // null = dos con las mismas puntas: no se adivina
   const quiero = {};
   for (let k = 0; k < dias; k++) {
     const d = new Date(desde.getTime() + k * DIA);
@@ -40,7 +43,7 @@ export function armarCumples(js, historicos, desde, dias = 40) {
     .forEach((p) => { const o = { n: p.name, id: p.id }; if (p.title) o.t = p.title; if (p.born) o.a = p.born; quiero[C[String(p.fide_id)]].push(o); });
   (historicos || []).forEach((x) => {
     if (!quiero[x.md]) return;
-    const p = porNombre[norm(x.n)];
+    const p = (x.f && pl.find((q) => String(q.fide_id) === String(x.f))) || porNombre[norm(x.n)] || porPuntas[puntas(x.n)] || null;
     if (p && p.fide_id && C[String(p.fide_id)]) return;   // ya está como jugador del ranking
     const o = { n: x.n, a: x.a, m: x.m || 0, h: 1 };
     if (p) { o.id = p.id; if (p.title) o.t = p.title; }

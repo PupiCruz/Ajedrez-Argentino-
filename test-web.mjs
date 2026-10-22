@@ -28,7 +28,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2560;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2562;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -10569,6 +10569,15 @@ console.log('\n=== 79. 🎂 Cumpleaños + cartelera de la portada (22/10) ===');
       '🎂 portada.json → cum: los del ranking primero (por Elo), después los históricos con su perfil si lo tienen (por nombre, sin tildes); sólo los próximos 40 días', JSON.stringify(cu));
   chk(/Nació un día como hoy/.test(extraerFuncion('_hoyDiaComoHoyHtml')) && /_hoyP\.cum\[md\]/.test(extraerFuncion('_hoyDiaComoHoyHtml')) && /es\\\.wikipedia\\\.org/.test(extraerFuncion('_hoyDiaComoHoyHtml')),
       '🕯️ la portada muestra los históricos del día («Nació un día como hoy»): con perfil, a su perfil; si no, a Wikipedia en castellano');
+  chk(/_cumHoy\(hoyD\)/.test(extraerFuncion('_hoyCumpleHtml')) && !/_cumHoy/.test(extraerFuncion('_hoyDiaComoHoyHtml')) && /_hoyCumpleHtml\(hoyD\)/.test(extraerFuncion('_hoyPintar'))
+      && /var anim = !_hoyFiestaVista; _hoyFiestaVista = true;/.test(extraerFuncion('_hoyCumpleHtml')),
+      '🎉 «¡Hoy cumplen años!» tiene su propio panel (no va dentro de «Un día como hoy») y las tarjetas saltan una sola vez por visita');
+  const HP = new Function('var _cumHist = null; var _CUM_MESES = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];'
+    + ['_cumNorm', '_cumMismoNombre', '_cumHistDe', '_cumHistTexto', '_cumTexto'].map(extraerFuncion).join('\n') + '; return { de: _cumHistDe, tx: _cumHistTexto };')();
+  const LH = [{ n: 'Miguel Najdorf', md: '04-15', a: 1910, m: 1997 }, { n: 'Raúl Sanguineti', md: '02-04', a: 1933, m: 2000 }, { n: 'Julio Bolbochán', md: '03-10', a: 1920, m: 1996 }, { n: 'Oscar Panno', md: '03-17', a: 1935, m: 0, f: '100153' }];
+  chk(HP.tx(HP.de({ name: 'Miguel Najdorf', fide_id: 100018 }, LH)) === '🎂 15 de abril de 1910 · † 1997' && HP.de({ name: 'Raúl Carlos Sanguineti' }, LH).a === 1933
+      && HP.de({ name: 'Jacobo Bolbochan' }, LH) === null && HP.de({ name: 'O. Panno', fide_id: 100153 }, LH).md === '03-17' && HP.tx(HP.de({ name: 'Oscar Panno' }, LH)) === '🎂 17 de marzo de 1935',
+      '🕯️ el perfil de un histórico muestra su cumpleaños (Najdorf «† 1997»): por número FIDE o por nombre y apellido, sin confundir a Jacobo con Julio Bolbochán');
 }
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
 console.log('   Corrieron ' + corridas + ' de ' + ESPERADAS + ' comprobaciones.'
