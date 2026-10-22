@@ -28,7 +28,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2540;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2542;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -10454,6 +10454,11 @@ console.log('\n=== 78. ☀️ Portada «Hoy» (21/10) ===');
   chk(/_ejrMandarOk\(id\)/.test(extraerFuncion('_ejdiaResultado')) && /contaba = esHoy && limpio && !visto/.test(extraerFuncion('_ejdiaResultado'))
       && /\/ejdia\/importar/.test(extraerFuncion('ejrSyncPull')) && /owner && owner !== uid/.test(extraerFuncion('ejrSyncPull')),
       '🔥 con sesión: el resuelto limpio del día va a la cuenta; al entrar se suma la del navegador (si no es de OTRA cuenta)');
+  chk(/roundDT: entry\.roundDT \|\| null/.test(extraerFuncion('pgnGetTorneosForList')) && /bk && bk\.rd/.test(extraerFuncion('_hoyDatos')),
+      '📅 en la web, «Esta semana» conoce los horarios de las rondas sin abrir el torneo (igual que en modo autor)');
+  chk(/_ondemand \? \(window\.__EMBEDDED_TZ__ \|\| \{\}\)\.aa_hoy : tzCfg\.aa_hoy/.test(extraerFuncion('_hoyPintar')) && !/hoy-ir-torneos/.test(extraerFuncion('_hoyPintar'))
+      && /Ver todos los torneos/.test(extraerFuncion('_hoyNuevosHtml')),
+      '📌 en la web, los destacados elegidos a mano llegan (de __EMBEDDED_TZ__); «Ver todos los torneos» va pegado a los torneos nuevos');
   chk(/ejr-entrar/.test(extraerFuncion('_hoyEjHtml')) && /!_ejrTok\(\)/.test(extraerFuncion('_hoyEjHtml')), '🔐 sin cuenta y con racha: «Entrá con tu cuenta para no perder tu racha»');
   // 📈 Ranking FIDE: titulares del padrón
   const F = new Function(extraerFuncion('_hoyFideDatos') + '; return _hoyFideDatos;')();
