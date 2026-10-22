@@ -31668,7 +31668,10 @@ function _ejrLeer() {
   r = r || {}; r.act = r.act || 0; r.mejor = r.mejor || 0; r.ok = r.ok || {}; r.mal = r.mal || [];
   return r;
 }
-function _ejrGuardar(r) { try { localStorage.setItem('aa_ejdia_racha', JSON.stringify(r)); } catch (e) {} }
+function _ejrGuardar(r) {
+  try { localStorage.setItem('aa_ejdia_racha', JSON.stringify(r)); } catch (e) {}
+  try { _avRachaInformar(); } catch (e) {}   // 🔔 para el aviso de las 22 («que no se corte tu racha»)
+}
 // La racha "viva" a esta hora: si pasaron más de 72 h desde el último resuelto, se cortó.
 function _ejrActual(r, ahora) { return (r.ultTs && ahora - r.ultTs <= _EJR_GRACIA) ? r.act : 0; }
 // Anota el resultado de un ejercicio del día (o de uno fallado que se reintenta). Devuelve la racha nueva.
@@ -32095,8 +32098,8 @@ function _hoyFideDatos(ov) {
      localhost) o con localStorage aa_app_prueba = 1. En la web de verdad no se ve nada hasta que el autor diga.
    · Android/Chrome: el teléfono avisa que se puede instalar (beforeinstallprompt) y el botón abre su cartel.
      iPhone: no hay botón posible; se explica Compartir → «Agregar a inicio».
-   · 🔔 «Probar una notificación»: pide el permiso (siempre después de un toque) y muestra una de ejemplo. Las de
-     verdad (las manda el bot) son el paso 2. */
+   · 🔔 Avisos de verdad (paso 2, 22/10): ver «AVISOS AL TELÉFONO» más abajo. El cartel invita a instalarla sólo en el
+     teléfono; su ✕, con cuenta, queda guardada en la cuenta (no vuelve en ningún aparato). */
 var _appPrompt = null, _appSw = null;
 function _appEnPrueba() {
   var h = location.hostname;
@@ -32108,29 +32111,35 @@ function _appEsIOS() { return /iPhone|iPad|iPod/.test(navigator.userAgent) || (n
 function _appIniciar() {
   if (!_appEnPrueba()) return;
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
-    navigator.serviceWorker.register('/sw.js').then(function (r) { _appSw = r; }).catch(function () {});
+    navigator.serviceWorker.register('/sw.js').then(function (r) { _appSw = r; _avSincronizar(false); }).catch(function () {});
   }
   window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault(); _appPrompt = e; try { _hoyPronto(); } catch (x) {} });
   window.addEventListener('appinstalled', function () { _appPrompt = null; try { _hoyPronto(); } catch (x) {} });
+  // Entró o salió de la cuenta: los avisos de este aparato pasan a ser (o dejan de ser) los de la cuenta.
+  try { document.addEventListener('aa-auth-changed', function () { _avSincronizar(true); }); } catch (e) {}
 }
+// Invitar a instalarla sólo en el teléfono o la tablet (dedo, no mouse): en la compu no molesta.
+function _appEsMovil() { return !!(window.matchMedia && matchMedia('(pointer: coarse)').matches) || _appEsIOS(); }
 function _appCardHtml() {
   if (!_appEnPrueba()) return '';
   // Dos cruces aparte: la del cartel «Instalá» (en el navegador) y la de adentro de la app instalada. Así, cerrar
   // el de «Instalá» no esconde el de «Probar una notificación» al abrir la app (le pasó al autor, 22/10).
   try { if (localStorage.getItem(_appClaveCerrado()) === '1') return ''; } catch (e) {}
-  var inst = _appInstalada(), ios = _appEsIOS(), notif = ('Notification' in window), perm = notif ? Notification.permission : 'no';
+  if (_avCartelCerradoEnCuenta()) return '';
+  var inst = _appInstalada(), ios = _appEsIOS(), puede = _avSoportado(), on = _avPrendido();
+  if (!inst && !_appEsMovil()) return '';   // en la compu no se invita a instalar (los avisos están en ⚙️ Preferencias)
+  if (inst && on) return '';                // ya instalada y con avisos: el cartel ya cumplió
   var h = '<section class="hoy-blq hoy-app" style="--o:-1" aria-label="ChessArgentino en tu teléfono">'
-    + '<button class="hoy-app-x" type="button" onclick="appCerrar()" aria-label="Cerrar">✕</button>'
+    + '<button class="hoy-app-x" type="button" onclick="appCerrar()" aria-label="No mostrar más">✕</button>'
     + '<img class="hoy-app-ic" src="/favicon-192.png" alt="" width="52" height="52">'
     + '<div class="hoy-app-tx">';
-  if (inst) h += '<b>¡Ya la tenés instalada! 🎉</b><span>Probá cómo te llegaría un aviso: tocá el botón, aceptá el permiso y mirá arriba de la pantalla.</span>';
-  else if (_appPrompt) h += '<b>📲 Instalá ChessArgentino</b><span>Queda con su ícono en el inicio y se abre a pantalla completa, como una app.</span>';
-  else if (ios) h += '<b>📲 Tenela como app en tu iPhone</b><span>Tocá <b>Compartir</b> <span class="hoy-app-ios" aria-hidden="true">⬆︎</span> abajo y después <b>«Agregar a inicio»</b>. Las notificaciones en iPhone sólo llegan con la app agregada.</span>';
-  else h += '<b>📲 ChessArgentino como app</b><span>En el teléfono (Chrome) aparece el botón para instalarla. En la compu podés probar igual cómo llega un aviso.</span>';
+  if (inst) h += '<b>¡Ya la tenés instalada! 🎉</b><span>Elegí de qué querés que te avise: el ejercicio del día, tu racha, las rondas en vivo, los cumpleaños…</span>';
+  else if (_appPrompt) h += '<b>📲 Instalá ChessArgentino</b><span>Queda con su ícono en el inicio, se abre a pantalla completa y te puede avisar del ejercicio del día, las rondas en vivo y más.</span>';
+  else if (ios) h += '<b>📲 Tenela como app en tu iPhone</b><span>Tocá <b>Compartir</b> <span class="hoy-app-ios" aria-hidden="true">⬆︎</span> abajo y después <b>«Agregar a inicio»</b>. Los avisos en iPhone sólo llegan con la app agregada.</span>';
+  else h += '<b>📲 ChessArgentino como app</b><span>Desde el menú del navegador, «Instalar app» o «Agregar a la pantalla de inicio».</span>';
   h += '<div class="hoy-app-acc">';
   if (!inst && _appPrompt) h += '<button class="hoy-btn" type="button" onclick="appInstalar()">Instalar</button>';
-  if (notif && (inst || !ios)) h += '<button class="hoy-btn' + (!inst && _appPrompt ? ' hoy-btn2' : '') + '" type="button" onclick="appProbarAviso()">🔔 Probar una notificación</button>';
-  if (perm === 'denied') h += '<small class="hoy-app-nota">Las notificaciones están bloqueadas para esta página: se habilitan desde el candadito de la barra de direcciones (o en los ajustes del teléfono).</small>';
+  if (puede && (inst || !ios)) h += '<button class="hoy-btn' + (!inst && _appPrompt ? ' hoy-btn2' : '') + '" type="button" onclick="avAbrir()">🔔 Elegir avisos</button>';
   return h + '</div></div></section>';
 }
 function appInstalar() {
@@ -32140,37 +32149,200 @@ function appInstalar() {
   Promise.resolve(p.userChoice).then(function () { try { _hoyPronto(); } catch (e) {} });
 }
 function _appClaveCerrado() { return _appInstalada() ? 'aa_app_cerrado_app' : 'aa_app_cerrado2'; }   // nombres nuevos: lo cerrado antes del 22/10 vuelve a verse
-function appCerrar() { try { localStorage.setItem(_appClaveCerrado(), '1'); } catch (e) {} try { _hoyPronto(); } catch (e) {} }
-function appProbarAviso() {
-  if (!('Notification' in window)) return;
-  Promise.resolve(Notification.requestPermission()).then(function (perm) {
-    if (perm !== 'granted') {
-      if (window.aaAsk) window.aaAsk({ icono: '🔕', titulo: 'Sin permiso no hay avisos', texto: 'Para ver la prueba, tocá otra vez y elegí «Permitir». Si ya lo bloqueaste, se habilita desde el candadito de la barra de direcciones o en los ajustes del teléfono.', ok: 'Entendido', cancelar: 'Cerrar' });
-      try { _hoyPronto(); } catch (e) {}
-      return;
-    }
-    // Al tocarlo abre el ejercicio de hoy (el mismo link que ?ejercicio=<id>); si todavía no se sabe cuál es, la portada.
-    // badge = el caballito blanco de la barra de arriba de Android (sin él, Android pone el ícono de Chrome).
-    var url = (_ejdia && _ejdia.id) ? '/?ejercicio=' + encodeURIComponent(_ejdia.id) : '/';
-    var titulo = '🧩 Salió el ejercicio del día', texto = '¿Lo resolvés? Tocá acá y se abre. (Éste es un aviso de prueba.)';
-    var mostrar = function (reg) {
-      return reg.showNotification(titulo, {
-        body: texto, icon: '/favicon-192.png', badge: '/badge-96.png', tag: 'prueba', data: { url: url },
+// ✕ del cartel: en este aparato, y con cuenta también en la cuenta (así no le sale más en ningún lado).
+function appCerrar() {
+  try { localStorage.setItem(_appClaveCerrado(), '1'); } catch (e) {}
+  var uid = _ejrUid();
+  if (uid) { try { localStorage.setItem('aa_av_cartel_u', uid); } catch (e) {} _avPedir('cuenta', { cartel: true }); }
+  try { _hoyPronto(); } catch (e) {}
+}
+
+/* ── 🔔 AVISOS AL TELÉFONO (Fase 5 paso 2, 22/10/2026) ──
+   El aparato se anota en el bot (vivo-worker, /push/*; ver src/avisos.js allá) y elige de qué quiere avisos. Los manda
+   el bot cuando publica: ejercicio del día, ronda que arranca, cumpleaños, videos y noticias, torneos nuevos; y a las
+   22 «que no se corte tu racha». De 23 a 9 no llega nada. Se eligen en ⚙️ Preferencias (con cuenta: quedan en la
+   cuenta y valen para todos sus aparatos) o desde el cartel de la portada (sin cuenta: en el aparato).
+   localStorage: aa_av_temas (lo elegido en este aparato), aa_av_on ('1' = anotado), aa_av_sinc (última vez que se
+   avisó al bot), aa_av_rsig (la última racha informada), aa_av_cartel_u (cuenta que cerró el cartel). */
+var AV_BASE = 'https://ajedrez-vivo.mmatiasscruz.workers.dev/push/';
+var AV_CLAVE = 'BHHy5LrQTuXtCNAOZYzXfAuU1ilSRpaHOem_RNWPCOWYI7KTToeKIvI0J6yRAuwer9O43Uaplgaq9MYCS6uMg_U';   // la pública (VAPID_PUBLICA del bot)
+var AV_TEMAS = [
+  ['ej', '🧩 Ejercicio del día', 'Cuando sale, a las 13.'],
+  ['racha', '🔥 Que no se corte tu racha', 'A las 22, si todavía no hiciste el ejercicio de hoy.'],
+  ['rondas', '♟️ Arranca una ronda en vivo', 'De los torneos que se transmiten.'],
+  ['cum', '🎂 Cumpleaños del día', 'Los jugadores que cumplen años hoy.'],
+  ['nov', '🎬 Videos y noticias', 'Cuando se publica algo nuevo.'],
+  ['torneos', '🏆 Torneos nuevos', 'Cuando se suma un torneo a la agenda.'],
+];
+function _avSoportado() { return _appEnPrueba() && ('serviceWorker' in navigator) && ('PushManager' in window) && ('Notification' in window); }
+function _avPrendido() { try { return localStorage.getItem('aa_av_on') === '1'; } catch (e) { return false; } }
+function _avTemasLocal(t) {
+  try {
+    if (t) localStorage.setItem('aa_av_temas', JSON.stringify(t));
+    var v = JSON.parse(localStorage.getItem('aa_av_temas') || 'null');
+    return Array.isArray(v) ? v : AV_TEMAS.map(function (x) { return x[0]; });
+  } catch (e) { return AV_TEMAS.map(function (x) { return x[0]; }); }
+}
+function _avCartelCerradoEnCuenta() { var u = _ejrUid(); try { return !!u && localStorage.getItem('aa_av_cartel_u') === u; } catch (e) { return false; } }
+// Todo POST con la sesión en el cuerpo ({ auth }), como el ranking de Música (el bot no acepta el encabezado Authorization).
+function _avPedir(ruta, cuerpo) {
+  var b = Object.assign({}, cuerpo || {}), tok = _ejrTok();
+  if (tok) b.auth = tok;
+  return fetch(AV_BASE + ruta, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) })
+    .then(function (r) { return r.json(); }).catch(function () { return null; });
+}
+function _avSub() {
+  if (!_avSoportado()) return Promise.resolve(null);
+  return navigator.serviceWorker.getRegistration('/').then(function (reg) { return reg ? reg.pushManager.getSubscription() : null; }).catch(function () { return null; });
+}
+function _avClaveBytes() {
+  var s = AV_CLAVE.replace(/-/g, '+').replace(/_/g, '/'), b = atob(s + '='.repeat((4 - s.length % 4) % 4)), u = new Uint8Array(b.length);
+  for (var i = 0; i < b.length; i++) u[i] = b.charCodeAt(i);
+  return u;
+}
+function _avRachaDatos() { var r = _ejrLeer(); return { act: _ejrActual(r, Date.now()), ult: r.ultTs || 0, id: r.ultId || '' }; }
+// Le cuenta al bot este aparato: sus claves, sus temas (o, con cuenta, los de la cuenta) y cómo viene la racha.
+// Al abrir la app como mucho una vez por hora; al entrar o salir de la cuenta, siempre.
+function _avSincronizar(forzar) {
+  if (!_avSoportado()) return;
+  var ult = 0; try { ult = +localStorage.getItem('aa_av_sinc') || 0; } catch (e) {}
+  if (!forzar && Date.now() - ult < 3600e3) return;
+  _avSub().then(function (sub) {
+    try { localStorage.setItem('aa_av_on', sub ? '1' : ''); } catch (e) {}
+    var uid = _ejrUid();
+    var mio = uid ? _avPedir('mio') : Promise.resolve(null);
+    return mio.then(function (m) {
+      if (m && m.ok && m.cartel && uid) { try { localStorage.setItem('aa_av_cartel_u', uid); } catch (e) {} try { _hoyPronto(); } catch (e) {} }
+      if (!sub) return;
+      // Con cuenta que ya eligió: mandan los de la cuenta. Si no, lo de este aparato (y con cuenta, pasa a ser lo de la cuenta).
+      var cuerpo = { sub: sub.toJSON(), racha: _avRachaDatos() };
+      if (!(m && m.ok && m.temas)) cuerpo.temas = _avTemasLocal();
+      return _avPedir('alta', cuerpo).then(function (r) {
+        if (r && r.ok && r.temas) _avTemasLocal(r.temas);
+        try { localStorage.setItem('aa_av_sinc', String(Date.now())); localStorage.setItem('aa_av_rsig', JSON.stringify(cuerpo.racha)); } catch (e) {}
       });
-    };
-    // Llega a los 5 segundos: da tiempo a salir de la app y ver cómo entra el aviso desde afuera.
-    if (window.aaAsk) window.aaAsk({ icono: '🔔', titulo: 'Llega en 5 segundos', texto: 'Salí de la app (botón de inicio del teléfono) y esperá el aviso. Al tocarlo se abre el ejercicio del día.', ok: 'Entendido' });
-    setTimeout(function () {
-      // Con el ayudante (lo normal en el teléfono); sin él, la notificación común del navegador.
-      var listo = ('serviceWorker' in navigator) ? navigator.serviceWorker.getRegistration('/') : Promise.resolve(null);
-      listo.then(function (reg) {
-        if (reg) return mostrar(reg);
-        var n = new Notification(titulo, { body: texto, icon: '/favicon-192.png' });
-        n.onclick = function () { window.focus(); location.href = url; };
-      }).catch(function () {});
-    }, 5000);
+    });
   });
 }
+// Cambió la racha (resolvió el ejercicio del día, o llegó la de la cuenta): si este aparato está anotado, se le cuenta al bot.
+var _avRachaT = 0;
+function _avRachaInformar() {
+  if (!_avPrendido()) return;
+  clearTimeout(_avRachaT);
+  _avRachaT = setTimeout(function () {
+    var d = _avRachaDatos(), sig = JSON.stringify(d);
+    try { if (localStorage.getItem('aa_av_rsig') === sig) return; } catch (e) {}
+    _avSub().then(function (sub) {
+      if (!sub) return;
+      _avPedir('racha', { ep: sub.endpoint, act: d.act, ult: d.ult, id: d.id }).then(function (r) { if (r && r.ok) try { localStorage.setItem('aa_av_rsig', sig); } catch (e) {} });
+    });
+  }, 1500);
+}
+// Prender: pide el permiso (tiene que ser en el mismo toque), se anota en el servicio de avisos del navegador y en el bot.
+function _avPrender(temas) {
+  var pedir = Notification.requestPermission();
+  return Promise.resolve(pedir).then(function (perm) {
+    if (perm !== 'granted') return { ok: false, error: perm === 'denied' ? 'bloqueado' : 'sin permiso' };
+    return navigator.serviceWorker.register('/sw.js').then(function () { return navigator.serviceWorker.ready; }).then(function (reg) {
+      return reg.pushManager.getSubscription().then(function (s) { return s || reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: _avClaveBytes() }); });
+    }).then(function (sub) {
+      return _avPedir('alta', { sub: sub.toJSON(), temas: temas, racha: _avRachaDatos() }).then(function (r) {
+        if (!(r && r.ok)) return { ok: false, error: (r && r.error) || 'el servidor no respondió' };
+        try { localStorage.setItem('aa_av_on', '1'); localStorage.setItem('aa_av_sinc', String(Date.now())); } catch (e) {}
+        _avTemasLocal(r.temas || temas);
+        return { ok: true, sub: sub };
+      });
+    }).catch(function (e) { return { ok: false, error: String((e && e.message) || e) }; });
+  });
+}
+function _avApagar() {
+  return _avSub().then(function (sub) {
+    try { localStorage.setItem('aa_av_on', ''); } catch (e) {}
+    if (!sub) return;
+    var ep = sub.endpoint;
+    return sub.unsubscribe().catch(function () {}).then(function () { return _avPedir('baja', { ep: ep }); });
+  });
+}
+// El panel (el mismo en ⚙️ Preferencias y en la ventanita del cartel). Se pinta solo, cuando sabe cómo está el aparato.
+function avPanelPintar(box) {
+  if (!box) return;
+  if (!_avSoportado()) {
+    box.innerHTML = '<div class="aa-pref-d" style="padding:4px 2px">' + (_appEsIOS() && !_appInstalada()
+      ? 'En iPhone los avisos llegan con la app agregada al inicio: en Safari, <b>Compartir → «Agregar a inicio»</b>, y abrila desde ese ícono.'
+      : 'Este navegador no puede recibir avisos.') + '</div>';
+    return;
+  }
+  box.innerHTML = '<div class="aa-pref-d" style="padding:4px 2px">Un momento…</div>';
+  var uid = _ejrUid();
+  Promise.all([_avSub(), uid ? _avPedir('mio') : Promise.resolve(null)]).then(function (x) {
+    var sub = x[0], m = x[1], temas = (m && m.ok && m.temas) ? _avTemasLocal(m.temas) : _avTemasLocal();
+    var on = !!sub && Notification.permission === 'granted';
+    try { localStorage.setItem('aa_av_on', on ? '1' : ''); } catch (e) {}
+    var fila = function (k, t, d, chk, dis) {
+      return '<label class="aa-pref-row"' + (dis ? ' style="opacity:.5"' : '') + '><span class="aa-pref-txt"><span class="aa-pref-t">' + t + '</span>'
+        + (d ? '<span class="aa-pref-d">' + d + '</span>' : '') + '</span><input type="checkbox" class="aa-switch" data-av="' + k + '"' + (chk ? ' checked' : '') + (dis ? ' disabled' : '') + '></label>';
+    };
+    var h = fila('on', '🔔 Recibir avisos en este aparato', Notification.permission === 'denied'
+      ? 'Están bloqueados para esta página: se habilitan en los ajustes del teléfono (o en el candadito de la barra de direcciones).'
+      : 'Te llegan aunque la app esté cerrada.', on, Notification.permission === 'denied');
+    AV_TEMAS.forEach(function (t) { h += fila(t[0], t[1], t[2], temas.indexOf(t[0]) >= 0, !on); });
+    h += '<div class="aa-pref-d" style="padding:2px 2px 0">🌙 De 23 a 9 no llega nada. ' + (uid ? 'Lo que elijas se guarda en tu cuenta: vale para todos tus aparatos.' : 'Se guarda en este aparato (con tu cuenta, valdría para todos tus aparatos).') + '</div>';
+    if (on) h += '<div class="aa-pref-row" style="cursor:default"><span class="aa-pref-txt"><span class="aa-pref-t">Probar</span><span class="aa-pref-d">Te llega uno de ejemplo en 5 segundos: salí de la app y esperalo.</span></span><button type="button" class="aa-pref-btn" data-avbtn="probar">Probar</button></div>';
+    box.innerHTML = h;
+  });
+  if (box._avListo) return;
+  box._avListo = true;
+  box.addEventListener('change', function (ev) {
+    var el = ev.target.closest && ev.target.closest('[data-av]'); if (!el) return;
+    var k = el.getAttribute('data-av');
+    var elegidos = function () { return [].slice.call(box.querySelectorAll('[data-av]')).filter(function (x) { return x.getAttribute('data-av') !== 'on' && x.checked; }).map(function (x) { return x.getAttribute('data-av'); }); };
+    if (k === 'on') {
+      el.disabled = true;
+      (el.checked ? _avPrender(elegidos()) : _avApagar().then(function () { return { ok: true }; })).then(function (r) {
+        if (r && !r.ok && window.aaAsk) window.aaAsk({ icono: '🔕', titulo: 'No se pudieron prender los avisos', ok: 'Entendido',
+          texto: r.error === 'bloqueado' ? 'Los avisos están bloqueados para esta página. Se habilitan en los ajustes del teléfono (Notificaciones) o en el candadito de la barra de direcciones.'
+            : r.error === 'sin permiso' ? 'Hace falta tocar «Permitir» cuando el teléfono lo pregunta. Probá de nuevo.' : 'Probá de nuevo en un rato. (' + r.error + ')' });
+        avPanelPintar(box);
+        try { _hoyPronto(); } catch (e) {}
+      });
+      return;
+    }
+    var t = elegidos();
+    _avTemasLocal(t);
+    _avSub().then(function (sub) {
+      if (sub) _avPedir('alta', { sub: sub.toJSON(), temas: t });
+      else if (_ejrUid()) _avPedir('cuenta', { temas: t });
+    });
+  });
+  box.addEventListener('click', function (ev) {
+    var b = ev.target.closest && ev.target.closest('[data-avbtn="probar"]'); if (!b) return;
+    b.disabled = true;
+    _avSub().then(function (sub) {
+      if (!sub) return null;
+      var url = (_ejdia && _ejdia.id) ? '/?ejercicio=' + encodeURIComponent(_ejdia.id) : '/';
+      return _avPedir('prueba', { ep: sub.endpoint, demora: 5000, titulo: '🧩 Así te llega el ejercicio del día', texto: 'Tocá acá y se abre. (Éste es un aviso de prueba.)', url: url });
+    }).then(function (r) {
+      b.textContent = r && r.ok ? '¡Va en camino!' : ((r && r.error) || 'No se pudo');
+      setTimeout(function () { b.textContent = 'Probar'; b.disabled = false; }, 4000);
+    });
+  });
+}
+// La ventanita del cartel de la portada (para quien no tiene cuenta, o no sabe dónde está ⚙️ Preferencias).
+function avAbrir() {
+  var back = document.createElement('div'); back.className = 'aa-modal-back';
+  back.innerHTML = '<div class="aa-modal aa-modal-prefs" role="dialog" aria-modal="true" aria-label="Avisos al teléfono">'
+    + '<div class="aa-modal-ic">🔔</div><h3 class="aa-modal-h">Avisos al teléfono</h3>'
+    + '<div class="aa-prefs" id="av-modal"></div>'
+    + '<div class="aa-modal-btns"><button class="aa-modal-go" type="button">Listo</button></div></div>';
+  document.body.appendChild(back);
+  requestAnimationFrame(function () { back.classList.add('open'); });
+  var cerrar = function () { back.classList.remove('open'); setTimeout(function () { if (back.parentNode) back.remove(); }, 200); try { _hoyPronto(); } catch (e) {} };
+  back.querySelector('.aa-modal-go').addEventListener('click', cerrar);
+  back.addEventListener('click', function (ev) { if (ev.target === back) cerrar(); });
+  avPanelPintar(back.querySelector('#av-modal'));
+}
+window.avPanelPintar = avPanelPintar;
+window.avDisponible = _avSoportado;
 try { _appIniciar(); } catch (e) {}
 // 🎵 Música en el Tablero: la misma tarjeta de Jugar, más angosta, al final de la columna de «algo para hacer»
 // (22/10: llenaba el hueco de abajo a la derecha; el hueco cambia cada día, la tarjeta siempre tiene sentido).
@@ -61066,6 +61238,8 @@ function cvUpdateNagBadge() {
         // Aviso de colgadas (19/09): mientras se prueba, sólo donde se prendió con ?colgadas=1.
         (window.aaCol && window.aaCol.llave() ? '<div class="aa-pref-sec">Transmisiones en vivo</div>'+
           prefRow('colgadas','Avisar colgadas graves','Un cartelito con sonido cuando alguien comete un error grave en el torneo que estás mirando.', !prefRead('aa_pref_col_off')) : '')+
+        // 🔔 Avisos al teléfono (22/10): el panel se pinta solo después (avPanelPintar), cuando sabe si el aparato está anotado.
+        (window.avDisponible && window.avDisponible() ? '<div class="aa-pref-sec">🔔 Avisos al teléfono</div><div class="aa-prefs" id="av-prefs" style="margin:0"></div>' : '')+
         '<div class="aa-pref-sec">Apariencia</div>'+
         prefRow('theme','Tema claro','', light)+
         '<div class="aa-pref-sec">Privacidad</div>'+
@@ -61082,6 +61256,7 @@ function cvUpdateNagBadge() {
     '</div>';
     document.body.appendChild(back);
     requestAnimationFrame(function(){ back.classList.add('open'); });
+    if(window.avPanelPintar){ var avb=back.querySelector('#av-prefs'); if(avb) window.avPanelPintar(avb); }
     function close(){ back.classList.remove('open'); setTimeout(function(){ if(back.parentNode) back.remove(); }, 200); }
     function setPref(k,v){ try{ localStorage.setItem(k, v?'1':''); }catch(e){} document.dispatchEvent(new CustomEvent('aa-prefs-changed')); }
     back.addEventListener('change', function(ev){
