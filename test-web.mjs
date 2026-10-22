@@ -28,7 +28,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2551;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2560;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -10126,12 +10126,13 @@ console.log('\n=== 76. 🌐 Ratings online: tarjeta "En línea" de Chess.com y L
     + 'function _normTitle(t){ return String(t || "").trim().toUpperCase(); }'
     + 'var _ENT_MOD = { blitz: "blitz", rapid: "rápido", bullet: "bullet" };'
     + 'var _onlCuentasCache = null, _onlDatos = null;'
+    + 'var _cumCache = null;'
     + 'var _ONL_SITIOS = { cc: { nom: "Chess.com", url: "https://www.chess.com/member/" }, li: { nom: "Lichess", url: "https://lichess.org/@/" } };'
     + 'var _ONL_MODS = [["blitz", "Blitz"], ["bullet", "Bullet"], ["rapid", "Rápido"]];'
     + 'var _ONL_VIGENCIA = 365 * 864e5; var _ONL_RED_ICONO = {}; var _ONL_REDES = { "youtube.com": "YouTube", "instagram.com": "Instagram" };'
     + 'var _ONL_REDES_MANO = ["YouTube", "Instagram", "Facebook", "Twitch", "X", "TikTok", "Kick", "Sitio web"];'
     + 'function _rankingOverride(){ return { players: [{ fide_id: 1 }] }; }'
-    + ['_onlCuentas', '_onlCardHtml', '_onlRedesDe', '_onlRedChip', '_onlMias', '_onlRedDeLink', '_onlLinkLimpio', '_entLista', '_entPasa', '_entCardHtml', '_entColor', '_onlHace', '_onlNormCC', '_onlNormLI', '_onlLimpiarUsuario', '_embeddedPlayersJs'].map(extraerFuncion).join('\n')
+    + ['_onlCuentas', '_onlCardHtml', '_onlRedesDe', '_onlRedChip', '_onlMias', '_onlRedDeLink', '_onlLinkLimpio', '_entLista', '_entPasa', '_entCardHtml', '_entColor', '_onlHace', '_onlNormCC', '_onlNormLI', '_onlLimpiarUsuario', '_cumples', '_embeddedPlayersJs'].map(extraerFuncion).join('\n')
     + '; return { entLista: _entLista, entPasa: _entPasa, entCard: _entCardHtml, deLink: _onlRedDeLink, link: _onlLinkLimpio, cuentas: _onlCuentas, card: _onlCardHtml, cc: _onlNormCC, li: _onlNormLI, limpiar: _onlLimpiarUsuario, emb: _embeddedPlayersJs };');
   const H = await import('./herramientas/online/actualizar.mjs');
   const T0 = 1760000000000;
@@ -10522,6 +10523,52 @@ console.log('\n=== 78. ☀️ Portada «Hoy» (21/10) ===');
   chk(sem.length === 2 && M.eleg(sem).arg === 1, '⚡ lo mejor de la semana: sólo los últimos 7 días y, de ésos, primero el de un argentino');
   chk(/it\._tn \|\|/.test(extraerFuncion('_cgPuzzle')) && /it\._tid != null/.test(extraerFuncion('_cgVerPartida')) && /_cgAbrirEnTablero\(/.test(extraerFuncion('hoyJugadones')),
       '✨ los jugadones de la semana se abren todos juntos en el tablero de siempre, cada uno con su torneo');
+}
+console.log('\n=== 79. 🎂 Cumpleaños + cartelera de la portada (22/10) ===');
+{
+  const mkCum = (ondemand, ls, win, players) => new Function('_ondemand', 'localStorage', 'window', 'PLAYERS',
+    'var _cumCache = null; var _CUM_MESES = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];'
+    + ['_cumples', '_cumDe', '_cumParse', '_cumTexto', '_cumEdad', '_cumHoy', '_hoyFaltaCorto'].map(extraerFuncion).join('\n')
+    + '; return { de: _cumDe, parse: _cumParse, texto: _cumTexto, edad: _cumEdad, hoy: _cumHoy, falta: _hoyFaltaCorto };')(
+    ondemand, { getItem: (k) => (k === 'cumples' ? ls : null) }, win, players);
+  const C = mkCum(true, null, {}, []);
+  chk(C.parse('13/5') === '05-13' && C.parse('13 de mayo') === '05-13' && C.parse('1 set') === '09-01' && C.parse('5-12-1987') === '12-05'
+      && C.parse('29/2') === '02-29' && C.parse('31/4') === null && C.parse('hola') === null,
+      '🎂 el lápiz entiende 13/5, «13 de mayo», «1 set», 5-12-1987 y 29/2; rechaza 31/4 y basura');
+  chk(C.texto('05-13') === '13 de mayo' && C.texto('05-13', 1987) === '13 de mayo de 1987', '🎂 la fecha en castellano, con el año de FIDE si se sabe');
+  const pl = [{ id: 1, fide_id: 11, name: 'Uno', elo: 2400, born: 1987 }, { id: 2, fide_id: 22, name: 'Dos', elo: 2600, born: 2013 }, { id: 3, fide_id: 33, name: 'Tres', elo: 2500 }, { id: 4, name: 'Sin FIDE', elo: 2700 }];
+  const web = mkCum(true, '{"11":"01-01"}', { __CUMPLES__: { 11: '10-22', 22: '10-22', 33: '10-23', 99: 'basura' } }, pl);
+  const hoy = new Date(2026, 9, 22, 12);
+  chk(web.hoy(hoy).map(p => p.name).join() === 'Dos,Uno' && web.edad(pl[1], hoy) === 13 && web.edad(pl[2], hoy) === 0,
+      '🎂 «Hoy cumplen»: en la web sale de window.__CUMPLES__ (no del navegador), los de más Elo primero, con la edad sólo si se sabe el año');
+  const aut = mkCum(false, '{"11":"01-01"}', { __CUMPLES__: { 11: '10-22' } }, pl);
+  chk(aut.de(pl[0]) === '01-01' && aut.de(pl[3]) === '' && mkCum(true, null, { __CUMPLES__: { 11: 'x' } }, pl).de(pl[0]) === '',
+      '🎂 modo autor: manda lo del navegador; sin número FIDE no hay cumpleaños; un valor roto no se muestra');
+  chk(/__CUMPLES__=/.test(extraerFuncion('_embeddedPlayersJs')) && /~cum/.test(SRC) && /if \(mio === x\.md\)/.test(extraerFuncion('cumBuscarWikidata'))
+      && /on: !mio && !anioMal/.test(extraerFuncion('cumBuscarWikidata')),
+      '🎂 viaja al publicar (y avisa «sin guardar»); Wikidata nunca pisa lo cargado a mano y lo de año distinto va sin tildar');
+  chk(C.falta(25 * 60000) === 'en 25 min' && C.falta(8.6 * 3600e3) === 'en 9 h' && C.falta(10) === 'en 1 min',
+      '📅 la cartelera dice «en 25 min» / «en 9 h» (corto, para que entre al lado del torneo)');
+  // 🕯️ Históricos (Wikidata) + lo que hornea armar-portada.mjs para la portada y el bot.
+  const HI = await import('./herramientas/cumples/historicos.mjs');
+  const fila = (n, dob, extra) => Object.assign({ itemLabel: { value: n }, dob: { value: dob } }, extra || {});
+  const lh = HI.armarLista([fila('Miguel Najdorf', '1910-04-15T00:00:00Z', { dod: { value: '1997-07-04T00:00:00Z' }, ar: { value: 'https://es.wikipedia.org/wiki/Miguel_Najdorf' } }),
+    fila('Miguel Najdorf', '1910-04-15T00:00:00Z'), fila('Q2944905', '1894-11-19T00:00:00Z'), fila('Victor Winz', '1906-08-31T00:00:00Z', { dod: { value: 'http://www.wikidata.org/.well-known/genid/x' } }),
+    fila('Sandro Mareco', '1987-05-13T00:00:00Z', { fide: { value: '112275' } }), fila('Oscar Panno', '1935-03-17T00:00:00Z', { fide: { value: '100013' } })], ['112275']);
+  chk(lh.length === 3 && lh[0].n === 'Oscar Panno' && lh[0].m === 0 && lh[0].f === '100013' && lh[1].n === 'Miguel Najdorf' && lh[1].m === 1997 && /wikipedia/.test(lh[1].w) && lh[2].m === -1,
+      '🕯️ históricos: sin repetidos, sin los que no tienen nombre, sin los del ranking (van por el lápiz); muerte sin fecha = -1', JSON.stringify(lh));
+  const apSrc = fs.readFileSync(new URL('./herramientas/armar-portada.mjs', import.meta.url), 'utf8');
+  const ia = apSrc.indexOf('function armarCumples('); let ja = apSrc.indexOf('{', ia), na = 0;
+  for (; ja < apSrc.length; ja++) { if (apSrc[ja] === '{') na++; else if (apSrc[ja] === '}' && --na === 0) break; }
+  const armarCumples = new Function('DIA', apSrc.slice(ia, ja + 1) + '; return armarCumples;')(864e5);
+  const manJs = 'window.__EMBEDDED_PLAYERS__=' + JSON.stringify({ players: [{ id: 5, name: 'Sandro Mareco', title: 'GM', fide_id: 112275, elo: 2600, born: 1987 }, { id: 6, name: 'Otro', fide_id: 7, elo: 2700 }],
+    additionals: [{ id: 99, name: 'Isaías Pleci' }] }) + ';\nwindow.__CUMPLES__={"112275":"05-13","7":"05-13"};\n';
+  const cu = armarCumples(manJs, [{ n: 'Isaias Pleci', md: '05-13', a: 1907, m: 1980 }, { n: 'Lejano', md: '12-01', a: 1900, m: 1950 }], new Date(2026, 4, 12, 12));
+  chk(Object.keys(cu).join() === '05-13' && cu['05-13'].map((x) => x.n).join() === 'Otro,Sandro Mareco,Isaías Pleci'.replace('Isaías', 'Isaias')
+      && cu['05-13'][1].t === 'GM' && cu['05-13'][1].a === 1987 && cu['05-13'][2].h === 1 && cu['05-13'][2].id === 99,
+      '🎂 portada.json → cum: los del ranking primero (por Elo), después los históricos con su perfil si lo tienen (por nombre, sin tildes); sólo los próximos 40 días', JSON.stringify(cu));
+  chk(/Nació un día como hoy/.test(extraerFuncion('_hoyDiaComoHoyHtml')) && /_hoyP\.cum\[md\]/.test(extraerFuncion('_hoyDiaComoHoyHtml')) && /es\\\.wikipedia\\\.org/.test(extraerFuncion('_hoyDiaComoHoyHtml')),
+      '🕯️ la portada muestra los históricos del día («Nació un día como hoy»): con perfil, a su perfil; si no, a Wikipedia en castellano');
 }
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
 console.log('   Corrieron ' + corridas + ' de ' + ESPERADAS + ' comprobaciones.'

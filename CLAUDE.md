@@ -338,6 +338,18 @@ el FIDE id (se actualiza cada mes con la tabla) o dejarlo solo con nombre (engan
 nombre). Crea Adicionales. Umbral de "conservar al salir del ranking" es 30 (`_ADIC_KEEP_GAMES`),
 distinto del de sugerencia (50).
 
+### 🎂 Cumpleaños (22/10/2026)
+FIDE sólo publica el **año** de nacimiento. El día y el mes se cargan de dos maneras, en modo autor:
+- **Uno por uno:** en el perfil, al lado del FIDE ID, **🎂 Cumpleaños: sin cargar ✏️** → escribir `13/5` o `13 de mayo`.
+  Vacío lo borra. Sin número FIDE no hay lápiz.
+- **De a muchos:** Jugadores → **🎂 Buscar cumpleaños en Wikidata** (unos segundos). Wikidata guarda el número FIDE de
+  cada jugador, así que el cruce es exacto (~190 jugadores). Vienen tildados los seguros; **sin tildar** los que ya
+  tienen otra fecha cargada a mano (lo manual nunca se pisa) y los de año distinto al de FIDE (puede ser otra persona).
+- Después: **💾 Guardar datos en mi carpeta** y publicar. Se guardan por fide_id (`cumples` en el navegador →
+  `window.__CUMPLES__`, un renglón más de `_embeddedPlayersJs`). Se ven en el perfil («🎂 13 de mayo de 1987») y en la
+  portada, arriba de «Un día como hoy» («🎂 Hoy cumplen», con la edad). Los menores también (decisión del autor).
+  Pruebas: sección 79 del banco.
+
 ### 🌐 Ratings online: tarjeta "En línea" (Chess.com + Lichess, 15/10/2026)
 Fase 1 de `planes-de-la-web/PLAN-RATINGS-ONLINE.md` (afuera de esta carpeta).
 - **Cargar las cuentas:** en el perfil (modo autor), tarjeta **🌐 En línea → ✏️ Cuentas**. Acepta el usuario o el

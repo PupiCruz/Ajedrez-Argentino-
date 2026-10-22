@@ -630,6 +630,18 @@
     .hoy-an { width: 46px !important; font-size: 17px; font-weight: 700; color: color-mix(in srgb, #a0743c 70%, #fff); }
     body.light .hoy-an { color: #7d5524; }
     body.light .hoy-blq[data-c="hist"] { background: #f6ecd8; }
+    /* 🎂 Hoy cumplen: renglones de jugadores arriba de las partidas, separados por una rayita. */
+    .hoy-cum { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 0 4px 12px; margin-bottom: 6px; border-bottom: 1px dashed color-mix(in srgb, #a0743c 40%, transparent); }
+    .hoy-cum-k { flex-basis: 100%; font-family: Georgia, 'Times New Roman', serif; font-size: 14px; font-weight: 700; color: color-mix(in srgb, #a0743c 70%, #fff); }
+    body.light .hoy-cum-k { color: #7d5524; }
+    .hoy-cum-j { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px 5px 9px; border-radius: var(--r-pill); text-decoration: none; font-size: 13px;
+      background: color-mix(in srgb, #a0743c 14%, transparent); border: 1px solid color-mix(in srgb, #a0743c 30%, transparent); color: var(--fg0); transition: background .15s; }
+    .hoy-cum-j:hover { background: color-mix(in srgb, #a0743c 24%, transparent); }
+    .hoy-cum-j:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+    .hoy-cum-j b { font-weight: 800; }
+    .hoy-cum-j span { font-size: 12px; color: var(--text3); font-weight: 600; }
+    .hoy-cum-j i { font-style: normal; font-size: 10.5px; font-weight: 800; color: var(--gold-dim); margin-right: -2px; }
+    .hoy-cum-mas { font-size: 12px; color: var(--text3); font-weight: 600; }
 
     /* Bloques con tablero: el tablero manda, el texto acompaña. */
     .hoy-tab { display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: 14px; align-items: center; }
@@ -3952,6 +3964,10 @@
           🔗 Revisar redes de los jugadores
         </button>
         <div style="font-size:11px;color:var(--text3);margin-top:5px;line-height:1.5">Las redes que comparte cada jugador con cuenta cargada (sobre todo en Lichess), con los que <b style="color:var(--text2)">dan clases</b> arriba. Tildás a quiénes mostrar en su perfil y en el bot.</div>
+        <button onclick="cumBuscarWikidata()" style="width:100%;margin-top:8px;padding:11px;background:var(--bg2);border:1px dashed var(--border);color:var(--text2);font-size:13px;font-weight:600;border-radius:11px;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:8px">
+          🎂 Buscar cumpleaños en Wikidata
+        </button>
+        <div style="font-size:11px;color:var(--text3);margin-top:5px;line-height:1.5">FIDE sólo da el año. Wikidata tiene el día y el mes de unos 190 jugadores, cruzados por el número FIDE. Te los muestra para que tildes los buenos; lo que cargaste a mano en el perfil (🎂 ✏️) nunca se pisa.</div>
       </div>
 
       <!-- Selector de mes -->
@@ -5139,6 +5155,11 @@
         .lvm-tx { flex-basis:100%; order:2; font-size:13.5px; }
         .lvm-go { margin-left:auto; align-self:center; padding:9px 16px; font-size:14px; }
       }
+      /* En la portada Hoy va en la columna angosta: logo y botón arriba, el texto abajo. */
+      .lv-musica.hoy-musica { max-width:none; width:100%; margin:0; flex-wrap:wrap; gap:10px 14px; padding:14px 16px; }
+      .hoy-musica .lvm-1 { font-size:32px; } .hoy-musica .lvm-2 { font-size:25px; } .hoy-musica .lvm-2 small { font-size:13px; } .hoy-musica .lvm-nota { width:24px; height:24px; }
+      .hoy-musica .lvm-tx { flex-basis:100%; order:2; font-size:13.5px; }
+      .hoy-musica .lvm-go { margin-left:auto; align-self:center; padding:9px 16px; font-size:14px; }
       @media (prefers-reduced-motion: reduce) { .lvm-nota, .lvm-cols img { animation:none; } .lvm-cols img { transform:translateY(28px); } .lv-musica { transition:none; } }
       .lv-rank-back { position:fixed; inset:0; z-index:100001; background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; padding:16px; -webkit-backdrop-filter:blur(3px); backdrop-filter:blur(3px); }
       .lv-rank-card { position:relative; background:var(--card90,rgba(24,26,38,.99)); color:var(--text,#e9e9f2); border:1px solid var(--bd22,rgba(255,255,255,.14)); border-radius:16px; box-shadow:0 20px 60px rgba(0,0,0,.55); max-width:820px; width:100%; max-height:88vh; overflow:auto; padding:20px 22px; }
@@ -20000,7 +20021,9 @@ function _estadoActualFp() {
   try { var onlS = JSON.stringify(_onlCuentas()); if (onlS !== '{}') onlFp = _fpStr(onlS); } catch(e){}
   var evjN = 0;   // evaluaciones del barrido escritas en el pool: el pool sólo cuenta partidas, no su texto
   try { evjN = _evjContar(); } catch(e){}
-  return _combinedFp(all, getTzConfig()) + '~' + _fpStr(photoKeys) + '~' + newsFp + '~' + rankFp + '~' + flyerFp + '~' + troFp + (cgFp ? '~' + cgFp : '') + (evjN ? '~evj' + evjN : '') + (onlFp ? '~onl' + onlFp : '');
+  var cumFp = '';   // 🎂 cumpleaños (lápiz del perfil / Wikidata)
+  try { var cumS = JSON.stringify(_cumples()); if (cumS !== '{}') cumFp = _fpStr(cumS); } catch(e){}
+  return _combinedFp(all, getTzConfig()) + '~' + _fpStr(photoKeys) + '~' + newsFp + '~' + rankFp + '~' + flyerFp + '~' + troFp + (cgFp ? '~' + cgFp : '') + (evjN ? '~evj' + evjN : '') + (onlFp ? '~onl' + onlFp : '') + (cumFp ? '~cum' + cumFp : '');
 }
 // ¿Hay torneos cambiados que todavía no se exportaron al archivo?
 function _hayCambiosSinExportar() {
@@ -24089,11 +24112,17 @@ async function openPlayer(id) {
   if (_fedHtml) _fedHtml += ' ';
   var _subParts = [];
   if (p.province) _subParts.push(p.province);
-  if (p.born) _subParts.push('Nac. ' + p.born);
+  // 🎂 Con el cumpleaños cargado, la fecha entera; si no, sólo el año que da FIDE.
+  var _cum = _cumDe(p);
+  if (_cum) _subParts.push('🎂 ' + _cumTexto(_cum, p.born));
+  else if (p.born) _subParts.push('Nac. ' + p.born);
   if (p.ranked === false) { _subParts.push('<span style="color:var(--gold)">' + _fedHtml + _fed + '</span>'); if (p.inactive) _subParts.push('<span style="color:var(--text3)">inactivo</span>'); }
   else if (ranking) _subParts.push('<span style="color:var(--gold)">#' + ranking + ' ' + _fedHtml + _fed + '</span>');
   h += '<div class="m-sub">' + _titleHtml + _subParts.join(' · ') + '</div>';
-  if (p.fide_id) h += '<div class="m-sub" style="margin-top:3px"><a href="https://ratings.fide.com/profile/' + p.fide_id + '" target="_blank" style="color:var(--gold);text-decoration:none">FIDE ID: ' + p.fide_id + ' ↗</a></div>';
+  if (p.fide_id) h += '<div class="m-sub" style="margin-top:3px"><a href="https://ratings.fide.com/profile/' + p.fide_id + '" target="_blank" style="color:var(--gold);text-decoration:none">FIDE ID: ' + p.fide_id + ' ↗</a>'
+    // ✏️ Modo autor: cargar el cumpleaños (va por fide_id; sin fide_id no hay lápiz).
+    + (!_ondemand ? ' · <a href="javascript:void(0)" onclick="cumEditar(' + p.id + ')" style="color:var(--text2);text-decoration:none">🎂 ' + (_cum ? 'Cumpleaños ✏️' : 'Cumpleaños: sin cargar ✏️') + '</a>' : '')
+    + '</div>';
   // Controles de autor para ADICIONALES — SIEMPRE (con o sin FIDE id; los frecuentes sin perfil
   // se crean sin FIDE id y antes quedaban sin el ✕ para borrarlos).
   if (p.ranked === false && !_ondemand) {
@@ -28633,7 +28662,158 @@ function _embeddedPlayersJs() {
   var o = _rankingOverride();
   // + las cuentas online de los perfiles (ver _onlCuentas): un renglón propio, que lee herramientas/online/actualizar.mjs.
   return 'window.__EMBEDDED_PLAYERS__=' + JSON.stringify(o || null).replace(/</g, '\\u003c') + ';'
-       + '\nwindow.__ONLINE_CUENTAS__=' + JSON.stringify(_onlCuentas()).replace(/</g, '\\u003c') + ';';
+       + '\nwindow.__ONLINE_CUENTAS__=' + JSON.stringify(_onlCuentas()).replace(/</g, '\\u003c') + ';'
+       + '\nwindow.__CUMPLES__=' + JSON.stringify(_cumples()).replace(/</g, '\\u003c') + ';';
+}
+
+/* ── 🎂 Cumpleaños de los jugadores (PLAN-PORTADA-HOY, Fase 3, 22/10/2026) ──
+   · Un mapa por fide_id { "<fide_id>": "MM-DD" } (por fide_id, como las cuentas online: sobrevive al ranking nuevo).
+     FIDE sólo publica el AÑO (p.born); el día y el mes los carga el autor con el lápiz del perfil o los trae de
+     Wikidata (Jugadores → 🎂 Buscar cumpleaños en Wikidata, se revisa con un tilde por jugador).
+   · En el navegador del autor vive en localStorage 'cumples'; viaja en los exports como window.__CUMPLES__ (un
+     renglón más de _embeddedPlayersJs). Lo cargado a mano siempre gana: Wikidata nunca pisa una fecha que ya está.
+   · Los menores también se muestran (decisión del autor, 21/10). */
+var _cumCache = null;
+var _CUM_MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+function _cumples() {
+  if (_cumCache) return _cumCache;
+  var o = null;
+  if (typeof _ondemand !== 'undefined' && !_ondemand) { try { var raw = localStorage.getItem('cumples'); if (raw) o = JSON.parse(raw); } catch (e) {} }
+  if (!o && typeof window !== 'undefined' && window.__CUMPLES__ && typeof window.__CUMPLES__ === 'object') o = window.__CUMPLES__;
+  if (o && typeof o === 'object') _cumCache = o;   // el vacío no se memoriza: el manifest puede llegar después
+  return _cumCache || {};
+}
+function _cumDe(p) { var v = p && p.fide_id ? _cumples()[String(p.fide_id)] : ''; return /^\d{2}-\d{2}$/.test(v || '') ? v : ''; }
+function _cumGuardar(m) {
+  _cumCache = m;
+  try { localStorage.setItem('cumples', JSON.stringify(m)); } catch (e) {}   // el aviso de «sin guardar» lo da la huella ~cum
+}
+// "13/5", "13-05", "13 de mayo", "13 mayo" → "05-13". null si no es una fecha posible (29/2 sí vale).
+function _cumParse(s) {
+  s = String(s || '').trim().toLowerCase(); var d, m;
+  var x = s.match(/^(\d{1,2})\s*[\/\-.]\s*(\d{1,2})(?:\s*[\/\-.]\s*\d{2,4})?$/);
+  if (x) { d = +x[1]; m = +x[2]; }
+  else {
+    x = s.match(/^(\d{1,2})\s*(?:de\s+)?([a-záéíóú]+)/);
+    if (!x) return null;
+    d = +x[1]; m = 0;
+    var w = x[2].replace(/^set/, 'sept');   // «setiembre» / «set» también valen
+    for (var i = 0; i < 12; i++) if (_CUM_MESES[i].indexOf(w) === 0 && x[2].length >= 3) { m = i + 1; break; }
+  }
+  var tope = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1];
+  if (!m || !d || d > tope) return null;
+  return ('0' + m).slice(-2) + '-' + ('0' + d).slice(-2);
+}
+// "05-13" → "13 de mayo" (+ " de 1987" si se pasa el año).
+function _cumTexto(md, anio) { return +md.slice(3) + ' de ' + _CUM_MESES[+md.slice(0, 2) - 1] + (anio ? ' de ' + anio : ''); }
+// Años que cumple HOY (o 0 si no se sabe el año).
+function _cumEdad(p, hoyD) { return p && p.born ? hoyD.getFullYear() - p.born : 0; }
+// Los jugadores (ranking + adicionales) que cumplen años en esa fecha, los de más Elo primero.
+function _cumHoy(hoyD) {
+  var md = ('0' + (hoyD.getMonth() + 1)).slice(-2) + '-' + ('0' + hoyD.getDate()).slice(-2);
+  var C = _cumples(), L = [];
+  if (!Object.keys(C).length) return L;
+  (typeof PLAYERS !== 'undefined' && PLAYERS || []).forEach(function (p) { if (p && p.fide_id && C[String(p.fide_id)] === md) L.push(p); });
+  return L.sort(function (a, b) { return (b.elo || 0) - (a.elo || 0); });
+}
+// ✏️ Lápiz del perfil (modo autor).
+function cumEditar(pid) {
+  if (_ondemand || !window.aaAsk) return;
+  var p = null; for (var i = 0; i < PLAYERS.length; i++) if (PLAYERS[i].id === pid) { p = PLAYERS[i]; break; }
+  if (!p || !p.fide_id) return;
+  var ya = _cumDe(p);
+  window.aaAsk({ icono: '🎂', titulo: 'Cumpleaños de ' + p.name,
+    texto: (ya ? 'Ahora: ' + _cumTexto(ya) + '. ' : '') + 'Escribí el día y el mes (13/5 o «13 de mayo»). El año ya viene de FIDE.' + (ya ? ' Dejalo vacío para borrarlo.' : ''),
+    campo: ya ? (+ya.slice(3)) + '/' + (+ya.slice(0, 2)) : '13/5', max: 30, ok: 'Guardar' }).then(function (v) {
+    if (v == null) return;
+    var m = JSON.parse(JSON.stringify(_cumples()));
+    if (!String(v).trim()) { if (!ya) return; delete m[String(p.fide_id)]; }
+    else {
+      var md = _cumParse(v);
+      if (!md) { window.aaAsk({ icono: '🤔', titulo: 'No entendí la fecha', texto: '«' + v + '» no es un día y mes. Probá con 13/5 o «13 de mayo».', ok: 'Entendido', cancelar: 'Cerrar' }); return; }
+      m[String(p.fide_id)] = md;
+    }
+    _cumGuardar(m);
+    openPlayer(pid);
+    try { _hoyPronto(); } catch (e) {}
+  });
+}
+// 🎂 Buscar cumpleaños en Wikidata (modo autor): una consulta por cada 300 números FIDE (Wikidata guarda el número
+// FIDE de cada jugador, propiedad P1440: cruce exacto, sin adivinar por el nombre). Sólo fechas con DÍA (precisión
+// 11). Vienen tildados los que coinciden con el año de FIDE; si el año no coincide (puede ser otra persona), sin tildar.
+var _cumRevLista = null;
+async function cumBuscarWikidata() {
+  if (_ondemand) return;
+  var B = _onlBusq = { cancelada: false };
+  var C = _cumples(), pl = PLAYERS.filter(function (p) { return p && p.fide_id; });
+  var ids = pl.map(function (p) { return String(p.fide_id); });
+  var porF = {}; pl.forEach(function (p) { porF[String(p.fide_id)] = p; });
+  var hall = {};
+  try {
+    for (var i = 0; i < ids.length; i += 300) {
+      _onlBuscarOverlay('<div class="onl-busq-h">🎂 Buscando cumpleaños</div><div class="onl-busq-p">Consultando Wikidata: ' + Math.min(i + 300, ids.length) + ' de ' + ids.length + ' jugadores…</div>'
+        + '<div class="onl-busq-bar"><i style="width:' + Math.round(i / ids.length * 100) + '%"></i></div>'
+        + '<div class="onl-busq-btns"><button type="button" onclick="_onlBuscarCerrar()">Cancelar</button></div>');
+      var q = 'SELECT ?fide ?dob WHERE { VALUES ?fide { ' + ids.slice(i, i + 300).map(function (x) { return '"' + x.replace(/\D/g, '') + '"'; }).join(' ')
+        + ' } ?item wdt:P1440 ?fide . ?item p:P569/psv:P569 [ wikibase:timeValue ?dob ; wikibase:timePrecision ?prec ] . FILTER(?prec >= 11) }';
+      var r = await fetch('https://query.wikidata.org/sparql?format=json&query=' + encodeURIComponent(q), { headers: { Accept: 'application/sparql-results+json' } });
+      if (!r.ok) throw new Error('Wikidata respondió ' + r.status);
+      ((await r.json()).results.bindings || []).forEach(function (b) {
+        var f = b.fide.value, m = String(b.dob.value).match(/^\+?(\d{4})-(\d{2})-(\d{2})/);
+        if (!m || (hall[f] && hall[f].md !== m[2] + '-' + m[3])) { if (hall[f]) hall[f].dudosa = true; return; }   // dos fechas distintas: no se ofrece
+        hall[f] = { md: m[2] + '-' + m[3], anio: +m[1] };
+      });
+      if (B.cancelada) return;
+    }
+  } catch (e) {
+    if (B.cancelada) return;
+    _onlBusq = null;
+    _onlBuscarOverlay('<div class="onl-busq-h">🎂 Buscar cumpleaños</div><div class="onl-busq-p">⚠️ Se cortó: ' + escHtml(e.message || String(e)) + '</div>'
+      + '<div class="onl-busq-btns"><button type="button" onclick="_onlBuscarCerrar()">Cerrar</button></div>');
+    return;
+  }
+  _onlBusq = null;
+  var yaIguales = 0;
+  _cumRevLista = [];
+  Object.keys(hall).forEach(function (f) {
+    var x = hall[f], p = porF[f]; if (!p || x.dudosa) return;
+    var mio = C[f];
+    if (mio === x.md) { yaIguales++; return; }
+    var anioMal = p.born && p.born !== x.anio;
+    _cumRevLista.push({ p: p, md: x.md, anio: x.anio, mio: mio || '', on: !mio && !anioMal, anioMal: anioMal });
+  });
+  _cumRevLista.sort(function (a, b) { return (a.mio ? 1 : 0) - (b.mio ? 1 : 0) || (a.anioMal ? 1 : 0) - (b.anioMal ? 1 : 0) || (b.p.elo || 0) - (a.p.elo || 0); });
+  var h = '<div class="onl-busq-h">🎂 Cumpleaños encontrados en Wikidata</div>'
+    + '<div class="onl-busq-p">Revisé ' + ids.length + ' jugadores con número FIDE: Wikidata tiene el día de ' + Object.keys(hall).length + '.'
+    + (yaIguales ? ' ' + yaIguales + (yaIguales === 1 ? ' ya estaba cargado igual.' : ' ya estaban cargados igual.') : '') + ' Tildá los que quieras guardar. Sin tildar van los que ya tienen otra fecha cargada por vos y los que tienen un año distinto al de FIDE (puede ser otra persona).</div>';
+  if (!_cumRevLista.length) h += '<div class="onl-busq-p">No hay nada nuevo para agregar.</div>';
+  else {
+    h += '<div class="onl-busq-lista">';
+    _cumRevLista.forEach(function (f, i) {
+      h += '<div class="onl-busq-fila"><input type="checkbox" id="cum-rv-' + i + '"' + (f.on ? ' checked' : '') + ' aria-label="Guardar el cumpleaños de ' + escHtml(f.p.name) + '">'
+        + '<span class="onl-busq-quien"><label for="cum-rv-' + i + '"><b>' + (f.p.title ? titleBadge(f.p.title) : '') + escHtml(f.p.name) + '</b> <span class="onl-busq-elo">FIDE ' + (f.p.elo || '–') + '</span></label>'
+        + '<span class="onl-busq-cta">🎂 ' + _cumTexto(f.md, f.anio) + '</span>'
+        + (f.mio ? '<span class="onl-busq-por">⚠️ Vos le pusiste el ' + _cumTexto(f.mio) + '</span>' : '')
+        + (f.anioMal ? '<span class="onl-busq-por">⚠️ FIDE dice que nació en ' + f.p.born + '</span>' : '')
+        + '</span></div>';
+    });
+    h += '</div>';
+  }
+  h += '<div class="onl-busq-btns"><button type="button" onclick="_onlBuscarCerrar()">Cerrar</button>'
+     + (_cumRevLista.length ? '<button type="button" class="onl-busq-ok" onclick="cumRevGuardar()">Guardar</button>' : '') + '</div>';
+  _onlBuscarOverlay(h);
+}
+function cumRevGuardar() {
+  var m = JSON.parse(JSON.stringify(_cumples())), n = 0;
+  (_cumRevLista || []).forEach(function (f, i) {
+    var cb = document.getElementById('cum-rv-' + i);
+    if (cb && cb.checked) { m[String(f.p.fide_id)] = f.md; n++; }
+  });
+  if (n) _cumGuardar(m);
+  _onlBuscarCerrar();
+  if (window.aaAsk) window.aaAsk({ icono: '🎂', titulo: n ? 'Guardé ' + n + ' cumpleaños' : 'No guardé nada',
+    texto: n ? 'Ya se ven en los perfiles y en la portada. Para que lleguen a la web: 💾 Guardar datos en mi carpeta y publicar.' : 'No había ninguno tildado.', ok: 'Listo', cancelar: 'Cerrar' });
+  try { _hoyPronto(); } catch (e) {}
 }
 // ¿El jugador tiene datos propios cargados (foto / partidas curadas / favorito)? Para avisar si "sale".
 function _playerTieneDatos(p) {
@@ -31221,6 +31401,7 @@ function _hoyPintar() {
   izq += _hoyNuevosHtml(infos, ahora);
   der += _hoyAperturaHtml(hoyD);
   der += _hoyFideHtml(hoyD);
+  der += _hoyMusicaHtml();
   h += '<div class="hoy-cols"><div class="hoy-col">' + izq + '</div><div class="hoy-col">' + der + '</div></div>';
   box.innerHTML = h;
   clearInterval(_hoyCdTimer);
@@ -31686,8 +31867,31 @@ function _hoyAperturaHtml(hoyD) {
 function _hoyDiaComoHoyHtml(hoyD, grande) {
   var md = ('0' + (hoyD.getMonth() + 1)).slice(-2) + '-' + ('0' + hoyD.getDate()).slice(-2);
   var L = (_hoySel && _hoySel.length) ? _hoySel : ((_hoyP && _hoyP.hoy && _hoyP.hoy[md]) || []);
-  if (!L.length) return '';
-  var h = L.map(function (g) {
+  // 🎂 Hoy cumplen (Fase 3): arriba de las partidas, los de más Elo primero; hasta 5 y «y N más».
+  var cu = [];
+  try { cu = _cumHoy(hoyD); } catch (e) {}
+  // 🕯️ Nació un día como hoy: los históricos (Najdorf, Eliskases…), horneados en data/portada.json → cum.
+  var hi = ((_hoyP && _hoyP.cum && _hoyP.cum[md]) || []).filter(function (x) { return x && x.h && x.n; });
+  if (!L.length && !cu.length && !hi.length) return '';
+  var hc = '';
+  if (cu.length) {
+    hc += '<div class="hoy-cum"><div class="hoy-cum-k">🎂 Hoy cumple' + (cu.length > 1 ? 'n' : '') + '</div>' + cu.slice(0, 5).map(function (p) {
+      var ed = _cumEdad(p, hoyD);
+      return '<a class="hoy-cum-j" href="?jugador=' + (+p.id) + '" onclick="openPlayer(' + (+p.id) + '); return false;">' + (p.title ? '<i>' + escHtml(p.title) + '</i>' : '')
+        + '<b>' + escHtml(p.name) + '</b>' + (ed > 0 && ed < 120 ? '<span>' + ed + ' años</span>' : '') + '</a>';
+    }).join('') + (cu.length > 5 ? '<span class="hoy-cum-mas">y ' + (cu.length - 5) + ' más</span>' : '') + '</div>';
+  }
+  if (hi.length) {
+    hc += '<div class="hoy-cum"><div class="hoy-cum-k">Nació un día como hoy</div>' + hi.slice(0, 5).map(function (x) {
+      // Vive: «cumple 91»; murió: «1910–1997» (o sólo el año de nacimiento si no se sabe cuándo).
+      var vida = x.m > 0 ? x.a + '–' + x.m : x.m < 0 ? 'n. ' + x.a : 'cumple ' + (hoyD.getFullYear() - x.a);
+      var adentro = (x.t ? '<i>' + escHtml(x.t) + '</i>' : '') + '<b>' + escHtml(x.n) + '</b><span>' + vida + '</span>';
+      if (x.id) return '<a class="hoy-cum-j" href="?jugador=' + (+x.id) + '" onclick="openPlayer(' + (+x.id) + '); return false;">' + adentro + '</a>';
+      if (/^https:\/\/es\.wikipedia\.org\//.test(x.w || '')) return '<a class="hoy-cum-j" href="' + escHtml(x.w) + '" target="_blank" rel="noopener" title="Su biografía en Wikipedia">' + adentro + '</a>';
+      return '<span class="hoy-cum-j">' + adentro + '</span>';
+    }).join('') + (hi.length > 5 ? '<span class="hoy-cum-mas">y ' + (hi.length - 5) + ' más</span>' : '') + '</div>';
+  }
+  var h = hc + L.map(function (g) {
     var u = '?torneo=' + encodeURIComponent(g[5]) + '&partida=' + g[6], an = String(g[0]).slice(0, 4);
     var res = g[3] === '1/2-1/2' ? '½–½' : String(g[3]).replace('-', '–');
     return '<a class="hoy-fila" href="' + _hoyHref(u) + '" onclick="return _hoyIr(this.getAttribute(\'href\'))"><span class="hf-ic hoy-an">' + an + '</span>'
@@ -31750,6 +31954,15 @@ function _hoyFideDatos(ov) {
     if (j) { D.juvenil = { p: j, e: e }; return true; } return false;
   });
   return D;
+}
+// 🎵 Música en el Tablero: la misma tarjeta de Jugar, más angosta, al final de la columna de «algo para hacer»
+// (22/10: llenaba el hueco de abajo a la derecha; el hueco cambia cada día, la tarjeta siempre tiene sentido).
+function _hoyMusicaHtml() {
+  return '<a class="lv-musica hoy-musica" style="--o:10" href="/juegos/musica-en-el-tablero/" onclick="if(typeof _crIsAuthor===\'function\'&&_crIsAuthor()){window.open(this.href,\'_blank\');return false;}">'
+    + '<span class="lvm-logo" aria-hidden="true"><span class="lvm-1">Música<svg class="lvm-nota" viewBox="0 0 64 64"><path d="M22 10 54 3v38.5a9 9 0 1 1-5-8V17L27 21.6v26a9 9 0 1 1-5-8z" fill="currentColor" stroke="#241505" stroke-width="4" stroke-linejoin="round"/></svg></span>'
+    + '<span class="lvm-2"><small>en el</small>Tablero</span></span>'
+    + '<span class="lvm-tx"><b class="lvm-nombre">Música en el Tablero</b><span>Capturá las piezas al compás de La Cumparsita, El Choclo y más.</span><small>6 canciones · ranking de todos</small></span>'
+    + '<span class="lvm-go">¡A jugar! <span aria-hidden="true">▸</span></span></a>';
 }
 function _hoyFideHtml(hoyD) {
   var ov = (typeof _rankingOverride === 'function') ? _rankingOverride() : null;

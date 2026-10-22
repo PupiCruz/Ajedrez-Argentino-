@@ -22,6 +22,36 @@ const hoy0 = new Date(); hoy0.setHours(12, 0, 0, 0);
 const iso = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 const out = { v: 1, hecho: Date.now(), ap: {}, hoy: {}, t: {}, mom: [] };
 
+// 🎂 manifest.js (o embedded-data.js) + la lista de históricos → { "MM-DD": [cumpleañero, …] } de los próximos 40 días.
+// Exportada para el banco de pruebas (test-web.mjs). Nombres comparados sin tildes ni mayúsculas.
+export function armarCumples(js, historicos, desde, dias = 40) {
+  const linea = (nom) => { const m = new RegExp('^window\\.' + nom + '=(.*);\\s*$', 'm').exec(String(js || '')); try { return m ? JSON.parse(m[1]) : null; } catch (e) { return null; } };
+  const ov = linea('__EMBEDDED_PLAYERS__') || {}, C = linea('__CUMPLES__') || {};
+  const pl = (ov.players || []).concat(ov.additionals || []);
+  const norm = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim();
+  const porNombre = {}; pl.forEach((p) => { porNombre[norm(p.name)] = p; });
+  const quiero = {};
+  for (let k = 0; k < dias; k++) {
+    const d = new Date(desde.getTime() + k * DIA);
+    quiero[String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')] = [];
+  }
+  pl.filter((p) => p.fide_id && /^\d{2}-\d{2}$/.test(C[String(p.fide_id)] || '') && quiero[C[String(p.fide_id)]])
+    .sort((a, b) => (b.elo || 0) - (a.elo || 0))
+    .forEach((p) => { const o = { n: p.name, id: p.id }; if (p.title) o.t = p.title; if (p.born) o.a = p.born; quiero[C[String(p.fide_id)]].push(o); });
+  (historicos || []).forEach((x) => {
+    if (!quiero[x.md]) return;
+    const p = porNombre[norm(x.n)];
+    if (p && p.fide_id && C[String(p.fide_id)]) return;   // ya está como jugador del ranking
+    const o = { n: x.n, a: x.a, m: x.m || 0, h: 1 };
+    if (p) { o.id = p.id; if (p.title) o.t = p.title; }
+    if (x.w) o.w = x.w;
+    quiero[x.md].push(o);
+  });
+  const res = {};
+  for (const md in quiero) if (quiero[md].length) res[md] = quiero[md];
+  return res;
+}
+
 // ── 1) Apertura del día: las funciones se sacan del index.html por nombre (como el banco de pruebas) ──
 function extraerFuncion(src, nombre) {
   const i = src.indexOf('function ' + nombre + '(');
@@ -126,6 +156,13 @@ const eloMax = (x) => Math.max(+x.wElo || 0, +x.bElo || 0);
 out.mom.sort((a, b) => (String(b.fecha) > String(a.fecha) ? 1 : String(b.fecha) < String(a.fecha) ? -1 : 0) || ((b.arg || 0) - (a.arg || 0)) || ((b.clara ? 1 : 0) - (a.clara ? 1 : 0)) || (eloMax(b) - eloMax(a)));
 out.mom = out.mom.slice(0, 40);
 console.log('Jugadones de la semana: ' + out.mom.length);
+
+// ── 5) 🎂 Cumpleaños de los próximos 40 días (22/10/2026): la portada («Nació un día como hoy») y el saludo del bot.
+//   cum { "MM-DD": [{ n, t, id, a, m, h, w }] } → n nombre, t título, id su perfil en la web (si tiene), a año de
+//   nacimiento, m año de muerte (0 vive, -1 murió sin fecha), h 1 = histórico (de data/cumples-historicos.json),
+//   w Wikipedia. Los del ranking salen de window.__CUMPLES__ (lápiz del perfil / Wikidata) y van primero, por Elo.
+out.cum = armarCumples(manTxt, (() => { try { return JSON.parse(fs.readFileSync(P('data', 'cumples-historicos.json'), 'utf8')); } catch (e) { return []; } })(), hoy0);
+console.log('Cumpleaños en los próximos 40 días: ' + Object.values(out.cum).reduce((s, L) => s + L.length, 0));
 
 fs.writeFileSync(P('data', 'portada.json'), JSON.stringify(out));
 console.log('✓ data/portada.json (' + Math.round(fs.statSync(P('data', 'portada.json')).size / 1024) + ' KB)');
