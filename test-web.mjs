@@ -28,7 +28,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2545;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2546;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -10377,6 +10377,13 @@ console.log('\n=== 78. ☀️ Portada «Hoy» (21/10) ===');
   const rd = { 1: '2026-10-19 19:30', 2: '2026-10-20 19:30', 3: '2026-10-21 19:30', 4: '2026-10-22 19:30' };
   const r = H.ronda(rd, AHORA);
   chk(r && r.n === 3 && r.hoy && r.hora === '19:30', 'la ronda de HOY es la 3 (las de ayer ya pasaron)', JSON.stringify(r));
+  // (22/10) Jueves 0:30: la ronda del miércoles 19:30 todavía está dentro de sus 6 h…
+  const MEDIANOCHE = Date.UTC(2026, 9, 22, 3, 30);
+  const rdPA = { 6: '2026-10-21 19:30', 7: '2026-10-22 19:30' };
+  const sinTabla = H.ronda(rdPA, MEDIANOCHE), conTabla = H.ronda(rdPA, MEDIANOCHE, 6), hoyJuega = H.ronda(rd, Date.UTC(2026, 9, 21, 23, 0), 3);
+  chk(sinTabla.n === 6 && conTabla.n === 7 && conTabla.hoy && hoyJuega.n === 3,
+      '🕛 la ronda de ayer que ya está en la tabla se da por terminada (pasa a la de hoy); sin tabla espera las 6 h; la de HOY nunca se saltea',
+      [sinTabla.n, conTabla.n, hoyJuega.n].join());
   chk(H.ronda({ 1: '2026-10-21 10:00', 2: '2026-10-21 16:00' }, AHORA).n === 1, 'con dos rondas hoy, sigue siendo «la de hoy» la de la mañana mientras dura (6 h)');
   chk(H.ronda({ 1: '2026-10-25 10:00' }, AHORA).hoy === false && H.ronda({}, AHORA) === null, 'sin ronda hoy: la próxima (no marcada «hoy»); sin horarios, nada');
   const T = (key, status, extra) => Object.assign({ key, status, startKey: 20261015, intl: false, historico: false, _d: { rd: {} } }, extra || {});

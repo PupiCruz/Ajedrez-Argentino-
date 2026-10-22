@@ -592,6 +592,9 @@
     .hoy-link { display: block; margin-top: 10px; background: none; border: 0; padding: 4px 0; font-family: inherit; font-size: 12.5px; font-weight: 700;
       color: var(--gold); cursor: pointer; text-align: left; }
     .hoy-link:hover { text-decoration: underline; }
+    .hoy-btn-bri { display: inline-flex; align-items: center; gap: 8px; }
+    .hoy-bri { flex-shrink: 0; width: 20px; height: 20px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+      background: #26c2a3; color: #fff; font-size: 11px; font-weight: 800; letter-spacing: -.5px; box-shadow: 0 1px 3px rgba(0,0,0,.45); }
     .ejr-entrar { width: 100%; margin-top: 12px; padding: 9px 12px; border-radius: 10px; background: var(--gold-bg); border: 1px solid var(--gold-dim); line-height: 1.35; }
     .ejr-entrar:hover { text-decoration: none; filter: brightness(1.12); }
     .ejr-entrar small { display: block; font-size: 11.5px; font-weight: 600; color: var(--text2); margin-top: 1px; }
@@ -30991,14 +30994,18 @@ function _hoyDatos(o) {
   }
   return r;
 }
-// La ronda de HOY (o la próxima): { n, t (ms), hora, hoy }.
-function _hoyRonda(rd, ahora) {
+// La ronda de HOY (o la próxima): { n, t (ms), hora, hoy }. `hecha` = hasta qué ronda llega la tabla publicada.
+function _hoyRonda(rd, ahora, hecha) {
   var hoyIso = _hoyIso(new Date(ahora)), mejor = null;
   Object.keys(rd || {}).forEach(function (k) {
     var x = _hoyMs(rd[k]); if (!x) return;
     var n = parseInt(k, 10); if (!n) return;
     var esHoy = x.dia === hoyIso;
     if (x.ms + 6 * 3600e3 < ahora && !esHoy) return;   // ya pasó (una ronda dura como mucho unas 6 h)
+    // (22/10) Una ronda de un día anterior que ya está en la tabla terminó: no se esperan las 6 h (a la medianoche
+    // seguía «Ronda 6 · miércoles» con la tabla «después de la ronda 6» ya puesta). Las de HOY no se saltean nunca:
+    // Chess-Results titula la tabla con la ronda apenas entra el primer resultado.
+    if (!esHoy && hecha && n <= hecha) return;
     if (!mejor || x.ms < mejor.t) mejor = { n: n, t: x.ms, hora: x.hora, hoy: esHoy, dia: x.dia };
   });
   return mejor;
@@ -31009,7 +31016,7 @@ function _hoyRonda(rd, ahora) {
 function _hoyElegirPrincipal(infos, fijo, ahora) {
   if (fijo) for (var i = 0; i < infos.length; i++) if (infos[i].key === fijo && infos[i].status !== 'done') return infos[i];
   var vivos = infos.filter(function (o) { return o.status === 'live' && !o.historico; });
-  var conRonda = vivos.filter(function (o) { var r = _hoyRonda(o._d.rd, ahora); return r && r.hoy; });
+  var conRonda = vivos.filter(function (o) { var r = _hoyRonda(o._d.rd, ahora, o._d.r); return r && r.hoy; });
   var orden = function (a, b) { return (a.intl - b.intl) || ((b.startKey || 0) - (a.startKey || 0)); };
   if (conRonda.length) return conRonda.sort(orden)[0];
   if (vivos.length) return vivos.sort(orden)[0];
@@ -31183,7 +31190,7 @@ function _hoyElegirDestacados(infos, fijos, ahora) {
     var orden = function (a, b) { return (a.intl - b.intl) || ((b.startKey || 0) - (a.startKey || 0)); };
     var otro = infos.filter(function (o) {
       if (o.status !== 'live' || o.historico || !usa(o)) return false;
-      var r = _hoyRonda(o._d.rd, ahora); return r && r.hoy;
+      var r = _hoyRonda(o._d.rd, ahora, o._d.r); return r && r.hoy;
     }).sort(orden)[0];
     if (otro) out.push(otro);
   }
@@ -31191,7 +31198,7 @@ function _hoyElegirDestacados(infos, fijos, ahora) {
 }
 // La ronda de un torneo en palabras: { lbl: "Ronda 6 · hoy a las 19:30", cd: cuenta regresiva, enJuego }.
 function _hoyRondaInfo(P, ahora) {
-  var r = _hoyRonda(P._d.rd, ahora);
+  var r = _hoyRonda(P._d.rd, ahora, P._d.r);
   if (r) {
     var enJuego = r.hoy && r.hora && r.t <= ahora && ahora < r.t + 6 * 3600e3;
     var cuando = r.hoy ? 'hoy' : (r.dia === _hoyIso(new Date(ahora + 864e5)) ? 'mañana' : _hoyDiaCorto(r.dia));
@@ -31212,7 +31219,7 @@ function _hoyHeroHtml(dest, infos, fijos, ahora) {
   if (dest.length) h += '<div class="hoy-dest' + (dest.length > 1 ? ' dos' : '') + '">' + dest.map(function (P) { return _hoyCardHtml(P, fijos, ahora); }).join('') + '</div>';
   // También se juega: los otros en curso, como tarjetitas (flyer chico + la ronda de hoy).
   var otros = infos.filter(function (o) { return o.status === 'live' && dest.indexOf(o) < 0 && !o.historico; })
-    .sort(function (a, b) { var ra = _hoyRonda(a._d.rd, ahora), rb = _hoyRonda(b._d.rd, ahora); return ((rb && rb.hoy) ? 1 : 0) - ((ra && ra.hoy) ? 1 : 0); }).slice(0, 6);
+    .sort(function (a, b) { var ra = _hoyRonda(a._d.rd, ahora, a._d.r), rb = _hoyRonda(b._d.rd, ahora, b._d.r); return ((rb && rb.hoy) ? 1 : 0) - ((ra && ra.hoy) ? 1 : 0); }).slice(0, 6);
   if (otros.length) {
     h += '<div class="hoy-tamb-k">También se juega</div><div class="hoy-tamb">' + otros.map(function (o) {
       var ri = _hoyRondaInfo(o, ahora);
@@ -31462,7 +31469,8 @@ function _hoyMomHtml(ahora) {
     + '<div class="hoy-mini" onclick="hoyJugadones()" aria-hidden="true">' + tdMiniFen(m.fen, null, juegaN) + '</div>'
     + '<div><div class="hoy-tab-t">' + escHtml(quien) + ' encontró un jugadón</div>'
     + '<div class="hoy-tab-s">Contra ' + escHtml(rival) + ' · ' + escHtml(m._tn || '') + '. Juegan las ' + (juegaN ? 'negras' : 'blancas') + ': ¿lo ves?</div>'
-    + '<button class="hoy-btn" type="button" onclick="hoyJugadones()">✨ Ver ' + (L.length > 1 ? 'los ' + L.length + ' jugadones' : 'el jugadón') + ' de la semana</button>'
+    // (22/10) La pastilla «!!» verde agua del tablero (#cv-nag-badge.nb-brilliant): el ✨ no se veía sobre el dorado.
+    + '<button class="hoy-btn hoy-btn-bri" type="button" onclick="hoyJugadones()"><span class="hoy-bri" aria-hidden="true">!!</span>Ver ' + (L.length > 1 ? 'los ' + L.length + ' jugadones' : 'el jugadón') + ' de la semana</button>'
     + '</div></div></section>';
 }
 // "Ver la partida" de un jugadón de la semana: abre su torneo y, cuando llegan las partidas, la partida en esa
