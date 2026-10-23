@@ -3812,7 +3812,17 @@
   <!-- En la web publicada (on-demand: hay manifest pero NO embedded-data), ocultar la UI de autor
        ANTES de que se pinte el contenido → mata el "flash" de la pantalla de Exportar/Mantenimiento
        y de los botones de editar que después el init oculta igual. En modo autor no hace nada. -->
-  <script>(function(){if(!window.__EMBEDDED_DATA__&&window.__MANIFEST__){var s=document.createElement('style');s.textContent='#pgn-upload-panel,#pgn-maint-panel,#chip-export,#chip-maint,#btn-add-tour,#ranking-update-wrap,button[onclick^="openTzModal"],button[onclick^="pgnDeleteTorneo"],button[onclick^="torneoDel"]{display:none!important}';(document.head||document.documentElement).appendChild(s);}})();</script>
+  <!-- Si el manifest no llegó (corte de red, archivo a medio subir), un segundo intento. Antes, sin manifest
+       la web publicada se creía en MODO AUTOR (paneles de Exportar, botones de editar, carteles del
+       navegador) y quedaba vacía. Ahora el "¿es la web?" lo decide el nombre del sitio (__AA_WEB__), y si
+       tampoco llega al segundo intento, un cartel con "Reintentar" (auditoría 22/10). -->
+  <script>if(window.__AA_WEB__&&!window.__MANIFEST__)document.write('<scr'+'ipt src="data/manifest.js?r='+Date.now()+'"><\/scr'+'ipt>');</script>
+  <script>(function(){if(!window.__AA_WEB__||window.__MANIFEST__)return;window.__AA_SIN_DATOS__=true;
+    document.addEventListener('DOMContentLoaded',function(){var d=document.createElement('div');d.setAttribute('role','alertdialog');d.setAttribute('aria-labelledby','aa-sd-t');
+      d.style.cssText='position:fixed;inset:0;z-index:100000;display:flex;align-items:center;justify-content:center;padding:24px;background:#14161b;color:#f2f2f2;font:16px/1.5 system-ui,sans-serif;text-align:center';
+      d.innerHTML='<div style="max-width:420px"><div style="font-size:40px">♟️</div><h2 id="aa-sd-t" style="margin:8px 0">No se pudieron cargar los datos</h2><p style="margin:0 0 18px;color:#c9ccd3">Puede ser la conexión. Probá de nuevo en unos segundos.</p><button type="button" onclick="location.reload()" style="padding:10px 22px;border-radius:8px;border:0;background:#d4a843;color:#14161b;font-weight:700;font-size:16px;cursor:pointer">Reintentar</button></div>';
+      document.body.appendChild(d);try{d.querySelector('button').focus();}catch(e){}});})();</script>
+  <script>(function(){if(window.__AA_WEB__||(!window.__EMBEDDED_DATA__&&window.__MANIFEST__)){var s=document.createElement('style');s.textContent='#pgn-upload-panel,#pgn-maint-panel,#chip-export,#chip-maint,#btn-add-tour,#ranking-update-wrap,button[onclick^="openTzModal"],button[onclick^="pgnDeleteTorneo"],button[onclick^="torneoDel"]{display:none!important}';(document.head||document.documentElement).appendChild(s);}})();</script>
   <script type="application/json" id="embedded-token">""</script>
   <!-- Fotos y flyers self-hosteados: solo modo autor (ver la nota de embedded-data.js más arriba). -->
   <script>if(!window.__AA_WEB__){document.write('<scr'+'ipt data-aa-author src="data/embedded-photos.js"><\/scr'+'ipt>');
@@ -16385,15 +16395,19 @@ function _vsBuildData(tu) {
   // Clasificación
   (tu.players || []).forEach(function(p) {
     if (!p) return;
+    // Auditoría 22/10: todo lo numérico de vesus se pasa a número (y el FIDE id a sólo dígitos) ACÁ, al
+    // entrar: después se pega en la tabla y en un onclick sin escapar. Si vesus mandara texto, era código.
+    var _vsNum = function (v) { v = +v; return isFinite(v) ? v : 0; };
+    var _vsRk = function (v) { return (v != null && isFinite(+v)) ? +v : null; };
     data.standings.push({
       name: p.name || '', fed: p.federation || '', title: _normTitle(p.title || ''),
-      elo: (p.fideRating || p.rating || 0), fideId: (p.fideId != null ? String(p.fideId) : ''),
-      pts: (p.points != null ? p.points : 0),
+      elo: _vsNum(p.fideRating || p.rating || 0), fideId: (p.fideId != null && /^\d{1,12}$/.test(String(p.fideId)) ? String(p.fideId) : ''),
+      pts: _vsNum(p.points != null ? p.points : 0),
       // vesus deja rank en null hasta que arranca el torneo: caemos al nº de sembrado (rankedId), como
       // el ranking inicial de Chess-Results, para no mostrar "#null" en el panel del jugador.
-      rank: (p.rank != null ? p.rank : (p.rankedId != null ? p.rankedId : null)),
-      rp: (p.performanceRating || 0), eloVar: (p.ratingChange || 0),
-      startNo: (p.rankedId != null ? p.rankedId : null)
+      rank: (p.rank != null ? _vsRk(p.rank) : _vsRk(p.rankedId)),
+      rp: _vsNum(p.performanceRating || 0), eloVar: _vsNum(p.ratingChange || 0),
+      startNo: _vsRk(p.rankedId)
     });
   });
   // vesus entrega players[] en orden de SEMBRADO; la app numera la tabla por posición de fila, así que
@@ -16414,7 +16428,7 @@ function _vsBuildData(tu) {
     if (reg[pk] != null) {   // el otro jugador ya reportó este juego: completar lo que falte
       var ex = list[reg[pk]];
       if (ex && !ex.res && res) ex.res = res;
-      if (ex && (ex.m == null || ex.m === '') && board != null) ex.m = String(board);
+      if (ex && (ex.m == null || ex.m === '') && board != null && isFinite(+board)) ex.m = String(+board);
       return;
     }
     var W = byRanked[wId], B = byRanked[bId];
@@ -16422,8 +16436,8 @@ function _vsBuildData(tu) {
     list.push({
       w: W ? W.name : '', b: B ? B.name : '',
       tw: W ? _normTitle(W.title || '') : '', tb: B ? _normTitle(B.title || '') : '',
-      ew: W ? (W.fideRating || W.rating || 0) : 0, eb: B ? (B.fideRating || B.rating || 0) : 0,
-      sw: wId, sb: bId, m: (board != null ? String(board) : ''), res: res || ''
+      ew: W ? (+(W.fideRating || W.rating || 0) || 0) : 0, eb: B ? (+(B.fideRating || B.rating || 0) || 0) : 0,
+      sw: wId, sb: bId, m: (board != null && isFinite(+board) ? String(+board) : ''), res: res || ''
     });
   }
   var maxR = 0; (tu.players || []).forEach(function(p) { if (p && p.matches) maxR = Math.max(maxR, p.matches.length); });
@@ -17451,8 +17465,8 @@ function crOpenPlayer(key,name){
     if(argP){
       h+='<button onclick="crGoToProfile('+argP.id+')" style="flex:1;min-width:140px;padding:10px 12px;background:var(--gold-bg);border:1px solid var(--gold-dim);border-radius:8px;color:var(--gold);font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit" aria-label="'+escHtml('Ver el perfil completo de '+_a11yNombre(name))+'">👤 Perfil completo</button>';
     }
-    if(fideId){
-      h+='<button onclick="window.open(\'https://ratings.fide.com/profile/'+fideId+'\',\'_blank\')" style="flex:1;min-width:140px;padding:10px 12px;background:var(--gl40);border:1px solid var(--bd20);border-radius:8px;color:var(--fg-e0);font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit;text-shadow:var(--txt-out)" aria-label="'+escHtml('Ver la ficha FIDE de '+_a11yNombre(name)+'. Se abre en una pestaña nueva')+'">🌐 Ver en FIDE ↗</button>';
+    if(fideId && /^\d{1,12}$/.test(String(fideId))){   // sólo dígitos: va pegado dentro del onclick
+      h+='<button onclick="window.open(\'https://ratings.fide.com/profile/'+fideId+'\',\'_blank\',\'noopener\')" style="flex:1;min-width:140px;padding:10px 12px;background:var(--gl40);border:1px solid var(--bd20);border-radius:8px;color:var(--fg-e0);font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit;text-shadow:var(--txt-out)" aria-label="'+escHtml('Ver la ficha FIDE de '+_a11yNombre(name)+'. Se abre en una pestaña nueva')+'">🌐 Ver en FIDE ↗</button>';
     }
     h+='</div>';
   }
@@ -17964,7 +17978,9 @@ function pgnGetTorneosForList() {
    Dev/autoría sigue en modo EAGER si está presente window.__EMBEDDED_DATA__ (cero cambios).
    `?ondemand=1` fuerza on-demand para probar contra el manifest sin tocar el dev.
 ═══════════════════════════════════════════════════════ */
-var _ondemand = (location.search.indexOf('ondemand') >= 0) || (!window.__EMBEDDED_DATA__ && !!window.__MANIFEST__);
+// __AA_WEB__ (el nombre del sitio) manda: en chessargentino.ar es SIEMPRE la web, aunque el manifest no haya
+// llegado (antes eso la dejaba en modo autor: auditoría 22/10).
+var _ondemand = (location.search.indexOf('ondemand') >= 0) || !!window.__AA_WEB__ || (!window.__EMBEDDED_DATA__ && !!window.__MANIFEST__);
 var _manifest = window.__MANIFEST__ || null;
 var _tourGamesCache = {};   // tourId → [pgn...]  (cache de los fetch)
 var _tourFileMeta = {};     // tourId → { name, location }  (del archivo t/<id>.json, para deep-links del pool)
@@ -24461,7 +24477,9 @@ function parsePgnHeaders(pgn) {
   var re = /\[(\w+)\s+"([^"]*)"\]/g;
   var m;
   while ((m = re.exec(pgn)) !== null) {
-    headers[m[1]] = m[2];
+    // Sin < ni >: ningún dato real de un encabezado los lleva, y así nada que venga de un PGN ajeno
+    // puede convertirse en código si algún lugar se olvida de escapar (auditoría 22/10, [Result]).
+    headers[m[1]] = m[2].replace(/[<>]/g, '');
   }
   return headers;
 }
@@ -32030,7 +32048,7 @@ function _hoyDiaComoHoyHtml(hoyD, grande) {
   }
   var h = hc + L.map(function (g) {
     var u = '?torneo=' + encodeURIComponent(g[5]) + '&partida=' + g[6], an = String(g[0]).slice(0, 4);
-    var res = g[3] === '1/2-1/2' ? '½–½' : String(g[3]).replace('-', '–');
+    var res = escHtml(g[3] === '1/2-1/2' ? '½–½' : String(g[3]).replace('-', '–'));
     return '<a class="hoy-fila" href="' + _hoyHref(u) + '" onclick="return _hoyIr(this.getAttribute(\'href\'))"><span class="hf-ic hoy-an">' + an + '</span>'
       + '<span class="hf-tx"><b>' + escHtml(_hoyNom(g[1])) + '</b> – <b>' + escHtml(_hoyNom(g[2])) + '</b><span class="hf-sub">' + escHtml(g[4] || '') + '</span></span>'
       + '<span class="hf-der">' + res + '</span></a>';
@@ -36225,7 +36243,7 @@ function _cvRootIsStd() {
 
 function obLocalUpdate() {
   if (!cv.chess) return;
-  if (!_cvRootIsStd()) {
+  if (!_cvRootIsStd() || _aaLiBloq()) {   // ♞ con una partida de Lichess en curso, tampoco hay libro
     var opX = document.getElementById('cv-opening'); if (opX) opX.textContent = '';
     var faX = document.getElementById('fa-opening'); if (faX) faX.textContent = '';
     obSetVisible(false);
@@ -36433,7 +36451,65 @@ var _SF_LIVE_MAXMS = 60000;
 var _SF_LIVE_EXTDEPTH = 45;
 var _SF_LIVE_EXTEND_IF_UNDER_MS = 10000;
 
+/* ── ♞🚫 Partida de Lichess en curso = nada de ayuda (auditoría 22/10/2026) ──────────────────────
+   Mientras el visitante juega una partida de Lichess desde el sitio, en ESTA pestaña o en otra, quedan
+   apagados el módulo del visor, el análisis completo, Practicar/Jugáselo, ¿Qué amenaza?, Buscar planes,
+   Probar cambios, el módulo de los ejercicios, la tabla de finales y el libro. Para Lichess es ayuda de
+   motor: le cierra la cuenta al usuario. Antes sólo lo sabía el panel de Lichess, y bastaba con ir a
+   otra sección o abrir otra pestaña. Las otras pestañas se enteran por localStorage ('aa_li_jugando' =
+   la hora del último latido, cada 5 s; pasados 20 s sin latido se da por terminada, por si la pestaña
+   de la partida se cerró de golpe). Lo que analiza tableros AJENOS (miniaturas, colgadas, motor
+   repartido) sigue: no es la partida del usuario. */
+var _AA_LI_LATIDO = 5000, _AA_LI_VENCE = 20000, _aaLiBloqueado = false, _aaLiAvisado = 0;
+function _aaLiAca() { try { return !!(window.aaLiPartida && window.aaLiPartida.enCurso()); } catch (e) { return false; } }
+function aaJugandoLichess() {
+  if (_aaLiAca()) return true;
+  try { var t = +localStorage.getItem('aa_li_jugando') || 0; return t > 0 && Date.now() - t < _AA_LI_VENCE; } catch (e) { return false; }
+}
+// ¿Está bloqueado? Con `avisar`, además muestra el cartel (como mucho uno cada 4 s: un doble clic no apila dos).
+function _aaLiBloq(avisar) {
+  if (!aaJugandoLichess()) return false;
+  if (avisar && Date.now() - _aaLiAvisado > 4000) {
+    _aaLiAvisado = Date.now();
+    try { _avisoApp('♞', 'No disponible mientras jugás en Lichess', 'El análisis, el módulo, la tabla de finales y el libro se apagan mientras tenés una partida de Lichess en curso: para Lichess es ayuda de motor y te puede cerrar la cuenta. Vuelven solos cuando termina la partida.'); } catch (e) {}
+  }
+  return true;
+}
+// Al empezar una partida: apagar lo que estuviera andando sobre CUALQUIER posición.
+function _aaLiApagarTodo() {
+  try { if (typeof sfTurnOff === 'function') sfTurnOff(); } catch (e) {}
+  try { if (typeof puzSfOff === 'function' && typeof puz !== 'undefined' && puz.anOn) puzSfOff(); } catch (e) {}
+  try { if (typeof _qp !== 'undefined' && _qp.on) qpSalir(); } catch (e) {}
+  try { if (typeof plaReset === 'function') plaReset(true); } catch (e) {}
+  try { if (typeof thrReset === 'function') thrReset(); } catch (e) {}
+  // El análisis completo que se pidió a mano (no el del vivo de una transmisión, que es una partida ajena).
+  try { if (typeof _fa !== 'undefined' && _fa.running && !_fa.live) faReset(); } catch (e) {}
+  try { if (typeof prac !== 'undefined' && prac.anOn) { pracAnOff(); pracRenderActions(); } } catch (e) {}
+  try { if (typeof obSetVisible === 'function') obSetVisible(false); } catch (e) {}
+}
+function _aaLiCartel(on) {
+  var el = document.getElementById('aa-li-bloq');
+  if (on && !el) {
+    el = document.createElement('div');
+    el.id = 'aa-li-bloq'; el.setAttribute('role', 'status');
+    el.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:calc(10px + env(safe-area-inset-bottom,0px));z-index:9000;max-width:calc(100% - 24px);padding:7px 14px;border-radius:999px;background:rgba(20,20,25,.92);color:#fff;font-size:13px;line-height:1.35;box-shadow:0 2px 10px rgba(0,0,0,.35);pointer-events:none;text-align:center';
+    el.textContent = '♞ Partida de Lichess en curso: análisis, módulo, tabla de finales y libro apagados hasta que termine.';
+    (document.body || document.documentElement).appendChild(el);
+  } else if (!on && el) el.remove();
+}
+function _aaLiTick() {
+  var aca = _aaLiAca();
+  try { if (aca) localStorage.setItem('aa_li_jugando', String(Date.now())); else if (localStorage.getItem('aa_li_jugando_yo') === _sfTabId) localStorage.removeItem('aa_li_jugando'); } catch (e) {}
+  try { if (aca) localStorage.setItem('aa_li_jugando_yo', _sfTabId); else if (localStorage.getItem('aa_li_jugando_yo') === _sfTabId) localStorage.removeItem('aa_li_jugando_yo'); } catch (e) {}
+  var b = aaJugandoLichess();
+  if (b && !_aaLiBloqueado) _aaLiApagarTodo();
+  if (b !== _aaLiBloqueado) { _aaLiBloqueado = b; _aaLiCartel(b); }
+}
+setInterval(_aaLiTick, _AA_LI_LATIDO);
+try { window.addEventListener('storage', function (e) { if (e && e.key === 'aa_li_jugando') _aaLiTick(); }); } catch (e) {}
+
 function sfToggle() {
+  if (!sf.on && _aaLiBloq(true)) return;
   if (!sf.on) {
     sf.on = true;
     document.getElementById('sf-toggle').classList.add('on');
@@ -36786,6 +36862,7 @@ function sfAnalyzeNow() {
 // se cambia exactamente cuando arranca la búsqueda nueva (no antes). Lo usan el visor y el solver.
 function sfRestart(fen, side) {
   if (!sf.engine) return;
+  if (_aaLiBloq()) return;   // ♞ partida de Lichess en curso: el módulo no analiza nada (visor, Practicar, ejercicios)
   sf.pending = { fen: fen, side: side };
   sf.armed = false;
   sf.engine.postMessage('stop');
@@ -38281,7 +38358,7 @@ function _bcGridRender() {
     var hd = parsePgnHeaders(pgn);
     var wParts = (hd.White || '?').split(','); var white = wParts.length > 1 ? (wParts[1].trim() + ' ' + wParts[0].trim()) : wParts[0].trim();
     var bParts = (hd.Black || '?').split(','); var black = bParts.length > 1 ? (bParts[1].trim() + ' ' + bParts[0].trim()) : bParts[0].trim();
-    var res = hd.Result || '*';
+    var res = _resLimpio(hd.Result);   // sin limpiar se pegaba en el HTML (auditoría 22/10)
     var wScore = res === '1-0' ? '1' : res === '0-1' ? '0' : res === '1/2-1/2' ? '½' : '';
     var bScore = res === '1-0' ? '0' : res === '0-1' ? '1' : res === '1/2-1/2' ? '½' : '';
     var wsc = res === '1-0' ? 'var(--green)' : res === '0-1' ? 'var(--red)' : 'var(--text2)';
@@ -42489,7 +42566,15 @@ function _tdEvalBarHtml(ev, flip) {
 // se reservaba un lugar a la derecha; ahora el resultado va centrado sobre el tablero (se ve más y
 // libera ese lugar para el reloj). isStart: partida sin jugadas → '·' (o el resultado si ya se
 // definió por bye/incomparecencia). En curso con posición → '' (no tapa el tablero).
+// Auditoría 22/10: el [Result] del PGN viene de afuera (transmisiones, sichess, lo subido por PIN) y se
+// pegaba tal cual en el HTML de la grilla: [Result "<img onerror=…>"] ejecutaba código para todos los que
+// miraban. Sólo pasan los cuatro valores del estándar PGN (y el ½ que escriben algunos); lo demás = '*'.
+function _resLimpio(res) {
+  var r = String(res == null ? '' : res).trim().replace(/½/g, '1/2').replace(/–/g, '-');
+  return (r === '1-0' || r === '0-1' || r === '1/2-1/2' || r === '*') ? r : '*';
+}
 function _tdResBadgeHtml(res, isStart) {
+  res = _resLimpio(res);
   var decided = res && res !== '*';
   if (!decided && !isStart) return '';
   var big = res === '1/2-1/2' ? '½-½' : (res === '*' ? '·' : res);
@@ -49241,6 +49326,7 @@ function puzSfOff() {
 }
 function puzSfToggle() {
   if (puz.anOn) { puzSfOff(); return; }
+  if (_aaLiBloq(true)) return;
   puz.anOn = true;
   document.getElementById('puz-eval').style.display = 'block';
   var v = document.getElementById('puz-vbar'); v.classList.add('show');
@@ -49664,6 +49750,7 @@ var _pracUrlAntes = null;      // la dirección de antes de abrir Practicar (al 
    origen 'visor' = se abrió ENCIMA de una partida (al cerrar se vuelve a ella); 'link' = alguien la compartió.
    Sin objetivo ni fase → "Jugá la posición contra el módulo."; sin "Otra posición" ni "Ver la partida original". */
 function pracOpenFen(fen, src) {
+  if (_aaLiBloq(true)) return false;   // ♞ Practicar / Jugáselo = jugar contra el módulo
   if (typeof Chess === 'undefined') return false;
   var c = new Chess();
   if (!c.load(String(fen || '').trim())) return false;
@@ -50161,6 +50248,7 @@ function pracResumeStatus() {
 /* ── Jugada del módulo (motor a fuerza limitada) ── */
 function pracEngineMove() {
   if (prac.over || !prac.chess) return;
+  if (_aaLiBloq(true)) { pracSetStatus('think', '♞', 'El módulo no juega mientras tenés una partida de Lichess en curso.'); return; }
   prac.busy = true; pracRenderActions();
   pracSetStatus('think', '⏳', 'El módulo está pensando…');
   // 🤖 Abierta desde el visor (04/10): si el gráfico de la partida (pase completo), ¿Qué amenaza? o Buscar planes
@@ -50289,6 +50377,7 @@ function pracAnOff() {
 }
 function pracAnToggle() {
   if (prac.anOn) { pracAnOff(); pracRenderActions(); return; }
+  if (_aaLiBloq(true)) return;
   pracStopEngine();   // por si el módulo estaba por jugar su jugada
   prac.anOn = true; pracAnReset();
   document.getElementById('prac-eval').style.display = 'block';
@@ -51221,6 +51310,7 @@ function thrReset() {
 function thrProbe() {
   if (_thr.running || _pla.running) return;                   // ya hay un probe (o una búsqueda de planes) en curso
   if (!cv.chess) return;
+  if (_aaLiBloq(true)) return;   // ♞ partida de Lichess en curso
   if (_faOcupado()) { thrFlash('El análisis de la partida está usando el motor…'); return; }
   if (!sf.ready) { if (!sf.on) sfToggle(); thrFlash('El motor se está cargando…'); return; }
   if (cv.chess.in_check()) { thrFlash('La amenaza es el jaque.'); return; }
@@ -52127,6 +52217,7 @@ function plaUpdateBtn() {
 function plaProbe(rival) {
   rival = !!rival;
   if (_pla.running || _thr.running || !cv.chess) return;
+  if (_aaLiBloq(true)) return;   // ♞ partida de Lichess en curso
   if (_faOcupado()) { _plaCaja('<div class="pla-msg">El análisis de la partida está usando el motor…</div>'); return; }
   if (!sf.ready) { if (!sf.on) sfToggle(); _plaCaja('<div class="pla-msg">El motor se está cargando… probá de nuevo en un ratito.</div>'); return; }
   if (cv.chess.in_check() || cv.chess.game_over()) return;
@@ -52755,6 +52846,7 @@ function qpUpdateBtn() {
 function qpToggle() { if (_qp.on) qpSalir(); else qpEntrar(); }
 function qpEntrar() {
   if (_qp.on || !cv.chess || !cv.node || _pla.running || _thr.running) return;
+  if (_aaLiBloq(true)) return;   // ♞ partida de Lichess en curso
   if (!sf.on) sfToggle();
   plaReset(true); thrReset();
   var fen0 = cv.chess.fen();
@@ -53894,6 +53986,7 @@ function faGetNodes() {
 
 function faToggle() {
   if (_faOcupado()) { cancelFA(); return; }
+  if (_aaLiBloq(true)) return;   // ♞ partida de Lichess en curso
   if (_thr.running || _pla.running) return;   // el motor está en "¿Qué amenaza?"/"Buscar planes": son segundos (si no, los trababa)
   _faCederRelleno();   // el relleno de lo salteado no es "un análisis corriendo": se corta y se sigue
   var _rb = document.getElementById('fa-reopen'); if (_rb) _rb.style.display = 'none';   // se está (re)abriendo
@@ -55463,6 +55556,7 @@ function _tbActivo(q, ls) {
   } catch (e) { return true; }
 }
 function _tbOn() {
+  if (typeof _aaLiBloq === 'function' && _aaLiBloq()) return false;   // ♞ partida de Lichess en curso: sin tabla de finales
   if (_tb.llave === null) { try { _tb.llave = _tbActivo(location.search || '', localStorage); } catch (e) { _tb.llave = true; } }
   return _tb.llave;
 }
@@ -64179,6 +64273,14 @@ function cvUpdateNagBadge() {
         if (intento === 1) avisar('Lichess no aceptó la jugada (' + msg + ').');
         return;
       }
+      /* 429 = Lichess pide frenar UN MINUTO (sus reglas: insistir antes puede costarle la cuenta al
+         usuario). Antes se reenviaba a los 400 ms como cualquier corte (auditoría 22/10). */
+      if (e && e.status === 429) {
+        if (intento === 1) avisar('Lichess pidió esperar un minuto antes de recibir más pedidos. La jugada se vuelve a mandar sola en 60 segundos; si estás apurado de tiempo, hacela en lichess.org.');
+        if (intento < JUG_MAX) setTimeout(function () { if (pendiente()) mandarJugada(uci, intento + 1); }, 60000);
+        else P.jugPend = null;
+        return;
+      }
       if (intento < JUG_MAX) setTimeout(function () { if (pendiente()) mandarJugada(uci, intento + 1); }, 400);
       else { P.jugPend = null; avisar('Lichess no recibió la jugada (' + msg + '). Hacela de nuevo.'); }
     });
@@ -64376,8 +64478,15 @@ function cvUpdateNagBadge() {
       avisar('No se pudo recuperar la conexión con la partida. Abrila en lichess.org para no perderla.');
       return;
     }
-    try { window.lvTablero.aviso('🔌 Se cortó la conexión con Lichess. Reconectando…'); } catch (x) {}
     var id = P.id, espera = Math.min(1000 * P.intentos, 5000);   // 1 s, 2 s, 3 s… y 5 s de tope
+    /* 429 = Lichess pide frenar un minuto entero (como ya hacía la conexión de la cuenta desde el 23/09;
+       la de la PARTIDA lo reintentaba en 1-5 s, auditoría 22/10). */
+    if (st === 429) {
+      espera = 60000;
+      try { window.lvTablero.aviso('🔌 Lichess pidió esperar un minuto. Reconectando en 60 s… (la partida sigue en lichess.org)'); } catch (x) {}
+    } else {
+      try { window.lvTablero.aviso('🔌 Se cortó la conexión con Lichess. Reconectando…'); } catch (x) {}
+    }
     setTimeout(function () { if (P && P.id === id && P.caido && !P.terminada) abrirCano(); }, espera);
   }
 

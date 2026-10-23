@@ -28,7 +28,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2562;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2577;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -5802,7 +5802,7 @@ console.log('\n=== Arenas temáticos: posición inicial ===');
       'visor: si arrancan las NEGRAS, la 1.ª jugada es "1… " y la 2.ª "2." (no "1. e6 e3")', JSON.stringify([a, b]));
   const sinFen = moveNo({ parent: { parent: null } });
   chk(sinFen.num === 1 && sinFen.white === true, 'visor: sin FEN usable, se numera como siempre');
-  chk(/function obLocalUpdate\(\) \{\s*if \(!cv\.chess\) return;\s*if \(!_cvRootIsStd\(\)\)/.test(SRC),
+  chk(/function obLocalUpdate\(\) \{\s*if \(!cv\.chess\) return;\s*if \(!_cvRootIsStd\(\)( \|\| _aaLiBloq\(\))?\)/.test(SRC),
       'visor: con otra posición inicial no se muestra el libro de 1.e4/1.d4 (ni un nombre de apertura equivocado)');
   chk(/startFen: fen0,/.test(SRC) && /completarFen\(full\.initialFen\)/.test(SRC) && /if\('startFen' in m\)\{\s*lvStartFen=m\.startFen\|\|null;/.test(SRC)
       && /var c=lvStartFen\?new Chess\(lvStartFen\):new Chess\(\), lm=null;/.test(SRC)
@@ -9561,7 +9561,7 @@ console.log('\n── Portada de aperturas ──');
   const ChessJ = _mj.exports.Chess || _mj.exports;
   // pracOpenFen: arma la posición "de mentira" y abre Practicar
   const OF = new Function('Chess', 'var prac = { chess: null }, sf = { engine: null, on: false }, _fa = { running: false }, abrio = 0, armo = 0, cortes = 0;'
-    + 'function pracAnOff(){} function pracStopEngine(){} function pracOpenOverlay(){ abrio++; } function pracSetup(){ armo++; }'
+    + 'function pracAnOff(){} function pracStopEngine(){} function pracOpenOverlay(){ abrio++; } function pracSetup(){ armo++; } function _aaLiBloq(){ return false; }'
     + 'function mevAbort(){ cortes++; } function _faCederRelleno(){ cortes++; }'
     + extraerFuncion('pracOpenFen') + '\n' + extraerFuncion('_pracSobreVisor')
     + '; return { abrir: function(f, s){ prac.cur = null; return pracOpenFen(f, s); }, get cur(){ return prac.cur; }, get color(){ return prac.humanColor; },'
@@ -10578,6 +10578,80 @@ console.log('\n=== 79. 🎂 Cumpleaños + cartelera de la portada (22/10) ===');
   chk(HP.tx(HP.de({ name: 'Miguel Najdorf', fide_id: 100018 }, LH)) === '🎂 15 de abril de 1910 · † 1997' && HP.de({ name: 'Raúl Carlos Sanguineti' }, LH).a === 1933
       && HP.de({ name: 'Jacobo Bolbochan' }, LH) === null && HP.de({ name: 'O. Panno', fide_id: 100153 }, LH).md === '03-17' && HP.tx(HP.de({ name: 'Oscar Panno' }, LH)) === '🎂 17 de marzo de 1935',
       '🕯️ el perfil de un histórico muestra su cumpleaños (Najdorf «† 1997»): por número FIDE o por nombre y apellido, sin confundir a Jacobo con Julio Bolbochán');
+}
+
+console.log('\n=== 🔒 Auditoría 22/10 · Fase 1 (web urgente) ===');
+{
+  // C1: el [Result] de un PGN ajeno se pegaba en el HTML de la grilla.
+  const PH = new Function(extraerFuncion('parsePgnHeaders') + '; return parsePgnHeaders;')();
+  const malo = '[Event "x"]\n[White "A<b>"]\n[Result "<img src=x onerror=alert(1)>"]\n\n1. e4 *';
+  const hm = PH(malo);
+  chk(!/[<>]/.test(hm.Result) && hm.White === 'Ab' && PH('[Result "1-0"]').Result === '1-0',
+      '🔒 los encabezados del PGN llegan sin < ni > (un [Result] con código ya no sirve para nada)', JSON.stringify(hm));
+  const RB = new Function(extraerFuncion('_resLimpio') + '\n' + extraerFuncion('_tdResBadgeHtml') + '; return { l: _resLimpio, b: _tdResBadgeHtml };')();
+  chk(RB.l('1-0') === '1-0' && RB.l('0-1') === '0-1' && RB.l('1/2-1/2') === '1/2-1/2' && RB.l('½-½') === '1/2-1/2' && RB.l(' * ') === '*'
+      && RB.l('<img src=x onerror=alert(1)>') === '*' && RB.l(null) === '*' && RB.l('1-0 ff') === '*',
+      '🔒 resultado: sólo pasan 1-0, 0-1, 1/2-1/2 y * (lo demás cuenta como «en curso»)');
+  chk(!/<img/i.test(RB.b('<img src=x onerror=alert(1)>', true)) && /½-½/.test(RB.b('1/2-1/2', false)) && RB.b('*', false) === '',
+      '🔒 el cartelito del resultado en la grilla no arma HTML con lo que venga en el PGN');
+  chk(/var res = _resLimpio\(hd\.Result\);/.test(SRC) && /var res = escHtml\(g\[3\] === '1\/2-1\/2'/.test(SRC),
+      '🔒 lo mismo en la grilla de la transmisión y en «Un día como hoy»');
+  // I18: números de vesus.
+  const VS = new Function(['_normTitle', '_vsResStr', '_vsPairRes', '_vsBuildData'].map(extraerFuncion).join('\n') + '; return _vsBuildData;')();
+  const vd = VS({ name: 'T', players: [{ name: 'Ana', rankedId: 1, rank: '<b>', fideRating: '2000<img>', fideId: "1');alert(1);//", ratingChange: '<img src=x>', performanceRating: 'x', points: '3' },
+                                       { name: 'Bea', rankedId: 2, rank: 2, fideRating: 1900, fideId: 123456, ratingChange: -4.5, performanceRating: 2100, points: 2 }], pairings: [] });
+  const s0 = vd.standings.find((x) => x.name === 'Ana'), s1 = vd.standings.find((x) => x.name === 'Bea');
+  chk(s0.fideId === '' && s0.elo === 0 && s0.eloVar === 0 && s0.rp === 0 && s0.rank === null && s0.pts === 3
+      && s1.fideId === '123456' && s1.elo === 1900 && s1.eloVar === -4.5 && s1.rank === 2,
+      '🔒 vesus: puesto, Elo, performance y variación entran como números, y el FIDE id sólo con dígitos', JSON.stringify([s0, s1]));
+  chk(/if\(fideId && \/\^\\d\{1,12\}\$\/\.test\(String\(fideId\)\)\)/.test(SRC) && /'_blank\\',\\'noopener\\'\)"/.test(SRC),
+      '🔒 el botón «Ver en FIDE» se arma sólo con un FIDE id de dígitos (y abre sin darle acceso a la página)');
+  // C5: nada de ayuda mientras se juega en Lichess.
+  const mkLi = (enCurso, latidoHace) => {
+    const store = { aa_li_jugando: latidoHace == null ? null : String(Date.now() - latidoHace) };
+    const ls = { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); }, removeItem: (k) => { delete store[k]; } };
+    let avisos = 0;
+    const L = new Function('window', 'localStorage', '_avisoApp',
+      'var _AA_LI_LATIDO = 5000, _AA_LI_VENCE = 20000, _aaLiBloqueado = false, _aaLiAvisado = 0;'
+      + ['_aaLiAca', 'aaJugandoLichess', '_aaLiBloq'].map(extraerFuncion).join('\n') + '; return { j: aaJugandoLichess, b: _aaLiBloq };')(
+      { aaLiPartida: { enCurso: () => enCurso } }, ls, () => { avisos++; });
+    return { L, get avisos() { return avisos; } };
+  };
+  const t1 = mkLi(true, null), t2 = mkLi(false, 3000), t3 = mkLi(false, 30000), t4 = mkLi(false, null);
+  chk(t1.L.j() && t2.L.j() && !t3.L.j() && !t4.L.j(),
+      '♞ «jugando en Lichess»: la partida en ESTA pestaña, o el latido de otra pestaña de hace menos de 20 s (uno viejo, de una pestaña cerrada de golpe, no cuenta)');
+  t1.L.b(true); t1.L.b(true);
+  chk(t1.avisos === 1 && t1.L.b() === true && t4.L.b(true) === false && t4.avisos === 0,
+      '♞ bloqueado: avisa con el cartel de la app UNA vez aunque se toque dos veces; sin partida, no bloquea ni avisa');
+  const gate = ['sfToggle', 'sfRestart', 'pracOpenFen', 'pracEngineMove', 'pracAnToggle', 'puzSfToggle', 'faToggle', 'thrProbe', 'plaProbe', 'qpEntrar', 'obLocalUpdate', '_tbOn']
+    .filter((n) => !/_aaLiBloq\(/.test(extraerFuncion(n)));
+  chk(gate.length === 0, '♞ con una partida de Lichess en curso se apagan: módulo del visor, análisis completo, Practicar/Jugáselo, ejercicios, ¿Qué amenaza?, Buscar planes, Probar cambios, libro y tabla de finales', gate.join(', '));
+  chk(/sfTurnOff\(\)/.test(extraerFuncion('_aaLiApagarTodo')) && /faReset\(\)/.test(extraerFuncion('_aaLiApagarTodo')) && /pracAnOff\(\)/.test(extraerFuncion('_aaLiApagarTodo'))
+      && /setInterval\(_aaLiTick, _AA_LI_LATIDO\)/.test(SRC) && /e\.key === 'aa_li_jugando'/.test(SRC),
+      '♞ al empezar la partida se apaga lo que estuviera andando, también en las otras pestañas (latido + aviso del navegador)');
+  // I33: 429 de Lichess en la partida.
+  chk(/if \(st === 429\) \{\s*espera = 60000;/.test(SRC) && /e\.status === 429\) \{[^]*?\}, 60000\);/.test(SRC),
+      '♞ un 429 de Lichess en la partida (conexión y jugada) espera un minuto entero, como piden sus reglas');
+  // I17: PIN de editar.html.
+  const ED = fs.readFileSync(new URL('./editar.html', import.meta.url), 'utf8');
+  chk(!/pin-remember/.test(ED) && !/localStorage\.setItem\('edit_pin'/.test(ED) && /localStorage\.removeItem\('edit_pin'\)/.test(ED)
+      && /sessionStorage\.setItem\('edit_pin', pin\)/.test(ED),
+      '🔒 editar.html: el PIN dura sólo lo que la pestaña (y el que había quedado guardado para siempre se borra)');
+  // I32: sin manifest, la web no se cree modo autor.
+  chk(/var _ondemand = \(location\.search\.indexOf\('ondemand'\) >= 0\) \|\| !!window\.__AA_WEB__ \|\|/.test(SRC)
+      && /window\.__AA_SIN_DATOS__=true/.test(SRC) && /data\/manifest\.js\?r=/.test(SRC) && /if\(window\.__AA_WEB__\|\|\(!window\.__EMBEDDED_DATA__&&window\.__MANIFEST__\)\)/.test(SRC),
+      '🔒 en chessargentino.ar es siempre la web: si el manifest no llega, un segundo intento y después «No se pudieron cargar los datos · Reintentar» (nunca el modo autor)');
+  // C6: archivos internos fuera de la web.
+  const RD = fs.readFileSync(new URL('./_redirects', import.meta.url), 'utf8');
+  const reglas = RD.split('\n').map((l) => l.trim()).filter((l) => l && l[0] !== '#').map((l) => l.split(/\s+/));
+  const tapa = (p) => reglas.some(([de]) => de === p || (de.endsWith('/*') && p.startsWith(de.slice(0, -1))));
+  const raiz = fs.readdirSync(new URL('./', import.meta.url)).filter((f) => /\.(md|cmd|ps1|mjs)$|^build-.*\.js$|^\.git(ignore|attributes)$/.test(f) && !/^_/.test(f));
+  const sueltos = raiz.filter((f) => !tapa('/' + f));
+  chk(sueltos.length === 0 && tapa('/cloudflare-worker/cr-proxy-worker.js') && tapa('/herramientas/online/actualizar.mjs'),
+      '🔒 _redirects: notas, Worker, bancos, herramientas y scripts de la PC no se ven en la web', sueltos.join(', '));
+  const deben = ['/', '/index.html', '/editar.html', '/sw.js', '/manifest.webmanifest', '/robots.txt', '/sitemap.xml', '/404.html', '/data/manifest.js', '/assets/chess.min.js', '/juegos/musica-en-el-tablero/index.html'];
+  chk(deben.every((p) => !tapa(p)) && reglas.every((r) => r.length === 3 && r[1] === '/' && r[2] === '301'),
+      '🔒 _redirects no toca nada de lo que la web usa (index, editar, sw.js, data/, assets/, juegos/) y cada regla lleva a la portada');
 }
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
 console.log('   Corrieron ' + corridas + ' de ' + ESPERADAS + ' comprobaciones.'
