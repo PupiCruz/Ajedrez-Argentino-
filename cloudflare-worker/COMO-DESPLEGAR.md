@@ -1,5 +1,11 @@
 # Cómo desplegar el Worker de Chess-Results (proxy CORS)
 
+> **Desde el 23/10/2026 se sube con wrangler, no pegando el código en el panel** (auditoría 22/10, I13): el freno de
+> Cloudflare (FRENO_30/60/120 de `wrangler.toml`) no se puede armar desde el panel. Desde esta carpeta:
+> `node ../../vivo-worker/node_modules/wrangler/bin/wrangler.js deploy` (o `npx wrangler deploy`). Las claves secretas
+> no se tocan. Si alguna vez se pega el código a mano igual, sigue andando: sólo pierde esa segunda barrera.
+> Lo de abajo es cómo se creó al principio.
+
 Esto se hace **una sola vez**. Es gratis (Cloudflare Workers, plan free, no pide tarjeta).
 
 ## Pasos (por el panel de Cloudflare — sin instalar nada)

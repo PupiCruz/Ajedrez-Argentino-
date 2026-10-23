@@ -167,6 +167,7 @@ const LI_TURNO_MARGEN = 5_000;
 
 export default {
   async fetch(request, env, ctx) {
+    _frenoEnv = env;   // para el freno de Cloudflare (rlFreno)
     // Respuesta al "preflight" CORS que manda el navegador antes del fetch real.
     if (request.method === 'OPTIONS') {
       return new Response(null, { headers: corsHeaders() });
@@ -185,7 +186,7 @@ export default {
     if (reqUrl.pathname.startsWith('/u/')) {   // GET público → perfil de <usuario>
       // Sin sesión es igual para todos → caché del borde. Con sesión trae "¿lo sigo?" → sin caché, con freno.
       if (request.headers.get('Authorization')) {
-        if (!rlAllow('upriv:' + ipDe(request), 60)) return tooMany();
+        if (!(await rlFreno('upriv:' + ipDe(request), 60))) return tooMany();
         return publicProfile(request, reqUrl, env);
       }
       return cachePublico(request, reqUrl, ctx, '/u', { h: perfilHandle(reqUrl).toLowerCase() }, PUB_CACHE_PERFIL, () => publicProfile(request, reqUrl, env));
@@ -293,7 +294,7 @@ export default {
       // emparejamientos nuevos no pueden esperar 10 min). Ahí la copia sirve si tiene menos de 2 min.
       if (!(reqUrl.searchParams.get('fresco') === '1' && tablaVieja(hit))) return tablaClientResp(hit);
     }
-    if (!rlAllow('crmiss:' + ipDe(request), 120)) return tooMany();
+    if (!(await rlFreno('crmiss:' + ipDe(request), 120))) return tooMany();
 
     let upstream;
     try {
@@ -359,7 +360,7 @@ async function i64Xls(reqUrl, ctx, request) {
     if (!(reqUrl.searchParams.get('fresco') === '1' && tablaVieja(hit))) return tablaClientResp(hit);
   }
   // Lo que va a info64 (dos pedidos cada vez) con freno por IP (auditoría 22/10: no tenía ninguno).
-  if (!rlAllow('i64miss:' + ipDe(request), 30)) return tooMany();
+  if (!(await rlFreno('i64miss:' + ipDe(request), 30))) return tooMany();
 
   // Paso 1: POST al endpoint de export → JSON { url: "/media/....xlsx" }
   let meta;
@@ -660,7 +661,7 @@ async function siPgn(reqUrl, ctx, request) {
   const cacheKey = llaveCache(reqUrl, '/sipgn', { url: limpia });
   const hit = await cache.match(cacheKey);
   if (hit) return hit;
-  if (!rlAllow('simiss:' + ipDe(request), 120)) return tooMany();
+  if (!(await rlFreno('simiss:' + ipDe(request), 120))) return tooMany();
 
   let upstream;
   try {
@@ -755,7 +756,7 @@ async function liBc(reqUrl, ctx, request) {
     else if (isPgn && !terminada && !(await liEsSuTurno(cache, reqUrl, cacheKeyStr, vence))) estado = 'vieja-turno';
     // Un mismo visitante no dispara más de 60 refrescos por minuto, y los de rondas terminadas cuentan en el
     // tope en frío. Si no, se sirve la copia (que ya es buena) sin ir a Lichess.
-    else if (!liInflightVivo(cacheKeyStr) && (!rlAllow('lirev:' + ipDe(request), 60) || (terminada && !(await liFrioPermitido(cache, reqUrl))))) estado = 'vieja-freno';
+    else if (!liInflightVivo(cacheKeyStr) && (!(await rlFreno('lirev:' + ipDe(request), 60)) || (terminada && !(await liFrioPermitido(cache, reqUrl))))) estado = 'vieja-freno';
     else ctx.waitUntil(liRevalidate(cache, cacheKey, cacheKeyStr, limpia, isPgn, contentType, storeTtl, reqUrl, freshTtl, terminada));
     return await liClientResp(hit, contentType, freshTtl, estado, ageMs);
   }
@@ -766,7 +767,7 @@ async function liBc(reqUrl, ctx, request) {
   // Además, el tope EN FRÍO de todo el centro de datos (auditoría 22/10: con ids inventados desde varias
   // IP se gastaba el cupo del token del sitio). Lo que ya se está bajando para otro no cuenta: se comparte.
   if (!liInflightVivo(cacheKeyStr)) {
-    if (!rlAllow('limiss:' + ipDe(request), 60)) return tooMany();
+    if (!(await rlFreno('limiss:' + ipDe(request), 60))) return tooMany();
     if (!(await liFrioPermitido(cache, reqUrl))) return errJson('Lichess está ocupado: probá de nuevo en un momento.', 429);
   }
   let r;
@@ -1123,7 +1124,7 @@ async function vsPgn(reqUrl, ctx, request) {
   const cacheKey = llaveCache(reqUrl, '/vspgn', { key });
   const hit = await cache.match(cacheKey);
   if (hit) return hit;
-  if (!rlAllow('vsmiss:' + ipDe(request), 30)) return tooMany();
+  if (!(await rlFreno('vsmiss:' + ipDe(request), 30))) return tooMany();
 
   let data;
   try {
@@ -1540,6 +1541,21 @@ function rlGastar(key, maxPorMinuto, n) {
 }
 function tooMany() { return errJson('Estás yendo demasiado rápido. Esperá un momento.', 429); }
 
+// 🧱 SEGUNDA BARRERA: el freno de Cloudflare (auditoría 22/10/2026, I13). El de arriba cuenta en la memoria de CADA
+// instancia del Worker, y Cloudflare reparte los pedidos entre muchas: un script que pega desde varias no se frena.
+// El freno propio de Cloudflare (Rate Limiting de Workers) cuenta en el centro de datos entero (no en el mundo
+// entero: es por lugar y aproximado, pero ya no se esquiva abriendo instancias). Se arma con los bindings
+// FRENO_30 / FRENO_60 / FRENO_120 de wrangler.toml (30, 60 y 120 pedidos por minuto). El panel de Cloudflare NO los
+// muestra ni los puede crear: por eso este Worker se sube con `npx wrangler deploy` desde esta carpeta. Si un binding
+// no está (se pegó el código a mano en el panel, o el banco de pruebas), se usa sólo el freno de memoria, como antes.
+let _frenoEnv = null;   // el env del Worker (es el mismo en todos los pedidos); lo anota fetch()
+async function rlFreno(key, maxPorMinuto) {
+  if (!rlAllow(key, maxPorMinuto)) return false;
+  const b = _frenoEnv && _frenoEnv['FRENO_' + maxPorMinuto];
+  if (!b || typeof b.limit !== 'function') return true;
+  try { const r = await b.limit({ key }); return !(r && r.success === false); } catch (e) { return true; }   // si el freno falla, no se corta a nadie
+}
+
 // Quién pide (para los frenos por dirección). Cloudflare la pone siempre; sin ella, un balde común.
 // IPv6: se cuenta por red /64 (las primeras 4 partes), no por dirección. Una sola conexión de casa recibe
 // millones de direcciones IPv6 y cada una era un balde nuevo: los frenos no frenaban (auditoría 22/10).
@@ -1573,7 +1589,7 @@ async function cachePublico(request, reqUrl, ctx, ruta, params, ttl, armar) {
   const key = llaveCache(reqUrl, '/__pub' + ruta, params);
   const hit = await cache.match(key);
   if (hit) return hit;
-  if (!rlAllow('pub:' + ipDe(request), 120)) return tooMany();
+  if (!(await rlFreno('pub:' + ipDe(request), 120))) return tooMany();
   const r = await armar();
   if (r.status === 200 || r.status === 404) {
     const copia = new Response(r.clone().body, { status: r.status, headers: new Headers(r.headers) });
@@ -1713,7 +1729,7 @@ async function puzHit(reqUrl, env, request) {
   if (!id || id.length > 200 || (r !== 'ok' && r !== 'fail')) return errJson('Parámetros inválidos (id, r=ok|fail)', 400);
   if (!env.DB) return errJson('Falta el binding D1 (DB)', 500);
   const ip = ipDe(request);
-  if (!rlAllow('puzhit:' + ip, 30)) return tooMany();
+  if (!(await rlFreno('puzhit:' + ip, 30))) return tooMany();
   if (!puzUnaVez(ip, id)) return jsonResp({ ok: true });
   const lista = await puzLista();
   if (lista && !lista.ids.has(id)) return jsonResp({ ok: true });

@@ -173,6 +173,7 @@ let listaEjCaida = false, pedidosLista = 0;
   };
 }
 
+const fs = await import('node:fs');
 const worker = (await import('./cr-proxy-worker.js')).default;
 const DB = mkDB();
 const env = { DB, VIVO_SECRET: 'secreto-vivo', EDIT_PIN: 'la-frase-larga', GH_TOKEN: 'x' };
@@ -1508,6 +1509,25 @@ console.log('\n=== 🔒 Auditoría 22/10 · Fase 3 (Worker de cuentas) ===');
   } finally {
     globalThis.caches = cachesAntes; globalThis.fetch = fetchAntes; DB.prepare = prepAntes;
   }
+}
+
+console.log('\n=== 🧱 Freno de Cloudflare como segunda barrera (auditoría 22/10, I13) ===');
+{
+  const vistos = [];
+  const freno = (falla) => ({ limit: async ({ key }) => { vistos.push(key); if (falla === 'tira') throw new Error('caído'); return { success: !(falla && key.startsWith(falla)) }; } });
+  const ir = (e, ip) => worker.fetch(req('/u/alguien', { ip, headers: { Authorization: 'Bearer cualquiera' } }), Object.assign({}, env, e), ctx);
+  let r = await ir({ FRENO_60: freno('upriv:') }, '10.77.0.1');
+  chk(r.status === 429 && vistos.includes('upriv:10.77.0.1'), '🧱 si el freno de Cloudflare dice que no, se corta (aunque el de memoria de esta instancia todavía deje)', r.status);
+  r = await ir({ FRENO_60: freno(null) }, '10.77.0.2');
+  chk(r.status !== 429, '🧱 si dice que sí, sigue como siempre', r.status);
+  r = await ir({ FRENO_60: freno('tira') }, '10.77.0.3');
+  chk(r.status !== 429, '🧱 si el freno de Cloudflare falla, no se corta a nadie', r.status);
+  r = await ir({}, '10.77.0.4');
+  chk(r.status !== 429, '🧱 sin el binding (código pegado a mano en el panel), sólo el freno de memoria, como antes', r.status);
+  const W = fs.readFileSync(new URL('./wrangler.toml', import.meta.url), 'utf8');
+  chk(['FRENO_30', 'FRENO_60', 'FRENO_120'].every((b) => new RegExp('name = "' + b + '"[\\s\\S]*?limit = ' + b.slice(6) + '\\s+period = 60').test(W))
+      && /binding = "DB"[\s\S]*database_id = "32eae1e8-4298-4b99-a9d4-166d0e92d857"/.test(W) && /\[ai\]\s*binding = "AI"/.test(W) && /name = "cr-proxy"/.test(W),
+      '🧱 wrangler.toml trae los tres frenos y las mismas conexiones que el Worker de hoy (base D1 e IA)');
 }
 
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.') + '\n');

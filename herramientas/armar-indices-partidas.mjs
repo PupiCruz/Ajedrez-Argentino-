@@ -16,8 +16,9 @@
 //                     (lo de antes de la coma: "Perez Gonzalez, Juan" → perez y gonzalez; sin coma, todas las
 //                     palabras), recortada a lo que haga falta para que ninguna clave junte más de CUB
 //                     partidas ("g", "go", "gonzalez"…: sp = los comienzos que se partieron). Sus partidas van
-//                     en el paquete de cada una de sus claves. Las claves vecinas se juntan en paquetes de
-//                     unas CUB partidas, así no son miles de archivos (Cloudflare acepta 20.000 en total).
+//                     en el paquete de cada una de sus claves. Las claves se reparten en PAQUETES (400) por su
+//                     huella: cada apellido cae siempre en el mismo, así una publicación sólo cambia los de los
+//                     jugadores nuevos, y no son miles de archivos (Cloudflare acepta 20.000 en total).
 //     Para buscar "Gonzalez Juan" la web baja l-g.json y l-j.json, mira qué palabra le hace bajar MENOS y baja
 //     sólo esos paquetes: con un apellido, casi siempre uno o dos (≈100-500 KB). Después filtra como siempre.
 //     Los renglones de acá NO traen las jugadas (la partida completa se baja al abrirla, como siempre).
@@ -42,6 +43,7 @@ const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DATA = path.join(RAIZ, 'data');
 
 export const CUB = 4000;     // partidas por clave (salvo un apellido solo que tenga más) y por paquete de la búsqueda
+export const PAQUETES = 400;  // paquetes de la búsqueda (cada apellido cae siempre en el mismo; NO cambiar sin motivo)
 export const HOJA = 3000;    // partidas como mucho en una hoja del explorador (la más pesada ≈ 150 KB comprimida)
 export const TOP = 100;      // mejores por Elo que se guardan de cada nodo del explorador
 
@@ -119,20 +121,24 @@ export function armarIndices(base, opc = {}) {
     new Set(cl(x.g.w).concat(cl(x.g.b))).forEach((k) => { if (!porClave.has(k)) porClave.set(k, []); porClave.get(k).push(x.n); });
   });
   const iGi = { v: 2, n: base.length, sp: [...sp].sort(), k: {}, p: [], l: {} };
-  let paq = null;
-  const cerrar = () => {
-    if (!paq) return;
-    const ns = [...paq].sort((a, b) => a - b), t = archivoPartidas(ns.map((n) => base[n]), true);
-    out['gi/p' + iGi.p.length + '.json'] = t; iGi.p.push([ns.length, huella(t)]); paq = null;
-  };
+  // Cada clave va SIEMPRE al mismo paquete (por su huella), así una publicación con partidas nuevas cambia sólo los
+  // paquetes de esos apellidos. (Antes se llenaban en fila: una partida nueva corría todos los de atrás y se volvían a
+  // bajar los 230 archivos en cada publicación.)
+  const nPaq = opc.paquetes || PAQUETES;   // fijo: si cambiara, se moverían todos los apellidos de paquete
+  const paqs = Array.from({ length: nPaq }, () => new Set()), dePaq = {};
   [...porClave.keys()].sort().forEach((k) => {
-    const ns = porClave.get(k);
-    if (paq && paq.size + ns.length > cub) cerrar();
-    if (!paq) paq = new Set();
-    ns.forEach((n) => paq.add(n));
-    iGi.k[k] = iGi.p.length;
+    let x = 2166136261; for (let i = 0; i < k.length; i++) { x ^= k.charCodeAt(i); x = Math.imul(x, 16777619); }
+    const p = (x >>> 0) % nPaq;
+    porClave.get(k).forEach((n) => paqs[p].add(n));
+    dePaq[k] = p;
   });
-  cerrar();
+  iGi.p = paqs.map(() => null);   // p[i] = [partidas, número] del paquete i (null = vacío, no se escribe)
+  paqs.forEach((s, p) => {
+    if (!s.size) return;
+    const ns = [...s].sort((a, b) => a - b), t = archivoPartidas(ns.map((n) => base[n]), true);
+    out['gi/p' + p + '.json'] = t; iGi.p[p] = [ns.length, huella(t)];
+  });
+  Object.keys(dePaq).sort().forEach((k) => { iGi.k[k] = dePaq[k]; });
   const letras = {};
   [...jug.entries()].sort((p, q) => q[1] - p[1] || (p[0] < q[0] ? -1 : 1)).forEach(([nm, c]) => {
     new Set(nameTokens(nm).map((t) => t[0])).forEach((L) => { (letras[L] = letras[L] || []).push([nm, c]); });

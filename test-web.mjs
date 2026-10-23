@@ -28,7 +28,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2649;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2652;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -10978,14 +10978,33 @@ console.log('\n=== 🔒 Auditoría 22/10 · Fase 5 (rendimiento) ===');
     const W = {}; new Function('window', fs.readFileSync('data/manifest.js', 'utf8'))(W);
     const rec = new Function('tourRange', (SRC.match(/function tourRange\(obj\) \{[\s\S]*?\n\}/) || [''])[0] + extraerFuncion('_isoToKey') + extraerFuncion('parseDateRange')
       + extraerFuncion('_crNombresRecientes') + ';' + (SRC.match(/var _CR_NOMBRES_DIAS = \d+;/) || [''])[0] + ' return _crNombresRecientes;');
-    let chico = null; try { chico = rec()(W.__CR_NAMES__ || {}, (W.__MANIFEST__ || {}).tournaments, W.__EMBEDDED_TZ__ || {}); } catch (e) { chico = 'ERR ' + e.message; }
+    // Todos los nombres: data/cr-nombres.json si ya se guardó con la Fase 5 (el manifest ya viene recortado); si no, el manifest.
+    const todos = fs.existsSync('data/cr-nombres.json') ? JSON.parse(fs.readFileSync('data/cr-nombres.json', 'utf8')) : (W.__CR_NAMES__ || {});
+    let chico = null; try { chico = rec()(todos, (W.__MANIFEST__ || {}).tournaments, W.__EMBEDDED_TZ__ || {}); } catch (e) { chico = 'ERR ' + e.message; }
     const kb = (o) => Math.round(JSON.stringify(o).length / 1024);
-    chk(typeof chico === 'object' && kb(chico) < kb(W.__CR_NAMES__) / 2, '🪶 con los datos de verdad, los nombres del manifest bajan a menos de la mitad',
-        typeof chico === 'object' ? kb(W.__CR_NAMES__) + ' KB → ' + kb(chico) + ' KB (' + Object.keys(chico).length + ' de ' + Object.keys(W.__CR_NAMES__).length + ' tablas)' : chico);
+    chk(typeof chico === 'object' && kb(chico) < kb(todos) / 2, '🪶 con los datos de verdad, los nombres del manifest bajan a menos de la mitad',
+        typeof chico === 'object' ? kb(todos) + ' KB → ' + kb(chico) + ' KB (' + Object.keys(chico).length + ' de ' + Object.keys(todos).length + ' tablas)' : chico);
   } else chk(true, '(sin manifest en esta PC)');
   const CMD = fs.readFileSync('publicar-web.cmd', 'utf8');
   const iI = CMD.indexOf('armar-indices-partidas.mjs'), iW = CMD.indexOf('armar-web-liviana.mjs'), iV = CMD.indexOf('node "herramientas\\versiones-datos.mjs"'), iG = CMD.indexOf('git add .');
   chk(iI > 0 && iW > iI && iV > iW && iG > iV, '🪶 publicar-web.cmd arma los pedazos, la página liviana y las versiones, en ese orden y antes de subir');
+}
+
+console.log('\n=== 🔒 Auditoría 22/10 · lo que había quedado afuera (I26, I10) ===');
+{
+  // I26: los Titled van con la hora de Europa central (Chess.com: 17 h de Ámsterdam); Argentina no cambia la hora.
+  const TH = new Function(extraerFuncion('_ttHoraArg') + '; return _ttHoraArg;')();
+  const casos = [['2026-10-20', 17, '12:00'], ['2026-10-27', 17, '13:00'], ['2026-03-24', 17, '13:00'], ['2026-03-31', 17, '12:00'],
+                 ['2026-11-05', 22, '18:00'], ['2026-11-06', 3, '23:00'], ['2026-10-16', 3, '22:00']];
+  const malos = casos.filter(([d, h, a]) => TH(d, h) !== a).map(([d, h, a]) => d + ' ' + h + 'h → ' + TH(d, h) + ' (era ' + a + ')');
+  chk(!malos.length, '🕐 la hora argentina de los Titled cambia con el horario europeo: 12 h en verano, 13 h desde el 25/10 (como en la API de Chess.com)', malos.join(' | '));
+  const SEM = extraerFuncion('_hoySemanaHtml');
+  chk(/hora: _ttHoraArg\(di, 17\)/.test(SEM) && !/hora: '12:00'/.test(SEM) && /_ttHoraArg\(_vie, 3\)/.test(SEM), '🕐 la cartelera de la portada usa esa hora (ya no "12:00" fijo)');
+  // I10: el link ?sala= pregunta antes de sentarte (salvo que ya estuvieras en esa mesa: F5).
+  const i = SRC.indexOf("var sala=null; try { sala=new URLSearchParams(location.search||'').get('sala'); }"), bloque = SRC.slice(i, i + 1500);
+  chk(i > 0 && /localStorage\.getItem\('lv_tok_'\+_salaId\)/.test(bloque) && /if\(_yaEstaba \|\| typeof window\.aaAsk!=='function'\) join\(sala\);/.test(bloque)
+      && /window\.aaAsk\(\{ icono:'♟️', titulo:'Te invitaron a una partida'/.test(bloque) && /if\(si\) join\(sala\);/.test(bloque),
+      '🔒 abrir un link de partida pregunta antes de sentarte (con el cartel de la app); si ya estabas en esa mesa, entra directo');
 }
 
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));

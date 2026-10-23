@@ -32307,6 +32307,20 @@ function hoyJugadones() {
   if (!m || typeof _cgAbrirEnTablero !== 'function') return;
   _cgAbrirEnTablero([m].concat(L.filter(function (x) { return x !== m; })));
 }
+// 🕐 (Auditoría 22/10, I26) Chess.com arma los Titled con la hora de Europa central (17 h de Ámsterdam), y Argentina no
+// cambia la hora: el Titled Tuesday es a las 12 h en el verano europeo y a las 13 h en el invierno (desde el último
+// domingo de octubre). Igual que TT_ZONA / ttUtc en vivo-worker/src/titulados.js. di = 'AAAA-MM-DD' del día del torneo
+// en Ámsterdam, h = su hora allá; devuelve la hora argentina "HH:MM". Sin Intl (navegador muy viejo), la de verano.
+function _ttHoraArg(di, h) {
+  var p = String(di).split('-'), g = Date.UTC(+p[0], +p[1] - 1, +p[2], h, 0), off = 2 * 3600e3;
+  try {
+    var f = new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Amsterdam', hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric' });
+    var des = function (t) { var o = {}; f.formatToParts(new Date(t)).forEach(function (x) { o[x.type] = x.value; }); return Date.UTC(+o.year, +o.month - 1, +o.day, +o.hour % 24, +o.minute) - Math.floor(t / 60000) * 60000; };
+    off = des(g - des(g));
+  } catch (e) {}
+  var a = new Date(g - off - 3 * 3600e3);   // UTC − 3 = Argentina
+  return String(a.getUTCHours()).padStart(2, '0') + ':' + String(a.getUTCMinutes()).padStart(2, '0');
+}
 // 📅 Esta semana: hoy + 6 días, con las rondas de cada torneo y los que arrancan.
 function _hoySemanaHtml(infos, ahora) {
   var dias = [], porDia = {};
@@ -32329,8 +32343,11 @@ function _hoySemanaHtml(infos, ahora) {
   var h = '', hay = false, nDias = 0, hoyIso = dias[0];
   dias.forEach(function (di, i) {
     var L = porDia[di], wd = new Date(di + 'T12:00:00').getDay();
-    if (wd === 2) L.push({ titled: 'Titled Tuesday', hora: '12:00', sub: 'Chess.com' });
-    if (wd === 4) L.push({ titled: 'Titled Thursday', hora: '12:00', sub: 'Chess.com · también a las 17 y 22 h' });
+    if (wd === 2) L.push({ titled: 'Titled Tuesday', hora: _ttHoraArg(di, 17), sub: 'Chess.com' });
+    if (wd === 4) {   // el 3.º es el viernes a las 3 de Ámsterdam (jueves a la noche acá)
+      var _vie = new Date(Date.parse(di + 'T12:00:00Z') + 864e5).toISOString().slice(0, 10);
+      L.push({ titled: 'Titled Thursday', hora: _ttHoraArg(di, 17), sub: 'Chess.com · también a las ' + parseInt(_ttHoraArg(di, 22), 10) + ' y ' + parseInt(_ttHoraArg(_vie, 3), 10) + ' h' });
+    }
     if (!L.length) return;
     if (L.some(function (e) { return !e.titled; })) hay = true;
     L.sort(function (a, b) { return (a.titled ? 1 : 0) - (b.titled ? 1 : 0) || String(a.hora || '99').localeCompare(String(b.hora || '99')); });
@@ -60009,7 +60026,19 @@ function cvUpdateNagBadge() {
     if(sala){
       // goTo limpia la URL; join() la vuelve a poner en ?sala=<id> (para que F5 reingrese).
       try { var btn=document.querySelector('.nav-btn[onclick*="\'vivo\'"]'); if(typeof goTo==='function') goTo('vivo', btn); } catch(e){}
-      join(sala);
+      // 🔒 (Auditoría 22/10, I10) Antes, abrir el link te sentaba en la mesa libre y arrancaba la partida sin tocar nada:
+      // con la pestaña de fondo (o un link abierto sin querer) se perdía por tiempo una partida que podía contar para
+      // el rating. Ahora se pregunta primero. Si ya estabas en esa mesa (F5, volver a la pestaña: el navegador guarda
+      // tu boleto lv_tok_<id>), se vuelve a entrar directo, como siempre.
+      var _salaId=String(sala).replace(/[^A-Za-z0-9_-]/g,''), _yaEstaba='';
+      try { _yaEstaba=localStorage.getItem('lv_tok_'+_salaId)||''; } catch(e){}
+      if(_yaEstaba || typeof window.aaAsk!=='function') join(sala);
+      else window.aaAsk({ icono:'♟️', titulo:'Te invitaron a una partida', ok:'🪑 Entrar a jugar', cancelar:'Ahora no',
+          texto:'Al entrar te sentás en la mesa libre y la partida empieza enseguida, con reloj. ¿Entrás a jugar ahora?' })
+        .then(function(si){
+          if(si) join(sala);
+          else { try { history.replaceState({}, '', location.pathname); } catch(e){} }
+        });
     }
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', init); else init();
