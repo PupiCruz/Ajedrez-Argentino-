@@ -27,7 +27,7 @@ const DATA = path.join(RAIZ, 'data');
 export function archivosVersionados(dir) {
   const out = [];
   const raiz = ['book.json', 'puzzles.json', 'practice.json', 'aperturas-stats.json', 'datos.json',
-                'cumples-historicos.json', 'portada.json', 'cr-nombres.json'];
+                'cumples-historicos.json', 'portada.json', 'cr-nombres.json', 'chesscom-eventos.json'];
   raiz.forEach((f) => { if (fs.existsSync(path.join(dir, f))) out.push(f); });
   fs.readdirSync(dir).filter((f) => /^games_\d+\.json$/.test(f)).forEach((f) => out.push(f));
   ['planes', 'lecciones'].forEach((sub) => {

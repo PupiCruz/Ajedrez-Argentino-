@@ -28,7 +28,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2652;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2666;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -11005,6 +11005,98 @@ console.log('\n=== 🔒 Auditoría 22/10 · lo que había quedado afuera (I26, I
   chk(i > 0 && /localStorage\.getItem\('lv_tok_'\+_salaId\)/.test(bloque) && /if\(_yaEstaba \|\| typeof window\.aaAsk!=='function'\) join\(sala\);/.test(bloque)
       && /window\.aaAsk\(\{ icono:'♟️', titulo:'Te invitaron a una partida'/.test(bloque) && /if\(si\) join\(sala\);/.test(bloque),
       '🔒 abrir un link de partida pregunta antes de sentarte (con el cartel de la app); si ya estabas en esa mesa, entra directo');
+}
+
+console.log('\n=== 80. ♟️ Chess Club Showdown en la portada (23/10) ===');
+{
+  const C = await import('./herramientas/chesscom-eventos/armar.mjs');
+  const fila = (rk, u, t, pais, club, pts, g, e) => '<tr class="tournaments-live-view-results-row"><td><span class="table-text-center tournaments-live-view-results-rank"> #' + rk + ' </span>'
+    + (t ? '<a href="x" class="cc-user-title-component cc-text-x-small-bold"> ' + t + ' </a>' : '')
+    + '<a href="x" class="cc-text-medium-bold" data-test-element="user-tagline-username"> ' + u + ' </a>'
+    + (pais ? '<div data-cy="country-flag" class="cc-country-flag-component cc-country-flag-small country-' + pais + '" v-tooltip="X"> </div>' : '')
+    + '<span class="user-rating">(' + (3300 - rk) + ')</span></td>'
+    + '<td class="tournaments-live-view-club-name"><a class="tournaments-live-view-club-name-link" href="https://www.chess.com/club/' + club + '" alt="c"> c </a></td>'
+    + '<td><div v-tooltip="' + g + ' wins, ' + e + ' draws, 0 bye" class="tournaments-live-view-total-score"> ' + pts + ' </div></td></tr>';
+  const html = 'Rating: Open 4656 players (50 max eligible scorers per club) <span>Club Results</span><table><thead><tr><th>Rank</th></tr></thead><tbody>'
+    + '<tr> <td> #1 </td> <td class="post-view-meta-component"><a href="https://www.chess.com/club/9z-globant"><img class="post-view-meta-image" src="https://images.chesscomfiles.com/a.png"></a><div><a href="https://www.chess.com/club/9z-globant" class="user-tagline-username"> 9z Globant Chess Club </a></div></td> <td class="table-text-right"> 962 </td> <td class="table-text-right"> 2368 </td> </tr>'
+    + '<tr> <td> #2 </td> <td><a href="https://www.chess.com/club/team-liquid-chess-club"> Team Liquid Chess Club </a></td> <td> 1,005 </td> <td> 2312 </td> </tr></tbody></table>'
+    + '<div data-total-pages="215"></div>' + fila(1, 'LyonBeast', 'GM', 'fr', 'team-vitality-chess-club', 87, 23, 1)
+    + fila(19, 'IlanSchnaider', 'IM', 'ar', '9z-globant', 58, 20, 2) + fila(40, 'MagoDelSur', '', 'xx', '9z-globant', 50, 18, 0)
+    + fila(55, 'ElChileno', 'FM', 'cl', 'team-liquid-chess-club', 45, 15, 3) + '<div data-total-pages="948"></div>';
+  const cl = C.leerClubes(html);
+  chk(cl.tope === 50 && cl.clubes.length === 2 && cl.clubes[0].slug === '9z-globant' && cl.clubes[0].n === '9z Globant Chess Club' && cl.clubes[0].pts === 2368
+      && cl.clubes[0].jug === 962 && cl.clubes[1].jug === 1005 && /chesscomfiles/.test(cl.clubes[0].img), '♟️ la tabla de clubes de la página se lee entera (puesto, club, jugadores, puntos, escudo, tope de 50)', JSON.stringify(cl));
+  const J = C.leerJugadores(html);
+  chk(J.length === 4 && J[0].u === 'LyonBeast' && J[0].t === 'GM' && J[0].pais === 'fr' && J[0].pts === 87 && J[0].g === 23 && J[0].e === 1 && J[1].p === 19
+      && J[0].r === 3299 && J[2].t === undefined && J[1].club === '9z-globant', '♟️ cada renglón de jugadores: puesto, usuario, título, país, rating, club, puntos, ganadas y tablas', JSON.stringify(J[0]));
+  chk(C.paginasJugadores(html) === 215, '♟️ las páginas de jugadores son el PRIMER data-total-pages (el segundo es el de las partidas)');
+  // Figuras: los 3 de más rating de cada club + los argentinos con título o perfil (no los argentinos sin título ni perfil).
+  const z = (p, u, r, extra) => Object.assign({ p, u, r, pts: 100 - p, club: '9z-globant' }, extra || {});
+  const JJ = [z(30, 'Tres', 3000), z(10, 'Uno', 3200, { t: 'GM', pais: 'xx' }), z(20, 'Dos', 3100), z(40, 'ArgIM', 2900, { t: 'IM', pais: 'ar' }),
+              z(50, 'ArgSinNada', 2950, { pais: 'ar' }), z(60, 'ConPerfil', 2500), z(70, 'Random', 2990), z(10, 'Uno', 3200)];
+  const R = C.resumirFinal(cl, JJ, { conperfil: '77' }, ['9z-globant'], new Set(['fr', 'ar', 'cl', 'xx']));
+  const f9 = R.clubes[0].fig.map((f) => f.u).join();
+  chk(f9 === 'Uno,Dos,Tres,ArgIM,ConPerfil' && R.clubes[0].fig[4].id === 77 && R.clubes[0].fig[0].pais === undefined && R.clubes[0].fig[3].pais === 'ar'
+      && R.clubes[0].ar === 1 && !R.clubes[1].ar && R.clubes[1].fig.length === 0 && R.total === 962 + 1005 && R.tope === 50 && !R.top && !R.arg,
+      '♟️ al resumir sólo van los clubes con sus figuras: los 3 de más rating + argentinos con título o perfil; sin listas de jugadores sueltos', f9);
+  const A = (st, ini, fin, ahora) => C.datosApi({ status: st, start_time: ini, finish_time: fin, settings: { time_control: '300', registered_user_count: 9 } }, ahora);
+  chk(A('scheduled', 2000, 0, 1000e3).estado === 'prox' && A('scheduled', 2000, 0, 1000e3).ritmo === '5+0' && A('scheduled', 2000, 0, 2500e3).estado === 'vivo'
+      && A('finished', 2000, 9200, 1e7).estado === 'fin' && A('finished', 2000, 9200, 1e7).fin === 9200e3, '♟️ de la API: próximo / en juego / terminado y el ritmo 5+0');
+  const CCF = new Function(['normStr', '_ccEvSeries', '_ccEvEstado', '_ccEvElegir', '_ccEvParaTorneo', '_tdEsCcEv'].map(extraerFuncion).join('\n')
+    + (SRC.match(/var _CCEV_ORD = \{[^}]*\};/) || [''])[0] + '; return { _ccEvElegir, _ccEvParaTorneo, _tdEsCcEv };')();
+  const EL = CCF._ccEvElegir;
+  const H = 3600e3, D = 864e5, e1 = { serie: 's', ed: 1, ini: 0, fin: 2 * H, estado: 'fin', res: { clubes: [] } }, e2 = { serie: 's', ed: 2, ini: 28 * D, estado: 'prox' };
+  const v = (ahora) => EL([e1, e2], ahora).map((x) => x.e.ed + x.est + (x.ant ? 'a' + x.ant.ed : '')).join();
+  chk(v(1 * D) === '1fin' && v(15 * D) === '' && v(20 * D) === '2proxa1' && v(28 * D + H) === '2vivoa1' && v(28 * D + 3 * H) === '2fina1' && v(40 * D) === '',
+      '♟️ la portada muestra la edición de 10 días antes a 10 después: próxima (con la anterior), en juego (2 h como la anterior), terminada', [1, 15, 20, 28.04, 28.12, 40].map((d) => v(d * D)).join(' | '));
+  // Dentro del torneo que carga el autor (23/10): se reconoce por el nombre o por el número del arena en un enlace.
+  const ev = [Object.assign({ nombre: 'Chess Club Showdown', slug: 'chess-club-showdown-31104532' }, e1), Object.assign({ nombre: 'Chess Club Showdown', slug: 'chess-club-showdown-31136288' }, e2)];
+  const PT = (n, l, ahora) => { const x = CCF._ccEvParaTorneo(ev, n, l || [], ahora == null ? 20 * D : ahora); return x ? x.e.ed + x.est : '-'; };
+  chk(PT('Chess Club Showdown') === '2prox' && PT('Chess Club Showdown - Segunda edición') === '2prox' && PT('Chess Club Showdown 1.ª edición') === '1fin'
+      && PT('Chess Club Showdown · Primera Edición') === '1fin' && PT('Arena 9z', ['https://www.chess.com/play/arena/31104532']) === '1fin'
+      && PT('Torneo Abierto de Tandil') === '-' && PT('Chess Club Showdown', [], 60 * D) === '2fin'
+      && CCF._tdEsCcEv('CHESS CLUB SHOWDOWN 2', []) && CCF._tdEsCcEv('Arena', ['https://www.chess.com/play/arena/31136288']) && !CCF._tdEsCcEv('Abierto de Tandil', ['https://chess-results.com/tnr1.aspx']),
+      '♟️ el torneo «Chess Club Showdown» (o con el link del arena) muestra su edición: la que dice el nombre, o la próxima, o la última',
+      ['Chess Club Showdown', 'Segunda edición', '1.ª edición', 'Primera', 'link', 'Tandil', 'después'].join(','));
+  // Ediciones nuevas solas (23/10): el torneo de la web con «Chess Club Showdown» en el nombre + el link del arena.
+  const SER = { showdown: { nombre: 'Chess Club Showdown', club: { nombre: '9z', url: 'https://www.chess.com/club/9z-globant' }, abre: 60 } };
+  const au = C.edicionesDeTorneos([{ name: 'Chess Club Showdown – 3.ª edición', chesscomUrl: 'https://www.chess.com/play/arena/31999999' },
+    { name: 'CHESS CLUB SHOWDOWN noviembre', weburl: 'https://www.chess.com/tournament/live/arena/chess-club-showdown-31888888' },
+    { name: 'Chess Club Showdown 5', chesscomUrl: 'https://www.chess.com/events/x' }, { name: 'Abierto de Tandil', weburl: 'https://www.chess.com/play/arena/31777777' }], SER);
+  const J2 = C.juntarEdiciones({ series: SER, eventos: [{ serie: 'showdown', ed: 2, slug: 'chess-club-showdown-31999999', nota: 'Fausti' }] }, au.ed);
+  const N = C.numerar([{ serie: 's', ini: 30, ed: 1 }, { serie: 's', ini: 90 }, { serie: 's', ini: 60, ed: 2 }]);
+  chk(C.arenaId('https://www.chess.com/play/arena/31136288') === '31136288' && C.arenaId('https://www.chess.com/tournament/live/arena/chess-club-showdown-31104532') === '31104532'
+      && au.ed.length === 2 && au.ed[0].slug === 'chess-club-showdown-31999999' && au.ed[1].slug === 'chess-club-showdown-31888888' && au.sinLink.join() === 'Chess Club Showdown 5'
+      && J2.length === 2 && J2[0].nota === 'Fausti' && J2[0].ed === 2 && J2[0].club.nombre === '9z' && J2[1].abre === 60 && J2[1].nombre === 'Chess Club Showdown' && !J2[1].ed
+      && N[1].ed === 3,
+      '♟️ cada edición nueva se encuentra sola: torneo con el nombre + link del arena (sin link, avisa); hereda club y hora de su serie; número por fecha',
+      JSON.stringify(au) + ' | ' + JSON.stringify(J2.map((e) => e.slug + ':' + e.ed)));
+  // En la portada: corto y llevando al torneo de la web de esa edición (por nombre + día del arena dentro de sus fechas).
+  const TDE = new Function('_ccEv', '_hoyArIso', ['normStr', '_ccEvSeries', '_ccEvEstado', '_ccEvParaTorneo', '_ccEvTorneoDe'].map(extraerFuncion).join('\n')
+    + (SRC.match(/var _CCEV_ORD = \{[^}]*\};/) || [''])[0] + '; return _ccEvTorneoDe;');
+  const iso = (ms) => new Date(ms - 3 * 3600e3).toISOString().slice(0, 10);
+  const ini2 = Date.UTC(2026, 9, 28, 16), xE = { e: { nombre: 'Chess Club Showdown', ini: ini2, serie: 's', ed: 2 } };
+  const tde = TDE({ ev: [xE.e] }, iso);
+  const infos = [{ key: 'a', name: 'Chess Club Showdown', startKey: 20260930, endKey: 20260930 }, { key: 'b', name: 'Chess Club Showdown - 2.ª edición', startKey: 20261028, endKey: 20261028 }, { key: 'c', name: 'Abierto', startKey: 20261028 }];
+  chk(tde(xE, infos, ini2 - 864e5)?.key === 'b' && tde(xE, infos.slice(0, 1), ini2) === null && tde(xE, [{ key: 'd', name: 'Chess Club Showdown' }], ini2)?.key === 'd',
+      '♟️ el recuadro de la portada lleva al torneo de ESA edición (mismo nombre todos los meses: decide el día)');
+  const HC = extraerFuncion('_hoyCcEvHtml'), CU = extraerFuncion('_ccEvCuerpo');
+  chk(/_ccEvCuerpo\(x, ahora, true\)/.test(HC) && /_ccEvIr\(event/.test(HC) && /cce-ver/.test(HC) && /x\.ant && !corto/.test(CU) && /if \(corto\) return h;/.test(CU)
+      && /closest\('a,button'\)/.test(extraerFuncion('_ccEvIr')),
+      '♟️ en la portada va corto (sin la tabla de clubes) y todo el recuadro abre el torneo, menos los botones de Chess.com');
+  const TD = extraerFuncion('openTournamentDetail');
+  chk(/_tdCcEvHtml\(name, _ccLinks\)/.test(TD) && /status === 'upcoming' && !_esCcEv/.test(TD) && /_tdCcEvPintar\(\)/.test(extraerFuncion('_ccEvCargar')),
+      '♟️ dentro del torneo va el bloque (en vez de «Todavía no hay partidas») y se completa cuando llegan los datos');
+  const cuerpo = extraerFuncion('_ccEvCuerpo');
+  chk(/Unirse a /.test(cuerpo) && /e\.abre \* 60e3/.test(cuerpo) && /una hora/.test(cuerpo) && /e\.nota/.test(cuerpo)
+      && fs.readFileSync('herramientas/chesscom-eventos/armar.mjs', 'utf8').includes('o.club = {'),
+      '♟️ botón para unirse al club, «te podés unir desde las 12:00 h, una hora antes» y la nota (Fausti), viajando desde eventos.json');
+  const CMD = fs.readFileSync('publicar-web.cmd', 'utf8');
+  chk(CMD.indexOf('chesscom-eventos\\armar.mjs') > 0 && CMD.indexOf('chesscom-eventos\\armar.mjs') < CMD.indexOf('node "herramientas\\versiones-datos.mjs"')
+      && fs.readFileSync('herramientas/versiones-datos.mjs', 'utf8').includes("'chesscom-eventos.json'") && /_hoyCcEvHtml\(ahora, infos\)/.test(extraerFuncion('_hoyPintar')),
+      '♟️ publicar-web.cmd lo arma antes de las versiones, el archivo lleva versión propia y la portada lo dibuja');
+  const cfg = JSON.parse(fs.readFileSync('herramientas/chesscom-eventos/eventos.json', 'utf8'));
+  chk(cfg.eventos.every((e) => /^[a-z0-9-]+-\d+$/.test(e.slug) && /^https:\/\/www\.chess\.com\//.test(e.link)), '♟️ eventos.json: cada edición con su slug y un link a chess.com');
 }
 
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));

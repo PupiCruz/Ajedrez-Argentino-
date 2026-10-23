@@ -73,6 +73,20 @@ if not errorlevel 1 (
 )
 
 :: ------------------------------------------------------------------
+:: 0d2) Eventos de Chess.com en la portada (Chess Club Showdown): la
+::      fecha de la proxima edicion y, cuando termina, la tabla de clubes
+::      y la de jugadores (data\chesscom-eventos.json). La lista de
+::      ediciones esta en herramientas\chesscom-eventos\eventos.json.
+::      La tabla final se lee UNA vez (tarda unos minutos). Si falla, se
+::      sigue publicando con lo de la vez pasada.
+:: ------------------------------------------------------------------
+where node >nul 2>&1
+if not errorlevel 1 (
+    node "herramientas\chesscom-eventos\armar.mjs"
+    echo.
+)
+
+:: ------------------------------------------------------------------
 :: 0e) Partidas por partes: corta la base de partidas (data\games_*.json)
 ::     en pedazos chicos (data\gi = buscar por jugador, data\ob = el
 ::     explorador de aperturas), asi la web no baja los 13 MB enteros.
