@@ -363,7 +363,9 @@ FIDE sólo publica el **año** de nacimiento. El día y el mes se cargan de dos 
   tienen otra fecha cargada a mano (lo manual nunca se pisa) y los de año distinto al de FIDE (puede ser otra persona).
 - Después: **💾 Guardar datos en mi carpeta** y publicar. Se guardan por fide_id (`cumples` en el navegador →
   `window.__CUMPLES__`, un renglón más de `_embeddedPlayersJs`). Se ven en el perfil («🎂 13 de mayo de 1987») y en la
-  portada, arriba de «Un día como hoy» («🎂 Hoy cumplen», con la edad). Los menores también (decisión del autor).
+  portada, en su panel «🎂 ¡Hoy cumplen años!» — **SIN la edad** (pedido del autor 23/10: ni en la web ni en el saludo
+  del bot). Los menores también (decisión del autor). El aviso al teléfono abre `/?ver=cumples` (baja hasta el panel).
+  En el bot, **`/cumples 24/10`** muestra los de ese día con su año de nacimiento, para revisarlos un día antes.
   Pruebas: sección 79 del banco.
 
 ### 📲 La web como app + 🔔 avisos al teléfono (22/10/2026)

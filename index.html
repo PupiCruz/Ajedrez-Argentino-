@@ -657,7 +657,7 @@
     /* 🎉 ¡Hoy cumplen años!: panel propio de fiesta (22/10; violeta, el autor eligió entre 3: el rosa era «muy de señorita»). Confeti de fondo (puntitos de colores, sólo CSS),
        banderines bajo el título, una tarjetita por cumpleañero con aro de colores y la tortita en la esquina.
        Las tarjetas «saltan» una vez al aparecer (hoy-fe-anim: sólo la primera pintada, la portada se redibuja seguido). */
-    .hoy-blq[data-c="cum"] { --hc: #7c55d6; position: relative; overflow: hidden; }
+    .hoy-blq[data-c="cum"] { --hc: #7c55d6; position: relative; overflow: hidden; scroll-margin-top: 76px; }
     .hoy-fiesta::before { content: ''; position: absolute; inset: 0; pointer-events: none; opacity: .55;
       background:
         radial-gradient(circle at 8% 30%, #f6c343 0 3px, transparent 4px), radial-gradient(circle at 22% 78%, #4fb3e8 0 2.5px, transparent 3.5px),
@@ -4989,7 +4989,10 @@
       /* ── (15/10/2026, autor: "más vida mientras se juega") ── */
       /* 1) El que tiene que mover: su barra se ilumina (el reloj que corre ya era dorado). */
       .lv-player { transition:background-color .2s, box-shadow .2s; }
-      .lv-player:has(.lv-clock.lv-run) { background:linear-gradient(90deg, var(--gold-bg), var(--card90) 75%); box-shadow:inset 4px 0 0 var(--as-c, var(--gold)); }
+      /* Sólo la IMAGEN cambia; el color de fondo queda fijo (23/10, autor: «se rompe el fondo del nombre un instante al
+         mover»). Con `background:` el color pasaba a transparente y volvía con la transición de .2s: la barra del que
+         acababa de mover quedaba transparente un instante, muy visible en modo oscuro. */
+      .lv-player:has(.lv-clock.lv-run) { background-image:linear-gradient(90deg, var(--gold-bg), transparent 75%); box-shadow:inset 4px 0 0 var(--as-c, var(--gold)); }
       .lv-clock.lv-run { box-shadow:0 0 0 2px var(--as-c, var(--gold-dim)); }
       .lv-clock.lv-run.lv-low { background:rgba(224,75,74,.16); animation:lvRelojUrge 1s ease-in-out infinite; }
       @keyframes lvRelojUrge { 50% { box-shadow:0 0 0 3px rgba(224,75,74,.55); } }
@@ -31951,9 +31954,32 @@ function _hoyPintar() {
   der += _hoyMusicaHtml();
   h += '<div class="hoy-cols"><div class="hoy-col">' + izq + '</div><div class="hoy-col">' + der + '</div></div>';
   box.innerHTML = h;
+  _hoyACumples();
   clearInterval(_hoyCdTimer);
   _hoyCdTimer = setInterval(_hoyCuentas, 30000);
 }
+// 🔔 El aviso de cumpleaños abre /?ver=cumples (23/10): la portada baja hasta el panel de la fiesta. Los datos llegan de a
+// poco y la portada se redibuja, así que se espera hasta 20 s a que el panel aparezca; después la dirección queda limpia.
+// Los bloques de arriba siguen cambiando de alto un rato (flyers, tablas): durante 5 s se vuelve a acomodar, salvo que
+// la persona ya haya movido la página.
+var _hoyACumT0 = /[?&]ver=cumples\b/.test(location.search) ? Date.now() : 0, _hoyACumHasta = 0;
+function _hoyACumples() {
+  if (!_hoyACumT0) return;
+  var el = document.querySelector('#hoy-bloques .hoy-blq[data-c="cum"]');
+  if (!el) { if (Date.now() - _hoyACumT0 > 20000) _hoyACumFin(); return; }
+  if (!_hoyACumHasta) {
+    _hoyACumHasta = Date.now() + 5000;
+    try { history.replaceState(history.state, '', location.pathname + location.search.replace(/([?&])ver=cumples(&|$)/, '$1').replace(/[?&]$/, '') + location.hash); } catch (e) {}
+    ['wheel', 'touchstart', 'keydown', 'mousedown'].forEach(function (ev) { window.addEventListener(ev, _hoyACumFin, { once: true, passive: true }); });
+    [80, 700, 1600, 3000, 4800].forEach(function (ms) { setTimeout(_hoyACumples, ms); });
+  }
+  if (Date.now() > _hoyACumHasta) { _hoyACumFin(); return; }
+  setTimeout(function () {
+    var x = _hoyACumT0 && document.querySelector('#hoy-bloques .hoy-blq[data-c="cum"]');
+    try { if (x) x.scrollIntoView({ block: 'start' }); } catch (e) {}
+  }, 40);
+}
+function _hoyACumFin() { _hoyACumT0 = 0; }
 // Las cuentas regresivas se refrescan solas (sin redibujar la portada).
 function _hoyCuentas() {
   if (!document.querySelector('#s-hoy.active')) return;
@@ -32444,13 +32470,14 @@ function _hoyCumpleHtml(hoyD) {
   try { cu = _cumHoy(hoyD); } catch (e) {}
   if (!cu.length) return '';
   var tarj = cu.slice(0, 6).map(function (p, i) {
-    var ed = _cumEdad(p, hoyD), src = null;
+    var src = null;
     try { src = _photoSrc(p.id); } catch (e) {}
     var inic = (typeof ini === 'function') ? ini(p.name) : String(p.name || '?').charAt(0);
     return '<a class="hoy-fe" style="--i:' + i + '" href="?jugador=' + (+p.id) + '" onclick="openPlayer(' + (+p.id) + '); return false;">'
       + '<span class="hoy-fe-av"><span class="hoy-fe-in" data-ini="' + escHtml(inic) + '">' + (src ? '<img src="' + escHtml(src) + '" alt="" loading="lazy" onerror="_avImgErr(this)">' : escHtml(inic)) + '</span><i aria-hidden="true">🎂</i></span>'
       + '<span class="hoy-fe-nom">' + (p.title ? '<em>' + escHtml(p.title) + '</em> ' : '') + escHtml(p.name) + '</span>'
-      + (ed > 0 && ed < 120 ? '<span class="hoy-fe-ed"><b>' + ed + '</b> años</span>' : '<span class="hoy-fe-ed">¡Feliz cumple!</span>')
+      // Sin la edad (pedido del autor 23/10: hay quien no quiere que se sepa).
+      + '<span class="hoy-fe-ed">¡Feliz cumple!</span>'
       + '</a>';
   }).join('');
   // Las tarjetas «saltan» sólo la primera vez que se pinta en la visita (la portada se redibuja cada vez que llega un dato).
@@ -32473,9 +32500,9 @@ function _hoyDiaComoHoyHtml(hoyD, grande) {
   var hc = '';
   if (hi.length) {
     hc += '<div class="hoy-cum"><div class="hoy-cum-k">Nació un día como hoy</div>' + hi.slice(0, 5).map(function (x) {
-      // Vive: «cumple 91»; murió: «1910–1997» (o sólo el año de nacimiento si no se sabe cuándo).
-      var vida = x.m > 0 ? x.a + '–' + x.m : x.m < 0 ? 'n. ' + x.a : 'cumple ' + (hoyD.getFullYear() - x.a);
-      var adentro = (x.t ? '<i>' + escHtml(x.t) + '</i>' : '') + '<b>' + escHtml(x.n) + '</b><span>' + vida + '</span>';
+      // Murió: «1910–1997» (o sólo el año de nacimiento si no se sabe cuándo). Vive: sin la edad (pedido del autor 23/10).
+      var vida = x.m > 0 ? x.a + '–' + x.m : x.m < 0 ? 'n. ' + x.a : '';
+      var adentro = (x.t ? '<i>' + escHtml(x.t) + '</i>' : '') + '<b>' + escHtml(x.n) + '</b>' + (vida ? '<span>' + vida + '</span>' : '');
       if (x.id) return '<a class="hoy-cum-j" href="?jugador=' + (+x.id) + '" onclick="openPlayer(' + (+x.id) + '); return false;">' + adentro + '</a>';
       if (/^https:\/\/es\.wikipedia\.org\//.test(x.w || '')) return '<a class="hoy-cum-j" href="' + escHtml(x.w) + '" target="_blank" rel="noopener" title="Su biografía en Wikipedia">' + adentro + '</a>';
       return '<span class="hoy-cum-j">' + adentro + '</span>';
