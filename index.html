@@ -557,6 +557,14 @@
       .hoy-mt { flex: 0 0 236px; scroll-snap-align: start; }
     }
 
+    /* 🆕 Torneos: los recién agregados que trae el aviso al teléfono (?nuevos=, ver _tNuevos). */
+    .t-nuevos { margin: 0 0 18px; padding: 14px; border: 1px solid var(--gold-dim); border-radius: var(--r-lg); background: var(--gold-bg); }
+    .t-nuevos-cab { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; font-size: 15px; color: var(--gold); }
+    .t-nuevos-cab b { font-weight: 800; }
+    .t-nuevos-x { margin-left: auto; width: 32px; height: 32px; flex: 0 0 auto; border: 1px solid var(--gold-dim); border-radius: 50%; background: transparent; color: var(--gold); font-size: 14px; cursor: pointer; font-family: inherit; }
+    .t-nuevos-x:hover { background: var(--bd10); }
+    .t-nuevos-x:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+    .t-nuevos-todos { font-size: 14px; font-weight: 800; color: var(--text3); margin: 0 0 10px; }
     /* Renglones tocables (semana, resultados, nuevos, un día como hoy). */
     .hoy-lista { display: flex; flex-direction: column; gap: 2px; }
     .hoy-fila { display: flex; align-items: baseline; gap: 10px; padding: 8px 9px; border-radius: 10px; text-decoration: none; color: var(--fg-e0);
@@ -8226,6 +8234,15 @@ function _tourStandList(item) {
   return list;
 }
 
+// 🆕 Los torneos que trae el aviso de «varios torneos nuevos» (?nuevos=k1,k2; lo arma urlTorneosNuevos en el bot).
+var _tNuevos = (function () {
+  try { var v = new URLSearchParams(location.search || '').get('nuevos'); return v ? v.split(',').filter(Boolean).slice(0, 20) : []; } catch (e) { return []; }
+})();
+function _tNuevosCerrar() {
+  _tNuevos = [];
+  try { history.replaceState(history.state, '', location.pathname + location.search.replace(/([?&])nuevos=[^&]*(&|$)/, '$1').replace(/[?&]$/, '') + location.hash); } catch (e) {}
+  renderTorneos(_lastTorneoFilter);
+}
 function renderTorneos(filter) {
   if (!filter) filter = 'todos';
   if (filter !== _lastTorneoFilter) _torneoPage = 1; // al cambiar de pestaña, volver a la página 1
@@ -8285,6 +8302,19 @@ function renderTorneos(filter) {
         if (_allIn(sl[i])) { item._matchName = (sl._orig && sl._orig[i]) || ''; return true; }
       return false;
     });
+  }
+
+  // 🆕 Se entró por el aviso «N torneos nuevos en la agenda» (?nuevos=k1,k2, 23/10): ESOS van arriba con sus
+  // tarjetas, y la lista de siempre sigue abajo. Antes el aviso abría la lista entera y no se sabía cuáles eran.
+  if (_tNuevos.length && !_q && filter === 'todos' && _torneoPage === 1) {
+    var _nv = items.filter(function (it) { try { return _tNuevos.indexOf(_hoyInfo(it, tzCfg).key) >= 0; } catch (e) { return false; } });
+    if (_nv.length) {
+      html += '<section class="t-nuevos" aria-label="Torneos recién agregados"><div class="t-nuevos-cab"><b>🆕 '
+        + (_nv.length === 1 ? 'Recién agregado a la agenda' : _nv.length + ' torneos recién agregados a la agenda')
+        + '</b><button type="button" class="t-nuevos-x" onclick="_tNuevosCerrar()" aria-label="Cerrar los recién agregados">✕</button></div><div class="t-grid">';
+      _nv.forEach(function (item) { html += _itemTileHtml(item, tzCfg); });
+      html += '</div></section><h3 class="t-nuevos-todos">Todos los torneos</h3>';
+    }
   }
 
   if (!filtered.length) {
@@ -32644,6 +32674,14 @@ var _appPrompt = null, _appSw = null;
 // (22/10) Probado en el teléfono del autor y PUBLICADO: anda en todos lados. Si hubiera que apagar la app y los
 // avisos de golpe, que devuelva false (y sw.js tiene adentro la receta para sacar el ayudante de los teléfonos).
 function _appEnPrueba() { return true; }
+// 🔔 Tocaron un aviso con la app ya abierta y el ayudante (sw.js) no pudo cambiarle la página: la cambia ella (23/10).
+// Sólo direcciones de este mismo sitio.
+function _appSwMensaje(ev) {
+  var u = ev && ev.data && ev.data.aaIr;
+  if (typeof u !== 'string') return;
+  try { var d = new URL(u, location.href); if (d.origin === location.origin) location.assign(d.href); } catch (e) {}
+}
+try { if (navigator.serviceWorker) { navigator.serviceWorker.addEventListener('message', _appSwMensaje); navigator.serviceWorker.startMessages(); } } catch (e) {}
 function _appInstalada() { return !!((window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone); }
 function _appEsIOS() { return /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); }
 function _appIniciar() {

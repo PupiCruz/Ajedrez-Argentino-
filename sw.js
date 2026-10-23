@@ -30,10 +30,14 @@ self.addEventListener('notificationclick', (e) => {
   // Sólo páginas de ESTE sitio (auditoría 22/10): un aviso con la dirección de otro sitio abre la portada.
   let url = self.location.origin + '/';
   try { const u = new URL((e.notification.data && e.notification.data.url) || '/', self.location.origin); if (u.origin === self.location.origin) url = u.href; } catch (_) {}
+  // (23/10) Con la app ya abierta, navigate() puede fallar (una página que este ayudante no controla, o el teléfono que
+  // no lo deja) y antes el error se tragaba: la app quedaba en la portada. Ahora, si falla, se le pide a la página que vaya
+  // ella (escucha «aaIr» en _appSwMensaje); y si tampoco hay a quién, se abre una ventana nueva con el link.
   e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((ws) => {
-    for (const w of ws) {
-      if (new URL(w.url).origin === self.location.origin && 'focus' in w) { w.navigate(url).catch(() => {}); return w.focus(); }
-    }
-    return self.clients.openWindow(url);
+    const w = ws.find((x) => new URL(x.url).origin === self.location.origin && 'focus' in x);
+    if (!w) return self.clients.openWindow(url);
+    return w.focus().catch(() => w).then((f) => (f || w).navigate(url)).then((n) => {
+      if (!n) w.postMessage({ aaIr: url });
+    }).catch(() => { try { w.postMessage({ aaIr: url }); } catch (_) { return self.clients.openWindow(url); } });
   }));
 });
