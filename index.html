@@ -465,6 +465,7 @@
     .hoy-blq h3 { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 800; color: var(--fg0); margin: 0 0 11px; letter-spacing: -.1px; }
     .hoy-blq h3 .hoy-mas { margin-left: auto; font-size: 12.5px; font-weight: 700; color: var(--gold); text-decoration: none; white-space: nowrap; }
     .hoy-blq h3 .hoy-mas:hover { text-decoration: underline; }
+    .hoy-blq h3 .hoy-zona { font-size: 11.5px; font-weight: 600; opacity: .75; margin-left: 8px; }
     .hoy-vacio { font-size: 13px; color: var(--text3); }
     .hoy-btn { display: inline-flex; align-items: center; gap: 6px; font-family: inherit; font-size: 13.5px; font-weight: 800; border-radius: 10px;
       padding: 9px 15px; cursor: pointer; text-decoration: none; background: var(--gold-fill); color: #1a1400; border: 1px solid var(--gold-dim);
@@ -3808,6 +3809,47 @@
        local, IP de la red para probar en el teléfono) se comporta EXACTAMENTE como hasta ahora. -->
   <script>window.__AA_WEB__=/(^|\.)chessargentino\.ar$/i.test(location.hostname)||/\.pages\.dev$/i.test(location.hostname);
     if(!window.__AA_WEB__) document.write('<scr'+'ipt data-aa-author src="data/embedded-data.js"><\/scr'+'ipt>');</script>
+  <!-- 📛 ERRORES DE LOS VISITANTES (auditoría 22/10/2026). Antes, si algo reventaba en un teléfono, nadie se enteraba.
+       Va ACÁ, arriba de todo, para cazar hasta un error de sintaxis del script grande (la app colgada en «Cargando…»).
+       Sólo en la web publicada; como mucho 3 por visita y el mismo, una vez por día por navegador. Lo que viaja: el
+       mensaje técnico, dónde pasó, la pantalla SIN los valores (?torneo, no ?torneo=123) y el navegador. Lo junta el
+       bot (vivo-worker/src/errores.js) y el autor lo ve con /errores. Se ignoran los de extensiones y los cortes de red. -->
+  <script>(function(){
+    if(!window.__AA_WEB__) return;
+    var enviados=0, vistos={};
+    function nuestro(s){ return !s || /^https?:\/\/([^\/]*\.)?(chessargentino\.ar|pages\.dev)(\/|:|$)/.test(s); }
+    function mandar(k,m,s,st){
+      try{
+        m=String(m||'').slice(0,300);
+        if(enviados>=3 || !m || /^Script error\.?$/i.test(m) || /ResizeObserver loop/i.test(m)) return;
+        var clave=(m+'|'+String(s||'').replace(/:\d+$/,'')).slice(0,120);
+        if(vistos[clave]) return; vistos[clave]=1;
+        var hoy=new Date().toISOString().slice(0,10), ya=null;
+        try{ ya=JSON.parse(localStorage.getItem('aa_err')||'null'); }catch(e){}
+        if(!ya || ya.d!==hoy || !ya.k) ya={d:hoy,k:[]};
+        if(ya.k.indexOf(clave)>=0) return;
+        ya.k=ya.k.concat(clave).slice(-10);
+        try{ localStorage.setItem('aa_err',JSON.stringify(ya)); }catch(e){}
+        enviados++;
+        var q=location.search.length>1 ? '?'+location.search.slice(1).split('&').map(function(p){ return p.split('=')[0]; }).join('&') : '';
+        var limpio=function(x){ return String(x||'').replace(/\?[^\s:)]*/g,''); };
+        fetch('https://ajedrez-vivo.mmatiasscruz.workers.dev/tg/error',{ method:'POST', keepalive:true,
+          body:JSON.stringify({ k:k, m:m, s:limpio(s).slice(0,200), st:limpio(st).slice(0,1500), u:(location.pathname+q).slice(0,120),
+            v:(typeof __DATA_TS__!=='undefined'?String(__DATA_TS__):''), ua:String(navigator.userAgent||'').slice(0,200) }) }).catch(function(){});
+      }catch(e){}
+    }
+    window.addEventListener('error',function(ev){
+      if(!ev || (ev.target && ev.target!==window)) return;                    // una imagen que no cargó no es un error de la app
+      if(!nuestro(ev.filename)) return;                                       // extensiones del navegador, scripts de otros
+      mandar('error', ev.message, ev.filename ? ev.filename+':'+ev.lineno+':'+ev.colno : '', ev.error && ev.error.stack);
+    });
+    window.addEventListener('unhandledrejection',function(ev){
+      var r=ev && ev.reason; if(!r) return;
+      var m=r.message ? (r.name||'Error')+': '+r.message : String(r);
+      if(/^(AbortError|NotAllowedError|TimeoutError)\b/.test(m) || /Failed to fetch|NetworkError|Load failed|network connection|cancelad|The user aborted/i.test(m)) return;   // cortes de red y permisos que el visitante negó
+      mandar('promesa', m, '', r.stack);
+    });
+  })();</script>
   <script src="data/manifest.js"></script>
   <!-- En la web publicada (on-demand: hay manifest pero NO embedded-data), ocultar la UI de autor
        ANTES de que se pinte el contenido → mata el "flash" de la pantalla de Exportar/Mantenimiento
@@ -5761,7 +5803,7 @@
            Se esconde junto con el encabezado cuando estás dentro de una partida o una sala.
            En MODO AUTOR se abre en otra pestaña: si hay cambios sin guardar en la carpeta, irse de la página
            dispara el "¿Salir del sitio?" (beforeunload) y se podían perder. Los visitantes entran en la misma. -->
-      <a id="lv-musica" class="lv-musica" href="/juegos/musica-en-el-tablero/" onclick="if(typeof _crIsAuthor==='function'&&_crIsAuthor()){window.open(this.href,'_blank');return false;}">
+      <a id="lv-musica" class="lv-musica" href="/juegos/musica-en-el-tablero/" onclick="if(typeof _crIsAuthor==='function'&&_crIsAuthor()){window.open(this.href,'_blank','noopener');return false;}">
         <span class="lvm-logo" aria-hidden="true">
           <span class="lvm-1">Música<svg class="lvm-nota" viewBox="0 0 64 64"><path d="M22 10 54 3v38.5a9 9 0 1 1-5-8V17L27 21.6v26a9 9 0 1 1-5-8z" fill="currentColor" stroke="#241505" stroke-width="4" stroke-linejoin="round"/></svg></span>
           <span class="lvm-2"><small>en el</small>Tablero</span>
@@ -18061,21 +18103,27 @@ function _crKeysForTour(id) {
 }
 // Baja (una vez) los cruces de un torneo y los deja en __EMBEDDED_CR__. Idempotente y tolerante:
 // si un archivo falta o falla, se ignora (el render cae al estado vacío, como un torneo sin tabla).
+// (auditoría 22/10) Si la red falla (o el servidor da 5xx), se borra la marca y devuelve false: la próxima vez que se
+// abra el torneo se vuelve a pedir (antes quedaba sin cruces hasta recargar). Un 404 es «no existe»: no se reintenta.
 async function _crEnsureLoaded(id) {
   if (!_ondemand || id == null || _crLoadedTour[id]) return;
   _crLoadedTour[id] = true;
   var keys = _crKeysForTour(id);
   if (!keys.length) return;
   if (!window.__EMBEDDED_CR__) window.__EMBEDDED_CR__ = {};
+  var fallo = false;
   await Promise.all(keys.map(async function(k) {
     if (window.__EMBEDDED_CR__[k]) return;
     try {
       var r = await fetch('data/cr/' + k + '.json' + _dataV());
       if (r.ok) window.__EMBEDDED_CR__[k] = await r.json();
-    } catch (e) {}
+      else if (r.status !== 404) fallo = true;
+    } catch (e) { fallo = true; }
   }));
+  if (fallo) delete _crLoadedTour[id];
   // Cachés que dependen del contenido CR (índice de búsqueda, argentinos, feds): invalidar.
   _crArgCache = {}; _tourSearchIndex = {}; _stdFedCache = {};
+  return !fallo;
 }
 // Para el rating en vivo del perfil (_liveRatingStd): baja SOLO los cruces de los torneos CLÁSICOS
 // terminados después del último padrón FIDE EN LOS QUE ESTE JUGADOR aparece. El "aparece" se decide
@@ -24493,6 +24541,9 @@ function parsePgnHeaders(pgn) {
 function escHtml(s) {
   return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
+// Un link que cargó el autor (sitio del torneo, formulario, crédito del flyer) sólo si es https:// o http:// (auditoría
+// 22/10): un «javascript:…» pegado por error se ejecutaba al tocarlo. Lo demás → '#'.
+function _urlSegura(u) { u = String(u == null ? '' : u).trim(); return /^https?:\/\//i.test(u) ? u : '#'; }
 
 /* ═══════════════════════════════════════════════════════
    PARTIDAS RECIENTES — Lichess Masters Explorer
@@ -25911,7 +25962,10 @@ function cvSetResult(res) {
 // de "falló de verdad". Devuelve true solo si la librería está lista.
 function ensureChessLib() {
   if (typeof Chess !== 'undefined') return true;
-  if (window.__chessLibFailed) {
+  // (auditoría 22/10) El archivo llegó pero el navegador no lo pudo leer: es anterior a Safari/iOS 14 (2020).
+  if (window.__chessLibViejo) {
+    _avisoApp('📱', 'Tu navegador es muy viejo para el tablero', 'Las partidas necesitan un navegador más nuevo: en iPhone, iOS 14 o más; si no, probá con Chrome o Firefox actualizados.');
+  } else if (window.__chessLibFailed) {
     _avisoApp('⚠️', 'No se pudo cargar el ajedrez', 'Recargá la página y volvé a intentarlo.');
   } else {
     _avisoApp('⏳', 'Todavía está cargando', 'Esperá unos segundos y volvé a intentarlo.');
@@ -28824,8 +28878,9 @@ function _cumHoy(hoyD) {
 // por nombre: igual entero, o igual el primer nombre y el apellido («Raúl Carlos Sanguineti» = «Raúl Sanguineti»).
 var _cumHist = null, _cumHistProm = null;
 function _cumHistCargar() {
+  // Si falla la red, se olvida el pedido (auditoría 22/10): la próxima vez se vuelve a probar.
   if (!_cumHistProm) _cumHistProm = fetch('data/cumples-historicos.json' + (typeof _dataV === 'function' ? _dataV() : ''))
-    .then(function (r) { return r.ok ? r.json() : []; }).catch(function () { return []; })
+    .then(function (r) { return r.ok ? r.json() : []; }).catch(function () { _cumHistProm = null; return []; })
     .then(function (L) { _cumHist = Array.isArray(L) ? L : []; return _cumHist; });
   return _cumHistProm;
 }
@@ -31244,21 +31299,30 @@ async function _tgVincular(){
 // publica el bot (TgAvisador); la web sólo pregunta cuál es (GET /tg/ejhoy, sin la solución). La
 // respuesta se guarda en el navegador una hora (o hasta las 13:05, lo que llegue antes), así cada
 // visitante le pregunta al servidor como mucho una vez por hora. Sin ejercicio, no se muestra nada.
-var _ejdia = null, _ejdiaPedido = false;
+// (auditoría 22/10, I30) Antes se pedía UNA vez por sesión: con la app instalada (queda abierta días) al otro día
+// seguía el ejercicio de ayer y alguien podía perder la racha creyendo que ya lo había hecho. Ahora lo pedido vence
+// (_ejdiaVence, la misma regla de la hora / las 13:05) y la portada lo vuelve a mirar al redibujarse.
+var _ejdia = null, _ejdiaPedido = false, _ejdiaVence = 0;
 function _ejdiaHasta(ahora){
   var d = new Date(ahora), t = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 16, 5, 0);   // 13:05 en la Argentina (sale a las 13)
   if (t <= ahora) t += 864e5;
   return Math.min(t, ahora + 3600e3);
 }
 function _ejdiaCargar(){
-  if (_ejdiaPedido) return; _ejdiaPedido = true;
+  var ahora = Date.now();
+  if (_ejdiaPedido && ahora < _ejdiaVence) return;
+  _ejdiaPedido = true; _ejdiaVence = _ejdiaHasta(ahora);
   var c = null; try { c = JSON.parse(localStorage.getItem('aa_ejdia') || 'null'); } catch(e){}
-  if (c && c.hasta > Date.now()) { _ejdiaPintar(c.ej); return; }
-  fetch(TG_BASE + 'ejhoy').then(function(r){ return r.json(); }).then(function(j){
+  if (c && c.hasta > ahora) {
+    _ejdiaVence = c.hasta;
+    if (JSON.stringify(c.ej || null) !== JSON.stringify(_ejdia)) _ejdiaPintar(c.ej);   // otra pestaña ya trajo el nuevo
+    return;
+  }
+  fetch(TG_BASE + 'ejhoy').then(function(r){ if (!r.ok) throw new Error('http ' + r.status); return r.json(); }).then(function(j){
     var ej = (j && j.ej) || null;
     try { localStorage.setItem('aa_ejdia', JSON.stringify({ ej: ej, hasta: _ejdiaHasta(Date.now()) })); } catch(e){}
     _ejdiaPintar(ej);
-  }).catch(function(){});
+  }).catch(function(){ _ejdiaVence = Date.now() + 60e3; });   // sin red: se vuelve a probar en un minuto
 }
 // (22/10) Se muestra SÓLO en la portada Hoy: la tarjeta de Torneos (09/10) se sacó para no repetirlo.
 function _ejdiaPintar(ej){
@@ -31281,6 +31345,39 @@ function ejdiaAbrir(){
   puzOpenByIdWhenReady(_ejdia.id);
 }
 
+/* ♿ BOTONES DE SÍMBOLO CON NOMBRE (auditoría 22/10). Unos 100 botones son sólo un dibujo: ◀ ▶ ‹ › – + ✕ ⇅ 🔊…
+   El lector de pantalla los leía como «triángulo negro apuntando a la izquierda, botón» o «botón» a secas. En vez de
+   tocarlos uno por uno (muchos se arman con JavaScript), acá se les pone aria-label: su title si tienen, y si no, lo
+   que quiere decir el símbolo. Se mira lo que se agrega a la página, de a tandas y cuando el navegador está libre. */
+var _A11Y_SIMBOLOS = { '◀': 'Anterior', '‹': 'Anterior', '«': 'Anterior', '▶': 'Siguiente', '›': 'Siguiente', '»': 'Siguiente',
+  '|◀': 'Al principio', '⏮': 'Al principio', '▶|': 'Al final', '⏭': 'Al final', '✕': 'Cerrar', '×': 'Cerrar', '✖': 'Cerrar',
+  '–': 'Menos', '-': 'Menos', '−': 'Menos', '+': 'Más', '⇅': 'Girar el tablero', '🔊': 'Sonido', '🔇': 'Sonido apagado',
+  '↑': 'Subir', '↓': 'Bajar', '🗑': 'Borrar', '✏️': 'Editar', '📷': 'Foto', '⌄': 'Ver más', '☰': 'Menú' };
+function _a11yNombrar(raiz) {
+  if (!raiz || !raiz.querySelectorAll) return;
+  var L = raiz.matches && raiz.matches('button:not([aria-label])') ? [raiz] : [];
+  L = L.concat([].slice.call(raiz.querySelectorAll('button:not([aria-label])')));
+  for (var i = 0; i < L.length; i++) {
+    var b = L[i], tx = (b.textContent || '').trim();
+    if (/[A-Za-zÁÉÍÓÚáéíóúÑñ0-9]{2,}/.test(tx)) continue;   // tiene palabras: el lector ya lo lee bien
+    var nom = (b.getAttribute('title') || '').trim() || _A11Y_SIMBOLOS[tx] || '';
+    if (nom) b.setAttribute('aria-label', nom);
+  }
+}
+(function () {
+  var pend = [], tarea = 0;
+  var correr = function () { tarea = 0; var P = pend.splice(0); for (var i = 0; i < P.length; i++) { try { _a11yNombrar(P[i]); } catch (e) {} } };
+  var pedir = function () { if (!tarea) tarea = (window.requestIdleCallback ? requestIdleCallback(correr, { timeout: 1500 }) : setTimeout(correr, 300)); };
+  try {
+    new MutationObserver(function (ms) {
+      for (var i = 0; i < ms.length; i++) for (var j = 0; j < ms[i].addedNodes.length; j++) { var n = ms[i].addedNodes[j]; if (n.nodeType === 1) pend.push(n); }
+      if (pend.length > 400) pend = [document.body];   // una pantalla entera nueva: se mira todo de una
+      if (pend.length) pedir();
+    }).observe(document.documentElement, { childList: true, subtree: true });
+  } catch (e) {}
+  pend.push(document.documentElement); pedir();
+})();
+
 /* ═══════════════════════════════════════════════════════
    ☀️ HOY — LA PORTADA (PLAN-PORTADA-HOY, 21/10/2026)
    Junta en una pantalla lo que pasa hoy, armado SOLO con datos que la web ya tiene: el torneo de
@@ -31292,10 +31389,77 @@ function ejdiaAbrir(){
    📌 El autor puede fijar a mano el torneo de la tarjeta grande (tz_config 'aa_hoy', viaja al
    publicar); se apaga solo cuando ese torneo termina.
 ═══════════════════════════════════════════════════════ */
-var _hoyYaPinto = false, _hoyFiestaVista = false, _hoyP = null, _hoyPPedido = false, _hoyTimer = 0, _hoyCdTimer = 0, _hoyCargados = {};
+var _hoyYaPinto = false, _hoyFiestaVista = false, _hoyP = null, _hoyPPedido = false, _hoyPReintento = 0, _hoyTimer = 0, _hoyCdTimer = 0, _hoyCargados = {}, _hoyPintadoDia = '';
 var _HOY_DIAS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
 var _HOY_MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
 function _hoyIso(d) { return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
+// 🇦🇷 El DÍA ARGENTINO de un instante (auditoría 22/10, I29). La portada compara contra el día de las rondas, que
+// está en hora argentina: con el día del aparato, en España de 0 a 5 la ronda de hoy salía como de otro día.
+function _hoyArIso(ms) {
+  var d = new Date(ms - 3 * 3600e3);
+  return d.getUTCFullYear() + '-' + ('0' + (d.getUTCMonth() + 1)).slice(-2) + '-' + ('0' + d.getUTCDate()).slice(-2);
+}
+// El día argentino como fecha del aparato al mediodía: sus getDay/getDate/getMonth dan el día de acá.
+function _hoyArFecha(ms) { var s = _hoyArIso(ms); return new Date(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10), 12); }
+// ¿Quien mira está en otra zona horaria? Entonces los horarios llevan «(hora argentina)».
+function _hoyFueraAR() { try { return new Date().getTimezoneOffset() !== 180; } catch (e) { return false; } }
+/* 🌍 HORARIOS DE LOS TORNEOS DEL EXTERIOR (auditoría 22/10, I28). Chess-Results e info64 publican la hora del LUGAR
+   (un torneo en España dice 15:00 y acá son las 10:00), y la portada la tomaba como hora argentina: «Faltan X», «EN
+   VIVO» y la cartelera se corrían horas. Ahora, en un internacional, la hora se pasa a hora argentina con la zona del
+   país de la sede; si el país no está en la lista (o tiene varias zonas: Estados Unidos, Rusia…) se deja sólo el día,
+   sin hora: mejor callarse que decir algo falso. Lo que cargó el autor día+hora (roundDT) ya es hora argentina y no
+   se toca; la Bundesliga tampoco (el sitio ya la pasa a hora argentina, source 'dsb'). */
+var _HOY_ZONAS = {
+  'argentina': 'AR',
+  'uruguay': 'America/Montevideo', 'chile': 'America/Santiago', 'paraguay': 'America/Asuncion', 'bolivia': 'America/La_Paz',
+  'peru': 'America/Lima', 'ecuador': 'America/Guayaquil', 'colombia': 'America/Bogota', 'venezuela': 'America/Caracas',
+  'brasil': 'America/Sao_Paulo', 'cuba': 'America/Havana', 'mexico': 'America/Mexico_City', 'guatemala': 'America/Guatemala',
+  'costa rica': 'America/Costa_Rica', 'panama': 'America/Panama', 'el salvador': 'America/El_Salvador', 'honduras': 'America/Tegucigalpa',
+  'nicaragua': 'America/Managua', 'republica dominicana': 'America/Santo_Domingo', 'puerto rico': 'America/Puerto_Rico',
+  'espana': 'Europe/Madrid', 'andorra': 'Europe/Andorra', 'portugal': 'Europe/Lisbon', 'francia': 'Europe/Paris', 'alemania': 'Europe/Berlin',
+  'italia': 'Europe/Rome', 'paises bajos': 'Europe/Amsterdam', 'holanda': 'Europe/Amsterdam', 'belgica': 'Europe/Brussels',
+  'suiza': 'Europe/Zurich', 'austria': 'Europe/Vienna', 'chequia': 'Europe/Prague', 'republica checa': 'Europe/Prague',
+  'eslovaquia': 'Europe/Bratislava', 'polonia': 'Europe/Warsaw', 'hungria': 'Europe/Budapest', 'serbia': 'Europe/Belgrade',
+  'croacia': 'Europe/Zagreb', 'eslovenia': 'Europe/Ljubljana', 'bosnia': 'Europe/Sarajevo', 'montenegro': 'Europe/Podgorica',
+  'macedonia': 'Europe/Skopje', 'grecia': 'Europe/Athens', 'turquia': 'Europe/Istanbul', 'rumania': 'Europe/Bucharest',
+  'bulgaria': 'Europe/Sofia', 'inglaterra': 'Europe/London', 'reino unido': 'Europe/London', 'escocia': 'Europe/London',
+  'gales': 'Europe/London', 'irlanda': 'Europe/Dublin', 'noruega': 'Europe/Oslo', 'suecia': 'Europe/Stockholm',
+  'dinamarca': 'Europe/Copenhagen', 'finlandia': 'Europe/Helsinki', 'islandia': 'Atlantic/Reykjavik', 'estonia': 'Europe/Tallinn',
+  'letonia': 'Europe/Riga', 'lituania': 'Europe/Vilnius', 'ucrania': 'Europe/Kyiv', 'moldavia': 'Europe/Chisinau',
+  'georgia': 'Asia/Tbilisi', 'armenia': 'Asia/Yerevan', 'azerbaiyan': 'Asia/Baku', 'uzbekistan': 'Asia/Tashkent',
+  'kazajistan': 'Asia/Almaty', 'india': 'Asia/Kolkata', 'china': 'Asia/Shanghai', 'hong kong': 'Asia/Hong_Kong',
+  'singapur': 'Asia/Singapore', 'japon': 'Asia/Tokyo', 'emiratos': 'Asia/Dubai', 'arabia saudita': 'Asia/Riyadh',
+  'qatar': 'Asia/Qatar', 'catar': 'Asia/Qatar', 'israel': 'Asia/Jerusalem', 'egipto': 'Africa/Cairo',
+  'sudafrica': 'Africa/Johannesburg', 'marruecos': 'Africa/Casablanca', 'tunez': 'Africa/Tunis', 'nueva zelanda': 'Pacific/Auckland'
+};
+function _hoyZonaDe(loc) {
+  var s = ' ' + String(loc || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z]+/g, ' ') + ' ';
+  var mejor = null, pos = -1;
+  // Manda el país que aparece MÁS A LA DERECHA («Mérida, España»: no la de México ni la de Venezuela).
+  for (var k in _HOY_ZONAS) { var i = s.lastIndexOf(' ' + k + ' '); if (i > pos) { pos = i; mejor = _HOY_ZONAS[k]; } }
+  return mejor;
+}
+var _hoyTzFmt = {};
+// Cuántos ms está adelantada la zona respecto de UTC en ese instante (con su horario de verano).
+function _hoyTzOff(zona, ms) {
+  var f = _hoyTzFmt[zona] || (_hoyTzFmt[zona] = new Intl.DateTimeFormat('en-US', { timeZone: zona, hourCycle: 'h23',
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }));
+  var p = {}; f.formatToParts(new Date(ms)).forEach(function (x) { p[x.type] = x.value; });
+  return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute) - Math.floor(ms / 60000) * 60000;
+}
+// "2026-10-25 15:00" en la hora del lugar → "2026-10-25 10:00" en hora argentina. Sin zona conocida → sólo el día.
+function _hoyAHoraAr(s, zona) {
+  var m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{1,2}):(\d{2}))?/);
+  if (!m || m[4] == null || zona === 'AR') return s;
+  var dia = m[1] + '-' + m[2] + '-' + m[3];
+  if (!zona) return dia;
+  try {
+    var guess = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]), off = _hoyTzOff(zona, guess), ms = guess - off;
+    var off2 = _hoyTzOff(zona, ms); if (off2 !== off) ms = guess - off2;   // el cambio de hora cae justo en el medio
+    var d = new Date(ms - 3 * 3600e3);
+    return _hoyArIso(ms) + ' ' + ('0' + d.getUTCHours()).slice(-2) + ':' + ('0' + d.getUTCMinutes()).slice(-2);
+  } catch (e) { return dia; }
+}
 function _hoyKey2Date(k) { k = +k || 0; return k ? new Date(Math.floor(k / 10000), Math.floor(k / 100) % 100 - 1, k % 100, 12) : null; }
 // "2026-10-21 19:30" (hora argentina) → milisegundos. Sólo día → las 00:00 (y `sinHora`).
 function _hoyMs(s) {
@@ -31353,6 +31517,11 @@ function _hoyDatos(o) {
   } else if (bk) {
     r.rd = Object.assign({}, bk.rd || {}); r.s = bk.s || null; r.eq = bk.eq || null; r.fin = !!bk.fin; r.r = bk.r != null ? bk.r : null;
   }
+  // 🌍 Un internacional: la hora de Chess-Results/info64 es la del lugar → a hora argentina (ver _hoyAHoraAr).
+  if (o.intl && ((cr && cr.source) || (bk && bk.src)) !== 'dsb') {
+    var zona = _hoyZonaDe(o.loc);
+    Object.keys(r.rd).forEach(function (k) { r.rd[k] = _hoyAHoraAr(r.rd[k], zona); });
+  }
   if (o.rdt && typeof o.rdt === 'object') Object.keys(o.rdt).forEach(function (k) { if (o.rdt[k]) r.rd[k] = String(o.rdt[k]); });
   // Los punteros de CADA categoría (para Resultados: si un argentino ganó una categoría, se cuenta ésa).
   if (o.status === 'done' && o.cats && o.cats.length > 1) {
@@ -31368,7 +31537,7 @@ function _hoyDatos(o) {
 }
 // La ronda de HOY (o la próxima): { n, t (ms), hora, hoy }. `hecha` = hasta qué ronda llega la tabla publicada.
 function _hoyRonda(rd, ahora, hecha) {
-  var hoyIso = _hoyIso(new Date(ahora)), mejor = null;
+  var hoyIso = _hoyArIso(ahora), mejor = null;
   Object.keys(rd || {}).forEach(function (k) {
     var x = _hoyMs(rd[k]); if (!x) return;
     var n = parseInt(k, 10); if (!n) return;
@@ -31392,7 +31561,7 @@ function _hoyElegirPrincipal(infos, fijo, ahora) {
   var orden = function (a, b) { return (a.intl - b.intl) || ((b.startKey || 0) - (a.startKey || 0)); };
   if (conRonda.length) return conRonda.sort(orden)[0];
   if (vivos.length) return vivos.sort(orden)[0];
-  var tope = +(_hoyIso(new Date(ahora + 30 * 864e5)).replace(/-/g, ''));
+  var tope = +(_hoyArIso(ahora + 30 * 864e5).replace(/-/g, ''));
   var prox = infos.filter(function (o) { return o.status === 'upcoming' && !o.historico && o.startKey && o.startKey <= tope; })
     .sort(function (a, b) { return (a.startKey - b.startKey) || (a.intl - b.intl); });
   return prox[0] || null;
@@ -31429,7 +31598,7 @@ function _hoyFrase(o, d) {
   return txt + extra;
 }
 
-function _hoyHref(u) { return escHtml(u); }
+function _hoyHref(u) { u = String(u || ''); return /^[\/?](?![\/\\])/.test(u) ? escHtml(u) : '/'; }   // sólo direcciones de este sitio (auditoría 22/10)
 // Navegar dentro de la app sin recargar (lo mismo que hace el botón Atrás: reconciliar con la dirección).
 /* ↩️ VOLVER A HOY (22/10, pedido del autor). Una partida que se abre desde la portada va encima de su torneo,
    pero Atrás tiene que volver a HOY (no dejarte dentro del torneo). Se apila UNA sola marca (la de la partida)
@@ -31488,12 +31657,18 @@ var _hoyVisitaAnt = (function () {
 
 var _hoySel = null;   // 🗓️ las de "Un día como hoy" que eligió el autor con el botón ☀️ del bot (/hoy)
 function _hoyCargarP() {
-  if (_hoyPPedido) return; _hoyPPedido = true;
-  var d0 = new Date();
-  fetch(TG_BASE + 'hoyportada?d=' + ('0' + (d0.getMonth() + 1)).slice(-2) + '-' + ('0' + d0.getDate()).slice(-2)).then(function (r) { return r.ok ? r.json() : null; })
+  // (auditoría 22/10) Se vuelve a pedir si cambió el día argentino (la app abierta de un día para el otro) y, si la
+  // portada no llegó, después de un minuto (antes quedaba sin datos hasta recargar).
+  var hoyAr = _hoyArIso(Date.now());
+  if (_hoyPPedido === hoyAr || (_hoyPPedido === 'falla' && Date.now() < _hoyPReintento)) return;
+  var diaNuevo = _hoyPPedido && _hoyPPedido !== 'falla';
+  _hoyPPedido = hoyAr;
+  if (diaNuevo) _hoySel = null;
+  fetch(TG_BASE + 'hoyportada?d=' + hoyAr.slice(5)).then(function (r) { return r.ok ? r.json() : null; })
     .then(function (j) { if (j && j.sel && j.sel.length) { _hoySel = j.sel; _hoyPronto(); } }).catch(function () {});
-  fetch('data/portada.json' + _dataV()).then(function (r) { return r.ok ? r.json() : null; })
-    .then(function (j) { if (j && j.v) { _hoyP = j; _hoyPronto(); } }).catch(function () {});
+  fetch('data/portada.json' + _dataV()).then(function (r) { if (!r.ok) throw new Error('http ' + r.status); return r.json(); })
+    .then(function (j) { if (j && j.v) { _hoyP = j; _hoyPronto(); } })
+    .catch(function () { if (!_hoyP) { _hoyPPedido = 'falla'; _hoyPReintento = Date.now() + 60e3; } });
 }
 function _hoyPronto() { clearTimeout(_hoyTimer); _hoyTimer = setTimeout(_hoyPintar, 60); }
 
@@ -31502,11 +31677,12 @@ function _hoyPintar() {
   _hoyCargarP();
   if (typeof _ejdiaCargar === 'function') _ejdiaCargar();
   try { _cumHistCargar(); } catch (e) {}   // 5 KB: así el perfil de un histórico ya tiene su cumpleaños al abrirlo
-  var ahora = Date.now(), hoyD = new Date(ahora);
+  var ahora = Date.now(), hoyD = _hoyArFecha(ahora);   // el día ARGENTINO (auditoría 22/10)
+  _hoyPintadoDia = _hoyArIso(ahora);
   var f = document.getElementById('hoy-dia');
   if (f) f.textContent = _HOY_DIAS[hoyD.getDay()] + ' ' + hoyD.getDate() + ' de ' + _HOY_MESES[hoyD.getMonth()];
   var tzCfg = getTzConfig(), infos = [];
-  var reciente = +(_hoyIso(new Date(ahora - 16 * 864e5)).replace(/-/g, ''));
+  var reciente = +(_hoyArIso(ahora - 16 * 864e5).replace(/-/g, ''));
   try { infos = _torneoItems(tzCfg).map(function (it) {
     var o = _hoyInfo(it, tzCfg);
     o._d = (o.status !== 'done' || o.endKey >= reciente) ? _hoyDatos(o) : { rd: {}, s: null, eq: null };
@@ -31520,7 +31696,11 @@ function _hoyPintar() {
   dest.forEach(function (P) {
     if (_ondemand && !_hoyCargados[P.key] && typeof _crEnsureLoaded === 'function') {
       _hoyCargados[P.key] = 1;
-      Promise.resolve(_crEnsureLoaded(P.id)).then(_hoyPronto, function () {});
+      // Si falló la bajada, se vuelve a probar en el próximo dibujo de la portada (no antes de 30 s: sin bucles).
+      Promise.resolve(_crEnsureLoaded(P.id)).then(function (ok) {
+        if (ok === false) { setTimeout(function () { delete _hoyCargados[P.key]; }, 30000); return; }
+        _hoyPronto();
+      }, function () {});
     }
   });
   var izq = '', der = '', h = '';
@@ -31546,6 +31726,8 @@ function _hoyPintar() {
 function _hoyCuentas() {
   if (!document.querySelector('#s-hoy.active')) return;
   var ahora = Date.now();
+  // Pasó la medianoche argentina o venció el ejercicio del día (la app abierta de un día para el otro): de nuevo entera.
+  if (_hoyArIso(ahora) !== _hoyPintadoDia || (_ejdiaPedido && ahora >= _ejdiaVence)) { _hoyPronto(); return; }
   document.querySelectorAll('#s-hoy [data-hoy-t]').forEach(function (el) {
     var t = +el.getAttribute('data-hoy-t'), falta = t - ahora;
     if (falta <= 0) { if (!el.classList.contains('ya')) _hoyPronto(); return; }
@@ -31558,6 +31740,8 @@ function _hoyCuentas() {
   });
 }
 
+// Al volver a la app (el teléfono la tenía en segundo plano) se mira enseguida si cambió el día, sin esperar los 30 s.
+document.addEventListener('visibilitychange', function () { if (!document.hidden) { try { _hoyCuentas(); } catch (e) {} } });
 // Los destacados de la tarjeta grande: hasta DOS, uno al lado del otro (pedido del autor 21/10). Cada lugar
 // puede venir 📌 elegido a mano; el que no, lo pone el automático (el segundo, sólo si otro también juega HOY).
 function _hoyElegirDestacados(infos, fijos, ahora) {
@@ -31582,14 +31766,16 @@ function _hoyRondaInfo(P, ahora) {
   var r = _hoyRonda(P._d.rd, ahora, P._d.r);
   if (r) {
     var enJuego = r.hoy && r.hora && r.t <= ahora && ahora < r.t + 6 * 3600e3;
-    var cuando = r.hoy ? 'hoy' : (r.dia === _hoyIso(new Date(ahora + 864e5)) ? 'mañana' : _hoyDiaCorto(r.dia));
-    var lbl = (P.status === 'upcoming' && r.n === 1 ? 'Arranca ' : 'Ronda ' + r.n + ' · ') + cuando + (r.hora ? ' a las ' + r.hora : '');
-    return { lbl: lbl.charAt(0).toUpperCase() + lbl.slice(1), corto: (P.status === 'upcoming' && r.n === 1 ? 'Arranca ' : 'R' + r.n + ' · ') + cuando + (r.hora ? ' ' + r.hora : ''),
+    var cuando = r.hoy ? 'hoy' : (r.dia === _hoyArIso(ahora + 864e5) ? 'mañana' : _hoyDiaCorto(r.dia));
+    // Para quien mira desde otro país, la hora dice de dónde es (auditoría 22/10, I29).
+    var zAr = r.hora && _hoyFueraAR() ? ' (hora argentina)' : '';
+    var lbl = (P.status === 'upcoming' && r.n === 1 ? 'Arranca ' : 'Ronda ' + r.n + ' · ') + cuando + (r.hora ? ' a las ' + r.hora + zAr : '');
+    return { lbl: lbl.charAt(0).toUpperCase() + lbl.slice(1), corto: (P.status === 'upcoming' && r.n === 1 ? 'Arranca ' : 'R' + r.n + ' · ') + cuando + (r.hora ? ' ' + r.hora + (zAr ? ' (hora arg.)' : '') : ''),
              enJuego: enJuego, t: (!enJuego && r.hora && r.t > ahora) ? r.t : 0 };
   }
   if (P.status === 'upcoming' && P.startKey) {
     var ini = _hoyKey2Date(P.startKey);
-    if (ini) return { lbl: 'Arranca el ' + _hoyDiaCorto(_hoyIso(ini)), corto: 'Arranca el ' + ini.getDate() + '/' + (ini.getMonth() + 1), t: ini.getTime() - 12 * 3600e3 };
+    if (ini) return { lbl: 'Arranca el ' + _hoyDiaCorto(_hoyIso(ini)), corto: 'Arranca el ' + ini.getDate() + '/' + (ini.getMonth() + 1), t: _hoyMs(_hoyIso(ini)).ms };
   }
   return null;
 }
@@ -31841,7 +32027,7 @@ function _hoySeguiHtml(ahora) {
 // 7 días (primero los de argentinos, los "claros" y los de más Elo) y un botón que abre TODOS los de la semana,
 // de todos los torneos, en el tablero de jugadones de siempre (_cgAbrirEnTablero).
 function _hoyMomSemana(ahora) {
-  var tope = _hoyIso(new Date(ahora - 7 * 864e5)).replace(/-/g, '.');
+  var tope = _hoyArIso(ahora - 7 * 864e5).replace(/-/g, '.');
   return ((_hoyP && _hoyP.mom) || []).filter(function (it) { return it && it.fen && it.sol && String(it.fecha) >= tope; });
 }
 function _hoyMomElegido(L) {
@@ -31892,7 +32078,7 @@ function hoyJugadones() {
 // 📅 Esta semana: hoy + 6 días, con las rondas de cada torneo y los que arrancan.
 function _hoySemanaHtml(infos, ahora) {
   var dias = [], porDia = {};
-  for (var k = 0; k < 7; k++) { var dd = new Date(ahora + k * 864e5); dias.push(_hoyIso(dd)); porDia[_hoyIso(dd)] = []; }
+  for (var k = 0; k < 7; k++) { var dd = _hoyArIso(ahora + k * 864e5); dias.push(dd); porDia[dd] = []; }
   infos.forEach(function (o) {
     if (o.status === 'done' || o.historico) return;
     var ya = {};
@@ -31945,7 +32131,7 @@ function _hoySemanaHtml(infos, ahora) {
     h += '</div></div>';
   });
   if (!hay) return '';
-  return '<section class="hoy-blq" data-c="semana" style="--o:5" aria-label="Esta semana"><h3>📅 Esta semana<a class="hoy-mas" href="?ir=torneos" onclick="goTo(\'torneos\'); return false;">Todos los torneos ›</a></h3><div class="hoy-cartel">' + h + '</div></section>';
+  return '<section class="hoy-blq" data-c="semana" style="--o:5" aria-label="Esta semana"><h3>📅 Esta semana' + (_hoyFueraAR() ? '<small class="hoy-zona">hora argentina</small>' : '') + '<a class="hoy-mas" href="?ir=torneos" onclick="goTo(\'torneos\'); return false;">Todos los torneos ›</a></h3><div class="hoy-cartel">' + h + '</div></section>';
 }
 // "en 8 h" / "en 25 min" (la cartelera no tiene lugar para el «Faltan 8 h 47 min» de la tarjeta grande).
 function _hoyFaltaCorto(ms) {
@@ -31954,7 +32140,7 @@ function _hoyFaltaCorto(ms) {
 }
 // 🏆 Resultados: los torneos terminados en los últimos 15 días, con una frase armada sola.
 function _hoyResultadosHtml(infos, ahora) {
-  var desde = +(_hoyIso(new Date(ahora - 15 * 864e5)).replace(/-/g, ''));
+  var desde = +(_hoyArIso(ahora - 15 * 864e5).replace(/-/g, ''));
   var L = infos.filter(function (o) { return o.status === 'done' && !o.historico && o.endKey >= desde; })
     .sort(function (a, b) { return b.endKey - a.endKey; });
   var h = '', n = 0;
@@ -32265,7 +32451,9 @@ function _avPrender(temas) {
       return reg.pushManager.getSubscription().then(function (s) { return s || reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: _avClaveBytes() }); });
     }).then(function (sub) {
       return _avPedir('alta', { sub: sub.toJSON(), temas: temas, racha: _avRachaDatos() }).then(function (r) {
-        if (!(r && r.ok)) return { ok: false, error: (r && r.error) || 'el servidor no respondió' };
+        // (auditoría 22/10) Si el bot no lo anotó, se borra también la anotación del navegador: si no, el interruptor
+        // quedaba prendido sin que llegara ningún aviso.
+        if (!(r && r.ok)) return sub.unsubscribe().catch(function () {}).then(function () { return { ok: false, error: (r && r.error) || 'el servidor no respondió' }; });
         try { localStorage.setItem('aa_av_on', '1'); localStorage.setItem('aa_av_sinc', String(Date.now())); } catch (e) {}
         _avTemasLocal(r.temas || temas);
         return { ok: true, sub: sub };
@@ -32327,9 +32515,13 @@ function avPanelPintar(box) {
     }
     var t = elegidos();
     _avTemasLocal(t);
+    // (auditoría 22/10) Se mira si el bot lo guardó: si no, se avisa y el panel vuelve a mostrar lo que hay de verdad.
     _avSub().then(function (sub) {
-      if (sub) _avPedir('alta', { sub: sub.toJSON(), temas: t });
-      else if (_ejrUid()) _avPedir('cuenta', { temas: t });
+      return sub ? _avPedir('alta', { sub: sub.toJSON(), temas: t }) : _ejrUid() ? _avPedir('cuenta', { temas: t }) : { ok: true };
+    }).then(function (r) {
+      if (r && r.ok) return;
+      if (window.aaAsk) window.aaAsk({ icono: '🔕', titulo: 'No se pudo guardar el cambio', ok: 'Entendido', texto: 'No hubo conexión con el servidor de avisos. Probá de nuevo en un rato.' });
+      avPanelPintar(box);
     });
   });
   box.addEventListener('click', function (ev) {
@@ -32379,7 +32571,7 @@ try { _appIniciar(); } catch (e) {}
 // 🎵 Música en el Tablero: la misma tarjeta de Jugar, más angosta, al final de la columna de «algo para hacer»
 // (22/10: llenaba el hueco de abajo a la derecha; el hueco cambia cada día, la tarjeta siempre tiene sentido).
 function _hoyMusicaHtml() {
-  return '<a class="lv-musica hoy-musica" style="--o:10" href="/juegos/musica-en-el-tablero/" onclick="if(typeof _crIsAuthor===\'function\'&&_crIsAuthor()){window.open(this.href,\'_blank\');return false;}">'
+  return '<a class="lv-musica hoy-musica" style="--o:10" href="/juegos/musica-en-el-tablero/" onclick="if(typeof _crIsAuthor===\'function\'&&_crIsAuthor()){window.open(this.href,\'_blank\',\'noopener\');return false;}">'
     + '<span class="lvm-logo" aria-hidden="true"><span class="lvm-1">Música<svg class="lvm-nota" viewBox="0 0 64 64"><path d="M22 10 54 3v38.5a9 9 0 1 1-5-8V17L27 21.6v26a9 9 0 1 1-5-8z" fill="currentColor" stroke="#241505" stroke-width="4" stroke-linejoin="round"/></svg></span>'
     + '<span class="lvm-2"><small>en el</small>Tablero</span></span>'
     + '<span class="lvm-tx"><b class="lvm-nombre">Música en el Tablero</b><span>Capturá las piezas al compás de La Cumparsita, El Choclo y más.</span><small>6 canciones · ranking de todos</small></span>'
@@ -34203,7 +34395,7 @@ function cvClickPlayer(name, fideId) {
     openPlayer(found.id);              // resetea _playerReturnToGame al inicio (perfil "en fresco")
     _playerReturnToGame = snap;        // se setea DESPUÉS para que sobreviva y arme el regreso
   } else if (fideId) {
-    window.open('https://ratings.fide.com/profile/' + fideId, '_blank');
+    window.open('https://ratings.fide.com/profile/' + fideId, '_blank', 'noopener');
   }
 }
 
@@ -37150,22 +37342,22 @@ function escJs(s) {
    El mismo markup salía copiado a mano en ~4 lugares (tarjetas de torneo y detalle).
    Centralizado acá para que estilo/texto no se desincronicen. */
 function linkChessResults(url) {
-  return '<a href="' + escHtml(url) + '" target="_blank" rel="noopener" class="pgn-btn td-lnk">🌐 Ver en Chess Results</a>';
+  return '<a href="' + escHtml(_urlSegura(url)) + '" target="_blank" rel="noopener" class="pgn-btn td-lnk">🌐 Ver en Chess Results</a>';
 }
 function linkChesscom(url) {
-  return '<a href="' + escHtml(url) + '" target="_blank" rel="noopener" class="pgn-btn td-lnk" style="background:var(--cc-bg);border-color:var(--cc-bd);color:var(--cc-fg)">♟ Ver partidas · Chess.com&nbsp;↗</a>';
+  return '<a href="' + escHtml(_urlSegura(url)) + '" target="_blank" rel="noopener" class="pgn-btn td-lnk" style="background:var(--cc-bg);border-color:var(--cc-bd);color:var(--cc-fg)">♟ Ver partidas · Chess.com&nbsp;↗</a>';
 }
 function linkInfo64(url) {
-  return '<a href="' + escHtml(url) + '" target="_blank" rel="noopener" class="pgn-btn td-lnk">📊 Ver en info64&nbsp;↗</a>';
+  return '<a href="' + escHtml(_urlSegura(url)) + '" target="_blank" rel="noopener" class="pgn-btn td-lnk">📊 Ver en info64&nbsp;↗</a>';
 }
 function linkVesus(url) {
-  return '<a href="' + escHtml(url) + '" target="_blank" rel="noopener" class="pgn-btn td-lnk">📊 Ver en vesus&nbsp;↗</a>';
+  return '<a href="' + escHtml(_urlSegura(url)) + '" target="_blank" rel="noopener" class="pgn-btn td-lnk">📊 Ver en vesus&nbsp;↗</a>';
 }
 function linkWebUrl(url) {
-  return '<a href="' + escHtml(url) + '" target="_blank" rel="noopener" class="pgn-btn td-lnk" aria-label="' + escHtml(_a11yTexto(webUrlLabel(url)) + '. Se abre en una pestaña nueva') + '">' + webUrlLabel(url) + '&nbsp;↗</a>';
+  return '<a href="' + escHtml(_urlSegura(url)) + '" target="_blank" rel="noopener" class="pgn-btn td-lnk" aria-label="' + escHtml(_a11yTexto(webUrlLabel(url)) + '. Se abre en una pestaña nueva') + '">' + webUrlLabel(url) + '&nbsp;↗</a>';
 }
 function linkInscription(url) {
-  return '<a href="' + escHtml(url) + '" target="_blank" rel="noopener" class="pgn-btn td-lnk" style="background:var(--gold-bg);border-color:var(--gold-dim);color:var(--gold);font-weight:700">📝 Formulario de inscripción&nbsp;↗</a>';
+  return '<a href="' + escHtml(_urlSegura(url)) + '" target="_blank" rel="noopener" class="pgn-btn td-lnk" style="background:var(--gold-bg);border-color:var(--gold-dim);color:var(--gold);font-weight:700">📝 Formulario de inscripción&nbsp;↗</a>';
 }
 // Botón "Contacto por WhatsApp": abre el chat con el organizador. wa.me necesita el número en
 // formato internacional SOLO con dígitos (sin +, espacios ni guiones), así que se limpia acá.
@@ -38255,7 +38447,7 @@ function openBroadcastTournament(broadcastId, name, sub, pageUrl) {
     bcResolveTourId(m[1], m[2], m[3], function(tourId) {
       if (tourId) bcOpenLiveGrid(tourId, name, sub, pageUrl);
       else _preguntaApp('📡', 'No se pudo conectar con Lichess', '¿Abrís la transmisión directamente en lichess.org?', 'Abrir en Lichess')
-        .then(function (si) { if (si) window.open(pageUrl || ('https://lichess.org/broadcast/' + raw), '_blank'); });
+        .then(function (si) { if (si) window.open(pageUrl || ('https://lichess.org/broadcast/' + raw), '_blank', 'noopener'); });
     });
     return;
   }
@@ -39024,7 +39216,7 @@ function _bcLoad(isRefresh) {
     if (!_liveCtx || _liveCtx.broadcastId !== ctx.broadcastId) return;   // cambió de torneo mientras tanto
     if (!res) {
       if (!isRefresh) _preguntaApp('📡', 'No se pudo conectar con Lichess', '¿Abrís la transmisión directamente en lichess.org?', 'Abrir en Lichess')
-        .then(function (si) { if (si) window.open(ctx.pageUrl || ('https://lichess.org/broadcast/' + ctx.broadcastId), '_blank'); });
+        .then(function (si) { if (si) window.open(ctx.pageUrl || ('https://lichess.org/broadcast/' + ctx.broadcastId), '_blank', 'noopener'); });
       return;
     }
     if (!isRefresh && !res.allGames.length) { _avisoApp('🕑', 'Todavía no hay rondas', 'El torneo aún no tiene rondas disponibles.'); return; }
@@ -39232,7 +39424,7 @@ function _tdFlyerHtml(url, pos, credito, creditoUrl) {
   // link activo a la fuente) llevan abajo de dónde salieron, con su link.
   if (credito) {
     var cr = creditoUrl
-      ? '<a href="' + escHtml(creditoUrl) + '" target="_blank" rel="noopener" aria-label="' + escHtml('Imagen: ' + credito + '. Se abre en una pestaña nueva') + '" style="color:var(--text3);text-decoration:underline;text-underline-offset:2px">🖼️ ' + escHtml(credito) + ' ↗</a>'
+      ? '<a href="' + escHtml(_urlSegura(creditoUrl)) + '" target="_blank" rel="noopener" aria-label="' + escHtml('Imagen: ' + credito + '. Se abre en una pestaña nueva') + '" style="color:var(--text3);text-decoration:underline;text-underline-offset:2px">🖼️ ' + escHtml(credito) + ' ↗</a>'
       : '<span>🖼️ ' + escHtml(credito) + '</span>';
     return '<div style="display:flex;flex-direction:column;gap:5px;width:150px;max-width:36%;flex-shrink:0">'
       + _tdFlyerHtml(url, pos).replace('width:150px;max-width:36%;', 'width:100%;')
@@ -40333,10 +40525,6 @@ function _tdCatStore(type, id) {
   }
   return null;
 }
-function _tdSaveCatField(field, value) {
-  var o = {}; o[field] = value;
-  _tdSaveCatFields([_tdChipCat], o);
-}
 // Guarda varios campos a la vez en una o varias categorías (la abierta + las tildadas en
 // "Aplicar también a…"), con un solo guardado.
 function _tdSaveCatFields(idxs, vals) {
@@ -41078,7 +41266,7 @@ async function openTournamentDetail(type, id, scrollToGames, catIdx) {
     if (_isLcc) h += '<a href="' + escHtml(_lccExtUrl(broadcastId)) + '" target="_blank" rel="noopener" aria-label="Ver la transmisión en livechesscloud. Se abre en una pestaña nueva" style="' + _lnkCss + '">⚡ Ver en livechesscloud ↗</a>';
     if (_isSi)  h += '<a href="' + escHtml(_siExtUrl(broadcastId)) + '" target="_blank" rel="noopener" aria-label="Ver la transmisión en sichess. Se abre en una pestaña nueva" style="' + _lnkCss + '">⚡ Ver en sichess ↗</a>';
     var _lichUrl = /lichess\.org\/broadcast/.test(String(broadcastUrl || '')) ? broadcastUrl : ((!_isLcc && !_isSi) ? (broadcastUrl || 'https://lichess.org/broadcast/' + broadcastId) : null);
-    if (_lichUrl) h += '<a href="' + escHtml(_lichUrl) + '" target="_blank" rel="noopener" aria-label="Ver la transmisión en Lichess. Se abre en una pestaña nueva" style="' + _lnkCss + '">⚡ Ver en Lichess ↗</a>';
+    if (_lichUrl) h += '<a href="' + escHtml(_urlSegura(_lichUrl)) + '" target="_blank" rel="noopener" aria-label="Ver la transmisión en Lichess. Se abre en una pestaña nueva" style="' + _lnkCss + '">⚡ Ver en Lichess ↗</a>';
   }
   h += '</div>';
   h += '</div>';
@@ -43169,7 +43357,8 @@ function _colActivo(q, ls) {
   } catch (e) { return false; }
 }
 function _colLlave() {
-  if (_colLlaveVal === null) { try { _colLlaveVal = _colActivo(_colQ0, localStorage); } catch (e) { _colLlaveVal = false; } }
+  // (auditoría 22/10) El «=0» de la dirección dura sólo esta sesión (sessionStorage): un link con ?lichess=0&arena=0&colgadas=0 apagaba esas funciones PARA SIEMPRE en el navegador de quien lo tocaba. Lo viejo guardado así se borra.
+  if (_colLlaveVal === null) { try { try { if (localStorage.getItem('aa_col_on') === '0') localStorage.removeItem('aa_col_on'); } catch (e) {} _colLlaveVal = _colActivo(_colQ0, sessionStorage); } catch (e) { _colLlaveVal = false; } }
   return _colLlaveVal;
 }
 function _colOn() {
@@ -43636,10 +43825,16 @@ function _colDetalleHtml(it) {
   return escHtml(_colJugada(it.prev, it.now, _colPlyColgada(it))) + ' &nbsp;<span class="col-ch col-ch-a">' + _colEvTxt(a) + '</span> → <span class="col-ch col-ch-d">' + fin + '</span>';
 }
 
+// 🔈 iPhone (auditoría 22/10): un sonido armado sin que la persona haya tocado la pantalla queda «suspendido» y
+// mudo. El primer toque de la visita lo destraba; y antes de sonar, se lo despierta por las dudas.
+document.addEventListener('pointerdown', function () {
+  try { var A = window.AudioContext || window.webkitAudioContext; if (!A) return; var c = _colSonido._c || (_colSonido._c = new A()); if (c.state === 'suspended' && c.resume) c.resume().catch(function () {}); } catch (e) {}
+}, { once: true, capture: true });
 function _colSonido() {
   try {
     var A = window.AudioContext || window.webkitAudioContext; if (!A) return;
     var ctx = _colSonido._c || (_colSonido._c = new A());
+    if (ctx.state === 'suspended' && ctx.resume) ctx.resume().catch(function () {});
     [[880, 0], [660, 0.16]].forEach(function(n){
       var o = ctx.createOscillator(), g = ctx.createGain(), t = ctx.currentTime + n[1];
       o.type = 'triangle'; o.frequency.value = n[0];
@@ -44133,6 +44328,7 @@ function _briSonido() {
   try {
     var A = window.AudioContext || window.webkitAudioContext; if (!A) return;
     var ctx = _colSonido._c || (_colSonido._c = new A());
+    if (ctx.state === 'suspended' && ctx.resume) ctx.resume().catch(function () {});
     [[660, 0], [880, 0.12], [1175, 0.24]].forEach(function(n){   // sube (la colgada baja)
       var o = ctx.createOscillator(), g = ctx.createGain(), t = ctx.currentTime + n[1];
       o.type = 'sine'; o.frequency.value = n[0];
@@ -46373,7 +46569,7 @@ function _tdLoadLiveGames(broadcastId, broadcastUrl, name, location, pgnKey, typ
 function _tdLiveError(url, detail) {
   _tdLivePolling = false;   // no hay transmisión viva que seguir → el gráfico usa el análisis normal
   var sec = document.getElementById('td-games-section');
-  if (sec) sec.innerHTML = '<div style="text-align:center;padding:30px 0;color:var(--text3);font-size:13px">No se pudieron cargar las partidas en vivo.' + (url ? '<br><a href="' + escHtml(url) + '" target="_blank" style="color:var(--gold)">Ver en Lichess ↗</a>' : '') + (detail ? '<br><span style="font-size:11px;opacity:.6">' + escHtml(detail) + '</span>' : '') + '</div>';
+  if (sec) sec.innerHTML = '<div style="text-align:center;padding:30px 0;color:var(--text3);font-size:13px">No se pudieron cargar las partidas en vivo.' + (url ? '<br><a href="' + escHtml(_urlSegura(url)) + '" target="_blank" style="color:var(--gold)">Ver en Lichess ↗</a>' : '') + (detail ? '<br><span style="font-size:11px;opacity:.6">' + escHtml(detail) + '</span>' : '') + '</div>';
 }
 
 function _tdLiveFetchMulti(tourIds, name, location, pgnKey, typ, hasFallback) {
@@ -48503,9 +48699,21 @@ function _puzEnsureLoaded() {
     _puzLoaded = true; puzUpdateChipCounts(); puzRenderList();
     _puzAlCargar.splice(0).forEach(function (f) { try { f(); } catch (e) {} });
   }).catch(function() {
-    _puzLoaded = true; var el = document.getElementById('puz-list');
-    if (el) el.innerHTML = '<div style="text-align:center;padding:32px;color:var(--red);font-size:13px">No se pudieron cargar los ejercicios.</div>';
+    // (auditoría 22/10) Se borra la marca: con un corte de red, Entrenar quedaba vacío hasta recargar la página.
+    _puzLoaded = true; _puzFetchStarted = false; _trainDataStarted = false; var el = document.getElementById('puz-list');
+    if (el) el.innerHTML = '<div style="text-align:center;padding:32px;color:var(--red);font-size:13px">No se pudieron cargar los ejercicios.' + _trainReintentarBtn() + '</div>';
   });
+}
+// El botón «Reintentar» de las bajadas de Entrenar que fallaron (vuelve a pedir sólo lo que falta).
+function _trainReintentarBtn() {
+  return '<div style="margin-top:10px"><button class="btn-ghost" type="button" onclick="_trainReintentar()">Reintentar</button></div>';
+}
+function _trainReintentar() {
+  if (!_puzFetchStarted) _puzLoaded = false;
+  if (!_pracRenderStarted) _pracLoaded = false;
+  _trainEnsureData();
+  if (!_puzFetchStarted) _puzEnsureLoaded();
+  if (!_pracRenderStarted) _pracEnsureLoaded();
 }
 var _pracRenderStarted = false;
 function _pracEnsureLoaded() {
@@ -48515,8 +48723,8 @@ function _pracEnsureLoaded() {
     _pracLoaded = true; pracUpdatePhaseCounts(); pracRenderFilters(); pracRenderList();
     routineRenderBuilder();
   }).catch(function() {
-    _pracLoaded = true; var el = document.getElementById('prac-list');
-    if (el) el.innerHTML = '<div style="text-align:center;padding:32px;color:var(--red);font-size:13px">No se pudieron cargar las posiciones de práctica.</div>';
+    _pracLoaded = true; _pracRenderStarted = false; _trainDataStarted = false; var el = document.getElementById('prac-list');
+    if (el) el.innerHTML = '<div style="text-align:center;padding:32px;color:var(--red);font-size:13px">No se pudieron cargar las posiciones de práctica.' + _trainReintentarBtn() + '</div>';
   });
 }
 // Carga por demanda de TODO lo de "Entrenar" (ejercicios + prácticas + stats colectivas).
@@ -53122,12 +53330,6 @@ function cvDrawArrows() {
     if (cv.flipped) { f = 7 - f; r = 7 - r; }
     return { x: g.ox + (f + 0.5) * g.sqW, y: g.oy + (r + 0.5) * g.sqH };
   }
-  function sqOrigin(sq) {
-    var f = 'abcdefgh'.indexOf(sq[0]);
-    var r = 8 - parseInt(sq[1]);
-    if (cv.flipped) { f = 7 - f; r = 7 - r; }
-    return { x: g.ox + f * g.sqW, y: g.oy + r * g.sqH };
-  }
 
   // Lo que trae el PGN ([%csl] / [%cal], lecciones y partidas comentadas): debajo de lo del usuario.
   var _pf = _cvFormasNodo(cv.node);
@@ -56581,7 +56783,7 @@ function cvUpdateNagBadge() {
 (function(){ var b = document.getElementById('cv-nag-toggle'); if (b) b.classList.toggle('on', _showNagBadges); })();
 
 </script>
-<script async="" src="assets/chess.min.js?v=3" onerror="window.__chessLibFailed=true">
+<script async="" src="assets/chess.min.js?v=3" onerror="window.__chessLibFailed=true" onload="if(typeof Chess==='undefined'){window.__chessLibFailed=true;window.__chessLibViejo=true;}">
 </script>
 
 <!-- ── DATOS HISTÓRICOS al azar en la columna derecha del visor ──────────────
@@ -56768,6 +56970,9 @@ function cvUpdateNagBadge() {
   //    leyéramos tarde se perdería el ?vivolocal). ─────────────────────────────
   var DEV_BASE = (function(){
     try {
+      // En la web publicada, nunca (auditoría 22/10): un link con ?vivolocal=1 mandaba la sesión del visitante a
+      // lo que escuchara en su localhost:8787. Para probar contra el worker de la PC está el modo autor.
+      if(window.__AA_WEB__) return '';
       var qs=new URLSearchParams(location.search||'');
       if(qs.get('vivolocal')==='1') return 'http://localhost:8787';
       var m=localStorage.getItem('lv_server');
@@ -57748,11 +57953,12 @@ function cvUpdateNagBadge() {
     var q=[]; if(lvToken) q.push('token='+encodeURIComponent(lvToken)); if(nm) q.push('name='+encodeURIComponent(nm));
     if(!lvRoom && (lvSeatPref==='w'||lvSeatPref==='b')) q.push('seat='+lvSeatPref);   // color pedido por el creador
     // Token de sesión de la cuenta → el servidor sabe quién soy y ratea la partida.
-    var auth=lvAuthToken(); if(auth) q.push('auth='+encodeURIComponent(auth));
+    // 🔑 La sesión NO va en la dirección (quedaba en los registros de Cloudflare, auditoría 22/10): ?a=1 avisa que viene, y viaja como primer mensaje.
+    var auth=lvAuthToken(); if(auth) q.push('a=1');
     lvWsAuthed=!!auth;   // ¿este socket sabe quién soy? (si no, hay que rehacerlo al loguearse)
     if(q.length) url+='?'+q.join('&');
     try { ws=new WebSocket(url); } catch(e){ setStatus('No pude conectar ⚠️'); return; }
-    ws.onopen=function(){ lvReconnectTries=0; };
+    ws.onopen=function(){ if(auth){ try{ ws.send(JSON.stringify({type:'auth',token:auth})); }catch(e){} } lvReconnectTries=0; };
     ws.onmessage=function(e){
       var m; try { m=JSON.parse(e.data); } catch(_){ return; }
       handle(m);
@@ -58757,12 +58963,14 @@ function cvUpdateNagBadge() {
     if(lobbyWs && (lobbyWs.readyState===0 || lobbyWs.readyState===1)) return;
     lvLobbyIntentional=false;
     var tok=lvAuthToken();
-    var url=serverBase().replace(/^http/,'ws')+'/lobby/ws'+(tok?('?auth='+encodeURIComponent(tok)):'');
+    // 🔑 La sesión NO va en la dirección (quedaba en los registros de Cloudflare, auditoría 22/10): ?a=1 avisa que viene, y viaja como primer mensaje.
+    var url=serverBase().replace(/^http/,'ws')+'/lobby/ws'+(tok?'?a=1':'');
     // Igual que en La hinchada: una conexión vieja que avisa "me cerré" tarde no debe pisar a la nueva. (25/09)
     var sock; try{ sock=lobbyWs=new WebSocket(url); }catch(e){ setChalConn('No pude conectar al lobby.'); return; }
     setChalConn('Conectando…');
     sock.onopen=function(){
       if(sock!==lobbyWs) return;
+      if(tok){ try{ sock.send(JSON.stringify({type:'auth',token:tok})); }catch(e){} }   // 🔑 la sesión, primero que todo
       lvLobbyTries=0; setChalConn('');
       // Si soy anfitrión esperando, re-publico mi desafío (el DO lo perdió al caerse el ws).
       if(lvMyChallenge && lvStatus==='waiting'){
@@ -59601,13 +59809,14 @@ function cvUpdateNagBadge() {
     if(tcWs && (tcWs.readyState===0 || tcWs.readyState===1)) return;
     tcIntentional=false;
     var tok=lvAuthToken(); tcConnTok=tok;
-    var url=serverBase().replace(/^http/,'ws')+'/tour/'+encodeURIComponent(tcRoom)+'/ws'+(tok?('?auth='+encodeURIComponent(tok)):'');
+    // 🔑 La sesión NO va en la dirección (quedaba en los registros de Cloudflare, auditoría 22/10): ?a=1 avisa que viene, y viaja como primer mensaje.
+    var url=serverBase().replace(/^http/,'ws')+'/tour/'+encodeURIComponent(tcRoom)+'/ws'+(tok?'?a=1':'');
     // Cada conexión mira si TODAVÍA es la actual (sock===tcWs). Antes, al cambiar de torneo o de login
     // se cerraba la vieja y se abría otra; el "se cerró" de la vieja llegaba DESPUÉS, borraba la nueva
     // de tcWs y abría una tercera. Quedaban dos conexiones vivas y cada mensaje se veía dos veces
     // (al recargar se arreglaba). Además inflaba el "👁 X mirando". (25/09)
     var sock; try{ sock=tcWs=new WebSocket(url); }catch(e){ return; }
-    sock.onopen=function(){ if(sock!==tcWs) return; tcTries=0; tcChatPend=null; tcChatRetried=false;
+    sock.onopen=function(){ if(sock!==tcWs) return; if(tok){ try{ sock.send(JSON.stringify({type:'auth',token:tok})); }catch(e){} } tcTries=0; tcChatPend=null; tcChatRetried=false;
       try{ if(typeof _repConectado==='function') _repConectado(); }catch(e){} };   // motor repartido: decir qué ronda miro
     sock.onmessage=function(e){ if(sock!==tcWs){ try{ sock.close(); }catch(_){ } return; } var m; try{ m=JSON.parse(e.data); }catch(_){ return; }
       if(m.type==='chat-history'){ tcMsgs=Array.isArray(m.msgs)?m.msgs.slice(-40):[]; tcRenderAll(); }
@@ -61755,9 +61964,11 @@ function cvUpdateNagBadge() {
   function activo() {
     try {
       var q = location.search || '';
-      if (/[?&]lichess=1/.test(q)) localStorage.removeItem('aa_li_off');
-      if (/[?&]lichess=0/.test(q)) localStorage.setItem('aa_li_off', '1');
-      if (localStorage.getItem('aa_li_off') === '1') return false;
+      // (auditoría 22/10) El «=0» de la dirección dura sólo esta sesión (sessionStorage): un link con ?lichess=0&arena=0&colgadas=0 apagaba esas funciones PARA SIEMPRE en el navegador de quien lo tocaba. Lo viejo guardado así se borra.
+      localStorage.removeItem('aa_li_off');
+      if (/[?&]lichess=1/.test(q)) sessionStorage.removeItem('aa_li_off');
+      if (/[?&]lichess=0/.test(q)) sessionStorage.setItem('aa_li_off', '1');
+      if (sessionStorage.getItem('aa_li_off') === '1') return false;
     } catch (e) {}
     return true;
   }
@@ -62644,7 +62855,8 @@ function cvUpdateNagBadge() {
   function activo() {
     var q = AR_Q0;
     try { q += location.search || ''; } catch (e) {}
-    try { return _arActivo({ search: q }, window.localStorage); } catch (e) { return false; }
+    // (auditoría 22/10) El «=0» de la dirección dura sólo esta sesión (sessionStorage): un link con ?lichess=0&arena=0&colgadas=0 apagaba esas funciones PARA SIEMPRE en el navegador de quien lo tocaba. Lo viejo guardado así se borra.
+    try { try { if (localStorage.getItem('aa_arena_on') === '0') localStorage.removeItem('aa_arena_on'); } catch (e) {} return _arActivo({ search: q }, window.sessionStorage); } catch (e) { return false; }
   }
   /* A la vista = el salón de Jugar está en pantalla (la cartelera vive al lado de las salas). */
   function aLaVista() {
@@ -67743,7 +67955,7 @@ void main(){
       elH = panel.querySelector('.pupi-h'), elB = panel.querySelector('.pupi-b'), elAcc = panel.querySelector('.pupi-acc'), elFlota = panel.querySelector('.pupi-flota');
   elGlobo.setAttribute('role', 'status'); elGlobo.setAttribute('aria-live', 'polite');
   var btnSnd = ctrl.querySelector('.pupi-snd');
-  function pintarSnd() { btnSnd.textContent = sonidoOn() ? '🔊' : '🔇'; btnSnd.title = sonidoOn() ? 'Callar los sonidos del Pupi' : 'Prender los sonidos del Pupi'; }
+  function pintarSnd() { btnSnd.textContent = sonidoOn() ? '🔊' : '🔇'; btnSnd.title = sonidoOn() ? 'Callar los sonidos del Pupi' : 'Prender los sonidos del Pupi'; btnSnd.setAttribute('aria-label', btnSnd.title); }   // el lector de pantalla leía «botón» a secas (auditoría 22/10)
   btnSnd.onclick = function () { lsSet('aa_pupi_snd', sonidoOn() ? 'no' : null); pintarSnd(); cargarSonidos(); };
   pintarSnd();
   ctrl.querySelector('.pupi-chau').onclick = function () { irse('Bueno, me voy. Si me extrañás, tocá el 🧉 de arriba.'); };

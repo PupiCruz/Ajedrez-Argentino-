@@ -27,7 +27,9 @@ self.addEventListener('push', (e) => {
 // Al tocar la notificación: si la app ya está abierta, la trae al frente y la lleva a esa página; si no, la abre.
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();
-  const url = new URL((e.notification.data && e.notification.data.url) || '/', self.location.origin).href;
+  // Sólo páginas de ESTE sitio (auditoría 22/10): un aviso con la dirección de otro sitio abre la portada.
+  let url = self.location.origin + '/';
+  try { const u = new URL((e.notification.data && e.notification.data.url) || '/', self.location.origin); if (u.origin === self.location.origin) url = u.href; } catch (_) {}
   e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((ws) => {
     for (const w of ws) {
       if (new URL(w.url).origin === self.location.origin && 'focus' in w) { w.navigate(url).catch(() => {}); return w.focus(); }

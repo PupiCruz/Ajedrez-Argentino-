@@ -116,6 +116,7 @@ for (const suf in porTorneo) {
     const rd = j.roundDates || {}, fechas = Object.values(rd).map((x) => String(x).slice(0, 10));
     if (!fechas.some((f) => f >= desde && f <= hasta)) continue;
     const it = { rd };
+    if (j.source === 'dsb') it.src = 'dsb';   // la Bundesliga ya viene en hora argentina: la portada no la convierte
     if (j.standings && j.standings.length) it.s = top(j.standings, (p) => [p.name || '', p.title || '', p.fed || '', p.pts != null ? p.pts : '']);
     const te = j.teamStandings && j.teamStandings.teams;
     if (te && te.length && j.teamStandings.kind !== 'initial') it.eq = top(te, (q) => [q.name || '', q.fed || '', q.mp != null ? q.mp : (q.pts != null ? q.pts : '')]);

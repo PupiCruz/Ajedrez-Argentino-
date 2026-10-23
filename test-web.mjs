@@ -28,7 +28,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2577;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2615;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -10381,7 +10381,7 @@ console.log('\n=== 78. ☀️ Portada «Hoy» (21/10) ===');
   const H = new Function('var _HOY_DIAS = ["domingo","lunes","martes","miércoles","jueves","viernes","sábado"];'
     + 'function escHtml(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}'
     + 'function pgnNameToNatural(s){var p=s.split(","); return (p[1]||"").trim()+" "+p[0].trim();}'
-    + ['_hoyIso', '_hoyMs', '_hoyCreado', '_hoyRonda', '_hoyElegirPrincipal', '_hoyFalta', '_hoyRondasTxt', '_hoyNom', '_hoyPts', '_hoyFrase'].map(extraerFuncion).join('\n')
+    + ['_hoyIso', '_hoyArIso', '_hoyMs', '_hoyCreado', '_hoyRonda', '_hoyElegirPrincipal', '_hoyFalta', '_hoyRondasTxt', '_hoyNom', '_hoyPts', '_hoyFrase'].map(extraerFuncion).join('\n')
     + '; return { ms: _hoyMs, creado: _hoyCreado, ronda: _hoyRonda, elegir: _hoyElegirPrincipal, falta: _hoyFalta, rondas: _hoyRondasTxt, frase: _hoyFrase };')();
   // 21/10/2026 a las 15:00 hora argentina = 18:00 UTC.
   const AHORA = Date.UTC(2026, 9, 21, 18, 0);
@@ -10428,7 +10428,7 @@ console.log('\n=== 78. ☀️ Portada «Hoy» (21/10) ===');
   const H2 = new Function('var _HOY_DIAS = ["domingo","lunes","martes","miércoles","jueves","viernes","sábado"];'
     + 'function escHtml(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}'
     + 'function pgnNameToNatural(s){var p=s.split(","); return (p[1]||"").trim()+" "+p[0].trim();}'
-    + ['_hoyIso', '_hoyMs', '_hoyRonda', '_hoyElegirPrincipal', '_hoyElegirDestacados', '_hoyNom', '_hoyPts', '_hoyFrase', '_ejrActual', '_ejrAnotar'].map(extraerFuncion).join('\n')
+    + ['_hoyIso', '_hoyArIso', '_hoyMs', '_hoyRonda', '_hoyElegirPrincipal', '_hoyElegirDestacados', '_hoyNom', '_hoyPts', '_hoyFrase', '_ejrActual', '_ejrAnotar'].map(extraerFuncion).join('\n')
     + '; var _EJR_GRACIA = 72 * 3600e3; return { dest: _hoyElegirDestacados, nom: _hoyNom, frase: _hoyFrase, act: _ejrActual, anotar: _ejrAnotar };')();
   const rdHoy = { 1: '2026-10-21 19:30' };
   const A = T('a', 'live', { _d: { rd: rdHoy } }), B = T('b', 'live', { intl: true, _d: { rd: rdHoy } }), C = T('c', 'live');
@@ -10516,7 +10516,7 @@ console.log('\n=== 78. ☀️ Portada «Hoy» (21/10) ===');
   const DE = F({ month: '2026-10', players: [pj(1, 'Campos', 2266, [{ d: '2026-09', s: 2230 }], { female: true }), pj(2, 'Francisco', 2266, [{ d: '2026-09', s: 2268 }], { female: true })] });
   chk(DE.fem && !DE.fem.nueva && DE.fem.todas.length === 2, '👑 empatadas en Elo en el 1.º puesto: no hay «nueva N.º 1» (la de antes sigue arriba) y se nombra a las dos');
   // ⚡ Lo mejor de la semana
-  const M = new Function('var _hoyP = null;' + ['_hoyIso', '_hoyMomSemana', '_hoyMomElegido'].map(extraerFuncion).join('\n') + '; return { set: function (p) { _hoyP = p; }, sem: _hoyMomSemana, eleg: _hoyMomElegido };')();
+  const M = new Function('var _hoyP = null;' + ['_hoyIso', '_hoyArIso', '_hoyMomSemana', '_hoyMomElegido'].map(extraerFuncion).join('\n') + '; return { set: function (p) { _hoyP = p; }, sem: _hoyMomSemana, eleg: _hoyMomElegido };')();
   M.set({ mom: [{ fen: 'x w', sol: ['e2e4'], fecha: '2026.10.21', wElo: '2700', arg: 0 }, { fen: 'x b', sol: ['e7e5'], fecha: '2026.10.19', wElo: '2300', arg: 1 },
     { fen: 'x w', sol: ['a2a3'], fecha: '2026.10.10', wElo: '2800', arg: 1 }] });
   const sem = M.sem(AHORA);
@@ -10652,6 +10652,147 @@ console.log('\n=== 🔒 Auditoría 22/10 · Fase 1 (web urgente) ===');
   const deben = ['/', '/index.html', '/editar.html', '/sw.js', '/manifest.webmanifest', '/robots.txt', '/sitemap.xml', '/404.html', '/data/manifest.js', '/assets/chess.min.js', '/juegos/musica-en-el-tablero/index.html'];
   chk(deben.every((p) => !tapa(p)) && reglas.every((r) => r.length === 3 && r[1] === '/' && r[2] === '301'),
       '🔒 _redirects no toca nada de lo que la web usa (index, editar, sw.js, data/, assets/, juegos/) y cada regla lleva a la portada');
+}
+console.log('\n=== 🔒 Auditoría 22/10 · Fase 4 (web: calidad) ===');
+{
+  // I29: el día de la portada es el ARGENTINO, no el del aparato.
+  const H = new Function(['_hoyIso', '_hoyArIso', '_hoyArFecha', '_hoyZonaDe', '_hoyTzOff', '_hoyAHoraAr', '_hoyMs'].map(extraerFuncion).join('\n')
+    + '\n' + (SRC.match(/var _HOY_ZONAS = \{[\s\S]*?\n\};/) || [''])[0] + '\nvar _hoyTzFmt = {};'
+    + '; return { ar: _hoyArIso, fecha: _hoyArFecha, zona: _hoyZonaDe, conv: _hoyAHoraAr, ms: _hoyMs };')();
+  chk(H.ar(Date.UTC(2026, 9, 23, 2, 30)) === '2026-10-22' && H.ar(Date.UTC(2026, 9, 23, 3, 0)) === '2026-10-23',
+      '🇦🇷 el día de la portada es el argentino: a las 4:30 de España del 23 acá todavía es el 22');
+  const f = H.fecha(Date.UTC(2026, 9, 23, 2, 30));
+  chk(f.getDate() === 22 && f.getMonth() === 9 && f.getDay() === 4, 'y la fecha de arriba («jueves 22 de octubre») también', f.toString());
+  chk(/hoyD = _hoyArFecha\(ahora\)/.test(SRC) && !/_hoyIso\(new Date\(ahora/.test(SRC) && /var dd = _hoyArIso\(ahora \+ k \* 864e5\)/.test(SRC),
+      'la portada ya no usa el día del aparato en ningún lado (rondas, cartelera, resultados, jugadones)');
+  chk(/zAr = r\.hora && _hoyFueraAR\(\) \? ' \(hora argentina\)'/.test(SRC) && /_hoyFueraAR\(\) \? '<small class="hoy-zona">hora argentina<\/small>'/.test(SRC),
+      'para quien mira desde otro país, los horarios dicen «(hora argentina)» (tarjeta y cartelera)');
+  // I28: la hora de un torneo del exterior se pasa a hora argentina.
+  chk(H.zona('Valencia, España') === 'Europe/Madrid' && H.zona('Lima, Perú') === 'America/Lima' && H.zona('Mar del Plata, Argentina') === 'AR'
+      && H.zona('Riad, Arabia Saudita') === 'Asia/Riyadh' && H.zona('Mérida, México') === 'America/Mexico_City' && H.zona('Estados Unidos') === null && H.zona('') === null,
+      '🌍 la zona sale del país de la sede (el que está más a la derecha); Estados Unidos (varias zonas) o sin sede → ninguna');
+  chk(H.conv('2026-07-10 15:00', 'Europe/Madrid') === '2026-07-10 10:00' && H.conv('2026-12-10 15:00', 'Europe/Madrid') === '2026-12-10 11:00',
+      '🌍 15:00 en España es 10:00 acá en julio y 11:00 en diciembre (con su horario de verano)', H.conv('2026-07-10 15:00', 'Europe/Madrid') + ' / ' + H.conv('2026-12-10 15:00', 'Europe/Madrid'));
+  chk(H.conv('2026-10-25 15:00', 'Europe/Madrid') === '2026-10-25 11:00' && H.conv('2026-10-10 19:00', 'America/Lima') === '2026-10-10 21:00'
+      && H.conv('2026-10-10 23:30', 'Asia/Riyadh') === '2026-10-10 17:30' && H.conv('2026-10-10 01:00', 'America/Lima') === '2026-10-10 03:00',
+      '🌍 el día del cambio de hora, Perú, Arabia: bien (y si el día cambia, cambia)');
+  chk(H.conv('2026-10-10 19:00', null) === '2026-10-10' && H.conv('2026-10-10 19:00', 'AR') === '2026-10-10 19:00' && H.conv('2026-10-10', 'Europe/Madrid') === '2026-10-10',
+      '🌍 sin zona conocida queda sólo el día (sin hora inventada); en la Argentina, tal cual');
+  chk(/if \(o\.intl && \(\(cr && cr\.source\) \|\| \(bk && bk\.src\)\) !== 'dsb'\)/.test(SRC)
+      && SRC.indexOf('r.rd[k] = _hoyAHoraAr(r.rd[k], zona)') < SRC.indexOf("if (o.rdt && typeof o.rdt === 'object') Object.keys(o.rdt)")
+      && /if \(j\.source === 'dsb'\) it\.src = 'dsb';/.test(fs.readFileSync('herramientas/armar-portada.mjs', 'utf8')),
+      '🌍 sólo en los internacionales; lo que cargó el autor (día+hora) y la Bundesliga ya son hora argentina y no se tocan');
+
+  // I30: el ejercicio del día se vuelve a pedir cuando vence.
+  let pedidos = 0, pintados = [], falla = false, AHORA = Date.UTC(2026, 9, 22, 15, 0);
+  const store = {};
+  const EJ = new Function('fetch', 'localStorage', 'Date', 'TG_BASE', '_hoyPronto',
+    'var _ejdia = null, _ejdiaPedido = false, _ejdiaVence = 0;\n' + ['_ejdiaHasta', '_ejdiaCargar', '_ejdiaPintar'].map(extraerFuncion).join('\n')
+    + '; return { cargar: _ejdiaCargar, vence: function () { return _ejdiaVence; }, ej: function () { return _ejdia; } };')(
+    (u) => { pedidos++; if (falla) return Promise.reject(new Error('sin red')); return Promise.resolve({ ok: true, json: () => Promise.resolve({ ej: { id: 'e' + pedidos } }) }); },
+    { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } },
+    Object.assign(function (x) { return new globalThis.Date(x); }, { now: () => AHORA, UTC: globalThis.Date.UTC }), '/tg/', () => { pintados.push(1); });
+  EJ.cargar(); await new Promise((r) => setTimeout(r, 0)); await new Promise((r) => setTimeout(r, 0));
+  EJ.cargar();
+  chk(pedidos === 1 && EJ.ej() && EJ.ej().id === 'e1', '🧩 el ejercicio del día se pide una vez y queda (no se pide de más)', pedidos);
+  AHORA += 25 * 3600e3;   // la app quedó abierta hasta el día siguiente
+  EJ.cargar(); await new Promise((r) => setTimeout(r, 0)); await new Promise((r) => setTimeout(r, 0));
+  chk(pedidos === 2 && EJ.ej().id === 'e2', '🧩 al otro día (app abierta) se vuelve a pedir: ya no queda el de ayer', pedidos);
+  AHORA += 2 * 3600e3; falla = true;
+  EJ.cargar(); await new Promise((r) => setTimeout(r, 0)); await new Promise((r) => setTimeout(r, 0));
+  chk(EJ.vence() === AHORA + 60e3 && EJ.ej().id === 'e2', '🧩 sin red: queda el que había y se vuelve a probar en un minuto', EJ.vence() - AHORA);
+  chk(/if \(_hoyArIso\(ahora\) !== _hoyPintadoDia \|\| \(_ejdiaPedido && ahora >= _ejdiaVence\)\) \{ _hoyPronto\(\); return; \}/.test(SRC)
+      && /document\.addEventListener\('visibilitychange', function \(\) \{ if \(!document\.hidden\) \{ try \{ _hoyCuentas\(\); \}/.test(SRC),
+      '🧩 la portada se redibuja sola al pasar la medianoche, al vencer el ejercicio y al volver a la app');
+
+  // I31: las bajadas que fallan se vuelven a intentar.
+  const crStore = {}; let crPedidos = 0, crFalla = true;
+  const CR = new Function('fetch', 'window', '_dataV', 'var _ondemand = true, _crLoadedTour = {}, _crArgCache, _tourSearchIndex, _stdFedCache;\n'
+    + ['_crKeysForTour', '_crEnsureLoaded'].map(extraerFuncion).join('\n').replace('function _crEnsureLoaded', 'async function _crEnsureLoaded') + '; return { cargar: _crEnsureLoaded, marca: function (id) { return _crLoadedTour[id]; } };')(
+    async (u) => { crPedidos++; if (crFalla) throw new Error('sin red'); return { ok: true, status: 200, json: async () => ({ ok: 1 }) }; },
+    { __CR_INDEX__: ['cr2_tz_tz_1', 'cr2_tz_tz_1_c0'], __EMBEDDED_CR__: crStore }, () => '');
+  const r1 = await CR.cargar('tz_1');
+  chk(r1 === false && CR.marca('tz_1') === undefined, '📥 cruces: si la red falla se borra la marca (antes el torneo quedaba sin cruces hasta recargar)');
+  crFalla = false; const r2 = await CR.cargar('tz_1');
+  chk(r2 === true && crStore.cr2_tz_tz_1 && crStore.cr2_tz_tz_1_c0 && crPedidos === 4, '📥 y la próxima vez que se abre, baja', crPedidos);
+  const CR404 = new Function('fetch', 'window', '_dataV', 'var _ondemand = true, _crLoadedTour = {}, _crArgCache, _tourSearchIndex, _stdFedCache;\n'
+    + ['_crKeysForTour', '_crEnsureLoaded'].map(extraerFuncion).join('\n').replace('function _crEnsureLoaded', 'async function _crEnsureLoaded') + '; return { cargar: _crEnsureLoaded, marca: function (id) { return _crLoadedTour[id]; } };')(
+    async () => ({ ok: false, status: 404 }), { __CR_INDEX__: ['cr2_tz_tz_9'], __EMBEDDED_CR__: {} }, () => '');
+  chk((await CR404.cargar('tz_9')) === true && CR404.marca('tz_9') === true, '📥 un 404 es «no existe»: no se reintenta');
+  chk(/_puzLoaded = true; _puzFetchStarted = false; _trainDataStarted = false;/.test(SRC) && /_pracLoaded = true; _pracRenderStarted = false; _trainDataStarted = false;/.test(SRC)
+      && (SRC.match(/_trainReintentarBtn\(\) \+ '<\/div>'/g) || []).length === 2,
+      '📥 Entrenar: ejercicios y prácticas que no bajaron muestran «Reintentar» y se pueden volver a pedir');
+  chk(/\.catch\(function \(\) \{ _cumHistProm = null; return \[\]; \}\)/.test(SRC) && /_hoyPPedido = 'falla'; _hoyPReintento = Date\.now\(\) \+ 60e3;/.test(SRC)
+      && /if \(ok === false\) \{ setTimeout\(function \(\) \{ delete _hoyCargados\[P\.key\]; \}, 30000\); return; \}/.test(SRC),
+      '📥 portada: portada.json, los cumpleaños históricos y la tabla de los destacados se vuelven a pedir si fallaron');
+
+  // I19 + menores: cabeceras.
+  const HD = fs.readFileSync('_headers', 'utf8');
+  const csp = (HD.match(/^\s*Content-Security-Policy: (.*)$/m) || [, ''])[1];
+  chk(/frame-ancestors 'self'/.test(csp) && /object-src 'none'/.test(csp) && /base-uri 'self'/.test(csp) && /form-action 'self'/.test(csp),
+      '🔒 CSP: sin marcos ajenos, sin <object>, sin <base> ni formularios a otro sitio');
+  const conn = (csp.match(/connect-src ([^;]*)/) || [, ''])[1].split(/\s+/);
+  const deben = ["'self'", 'https://lichess.org', 'https://tablebase.lichess.ovh', 'https://cr-proxy.mmatiasscruz.workers.dev', 'https://ajedrez-vivo.mmatiasscruz.workers.dev',
+    'wss://ajedrez-vivo.mmatiasscruz.workers.dev', 'https://api.chess.com', 'https://*.livechesscloud.com', 'https://cloudflareinsights.com'];
+  chk(deben.every((x) => conn.indexOf(x) >= 0) && !conn.some((x) => x === '*' || x === 'https:' || /localhost/.test(x)),
+      '🔒 CSP connect-src: sólo los sitios que la web usa (sin comodines ni localhost)', conn.join(' '));
+  // Cada sitio al que la app le pide datos tiene que estar en la lista (si no, el navegador lo bloquea en la web publicada).
+  const hosts = new Set();
+  (SRC.match(/fetch\('https?:\/\/[a-z0-9.-]+/g) || []).forEach((x) => hosts.add(x.replace(/^fetch\('/, '')));
+  (SRC.match(/var (CR_PROXY|TG_BASE|AV_BASE|_TB_URL|_LCC_BASE|LI_AR|LI_AS) = '(https?:\/\/[a-z0-9.-]+)/g) || []).forEach((x) => hosts.add(x.replace(/^.*'/, '')));
+  const permitido = (h) => conn.some((c) => c === h || (c.indexOf('*.') >= 0 && new RegExp('^' + c.replace(/[.]/g, '\\.').replace('*', '[a-z0-9.-]+') + '$').test(h)));   // en la CSP, «*.» cubre también subdominios de varios niveles
+  const faltan = [...hosts].filter((h) => !permitido(h));
+  chk(hosts.size >= 6 && !faltan.length, '🔒 CSP: todos los sitios a los que la app les pide algo están en connect-src', faltan.join(' ') || [...hosts].join(' '));
+  chk(/Strict-Transport-Security: max-age=31536000; includeSubDomains/.test(HD) && /Permissions-Policy: camera=\(\), microphone=\(\), geolocation=\(\), payment=\(\)/.test(HD),
+      '🔒 HSTS con subdominios y Permissions-Policy (sin cámara, micrófono, ubicación ni pagos)');
+
+  // I20: la sesión no viaja en la dirección de las salas en vivo.
+  chk(!/'auth='\+encodeURIComponent/.test(SRC) && !/\?auth='\+encodeURIComponent/.test(SRC) && (SRC.match(/JSON\.stringify\(\{type:'auth',token:(auth|tok)\}\)/g) || []).length === 3
+      && /q\.push\('a=1'\)/.test(SRC) && (SRC.match(/\(tok\?'\?a=1':''\)/g) || []).length === 2,
+      '🔑 partidas, lobby y chat del torneo: ?a=1 en la dirección y la sesión como primer mensaje (ya no ?auth=)');
+  chk(/if\(window\.__AA_WEB__\) return '';\n      var qs=new URLSearchParams\(location\.search\|\|''\);\n      if\(qs\.get\('vivolocal'\)==='1'\)/.test(SRC),
+      '🔒 ?vivolocal=1 no hace nada en la web publicada (mandaba la sesión al localhost del visitante)');
+
+  // Reporte de errores de los visitantes.
+  const iErr = SRC.indexOf("fetch('https://ajedrez-vivo.mmatiasscruz.workers.dev/tg/error'"), iMan = SRC.indexOf('<script src="data/manifest.js"></script>');
+  const bloqErr = SRC.slice(SRC.lastIndexOf('<script>', iErr), SRC.indexOf('</script>', iErr));
+  chk(iErr > 0 && iErr < iMan && /if\(!window\.__AA_WEB__\) return;/.test(bloqErr) && /enviados>=3/.test(bloqErr) && /localStorage\.setItem\('aa_err'/.test(bloqErr),
+      '📛 errores: el script va antes que todo (caza hasta un error de sintaxis), sólo en la web publicada, 3 por visita y uno por día');
+  chk(/split\('='\)\[0\]/.test(bloqErr) && /ev\.target && ev\.target!==window/.test(bloqErr) && /if\(!nuestro\(ev\.filename\)\) return;/.test(bloqErr) && /Failed to fetch\|NetworkError/.test(bloqErr),
+      '📛 errores: la pantalla viaja sin valores, y no cuentan las imágenes que no cargan, las extensiones ni los cortes de red');
+
+  // Menores.
+  chk(!/window\.open\([^;]*'_blank'\)/.test(SRC) && !/window\.open\([^;]*\\'_blank\\'\)/.test(SRC), '🔒 todos los window.open abren con noopener');
+  const US = new Function(extraerFuncion('_urlSegura') + '; return _urlSegura;')();
+  chk(US('javascript:alert(1)') === '#' && US(' JavaScript:x') === '#' && US('data:text/html,x') === '#' && US('https://x.com/a') === 'https://x.com/a' && US('http://x.com') === 'http://x.com',
+      '🔒 los links que carga el autor (sitio, inscripción, crédito) sólo si son http(s)');
+  chk((SRC.match(/escHtml\(_urlSegura\(url\)\)/g) || []).length === 7 && /escHtml\(_urlSegura\(creditoUrl\)\)/.test(SRC) && /escHtml\(_urlSegura\(_lichUrl\)\)/.test(SRC),
+      '🔒 … usado en los 6 botones del torneo, el aviso sin partidas, el crédito del flyer y el de Lichess');
+  const HH = new Function('escHtml', extraerFuncion('_hoyHref') + '; return _hoyHref;')((s) => s);
+  chk(HH('/?ir=estudiar') === '/?ir=estudiar' && HH('?leccion=x') === '?leccion=x' && HH('//malo.com') === '/' && HH('/\\malo.com') === '/' && HH('javascript:x') === '/',
+      '🔒 «Seguí donde dejaste» y los links de la portada sólo llevan a páginas de este sitio');
+  const SW = fs.readFileSync('sw.js', 'utf8');
+  chk(/if \(u\.origin === self\.location\.origin\) url = u\.href;/.test(SW), '🔒 al tocar un aviso, sw.js sólo abre páginas de este sitio');
+  chk(/sessionStorage\.setItem\('aa_li_off', '1'\)/.test(SRC) && /_arActivo\(\{ search: q \}, window\.sessionStorage\)/.test(SRC) && /_colActivo\(_colQ0, sessionStorage\)/.test(SRC)
+      && /localStorage\.removeItem\('aa_li_off'\)/.test(SRC),
+      '🔒 ?lichess=0 / ?arena=0 / ?colgadas=0 duran sólo la sesión (un link ya no apaga nada para siempre)');
+  chk(/if \(!\(r && r\.ok\)\) return sub\.unsubscribe\(\)/.test(SRC) && /titulo: 'No se pudo guardar el cambio'/.test(SRC),
+      '🔔 avisos: si el bot no anotó el aparato se borra también en el navegador, y un cambio de temas que no se guardó avisa');
+  chk(/onload="if\(typeof Chess==='undefined'\)\{window\.__chessLibFailed=true;window\.__chessLibViejo=true;\}"/.test(SRC) && /Tu navegador es muy viejo para el tablero/.test(SRC),
+      '📱 un navegador anterior a iOS 14 ve un cartel en vez de un tablero mudo');
+  chk((SRC.match(/if \(ctx\.state === 'suspended' && ctx\.resume\) ctx\.resume\(\)/g) || []).length === 2 && /document\.addEventListener\('pointerdown', function \(\) \{\n  try \{ var A = window\.AudioContext/.test(SRC),
+      '🔈 el sonido de colgadas y jugadones se destraba con el primer toque (iPhone)');
+  chk(!/function _tdSaveCatField\(/.test(SRC) && !/function sqOrigin\(/.test(SRC), '🧹 sin el código muerto (_tdSaveCatField, sqOrigin)');
+
+  // Accesibilidad: botones de símbolo con nombre.
+  const mkB = (tx, title) => { const at = title ? { title } : {}; return { textContent: tx, getAttribute: (k) => (k in at ? at[k] : null), setAttribute: (k, v) => { at[k] = v; }, at }; };
+  const bs = [mkB('◀'), mkB('✕', 'Cerrar la ventana'), mkB('Ver más ›'), mkB('+'), mkB('?')];
+  const A11 = new Function((SRC.match(/var _A11Y_SIMBOLOS = \{[\s\S]*?\};/) || [''])[0] + '\n' + extraerFuncion('_a11yNombrar') + '; return _a11yNombrar;')();
+  A11({ querySelectorAll: () => bs, matches: () => false });
+  chk(bs[0].at['aria-label'] === 'Anterior' && bs[1].at['aria-label'] === 'Cerrar la ventana' && !('aria-label' in bs[2].at) && bs[3].at['aria-label'] === 'Más' && !('aria-label' in bs[4].at),
+      '♿ los botones de símbolo reciben nombre: su title o lo que quiere decir el símbolo (los que tienen palabras no se tocan)', JSON.stringify(bs.map((b) => b.at)));
+  chk(/new MutationObserver\(function \(ms\) \{/.test(SRC) && /requestIdleCallback\(correr, \{ timeout: 1500 \}\)/.test(SRC) && /btnSnd\.setAttribute\('aria-label', btnSnd\.title\)/.test(SRC),
+      '♿ también los que se agregan después (de a tandas, con el navegador libre) y el 🔊 del Pupi');
 }
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
 console.log('   Corrieron ' + corridas + ' de ' + ESPERADAS + ' comprobaciones.'

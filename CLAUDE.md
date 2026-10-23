@@ -205,6 +205,7 @@ lugares se pudre solo. (Pasó: este archivo decía 394 cuando el banco de la web
 | `vivo-worker/test-titulados.mjs` | 🏆 avisos de los Titled Tuesday/Thursday de Chess.com en #en-vivo + 🌐 ratings online en /jugador | `cd vivo-worker` y `node test-titulados.mjs` |
 | `vivo-worker/test-ranking-musica.mjs` | 🎵 ranking de Música en el Tablero: sólo con cuenta (cr-proxy), frenos (30 s, canción completa, tope de puntos), orden, 100 mejores | `cd vivo-worker` y `node test-ranking-musica.mjs` |
 | `vivo-worker/test-token-lichess.mjs` | 🔑 aviso por privado al autor si el token de Lichess de cr-proxy (`LICHESS_TOKEN`, permiso study:read) falla o vence | `cd vivo-worker` y `node test-token-lichess.mjs` |
+| `vivo-worker/test-errores.mjs` | 📛 errores de la web en los visitantes: limpieza (sin datos personales), se juntan los iguales, freno, `/errores` del bot | `cd vivo-worker` y `node test-errores.mjs` |
 | `vivo-worker/test-avisos.mjs` | 🔔 avisos al teléfono (Web Push): cifrado igual al ejemplo del RFC 8291, firma VAPID, aparatos y temas por cuenta, cola de a 40, noche, racha de las 22 | `cd vivo-worker` y `node test-avisos.mjs` |
 
 Ya cazaron varios bugs antes de que llegaran al sitio. Si uno falla, **no publicar**.

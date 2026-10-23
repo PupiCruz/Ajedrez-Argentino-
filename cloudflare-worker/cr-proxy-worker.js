@@ -182,7 +182,14 @@ export default {
     if (reqUrl.pathname === '/auth/lichess') return authLichess(request, env);
     if (reqUrl.pathname === '/me')           return authMe(request, env);
     if (reqUrl.pathname === '/logout')       return authLogout(request, env);
-    if (reqUrl.pathname.startsWith('/u/'))   return publicProfile(request, reqUrl, env);   // GET público → perfil de <usuario>
+    if (reqUrl.pathname.startsWith('/u/')) {   // GET público → perfil de <usuario>
+      // Sin sesión es igual para todos → caché del borde. Con sesión trae "¿lo sigo?" → sin caché, con freno.
+      if (request.headers.get('Authorization')) {
+        if (!rlAllow('upriv:' + ipDe(request), 60)) return tooMany();
+        return publicProfile(request, reqUrl, env);
+      }
+      return cachePublico(request, reqUrl, ctx, '/u', { h: perfilHandle(reqUrl).toLowerCase() }, PUB_CACHE_PERFIL, () => publicProfile(request, reqUrl, env));
+    }
     if (reqUrl.pathname === '/follow')       return followToggle(request, env, true);      // POST Bearer {userId}
     if (reqUrl.pathname === '/unfollow')     return followToggle(request, env, false);     // POST Bearer {userId}
     if (reqUrl.pathname === '/following')     return followingList(request, env);           // GET Bearer → a quién sigo
@@ -195,9 +202,15 @@ export default {
     // ── Rating de partidas en vivo (PvP) — propio del sitio, server-authoritative ──
     if (reqUrl.pathname === '/rating/me')     return ratingMe(request, env);      // GET  Bearer → mis 3 ratings
     if (reqUrl.pathname === '/rating/report') return ratingReport(request, env);  // POST secreto (sólo el worker de vivo)
-    if (reqUrl.pathname === '/rating/games')  return ratingGames(request, reqUrl, env); // GET público ?user= → historial de partidas
-    if (reqUrl.pathname === '/rating/game')   return ratingGame(request, reqUrl, env);  // GET público ?id= → una partida (link compartible)
-    if (reqUrl.pathname === '/rating/top')    return ratingTop(request, reqUrl, env);   // GET público → top del sitio por ritmo
+    // Las tres públicas: iguales para todos → caché del borde (auditoría 22/10: sin caché ni freno, un bucle
+    // de pedidos se comía el cupo diario de la base, y con eso el login y el rating de toda la web).
+    if (reqUrl.pathname === '/rating/games')  return cachePublico(request, reqUrl, ctx, '/rating/games',   // GET público ?user= → historial de partidas
+      { user: String(reqUrl.searchParams.get('user') || '').trim().slice(0, 40).toLowerCase(), limit: String(parseInt(reqUrl.searchParams.get('limit') || '500', 10) || 500) },
+      PUB_CACHE_LISTA, () => ratingGames(request, reqUrl, env));
+    if (reqUrl.pathname === '/rating/game')   return cachePublico(request, reqUrl, ctx, '/rating/game',    // GET público ?id= → una partida (link compartible)
+      { id: String(reqUrl.searchParams.get('id') || '').trim().slice(0, 80) }, PUB_CACHE_LISTA, () => ratingGame(request, reqUrl, env));
+    if (reqUrl.pathname === '/rating/top')    return cachePublico(request, reqUrl, ctx, '/rating/top',     // GET público → top del sitio por ritmo
+      { limit: String(parseInt(reqUrl.searchParams.get('limit') || '20', 10) || 20) }, PUB_CACHE_LISTA, () => ratingTop(request, reqUrl, env));
 
     // ── Moderación de los chats (banear/silenciar) — sólo mods (sesión) o el vivo-worker (X-Vivo-Secret) ──
     if (reqUrl.pathname === '/mod/ban')       return modBan(request, env, true);    // POST → banear (bloquea login)
@@ -212,7 +225,7 @@ export default {
 
     // ── Colaboradores (el caballito ♞ de quien dona) ──
     if (reqUrl.pathname === '/patron/claim')  return patronClaim(request, env);        // POST Bearer → "ya doné"
-    if (reqUrl.pathname === '/patron/list')   return patronList(request, env);         // GET público → quiénes tienen el ♞
+    if (reqUrl.pathname === '/patron/list')   return cachePublico(request, reqUrl, ctx, '/patron/list', {}, PUB_CACHE_LISTA, () => patronList(request, env));   // GET público → quiénes tienen el ♞
     if (reqUrl.pathname === '/mod/patron/claims') return modPatronClaims(request, env); // GET  → avisos sin revisar
     if (reqUrl.pathname === '/mod/patron/grant')  return modPatronGrant(request, env);  // POST → dar / renovar / quitar
     if (reqUrl.pathname === '/mod/patron/claim/done') return modPatronClaimDone(request, env); // POST → descartar aviso
@@ -229,7 +242,7 @@ export default {
     if (reqUrl.pathname === '/admin/save') return adminSave(request, env);
 
     // ── Descarga de Excel de info64 (POST → JSON {url} → bajar el .xlsx) ──
-    if (reqUrl.pathname === '/i64xls') return i64Xls(reqUrl, ctx);
+    if (reqUrl.pathname === '/i64xls') return i64Xls(reqUrl, ctx, request);
 
     // ── Descarga de las PARTIDAS (PGN) de un torneo de Chess-Results ──
     if (reqUrl.pathname === '/crpgn') return crPgn(reqUrl, ctx, request);
@@ -238,7 +251,7 @@ export default {
     if (reqUrl.pathname === '/sipgn') return siPgn(reqUrl, ctx, request);
 
     // ── Tablas de vesus.org (clasificación + emparejamientos en JSON) ──
-    if (reqUrl.pathname === '/vspgn') return vsPgn(reqUrl, ctx);
+    if (reqUrl.pathname === '/vspgn') return vsPgn(reqUrl, ctx, request);
 
     // ── Proxy con caché para el broadcast de Lichess (mata el 429 del vivo) ──
     if (reqUrl.pathname === '/libc') { _liToken = (env && env.LICHESS_TOKEN) || ''; return liBc(reqUrl, ctx, request); }
@@ -260,6 +273,12 @@ export default {
     if (t.protocol !== 'https:' || !(ALLOWED_HOST.test(t.hostname) || ALLOWED_HOST_DSB.test(t.hostname))) {
       return errJson('Host no permitido (sólo chess-results.com y ergebnisdienst.schachbund.de)', 403);
     }
+    // Y sólo las páginas que usa la app (auditoría 22/10: pasaba cualquier página de esos sitios, y cada
+    // dirección inventada era un pedido más a Chess-Results): la del torneo en Chess-Results
+    // (tnrNNN.aspx, con sus parámetros) y las .php del Ergebnisdienst.
+    const rutaOk = ALLOWED_HOST.test(t.hostname) ? /^\/tnr\d{1,9}\.aspx$/i.test(t.pathname)
+                                                 : /^\/(saison[\w-]+\/)?[a-z]{1,30}\.php$/i.test(t.pathname);
+    if (!rutaOk) return errJson('Página no permitida', 403);
 
     // Caché: si ya bajamos esto hace poco, devolverlo sin volver a chess-results.
     // La llave es SÓLO la dirección de Chess-Results (auditoría 23/09): antes era el pedido entero, y
@@ -290,6 +309,12 @@ export default {
       ctx.waitUntil(guardarError(cache, cacheKey, upstream.status));
       return errJson(t.hostname + ' no está respondiendo (HTTP ' + upstream.status + ')', upstream.status);
     }
+    // Un torneo que no existe también se recuerda un minuto (auditoría 22/10): si no, los números inventados
+    // le pegaban a Chess-Results en cada pedido.
+    if (upstream.status === 404) {
+      ctx.waitUntil(guardarError(cache, cacheKey, 404));
+      return errJson('Esa página no existe en ' + t.hostname, 404);
+    }
 
     const headers = corsHeaders();
     const ct = upstream.headers.get('content-type');
@@ -309,7 +334,10 @@ export default {
 // info64 exporta en DOS pasos: POST al endpoint (ej. .../standings_xls) devuelve un JSON
 // { "url": "/media/....xlsx" } y recién ahí se baja el archivo. El navegador no puede hacer
 // ese POST cross-origin, así que lo hace el Worker y devuelve los bytes con CORS.
-async function i64Xls(reqUrl, ctx) {
+// Sólo las TRES exportaciones que pide la app (_i64ExportUrl en index.html): /<torneo>/xls (ranking inicial),
+// /<torneo>/standings_xls (clasificación) y /<torneo>/<ronda>/xls. Antes pasaba cualquier ruta de info64.
+const I64_RUTA_OK = /^\/[A-Za-z0-9_.~-]{1,160}\/(xls|standings_xls|\d{1,3}\/xls)$/;
+async function i64Xls(reqUrl, ctx, request) {
   const target = reqUrl.searchParams.get('url');
   if (!target) return errJson('Falta el parámetro ?url=', 400);
   let t;
@@ -318,21 +346,25 @@ async function i64Xls(reqUrl, ctx) {
   if (t.protocol !== 'https:' || !ALLOWED_HOST_I64.test(t.hostname)) {
     return errJson('Host no permitido (sólo info64.org)', 403);
   }
+  if (!I64_RUTA_OK.test(t.pathname)) return errJson('Ruta no permitida (sólo las exportaciones de info64)', 403);
+  const limpia = 'https://' + t.hostname.toLowerCase() + t.pathname;   // sin parámetros: no se esquiva la caché
 
   // Caché: la respuesta final (el .xlsx) la guardamos 10 min, igual que el proxy de CR.
   const cache = caches.default;
-  const cacheKey = llaveCache(reqUrl, '/i64xls', { url: t.toString() });
+  const cacheKey = llaveCache(reqUrl, '/i64xls', { url: limpia });
   const hit = await cache.match(cacheKey);
   if (hit) {
     const errGuardado = errorGuardadoResp(hit);
     if (errGuardado) return errGuardado;
     if (!(reqUrl.searchParams.get('fresco') === '1' && tablaVieja(hit))) return tablaClientResp(hit);
   }
+  // Lo que va a info64 (dos pedidos cada vez) con freno por IP (auditoría 22/10: no tenía ninguno).
+  if (!rlAllow('i64miss:' + ipDe(request), 30)) return tooMany();
 
   // Paso 1: POST al endpoint de export → JSON { url: "/media/....xlsx" }
   let meta;
   try {
-    const r1 = await fetch(t.toString(), {
+    const r1 = await fetch(limpia, {
       method: 'POST',
       headers: {
         'User-Agent': 'Mozilla/5.0 (compatible; AjedrezArgentinoBot/1.0)',
@@ -354,16 +386,29 @@ async function i64Xls(reqUrl, ctx) {
   }
   if (!meta || !meta.url) return errJson('info64 no devolvió la URL del archivo', 502);
 
-  // Paso 2: bajar el .xlsx (la url viene relativa al dominio de info64).
+  // Paso 2: bajar el .xlsx (la url viene relativa al dominio de info64). Tiene que seguir siendo de info64:
+  // si la respuesta trajera una dirección de otro sitio, el Worker la bajaba y se la entregaba a cualquiera
+  // (proxy abierto, auditoría 22/10). Lo mismo si la bajada termina en otro sitio por una redirección.
+  let archivo;
+  try { archivo = new URL(String(meta.url), t.origin); } catch (e) { archivo = null; }
+  if (!archivo || archivo.protocol !== 'https:' || !ALLOWED_HOST_I64.test(archivo.hostname)) {
+    return errJson('info64 devolvió una dirección que no es suya', 502);
+  }
   let upstream;
   try {
-    upstream = await fetch(new URL(meta.url, t.origin).toString(), {
+    upstream = await fetch(archivo.toString(), {
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AjedrezArgentinoBot/1.0)' },
       redirect: 'follow',
     });
   } catch (e) {
     ctx.waitUntil(guardarError(cache, cacheKey, 502));
     return errJson('No se pudo bajar el .xlsx de info64: ' + e.message, 502);
+  }
+  let final = null;
+  try { final = upstream.url ? new URL(upstream.url) : null; } catch (e) { final = null; }
+  if (final && !ALLOWED_HOST_I64.test(final.hostname)) {
+    try { await upstream.body?.cancel(); } catch (e) {}
+    return errJson('info64 redirigió a otro sitio', 502);
   }
   if (esErrorDeServidor(upstream.status)) {
     ctx.waitUntil(guardarError(cache, cacheKey, upstream.status));
@@ -410,6 +455,7 @@ async function i64Xls(reqUrl, ctx) {
 //     filtro hay que pedírselo a Chess-Results, no hacerlo acá.
 // ─────────────────────────────────────────────────────────────────────────────
 const CR_PGN_MAX_FIDE = 20;   // tope de jugadores por pedido (cada uno = 2 subrequests; el Worker permite 50)
+const CR_PGN_SUBPEDIDOS_MIN = 120;   // pedidos a Chess-Results por minuto y por IP (lo guardado no cuenta)
 // El host llega como TEXTO (no como dirección ya armada), así que no alcanza con mirar cómo termina:
 // "otrositio.com?.chess-results.com" terminaba bien y la dirección que se armaba iba a otrositio.com
 // (auditoría 23/09, comprobado contra el Worker publicado). Sólo letras, números, guiones y puntos.
@@ -423,8 +469,11 @@ async function crPgn(reqUrl, ctx, request) {
   let host = (reqUrl.searchParams.get('host') || 'chess-results.com').trim().toLowerCase();
   if (!CR_HOST_TEXTO.test(host)) return errJson('Host no permitido (sólo chess-results.com)', 403);
 
-  const fideList = (reqUrl.searchParams.get('fide') || '')
-    .split(',').map(s => s.trim()).filter(s => /^\d{1,9}$/.test(s)).slice(0, CR_PGN_MAX_FIDE);
+  // Sin repetidos y en orden (auditoría 22/10): "1,2" y "2,1" eran dos copias distintas, y cada una le
+  // costaba a Chess-Results un pedido por jugador.
+  const fideList = Array.from(new Set((reqUrl.searchParams.get('fide') || '')
+    .split(',').map(s => s.trim().replace(/^0+(?=\d)/, '')).filter(s => /^\d{1,9}$/.test(s))))
+    .sort((a, b) => +a - +b).slice(0, CR_PGN_MAX_FIDE);
 
   // rd=N (opcional): filtrar por ronda. '' = todas (como siempre).
   const rdRaw = (reqUrl.searchParams.get('rd') || '').trim();
@@ -448,7 +497,9 @@ async function crPgn(reqUrl, ctx, request) {
   const cacheKey = llaveCache(reqUrl, '/crpgn', params);
   const cacheKeyStr = cacheKey.url;
   const hit = await cache.match(cacheKey);
-  if (!hit && !rlAllow('crpgnmiss:' + ipDe(request), 30)) return tooMany();
+  // El freno cuenta los pedidos que de verdad van a Chess-Results (auditoría 22/10): uno con 20 jugadores
+  // son 21 (el formulario + uno por jugador). Antes contaba 1, y una IP mandaba 630 por minuto.
+  if (!hit && !rlGastar('crpgnmiss:' + ipDe(request), CR_PGN_SUBPEDIDOS_MIN, 1 + fideList.length)) return tooMany();
   if (hit) {
     const errGuardado = errorGuardadoResp(hit);
     if (errGuardado) return errGuardado;
@@ -693,20 +744,31 @@ async function liBc(reqUrl, ctx, request) {
     // "Ocupado" sólo mientras la copia sea reciente (LI_BUSY_MAX_STALE): si no, una exportación lenta o
     // colgada dejaba la copia congelada en la jugada que tenía.
     const vence = fetchedAt + hitFresh * 1000;   // desde cuándo está vieja (una ronda terminada, 1 h después)
-    if (isPgn) await liTurnoAnotar(cache, reqUrl, cacheKeyStr, vence);
+    // Ronda TERMINADA: su refresco va "en frío" (cualquiera puede juntar rondas viejas de cualquier
+    // transmisión y pedirlas a la hora: auditoría 22/10). No entra en el turno de las que están en vivo.
+    const terminada = isPgn && hitFresh === LI_FIN_FRESH;
+    if (isPgn && !terminada) await liTurnoAnotar(cache, reqUrl, cacheKeyStr, vence);
     const ocupado = isPgn && !liInflightVivo(cacheKeyStr) && (await liExportDesde(cache, reqUrl)) > Date.now() - LI_BUSY_MAX_STALE * 1000;
     let estado = 'vieja-refrescando';
     if (ocupado) estado = 'vieja-ocupado';
     else if (await liIsPaused(cache, reqUrl)) estado = 'vieja-pausa';
-    else if (isPgn && !(await liEsSuTurno(cache, reqUrl, cacheKeyStr, vence))) estado = 'vieja-turno';
-    else ctx.waitUntil(liRevalidate(cache, cacheKey, cacheKeyStr, limpia, isPgn, contentType, storeTtl, reqUrl, freshTtl));
+    else if (isPgn && !terminada && !(await liEsSuTurno(cache, reqUrl, cacheKeyStr, vence))) estado = 'vieja-turno';
+    // Un mismo visitante no dispara más de 60 refrescos por minuto, y los de rondas terminadas cuentan en el
+    // tope en frío. Si no, se sirve la copia (que ya es buena) sin ir a Lichess.
+    else if (!liInflightVivo(cacheKeyStr) && (!rlAllow('lirev:' + ipDe(request), 60) || (terminada && !(await liFrioPermitido(cache, reqUrl))))) estado = 'vieja-freno';
+    else ctx.waitUntil(liRevalidate(cache, cacheKey, cacheKeyStr, limpia, isPgn, contentType, storeTtl, reqUrl, freshTtl, terminada));
     return await liClientResp(hit, contentType, freshTtl, estado, ageMs);
   }
 
   // No hay NADA cacheado (primer visitante del torneo, o expiró toda la ventana de gracia):
   // hay que bajar ahora, con dedup para que muchos misses simultáneos compartan una sola bajada.
   // Freno por IP SÓLO para esto (lo que va a Lichess): lo guardado se sirve siempre sin límite.
-  if (!liInflightVivo(cacheKeyStr) && !rlAllow('limiss:' + ipDe(request), 60)) return tooMany();
+  // Además, el tope EN FRÍO de todo el centro de datos (auditoría 22/10: con ids inventados desde varias
+  // IP se gastaba el cupo del token del sitio). Lo que ya se está bajando para otro no cuenta: se comparte.
+  if (!liInflightVivo(cacheKeyStr)) {
+    if (!rlAllow('limiss:' + ipDe(request), 60)) return tooMany();
+    if (!(await liFrioPermitido(cache, reqUrl))) return errJson('Lichess está ocupado: probá de nuevo en un momento.', 429);
+  }
   let r;
   try {
     // La copia la guarda la bajada misma (bajo ctx.waitUntil): si el visitante se va antes, igual queda.
@@ -723,7 +785,9 @@ async function liBc(reqUrl, ctx, request) {
     // Sin copia previa que servir (el primer pedido y Lichess frenando). Si el 429 fue por chocar con
     // otra exportación en curso (lo normal al abrir una ronda en frío: sus 4-5 partes llegan juntas), la
     // app ya lo reintenta de a una y no es un freno de verdad: no se arma la pausa.
-    if (r.status === 429 && !r.choque) ctx.waitUntil(liPause(cache, reqUrl));
+    // Este 429 es de algo EN FRÍO: pausa sólo lo que va en frío, nunca el refresco de las transmisiones
+    // ya guardadas (antes las congelaba a todas: auditoría 22/10).
+    if (r.status === 429 && !r.choque) ctx.waitUntil(liFrioPausar(cache, reqUrl));
     const h = corsHeaders();
     h.set('Content-Type', contentType);
     h.set('Cache-Control', 'no-store');
@@ -851,11 +915,12 @@ function liConPlazo(e) {
 
 // Refresco en segundo plano. CLAVE: si Lichess devuelve 429/5xx o se cae, NO tocamos la caché
 // → seguimos sirviendo la última copia buena. El tablero nunca queda vacío por un pico.
-async function liRevalidate(cache, cacheKey, cacheKeyStr, targetUrl, isPgn, contentType, storeTtl, reqUrl, freshTtl) {
+async function liRevalidate(cache, cacheKey, cacheKeyStr, targetUrl, isPgn, contentType, storeTtl, reqUrl, freshTtl, frio) {
   let r;
   try { r = await liFetchBuffered(cacheKeyStr, targetUrl, isPgn, cache, reqUrl); }
   catch (e) { return; }        // Lichess caído → conservamos lo viejo-pero-bueno
-  if (r.status === 429) { if (!r.choque) await liPause(cache, reqUrl); return; }   // y un minuto sin pedirle nada
+  // y un minuto sin pedirle nada (si era una ronda terminada, sólo a lo que va en frío)
+  if (r.status === 429) { if (!r.choque) await (frio ? liFrioPausar(cache, reqUrl) : liPause(cache, reqUrl)); return; }
   if (!r.ok) return;           // 5xx → idem: NO pisamos la copia buena
   const copia = liStoredCopy(r.buf, contentType, isPgn, freshTtl, storeTtl);
   await cache.put(cacheKey, copia);
@@ -950,6 +1015,50 @@ async function liPause(cache, reqUrl) {
   } catch (e) {}
 }
 
+// ── Lo que sale a Lichess "en frío" (auditoría 22/10/2026) ───────────────────────────────────────────
+// En frío = algo que no está guardado (una ronda que nadie pidió antes, un id inventado) o el refresco de una
+// ronda TERMINADA. Cualquiera puede provocarlo, y cada uno gasta el cupo del token del sitio. Antes, con ids
+// inventados desde dos computadoras se llegaba al 429, y ese 429 pausaba un minuto el refresco de TODAS las
+// transmisiones: repitiéndolo, el vivo quedaba congelado. Ahora:
+//   · un tope de LI_FRIO_POR_MIN por minuto para TODO el centro de datos (no por IP: las IPv6 son infinitas);
+//   · un 429 de algo en frío pausa sólo lo que va en frío (LI_FRIO_PAUSA). El refresco de las rondas que ya
+//     están guardadas sigue andando: lo que miran los visitantes no se congela.
+const LI_FRIO_POR_MIN = 40;   // el cupo del token es ~120/min: queda lugar de sobra para el refresco del vivo
+const LI_FRIO_PAUSA = 60;
+// Lo de este isolate (la Cache API no suma de forma atómica: esto la respalda), atado a la caché que se usa
+// (en Cloudflare es siempre la misma; el banco de pruebas estrena una por prueba y así arranca de cero).
+const _liFrioMem = new WeakMap();
+function liFrioMem(cache) { let m = _liFrioMem.get(cache); if (!m) { m = { t: [], pausa: 0 }; _liFrioMem.set(cache, m); } return m; }
+function liFrioKey(reqUrl, min) { return new Request(reqUrl.origin + '/__lifrio?m=' + min); }
+function liFrioPausaKey(reqUrl) { return new Request(reqUrl.origin + '/__lifriopausa'); }
+async function liFrioPermitido(cache, reqUrl) {
+  const ahora = Date.now(), mem = liFrioMem(cache);
+  if (ahora < mem.pausa) return false;
+  try {
+    const p = await cache.match(liFrioPausaKey(reqUrl));
+    const u = p ? Number(p.headers.get('x-fa-until') || 0) : 0;
+    if (ahora < u) { mem.pausa = u; return false; }
+  } catch (e) {}
+  while (mem.t.length && ahora - mem.t[0] >= 60000) mem.t.shift();
+  if (mem.t.length >= LI_FRIO_POR_MIN) return false;
+  const min = Math.floor(ahora / 60000), key = liFrioKey(reqUrl, min);
+  let n = 0;
+  try { const m = await cache.match(key); n = m ? Number(m.headers.get('x-fa-n') || 0) : 0; } catch (e) {}
+  if (n >= LI_FRIO_POR_MIN) return false;
+  mem.t.push(ahora);
+  try { await cache.put(key, new Response('', { headers: { 'Cache-Control': 'public, max-age=120', 'x-fa-n': String(n + 1) } })); } catch (e) {}
+  return true;
+}
+async function liFrioPausar(cache, reqUrl) {
+  const until = Date.now() + LI_FRIO_PAUSA * 1000, mem = liFrioMem(cache);
+  if (until > mem.pausa) mem.pausa = until;
+  try {
+    await cache.put(liFrioPausaKey(reqUrl), new Response('', {
+      headers: { 'Cache-Control': 'public, max-age=' + LI_FRIO_PAUSA, 'x-fa-until': String(until) },
+    }));
+  } catch (e) {}
+}
+
 // Copia para GUARDAR en la caché: TTL largo (fresca + gracia) + sello de tiempo para medir frescura +
 // cuántos segundos dura fresca (`x-fa-fresh`: una ronda terminada no dura lo mismo que una en vivo).
 function liStoredResp(buf, contentType, storeTtl, freshTtl) {
@@ -1002,15 +1111,19 @@ const VS_CACHE_SECONDS = 60;
 // vsScrapeDocId() lo actualiza solo y esta variable queda pisada mientras viva el isolate.
 let VS_DOCID = '2b7be2c69372d525856bc40916204211';
 
-async function vsPgn(reqUrl, ctx) {
+async function vsPgn(reqUrl, ctx, request) {
   const key = (reqUrl.searchParams.get('key') || '').trim();
   if (!/^[A-Za-z0-9]{4,20}$/.test(key)) return errJson('Parámetro key inválido (shortKey de vesus)', 400);
 
-  // Caché por URL: muchos visitantes mirando el mismo torneo comparten esta respuesta.
+  // Caché por torneo: muchos visitantes mirando el mismo torneo comparten esta respuesta. La llave es SÓLO
+  // la clave del torneo (auditoría 22/10: era la dirección entera, y con "&x=1", "&x=2"… cada pedido salía
+  // nuevo hacia vesus). Lo que no está guardado tiene freno por IP, y un torneo que no existe se recuerda
+  // un minuto (si no, las claves inventadas le pegaban a vesus siempre).
   const cache = caches.default;
-  const cacheKey = new Request(reqUrl.toString());
+  const cacheKey = llaveCache(reqUrl, '/vspgn', { key });
   const hit = await cache.match(cacheKey);
   if (hit) return hit;
+  if (!rlAllow('vsmiss:' + ipDe(request), 30)) return tooMany();
 
   let data;
   try {
@@ -1023,7 +1136,13 @@ async function vsPgn(reqUrl, ctx) {
     return errJson('No se pudo bajar de vesus: ' + e.message, 502);
   }
   if (data === '__BADDOC__') return errJson('vesus cambió su API (docId) y no se pudo resolver', 502);
-  if (data == null) return errJson('vesus no devolvió datos para ese torneo (¿shortKey correcto?)', 404);
+  if (data == null) {
+    const no = errJson('vesus no devolvió datos para ese torneo (¿shortKey correcto?)', 404);
+    const copiaNo = new Response(no.clone().body, { status: 404, headers: new Headers(no.headers) });
+    copiaNo.headers.set('Cache-Control', 'public, max-age=60');
+    ctx.waitUntil(cache.put(cacheKey, copiaNo).catch(() => {}));
+    return no;
+  }
 
   const headers = corsHeaders();
   headers.set('Content-Type', 'application/json; charset=utf-8');
@@ -1410,10 +1529,60 @@ function rlAllow(key, maxPorMinuto) {
   }
   return true;
 }
+// Como rlAllow, pero un pedido puede valer más de uno (los que salen a varios lados a la vez).
+function rlGastar(key, maxPorMinuto, n) {
+  const now = Date.now();
+  const arr = (_rl.get(key) || []).filter((t) => now - t < 60000);
+  if (arr.length + n > maxPorMinuto) { _rl.set(key, arr); return false; }
+  for (let i = 0; i < n; i++) arr.push(now);
+  _rl.set(key, arr);
+  return true;
+}
 function tooMany() { return errJson('Estás yendo demasiado rápido. Esperá un momento.', 429); }
 
 // Quién pide (para los frenos por dirección). Cloudflare la pone siempre; sin ella, un balde común.
-function ipDe(request) { return (request && request.headers && request.headers.get('CF-Connecting-IP')) || 'sin-ip'; }
+// IPv6: se cuenta por red /64 (las primeras 4 partes), no por dirección. Una sola conexión de casa recibe
+// millones de direcciones IPv6 y cada una era un balde nuevo: los frenos no frenaban (auditoría 22/10).
+function ipDe(request) {
+  const ip = (request && request.headers && request.headers.get('CF-Connecting-IP')) || 'sin-ip';
+  return ip.indexOf(':') >= 0 ? ipv6Red64(ip) : ip;
+}
+function ipv6Red64(ip) {
+  const s = String(ip).toLowerCase().split('%')[0];
+  const [cab, cola] = s.split('::');
+  const a = cab ? cab.split(':') : [], b = cola !== undefined && cola ? cola.split(':') : [];
+  const partes = cola === undefined ? a : a.concat(new Array(Math.max(0, 8 - a.length - b.length)).fill('0'), b);
+  return partes.slice(0, 4).map((x) => (x || '0').replace(/^0+(?=.)/, '')).join(':') + '::/64';
+}
+
+// ── Páginas públicas que leen la base (perfil, ranking, historial, colaboradores) ── (auditoría 22/10)
+// Sin caché ni freno, cada visita eran varias consultas que recorrían tablas enteras: un bucle de pedidos se
+// comía el cupo diario de lecturas de la base y se caían el login y el rating de toda la web. Ahora:
+// la respuesta queda en la caché del borde unos segundos (todos los que miran lo mismo comparten UNA consulta)
+// y lo que no está guardado tiene freno por IP. Sin caché disponible (el banco de pruebas), se responde directo.
+const PUB_CACHE_PERFIL = 30;   // un perfil: si alguien edita su ficha, lo ve al instante (pide con su sesión, sin caché)
+const PUB_CACHE_LISTA = 30;    // ranking, historial, una partida, colaboradores
+function perfilHandle(reqUrl) {
+  let h = '';
+  try { h = decodeURIComponent(reqUrl.pathname.slice(3)); } catch (e) { h = reqUrl.pathname.slice(3); }
+  return String(h).replace(/\/+$/, '').trim().slice(0, 40);
+}
+async function cachePublico(request, reqUrl, ctx, ruta, params, ttl, armar) {
+  const cache = (typeof caches !== 'undefined' && caches && caches.default) || null;
+  if (request.method !== 'GET' || !cache) return armar();
+  const key = llaveCache(reqUrl, '/__pub' + ruta, params);
+  const hit = await cache.match(key);
+  if (hit) return hit;
+  if (!rlAllow('pub:' + ipDe(request), 120)) return tooMany();
+  const r = await armar();
+  if (r.status === 200 || r.status === 404) {
+    const copia = new Response(r.clone().body, { status: r.status, headers: new Headers(r.headers) });
+    copia.headers.set('Cache-Control', 'public, max-age=' + ttl);
+    const guardar = cache.put(key, copia).catch(() => {});
+    if (ctx && ctx.waitUntil) ctx.waitUntil(guardar);
+  }
+  return r;
+}
 
 // Llave de la caché armada SÓLO con los parámetros ya validados, en un orden fijo (auditoría 23/09).
 // Antes la llave era el pedido tal cual llegaba: sumándole cualquier cosa al final cada pedido salía
@@ -1688,6 +1857,11 @@ const MUTE_MINUTES = new Set([15, 30, 60, 480, 1440]);
 // carga de página, en cada conexión de chat y en cada partida. Con estas banderas, a partir del
 // segundo pedido de cada isolate no cuestan ninguna consulta. Si una CREATE falla, .run() tira y la
 // bandera NO se marca: se reintenta en el pedido siguiente.
+// Índices: si uno falla (columna que todavía no existe, base de prueba), se sigue igual: sin índice la
+// consulta anda, sólo que más cara. Se reintenta en el isolate siguiente.
+async function crearIndices(env, sqls) {
+  for (const q of sqls) { try { await env.DB.prepare(q).run(); } catch (e) {} }
+}
 let _usuariosTablesReady = false;
 let _usuariosMigrated = false;   // fichita editable: se agregan las columnas una vez por isolate
 async function ensureUserTables(env) {
@@ -1707,6 +1881,12 @@ async function ensureUserTables(env) {
     'CREATE TABLE IF NOT EXISTS sessions (' +
     'token TEXT PRIMARY KEY, user_id TEXT, created_at INTEGER, expires INTEGER)'
   ).run();
+  // Índices (auditoría 22/10): sin ellos, buscar un perfil por nombre o limpiar las sesiones vencidas
+  // recorría la tabla entera, y la base cobra por fila recorrida.
+  await crearIndices(env, [
+    'CREATE INDEX IF NOT EXISTS ix_usuarios_user_lc ON usuarios(LOWER(username))',
+    'CREATE INDEX IF NOT EXISTS ix_sessions_expires ON sessions(expires)',
+  ]);
   _usuariosTablesReady = true;
   await _migrarUsuarios(env);
 }
@@ -2469,6 +2649,12 @@ async function ensureRatingTables(env) {
     'white_before INTEGER, white_after INTEGER, black_before INTEGER, black_after INTEGER, ts INTEGER, ' +
     'moves TEXT, white_name TEXT, black_name TEXT, rated INTEGER DEFAULT 1)'
   ).run();
+  // El ranking por ritmo y el historial de un jugador (blancas o negras), sin recorrer todo (auditoría 22/10).
+  await crearIndices(env, [
+    'CREATE INDEX IF NOT EXISTS ix_ratings_cat ON ratings(category, rating)',
+    'CREATE INDEX IF NOT EXISTS ix_rg_white ON rated_games(white_id, ts)',
+    'CREATE INDEX IF NOT EXISTS ix_rg_black ON rated_games(black_id, ts)',
+  ]);
   _ratingTablesReady = true;
   await _migrarRatedGames(env);
 }
@@ -2890,6 +3076,8 @@ async function ensureFollowTable(env) {
     'CREATE TABLE IF NOT EXISTS follows (follower_id TEXT NOT NULL, followee_id TEXT NOT NULL, ' +
     'created_at INTEGER, PRIMARY KEY (follower_id, followee_id))'
   ).run();
+  // "Cuántos lo siguen" (la clave principal sirve para "a quién sigo", no para esto).
+  await crearIndices(env, ['CREATE INDEX IF NOT EXISTS ix_follows_followee ON follows(followee_id)']);
   _followTableReady = true;
 }
 
@@ -3197,6 +3385,7 @@ async function ensurePuzProgressTable(env) {
     'CREATE TABLE IF NOT EXISTS user_puzzle (' +
     'user_id TEXT PRIMARY KEY, data TEXT, solved INTEGER, updated INTEGER)'
   ).run();
+  await crearIndices(env, ['CREATE INDEX IF NOT EXISTS ix_up_solved ON user_puzzle(solved)']);   // la columna Táctica del ranking
   _puzTableReady = true;
 }
 
@@ -3259,15 +3448,23 @@ function puzMerge(viejo, nuevo) {
 //     la última vez que se guardó (el navegador cuenta cada ejercicio una sola vez);
 //   · rating entre 100 y 3200 (lo mismo que el navegador); rachas y niveles, no más que los resueltos;
 //   · días de práctica: fechas de verdad, entre el alta de la cuenta y mañana, y no más de PUZ_MAX_DIA cada uno.
-const PUZ_MAX_DIA = 400;
+// Auditoría 22/10: el tope era "+400 por día desde el último guardado", pero contado por GUARDADO (un
+// minuto redondeaba a un día): guardando seguido se sumaban cientos por minuto, y el primer guardado dejaba
+// ~1.450 de una. Ahora es por DÍA (hora argentina): el servidor anota en `_srv` con cuántos resueltos
+// arrancó el día, y en ese día no se pasa de ahí + PUZ_MAX_DIA, guarde las veces que guarde. `_srv` sale
+// siempre de lo guardado en la base (lo que mande el navegador en ese campo no cuenta).
+const PUZ_MAX_DIA = 300;
 function puzSanear(o, prev, prevUpdated, alta, maxPuz, ahora) {
   const ent = (v) => { v = Math.floor(+v || 0); return v > 0 ? v : 0; };
   const prevSolved = prev ? ent(prev.solved || prev.n) : 0;
-  const dias = prevUpdated ? Math.max(0, Math.ceil((ahora - prevUpdated) / 86400)) : 0;
-  let tope = prev ? prevSolved + PUZ_MAX_DIA * (dias + 1) : PUZ_MAX_DIA * 30;
+  const hoy = Math.floor((ahora - 3 * 3600) / 86400);
+  const s = prev && prev._srv && typeof prev._srv === 'object' ? prev._srv : null;
+  const base = (s && s.dia === hoy) ? Math.min(ent(s.base), prevSolved) : prevSolved;
+  let tope = base + PUZ_MAX_DIA;
   if (maxPuz) tope = Math.min(tope, maxPuz);
   tope = Math.max(tope, Math.min(prevSolved, maxPuz || prevSolved));   // nunca se le saca lo que ya tenía legítimo
   const out = Object.assign({}, o);
+  out._srv = { dia: hoy, base };
   for (const k of ['solved', 'n']) if (k in out) out[k] = Math.min(ent(out[k]), tope);
   const hechos = ent(out.solved != null ? out.solved : out.n);
   for (const k of ['ok', 'fail', 'bestStreak', 'streak', 'dailyCount']) if (k in out) out[k] = Math.min(ent(out[k]), hechos);
@@ -3391,9 +3588,17 @@ function ejdPublico(R, ahora) {
   const act = ejdViva(R, ahora);
   return { act, mejor: R.mejor, mejorTs: R.mejorTs, enCurso: act > 0 && act >= R.mejor, ultTs: R.ultTs };
 }
+// El día (en hora argentina) de un momento en segundos: la racha cuenta días, no ejercicios.
+function ejdDiaAR(ts) { return Math.floor((ts - 3 * 3600) / 86400); }
 // Anota un resuelto (id ya validado). Devuelve true si cambió algo.
 function ejdAnotar(R, id, ahora) {
   if (R.ok.indexOf(id) >= 0) return false;                        // el mismo ejercicio no suma dos veces
+  // UN día = UNO más, aunque el bot haya publicado dos ejercicios distintos en esas 30 h (auditoría 22/10:
+  // se sumaban dos el mismo día). El resuelto queda anotado igual, para que no aparezca como pendiente.
+  if (R.ultTs && ejdDiaAR(R.ultTs) === ejdDiaAR(ahora) && ejdViva(R, ahora) > 0) {
+    R.ok.push(id); if (R.ok.length > 40) R.ok = R.ok.slice(-40);
+    return true;
+  }
   R.act = ejdViva(R, ahora) + 1;
   R.ultTs = ahora; R.ultId = id;
   if (R.act >= R.mejor) { R.mejor = R.act; R.mejorTs = ahora; }   // mejorTs = el último día de la más larga
@@ -3402,10 +3607,14 @@ function ejdAnotar(R, id, ahora) {
 }
 // Lo que traía el navegador antes de entrar con la cuenta: UNA vez, y con topes (no puede ser más larga que los
 // días que lleva existiendo el ejercicio del día, ni venir del futuro). Si la cuenta ya tenía racha, gana la mejor.
+// Tope de lo importado (auditoría 22/10): antes era "los días que existe el ejercicio del día", y como el
+// número lo dice el navegador, cualquier cuenta nueva mandaba 999 y quedaba con la racha más larga posible
+// (y su logro). Con 6, lo importado nunca llega solo al logro de 7 días: hace falta resolver uno de verdad.
+const EJD_IMPORT_TOPE = 6;
 function ejdImportar(R, imp, ahora) {
   if (R.importado) return false;
   R.importado = 1;
-  const tope = Math.max(0, Math.floor((ahora - EJD_DESDE) / 86400) + 1);
+  const tope = Math.max(0, Math.min(EJD_IMPORT_TOPE, Math.floor((ahora - EJD_DESDE) / 86400) + 1));
   let act = Math.max(0, Math.min(tope, Math.floor(+imp.act || 0)));
   let mejor = Math.max(act, Math.min(tope, Math.floor(+imp.mejor || 0)));
   let ult = Math.floor((+imp.ultTs || 0) / 1000);                  // el navegador manda milisegundos
@@ -3529,31 +3738,45 @@ function adminCleanFields(raw) {
 // El contador de fallos va POR DIRECCIÓN IP. Antes era uno solo para todo el mundo (la fila
 // 'pinfail'), así que cualquiera podía mandar doce PIN inventados por hora y dejar al AUTOR sin
 // poder cargar partidas desde el teléfono, indefinidamente y sin ningún esfuerzo.
+// Además (auditoría 22/10): la IP se cuenta por red (IPv6 por /64, ver ipDe), y hay un contador GLOBAL de
+// fallos. Si en la última hora hubo más de PIN_FALLOS_GLOBAL entre todos (alguien probando desde muchas
+// direcciones), cada red tiene UN solo intento por hora en vez de doce. Así no se deja afuera al autor
+// (su teléfono, sin fallos, igual entra con el PIN bueno), pero adivinarlo deja de ser cuestión de paciencia.
+// La comparación tarda lo mismo acierte o no, y las filas vencidas se borran (antes crecían para siempre).
+const PIN_FALLOS_GLOBAL = 40;
+function igualSeguro(a, b) {
+  a = String(a); b = String(b);
+  let d = a.length ^ b.length;
+  for (let i = 0; i < Math.max(a.length, b.length); i++) d |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
+  return d === 0;
+}
 async function adminCheckPin(pin, env, request) {
   if (!env.EDIT_PIN) return errJson('La edición remota no está configurada (falta el secreto EDIT_PIN)', 503);
-  const ip = (request && request.headers.get('CF-Connecting-IP')) || 'sin-ip';
-  const rlKey = 'pinfail:' + ip;
+  const rlKey = 'pinfail:' + ipDe(request);
+  const now = Math.floor(Date.now() / 1000);
   // Rate-limit: contamos PIN errados de ESTA IP en la última hora. Sin D1, seguimos sin contar.
-  let rlRow = null;
+  let rlRow = null, glRow = null;
   if (env.DB) {
     try {
       await env.DB.prepare('CREATE TABLE IF NOT EXISTS admin_rl (k TEXT PRIMARY KEY, n INTEGER, ts INTEGER)').run();
       rlRow = await env.DB.prepare('SELECT n, ts FROM admin_rl WHERE k = ?1').bind(rlKey).first();
-      const now = Math.floor(Date.now() / 1000);
+      glRow = await env.DB.prepare('SELECT n, ts FROM admin_rl WHERE k = ?1').bind('pinfail:*').first();
       if (rlRow && (now - (rlRow.ts || 0)) > RL_WINDOW_S) rlRow = null;   // ventana vencida: de cero
-      if (rlRow && rlRow.n >= RL_MAX_FAILS) return errJson('Demasiados intentos fallidos. Probá de nuevo en una hora.', 429);
-    } catch (e) { rlRow = null; }
+      if (glRow && (now - (glRow.ts || 0)) > RL_WINDOW_S) glRow = null;
+      const tope = (glRow && glRow.n >= PIN_FALLOS_GLOBAL) ? 1 : RL_MAX_FAILS;
+      if (rlRow && rlRow.n >= tope) return errJson('Demasiados intentos fallidos. Probá de nuevo en una hora.', 429);
+    } catch (e) { rlRow = null; glRow = null; }
   }
-  if (typeof pin !== 'string' || pin !== env.EDIT_PIN) {
+  if (typeof pin !== 'string' || !igualSeguro(pin, env.EDIT_PIN)) {
     if (env.DB) {
       try {
-        const now = Math.floor(Date.now() / 1000);
-        const n = rlRow ? (rlRow.n + 1) : 1;
-        const ts = rlRow ? rlRow.ts : now;
-        await env.DB.prepare(
+        const sumar = (row, k) => env.DB.prepare(
           'INSERT INTO admin_rl (k, n, ts) VALUES (?1, ?2, ?3) ' +
           'ON CONFLICT(k) DO UPDATE SET n = ?2, ts = ?3'
-        ).bind(rlKey, n, ts).run();
+        ).bind(k, row ? (row.n + 1) : 1, row ? row.ts : now).run();
+        await sumar(rlRow, rlKey);
+        await sumar(glRow, 'pinfail:*');
+        await env.DB.prepare('DELETE FROM admin_rl WHERE ts < ?1').bind(now - RL_WINDOW_S).run();
       } catch (e) {}
     }
     return errJson('PIN incorrecto', 403);

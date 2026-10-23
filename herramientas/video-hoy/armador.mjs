@@ -83,7 +83,10 @@ async function procesar(job) {
   }
   const mp4 = fs.readFileSync(tmp + '.mp4');
   log('Entrego el video (' + (mp4.length / 1e6).toFixed(1) + ' MB)…');
-  const r = await fetch(BASE + '/tg/hoyvideo/subir?clave=' + encodeURIComponent(CLAVE) + '&id=' + encodeURIComponent(job.id), { method: 'POST', headers: { 'Content-Type': 'video/mp4' }, body: mp4 });
+  // La clave va en el encabezado X-Clave, no en la dirección (quedaba en los registros de Cloudflare; auditoría
+  // 22/10). Si el bot todavía es el de antes (contesta 403), una vez más con la clave en la dirección.
+  let r = await fetch(BASE + '/tg/hoyvideo/subir?id=' + encodeURIComponent(job.id), { method: 'POST', headers: { 'Content-Type': 'video/mp4', 'X-Clave': CLAVE }, body: mp4 });
+  if (r.status === 403) r = await fetch(BASE + '/tg/hoyvideo/subir?clave=' + encodeURIComponent(CLAVE) + '&id=' + encodeURIComponent(job.id), { method: 'POST', headers: { 'Content-Type': 'video/mp4' }, body: mp4 });
   const j = await r.json().catch(() => ({}));
   if (!r.ok || !j.ok) throw new Error('No se pudo entregar: ' + (j.error || 'HTTP ' + r.status));
   log('✅ Entregado: ' + titulo);

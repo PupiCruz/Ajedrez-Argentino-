@@ -616,10 +616,20 @@ console.log('\n=== 10. La IA sabe redactar torneos POR EQUIPOS (Olimpiadas, liga
     reloj += 11_000; await libc(ronda('vivo1'));
     chk(pedidos.length === antes + 1, 'y el refresco de fondo vuelve a andar');
 
-    // 5) Un 429 SIN choque (no había nada andando) sí es un freno de verdad: arma la pausa.
+    // 5) Un 429 SIN choque (no había nada andando) sí es un freno de verdad. Como es de una ronda que no
+    //    estaba guardada (en frío), pausa SÓLO lo que va en frío: las transmisiones ya guardadas siguen
+    //    refrescando (auditoría 22/10: con ids inventados se congelaba todo el vivo).
+    responder = () => new Response(pgn('1-0', '*'), { status: 200 });
+    await libc(ronda('enVivo'));                       // una ronda EN VIVO ya guardada
     responder = () => new Response('{"error":"Too many requests"}', { status: 429 });
     await libc(ronda('nueva'));
-    chk(hayPausa(), 'un 429 sin ninguna otra exportación en curso sí arma la pausa del minuto');
+    chk(guardado.has('https://cr-proxy.test/__lifriopausa') && !hayPausa(), '🔒 un 429 de algo en frío pausa sólo lo que va en frío (no el refresco del vivo)');
+    antes = pedidos.length;
+    const enPausa = await libc(ronda('otraNueva'));
+    chk(enPausa.status === 429 && pedidos.length === antes, '🔒 durante esa pausa, lo nuevo no le pregunta a Lichess', enPausa.status);
+    responder = () => new Response(pgn('1-0', '*'), { status: 200 });
+    reloj += 11_000; await libc(ronda('enVivo'));
+    chk(pedidos.length === antes + 1, '🔒 y el refresco de la ronda en vivo sigue andando');
 
     // 6) Si una partida no trae resultado, no se la da por terminada (se trata como en vivo).
     reloj += 61_000;
@@ -1112,7 +1122,12 @@ console.log('\n=== 17. El progreso de ejercicios no se puede inflar (ranking de 
   chk(p.solved <= EJ_LISTA.puzzles.length + 50, '🔒 los resueltos no pueden superar los ejercicios publicados', p.solved);
   chk(p.rating === 3200 && p.best === 3200, '🔒 el rating de táctica queda entre 100 y 3200', p.rating);
   chk(p.bestStreak <= p.solved && p.ok <= p.solved, '🔒 la racha y los aciertos no superan los resueltos', p.bestStreak + '/' + p.ok);
-  chk(p.days['2026-09-01'] === 400 && !('basura' in p.days) && !('1999-01-01' in p.days), '🔒 el calendario sólo acepta fechas de verdad y hasta 400 por día', JSON.stringify(p.days));
+  chk(p.days['2026-09-01'] === 300 && !('basura' in p.days) && !('1999-01-01' in p.days), '🔒 el calendario sólo acepta fechas de verdad y hasta 300 por día', JSON.stringify(p.days));
+  // El tope es por DÍA y lo lleva el servidor: lo que mande el navegador en `_srv` no cuenta (auditoría 22/10).
+  const hoyAR = Math.floor((Math.floor(Date.now() / 1000) - 3 * 3600) / 86400);
+  chk(p._srv && p._srv.dia === hoyAR && p._srv.base === 0, '🔒 el servidor anota con cuántos resueltos arrancó el día (el tope diario no se reinicia guardando seguido)', JSON.stringify(p._srv));
+  const d2 = (await guardar({ solved: 99999, _srv: { dia: hoyAR - 5, base: 99999 } })).progress || {};
+  chk(d2._srv && d2._srv.dia === hoyAR && d2._srv.base === 0 && d2.solved === p.solved, '🔒 y si el navegador inventa su propio `_srv`, se ignora', JSON.stringify(d2._srv));
   chk(p.byLevel.inicial.n <= p.solved && p.byLevel.avanzado.n === 2, 'los niveles tampoco superan los resueltos, y lo chico queda igual');
   const fila = DB.tablas.user_puzzle.find((x) => x.user_id === 'u_eva');
   chk(fila && fila.solved === p.solved, 'y la columna que usa el ranking guarda el número ya recortado', fila && fila.solved);
@@ -1268,11 +1283,17 @@ console.log('\n=== 21. Chess-Results / info64 caídos: el error se guarda un min
     r = await ir(CR2); const r2 = await ir(CR2);
     chk(r.status === 502 && r2.status === 502 && afuera === antes + 1, '🔒 si Chess-Results no contesta, tampoco se insiste durante un minuto', afuera - antes);
 
-    // Un 404 es una respuesta de verdad: no se guarda como "caído".
+    // Un torneo que no existe (404) se recuerda un minuto (auditoría 22/10: antes no se guardaba, y los números
+    // inventados le pegaban a Chess-Results en cada pedido).
     const CR3 = '/?url=' + encodeURIComponent('https://s1.chess-results.com/tnr9999999.aspx?lan=2&art=1&excel=2010');
     estado = 404; antes = afuera;
-    await ir(CR3); await ir(CR3);
-    chk(afuera === antes + 2, 'un 404 no se guarda (se vuelve a preguntar)', afuera - antes);
+    const r404 = await ir(CR3); const r404b = await ir(CR3);
+    chk(afuera === antes + 1 && r404.status === 404 && r404b.status === 404, '🔒 un 404 se recuerda un minuto: no se le vuelve a preguntar a Chess-Results', afuera - antes);
+    // Y sólo pasan las páginas que usa la app: la del torneo (tnrNNN.aspx) y las .php de la Bundesliga.
+    antes = afuera;
+    const otra = await ir('/?url=' + encodeURIComponent('https://chess-results.com/PartieSuche.aspx?lan=2'));
+    const dsbOk = await ir('/?url=' + encodeURIComponent('https://ergebnisdienst.schachbund.de/bedt.php?liga=bl'));
+    chk(otra.status === 403 && dsbOk.status !== 403 && afuera === antes + 1, '🔒 el proxy general sólo deja pasar las páginas que usa la app', otra.status + ' / ' + dsbOk.status);
 
     // info64: lo mismo.
     estado = 503; antes = afuera;
@@ -1387,11 +1408,15 @@ console.log('\n=== 🔥 Racha del ejercicio del día con la cuenta (PLAN-PORTADA
   chk(ok1.ok && ok1.act === 1 && ok1.mejor === 1 && ok1.enCurso === true, 'resuelto el del día: racha de 1, en curso', JSON.stringify(ok1));
   const ok2 = await json(await post('/ejdia/ok', { id: 'ej-dia-1' }, EVA));
   chk(ok2.act === 1, 'el mismo ejercicio dos veces no suma', ok2.act);
-  // Lo que traía del navegador: tope por los días que lleva el ejercicio del día, y una sola vez.
+  // Dos ejercicios del día distintos publicados en las mismas 30 h, resueltos el mismo día: suma UNO.
+  await post('/ejdia/hoy', { id: 'ej-dia-1b' }, { 'X-Vivo-Secret': 'secreto-vivo', 'Content-Type': 'application/json' });
+  const ok3 = await json(await post('/ejdia/ok', { id: 'ej-dia-1b' }, EVA));
+  chk(ok3.ok && ok3.act === 1 && ok3.mejor === 1, '🔒 dos ejercicios del día resueltos el MISMO día suman uno solo (antes, dos)', JSON.stringify(ok3));
+  // Lo que traía del navegador: tope chico (6, por debajo del logro de 7 días), y una sola vez.
   const imp = await json(await post('/ejdia/importar', { act: 999, mejor: 999, ultTs: Date.now() - 3600e3, ultId: 'x', ok: ['viejo-1'] }, EVA));
-  const tope = Math.floor((Math.floor(Date.now() / 1000) - Math.floor(Date.UTC(2026, 9, 10) / 1000)) / 86400) + 1;
+  const tope = Math.min(6, Math.floor((Math.floor(Date.now() / 1000) - Math.floor(Date.UTC(2026, 9, 10) / 1000)) / 86400) + 1);
   chk(imp.ok && imp.act === tope && imp.mejor === tope && imp.okIds.includes('viejo-1') && imp.okIds.includes('ej-dia-1'),
-      'la racha del navegador se suma con TOPE (no más larga que los días que existe el ejercicio del día)', JSON.stringify(imp));
+      '🔒 la racha del navegador se suma con TOPE de 6 días: mandar 999 ya no regala la racha más larga ni el logro', JSON.stringify(imp));
   const imp2 = await json(await post('/ejdia/importar', { act: 1, mejor: 50000, ultTs: Date.now() }, EVA));
   chk(imp2.mejor === tope, 'y se suma UNA sola vez (la segunda no cambia nada)', imp2.mejor);
   const me = await json(await pedir('/ejdia/me', { headers: EVA }));
@@ -1406,6 +1431,83 @@ console.log('\n=== 🔥 Racha del ejercicio del día con la cuenta (PLAN-PORTADA
   // El perfil público la muestra.
   const perfil = await json(await pedir('/u/Eva'));
   chk(perfil.ejdia && perfil.ejdia.mejor === tope && perfil.ejdia.act === tope, 'el perfil público trae la racha (actual y la más larga)', JSON.stringify(perfil.ejdia));
+}
+
+console.log('\n=== 🔒 Auditoría 22/10 · Fase 3 (Worker de cuentas) ===');
+{
+  const guardado = new Map();
+  const cacheFalsa = {
+    async match(k) { const r = guardado.get(typeof k === 'string' ? k : k.url); return r ? r.clone() : undefined; },
+    async put(k, r) { guardado.set(typeof k === 'string' ? k : k.url, r.clone()); },
+  };
+  const cachesAntes = globalThis.caches, fetchAntes = globalThis.fetch, prepAntes = DB.prepare;
+  globalThis.caches = { default: cacheFalsa };
+  const afuera = [];
+  let responder = () => new Response('', { status: 404 });
+  globalThis.fetch = async (u, o) => { afuera.push(String(u)); return responder(String(u), o); };
+  const ctxF = { waitUntil() {} };
+  const ir = (path, opt) => worker.fetch(req(path, opt), env, ctxF);
+  try {
+    // C2: lo que va a Lichess en frío tiene tope para TODO el centro de datos (no por IP).
+    let ult = null;
+    for (let i = 0; i < 41; i++) ult = await ir('/libc?url=' + encodeURIComponent('https://lichess.org/api/broadcast/round/inv' + i + '.pgn'), { ip: '10.0.' + i + '.1' });
+    const aLichess = afuera.filter((u) => u.includes('lichess.org')).length;
+    chk(aLichess === 40 && ult.status === 429, '🔒 /libc: rondas inventadas desde 41 IP distintas → sólo 40 van a Lichess por minuto (antes, todas, con el token)', aLichess + ' / ' + ult.status);
+    chk(!guardado.has('https://cr-proxy.test/__li429pausa'), '🔒 y llegar al tope no pausa el refresco de las transmisiones guardadas');
+
+    // IPv6: toda una red /64 es un solo balde.
+    chk(await (async () => {
+      let r; for (let i = 0; i < 61; i++) r = await ir('/libc?url=' + encodeURIComponent('https://lichess.org/api/broadcast/round/inv0.pgn'), { ip: '2001:db8:1:2::' + (i + 1).toString(16) });
+      return true;
+    })(), 'pedidos desde muchas direcciones IPv6 de la misma red no rompen nada');
+    const p6 = [];
+    for (let i = 0; i < 13; i++) p6.push(await ir('/admin/live', { method: 'POST', ip: '2001:db8:aa:bb::' + (i + 1).toString(16), headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin: 'mal' + i }) }));
+    const p6b = await ir('/admin/live', { method: 'POST', ip: '2001:db8:aa:bb:ffff::1', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin: 'mal-x' }) });
+    chk(p6b.status === 429, '🔒 PIN: cambiar de dirección IPv6 dentro de la misma red /64 no da intentos nuevos', p6b.status);
+
+    // PIN: con muchos fallos en total, cada red tiene UN intento por hora; el autor igual entra.
+    for (let i = 0; i < 20; i++) await ir('/admin/live', { method: 'POST', ip: '172.16.' + i + '.9', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin: 'otro' + i }) });
+    const x1 = await ir('/admin/live', { method: 'POST', ip: '172.31.0.1', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin: 'nop' }) });
+    const x2 = await ir('/admin/live', { method: 'POST', ip: '172.31.0.1', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin: 'nop2' }) });
+    chk(x1.status === 403 && x2.status === 429, '🔒 PIN: con más de 40 fallos en la hora entre todos, una red nueva tiene un solo intento', x1.status + ' / ' + x2.status);
+    const autor = await ir('/admin/live', { method: 'POST', ip: '192.0.2.50', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin: 'la-frase-larga' }) });
+    chk(autor.status !== 429 && autor.status !== 403, 'y el autor, con el PIN bueno, entra igual (no queda afuera por el ataque)', autor.status);
+
+    // I12: las páginas públicas quedan en la caché del borde (el segundo pedido no toca la base).
+    let consultas = 0;
+    DB.prepare = function (...a) { consultas++; return prepAntes.apply(this, a); };
+    await ir('/rating/top', { ip: '10.9.9.9' }); const c1 = consultas;
+    await ir('/rating/top?x=1', { ip: '10.9.9.9' }); const c2 = consultas;
+    chk(c1 > 0 && c2 === c1, '🔒 /rating/top: el segundo pedido (aunque le agreguen cosas) sale de la caché, sin tocar la base', c1 + ' / ' + (c2 - c1));
+    await ir('/u/Eva', { ip: '10.9.9.9' }); const c3 = consultas;
+    await ir('/u/EVA', { ip: '10.9.9.8' }); const c4 = consultas;
+    await ir('/u/Eva', { ip: '10.9.9.9', headers: { Authorization: 'Bearer sess-ana' } }); const c5 = consultas;
+    chk(c4 === c3 && c5 > c4, '🔒 /u/: el perfil visto sin sesión se comparte (también con otra mayúscula); con sesión se arma en el momento ("¿lo sigo?")', (c4 - c3) + ' / ' + (c5 - c4));
+    DB.prepare = prepAntes;
+
+    // I14: vesus. La llave es sólo la clave del torneo, y uno que no existe se recuerda un minuto.
+    afuera.length = 0; responder = () => new Response('', { status: 200 });
+    const v1 = await ir('/vspgn?key=abcd1234&x=1', { ip: '10.8.0.1' });
+    const v2 = await ir('/vspgn?key=abcd1234&x=2', { ip: '10.8.0.1' });
+    chk(v1.status === 404 && v2.status === 404 && afuera.filter((u) => u.includes('vesus')).length === 1, '🔒 /vspgn: agregarle cosas a la dirección no obliga a preguntarle a vesus otra vez', afuera.length);
+
+    // I15: info64. Sólo sus exportaciones, y el segundo paso tiene que seguir siendo de info64.
+    afuera.length = 0;
+    const rutaMala = await ir('/i64xls?url=' + encodeURIComponent('https://info64.org/cualquier/cosa'), { ip: '10.7.0.1' });
+    chk(rutaMala.status === 403 && afuera.length === 0, '🔒 /i64xls: una ruta que no es exportación no sale a info64', rutaMala.status);
+    responder = (u) => u.includes('info64.org') ? new Response(JSON.stringify({ url: 'https://otrositio.example/robar' }), { status: 200 }) : new Response('secreto', { status: 200 });
+    const afueraMalo = await ir('/i64xls?url=' + encodeURIComponent('https://info64.org/torneo-x/standings_xls'), { ip: '10.7.0.1' });
+    chk(afueraMalo.status === 502 && !afuera.some((u) => u.includes('otrositio')), '🔒 /i64xls: si info64 devuelve una dirección de otro sitio, el Worker no va', afueraMalo.status + ' ' + afuera.join(' '));
+
+    // I16: /crpgn. Los jugadores repetidos o en otro orden son la misma copia.
+    const llaves = () => [...guardado.keys()].filter((k) => k.includes('/crpgn')).length;
+    responder = () => new Response('<html></html>', { status: 200 });
+    await ir('/crpgn?tnr=123&fide=3,1,2,2', { ip: '10.6.0.1' }); const k1 = llaves();
+    await ir('/crpgn?tnr=123&fide=1,2,3', { ip: '10.6.0.1' }); const k2 = llaves();
+    chk(k1 === 1 && k2 === 1, '🔒 /crpgn: "3,1,2,2" y "1,2,3" son la misma copia (antes, dos bajadas a Chess-Results)', k1 + ' / ' + k2);
+  } finally {
+    globalThis.caches = cachesAntes; globalThis.fetch = fetchAntes; DB.prepare = prepAntes;
+  }
 }
 
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.') + '\n');
