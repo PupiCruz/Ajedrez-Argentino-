@@ -182,6 +182,20 @@ día. El registro completo de qué se cambió y por qué está en **`PLAN-AUDITO
 misma carpeta, la más nueva arriba): conviene leerlo antes de tocar cuentas, moderación, chats,
 los proxys del Worker o el arranque de la página.
 
+## 🪶 Rendimiento (auditoría 22/10/2026, Fase 5)
+`publicar-web.cmd` arma tres cosas antes de subir (si alguna falla, la web sigue como antes):
+- **Partidas por partes** (`herramientas/armar-indices-partidas.mjs`): corta `data/games_*.json` en `data/gi/`
+  (búsqueda por jugador: paquetes por apellido) y `data/ob/` (explorador: primeras jugadas ya contadas + hojas).
+  La web baja sólo el pedazo que necesita (`_gpBuscar`, `_obPartesCalc`). Los `games_N.json` siguen: los usa la
+  búsqueda sin apellido y el modo autor. Ojo con el límite de Cloudflare: 20.000 archivos en total.
+- **La página liviana** (`herramientas/armar-web-liviana.mjs` → `web.html`): la copia de `index.html` sin comentarios
+  ni espacios (esbuild de vivo-worker, sin cambiar nombres) y sin `PLAYERS`. La sirve `functions/index.js` en "/".
+  **Se edita siempre `index.html`**; `web.html` no se toca a mano.
+- **Versión por archivo** (`herramientas/versiones-datos.mjs` → `data/versiones.js`): el número de cada archivo grande
+  sale de su contenido (`_dataV('book.json')`). `data/t`, `p`, `cr` siguen con `__DATA_TS__`.
+- Los nombres de las tablas: el manifest lleva sólo los recientes (`_crNombresRecientes`, 60 días); todos van en
+  `data/cr-nombres.json` y se bajan al usar el buscador de Torneos. Hace falta un 💾 Guardar para que se armen.
+
 ## 🧪 Bancos de pruebas — correrlos antes y después de tocar esas partes
 Son dieciséis y no necesitan instalar nada (Node y listo). **Cuántas comprobaciones tiene cada uno lo
 dice el propio banco al terminar**, y por eso no está copiado acá: un número escrito a mano en dos
@@ -203,7 +217,7 @@ lugares se pudre solo. (Pasó: este archivo decía 394 cuando el banco de la web
 | `vivo-worker/test-final-torneo.mjs` | 🏁 el aviso del bot al marcar un torneo Finalizado (podio → canal y hilo de Discord) | `cd vivo-worker` y `node test-final-torneo.mjs` |
 | `vivo-worker/test-avisos-ronda.mjs` | los avisos de ronda del bot: nacional (primeras mesas) vs internacional (los argentinos) | `cd vivo-worker` y `node test-avisos-ronda.mjs` |
 | `vivo-worker/test-titulados.mjs` | 🏆 avisos de los Titled Tuesday/Thursday de Chess.com en #en-vivo + 🌐 ratings online en /jugador | `cd vivo-worker` y `node test-titulados.mjs` |
-| `vivo-worker/test-ranking-musica.mjs` | 🎵 ranking de Música en el Tablero: sólo con cuenta (cr-proxy), frenos (30 s, canción completa, tope de puntos), orden, 100 mejores | `cd vivo-worker` y `node test-ranking-musica.mjs` |
+| `vivo-worker/test-ranking-musica.mjs` | 🎵 ranking de Música en el Tablero: sólo con cuenta (cr-proxy), los puntos los cuenta el servidor con el acta (y con el juego de verdad jugado en Node: tiene que dar lo mismo), frenos, orden, 100 mejores, 🗑️ de moderadores | `cd vivo-worker` y `node test-ranking-musica.mjs` |
 | `vivo-worker/test-token-lichess.mjs` | 🔑 aviso por privado al autor si el token de Lichess de cr-proxy (`LICHESS_TOKEN`, permiso study:read) falla o vence | `cd vivo-worker` y `node test-token-lichess.mjs` |
 | `vivo-worker/test-errores.mjs` | 📛 errores de la web en los visitantes: limpieza (sin datos personales), se juntan los iguales, freno, `/errores` del bot | `cd vivo-worker` y `node test-errores.mjs` |
 | `vivo-worker/test-avisos.mjs` | 🔔 avisos al teléfono (Web Push): cifrado igual al ejemplo del RFC 8291, firma VAPID, aparatos y temas por cuenta, cola de a 40, noche, racha de las 22 | `cd vivo-worker` y `node test-avisos.mjs` |

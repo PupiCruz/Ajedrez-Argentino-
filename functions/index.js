@@ -277,8 +277,27 @@ function armarFicha(tipo, clave, fila, fichas, og) {
        + '<script>(function(){var e=document.getElementById("seo-ficha");if(e&&e.parentNode)e.parentNode.removeChild(e);})();</script>';
 }
 
+/* 🪶 LA PÁGINA LIVIANA (auditoría 22/10/2026, Fase 5). La gente recibe web.html: la copia de index.html sin
+   comentarios ni espacios de más (2,7 MB en vez de 4,6) que arma publicar-web.cmd (herramientas/armar-web-liviana.mjs).
+   index.html sigue siendo el archivo de verdad: el que se edita y el del modo autor. Si web.html no está (el paso
+   falló y lo borró a propósito) o algo sale mal, se manda index.html, como siempre (regla 1).
+   Se pide como "/web" y no "/web.html": Cloudflare contesta "/web.html" con una redirección a "/web". */
+async function pagina(context) {
+  const { request, next, env } = context;
+  try {
+    if (env && env.ASSETS && (request.method === 'GET' || request.method === 'HEAD')) {
+      const u = new URL(request.url);
+      u.pathname = '/web'; u.search = '';
+      const r = await env.ASSETS.fetch(new Request(u.toString(), { method: request.method, headers: request.headers }));
+      if (r.status === 200 || r.status === 304) return r;
+    }
+  } catch (_) {}
+  return next();
+}
+
 export async function onRequest(context) {
-  const { request, next } = context;
+  const { request } = context;
+  const next = () => pagina(context);
   let res = null;
   try {
     const url = new URL(request.url);

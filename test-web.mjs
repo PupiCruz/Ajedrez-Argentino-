@@ -28,7 +28,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2615;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2649;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -9361,7 +9361,7 @@ console.log('\n── Portada de aperturas ──');
   chk(/var _dbMode = 'portada'/.test(SRC) && /btn\('portada', '🌳', 'Familias'\) \+ btn\('openings', '♟️', 'Jugada por jugada'\) \+ btn\('search', '🔍', 'Buscar partidas'\)/.test(SRC),
       'Partidas abre en la portada de aperturas; el buscador es el último botón');
   chk(extraerFuncion('_fsSaveJobs').includes("uno('aperturas-stats.json'") && extraerFuncion('exportGithubData').includes("'data/aperturas-stats.json'")
-      && /'assets\/aperturas-arbol\.json',/.test(SRC) && extraerFuncion('_apStatsEnsure').includes("fetch('data/aperturas-stats.json' + _dataV())"),
+      && /'assets\/aperturas-arbol\.json',/.test(SRC) && extraerFuncion('_apStatsEnsure').includes("fetch('data/aperturas-stats.json' + _dataV('aperturas-stats.json'))"),
       '🔒 el guardado y el ZIP hornean data/aperturas-stats.json, y el árbol viaja con los assets');
   // El nombre de la apertura en el visor lleva al explorador, y los archivos de aperturas se piden con versión
   // (/assets/* es inmutable un año: sin ?v= el visitante seguiría con los nombres viejos).
@@ -9513,7 +9513,7 @@ console.log('\n── Portada de aperturas ──');
   const foto = new Uint8Array([9, 9]);
   const J = SJ.jobs(split, { files: [{ name: 'data/ph/7.jpg', data: foto }] }, [], 'var __DATA_TS__=1;\nM', [{ rel: 'embedded-data.js', arma: () => 'ED' }]);
   const sal = {}; J.forEach((t) => t.arma().forEach((f) => { sal[f.rel] = f; }));
-  chk(Object.keys(sal).join(' ') === 'embedded-data.js manifest.js games_0.json book.json aperturas-stats.json t/tz_1.json p/7.json cr/cr2_tz_1.json ph/7.jpg'
+  chk(Object.keys(sal).join(' ') === 'embedded-data.js manifest.js games_0.json cr-nombres.json book.json aperturas-stats.json t/tz_1.json p/7.json cr/cr2_tz_1.json ph/7.jpg'
       && sal['manifest.js'].ignoreTs && sal['games_0.json'].c === SJ.parts(ge)[0] && sal['ph/7.jpg'].c === foto
       && sal['book.json'].c === JSON.stringify(SJ.book(ge.map((g) => ({ moves: g.m.split(' '), r: g.r })))) && sal['t/tz_1.json'].c === JSON.stringify(split.tFiles.tz_1),
       'las tareas del guardado arman los mismos archivos de siempre, cada uno recién cuando le toca', Object.keys(sal).join(' '));
@@ -10794,6 +10794,200 @@ console.log('\n=== 🔒 Auditoría 22/10 · Fase 4 (web: calidad) ===');
   chk(/new MutationObserver\(function \(ms\) \{/.test(SRC) && /requestIdleCallback\(correr, \{ timeout: 1500 \}\)/.test(SRC) && /btnSnd\.setAttribute\('aria-label', btnSnd\.title\)/.test(SRC),
       '♿ también los que se agregan después (de a tandas, con el navegador libre) y el 🔊 del Pupi');
 }
+console.log('\n=== 🔒 Auditoría 22/10 · Fase 5 (rendimiento) ===');
+{
+  // 1 · Versión por archivo: _dataV('book.json') usa la huella de data/versiones.js; si no está, la general.
+  const DV = (vs, ts) => new Function('window', '__DATA_TS__', extraerFuncion('_dataV') + '; return _dataV;')({ __DATA_VS__: vs }, ts);
+  const vs = { 'book.json': 'f309f70aa1', 'planes/italiana.json': 'abc123def0', 'malo.json': '"><x' };
+  chk(DV(vs, 123)('book.json') === '?v=f309f70aa1', '🏷️ un archivo de la lista se pide con SU número');
+  chk(DV(vs, 123)('puzzles.json') === '?v=123' && DV(vs, 123)() === '?v=123', '🏷️ uno que no está (o sin decir cuál) sigue con la versión general');
+  chk(DV(vs, 123)('malo.json') === '?v=123' && DV(vs, 123)('__proto__') === '?v=123' && DV(null, 123)('book.json') === '?v=123',
+      '🏷️ un número raro, __proto__ o sin versiones.js: la versión general');
+  const sinRel = ['book.json', 'puzzles.json', 'practice.json', 'portada.json', 'aperturas-stats.json', 'cumples-historicos.json', 'datos.json']
+    .filter((f) => new RegExp("fetch\\('data/" + f.replace('.', '\\.') + "' \\+ [^;]*_dataV\\(\\)").test(SRC));
+  chk(!sinRel.length && !/fetch\('data\/(games_|planes\/|lecciones\/)[^;]*_dataV\(\)/.test(SRC), '🏷️ todos los archivos grandes se piden diciendo cuál son', sinRel.join(', '));
+  chk(/<script src="data\/manifest\.js"><\/script>\s*<!--[\s\S]*?-->\s*<script src="data\/versiones\.js"><\/script>/.test(SRC), '🏷️ data/versiones.js se carga justo después del manifest');
+  const VD = await import('./herramientas/versiones-datos.mjs');
+  const tmp = fs.mkdtempSync((process.env.TEMP || '/tmp') + '/aa-vd-');
+  fs.mkdirSync(tmp + '/planes'); fs.mkdirSync(tmp + '/t');
+  ['book.json', 'games_0.json', 'games_12.json', 'live-torneos.json', 'og.json', 'manifest.js'].forEach((f) => fs.writeFileSync(tmp + '/' + f, f));
+  fs.writeFileSync(tmp + '/planes/italiana.json', 'x'); fs.writeFileSync(tmp + '/t/123.json', 'x');
+  const lista = VD.archivosVersionados(tmp);
+  chk(JSON.stringify(lista) === JSON.stringify(['book.json', 'games_0.json', 'games_12.json', 'planes/italiana.json']),
+      '🏷️ versiones.js lleva los grandes y las partes de partidas; no los del teléfono, og.json, el manifest ni data/t', JSON.stringify(lista));
+  const v1 = VD.armarVersiones(tmp); fs.writeFileSync(tmp + '/games_0.json', 'otro'); const v2 = VD.armarVersiones(tmp);
+  chk(v1['book.json'] === v2['book.json'] && v1['games_0.json'] !== v2['games_0.json'] && /^[0-9a-f]{10}$/.test(v1['book.json']),
+      '🏷️ el número sale del contenido: sólo cambia el del archivo que cambió');
+  chk(/^\/\/[^\n]*\nwindow\.__DATA_VS__=\{.*\};\n$/.test(VD.textoVersiones(v1)), '🏷️ versiones.js es un renglón window.__DATA_VS__={…}');
+  fs.rmSync(tmp, { recursive: true, force: true });
+  if (fs.existsSync('data/versiones.js')) {
+    const W = {}; new Function('window', fs.readFileSync('data/versiones.js', 'utf8'))(W);
+    const hoy = VD.armarVersiones('data'), viejos = Object.keys(hoy).filter((f) => W.__DATA_VS__[f] !== hoy[f]);
+    if (viejos.length) console.log('  (aviso) data/versiones.js no está al día con ' + viejos.length + ' archivo(s): lo rehace publicar-web.cmd.');
+  }
+  chk(/node "herramientas\\versiones-datos\.mjs"/.test(fs.readFileSync('publicar-web.cmd', 'utf8')), '🏷️ publicar-web.cmd arma las versiones');
+
+  // 2 · Partidas por partes (I34): lo que encuentra la web bajando pedazos tiene que ser EXACTAMENTE lo que
+  // encontraba con la base entera. Se arman los pedazos acá (chicos, para que se partan) y se comparan.
+  const AI = await import('./herramientas/armar-indices-partidas.mjs');
+  const NT = new Function(extraerFuncion('normStr') + extraerFuncion('nameTokens') + '; return nameTokens;')();
+  const nombres = ['Pérez González, Juan', 'Oro, Faustino', 'Ñúñez, Ánxel', "O'Kelly de Galway, A.", 'Najdorf, Miguel', 'Mecking H', 'García-Ilundain, D.'];
+  chk(nombres.every((n) => JSON.stringify(NT(n)) === JSON.stringify(AI.nameTokens(n))), '🧩 el armador separa los nombres igual que la web (tildes, ñ, guiones)');
+  const nucleo = ['_dataV', '_gpJson', '_gpApellido', '_gpClave', '_gpFilas', '_gpPaquetes', '_gpBuscar', '_dbQuery', '_dbFiltrar', '_dbIdxEntry',
+    '_reconstructPgn', 'normStr', 'nameTokens', '_tokAllIn', '_tokAllInOne', '_obContar', '_obEntrada', '_obPartesArchivo', '_obPartesCalc', '_obPorPartes'].map(extraerFuncion).join('\n');
+  const mkGP = (files) => new Function('fetch', 'window', 'Promise', nucleo
+    + '\nvar _GP_MAX_FILAS = 40000, _gpPedidos = {}, _gpListo = {}, _obIx = null, _obPartesEnt = {}, _ondemand = true, _splitMemo = null;'
+    + '\nvar pedidos = []; function _loadGamesIndexAsync(cb) { pedidos.push("TODA"); cb(true); }'
+    + '\nreturn { buscar: _gpBuscar, filtrar: _dbFiltrar, query: _dbQuery, entrada: _dbIdxEntry, contar: _obContar, obEnt: _obEntrada,'
+    + ' calc: _obPartesCalc, pedidos: pedidos, apellido: _gpApellido, clave: _gpClave, ix: function () { return _obIx; } };')(
+    (url) => { const rel = url.replace(/^data\//, '').replace(/\?.*$/, ''); return Promise.resolve(files[rel] ? { ok: true, json: () => Promise.resolve(JSON.parse(files[rel])) } : { ok: false, status: 404 }); },
+    {}, Promise);
+  const spT = new Set(['g', 'go', 'gon']);
+  chk(['Pérez González, Juan', 'Gonzalez Juan', 'Oro, Faustino', ', X'].every((n) => {
+    const GP0 = mkGP({}); const sp = {}; spT.forEach((k) => { sp[k] = 1; });
+    return JSON.stringify(GP0.apellido(n)) === JSON.stringify(AI.apellido(n)) && AI.apellido(n).every((t) => GP0.clave(t, sp) === AI.clave(t, spT));
+  }), '🧩 la web calcula el apellido y su clave igual que el armador');
+  // Una base de juguete: 6 apellidos, nombres de pila repetidos, partidas cortas, la mitad sin árbol (na=1).
+  const AP = ['Gonzalez', 'Gomez', 'Garcia', 'Perez Gonzalez', 'Oro', 'Najdorf'], PI = ['Juan', 'Carlos', 'Faustino', 'Miguel'];
+  const MV = ['e4 c5 Nf3 d6 d4 cxd4', 'e4 c5 Nf3 Nc6', 'e4 e5 Nf3 Nc6 Bb5', 'd4 Nf6 c4 g6', 'd4 d5 c4 e6', 'e4 c5 Nc3', 'e4', 'c4 e5'];
+  const RS = ['1-0', '0-1', '1/2-1/2'];
+  const juguete = [];
+  for (let i = 0; i < 900; i++) {
+    juguete.push({ w: AP[i % 6] + ', ' + PI[i % 4], b: AP[(i * 7 + 3) % 6] + ', ' + PI[(i * 3 + 1) % 4], d: (1950 + i % 70) + '.01.01', r: RS[i % 3],
+                   e: 'B' + (i % 10) + '0', we: 1800 + (i * 37) % 900, be: i % 5 ? 1900 + (i * 13) % 600 : 0, ev: 'Torneo ' + (i % 30), pl: 40 + i % 60,
+                   m: MV[i % 8], t: 't' + (i % 30), gi: i, na: i % 3 === 2 ? 1 : 0 });
+  }
+  const arch = AI.armarIndices(juguete.map((g, n) => ({ g, n })), { cub: 120, hoja: 60, top: 10 });
+  const GP = mkGP(arch);
+  const todas = juguete.map(GP.entrada);
+  const qs = [{ raw: 'Gonzalez' }, { raw: 'gonz juan' }, { raw: 'Oro 1960-1980' }, { white: 'Najdorf', black: 'Perez' }, { raw: 'Garcia Carlos', result: '1-0', eco: 'B3' },
+              { raw: 'Miguel' }, { raw: 'Inexistente' }];
+  let igualesB = 0; const difB = [];
+  for (const q of qs) {
+    const sub = await GP.buscar(q);
+    const a = sub ? GP.filtrar(sub, GP.query(q)).map((e) => e.gi).join(',') : 'null', b = GP.filtrar(todas, GP.query(q)).map((e) => e.gi).join(',');
+    if (a === b) igualesB++; else difB.push(JSON.stringify(q));
+  }
+  chk(igualesB === qs.length, '🧩 la búsqueda por partes encuentra lo MISMO que con la base entera, en el mismo orden (7 búsquedas)', difB.join(' | '));
+  chk((await GP.buscar({ raw: '1980' })) === null && (await GP.buscar({ eco: 'B40' })) === null, '🧩 sin ningún nombre (sólo año o ECO) avisa que hace falta la base entera');
+  const sinTope = await GP.buscar({ raw: 'juan' });
+  chk(Array.isArray(sinTope), '🧩 un nombre de pila también se busca por partes mientras no haga bajar demasiado');
+  // Explorador: totales, jugadas siguientes y partidas iguales a contar sobre la base entera (sin na=1).
+  const delArbol = juguete.filter((g) => !g.na).map(GP.obEnt);
+  const calc = async (L) => { for (let k = 0; k < 20; k++) { const r = GP.calc(L, () => {}); if (r) return r; await new Promise((res) => setTimeout(res, 0)); } return null; };
+  let igualesO = 0; const difO = [];
+  const lineas = [[], ['e4'], ['e4', 'c5'], ['e4', 'c5', 'Nf3'], ['e4', 'c5', 'Nf3', 'd6', 'd4'], ['d4', 'Nf6'], ['e4', 'c5', 'Nf3', 'd6', 'd4', 'cxd4', 'Nxd4'], ['h4']];
+  for (const L of lineas) {
+    const r = await calc(L), t = GP.contar(delArbol, L);
+    const mv = (x) => x.nextMoves.map((m) => [m.san, m.count, m.w, m.d, m.b].join(':')).join(' ');
+    const ok = r && r.total === t.total && mv(r) === mv(t)
+      && (r.parcial ? r.matches.map((g) => g.gi).join() === t.matches.slice(0, 10).map((g) => g.gi).join() : r.matches.map((g) => g.gi).join() === t.matches.map((g) => g.gi).join());
+    if (ok) igualesO++; else difO.push(L.join(' ') || '(inicial)');
+  }
+  chk(igualesO === lineas.length && GP.pedidos.length === 0, '🧩 el explorador por partes cuenta lo MISMO que con la base entera (8 líneas, de la inicial a una hoja)', difO.join(' | '));
+  const nodos = Object.keys(JSON.parse(arch['ob/indice.json']).nodos).length, hojas = Object.keys(JSON.parse(arch['ob/indice.json']).hojas).length;
+  chk(nodos > 1 && hojas > 3, '🧩 el juguete sí se partió (nodos y hojas)', nodos + ' nodos, ' + hojas + ' hojas');
+  const GPmal = mkGP({});
+  GPmal.calc([], () => {}); await new Promise((res) => setTimeout(res, 0)); await new Promise((res) => setTimeout(res, 0));
+  chk((await GPmal.buscar({ raw: 'Gonzalez' })) === null && GPmal.pedidos.join() === 'TODA' && GPmal.ix() === false,
+      '🧩 sin pedazos publicados, la búsqueda y el explorador vuelven a la base entera (como antes)');
+  chk(/_gpBuscar\(q0\)\.then/.test(extraerFuncion('dbSearchRun')) && /_loadGamesIndexAsync/.test(extraerFuncion('dbSearchRun'))
+      && !/_renderPartidasLoading\(el, renderDbSearch\)/.test(extraerFuncion('renderDbSearch')),
+      '🧩 el buscador ya no baja la base entera para mostrarse: cada búsqueda baja su pedazo');
+  chk(/_obPorPartes\(\)\) return _obPartesCalc/.test(extraerFuncion('_obCompute')) && /_obPartesCalc\(line/.test(extraerFuncion('_cvBookGamesUpdate'))
+      && /_gpBuscar\(\{ white/.test(extraerFuncion('puzOpenSourceGame')) && /_gpBuscar\(\{ white/.test(extraerFuncion('pracOpenSourceGame')),
+      '🧩 el explorador, las partidas del libro y la partida original de los ejercicios usan los pedazos');
+  // Con la base de verdad (si está armada en esta PC): mismas búsquedas y mismo árbol que con la base entera.
+  if (fs.existsSync('data/gi/indice.json') && fs.existsSync('data/ob/indice.json') && fs.existsSync('data/games_0.json')) {
+    const real = {}; ['gi', 'ob'].forEach((d) => fs.readdirSync('data/' + d).forEach((f) => { real[d + '/' + f] = fs.readFileSync('data/' + d + '/' + f, 'utf8'); }));
+    const GR = mkGP(real), base = AI.leerBase('data').map((x) => x.g);
+    const llenas = base.map(GR.entrada);
+    let okR = 0; const difR = [];
+    const qr = [{ raw: 'Oro Faustino' }, { raw: 'Panno Najdorf' }, { raw: 'Mareco 2024' }, { raw: 'gonzalez' }, { white: 'Campora', black: 'Hoffman' }];
+    for (const q of qr) {
+      const sub = await GR.buscar(q);
+      const a = sub ? GR.filtrar(sub, GR.query(q)).map((e) => e.t + '/' + e.gi).join(',') : 'null', b = GR.filtrar(llenas, GR.query(q)).map((e) => e.t + '/' + e.gi).join(',');
+      if (a === b && b) okR++; else difR.push(JSON.stringify(q) + ' ' + a.split(',').length + ' vs ' + b.split(',').length);
+    }
+    chk(okR === qr.length, '🧩 con la base de verdad, 5 búsquedas por partes dan lo mismo que con la base entera', difR.join(' | '));
+    const arbolR = base.filter((g) => !g.na).map(GR.obEnt);
+    const calcR = async (L) => { for (let k = 0; k < 20; k++) { const r = GR.calc(L, () => {}); if (r) return r; await new Promise((res) => setTimeout(res, 0)); } return null; };
+    let okA = 0; const difA = [];
+    for (const L of [[], ['e4', 'c5'], ['d4', 'Nf6', 'c4', 'g6'], ['e4', 'e5', 'Nf3', 'Nc6', 'Bb5', 'a6', 'Ba4', 'Nf6']]) {
+      const r = await calcR(L), t = GR.contar(arbolR, L);
+      const mv = (x) => x.nextMoves.map((m) => [m.san, m.count, m.w, m.d, m.b].join(':')).join(' ');
+      if (r && r.total === t.total && mv(r) === mv(t) && r.matches.slice(0, 30).map((g) => g.t + '/' + g.gi).join() === t.matches.slice(0, 30).map((g) => g.t + '/' + g.gi).join()) okA++;
+      else difA.push((L.join(' ') || 'inicial') + (r ? ' ' + r.total + ' vs ' + t.total : ' sin resultado'));
+    }
+    chk(okA === 4, '🧩 con la base de verdad, el explorador por partes cuenta lo mismo (4 líneas)', difA.join(' | '));
+  } else { chk(true, '(sin la base armada en esta PC: se saltea la comparación con la base de verdad)'); chk(true, '(ídem explorador)'); }
+
+  // 3 · Primera carga más liviana: lo horneado por error, la página liviana y los nombres de las tablas.
+  chk(/<div id="list-favoritos"><\/div>/.test(SRC) && /<div id="tour-modal-body"><\/div>/.test(SRC) && /<div id="modal-body"><\/div>/.test(SRC) && !/Bellver/.test(SRC.slice(0, SRC.indexOf('<script>\n/* ═'))),
+      '🪶 el archivo ya no trae horneados los favoritos, el cartel del torneo «Nave Bellver» ni la ficha de un jugador');
+  chk(/\['list-favoritos','tour-modal-body','modal-body'\]\.forEach/.test(extraerFuncion('_exportBaseHtml')), '🪶 y el exportador los vacía, para que no vuelvan a quedar escritos');
+  const WL = await import('./herramientas/armar-web-liviana.mjs');
+  const esb = WL.buscarEsbuild();
+  if (esb) {
+    const ej = '<!DOCTYPE html>\n<html><head>\n  <!-- un comentario -->\n  <style>\n  /* nota */\n  .a { color: red; }\n  </style>\n</head><body>\n'
+      + '    <div title="x">Hola <b>che</b></div>\n<pre>  dos  espacios\n    acá</pre><textarea>  igual  </textarea>\n'
+      + '<script src="data/manifest.js"></script>\n<script type="application/json" id="t">""</script>\n'
+      + '<script>\n// comentario\nvar s = "<\\/script>"; /* otro */ function f(a) { return a  +  1; }\nvar PLAYERS = [\n  { id:1 },\n  { id:2 },\n];\nvar despues = 1;\n</script>\n</body></html>';
+    const L = WL.armarLiviana(ej, esb), h = L.html;
+    chk(!/comentario|nota|otro/.test(h) && /\.a\{color:red\}/.test(h.replace(/\s/g, '')) && /function f\(a\)\{return a\+1\}/.test(h),
+        '🪶 la página liviana saca los comentarios del HTML, del CSS y del JavaScript y los espacios de más', h);
+    chk(/<pre>  dos  espacios\n    acá<\/pre><textarea>  igual  <\/textarea>/.test(h) && /<div title="x">Hola <b>che<\/b><\/div>/.test(h),
+        '🪶 no toca lo que se ve: el texto, los <pre> ni los <textarea>');
+    chk(/var PLAYERS=\[\];var despues=1/.test(h) && /<script src="data\/manifest\.js"><\/script>/.test(h) && /<script type="application\/json" id="t">""<\/script>/.test(h)
+        && !/<\/script>";/.test(h) && /"<\\\/script>"/.test(h),
+        '🪶 vacía la lista vieja de jugadores, deja los <script src> y los de datos, y nunca un </script> suelto adentro');
+    chk(h.includes('<meta name="aa-fuente" content="' + WL.huellaFuente(ej) + '">'), '🪶 lleva la huella del index.html del que salió');
+    // Con el index.html de verdad: compila entera y conserva lo que necesita la función de la portada.
+    const R = WL.armarLiviana(SRC, esb);
+    const vm = await import('node:vm');
+    let compila = 0, malos = [];
+    for (const m of R.html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)) {
+      if (/\bsrc=|type="application\/json"/.test(m[1]) || !m[2].trim()) continue;
+      try { new vm.Script(m[2]); compila++; } catch (e) { malos.push(e.message); }
+    }
+    const nOrig = [...SRC.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)].filter((m) => !/\bsrc=|type="application\/json"/.test(m[1]) && m[2].trim()).length;
+    chk(!malos.length && compila === nOrig && compila > 20, '🪶 la página liviana de verdad: los ' + compila + ' scripts compilan', malos.join(' | '));
+    chk(/<script id="dl-cover">/.test(R.html) && /<title>[^<]+<\/title>/.test(R.html) && /<meta property="og:image"/.test(R.html) && /<link rel="canonical"/.test(R.html)
+        && R.html.length < SRC.length * 0.7,
+        '🪶 conserva lo que toca la función de la portada (dl-cover, título, og:, canonical) y pesa bastante menos', Math.round(R.html.length / 1048576 * 10) / 10 + ' MB');
+    if (fs.existsSync('web.html') && !fs.readFileSync('web.html', 'utf8').includes('content="' + WL.huellaFuente(SRC) + '"'))
+      console.log('  (aviso) web.html no está al día con index.html: lo rehace publicar-web.cmd.');
+  } else { for (let i = 0; i < 6; i++) chk(true, '(sin esbuild en esta PC: se saltea la página liviana)'); }
+  // La función de la portada manda web.html y, si no está, index.html.
+  const FX = fs.readFileSync('functions/index.js', 'utf8');
+  const PAG = new Function('URL', 'Request', (FX.match(/async function pagina\(context\) \{[\s\S]*?\n\}/) || [''])[0] + '; return pagina;')(URL, Request);
+  const ctx = (st) => { const vistos = []; return { vistos, c: { request: new Request('https://chessargentino.ar/?torneo=1', { headers: { 'If-None-Match': '"x"' } }),
+    next: async () => 'INDEX', env: { ASSETS: { fetch: async (rq) => { vistos.push(new URL(rq.url).pathname + new URL(rq.url).search + '|' + rq.headers.get('if-none-match')); return { status: st }; } } } } }; };
+  const c1 = ctx(200), r1 = await PAG(c1.c), c2 = ctx(404), r2 = await PAG(c2.c), c3 = ctx(304), r3 = await PAG(c3.c);
+  chk(r1.status === 200 && c1.vistos[0] === '/web|"x"' && r2 === 'INDEX' && r3.status === 304 && /const next = \(\) => pagina\(context\);/.test(FX),
+      '🪶 la portada manda web.html (pedido como /web, con el 304 de siempre) y, si no está, index.html', c1.vistos.join());
+  // Los nombres de las tablas: en el manifest sólo los recientes; todos en data/cr-nombres.json, que se baja al buscar.
+  const CNR = new Function('tourRange', extraerFuncion('_crNombresRecientes') + ';' + (SRC.match(/var _CR_NOMBRES_DIAS = \d+;/) || [''])[0] + ' return _crNombresRecientes;')((o) => (o && o.fin ? { end: o.fin } : null));
+  const hoyK = (d) => { const x = new Date(Date.now() - d * 864e5); return x.getFullYear() * 10000 + (x.getMonth() + 1) * 100 + x.getDate(); };
+  const cnr = CNR({ cr2_tz_tz_1_c0: 'A', cr2_ls_2: 'B', cr2_tz_tz_3: 'C', cr2_hc_9: 'D' }, [{ id: 'tz_1', fin: hoyK(10) }, { id: '2', fin: hoyK(400) }], { tz_3: { fin: hoyK(400) }, tz_1: {} });
+  chk(JSON.stringify(cnr) === '{"cr2_tz_tz_1_c0":"A","cr2_hc_9":"D"}', '🪶 viajan los nombres de los torneos recientes (y los de fecha desconocida); los de hace más de _CR_NOMBRES_DIAS días, no', JSON.stringify(cnr));
+  chk(/if \(_q && _ondemand\) _crNombresTodos\(\);/.test(SRC) && /\/\^cr2_\/\.test\(k\)/.test(extraerFuncion('_crNombresTodos')) && /renderTorneos\(_lastTorneoFilter\)/.test(extraerFuncion('_crNombresTodos'))
+      && extraerFuncion('_fsSaveJobs').includes("uno('cr-nombres.json'"),
+      '🪶 el buscador de Torneos baja los nombres de todas las tablas la primera vez que se usa, y repite la búsqueda');
+  if (fs.existsSync('data/manifest.js')) {
+    const W = {}; new Function('window', fs.readFileSync('data/manifest.js', 'utf8'))(W);
+    const rec = new Function('tourRange', (SRC.match(/function tourRange\(obj\) \{[\s\S]*?\n\}/) || [''])[0] + extraerFuncion('_isoToKey') + extraerFuncion('parseDateRange')
+      + extraerFuncion('_crNombresRecientes') + ';' + (SRC.match(/var _CR_NOMBRES_DIAS = \d+;/) || [''])[0] + ' return _crNombresRecientes;');
+    let chico = null; try { chico = rec()(W.__CR_NAMES__ || {}, (W.__MANIFEST__ || {}).tournaments, W.__EMBEDDED_TZ__ || {}); } catch (e) { chico = 'ERR ' + e.message; }
+    const kb = (o) => Math.round(JSON.stringify(o).length / 1024);
+    chk(typeof chico === 'object' && kb(chico) < kb(W.__CR_NAMES__) / 2, '🪶 con los datos de verdad, los nombres del manifest bajan a menos de la mitad',
+        typeof chico === 'object' ? kb(W.__CR_NAMES__) + ' KB → ' + kb(chico) + ' KB (' + Object.keys(chico).length + ' de ' + Object.keys(W.__CR_NAMES__).length + ' tablas)' : chico);
+  } else chk(true, '(sin manifest en esta PC)');
+  const CMD = fs.readFileSync('publicar-web.cmd', 'utf8');
+  const iI = CMD.indexOf('armar-indices-partidas.mjs'), iW = CMD.indexOf('armar-web-liviana.mjs'), iV = CMD.indexOf('node "herramientas\\versiones-datos.mjs"'), iG = CMD.indexOf('git add .');
+  chk(iI > 0 && iW > iI && iV > iW && iG > iV, '🪶 publicar-web.cmd arma los pedazos, la página liviana y las versiones, en ese orden y antes de subir');
+}
+
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));
 console.log('   Corrieron ' + corridas + ' de ' + ESPERADAS + ' comprobaciones.'
           + (corridas < ESPERADAS ? '   ⚠️  FALTAN ' + (ESPERADAS - corridas) + ': algo se está salteando.' : '') + '\n');

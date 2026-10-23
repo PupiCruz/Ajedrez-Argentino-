@@ -73,6 +73,43 @@ if not errorlevel 1 (
 )
 
 :: ------------------------------------------------------------------
+:: 0e) Partidas por partes: corta la base de partidas (data\games_*.json)
+::     en pedazos chicos (data\gi = buscar por jugador, data\ob = el
+::     explorador de aperturas), asi la web no baja los 13 MB enteros.
+::     Si falla, la web baja la base entera, como antes.
+:: ------------------------------------------------------------------
+where node >nul 2>&1
+if not errorlevel 1 (
+    node --max-old-space-size=4096 "herramientas\armar-indices-partidas.mjs"
+    echo.
+)
+
+:: ------------------------------------------------------------------
+:: 0e2) La pagina liviana (web.html): la copia de index.html sin
+::      comentarios ni espacios de mas que recibe la gente (2,7 MB en vez
+::      de 4,6). Vos seguis editando index.html. Si falla, la borra y la
+::      gente recibe index.html entero, como antes.
+:: ------------------------------------------------------------------
+where node >nul 2>&1
+if not errorlevel 1 (
+    node "herramientas\armar-web-liviana.mjs"
+    echo.
+)
+if errorlevel 1 if exist "web.html" del "web.html"
+
+:: ------------------------------------------------------------------
+:: 0f) Version POR ARCHIVO de los datos grandes (book.json, puzzles.json,
+::     las partidas...): data\versiones.js. Asi la gente vuelve a bajar
+::     solo lo que cambio de verdad. Va DESPUES de los pasos que arman
+::     datos. Si falla, la web usa la version general (como antes).
+:: ------------------------------------------------------------------
+where node >nul 2>&1
+if not errorlevel 1 (
+    node "herramientas\versiones-datos.mjs"
+    echo.
+)
+
+:: ------------------------------------------------------------------
 :: 1) Si hay archivos sin guardar (datos nuevos, etc.), commitearlos.
 :: ------------------------------------------------------------------
 git status --short > "%TEMP%\gitstatus.txt" 2>&1

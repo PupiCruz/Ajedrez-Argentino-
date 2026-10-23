@@ -336,6 +336,10 @@ kbd { font: 700 calc(var(--u) * 11.5) var(--font); border: 1px solid var(--bd30)
 .rank li .pts { font-weight: 800; font-variant-numeric: tabular-nums; }
 .rank li.me { background: var(--gold-bg); outline: 1px solid var(--gold-dim); }
 .rank li.me .pts { color: var(--gold); }
+/* moderators (audit 22/10): a 🗑️ to take a score out of the ranking of everyone */
+.rank li.mod { grid-template-columns: calc(var(--u) * 22) 1fr auto auto; }
+.rank .borrar { font: inherit; font-size: calc(var(--u) * 12); border: 1px solid var(--bd14); background: transparent; color: var(--text2); border-radius: calc(var(--u) * 6); padding: 0 calc(var(--u) * 5); cursor: pointer; }
+.rank .borrar.si { color: var(--red); border-color: var(--red); }
 .rank .empty { font-size: calc(var(--u) * 12.5); color: var(--text3); margin: 0; }
 .rank form { display: flex; gap: calc(var(--u) * 6); margin-top: calc(var(--u) * 8); }
 .rank input { flex: 1; min-width: 0; font: 600 16px var(--font); padding: calc(var(--u) * 7) calc(var(--u) * 10); border-radius: calc(var(--u) * 9);
@@ -1740,6 +1744,7 @@ function start() {
   chPtr = 0;
   notes.forEach(n => { if (n.vib) n.vib.lfo.stop(); });
   notes = song.build(P); endTime = notes.reduce((m, n) => Math.max(m, n.t + n.dur), 0) + 1.8;
+  notes.forEach((n, i) => { n.i = i; }); acta = { k: [], p: [], im: [] };   /* the record of this game, for the ranking (see armarActa) */
   marcReset(); score = 0; material = 0; combo = 0; maxCombo = 0; hp = 100; hits = 0; misses = 0; kingsTaken = 0; kingsSpawned = 0; kingRun = 0; kingStep = 0; tier = 0; tierFlash = 0;
   parts = []; pops = []; glow = [0, 0, 0, 0]; nextE = 0;
   king = { x: 1, from: 1, to: 1, t0: -9, warn: -1, moveAt: 0, next: 3 };
@@ -1807,9 +1812,33 @@ function renderRank() {
     const li = document.createElement('li'), who = document.createElement('span'), pts = document.createElement('span');
     who.className = 'who'; who.textContent = e === pendingRank ? 'Vos' : e.n; pts.className = 'pts'; pts.textContent = e.s.toLocaleString('es-AR');
     if (e === pendingRank || (!marked && savedRank && rankSame(e, savedRank))) { li.className = 'me'; marked = true; }
-    li.append(who, pts); ol.appendChild(li);
+    li.append(who, pts);
+    if (e.on && esMod()) { li.classList.add('mod'); li.appendChild(botonBorrar(e)); }
+    ol.appendChild(li);
   });
   $('rankEmpty').hidden = rows.length > 0;
+}
+/* Moderators (audit 22/10/2026, I3): next to each name of the ranking of everyone, a 🗑️ that asks once more and takes it
+   out (POST /musica/borrar). The server checks that the account really is a moderator; this list only decides who sees
+   the button (the same two as the chats of the site). */
+const MODS = ['elpupicruz', 'chess_argentino'];
+function esMod() { const yo = cuenta(); return !!yo && MODS.includes(yo.name.toLowerCase()); }
+function botonBorrar(e) {
+  const b = document.createElement('button'); b.type = 'button'; b.className = 'borrar'; b.textContent = '🗑️';
+  b.title = 'Sacar a ' + e.n + ' del ranking de todos'; b.setAttribute('aria-label', b.title);
+  b.addEventListener('click', () => {
+    if (!b.classList.contains('si')) { b.classList.add('si'); b.textContent = '¿Borrar?'; setTimeout(() => { b.classList.remove('si'); b.textContent = '🗑️'; }, 4000); return; }
+    const yo = cuenta(), k = songKey + '.' + diffKey, note = $('rankNote'); if (!yo) return;
+    b.disabled = true; note.textContent = 'Sacando a ' + e.n + ' del ranking de todos…';
+    fetch(RANK_API + 'borrar', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ auth: yo.tok, cancion: songKey, dif: diffKey, n: e.n }) })
+      .then(r => r.json())
+      .then(j => {
+        if (j && j.ok) { const o = RANK_ON[k] || (RANK_ON[k] = {}); o.list = rankClean(j.top); o.at = Date.now(); note.textContent = j.borrado ? 'Listo: ' + e.n + ' ya no está en el ranking de todos.' : e.n + ' ya no estaba.'; rankRefresh(k); renderRank(); }
+        else { b.disabled = false; note.textContent = j && j.error === 'moderador' ? 'Eso lo puede hacer sólo un moderador.' : 'No se pudo borrar. Probá de nuevo.'; }
+      })
+      .catch(() => { b.disabled = false; note.textContent = 'Sin conexión: no se pudo borrar.'; });
+  });
+  return b;
 }
 /* send a finished song to the ranking of everyone; the note under the list says how it went */
 /* The ranking of everyone is only for the site's accounts (the author's decision, 17/10: nobody types a name there, so
@@ -1826,20 +1855,24 @@ function sendRank(e, tok) {
   const k = songKey + '.' + diffKey, note = $('rankNote');
   note.textContent = 'Guardado en esta compu. Mandándolo al ranking de todos…';
   fetch(RANK_API + 'puntaje', { method: 'POST', headers: { 'Content-Type': 'text/plain' },
-    body: JSON.stringify({ auth: tok, cancion: songKey, dif: diffKey, puntos: e.s, precision: e.a, material: e.mat, combo: e.c, dur: Math.round(e.dur * 10) / 10 }) })
+    body: JSON.stringify({ auth: tok, cancion: songKey, dif: diffKey, puntos: e.s, precision: e.a, material: e.mat, combo: e.c, dur: Math.round(e.dur * 10) / 10, acta: e.acta }) })
     .then(r => r.json())
     .then(j => {
       if (j && j.ok) {
         const o = RANK_ON[k] || (RANK_ON[k] = {}); o.list = rankClean(j.top); o.at = Date.now();
         const p = j.puesto + '.º';
-        note.textContent = j.noMejoro ? 'Guardado en esta compu. En el ranking de todos sigue tu récord de antes (' + p + ').'
-          : j.fuera ? 'Guardado. En el ranking de todos quedaste ' + p + ' (se muestran los 10 mejores).'
-          : '¡Guardado! Quedaste ' + p + ' en el ranking de todos.';
+        /* the server counts the points itself from the acta: if its number is not this one, say which it took */
+        const suyo = typeof j.s === 'number' && j.s !== e.s ? ' (el ranking te contó ' + j.s.toLocaleString('es-AR') + ' puntos)' : '';
+        note.textContent = j.noMejoro ? 'Guardado en esta compu. En el ranking de todos sigue tu récord de antes (' + p + ')' + suyo + '.'
+          : j.fuera ? 'Guardado. En el ranking de todos quedaste ' + p + suyo + ' (se muestran los 10 mejores).'
+          : '¡Guardado! Quedaste ' + p + ' en el ranking de todos' + suyo + '.';
         rankRefresh(k);
       } else {
         const why = j && j.error;
         note.textContent = why === 'cuenta' ? 'Guardado en esta compu. Tu sesión de ChessArgentino venció: entrá de nuevo en la web para figurar en el ranking de todos.'
           : why === 'espera' ? 'Guardado en esta compu. Al ranking de todos va un puntaje cada 30 segundos.'
+          : why === 'acta' || why === 'partitura' ? 'Guardado en esta compu. El ranking de todos no lo pudo contar: recargá la página (F5) y jugala de nuevo.'
+          : why === 'automatico' ? 'Guardado en esta compu. El ranking de todos no lo aceptó: salió demasiado perfecto, como tocado por un programa.'
           : 'Guardado en esta compu. El ranking de todos no lo aceptó.';
       }
     })
@@ -1849,6 +1882,26 @@ function sendRank(e, tok) {
 if (/[?&]vivolocal=1\b/.test(location.search)) window.__pruebaRanking = pts => {
   score = pts; hits = 300; misses = 10; maxCombo = 120; material = 700; t0 = (ac ? ac.currentTime : performance.now() / 1000) - 200; finish('win');
 };
+/* The acta in short (what the server reads; see musicaRecalcular in vivo-worker): r = one entry per piece of the score,
+   in the order build() made them: a number = ms early/late it was taken (a friend: ms of the press that hit it), null =
+   it went by; a held piece: [ms, ms held, ms of vibrato]. k = the black kings, in the order they came out:
+   [when it falls (ms), ms of the capture or null, castle 0/1, ms of the decoy rook or null]. p = pifies, im = checks.
+   f = for the pieces that went by: [piece, ms] after its window closed until the frame that noticed it (the order matters
+   for the streak). */
+function armarActa() {
+  if (!acta) return null;
+  const ms = x => Math.round(x * 10000) / 10, r = [], f = [];   /* tenths of a millisecond: a tap and a frame in the same ms must keep their order */   /* f: [piece, ms after its window closed when the game noticed it went by] */
+  for (const n of notes) {
+    if (n.i === undefined) continue;
+    const hit = n.ho !== undefined && (n.type === 'friend' || n.state !== 'missed' || n.hf !== undefined);
+    if (!hit) { r[n.i] = null; if (n.mt !== undefined) f.push([n.i, ms(n.mt - n.t - WIN)]); continue; }
+    if (n.dur > 0 && n.type !== 'friend') r[n.i] = [ms(n.ho), Math.max(0, ms(Math.min(n.hf !== undefined ? n.hf : n.t + n.dur, n.t + n.dur) - (n.t + n.ho))), ms(n.vs || 0)];
+    else r[n.i] = ms(n.ho);
+  }
+  for (let i = 0; i < r.length; i++) if (r[i] === undefined) r[i] = null;
+  return { v: 1, r, k: acta.k.map(({ k, r: rk }) => [ms(k.t), k.ho !== undefined ? ms(k.ho) : null, k.castle ? 1 : 0, rk && rk.ho !== undefined ? ms(rk.ho) : null]),
+           p: acta.p.slice(0, 2000), im: acta.im.slice(0, 2000), f };
+}
 function finish(kind) {
   state = 'over'; clearInterval(schedTimer); stopCountdown(); modoJuego(false);
   notes.forEach(n => { if (n.vib) n.vib.lfo.stop(); n.vib = null; });
@@ -1870,7 +1923,7 @@ function finish(kind) {
   const yo = cuenta(), online = !!yo && !lose && fin > 0;
   const list = getRank(), makes = fin > 0 && (online || list.length < 10 || fin > list[list.length - 1].s);
   /* only a finished song goes to the ranking of everyone (dur: how long the song ran, the server checks it) */
-  pendingRank = makes ? { s: fin, a: Math.round(acc * 100), d: Date.now(), mat: material, c: maxCombo, dur: clock(), done: !lose } : null;
+  pendingRank = makes ? { s: fin, a: Math.round(acc * 100), d: Date.now(), mat: material, c: maxCombo, dur: clock(), done: !lose, acta: lose ? null : armarActa() } : null;
   savedRank = null; renderRank(); MC.rankKeyNow = ''; marcRank(true); fetchRank();
   /* with an account nothing has to be typed: it is saved (here and in the ranking of everyone) right away. The author
      finished El Choclo, went back to the menu without pressing Guardar and his score was lost (17/10). */
@@ -1941,11 +1994,13 @@ function spawnKing() {
     if (Math.random() > 0.65) rF = rS;   /* sometimes the rook stays put and only the king moves */
     notes.push({ t, lane: kF, start: kS, type: 'bking', dur: 0, state: 'wait', castle: true, sw });
     notes.push({ t, lane: rF, start: rS, type: 'drook', dur: 0, state: 'wait', castle: true, sw });
+    if (acta) acta.k.push({ k: notes[notes.length - 2], r: notes[notes.length - 1] });
     pop('¡REY NEGRO!', W / 2, 230, C.brass, 34);
     return;
   }
   const ok = [0, 1, 2, 3].filter(l => !busy(l)), pool = ok.length ? ok : [0, 1, 2, 3], lane = pool[Math.floor(Math.random() * pool.length)];
   notes.push({ t, lane, start: lane, type: 'bking', dur: 0, state: 'wait' });
+  if (acta) acta.k.push({ k: notes[notes.length - 1], r: null });
   pop('¡REY NEGRO!', W / 2, 230, C.brass, 34);
 }
 function bump() {
@@ -1964,6 +2019,11 @@ function burst(x, y, col) {
 const MATERIAL = { pawn: 1, knight: 3, bishop: 3, rook: 5, queen: 9 };
 const PIECE_NAME = { knight: 'CABALLO', bishop: 'ALFIL', rook: 'TORRE', queen: 'DAMA' };
 let material = 0;
+/* The ACTA (audit 22/10/2026, I3): what happened to each piece, so the ranking of everyone counts the points itself
+   (vivo-worker, musicaRecalcular) on its own copy of the score instead of believing the number. ho = how early (-) or
+   late (+) the piece was taken; hf = when a held piece ended; vs = seconds of vibrato; plus the black kings, the
+   pifies and the checks. */
+let acta = null;
 function hitNote(n, d) {
   const x = laneX(n.lane);
   if (n.type === 'drook') {
@@ -2020,7 +2080,7 @@ function miss(n) {
 /* the escaped piece hits the king: check. More life and points lost, the king flashes red and shakes. */
 let kingFlash = 0;
 function kingImpact(n) {
-  n.impacted = true;
+  n.impacted = true; if (acta) acta.im.push(Math.round(n.impactAt * 1000));
   const x = laneX(king.x);
   hp -= (9 + P.kingHit) * P.hpMul; score = Math.max(0, score - P.kingScore); shake = 0.5; kingFlash = 0.7; pupiEv('ugly');
   pop('¡Jaque!', x, KING_Y - 46, C.crimson, 26); pop('-' + P.kingScore, x, KING_Y - 74, C.white, 17);
@@ -2037,9 +2097,10 @@ function press(lane) {
     if (d <= (n.type === 'bking' ? WIN + 0.05 : WIN) && d < bd) { best = n; bd = d; }
   }
   if (!best) {
-    if (melodic && now > 1) { breakCombo(); hp -= 1.5 * P.hpMul; pop('PIFIE', laneX(lane), HIT_Y - 64, C.muted, 15); sfxPifie(); }
+    if (melodic && now > 1) { if (acta) acta.p.push(Math.round(now * 1000)); breakCombo(); hp -= 1.5 * P.hpMul; pop('PIFIE', laneX(lane), HIT_Y - 64, C.muted, 15); sfxPifie(); }
     return;
   }
+  best.ho = now - best.t;
   if (best.type === 'friend') {
     best.state = 'missed'; misses++; breakCombo(); hp -= 16 * P.hpMul; shake = 0.35;
     burst(laneX(lane), HIT_Y, C.crimson); pop('¡FUEGO AMIGO!', laneX(lane), HIT_Y - 64, C.crimson, 17); sfxBad(); pupiEv('ugly');
@@ -2262,15 +2323,15 @@ function update(dt) {
     if (n.castle && n.type === 'bking' && !n.warned && n.state === 'wait' && 1 - (n.t - now) / FALL >= n.sw) { n.warned = true; pop('¡ENROQUE!', W / 2, 170, C.brass, 34); sfxCastle(); }
     if (n.toKing && !n.impacted && now >= n.impactAt) kingImpact(n);
     if (n.state === 'wait' && now > n.t + (n.type === 'bking' ? WIN + 0.05 : WIN)) {
-      if (n.type === 'friend') { n.state = 'done'; score += 10 * mult(); }
+      if (n.type === 'friend') { n.state = 'done'; n.mt = now; score += 10 * mult(); }
       else if (n.type === 'drook') n.state = 'done';
       else if (n.type === 'bking') { n.state = 'done'; pop('SE FUE EL REY', laneX(n.lane), HIT_Y - 64, C.muted, 14); }
-      else miss(n);
+      else { n.mt = now; miss(n); }
     } else if (n.state === 'holding') {
       const end = n.t + n.dur, q = n.type === 'queen' ? 2 : 1;
-      if (now >= end) { endHold(n); n.state = 'done'; score += 50 * q * mult(); pop('+' + 50 * q, laneX(n.lane), HIT_Y - 64, C.brass, 17); burst(laneX(n.lane), HIT_Y, C.brass); }
+      if (now >= end) { n.hf = now; endHold(n); n.state = 'done'; score += 50 * q * mult(); pop('+' + 50 * q, laneX(n.lane), HIT_Y - 64, C.brass, 17); burst(laneX(n.lane), HIT_Y, C.brass); }
       else if (!isDown(n.lane)) {
-        endHold(n);
+        n.hf = now; endHold(n);
         if (end - now < 0.12) { n.state = 'done'; score += 50 * q * mult(); }
         else { n.state = 'missed'; breakCombo(); hp -= 6 * P.hpMul; pop('SOLTASTE', laneX(n.lane), HIT_Y - 64, C.crimson, 15);
           if (n.voice && ac) { n.voice.gain.cancelScheduledValues(ac.currentTime); n.voice.gain.setTargetAtTime(0, ac.currentTime, 0.03); }
@@ -2278,7 +2339,7 @@ function update(dt) {
       } else {
         /* holding: points per second, doubled while doing vibrato (space bar, or wiggling the finger on a phone) */
         const vib = vibKey || vibTouch > 30, add = 60 * q * mult() * dt * (vib ? 2 : 1);
-        score += add; if (vib) n.vibPts = (n.vibPts || 0) + add / 2;
+        score += add; if (vib) { n.vibPts = (n.vibPts || 0) + add / 2; n.vs = (n.vs || 0) + dt; }
         if (vib !== !!n.vibOn) setVibrato(n, vib);
         glow[n.lane] = Math.max(glow[n.lane], vib ? 1 : 0.7);
       }
