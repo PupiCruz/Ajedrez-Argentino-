@@ -20588,15 +20588,15 @@ function _histPeaks(p) {
   });
   return pk;
 }
-// Baja el historial FIDE de un jugador desde la página de Lichess (que lo trae embebido, desde ~2000).
+// Baja el historial FIDE de un jugador desde la API de Lichess (/api/fide/player/{id}/ratings).
 // CORS abierto → se lee directo del navegador, sin servidor. Devuelve [{d:"YYYY-MM",s,r,b}] o null.
+// (Antes se leía la página lichess.org/fide/{id}/x, pero desde oct. 2026 tiene el control
+// anti-robots de Cloudflare y el navegador recibe "Failed to fetch".)
 async function _fetchLichessHist(fideId) {
-  var res = await fetch('https://lichess.org/fide/' + encodeURIComponent(fideId) + '/x');
+  var res = await fetch('https://lichess.org/api/fide/player/' + encodeURIComponent(fideId) + '/ratings');
   if (!res.ok) return null;
-  var txt = await res.text();
-  var m = txt.match(/fideRatingChart['"]?\s*,\s*\{init:(\{.*?\})\}\)/);
-  if (!m) return null;
-  var obj; try { obj = JSON.parse(m[1]); } catch (e) { return null; }
+  var obj; try { obj = await res.json(); } catch (e) { return null; }
+  if (!obj || typeof obj !== 'object') return null;
   // Cada entero codifica AÑO·MES·RATING: n = año*1e6 + mes*1e4 + rating.
   var byMonth = {}, pad = function (n) { return ('0' + n).slice(-2); };
   function add(arr, key) {
