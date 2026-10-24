@@ -4229,7 +4229,10 @@ console.log('\n=== 50. Puntos del torneo en el visor (6½/7) ===');
       if (!d.rounds || !d.standings || !d.standings.length) return;
       const rs = Object.keys(d.rounds).map(Number).filter(n => !isNaN(n)).sort((a, b) => a - b);
       if (!rs.length) return;
-      const p = PTS(d), ult = rs[rs.length - 1];
+      // (23/10) Un torneo guardado en plena jugada trae los cruces de la ronda 5 y la tabla «después de la 3»
+      // (standingsRound): se compara contra la ronda de la TABLA, no contra la última (el blitz del PRO AM
+      // sumaba 62 «errores» que no eran del visor).
+      const sr = +d.standingsRound, p = PTS(d), ult = (sr && rs.indexOf(sr) >= 0) ? sr : rs[rs.length - 1];
       let hubo = false;
       d.standings.forEach(st => {
         if (!st || st.name == null || st.pts == null) return;
