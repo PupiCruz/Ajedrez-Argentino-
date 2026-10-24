@@ -28,7 +28,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2666;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2682;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -11097,6 +11097,101 @@ console.log('\n=== 80. ♟️ Chess Club Showdown en la portada (23/10) ===');
       '♟️ publicar-web.cmd lo arma antes de las versiones, el archivo lleva versión propia y la portada lo dibuja');
   const cfg = JSON.parse(fs.readFileSync('herramientas/chesscom-eventos/eventos.json', 'utf8'));
   chk(cfg.eventos.every((e) => /^[a-z0-9-]+-\d+$/.test(e.slug) && /^https:\/\/www\.chess\.com\//.test(e.link)), '♟️ eventos.json: cada edición con su slug y un link a chess.com');
+}
+
+console.log('\n=== 81. 📖 Sobre el torneo (23/10) ===');
+{
+  const escHtml = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  const A = new Function('escHtml', ['_aboutBloques', '_aboutInline', '_aboutHtml', '_aboutResumen', '_tdAboutHtml'].map(extraerFuncion).join('\n')
+    + '; return { _aboutBloques, _aboutHtml, _aboutResumen, _tdAboutHtml };')(escHtml);
+  const txt = 'Primer párrafo con **negrita**.\nSigue en el mismo.\n\n## Los jugadores\n- **Gukesh** (India)\n• Sindarov\n\nVer [FIDE](https://fide.com/x?a=1&b=2).';
+  const h = A._aboutHtml(txt);
+  chk(h === '<p class="td-ab-lead">Primer párrafo con <b>negrita</b>.<br>Sigue en el mismo.</p><div class="td-ab-secs"><section class="td-ab-sec"><h3>Los jugadores</h3>'
+      + '<ul><li><b>Gukesh</b> (India)</li><li>Sindarov</li></ul><p>Ver <a href="https://fide.com/x?a=1&amp;b=2" target="_blank" rel="noopener">FIDE</a>.</p></section></div>',
+      '📖 párrafo de entrada, cada subtítulo con lo suyo en una sección, listas con - o •, negrita y links', h);
+  const malo = A._aboutHtml('<img src=x onerror=alert(1)> [x](javascript:alert(1)) [y](https://a.b/"onmouseover=1)');
+  chk(!/<img|<a href="javascript|"onmouseover/.test(malo), '📖 nada de HTML propio ni links que no sean http(s): todo sale escapado', malo);
+  const largo = 'El campeón del mundo, Gukesh Dommaraju (India), defiende por primera vez su corona ante el retador Javokhir Sindarov (Uzbekistán). Son hasta 14 partidas clásicas en Ginebra.';
+  chk(A._aboutResumen('## Título\n' + largo) === 'El campeón del mundo, Gukesh Dommaraju (India), defiende por primera vez su corona ante el retador Javokhir Sindarov (Uzbekistán).'
+      && A._aboutResumen('Corto con **negrita** y [link](https://x.y).') === 'Corto con negrita y link.' && A._aboutResumen('## Sólo título') === ''
+      && A._aboutResumen('a '.repeat(200)).length <= 160,
+      '📖 el resumen para Google: primer párrafo en texto plano, cortado en el último punto (o palabra)');
+  const cuatro = 'Entrada.\n\n## Los jugadores\nA\n\n## Cómo se juega\nB\n\n## Calendario (hora argentina)\nC\n\n## Premios\nD\n\n## Historia\nE';
+  const c4 = A._tdAboutHtml(cuatro);
+  chk(A._tdAboutHtml('') === '' && A._tdAboutHtml('  \n ') === '' && !/cerrado/.test(A._tdAboutHtml('corto'))
+      && /cerrado sin-secs[\s\S]*Seguir leyendo/.test(A._tdAboutHtml('x '.repeat(600)))
+      && !/cerrado/.test(A._tdAboutHtml('E.\n\n## Uno\nA\n\n## Dos\nB'))
+      && /class="td-about cerrado"/.test(c4) && c4.includes('Seguir leyendo: Calendario, Premios y 1 más'),
+      '📖 vacío no dibuja nada; con más de 2 secciones se ven 2 y el botón dice qué falta («Seguir leyendo: Calendario, Premios y 1 más»)');
+  // Las reglas del servidor (functions/index.js) tienen que dar lo mismo que las de la app: el mismo texto, en el mismo orden.
+  const FN = fs.readFileSync('functions/index.js', 'utf8');
+  const srv = new Function(FN.replace(/export async function/g, 'async function') + '; return { aboutHtml, armarTorneo, fichaTorneo };')();
+  const trozos = (x) => x.replace(/<(h[23]|p|li)[^>]*>/g, '\n$1:').replace(/<[^>]+>/g, '').split('\n').filter(Boolean).join('|');
+  chk(trozos(srv.aboutHtml(txt)).replace(/h2:/g, 'h3:') === trozos(h) && /<h2>Los jugadores<\/h2>/.test(srv.aboutHtml(txt)),
+      '📖 el servidor arma lo mismo para Google (mismo texto y orden; subtítulos como h2)', trozos(srv.aboutHtml(txt)));
+  chk(srv.armarTorneo(['T', 'Ginebra', 'Nov', '', 'Resumen.']).desc === 'Resumen.' && /^Tabla de posiciones/.test(srv.armarTorneo(['T', 'Ginebra', 'Nov', '']).desc)
+      && /<h2>Los jugadores<\/h2>/.test(srv.fichaTorneo(['T', '', ''], { b: [], a: [], p: txt }, {})),
+      '📖 og.json con 5.º lugar → descripción; sin él, la de siempre; la ficha para Google lleva el texto');
+  const SD = extraerFuncion('_seoDatos'), OG = extraerFuncion('_ogJson'), TD = extraerFuncion('openTournamentDetail');
+  chk(/res\.t\[key\]\.p = about/.test(SD) && /_aboutResumen\(d\.about, 160\)/.test(OG) && /h \+= _tdAboutHtml\(about\)/.test(TD)
+      && /about: about \|\| ''/.test(TD) && /about: entry\.about \|\| ''/.test(extraerFuncion('_tourManifestMeta')),
+      '📖 viaja a la web (manifest), a og.json, a las fichas de Google y se dibuja en el torneo');
+
+  // 🗳️ La encuesta.
+  const lsMem = mkLS([]);
+  const ENC = new Function('escHtml', 'localStorage', 'getTzConfig', 'tourRange', 'setTimeout', 'fetch', 'document',
+    'var ENC_URL = "https://x/encuesta/", _tdEnc = null, _ENC_ERRORES = {}, _tdEncCargar = function () {};\n'
+    + ['_encIdDe', '_encHasta', '_encImg', '_encVotante', '_tdEncHtml', '_tdEncInner', '_encuestasJson'].map(extraerFuncion).join('\n')
+    + '; return { _encIdDe, _encHasta, _encImg, _encVotante, _tdEncHtml, _tdEncInner, _encuestasJson, E: () => _tdEnc, set: (c, mio) => { _tdEnc.c = c; _tdEnc.mio = mio; _tdEnc.estado = "ok"; } };')(
+    escHtml, lsMem,
+    () => ({ tz_m: { name: 'Mundial', startDate: '2026-11-24', endDate: '2026-12-12', encuesta: { preg: '¿Quién gana?', ops: [{ t: 'Gukesh' }, { t: 'Sindarov' }] } },
+             tz_sin: { name: 'Otro' }, tz_una: { name: 'Uno', encuesta: { preg: '¿?', ops: [{ t: 'A' }] } } }),
+    (d) => ({ start: +String(d.startDate || '').replace(/-/g, '') || 0, end: +String(d.endDate || '').replace(/-/g, '') || 0 }),
+    () => 0, () => Promise.reject(new Error('sin red')), { getElementById: () => null });
+  const ej = { preg: '¿Para vos quién gana el match?', ops: [{ t: 'Gukesh', img: 'data/fl/wcm2026-gukesh.jpg' }, { t: 'Sindarov', img: 'javascript:alert(1)' }] };
+  chk(ENC._encIdDe('tz', 'tz_179') === 'tz_179' && ENC._encIdDe('ls', 'tz_179') === 'tz_179' && ENC._encIdDe('ls', 42) === 'ls_42'
+      && ENC._encHasta({ hasta: '2026-11-24 11:00' }) === Date.parse('2026-11-24T14:00:00Z') && ENC._encHasta({}, { end: 20261212 }) === Date.parse('2026-12-13T02:59:00Z'),
+      '🗳️ la clave es la del torneo (igual en el modo autor y en la web); se vota hasta la fecha elegida (hora argentina) o el último día del torneo');
+  const he = ENC._tdEncHtml('tz_m', ej, { end: 20991231 });
+  chk(/id="td-enc"/.test(he) && /src="data\/fl\/wcm2026-gukesh\.jpg"/.test(he) && !/javascript:/.test(he) && /class="ini">S</.test(he) && /VS/.test(he) && /Cargando los votos/.test(he)
+      && ENC._tdEncHtml('x', { preg: 'P', ops: [{ t: 'A' }] }) === '' && ENC._tdEncHtml('x', null) === '',
+      '🗳️ dos caras con VS (foto del sitio sí, link raro no: queda la inicial); sin 2 opciones no se dibuja nada');
+  ENC._tdEncHtml('tz_m', ej, { end: 20991231 });
+  ENC.set([2, 1], 0);
+  const h2 = ENC._tdEncInner();
+  chk(/>67%</.test(h2) && />33%</.test(h2) && /td-enc-op mio" data-i="0"/.test(h2) && /3 votos · podés cambiar el tuyo/.test(h2) && /width:67%/.test(h2),
+      '🗳️ porcentajes que suman 100, mi voto marcado, la barra partida y «3 votos · podés cambiar el tuyo»', h2.match(/td-enc-pie[^<]*<|>\d+%</g).join(' '));
+  ENC._tdEncHtml('tz_m', ej, { end: 20200101 });
+  ENC.set([0, 0], null);
+  chk(/disabled/.test(ENC._tdEncInner()) && /Votación cerrada/.test(ENC._tdEncInner()), '🗳️ pasada la fecha: no se puede tocar y dice «Votación cerrada»');
+  ENC.set([7, 3], 1);
+  const hc = ENC._tdEncInner();
+  chk(/>70%</.test(hc) && />30%</.test(hc) && /10 votos · votación cerrada/.test(hc) && (hc.match(/disabled/g) || []).length === 2 && /td-enc-op mio" data-i="1"/.test(hc),
+      '🗳️ cerrada con votos: los resultados finales quedan a la vista (porcentajes, barra y tu voto), sólo que ya no se puede votar', hc.match(/td-enc-pie[^<]*<|>\d+%</g).join(' '));
+  const v1 = ENC._encVotante(), v2 = ENC._encVotante();
+  const ej2 = JSON.parse(ENC._encuestasJson());
+  chk(/^[a-z0-9]{12,40}$/.test(v1) && v1 === v2 && Object.keys(ej2.e).join() === 'tz_m' && ej2.e.tz_m.n === 2 && ej2.e.tz_m.hasta === Date.parse('2026-12-13T02:59:00Z'),
+      '🗳️ un número fijo por navegador; data/encuestas.json lleva sólo las encuestas completas, con cuántas opciones y hasta cuándo', JSON.stringify(ej2));
+  const SV = extraerFuncion('openTournamentDetail');
+  // 🔒 Cierre: a mano (cerrada = cuándo), por torneo Finalizado o por fecha.
+  ENC._tdEncHtml('tz_m', Object.assign({ cerrada: Date.now() - 1000 }, ej), { end: 20991231 });
+  const cerradaMano = ENC.E().abierta;
+  ENC._tdEncHtml('tz_m', ej, { end: 20991231 }, { type: 'tz', key: 'tz_m' }, true);
+  const cerradaFin = ENC.E().abierta;
+  const ENC2 = new Function('escHtml', 'localStorage', 'getTzConfig', 'tourRange',
+    ['_encIdDe', '_encHasta', '_encuestasJson'].map(extraerFuncion).join('\n') + '; return _encuestasJson;')(
+    escHtml, lsMem, () => ({ tz_a: { endDate: '2099-01-01', finished: true, encuesta: ej }, tz_b: { endDate: '2099-01-01', encuesta: Object.assign({ cerrada: 1234 }, ej) }, tz_c: { endDate: '2099-01-01', encuesta: ej } }),
+    (d) => ({ end: +String(d.endDate || '').replace(/-/g, '') || 0 }));
+  const j3 = JSON.parse(ENC2()).e;
+  chk(cerradaMano === false && cerradaFin === false && j3.tz_a.hasta === 1 && j3.tz_b.hasta === 1234 && j3.tz_c.hasta > Date.now(),
+      '🗳️ se cierra a mano (🔒), al marcar el torneo Finalizado o al llegar la fecha; el bot se entera por data/encuestas.json', JSON.stringify(j3));
+  const CE = extraerFuncion('_tdEncCerrar'), EH = extraerFuncion('_tdEncHtml');
+  chk(/window\.aaAsk\(/.test(CE) && /enc\.cerrada = Date\.now\(\)/.test(CE) && /delete enc\.cerrada/.test(CE) && /lsSaveTours\(ts\)/.test(CE)
+      && /!_ondemand && donde/.test(EH) && /Reabrir la encuesta/.test(EH) && /Cerrar la encuesta/.test(EH),
+      '🗳️ el botón del autor (sólo en modo autor) pregunta con el cartel de la app, guarda en el torneo y se puede reabrir');
+  chk(/_fsWriteFile\(dir, 'encuestas\.json', _encuestasJson\(\)\)/.test(SRC) && /var encHtml = _tdEncHtml\(_encIdDe\(type, id\), encuesta, tourRng, \{ type: type, key: id \}, manuallyFinished\)/.test(SV)
+      && /encuesta: entry\.encuesta \|\| null/.test(extraerFuncion('_tourManifestMeta')) && /cfg\[_tzeKey\]\.encuesta = encuesta/.test(SRC),
+      '🗳️ se guarda en el torneo, viaja a la web, se escribe data/encuestas.json al guardar y va en la ficha');
 }
 
 console.log('\n' + (fallos ? ('❌ ' + fallos + ' PRUEBAS FALLARON') : '✅ Todas las pruebas pasaron.'));

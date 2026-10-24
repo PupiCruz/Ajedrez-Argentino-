@@ -171,6 +171,16 @@ Search Console mostró que Google tenía indexadas 34 de 1.847 páginas: todas d
 - **Canonical sin `?cat=`** en los torneos (salvo con una partida abierta) y título con
   "posiciones, resultados y partidas": se cambian **en los dos lados** (`_seo*` en index.html y
   functions/index.js), si no la misma página queda con dos títulos.
+- **📖 Sobre el torneo** (23/10/2026): campo `about` de Editar torneo (texto con `## Título`, `- lista`,
+  `**negrita**`, `[link](https://…)`). Se ve en la ficha (`_tdAboutHtml`), va ENTERO en la ficha para Google
+  (`p` en data/seo/t*.json) y su primer párrafo es la descripción (5.º lugar de og.json). Las reglas de
+  formato están dos veces (`_aboutBloques` en index.html y `aboutBloques` en functions/index.js): cambiarlas
+  en los dos lados (lo controla la sección 81 del banco). Sirve para los torneos PRÓXIMOS, que no tienen tabla.
+- **🗳️ Encuesta del torneo** (23/10/2026): en Editar torneo (pregunta + hasta 4 opciones con foto + "hasta").
+  Va arriba a la derecha de la ficha (`_tdEncHtml`). Los votos los cuenta el bot (`vivo-worker/src/encuestas.js`,
+  Durable Object `Encuesta`), que SÓLO acepta las encuestas de `data/encuestas.json` (lo escribe 💾 Guardar,
+  `_encuestasJson`): una encuesta nueva funciona recién después de guardar y publicar. Las caras del Mundial:
+  `data/fl/wcm2026-gukesh.jpg` y `wcm2026-sindarov.jpg` (recortadas del flyer).
 - **Sitemap:** `lastmod` es la fecha real (fin del torneo, último torneo del jugador). Sin fecha
   conocida, o si tiene más de un año sin fecha de alta, va **sin** lastmod.
 
@@ -220,6 +230,7 @@ lugares se pudre solo. (Pasó: este archivo decía 394 cuando el banco de la web
 | `vivo-worker/test-ranking-musica.mjs` | 🎵 ranking de Música en el Tablero: sólo con cuenta (cr-proxy), los puntos los cuenta el servidor con el acta (y con el juego de verdad jugado en Node: tiene que dar lo mismo), frenos, orden, 100 mejores, 🗑️ de moderadores | `cd vivo-worker` y `node test-ranking-musica.mjs` |
 | `vivo-worker/test-token-lichess.mjs` | 🔑 aviso por privado al autor si el token de Lichess de cr-proxy (`LICHESS_TOKEN`, permiso study:read) falla o vence | `cd vivo-worker` y `node test-token-lichess.mjs` |
 | `vivo-worker/test-errores.mjs` | 📛 errores de la web en los visitantes: limpieza (sin datos personales), se juntan los iguales, freno, `/errores` del bot | `cd vivo-worker` y `node test-errores.mjs` |
+| `vivo-worker/test-encuestas.mjs` | 🗳️ encuestas de la ficha del torneo: sólo las publicadas en data/encuestas.json, opciones, cierre, un voto por navegador (cambiable), freno por red, resultado en memoria | `cd vivo-worker` y `node test-encuestas.mjs` |
 | `vivo-worker/test-avisos.mjs` | 🔔 avisos al teléfono (Web Push): cifrado igual al ejemplo del RFC 8291, firma VAPID, aparatos y temas por cuenta, cola de a 40, noche, racha de las 22 | `cd vivo-worker` y `node test-avisos.mjs` |
 
 Ya cazaron varios bugs antes de que llegaran al sitio. Si uno falla, **no publicar**.

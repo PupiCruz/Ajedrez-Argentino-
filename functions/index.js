@@ -81,7 +81,7 @@ function conMarca(t) {
 }
 
 function armarTorneo(f) {
-  const [nombre, lugar, fechas, flyer] = f;
+  const [nombre, lugar, fechas, flyer, resumen] = f;
   const partes = [];
   if (lugar) partes.push(lugar);
   if (fechas) partes.push(fechas);
@@ -89,7 +89,8 @@ function armarTorneo(f) {
     // "posiciones" es la palabra que más usa la gente al buscar un torneo (Search Console, sep 2026).
     // Igual que _seoTorneo() en index.html: la misma página no puede tener dos títulos.
     titulo: conMarca(nombre + ' — posiciones, resultados y partidas'),
-    desc: limpio('Tabla de posiciones, cruces, rondas y partidas de ' + nombre +
+    // Con "📖 Sobre el torneo" cargado, su primer párrafo (5.º lugar de og.json) es la descripción.
+    desc: limpio(resumen) || limpio('Tabla de posiciones, cruces, rondas y partidas de ' + nombre +
           (partes.length ? '. ' + partes.join('. ') : '') + '. Ajedrez argentino.'),
     imagen: absoluta(flyer)
   };
@@ -194,11 +195,45 @@ function linkJugador(og, id, nombreRespaldo) {
 const PIE = '<p><a href="/?ir=torneos">Torneos de ajedrez en Argentina</a> · <a href="/?ir=jugadores">Ranking FIDE de Argentina</a>'
           + ' · <a href="/?ir=noticias">Noticias de ajedrez</a></p>';
 
+/* 📖 SOBRE EL TORNEO (23/10/2026): la presentación que escribe el autor (campo `about`, viene entero en la
+   ficha como `p`). Las mismas reglas que _aboutBloques() en index.html: "## Título", renglones con "- ",
+   **negrita**, [texto](https://…) y renglón vacío = párrafo nuevo. Si se cambian, en los dos lados. */
+function aboutBloques(txt) {
+  const out = [];
+  let cur = null;
+  for (const ln of String(txt || '').replace(/\r/g, '').split('\n')) {
+    const s = ln.trim();
+    let m;
+    if (!s) { cur = null; continue; }
+    if ((m = s.match(/^#{2,3}\s+(.+)$/))) { out.push({ t: 'h', s: m[1] }); cur = null; continue; }
+    if ((m = s.match(/^[-•*]\s+(.+)$/))) {
+      if (!cur || cur.t !== 'ul') { cur = { t: 'ul', l: [] }; out.push(cur); }
+      cur.l.push(m[1]); continue;
+    }
+    if (!cur || cur.t !== 'p') { cur = { t: 'p', l: [] }; out.push(cur); }
+    cur.l.push(s);
+  }
+  return out;
+}
+function aboutInline(s) {
+  return esc(s)
+    .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2">$1</a>');
+}
+function aboutHtml(txt) {
+  return aboutBloques(txt).map(b => {
+    if (b.t === 'h') return '<h2>' + aboutInline(b.s) + '</h2>';
+    if (b.t === 'ul') return '<ul>' + b.l.map(x => '<li>' + aboutInline(x) + '</li>').join('') + '</ul>';
+    return '<p>' + b.l.map(aboutInline).join('<br>') + '</p>';
+  }).join('');
+}
+
 function fichaTorneo(fila, ficha, og) {
   const [nombre, lugar, fechas] = fila;
   let h = '<h1>' + esc(limpio(nombre)) + '</h1>';
   const det = [lugar, fechas].map(limpio).filter(Boolean);
   h += '<p>' + (det.length ? esc(det.join(' · ')) + '. ' : '') + 'Tabla de posiciones, cruces, rondas y partidas.</p>';
+  if (ficha && typeof ficha.p === 'string' && ficha.p) h += aboutHtml(ficha.p.slice(0, 6000));
   const bloques = ficha && Array.isArray(ficha.b) ? ficha.b : [];
   for (const b of bloques) {
     if (!Array.isArray(b) || !Array.isArray(b[2])) continue;
