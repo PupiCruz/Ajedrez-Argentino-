@@ -28,7 +28,7 @@ function chk(ok, txt, extra) {
 // Este banco recorta funciones del index.html POR NOMBRE. Si una empieza a llamar a un ayudante
 // que no está listado, la copia recortada revienta y Node MATA el archivo entero: dejaban de
 // correr cientos de pruebas sin que se notara. Acá se avisa fuerte y se dice qué falta.
-const ESPERADAS = 2682;   // subir cuando se agreguen pruebas. NUNCA baja solo.
+const ESPERADAS = 2683;   // subir cuando se agreguen pruebas. NUNCA baja solo.
 process.on('uncaughtException', (e) => {
   const falta = /(\w+) is not defined/.exec(e.message || '');
   console.log('\n' + '='.repeat(78));
@@ -10400,6 +10400,14 @@ console.log('\n=== 78. ☀️ Portada «Hoy» (21/10) ===');
       '🕛 la ronda de ayer que ya está en la tabla se da por terminada (pasa a la de hoy); sin tabla espera las 6 h; la de HOY nunca se saltea',
       [sinTabla.n, conTabla.n, hoyJuega.n].join());
   chk(H.ronda({ 1: '2026-10-21 10:00', 2: '2026-10-21 16:00' }, AHORA).n === 1, 'con dos rondas hoy, sigue siendo «la de hoy» la de la mañana mientras dura (6 h)');
+  // (23/10) Amazónico: rondas 5 (14:15) y 6 (20:15) el mismo día; a las 21:58 con la tabla «después de la 5».
+  const rdAm = { 5: '2026-10-23 14:15', 6: '2026-10-23 20:15', 7: '2026-10-24 14:15' };
+  const am22 = H.ronda(rdAm, Date.UTC(2026, 9, 24, 0, 58), 5), am18 = H.ronda(rdAm, Date.UTC(2026, 9, 23, 21, 0), 5), am15 = H.ronda(rdAm, Date.UTC(2026, 9, 23, 18, 0), 5);
+  const rdBl = {}; for (let i = 1; i <= 9; i++) rdBl[i] = '2026-10-23 ' + (19 + Math.floor((30 + 15 * (i - 1)) / 60)) + ':' + String((30 + 15 * (i - 1)) % 60).padStart(2, '0');
+  const bl = H.ronda(rdBl, Date.UTC(2026, 9, 24, 0, 58), 6);
+  chk(am22.n === 6 && am18.n === 6 && am18.t > Date.UTC(2026, 9, 23, 21, 0) && am15.n === 5 && bl.n === 9,
+      '⏭️ dos rondas el mismo día: empezada la de la noche, se muestra ésa; entre rondas (ya en la tabla, +3 h) la que viene; recién empezada sigue; el blitz de 9 no se queda en la 1',
+      [am22.n, am18.n, am15.n, bl.n].join());
   chk(H.ronda({ 1: '2026-10-25 10:00' }, AHORA).hoy === false && H.ronda({}, AHORA) === null, 'sin ronda hoy: la próxima (no marcada «hoy»); sin horarios, nada');
   const T = (key, status, extra) => Object.assign({ key, status, startKey: 20261015, intl: false, historico: false, _d: { rd: {} } }, extra || {});
   const nacHoy = T('nac', 'live', { _d: { rd: rd } }), intHoy = T('int', 'live', { intl: true, _d: { rd: rd } }), vivoSin = T('vivo', 'live'), prox = T('prox', 'upcoming', { startKey: 20261030 }), lejos = T('lejos', 'upcoming', { startKey: 20270301 });

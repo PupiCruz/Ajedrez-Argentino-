@@ -31950,16 +31950,26 @@ function _hoyDatos(o) {
 }
 // La ronda de HOY (o la próxima): { n, t (ms), hora, hoy }. `hecha` = hasta qué ronda llega la tabla publicada.
 function _hoyRonda(rd, ahora, hecha) {
-  var hoyIso = _hoyArIso(ahora), mejor = null;
+  var hoyIso = _hoyArIso(ahora), mejor = null, todas = [];
   Object.keys(rd || {}).forEach(function (k) {
-    var x = _hoyMs(rd[k]); if (!x) return;
-    var n = parseInt(k, 10); if (!n) return;
+    var x = _hoyMs(rd[k]), n = parseInt(k, 10);
+    if (x && n) todas.push({ n: n, x: x });
+  });
+  todas.forEach(function (o) {
+    var x = o.x, n = o.n;
     var esHoy = x.dia === hoyIso;
     if (x.ms + 6 * 3600e3 < ahora && !esHoy) return;   // ya pasó (una ronda dura como mucho unas 6 h)
     // (22/10) Una ronda de un día anterior que ya está en la tabla terminó: no se esperan las 6 h (a la medianoche
-    // seguía «Ronda 6 · miércoles» con la tabla «después de la ronda 6» ya puesta). Las de HOY no se saltean nunca:
-    // Chess-Results titula la tabla con la ronda apenas entra el primer resultado.
+    // seguía «Ronda 6 · miércoles» con la tabla «después de la ronda 6» ya puesta).
     if (!esHoy && hecha && n <= hecha) return;
+    // (23/10) Dos rondas el mismo día: si ya empezó una ronda posterior, ésta terminó (el Amazónico seguía con
+    // «Ronda 5 · hoy 14:15» a las 22 con la 6 en juego; un blitz de 9 rondas seguía en la 1).
+    if (todas.some(function (p) { return p.n > n && p.x.hora && p.x.ms <= ahora; })) return;
+    // La tabla ya va más allá de esta ronda, o ya está en la tabla, hace 3 h que empezó y hay otra más tarde HOY:
+    // se muestra la que viene (con su cuenta regresiva). La que recién arrancó NO se saltea: Chess-Results titula
+    // la tabla con la ronda apenas entra el primer resultado.
+    if (hecha && n < hecha) return;
+    if (hecha && n === hecha && x.ms + 3 * 3600e3 < ahora && todas.some(function (p) { return p.n > n && p.x.dia === hoyIso; })) return;
     if (!mejor || x.ms < mejor.t) mejor = { n: n, t: x.ms, hora: x.hora, hoy: esHoy, dia: x.dia };
   });
   return mejor;
